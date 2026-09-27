@@ -27,6 +27,8 @@ def test_arc_package_imports() -> None:
         "arc.ingest.edgar",
         "arc.ingest.earnings",
         "arc.ingest.youtube",
+        "arc.ingest.llm",
+        "arc.ingest.scout",
         "arc.features",
         "arc.personas",
         "arc.gate",
@@ -57,4 +59,4 @@ def test_cli_stub_command() -> None:
     """Stub commands print 'not yet implemented'."""
     from arc.cli import main
 
-    assert main(["scan"]) == 0
+    assert main(["propose"]) == 0

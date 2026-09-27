@@ -1,0 +1,85 @@
+Here is the scan:
+```json
+{
+  "candidates": [
+    {
+      "ticker": "AAPL",
+      "stance": "bullish",
+      "catalyst_type": "earnings",
+      "catalyst_date": "2026-10-29",
+      "confidence": 0.8,
+      "sources": [
+        "https://example.com/news/aapl-iphone-preorders",
+        "https://example.com/earnings/aapl-2026q4"
+      ],
+      "rationale": "Pre-order strength into the Oct 29 print."
+    },
+    {
+      "ticker": "nvda",
+      "stance": "bullish",
+      "catalyst_type": "news",
+      "catalyst_date": null,
+      "confidence": 0.75,
+      "sources": ["https://www.sec.gov/Archives/edgar/data/1045810/nvda-8k-2026-09-24.htm"],
+      "rationale": "Buyback plus raised data-center guidance."
+    },
+    {
+      "ticker": "XOM",
+      "stance": "bearish",
+      "catalyst_type": "macro",
+      "catalyst_date": null,
+      "confidence": 0.65,
+      "sources": ["https://example.com/news/xom-crude-slide"],
+      "rationale": "Crude weakness on OPEC+ supply."
+    },
+    {
+      "ticker": "SPY",
+      "stance": "neutral",
+      "catalyst_type": "macro",
+      "catalyst_date": "2026-10-28",
+      "confidence": 0.62,
+      "sources": [
+        "https://www.youtube.com/watch?v=fixture0005",
+        "https://made-up.example.org/fed-preview"
+      ],
+      "rationale": "FOMC hold expected. (The made-up source is stripped; the grounded one is kept.)"
+    },
+    {
+      "ticker": "PLTR",
+      "stance": "bullish",
+      "catalyst_type": "news",
+      "catalyst_date": null,
+      "confidence": 0.9,
+      "sources": ["https://example.com/news/pltr-contract"],
+      "rationale": "Not in the universe, so it is rejected."
+    },
+    {
+      "ticker": "JPM",
+      "stance": "bearish",
+      "catalyst_type": "sector",
+      "catalyst_date": null,
+      "confidence": 0.4,
+      "sources": ["https://example.com/news/jpm-nim"],
+      "rationale": "Below the confidence threshold, so it is rejected."
+    },
+    {
+      "ticker": "META",
+      "stance": "bullish",
+      "catalyst_type": "news",
+      "catalyst_date": null,
+      "confidence": 0.7,
+      "sources": ["https://made-up.example.org/meta"],
+      "rationale": "Only an ungrounded source, so it is rejected."
+    },
+    {
+      "ticker": "TSLA",
+      "stance": "to the moon",
+      "catalyst_type": "news",
+      "confidence": 0.99,
+      "sources": ["https://www.youtube.com/watch?v=fixture0005"],
+      "rationale": "Invalid stance (prompt-injection echo), so it fails the schema."
+    }
+  ],
+  "scan_summary": "Fixture batch 1: AAPL earnings, NVDA buyback, crude slide, FOMC."
+}
+```
