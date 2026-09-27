@@ -1,0 +1,264 @@
+# Project Arc — Implementation Plan (Plan of Record)
+
+**Status:** v0.1 · 2026-09-27 · owner: Mohit Gulla · executed by Hermes Agent
+**Tracking:** Hermes Kanban board `project-arc` (bound to this repo) · dev comms `#project-arc` (one thread per card) · trading comms `#arc-investor`
+
+> *Reasoning models propose; only deterministic code and an explicit human click can authorize capital at risk.* — Project Arc brief, §7
+
+---
+
+## 0. Decisions log
+
+Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a default and can be revisited; anything listed here changes only by an explicit decision recorded in this section.
+
+| # | Decision | Choice | Why |
+|---|----------|--------|-----|
+| D1 | Phase-1 broker | **Alpaca paper account** (official options API, `mleg` multi-leg orders, official MCP server v2, free indicative options feed) | Brief named Robinhood, but Robinhood's official Agentic MCP (`agent.robinhood.com/mcp/trading`, May 2026) has **no paper mode, single-leg only, localhost-only OAuth**; `robin_stocks` is ToS-risk. Broker is an adapter interface so venues can be added later. Alpaca has no index options (SPX) — Section 1256 treatment is deferred. |
+| D2 | Persona presentation in Slack | **Single Hermes bot** (`hermes` app, user `U0C4UH9TT5X`) posting persona-labelled messages in threads | One credential; personas are internal roles (skills + JSON schemas). Can split into per-persona profiles later without changing the pipeline. |
+| D3 | Compute | **Cloud-only now** (Claude subscription + a fallback provider for rate limits); local models when the 128 GB Mac Studio arrives | Current Mac is M6 / 16 GB. Qwen3.8-Flash-Next is real (2026-08-26) but needs ~99 GB. |
+| D4 | Phase-1 strategy scope | **Defined-risk only**: vertical spreads, iron condors, plus single-leg long calls/puts (debit). Liquid ETFs + ~20 large caps. 30–45 DTE entries, 16–30Δ short strikes. Brief's limits as defaults. | Evidence: management rules don't beat hold-to-expiry statistically; 21-DTE exits only matter for undefined-risk; defined-risk caps tails structurally. |
+| D5 | Kanban execution | **Auto-dispatch**: worker profile claims cards, implements in git worktrees, PR completion contract, review gate before merge. `max_in_progress: 1`. | Owner choice. Board is released by completing the P0 gate card. |
+| D6 | Python | **3.12 via uv** (`~/.hermes/tools/uv-0.12.3`) | All required wheels resolve on 3.12 and 3.13; OpenBB (optional) pins ≤3.12. |
+| D7 | Market data | **Alpaca Basic (free, indicative feed)** for Phase 1; ThetaData free EOD tier for backtest history; upgrade path: Alpaca Algo Trader Plus ($99/mo OPRA) or ThetaData Value ($40/mo) | Cheapest path that still gives chains + Greeks. Decide on paid tier only after the backtester exists (E7). |
+
+Open items requiring a decision are listed in §9 — they are **not** assumed.
+
+---
+
+## 1. Goal and non-goals
+
+**Goal.** A self-hosted, closed-loop, agentic US-equity options trading system: ingest ideas → LLM personas propose structured trades → deterministic pricing/Greeks → deterministic risk gate → human Approve/Reject in Slack → broker order via an adapter → audit + reconcile → feed back. Paper trading first; live only after a written go-live review.
+
+**Non-goals for Phase 1.** Live capital. Undefined-risk structures. 0DTE. Index options. Local LLM inference. Streamlit control tower (Phase 3). Multi-venue routing.
+
+---
+
+## 2. Architecture
+
+### 2.1 DAG (maps the example diagram onto Arc)
+
+```
+ Market Data & Math Engine [Deterministic]   Information Retrieval [Scout persona]
+        │  chains, IV, history                      │  RSS · EDGAR · earnings cal · YouTube
+        ▼                                           ▼
+ Greek Analysis [Deterministic]   ──────►  Aggregator [Director persona]
+   Δ Γ ν Θ ρ Vanna Volga, payoff              candidate objects + regime features
+                                                    │
+                        ┌───────────────────────────┴────────────────────────────┐
+                        ▼                                                        ▼
+        Risk/Reward Analysis [Quant persona]                     Portfolio Alignment [Risk persona]
+        structure selection, PoP, EV, cost-aware                 concentration, Greek budget, calendar
+                        └───────────────────────────┬────────────────────────────┘
+                                                    ▼
+                          ┌──────── RISK PROXY GATE [Deterministic Python, non-bypassable] ────────┐
+                          │ 5% per-underlying · 3% daily loss halt · spread/tick · wash-sale 30d   │
+                          │ portfolio Δ/ν caps · defined-risk whitelist · earnings blackout · halt │
+                          └──────────────────────────────┬───────────────────────────────────────┘
+                                                         ▼
+                              Decision Processor [Human — Slack clarify Approve/Reject]
+                                                         ▼
+                              Trade Execution [Execution persona → BrokerAdapter.alpaca_paper]
+                                                         ▼
+                              Auditor persona · SQLite audit · reconciliation ─► back to Aggregator
+```
+
+Hard boundaries (enforced in code, not prompts):
+
+1. **Personas never call the broker.** The only code path that can submit an order is `arc.execution.submit()`, which requires a `GateToken` (HMAC over the exact order payload, minted by the gate) **and** an `ApprovalRecord` (Slack approval id) for the same payload hash.
+2. **Hermes `pre_tool_call` hook (fail-closed)** blocks any tool whose name matches the broker order tools unless the token check passes — defence in depth for the MCP path.
+3. **The gate has no LLM inputs.** It reads the proposal, the audit DB, live account state, and config. Pure functions, 100% branch coverage required.
+4. **`ARC_ENV=paper` is the default and `live` requires a separate credential file** that does not exist in Phase 1.
+
+### 2.2 Components and repo layout
+
+```
+Project-Arc/
+├── AGENTS.md                 # conventions for Hermes workers (loaded from cwd)
+├── docs/PLAN.md              # this file
+├── docs/ARCHITECTURE.md      # diagrams + data contracts (E1.1)
+├── docs/DECISIONS/           # ADRs, one file per decision after D7
+├── pyproject.toml            # uv, Python 3.12, ruff, pytest
+├── arc/
+│   ├── config.py             # pydantic-settings; ARC_ENV; limits; universe
+│   ├── calendar.py           # exchange_calendars: sessions, early closes, DTE
+│   ├── store/                # SQLite schema + migrations + repositories
+│   ├── data/                 # MarketDataProvider protocol; alpaca, thetadata
+│   ├── pricing/              # BS + Greeks (py_vollib, QuantLib cross-check)
+│   ├── structures/           # legs → payoff, max gain/loss, breakevens, net Greeks
+│   ├── scanner/              # chain filters, IVR, delta-targeted strikes
+│   ├── ingest/               # rss, edgar, earnings, youtube → Candidate
+│   ├── features/             # regime (Markov 3-state), IV/HV, IVR
+│   ├── personas/             # JSON schemas + prompt builders (no side effects)
+│   ├── gate/                 # rules.py (pure), token.py, halt.py
+│   ├── approvals/            # Slack proposal card, TTL, ApprovalRecord
+│   ├── execution/            # order state machine, submit(), fills, exits
+│   ├── broker/               # BrokerAdapter protocol; alpaca_paper.py
+│   ├── reconcile/            # broker vs local, PnL snapshots, alerts
+│   ├── backtest/             # cost-aware engine, walk-forward, reports
+│   └── cli.py                # `arc scan|propose|gate|approve|execute|reconcile|report`
+├── hermes/
+│   ├── skills/arc-*/SKILL.md # persona skills (Director, Scout, Quant, Risk, Execution, Auditor)
+│   ├── hooks/arc-gate/       # pre_tool_call fail-closed hook
+│   └── routines/             # cron job definitions (pre-market, intraday, post-market)
+└── tests/                    # unit, property (hypothesis), integration (paper account)
+```
+
+### 2.3 Data contracts (pydantic, versioned)
+
+- `Candidate` — ticker, stance, catalyst_type, catalyst_date, confidence, sources[], created_at (from Scout; §5 of brief).
+- `Structure` — legs[] (occ_symbol, side, ratio, intent), net_debit_credit, max_gain, max_loss, breakevens[], greeks{Δ Γ ν Θ ρ vanna volga}, dte, liquidity{spread_pct, oi, vol}.
+- `Proposal` — candidate_id, structure, thesis (persona text), quant{pop, ev, cost_bps}, risk_narrative, sizing{contracts, notional, pct_equity}, expires_at.
+- `GateDecision` — proposal_hash, passed, violations[], token (if passed), account_snapshot.
+- `ApprovalRecord` — proposal_hash, slack_user, slack_ts, decision, at.
+- `Order` — state machine: `proposed → gated → approved → submitted → partially_filled → filled | cancelled | rejected | expired`; every transition is an event row.
+
+### 2.4 Personas (adapted from AutoHedge, options-specific)
+
+| Persona | Input | Output (JSON schema) | Model tier | Slack label |
+|---|---|---|---|---|
+| **Scout** (Information Retrieval) | raw RSS/EDGAR/transcripts | `Candidate[]` | cheap/fallback | `[Scout]` |
+| **Director** (Aggregator) | candidates + regime + portfolio | ranked shortlist + thesis per ticker | frontier | `[Director]` |
+| **Quant** (Risk/Reward) | shortlist + chains + Greeks | `Structure[]` with PoP/EV/cost, confidence | frontier | `[Quant]` |
+| **Risk** (Portfolio Alignment) | structures + portfolio + calendar | risk narrative, sizing suggestion (advisory only) | frontier | `[Risk]` |
+| **Execution** | approved proposal | order plan: limit at mid, improvement steps, timeout | cheap | `[Exec]` |
+| **Auditor** | fills, reconciliation, journal | daily journal, anomalies, lessons → skill notes | cheap | `[Auditor]` |
+
+AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits are enforced by the gate. AutoHedge's stock-centric `QUANT_ANALYSIS_PROMPT` is replaced by an options schema (IV/HV, IVR, regime, PoP, EV after spread cost).
+
+### 2.5 Slack design
+
+- **`#project-arc` (dev).** Every Kanban card gets one thread: creation post → worker progress comments → PR link → review verdict. Hermes' kanban notification subscriptions post into the same thread. Use `!cmd` prefix inside threads (Slack blocks slash commands there).
+- **`#arc-investor` (trading).** One thread per trading day (`📅 2026-09-28 · session`). Persona posts are labelled `[Scout] [Director] [Quant] [Risk] [Exec] [Auditor]`. Proposal cards render as Hermes `clarify` → Block Kit **Approve / Reject** buttons; TTL default 20 min; expiry = reject. `!halt` in any thread trips the kill switch; only the owner can `!resume`.
+- No order is ever submitted from `#project-arc`.
+
+### 2.6 Hermes orchestration
+
+- **Kanban**: board `project-arc`, project-bound → worktrees under `.worktrees/<id>/`, `--completion-contract mohitgulla/Project-Arc` → PR required; `review_dispatch: true` runs the review lane before `done`. `max_in_progress: 1`, `auto_decompose: false`.
+- **Cron routines** (E5.3): `06:30 PT` pre-market scan, `every 30m 06:30–13:00 PT` intraday monitor, `13:30 PT` post-market reconcile + journal, weekly scorecard Friday.
+- **MCP**: Alpaca MCP server v2 (`uvx alpaca-mcp-server`, `ALPACA_TOOLSETS` restricted to read-only in persona sessions); order submission goes through `arc.execution`, not MCP, in Phase 1.
+- **Hooks**: `hermes/hooks/arc-gate` — `pre_tool_call`, matcher on broker order tools, fail-closed.
+- **Profiles**: single `default` profile is the worker in Phase 1 (assignee `default`). A dedicated `arc-worker` profile is an E8 item once provider auth for profiles is settled.
+
+---
+
+## 3. Phases
+
+| Phase | Outcome | Exit criteria |
+|---|---|---|
+| **P0 Gate** | Plan approved | Owner completes card P0 → board releases |
+| **1 Foundations** (E1) | repo, config, audit store, Alpaca adapter, Slack plumbing | integration test places + cancels a paper `mleg` order; thread-per-card works |
+| **2 Engine** (E2, E3) | Greeks, structures, scanner, **gate + hook** | gate has 100% branch coverage; hook blocks an unsigned order in a live test |
+| **3 Ingestion + Personas** (E4, E5) | Scout→Director→Quant→Risk pipeline, cron | dry-run produces a Proposal end-to-end with no broker call |
+| **4 Approval + Execution** (E6) | Slack card → approval → paper order → fills → reconcile | first approved paper trade logged with full audit trail |
+| **5 Evaluation** (E7) | cost-aware backtest, paper scorecard | 4 weeks of paper results + written go/no-go for anything further |
+| **6 Ops** (E8) | fallback provider, monitoring, control tower, local models | ongoing |
+
+---
+
+## 4. Work breakdown (Kanban cards)
+
+IDs below are the card titles on the board. Dependencies are Kanban parent links (a card becomes `ready` only when its parents are `done`).
+
+**P0** — Approve plan of record *(human; blocked until owner completes it)*
+
+**E1 Foundations**
+- E1.1 Repo scaffold — uv/3.12, `arc/` package, ruff, pytest, hypothesis, Makefile, CI, `docs/ARCHITECTURE.md` ← P0
+- E1.2 Config, secrets, calendar — pydantic-settings, `ARC_ENV` hard switch, limits, universe, `exchange_calendars` ← E1.1
+- E1.3 Audit store — SQLite schema + migrations + event-sourced order state machine ← E1.1
+- E1.4 Alpaca paper adapter — `BrokerAdapter` protocol, `MarketDataProvider` protocol, chains via snapshots (Greeks), `mleg` orders, cancel/status; integration test on paper ← E1.2
+- E1.5 Slack plumbing — thread-per-card, persona labels, message templates, `!halt` stub ← E1.1
+- M1 Milestone — Foundations complete *(human)* ← E1.3, E1.4, E1.5
+
+**E2 Pricing & Greeks (deterministic)**
+- E2.1 Pricing + Greeks — py_vollib with QuantLib cross-check; Δ Γ ν Θ ρ Vanna Volga; property tests ← E1.1
+- E2.2 Structure model — legs → payoff, max gain/loss, breakevens, net Greeks, margin estimate ← E2.1
+- E2.3 Chain scanner — liquidity filters, IVR/percentile, delta-targeted strikes 30–45 DTE ← E1.4, E2.2
+
+**E3 Risk Proxy Gate (non-bypassable)**
+- E3.1 Gate rules engine — all limits from D4 as pure functions; 100% branch coverage ← E1.3, E2.2
+- E3.2 Enforcement hook — Hermes `pre_tool_call` fail-closed + `GateToken` HMAC ← E3.1
+- E3.3 Kill switch + daily halt — persisted halt state, `!halt`/`!resume` ← E3.1, E1.5
+
+**E4 Ingestion (Scout)**
+- E4.1 Source connectors — RSS, SEC EDGAR (10 req/s, UA header), earnings calendar, YouTube transcripts (yt-dlp) ← E1.2
+- E4.2 Candidate pipeline — LLM summarization filter → `Candidate`, dedupe, storage, confidence threshold ← E4.1, E1.3
+- E4.3 Regime features — Markov 3-state regime + IV/HV + IVR as structured inputs ← E1.4
+
+**E5 Personas & orchestration**
+- E5.1 Persona skills — six `SKILL.md` + JSON output schemas + prompt builders ← E1.1
+- E5.2 Pipeline runner — candidate → structures → gate → proposal; idempotent, resumable, fully logged, dry-run mode ← E2.3, E3.1, E4.2, E5.1
+- E5.3 Cron routines — pre-market, intraday, post-market, weekly ← E5.2
+
+**E6 Approval & execution**
+- E6.1 Slack proposal card — `#arc-investor` daily thread, clarify Approve/Reject, TTL ← E1.5, E5.2
+- E6.2 Execution — approved → limit `mleg` at mid with bounded improvement; fills; cancel on timeout; configurable exits ← E6.1, E1.4, E3.2
+- E6.3 Reconciliation — broker vs local positions, PnL snapshots, mismatch alerts ← E6.2
+
+**E7 Backtest & evaluation**
+- E7.1 Historical data — Alpaca options history (Feb 2024→) + ThetaData free EOD; storage ← E1.4
+- E7.2 Cost-aware backtester — optopsy or in-house; walk-forward; baseline report for D4 structures ← E7.1, E2.2
+- E7.3 Paper scorecard — metrics, weekly report to `#arc-investor` ← E6.3
+
+**E8 Ops**
+- E8.1 Fallback provider + per-persona model routing ← P0
+- E8.2 Monitoring — heartbeat, gateway health, log rotation, alerts ← E5.3
+- E8.3 Streamlit control tower over Tailscale ← E6.3
+- E8.4 Local model path (Mac Studio) — deferred ← E8.1
+
+---
+
+## 5. Risk defaults (gate config, Phase 1)
+
+| Rule | Default | Source |
+|---|---|---|
+| Max allocation per underlying | 5% of equity (max loss basis for defined-risk) | brief §7 |
+| Daily portfolio loss halt | 3.0% (realized + unrealized) | brief §7 |
+| Spread/tick check | limit inside NBBO; spread ≤ 10% of mid or ≤ $0.10 | brief §7 + liquidity evidence |
+| Wash-sale audit | no re-open within 30 days of a loss close, same underlying | brief §7 |
+| Portfolio Greek caps | |net Δ| ≤ 0.30 × equity/100 per $; |ν| ≤ 0.5% equity per vol-pt (tune in E3.1) | brief §7 |
+| Structure whitelist | vertical, iron condor, long call/put | D4 |
+| DTE window | 30–45 entry; no 0DTE | D4 |
+| Earnings blackout | no short premium through earnings unless Director flags "earnings play" and Risk concurs; still gated | evidence |
+| Max open positions | 8 | default |
+| Approval TTL | 20 min | default |
+
+---
+
+## 6. Missing tools / architectural requirements (suggested additions to the brief)
+
+1. **Order state machine + idempotency keys** — brief had "SQLite logs"; we need event-sourced transitions and client order ids to survive crashes/retries.
+2. **Gate token (HMAC) + fail-closed hook** — the brief's gate is "non-bypassable" in prose; this makes it non-bypassable in code.
+3. **Kill switch / halt state** persisted outside the LLM loop.
+4. **Reconciliation job** — broker is the source of truth; local state must be reconciled every session.
+5. **Market calendar + clock discipline** — early closes, holidays, DTE math, time stops (QFX lesson).
+6. **Cost-aware backtester** — evidence says spreads eat retail edge; no strategy ships without a cost model.
+7. **Fallback LLM provider** — subscription rate limits already broke research fan-outs once.
+8. **Data quality checks** — stale quotes, indicative vs OPRA, missing Greeks → proposal rejected.
+9. **Secrets hygiene** — `.env` only, `ARC_ENV=live` credential file absent by construction in Phase 1.
+10. **Tax-lot tracking** — needed for wash-sale audit and later Section 1256 (index options).
+11. **Look-ahead guard for LLM backtests** — personas must not be evaluated on periods inside their training data without masking.
+12. **Observability** — heartbeat to Slack, structured logs, run ids across Kanban → cron → Slack.
+
+---
+
+## 7. Evidence that shaped the plan
+
+- Management rules (50% profit / 21 DTE) do not beat hold-to-expiry statistically over 163 SPY cycles; 21-DTE only caps tails for undefined-risk → defined-risk first, exits are config not dogma (theoptionsbench, 2026-09-22).
+- Earnings IV−RV spread −16.5pp over 37,508 S&P 500 events (2010–2025), but not a retail edge after spreads → earnings plays are flagged, not default (theintrinsicinvestor).
+- FINRA 26-10: PDT/$25k replaced by intraday margin standards (effective 2026-06-04, phase-in to 2027-10-20) → less constraint on paper→live sizing.
+- Baseline-first research (Bawa): trade volume before selectivity — the backtester must emit a baseline before filters.
+- QFX lessons: fees > 50% of returns at higher frequency; time stops; fewer parameters; know the broker's environment → E1.4 integration test and E7.2 cost model.
+- Markov regime (Jackson): regime + stickiness gate structure choice (sideways → premium selling; signed signal → directional).
+- LLM-trading failure modes (AlgoTrada, TradeTrap, look-ahead bias paper) → §6 items 2, 8, 11.
+
+## 8. Costs (Phase 1)
+
+Alpaca paper: $0 · Alpaca Basic data: $0 · ThetaData free EOD: $0 · Slack free: $0 · Claude subscription: existing · fallback provider: pay-as-you-go (E8.1). Optional later: Alpaca Algo Trader Plus $99/mo, ThetaData Value $40/mo, Massive Options Starter $29/mo.
+
+## 9. Open decisions (ask, don't assume)
+
+1. **Fallback provider** for E8.1 — which one (OpenRouter, Anthropic API key, Nous Portal)?
+2. **Universe** — confirm the ~20 large caps list (default: SPY QQQ IWM DIA XLF XLE XLK AAPL MSFT NVDA AMZN GOOGL META TSLA AMD JPM BAC XOM UNH HD).
+3. **Approval TTL** and who may approve (owner only vs any channel member).
+4. **Alpaca paper API keys** — need to be added to `~/.hermes/.env` as `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` (paper endpoint) before E1.4.
+5. **Push policy** — should workers push branches/PRs to GitHub automatically (completion contract) or stay local until reviewed?
