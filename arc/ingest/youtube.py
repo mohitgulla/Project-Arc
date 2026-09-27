@@ -72,58 +72,56 @@ def _get_recent_videos(
         return []
 
 
-def _get_transcript(video_url: str) -> str:
-    """Use yt-dlp to download auto/manual captions as text."""
+def _get_video_info(video_url: str) -> dict:
+    """Fetch full metadata for one video (upload time, caption tracks) via yt-dlp."""
     cmd = [
         sys.executable,
         "-m",
         "yt_dlp",
-        "--write-auto-subs",
-        "--write-subs",
-        "--sub-lang",
-        "en",
-        "--sub-format",
-        "vtt",
+        "--dump-single-json",
         "--skip-download",
-        "--print",
-        "%(subtitles)j",
         "--no-warnings",
         video_url,
     ]
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if result.returncode != 0:
-            # Fallback: try getting description as text
-            return ""
-
-        # Parse VTT subtitle data from stdout
-        output = result.stdout.strip()
-        if not output or output == "null" or output == "NA":
-            return ""
-
-        # yt-dlp --print %(subtitles)j returns JSON with subtitle data
-        try:
-            subs_data = json.loads(output)
-            if isinstance(subs_data, dict):
-                for _lang, entries in subs_data.items():
-                    if isinstance(entries, list):
-                        for entry in entries:
-                            if entry.get("ext") in ("vtt", "srv1", "srv2", "srv3", "json3"):
-                                # The URL to the subtitle file
-                                sub_url = entry.get("url", "")
-                                if sub_url:
-                                    return _download_subtitle(sub_url)
-        except json.JSONDecodeError:
-            pass
-
-        return ""
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        return ""
+        log.warning("youtube.info_unavailable", url=video_url)
+        return {}
+    if result.returncode != 0:
+        log.warning("youtube.info_failed", url=video_url, stderr=result.stderr[:200])
+        return {}
+    try:
+        info = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+    return info if isinstance(info, dict) else {}
+
+
+_CAPTION_LANGS = ("en", "en-US", "en-orig")
+
+
+def _pick_caption_url(info: dict) -> str:
+    """Return a VTT caption URL: manual English subs first, then auto-captions.
+
+    Most finance channels (e.g. StockedUp) publish auto-generated captions only,
+    so falling back to ``automatic_captions`` is required to get any text.
+    """
+    for key in ("subtitles", "automatic_captions"):
+        tracks = info.get(key) or {}
+        if not isinstance(tracks, dict):
+            continue
+        for lang in _CAPTION_LANGS:
+            for entry in tracks.get(lang) or []:
+                if entry.get("ext") == "vtt" and entry.get("url"):
+                    return str(entry["url"])
+    return ""
+
+
+def _get_transcript(info: dict) -> str:
+    """Download and clean the best available English caption track."""
+    url = _pick_caption_url(info)
+    return _download_subtitle(url) if url else ""
 
 
 def _download_subtitle(url: str) -> str:
@@ -167,13 +165,26 @@ def _extract_tickers(text: str, universe: list[str]) -> list[str]:
     return found
 
 
+def _published_at(info: dict, fallback_date: str) -> datetime:
+    ts = info.get("timestamp")
+    if isinstance(ts, int | float):
+        return datetime.fromtimestamp(ts, tz=UTC)
+    date = str(info.get("upload_date") or fallback_date or "")
+    try:
+        return datetime.strptime(date, "%Y%m%d").replace(tzinfo=UTC)
+    except ValueError:
+        return datetime.now(UTC)
+
+
 def fetch_youtube(
     conn: sqlite3.Connection,
     settings: ArcSettings,
 ) -> list[RawDoc]:
     """Fetch transcripts from configured YouTube channels.
 
-    Returns only newly stored documents.
+    Returns only newly stored documents. A video whose captions are not yet
+    available (YouTube generates auto-captions some time after upload) is not
+    stored, so it is retried on the next run instead of being deduped forever.
     """
     cursor_repo = IngestCursorRepo(conn)
     doc_repo = RawDocRepo(conn)
@@ -187,47 +198,47 @@ def fetch_youtube(
 
     for channel_url in channels:
         cursor_key = f"{CONNECTOR}:{channel_url}"
-        last_cursor = cursor_repo.get(cursor_key)
-        last_date = last_cursor or ""
+        last_date = cursor_repo.get(cursor_key) or ""
 
-        log.info("youtube.fetching", channel=channel_url, cursor=last_cursor)
+        log.info("youtube.fetching", channel=channel_url, cursor=last_date)
         videos = _get_recent_videos(channel_url, max_videos=5)
 
         newest_date = last_date
 
         for video in videos:
             video_id = video.get("id", "")
-            upload_date = video.get("upload_date", "")  # YYYYMMDD
-            title = video.get("title", "")
-
             if not video_id:
                 continue
 
-            # Skip if older than cursor
-            if upload_date and upload_date <= last_date:
+            # Flat listings usually omit upload_date; when present, honour the cursor.
+            listed_date = str(video.get("upload_date") or "")
+            if listed_date and listed_date < last_date:
                 continue
 
             video_url = f"https://www.youtube.com/watch?v={video_id}"
             h = content_hash(CONNECTOR, video_url)
-
-            # Check dedupe before expensive transcript fetch
             if doc_repo.exists(h):
                 continue
 
-            transcript = _get_transcript(video_url)
-            text = f"[{title}] {transcript}" if transcript else f"[{title}] (no transcript)"
+            info = _get_video_info(video_url)
+            upload_date = str(info.get("upload_date") or listed_date)
+            if upload_date and upload_date < last_date:
+                continue
 
+            transcript = _get_transcript(info)
+            if not transcript:
+                log.info("youtube.no_transcript_yet", url=video_url)
+                continue
+
+            title = info.get("title") or video.get("title", "")
+            channel = info.get("channel") or info.get("uploader") or ""
+            text = f"[{channel}] [{title}] {transcript}" if channel else f"[{title}] {transcript}"
             tickers = _extract_tickers(text, settings.universe)
-
-            try:
-                pub_dt = datetime.strptime(upload_date, "%Y%m%d").replace(tzinfo=UTC)
-            except (ValueError, TypeError):
-                pub_dt = datetime.now(UTC)
 
             doc = RawDoc(
                 source=CONNECTOR,
                 url=video_url,
-                published_at=pub_dt,
+                published_at=_published_at(info, listed_date),
                 text=text,
                 tickers_hint=tickers,
                 content_hash=h,

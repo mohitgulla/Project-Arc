@@ -44,6 +44,17 @@ class StructureKind(enum.StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# Default YouTube sources (D13)
+# ---------------------------------------------------------------------------
+
+# StockedUp (@StockedUp) posts a next-session market outlook almost every trading
+# day. The channel id is used rather than the handle so a rename can't break it.
+DEFAULT_YOUTUBE_CHANNELS: list[str] = [
+    "https://www.youtube.com/channel/UC-m6zNItyoDk5lSykDlhE4Q/videos",
+]
+
+
+# ---------------------------------------------------------------------------
 # Default universe (D9)
 # ---------------------------------------------------------------------------
 
@@ -176,8 +187,11 @@ class ArcSettings(BaseSettings):
         description="Finnhub API key for earnings calendar (free tier).",
     )
     ingest_youtube_channels: list[str] = Field(
-        default_factory=list,
-        description="YouTube channel/playlist URLs for transcript ingestion.",
+        default_factory=lambda: list(DEFAULT_YOUTUBE_CHANNELS),
+        description=(
+            "YouTube channel/playlist URLs for transcript ingestion. "
+            "Default: StockedUp (daily next-session market outlook)."
+        ),
     )
 
     # -- Universe (D9) -------------------------------------------------------

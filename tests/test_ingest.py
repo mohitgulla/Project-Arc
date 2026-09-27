@@ -13,7 +13,7 @@ from unittest import mock
 
 import pytest
 
-from arc.config import ArcSettings
+from arc.config import DEFAULT_YOUTUBE_CHANNELS, ArcSettings
 from arc.ingest.store import IngestCursorRepo, RawDocRepo, content_hash
 from arc.store.migrate import migrate
 
@@ -357,36 +357,74 @@ class TestEarningsConnector:
 # ---------------------------------------------------------------------------
 
 
+def _yt_runner(listing: list[dict], infos: dict[str, dict]):
+    """Fake ``subprocess.run`` for yt-dlp: flat listing + per-video info JSON."""
+
+    def run(cmd, **_kwargs):
+        result = mock.MagicMock()
+        result.stderr = ""
+        if "--flat-playlist" in cmd:
+            result.returncode = 0
+            result.stdout = "\n".join(json.dumps(v) for v in listing)
+        elif "--dump-single-json" in cmd:
+            vid = cmd[-1].rsplit("=", 1)[-1]
+            result.returncode = 0 if vid in infos else 1
+            result.stdout = json.dumps(infos.get(vid, {}))
+        else:
+            result.returncode = 1
+            result.stdout = ""
+        return result
+
+    return run
+
+
+def _info(vid: str, title: str, date: str, *, captions: bool = True) -> dict:
+    auto = {"en": [{"ext": "vtt", "url": f"https://captions.test/{vid}.vtt"}]} if captions else {}
+    return {
+        "id": vid,
+        "title": title,
+        "upload_date": date,
+        "timestamp": int(datetime.strptime(date, "%Y%m%d").replace(tzinfo=UTC).timestamp()),
+        "channel": "StockedUp",
+        "subtitles": {},
+        "automatic_captions": auto,
+    }
+
+
 class TestYouTubeConnector:
-    def test_fetches_transcripts(self, db: sqlite3.Connection, settings: ArcSettings) -> None:
+    def test_fetches_auto_captions(self, db: sqlite3.Connection, settings: ArcSettings) -> None:
         from arc.ingest.youtube import fetch_youtube
 
-        # Mock yt-dlp listing
-        listing_output = json.dumps(
-            {"id": "abc123", "title": "AAPL Analysis 2026", "upload_date": "20260115"}
+        run = _yt_runner(
+            [{"id": "abc123", "title": "AAPL Analysis"}],
+            {"abc123": _info("abc123", "AAPL Analysis 2026", "20260115")},
         )
-
-        def mock_run(cmd, **_kwargs):
-            result = mock.MagicMock()
-            if "--flat-playlist" in cmd:
-                result.returncode = 0
-                result.stdout = listing_output
-            elif "--write-auto-subs" in cmd:
-                result.returncode = 0
-                result.stdout = "null"
-            else:
-                result.returncode = 1
-                result.stdout = ""
-            result.stderr = ""
-            return result
-
-        with mock.patch("subprocess.run", side_effect=mock_run):
+        with (
+            mock.patch("subprocess.run", side_effect=run),
+            mock.patch(
+                "arc.ingest.youtube._download_subtitle",
+                return_value="AAPL is testing support at 180",
+            ) as dl,
+        ):
             docs = fetch_youtube(db, settings)
 
+        dl.assert_called_once_with("https://captions.test/abc123.vtt")
         assert len(docs) == 1
         assert docs[0].source == "youtube"
         assert docs[0].url == "https://www.youtube.com/watch?v=abc123"
+        assert docs[0].text.startswith("[StockedUp] [AAPL Analysis 2026] AAPL is testing")
         assert "AAPL" in docs[0].tickers_hint
+        assert docs[0].published_at == datetime(2026, 1, 15, tzinfo=UTC)
+
+    def test_manual_subs_preferred(self) -> None:
+        from arc.ingest.youtube import _pick_caption_url
+
+        info = {
+            "subtitles": {"en": [{"ext": "vtt", "url": "manual"}]},
+            "automatic_captions": {"en": [{"ext": "vtt", "url": "auto"}]},
+        }
+        assert _pick_caption_url(info) == "manual"
+        assert _pick_caption_url({"automatic_captions": {"en": [{"ext": "json3"}]}}) == ""
 
     def test_no_channels_configured(self, db: sqlite3.Connection) -> None:
         from arc.ingest.youtube import fetch_youtube
@@ -395,28 +433,45 @@ class TestYouTubeConnector:
         docs = fetch_youtube(db, empty_settings)
         assert docs == []
 
-    def test_incremental_skips_old(self, db: sqlite3.Connection, settings: ArcSettings) -> None:
+    def test_dedupes_and_advances_cursor(
+        self, db: sqlite3.Connection, settings: ArcSettings
+    ) -> None:
         from arc.ingest.youtube import fetch_youtube
 
-        listing = json.dumps({"id": "abc123", "title": "Test Video", "upload_date": "20260115"})
-
-        def mock_run(cmd, **_kwargs):
-            result = mock.MagicMock()
-            if "--flat-playlist" in cmd:
-                result.returncode = 0
-                result.stdout = listing
-            else:
-                result.returncode = 0
-                result.stdout = "null"
-            result.stderr = ""
-            return result
-
-        with mock.patch("subprocess.run", side_effect=mock_run):
+        run = _yt_runner(
+            [{"id": "abc123", "title": "Test Video"}],
+            {"abc123": _info("abc123", "Test Video", "20260115")},
+        )
+        with (
+            mock.patch("subprocess.run", side_effect=run),
+            mock.patch("arc.ingest.youtube._download_subtitle", return_value="words"),
+        ):
             docs1 = fetch_youtube(db, settings)
             docs2 = fetch_youtube(db, settings)
 
         assert len(docs1) == 1
-        assert len(docs2) == 0  # cursor advanced
+        assert len(docs2) == 0
+        cursor = IngestCursorRepo(db).get("youtube:https://www.youtube.com/@TestChannel")
+        assert cursor == "20260115"
+
+    def test_video_without_captions_is_retried(
+        self, db: sqlite3.Connection, settings: ArcSettings
+    ) -> None:
+        """Auto-captions lag uploads; a caption-less video must not be deduped forever."""
+        from arc.ingest.youtube import fetch_youtube
+
+        listing = [{"id": "new1", "title": "Fresh"}]
+        pending = _yt_runner(listing, {"new1": _info("new1", "Fresh", "20260116", captions=False)})
+        ready = _yt_runner(listing, {"new1": _info("new1", "Fresh", "20260116")})
+
+        with mock.patch("subprocess.run", side_effect=pending):
+            assert fetch_youtube(db, settings) == []
+        with (
+            mock.patch("subprocess.run", side_effect=ready),
+            mock.patch("arc.ingest.youtube._download_subtitle", return_value="now captioned"),
+        ):
+            docs = fetch_youtube(db, settings)
+        assert [d.url for d in docs] == ["https://www.youtube.com/watch?v=new1"]
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +516,7 @@ class TestIngestConfig:
     def test_default_empty(self) -> None:
         s = ArcSettings(env="paper")
         assert s.ingest_rss_feeds == []
-        assert s.ingest_youtube_channels == []
+        assert s.ingest_youtube_channels == DEFAULT_YOUTUBE_CHANNELS
         assert s.finnhub_api_key == ""
         assert "ProjectArc" in s.edgar_user_agent
 
