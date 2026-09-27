@@ -12,6 +12,7 @@ def test_arc_package_imports() -> None:
     packages = [
         "arc",
         "arc.config",
+        "arc.calendar",
         "arc.utils",
         "arc.utils.calendar",
         "arc.cli",
