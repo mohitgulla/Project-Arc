@@ -24,6 +24,18 @@ from arc.utils.calendar import now_et
 _HAS_KEYS = bool(os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY"))
 pytestmark = pytest.mark.skipif(not _HAS_KEYS, reason="ALPACA_API_KEY/SECRET not set")
 
+_OPEN_STATES = {"new", "accepted", "pending_new", "held"}
+
+
+def _wait_for(broker, broker_id: str, targets: set[str], timeout: float = 15.0):
+    """Poll order status until it reaches one of ``targets`` or times out."""
+    deadline = time.monotonic() + timeout
+    status = broker.order_status(broker_id)
+    while status.status not in targets and time.monotonic() < deadline:
+        time.sleep(0.5)
+        status = broker.order_status(broker_id)
+    return status
+
 
 @pytest.fixture(scope="module")
 def broker():
@@ -113,48 +125,36 @@ class TestAlpacaIntegration:
         ]
         assert len(calls) >= 2, "Need at least 2 call contracts for a vertical"
 
-        # Sort by strike, pick two adjacent
+        # Sort by strike, pick two adjacent near the middle of the chain
         calls.sort(key=lambda c: c.strike)
-        # Find something near ATM
-        mid_idx = len(calls) // 2
+        mid_idx = (len(calls) - 1) // 2
         long_leg = calls[mid_idx]
         short_leg = calls[mid_idx + 1]
 
         from arc.broker.base import MlegLeg, MlegOrder
 
+        # Bull call vertical: fair debit is well above $0.01, so this limit is
+        # far from market and never fills — whether or not the market is open
+        # (outside hours Alpaca simply holds it as ``accepted``).
         order = MlegOrder(
             legs=[
                 MlegLeg(symbol=long_leg.symbol, side="buy", ratio_qty=1),
                 MlegLeg(symbol=short_leg.symbol, side="sell", ratio_qty=1),
             ],
-            limit_price=Decimal("0.01"),  # Absurdly low — will never fill
+            limit_price=Decimal("0.01"),
             time_in_force="day",
         )
 
-        # Submit
         broker_id = broker.submit_mleg(order)
         assert broker_id, "Expected a broker order id"
 
-        # Brief pause for the order to be registered
-        time.sleep(1)
+        try:
+            status = broker.order_status(broker_id)
+            assert status.broker_order_id == broker_id
+            assert status.status in _OPEN_STATES, status.status
+        finally:
+            # Always clean up the paper order, even if an assertion failed.
+            broker.cancel(broker_id)
 
-        # Check status
-        status = broker.order_status(broker_id)
-        assert status.broker_order_id == broker_id
-        assert status.status in (
-            "new",
-            "accepted",
-            "pending_new",
-            "partially_filled",
-            "held",
-        )
-
-        # Cancel
-        broker.cancel(broker_id)
-
-        # Brief pause for cancellation
-        time.sleep(1)
-
-        # Confirm cancelled
-        status = broker.order_status(broker_id)
-        assert status.status in ("canceled", "pending_cancel")
+        status = _wait_for(broker, broker_id, {"canceled"})
+        assert status.status == "canceled", status.status

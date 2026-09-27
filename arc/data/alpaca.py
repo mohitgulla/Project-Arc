@@ -14,6 +14,7 @@ import os
 from typing import Any
 
 import structlog
+from alpaca.data.enums import DataFeed, OptionsFeed
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.requests import (
@@ -23,6 +24,7 @@ from alpaca.data.requests import (
 )
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
+from arc.config import AlpacaDataFeed, AlpacaOptionsFeed, get_settings
 from arc.data.base import (
     DataQualityFlag,
     HistoryBar,
@@ -180,8 +182,17 @@ class AlpacaMarketData:
         self,
         option_client: OptionHistoricalDataClient | None = None,
         stock_client: StockHistoricalDataClient | None = None,
+        data_feed: AlpacaDataFeed | str | None = None,
+        options_feed: AlpacaOptionsFeed | str | None = None,
     ) -> None:
         api_key, secret_key = _get_keys()
+        if data_feed is None or options_feed is None:
+            settings = get_settings()
+            data_feed = data_feed or settings.alpaca_data_feed
+            options_feed = options_feed or settings.alpaca_options_feed
+        # Free/paper tier: stock requests without a feed default to SIP → 403.
+        self._data_feed = DataFeed(AlpacaDataFeed(data_feed).value)
+        self._options_feed = OptionsFeed(AlpacaOptionsFeed(options_feed).value)
         self._option_client = option_client or OptionHistoricalDataClient(
             api_key=api_key,
             secret_key=secret_key,
@@ -203,6 +214,7 @@ class AlpacaMarketData:
             underlying_symbol=underlying,
             expiration_date_gte=exp_start.isoformat(),
             expiration_date_lte=exp_end.isoformat(),
+            feed=self._options_feed,
         )
         snapshots = self._option_client.get_option_chain(req)
 
@@ -272,7 +284,7 @@ class AlpacaMarketData:
     # -- underlying_quote ----------------------------------------------------
 
     def underlying_quote(self, symbol: str) -> UnderlyingQuote:
-        req = StockLatestQuoteRequest(symbol_or_symbols=symbol)
+        req = StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=self._data_feed)
         quotes = self._stock_client.get_stock_latest_quote(req)
 
         if symbol not in quotes:
@@ -307,23 +319,26 @@ class AlpacaMarketData:
             start=dt.datetime.combine(start, dt.time.min, tzinfo=ET),
             end=dt.datetime.combine(end, dt.time.max, tzinfo=ET),
             timeframe=tf,
+            feed=self._data_feed,
         )
         bars_map = self._stock_client.get_stock_bars(req)
+        # BarSet is a pydantic model: ``symbol in BarSet`` iterates model
+        # fields, not symbols, so always go through ``.data``.
+        bars_by_symbol = getattr(bars_map, "data", bars_map)
 
         result: list[HistoryBar] = []
-        if symbol in bars_map:
-            for bar in bars_map[symbol]:
-                result.append(
-                    HistoryBar(
-                        timestamp=bar.timestamp,
-                        open=bar.open,
-                        high=bar.high,
-                        low=bar.low,
-                        close=bar.close,
-                        volume=bar.volume,
-                        trade_count=bar.trade_count,
-                        vwap=bar.vwap,
-                    )
+        for bar in bars_by_symbol.get(symbol, []):
+            result.append(
+                HistoryBar(
+                    timestamp=bar.timestamp,
+                    open=bar.open,
+                    high=bar.high,
+                    low=bar.low,
+                    close=bar.close,
+                    volume=bar.volume,
+                    trade_count=bar.trade_count,
+                    vwap=bar.vwap,
                 )
+            )
 
         return result

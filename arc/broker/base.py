@@ -54,6 +54,7 @@ class MlegOrder(BaseModel):
     """A multi-leg order to submit to the broker."""
 
     legs: list[MlegLeg]
+    qty: int = Field(1, ge=1, description="Number of spread units (legs scale by ratio_qty)")
     limit_price: Decimal
     time_in_force: str = "day"
     client_order_id: str | None = None
