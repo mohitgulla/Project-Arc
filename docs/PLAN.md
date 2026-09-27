@@ -20,8 +20,12 @@ Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a 
 | D5 | Kanban execution | **Auto-dispatch**: worker profile claims cards, implements in git worktrees, PR completion contract, review gate before merge. `max_in_progress: 1`. | Owner choice. Board is released by completing the P0 gate card. |
 | D6 | Python | **3.12 via uv** (`~/.hermes/tools/uv-0.12.3`) | All required wheels resolve on 3.12 and 3.13; OpenBB (optional) pins ≤3.12. |
 | D7 | Market data | **Alpaca Basic (free, indicative feed)** for Phase 1; ThetaData free EOD tier for backtest history; upgrade path: Alpaca Algo Trader Plus ($99/mo OPRA) or ThetaData Value ($40/mo) | Cheapest path that still gives chains + Greeks. Decide on paid tier only after the backtester exists (E7). |
+| D8 | LLM provider | **Anthropic Subscription (Claude Opus 5.5)** for all implementation/execution tasks. No fallback provider for now; fallback (E8.1) deferred until needed. | Single provider simplifies Phase 1; subscription already in place. |
+| D9 | Universe | **Confirmed**: SPY QQQ IWM DIA XLF XLE XLK AAPL MSFT NVDA AMZN GOOGL META TSLA AMD JPM BAC XOM UNH HD. **Configurable** — Scout persona may propose additions based on catalyst discovery. | Starting set covers liquid ETFs + large caps across sectors. |
+| D10 | Approval policy | **Owner-only** (`U0C5KUMH28G`). Add a **self-approval / auto-approve mode** for paper account (configurable flag `ARC_AUTO_APPROVE=true`, paper-only, enforced by gate). | Lets paper pipeline run fully autonomous for evaluation. |
+| D11 | Push policy | **Auto-push**: workers push branches and open PRs automatically (completion contract). | Owner preference; review gate still required before merge. |
 
-Open items requiring a decision are listed in §9 — they are **not** assumed.
+Open items requiring a decision are listed in §9 — all five original items are now resolved (D8–D11 + keys stored).
 
 ---
 
@@ -257,8 +261,10 @@ Alpaca paper: $0 · Alpaca Basic data: $0 · ThetaData free EOD: $0 · Slack fre
 
 ## 9. Open decisions (ask, don't assume)
 
-1. **Fallback provider** for E8.1 — which one (OpenRouter, Anthropic API key, Nous Portal)?
-2. **Universe** — confirm the ~20 large caps list (default: SPY QQQ IWM DIA XLF XLE XLK AAPL MSFT NVDA AMZN GOOGL META TSLA AMD JPM BAC XOM UNH HD).
-3. **Approval TTL** and who may approve (owner only vs any channel member).
-4. **Alpaca paper API keys** — need to be added to `~/.hermes/.env` as `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` (paper endpoint) before E1.4.
-5. **Push policy** — should workers push branches/PRs to GitHub automatically (completion contract) or stay local until reviewed?
+All original items resolved on 2026-09-27:
+
+1. ~~Fallback provider~~ → **D8**: Anthropic Subscription (Opus 5.5), no fallback for now.
+2. ~~Universe~~ → **D9**: Confirmed 20-ticker list, configurable via Scout.
+3. ~~Approval TTL & approvers~~ → **D10**: Owner-only + auto-approve mode for paper (`ARC_AUTO_APPROVE`). TTL stays at 20 min default.
+4. ~~Alpaca paper API keys~~ → Stored in `~/.hermes/.env`. **⚠️ Keys were exposed in Slack — rotate them.**
+5. ~~Push policy~~ → **D11**: Auto-push with completion contract.
