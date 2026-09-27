@@ -23,6 +23,8 @@ from alpaca.data.requests import (
     StockLatestQuoteRequest,
 )
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import GetOptionContractsRequest
 
 from arc.config import AlpacaDataFeed, AlpacaOptionsFeed, get_settings
 from arc.data.base import (
@@ -184,6 +186,8 @@ class AlpacaMarketData:
         stock_client: StockHistoricalDataClient | None = None,
         data_feed: AlpacaDataFeed | str | None = None,
         options_feed: AlpacaOptionsFeed | str | None = None,
+        contracts_client: TradingClient | None = None,
+        raw_option_client: OptionHistoricalDataClient | None = None,
     ) -> None:
         api_key, secret_key = _get_keys()
         if data_feed is None or options_feed is None:
@@ -201,6 +205,19 @@ class AlpacaMarketData:
             api_key=api_key,
             secret_key=secret_key,
         )
+        # Open interest + daily volume are not in the parsed snapshot model; they are
+        # filled from the paper Trading API contracts list (OI) and the raw snapshot
+        # daily bar (volume). Built by default only for a real (non-injected) client
+        # so unit tests with mocked clients stay offline.
+        if option_client is None:
+            contracts_client = contracts_client or TradingClient(
+                api_key=api_key, secret_key=secret_key, paper=True
+            )
+            raw_option_client = raw_option_client or OptionHistoricalDataClient(
+                api_key=api_key, secret_key=secret_key, raw_data=True
+            )
+        self._contracts_client = contracts_client
+        self._raw_option_client = raw_option_client
 
     # -- option_chain --------------------------------------------------------
 
@@ -217,6 +234,8 @@ class AlpacaMarketData:
             feed=self._options_feed,
         )
         snapshots = self._option_client.get_option_chain(req)
+        open_interest = self._open_interest(underlying, exp_start, exp_end)
+        volume = self._daily_volume(req)
 
         now = now_et()
         contracts: list[OptionContract] = []
@@ -266,6 +285,8 @@ class AlpacaMarketData:
                     ask=ask,
                     mid=mid,
                     last_trade_price=last_trade_price,
+                    open_interest=open_interest.get(symbol),
+                    volume=volume.get(symbol),
                     implied_volatility=snap.implied_volatility,
                     greeks=greeks,
                     quote_timestamp=quote_ts,
@@ -280,6 +301,43 @@ class AlpacaMarketData:
             flagged=sum(1 for c in contracts if c.is_flagged),
         )
         return contracts
+
+    def _open_interest(
+        self, underlying: str, exp_start: dt.date, exp_end: dt.date
+    ) -> dict[str, int]:
+        """OCC symbol → open interest from the paper Trading API contracts list."""
+        if self._contracts_client is None:
+            return {}
+        out: dict[str, int] = {}
+        page: str | None = None
+        while True:
+            resp = self._contracts_client.get_option_contracts(
+                GetOptionContractsRequest(
+                    underlying_symbols=[underlying],
+                    expiration_date_gte=exp_start,
+                    expiration_date_lte=exp_end,
+                    limit=10_000,
+                    page_token=page,
+                )
+            )
+            for c in resp.option_contracts or []:
+                if c.open_interest is not None:
+                    out[c.symbol] = int(c.open_interest)
+            page = resp.next_page_token
+            if not page:
+                return out
+
+    def _daily_volume(self, req: OptionChainRequest) -> dict[str, int]:
+        """OCC symbol → latest daily-bar volume from the raw snapshots payload."""
+        if self._raw_option_client is None:
+            return {}
+        raw = self._raw_option_client.get_option_chain(req)
+        out: dict[str, int] = {}
+        for symbol, snap in raw.items():  # type: ignore[union-attr]
+            bar = snap.get("dailyBar") or snap.get("prevDailyBar")
+            if bar and bar.get("v") is not None:
+                out[symbol] = int(bar["v"])
+        return out
 
     # -- underlying_quote ----------------------------------------------------
 

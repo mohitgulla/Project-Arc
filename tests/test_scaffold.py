@@ -20,12 +20,16 @@ def test_arc_package_imports() -> None:
         "arc.data",
         "arc.data.base",
         "arc.data.alpaca",
+        "arc.data.recorded",
         "arc.pricing",
         "arc.structures",
         "arc.structures.occ",
         "arc.structures.analytics",
         "arc.structures.builders",
         "arc.scanner",
+        "arc.scanner.filters",
+        "arc.scanner.iv",
+        "arc.scanner.scan",
         "arc.ingest",
         "arc.features",
         "arc.personas",
@@ -59,4 +63,4 @@ def test_cli_stub_command() -> None:
     """Stub commands print 'not yet implemented'."""
     from arc.cli import main
 
-    assert main(["scan"]) == 0
+    assert main(["report"]) == 0
