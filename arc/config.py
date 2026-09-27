@@ -177,6 +177,20 @@ class ArcSettings(BaseSettings):
         default=1200,
         description="Approval TTL in seconds (20 min).",
     )
+    # Gate data-quality defaults (E3.1). Not specified in PLAN §5 — proposed
+    # defaults, owner to confirm in the E3.1 PR.
+    quote_max_age_seconds: Annotated[int, Field(ge=1)] = Field(
+        default=60,
+        description="Max age of a leg quote at gate time (data freshness).",
+    )
+    account_max_age_seconds: Annotated[int, Field(ge=1)] = Field(
+        default=300,
+        description="Max age of the account snapshot at gate time (data freshness).",
+    )
+    limit_tick: Annotated[float, Field(gt=0.0)] = Field(
+        default=0.01,
+        description="Limit price must be a whole multiple of this tick ($).",
+    )
     auto_approve: bool = Field(
         default=False,
         description="Auto-approve proposals in paper mode (D10). Ignored when env=live.",
