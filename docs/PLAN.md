@@ -26,7 +26,8 @@ Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a 
 | D11 | Push policy | **Auto-push**: workers push branches and open PRs automatically (completion contract). | Owner preference; review gate still required before merge. |
 | D12 | Persona names | **Scout, Director, Quant, Risk, Investor, Auditor** (Execution/Exec renamed to Investor). Slack labels: `[Scout] [Director] [Quant] [Risk] [Investor] [Auditor]`. | Owner choice 2026-09-27. |
 | D13 | Initial YouTube source | **StockedUp** (channel `UC-m6zNItyoDk5lSykDlhE4Q`), default in `ARC_INGEST_YOUTUBE_CHANNELS`. Posts a next-session outlook almost every trading day. | Owner choice 2026-09-27. |
-| D14 | Channel processors | Each YouTube channel gets a **profile + extraction guidelines** (`arc/ingest/channels/<slug>/`). Newest video → validated `ChannelBrief` (schema §E4.4). A brief is **active from publish until the channel's next brief supersedes it** (hard cap: 2 trading sessions). Every extracted item carries a verbatim transcript quote, checked deterministically; items that fail are dropped. | Owner: newest video informs next-day trading until a new video replaces it. |
+| D14 | Channel processors | Each YouTube channel gets a **profile + extraction guidelines** (`arc/ingest/channels/<slug>/`). Newest video → validated `ChannelBrief` (schema §E4.4). TTL is **per source** (`ttl_sessions` in the profile). **StockedUp = 1 session**, and its next video supersedes it (`supersede: latest`). Macro-guidance sources can set longer TTLs (e.g. 5–20 sessions, `supersede: accumulate`). Expired briefs never inform trading. Every extracted item carries a verbatim transcript quote, checked deterministically; items that fail are dropped. | Owner: newest video informs next-day trading until a new video replaces it; recent info for daily sources, longer horizon for macro. |
+| D15 | Scout cadence + transcription | Scout runs **twice daily at 22:00 ET** (after-close sources, e.g. StockedUp) and **12:00 ET** (midday news), processing all new sources (YouTube, RSS, EDGAR, earnings). Videos without captions fall back to **local audio transcription** (mlx-whisper, no paid STT). | Owner choice 2026-09-27. |
 
 Open items requiring a decision are listed in §9 — all five original items are now resolved (D8–D11 + keys stored).
 
@@ -141,7 +142,7 @@ AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits a
 ### 2.6 Hermes orchestration
 
 - **Kanban**: board `project-arc`, project-bound → worktrees under `.worktrees/<id>/`, `--completion-contract mohitgulla/Project-Arc` → PR required; `review_dispatch: true` runs the review lane before `done`. `max_in_progress: 1`, `auto_decompose: false`.
-- **Cron routines** (E5.3): `06:30 PT` pre-market scan, `every 30m 06:30–13:00 PT` intraday monitor, `13:30 PT` post-market reconcile + journal, weekly scorecard Friday.
+- **Cron routines** (E5.3): **Scout ingest+extract at 22:00 ET and 12:00 ET (D15)**, `06:30 PT` pre-market scan, `every 30m 06:30–13:00 PT` intraday monitor, `13:30 PT` post-market reconcile + journal, weekly scorecard Friday.
 - **MCP**: Alpaca MCP server v2 (`uvx alpaca-mcp-server`, `ALPACA_TOOLSETS` restricted to read-only in persona sessions); order submission goes through `arc.execution`, not MCP, in Phase 1.
 - **Hooks**: `hermes/hooks/arc-gate` — `pre_tool_call`, matcher on broker order tools, fail-closed.
 - **Profiles**: single `default` profile is the worker in Phase 1 (assignee `default`). A dedicated `arc-worker` profile is an E8 item once provider auth for profiles is settled.
@@ -188,6 +189,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 
 **E4 Ingestion (Scout)**
 - E4.1 Source connectors — RSS, SEC EDGAR (10 req/s, UA header), earnings calendar, YouTube transcripts (yt-dlp) ← E1.2
+- E4.1b YouTube audio-transcription fallback — local mlx-whisper when no captions (D15) ← E4.1
 - E4.2 Candidate pipeline — LLM summarization filter → `Candidate`, dedupe, storage, confidence threshold ← E4.1, E1.3
 - E4.3 Regime features — Markov 3-state regime + IV/HV + IVR as structured inputs ← E1.4
 - E4.4 Channel processors — per-channel profile + extraction guidelines → `ChannelBrief` (levels, directional calls, catalysts, risk flags, tickers; each with verbatim quote); active-brief lifecycle (superseded by next video); StockedUp first (D13, D14) ← E4.1, E4.2
