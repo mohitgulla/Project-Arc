@@ -21,6 +21,8 @@ dependencies = [
     "exchange_calendars>=4.5",
     "slack_sdk>=3.27",
     "feedparser>=6.0",
+    "pyarrow>=15",
+    "requests>=2.31",
 ]
 
 [project.scripts]
