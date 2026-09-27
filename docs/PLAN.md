@@ -25,6 +25,8 @@ Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a 
 | D10 | Approval policy | **Owner-only** (`U0C5KUMH28G`). Add a **self-approval / auto-approve mode** for paper account (configurable flag `ARC_AUTO_APPROVE=true`, paper-only, enforced by gate). | Lets paper pipeline run fully autonomous for evaluation. |
 | D11 | Push policy | **Auto-push**: workers push branches and open PRs automatically (completion contract). | Owner preference; review gate still required before merge. |
 | D12 | Persona names | **Scout, Director, Quant, Risk, Investor, Auditor** (Execution/Exec renamed to Investor). Slack labels: `[Scout] [Director] [Quant] [Risk] [Investor] [Auditor]`. | Owner choice 2026-09-27. |
+| D13 | Initial YouTube source | **StockedUp** (channel `UC-m6zNItyoDk5lSykDlhE4Q`), default in `ARC_INGEST_YOUTUBE_CHANNELS`. Posts a next-session outlook almost every trading day. | Owner choice 2026-09-27. |
+| D14 | Channel processors | Each YouTube channel gets a **profile + extraction guidelines** (`arc/ingest/channels/<slug>/`). Newest video → validated `ChannelBrief` (schema §E4.4). A brief is **active from publish until the channel's next brief supersedes it** (hard cap: 2 trading sessions). Every extracted item carries a verbatim transcript quote, checked deterministically; items that fail are dropped. | Owner: newest video informs next-day trading until a new video replaces it. |
 
 Open items requiring a decision are listed in §9 — all five original items are now resolved (D8–D11 + keys stored).
 
@@ -188,6 +190,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E4.1 Source connectors — RSS, SEC EDGAR (10 req/s, UA header), earnings calendar, YouTube transcripts (yt-dlp) ← E1.2
 - E4.2 Candidate pipeline — LLM summarization filter → `Candidate`, dedupe, storage, confidence threshold ← E4.1, E1.3
 - E4.3 Regime features — Markov 3-state regime + IV/HV + IVR as structured inputs ← E1.4
+- E4.4 Channel processors — per-channel profile + extraction guidelines → `ChannelBrief` (levels, directional calls, catalysts, risk flags, tickers; each with verbatim quote); active-brief lifecycle (superseded by next video); StockedUp first (D13, D14) ← E4.1, E4.2
 
 **E5 Personas & orchestration**
 - E5.1 Persona skills — six `SKILL.md` + JSON output schemas + prompt builders ← E1.1
