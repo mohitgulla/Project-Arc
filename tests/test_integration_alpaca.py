@@ -19,6 +19,7 @@ from decimal import Decimal
 import pytest
 
 from arc.utils.calendar import now_et
+from tests.vertical_legs import select_bull_call_vertical
 
 # Skip the entire module if keys are absent
 _HAS_KEYS = bool(os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY"))
@@ -114,22 +115,16 @@ class TestAlpacaIntegration:
 
         # Fetch chain
         contracts = data.option_chain("SPY", exp_start, exp_end)
-        calls = [
-            c
-            for c in contracts
-            if c.option_type == "call"
-            and c.bid is not None
-            and c.bid > 0
-            and c.greeks is not None
-            and c.greeks.delta is not None
-        ]
-        assert len(calls) >= 2, "Need at least 2 call contracts for a vertical"
 
-        # Sort by strike, pick two adjacent near the middle of the chain
-        calls.sort(key=lambda c: c.strike)
-        mid_idx = (len(calls) - 1) // 2
-        long_leg = calls[mid_idx]
-        short_leg = calls[mid_idx + 1]
+        # Both legs from one expiration: a cross-expiry pair can leave the
+        # short leg expiring first, which Alpaca rejects as uncovered (403).
+        legs = select_bull_call_vertical(contracts)
+        assert legs is not None, (
+            f"No expiration in {exp_start}..{exp_end} has >=2 usable SPY calls "
+            f"(bid > 0, delta present) for a single-expiry vertical "
+            f"({len(contracts)} contracts fetched)"
+        )
+        long_leg, short_leg = legs
 
         from arc.broker.base import MlegLeg, MlegOrder
 
