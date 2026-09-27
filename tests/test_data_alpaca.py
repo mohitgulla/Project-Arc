@@ -6,7 +6,10 @@ import datetime as dt
 from unittest.mock import MagicMock, patch
 
 import pytest
+from alpaca.data.enums import DataFeed, OptionsFeed
+from alpaca.data.models.bars import BarSet
 
+from arc.config import AlpacaOptionsFeed, ArcSettings
 from arc.data.alpaca import (
     AlpacaMarketData,
     _check_quality,
@@ -182,6 +185,33 @@ class TestAlpacaMarketDataMocked:
         assert bars[0].vwap == 451.0
 
     @patch.dict("os.environ", {"ALPACA_API_KEY": "test", "ALPACA_SECRET_KEY": "test"})
+    def test_history_bars_real_barset(self) -> None:
+        """Regression: ``symbol in BarSet`` is always False (pydantic __iter__)."""
+        raw = {
+            "SPY": [
+                {
+                    "t": "2026-09-25T04:00:00Z",
+                    "o": 650.0,
+                    "h": 655.0,
+                    "l": 648.0,
+                    "c": 653.0,
+                    "v": 1_000_000,
+                    "n": 5000,
+                    "vw": 652.0,
+                }
+            ]
+        }
+        mock_stock = MagicMock()
+        mock_stock.get_stock_bars.return_value = BarSet(raw)
+
+        adapter = AlpacaMarketData(option_client=MagicMock(), stock_client=mock_stock)
+        bars = adapter.history_bars("SPY", dt.date(2026, 9, 1), dt.date(2026, 10, 1))
+
+        assert len(bars) == 1
+        assert bars[0].close == 653.0
+        assert adapter.history_bars("QQQ", dt.date(2026, 9, 1), dt.date(2026, 10, 1)) == []
+
+    @patch.dict("os.environ", {"ALPACA_API_KEY": "test", "ALPACA_SECRET_KEY": "test"})
     def test_option_chain_with_quality_flags(self) -> None:
         mock_option = MagicMock()
 
@@ -243,3 +273,81 @@ class TestAlpacaMarketDataMocked:
         assert c.greeks.delta == 0.45
         assert c.implied_volatility == 0.25
         assert abs((c.mid or 0) - 3.65) < 0.001
+
+
+# ---------------------------------------------------------------------------
+# Data feed selection (free tier: iex stocks / indicative options)
+# ---------------------------------------------------------------------------
+
+_KEYS = {"ALPACA_API_KEY": "test", "ALPACA_SECRET_KEY": "test"}
+
+
+def _stock_client() -> MagicMock:
+    mock_stock = MagicMock()
+    q = MagicMock(bid_price=1.0, ask_price=1.1, timestamp=dt.datetime(2026, 10, 1, tzinfo=ET))
+    mock_stock.get_stock_latest_quote.return_value = {"SPY": q}
+    mock_stock.get_stock_bars.return_value = {}
+    return mock_stock
+
+
+class TestDataFeed:
+    @patch.dict("os.environ", _KEYS)
+    def test_defaults_iex_and_indicative(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ARC_ALPACA_DATA_FEED", raising=False)
+        monkeypatch.delenv("ARC_ALPACA_OPTIONS_FEED", raising=False)
+        monkeypatch.setattr(
+            "arc.config.ArcSettings.model_config", {**ArcSettings.model_config, "env_file": None}
+        )
+        mock_stock = _stock_client()
+        mock_option = MagicMock()
+        mock_option.get_option_chain.return_value = {}
+        adapter = AlpacaMarketData(option_client=mock_option, stock_client=mock_stock)
+
+        adapter.underlying_quote("SPY")
+        adapter.history_bars("SPY", dt.date(2026, 9, 1), dt.date(2026, 10, 1))
+        adapter.option_chain("SPY", dt.date(2026, 10, 1), dt.date(2026, 10, 30))
+
+        assert mock_stock.get_stock_latest_quote.call_args.args[0].feed == DataFeed.IEX
+        assert mock_stock.get_stock_bars.call_args.args[0].feed == DataFeed.IEX
+        assert mock_option.get_option_chain.call_args.args[0].feed == OptionsFeed.INDICATIVE
+        # Serialized request carries the feed param.
+        bars_req = mock_stock.get_stock_bars.call_args.args[0]
+        assert bars_req.to_request_fields()["feed"] == "iex"
+
+    @patch.dict(
+        "os.environ",
+        {**_KEYS, "ARC_ALPACA_DATA_FEED": "sip", "ARC_ALPACA_OPTIONS_FEED": "opra"},
+    )
+    def test_env_override(self) -> None:
+        mock_stock = _stock_client()
+        mock_option = MagicMock()
+        mock_option.get_option_chain.return_value = {}
+        adapter = AlpacaMarketData(option_client=mock_option, stock_client=mock_stock)
+
+        adapter.history_bars("SPY", dt.date(2026, 9, 1), dt.date(2026, 10, 1))
+        adapter.option_chain("SPY", dt.date(2026, 10, 1), dt.date(2026, 10, 30))
+
+        assert mock_stock.get_stock_bars.call_args.args[0].feed == DataFeed.SIP
+        assert mock_option.get_option_chain.call_args.args[0].feed == OptionsFeed.OPRA
+
+    @patch.dict("os.environ", _KEYS)
+    def test_explicit_args(self) -> None:
+        mock_stock = _stock_client()
+        adapter = AlpacaMarketData(
+            option_client=MagicMock(),
+            stock_client=mock_stock,
+            data_feed="delayed_sip",
+            options_feed=AlpacaOptionsFeed.INDICATIVE,
+        )
+        adapter.underlying_quote("SPY")
+        assert mock_stock.get_stock_latest_quote.call_args.args[0].feed == DataFeed.DELAYED_SIP
+
+    @patch.dict("os.environ", _KEYS)
+    def test_invalid_feed_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            AlpacaMarketData(
+                option_client=MagicMock(),
+                stock_client=MagicMock(),
+                data_feed="bogus",
+                options_feed="indicative",
+            )

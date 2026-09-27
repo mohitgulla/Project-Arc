@@ -44,6 +44,26 @@ class StructureKind(enum.StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# Market data feeds (D7: Alpaca Basic, free tier)
+# ---------------------------------------------------------------------------
+
+
+class AlpacaDataFeed(enum.StrEnum):
+    """Alpaca stock data feed. Free/paper tier cannot query recent SIP data."""
+
+    IEX = "iex"
+    SIP = "sip"
+    DELAYED_SIP = "delayed_sip"
+
+
+class AlpacaOptionsFeed(enum.StrEnum):
+    """Alpaca options data feed. Free tier is ``indicative``; OPRA is paid."""
+
+    INDICATIVE = "indicative"
+    OPRA = "opra"
+
+
+# ---------------------------------------------------------------------------
 # Default universe (D9)
 # ---------------------------------------------------------------------------
 
@@ -160,6 +180,16 @@ class ArcSettings(BaseSettings):
     auto_approve: bool = Field(
         default=False,
         description="Auto-approve proposals in paper mode (D10). Ignored when env=live.",
+    )
+
+    # -- Market data feeds (D7) ---------------------------------------------
+    alpaca_data_feed: AlpacaDataFeed = Field(
+        default=AlpacaDataFeed.IEX,
+        description="Alpaca stock data feed (ARC_ALPACA_DATA_FEED). Free tier: iex.",
+    )
+    alpaca_options_feed: AlpacaOptionsFeed = Field(
+        default=AlpacaOptionsFeed.INDICATIVE,
+        description="Alpaca options data feed (ARC_ALPACA_OPTIONS_FEED). Free tier: indicative.",
     )
 
     # -- Universe (D9) -------------------------------------------------------

@@ -8,8 +8,9 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from alpaca.trading.enums import OrderClass
 
-from arc.broker.alpaca_paper import AlpacaPaperBroker, _require_paper
+from arc.broker.alpaca_paper import AlpacaPaperBroker, _require_paper, build_mleg_request
 from arc.broker.base import MlegLeg, MlegOrder
 from arc.utils.calendar import ET
 
@@ -98,6 +99,51 @@ class TestAlpacaPaperBrokerMocked:
 
         assert broker_id == str(mock_order.id)
         mock_client.submit_order.assert_called_once()
+        req = mock_client.submit_order.call_args.args[0]
+        assert req.symbol is None
+        assert req.order_class == OrderClass.MLEG
+
+    def test_build_mleg_request_has_no_top_level_symbol(self) -> None:
+        order = MlegOrder(
+            legs=[
+                MlegLeg(symbol="SPY261016C00450000", side="buy", ratio_qty=1),
+                MlegLeg(symbol="SPY261016C00460000", side="sell", ratio_qty=2),
+            ],
+            qty=3,
+            limit_price=Decimal("2.50"),
+            time_in_force="gtc",
+        )
+        req = build_mleg_request(order)
+        payload = req.to_request_fields()
+
+        # Alpaca 422s on any top-level symbol for mleg orders.
+        assert "symbol" not in payload
+        assert payload["order_class"] == "mleg"
+        assert payload["type"] == "limit"
+        assert payload["time_in_force"] == "gtc"
+        assert payload["qty"] == 3
+        assert payload["limit_price"] == 2.5
+        assert payload["client_order_id"].startswith("arc-")
+        assert payload["legs"] == [
+            {"symbol": "SPY261016C00450000", "ratio_qty": 1, "side": "buy"},
+            {"symbol": "SPY261016C00460000", "ratio_qty": 2, "side": "sell"},
+        ]
+
+    def test_build_mleg_request_defaults(self) -> None:
+        order = MlegOrder(
+            legs=[
+                MlegLeg(symbol="SPY261016C00450000", side="buy", ratio_qty=1),
+                MlegLeg(symbol="SPY261016C00460000", side="sell", ratio_qty=1),
+            ],
+            limit_price=Decimal("-1.00"),
+            time_in_force="bogus",
+            client_order_id="arc-fixed",
+        )
+        payload = build_mleg_request(order).to_request_fields()
+        assert payload["qty"] == 1
+        assert payload["time_in_force"] == "day"
+        assert payload["client_order_id"] == "arc-fixed"
+        assert payload["limit_price"] == -1.0  # negative = net credit
 
     def test_cancel(self) -> None:
         mock_client = MagicMock()

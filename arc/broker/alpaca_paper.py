@@ -19,10 +19,9 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import (
     OrderClass,
     OrderSide,
-    OrderType,
     TimeInForce,
 )
-from alpaca.trading.requests import OptionLegRequest, OrderRequest
+from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
 
 from arc.broker.base import (
     AccountInfo,
@@ -74,6 +73,34 @@ def _make_client() -> TradingClient:
         secret_key=secret_key,
         paper=True,
         url_override=_PAPER_BASE_URL,
+    )
+
+
+def build_mleg_request(order: MlegOrder) -> LimitOrderRequest:
+    """Build an Alpaca multi-leg limit order request.
+
+    Alpaca rejects a top-level ``symbol`` on ``order_class=mleg`` (422
+    ``symbol is not allowed for mleg order``); contracts go only in ``legs``.
+    """
+    legs = [
+        OptionLegRequest(
+            symbol=leg.symbol,
+            ratio_qty=float(leg.ratio_qty),
+            side=OrderSide.BUY if leg.side == "buy" else OrderSide.SELL,
+        )
+        for leg in order.legs
+    ]
+    tif = _TIF_MAP.get(order.time_in_force.lower(), TimeInForce.DAY)
+    client_order_id = order.client_order_id or f"arc-{uuid.uuid4().hex[:12]}"
+    # LimitOrderRequest (not the base OrderRequest, which has no limit_price
+    # field and silently drops it). Positive limit = net debit, negative = credit.
+    return LimitOrderRequest(
+        qty=float(order.qty),
+        order_class=OrderClass.MLEG,
+        time_in_force=tif,
+        limit_price=float(order.limit_price),
+        legs=legs,
+        client_order_id=client_order_id,
     )
 
 
@@ -130,35 +157,13 @@ class AlpacaPaperBroker:
     # -- submit_mleg ---------------------------------------------------------
 
     def submit_mleg(self, order: MlegOrder) -> str:
-        legs = [
-            OptionLegRequest(
-                symbol=leg.symbol,
-                ratio_qty=float(leg.ratio_qty),
-                side=OrderSide.BUY if leg.side == "buy" else OrderSide.SELL,
-            )
-            for leg in order.legs
-        ]
-
-        tif = _TIF_MAP.get(order.time_in_force.lower(), TimeInForce.DAY)
-        client_order_id = order.client_order_id or f"arc-{uuid.uuid4().hex[:12]}"
-
-        req = OrderRequest(
-            symbol="MLEG",  # required placeholder for mleg orders
-            qty=1,
-            order_class=OrderClass.MLEG,
-            type=OrderType.LIMIT,
-            time_in_force=tif,
-            limit_price=float(order.limit_price),
-            legs=legs,
-            client_order_id=client_order_id,
-        )
-
+        req = build_mleg_request(order)
         result = self._client.submit_order(req)
         broker_id = str(result["id"]) if isinstance(result, dict) else str(result.id)
         log.info(
             "mleg_order_submitted",
             broker_order_id=broker_id,
-            client_order_id=client_order_id,
+            client_order_id=req.client_order_id,
             legs=len(order.legs),
         )
         return broker_id
