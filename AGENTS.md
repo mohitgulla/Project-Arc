@@ -25,4 +25,4 @@ You are working a Kanban card for Project Arc, an agentic **options** trading sy
 
 ## Style
 - Typed Python, pydantic v2 models for every data contract in `docs/PLAN.md §2.3`.
-- No `print`; use `structlog`. No global mutable state. Time is always `datetime` with tz `America/New_York` via `arc.calendar`.
+- No `print`; use `structlog`. No global mutable state. Time is always `datetime` with tz `America/New_York` via `arc.utils.calendar`.
