@@ -24,6 +24,7 @@ Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a 
 | D9 | Universe | **Confirmed**: SPY QQQ IWM DIA XLF XLE XLK AAPL MSFT NVDA AMZN GOOGL META TSLA AMD JPM BAC XOM UNH HD. **Configurable** — Scout persona may propose additions based on catalyst discovery. | Starting set covers liquid ETFs + large caps across sectors. |
 | D10 | Approval policy | **Owner-only** (`U0C5KUMH28G`). Add a **self-approval / auto-approve mode** for paper account (configurable flag `ARC_AUTO_APPROVE=true`, paper-only, enforced by gate). | Lets paper pipeline run fully autonomous for evaluation. |
 | D11 | Push policy | **Auto-push**: workers push branches and open PRs automatically (completion contract). | Owner preference; review gate still required before merge. |
+| D12 | Persona names | **Scout, Director, Quant, Risk, Investor, Auditor** (Execution/Exec renamed to Investor). Slack labels: `[Scout] [Director] [Quant] [Risk] [Investor] [Auditor]`. | Owner choice 2026-09-27. |
 
 Open items requiring a decision are listed in §9 — all five original items are now resolved (D8–D11 + keys stored).
 
@@ -61,7 +62,7 @@ Open items requiring a decision are listed in §9 — all five original items ar
                                                          ▼
                               Decision Processor [Human — Slack clarify Approve/Reject]
                                                          ▼
-                              Trade Execution [Execution persona → BrokerAdapter.alpaca_paper]
+                              Trade Execution [Investor persona → BrokerAdapter.alpaca_paper]
                                                          ▼
                               Auditor persona · SQLite audit · reconciliation ─► back to Aggregator
 ```
@@ -101,7 +102,7 @@ Project-Arc/
 │   ├── backtest/             # cost-aware engine, walk-forward, reports
 │   └── cli.py                # `arc scan|propose|gate|approve|execute|reconcile|report`
 ├── hermes/
-│   ├── skills/arc-*/SKILL.md # persona skills (Director, Scout, Quant, Risk, Execution, Auditor)
+│   ├── skills/arc-*/SKILL.md # persona skills (Scout, Director, Quant, Risk, Investor, Auditor)
 │   ├── hooks/arc-gate/       # pre_tool_call fail-closed hook
 │   └── routines/             # cron job definitions (pre-market, intraday, post-market)
 └── tests/                    # unit, property (hypothesis), integration (paper account)
@@ -124,7 +125,7 @@ Project-Arc/
 | **Director** (Aggregator) | candidates + regime + portfolio | ranked shortlist + thesis per ticker | frontier | `[Director]` |
 | **Quant** (Risk/Reward) | shortlist + chains + Greeks | `Structure[]` with PoP/EV/cost, confidence | frontier | `[Quant]` |
 | **Risk** (Portfolio Alignment) | structures + portfolio + calendar | risk narrative, sizing suggestion (advisory only) | frontier | `[Risk]` |
-| **Execution** | approved proposal | order plan: limit at mid, improvement steps, timeout | cheap | `[Exec]` |
+| **Investor** | approved proposal | order plan: limit at mid, improvement steps, timeout | cheap | `[Investor]` |
 | **Auditor** | fills, reconciliation, journal | daily journal, anomalies, lessons → skill notes | cheap | `[Auditor]` |
 
 AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits are enforced by the gate. AutoHedge's stock-centric `QUANT_ANALYSIS_PROMPT` is replaced by an options schema (IV/HV, IVR, regime, PoP, EV after spread cost).
@@ -132,7 +133,7 @@ AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits a
 ### 2.5 Slack design
 
 - **`#project-arc` (dev).** Every Kanban card gets one thread: creation post → worker progress comments → PR link → review verdict. Hermes' kanban notification subscriptions post into the same thread. Use `!cmd` prefix inside threads (Slack blocks slash commands there).
-- **`#arc-investor` (trading).** One thread per trading day (`📅 2026-09-28 · session`). Persona posts are labelled `[Scout] [Director] [Quant] [Risk] [Exec] [Auditor]`. Proposal cards render as Hermes `clarify` → Block Kit **Approve / Reject** buttons; TTL default 20 min; expiry = reject. `!halt` in any thread trips the kill switch; only the owner can `!resume`.
+- **`#arc-investor` (trading).** One thread per trading day (`📅 2026-09-28 · session`). Persona posts are labelled `[Scout] [Director] [Quant] [Risk] [Investor] [Auditor]`. Proposal cards render as Hermes `clarify` → Block Kit **Approve / Reject** buttons; TTL default 20 min; expiry = reject. `!halt` in any thread trips the kill switch; only the owner can `!resume`.
 - No order is ever submitted from `#project-arc`.
 
 ### 2.6 Hermes orchestration

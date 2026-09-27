@@ -22,7 +22,7 @@
                                                         v
                               Decision Processor [Human -- Slack Approve/Reject]
                                                         v
-                              Trade Execution [Execution persona -> BrokerAdapter.alpaca_paper]
+                              Trade Execution [Investor persona -> BrokerAdapter.alpaca_paper]
                                                         v
                               Auditor persona, SQLite audit, reconciliation --> back to Aggregator
 ```
