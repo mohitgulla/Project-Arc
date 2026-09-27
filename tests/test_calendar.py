@@ -1,4 +1,4 @@
-"""Tests for arc.calendar — sessions, early closes, DTE, now_et().
+"""Tests for arc.utils.calendar — sessions, early closes, DTE, now_et().
 
 Tests cover:
 - Session detection (weekday vs weekend vs holiday)
@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from arc import calendar as cal
+from arc.utils import calendar as cal
 
 ET = ZoneInfo("America/New_York")
 
@@ -150,7 +150,7 @@ class TestDST:
     def test_now_et_during_dst(self) -> None:
         # Freeze time to a DST date and verify timezone
         frozen = dt.datetime(2026, 7, 15, 12, 0, tzinfo=ET)
-        with mock.patch("arc.calendar.now_et", return_value=frozen):
+        with mock.patch("arc.utils.calendar.now_et", return_value=frozen):
             result = cal.now_et()
         assert result == frozen
 
