@@ -18,6 +18,8 @@ def test_arc_package_imports() -> None:
         "arc.models",
         "arc.store",
         "arc.data",
+        "arc.data.base",
+        "arc.data.alpaca",
         "arc.pricing",
         "arc.structures",
         "arc.scanner",
@@ -28,6 +30,8 @@ def test_arc_package_imports() -> None:
         "arc.approvals",
         "arc.execution",
         "arc.broker",
+        "arc.broker.base",
+        "arc.broker.alpaca_paper",
         "arc.reconcile",
         "arc.backtest",
     ]

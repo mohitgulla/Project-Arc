@@ -50,3 +50,6 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: tests that require real API keys and network access",
+]
