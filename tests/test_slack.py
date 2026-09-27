@@ -55,7 +55,7 @@ class TestPersonaLabel:
             (Persona.DIRECTOR, "[Director]"),
             (Persona.QUANT, "[Quant]"),
             (Persona.RISK, "[Risk]"),
-            (Persona.EXEC, "[Exec]"),
+            (Persona.INVESTOR, "[Investor]"),
             (Persona.AUDITOR, "[Auditor]"),
         ],
     )

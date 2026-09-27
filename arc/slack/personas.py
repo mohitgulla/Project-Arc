@@ -12,7 +12,7 @@ class Persona(StrEnum):
     DIRECTOR = "Director"
     QUANT = "Quant"
     RISK = "Risk"
-    EXEC = "Exec"
+    INVESTOR = "Investor"
     AUDITOR = "Auditor"
 
 
