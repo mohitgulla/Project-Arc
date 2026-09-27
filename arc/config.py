@@ -162,6 +162,24 @@ class ArcSettings(BaseSettings):
         description="Auto-approve proposals in paper mode (D10). Ignored when env=live.",
     )
 
+    # -- Ingestion (E4.1) ----------------------------------------------------
+    ingest_rss_feeds: list[str] = Field(
+        default_factory=list,
+        description="RSS feed URLs for the Scout connector.",
+    )
+    edgar_user_agent: str = Field(
+        default="ProjectArc/0.1 (arc@example.com)",
+        description="User-Agent header for SEC EDGAR requests (required by EDGAR).",
+    )
+    finnhub_api_key: str = Field(
+        default="",
+        description="Finnhub API key for earnings calendar (free tier).",
+    )
+    ingest_youtube_channels: list[str] = Field(
+        default_factory=list,
+        description="YouTube channel/playlist URLs for transcript ingestion.",
+    )
+
     # -- Universe (D9) -------------------------------------------------------
     universe: list[str] = Field(
         default_factory=lambda: list(DEFAULT_UNIVERSE),
@@ -170,12 +188,12 @@ class ArcSettings(BaseSettings):
 
     # -- Validators ----------------------------------------------------------
 
-    @field_validator("universe", mode="before")
+    @field_validator("universe", "ingest_rss_feeds", "ingest_youtube_channels", mode="before")
     @classmethod
-    def _parse_universe(cls, v: object) -> object:
+    def _parse_str_list(cls, v: object) -> object:
         """Accept a comma-separated string from env vars."""
         if isinstance(v, str):
-            return [s.strip().upper() for s in v.split(",") if s.strip()]
+            return [s.strip() for s in v.split(",") if s.strip()]
         return v
 
     @field_validator("dte_max")
