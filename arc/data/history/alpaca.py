@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
@@ -28,6 +29,7 @@ log = structlog.get_logger()
 
 ALPACA_OPTIONS_HISTORY_START = dt.date(2024, 2, 1)
 _BAR_BATCH = 100  # symbols per bars request (URL length / page size friendly)
+_STD_OCC = re.compile(r"^[A-Z]{1,5}\d{6}[CP]\d{8}$")
 
 
 class _ContractsClient(Protocol):
@@ -96,11 +98,13 @@ class AlpacaHistoryProvider:
         from alpaca.trading.requests import GetOptionContractsRequest
 
         out: dict[str, dict[str, Any]] = {}
+        skipped = 0
+        root = underlying.upper()
         for status in (AssetStatus.ACTIVE, AssetStatus.INACTIVE):
             token: str | None = None
             while True:
                 req = GetOptionContractsRequest(
-                    underlying_symbols=[underlying.upper()],
+                    underlying_symbols=[root],
                     status=status,
                     expiration_date_gte=exp_start,
                     expiration_date_lte=exp_end,
@@ -109,6 +113,11 @@ class AlpacaHistoryProvider:
                 )
                 resp = self._contracts.get_option_contracts(req)
                 for c in resp.option_contracts or []:
+                    # Skip corporate-action-adjusted contracts (e.g. "1SPY…", "SPY1…"):
+                    # non-standard deliverables, and the bars API rejects their symbols.
+                    if not _STD_OCC.match(c.symbol) or c.symbol[:-15] != root:
+                        skipped += 1
+                        continue
                     out[c.symbol] = {
                         "symbol": c.symbol,
                         "expiration": c.expiration_date,
@@ -118,7 +127,7 @@ class AlpacaHistoryProvider:
                 token = resp.next_page_token
                 if not token:
                     break
-        log.info("alpaca_history.contracts", underlying=underlying, n=len(out))
+        log.info("alpaca_history.contracts", underlying=underlying, n=len(out), skipped=skipped)
         return list(out.values())
 
     # -- bars ----------------------------------------------------------------

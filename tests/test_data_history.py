@@ -297,7 +297,9 @@ class FakeContracts:
         if request.page_token is None:
             return SimpleNamespace(
                 option_contracts=[
-                    _contract("SPY240209C00500000", dt.date(2024, 2, 9), 500, "call")
+                    _contract("SPY240209C00500000", dt.date(2024, 2, 9), 500, "call"),
+                    _contract("1SPY240209C00500000", dt.date(2024, 2, 9), 500, "call"),
+                    _contract("SPY1240209C00500000", dt.date(2024, 2, 9), 500, "call"),
                 ],
                 next_page_token="p2",
             )
