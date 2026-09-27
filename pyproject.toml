@@ -1,0 +1,52 @@
+[project]
+name = "arc"
+version = "0.1.0"
+description = "Agentic options trading system — paper trading first."
+requires-python = ">=3.12,<3.13"
+readme = "README.md"
+license = {text = "Proprietary"}
+authors = [{name = "Mohit Gulla"}]
+
+dependencies = [
+    "pydantic>=2.0,<3",
+    "pydantic-settings>=2.0,<3",
+    "structlog>=24.0",
+    "alpaca-py>=0.33",
+    "py_vollib>=1.0",
+    "py_vollib_vectorized>=0.1",
+    "QuantLib>=1.30",
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.12",
+    "exchange_calendars>=4.5",
+    "slack_sdk>=3.27",
+    "feedparser>=6.0",
+]
+
+[project.scripts]
+arc = "arc.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "hypothesis>=6.100",
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
+
+[tool.ruff.lint.per-file-ignores]
+"arc/models.py" = ["TCH003"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
