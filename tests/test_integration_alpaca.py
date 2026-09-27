@@ -123,13 +123,23 @@ class TestAlpacaIntegration:
             and c.greeks is not None
             and c.greeks.delta is not None
         ]
-        assert len(calls) >= 2, "Need at least 2 call contracts for a vertical"
+        assert calls, "Need call contracts for a vertical"
 
-        # Sort by strike, pick two adjacent near the middle of the chain
-        calls.sort(key=lambda c: c.strike)
-        mid_idx = (len(calls) - 1) // 2
-        long_leg = calls[mid_idx]
-        short_leg = calls[mid_idx + 1]
+        # The DTE window can span several expirations. Legs from different
+        # expirations make a calendar, not a vertical: if the short leg
+        # expires after the long leg it is uncovered and Level-2 paper
+        # accounts reject it (403 40310000). Pin both legs to one expiration.
+        expiration = min(c.expiration for c in calls)
+        by_strike = {c.strike: c for c in calls if c.expiration == expiration}
+        strikes = sorted(by_strike)
+        assert len(strikes) >= 2, f"Need 2 distinct call strikes on {expiration}"
+
+        # Two adjacent distinct strikes near the middle: long lower, short higher.
+        mid_idx = (len(strikes) - 1) // 2
+        long_leg = by_strike[strikes[mid_idx]]
+        short_leg = by_strike[strikes[mid_idx + 1]]
+        assert long_leg.expiration == short_leg.expiration
+        assert long_leg.strike < short_leg.strike
 
         from arc.broker.base import MlegLeg, MlegOrder
 
