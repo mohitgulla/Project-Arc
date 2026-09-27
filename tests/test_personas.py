@@ -17,13 +17,13 @@ from pydantic import ValidationError
 from arc.personas.builders import (
     AuditorInput,
     DirectorInput,
-    ExecutionInput,
+    InvestorInput,
     QuantInput,
     RiskInput,
     ScoutInput,
     build_auditor_prompt,
     build_director_prompt,
-    build_execution_prompt,
+    build_investor_prompt,
     build_quant_prompt,
     build_risk_prompt,
     build_scout_prompt,
@@ -33,8 +33,8 @@ from arc.personas.schemas import (
     AuditorOutput,
     DirectorOutput,
     DirectorRankedItem,
-    ExecutionOutput,
     ImprovementStep,
+    InvestorOutput,
     LessonLearned,
     QuantOutput,
     QuantStructureOut,
@@ -306,16 +306,16 @@ class TestRiskSchema:
 
 class TestExecutionSchema:
     def test_valid_output(self) -> None:
-        out = ExecutionOutput.model_validate(SAMPLE_EXECUTION_OUTPUT)
+        out = InvestorOutput.model_validate(SAMPLE_EXECUTION_OUTPUT)
         assert len(out.plans) == 1
         plan = out.plans[0]
         assert plan.order_type == "limit"
         assert len(plan.improvement_steps) == 3
 
     def test_roundtrip(self) -> None:
-        out = ExecutionOutput.model_validate(SAMPLE_EXECUTION_OUTPUT)
+        out = InvestorOutput.model_validate(SAMPLE_EXECUTION_OUTPUT)
         data = json.loads(out.model_dump_json())
-        out2 = ExecutionOutput.model_validate(data)
+        out2 = InvestorOutput.model_validate(data)
         assert out == out2
 
     def test_step_number_positive(self) -> None:
@@ -404,14 +404,14 @@ class TestPromptBuilders:
         assert "ADVISORY" in result
 
     def test_execution_builder(self) -> None:
-        inp = ExecutionInput(
+        inp = InvestorInput(
             proposal_json='{"proposal": "test"}',
             current_quotes_json='{"quotes": []}',
             scan_date="2026-09-27",
         )
-        result = build_execution_prompt(inp)
+        result = build_investor_prompt(inp)
         assert isinstance(result, str)
-        assert "Execution" in result or "Exec" in result
+        assert "Investor" in result
 
     def test_auditor_builder(self) -> None:
         inp = AuditorInput(
@@ -468,7 +468,7 @@ class TestPromptBuilders:
             account_equity=100000.0,
             scan_date="2026-09-27",
         )
-        exec_inp = ExecutionInput(
+        exec_inp = InvestorInput(
             proposal_json="{}",
             current_quotes_json="{}",
             scan_date="2026-09-27",
@@ -486,7 +486,7 @@ class TestPromptBuilders:
             ("director", build_director_prompt, director_inp),
             ("quant", build_quant_prompt, quant_inp),
             ("risk", build_risk_prompt, risk_inp),
-            ("execution", build_execution_prompt, exec_inp),
+            ("investor", build_investor_prompt, exec_inp),
             ("auditor", build_auditor_prompt, auditor_inp),
         ]:
             prompt = builder(inp)

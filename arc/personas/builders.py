@@ -54,8 +54,8 @@ class RiskInput:
 
 
 @dataclass(frozen=True)
-class ExecutionInput:
-    """Input context for the Execution prompt builder."""
+class InvestorInput:
+    """Input context for the Investor prompt builder."""
 
     proposal_json: str  # serialized Proposal (approved)
     current_quotes_json: str  # live bid/ask for the legs
@@ -334,18 +334,18 @@ Respond with JSON matching the RiskOutput schema:
 
 
 # ---------------------------------------------------------------------------
-# Execution
+# Investor
 # ---------------------------------------------------------------------------
 
 
-def build_execution_prompt(inp: ExecutionInput) -> str:
-    """Build the Execution persona prompt.
+def build_investor_prompt(inp: InvestorInput) -> str:
+    """Build the Investor persona prompt.
 
-    Execution produces an order plan: limit at mid, improvement steps, timeout.
+    Investor produces an order plan: limit at mid, improvement steps, timeout.
     """
     return f"""{_SYSTEM_PREAMBLE}
-## Role: Execution
-Slack label: [Exec]
+## Role: Investor
+Slack label: [Investor]
 
 You receive an approved proposal and current quotes. Produce an execution plan:
 - Always use limit orders (no market orders in Phase 1).
@@ -369,7 +369,7 @@ You receive an approved proposal and current quotes. Produce an execution plan:
 Date: {inp.scan_date}
 
 ## Output format
-Respond with JSON matching the ExecutionOutput schema:
+Respond with JSON matching the InvestorOutput schema:
 {{
   "plans": [
     {{

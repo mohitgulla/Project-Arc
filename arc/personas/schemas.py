@@ -184,7 +184,7 @@ class RiskOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Execution — order plan for approved proposals
+# Investor — order plan for approved proposals
 # ---------------------------------------------------------------------------
 
 
@@ -196,8 +196,8 @@ class ImprovementStep(BaseModel):
     wait_seconds: int = Field(..., ge=0, description="Seconds to wait before moving to next step")
 
 
-class ExecutionPlan(BaseModel):
-    """Execution plan for a single approved proposal."""
+class InvestorPlan(BaseModel):
+    """Investor plan for a single approved proposal."""
 
     ticker: str
     structure_type: str
@@ -211,10 +211,10 @@ class ExecutionPlan(BaseModel):
     notes: str = Field(..., description="Execution notes and rationale")
 
 
-class ExecutionOutput(BaseModel):
-    """Execution persona output: order plans for approved proposals."""
+class InvestorOutput(BaseModel):
+    """Investor persona output: order plans for approved proposals."""
 
-    plans: list[ExecutionPlan] = Field(..., description="One plan per approved proposal")
+    plans: list[InvestorPlan] = Field(..., description="One plan per approved proposal")
     market_conditions_note: str = Field(
         ..., description="Current market conditions relevant to execution"
     )
