@@ -6,20 +6,46 @@ on:
   push:
     branches: [main]
 
+# Least privilege: jobs only read the repo.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to full-length commit SHAs (release tag in the trailing comment).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
 
       - name: Set up Python 3.12
         run: uv python install 3.12
 
-      - name: Install dependencies
-        run: uv sync
+      - name: Install dependencies (fails if uv.lock is stale)
+        run: uv sync --locked
 
       - name: make check
         run: make check
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (fails if uv.lock is stale)
+        run: uv sync --locked
+
+      - name: pip-audit (fails on known vulnerabilities)
+        run: make audit

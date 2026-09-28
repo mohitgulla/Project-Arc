@@ -573,9 +573,17 @@ class TestQuoteSizes:
         assert _size("7") is None
 
 
-def test_scaffold_lists_new_modules() -> None:
-    text = Path("tests/test_scaffold.py").read_text()
-    assert '"arc.journal.analytics"' in text and '"arc.pipeline.analytics"' in text
+def test_scaffold_discovers_new_modules() -> None:
+    # test_scaffold imports every module found by pkgutil.walk_packages (E1.1a).
+    import importlib
+    import pkgutil
+
+    import arc
+
+    found = {m.name for m in pkgutil.walk_packages(arc.__path__, "arc.")}
+    assert {"arc.journal.analytics", "arc.pipeline.analytics"} <= found
+    importlib.import_module("arc.journal.analytics")
+    importlib.import_module("arc.pipeline.analytics")
 
 
 def test_fixture_db_is_in_memory(run: SimpleNamespace) -> None:
