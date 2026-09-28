@@ -1,6 +1,14 @@
-.PHONY: check test test-gate lint fmt
+.PHONY: check test test-gate lint fmt audit lock-check
 
-check: lint fmt test test-gate
+check: lock-check lint fmt audit test test-gate
+
+lock-check:
+	uv lock --check
+
+# Known-vulnerability scan of the locked environment (PyPI advisory DB).
+# The project itself is not published on PyPI, so it is skipped, not audited.
+audit:
+	uv run pip-audit --skip-editable
 
 lint:
 	uv run ruff check arc/ tests/
