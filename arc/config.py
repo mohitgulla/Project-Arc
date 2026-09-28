@@ -314,6 +314,32 @@ class ArcSettings(BaseSettings):
         default=3,
         description="Max audio transcriptions per ingest run (ARC_YT_MAX_AUDIO_PER_RUN).",
     )
+    # -- YouTube caption rate-limit backoff (E4.1c, D15) ----------------------
+    yt_caption_sleep_seconds: Annotated[float, Field(ge=0)] = Field(
+        default=5.0,
+        description=(
+            "Pause between timedtext (caption) requests within a run "
+            "(ARC_YT_CAPTION_SLEEP_SECONDS; yt-dlp guidance: 5-10 s)."
+        ),
+    )
+    yt_caption_cooldown_base_minutes: Annotated[float, Field(gt=0)] = Field(
+        default=30.0,
+        description=(
+            "Caption cooldown after the first 429 in a streak; doubles per consecutive "
+            "rate-limited run (ARC_YT_CAPTION_COOLDOWN_BASE_MINUTES)."
+        ),
+    )
+    yt_caption_cooldown_max_minutes: Annotated[float, Field(gt=0)] = Field(
+        default=360.0,
+        description="Upper bound on the caption cooldown (ARC_YT_CAPTION_COOLDOWN_MAX_MINUTES).",
+    )
+    yt_caption_cooldown_jitter: Annotated[float, Field(ge=0, lt=1)] = Field(
+        default=0.10,
+        description=(
+            "Relative ± jitter applied to the caption cooldown "
+            "(ARC_YT_CAPTION_COOLDOWN_JITTER; 0.10 = ±10%)."
+        ),
+    )
     whisper_model: str = Field(
         default="mlx-community/whisper-large-v3-turbo",
         description="Local mlx-whisper model repo (ARC_WHISPER_MODEL).",

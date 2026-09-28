@@ -14,6 +14,7 @@ from unittest import mock
 import pytest
 
 from arc.config import DEFAULT_YOUTUBE_CHANNELS, ArcSettings
+from arc.ingest.caption_backoff import CaptionResult, CaptionStatus
 from arc.ingest.store import IngestCursorRepo, RawDocRepo, content_hash
 from arc.store.migrate import migrate
 
@@ -42,6 +43,7 @@ def settings() -> ArcSettings:
         finnhub_api_key="test_key_123",
         ingest_youtube_channels=["https://www.youtube.com/@TestChannel"],
         universe=["AAPL", "MSFT", "NVDA"],
+        yt_caption_sleep_seconds=0,
     )
 
 
@@ -403,7 +405,7 @@ class TestYouTubeConnector:
             mock.patch("subprocess.run", side_effect=run),
             mock.patch(
                 "arc.ingest.youtube._download_subtitle",
-                return_value="AAPL is testing support at 180",
+                return_value=CaptionResult.ok("AAPL is testing support at 180"),
             ) as dl,
         ):
             docs = fetch_youtube(db, settings)
@@ -454,7 +456,9 @@ class TestYouTubeConnector:
         run = _yt_runner([{"id": "cid1", "title": "Outlook"}], {"cid1": info})
         with (
             mock.patch("subprocess.run", side_effect=run),
-            mock.patch("arc.ingest.youtube._download_subtitle", return_value="words"),
+            mock.patch(
+                "arc.ingest.youtube._download_subtitle", return_value=CaptionResult.ok("words")
+            ),
         ):
             (doc,) = fetch_youtube(db, settings)
         assert doc.channel_id == "UC-m6zNItyoDk5lSykDlhE4Q"
@@ -468,7 +472,9 @@ class TestYouTubeConnector:
         resp = mock.MagicMock()
         resp.__enter__.return_value.read.return_value = vtt
         with mock.patch("urllib.request.urlopen", return_value=resp):
-            assert _download_subtitle("https://captions.test/x.vtt") == "Hello SPY"
+            res = _download_subtitle("https://captions.test/x.vtt")
+        assert res.status is CaptionStatus.OK
+        assert res.text == "Hello SPY"
 
     def test_no_channels_configured(self, db: sqlite3.Connection) -> None:
         from arc.ingest.youtube import fetch_youtube
@@ -488,7 +494,9 @@ class TestYouTubeConnector:
         )
         with (
             mock.patch("subprocess.run", side_effect=run),
-            mock.patch("arc.ingest.youtube._download_subtitle", return_value="words"),
+            mock.patch(
+                "arc.ingest.youtube._download_subtitle", return_value=CaptionResult.ok("words")
+            ),
         ):
             docs1 = fetch_youtube(db, settings)
             docs2 = fetch_youtube(db, settings)
@@ -512,7 +520,10 @@ class TestYouTubeConnector:
             assert fetch_youtube(db, settings) == []
         with (
             mock.patch("subprocess.run", side_effect=ready),
-            mock.patch("arc.ingest.youtube._download_subtitle", return_value="now captioned"),
+            mock.patch(
+                "arc.ingest.youtube._download_subtitle",
+                return_value=CaptionResult.ok("now captioned"),
+            ),
         ):
             docs = fetch_youtube(db, settings)
         assert [d.url for d in docs] == ["https://www.youtube.com/watch?v=new1"]

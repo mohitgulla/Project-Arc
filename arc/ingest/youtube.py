@@ -13,6 +13,8 @@ the cursor.
 from __future__ import annotations
 
 import json
+import random
+import re
 import subprocess
 import sys
 import time
@@ -22,9 +24,20 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Callable
 
 import structlog
 
+from arc.ingest.caption_backoff import (
+    CaptionBackoff,
+    CaptionResult,
+    CaptionStatus,
+    is_sorry_page,
+    load_backoff,
+    parse_retry_after,
+    register_rate_limit,
+    save_backoff,
+)
 from arc.ingest.store import IngestCursorRepo, RawDocRepo, content_hash
 from arc.ingest.transcribe import (
     MlxWhisperTranscriber,
@@ -138,42 +151,62 @@ def _pick_caption_url(info: dict) -> str:
     return ""
 
 
-def _get_transcript(info: dict) -> str:
-    """Download and clean the best available English caption track."""
-    url = _pick_caption_url(info)
-    return _download_subtitle(url) if url else ""
+def _clean_vtt(raw: str) -> str:
+    """Strip VTT header, cue timings, numbering and inline tags; join the text."""
+    text_lines: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        # Skip VTT header, timestamps, notes
+        if not line or line.startswith("WEBVTT") or "-->" in line:
+            continue
+        if line.startswith(("Kind:", "Language:", "NOTE")):
+            continue
+        if re.match(r"^\d+$", line):
+            continue
+        # Strip HTML tags
+        line = re.sub(r"<[^>]+>", "", line)
+        if line and line not in text_lines[-1:]:
+            text_lines.append(line)
+    return " ".join(text_lines)[:50_000]
 
 
-def _download_subtitle(url: str) -> str:
-    """Download and clean a subtitle file."""
-    import re
+def _download_subtitle(url: str) -> CaptionResult:
+    """Download a caption track and classify the outcome (E4.1c).
+
+    ``rate_limited``: HTTP 429, or Google's "Sorry" page on any status.
+    ``empty``: 200 with no cues (PO-token gated URLs look like this).
+    ``error``: anything else. Logging is left to the caller, which knows the video.
+    """
+    import urllib.error
     import urllib.request
 
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
-            # Strip VTT timestamps and formatting
-            lines = raw.splitlines()
-            text_lines = []
-            for line in lines:
-                line = line.strip()
-                # Skip VTT header, timestamps, notes
-                if not line or line.startswith("WEBVTT") or "-->" in line:
-                    continue
-                if line.startswith(("Kind:", "Language:", "NOTE")):
-                    continue
-                if re.match(r"^\d+$", line):
-                    continue
-                # Strip HTML tags
-                line = re.sub(r"<[^>]+>", "", line)
-                if line and line not in text_lines[-1:]:
-                    text_lines.append(line)
-            return " ".join(text_lines)[:50_000]
+            status = resp.status if isinstance(getattr(resp, "status", None), int) else 200
+            final_url = resp.geturl() if callable(getattr(resp, "geturl", None)) else url
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            body = ""
+        retry_after = parse_retry_after(
+            exc.headers.get("Retry-After") if exc.headers else None, now=datetime.now(UTC)
+        )
+        if exc.code == 429 or is_sorry_page(body, str(exc.url or "")):
+            return CaptionResult(
+                CaptionStatus.RATE_LIMITED, http_status=exc.code, retry_after_s=retry_after
+            )
+        return CaptionResult(CaptionStatus.ERROR, http_status=exc.code, error=str(exc)[:200])
     except Exception as exc:  # noqa: BLE001
-        # e.g. HTTP 429 from YouTube's timedtext endpoint: treated as "no captions",
-        # so the audio fallback (E4.1b) can take over after the grace period.
-        log.warning("youtube.caption_download_failed", error=str(exc)[:200])
-        return ""
+        return CaptionResult(CaptionStatus.ERROR, error=str(exc)[:200])
+
+    if is_sorry_page(raw, str(final_url)):
+        return CaptionResult(CaptionStatus.RATE_LIMITED, http_status=status)
+    text = _clean_vtt(raw)
+    if not text:
+        return CaptionResult(CaptionStatus.EMPTY, http_status=status)
+    return CaptionResult(CaptionStatus.OK, text=text, http_status=status)
 
 
 def _extract_tickers(text: str, universe: list[str]) -> list[str]:
@@ -295,6 +328,105 @@ def _audio_transcript(
     return text
 
 
+@dataclass
+class _CaptionGuard:
+    """Per-run caption pacing, circuit breaker and cross-run cooldown (E4.1c).
+
+    ``blocked`` is set when a persisted cooldown is active at the start of the
+    run, or by the first ``rate_limited`` result (the breaker). While blocked,
+    no timedtext request is sent; videos go to the audio fallback.
+    """
+
+    conn: sqlite3.Connection
+    settings: ArcSettings
+    rng: random.Random
+    sleep: Callable[[float], None]
+    now: datetime
+    state: CaptionBackoff
+    blocked: str | None = None  # None | "cooldown" | "breaker"
+    requests: int = 0
+
+    @classmethod
+    def start(
+        cls,
+        conn: sqlite3.Connection,
+        settings: ArcSettings,
+        *,
+        rng: random.Random,
+        sleep: Callable[[float], None],
+        now: datetime,
+    ) -> _CaptionGuard:
+        guard = cls(conn, settings, rng, sleep, now, load_backoff(conn))
+        if guard.state.active(now):
+            guard.blocked = "cooldown"
+            log.warning(
+                "youtube.captions_cooldown_active",
+                until=_iso(guard.state.cooldown_until),
+                consecutive_rate_limits=guard.state.consecutive_rate_limits,
+            )
+        return guard
+
+    def transcript(self, info: dict, video_id: str) -> str:
+        """Caption text for one video, or "" (then the audio fallback may run)."""
+        url = _pick_caption_url(info)
+        if not url:
+            return ""
+        if self.blocked:
+            log.info(
+                "youtube.captions_skipped",
+                video_id=video_id,
+                reason=self.blocked,
+                until=_iso(self.state.cooldown_until),
+            )
+            return ""
+        if self.requests:
+            self.sleep(self.settings.yt_caption_sleep_seconds)
+        self.requests += 1
+        res = _download_subtitle(url)
+        if res.status is CaptionStatus.OK:
+            if self.state.consecutive_rate_limits or self.state.cooldown_until:
+                log.info(
+                    "youtube.captions_backoff_reset",
+                    previous_consecutive=self.state.consecutive_rate_limits,
+                )
+                self.state = CaptionBackoff()
+                save_backoff(self.conn, self.state)
+            return res.text
+        if res.status is CaptionStatus.RATE_LIMITED:
+            self._trip(res, video_id)
+        elif res.status is CaptionStatus.EMPTY:
+            log.warning("youtube.captions_empty", video_id=video_id, status=res.http_status)
+        else:
+            log.warning(
+                "youtube.caption_download_failed",
+                video_id=video_id,
+                status=res.http_status,
+                error=res.error,
+            )
+        return ""
+
+    def _trip(self, res: CaptionResult, video_id: str) -> None:
+        self.state, minutes = register_rate_limit(
+            self.state, self.settings, self.rng, now=self.now, retry_after_s=res.retry_after_s
+        )
+        save_backoff(self.conn, self.state)
+        self.blocked = "breaker"
+        log.warning(
+            "youtube.captions_rate_limited",
+            video_id=video_id,
+            status=res.http_status,
+            retry_after=res.retry_after_s is not None,
+            retry_after_s=res.retry_after_s,
+            consecutive_rate_limits=self.state.consecutive_rate_limits,
+            cooldown_minutes=round(minutes, 1),
+            until=_iso(self.state.cooldown_until),
+        )
+
+
+def _iso(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt else None
+
+
 def fetch_youtube(
     conn: sqlite3.Connection,
     settings: ArcSettings,
@@ -303,6 +435,8 @@ def fetch_youtube(
     transcriber: Transcriber | None = None,
     max_videos: int = 5,
     now: datetime | None = None,
+    rng: random.Random | None = None,
+    sleep: Callable[[float], None] | None = None,
 ) -> list[RawDoc]:
     """Fetch transcripts from configured YouTube channels.
 
@@ -312,6 +446,11 @@ def fetch_youtube(
     ``yt_max_audio_minutes``, and at most ``yt_max_audio_per_run`` times per run.
     ``force_audio`` skips captions entirely and ignores the grace period (the
     length and per-run caps still apply).
+
+    Caption requests are paced (``yt_caption_sleep_seconds``). The first HTTP 429
+    stops caption requests for the rest of the run and starts a DB-persisted,
+    exponentially growing cooldown that later runs honour (E4.1c). ``rng`` and
+    ``sleep`` are injectable for tests.
 
     Returns only newly stored documents. A video with no transcript is not
     stored, so it is retried on the next run instead of being deduped forever.
@@ -324,14 +463,26 @@ def fetch_youtube(
         log.warning("youtube.no_channels_configured")
         return []
 
+    run_now = now or datetime.now(UTC)
     budget = _AudioBudget(
         remaining=settings.yt_max_audio_per_run,
         grace_minutes=settings.yt_caption_grace_minutes,
         max_minutes=settings.yt_max_audio_minutes,
         force=force_audio,
-        now=now or datetime.now(UTC),
+        now=run_now,
     )
     stt: Transcriber = transcriber or MlxWhisperTranscriber(model=settings.whisper_model)
+    captions = (
+        None
+        if force_audio
+        else _CaptionGuard.start(
+            conn,
+            settings,
+            rng=rng or random.Random(),  # noqa: S311 - jitter, not crypto
+            sleep=sleep or time.sleep,
+            now=run_now,
+        )
+    )
     results: list[RawDoc] = []
 
     for channel_url in channels:
@@ -364,7 +515,7 @@ def fetch_youtube(
                 continue
 
             source = TranscriptSource.CAPTIONS
-            transcript = "" if force_audio else _get_transcript(info)
+            transcript = "" if captions is None else captions.transcript(info, video_id)
             if not transcript and info:
                 transcript = _audio_transcript(video_url, info, budget, stt, settings.ffmpeg_bin)
                 source = TranscriptSource.AUDIO
