@@ -130,6 +130,15 @@ def propose_exits(
     if switch.is_halted():
         out.lines.append("halted: no exit proposals")
         return out
+    secret: bytes | None = None
+    if mint:
+        try:  # E5.2b: a live run never stores a token-less PASS it cannot execute
+            secret = gate_secret(settings)
+        except TokenError as exc:
+            msg = f"exit proposals disabled: cannot mint a gate token ({exc}); set ARC_GATE_SECRET"
+            out.errors.append(msg)
+            log.error("exits.no_gate_secret", reason=str(exc))
+            return out
     cfg = exits or load_exit_config()
     repo = OpenStructureRepo(conn)
     today = now.astimezone(ET).date()
@@ -199,13 +208,8 @@ def propose_exits(
             band=band,
             closing=True,
         )
-        if mint and decision.passed:
-            try:
-                decision = issue_token(
-                    decision, proposal, secret=gate_secret(settings), now=now, band=band
-                )
-            except TokenError as exc:
-                log.warning("exits.no_gate_token", reason=str(exc))
+        if secret is not None and decision.passed:
+            decision = issue_token(decision, proposal, secret=secret, now=now, band=band)
         phash = proposal_hash(proposal)
         code = _EXIT_CODES[state.fired]
         with conn:

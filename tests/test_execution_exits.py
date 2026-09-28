@@ -191,6 +191,16 @@ def test_dry_run_never_mints(conn: sqlite3.Connection) -> None:
     assert tok.fetchone()[0] is None
 
 
+def test_live_run_without_secret_proposes_nothing(conn: sqlite3.Connection) -> None:
+    """E5.2b: a minting run with no ARC_GATE_SECRET reports an error, stores no token-less PASS."""
+    open_structure(conn)
+    run = propose(conn, settings=settings(gate_secret=None))
+    assert run.proposed == [] and run.evaluated == 0
+    assert any("ARC_GATE_SECRET" in e for e in run.errors), run.errors
+    n = conn.execute("SELECT COUNT(*) FROM gate_decisions").fetchone()[0]
+    assert n == 0
+
+
 def test_close_mismatch_fails_gate(conn: sqlite3.Connection) -> None:
     """Arc thinks it holds the structure, the broker doesn't: the exit is not actionable."""
     open_structure(conn)

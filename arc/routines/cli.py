@@ -123,6 +123,7 @@ def _dispatcher(
     from arc.routines.dispatcher import Dispatcher as _Dispatcher
     from arc.routines.heartbeat import LogNotifier, Notifier, SlackDayThreadNotifier
     from arc.routines.locks import LockManager, NullLocks
+    from arc.utils.calendar import now_et
 
     notifier: Notifier
     if dry or getattr(args, "no_slack", False):
@@ -130,7 +131,11 @@ def _dispatcher(
     else:
         notifier = SlackDayThreadNotifier(conn)
     locks = NullLocks() if dry else LockManager(args.lock_dir)
-    return _Dispatcher(conn, _load(args), locks=locks, notifier=notifier)
+    # E5.2b: a real (un-pinned) run hands steps the wall clock, so data age and
+    # proposal expiry are judged when the step runs, not when the tick started.
+    # ``--now`` replays keep the frozen time for every step.
+    clock = now_et if not dry and not getattr(args, "now", None) else None
+    return _Dispatcher(conn, _load(args), locks=locks, notifier=notifier, clock=clock)
 
 
 def _approval_sweep(

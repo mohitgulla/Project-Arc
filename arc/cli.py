@@ -571,6 +571,7 @@ def _propose(args: argparse.Namespace) -> int:
             routines,
             env,
             now=now_et(),
+            clock=now_et,  # E5.2b: quotes/gate/token/expiry judged at step time
             notifier=notifier,
             scout=not args.no_scout,
             locks=NullLocks() if args.dry_run else LockManager(args.lock_dir),
