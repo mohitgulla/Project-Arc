@@ -1,0 +1,27 @@
+# arc-gate: Hermes pre_tool_call hook, fail-closed (PLAN §2.1 boundary 2, card E3.2).
+#
+# Blocks broker order tools unless the call carries a valid Arc gate token:
+#   - Alpaca MCP v2 `place_option_order`: `client_order_id` must be a gate token
+#     bound to exactly these legs, qty and limit price (limit/day orders only).
+#   - Alpaca MCP v2 `place_stock_order`, `place_crypto_order`, `replace_order_by_id`,
+#     `close_position`, `close_all_positions`, `exercise_options_position`: always blocked.
+#   - `terminal` commands that run `arc execute`: need `--token <valid gate token>`.
+#     All other terminal commands pass untouched.
+#
+# Wiring: Hermes runs pre_tool_call shell hooks from the `hooks:` block of
+# config.yaml. The `hermes_hooks` entry below is that block, verbatim, with
+# {ARC_REPO} standing for the absolute path of this repository. The hook needs the
+# Arc venv's Python (it imports `arc`). `fail_closed: true` makes Hermes block the
+# tool if the hook crashes, times out, or prints non-JSON.
+#
+# The secret is ARC_GATE_SECRET (>= 32 bytes) in ~/.hermes/.env. Without it every
+# gated call is blocked.
+
+name: arc-gate
+description: Fail-closed gate on broker order tools; requires an Arc HMAC gate token.
+hermes_hooks:
+  pre_tool_call:
+    - matcher: "terminal|mcp__.+__(place_option_order|place_stock_order|place_crypto_order|replace_order_by_id|close_position|close_all_positions|exercise_options_position)"
+      command: "{ARC_REPO}/.venv/bin/python {ARC_REPO}/hermes/hooks/arc-gate/hook.py"
+      timeout: 10
+      fail_closed: true
