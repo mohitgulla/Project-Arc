@@ -181,18 +181,29 @@ def stationary_distribution(
     the unique stationary distribution; otherwise it is the long-run
     occupancy from a uniform start. Uses repeated squaring, so convergence
     is fast even for very sticky chains.
+
+    Each squaring re-projects ``Q`` onto the row-stochastic matrices. Without
+    that, float rounding in the row sums compounds as ``(1 + eps) ** (2 ** k)``
+    whenever ``tol`` is not reached (e.g. reducible chains with slow transient
+    states) and overflows to ``inf``/NaN. The result is therefore always
+    finite, non-negative and sums to 1.
     """
     _check_stochastic(p)
-    q = 0.5 * (np.eye(N_STATES) + p)
+    q = _row_normalise(0.5 * (np.eye(N_STATES) + np.clip(p, 0.0, None)))
     for _ in range(max_squarings):
-        q_next = q @ q
-        if np.max(np.abs(q_next - q)) < tol:
-            q = q_next
-            break
+        q_next = _row_normalise(q @ q)
+        converged = np.max(np.abs(q_next - q)) < tol
         q = q_next
+        if converged:
+            break
     pi = np.full(N_STATES, 1.0 / N_STATES) @ q
-    pi = np.clip(pi, 0.0, None)
     return pi / pi.sum()
+
+
+def _row_normalise(q: np.ndarray) -> np.ndarray:
+    """Clip tiny negatives and rescale rows to sum to exactly 1 (rows of ``Q`` are never 0)."""
+    q = np.clip(q, 0.0, None)
+    return q / q.sum(axis=1, keepdims=True)
 
 
 # ---------------------------------------------------------------------------
