@@ -325,6 +325,12 @@ class ArcSettings(BaseSettings):
         default_factory=list,
         description="RSS feed URLs for the Scout connector.",
     )
+    ingest_rss_timeout_seconds: float = Field(
+        default=20.0,
+        gt=0,
+        le=120,
+        description="Per-feed HTTP timeout; a slow or dead feed is skipped, never hangs the tick.",
+    )
     edgar_user_agent: str = Field(
         default="ProjectArc/0.1 (arc@example.com)",
         description="User-Agent header for SEC EDGAR requests (required by EDGAR).",
