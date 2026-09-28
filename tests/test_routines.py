@@ -237,6 +237,20 @@ class TestConfig:
         with pytest.raises((ValidationError, ValueError)):
             cfg(bad)
 
+    def test_writes_parse(self) -> None:
+        c = cfg("personas: {d: {schedule: ['09:00'], writes: [shortlist, note]}}")
+        assert c.personas["d"].writes == ["shortlist", "note"]
+        assert cfg("steps: {propose: {writes: []}}").steps["propose"].writes == []
+        assert cfg("personas: {d: {schedule: ['09:00']}}").personas["d"].writes is None
+
+    def test_unknown_write_kind_message(self) -> None:
+        with pytest.raises(ValidationError, match="unknown context kind 'bogus' in writes"):
+            cfg("personas: {d: {schedule: ['09:00'], writes: [bogus]}}")
+        with pytest.raises(ValidationError, match="unknown context kind 'bogus' in reads"):
+            cfg("personas: {d: {schedule: ['09:00'], reads: [bogus]}}")
+        with pytest.raises(ValidationError, match="writes lists a kind twice"):
+            cfg("personas: {d: {schedule: ['09:00'], writes: [note, note]}}")
+
     def test_chain_step_completion_is_a_valid_trigger(self) -> None:
         c = cfg(
             """

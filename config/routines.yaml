@@ -6,9 +6,13 @@
 #
 # Job keys: schedule | every (+window) | trigger, days (daily|trading|weekdays or a
 # weekday list like [fri]), chain, after_sources, ttl (catch-up window),
-# context {ttl, supersede}, reads [kinds], handler "module:function",
+# context {ttl, supersede}, reads [kinds], writes [kinds], handler "module:function",
 # halt_exempt, notify (quiet|summary), llm. Any other key is passed to the
 # handler as an option (e.g. only_for).
+#
+# I/O contract (D27): every job and chain step declares `writes: [kinds]`. A write
+# of an undeclared kind fails the run (fail-closed); `writes: []` = writes nothing.
+# `reads` limits the recorded input snapshot. `arc context trace <run|chain>` shows both.
 #
 # A trading day at a glance (full simulated day: `arc routines tick --dry-run`):
 #   06:00           earnings calendar; rss (30m) / edgar (15m) polling until 20:00
