@@ -448,6 +448,39 @@ def test_performance_from_series() -> None:
     assert p2 is not None and p2.mtd_pnl == 500.0
 
 
+def test_performance_month_and_year_rollover() -> None:
+    s = [
+        DailyEquity(dt.date(2026, 12, 30), D("100000")),
+        DailyEquity(dt.date(2026, 12, 31), D("101000")),
+        DailyEquity(dt.date(2027, 1, 4), D("102010")),
+    ]
+    p = performance_from(s, dt.date(2027, 1, 4))
+    assert p is not None
+    # new month and new year both start from Dec-31 close
+    assert p.day_pnl == p.mtd_pnl == p.ytd_pnl == 1010.0
+    assert p.mtd_pct == pytest.approx(0.01) and p.ytd_pct == pytest.approx(0.01)
+    # Dec-31: MTD/YTD since inception (history began inside the month)
+    p2 = performance_from(s, dt.date(2026, 12, 31))
+    assert p2 is not None and p2.day_pnl == 1000.0 and p2.mtd_pnl == 1000.0
+
+
+def test_performance_first_day_of_history_is_na(conn: sqlite3.Connection) -> None:
+    assert performance(conn, dt.date(2026, 9, 28)) is None
+    PnlSnapshotRepo(conn).insert(realized="0", unrealized="0", total="0",
+                                 details_json=json.dumps({"day": "2026-09-28",
+                                                          "equity": "100000"}))  # fmt: skip
+    assert performance(conn, dt.date(2026, 9, 28)) is None
+
+
+def test_group_legs_orphan_leg_does_not_hide_structures(conn: sqlite3.Connection) -> None:
+    """S-5 / E6.3: an unattributed (bounded) leg is its own group; structures still valued."""
+    st = bull_put()
+    a = open_position(conn)
+    extra = BrokerPosition(symbol="SPY261120P00700000", qty=D(1), side="long")
+    groups = _group_legs(conn, [*held_positions(st), extra])
+    assert [label for _, label, _ in groups] == [a["sid"], "SPY 2026-11-20"]
+
+
 def test_performance_reads_latest_snapshot_per_day(conn: sqlite3.Connection) -> None:
     repo = PnlSnapshotRepo(conn)
     for day, eq in (("2026-09-25", "100000"), ("2026-09-28", "99000"), ("2026-09-28", "100250")):
