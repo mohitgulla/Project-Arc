@@ -79,6 +79,7 @@ def test_arc_package_imports() -> None:
         "arc.routines.handlers",
         "arc.routines.heartbeat",
         "arc.routines.locks",
+        "arc.routines.monitor",
         "arc.routines.runs",
         "arc.routines.schedule",
         "arc.features",

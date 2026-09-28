@@ -18,7 +18,7 @@ import re
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -47,6 +47,7 @@ from arc.ingest.transcribe import (
     transcribe_video_audio,
 )
 from arc.models import RawDoc, TranscriptSource
+from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     from arc.config import ArcSettings
@@ -266,6 +267,47 @@ def _video_age_minutes(info: dict, now: datetime) -> float | None:
 
 
 @dataclass
+class YoutubeRunStats:
+    """Per-run outcome of :func:`fetch_youtube` (captions, audio fallback, cooldown).
+
+    Filled in place when the caller passes one; the routine handler turns it
+    into the run summary so each scheduled run shows its YouTube outcome (E5.3).
+    """
+
+    captions: dict[str, int] = field(default_factory=dict)  # CaptionStatus value -> count
+    captions_skipped: int = 0
+    skip_reason: str | None = None  # "cooldown" | "breaker"
+    audio: int = 0
+    audio_failed: int = 0
+    audio_wall_s: float = 0.0
+    no_transcript: int = 0
+    cooldown_until: datetime | None = None
+    consecutive_rate_limits: int = 0
+
+    def count(self, status: CaptionStatus) -> None:
+        self.captions[status.value] = self.captions.get(status.value, 0) + 1
+
+    def summary(self) -> str:
+        caps = ", ".join(f"{s.value} {self.captions.get(s.value, 0)}" for s in CaptionStatus)
+        text = f"captions: {caps}"
+        if self.captions_skipped:
+            text += f", skipped {self.captions_skipped} ({self.skip_reason})"
+        text += f" · audio {self.audio} ({self.audio_wall_s:.0f}s wall"
+        text += f", {self.audio_failed} failed)" if self.audio_failed else ")"
+        if self.no_transcript:
+            text += f" · {self.no_transcript} without transcript yet"
+        if self.cooldown_until is not None:
+            until = self.cooldown_until.astimezone(ET)
+            text += (
+                f" · captions cooldown until {until:%a %H:%M} ET"
+                f" (streak {self.consecutive_rate_limits})"
+            )
+        else:
+            text += " · captions cooldown: none"
+        return text
+
+
+@dataclass
 class _AudioBudget:
     """Per-run guard rails for audio transcription."""
 
@@ -299,6 +341,7 @@ def _audio_transcript(
     budget: _AudioBudget,
     transcriber: Transcriber,
     ffmpeg_bin: str,
+    stats: YoutubeRunStats,
 ) -> str:
     reason = budget.skip_reason(info)
     if reason is not None:
@@ -315,8 +358,12 @@ def _audio_transcript(
     try:
         text = transcribe_video_audio(video_url, transcriber, ffmpeg=resolve_ffmpeg(ffmpeg_bin))
     except TranscriptionError as exc:
+        stats.audio_failed += 1
+        stats.audio_wall_s += time.monotonic() - started
         log.warning("youtube.audio_failed", url=video_url, error=str(exc)[:300])
         return ""
+    stats.audio += 1
+    stats.audio_wall_s += time.monotonic() - started
     log.info(
         "youtube.audio_transcribed",
         url=video_url,
@@ -343,6 +390,7 @@ class _CaptionGuard:
     sleep: Callable[[float], None]
     now: datetime
     state: CaptionBackoff
+    stats: YoutubeRunStats = field(default_factory=lambda: YoutubeRunStats())
     blocked: str | None = None  # None | "cooldown" | "breaker"
     requests: int = 0
 
@@ -355,8 +403,9 @@ class _CaptionGuard:
         rng: random.Random,
         sleep: Callable[[float], None],
         now: datetime,
+        stats: YoutubeRunStats,
     ) -> _CaptionGuard:
-        guard = cls(conn, settings, rng, sleep, now, load_backoff(conn))
+        guard = cls(conn, settings, rng, sleep, now, load_backoff(conn), stats)
         if guard.state.active(now):
             guard.blocked = "cooldown"
             log.warning(
@@ -372,6 +421,8 @@ class _CaptionGuard:
         if not url:
             return ""
         if self.blocked:
+            self.stats.captions_skipped += 1
+            self.stats.skip_reason = self.blocked
             log.info(
                 "youtube.captions_skipped",
                 video_id=video_id,
@@ -383,6 +434,7 @@ class _CaptionGuard:
             self.sleep(self.settings.yt_caption_sleep_seconds)
         self.requests += 1
         res = _download_subtitle(url)
+        self.stats.count(res.status)
         if res.status is CaptionStatus.OK:
             if self.state.consecutive_rate_limits or self.state.cooldown_until:
                 log.info(
@@ -437,6 +489,7 @@ def fetch_youtube(
     now: datetime | None = None,
     rng: random.Random | None = None,
     sleep: Callable[[float], None] | None = None,
+    stats: YoutubeRunStats | None = None,
 ) -> list[RawDoc]:
     """Fetch transcripts from configured YouTube channels.
 
@@ -450,7 +503,8 @@ def fetch_youtube(
     Caption requests are paced (``yt_caption_sleep_seconds``). The first HTTP 429
     stops caption requests for the rest of the run and starts a DB-persisted,
     exponentially growing cooldown that later runs honour (E4.1c). ``rng`` and
-    ``sleep`` are injectable for tests.
+    ``sleep`` are injectable for tests. Pass *stats* to receive the run's caption /
+    audio / cooldown outcome (the routine handler puts it in the run summary).
 
     Returns only newly stored documents. A video with no transcript is not
     stored, so it is retried on the next run instead of being deduped forever.
@@ -464,6 +518,7 @@ def fetch_youtube(
         return []
 
     run_now = now or datetime.now(UTC)
+    stats = stats if stats is not None else YoutubeRunStats()
     budget = _AudioBudget(
         remaining=settings.yt_max_audio_per_run,
         grace_minutes=settings.yt_caption_grace_minutes,
@@ -481,6 +536,7 @@ def fetch_youtube(
             rng=rng or random.Random(),  # noqa: S311 - jitter, not crypto
             sleep=sleep or time.sleep,
             now=run_now,
+            stats=stats,
         )
     )
     results: list[RawDoc] = []
@@ -517,9 +573,12 @@ def fetch_youtube(
             source = TranscriptSource.CAPTIONS
             transcript = "" if captions is None else captions.transcript(info, video_id)
             if not transcript and info:
-                transcript = _audio_transcript(video_url, info, budget, stt, settings.ffmpeg_bin)
+                transcript = _audio_transcript(
+                    video_url, info, budget, stt, settings.ffmpeg_bin, stats
+                )
                 source = TranscriptSource.AUDIO
             if not transcript:
+                stats.no_transcript += 1
                 log.info("youtube.no_transcript_yet", url=video_url)
                 continue
 
@@ -562,5 +621,9 @@ def fetch_youtube(
         if newest_date > last_date:
             cursor_repo.set(cursor_key, newest_date)
 
-    log.info("youtube.done", new_docs=len(results))
+    backoff = captions.state if captions is not None else load_backoff(conn)
+    if backoff.active(run_now):
+        stats.cooldown_until = backoff.cooldown_until
+    stats.consecutive_rate_limits = backoff.consecutive_rate_limits
+    log.info("youtube.done", new_docs=len(results), outcome=stats.summary())
     return results

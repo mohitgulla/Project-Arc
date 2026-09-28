@@ -109,8 +109,8 @@ def test_source_handlers_write_doc_refs(
     ctx = _ctx(conn, job, options)
     with mock.patch(target, return_value=docs) as fetch:
         result = fn(ctx)  # type: ignore[operator]
-    assert result.metrics == {"new_docs": 2}
-    assert result.summary == "2 new docs"
+    assert result.metrics["new_docs"] == 2
+    assert result.summary.startswith("2 new docs")
     if setting is not None:
         assert getattr(fetch.call_args.args[1], setting) == expected
     refs = ContextStore(conn).query(as_of=NOW, kinds=["raw_doc_ref"])

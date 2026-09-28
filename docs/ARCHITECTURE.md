@@ -67,6 +67,35 @@
   prefix (`youtube.<channel>` uses the YouTube handler), and `handler: module:fn`
   plugs in anything else.
 
+### Daily schedule and cron (E5.3)
+
+Shipped defaults in `config/routines.yaml`, all times ET:
+
+| When | Job |
+|---|---|
+| 06:00, 18:00 trading days | `earnings` calendar |
+| 06:00-20:00 trading days | `rss` every 30m, `edgar` every 15m |
+| 09:30 trading days | pre-market chain `director -> quant -> risk -> propose` |
+| 09:30-16:00 trading days, every 30m | `monitor`: positions, net Greeks, expiries, daily-loss halt. Read-only, no LLM, halt-exempt |
+| 12:00 and 22:00 daily | `youtube.stockedup`, then `scout`. The 12:00 Scout triggers `director` when there are new in-session candidates |
+| 16:30 trading days | `auditor` |
+| 16:45 Fridays (`days: [fri]`) | `scorecard` (weekly) |
+
+- One Hermes cron job, `arc-routines-tick`, runs every 5m with `--no-agent`. It runs
+  `hermes/routines/arc_routines_tick.py`; install it with `hermes/routines/install.sh`.
+  Success prints nothing. If the tick crashes or times out, Hermes alerts #project-arc.
+- Heartbeats post to the #arc-investor thread for the next session. Posts go to today's
+  thread only on a trading day before `heartbeat.day_rollover` (20:00). Later posts go to
+  the next session's thread: a 22:00 Scout run posts in tomorrow's thread, and a Sunday
+  22:00 run posts in Monday's. Quiet jobs, sources and `monitor`, fold into the next
+  persona line, one entry per job. `JobResult.notice` posts immediately (halt, expiring
+  positions).
+- YouTube summaries show the run's caption outcome (ok, rate_limited, empty, error,
+  skipped by breaker/cooldown), audio fallbacks with wall time, and the current
+  captions cooldown.
+- `arc routines tick --dry-run --step 5m --since ... --now ...` simulates each cron tick
+  over a window.
+
 ## Repo layout
 
 ```
