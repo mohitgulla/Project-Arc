@@ -239,6 +239,13 @@ class Order(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class TranscriptSource(StrEnum):
+    """How a YouTube transcript was produced (E4.1b)."""
+
+    CAPTIONS = "captions"
+    AUDIO = "audio"
+
+
 class RawDoc(BaseModel):
     """A raw document ingested by a source connector.
 
@@ -256,3 +263,7 @@ class RawDoc(BaseModel):
         description="Tickers mentioned or associated with this document",
     )
     content_hash: str = Field("", description="SHA-256 hex digest of source+url for dedupe")
+    transcript_source: TranscriptSource | None = Field(
+        None,
+        description="YouTube only: whether the text came from captions or local audio STT",
+    )

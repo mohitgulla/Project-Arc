@@ -32,6 +32,7 @@ def test_arc_package_imports() -> None:
         "arc.ingest.edgar",
         "arc.ingest.earnings",
         "arc.ingest.youtube",
+        "arc.ingest.transcribe",
         "arc.features",
         "arc.personas",
         "arc.gate",

@@ -1,7 +1,10 @@
 """YouTube transcript connector.
 
 Downloads captions from configured YouTube channels using ``yt-dlp``.
-Yields one ``RawDoc`` per video with the transcript text.
+Yields one ``RawDoc`` per video with the transcript text. When a video has
+no captions, falls back to local audio transcription (E4.1b, D15; see
+:mod:`arc.ingest.transcribe`). The text is prefixed with
+``[transcript:captions]`` or ``[transcript:audio]``.
 
 Incremental: persists the latest video upload date per channel as
 the cursor.
@@ -12,6 +15,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -21,7 +26,14 @@ if TYPE_CHECKING:
 import structlog
 
 from arc.ingest.store import IngestCursorRepo, RawDocRepo, content_hash
-from arc.models import RawDoc
+from arc.ingest.transcribe import (
+    MlxWhisperTranscriber,
+    Transcriber,
+    TranscriptionError,
+    resolve_ffmpeg,
+    transcribe_video_audio,
+)
+from arc.models import RawDoc, TranscriptSource
 
 if TYPE_CHECKING:
     from arc.config import ArcSettings
@@ -176,14 +188,119 @@ def _published_at(info: dict, fallback_date: str) -> datetime:
         return datetime.now(UTC)
 
 
+# ---------------------------------------------------------------------------
+# Audio-transcription fallback (E4.1b, D15)
+# ---------------------------------------------------------------------------
+
+TRANSCRIPT_PREFIX = {
+    TranscriptSource.CAPTIONS: "[transcript:captions]",
+    TranscriptSource.AUDIO: "[transcript:audio]",
+}
+
+
+def transcript_source_of(text: str) -> TranscriptSource | None:
+    """Recover how a stored YouTube doc was transcribed from its text prefix."""
+    for src, prefix in TRANSCRIPT_PREFIX.items():
+        if text.startswith(prefix):
+            return src
+    return None
+
+
+def _video_age_minutes(info: dict, now: datetime) -> float | None:
+    """Minutes since upload, or None if the upload time is unknown.
+
+    Only an exact timestamp counts; a date-only ``upload_date`` can't tell a
+    video uploaded five minutes ago from one uploaded this morning.
+    """
+    for key in ("release_timestamp", "timestamp"):
+        ts = info.get(key)
+        if isinstance(ts, int | float):
+            return (now - datetime.fromtimestamp(ts, tz=UTC)).total_seconds() / 60
+    return None
+
+
+@dataclass
+class _AudioBudget:
+    """Per-run guard rails for audio transcription."""
+
+    remaining: int
+    grace_minutes: int
+    max_minutes: int
+    force: bool
+    now: datetime
+
+    def skip_reason(self, info: dict) -> str | None:
+        """Why this video must not be audio-transcribed now, or None if it may."""
+        if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
+            return "live_or_upcoming"
+        duration = info.get("duration")
+        if not isinstance(duration, int | float) or duration <= 0:
+            return "unknown_duration"
+        if duration > self.max_minutes * 60:
+            return "too_long"
+        if not self.force:
+            age = _video_age_minutes(info, self.now)
+            if age is None or age < self.grace_minutes:
+                return "within_caption_grace"
+        if self.remaining <= 0:
+            return "run_cap_reached"
+        return None
+
+
+def _audio_transcript(
+    video_url: str,
+    info: dict,
+    budget: _AudioBudget,
+    transcriber: Transcriber,
+    ffmpeg_bin: str,
+) -> str:
+    reason = budget.skip_reason(info)
+    if reason is not None:
+        log.info(
+            "youtube.audio_skipped",
+            url=video_url,
+            reason=reason,
+            duration_s=info.get("duration"),
+            max_minutes=budget.max_minutes,
+        )
+        return ""
+    budget.remaining -= 1
+    started = time.monotonic()
+    try:
+        text = transcribe_video_audio(video_url, transcriber, ffmpeg=resolve_ffmpeg(ffmpeg_bin))
+    except TranscriptionError as exc:
+        log.warning("youtube.audio_failed", url=video_url, error=str(exc)[:300])
+        return ""
+    log.info(
+        "youtube.audio_transcribed",
+        url=video_url,
+        backend=transcriber.name,
+        duration_s=info.get("duration"),
+        wall_s=round(time.monotonic() - started, 1),
+        chars=len(text),
+    )
+    return text
+
+
 def fetch_youtube(
     conn: sqlite3.Connection,
     settings: ArcSettings,
+    *,
+    force_audio: bool = False,
+    transcriber: Transcriber | None = None,
+    max_videos: int = 5,
+    now: datetime | None = None,
 ) -> list[RawDoc]:
     """Fetch transcripts from configured YouTube channels.
 
-    Returns only newly stored documents. A video whose captions are not yet
-    available (YouTube generates auto-captions some time after upload) is not
+    Transcript order: manual subs → auto-captions → local audio transcription.
+    Audio is used only for videos older than ``yt_caption_grace_minutes`` (so we
+    don't transcribe what YouTube is about to caption), no longer than
+    ``yt_max_audio_minutes``, and at most ``yt_max_audio_per_run`` times per run.
+    ``force_audio`` skips captions entirely and ignores the grace period (the
+    length and per-run caps still apply).
+
+    Returns only newly stored documents. A video with no transcript is not
     stored, so it is retried on the next run instead of being deduped forever.
     """
     cursor_repo = IngestCursorRepo(conn)
@@ -194,6 +311,14 @@ def fetch_youtube(
         log.warning("youtube.no_channels_configured")
         return []
 
+    budget = _AudioBudget(
+        remaining=settings.yt_max_audio_per_run,
+        grace_minutes=settings.yt_caption_grace_minutes,
+        max_minutes=settings.yt_max_audio_minutes,
+        force=force_audio,
+        now=now or datetime.now(UTC),
+    )
+    stt: Transcriber = transcriber or MlxWhisperTranscriber(model=settings.whisper_model)
     results: list[RawDoc] = []
 
     for channel_url in channels:
@@ -201,7 +326,7 @@ def fetch_youtube(
         last_date = cursor_repo.get(cursor_key) or ""
 
         log.info("youtube.fetching", channel=channel_url, cursor=last_date)
-        videos = _get_recent_videos(channel_url, max_videos=5)
+        videos = _get_recent_videos(channel_url, max_videos=max_videos)
 
         newest_date = last_date
 
@@ -225,14 +350,19 @@ def fetch_youtube(
             if upload_date and upload_date < last_date:
                 continue
 
-            transcript = _get_transcript(info)
+            source = TranscriptSource.CAPTIONS
+            transcript = "" if force_audio else _get_transcript(info)
+            if not transcript and info:
+                transcript = _audio_transcript(video_url, info, budget, stt, settings.ffmpeg_bin)
+                source = TranscriptSource.AUDIO
             if not transcript:
                 log.info("youtube.no_transcript_yet", url=video_url)
                 continue
 
             title = info.get("title") or video.get("title", "")
             channel = info.get("channel") or info.get("uploader") or ""
-            text = f"[{channel}] [{title}] {transcript}" if channel else f"[{title}] {transcript}"
+            header = f"[{channel}] [{title}]" if channel else f"[{title}]"
+            text = f"{TRANSCRIPT_PREFIX[source]} {header} {transcript}"
             tickers = _extract_tickers(text, settings.universe)
 
             doc = RawDoc(
@@ -242,6 +372,7 @@ def fetch_youtube(
                 text=text,
                 tickers_hint=tickers,
                 content_hash=h,
+                transcript_source=source,
             )
 
             doc_id = doc_repo.insert(
