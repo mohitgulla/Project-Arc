@@ -16,6 +16,7 @@ from unittest import mock
 import pytest
 
 from arc.config import ArcSettings
+from arc.ingest.caption_backoff import CaptionResult, CaptionStatus
 from arc.ingest.transcribe import (
     FixtureTranscriber,
     MlxWhisperTranscriber,
@@ -119,10 +120,17 @@ def _run(db, settings, infos, *, force=False, tx=None, fail_ffmpeg=False, subs="
     tx = tx or FixtureTranscriber(text="spy is holding 580 support")
     with (
         mock.patch("subprocess.run", side_effect=tools),
-        mock.patch("arc.ingest.youtube._download_subtitle", return_value=subs) as dl,
+        mock.patch(
+            "arc.ingest.youtube._download_subtitle",
+            return_value=CaptionResult.ok(subs)
+            if subs
+            else CaptionResult(CaptionStatus.EMPTY, http_status=200),
+        ) as dl,
         mock.patch("arc.ingest.youtube.resolve_ffmpeg", return_value=FFMPEG),
     ):
-        docs = fetch_youtube(db, settings, force_audio=force, transcriber=tx, now=NOW)
+        docs = fetch_youtube(
+            db, settings, force_audio=force, transcriber=tx, now=NOW, sleep=lambda _s: None
+        )
     return docs, tools, tx, dl
 
 
