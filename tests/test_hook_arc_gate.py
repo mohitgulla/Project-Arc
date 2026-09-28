@@ -220,6 +220,32 @@ def test_policy_import_failure_fails_closed(monkeypatch: pytest.MonkeyPatch) -> 
     assert "failing closed" in out["message"]
 
 
+def test_ledger_prunes_expired_ids(tmp_path: Path) -> None:
+    """Recording an id drops ids whose token has expired; live and unparseable ids stay."""
+    mod = load_hook_module()
+    from arc.gate.token import parse_any
+
+    arc1 = signed_token(proposal())
+    exp = parse_any(arc1).expires_epoch
+    arc2 = "arc2.x.y.1.2.3.99.sig.s1"  # unparseable arc2 id: kept
+    ledger = tmp_path / "arc-gate" / "used_order_ids"
+    mod._record_id(ledger, arc1, exp - 60)
+    mod._record_id(ledger, arc2, exp - 60)
+    mod._record_id(ledger, "not-a-token", exp - 60)
+    assert mod._used_ids(ledger) == frozenset({arc1, arc2, "not-a-token"})
+    mod._record_id(ledger, "new-id", exp + 1)  # the arc1 token is now expired
+    assert mod._used_ids(ledger) == frozenset({arc2, "not-a-token", "new-id"})
+    from tests.test_gate_band import band_token
+
+    band = band_token()
+    step_id = band + ".s2"
+    band_exp = parse_any(band).expires_epoch
+    mod._record_id(ledger, step_id, band_exp - 1)
+    assert step_id in mod._used_ids(ledger)
+    mod._record_id(ledger, "later", band_exp)  # expired arc2 step id is pruned too
+    assert step_id not in mod._used_ids(ledger)
+
+
 def test_secret_from_settings_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     mod = load_hook_module()
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
