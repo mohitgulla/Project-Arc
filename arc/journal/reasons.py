@@ -134,6 +134,7 @@ class ReasonCode(StrEnum):
     GATE_RULE_ERROR = "gate:rule_error"
     GATE_PRICE_BAND = "gate:price_band"
     GATE_CLOSE_MISMATCH = "gate:close_mismatch"
+    GATE_MISSING_GREEKS = "gate:missing_greeks"
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"

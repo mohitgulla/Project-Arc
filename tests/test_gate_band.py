@@ -259,6 +259,7 @@ def _call_spread(long_p: str = "37.625", short_p: str = "36.135"):
         short_strike=737,
         short_premium=short_p,
         as_of=G.AS_OF,
+        market=G.MarketInputs(spot=772.0, r=0.04, ivs={C736: 0.2, C737: 0.2}),
     )
 
 

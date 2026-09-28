@@ -1297,6 +1297,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
         except (LookupError, ValueError) as exc:
             log.warning("pipeline.reprice_failed", ticker=t, error=str(exc))
             skip(t, "reprice_failed", ReasonCode.REPRICE_FAILED, str(exc)[:500])
+            lines.append(f"{t}: reprice failed ({str(exc)[:200]})")
             continue
         st = priced.structure
         market = market_snapshot(priced.contracts, earnings)
