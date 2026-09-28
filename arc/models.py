@@ -232,3 +232,27 @@ class Order(BaseModel):
     client_order_id: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# RawDoc (ingestion output — E4.1)
+# ---------------------------------------------------------------------------
+
+
+class RawDoc(BaseModel):
+    """A raw document ingested by a source connector.
+
+    Each connector yields ``RawDoc`` instances which are deduplicated
+    by ``content_hash`` (SHA-256 of ``source + url``) and stored in
+    the audit database.
+    """
+
+    source: str = Field(..., description="Connector name: rss | edgar | earnings | youtube")
+    url: str = Field(..., description="Canonical URL of the source document")
+    published_at: datetime
+    text: str = Field(..., description="Extracted plain text / transcript")
+    tickers_hint: list[str] = Field(
+        default_factory=list,
+        description="Tickers mentioned or associated with this document",
+    )
+    content_hash: str = Field("", description="SHA-256 hex digest of source+url for dedupe")
