@@ -210,17 +210,21 @@ class TestScout:
             candidates=[cand(), cand("XOM", stance=Stance.BEARISH, catalyst_date=None)],
             rejected={"not_in_universe": 2, "schema": 1},
             rejected_items={"not_in_universe": ["PLTR", "AAPL"], "schema": ["TSLA"]},
+            rationales={"NVDA": "Buyback plus raised guidance."},
             run_id="run-1",
             chain_run_id="chain-1",
         )
-        assert view.text == view.blocks[0]["text"]["text"] == "[Scout] Scan: 12 docs → 2 candidates"
+        assert (
+            view.text == view.blocks[0]["text"]["text"] == "[Scout] Scan: 12 sources → 2 candidates"
+        )
         text = _all(view)
         assert "*3* accepted this run · 3 rejected" in text
         assert (
-            "• *NVDA* bullish · earnings Oct 28 · conf 75% · "
-            "<https://www.sec.gov/x.htm|sec.gov> <https://example.com/a|example.com>"
+            "• *NVDA* bullish · earnings Oct 28 · 75% confidence · 2 sources\n"
+            "   Buyback plus raised guidance."
         ) in text
-        assert "• *XOM* bearish · earnings · conf 75%" in text
+        assert "• *XOM* bearish · earnings · 75% confidence · 2 sources" in text
+        assert "http" not in text  # owner: no source links on the Scout card
         assert "• not in universe (2): PLTR, AAPL" in text
         assert "• invalid reply (1): TSLA" in text
         assert _footer(view) == "run `run-1` · chain `chain-1`"
@@ -229,13 +233,13 @@ class TestScout:
     def test_empty_run_and_failed_batches(self) -> None:
         view = D.scout_card(docs=1, accepted=0, candidates=[], rejected={}, failed_batches=2)
         text = _all(view)
-        assert view.text == "[Scout] Scan: 1 doc → 0 candidates"
-        assert "*Candidates today*\nnone" in text
+        assert view.text == "[Scout] Scan: 1 source → 0 candidates"
+        assert "*Candidates*\nnone" in text
         assert ":warning: 2 failed batches" in text
         assert "Rejected" not in text
         assert _footer(view) == " "
 
-    def test_escapes_sources_and_rejected_names(self) -> None:
+    def test_escapes_rationale_and_rejected_names(self) -> None:
         view = D.scout_card(
             docs=1,
             accepted=1,
@@ -244,12 +248,12 @@ class TestScout:
             ],
             rejected={"schema": 1},
             rejected_items={"schema": [EVIL]},
+            rationales={"NVDA": EVIL},
         )
         text = _all(view)
-        assert "<https://ex.com/a?b=&lt;x&gt;%7Cy|ex.com>" in text
-        assert "doc-&lt;b&gt;" in text
-        assert "+2" in text  # only the first three sources are linked
-        assert EVIL_ESC in text and "<!channel>" not in text
+        assert "ex.com" not in text and "doc-" not in text  # sources are counted, not shown
+        assert "5 sources" in text
+        assert text.count(EVIL_ESC) == 2 and "<!channel>" not in text
 
     def test_many_candidates_clip_under_section_limit(self) -> None:
         many = [cand(f"T{i}", sources=[f"https://example.com/{'z' * 80}/{i}"]) for i in range(80)]
@@ -279,16 +283,19 @@ class TestDirector:
             out,
             candidates=5,
             dropped=[("AAPL", "not_a_candidate"), ("XOM", "not_picked"), ("TSLA", "not_picked")],
+            evidence={"SPY": "Scout neutral · macro catalyst Oct 28"},
             run_id="r",
             chain_run_id="c",
         )
-        assert view.text == "[Director] Shortlist: 2 of 5 • market risk_on"
+        assert view.text == "[Director] Ranked: 2 / 5 • Market Risk ON"
         text = _all(view)
         assert (
-            "*[Director] SPY*\nrank 1 · neutral · confidence 70% · Iron Condor\n"
-            "Range-bound into FOMC.\n_Regime:_ Low realised vol."
+            "*SPY*\nRank 1 · Neutral · 70% confidence · Iron Condor\n"
+            "Thesis: Range-bound into FOMC.\nRegime: Low realised vol.\n"
+            "Evidence: Scout neutral · macro"
         ) in text
-        assert "rank 2 · bullish · confidence 70% · Vertical Spread" in text
+        assert "Rank 2 · Bullish · 70% confidence · Vertical Spread" in text
+        assert "[Director] SPY" not in text and "_Regime:_" not in text
         assert "• not a Scout candidate (1): AAPL" in text
         assert "• not picked by Director (2): XOM, TSLA" in text
         assert "*[Director] Session notes*\nTwo setups." in text
@@ -308,7 +315,7 @@ class TestDirector:
     def test_long_thesis_is_clipped(self) -> None:
         out = DirectorOutput(shortlist=[ranked(thesis=LONG)], market_regime="", session_notes=LONG)
         view = D.director_card(out, candidates=1)
-        assert view.text.endswith("market unknown")
+        assert view.text.endswith("Market Unknown")
         _assert_slack_limits(view)
 
 
@@ -331,14 +338,20 @@ class TestQuant:
         assert view.text == "[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78"
         text = _all(view)
         assert (
-            "*SPY Iron Condor · Oct 30 (35 DTE)*\n```LONG   1x      740P\nSHORT  1x      745P\n"
-            "SHORT  1x      798C\nLONG   1x      803C```"
+            "*SPY Iron Condor · Oct 30 (35 DTE)*\nLong 1x 740P\nShort 1x 745P\n"
+            "Short 1x 798C\nLong 1x 803C"
         ) in text
-        assert "*Net*\nCredit 1.66/sh ($166)" in text
-        assert "*Payoff*\nMax gain $165.55\nMax loss $334.45" in text
-        assert "*Edge*\nPoP 62%\nEV -$21.78/contract\nCost 386 bps" in text
-        assert "*Breakevens*\n743.34 / 799.66" in text
-        assert "ν -17.11 $/vol pt · Θ +3.14 $/day" in text
+        assert "```" not in text  # legs are plain lines, like the proposal card
+        assert "*Entry (1 contract)*\nCredit 1.66/sh\n$166 per contract" in text
+        assert "*Payoff*\nMax gain $165.55\nMax loss $334.45\nRisk/Reward 2.02 : 1" in text
+        assert (
+            "*Edge (hold to expiry)*\nPoP 62%\nEV -$21.78 per contract\nCost 386 bps round trip"
+        ) in text
+        assert "*Breakevens*\n743.34\n799.66" in text
+        assert (
+            "*Greeks (1 contract)*\nDelta -2.0 sh\nGamma -0.24 sh\n"
+            "Vega -$17.11 / vol pt\nTheta +$3.14 / day"
+        ) in text
         assert "*Confidence*\n70%" in text
         assert "*[Quant] Rationale*\nBalanced deltas." in text
         assert "• not in the scanner menu (1): SPY" in text
@@ -421,14 +434,14 @@ class TestRisk:
         )
         assert view.text == "[Risk] Review: SPY moderate +1 more • suggests 20"
         text = _all(view)
-        assert "*SPY Iron Condor*\nRating *moderate*" in text
-        assert "*Suggested size*\n20 contract(s) (advisory)" in text
-        assert "*Max loss*\n6.7% of equity" in text
+        assert "*SPY Iron Condor*\nRating *Moderate*" in text
+        assert "*Size*\nSuggested 20 (advisory)" in text
+        assert "*Max loss*\n6.7% of equity (Risk estimate)" in text
         assert "*Concentration*\n:warning: over limit" in text
         assert ":warning: 1 concentration" in text and "1 not assessed" in text
         assert (
-            "*[Risk] SPY review*\n• _Greek budget:_ Small short vega.\n"
-            "• _Calendar:_ FOMC inside the trade.\nDefined-risk condor."
+            "*[Risk] SPY review*\nGreek budget: Small short vega.\n"
+            "Calendar: FOMC inside the trade.\nDefined-risk condor."
         ) in text
         assert "*[Risk] Portfolio*\nFlat book." in text
         assert "*[Risk] Advisory*\nMind FOMC." in text
@@ -436,6 +449,33 @@ class TestRisk:
         assert "• not assessed by Risk (1): XOM vertical_spread" in text
         assert _footer(view) == "run `r` · chain `c`"
         _assert_slack_limits(view)
+
+    def test_sized_by_d18_cap(self) -> None:
+        from decimal import Decimal
+
+        from arc.sizing import size_contracts
+
+        out = RiskOutput(
+            assessments=[assessment(), assessment(ticker="XOM", sizing_suggestion=0)],
+            portfolio_summary="",
+            advisory_notes="",
+        )
+        eq = Decimal(100_000)
+        sized = {
+            ("SPY", "iron_condor"): size_contracts(
+                suggestion=20, max_loss_per_contract=Decimal("334.45"), equity=eq, cap_pct=0.05
+            ),
+            ("XOM", "iron_condor"): size_contracts(
+                suggestion=0, max_loss_per_contract=Decimal(300), equity=eq, cap_pct=0.05
+            ),
+        }
+        view = D.risk_card(out, sized=sized, cap_pct=0.05)
+        assert view.text == "[Risk] Review: SPY moderate +1 more • 14 contracts"
+        text = _all(view)
+        assert "*Size*\nSuggested 20\nSized 14 (capped by 5% cap)" in text
+        assert "*Max loss (sized)*\n$4,682.30\n4.68% of equity" in text
+        assert "*Size*\nSuggested 0\nNo trade: Risk suggested 0 contracts" in text
+        assert "_" not in text.replace("iron_condor", "")  # no italics anywhere
 
     def test_nothing_assessed_and_escaping(self) -> None:
         view = D.risk_card(RiskOutput(assessments=[], portfolio_summary=EVIL, advisory_notes=""))
@@ -459,10 +499,11 @@ class TestInvestor:
         view = D.investor_card(plan(), run_id="r")
         assert view.text == "[Investor] Order: SPY Iron Condor • x3 • limit -1.25"
         text = _all(view)
-        assert "limit order · 2 improvement steps · timeout 120s" in text
+        assert "Limit order · 3 attempts max · timeout 120s" in text
         assert (
-            "*Order plan*\n• start -1.25 (mid)\n"
-            "• step 1: -1.22 (wait 30s)\n• step 2: -1.20 (wait 30s)"
+            "*Order plan (same strikes, limit price steps)*\n1. -1.25 at mid\n2. -1.22\n3. -1.20\n"
+            "Each attempt waits 30s; if unfilled it is cancelled and the cancel is confirmed "
+            "before the next limit is sent"
         ) in text
         assert "Result" not in text
         assert "*[Investor] Notes*\nStart at mid." in text
@@ -484,7 +525,7 @@ class TestInvestor:
         assert "*Filled*\n3 of 3" in text
         assert "*Fill price*\n-1.22" in text
         assert "*Slippage vs mid*\n+0.03/sh (+$9.00 total, + = cost)" in text
-        assert "*Steps used*\n1 of 2" in text
+        assert "*Filled on attempt*\n2 of 3" in text
         assert "Filled at step 1." in text
         assert res.slippage == pytest.approx(0.03)
 
@@ -494,6 +535,7 @@ class TestInvestor:
         text = _all(view)
         assert view.text.endswith(" • cancelled")
         assert ":x: cancelled" in text and "*Filled*\n0 of 3" in text
+        assert "*Filled on attempt*\nnone of 3" in text
         assert "Slippage" not in text and "Fill price" not in text
         assert res.slippage is None
         assert EVIL_ESC in text
@@ -510,19 +552,35 @@ class TestInvestor:
 
 class TestAuditor:
     def test_journal(self) -> None:
-        view = D.auditor_card(journal(), run_id="r")
-        assert view.blocks[0]["text"]["text"] == "[Auditor] Journal: Sep 28 • P&L +$312 • 1 anomaly"
-        assert view.text == "[Auditor] Journal: Sep 28 • P&amp;L +$312 • 1 anomaly"
+        perf = D.Performance(
+            day_pnl=312.0,
+            day_pct=0.0031,
+            mtd_pnl=1184.0,
+            mtd_pct=0.0119,
+            ytd_pnl=-250.0,
+            ytd_pct=-0.0025,
+            equity=100_812.0,
+        )
+        view = D.auditor_card(journal(), performance=perf, run_id="r")
+        assert view.blocks[0]["text"]["text"] == "[Auditor] Journal: Sep 28 • P&L +$312 (+0.3%)"
+        assert view.text == "[Auditor] Journal: Sep 28 • P&amp;L +$312 (+0.3%)"
+        assert "anomal" not in view.text  # owner: anomalies only in the body
         text = _all(view)
-        assert "reconciliation :white_check_mark: *clean*" in text
-        assert "*Daily P&L*\n+$312.00" in text
-        assert "*Open positions*\n2" in text and "*Closed today*\n1" in text
-        assert "*Fills reviewed*\n3" in text
-        assert "• *warning* fill_discrepancy: Fill worse than mid. (orders o-1)" in text
-        assert "• *Timing*: Mid moved. → _Wait less._" in text
+        assert "Reconciliation :white_check_mark: *clean* · equity $100,812" in text
+        assert "*Performance*\nDay +$312 (+0.3%)\nMTD +$1,184 (+1.2%)\nYTD -$250 (-0.2%)" in text
+        assert "*Positions*\nOpen 2\nClosed today 1\nFills reviewed 3" in text
+        assert (
+            "*Anomalies (1)*\n• *Warning* · Fill discrepancy: Fill worse than mid. (orders o-1)"
+        ) in text
+        assert "• *Timing*: Mid moved.\n   → Wait less." in text
         assert "*[Auditor] Journal*\nQuiet day." in text
         assert _footer(view) == "run `r`"
         _assert_slack_limits(view)
+
+    def test_without_performance_shows_na(self) -> None:
+        view = D.auditor_card(journal())
+        assert view.text == "[Auditor] Journal: Sep 28 • P&amp;L +$312"
+        assert "MTD n/a\nYTD n/a" in _all(view)
 
     def test_loss_no_anomalies_discrepancy(self) -> None:
         view = D.auditor_card(
@@ -535,10 +593,10 @@ class TestAuditor:
                 journal_narrative=EVIL,
             )
         )
-        assert view.blocks[0]["text"]["text"] == "[Auditor] Journal: bad • P&L -$46 • 0 anomalies"
+        assert view.blocks[0]["text"]["text"] == "[Auditor] Journal: bad • P&L -$46"
         text = _all(view)
-        assert ":warning: *discrepancies_found*" in text
-        assert "*Daily P&L*\n-$45.50" in text
+        assert ":warning: *discrepancies found*" in text
+        assert "Day -$46" in text
         assert "Anomalies" not in text and "Lessons" not in text
         assert EVIL_ESC in text
 
@@ -547,8 +605,15 @@ class TestAuditor:
             AnomalyReport(category="other", severity="info", description=LONG) for _ in range(5)
         ]
         view = D.auditor_card(journal(anomalies=many))
-        assert view.text.endswith("5 anomalies")
+        assert "*Anomalies (5)*" in _all(view)
         _assert_slack_limits(view)
+
+
+def test_regime_names() -> None:
+    assert D.regime_name("risk_on") == "Risk ON"
+    assert D.regime_name("RISK-OFF") == "Risk OFF"
+    assert D.regime_name("range_bound") == "Range Bound"
+    assert D.regime_name("") == "Unknown"
 
 
 def test_unknown_reason_key_is_humanised() -> None:

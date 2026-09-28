@@ -38,15 +38,19 @@ if TYPE_CHECKING:
         QuantLeg,
         QuantOutput,
         QuantStructureOut,
+        RiskAssessment,
         RiskOutput,
     )
+    from arc.sizing import SizingResult
 
 __all__ = [
     "ExecutionResult",
+    "Performance",
     "auditor_card",
     "director_card",
     "investor_card",
     "quant_card",
+    "regime_name",
     "risk_card",
     "scout_card",
     "structure_name",
@@ -168,12 +172,17 @@ def scout_card(
     candidates: Sequence[Candidate],
     rejected: Mapping[str, int],
     rejected_items: Mapping[str, Sequence[str]] | None = None,
+    rationales: Mapping[str, str] | None = None,
     failed_batches: int = 0,
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Scout] Scan: 12 docs → 3 candidates`` with one row per candidate."""
-    title = f"[Scout] Scan: {_plural(docs, 'doc')} → {_plural(len(candidates), 'candidate')}"
+    """``[Scout] Scan: 12 sources → 3 candidates``; one evidence line per candidate.
+
+    No source links (owner, E5.5 review): the row carries the Scout's one-line
+    rationale and a source count; the URLs stay in the audit store.
+    """
+    title = f"[Scout] Scan: {_plural(docs, 'source')} → {_plural(len(candidates), 'candidate')}"
     n_rej = sum(rejected.values())
     blocks = _head(
         title,
@@ -184,16 +193,16 @@ def scout_card(
         else "",
     )
     rows = []
-    for c in candidates:
+    for c in sorted(candidates, key=lambda c: -c.confidence):
         when = f" {c.catalyst_date:%b %d}" if c.catalyst_date else ""
-        links = " ".join(_link(s) for s in c.sources[:3])
-        more = f" +{len(c.sources) - 3}" if len(c.sources) > 3 else ""
-        rows.append(
-            f"• *{B.esc(c.ticker)}* {c.stance.value} · {c.catalyst_type.value}{when} · "
-            f"conf {_pct(c.confidence)} · {links}{more}"
+        facts = (
+            f"{c.stance.value} · {c.catalyst_type.value}{when} · {_pct(c.confidence)} confidence"
+            f" · {_plural(len(c.sources), 'source')}"
         )
+        why = (rationales or {}).get(c.ticker, "").strip()
+        rows.append(f"• *{B.esc(c.ticker)}* {facts}" + (f"\n   {B.esc(why)}" if why else ""))
     blocks.append(B.divider())
-    blocks.append(_section("Candidates today", rows) or _section("Candidates today", ["none"]))
+    blocks.append(_section("Candidates", rows) or _section("Candidates", ["none"]))
     items = [(t, reason) for reason, ts in (rejected_items or {}).items() for t in ts]
     blocks.append(_section("Rejected", _drops(rejected, items)))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
@@ -204,41 +213,62 @@ def scout_card(
 # ---------------------------------------------------------------------------
 
 
+_REGIME_NAMES = {"risk_on": "Risk ON", "risk_off": "Risk OFF", "unknown": "Unknown"}
+
+
+def regime_name(raw: str) -> str:
+    """Regime display text: ``risk_on`` → ``Risk ON``, ``range_bound`` → ``Range Bound``."""
+    key = raw.strip().lower().replace("-", "_").replace(" ", "_") or "unknown"
+    return _REGIME_NAMES.get(key, _title_case(key))
+
+
 def director_card(
     out: DirectorOutput,
     *,
     candidates: int,
     dropped: Sequence[tuple[str, str]] = (),
+    evidence: Mapping[str, str] | None = None,
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Director] Shortlist: 2 of 5 • market risk_on``; one section per pick.
+    """``[Director] Ranked: 2 / 5 • Market Risk ON``; one section per ranked pick.
 
     ``dropped`` is ``(ticker, reason_key)`` for every candidate not kept.
+    ``evidence`` is ticker → a pre-escaped one-line summary of the upstream Scout
+    data (stance, catalyst, confidence, sources) shown under the thesis.
     """
-    regime = out.market_regime.strip() or "unknown"
-    title = f"[Director] Shortlist: {len(out.shortlist)} of {candidates} • market {regime}"
+    regime = regime_name(out.market_regime)
+    title = f"[Director] Ranked: {len(out.shortlist)} / {candidates} • Market {regime}"
     blocks = _head(
         title,
-        f"*{len(out.shortlist)}* picked",
-        f"{len(dropped)} dropped",
-        f"market *{B.esc(regime)}*",
+        f"*{len(out.shortlist)}* ranked",
+        f"{len(dropped)} dropped" if dropped else "",
     )
-    blocks.append(B.divider())
-    for item in out.shortlist:
+    for item in sorted(out.shortlist, key=lambda i: i.rank):
+        blocks.append(B.divider())
         meta = (
-            f"rank {item.rank} · {B.esc(item.stance)} · confidence {_pct(item.confidence)} · "
+            f"Rank {item.rank} · {B.esc(item.stance.strip().capitalize())} · "
+            f"{_pct(item.confidence)} confidence · "
             f"{B.esc(_title_case(item.suggested_structure_type))}"
         )
-        body = f"{meta}\n{B.esc(item.thesis.strip())}"
+        lines = [f"*{B.esc(item.ticker)}*", meta]
+        if item.thesis.strip():
+            lines.append(f"Thesis: {B.esc(item.thesis.strip())}")
         if item.regime_context.strip():
-            body += f"\n_Regime:_ {B.esc(item.regime_context.strip())}"
-        blocks.append(B.persona_section(Persona.DIRECTOR, B.esc(item.ticker), body, escape=False))
+            lines.append(f"Regime: {B.esc(item.regime_context.strip())}")
+        ev = (evidence or {}).get(item.ticker, "")
+        if ev:
+            lines.append(f"Evidence: {ev}")
+        blocks.append(
+            {"type": "section", "text": {"type": "mrkdwn", "text": B.clip("\n".join(lines))}}
+        )
     if not out.shortlist:
-        blocks.append(_section("Shortlist", ["nothing worth trading today"]))
+        blocks.append(_section("Ranked", ["nothing worth trading today"]))
     counts: dict[str, int] = {}
     for _, reason in dropped:
         counts[reason] = counts.get(reason, 0) + 1
+    if dropped:
+        blocks.append(B.divider())
     blocks.append(_section("Dropped", _drops(counts, dropped)))
     blocks.append(B.persona_section(Persona.DIRECTOR, "Session notes", out.session_notes))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
@@ -260,7 +290,8 @@ def structure_name(s: QuantStructureOut) -> str:
     return "Custom"
 
 
-def _legs_table(legs: Sequence[QuantLeg]) -> str:
+def _legs_lines(legs: Sequence[QuantLeg]) -> list[str]:
+    """Plain mrkdwn legs (D22: no code block): ``Short 1x 745P``; expiry only if legs differ."""
     multi_exp = len({leg.expiry for leg in legs}) > 1
     rows = []
     for leg in legs:
@@ -268,11 +299,20 @@ def _legs_table(legs: Sequence[QuantLeg]) -> str:
         exp = ""
         if multi_exp:
             try:
-                exp = f"{_dt.date.fromisoformat(leg.expiry):%b %d}  "
+                exp = f" {_dt.date.fromisoformat(leg.expiry):%b %d}"
             except ValueError:
-                exp = f"{leg.expiry[:10]}  "
-        rows.append(f"{leg.side.upper():<5}  {leg.ratio}x  {exp}{f'{leg.strike:g}{kind}':>8}")
-    return "```" + B.esc("\n".join(rows)) + "```"
+                exp = f" {leg.expiry[:10]}"
+        rows.append(
+            B.esc(f"{leg.side.strip().capitalize()} {leg.ratio}x {leg.strike:g}{kind}{exp}")
+        )
+    return rows
+
+
+def _risk_reward(s: QuantStructureOut) -> str:
+    """Risk/Reward = max loss / max gain (owner convention)."""
+    if s.max_gain is None or s.max_loss is None or not s.max_gain:
+        return "n/a"
+    return f"{s.max_loss / s.max_gain:.2f} : 1"
 
 
 def _expiry(s: QuantStructureOut) -> str:
@@ -303,32 +343,44 @@ def quant_card(
     else:
         title = "[Quant] Structures: none chosen"
     n_drop = sum((dropped or {}).values()) + len(no_chain)
-    blocks = _head(title, f"*{len(out.structures)}* chosen", f"{n_drop} dropped")
+    blocks = _head(
+        title,
+        f"*{len(out.structures)}* chosen",
+        f"{n_drop} dropped" if n_drop else "",
+        "per contract, before sizing (Risk sizes; the proposal card shows the sized position)",
+    )
     for s in out.structures:
         net = s.net_debit_credit
         word = "credit" if net < 0 else "debit"
         blocks.append(B.divider())
         blocks.append(
-            _section(f"{B.esc(s.ticker)} {structure_name(s)} · {_expiry(s)}", [_legs_table(s.legs)])
+            _section(f"{B.esc(s.ticker)} {structure_name(s)} · {_expiry(s)}", _legs_lines(s.legs))
         )
+        g = s.greeks
         blocks.extend(
             B.facts(
                 [
-                    ("Net", f"{word.capitalize()} {abs(net):.2f}/sh (${abs(net) * _MULT:,.0f})"),
-                    ("Payoff", f"Max gain {_money(s.max_gain)}\nMax loss {_money(s.max_loss)}"),
                     (
-                        "Edge",
-                        f"PoP {_pct(s.pop)}\nEV {_money(s.ev_per_contract)}/contract\n"
-                        f"Cost {s.cost_bps:.0f} bps",
+                        "Entry (1 contract)",
+                        f"{word.capitalize()} {abs(net):.2f}/sh\n"
+                        f"${abs(net) * _MULT:,.0f} per contract",
                     ),
                     (
-                        "Breakevens",
-                        " / ".join(f"{b:.2f}" for b in s.breakevens) or "n/a",
+                        "Payoff",
+                        f"Max gain {_money(s.max_gain)}\nMax loss {_money(s.max_loss)}\n"
+                        f"Risk/Reward {_risk_reward(s)}",
                     ),
                     (
-                        "Greeks (1 lot)",
-                        f"Δ {s.greeks.delta:+.1f} · Γ {s.greeks.gamma:+.2f}\n"
-                        f"ν {s.greeks.vega / 100:+.2f} $/vol pt · Θ {s.greeks.theta:+.2f} $/day",
+                        "Edge (hold to expiry)",
+                        f"PoP {_pct(s.pop)}\nEV {_money(s.ev_per_contract)} per contract\n"
+                        f"Cost {s.cost_bps:.0f} bps round trip",
+                    ),
+                    ("Breakevens", "\n".join(f"{b:.2f}" for b in s.breakevens) or "n/a"),
+                    (
+                        "Greeks (1 contract)",
+                        f"Delta {g.delta:+.1f} sh\nGamma {g.gamma:+.2f} sh\n"
+                        f"Vega {_money(g.vega / 100, signed=True)} / vol pt\n"
+                        f"Theta {_money(g.theta, signed=True)} / day",
                     ),
                     ("Confidence", _pct(s.confidence)),
                 ]
@@ -352,19 +404,32 @@ def quant_card(
 def risk_card(
     out: RiskOutput,
     *,
+    sized: Mapping[tuple[str, str], SizingResult] | None = None,
+    cap_pct: float | None = None,
     dropped: Mapping[str, int] | None = None,
     dropped_items: Sequence[tuple[str, str]] = (),
     not_assessed: Sequence[str] = (),
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Risk] Review: SPY moderate • suggests 20``; one section per assessment."""
+    """``[Risk] Review: SPY moderate • 14 contracts``; one section per assessment.
+
+    ``sized`` is the deterministic D18 result per ``(ticker, structure_type)``
+    (``min(suggestion, floor(cap × equity / max loss))``), so the card shows the size
+    the proposal will actually carry next to Risk's advisory suggestion.
+    """
+    sized = sized or {}
+
+    def size_of(a: RiskAssessment) -> str:
+        r = sized.get((a.ticker, a.structure_type))
+        if r is None:
+            return f"suggests {a.sizing_suggestion}"
+        return _plural(r.contracts, "contract") if r.trade else "no trade"
+
     if out.assessments:
         a0 = out.assessments[0]
         more = f" +{len(out.assessments) - 1} more" if len(out.assessments) > 1 else ""
-        title = (
-            f"[Risk] Review: {a0.ticker} {a0.risk_rating}{more} • suggests {a0.sizing_suggestion}"
-        )
+        title = f"[Risk] Review: {a0.ticker} {a0.risk_rating}{more} • {size_of(a0)}"
     else:
         title = "[Risk] Review: nothing assessed"
     warn = sum(a.concentration_warning for a in out.assessments)
@@ -374,27 +439,39 @@ def risk_card(
         f":warning: {warn} concentration" if warn else "",
         f"{len(not_assessed)} not assessed" if not_assessed else "",
     )
+    cap = f"{cap_pct:.0%} cap" if cap_pct is not None else "equity cap"
     for a in out.assessments:
         blocks.append(B.divider())
+        r = sized.get((a.ticker, a.structure_type))
+        if r is None:
+            size_txt = f"Suggested {a.sizing_suggestion} (advisory)"
+            loss_txt = f"{a.max_loss_pct_equity:.1%} of equity (Risk estimate)"
+        elif r.trade:
+            capped = f" (capped by {cap})" if r.contracts < r.suggestion else ""
+            size_txt = f"Suggested {r.suggestion}\nSized {r.contracts}{capped}"
+            loss_txt = f"{_money(float(r.max_loss_total))}\n{r.pct_equity:.2%} of equity"
+        else:
+            size_txt = f"Suggested {r.suggestion}\nNo trade: {B.esc(r.reason or '')}"
+            loss_txt = "n/a"
         blocks.extend(
             B.facts(
                 [
                     (
                         f"{B.esc(a.ticker)} {_title_case(a.structure_type)}",
-                        f"Rating *{B.esc(a.risk_rating)}*",
+                        f"Rating *{B.esc(a.risk_rating.strip().capitalize())}*",
                     ),
-                    ("Suggested size", f"{a.sizing_suggestion} contract(s) (advisory)"),
-                    ("Max loss", f"{a.max_loss_pct_equity:.1%} of equity"),
+                    ("Size", size_txt),
+                    ("Max loss (sized)" if r is not None else "Max loss", loss_txt),
                     (
                         "Concentration",
-                        ":warning: over limit" if a.concentration_warning else "ok",
+                        ":warning: over limit" if a.concentration_warning else "OK",
                     ),
                 ]
             )
         )
         lines = [
-            f"• _Greek budget:_ {B.esc(a.greek_budget_impact.strip())}",
-            f"• _Calendar:_ {B.esc(a.calendar_concerns.strip())}",
+            f"Greek budget: {B.esc(a.greek_budget_impact.strip())}",
+            f"Calendar: {B.esc(a.calendar_concerns.strip())}",
         ]
         if a.narrative.strip():
             lines.append(B.esc(a.narrative.strip()))
@@ -460,20 +537,26 @@ def investor_card(
     )
     if result is not None:
         title += f" • {result.status.replace('_', ' ')}"
+    attempts = 1 + len(plan.improvement_steps)
     blocks = _head(
         title,
-        f"{plan.order_type} order",
-        _plural(len(plan.improvement_steps), "improvement step"),
+        f"{plan.order_type.capitalize()} order",
+        f"{attempts} attempts max",
         f"timeout {plan.timeout_seconds}s",
     )
-    steps = [
-        f"• step {s.step_number}: {s.price:+.2f} (wait {s.wait_seconds}s)"
-        for s in plan.improvement_steps
-    ]
-    blocks.append(B.divider())
-    blocks.append(
-        _section("Order plan", [f"• start {plan.initial_limit_price:+.2f} (mid)", *steps])
+    lines = [f"1. {plan.initial_limit_price:+.2f} at mid"]
+    prev_wait = plan.improvement_steps[0].wait_seconds if plan.improvement_steps else None
+    for s in plan.improvement_steps:
+        lines.append(f"{s.step_number + 1}. {s.price:+.2f}")
+    waits = {s.wait_seconds for s in plan.improvement_steps}
+    wait = f"{prev_wait}s" if len(waits) == 1 and prev_wait is not None else "per step"
+    rule = (
+        f"Each attempt waits {wait}; if unfilled it is cancelled and the cancel is confirmed "
+        "before the next limit is sent, so only one order is ever working. "
+        "Unfilled after the last attempt: cancel and stop."
     )
+    blocks.append(B.divider())
+    blocks.append(_section("Order plan (same strikes, limit price steps)", [*lines, rule]))
     if result is not None:
         pairs = [
             ("Result", f"{_STATUS_ICON[result.status]} {result.status.replace('_', ' ')}"),
@@ -490,7 +573,14 @@ def investor_card(
                     f"{slip:+.2f}/sh ({_money(usd, signed=True)} total, + = cost)",
                 )
             )
-        pairs.append(("Steps used", f"{result.steps_used} of {len(plan.improvement_steps)}"))
+        pairs.append(
+            (
+                "Filled on attempt",
+                f"{result.steps_used + 1} of {attempts}"
+                if result.filled_qty
+                else f"none of {attempts}",
+            )
+        )
         blocks.extend(B.facts(pairs))
         if result.detail.strip():
             blocks.append(B.summary(B.clip(B.esc(result.detail.strip()))))
@@ -510,39 +600,70 @@ def _day(raw: str) -> str:
         return raw[:20]
 
 
+class Performance(BaseModel):
+    """Account performance for the Auditor digest (E6.3 pnl_snapshots). $ and fractions."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    day_pnl: float
+    day_pct: float | None = None
+    mtd_pnl: float | None = None
+    mtd_pct: float | None = None
+    ytd_pnl: float | None = None
+    ytd_pct: float | None = None
+    equity: float | None = None
+
+
+def _pnl(v: float | None, pct: float | None) -> str:
+    if v is None:
+        return "n/a"
+    return _money0(v) + (f" ({pct:+.1%})" if pct is not None else "")
+
+
 def auditor_card(
     out: AuditorOutput,
     *,
+    performance: Performance | None = None,
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Auditor] Journal: Sep 28 • P&L +$312 • 1 anomaly``."""
-    n_anom = len(out.anomalies)
-    title = (
-        f"[Auditor] Journal: {_day(out.journal_date)} • P&L {_money0(out.daily_pnl)} • "
-        f"{n_anom} {'anomaly' if n_anom == 1 else 'anomalies'}"
-    )
+    """``[Auditor] Journal: Sep 28 • P&L +$312 (+0.3%)``; anomalies live in the body."""
+    perf = performance or Performance(day_pnl=out.daily_pnl)
+    title = f"[Auditor] Journal: {_day(out.journal_date)} • P&L {_pnl(perf.day_pnl, perf.day_pct)}"
     recon = out.reconciliation_status.strip() or "pending"
     icon = ":white_check_mark:" if recon == "clean" else ":warning:"
-    blocks = _head(title, f"reconciliation {icon} *{B.esc(recon)}*")
+    n_anom = len(out.anomalies)
+    blocks = _head(
+        title,
+        f"Reconciliation {icon} *{B.esc(recon.replace('_', ' '))}*",
+        f"equity {_money0(perf.equity).lstrip('+')}" if perf.equity is not None else "",
+    )
     blocks.extend(
         B.facts(
             [
-                ("Daily P&L", _money(out.daily_pnl, signed=True)),
-                ("Open positions", str(out.open_positions)),
-                ("Closed today", str(out.closed_today)),
-                ("Fills reviewed", str(out.fills_reviewed)),
+                (
+                    "Performance",
+                    f"Day {_pnl(perf.day_pnl, perf.day_pct)}\n"
+                    f"MTD {_pnl(perf.mtd_pnl, perf.mtd_pct)}\n"
+                    f"YTD {_pnl(perf.ytd_pnl, perf.ytd_pct)}",
+                ),
+                (
+                    "Positions",
+                    f"Open {out.open_positions}\nClosed today {out.closed_today}\n"
+                    f"Fills reviewed {out.fills_reviewed}",
+                ),
             ]
         )
     )
     anomalies = [
-        f"• *{B.esc(a.severity)}* {B.esc(a.category)}: {B.esc(a.description)}"
+        f"• *{B.esc(a.severity.capitalize())}* · {B.esc(_title_case(a.category).capitalize())}: "
+        f"{B.esc(a.description)}"
         + (f" (orders {B.esc(', '.join(a.affected_orders))})" if a.affected_orders else "")
         for a in out.anomalies
     ]
-    blocks.append(_section("Anomalies", anomalies))
+    blocks.append(_section(f"Anomalies ({n_anom})", anomalies))
     lessons = [
-        f"• *{B.esc(x.topic)}*: {B.esc(x.observation)} → _{B.esc(x.recommendation)}_"
+        f"• *{B.esc(x.topic)}*: {B.esc(x.observation)}\n   → {B.esc(x.recommendation)}"
         for x in out.lessons
     ]
     blocks.append(_section("Lessons", lessons))

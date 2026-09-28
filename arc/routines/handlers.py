@@ -243,6 +243,7 @@ def scout_persona(ctx: JobContext, llm: ScoutLLM | None = None) -> JobResult:
             candidates=result.candidates,
             rejected=result.rejected,
             rejected_items=result.rejected_items,
+            rationales=result.rationales,
             failed_batches=result.failed_batches,
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,

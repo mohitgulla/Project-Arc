@@ -90,6 +90,7 @@ from arc.pipeline.store import PersonaCallRepo
 from arc.routines.handlers import JobResult
 from arc.routines.runs import RoutineRunRepo
 from arc.sizing import size_contracts
+from arc.slack.blocks import esc
 from arc.slack.digests import director_card, quant_card, risk_card
 from arc.structures import parse_occ
 from arc.utils.calendar import ET
@@ -323,6 +324,25 @@ def _filter_shortlist(
     return kept, dropped, items
 
 
+def _scout_evidence(ctx: JobContext) -> dict[str, str]:
+    """ticker -> one display line of the Scout data behind a pick (digest card only)."""
+    out: dict[str, str] = {}
+    for e in ctx.snapshot.of_kind("candidate"):
+        p = e.payload
+        when = ""
+        if p.get("catalyst_date"):
+            try:
+                when = f" {_dt.datetime.fromisoformat(str(p['catalyst_date'])):%b %d}"
+            except ValueError:
+                when = ""
+        n = len(p.get("sources") or [])
+        out[e.subject] = esc(
+            f"Scout {p.get('stance', '?')} · {p.get('catalyst_type', '?')} catalyst{when} · "
+            f"{float(p.get('confidence', 0)):.0%} confidence · {n} source{'' if n == 1 else 's'}"
+        )
+    return out
+
+
 def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
     cands = {e.subject: Stance(e.payload["stance"]) for e in ctx.snapshot.of_kind("candidate")}
@@ -373,6 +393,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             payload,
             candidates=len(cands),
             dropped=[*drop_items, *not_picked],
+            evidence=_scout_evidence(ctx),
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
         ),
@@ -682,6 +703,20 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         advisory_notes=out.advisory_notes,
     )
     ctx.write("risk_review", SESSION_SUBJECT, payload)
+    max_loss = {(s.ticker, s.structure_type): s.max_loss for s in structures.structures}
+    sized = {
+        (a.ticker, a.structure_type): size_contracts(
+            suggestion=a.sizing_suggestion,
+            max_loss_per_contract=(
+                None
+                if max_loss.get((a.ticker, a.structure_type)) is None
+                else Decimal(str(max_loss[(a.ticker, a.structure_type)]))
+            ),
+            equity=info.equity,
+            cap_pct=settings.max_alloc_pct,
+        )
+        for a in kept
+    }
     desc = "; ".join(f"{a.ticker} {a.risk_rating}, suggests {a.sizing_suggestion}" for a in kept)
     missing = sorted(f"{t} {k}" for t, k in wanted - seen)
     return JobResult(
@@ -691,6 +726,8 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         metrics={"assessments": len(kept), "not_assessed": len(missing), **dropped},
         card=risk_card(
             payload,
+            sized=sized,
+            cap_pct=settings.max_alloc_pct,
             dropped=dropped,
             dropped_items=drop_items,
             not_assessed=missing,

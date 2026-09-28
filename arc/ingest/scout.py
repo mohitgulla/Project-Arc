@@ -81,6 +81,10 @@ class ScoutRunResult:
     rejected: Counter[str] = field(default_factory=Counter)
     rejected_items: dict[str, list[str]] = field(default_factory=dict)  # reason -> tickers
     candidates: list[Candidate] = field(default_factory=list)
+    # ticker -> one-line Scout rationale (highest-confidence accepted item this run).
+    # Display only (Slack digest); never copied onto ``Candidate`` (funnel discipline).
+    rationales: dict[str, str] = field(default_factory=dict)
+    _rationale_conf: dict[str, float] = field(default_factory=dict, repr=False)
 
 
 @dataclass(frozen=True)
@@ -425,6 +429,11 @@ def run_scout(
                 continue
             store_candidate(cand_repo, outcome, day=day, run_id=run_id)
             accepted += 1
+            why = item.get("rationale") if isinstance(item, dict) else None
+            best = result._rationale_conf.get(outcome.ticker, -1.0)
+            if isinstance(why, str) and why.strip() and outcome.confidence >= best:
+                result._rationale_conf[outcome.ticker] = outcome.confidence
+                result.rationales[outcome.ticker] = " ".join(why.split())[:240]
 
         batch_repo.insert(
             run_id=run_id,
