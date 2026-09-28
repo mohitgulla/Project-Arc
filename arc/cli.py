@@ -181,6 +181,10 @@ def _make_parser() -> argparse.ArgumentParser:
             p.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
             p.add_argument("--routines", default=None, help="routines.yaml path")
             p.add_argument("--lock-dir", default="data/locks")
+        elif cmd == "approve":
+            from arc.approvals.cli import add_approve_parser
+
+            add_approve_parser(sub)
         else:
             sub.add_parser(cmd, help=f"{cmd.capitalize()} (stub)")
 
@@ -532,7 +536,7 @@ def _propose(args: argparse.Namespace) -> int:
             )
             return 2
     if args.fixtures:
-        _, report = fixture_run(settings, routines, db=args.db)
+        conn, report = fixture_run(settings, routines, db=args.db)
     else:
         conn = open_db(args.db, copy=args.dry_run and args.db is None)
         env = PipelineEnv.live(settings, broker=not args.dry_run)
@@ -550,10 +554,24 @@ def _propose(args: argparse.Namespace) -> int:
             locks=NullLocks() if args.dry_run else LockManager(args.lock_dir),
             mode="dry-run" if args.dry_run else "live",
         )
+    # E6.1: a card per new proposal. Only a live run posts to Slack; dry runs and
+    # fixtures log the card (their proposals carry no token, so it is info-only).
+    # A live --no-slack run leaves the cards to the next `arc routines tick`.
+    from arc.approvals.cli import make_service
+
+    offline = args.fixtures or args.dry_run
+    sweep = None
+    if offline or not args.no_slack:
+        svc = make_service(conn, settings, slack=not offline)
+        sweep = svc.sweep(report.now, day=report.day)
     if args.json:
-        _out(json.dumps(report.as_json(), indent=2))
+        payload = {**report.as_json(), "approvals": sweep.as_json() if sweep else None}
+        _out(json.dumps(payload, indent=2))
     else:
         _out("\n".join(report.lines()))
+        if sweep is not None:
+            where = "log" if offline else "slack"
+            _out(f"approval cards: {len(sweep.published)} posted ({where})")
     return 1 if report.failed else 0
 
 
@@ -578,6 +596,11 @@ def main(argv: list[str] | None = None) -> int:
         return _brief(args)
     if args.command == "propose":
         return _propose(args)
+    if args.command == "approve":
+        from arc.approvals.cli import run_approve
+
+        _log_to_stderr()
+        return run_approve(args)
     if args.command == "history":
         from arc.data.history.cli import run_history
 

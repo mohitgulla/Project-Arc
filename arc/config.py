@@ -11,7 +11,7 @@ from typing import Annotated
 
 import structlog
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 log = structlog.get_logger()
 
@@ -219,6 +219,15 @@ class ArcSettings(BaseSettings):
         min_length=1,
         description="Slack user id of the owner (D10). Only this user may `!resume` (E3.3).",
     )
+    # NoDecode: the env value is comma-separated ("U1,U2"), split by _parse_str_list.
+    approver_slack_user_ids: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["U0C5KUMH28G"],
+        min_length=1,
+        description=(
+            "ARC_APPROVER_SLACK_USER_IDS (comma-separated): Slack user ids whose Approve / "
+            "Reject clicks are honoured (E6.1). D10: owner only."
+        ),
+    )
     db_path: Path | None = Field(
         default=None,
         description="Audit store path (ARC_DB_PATH). None = data/arc.db in the repo.",
@@ -402,7 +411,13 @@ class ArcSettings(BaseSettings):
 
     # -- Validators ----------------------------------------------------------
 
-    @field_validator("universe", "ingest_rss_feeds", "ingest_youtube_channels", mode="before")
+    @field_validator(
+        "universe",
+        "ingest_rss_feeds",
+        "ingest_youtube_channels",
+        "approver_slack_user_ids",
+        mode="before",
+    )
     @classmethod
     def _parse_str_list(cls, v: object) -> object:
         """Accept a comma-separated string from env vars."""

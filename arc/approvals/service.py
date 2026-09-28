@@ -1,0 +1,639 @@
+"""Approval requests: post the card, record the click, enforce the TTL (E6.1).
+
+Lifecycle of one proposal (one row in ``approval_requests``)::
+
+    publish ──► pending ──► approved   (allowed approver clicked Approve before expiry)
+       │           ├──────► rejected   (allowed approver clicked Reject)
+       │           └──────► expired    (TTL passed; expired = rejected)
+       └──────► not_actionable         (gate FAIL or no gate token: info card, no buttons)
+
+Rules enforced here, in code:
+
+- Only Slack user ids in ``ARC_APPROVER_SLACK_USER_IDS`` (default: the owner,
+  D10) can decide. Other clicks are refused and change nothing.
+- A decision is accepted only while ``now < proposal.expires_at`` (the TTL,
+  ``ARC_APPROVAL_TTL_SECONDS``, default 20 min). A late click expires the
+  request instead of approving it.
+- A request resolves exactly once. The decision is written as an
+  :class:`~arc.models.ApprovalRecord` row in ``approvals`` in the same
+  transaction that closes the request; a unique index on
+  ``approvals.proposal_hash`` backs this up.
+- The stored proposal is re-hashed on load, so the ApprovalRecord is bound to
+  the exact payload the gate saw.
+- ``ARC_AUTO_APPROVE`` (D10, paper only) approves an actionable request at
+  publish time, as ``arc:auto-approve``.
+- Every rejection and expiry is logged (``approvals.rejected`` /
+  ``approvals.expired``) with its reason.
+
+Slack is best-effort: state is committed before anything is posted, so a Slack
+failure never changes a decision.
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+import json
+import sqlite3
+import uuid
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Protocol
+
+import structlog
+
+from arc.approvals.card import CardView, render_card, render_resolved, ticker_of
+from arc.approvals.trail import load_trail
+from arc.config import ArcEnv
+from arc.context.ttl import from_db, require_aware, to_db
+from arc.gate.rules import proposal_hash as hash_proposal
+from arc.models import ApprovalDecision, ApprovalRecord, GateDecision, Proposal
+from arc.utils.calendar import ET
+
+if TYPE_CHECKING:
+    from arc.config import ArcSettings
+
+log = structlog.get_logger(__name__)
+
+__all__ = [
+    "AUTO_APPROVER",
+    "TTL_ACTOR",
+    "ApprovalService",
+    "CardPoster",
+    "DecideResult",
+    "LogCardPoster",
+    "Outcome",
+    "PostedCard",
+    "RequestStatus",
+    "SweepReport",
+    "approval_record",
+]
+
+TTL_ACTOR = "arc:ttl"
+AUTO_APPROVER = "arc:auto-approve"
+
+
+class RequestStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    NOT_ACTIONABLE = "not_actionable"
+
+
+class Outcome(StrEnum):
+    """Result of a click (:meth:`ApprovalService.decide`). Stable, machine-readable."""
+
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    UNAUTHORIZED = "unauthorized"
+    EXPIRED = "expired"
+    ALREADY_DECIDED = "already_decided"
+    NOT_ACTIONABLE = "not_actionable"
+    UNKNOWN = "unknown_proposal"
+
+
+@dataclass(frozen=True)
+class DecideResult:
+    outcome: Outcome
+    proposal_hash: str
+    message: str
+    status: RequestStatus | None = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.outcome in (Outcome.APPROVED, Outcome.REJECTED)
+
+
+@dataclass(frozen=True)
+class PostedCard:
+    channel: str
+    thread_ts: str | None
+    message_ts: str | None
+
+
+class CardPoster(Protocol):
+    """Where cards go: the #arc-investor day thread, or the log (dry runs)."""
+
+    def post(self, day: _dt.date, view: CardView) -> PostedCard: ...
+
+    def update(self, channel: str, message_ts: str, view: CardView) -> None: ...
+
+    def notify_user(self, channel: str, user: str, text: str, thread_ts: str | None) -> None: ...
+
+
+class LogCardPoster:
+    """Writes cards to the structured log only (dry runs, tests, --no-slack)."""
+
+    def __init__(self) -> None:
+        self.posted: list[tuple[_dt.date, CardView]] = []
+        self.updated: list[tuple[str, str, CardView]] = []
+        self.notices: list[tuple[str, str]] = []
+
+    def post(self, day: _dt.date, view: CardView) -> PostedCard:
+        self.posted.append((day, view))
+        log.info("approvals.card", day=day.isoformat(), text=view.text)
+        return PostedCard(channel="log", thread_ts=None, message_ts=None)
+
+    def update(self, channel: str, message_ts: str, view: CardView) -> None:
+        self.updated.append((channel, message_ts, view))
+        log.info("approvals.card_update", text=view.text)
+
+    def notify_user(self, channel: str, user: str, text: str, thread_ts: str | None) -> None:
+        self.notices.append((user, text))
+        log.info("approvals.notice", user=user, text=text)
+
+
+@dataclass
+class SweepReport:
+    published: list[str]
+    auto_approved: list[str]
+    expired: list[str]
+
+    def as_json(self) -> dict[str, list[str]]:
+        return {
+            "published": self.published,
+            "auto_approved": self.auto_approved,
+            "expired": self.expired,
+        }
+
+
+@dataclass(frozen=True)
+class _Request:
+    proposal_hash: str
+    ticker: str
+    day: str
+    proposal: Proposal
+    status: RequestStatus
+    reason: str
+    channel: str
+    thread_ts: str | None
+    message_ts: str | None
+    expires_at: _dt.datetime
+
+
+def _load_proposal(raw: str, expected_hash: str) -> Proposal:
+    proposal = Proposal.model_validate_json(raw)
+    actual = hash_proposal(proposal)
+    if actual != expected_hash:
+        msg = f"stored proposal hashes to {actual[:12]}, not {expected_hash[:12]}"
+        raise ValueError(msg)
+    return proposal
+
+
+def _row_to_request(row: sqlite3.Row) -> _Request:
+    return _Request(
+        proposal_hash=row["proposal_hash"],
+        ticker=row["ticker"],
+        day=row["day"],
+        proposal=_load_proposal(row["proposal_json"], row["proposal_hash"]),
+        status=RequestStatus(row["status"]),
+        reason=row["reason"],
+        channel=row["channel"],
+        thread_ts=row["thread_ts"],
+        message_ts=row["message_ts"],
+        expires_at=from_db(row["expires_at"]),
+    )
+
+
+def _proposal_from_row(row: sqlite3.Row) -> Proposal:
+    """Rebuild the gated Proposal from a ``proposals`` row + its context entry.
+
+    The ``proposals`` table keeps the gated fields as JSON columns, but not
+    ``limit_price`` / earnings flags. The authoritative full payload is the
+    ``proposal`` context entry the propose step wrote in the same run.
+    """
+    ctx = row["context_payload"]
+    if ctx is None:
+        msg = f"no proposal context entry for {row['proposal_hash'][:12]}"
+        raise LookupError(msg)
+    return _load_proposal(ctx, row["proposal_hash"])
+
+
+def _gate_decision(row: sqlite3.Row) -> GateDecision | None:
+    if row["gate_passed"] is None:
+        return None
+    return GateDecision(
+        proposal_hash=row["proposal_hash"],
+        passed=bool(row["gate_passed"]),
+        violations=json.loads(row["gate_violations"] or "[]"),
+        token=row["gate_token"],
+    )
+
+
+def approval_record(conn: sqlite3.Connection, proposal_hash: str) -> ApprovalRecord | None:
+    """The ApprovalRecord for *proposal_hash*, if one was written (E6.2 reads this)."""
+    row = conn.execute(
+        """SELECT proposal_hash, slack_user, slack_ts, decision, decided_at
+           FROM approvals WHERE proposal_hash = ?""",
+        (proposal_hash,),
+    ).fetchone()
+    if row is None:
+        return None
+    return ApprovalRecord(
+        proposal_hash=row["proposal_hash"],
+        slack_user=row["slack_user"],
+        slack_ts=row["slack_ts"],
+        decision=ApprovalDecision(row["decision"]),
+        at=from_db(row["decided_at"]),
+    )
+
+
+class ApprovalService:
+    def __init__(self, conn: sqlite3.Connection, settings: ArcSettings, poster: CardPoster) -> None:
+        self.conn = conn
+        self.settings = settings
+        self.poster = poster
+
+    # -- queries -------------------------------------------------------------
+
+    @property
+    def approvers(self) -> frozenset[str]:
+        return frozenset(self.settings.approver_slack_user_ids)
+
+    def _request(self, proposal_hash: str) -> _Request | None:
+        row = self.conn.execute(
+            "SELECT * FROM approval_requests WHERE proposal_hash = ?", (proposal_hash,)
+        ).fetchone()
+        return _row_to_request(row) if row else None
+
+    def _decision_for(self, proposal_hash: str) -> GateDecision | None:
+        row = self.conn.execute(
+            """SELECT proposal_hash, passed AS gate_passed, violations_json AS gate_violations,
+                      token AS gate_token
+               FROM gate_decisions WHERE proposal_hash = ?
+               ORDER BY decided_at DESC, rowid DESC LIMIT 1""",
+            (proposal_hash,),
+        ).fetchone()
+        return _gate_decision(row) if row else None
+
+    def requests(self, *, day: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM approval_requests"
+        params: tuple[str, ...] = ()
+        if day:
+            sql += " WHERE day = ?"
+            params = (day,)
+        rows = self.conn.execute(sql + " ORDER BY created_at, rowid", params).fetchall()
+        return [{k: v for k, v in dict(r).items() if k != "proposal_json"} for r in rows]
+
+    # -- publish -------------------------------------------------------------
+
+    def _unpublished(self, day: str | None) -> list[sqlite3.Row]:
+        sql = """
+            SELECT p.proposal_hash, p.ticker, p.day, p.run_id,
+                   g.passed AS gate_passed, g.violations_json AS gate_violations,
+                   g.token AS gate_token,
+                   (SELECT c.payload FROM context_entries c
+                     WHERE c.kind = 'proposal' AND c.run_id = p.run_id AND c.subject = p.ticker
+                     ORDER BY c.created_at DESC, c.rowid DESC LIMIT 1) AS context_payload
+            FROM proposals p
+            LEFT JOIN gate_decisions g ON g.id = (
+                SELECT id FROM gate_decisions WHERE proposal_hash = p.proposal_hash
+                ORDER BY decided_at DESC, rowid DESC LIMIT 1)
+            WHERE p.day IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM approval_requests r
+                              WHERE r.proposal_hash = p.proposal_hash)"""
+        params: tuple[str, ...] = ()
+        if day:
+            sql += " AND p.day = ?"
+            params = (day,)
+        return self.conn.execute(sql + " ORDER BY p.created_at, p.rowid", params).fetchall()
+
+    def publish_pending(self, now: _dt.datetime, *, day: str | None = None) -> SweepReport:
+        """Post a card for every proposal that has none yet; auto-approve if enabled."""
+        now = require_aware(now, "now").astimezone(ET)
+        report = SweepReport(published=[], auto_approved=[], expired=[])
+        for row in self._unpublished(day):
+            phash = row["proposal_hash"]
+            try:
+                proposal = _proposal_from_row(row)
+            except (LookupError, ValueError) as exc:
+                log.error("approvals.unpublishable", proposal_hash=phash, error=str(exc))
+                continue
+            decision = _gate_decision(row)
+            status, reason = self._initial_status(proposal, decision, now)
+            if not self._insert_request(phash, row, proposal, status, reason, now):
+                continue  # a concurrent sweep won
+            actionable = status is RequestStatus.PENDING
+            view = render_card(
+                proposal,
+                decision,
+                proposal_hash=phash,
+                actionable=actionable,
+                note=reason,
+                trail=load_trail(self.conn, phash, row["ticker"]),
+            )
+            day_date = _dt.date.fromisoformat(row["day"])
+            posted = self._post(day_date, view, phash)
+            if posted is not None:
+                with self.conn:
+                    self.conn.execute(
+                        """UPDATE approval_requests SET channel = ?, thread_ts = ?, message_ts = ?
+                           WHERE proposal_hash = ?""",
+                        (posted.channel, posted.thread_ts, posted.message_ts, phash),
+                    )
+            report.published.append(phash)
+            log.info(
+                "approvals.published",
+                proposal_hash=phash,
+                ticker=row["ticker"],
+                status=str(status),
+                reason=reason,
+                expires_at=proposal.expires_at.isoformat(),
+            )
+            if status is RequestStatus.NOT_ACTIONABLE:
+                log.info(
+                    "approvals.rejected", proposal_hash=phash, ticker=row["ticker"], reason=reason
+                )
+            if actionable and self._auto_approve_enabled():
+                res = self._resolve(
+                    phash, RequestStatus.APPROVED, AUTO_APPROVER, "auto-approve (paper, D10)", now
+                )
+                if res.outcome is Outcome.APPROVED:
+                    report.auto_approved.append(phash)
+        return report
+
+    def _auto_approve_enabled(self) -> bool:
+        return self.settings.auto_approve and self.settings.env is ArcEnv.PAPER
+
+    @staticmethod
+    def _initial_status(
+        proposal: Proposal, decision: GateDecision | None, now: _dt.datetime
+    ) -> tuple[RequestStatus, str]:
+        if decision is None:
+            return RequestStatus.NOT_ACTIONABLE, "no gate decision"
+        if not decision.passed:
+            return RequestStatus.NOT_ACTIONABLE, "gate failed: " + "; ".join(decision.violations)
+        if not decision.token:
+            return (
+                RequestStatus.NOT_ACTIONABLE,
+                "no gate token (dry run / fixtures): informational only",
+            )
+        if proposal.expires_at <= now:
+            return RequestStatus.NOT_ACTIONABLE, "proposal expired before its card was posted"
+        return RequestStatus.PENDING, ""
+
+    def _insert_request(
+        self,
+        phash: str,
+        row: sqlite3.Row,
+        proposal: Proposal,
+        status: RequestStatus,
+        reason: str,
+        now: _dt.datetime,
+    ) -> bool:
+        try:
+            with self.conn:
+                self.conn.execute(
+                    """INSERT INTO approval_requests
+                       (proposal_hash, ticker, day, proposal_json, status, reason, channel,
+                        expires_at, created_at, decided_at, decided_by, run_id)
+                       VALUES (?, ?, ?, ?, ?, ?, 'log', ?, ?, ?, ?, ?)""",
+                    (
+                        phash,
+                        row["ticker"] or ticker_of(proposal),
+                        row["day"],
+                        proposal.model_dump_json(),
+                        str(status),
+                        reason,
+                        to_db(proposal.expires_at),
+                        to_db(now),
+                        to_db(now) if status is RequestStatus.NOT_ACTIONABLE else None,
+                        "arc:gate" if status is RequestStatus.NOT_ACTIONABLE else None,
+                        row["run_id"],
+                    ),
+                )
+        except sqlite3.IntegrityError:
+            return False
+        return True
+
+    def _post(self, day: _dt.date, view: CardView, phash: str) -> PostedCard | None:
+        try:
+            return self.poster.post(day, view)
+        except Exception as exc:  # noqa: BLE001 - state is committed; posting is best-effort
+            log.error("approvals.post_failed", proposal_hash=phash, error=str(exc))
+            return None
+
+    # -- decide --------------------------------------------------------------
+
+    def decide(
+        self,
+        proposal_hash: str,
+        *,
+        user: str,
+        approve: bool,
+        now: _dt.datetime,
+        slack_ts: str = "",
+    ) -> DecideResult:
+        """Apply an Approve / Reject click by Slack user *user* (id from the platform)."""
+        now = require_aware(now, "now").astimezone(ET)
+        req = self._request(proposal_hash)
+        if req is None:
+            return DecideResult(Outcome.UNKNOWN, proposal_hash, "Unknown proposal.")
+        if not user or user not in self.approvers:
+            log.warning(
+                "approvals.unauthorized", proposal_hash=proposal_hash, user=user or "unknown"
+            )
+            self._notify(req, user, "⛔ You are not an allowed approver; nothing was recorded.")
+            return DecideResult(
+                Outcome.UNAUTHORIZED,
+                proposal_hash,
+                f"<@{user}> is not an allowed approver.",
+                req.status,
+            )
+        if req.status is RequestStatus.NOT_ACTIONABLE:
+            return DecideResult(
+                Outcome.NOT_ACTIONABLE,
+                proposal_hash,
+                f"This proposal is not actionable ({req.reason}).",
+                req.status,
+            )
+        if req.status is not RequestStatus.PENDING:
+            return DecideResult(
+                Outcome.ALREADY_DECIDED,
+                proposal_hash,
+                f"Already {req.status}.",
+                req.status,
+            )
+        if now >= req.expires_at or now >= req.proposal.expires_at:
+            self._resolve(proposal_hash, RequestStatus.EXPIRED, TTL_ACTOR, _ttl_reason(req), now)
+            self._notify(req, user, "⏳ Too late: this proposal expired and counts as rejected.")
+            return DecideResult(
+                Outcome.EXPIRED, proposal_hash, "Expired before the click.", RequestStatus.EXPIRED
+            )
+        if approve:
+            return self._resolve(
+                proposal_hash, RequestStatus.APPROVED, user, "", now, slack_ts=slack_ts
+            )
+        return self._resolve(
+            proposal_hash,
+            RequestStatus.REJECTED,
+            user,
+            f"rejected by <@{user}>",
+            now,
+            slack_ts=slack_ts,
+        )
+
+    def _notify(self, req: _Request, user: str, text: str) -> None:
+        if not user or req.channel == "log":
+            return
+        try:
+            self.poster.notify_user(req.channel, user, text, req.thread_ts)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("approvals.notice_failed", error=str(exc))
+
+    # -- expire --------------------------------------------------------------
+
+    def expire_due(self, now: _dt.datetime) -> list[str]:
+        """Expire every pending request whose TTL has passed (expired = rejected)."""
+        now = require_aware(now, "now").astimezone(ET)
+        rows = self.conn.execute(
+            """SELECT proposal_hash FROM approval_requests
+               WHERE status = 'pending' AND expires_at <= ? ORDER BY expires_at""",
+            (to_db(now),),
+        ).fetchall()
+        expired: list[str] = []
+        for r in rows:
+            req = self._request(r["proposal_hash"])
+            if req is None:  # pragma: no cover - row just read
+                continue
+            res = self._resolve(
+                req.proposal_hash, RequestStatus.EXPIRED, TTL_ACTOR, _ttl_reason(req), now
+            )
+            if res.outcome is Outcome.EXPIRED:
+                expired.append(req.proposal_hash)
+        return expired
+
+    def sweep(self, now: _dt.datetime, *, day: str | None = None) -> SweepReport:
+        """Publish new cards, then expire overdue ones (run on every tick)."""
+        report = self.publish_pending(now, day=day)
+        report.expired = self.expire_due(now)
+        return report
+
+    # -- resolution ----------------------------------------------------------
+
+    def _resolve(
+        self,
+        proposal_hash: str,
+        status: RequestStatus,
+        actor: str,
+        reason: str,
+        now: _dt.datetime,
+        *,
+        slack_ts: str = "",
+    ) -> DecideResult:
+        decision = {
+            RequestStatus.APPROVED: ApprovalDecision.APPROVED,
+            RequestStatus.REJECTED: ApprovalDecision.REJECTED,
+            RequestStatus.EXPIRED: ApprovalDecision.EXPIRED,
+        }[status]
+        approval_id = f"apr-{uuid.uuid4().hex[:16]}"
+        try:
+            with self.conn:
+                req_row = self.conn.execute(
+                    "SELECT message_ts FROM approval_requests WHERE proposal_hash = ?",
+                    (proposal_hash,),
+                ).fetchone()
+                # The ApprovalRecord first (unique per proposal), then close the request;
+                # either failing rolls back both, so a request resolves exactly once.
+                self.conn.execute(
+                    """INSERT INTO approvals
+                       (id, proposal_hash, slack_user, slack_ts, decision, decided_at, run_id)
+                       VALUES (?, ?, ?, ?, ?, ?, NULL)""",
+                    (
+                        approval_id,
+                        proposal_hash,
+                        actor,
+                        slack_ts or ((req_row["message_ts"] if req_row else None) or ""),
+                        str(decision),
+                        to_db(now),
+                    ),
+                )
+                cur = self.conn.execute(
+                    """UPDATE approval_requests
+                       SET status = ?, reason = ?, decided_at = ?, decided_by = ?, approval_id = ?
+                       WHERE proposal_hash = ? AND status = 'pending'""",
+                    (str(status), reason, to_db(now), actor, approval_id, proposal_hash),
+                )
+                if cur.rowcount != 1:
+                    raise _LostRaceError
+                if status is RequestStatus.APPROVED:
+                    self.conn.execute(
+                        """INSERT INTO routine_events (id, name, payload, created_at)
+                           VALUES (?, 'approval', ?, ?)""",
+                        (
+                            f"evt-{uuid.uuid4().hex[:16]}",
+                            json.dumps(
+                                {"proposal_hash": proposal_hash, "approval_id": approval_id}
+                            ),
+                            to_db(now),
+                        ),
+                    )
+        except (_LostRaceError, sqlite3.IntegrityError):
+            current = self._request(proposal_hash)
+            return DecideResult(
+                Outcome.ALREADY_DECIDED,
+                proposal_hash,
+                "Already decided.",
+                current.status if current else None,
+            )
+
+        req = self._request(proposal_hash)
+        assert req is not None
+        event = {
+            RequestStatus.APPROVED: "approvals.approved",
+            RequestStatus.REJECTED: "approvals.rejected",
+            RequestStatus.EXPIRED: "approvals.expired",
+        }[status]
+        log.info(
+            event,
+            proposal_hash=proposal_hash,
+            ticker=req.ticker,
+            by=actor,
+            reason=reason or None,
+            approval_id=approval_id,
+        )
+        self._update_card(req, status, actor, now)
+        outcome = {
+            RequestStatus.APPROVED: Outcome.APPROVED,
+            RequestStatus.REJECTED: Outcome.REJECTED,
+            RequestStatus.EXPIRED: Outcome.EXPIRED,
+        }[status]
+        return DecideResult(outcome, proposal_hash, _outcome_text(status, actor), status)
+
+    def _update_card(
+        self, req: _Request, status: RequestStatus, actor: str, now: _dt.datetime
+    ) -> None:
+        if req.channel == "log" or not req.message_ts:
+            return
+        view = render_resolved(
+            req.proposal,
+            self._decision_for(req.proposal_hash),
+            proposal_hash=req.proposal_hash,
+            outcome=_outcome_text(status, actor),
+            at=now,
+            trail=load_trail(self.conn, req.proposal_hash, req.ticker),
+        )
+        try:
+            self.poster.update(req.channel, req.message_ts, view)
+        except Exception as exc:  # noqa: BLE001 - the decision is committed
+            log.error("approvals.update_failed", proposal_hash=req.proposal_hash, error=str(exc))
+
+
+class _LostRaceError(Exception):
+    pass
+
+
+def _ttl_reason(req: _Request) -> str:
+    return f"TTL expired at {req.expires_at.astimezone(ET):%H:%M} ET with no decision"
+
+
+def _who(actor: str) -> str:
+    return actor if actor.startswith("arc:") else f"<@{actor}>"
+
+
+def _outcome_text(status: RequestStatus, actor: str) -> str:
+    if status is RequestStatus.APPROVED:
+        return f":white_check_mark: *Approved* by {_who(actor)}"
+    if status is RequestStatus.REJECTED:
+        return f":x: *Rejected* by {_who(actor)}"
+    return ":hourglass: *Expired* — no decision within the TTL (treated as rejected)"

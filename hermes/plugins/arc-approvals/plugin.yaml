@@ -1,0 +1,4 @@
+name: arc-approvals
+version: 0.1.0
+description: "Project Arc proposal cards (E6.1): routes the Approve / Reject buttons on #arc-investor proposal cards to `arc approve decide` with the clicker's Slack user id."
+author: mohit
