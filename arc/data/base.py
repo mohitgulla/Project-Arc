@@ -128,3 +128,25 @@ class MarketDataProvider(Protocol):
         end: dt.date,
         timeframe: str = "1Day",
     ) -> list[HistoryBar]: ...
+
+
+REFERENCE_LOOKBACK_DAYS = 10
+
+
+def reference_price(
+    provider: MarketDataProvider,
+    symbol: str,
+    *,
+    today: dt.date,
+) -> float | None:
+    """A sanity-check reference price for *symbol*, or ``None`` if unavailable.
+
+    Uses the quote mid only when both sides are positive. Off-hours IEX quotes
+    often have a zero side (``ask=0``), which makes the adapter's mid half the
+    real price; in that case the latest daily close is used instead.
+    """
+    q = provider.underlying_quote(symbol)
+    if q.bid > 0 and q.ask > 0:
+        return (q.bid + q.ask) / 2.0
+    bars = provider.history_bars(symbol, today - dt.timedelta(days=REFERENCE_LOOKBACK_DAYS), today)
+    return bars[-1].close if bars and bars[-1].close > 0 else None

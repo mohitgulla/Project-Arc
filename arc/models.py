@@ -5,12 +5,15 @@ See PLAN.md section 2.3 for the full specification of each model.
 
 from __future__ import annotations
 
+from datetime import date as date_
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+
+from arc.utils.calendar import ET
 
 # ---------------------------------------------------------------------------
 # Candidate (from Scout persona)
@@ -309,3 +312,161 @@ class RawDoc(BaseModel):
         None,
         description="YouTube only: whether the text came from captions or local audio STT",
     )
+    channel_id: str | None = Field(
+        None, description="YouTube channel id (youtube source only); selects the E4.4 processor"
+    )
+    title: str = Field("", description="Document / video title when the source has one")
+
+
+# ---------------------------------------------------------------------------
+# ChannelBrief (per-channel processor output — E4.4, D14)
+# ---------------------------------------------------------------------------
+
+_TICKER_PATTERN = r"^[A-Z][A-Z0-9.]{0,9}$"
+QUOTE_MAX_CHARS = 240
+
+Ticker = Annotated[str, StringConstraints(pattern=_TICKER_PATTERN)]
+Quote = Annotated[str, StringConstraints(min_length=1, max_length=QUOTE_MAX_CHARS)]
+Unit = Annotated[float, Field(ge=0.0, le=1.0)]
+
+_BRIEF_CONFIG = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+class LevelKind(StrEnum):
+    SUPPORT = "support"
+    RESISTANCE = "resistance"
+    PIVOT = "pivot"
+    TARGET = "target"
+    STOP = "stop"
+
+
+class CallHorizon(StrEnum):
+    INTRADAY = "intraday"
+    NEXT_SESSION = "next_session"
+    SWING = "swing"
+    LONG_TERM = "long_term"
+
+
+class InstrumentHint(StrEnum):
+    SHARES = "shares"
+    CALLS = "calls"
+    PUTS = "puts"
+    SPREAD = "spread"
+    NONE = "none"
+
+
+class BriefCatalystKind(StrEnum):
+    EARNINGS = "earnings"
+    MACRO = "macro"
+    FED = "fed"
+    GEOPOLITICAL = "geopolitical"
+    SECTOR = "sector"
+    OTHER = "other"
+
+
+class ExpectedImpact(StrEnum):
+    BULLISH = "bullish"
+    BEARISH = "bearish"
+    VOLATILE = "volatile"
+    UNKNOWN = "unknown"
+
+
+class Severity(StrEnum):
+    LOW = "low"
+    MED = "med"
+    HIGH = "high"
+
+
+class MarketBias(BaseModel):
+    """The host's overall market stance for the session the brief applies to."""
+
+    model_config = _BRIEF_CONFIG
+
+    stance: Stance
+    confidence: Unit
+    quote: Quote
+
+
+class BriefLevel(BaseModel):
+    """A price level the host names on a ticker."""
+
+    model_config = _BRIEF_CONFIG
+
+    ticker: Ticker
+    kind: LevelKind
+    price: Annotated[float, Field(gt=0.0)]
+    quote: Quote
+    unverified_price: bool = Field(
+        False, description="True when no underlying price was available to sanity-check it"
+    )
+
+
+class BriefCall(BaseModel):
+    """A directional call the host asserts or recommends."""
+
+    model_config = _BRIEF_CONFIG
+
+    ticker: Ticker
+    stance: Stance
+    horizon: CallHorizon
+    instrument_hint: InstrumentHint
+    conviction: Unit
+    quote: Quote
+
+
+class BriefCatalyst(BaseModel):
+    """A scheduled or ongoing event the host says matters."""
+
+    model_config = _BRIEF_CONFIG
+
+    event: Annotated[str, StringConstraints(min_length=1, max_length=160)]
+    kind: BriefCatalystKind
+    date: date_ | None = None
+    tickers: list[Ticker] = Field(default_factory=list)
+    expected_impact: ExpectedImpact
+    quote: Quote
+
+
+class BriefRiskFlag(BaseModel):
+    """A market-wide risk the host flags (e.g. 'yields > 5%')."""
+
+    model_config = _BRIEF_CONFIG
+
+    flag: Annotated[str, StringConstraints(min_length=1, max_length=160)]
+    severity: Severity
+    quote: Quote
+
+
+class ChannelBrief(BaseModel):
+    """Validated, structured summary of one channel video (PLAN D14, card E4.4).
+
+    Every item carries a verbatim transcript ``quote`` that was checked by
+    code. There is deliberately no sizing / order field and ``extra="forbid"``
+    rejects any attempt to add one.
+    """
+
+    model_config = _BRIEF_CONFIG
+
+    brief_id: str = Field(..., min_length=1)
+    channel_slug: str = Field(..., pattern=r"^[A-Za-z0-9_-]+$")
+    video_id: str = Field(..., min_length=1)
+    video_url: str = Field(..., min_length=1)
+    title: str
+    published_at: datetime
+    applies_to_session: date_
+    guidelines_version: str = Field(..., min_length=1)
+    market_bias: MarketBias | None = None
+    levels: list[BriefLevel] = Field(default_factory=list)
+    calls: list[BriefCall] = Field(default_factory=list)
+    catalysts: list[BriefCatalyst] = Field(default_factory=list)
+    risk_flags: list[BriefRiskFlag] = Field(default_factory=list)
+    tickers_mentioned: list[Ticker] = Field(default_factory=list)
+    sponsor_segments_removed: bool = False
+
+    @field_validator("published_at")
+    @classmethod
+    def _published_at_et(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            msg = "published_at must be timezone-aware"
+            raise ValueError(msg)
+        return v.astimezone(ET)

@@ -429,6 +429,47 @@ class TestYouTubeConnector:
         assert _pick_caption_url(info) == "manual"
         assert _pick_caption_url({"automatic_captions": {"en": [{"ext": "json3"}]}}) == ""
 
+    def test_original_asr_track_preferred_over_translation(self) -> None:
+        """The ``en`` auto track is a tlang= translation that YouTube 429s; use en-orig."""
+        from arc.ingest.youtube import _pick_caption_url
+
+        info = {
+            "subtitles": {},
+            "automatic_captions": {
+                "en": [{"ext": "vtt", "url": "https://yt/timedtext?v=x&tlang=en"}],
+                "en-orig": [{"ext": "vtt", "url": "https://yt/timedtext?v=x"}],
+            },
+        }
+        assert _pick_caption_url(info) == "https://yt/timedtext?v=x"
+        only_translated = {"automatic_captions": {"en": info["automatic_captions"]["en"]}}
+        assert _pick_caption_url(only_translated) == "https://yt/timedtext?v=x&tlang=en"
+
+    def test_channel_id_and_title_stored(
+        self, db: sqlite3.Connection, settings: ArcSettings
+    ) -> None:
+        from arc.ingest.youtube import fetch_youtube
+
+        info = _info("cid1", "Outlook", "20260115")
+        info["channel_id"] = "UC-m6zNItyoDk5lSykDlhE4Q"
+        run = _yt_runner([{"id": "cid1", "title": "Outlook"}], {"cid1": info})
+        with (
+            mock.patch("subprocess.run", side_effect=run),
+            mock.patch("arc.ingest.youtube._download_subtitle", return_value="words"),
+        ):
+            (doc,) = fetch_youtube(db, settings)
+        assert doc.channel_id == "UC-m6zNItyoDk5lSykDlhE4Q"
+        row = db.execute("SELECT channel_id, title FROM raw_docs").fetchone()
+        assert tuple(row) == ("UC-m6zNItyoDk5lSykDlhE4Q", "Outlook")
+
+    def test_vtt_header_lines_stripped(self) -> None:
+        from arc.ingest.youtube import _download_subtitle
+
+        vtt = b"WEBVTT\nKind: captions\nLanguage: en\n\n00:00.000 --> 00:01.000\nHello SPY\n"
+        resp = mock.MagicMock()
+        resp.__enter__.return_value.read.return_value = vtt
+        with mock.patch("urllib.request.urlopen", return_value=resp):
+            assert _download_subtitle("https://captions.test/x.vtt") == "Hello SPY"
+
     def test_no_channels_configured(self, db: sqlite3.Connection) -> None:
         from arc.ingest.youtube import fetch_youtube
 

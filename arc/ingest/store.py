@@ -59,6 +59,8 @@ class RawDocRepo:
         hash_val: str | None = None,
         run_id: str | None = None,
         id: str | None = None,
+        channel_id: str | None = None,
+        title: str | None = None,
     ) -> str | None:
         """Insert a raw doc, skipping duplicates. Returns id or None if duplicate."""
         h = hash_val or content_hash(source, url)
@@ -70,8 +72,8 @@ class RawDocRepo:
         self.conn.execute(
             """INSERT INTO raw_docs
                (id, source, url, published_at, text, tickers_hint,
-                content_hash, ingested_at, run_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                content_hash, ingested_at, run_id, channel_id, title)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row_id,
                 source,
@@ -82,6 +84,8 @@ class RawDocRepo:
                 h,
                 _now_iso(),
                 run_id,
+                channel_id,
+                title,
             ),
         )
         self.conn.commit()
