@@ -147,7 +147,7 @@ Config: the `monitoring:` section of `config/routines.yaml` (validated by
 | Piece | Runs as | Does |
 |---|---|---|
 | `arc routines tick` | Hermes cron `arc-routines-tick`, every 5m (`hermes/routines/install.sh`) | Records one `tick` heartbeat per live tick with its `tick_id`, outcome counts and run ids. A crash still records a `failed` heartbeat. |
-| `arc health check` | launchd agent `com.projectarc.health-check`, every 5m (`hermes/monitoring/install.sh`) | Runs the checks below, records a `health` heartbeat, and opens/resolves ops alerts. Exit 1 while anything is failing. |
+| `arc health check` | launchd agent `com.projectarc.health-check`, every 30m (`hermes/monitoring/install.sh`) | Runs the checks below, records a `health` heartbeat, and opens/resolves ops alerts. Exit 1 while anything is failing. |
 
 The health check runs under launchd rather than as a Hermes cron. The gateway
 hosts the cron ticker, so a check running inside it could not report the

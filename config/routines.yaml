@@ -35,7 +35,7 @@ heartbeat:
   # later posts (the 22:00 Scout) and weekend/holiday posts go to the NEXT session's.
   day_rollover: "20:00"
 
-# Ops monitoring (E8.2): `arc health check`, run every 5 min by the launchd agent
+# Ops monitoring (E8.2): `arc health check`, run every 30 min by the launchd agent
 # from hermes/monitoring/install.sh (outside the gateway it watches). Alerts go to
 # #project-arc once per problem and again when it clears.
 monitoring:

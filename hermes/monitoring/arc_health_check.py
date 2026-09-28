@@ -2,7 +2,7 @@
 
 Runs OUTSIDE the Hermes gateway on purpose: the gateway hosts the cron ticker,
 so a check scheduled as a Hermes cron would die with the thing it watches.
-``install.sh`` installs this as a user LaunchAgent (every 5 min).
+``install.sh`` installs this as a user LaunchAgent (every 30 min).
 
 - cwd = the repo checkout; runs its ``.venv/bin/arc health check``.
 - Passes ``SLACK_BOT_TOKEN`` and ``ARC_*`` from ``~/.hermes/.env`` (same rule as
