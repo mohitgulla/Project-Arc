@@ -607,7 +607,7 @@ class TestCli:
 
         rc = main(
             [
-                "scan", "SPY", "--dte", "30-45", "--delta", "20", "--fixture", "spy",
+                "chains", "SPY", "--dte", "30-45", "--delta", "20", "--fixture", "spy",
                 "--iv-history-dir", str(tmp_path), "--top", "3",
             ]
         )  # fmt: skip
@@ -621,7 +621,7 @@ class TestCli:
     def test_scan_fixture_json_and_record_iv(self, capsys, tmp_path) -> None:  # noqa: ANN001
         from arc.cli import main
 
-        args = ["scan", "SPY", "--fixture", str(SPY_CHAIN_FIXTURE), "--json"]
+        args = ["chains", "SPY", "--fixture", str(SPY_CHAIN_FIXTURE), "--json"]
         args += ["--iv-history-dir", str(tmp_path), "--record-iv", "--delta", "0.25"]
         args += ["--strategy", "bear_call", "--rank-by", "ev", "--width", "3"]
         assert main(args) == 0
@@ -641,15 +641,15 @@ class TestCli:
         from arc.cli import main
 
         with pytest.raises(SystemExit) as ei:
-            main(["scan", "SPY", "--fixture", "spy", *bad])
+            main(["chains", "SPY", "--fixture", "spy", *bad])
         assert ei.value.code == 2
 
     def test_delta_outside_band_and_unknown_ticker(self, capsys) -> None:  # noqa: ANN001
         from arc.cli import main
 
-        assert main(["scan", "SPY", "--fixture", "spy", "--delta", "40"]) == 2
+        assert main(["chains", "SPY", "--fixture", "spy", "--delta", "40"]) == 2
         assert "outside the short-strike band" in capsys.readouterr().err
-        assert main(["scan", "QQQ", "--fixture", "spy"]) == 2
+        assert main(["chains", "QQQ", "--fixture", "spy"]) == 2
         assert "no recording for 'QQQ'" in capsys.readouterr().err
 
     def test_live_without_keys_is_a_clean_error(self, capsys, monkeypatch) -> None:  # noqa: ANN001
@@ -657,7 +657,7 @@ class TestCli:
 
         monkeypatch.delenv("ALPACA_API_KEY", raising=False)
         monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)
-        assert main(["scan", "SPY"]) == 2
+        assert main(["chains", "SPY"]) == 2
         assert "--fixture spy" in capsys.readouterr().err
 
 

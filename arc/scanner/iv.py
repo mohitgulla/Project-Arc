@@ -12,7 +12,7 @@ Definitions (kept identical to the E4.3 feature definitions so the two agree):
 
 History is a per-ticker CSV ``<dir>/<TICKER>.csv`` with header ``date,atm_iv``
 (one row per session, IV as a decimal, e.g. ``0.142``). The scanner can append
-today's ATM IV (``arc scan --record-iv``) so the history accumulates daily.
+today's ATM IV (``arc chains --record-iv``) so the history accumulates daily.
 """
 
 from __future__ import annotations

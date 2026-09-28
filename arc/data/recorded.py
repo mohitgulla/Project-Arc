@@ -1,6 +1,6 @@
 """RecordedMarketData — an offline MarketDataProvider backed by a recorded JSON chain.
 
-Used by tests and ``arc scan --fixture`` so the scanner runs with no network.
+Used by tests and ``arc chains --fixture`` so the scanner runs with no network.
 A recording holds one underlying: its quote, a daily close history and the
 option chain snapshot, all serialised from the :mod:`arc.data.base` models.
 

@@ -43,6 +43,8 @@ def test_arc_package_imports() -> None:
         "arc.ingest.edgar",
         "arc.ingest.earnings",
         "arc.ingest.youtube",
+        "arc.ingest.llm",
+        "arc.ingest.scout",
         "arc.features",
         "arc.personas",
         "arc.gate",
@@ -69,7 +71,7 @@ def test_cli_help() -> None:
         text=True,
     )
     assert result.returncode == 0
-    for cmd in ("scan", "propose", "gate", "approve", "execute", "reconcile", "report"):
+    for cmd in ("scan", "chains", "propose", "gate", "approve", "execute", "reconcile", "report"):
         assert cmd in result.stdout, f"{cmd} not in help output"
 
 
@@ -77,4 +79,4 @@ def test_cli_stub_command() -> None:
     """Stub commands print 'not yet implemented'."""
     from arc.cli import main
 
-    assert main(["report"]) == 0
+    assert main(["propose"]) == 0

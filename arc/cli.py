@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-COMMANDS = ("scan", "propose", "gate", "approve", "execute", "reconcile", "report")
+COMMANDS = ("scan", "chains", "propose", "gate", "approve", "execute", "reconcile", "report")
 
 
 class _StderrProxy:
@@ -98,6 +98,14 @@ def _make_parser() -> argparse.ArgumentParser:
 
     for cmd in COMMANDS:
         if cmd == "scan":
+            p = sub.add_parser(cmd, help="Scan: summarise ingested docs into Candidates (Scout)")
+            p.add_argument(
+                "--dry-run",
+                action="store_true",
+                help="Fixture docs + canned Scout responses in an in-memory DB (no network).",
+            )
+            p.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+        elif cmd == "chains":
             _add_scan_args(
                 sub.add_parser(cmd, help="Scan option chains for ranked credit structures")
             )
@@ -126,7 +134,7 @@ def _fmt_candidate(c: ScanCandidate) -> str:
     )
 
 
-def _scan(args: argparse.Namespace) -> int:
+def _chains(args: argparse.Namespace) -> int:
     from pathlib import Path
 
     from arc.config import get_settings
@@ -153,7 +161,7 @@ def _scan(args: argparse.Namespace) -> int:
         try:
             provider = AlpacaMarketData()
         except RuntimeError as exc:
-            sys.stderr.write(f"arc scan: {exc} (or pass --fixture spy to run offline)\n")
+            sys.stderr.write(f"arc chains: {exc} (or pass --fixture spy to run offline)\n")
             return 2
 
     dte = args.dte or (None, None)
@@ -169,7 +177,7 @@ def _scan(args: argparse.Namespace) -> int:
             top=args.top,
         )
     except ValueError as exc:
-        sys.stderr.write(f"arc scan: {exc}\n")
+        sys.stderr.write(f"arc chains: {exc}\n")
         return 2
 
     iv_dir = Path(args.iv_history_dir) if args.iv_history_dir else settings.scanner_iv_history_dir
@@ -181,7 +189,7 @@ def _scan(args: argparse.Namespace) -> int:
             try:
                 as_of = recorded.recording(ticker).as_of
             except KeyError as exc:
-                sys.stderr.write(f"arc scan: {exc.args[0]}\n")
+                sys.stderr.write(f"arc chains: {exc.args[0]}\n")
                 return 2
         else:
             as_of = now_et().date()
@@ -218,6 +226,36 @@ def _scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _scan(args: argparse.Namespace) -> int:
+    from arc.config import get_settings
+    from arc.ingest.scout import load_fixture_docs, run_scout
+    from arc.store.db import connect
+    from arc.store.migrate import migrate
+
+    # stdout carries the JSON report; keep structured logs on stderr.
+    structlog.configure(logger_factory=structlog.PrintLoggerFactory(file=sys.stderr))
+    settings = get_settings()
+    conn = connect(":memory:" if args.dry_run else args.db)
+    migrate(conn)
+    if args.dry_run:
+        load_fixture_docs(conn)
+
+    result = run_scout(conn, settings, dry_run=args.dry_run)
+    report = {
+        "run_id": result.run_id,
+        "day": result.day,
+        "dry_run": result.dry_run,
+        "batches": result.batches,
+        "failed_batches": result.failed_batches,
+        "docs_scouted": result.docs_scouted,
+        "accepted": result.accepted,
+        "rejected": dict(result.rejected),
+        "candidates": [c.model_dump(mode="json") for c in result.candidates],
+    }
+    sys.stdout.write(json.dumps(report, indent=2) + "\n")
+    return 1 if result.failed_batches and not result.docs_scouted else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = _make_parser()
@@ -229,6 +267,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "scan":
         return _scan(args)
+    if args.command == "chains":
+        return _chains(args)
     if args.command == "history":
         from arc.data.history.cli import run_history
 
