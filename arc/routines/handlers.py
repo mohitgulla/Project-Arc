@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from arc.ingest.llm import ScoutLLM
     from arc.models import RawDoc
     from arc.routines.config import JobKind, RoutinesConfig, StepSpec
+    from arc.routines.manifest import ExternalInput
     from arc.routines.runs import RoutineEvent
     from arc.slack.blocks import CardView
 
@@ -45,6 +46,13 @@ log = structlog.get_logger(__name__)
 
 class JobSkippedError(Exception):
     """Raised by a handler to record its run as ``skipped`` (not a failure)."""
+
+
+class ContractViolationError(RuntimeError):
+    """A job wrote a context kind outside its declared ``writes`` (D27, fail-closed).
+
+    Not caught by handlers: the dispatcher records the run as ``failed`` and alerts.
+    """
 
 
 @dataclass
@@ -80,6 +88,7 @@ class JobContext:
     event: RoutineEvent | None = None
     settings_factory: Callable[[], ArcSettings] | None = None
     outputs: list[str] = field(default_factory=list)
+    external_inputs: list[ExternalInput] = field(default_factory=list)
     _settings: ArcSettings | None = None
 
     @property
@@ -97,6 +106,27 @@ class JobContext:
     def options(self) -> dict[str, Any]:
         return self.spec.options
 
+    def record_input(
+        self,
+        name: str,
+        source: str,
+        payload: object,
+        *,
+        as_of: _dt.datetime | None = None,
+        count: int | None = None,
+    ) -> ExternalInput:
+        """Record market/broker/DB data this run used (D27 run manifest).
+
+        Only the sha256 of *payload*'s canonical JSON is kept, never the data.
+        """
+        from arc.routines.manifest import ExternalInput, digest
+
+        item = ExternalInput(
+            name=name, source=source, as_of=as_of, digest=digest(payload), count=count
+        )
+        self.external_inputs.append(item)
+        return item
+
     def write(
         self,
         kind: str,
@@ -105,7 +135,16 @@ class JobContext:
         *,
         valid_from: _dt.datetime | None = None,
     ) -> ContextEntry:
-        """Append a context entry using this job's TTL/supersede policy."""
+        """Append a context entry using this job's TTL/supersede policy.
+
+        Raises :class:`ContractViolationError` (nothing is written) when *kind*
+        is not in the job's declared ``writes`` (D27, fail-closed).
+        """
+        declared = list(self.spec.writes or [])
+        if kind not in declared:
+            log.error("context.write_rejected", job=self.job, kind=kind, declared=declared)
+            msg = f"job {self.job!r} wrote kind {kind!r} not in its declared writes {declared}"
+            raise ContractViolationError(msg)
         policy = self.routines.context_policy(kind, self.job)
         entry = ContextStore(self.conn).write(
             kind=kind,
@@ -164,6 +203,13 @@ def _doc_refs(ctx: JobContext, docs: list[RawDoc]) -> int:
 
 
 def _source_result(ctx: JobContext, docs: list[RawDoc]) -> JobResult:
+    ctx.record_input(
+        "raw_docs",
+        ctx.job.split(".", 1)[0],  # upstream source (rss, edgar, youtube, ...)
+        sorted(d.content_hash for d in docs),
+        as_of=ctx.now,
+        count=len(docs),
+    )
     n = _doc_refs(ctx, docs)
     return JobResult(summary=f"{n} new doc{'s' if n != 1 else ''}", metrics={"new_docs": n})
 
