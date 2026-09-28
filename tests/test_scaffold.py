@@ -88,6 +88,7 @@ def test_arc_package_imports() -> None:
         "arc.gate.halt",
         "arc.approvals",
         "arc.approvals.card",
+        "arc.approvals.trail",
         "arc.approvals.service",
         "arc.approvals.slack",
         "arc.approvals.cli",

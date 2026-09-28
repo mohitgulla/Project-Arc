@@ -27,6 +27,7 @@ from arc.approvals.service import (
     RequestStatus,
     approval_record,
 )
+from arc.approvals.trail import load_trail
 from arc.config import ArcSettings
 from arc.gate.rules import proposal_hash
 from arc.models import ApprovalDecision, GateDecision, Proposal, StructureKind
@@ -155,6 +156,52 @@ class TestTitle:
         assert strategy_name(p.model_copy(update={"structure": st})) == "Call Credit Spread"
 
 
+class TestLayout:
+    """Every card follows one grammar: title, summary line, legs, fact grid, reasoning, ids."""
+
+    def test_section_order(self, conn: sqlite3.Connection) -> None:
+        p = _proposal(conn)
+        ph = proposal_hash(p)
+        d = GateDecision(proposal_hash=ph, passed=True, token="t")
+        trail = load_trail(conn, _phash(conn), "SPY")
+        blocks = render_card(p, d, proposal_hash=ph, actionable=True, trail=trail).blocks
+        kinds = [b["type"] for b in blocks]
+        assert kinds[:4] == ["header", "context", "divider", "section"]
+        assert kinds[-2:] == ["context", "actions"]
+        assert "Legs" in blocks[3]["text"]["text"] and "```" in blocks[3]["text"]["text"]
+        summary = blocks[1]["elements"][0]["text"]
+        for part in ("*Credit 1.66*", "PoP 62%", "EV -$21.78", "x14", "Gate PASS"):
+            assert part in summary
+
+    def test_trail_attributes_each_persona(self, conn: sqlite3.Connection) -> None:
+        p = _proposal(conn)
+        ph = proposal_hash(p)
+        trail = load_trail(conn, _phash(conn), "SPY")
+        assert trail.chain_run_id and trail.director and trail.quant and trail.risk
+        text = _text(render_card(p, None, proposal_hash=ph, actionable=False, trail=trail).blocks)
+        assert "*[Director] Thesis (rank 1 of 1, neutral, confidence 70%)*" in text
+        assert "_Regime:_ Fixture: low realised vol" in text
+        assert "*[Quant] Structure choice (confidence 70%)*" in text
+        assert "*[Risk] Review*" in text and "rating *moderate*" in text
+        assert "suggested 20 → sized 14 (5% equity cap)" in text
+        assert "_Calendar:_ Fixture: FOMC Oct 28" in text
+        assert "Regime *sideways*" in text and "Director market read *risk_on*" in text
+        assert f"chain `{trail.chain_run_id}`" in text
+
+    def test_missing_trail_still_renders(self, conn: sqlite3.Connection) -> None:
+        p = _proposal(conn)
+        ph = proposal_hash(p)
+        assert load_trail(conn, "no-such-hash", "SPY").chain_run_id is None
+        text = _text(render_card(p, None, proposal_hash=ph, actionable=False).blocks)
+        assert "*[Director] Thesis*" in text and "*[Risk] Review*" in text
+
+    def test_published_card_carries_trail(
+        self, svc: ApprovalService, poster: RecordingPoster
+    ) -> None:
+        svc.publish_pending(NOW)
+        assert "[Quant] Structure choice" in _text(poster.posted[0][1].blocks)
+
+
 class TestCard:
     def test_has_every_required_field(self, conn: sqlite3.Connection) -> None:
         p = _proposal(conn)
@@ -167,14 +214,15 @@ class TestCard:
         assert view.text == f"{expected} • x14 • gate PASS"
         for leg in p.structure.legs:  # legs: every strike shown
             assert f"{leg.occ_symbol[-8:-3].lstrip('0')}" in text
-        assert "*Net*" in text and "credit 1.66" in text and "limit credit 1.65" in text
-        assert "*Max gain / loss*" in text and "$165.55" in text and "$334.45" in text
-        assert "x14: gain $2,317.70 / loss $4,682.30" in text
-        assert "*Breakevens*" in text and "743.34" in text and "799.66" in text
-        assert "*Net Greeks*" in text and "Δ " in text and "Θ " in text and "ν " in text
+        assert "*Entry*" in text and "Credit 1.66" in text and "Limit credit 1.65" in text
+        assert "*Payoff (per contract)*" in text and "$165.55" in text and "$334.45" in text
+        assert "Reward/risk 0.49" in text
+        assert "*Position (x14)*" in text and "$2,317.70" in text and "$4,682.30" in text
+        assert "*Breakevens*" in text and "743.34 / 799.66" in text
+        assert "*Net Greeks (position)*" in text and "Δ " in text and "Θ " in text and "ν " in text
         assert "PoP 62%" in text and "EV -$21.78" in text
         assert "*Gate*" in text and "PASS" in text
-        assert "14 contract(s)" in text and "4.68% equity" in text
+        assert "14 contract(s)" in text and "4.68% of equity" in text
         assert "Expires 16:20 ET" in text
 
     def test_buttons_carry_the_proposal_hash(self, conn: sqlite3.Connection) -> None:
@@ -194,7 +242,8 @@ class TestCard:
         view = render_card(p, d, proposal_hash=ph, actionable=False, note="gate failed")
         assert all(b["type"] != "actions" for b in view.blocks)
         text = _text(view.blocks)
-        assert "FAIL — max_loss: too big" in text and "gate failed" in text
+        assert "*Gate violations*" in text and "• max_loss: too big" in text
+        assert "gate failed" in text
         assert "gate FAIL" in view.text
 
     def test_persona_text_is_escaped(self, conn: sqlite3.Connection) -> None:

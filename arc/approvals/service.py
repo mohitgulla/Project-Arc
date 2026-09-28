@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import structlog
 
 from arc.approvals.card import CardView, render_card, render_resolved, ticker_of
+from arc.approvals.trail import load_trail
 from arc.config import ArcEnv
 from arc.context.ttl import from_db, require_aware, to_db
 from arc.gate.rules import proposal_hash as hash_proposal
@@ -314,7 +315,12 @@ class ApprovalService:
                 continue  # a concurrent sweep won
             actionable = status is RequestStatus.PENDING
             view = render_card(
-                proposal, decision, proposal_hash=phash, actionable=actionable, note=reason
+                proposal,
+                decision,
+                proposal_hash=phash,
+                actionable=actionable,
+                note=reason,
+                trail=load_trail(self.conn, phash, row["ticker"]),
             )
             day_date = _dt.date.fromisoformat(row["day"])
             posted = self._post(day_date, view, phash)
@@ -605,6 +611,7 @@ class ApprovalService:
             proposal_hash=req.proposal_hash,
             outcome=_outcome_text(status, actor),
             at=now,
+            trail=load_trail(self.conn, req.proposal_hash, req.ticker),
         )
         try:
             self.poster.update(req.channel, req.message_ts, view)
