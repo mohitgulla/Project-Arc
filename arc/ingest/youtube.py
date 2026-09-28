@@ -159,7 +159,10 @@ def _download_subtitle(url: str) -> str:
                 if line and line not in text_lines[-1:]:
                     text_lines.append(line)
             return " ".join(text_lines)[:50_000]
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # e.g. HTTP 429 from YouTube's timedtext endpoint: treated as "no captions",
+        # so the audio fallback (E4.1b) can take over after the grace period.
+        log.warning("youtube.caption_download_failed", error=str(exc)[:200])
         return ""
 
 
