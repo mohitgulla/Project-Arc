@@ -33,6 +33,7 @@ Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a 
 | D20 | Card thread lifecycle | Every card gets its own #project-arc thread when it is created (gatekeeper cron, 1 min). When the card is done **and** its PR has merged, the thread's parent message is edited to :white_check_mark: with the PR link. Any issue found after merge is discussed **in the original card's thread** until a follow-up fix card is agreed. The fix card then gets its own thread, and the original thread gets a pointer to it. | Owner choice 2026-09-27. |
 | D18 | Paper sizing | **Not fixed at 1 contract.** `contracts = min(Risk.sizing_suggestion, floor(5% equity / max_loss_per_contract))`, minimum 1 when a single contract fits under the 5% cap; otherwise no trade. The gate still enforces every portfolio cap. | Owner choice 2026-09-27 (answers E5.2 Q2). |
 | D19 | Exit management + reallocation | Open positions are re-evaluated on the intraday routine. **Investor** proposes **early profit-taking closes** (per-structure profit target, e.g. 50% of max gain for credit structures, plus a time-decay-adjusted target, with no waiting to expiry). **Risk** can propose **close-to-reallocate**: close a position to free buying power when a new candidate's expected risk/reward, net of costs and slippage, beats the open position's remaining EV by a configured margin. Every close is a Proposal that goes through gate + approval (`ARC_AUTO_APPROVE` applies in paper). | Owner choice 2026-09-27. Note: D4's evidence says management rules don't beat hold-to-expiry *statistically* for defined-risk. E7.2 backtests D19's rules against hold-to-expiry, and the paper scorecard reports both. |
+| D22 | Review-friendly posts + decision journal | Every persona post in #arc-investor uses one Block Kit layout (`arc/slack/blocks.py`): title `[Persona] <What>: <subject> • <fact> • <fact>` (proposals: `[Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor`), a summary line, a fact grid, persona-attributed reasoning, and audit ids in the footer. The E6.1 card also shows each persona's reasoning for the trade (Director rank/confidence/thesis, Quant rationale, Risk rating and suggested vs sized contracts, regime/vol). Every decision (selected, rejected, no-trade, approved, expired) is written to an append-only **decision journal** with a stable `reason_code`, its inputs snapshot and persona call. Outcomes are attributed back to decisions (P&L vs EV, PoP calibration, slippage vs cost, D19 shadow hold). Reviews label decision quality separately from outcome, plus a root-cause category. Other personas' cards are E5.5; the journal is E7.4. | Owner 2026-09-27: presentable, detailed review of every proposal; find suboptimal gaps and the root cause of good/bad decisions. |
 | D21 | CLI verbs | `arc scan` = Scout candidate pipeline (E4.2). The option-chain scanner (E2.3) is `arc chains SPY --dte 30-45 --delta 20`. | Owner choice 2026-09-27; both PRs claimed `arc scan`. |
 
 Open items requiring a decision are listed in §9 — all five original items are now resolved (D8–D11 + keys stored).
@@ -223,9 +224,10 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E5.2 Pipeline runner — candidate → structures → gate → proposal; idempotent, resumable, fully logged, dry-run mode ← E2.3, E3.1, E4.2, E5.1
 - E5.3 Cron routines — install `arc routines tick` cron + default routines.yaml (Scout 22:00/12:00 ET, pre-market, intraday, post-market, weekly) ← E5.2, E5.4
 - E5.4 Routine dispatcher + context store — per-source/per-persona cadence, chains, event triggers, `context_entries` + snapshots (D16) ← E1.3, E4.2
+- E5.5 Persona digest cards — one Block Kit layout (`arc/slack/blocks.py`) for every persona post, `notify: card` knob (D22) ← E6.1
 
 **E6 Approval & execution**
-- E6.1 Slack proposal card — `#arc-investor` daily thread, clarify Approve/Reject, TTL ← E1.5, E5.2
+- E6.1 Slack proposal card — `#arc-investor` daily thread, Approve/Reject, TTL; D22 layout + per-persona decision trail ← E1.5, E5.2
 - E6.2 Execution — approved → limit `mleg` at mid with bounded improvement; fills; cancel on timeout; configurable exits ← E6.1, E1.4, E3.2
 - E6.4 Position manager — early profit-taking + close-to-reallocate proposals (D19) ← E6.2, E5.4
 - E6.3 Reconciliation — broker vs local positions, PnL snapshots, mismatch alerts ← E6.2
@@ -233,7 +235,8 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 **E7 Backtest & evaluation**
 - E7.1 Historical data — Alpaca options history (Feb 2024→) + ThetaData free EOD; storage ← E1.4
 - E7.2 Cost-aware backtester — optopsy or in-house; walk-forward; baseline report for D4 structures ← E7.1, E2.2
-- E7.3 Paper scorecard — metrics, weekly report to `#arc-investor` ← E6.3
+- E7.3 Paper scorecard — metrics, weekly report to `#arc-investor` ← E6.3, E7.4
+- E7.4 Decision journal — every decision + reason_code + inputs in an append-only DB journal; outcome attribution; root-cause reviews; `arc journal show|gaps|replay` (D22) ← E6.1
 
 **E8 Ops**
 - E8.1 Per-persona model routing (fallback provider: later, note only) ← P0
