@@ -28,6 +28,7 @@ from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 NOW = dt.datetime(2026, 9, 28, 9, 0, tzinfo=ET)
 SECRET = "sk-test-DO-NOT-LEAK-0123456789"
@@ -253,3 +254,74 @@ class TestHelpers:
         )
         raw = conn.execute("SELECT payload FROM run_manifests").fetchone()["payload"]
         assert RunManifest.model_validate(json.loads(raw)).job == "director"
+
+
+class TestTraceCli:
+    def test_trace_chain_json_and_text(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from arc.cli import main
+        from arc.config import ArcSettings
+        from arc.pipeline.runner import fixture_run
+        from arc.routines.config import load_routines
+
+        db = str(tmp_path / "arc.db")
+        conn, report = fixture_run(ArcSettings(_env_file=None), load_routines(), db=db)  # type: ignore[call-arg]
+        chain = report.outcomes[1].chain_run_id
+        assert chain
+        capsys.readouterr()
+        assert main(["context", "trace", chain, "--db", db, "--json"]) == 0
+        steps = json.loads(capsys.readouterr().out)
+        assert [s["job"] for s in steps] == ["director", "quant", "risk", "propose"]
+        for s in steps:
+            assert set(s) >= {"job", "run_id", "status", "declared", "read", "wrote",
+                              "persona_calls", "manifest"}  # fmt: skip
+            assert {w["kind"] for w in s["wrote"]} <= set(s["declared"]["writes"])
+            assert s["manifest"]["run_id"] == s["run_id"]
+        assert steps[1]["persona_calls"] and steps[1]["read"]
+        assert any(w["kind"] == "note" for w in steps[0]["wrote"])
+        # every routine run in the DB has exactly one manifest
+        runs = conn.execute("SELECT COUNT(*) FROM routine_runs").fetchone()[0]
+        mans = conn.execute("SELECT COUNT(DISTINCT run_id) FROM run_manifests").fetchone()[0]
+        assert runs == mans == 5
+        assert main(["context", "trace", chain, "--db", db]) == 0
+        text = capsys.readouterr().out
+        assert text.count("== ") == 4 and "declared reads=" in text and "routines.yaml=" in text
+        assert main(["context", "trace", steps[1]["run_id"], "--db", db, "--json"]) == 0
+        assert len(json.loads(capsys.readouterr().out)) == 1
+        assert main(["context", "trace", "run-nope", "--db", db]) == 1
+
+    def test_quant_manifest_complete(self) -> None:
+        from arc.config import ArcSettings
+        from arc.pipeline.runner import fixture_run
+        from arc.routines.config import load_routines
+
+        conn, report = fixture_run(ArcSettings(_env_file=None), load_routines())  # type: ignore[call-arg]
+        quant = next(o for o in report.outcomes if o.job == "quant")
+        m = ManifestRepo(conn).latest(quant.run_id)
+        assert m is not None
+        assert m.declared_writes == ["structures", "note"]
+        assert m.output_ids["structures"]
+        assert m.persona_call_ids
+        assert len(m.input_digest) == 64 and int(m.input_digest, 16) >= 0
+        assert "routines.yaml" in m.config_hashes
+        assert any(x.name == "chain:SPY" for x in m.external_inputs)
+        assert m.market_session
+        assert m.models_served == ["fixture"]
+
+    def test_logs_carry_run_id(self, conn: sqlite3.Connection) -> None:
+        import structlog
+
+        def director(ctx: JobContext) -> JobResult:
+            structlog.get_logger("t").info("handler.event")
+            return _director_ok(ctx)
+
+        with structlog.testing.capture_logs(
+            processors=[structlog.contextvars.merge_contextvars]
+        ) as logs:
+            _dispatch(conn, {"director": director, "quant": _quant_ok}).run_manual(
+                "director", now=NOW
+            )
+        ev = next(e for e in logs if e["event"] == "handler.event")
+        run = RoutineRunRepo(conn).history(job="director")[0]
+        assert ev["run_id"] == run.run_id and ev["job"] == "director"

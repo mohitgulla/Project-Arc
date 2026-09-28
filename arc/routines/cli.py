@@ -9,7 +9,7 @@ import datetime as _dt
 import json
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -457,41 +457,111 @@ def run_context(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_trace(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
-    from arc.routines.manifest import RunManifest
+def trace_runs(conn: sqlite3.Connection, ref: str) -> list[dict[str, Any]]:
+    """One element per run (a chain in step order): contract, entries read and written,
+    persona calls and the full run manifest (latest attempt). Raises LookupError."""
+    from arc.context.store import ContextStore
+    from arc.pipeline.store import PersonaCallRepo
+    from arc.routines.manifest import ManifestRepo
+    from arc.routines.runs import RoutineRunRepo
 
     rows = conn.execute(
-        "SELECT payload FROM run_manifests WHERE run_id = ? OR chain_run_id = ?"
-        " ORDER BY created_at, rowid",
-        (args.id, args.id),
+        "SELECT run_id FROM routine_runs WHERE run_id = ? OR chain_run_id = ?"
+        " ORDER BY step_index, scheduled_for, rowid",
+        (ref, ref),
     ).fetchall()
-    manifests = [RunManifest.model_validate_json(r["payload"]) for r in rows]
-    if not manifests:
-        _write(f"error: no run manifest for {args.id}")
+    if not rows:
+        msg = f"no routine run or chain {ref!r}"
+        raise LookupError(msg)
+    store, calls, manifests = ContextStore(conn), PersonaCallRepo(conn), ManifestRepo(conn)
+    runs = RoutineRunRepo(conn)
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        run = runs.get(r["run_id"])
+        assert run is not None
+        m = manifests.latest(run.run_id)
+        read: dict[str, dict[str, Any]] = {}
+        for sid in run.inputs_snapshot:
+            try:
+                snap = store.load_snapshot(sid)
+            except KeyError:
+                continue
+            for e in snap.entries:
+                read.setdefault(
+                    e.id,
+                    {
+                        "id": e.id,
+                        "kind": e.kind,
+                        "subject": e.subject,
+                        "produced_by": e.produced_by,
+                    },
+                )
+        wrote = [
+            {"id": e.id, "kind": e.kind, "subject": e.subject}
+            for e in (store.get(i) for i in run.outputs)
+            if e is not None
+        ]
+        out.append(
+            {
+                "job": run.job,
+                "run_id": run.run_id,
+                "chain_run_id": run.chain_run_id,
+                "step_index": run.step_index,
+                "status": run.status.value,
+                "declared": {
+                    "reads": m.declared_reads if m else None,
+                    "writes": m.declared_writes if m else None,
+                },
+                "read": list(read.values()),
+                "wrote": wrote,
+                "persona_calls": [
+                    {
+                        "id": c["id"],
+                        "model": c["model"],
+                        "status": c["status"],
+                        "prompt_sha256": c["prompt_sha256"],
+                    }
+                    for c in calls.for_run(run.run_id)
+                ],
+                "manifest": m.model_dump(mode="json") if m else None,
+            }
+        )
+    return out
+
+
+def _run_trace(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
+    try:
+        steps = trace_runs(conn, args.id)
+    except LookupError as exc:
+        _write(f"error: {exc.args[0]}")
         return 1
     if args.json:
-        _write(json.dumps([m.model_dump(mode="json") for m in manifests], indent=2))
+        _write(json.dumps(steps, indent=2, default=str))
         return 0
-    for m in manifests:
-        outs = ", ".join(f"{k}={len(v)}" for k, v in m.output_ids.items()) or "-"
-        ins = ", ".join(f"{k}={n}" for k, n in m.input_counts.items()) or "-"
-        ext = ", ".join(e.name for e in m.external_inputs) or "-"
-        err = f" {m.error_class}: {m.error}" if m.error_class else ""
+    for st in steps:
+        m = st["manifest"] or {}
+        cfg = m.get("config_hashes", {}).get("routines.yaml", "?")[:8]
+        tokens = f"{m.get('input_tokens')}/{m.get('output_tokens')}"
+        served = ",".join(m.get("models_served") or []) or "-"
         _write(
-            f"{m.started_at:%Y-%m-%d %H:%M:%S} {m.job:<10} #{m.step_index} a{m.attempt}"
-            f" {m.status:<7} {m.duration_ms}ms {m.run_id}{err}"
+            f"== {st['job']} #{st['step_index']} {st['status']} {m.get('duration_ms', '?')}ms"
+            f" model={served} tokens={tokens} git={(m.get('git_sha') or '?')[:10]}"
+            f"{'+dirty' if m.get('git_dirty') else ''} routines.yaml={cfg}"
+            f" session={m.get('market_session', '?')} {st['run_id']}"
         )
-        _write(f"    reads={m.declared_reads} writes={m.declared_writes}")
-        _write(f"    in: {ins}  external: {ext}")
-        _write(f"    out: {outs}  dropped: {m.dropped or '-'}")
-        if m.persona_call_ids or m.scout_batch_ids:
+        if m.get("error_class"):
+            _write(f"   error: {m['error_class']}: {m.get('error')}")
+        _write(f"   declared reads={st['declared']['reads']} writes={st['declared']['writes']}")
+        for e in st["read"]:
             _write(
-                f"    llm: served={m.models_served} requested={m.models_requested}"
-                f" tokens={m.input_tokens}/{m.output_tokens} cost={m.cost_usd}"
+                f"   read  {e['kind']:<13} {e['subject']:<10} by={e['produced_by']:<9} {e['id']}"
             )
-        _write(
-            f"    git={(m.git_sha or '?')[:10]}{'+dirty' if m.git_dirty else ''} env={m.arc_env}"
-        )
+        for e in st["wrote"]:
+            _write(f"   wrote {e['kind']:<13} {e['subject']:<10} {e['id']}")
+        for c in st["persona_calls"]:
+            _write(f"   call  {c['model']} {c['status']} sha={c['prompt_sha256'][:12]} {c['id']}")
+        ext = ", ".join(x["name"] for x in m.get("external_inputs", [])) or "-"
+        _write(f"   external: {ext}")
     return 0
 
 
