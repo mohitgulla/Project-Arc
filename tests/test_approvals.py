@@ -16,6 +16,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from arc.approvals import ACTION_APPROVE, ACTION_REJECT, render_card
+from arc.approvals.card import strategy_name, title
 from arc.approvals.service import (
     AUTO_APPROVER,
     TTL_ACTOR,
@@ -28,7 +29,7 @@ from arc.approvals.service import (
 )
 from arc.config import ArcSettings
 from arc.gate.rules import proposal_hash
-from arc.models import ApprovalDecision, GateDecision, Proposal
+from arc.models import ApprovalDecision, GateDecision, Proposal, StructureKind
 from arc.pipeline.env import FIXTURE_NOW
 from arc.pipeline.runner import fixture_run
 from arc.routines.config import load_routines
@@ -126,6 +127,34 @@ def _text(blocks: list[dict[str, Any]]) -> str:
     return json.dumps(blocks, ensure_ascii=False)
 
 
+class TestTitle:
+    """One title format for every strategy: ticker • expiry (DTE) • strategy."""
+
+    @pytest.mark.parametrize(
+        ("kind", "name"),
+        [
+            (StructureKind.IRON_CONDOR, "Iron Condor"),
+            (StructureKind.VERTICAL_CREDIT, "Put Credit Spread"),
+            (StructureKind.VERTICAL_DEBIT, "Put Debit Spread"),
+            (StructureKind.LONG_PUT, "Long Put"),
+            (StructureKind.LONG_CALL, "Long Call"),
+            (StructureKind.OTHER, "Custom"),
+            (None, "Custom"),
+        ],
+    )
+    def test_strategy_names(self, conn: sqlite3.Connection, kind: object, name: str) -> None:
+        p = _proposal(conn)
+        p = p.model_copy(update={"structure": p.structure.model_copy(update={"kind": kind})})
+        assert strategy_name(p) == name
+        assert title(p) == f"[Quant] Proposal: SPY • Oct 30 (35 DTE) • {name}"
+
+    def test_call_side_from_first_leg(self, conn: sqlite3.Connection) -> None:
+        p = _proposal(conn)
+        calls = [leg for leg in p.structure.legs if leg.occ_symbol[-9] == "C"]
+        st = p.structure.model_copy(update={"kind": StructureKind.VERTICAL_CREDIT, "legs": calls})
+        assert strategy_name(p.model_copy(update={"structure": st})) == "Call Credit Spread"
+
+
 class TestCard:
     def test_has_every_required_field(self, conn: sqlite3.Connection) -> None:
         p = _proposal(conn)
@@ -133,8 +162,9 @@ class TestCard:
         d = GateDecision(proposal_hash=ph, passed=True, token="t")
         view = render_card(p, d, proposal_hash=ph, actionable=True)
         text = _text(view.blocks)
-        assert "SPY" in view.text and "iron condor" in view.text
-        assert "iron condor" in text  # structure
+        expected = "[Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor"
+        assert view.blocks[0]["text"]["text"] == expected
+        assert view.text == f"{expected} • x14 • gate PASS"
         for leg in p.structure.legs:  # legs: every strike shown
             assert f"{leg.occ_symbol[-8:-3].lstrip('0')}" in text
         assert "*Net*" in text and "credit 1.66" in text and "limit credit 1.65" in text

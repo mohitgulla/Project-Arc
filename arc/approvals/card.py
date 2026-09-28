@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from arc.models import StructureKind
 from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
@@ -31,6 +32,8 @@ __all__ = [
     "CardView",
     "render_card",
     "render_resolved",
+    "strategy_name",
+    "title",
 ]
 
 ACTION_APPROVE = "arc_approve"
@@ -68,9 +71,31 @@ def _num(v: Decimal) -> str:
     return f"{v.normalize():f}"
 
 
-def _structure_name(p: Proposal) -> str:
-    kind = p.structure.kind
-    return kind.value.replace("_", " ") if kind else "structure"
+_STRATEGY_NAMES = {
+    StructureKind.LONG_CALL: "Long Call",
+    StructureKind.LONG_PUT: "Long Put",
+    StructureKind.VERTICAL_DEBIT: "{side} Debit Spread",
+    StructureKind.VERTICAL_CREDIT: "{side} Credit Spread",
+    StructureKind.IRON_CONDOR: "Iron Condor",
+}
+
+
+def strategy_name(p: Proposal) -> str:
+    """Display name of the structure, e.g. ``Iron Condor`` or ``Put Credit Spread``."""
+    name = _STRATEGY_NAMES.get(p.structure.kind) if p.structure.kind else None
+    if name is None:
+        return "Custom"
+    side = parse_occ(p.structure.legs[0].occ_symbol).kind.name.capitalize()
+    return name.format(side=side)
+
+
+def title(p: Proposal) -> str:
+    """One consistent title: ``[Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor``."""
+    exp = parse_occ(p.structure.legs[0].occ_symbol).expiration
+    return (
+        f"[Quant] Proposal: {ticker_of(p)} • {exp:%b %d} ({p.structure.dte} DTE) • "
+        f"{strategy_name(p)}"
+    )
 
 
 def ticker_of(p: Proposal) -> str:
@@ -147,9 +172,7 @@ def _gate(decision: GateDecision | None) -> str:
 
 
 def _body(p: Proposal, decision: GateDecision | None, proposal_hash: str) -> list[dict[str, Any]]:
-    ticker = ticker_of(p)
-    exp = parse_occ(p.structure.legs[0].occ_symbol).expiration
-    header = f"[Quant] Proposal: {ticker} {_structure_name(p)} {exp:%b %d} ({p.structure.dte} DTE)"
+    header = title(p)
     blocks: list[dict[str, Any]] = [
         {"type": "header", "text": {"type": "plain_text", "text": header[:150], "emoji": True}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*Legs*\n{_legs(p)}"}},
@@ -187,9 +210,7 @@ def _body(p: Proposal, decision: GateDecision | None, proposal_hash: str) -> lis
 
 def _fallback(p: Proposal, decision: GateDecision | None) -> str:
     verdict = "gate PASS" if decision is not None and decision.passed else "gate FAIL"
-    return (
-        f"[Quant] Proposal: {ticker_of(p)} {_structure_name(p)} x{p.sizing.contracts} ({verdict})"
-    )
+    return f"{title(p)} • x{p.sizing.contracts} • {verdict}"
 
 
 def render_card(
