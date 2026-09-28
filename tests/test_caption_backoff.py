@@ -304,6 +304,61 @@ class TestRunBehaviour:
         _, _, sleep, *_ = _fetch(db, settings, infos, [RL])
         sleep.assert_not_called()
 
+    def test_run_stats_report_caption_audio_and_cooldown(self, db) -> None:
+        """E5.3: every run's YouTube outcome is summarised (owner note on E4.1c)."""
+        from arc.ingest.youtube import YoutubeRunStats
+
+        settings = _settings(yt_max_audio_per_run=2)
+        infos = {v: _info(v) for v in ("v1", "v2", "v3", "v4")}
+        stats = YoutubeRunStats()
+        with (
+            mock.patch("subprocess.run", side_effect=_tools(infos)),
+            mock.patch("arc.ingest.youtube._download_subtitle", side_effect=[OK, RL]),
+            mock.patch("arc.ingest.youtube.resolve_ffmpeg", return_value=FFMPEG),
+        ):
+            fetch_youtube(
+                db,
+                settings,
+                transcriber=FixtureTranscriber(text="spy audio words"),
+                now=NOW,
+                rng=random.Random(0),
+                sleep=mock.Mock(),
+                stats=stats,
+            )
+        assert stats.captions == {"ok": 1, "rate_limited": 1}
+        assert (stats.captions_skipped, stats.skip_reason) == (2, "breaker")
+        assert stats.audio == 2 and stats.audio_failed == 0
+        assert stats.no_transcript == 1  # v4: audio run cap reached
+        assert stats.consecutive_rate_limits == 1
+        assert stats.cooldown_until == load_backoff(db).cooldown_until
+        text = stats.summary()
+        assert "captions: ok 1, rate_limited 1, empty 0, error 0, skipped 2 (breaker)" in text
+        assert "audio 2 (" in text and "1 without transcript yet" in text
+        assert "captions cooldown until" in text and "(streak 1)" in text
+
+    def test_run_stats_cooldown_skip_and_none(self, db, settings) -> None:
+        from arc.ingest.youtube import YoutubeRunStats
+
+        _fetch(db, settings, {"v1": _info("v1")}, [RL])  # opens a cooldown
+        stats = YoutubeRunStats()
+        with (
+            mock.patch("subprocess.run", side_effect=_tools({"v2": _info("v2")})),
+            mock.patch("arc.ingest.youtube._download_subtitle") as dl,
+            mock.patch("arc.ingest.youtube.resolve_ffmpeg", return_value=FFMPEG),
+        ):
+            fetch_youtube(
+                db,
+                settings,
+                transcriber=FixtureTranscriber(text="spy"),
+                now=NOW + timedelta(minutes=5),
+                stats=stats,
+            )
+        dl.assert_not_called()
+        assert (stats.captions_skipped, stats.skip_reason) == (1, "cooldown")
+        assert stats.captions == {} and stats.audio == 1
+        assert stats.cooldown_until is not None
+        assert YoutubeRunStats().summary().endswith("captions cooldown: none")
+
 
 # ---------------------------------------------------------------------------
 # Cross-run cooldown

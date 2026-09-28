@@ -189,9 +189,11 @@ def _make_parser() -> argparse.ArgumentParser:
             sub.add_parser(cmd, help=f"{cmd.capitalize()} (stub)")
 
     from arc.data.history.cli import add_history_parser
+    from arc.journal.cli import add_journal_parser
     from arc.routines.cli import add_context_parser, add_routines_parser
 
     add_history_parser(sub)
+    add_journal_parser(sub)
     add_routines_parser(sub)
     add_context_parser(sub)
 
@@ -605,6 +607,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_approve(args)
+    if args.command == "journal":
+        from arc.journal.cli import run_journal
+
+        _log_to_stderr()
+        return run_journal(args)
     if args.command == "history":
         from arc.data.history.cli import run_history
 
