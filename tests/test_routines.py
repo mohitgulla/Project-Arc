@@ -762,6 +762,87 @@ class TestHeartbeats:
         assert label_for("director") == "[Director]"
         assert label_for("youtube.stockedup") == "[Routines]"
 
+    @staticmethod
+    def _card_dispatcher(
+        conn: sqlite3.Connection, scout_notify: str | None
+    ) -> tuple[Dispatcher, RecordingNotifier]:
+        from arc.slack.blocks import CardView, header
+
+        extra = f", notify: {scout_notify}" if scout_notify else ""
+        text = f"""
+            sources:
+              rss: {{every: 30m}}
+            personas:
+              scout: {{schedule: ["12:00"]{extra}}}
+        """
+        view = CardView(text="[Scout] Scan: 1 doc → 1 candidate", blocks=[header("card")])
+        notes = RecordingNotifier()
+        d = Dispatcher(
+            conn,
+            cfg(text),
+            handlers={
+                "rss": lambda ctx: JobResult(summary="1 new doc"),
+                "scout": lambda ctx: JobResult(summary="1 docs → 1 accepted", card=view),
+            },
+            notifier=notes,
+            is_halted=lambda: False,
+        )
+        return d, notes
+
+    @pytest.mark.parametrize(
+        ("notify", "posts", "has_blocks"),
+        [(None, 1, True), ("card", 1, True), ("summary", 1, False), ("quiet", 0, False)],
+    )
+    def test_notify_knob_is_config_only(
+        self, conn: sqlite3.Connection, notify: str | None, posts: int, has_blocks: bool
+    ) -> None:
+        """``notify:`` in routines.yaml alone switches card / one-liner / quiet (E5.5)."""
+        d, notes = self._card_dispatcher(conn, notify)
+        d.run_manual("scout", now=et(2026, 9, 28, 12, 0))
+        assert len(notes.posts) == posts
+        if posts:
+            # The fallback text is the unchanged one-liner in every mode.
+            assert notes.posts[0][1] == "[Scout] scout ✓ 1 docs → 1 accepted"
+            assert (notes.blocks[0] is not None) is has_blocks
+
+    def test_card_default_without_a_card_falls_back_to_one_liner(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        d, _, notes = make(conn)
+        d.run_manual("auditor", now=et(2026, 9, 28, 16, 30))
+        assert notes.posts[0][1] == "[Auditor] auditor ✓ auditor done"
+        assert notes.blocks == [None]
+
+    def test_card_folds_pending_sources(self, conn: sqlite3.Connection) -> None:
+        d, notes = self._card_dispatcher(conn, None)
+        Heartbeats(conn, notes).queue_source("rss", "3 new docs")
+        d.run_manual("scout", now=et(2026, 9, 28, 12, 0))
+        blocks = notes.blocks[0]
+        assert blocks is not None
+        assert blocks[-1]["elements"][0]["text"] == "sources since last update: rss: 3 new docs"
+        assert notes.posts[0][1].endswith("\n> sources since last update: rss: 3 new docs")
+
+    def test_failures_keep_one_line_alert(self, conn: sqlite3.Connection) -> None:
+        d, rec, notes = make(conn)
+        rec.fail.add("auditor")
+        d.run_manual("auditor", now=et(2026, 9, 28, 16, 30))
+        assert notes.posts[0][1] == (
+            ":rotating_light: [Auditor] auditor FAILED: RuntimeError: auditor boom"
+        )
+        assert notes.blocks == [None]
+
+    def test_notify_card_validates(self) -> None:
+        assert job(every="5m", notify="card").notify == "card"
+        with pytest.raises(ValidationError):
+            job(every="5m", notify="loud")
+
+    def test_shipped_config_cards_for_personas(self) -> None:
+        r = load_routines(DEFAULT_ROUTINES_PATH)
+        for name in ("scout", "director", "auditor", "investor", "quant", "risk"):
+            assert r.step(name)[1].notify == "card", name
+        assert r.step("propose")[1].notify == "summary"  # E6.1 owns the proposal card
+        assert all(s.notify in (None, "quiet") for s in r.sources.values())
+
     def test_pending_queue_is_bounded(self, conn: sqlite3.Connection) -> None:
         hb = Heartbeats(conn, RecordingNotifier())
         for i in range(60):
@@ -778,11 +859,14 @@ class TestHeartbeats:
         web.chat_postMessage.side_effect = [{"ts": "111.1"}, {"ts": "2"}, {"ts": "3"}]
         n = SlackDayThreadNotifier(conn, ArcSlackClient(client=web))
         n.post(dt.date(2026, 9, 28), "one")
-        n.post(dt.date(2026, 9, 28), "two")
+        n.post(dt.date(2026, 9, 28), "two", [{"type": "divider"}])
         calls = web.chat_postMessage.call_args_list
         assert len(calls) == 3
         assert "2026-09-28" in calls[0].kwargs["text"]
         assert calls[1].kwargs["thread_ts"] == "111.1" == calls[2].kwargs["thread_ts"]
+        assert "blocks" not in calls[1].kwargs
+        assert calls[2].kwargs["blocks"] == [{"type": "divider"}]
+        assert calls[2].kwargs["text"] == "two"
         web.chat_postMessage.side_effect = RuntimeError("slack down")
         n.post(dt.date(2026, 9, 29), "never raises")
 

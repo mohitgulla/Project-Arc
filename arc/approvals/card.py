@@ -13,13 +13,13 @@ without buttons plus one context line with the outcome.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from arc.approvals.trail import DecisionTrail
 from arc.models import StructureKind
 from arc.slack import blocks as B
+from arc.slack.blocks import CardView
 from arc.slack.personas import Persona
 from arc.structures import parse_occ
 from arc.utils.calendar import ET
@@ -43,14 +43,6 @@ ACTION_APPROVE = "arc_approve"
 ACTION_REJECT = "arc_reject"
 
 _MULT = Decimal(100)
-
-
-@dataclass(frozen=True)
-class CardView:
-    """What gets posted: plain fallback text (notifications) + Block Kit blocks."""
-
-    text: str
-    blocks: list[dict[str, Any]]
 
 
 def _money(v: Decimal | None) -> str:

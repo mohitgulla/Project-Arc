@@ -90,6 +90,7 @@ from arc.pipeline.store import PersonaCallRepo
 from arc.routines.handlers import JobResult
 from arc.routines.runs import RoutineRunRepo
 from arc.sizing import size_contracts
+from arc.slack.digests import director_card, quant_card, risk_card
 from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
@@ -281,25 +282,32 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
 
 def _filter_shortlist(
     out: DirectorOutput, candidates: Mapping[str, Stance], limit: int
-) -> tuple[list[DirectorRankedItem], Counter[str]]:
+) -> tuple[list[DirectorRankedItem], Counter[str], list[tuple[str, str]]]:
+    """Kept items, drop counts by reason, and ``(ticker, reason)`` per drop."""
     dropped: Counter[str] = Counter()
+    items: list[tuple[str, str]] = []
     kept: list[DirectorRankedItem] = []
     seen: set[str] = set()
+
+    def drop(t: str, reason: str) -> None:
+        dropped[reason] += 1
+        items.append((t, reason))
+
     for item in sorted(out.shortlist, key=lambda i: (i.rank, -i.confidence)):
         t = item.ticker.strip().upper()
         if t not in candidates:
-            dropped[DROP_NOT_CANDIDATE] += 1
+            drop(t, DROP_NOT_CANDIDATE)
             continue
         if t in seen:
-            dropped[DROP_DUPLICATE] += 1
+            drop(t, DROP_DUPLICATE)
             continue
         stype = item.suggested_structure_type.strip().lower()
         stance = item.stance.strip().lower()
         if stype not in STRUCTURE_TYPES or stance not in {s.value for s in Stance}:
-            dropped[DROP_BAD_FIELD] += 1
+            drop(t, DROP_BAD_FIELD)
             continue
         if len(kept) >= limit:
-            dropped[DROP_OVER_LIMIT] += 1
+            drop(t, DROP_OVER_LIMIT)
             continue
         seen.add(t)
         kept.append(
@@ -312,7 +320,7 @@ def _filter_shortlist(
                 }
             )
         )
-    return kept, dropped
+    return kept, dropped, items
 
 
 def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
@@ -348,20 +356,26 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         DirectorOutput,
     )
     reply, out = _ask(ctx, env, "director", prompt, DirectorOutput, snap.id)
-    kept, dropped = _filter_shortlist(out, cands, limit)
+    kept, dropped, drop_items = _filter_shortlist(out, cands, limit)
     _record_ok(ctx, "director", reply, snap.id, dropped)
-    ctx.write(
-        "shortlist",
-        SESSION_SUBJECT,
-        ShortlistPayload(
-            shortlist=kept, market_regime=out.market_regime, session_notes=out.session_notes
-        ),
+    payload = ShortlistPayload(
+        shortlist=kept, market_regime=out.market_regime, session_notes=out.session_notes
     )
+    ctx.write("shortlist", SESSION_SUBJECT, payload)
     names = ", ".join(f"{i.ticker} ({i.stance})" for i in kept) or "none"
+    picked = {i.ticker for i in kept} | {t for t, _ in drop_items}
+    not_picked = [(t, "not_picked") for t in sorted(cands) if t not in picked]
     return JobResult(
         summary=f"{len(cands)} candidates → shortlist: {names}"
         + (f"; dropped {dict(dropped)}" if dropped else ""),
         metrics={"shortlist": len(kept), "regime_written": len(regimes), **dropped},
+        card=director_card(
+            payload,
+            candidates=len(cands),
+            dropped=[*drop_items, *not_picked],
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+        ),
     )
 
 
@@ -527,31 +541,32 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
     reply, out = _ask(ctx, env, "quant", prompt, QuantOutput, ctx.snapshot.id)
     dropped: Counter[str] = Counter()
+    drop_items: list[tuple[str, str]] = []
     kept: list[QuantStructureOut] = []
     seen: set[str] = set()
     for s in out.structures:
         t = s.ticker.strip().upper()
         if t not in menus:
-            dropped[DROP_NOT_SHORTLISTED] += 1
-            continue
-        if t in seen:
-            dropped[DROP_DUPLICATE] += 1
-            continue
-        try:
-            match = menus[t].get(_legs_key(s.legs))
-        except ValueError:
-            match = None
-        if match is None:
-            dropped[DROP_NOT_IN_MENU] += 1
-            continue
-        seen.add(t)
-        kept.append(_to_quant_structure(t, match, confidence=s.confidence, rationale=s.rationale))
+            reason = DROP_NOT_SHORTLISTED
+        elif t in seen:
+            reason = DROP_DUPLICATE
+        else:
+            try:
+                match = menus[t].get(_legs_key(s.legs))
+            except ValueError:
+                match = None
+            if match is not None:
+                seen.add(t)
+                kept.append(
+                    _to_quant_structure(t, match, confidence=s.confidence, rationale=s.rationale)
+                )
+                continue
+            reason = DROP_NOT_IN_MENU
+        dropped[reason] += 1
+        drop_items.append((t, reason))
     _record_ok(ctx, "quant", reply, ctx.snapshot.id, dropped)
-    ctx.write(
-        "structures",
-        SESSION_SUBJECT,
-        StructuresPayload(structures=kept, analysis_notes=out.analysis_notes),
-    )
+    payload = StructuresPayload(structures=kept, analysis_notes=out.analysis_notes)
+    ctx.write("structures", SESSION_SUBJECT, payload)
     desc = "; ".join(
         f"{s.ticker} {s.structure_type} "
         f"{'/'.join(f'{leg.strike:g}' for leg in s.legs)} {s.legs[0].expiry} "
@@ -563,6 +578,14 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         + (f"; dropped {dict(dropped)}" if dropped else "")
         + (f"; no chain: {', '.join(no_chain)}" if no_chain else ""),
         metrics={"structures": len(kept), "no_chain": len(no_chain), **dropped},
+        card=quant_card(
+            payload,
+            dropped=dropped,
+            dropped_items=drop_items,
+            no_chain=no_chain,
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+        ),
     )
 
 
@@ -638,28 +661,27 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
     reply, out = _ask(ctx, env, "risk", prompt, RiskOutput, ctx.snapshot.id)
     wanted = {(s.ticker, s.structure_type) for s in structures.structures}
     dropped: Counter[str] = Counter()
+    drop_items: list[tuple[str, str]] = []
     kept: list[RiskAssessment] = []
     seen: set[tuple[str, str]] = set()
     for a in out.assessments:
         key = (a.ticker.strip().upper(), a.structure_type.strip().lower())
-        if key not in wanted:
-            dropped[DROP_UNKNOWN_STRUCTURE] += 1
-            continue
-        if key in seen:
-            dropped[DROP_DUPLICATE] += 1
+        reason = (
+            DROP_UNKNOWN_STRUCTURE if key not in wanted else DROP_DUPLICATE if key in seen else None
+        )
+        if reason is not None:
+            dropped[reason] += 1
+            drop_items.append((f"{key[0]} {key[1]}", reason))
             continue
         seen.add(key)
         kept.append(a.model_copy(update={"ticker": key[0], "structure_type": key[1]}))
     _record_ok(ctx, "risk", reply, ctx.snapshot.id, dropped)
-    ctx.write(
-        "risk_review",
-        SESSION_SUBJECT,
-        RiskReviewPayload(
-            assessments=kept,
-            portfolio_summary=out.portfolio_summary,
-            advisory_notes=out.advisory_notes,
-        ),
+    payload = RiskReviewPayload(
+        assessments=kept,
+        portfolio_summary=out.portfolio_summary,
+        advisory_notes=out.advisory_notes,
     )
+    ctx.write("risk_review", SESSION_SUBJECT, payload)
     desc = "; ".join(f"{a.ticker} {a.risk_rating}, suggests {a.sizing_suggestion}" for a in kept)
     missing = sorted(f"{t} {k}" for t, k in wanted - seen)
     return JobResult(
@@ -667,6 +689,14 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         + (f"; not assessed: {', '.join(missing)}" if missing else "")
         + (f"; dropped {dict(dropped)}" if dropped else ""),
         metrics={"assessments": len(kept), "not_assessed": len(missing), **dropped},
+        card=risk_card(
+            payload,
+            dropped=dropped,
+            dropped_items=drop_items,
+            not_assessed=missing,
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+        ),
     )
 
 

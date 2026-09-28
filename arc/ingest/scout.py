@@ -79,6 +79,7 @@ class ScoutRunResult:
     docs_scouted: int = 0
     accepted: int = 0
     rejected: Counter[str] = field(default_factory=Counter)
+    rejected_items: dict[str, list[str]] = field(default_factory=dict)  # reason -> tickers
     candidates: list[Candidate] = field(default_factory=list)
 
 
@@ -419,6 +420,8 @@ def run_scout(
             )
             if isinstance(outcome, str):
                 rejected[outcome] += 1
+                raw = item.get("ticker") if isinstance(item, dict) else None
+                result.rejected_items.setdefault(outcome, []).append(str(raw or "?")[:12])
                 continue
             store_candidate(cand_repo, outcome, day=day, run_id=run_id)
             accepted += 1

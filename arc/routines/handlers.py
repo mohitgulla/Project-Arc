@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from arc.models import RawDoc
     from arc.routines.config import JobKind, RoutinesConfig, StepSpec
     from arc.routines.runs import RoutineEvent
+    from arc.slack.blocks import CardView
 
 log = structlog.get_logger(__name__)
 
@@ -48,10 +49,15 @@ class JobSkippedError(Exception):
 
 @dataclass
 class JobResult:
-    """What a handler reports back. ``metrics`` feed trigger conditions."""
+    """What a handler reports back. ``metrics`` feed trigger conditions.
+
+    ``summary`` is the one-line heartbeat (and the notification fallback text);
+    ``card`` is the optional E5.5 digest card posted under ``notify: card``.
+    """
 
     summary: str = ""
     metrics: dict[str, Any] = field(default_factory=dict)
+    card: CardView | None = None
 
 
 @dataclass
@@ -217,6 +223,8 @@ def scout_persona(ctx: JobContext, llm: ScoutLLM | None = None) -> JobResult:
     result = run_scout(ctx.conn, ctx.settings, **kwargs)
     for cand in result.candidates:
         ctx.write("candidate", cand.ticker, CandidatePayload.model_validate(cand.model_dump()))
+    from arc.slack.digests import scout_card
+
     return JobResult(
         summary=(
             f"{result.docs_scouted} docs → {result.accepted} accepted, "
@@ -229,6 +237,16 @@ def scout_persona(ctx: JobContext, llm: ScoutLLM | None = None) -> JobResult:
             "docs_scouted": result.docs_scouted,
             "failed_batches": result.failed_batches,
         },
+        card=scout_card(
+            docs=result.docs_scouted,
+            accepted=result.accepted,
+            candidates=result.candidates,
+            rejected=result.rejected,
+            rejected_items=result.rejected_items,
+            failed_batches=result.failed_batches,
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+        ),
     )
 
 

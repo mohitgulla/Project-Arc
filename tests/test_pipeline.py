@@ -287,6 +287,60 @@ class _Boom:
         raise ScoutLLMError("provider down")
 
 
+class TestDigestCards:
+    """E5.5: each persona step posts a digest card; the fallback one-liner is unchanged."""
+
+    def test_fixture_chain_posts_a_card_per_persona(
+        self,
+        settings: ArcSettings,
+        routines,  # noqa: ANN001
+    ) -> None:
+        from arc.ingest.scout import load_fixture_docs
+        from arc.pipeline.runner import run_propose
+        from arc.routines.heartbeat import RecordingNotifier
+
+        conn = open_db(":memory:", copy=False)
+        load_fixture_docs(conn)
+        notes = RecordingNotifier()
+        report = run_propose(
+            conn, settings, routines, PipelineEnv.fixtures(), now=FIXTURE_NOW, notifier=notes
+        )
+        chain = report.outcomes[1].chain_run_id
+        texts = [t for _, t in notes.posts]
+        headers = [b[0]["text"]["text"] if b else None for b in notes.blocks]
+        assert headers == [
+            "[Scout] Scan: 10 docs → 3 candidates",
+            "[Director] Shortlist: 1 of 3 • market risk_on",
+            "[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78",
+            "[Risk] Review: SPY moderate • suggests 20",
+            None,  # propose has no card (E6.1 posts the proposal card)
+        ]
+        # Fallback text = the pre-E5.5 one-liners.
+        assert texts[0] == "[Scout] scout ✓ 10 docs → 5 accepted, 3 candidates today"
+        assert texts[1] == (
+            "[Director] director ✓ 3 candidates → shortlist: SPY (neutral); "
+            "dropped {'not_a_candidate': 2}"
+        )
+        assert texts[2].startswith("[Quant] quant ✓ SPY iron_condor 740/745/798/803 2026-10-30")
+        assert (
+            texts[3] == "[Risk] risk ✓ SPY moderate, suggests 20; dropped {'unknown_structure': 1}"
+        )
+        # Footer links each chain post to its run and chain (E7.4 journal).
+        for o, blocks in zip(report.outcomes[1:4], notes.blocks[1:4], strict=True):
+            assert blocks is not None
+            footer = blocks[-1]["elements"][0]["text"]
+            assert footer == f"run `{o.run_id}` · chain `{chain}`"
+        scout = "\n".join(
+            b["text"]["text"] for b in notes.blocks[0] or [] if b["type"] == "section"
+        )
+        assert "• not in universe (1): PLTR" in scout
+        director = json.dumps(notes.blocks[1])
+        assert "not a Scout candidate (2): AAPL, PLTR" in director
+        assert "not picked by Director (2): NVDA, XOM" in director
+        risk = json.dumps(notes.blocks[3])
+        assert "structure Quant did not propose (1): QQQ iron_condor" in risk
+
+
 class TestFailures:
     def _env(self, **llms: object) -> PipelineEnv:
         env = PipelineEnv.fixtures()

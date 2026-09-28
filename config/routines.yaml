@@ -6,8 +6,11 @@
 #
 # Job keys: schedule | every (+window) | trigger, days (daily|trading|weekdays),
 # chain, after_sources, ttl (catch-up window), context {ttl, supersede},
-# reads [kinds], handler "module:function", halt_exempt, notify (quiet|summary),
+# reads [kinds], handler "module:function", halt_exempt, notify (quiet|summary|card),
 # llm. Any other key is passed to the handler as an option (e.g. only_for).
+# notify (E5.5): sources default `quiet` (folded into the next persona post);
+# personas and chain steps default `card` (Block Kit digest; the one-liner stays
+# the notification text). `summary` = one-liner only. Failures always alert.
 # E5.3 tunes the defaults below (pre-market/intraday/post-market/weekly).
 
 timezone: America/New_York
@@ -44,24 +47,28 @@ personas:
     days: daily
     after_sources: true
     ttl: 3h
+    notify: card
   director:
     schedule: ["09:00"]
     days: trading
     chain: [quant, risk, propose]
     reads: [candidate, regime, channel_brief]
     ttl: 2h
+    notify: card
   auditor:
     schedule: ["16:30"]
     days: trading
     halt_exempt: true           # the only persona that keeps running under !halt
     ttl: 6h
+    notify: card
   investor:
     trigger: approval           # event-driven, never scheduled
+    notify: card
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
-  quant:   {reads: [shortlist]}
-  risk:    {reads: [structures]}
-  propose: {reads: [candidate, shortlist, structures, risk_review], llm: false}
+  quant:   {reads: [shortlist], notify: card}
+  risk:    {reads: [structures], notify: card}
+  propose: {reads: [candidate, shortlist, structures, risk_review], llm: false, notify: summary}  # E6.1 posts the proposal cards
 
 triggers:                       # a run finishing (or an external event) can start another run
   - on: scout.completed
