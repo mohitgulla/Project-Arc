@@ -501,10 +501,10 @@ class TestInvestor:
         text = _all(view)
         assert "Limit order · 3 attempts max · timeout 120s" in text
         assert (
-            "*Order plan (same strikes, limit price steps)*\n1. -1.25 at mid\n2. -1.22\n3. -1.20\n"
-            "Each attempt waits 30s; if unfilled it is cancelled and the cancel is confirmed "
-            "before the next limit is sent"
+            "*Order plan*\n1. Start -1.25 (mid)\n"
+            "2. Step 1 -1.22 (wait 30s)\n3. Step 2 -1.20 (wait 30s)"
         ) in text
+        assert "Each attempt" not in text
         assert "Result" not in text
         assert "*[Investor] Notes*\nStart at mid." in text
         _assert_slack_limits(view)

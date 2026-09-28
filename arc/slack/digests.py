@@ -544,19 +544,13 @@ def investor_card(
         f"{attempts} attempts max",
         f"timeout {plan.timeout_seconds}s",
     )
-    lines = [f"1. {plan.initial_limit_price:+.2f} at mid"]
-    prev_wait = plan.improvement_steps[0].wait_seconds if plan.improvement_steps else None
+    lines = [f"1. Start {plan.initial_limit_price:+.2f} (mid)"]
     for s in plan.improvement_steps:
-        lines.append(f"{s.step_number + 1}. {s.price:+.2f}")
-    waits = {s.wait_seconds for s in plan.improvement_steps}
-    wait = f"{prev_wait}s" if len(waits) == 1 and prev_wait is not None else "per step"
-    rule = (
-        f"Each attempt waits {wait}; if unfilled it is cancelled and the cancel is confirmed "
-        "before the next limit is sent, so only one order is ever working. "
-        "Unfilled after the last attempt: cancel and stop."
-    )
+        lines.append(
+            f"{s.step_number + 1}. Step {s.step_number} {s.price:+.2f} (wait {s.wait_seconds}s)"
+        )
     blocks.append(B.divider())
-    blocks.append(_section("Order plan (same strikes, limit price steps)", [*lines, rule]))
+    blocks.append(_section("Order plan", lines))
     if result is not None:
         pairs = [
             ("Result", f"{_STATUS_ICON[result.status]} {result.status.replace('_', ' ')}"),
