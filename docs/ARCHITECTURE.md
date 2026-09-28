@@ -67,6 +67,54 @@
   prefix (`youtube.<channel>` uses the YouTube handler), and `handler: module:fn`
   plugs in anything else.
 
+### Agent I/O contracts (E5.6, D27)
+
+Every job and chain step declares `reads` (kinds in its input snapshot) and `writes`
+(kinds it may append) in `config/routines.yaml`. `JobContext.write` raises
+`ContractViolationError` for an undeclared kind, and the run fails and alerts
+(fail-closed). No `writes` key means the job may write nothing. A test requires every
+shipped job and step to declare `writes`.
+
+| Job / step | reads | writes |
+|---|---|---|
+| `rss`, `edgar`, `earnings`, `youtube.stockedup` | - | `raw_doc_ref` |
+| `scout` | all | `candidate`, `note` (one scan-summary observation per run) |
+| `director` | `candidate`, `regime`, `channel_brief`, `note` | `shortlist`, `regime`, `note` |
+| `quant` | `shortlist`, `regime` | `structures`, `note` |
+| `risk` | `structures` | `risk_review`, `note` |
+| `propose` | `candidate`, `regime`, `shortlist`, `structures`, `risk_review` | `proposal` |
+| `monitor` | `proposal` | `proposal` (E6.2 exit proposals) |
+| `auditor` | all | `journal`, `note` |
+| `scorecard` | all | nothing yet |
+| `investor` | all | `note` |
+
+- **`note` kind.** `NotePayload` holds persona, topic (`thesis`, `regime_view`,
+  `observation`, `risk_flag`, `lesson`, `execution`), horizon, stance, title, body,
+  confidence, tags, evidence and `about` (the ids of the entries it annotates). Notes
+  keep persona narrative that used to be dropped. The Director reads prior notes,
+  newest first and capped by `pipeline_max_context_notes`. Notes are never gate or
+  `Candidate` inputs.
+- **Run manifest.** The dispatcher writes one append-only `run_manifests` row per run
+  attempt, whatever the status (`ok`, `failed` or `skipped`). It is a versioned
+  `arc.routines.manifest.RunManifest` covering:
+  - identity, trigger and parent run
+  - timing and market session
+  - outcome and error class
+  - env flags (never secret values), git sha and hashes of every `config/` file
+  - the effective spec, the declared contract and kind schema versions
+  - the input snapshot and its digest
+  - external inputs recorded by `JobContext.record_input` (`as_of` + sha256)
+  - outputs by kind
+  - LLM models, tokens and cost
+  - linked decisions, proposals, gate decisions and Slack ts
+
+  A later run-level fact is added as a manifest field, not as a side column.
+- **Schema registry.** Committed payload schemas live in
+  `schemas/context/<kind>.v<N>.json`. `arc context schemas --check` fails on drift;
+  regenerate with `--write` and bump `schema_version` on a change.
+- **Trace.** `arc context trace <run_id|chain_run_id> [--json]` shows each step's
+  declared contract, the entries it read and wrote, its persona calls and its manifest.
+
 ### Daily schedule and cron (E5.3)
 
 Shipped defaults in `config/routines.yaml`, all times ET:
@@ -119,7 +167,8 @@ Project-Arc/
 |   +-- scanner/                chain filters, IVR, delta-targeted strikes
 |   +-- ingest/                 RSS, EDGAR, earnings, YouTube -> Candidate
 |   +-- context/                shared context store: typed kinds, TTLs, snapshots (D16)
-|   +-- routines/               config-driven dispatcher: schedule, chains, triggers, locks
+|   +-- routines/               config-driven dispatcher: schedule, chains, triggers, locks,
+|                               run manifests (D27)
 |   +-- features/               regime (Markov 3-state), IV/HV, IVR
 |   +-- personas/               JSON schemas + prompt builders (no side effects)
 |   +-- gate/                   rules.py (pure), token.py, halt.py
@@ -128,6 +177,7 @@ Project-Arc/
 |   +-- broker/                 BrokerAdapter protocol; alpaca_paper.py
 |   +-- reconcile/              broker vs local, PnL snapshots, alerts
 |   +-- backtest/               cost-aware engine, walk-forward, reports
++-- schemas/context/            <kind>.v<N>.json: committed payload JSON Schemas (D27)
 +-- tests/
 +-- hermes/
     +-- skills/arc-*/SKILL.md
