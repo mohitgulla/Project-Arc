@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install (or re-install) the Arc health-check LaunchAgent (E8.2).
 #
-#   hermes/monitoring/install.sh [REPO_DIR]          install + load (every 5 min)
+#   hermes/monitoring/install.sh [REPO_DIR]          install + load (every 30 min)
 #   hermes/monitoring/install.sh --print [REPO_DIR]  print the plist only
 #   hermes/monitoring/install.sh --uninstall
 #
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 LABEL="com.projectarc.health-check"
-INTERVAL=300
+INTERVAL=1800   # 30 min: ops visibility, not strategy-critical (owner, 2026-09-28)
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 SCRIPTS="${HERMES_HOME:-$HOME/.hermes}/scripts"
@@ -34,7 +34,8 @@ fi
 
 REPO="${1:-$HOME/GitHub/Project-Arc}"
 REPO="$(cd "$REPO" && pwd)"
-PY="$(command -v python3)"
+# The repo venv (3.12): macOS /usr/bin/python3 is 3.9 and lacks datetime.UTC.
+PY="$REPO/.venv/bin/python"
 
 plist() {
   cat <<EOF

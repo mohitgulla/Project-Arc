@@ -918,5 +918,6 @@ def test_install_script_prints_plist() -> None:
         capture_output=True, text=True, check=True,
     ).stdout  # fmt: skip
     assert "com.projectarc.health-check" in out
-    assert "<integer>300</integer>" in out
+    assert "<integer>1800</integer>" in out
+    assert "/.venv/bin/python</string>" in out
     assert "arc_health_check.py" in out
