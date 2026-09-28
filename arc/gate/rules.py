@@ -281,6 +281,9 @@ def price_band(
     """
     nbbo = combo_nbbo(legs, market)
     tick = _d(config.limit_tick)
+    if limit % Decimal("0.01"):
+        msg = f"limit {limit} is not whole cents: round it to the tick before banding"
+        raise ValueError(msg)
     if nbbo is None or limit % tick != 0:
         return PriceBand(lo=limit, hi=limit, max_steps=0)
     return band_from_nbbo(
