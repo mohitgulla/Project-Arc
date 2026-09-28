@@ -238,6 +238,125 @@ class TestBandRules:
         assert R.worst_case(dd, BAND, 2).max_loss_total == D("850")
 
 
+# ---------------------------------------------------------------------------
+# Max gain must stay > 0 at every price the band can reach (review round 1)
+# ---------------------------------------------------------------------------
+
+EXP_R = G.dt.date(2026, 10, 30)
+C736 = G.format_occ("SPY", EXP_R, "call", 736)
+C737 = G.format_occ("SPY", EXP_R, "call", 737)
+# Live paper quotes that produced a +2.79 fill on a $1-wide call spread (10:41 ET).
+REVIEW_Q = {C736: G.quote("36.77", "38.48"), C737: G.quote("35.97", "36.30")}
+
+
+def _call_spread(long_p: str = "37.625", short_p: str = "36.135"):
+    return debit_vertical(
+        "call",
+        "SPY",
+        EXP_R,
+        long_strike=736,
+        long_premium=long_p,
+        short_strike=737,
+        short_premium=short_p,
+        as_of=G.AS_OF,
+    )
+
+
+class TestMaxGain:
+    def test_price_ceiling(self) -> None:
+        assert R.price_ceiling(_call_spread().legs) == D("1.00")  # the width
+        assert R.price_ceiling(G.bull_put().legs) == D("0")  # credit must stay > 0
+        assert R.price_ceiling(G.long_call("SPY", EXP_R, 736, "37.6").legs) is None
+
+    def test_max_gain_cap(self) -> None:
+        assert R.max_gain_cap(_call_spread().legs, TICK) == D("0.99")
+        assert R.max_gain_cap(_call_spread().legs, D("0.05")) == D("0.95")
+        assert R.max_gain_cap(G.bull_put().legs, TICK) == D("-0.01")
+        assert R.max_gain_cap(G.long_call("SPY", EXP_R, 736, "37.6").legs, TICK) is None
+
+    def test_regression_review_quotes_band_capped_below_width(self) -> None:
+        """SPY 736/737 C, combo NBBO [0.47, 2.51]: the far touch is past the $1 width."""
+        legs = _call_spread().legs
+        assert R.combo_nbbo(legs, G.mkt(quotes=REVIEW_Q)) == (D("0.47"), D("2.51"))
+        band = R.price_band(legs, D("0.60"), G.mkt(quotes=REVIEW_Q), cfg())
+        assert band.hi == D("0.99") and band.max_steps == 3
+        assert all(p < D("1.00") for p in band.ladder(TICK))
+
+    def test_regression_review_band_is_refused(self) -> None:
+        """The exact band from the review (1.99 -> 3.75) fails the gate at mid and worst."""
+        p = G.make_proposal(
+            structure=_call_spread(),
+            limit_price=D("1.99"),
+            sizing=G.Sizing(contracts=1, notional=D("199"), pct_equity=0.002),
+        )
+        bad = PriceBand(lo=D("1.99"), hi=D("3.75"), max_steps=3)
+        d = R.evaluate(
+            p, G.acct(), Portfolio(), cfg(), market=G.mkt(quotes=REVIEW_Q), now=NOW, band=bad
+        )
+        assert not d.passed
+        assert RuleCode.NO_MAX_GAIN.value in G.codes(d)
+        assert any("worst price" in v and "max gain" in v for v in d.violations)
+
+    def test_mid_at_or_above_width_has_no_band(self) -> None:
+        """When even the mid leaves no max gain, the gate fails (no band can fix it)."""
+        legs = _call_spread().legs
+        band = R.price_band(legs, D("1.20"), G.mkt(quotes=REVIEW_Q), cfg())
+        assert (band.lo, band.hi, band.max_steps) == (D("1.20"), D("1.20"), 0)
+        p = G.make_proposal(
+            structure=_call_spread(),
+            limit_price=D("1.00"),
+            sizing=G.Sizing(contracts=1, notional=D("100"), pct_equity=0.001),
+        )
+        d = R.evaluate(p, G.acct(), Portfolio(), cfg(), market=G.mkt(quotes=REVIEW_Q), now=NOW)
+        assert RuleCode.NO_MAX_GAIN.value in G.codes(d)
+
+    def test_credit_band_never_reaches_zero_credit(self) -> None:
+        """Bull put with a far touch at +0.10: the band stops at -0.01 (still a credit)."""
+        wide = {G.LP: G.quote("1.20", "2.20"), G.SP: G.quote("2.10", "2.15")}
+        band = R.price_band(G.bull_put().legs, D("-0.85"), G.mkt(quotes=wide), cfg())
+        assert band.hi == D("-0.01")
+
+    def test_check_max_gain_passes_inside(self) -> None:
+        assert R.check_max_gain(derive(G.make_proposal())) == []
+
+    @given(
+        st.integers(1, 20),  # width in $
+        st.integers(1, 5_000),  # mid, cents
+        st.integers(0, 10_000),  # far touch beyond mid, cents
+        st.integers(0, MAX_BAND_STEPS),
+        st.sampled_from([D("0.01"), D("0.05")]),
+        st.sampled_from([D("1"), D("0.5")]),
+    )
+    def test_property_every_ladder_price_keeps_max_gain(
+        self, width: int, mid_c: int, extra_c: int, n: int, tick: D, reach: D
+    ) -> None:
+        """Every ladder price the band allows leaves max gain > 0 whenever the band
+        steps at all; and the gate passes the band's worst price only if it does."""
+        mid = D(mid_c) / 100
+        mid = (mid / tick).to_integral_value() * tick
+        legs = debit_vertical(
+            "call",
+            "SPY",
+            EXP_R,
+            long_strike=700,
+            long_premium="50",
+            short_strike=700 + width,
+            short_premium="45",
+            as_of=G.AS_OF,
+        ).legs
+        cap = R.max_gain_cap(legs, tick)
+        assert cap is not None
+        band = band_from_nbbo(
+            mid, mid + D(extra_c) / 100, max_steps=n, reach=reach, tick=tick, cap=cap
+        )
+        ceiling = R.price_ceiling(legs)
+        assert ceiling is not None and ceiling == D(width)
+        if mid < ceiling:
+            assert all(p < ceiling for p in band.ladder(tick))
+        else:
+            assert band.max_steps == 0 and band.hi == mid
+
+
 class TestClosing:
     def _close(self):
         """Closing the baseline bull put = buying back a 570/565 bear put (debit 0.85)."""

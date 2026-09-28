@@ -130,6 +130,7 @@ class ReasonCode(StrEnum):
     GATE_MAX_POSITIONS = "gate:max_open_positions"
     GATE_APPROVAL_TTL = "gate:approval_ttl"
     GATE_STALE_DATA = "gate:stale_data"
+    GATE_NO_MAX_GAIN = "gate:limit_no_max_gain"
     GATE_RULE_ERROR = "gate:rule_error"
     GATE_PRICE_BAND = "gate:price_band"
     GATE_CLOSE_MISMATCH = "gate:close_mismatch"

@@ -75,18 +75,28 @@ class PriceBand(BaseModel):
 
 
 def band_from_nbbo(
-    start: Decimal, far: Decimal, *, max_steps: int, reach: Decimal, tick: Decimal
+    start: Decimal,
+    far: Decimal,
+    *,
+    max_steps: int,
+    reach: Decimal,
+    tick: Decimal,
+    cap: Decimal | None = None,
 ) -> PriceBand:
     """Band from the start (mid) limit toward the far touch ``far`` of the combo NBBO.
 
-    ``hi = start + reach·(far − start)`` floored to ``tick`` (never below
-    ``start``). With ``reach = 1`` the last step is the far touch. When the far
-    touch is not worse than the start there is no room to improve: ``hi = lo`` and
-    ``max_steps = 0`` (one attempt at the start price).
+    ``hi = start + reach·(min(far, cap) − start)`` floored to ``tick`` (never
+    below ``start``). With ``reach = 1`` the last step is the far touch. ``cap``
+    is the worst price the structure can still profit at (see
+    :func:`arc.gate.rules.max_gain_cap`); ``None`` = no cap. When neither the
+    far touch nor the cap is worse than the start there is no room to improve:
+    ``hi = lo`` and ``max_steps = 0`` (one attempt at the start price).
     """
     if tick <= 0 or not Decimal(0) <= reach <= Decimal(1):
         msg = f"invalid tick {tick} or reach {reach}"
         raise ValueError(msg)
+    if cap is not None:
+        far = min(far, cap)
     room = max(far - start, Decimal(0))
     hi = start + _floor_to(room * reach, tick)
     return PriceBand(lo=start, hi=hi, max_steps=max_steps if hi > start else 0)

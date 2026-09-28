@@ -17,7 +17,7 @@ import datetime as dt
 import hashlib
 import json
 from collections.abc import Callable, Sequence
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -53,6 +53,7 @@ __all__ = [
     "check_greek_caps",
     "check_halt",
     "check_max_open_positions",
+    "check_max_gain",
     "check_per_underlying",
     "check_spread_tick",
     "check_structure_whitelist",
@@ -60,7 +61,9 @@ __all__ = [
     "combo_nbbo",
     "derive",
     "evaluate",
+    "max_gain_cap",
     "price_band",
+    "price_ceiling",
     "proposal_band",
     "proposal_hash",
 ]
@@ -88,6 +91,7 @@ class RuleCode(StrEnum):
     MAX_POSITIONS = "max_open_positions"
     APPROVAL_TTL = "approval_ttl"
     STALE_DATA = "stale_data"
+    NO_MAX_GAIN = "limit_no_max_gain"
     BAND = "price_band"
     CLOSE_MISMATCH = "close_mismatch"
     RULE_ERROR = "rule_error"
@@ -115,6 +119,10 @@ class Derived(NamedTuple):
     max_loss_total: Decimal | None  # dollars for sizing.contracts units; None = unbounded
     net_price: Decimal  # per-share net: + debit / - credit (structure's own mid)
     limit_price: Decimal  # per-share limit the order will carry
+    # per-share price at which max gain hits 0 (the most the structure can be worth
+    # at expiry, net of the other legs); a limit must stay strictly below it.
+    # None = unbounded max gain.
+    price_ceiling: Decimal | None = None
 
 
 Rule = Callable[[], list[Violation]]
@@ -146,7 +154,7 @@ def derive(proposal: Proposal) -> Derived:
     legs = proposal.structure.legs
     kind = classify(legs)  # validates: legs present, premiums set, single root/expiry
     occ = parse_occ(legs[0].occ_symbol)
-    _, max_loss = max_gain_loss(legs)
+    max_gain, max_loss = max_gain_loss(legs)
     net = net_debit_credit(legs)
     contracts = Decimal(proposal.sizing.contracts)
     return Derived(
@@ -157,7 +165,39 @@ def derive(proposal: Proposal) -> Derived:
         max_loss_total=None if max_loss is None else max_loss * contracts,
         net_price=net,
         limit_price=net if proposal.limit_price is None else proposal.limit_price,
+        price_ceiling=None if max_gain is None else net + max_gain / _HUNDRED,
     )
+
+
+def price_ceiling(legs: Sequence[Leg]) -> Decimal | None:
+    """Per-share price at which the structure's max gain is 0; ``None`` = unbounded gain.
+
+    Max gain at a limit ``P`` is ``max_gain(mid) − (P − mid)·100`` per unit, so it
+    is positive iff ``P < mid + max_gain(mid)/100``. The ceiling depends only on
+    the strikes (e.g. the width of a debit vertical; ``0`` for a credit vertical,
+    whose credit must stay positive), not on the quotes.
+    """
+    max_gain, _ = max_gain_loss(legs)
+    return None if max_gain is None else net_debit_credit(legs) + max_gain / _HUNDRED
+
+
+def max_gain_cap(legs: Sequence[Leg], tick: Decimal) -> Decimal | None:
+    """Worst on-tick limit that still leaves max gain > 0: the last tick below the ceiling."""
+    ceiling = price_ceiling(legs)
+    if ceiling is None:
+        return None
+    return (ceiling / tick).to_integral_value(rounding=ROUND_CEILING) * tick - tick
+
+
+def check_max_gain(d: Derived) -> list[Violation]:
+    """The limit must leave max gain > 0: never pay the structure's full value or more
+    (a debit vertical above its width, a credit vertical for no credit)."""
+    if d.price_ceiling is not None and d.limit_price >= d.price_ceiling:
+        return _v(
+            RuleCode.NO_MAX_GAIN,
+            f"limit {d.limit_price} leaves max gain <= 0 (must stay below {d.price_ceiling})",
+        )
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -275,9 +315,12 @@ def price_band(
     """D24 band from *limit* toward the far touch of the legs' combo NBBO.
 
     ``max_steps = config.execution_improvement_steps``; the worst price is
-    ``execution_band_reach`` of the way to the far touch. Without a complete
-    NBBO (or with an off-tick limit) there is no room: a one-attempt band at the
-    limit (the gate's own spread/tick checks then decide). Pure.
+    ``execution_band_reach`` of the way to the far touch, capped at
+    :func:`max_gain_cap` so no step can leave max gain <= 0 (a debit vertical
+    never priced at or above its width, a credit never at or below zero).
+    Without a complete NBBO (or with an off-tick limit) there is no room: a
+    one-attempt band at the limit (the gate's own spread/tick checks then
+    decide). Pure.
     """
     nbbo = combo_nbbo(legs, market)
     tick = _d(config.limit_tick)
@@ -292,6 +335,7 @@ def price_band(
         max_steps=config.execution_improvement_steps,
         reach=_d(config.execution_band_reach),
         tick=tick,
+        cap=max_gain_cap(legs, tick),
     )
 
 
@@ -318,7 +362,8 @@ def check_band(
     config: ArcSettings,
 ) -> list[Violation]:
     """D24: the band starts at the proposal's limit, its steps are within the configured
-    maximum, and its worst price passes the combo-NBBO and tick checks too.
+    maximum, and its worst price passes the combo-NBBO and tick checks too and still
+    leaves max gain > 0 (e.g. a $1-wide debit vertical is never worked at >= 1.00).
 
     (The 5% per-underlying cap at the worst price is checked by
     :func:`check_per_underlying` on :func:`worst_case`, see :func:`evaluate`.)
@@ -335,6 +380,8 @@ def check_band(
     for v in check_spread_tick(proposal, worst, market, config):
         if v.code in (RuleCode.LIMIT_OUTSIDE_NBBO, RuleCode.TICK):
             out += _v(RuleCode.BAND, f"worst price: {v.detail}")
+    for v in check_max_gain(worst):
+        out += _v(RuleCode.BAND, f"worst price: {v.detail}")
     return out
 
 
@@ -581,6 +628,7 @@ def evaluate(
         if not closing:
             violations += _run("per_underlying", lambda: check_per_underlying(risk_d, a, pf, c))
         violations += _run("spread_tick", lambda: check_spread_tick(p, dd, m, c))
+        violations += _run("max_gain", lambda: check_max_gain(dd))
         if band is not None:
             bb = band
             violations += _run("band", lambda: check_band(p, dd, bb, m, c))
