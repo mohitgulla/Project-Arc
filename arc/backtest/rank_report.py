@@ -460,6 +460,23 @@ def _render(
         + ", ".join(f"{p} {lo}–{hi}" for p, (lo, hi) in windows.items())
         + "\n",
         f"## Decision rule (fixed before the run)\n\n{rule}\n",
+        "## Data caveats\n",
+        "- Alpaca options history has **no historical quotes**: `mid` is the session's last "
+        "trade close and the bid/ask spread is *estimated* as "
+        f"max({cost.spread_min}, {cost.spread_pct}·mid) (E7.1 finding). Costs, slippage and "
+        "the cost-sensitivity grid are therefore modelled, not observed.\n"
+        "- A trade close can be hours stale. Legs whose IV is more than "
+        f"{'off' if bt.max_leg_iv_dev is None else f'{bt.max_leg_iv_dev:.0%}'} from the median "
+        f"of their {bt.smile_window} neighbouring strikes are dropped (same-session data only).\n"
+        "- Daily EOD decisions and marks only: stops and take-profits are checked on closes, "
+        "so intraday paths are not seen (matches the owner's relaxed, end-of-day stop "
+        "preference).\n"
+        "- Menus hold one expiration (nearest the middle of the profile's DTE window) and "
+        "a fixed delta grid, not the full live scanner menu; contracts with no trade that "
+        "session are missing. ThetaData EOD was not used (no coverage in this store).\n"
+        "- At most one new position per ticker per session (open positions stack up to the "
+        "gate's per-underlying and max-open caps), sized by D18 with no Risk persona "
+        "(the equity cap binds).\n",
         "## Verdict\n",
         format_table(f["verdicts"]),
         "## Challengers vs incumbent\n",
