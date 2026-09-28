@@ -46,6 +46,8 @@ class OptionContract(BaseModel):
     bid: float | None = None
     ask: float | None = None
     mid: float | None = None
+    bid_size: float | None = Field(None, description="Top-of-book bid size (contracts)")
+    ask_size: float | None = Field(None, description="Top-of-book ask size (contracts)")
     last_trade_price: float | None = None
 
     # Volume / interest

@@ -168,10 +168,13 @@ class TestLayout:
         kinds = [b["type"] for b in blocks]
         assert kinds[:4] == ["header", "context", "divider", "section"]
         assert kinds[-2:] == ["context", "actions"]
-        assert "Legs" in blocks[3]["text"]["text"] and "```" in blocks[3]["text"]["text"]
+        legs = blocks[3]["text"]["text"]
+        assert legs.startswith("*Legs*\n") and "```" not in legs  # item 2: plain lines
         summary = blocks[1]["elements"][0]["text"]
-        for part in ("*Credit 1.66*", "PoP 62%", "EV -$21.78", "x14", "Gate PASS"):
-            assert part in summary
+        assert summary == (  # item 1: sentence case, Net EV, x14, gate
+            "Credit 1.66 · Max gain $165.55 · Max loss $334.45 · PoP 62% · "
+            "Net EV $9.22 managed / $32.36 hold · x14 · :white_check_mark: Gate PASS"
+        )
 
     def test_trail_attributes_each_persona(self, conn: sqlite3.Connection) -> None:
         p = _proposal(conn)
@@ -180,11 +183,11 @@ class TestLayout:
         assert trail.chain_run_id and trail.director and trail.quant and trail.risk
         text = _text(render_card(p, None, proposal_hash=ph, actionable=False, trail=trail).blocks)
         assert "*[Director] Thesis (rank 1 of 1, neutral, confidence 70%)*" in text
-        assert "_Regime:_ Fixture: low realised vol" in text
+        assert "Regime: Fixture: low realised vol" in text
         assert "*[Quant] Structure choice (confidence 70%)*" in text
-        assert "*[Risk] Review*" in text and "rating *moderate*" in text
-        assert "suggested 20 → sized 14 (5% equity cap)" in text
-        assert "_Calendar:_ Fixture: FOMC Oct 28" in text
+        assert "*[Risk] Review*" in text and "Rating *moderate*" in text
+        assert "Suggested 20 → sized 14 (5% equity cap)" in text
+        assert "Calendar: Fixture: FOMC Oct 28" in text
         assert "Regime *sideways*" in text and "Director market read *risk_on*" in text
         assert f"chain `{trail.chain_run_id}`" in text
 
@@ -216,12 +219,12 @@ class TestCard:
             assert f"{leg.occ_symbol[-8:-3].lstrip('0')}" in text
         assert "*Entry*" in text and "Credit 1.66" in text and "Limit credit 1.65" in text
         assert "*Payoff (per contract)*" in text and "$165.55" in text and "$334.45" in text
-        assert "Reward/risk 0.49" in text
+        assert "Risk/Reward 2.02 : 1" in text and "Reward/risk" not in text  # item 4
         assert "*Position (x14)*" in text and "$2,317.70" in text and "$4,682.30" in text
-        assert "*Breakevens*" in text and "743.34 / 799.66" in text
-        assert "*Net Greeks (position)*" in text and "Δ " in text and "Θ " in text and "ν " in text
-        assert "PoP 62%" in text and "EV -$21.78" in text
-        assert "*Gate*" in text and "PASS" in text
+        assert "*Breakevens*" in text and "BE 743.34" in text and "BE 799.66" in text
+        assert "*Net Greeks (position)*" in text
+        assert "PoP 62%" in text and "Quant EV -$18.74" in text
+        assert "*Gate*" in text and "PASS" in text and "Token issued" in text
         # D18/D24: sizing is at the band's worst price (max loss $4,760, not $4,682.30 at mid)
         assert "14 contract(s)" in text and "4.76% of equity" in text
         assert "Expires 16:20 ET" in text

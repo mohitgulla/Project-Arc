@@ -21,10 +21,13 @@ Scores (per one unit of the structure):
 - ``pop`` — probability of finishing at a profit at expiry, lognormal with
   drift ``r`` and vol = ATM IV, over the structure's breakevens.
 - ``ev_proxy`` — dollars: flat-vol (ATM IV) BSM value of the position minus
-  what it costs at mid, minus ``cost`` (half the bid-ask spread on every leg,
-  the expected slippage from mid). Positive means the chain's skew pays more
-  for the short strikes than a flat-vol model says they are worth, after costs.
-  It is a ranking proxy, not a forecast.
+  what it costs at mid, minus ``cost``: the **entry** cost under the shared
+  :class:`~arc.backtest.costs.CostModel` (``config/costs.yaml``): every leg's
+  slippage from mid (``slippage_frac`` × its quoted spread) plus the entry fees
+  (commission, ORF, OCC, CAT; TAF + SEC on the legs sold). Positive means the
+  chain's skew pays more for the short strikes than a flat-vol model says they
+  are worth, after costs. It is a ranking proxy, not a forecast; the card's Net
+  EV (E2.4 exit model) uses the same cost model for entry *and* exit.
 
 Nothing here submits orders or calls an LLM.
 """
@@ -42,6 +45,7 @@ import structlog
 from pydantic import BaseModel, Field, model_validator
 from scipy.stats import norm
 
+from arc.backtest.costs import CostModel, load_cost_model
 from arc.models import Liquidity, Structure
 from arc.pricing.bs import BSMInputs, price
 from arc.scanner.filters import FilterReport, LiquidityRules, apply_filters
@@ -110,6 +114,10 @@ class ScanParams(BaseModel):
     rules: LiquidityRules = Field(default_factory=LiquidityRules)
     iv_lookback: int = Field(252, ge=2)
     iv_min_obs: int = Field(20, ge=2)
+    cost: CostModel = Field(
+        default_factory=load_cost_model,
+        description="Entry cost model for ev_proxy / cost (config/costs.yaml, shared, D23)",
+    )
 
     @model_validator(mode="after")
     def _check(self) -> ScanParams:
@@ -165,7 +173,9 @@ class ScanCandidate(BaseModel):
     credit_width: float = Field(..., description="credit / width")
     pop: float = Field(..., ge=0.0, le=1.0)
     ev_proxy: float = Field(..., description="Dollars per unit, after cost (see module doc)")
-    cost: float = Field(..., ge=0.0, description="Half-spread slippage, dollars per unit")
+    cost: float = Field(
+        ..., ge=0.0, description="Entry slippage + fees (shared CostModel), dollars per unit"
+    )
     atm_iv: float | None = Field(None, description="ATM IV of this expiration (model vol)")
     leg_spreads: dict[str, float] = Field(
         default_factory=dict, description="Quoted ask − bid per share, by leg OCC symbol"
@@ -285,16 +295,22 @@ def _candidate(
     spot: float,
     sigma: float,
     r: float,
+    cost_model: CostModel | None = None,
 ) -> ScanCandidate:
+    cm = cost_model or load_cost_model()
     legs = structure.legs
     contracts = [quotes[leg.occ_symbol] for leg in legs]
     credit = -float(structure.net_debit_credit)
     natural = 0.0
-    half_spread = 0.0
+    entry_cost = 0.0  # $ per unit: slippage from mid + entry fees
     for leg, c in zip(legs, contracts, strict=True):
         assert c.bid is not None and c.ask is not None  # guaranteed by filters
         natural += (c.bid if leg.side.value == "short" else -c.ask) * leg.ratio
-        half_spread += (c.ask - c.bid) / 2 * leg.ratio
+        side = -1 if leg.side.value == "short" else 1
+        mid = (c.bid + c.ask) / 2
+        fill = cm.fill(mid, c.ask - c.bid, side)
+        entry_cost += abs(fill - mid) * leg.ratio * float(CONTRACT_MULTIPLIER)
+        entry_cost += cm.trade_fees(leg.ratio, side, fill)
     shorts = [c for leg, c in zip(legs, contracts, strict=True) if leg.side.value == "short"]
     strikes: dict[str, list[float]] = defaultdict(list)
     for c in contracts:
@@ -303,7 +319,7 @@ def _candidate(
     mult = float(CONTRACT_MULTIPLIER)
     t = structure.dte / 365.0
     model_value = _flat_vol_value(structure, spot, sigma, t, r)
-    cost = half_spread * mult
+    cost = entry_cost
     ev = (model_value + credit) * mult - cost
     spreads = [(c.ask - c.bid) / ((c.ask + c.bid) / 2) for c in contracts]  # type: ignore[operator]
     structure = structure.model_copy(
@@ -457,7 +473,14 @@ def scan(
         def add(strategy: ScanStrategy, st: Structure, sig: float = sigma) -> None:
             cands.append(
                 _candidate(
-                    ticker, strategy, st, quotes, spot=spot, sigma=sig, r=params.risk_free_rate
+                    ticker,
+                    strategy,
+                    st,
+                    quotes,
+                    spot=spot,
+                    sigma=sig,
+                    r=params.risk_free_rate,
+                    cost_model=params.cost,
                 )
             )
 

@@ -17,6 +17,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from arc.backtest.costs import CostModel, load_cost_model
 from arc.config import get_settings
 from arc.data.base import DataQualityFlag, MarketDataProvider, OptionContract, OptionGreeks
 from arc.data.base import UnderlyingQuote as Quote
@@ -391,8 +392,11 @@ class TestScanRecordedSpy:
         assert top.width == 5.0
         assert top.credit_width == pytest.approx(0.334)
         assert top.structure.max_loss == D("333")
-        # half-spreads 0.01 + 0.015 + 0.065 + 0.01 = 0.10 per share → $10
-        assert top.cost == pytest.approx(10.0)
+        # entry cost under config/costs.yaml (D23, one CostModel):
+        # spreads 0.02 + 0.03 + 0.13 + 0.02 = 0.20/share; slippage x=0.25 → $5.00
+        # fees: 4 x (ORF 0.015 + OCC 0.025 + CAT 0.0003) = 0.1612
+        #       + 2 short legs TAF 0.00329 + SEC 0.0000206 x fill x 100 (4.4475, 3.0725) ≈ 0.0221
+        assert top.cost == pytest.approx(5.18, abs=0.006)
         assert top.short_deltas == [0.2071, 0.2073]
         assert top.dte == 33
         # liquidity = weakest leg: min OI 733 (802C), min volume 57 (797C)
@@ -536,13 +540,28 @@ def res():  # noqa: ANN201
 class TestScoring:
     def test_ev_is_minus_cost_when_market_is_flat_vol(self, res) -> None:  # noqa: ANN001
         # Mids equal the flat-vol model up to the 4dp premium rounding, so EV ≈ -cost.
+        # cost = entry cost under the shared CostModel (config/costs.yaml):
+        # x·spread per leg + that leg's entry fees (TAF/SEC on the legs sold).
+        cm = load_cost_model()
         assert res.candidates
         assert res.iv.atm_iv == pytest.approx(SIG)
         for c in res.candidates:
             n = len(c.structure.legs)
-            assert c.cost == pytest.approx(n * HALF * 100)
+            want = 0.0
+            for leg in c.structure.legs:
+                side = -1 if leg.side.value == "short" else 1
+                fill = cm.fill(float(leg.premium), 2 * HALF, side)
+                want += cm.slippage_frac * 2 * HALF * 100 + cm.trade_fees(1, side, fill)
+            assert c.cost == pytest.approx(want, abs=0.005)  # ScanCandidate rounds to cents
             assert c.ev_proxy == pytest.approx(-c.cost, abs=0.05 * n)
             assert c.natural_credit == pytest.approx(c.credit - HALF * n, abs=1e-3)
+
+    def test_cost_matches_old_half_spread_at_x_half_and_no_fees(self) -> None:
+        # x = 0.5 (fill at the touch) and zero fees reproduce the pre-D23 half-spread cost.
+        touch = CostModel(slippage_frac=0.5, commission_per_contract=0.0)
+        r = scan(_Flat(), "SYN", ScanParams(risk_free_rate=R, cost=touch), as_of=SYN_ASOF)
+        for c in r.candidates:
+            assert c.cost == pytest.approx(len(c.structure.legs) * HALF * 100)
 
     def test_pop_matches_closed_form(self, res) -> None:  # noqa: ANN001
         t = 35 / 365

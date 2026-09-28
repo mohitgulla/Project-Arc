@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING, Any, cast
 import structlog
 from pydantic import BaseModel, ValidationError
 
+from arc.backtest.costs import CostModel, load_cost_model
 from arc.context.kinds import (
     ProposalPayload,
     RegimePayload,
@@ -85,6 +86,7 @@ from arc.personas.schemas import (
     RiskAssessment,
     RiskOutput,
 )
+from arc.pipeline.analytics import build_analytics
 from arc.pipeline.market import (
     PortfolioError,
     account_snapshot,
@@ -571,7 +573,11 @@ def _quant_leg(sym: str, side: str, ratio: int) -> QuantLeg:
 
 
 def _cost_bps(c: ScanCandidate) -> float:
-    """Round-trip half-spread cost vs. capital at risk (max loss), in bps."""
+    """Round-trip cost vs. capital at risk (max loss), in bps.
+
+    ``c.cost`` is the entry slippage + fees under the shared ``CostModel``
+    (``config/costs.yaml``); the round trip assumes the exit costs the same.
+    """
     max_loss = float(c.structure.max_loss or 0)
     return round(2 * c.cost / max_loss * 10_000, 1) if max_loss > 0 else 0.0
 
@@ -1138,7 +1144,11 @@ def _with_position(
 
 
 def _proposal_exit_model(
-    priced: Any, exits: ExitConfig, r: float, realized_vol: float | None
+    priced: Any,
+    exits: ExitConfig,
+    r: float,
+    realized_vol: float | None,
+    cost: CostModel | None = None,
 ) -> ExitModelResult | None:
     """E2.4 model for the re-priced proposal structure (None without spot/IV)."""
     st = priced.structure
@@ -1154,6 +1164,7 @@ def _proposal_exit_model(
             cfg=exits.model,
             spreads=priced.leg_spreads(),
             realized_vol=realized_vol,
+            cost=cost,
         )
     except ValueError as exc:  # e.g. a stop basis that does not fit this structure
         log.warning("pipeline.exit_model_failed", error=str(exc))
@@ -1248,6 +1259,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     earnings = next_earnings(ctx.conn, list(by_ticker), _today(ctx))
     switch = HaltSwitch(HaltRepo(ctx.conn))
     exits = load_exit_config()
+    cost_model = load_cost_model()
 
     skipped: Counter[str] = Counter()
     lines: list[str] = []
@@ -1423,11 +1435,29 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 reason_text=v,
                 proposal_hash=phash,
             )
-        JournalStore(ctx.conn).record_market_context(
-            _market_context(ctx.snapshot, t, phash, priced, now)
-        )
         exit_model = _proposal_exit_model(
-            priced, exits, settings.scanner_risk_free_rate, _realized_vol(ctx.snapshot, t)
+            priced,
+            exits,
+            settings.scanner_risk_free_rate,
+            _realized_vol(ctx.snapshot, t),
+            cost_model,
+        )
+        regime_entry = ctx.snapshot.latest("regime", t)
+        try:
+            analytics = build_analytics(
+                priced,
+                cost=cost_model,
+                regime=regime_entry.payload if regime_entry else None,
+                exit_model=exit_model,
+                account_profile=getattr(settings, "account_profile", None),
+            )
+        except ValueError as exc:  # no spot: the card renders without analytics
+            log.warning("pipeline.analytics_failed", ticker=t, error=str(exc))
+            analytics = None
+        JournalStore(ctx.conn).record_market_context(
+            _market_context(ctx.snapshot, t, phash, priced, now).model_copy(
+                update={"analytics": analytics}
+            )
         )
         ctx.write(
             "proposal",

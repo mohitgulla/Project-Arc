@@ -1,0 +1,35 @@
+# Transaction costs (PLAN D23; card E6.1a). Validated by arc.backtest.costs.CostModel.
+#
+# ONE cost model for the whole system: the proposal card's Net EV, the E2.4 exit
+# model (managed / hold-to-expiry Net EV), the Investor's live exits, the
+# scanner's ev_proxy and the backtester's defaults all load this file via
+# arc.backtest.costs.load_cost_model(). Changing a fee here needs no code change.
+#
+# Fees: Alpaca Securities "Brokerage Fee Schedule", revised 2026-09-17,
+#   https://files.alpaca.markets/disclosures/library/BrokFeeSched.pdf
+#   (retrieved 2026-09-28). Equity options, retail order flow:
+#   - commission                                   $0 (index options: +$0.50/contract; not traded)
+#   - Options Regulatory Fee (ORF), buys + sells   $0.015 per contract
+#   - OCC clearing fee, buys + sells               $0.025 per contract
+#   - FINRA CAT fee, buys + sells                  $0.000003 per executed equivalent share
+#                                                  (1 contract = 100 shares)
+#   - FINRA TAF, sells only                        $0.00329 per contract
+#   - SEC transaction fee, sells only              0.0000206 x trade value
+#   Alpaca aggregates each fee type daily per account and rounds up to the cent;
+#   the model charges the exact per-trade amount (no rounding).
+#
+# Slippage: every leg fills at mid +/- slippage_frac x quoted spread
+# (0 = mid, 0.5 = cross to the touch). The spread itself comes from the live
+# quote; spread_pct / spread_min only estimate it when there is no quote
+# (backtests on trade-close history).
+
+costs:
+  slippage_frac: 0.25
+  commission_per_contract: 0.0
+  orf_per_contract: 0.015
+  occ_per_contract: 0.025
+  cat_per_share: 0.000003
+  taf_per_contract_sell: 0.00329
+  sec_rate_sell: 0.0000206
+  spread_pct: 0.04
+  spread_min: 0.03

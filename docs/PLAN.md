@@ -241,7 +241,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 
 **E6 Approval & execution**
 - E6.1 Slack proposal card — `#arc-investor` daily thread, Approve/Reject, TTL; D22 layout + per-persona decision trail ← E1.5, E5.2
-- E6.1a Proposal card v2 — net EV + cost/liquidity breakdown, spot/moneyness, IV/IVR/IVP/HV, exit plan (D23) ← E6.1, E2.4
+- E6.1a Proposal card v2 — net EV + cost/liquidity breakdown, spot/moneyness, IV/IVR/IVP/HV, exit plan (D23); one `CostModel` with Alpaca fees in `config/costs.yaml` (scanner, exit model, live exits, backtester, card); `ProposalAnalytics` stored on the E7.4 `MarketContext` ← E6.1, E2.4
 - E6.2 Execution — approved → limit `mleg` at mid with bounded improvement; fills; cancel on timeout; exits from E2.4's policy ← E6.1, E1.4, E3.2, E2.4
 - E6.4 Position manager — early profit-taking + close-to-reallocate proposals (D19) ← E6.2, E5.4, E2.4, E5.6
 - E6.3 Reconciliation — broker vs local positions, PnL snapshots, mismatch alerts ← E6.2
