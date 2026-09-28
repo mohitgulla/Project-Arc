@@ -89,6 +89,12 @@ class Leg(BaseModel):
     side: LegIntent
     ratio: int = Field(1, ge=1)
     intent: str = Field("", description="Human-readable role, e.g. 'long call wing'")
+    premium: Decimal | None = Field(
+        None,
+        ge=0,
+        description="Per-share option price used for analytics (e.g. mid). Required by "
+        "arc.structures payoff / max gain / max loss math.",
+    )
 
 
 class Greeks(BaseModel):
@@ -111,10 +117,30 @@ class Liquidity(BaseModel):
     volume: int = 0
 
 
+class StructureKind(StrEnum):
+    """Structure classification (Phase-1 whitelist per PLAN D4, plus OTHER)."""
+
+    LONG_CALL = "long_call"
+    LONG_PUT = "long_put"
+    VERTICAL_DEBIT = "vertical_debit"
+    VERTICAL_CREDIT = "vertical_credit"
+    IRON_CONDOR = "iron_condor"
+    OTHER = "other"
+
+
 class Structure(BaseModel):
-    """A multi-leg option structure with analytics."""
+    """A multi-leg option structure with analytics.
+
+    Units (as produced by :mod:`arc.structures`):
+      - ``net_debit_credit``: per-share price (the mleg limit-price convention).
+      - ``max_gain`` / ``max_loss`` / ``buying_power``: dollars per one unit of the
+        structure (contract multiplier applied). ``None`` means unbounded.
+      - ``greeks``: position Greeks in share-equivalents (per-share Greek x 100 x
+        signed ratio, summed over legs).
+    """
 
     legs: list[Leg]
+    kind: StructureKind | None = None
     net_debit_credit: Decimal = Field(..., description="Positive = debit, negative = credit")
     max_gain: Decimal | None = None
     max_loss: Decimal | None = None
@@ -122,6 +148,9 @@ class Structure(BaseModel):
     greeks: Greeks = Field(default_factory=Greeks)
     dte: int = Field(..., ge=0)
     liquidity: Liquidity = Field(default_factory=Liquidity)
+    buying_power: Decimal | None = Field(
+        None, description="Estimated buying-power reduction per unit (Reg-T style)"
+    )
 
 
 # ---------------------------------------------------------------------------

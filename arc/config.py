@@ -44,6 +44,37 @@ class StructureKind(enum.StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# Market data feeds (D7: Alpaca Basic, free tier)
+# ---------------------------------------------------------------------------
+
+
+class AlpacaDataFeed(enum.StrEnum):
+    """Alpaca stock data feed. Free/paper tier cannot query recent SIP data."""
+
+    IEX = "iex"
+    SIP = "sip"
+    DELAYED_SIP = "delayed_sip"
+
+
+class AlpacaOptionsFeed(enum.StrEnum):
+    """Alpaca options data feed. Free tier is ``indicative``; OPRA is paid."""
+
+    INDICATIVE = "indicative"
+    OPRA = "opra"
+
+
+# ---------------------------------------------------------------------------
+# Default YouTube sources (D13)
+# ---------------------------------------------------------------------------
+
+# StockedUp (@StockedUp) posts a next-session market outlook almost every trading
+# day. The channel id is used rather than the handle so a rename can't break it.
+DEFAULT_YOUTUBE_CHANNELS: list[str] = [
+    "https://www.youtube.com/channel/UC-m6zNItyoDk5lSykDlhE4Q/videos",
+]
+
+
+# ---------------------------------------------------------------------------
 # Default universe (D9)
 # ---------------------------------------------------------------------------
 
@@ -162,6 +193,16 @@ class ArcSettings(BaseSettings):
         description="Auto-approve proposals in paper mode (D10). Ignored when env=live.",
     )
 
+    # -- Market data feeds (D7) ---------------------------------------------
+    alpaca_data_feed: AlpacaDataFeed = Field(
+        default=AlpacaDataFeed.IEX,
+        description="Alpaca stock data feed (ARC_ALPACA_DATA_FEED). Free tier: iex.",
+    )
+    alpaca_options_feed: AlpacaOptionsFeed = Field(
+        default=AlpacaOptionsFeed.INDICATIVE,
+        description="Alpaca options data feed (ARC_ALPACA_OPTIONS_FEED). Free tier: indicative.",
+    )
+
     # -- Ingestion (E4.1) ----------------------------------------------------
     ingest_rss_feeds: list[str] = Field(
         default_factory=list,
@@ -176,8 +217,11 @@ class ArcSettings(BaseSettings):
         description="Finnhub API key for earnings calendar (free tier).",
     )
     ingest_youtube_channels: list[str] = Field(
-        default_factory=list,
-        description="YouTube channel/playlist URLs for transcript ingestion.",
+        default_factory=lambda: list(DEFAULT_YOUTUBE_CHANNELS),
+        description=(
+            "YouTube channel/playlist URLs for transcript ingestion. "
+            "Default: StockedUp (daily next-session market outlook)."
+        ),
     )
 
     # -- Scout candidate pipeline (E4.2) -------------------------------------

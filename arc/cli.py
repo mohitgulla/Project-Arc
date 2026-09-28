@@ -32,6 +32,10 @@ def _make_parser() -> argparse.ArgumentParser:
         else:
             sub.add_parser(cmd, help=f"{cmd.capitalize()} (stub)")
 
+    from arc.data.history.cli import add_history_parser
+
+    add_history_parser(sub)
+
     return parser
 
 
@@ -76,6 +80,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "scan":
         return _scan(args)
+
+    if args.command == "history":
+        from arc.data.history.cli import run_history
+
+        return run_history(args)
 
     logger.info("command.stub", command=args.command)
     print(f"arc {args.command}: not yet implemented")
