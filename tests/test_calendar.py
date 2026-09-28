@@ -253,3 +253,39 @@ class TestSessionClose:
     def test_non_session_raises(self) -> None:
         with pytest.raises(ValueError, match="not a trading session"):
             cal.session_close(dt.date(2026, 1, 3))  # Saturday
+
+
+class TestNonSessionNavigation:
+    """next/previous_session accept weekends and holidays (used by session TTLs)."""
+
+    def test_next_from_saturday_and_holiday(self) -> None:
+        assert cal.next_session(dt.date(2026, 9, 26)) == dt.date(2026, 9, 28)
+        assert cal.next_session(dt.date(2026, 11, 26)) == dt.date(2026, 11, 27)  # Thanksgiving
+
+    def test_previous_from_sunday_and_holiday(self) -> None:
+        assert cal.previous_session(dt.date(2026, 9, 27)) == dt.date(2026, 9, 25)
+        assert cal.previous_session(dt.date(2026, 11, 26)) == dt.date(2026, 11, 25)
+
+
+class TestSessionOpenAndPhase:
+    def test_session_open(self) -> None:
+        assert cal.session_open(dt.date(2026, 9, 28)) == dt.datetime(2026, 9, 28, 9, 30, tzinfo=ET)
+        with pytest.raises(ValueError, match="not a trading session"):
+            cal.session_open(dt.date(2026, 9, 27))
+
+    def test_phases(self) -> None:
+        assert cal.session_phase(dt.datetime(2026, 9, 28, 9, 0, tzinfo=ET)) == "pre"
+        assert cal.session_phase(dt.datetime(2026, 9, 28, 12, 0, tzinfo=ET)) == "open"
+        assert cal.session_phase(dt.datetime(2026, 9, 28, 16, 0, tzinfo=ET)) == "post"
+        assert cal.session_phase(dt.datetime(2026, 9, 27, 12, 0, tzinfo=ET)) == "closed"
+        # early close: Black Friday closes 13:00
+        assert cal.session_phase(dt.datetime(2026, 11, 27, 13, 30, tzinfo=ET)) == "post"
+        # naive input is read as ET
+        assert cal.session_phase(dt.datetime(2026, 9, 28, 12, 0)) == "open"
+
+    def test_phase_default_now(self) -> None:
+        with mock.patch.object(
+            cal, "now_et", return_value=dt.datetime(2026, 9, 28, 12, 0, tzinfo=ET)
+        ):
+            assert cal.session_phase() == "open"
+            assert cal.session_open() == dt.datetime(2026, 9, 28, 9, 30, tzinfo=ET)

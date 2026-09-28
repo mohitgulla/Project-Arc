@@ -6,7 +6,12 @@ No side effects, no network calls, no broker interactions.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from arc.context.store import ContextSnapshot
 
 # ---------------------------------------------------------------------------
 # Input types for prompt builders (lightweight, not persisted)
@@ -73,6 +78,88 @@ class AuditorInput:
     broker_positions_json: str  # broker-reported positions for reconciliation
     pnl_json: str  # P&L snapshots
     journal_date: str
+
+
+# ---------------------------------------------------------------------------
+# Context-store adapters (D16): persona inputs come from a ContextSnapshot
+# ---------------------------------------------------------------------------
+#
+# Agent-to-agent inputs (candidates, regime, shortlist, structures, proposals)
+# are read ONLY from a recorded ContextSnapshot, never passed ad hoc, so each
+# prompt can be traced to the snapshot id on its routine run. Deterministic
+# market/account data (chains, quotes, portfolio) is still supplied by the
+# caller from the data providers. These adapters are pure.
+
+
+def _dump(obj: object) -> str:
+    return json.dumps(obj, indent=2, sort_keys=True, default=str)
+
+
+def _latest_payload(snapshot: ContextSnapshot, kind: str) -> dict[str, object]:
+    entry = snapshot.latest(kind)
+    if entry is None:
+        msg = f"snapshot {snapshot.id} has no active {kind!r} entry"
+        raise LookupError(msg)
+    return entry.payload
+
+
+def director_input_from_context(
+    snapshot: ContextSnapshot, *, portfolio_summary: str, scan_date: str
+) -> DirectorInput:
+    """Director reads every active ``candidate`` and ``regime`` entry."""
+    candidates = [e.payload for e in snapshot.of_kind("candidate")]
+    regime = {e.subject: e.payload for e in snapshot.of_kind("regime")}
+    return DirectorInput(
+        candidates_json=_dump({"candidates": candidates}),
+        regime_features_json=_dump(regime),
+        portfolio_summary=portfolio_summary,
+        scan_date=scan_date,
+    )
+
+
+def quant_input_from_context(
+    snapshot: ContextSnapshot, *, chains_json: str, underlying_prices_json: str, scan_date: str
+) -> QuantInput:
+    """Quant reads the latest active ``shortlist``."""
+    return QuantInput(
+        shortlist_json=_dump(_latest_payload(snapshot, "shortlist")),
+        chains_json=chains_json,
+        underlying_prices_json=underlying_prices_json,
+        scan_date=scan_date,
+    )
+
+
+def risk_input_from_context(
+    snapshot: ContextSnapshot,
+    *,
+    portfolio_json: str,
+    calendar_json: str,
+    account_equity: float,
+    scan_date: str,
+) -> RiskInput:
+    """Risk reads the latest active ``structures``."""
+    return RiskInput(
+        structures_json=_dump(_latest_payload(snapshot, "structures")),
+        portfolio_json=portfolio_json,
+        calendar_json=calendar_json,
+        account_equity=account_equity,
+        scan_date=scan_date,
+    )
+
+
+def investor_input_from_context(
+    snapshot: ContextSnapshot, *, proposal_id: str, current_quotes_json: str, scan_date: str
+) -> InvestorInput:
+    """Investor reads one approved ``proposal`` entry by id."""
+    for entry in snapshot.of_kind("proposal"):
+        if entry.id == proposal_id:
+            return InvestorInput(
+                proposal_json=_dump(entry.payload),
+                current_quotes_json=current_quotes_json,
+                scan_date=scan_date,
+            )
+    msg = f"snapshot {snapshot.id} has no active proposal {proposal_id!r}"
+    raise LookupError(msg)
 
 
 # ---------------------------------------------------------------------------

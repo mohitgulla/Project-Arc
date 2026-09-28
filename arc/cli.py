@@ -164,8 +164,11 @@ def _make_parser() -> argparse.ArgumentParser:
             sub.add_parser(cmd, help=f"{cmd.capitalize()} (stub)")
 
     from arc.data.history.cli import add_history_parser
+    from arc.routines.cli import add_context_parser, add_routines_parser
 
     add_history_parser(sub)
+    add_routines_parser(sub)
+    add_context_parser(sub)
 
     from arc.backtest.cli import add_backtest_parser
 
@@ -504,6 +507,16 @@ def main(argv: list[str] | None = None) -> int:
         from arc.data.history.cli import run_history
 
         return run_history(args)
+
+    if args.command == "routines":
+        from arc.routines.cli import run_routines
+
+        return run_routines(args)
+
+    if args.command == "context":
+        from arc.routines.cli import run_context
+
+        return run_context(args)
 
     if args.command == "backtest":
         from arc.backtest.cli import run_backtest_cli

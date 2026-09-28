@@ -161,6 +161,26 @@ def session_open(d: _dt.date | None = None) -> _dt.datetime:
     return open_ts.to_pydatetime().astimezone(ET)
 
 
+def session_phase(dt: _dt.datetime | None = None) -> str:
+    """Classify *dt* (default now ET): ``pre`` | ``open`` | ``post`` | ``closed``.
+
+    ``closed`` means the date is not a trading session (weekend/holiday).
+    """
+    if dt is None:
+        dt = now_et()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ET)
+    dt = dt.astimezone(ET)
+    d = dt.date()
+    if not is_session(d):
+        return "closed"
+    if dt < session_open(d):
+        return "pre"
+    if dt < session_close(d):
+        return "open"
+    return "post"
+
+
 def session_close(d: _dt.date | None = None) -> _dt.datetime:
     """Return the close time (ET) for session *d*.
 

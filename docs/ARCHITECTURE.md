@@ -41,6 +41,32 @@
 4. **`ARC_ENV=paper` is the default.** `live` requires a separate credential file
    that does not exist in Phase 1.
 
+5. **Agents share state only through the context store** (`arc/context/`, D16).
+   Writes are append-only (DB triggers). Every persona run records the snapshot id it
+   read. The gate never reads the store.
+
+## Scheduling: routine dispatcher + context store (E5.4, D16)
+
+```
+ Hermes cron (every 5m) --> arc routines tick
+                             |  config/routines.yaml (sources, personas, chains, triggers)
+                             v
+   expire TTLs -> plan due slots (cursor..now, catch-up once within TTL, skip if halted)
+     -> sources (fetch-only)  --append-->  context_entries (raw_doc_ref, channel_brief)
+     -> personas [global llm lock]
+          snapshot(as_of, kinds) --id--> routine_runs.inputs_snapshot
+          handler(ctx) --append--> context_entries (candidate, shortlist, ...)
+          chain: director -> quant -> risk -> propose  (one chain_run_id)
+     -> triggers: <job>.completed [if cond] -> run job; queued events (approval, halt)
+     -> heartbeat line in #arc-investor day thread (sources quiet, failures alert)
+```
+
+- `routine_runs` is unique on `(job, scheduled_for)`, so a doubled tick cannot re-run a job.
+- A failed chain step stops the chain. Retrying it resumes from that step.
+- Adding a source or persona is a YAML edit. Built-in handlers resolve by job-name
+  prefix (`youtube.<channel>` uses the YouTube handler), and `handler: module:fn`
+  plugs in anything else.
+
 ## Repo layout
 
 ```
@@ -53,7 +79,7 @@ Project-Arc/
 +-- .github/workflows/ci.yml   CI on PR
 +-- arc/
 |   +-- __init__.py
-|   +-- cli.py                  arc scan|propose|gate|approve|execute|reconcile|report
+|   +-- cli.py                  arc scan|history|routines|context (more per card)
 |   +-- config.py               pydantic-settings; ARC_ENV; limits; universe
 |   +-- calendar.py             exchange_calendars: sessions, early closes, DTE
 |   +-- models.py               pydantic v2 data contracts (see below)
@@ -63,6 +89,8 @@ Project-Arc/
 |   +-- structures/             legs -> payoff, max gain/loss, breakevens, net Greeks
 |   +-- scanner/                chain filters, IVR, delta-targeted strikes
 |   +-- ingest/                 RSS, EDGAR, earnings, YouTube -> Candidate
+|   +-- context/                shared context store: typed kinds, TTLs, snapshots (D16)
+|   +-- routines/               config-driven dispatcher: schedule, chains, triggers, locks
 |   +-- features/               regime (Markov 3-state), IV/HV, IVR
 |   +-- personas/               JSON schemas + prompt builders (no side effects)
 |   +-- gate/                   rules.py (pure), token.py, halt.py

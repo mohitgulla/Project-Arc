@@ -1,0 +1,65 @@
+# Project Arc routines (D16). Validated by `arc routines validate`.
+#
+# One Hermes cron runs `arc routines tick` every 5 min; everything below is
+# config. Changing a cadence, adding a source/persona, or re-ordering a chain is
+# an edit to this file, not a code or cron change. All times are ET.
+#
+# Job keys: schedule | every (+window) | trigger, days (daily|trading|weekdays),
+# chain, after_sources, ttl (catch-up window), context {ttl, supersede},
+# reads [kinds], handler "module:function", halt_exempt, notify (quiet|summary),
+# llm. Any other key is passed to the handler as an option (e.g. only_for).
+# E5.3 tunes the defaults below (pre-market/intraday/post-market/weekly).
+
+timezone: America/New_York
+
+tick:
+  interval: 5m          # how often the Hermes cron calls `arc routines tick`
+  max_lookback: 7d      # never look further back than this for missed slots
+
+# Default TTL / supersede policy per context kind (producers may override
+# per job with `context:`). TTLs: "<n>m|h|d" or "<n> session(s)".
+context_ttl:
+  raw_doc_ref:   {ttl: 5d, supersede: accumulate}
+  candidate:     {ttl: 1 session, supersede: latest}
+  regime:        {ttl: 1 session, supersede: latest}
+  shortlist:     {ttl: 1 session, supersede: latest}
+  structures:    {ttl: 1 session, supersede: latest}
+  risk_review:   {ttl: 1 session, supersede: latest}
+  proposal:      {ttl: 1 session, supersede: accumulate}
+  journal:       {ttl: 20 sessions, supersede: accumulate}
+
+sources:                        # fetch-only jobs (no LLM), each with its own cadence
+  youtube.stockedup:            # D13/D14: StockedUp next-session outlook
+    schedule: ["22:00", "12:00"]
+    days: daily
+    channel: UC-m6zNItyoDk5lSykDlhE4Q
+    context: {ttl: 1 session, supersede: latest}     # D14: next video supersedes
+  rss:      {every: 30m, window: "06:00-20:00", days: trading}
+  edgar:    {every: 15m, window: "06:00-20:00", days: trading}
+  earnings: {schedule: ["06:00", "18:00"], days: trading, ttl: 6h}
+
+personas:
+  scout:                        # D15: 22:00 (after-close sources) + 12:00 (midday news)
+    schedule: ["22:00", "12:00"]
+    days: daily
+    after_sources: true
+    ttl: 3h
+  director:
+    schedule: ["09:00"]
+    days: trading
+    chain: [quant, risk, propose]
+    ttl: 2h
+  auditor:
+    schedule: ["16:30"]
+    days: trading
+    halt_exempt: true           # the only persona that keeps running under !halt
+    ttl: 6h
+  investor:
+    trigger: approval           # event-driven, never scheduled
+
+steps: {}                       # per-step settings for chain-only steps (quant, risk, propose)
+
+triggers:                       # a run finishing (or an external event) can start another run
+  - on: scout.completed
+    if: "new_candidates > 0 and session == 'open'"
+    run: director               # which then runs its chain

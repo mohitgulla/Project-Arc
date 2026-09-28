@@ -38,6 +38,7 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 dev-dependencies = [
+    "freezegun>=1.5.5",
     "hypothesis>=6.100",
     "import-linter>=2.15",
     "pytest>=8.0",
@@ -95,6 +96,7 @@ forbidden_modules = [
     "arc.scanner",
     "arc.execution",
     "arc.approvals",
+    "arc.routines",
     "arc.cli",
 ]
 
