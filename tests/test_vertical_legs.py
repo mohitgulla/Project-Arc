@@ -8,7 +8,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from arc.data.base import OptionContract, OptionGreeks
-from tests.vertical_legs import select_bull_call_vertical
+from tests.vertical_legs import select_bull_call_vertical, select_sane_bull_call_vertical
 
 _OCT30 = dt.date(2026, 10, 30)
 _NOV06 = dt.date(2026, 11, 6)
@@ -128,3 +128,29 @@ def test_property_never_pairs_across_expirations(chain: list[OptionContract]) ->
     assert long_leg.strike < short_leg.strike
     assert long_leg.option_type == short_leg.option_type == "call"
     assert long_leg in usable and short_leg in usable
+
+
+def _q(strike: float, bid: float, ask: float, delta: float) -> OptionContract:
+    c = _c(_OCT30, strike, bid=bid, delta=delta)
+    return c.model_copy(update={"ask": ask})
+
+
+def test_sane_selector_skips_deep_itm_pair_from_e62_review() -> None:
+    """736/737 C at 36.77/38.48 and 35.97/36.30: far touch 2.51 > $1 width -> skipped."""
+    chain = [
+        _q(736.0, 36.77, 38.48, 0.95),
+        _q(737.0, 35.97, 36.30, 0.94),
+        _q(770.0, 10.10, 10.20, 0.52),
+        _q(771.0, 9.50, 9.60, 0.50),
+    ]
+    legs = select_sane_bull_call_vertical(chain)
+    assert legs is not None
+    assert (legs[0].strike, legs[1].strike) == (770.0, 771.0)
+    assert (legs[0].ask or 0) - (legs[1].bid or 0) < 1.0
+
+
+def test_sane_selector_none_when_every_pair_is_too_wide() -> None:
+    chain = [_q(736.0, 36.77, 38.48, 0.95), _q(737.0, 35.97, 36.30, 0.94)]
+    assert select_sane_bull_call_vertical(chain) is None
+    no_ask = [_c(_OCT30, 770.0), _c(_OCT30, 771.0)]  # ask missing: not two-sided
+    assert select_sane_bull_call_vertical(no_ask) is None
