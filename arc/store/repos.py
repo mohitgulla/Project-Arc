@@ -496,6 +496,7 @@ class PositionsSnapshotRepo:
         snapshot_at: str | None = None,
         run_id: str | None = None,
         id: str | None = None,
+        commit: bool = True,
     ) -> str:
         row_id = id or _uuid()
         self.conn.execute(
@@ -503,7 +504,8 @@ class PositionsSnapshotRepo:
                VALUES (?, ?, ?, ?)""",
             (row_id, snapshot_at or _now_iso(), positions_json, run_id),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return row_id
 
 
@@ -521,6 +523,7 @@ class PnlSnapshotRepo:
         snapshot_at: str | None = None,
         run_id: str | None = None,
         id: str | None = None,
+        commit: bool = True,
     ) -> str:
         row_id = id or _uuid()
         self.conn.execute(
@@ -529,8 +532,21 @@ class PnlSnapshotRepo:
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (row_id, snapshot_at or _now_iso(), realized, unrealized, total, details_json, run_id),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return row_id
+
+    def daily(self) -> list[dict[str, Any]]:
+        """The latest snapshot per ET day (``details_json.day``), oldest day first."""
+        rows = self.conn.execute(
+            """SELECT * FROM pnl_snapshots
+               WHERE json_extract(details_json, '$.day') IS NOT NULL
+               ORDER BY json_extract(details_json, '$.day'), snapshot_at, rowid"""
+        ).fetchall()
+        latest: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            latest[json.loads(r["details_json"])["day"]] = dict(r)
+        return list(latest.values())
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +683,40 @@ class TaxLotRepo:
             (close_price, realized_pnl, closed_at or _now_iso(), lot_id),
         )
         self.conn.commit()
+
+    def with_structure(self) -> list[dict[str, Any]]:
+        """Every lot with the proposal hash of the order that opened it (one structure each)."""
+        rows = self.conn.execute(
+            """SELECT l.*, o.proposal_hash AS structure_hash
+               FROM tax_lots l LEFT JOIN orders o ON o.id = l.order_id
+               ORDER BY l.opened_at, l.rowid"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_prices(
+        self,
+        lot_id: str,
+        *,
+        open_price: str | None = None,
+        close_price: str | None = None,
+        commit: bool = True,
+    ) -> None:
+        """Replace a lot's open and/or close price (e.g. mid at proposal -> broker fill)."""
+        if open_price is not None:
+            self.conn.execute(
+                "UPDATE tax_lots SET open_price = ? WHERE id = ?", (open_price, lot_id)
+            )
+        if close_price is not None:
+            self.conn.execute(
+                "UPDATE tax_lots SET close_price = ? WHERE id = ?", (close_price, lot_id)
+            )
+        if commit:
+            self.conn.commit()
+
+    def mark_wash_sale(self, lot_id: str, *, commit: bool = True) -> None:
+        self.conn.execute("UPDATE tax_lots SET wash_sale = 1 WHERE id = ?", (lot_id,))
+        if commit:
+            self.conn.commit()
 
     def open_lots_for_ticker(self, ticker: str, *, days: int = 30) -> list[dict[str, Any]]:
         """Return lots closed within ``days`` for wash-sale checking."""

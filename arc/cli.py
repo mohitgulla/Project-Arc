@@ -189,6 +189,10 @@ def _make_parser() -> argparse.ArgumentParser:
             from arc.execution.cli import add_execute_parser
 
             add_execute_parser(sub)
+        elif cmd == "reconcile":
+            from arc.reconcile.cli import add_reconcile_parser
+
+            add_reconcile_parser(sub)
         else:
             sub.add_parser(cmd, help=f"{cmd.capitalize()} (stub)")
 
@@ -620,6 +624,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_execute(args)
+    if args.command == "reconcile":
+        from arc.reconcile.cli import run_reconcile
+
+        _log_to_stderr()
+        return run_reconcile(args)
     if args.command == "journal":
         from arc.journal.cli import run_journal
 
