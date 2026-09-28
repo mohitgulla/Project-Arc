@@ -54,6 +54,9 @@ from pydantic import BaseModel, ValidationError
 
 from arc.backtest.costs import CostModel, load_cost_model
 from arc.context.kinds import (
+    Evidence,
+    NotePayload,
+    NoteTopic,
     ProposalPayload,
     RegimePayload,
     RiskReviewPayload,
@@ -161,6 +164,51 @@ class PersonaError(RuntimeError):
 
 def _today(ctx: JobContext) -> _dt.date:
     return ctx.now.astimezone(ET).date()
+
+
+def _stance(value: object) -> Stance | None:
+    try:
+        return Stance(str(value).strip().lower())
+    except ValueError:
+        return None
+
+
+def _note(
+    ctx: JobContext,
+    subject: str,
+    *,
+    persona: str,
+    topic: NoteTopic,
+    title: str,
+    body: str,
+    about: list[str],
+    stance: Stance | None = None,
+    confidence: float | None = None,
+    evidence: list[Evidence] | None = None,
+) -> str | None:
+    """Write a D27 ``note`` for persona narrative that would otherwise be discarded.
+
+    Truncates to the model limits. An invalid note is logged (``pipeline.note_invalid``)
+    and skipped: a note never fails its step. A contract violation still does.
+    """
+    body = body.strip()
+    if not body:
+        return None
+    try:
+        payload = NotePayload(
+            persona=persona,  # type: ignore[arg-type]
+            topic=topic,
+            title=(title.strip() or topic.value)[:120],
+            body=body[:4000],
+            stance=stance,
+            confidence=confidence,
+            about=about,
+            evidence=(evidence or [])[:20],
+        )
+    except ValidationError as exc:
+        log.warning("pipeline.note_invalid", persona=persona, topic=topic, error=str(exc))
+        return None
+    return ctx.write("note", subject, payload).id
 
 
 def _schema_block(model: type[BaseModel]) -> str:
@@ -540,7 +588,28 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     payload = ShortlistPayload(
         shortlist=kept, market_regime=out.market_regime, session_notes=out.session_notes
     )
-    ctx.write("shortlist", SESSION_SUBJECT, payload)
+    entry = ctx.write("shortlist", SESSION_SUBJECT, payload)
+    _note(
+        ctx,
+        SESSION_SUBJECT,
+        persona="director",
+        topic=NoteTopic.REGIME_VIEW,
+        title=f"Regime: {out.market_regime}",
+        body=f"{out.market_regime}: {out.session_notes}".strip(": "),
+        about=[entry.id],
+    )
+    for item in kept:
+        _note(
+            ctx,
+            item.ticker,
+            persona="director",
+            topic=NoteTopic.THESIS,
+            title=f"{item.ticker} {item.stance} thesis",
+            body="\n\n".join(x for x in (item.thesis, item.regime_context) if x.strip()),
+            about=[entry.id],
+            stance=_stance(item.stance),
+            confidence=item.confidence,
+        )
     names = ", ".join(f"{i.ticker} ({i.stance})" for i in kept) or "none"
     drop_items = [(i.ticker.strip().upper() or "?", reason) for i, reason in rejected]
     not_picked = [(t, "not_picked") for t in sorted(set(cands) - ranked)]
@@ -900,7 +969,27 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
     journal_no_chain(call_id)
     payload = StructuresPayload(structures=kept, analysis_notes=out.analysis_notes)
-    ctx.write("structures", SESSION_SUBJECT, payload)
+    entry = ctx.write("structures", SESSION_SUBJECT, payload)
+    for s in kept:
+        _note(
+            ctx,
+            s.ticker,
+            persona="quant",
+            topic=NoteTopic.THESIS,
+            title=f"{s.ticker} {s.structure_type}",
+            body=s.rationale,
+            about=[entry.id],
+            confidence=s.confidence,
+        )
+    _note(
+        ctx,
+        SESSION_SUBJECT,
+        persona="quant",
+        topic=NoteTopic.OBSERVATION,
+        title="Quant analysis",
+        body=out.analysis_notes,
+        about=[entry.id],
+    )
     desc = "; ".join(
         f"{s.ticker} {s.structure_type} "
         f"{'/'.join(f'{leg.strike:g}' for leg in s.legs)} {s.legs[0].expiry} "
@@ -1062,7 +1151,16 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         portfolio_summary=out.portfolio_summary,
         advisory_notes=out.advisory_notes,
     )
-    ctx.write("risk_review", SESSION_SUBJECT, payload)
+    entry = ctx.write("risk_review", SESSION_SUBJECT, payload)
+    _note(
+        ctx,
+        SESSION_SUBJECT,
+        persona="risk",
+        topic=NoteTopic.RISK_FLAG,
+        title="Risk advisory",
+        body="\n\n".join(x for x in (out.advisory_notes, out.portfolio_summary) if x.strip()),
+        about=[entry.id],
+    )
     by_key = {(s.ticker, s.structure_type): s for s in structures.structures}
     sized = {
         (a.ticker, a.structure_type): size_contracts(

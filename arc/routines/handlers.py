@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
     from arc.config import ArcSettings
     from arc.ingest.llm import ScoutLLM
+    from arc.ingest.scout import ScoutRunResult
     from arc.models import RawDoc
     from arc.routines.config import JobKind, RoutinesConfig, StepSpec
     from arc.routines.manifest import ExternalInput
@@ -277,6 +278,30 @@ def youtube_source(ctx: JobContext) -> JobResult:
     return result
 
 
+def _scout_note(ctx: JobContext, result: ScoutRunResult, about: list[str]) -> None:
+    """One ``observation`` note per scout run from the batches' ``scan_summary`` (D27)."""
+    from pydantic import ValidationError
+
+    from arc.context.kinds import Evidence, NotePayload, NoteTopic
+
+    if not result.summaries:
+        return
+    urls = list(dict.fromkeys(result.summary_sources))[:20]
+    try:
+        payload = NotePayload(
+            persona="scout",
+            topic=NoteTopic.OBSERVATION,
+            title=f"Scan summary ({result.docs_scouted} docs)",
+            body="\n\n".join(result.summaries)[:4000],
+            about=about,
+            evidence=[Evidence(ref=u) for u in urls],
+        )
+    except ValidationError as exc:
+        log.warning("pipeline.note_invalid", persona="scout", error=str(exc))
+        return
+    ctx.write("note", "market", payload)
+
+
 def scout_persona(ctx: JobContext, llm: ScoutLLM | None = None) -> JobResult:
     """Scout (E4.2): summarise unscouted docs; write each merged Candidate to context.
 
@@ -289,8 +314,11 @@ def scout_persona(ctx: JobContext, llm: ScoutLLM | None = None) -> JobResult:
     if llm is not None:
         kwargs["llm"] = llm
     result = run_scout(ctx.conn, ctx.settings, **kwargs)
-    for cand in result.candidates:
-        ctx.write("candidate", cand.ticker, CandidatePayload.model_validate(cand.model_dump()))
+    written = [
+        ctx.write("candidate", cand.ticker, CandidatePayload.model_validate(cand.model_dump())).id
+        for cand in result.candidates
+    ]
+    _scout_note(ctx, result, written)
     from arc.slack.digests import scout_card
 
     return JobResult(

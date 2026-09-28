@@ -165,6 +165,47 @@ class TestMarketHelpers:
 
 
 class TestFixtureRun:
+    def test_personas_emit_notes(self, settings: ArcSettings, routines) -> None:  # noqa: ANN001
+        """D27: persona narrative is stored as typed ``note`` entries, each annotating a real
+        entry, and every run's writes stay inside its declared contract."""
+        conn, report = fixture_run(settings, routines)
+        assert not report.failed
+        rows = conn.execute(
+            "SELECT id, subject, payload FROM context_entries WHERE kind = 'note'"
+        ).fetchall()
+        got = {
+            (r["subject"], json.loads(r["payload"])["persona"], json.loads(r["payload"])["topic"])
+            for r in rows
+        }
+        assert {
+            ("market", "scout", "observation"),
+            ("session", "director", "regime_view"),
+            ("SPY", "director", "thesis"),
+            ("SPY", "quant", "thesis"),
+            ("session", "quant", "observation"),
+            ("session", "risk", "risk_flag"),
+        } <= got
+        ids = {r[0] for r in conn.execute("SELECT id FROM context_entries")}
+        for r in rows:
+            about = json.loads(r["payload"])["about"]
+            assert about and set(about) <= ids
+        scout_notes = [s for s in got if s[1] == "scout"]
+        assert len(scout_notes) == 1  # one per scout run, not per batch
+
+    def test_long_note_is_truncated_not_failed(self) -> None:
+        from unittest.mock import MagicMock
+
+        from arc.context.kinds import NoteTopic
+        from arc.pipeline.steps import _note
+
+        ctx = MagicMock()
+        _note(
+            ctx, "session", persona="quant", topic=NoteTopic.OBSERVATION, title="x" * 300,
+            body="y" * 5000, about=["e1"],
+        )  # fmt: skip
+        payload = ctx.write.call_args.args[2]
+        assert len(payload.body) == 4000 and len(payload.title) == 120
+
     def test_end_to_end(self, settings: ArcSettings, routines) -> None:  # noqa: ANN001
         conn, report = fixture_run(settings, routines)
         assert [(o.job, o.status) for o in report.outcomes] == [
