@@ -10,7 +10,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Candidate (from Scout persona)
@@ -27,16 +27,47 @@ class CatalystType(StrEnum):
     TECHNICAL = "technical"
 
 
-class Candidate(BaseModel):
-    """A trading candidate surfaced by the Scout persona."""
+class Stance(StrEnum):
+    """Directional stance of a candidate."""
 
-    ticker: str = Field(..., description="Underlying symbol, e.g. 'AAPL'")
-    stance: str = Field(..., description="Directional stance: bullish | bearish | neutral")
+    BULLISH = "bullish"
+    BEARISH = "bearish"
+    NEUTRAL = "neutral"
+
+
+class Candidate(BaseModel):
+    """A trading candidate surfaced by the Scout persona.
+
+    Funnel discipline (E4.2): this is the only Scout artefact that flows
+    downstream to the scanner. It deliberately carries **no free text** —
+    every field is an enum, a symbol, a number, a date or a source URL.
+    Persona rationale stays in the audit store and never leaves it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = Field(default=None, description="Audit-store row id once persisted")
+    ticker: str = Field(
+        ...,
+        pattern=r"^[A-Z][A-Z0-9.]{0,9}$",
+        description="Underlying symbol, e.g. 'AAPL'",
+    )
+    stance: Stance = Field(..., description="Directional stance: bullish | bearish | neutral")
     catalyst_type: CatalystType
     catalyst_date: datetime | None = Field(None, description="Date of the catalyst event")
     confidence: float = Field(..., ge=0.0, le=1.0)
     sources: list[str] = Field(default_factory=list)
     created_at: datetime
+
+    @field_validator("sources")
+    @classmethod
+    def _sources_are_references(cls, v: list[str]) -> list[str]:
+        """Sources are references (URLs / ids), never prose."""
+        for s in v:
+            if not s or len(s) > 2048 or any(ch.isspace() for ch in s):
+                msg = f"source must be a single reference token (URL or id), got {s[:60]!r}"
+                raise ValueError(msg)
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -243,3 +274,27 @@ class Order(BaseModel):
     client_order_id: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# RawDoc (ingestion output — E4.1)
+# ---------------------------------------------------------------------------
+
+
+class RawDoc(BaseModel):
+    """A raw document ingested by a source connector.
+
+    Each connector yields ``RawDoc`` instances which are deduplicated
+    by ``content_hash`` (SHA-256 of ``source + url``) and stored in
+    the audit database.
+    """
+
+    source: str = Field(..., description="Connector name: rss | edgar | earnings | youtube")
+    url: str = Field(..., description="Canonical URL of the source document")
+    published_at: datetime
+    text: str = Field(..., description="Extracted plain text / transcript")
+    tickers_hint: list[str] = Field(
+        default_factory=list,
+        description="Tickers mentioned or associated with this document",
+    )
+    content_hash: str = Field("", description="SHA-256 hex digest of source+url for dedupe")

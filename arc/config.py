@@ -64,6 +64,17 @@ class AlpacaOptionsFeed(enum.StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# Default YouTube sources (D13)
+# ---------------------------------------------------------------------------
+
+# StockedUp (@StockedUp) posts a next-session market outlook almost every trading
+# day. The channel id is used rather than the handle so a rename can't break it.
+DEFAULT_YOUTUBE_CHANNELS: list[str] = [
+    "https://www.youtube.com/channel/UC-m6zNItyoDk5lSykDlhE4Q/videos",
+]
+
+
+# ---------------------------------------------------------------------------
 # Default universe (D9)
 # ---------------------------------------------------------------------------
 
@@ -215,6 +226,100 @@ class ArcSettings(BaseSettings):
         description="Alpaca options data feed (ARC_ALPACA_OPTIONS_FEED). Free tier: indicative.",
     )
 
+    # -- Chain scanner (E2.3) ------------------------------------------------
+    # Liquidity: the spread rule reuses spread_max_pct / spread_max_abs (§5).
+    scanner_min_open_interest: Annotated[int, Field(ge=0)] = Field(
+        default=100,
+        description="Min open interest per leg (unknown OI fails the filter).",
+    )
+    scanner_min_volume: Annotated[int, Field(ge=0)] = Field(
+        default=10,
+        description="Min daily volume per leg (unknown volume fails the filter).",
+    )
+    scanner_short_delta_min: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.16,
+        description="Lower bound of the short-strike |delta| band (D4: 16-30 delta).",
+    )
+    scanner_short_delta_max: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.30,
+        description="Upper bound of the short-strike |delta| band (D4: 16-30 delta).",
+    )
+    scanner_target_delta: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.20,
+        description="Default target |delta| for short strikes (CLI --delta).",
+    )
+    scanner_wing_width: Annotated[float, Field(gt=0.0)] = Field(
+        default=5.0,
+        description="Target wing width in dollars between short and long strikes.",
+    )
+    scanner_risk_free_rate: float = Field(
+        default=0.04,
+        description="Risk-free rate (annualised, continuous) for scanner Greeks / EV proxy.",
+    )
+    scanner_iv_lookback: Annotated[int, Field(ge=2)] = Field(
+        default=252,
+        description="IV rank / percentile lookback in observations (~1 trading year).",
+    )
+    scanner_iv_min_obs: Annotated[int, Field(ge=2)] = Field(
+        default=20,
+        description="Minimum IV observations before IV rank / percentile are reported.",
+    )
+    scanner_iv_history_dir: Path = Field(
+        default=Path("data/iv_history"),
+        description="Directory of per-ticker ATM IV history CSVs (date,atm_iv).",
+    )
+
+    # -- Ingestion (E4.1) ----------------------------------------------------
+    ingest_rss_feeds: list[str] = Field(
+        default_factory=list,
+        description="RSS feed URLs for the Scout connector.",
+    )
+    edgar_user_agent: str = Field(
+        default="ProjectArc/0.1 (arc@example.com)",
+        description="User-Agent header for SEC EDGAR requests (required by EDGAR).",
+    )
+    finnhub_api_key: str = Field(
+        default="",
+        description="Finnhub API key for earnings calendar (free tier).",
+    )
+    ingest_youtube_channels: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_YOUTUBE_CHANNELS),
+        description=(
+            "YouTube channel/playlist URLs for transcript ingestion. "
+            "Default: StockedUp (daily next-session market outlook)."
+        ),
+    )
+
+    # -- Scout candidate pipeline (E4.2) -------------------------------------
+    scout_model: str = Field(
+        default="claude-haiku-4-5",
+        description="Cheap-tier model the Scout runs on via Hermes (PLAN §2.4).",
+    )
+    scout_provider: str = Field(
+        default="anthropic",
+        description="Hermes provider for the Scout model (D8: Anthropic subscription).",
+    )
+    scout_hermes_bin: str = Field(
+        default="hermes",
+        description="Hermes CLI executable used for one-shot Scout calls.",
+    )
+    scout_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
+        default=240,
+        description="Timeout for a single Scout LLM batch call.",
+    )
+    scout_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.6,
+        description="Candidates below this Scout confidence are dropped.",
+    )
+    scout_batch_size: Annotated[int, Field(ge=1, le=50)] = Field(
+        default=8,
+        description="Max RawDocs summarised per Scout LLM call.",
+    )
+    scout_max_doc_chars: Annotated[int, Field(ge=200)] = Field(
+        default=4000,
+        description="Per-document text budget in the Scout prompt (truncated beyond).",
+    )
+
     # -- Universe (D9) -------------------------------------------------------
     universe: list[str] = Field(
         default_factory=lambda: list(DEFAULT_UNIVERSE),
@@ -223,12 +328,12 @@ class ArcSettings(BaseSettings):
 
     # -- Validators ----------------------------------------------------------
 
-    @field_validator("universe", mode="before")
+    @field_validator("universe", "ingest_rss_feeds", "ingest_youtube_channels", mode="before")
     @classmethod
-    def _parse_universe(cls, v: object) -> object:
+    def _parse_str_list(cls, v: object) -> object:
         """Accept a comma-separated string from env vars."""
         if isinstance(v, str):
-            return [s.strip().upper() for s in v.split(",") if s.strip()]
+            return [s.strip() for s in v.split(",") if s.strip()]
         return v
 
     @field_validator("dte_max")

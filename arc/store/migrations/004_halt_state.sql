@@ -1,4 +1,4 @@
--- 002_halt_state.sql — Kill switch + daily halt state (E3.3).
+-- 004_halt_state.sql — Kill switch + daily halt state (E3.3).
 --
 -- Reshapes `halts` to the E3.3 contract: (reason, actor, at, cleared_at),
 -- plus who cleared it, what kind of halt it is, and the trading session it

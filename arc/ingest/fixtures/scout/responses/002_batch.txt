@@ -1,0 +1,14 @@
+{
+  "candidates": [
+    {
+      "ticker": "AAPL",
+      "stance": "bearish",
+      "catalyst_type": "earnings",
+      "catalyst_date": "2026-10-29",
+      "confidence": 0.6,
+      "sources": ["https://example.com/news/aapl-downgrade"],
+      "rationale": "Tariff margin headwinds into the print."
+    }
+  ],
+  "scan_summary": "Fixture batch 2: AAPL downgrade; TSLA 10-Q not actionable."
+}

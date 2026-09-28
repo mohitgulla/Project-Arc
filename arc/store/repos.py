@@ -78,6 +78,87 @@ class CandidateRepo:
         row = self.conn.execute("SELECT * FROM candidates WHERE id = ?", (candidate_id,)).fetchone()
         return dict(row) if row else None
 
+    # -- Per ticker/day (E4.2 Scout pipeline) --------------------------------
+
+    def get_for_day(self, ticker: str, day: str) -> dict[str, Any] | None:
+        """Return the merged candidate row for *ticker* on ET trading *day*."""
+        row = self.conn.execute(
+            "SELECT * FROM candidates WHERE ticker = ? AND day = ?", (ticker, day)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def upsert_for_day(
+        self,
+        *,
+        day: str,
+        ticker: str,
+        stance: str,
+        catalyst_type: str,
+        catalyst_date: str | None,
+        confidence: float,
+        sources: list[str],
+        created_at: str,
+        run_id: str | None = None,
+    ) -> str:
+        """Insert or replace the single candidate row for ``(ticker, day)``.
+
+        The caller is responsible for merging with any existing row first;
+        this keeps the original ``id`` and ``created_at`` on update.
+        """
+        existing = self.get_for_day(ticker, day)
+        now = _now_iso()
+        if existing is None:
+            row_id = _uuid()
+            self.conn.execute(
+                """INSERT INTO candidates
+                   (id, ticker, stance, catalyst_type, catalyst_date, confidence,
+                    sources, created_at, run_id, day, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    row_id,
+                    ticker,
+                    stance,
+                    catalyst_type,
+                    catalyst_date,
+                    confidence,
+                    json.dumps(sources),
+                    created_at,
+                    run_id,
+                    day,
+                    now,
+                ),
+            )
+        else:
+            row_id = existing["id"]
+            self.conn.execute(
+                """UPDATE candidates
+                   SET stance = ?, catalyst_type = ?, catalyst_date = ?, confidence = ?,
+                       sources = ?, run_id = ?, updated_at = ?
+                   WHERE id = ?""",
+                (
+                    stance,
+                    catalyst_type,
+                    catalyst_date,
+                    confidence,
+                    json.dumps(sources),
+                    run_id,
+                    now,
+                    row_id,
+                ),
+            )
+        self.conn.commit()
+        return row_id
+
+    def list_for_day(self, day: str, *, min_confidence: float = 0.0) -> list[dict[str, Any]]:
+        """Candidates for *day* at or above *min_confidence*, best first."""
+        rows = self.conn.execute(
+            """SELECT * FROM candidates
+               WHERE day = ? AND confidence >= ?
+               ORDER BY confidence DESC, ticker ASC""",
+            (day, min_confidence),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
 
 # ---------------------------------------------------------------------------
 # Proposal repository

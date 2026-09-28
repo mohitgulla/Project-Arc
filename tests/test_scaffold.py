@@ -18,15 +18,49 @@ def test_arc_package_imports() -> None:
         "arc.models",
         "arc.store",
         "arc.data",
+        "arc.data.history",
+        "arc.data.history.base",
+        "arc.data.history.store",
+        "arc.data.history.alpaca",
+        "arc.data.history.thetadata",
+        "arc.data.history.download",
+        "arc.data.history.cli",
         "arc.data.base",
         "arc.data.alpaca",
+        "arc.data.recorded",
+        "arc.data.history",
+        "arc.data.history.base",
+        "arc.data.history.store",
+        "arc.data.history.alpaca",
+        "arc.data.history.thetadata",
+        "arc.data.history.download",
+        "arc.data.history.cli",
+        "arc.backtest.costs",
+        "arc.backtest.chain",
+        "arc.backtest.strategies",
+        "arc.backtest.engine",
+        "arc.backtest.metrics",
+        "arc.backtest.regime",
+        "arc.backtest.report",
+        "arc.backtest.underlying",
+        "arc.backtest.cli",
         "arc.pricing",
         "arc.structures",
         "arc.structures.occ",
         "arc.structures.analytics",
         "arc.structures.builders",
         "arc.scanner",
+        "arc.scanner.filters",
+        "arc.scanner.iv",
+        "arc.scanner.scan",
         "arc.ingest",
+        "arc.ingest.store",
+        "arc.ingest.rss",
+        "arc.ingest.edgar",
+        "arc.ingest.earnings",
+        "arc.ingest.youtube",
+        "arc.ingest.llm",
+        "arc.ingest.scout",
         "arc.features",
         "arc.personas",
         "arc.gate",
@@ -55,7 +89,7 @@ def test_cli_help() -> None:
         text=True,
     )
     assert result.returncode == 0
-    for cmd in ("scan", "propose", "gate", "approve", "execute", "reconcile", "report"):
+    for cmd in ("scan", "chains", "propose", "gate", "approve", "execute", "reconcile", "report"):
         assert cmd in result.stdout, f"{cmd} not in help output"
 
 
@@ -63,4 +97,4 @@ def test_cli_stub_command() -> None:
     """Stub commands print 'not yet implemented'."""
     from arc.cli import main
 
-    assert main(["scan"]) == 0
+    assert main(["propose"]) == 0
