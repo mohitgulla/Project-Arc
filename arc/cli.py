@@ -26,6 +26,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_history_parser(sub)
 
+    from arc.backtest.cli import add_backtest_parser
+
+    add_backtest_parser(sub)
+
     return parser
 
 
@@ -42,6 +46,11 @@ def main(argv: list[str] | None = None) -> int:
         from arc.data.history.cli import run_history
 
         return run_history(args)
+
+    if args.command == "backtest":
+        from arc.backtest.cli import run_backtest_cli
+
+        return run_backtest_cli(args)
 
     logger.info("command.stub", command=args.command)
     print(f"arc {args.command}: not yet implemented")
