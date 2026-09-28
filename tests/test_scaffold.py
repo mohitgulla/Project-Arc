@@ -27,6 +27,7 @@ def test_arc_package_imports() -> None:
         "arc.data.history.cli",
         "arc.data.base",
         "arc.data.alpaca",
+        "arc.data.recorded",
         "arc.data.history",
         "arc.data.history.base",
         "arc.data.history.store",
@@ -49,6 +50,9 @@ def test_arc_package_imports() -> None:
         "arc.structures.analytics",
         "arc.structures.builders",
         "arc.scanner",
+        "arc.scanner.filters",
+        "arc.scanner.iv",
+        "arc.scanner.scan",
         "arc.ingest",
         "arc.ingest.store",
         "arc.ingest.rss",
@@ -83,7 +87,7 @@ def test_cli_help() -> None:
         text=True,
     )
     assert result.returncode == 0
-    for cmd in ("scan", "propose", "gate", "approve", "execute", "reconcile", "report"):
+    for cmd in ("scan", "chains", "propose", "gate", "approve", "execute", "reconcile", "report"):
         assert cmd in result.stdout, f"{cmd} not in help output"
 
 
