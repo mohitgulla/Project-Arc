@@ -39,6 +39,7 @@ dev-dependencies = [
     "import-linter>=2.15",
     "pytest>=8.0",
     "pytest-cov>=7.1.0",
+    "pyyaml>=6.0",
     "ruff>=0.8",
 ]
 
@@ -95,7 +96,7 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "arc.gate.rules is pure: no storage or process I/O"
+name = "arc.gate rules, token and hook policy are pure: no storage or process I/O"
 type = "forbidden"
-source_modules = ["arc.gate.rules", "arc.gate.inputs"]
+source_modules = ["arc.gate.rules", "arc.gate.inputs", "arc.gate.token", "arc.gate.hook_policy"]
 forbidden_modules = ["arc.store", "sqlite3", "socket", "subprocess", "urllib", "http"]

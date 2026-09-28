@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated
 
 import structlog
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 log = structlog.get_logger()
@@ -201,6 +201,14 @@ class ArcSettings(BaseSettings):
     limit_tick: Annotated[float, Field(gt=0.0)] = Field(
         default=0.01,
         description="Limit price must be a whole multiple of this tick ($).",
+    )
+    # -- Gate token (E3.2) ----------------------------------------------------
+    gate_secret: SecretStr | None = Field(
+        default=None,
+        description=(
+            "ARC_GATE_SECRET: HMAC key for gate tokens (>= 32 bytes). Lives in "
+            "~/.hermes/.env only. Unset = no token can be minted or verified (fail closed)."
+        ),
     )
     auto_approve: bool = Field(
         default=False,
