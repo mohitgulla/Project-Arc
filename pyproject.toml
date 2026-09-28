@@ -58,6 +58,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
 "arc/models.py" = ["TCH003"]
 # pydantic resolves field annotations at runtime; imports must stay real.
 "arc/personas/schemas.py" = ["TC001"]
+"arc/journal/models.py" = ["TC001", "TC003"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -98,6 +99,30 @@ forbidden_modules = [
     "arc.approvals",
     "arc.routines",
     "arc.cli",
+]
+
+[[tool.importlinter.contracts]]
+name = "arc.journal records and attribution are deterministic: no LLM, network or broker"
+type = "forbidden"
+source_modules = [
+    "arc.journal.reasons",
+    "arc.journal.models",
+    "arc.journal.store",
+    "arc.journal.attribution",
+]
+forbidden_modules = [
+    "anthropic",
+    "openai",
+    "httpx",
+    "requests",
+    "alpaca",
+    "slack_sdk",
+    "arc.broker",
+    "arc.ingest",
+    "arc.personas",
+    "arc.slack",
+    "arc.execution",
+    "arc.pipeline",
 ]
 
 [[tool.importlinter.contracts]]

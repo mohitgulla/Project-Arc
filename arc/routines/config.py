@@ -11,7 +11,8 @@ Job keys (``sources.<name>`` / ``personas.<name>``):
   anchored at the window start (midnight when no window), or
 - ``trigger: approval`` — event-driven only (``<job>.completed``, ``approval``,
   ``halt``, or any name emitted with ``arc routines emit``).
-- ``days: daily | trading | weekdays`` (default ``daily``).
+- ``days: daily | trading | weekdays`` (default ``daily``), or a list of
+  weekdays for weekly jobs (``days: [fri]``).
 - ``chain: [a, b, c]`` — steps run in order after this job, in one chain run.
 - ``after_sources: true`` — run every source due in the same tick first.
 - ``ttl`` — catch-up window: a missed slot runs (once) only while inside it.
@@ -74,6 +75,23 @@ class Days(enum.StrEnum):
     DAILY = "daily"
     TRADING = "trading"
     WEEKDAYS = "weekdays"
+
+
+class Weekday(enum.StrEnum):
+    """Calendar weekday for weekly jobs (``days: [fri]``); value order = ISO weekday - 1."""
+
+    MON = "mon"
+    TUE = "tue"
+    WED = "wed"
+    THU = "thu"
+    FRI = "fri"
+    SAT = "sat"
+    SUN = "sun"
+
+    @property
+    def weekday_index(self) -> int:
+        """``datetime.date.weekday()`` of this day (Mon = 0)."""
+        return list(Weekday).index(self)
 
 
 class Notify(enum.StrEnum):
@@ -168,7 +186,7 @@ class JobSpec(StepSpec):
     every: _dt.timedelta | None = None
     window: Window | None = None
     trigger: str | None = None
-    days: Days = Days.DAILY
+    days: Days | list[Weekday] = Days.DAILY
     chain: list[str] = Field(default_factory=list)
     after_sources: bool = False
     ttl: Ttl | None = None
@@ -188,6 +206,23 @@ class JobSpec(StepSpec):
     @classmethod
     def _every(cls, v: Any) -> Any:
         return parse_duration(v) if isinstance(v, str) else v
+
+    @field_validator("days", mode="before")
+    @classmethod
+    def _days(cls, v: Any) -> Any:
+        if isinstance(v, list):
+            names = [str(d).strip().lower()[:3] for d in v]
+            if not names or len(set(names)) != len(names):
+                msg = "days list must name each weekday once (e.g. [fri])"
+                raise ValueError(msg)
+            return names
+        return v
+
+    @property
+    def days_label(self) -> str:
+        if isinstance(self.days, list):
+            return ",".join(d.value for d in self.days)
+        return str(self.days)
 
     @model_validator(mode="after")
     def _cadence(self) -> JobSpec:
@@ -210,12 +245,12 @@ class JobSpec(StepSpec):
     def cadence(self) -> str:
         if self.schedule:
             times = ", ".join(f"{t:%H:%M}" for t in sorted(self.schedule))
-            return f"at {times} ET ({self.days})"
+            return f"at {times} ET ({self.days_label})"
         if self.every is not None:
             secs = int(self.every.total_seconds())
             every = f"{secs // 60}m" if secs % 3600 else f"{secs // 3600}h"
             window = f" {self.window}" if self.window else ""
-            return f"every {every}{window} ET ({self.days})"
+            return f"every {every}{window} ET ({self.days_label})"
         return f"on {self.trigger}"
 
 
@@ -257,6 +292,25 @@ class TickSettings(BaseModel):
         return parse_duration(v) if isinstance(v, str) else v
 
 
+class HeartbeatSettings(BaseModel):
+    """Which #arc-investor day thread a heartbeat goes to.
+
+    A post belongs to today's session thread while today is a trading session
+    and the ET time is before ``day_rollover``. Later posts (e.g. the 22:00
+    Scout) and posts on weekends/holidays go to the **next** session's thread,
+    so a Sunday-night StockedUp run lands in Monday's thread (D14/D15).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    day_rollover: _dt.time = _dt.time(20, 0)
+
+    @field_validator("day_rollover", mode="before")
+    @classmethod
+    def _hhmm(cls, v: Any) -> Any:
+        return _parse_hhmm(v) if isinstance(v, str) else v
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -264,6 +318,7 @@ class RoutinesConfig(BaseModel):
 
     timezone: Literal["America/New_York"] = "America/New_York"
     tick: TickSettings = Field(default_factory=TickSettings)
+    heartbeat: HeartbeatSettings = Field(default_factory=HeartbeatSettings)
     context_ttl: dict[str, ContextPolicy] = Field(default_factory=dict)
     sources: dict[str, JobSpec] = Field(default_factory=dict)
     personas: dict[str, JobSpec] = Field(default_factory=dict)

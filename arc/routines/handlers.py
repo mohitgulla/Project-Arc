@@ -53,11 +53,14 @@ class JobResult:
 
     ``summary`` is the one-line heartbeat (and the notification fallback text);
     ``card`` is the optional E5.5 digest card posted under ``notify: card``.
+    ``notice`` (optional) is posted to the day thread immediately, even for a
+    quiet job: use it for things a human must see now (e.g. a daily-loss halt).
     """
 
     summary: str = ""
     metrics: dict[str, Any] = field(default_factory=dict)
     card: CardView | None = None
+    notice: str = ""
 
 
 @dataclass
@@ -199,14 +202,33 @@ def youtube_url(channel: str) -> str:
 
 
 def youtube_source(ctx: JobContext) -> JobResult:
-    """One YouTube channel per job (``channel:`` option), else the configured list."""
-    from arc.ingest.youtube import fetch_youtube
+    """One YouTube channel per job (``channel:`` option), else the configured list.
+
+    The summary carries the run's caption outcome (ok / rate_limited / empty /
+    error / skipped by breaker or cooldown), audio fallbacks with wall time, and
+    the current ``youtube:captions_backoff`` cooldown, so every scheduled run
+    shows how the E4.1c backoff behaved.
+    """
+    from arc.ingest.youtube import YoutubeRunStats, fetch_youtube
 
     settings = ctx.settings
     channel = ctx.options.get("channel")
     if channel:
         settings = settings.model_copy(update={"ingest_youtube_channels": [youtube_url(channel)]})
-    return _source_result(ctx, fetch_youtube(ctx.conn, settings))
+    stats = YoutubeRunStats()
+    result = _source_result(ctx, fetch_youtube(ctx.conn, settings, stats=stats))
+    result.summary = f"{result.summary} · {stats.summary()}"
+    result.metrics.update(
+        {
+            "captions_ok": stats.captions.get("ok", 0),
+            "captions_rate_limited": stats.captions.get("rate_limited", 0),
+            "captions_skipped": stats.captions_skipped,
+            "audio_fallbacks": stats.audio,
+            "audio_wall_s": round(stats.audio_wall_s, 1),
+            "captions_cooldown_active": stats.cooldown_until is not None,
+        }
+    )
+    return result
 
 
 def scout_persona(ctx: JobContext, llm: ScoutLLM | None = None) -> JobResult:
@@ -262,6 +284,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "quant": "arc.pipeline.steps:quant_step",
     "risk": "arc.pipeline.steps:risk_step",
     "propose": "arc.pipeline.steps:propose_step",
+    # E5.3 intraday monitor (read-only: positions, Greeks, expiries, daily-loss halt)
+    "monitor": "arc.routines.monitor:monitor_step",
 }
 
 

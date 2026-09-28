@@ -189,15 +189,21 @@ def _make_parser() -> argparse.ArgumentParser:
             sub.add_parser(cmd, help=f"{cmd.capitalize()} (stub)")
 
     from arc.data.history.cli import add_history_parser
+    from arc.journal.cli import add_journal_parser
     from arc.routines.cli import add_context_parser, add_routines_parser
 
     add_history_parser(sub)
+    add_journal_parser(sub)
     add_routines_parser(sub)
     add_context_parser(sub)
 
     from arc.backtest.cli import add_backtest_parser
 
     add_backtest_parser(sub)
+
+    from arc.exits.cli import add_exits_parser
+
+    add_exits_parser(sub)
 
     # -- kill switch (E3.3) ---------------------------------------------------
     halt = sub.add_parser("halt", help="Halt trading now (kill switch)")
@@ -601,6 +607,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_approve(args)
+    if args.command == "journal":
+        from arc.journal.cli import run_journal
+
+        _log_to_stderr()
+        return run_journal(args)
     if args.command == "history":
         from arc.data.history.cli import run_history
 
@@ -620,6 +631,12 @@ def main(argv: list[str] | None = None) -> int:
         from arc.backtest.cli import run_backtest_cli
 
         return run_backtest_cli(args)
+
+    if args.command == "exits":
+        from arc.exits.cli import run_exits
+
+        _log_to_stderr()
+        return run_exits(args)
 
     logger.info("command.stub", command=args.command)
     print(f"arc {args.command}: not yet implemented")

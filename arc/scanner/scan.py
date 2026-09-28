@@ -166,6 +166,10 @@ class ScanCandidate(BaseModel):
     pop: float = Field(..., ge=0.0, le=1.0)
     ev_proxy: float = Field(..., description="Dollars per unit, after cost (see module doc)")
     cost: float = Field(..., ge=0.0, description="Half-spread slippage, dollars per unit")
+    atm_iv: float | None = Field(None, description="ATM IV of this expiration (model vol)")
+    leg_spreads: dict[str, float] = Field(
+        default_factory=dict, description="Quoted ask − bid per share, by leg OCC symbol"
+    )
 
 
 class ScanResult(BaseModel):
@@ -325,6 +329,11 @@ def _candidate(
         pop=round(_pop(structure, spot, sigma, t, r), 4),
         ev_proxy=round(ev, 2),
         cost=round(cost, 2),
+        atm_iv=sigma,
+        leg_spreads={
+            leg.occ_symbol: round(c.ask - c.bid, 4)  # type: ignore[operator]
+            for leg, c in zip(legs, contracts, strict=True)
+        },
     )
 
 

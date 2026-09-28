@@ -1,23 +1,39 @@
-# Project Arc routines (D16). Validated by `arc routines validate`.
+# Project Arc routines (D16; defaults tuned in E5.3). Validated by `arc routines validate`.
 #
-# One Hermes cron runs `arc routines tick` every 5 min; everything below is
-# config. Changing a cadence, adding a source/persona, or re-ordering a chain is
-# an edit to this file, not a code or cron change. All times are ET.
+# One Hermes cron runs `arc routines tick` every 5 min (hermes/routines/); everything
+# below is config. Changing a cadence, adding a source/persona, or re-ordering a
+# chain is an edit to this file, not a code or cron change. All times are ET.
 #
-# Job keys: schedule | every (+window) | trigger, days (daily|trading|weekdays),
-# chain, after_sources, ttl (catch-up window), context {ttl, supersede},
-# reads [kinds], handler "module:function", halt_exempt, notify (quiet|summary|card),
-# llm. Any other key is passed to the handler as an option (e.g. only_for).
+# Job keys: schedule | every (+window) | trigger, days (daily|trading|weekdays or a
+# weekday list like [fri]), chain, after_sources, ttl (catch-up window),
+# context {ttl, supersede}, reads [kinds], handler "module:function",
+# halt_exempt, notify (quiet|summary), llm. Any other key is passed to the
+# handler as an option (e.g. only_for).
+#
+# A trading day at a glance (full simulated day: `arc routines tick --dry-run`):
+#   06:00           earnings calendar; rss (30m) / edgar (15m) polling until 20:00
+#   09:30           pre-market chain: director -> quant -> risk -> propose
+#   09:30-16:00     intraday monitor every 30 min (positions, Greeks, expiries, halts)
+#   12:00           StockedUp + Scout (midday news); new candidates in-session -> director chain
+#   16:30           auditor (reconcile + journal)
+#   16:45 Fri       weekly scorecard
+#   18:00           earnings calendar
+#   22:00 daily     StockedUp + Scout (after-close sources; Sunday 22:00 feeds Monday)
+#
 # notify (E5.5): sources default `quiet` (folded into the next persona post);
 # personas and chain steps default `card` (Block Kit digest; the one-liner stays
 # the notification text). `summary` = one-liner only. Failures always alert.
-# E5.3 tunes the defaults below (pre-market/intraday/post-market/weekly).
 
 timezone: America/New_York
 
 tick:
   interval: 5m          # how often the Hermes cron calls `arc routines tick`
   max_lookback: 7d      # never look further back than this for missed slots
+
+heartbeat:
+  # Posts before this time on a trading day go to that day's #arc-investor thread;
+  # later posts (the 22:00 Scout) and weekend/holiday posts go to the NEXT session's.
+  day_rollover: "20:00"
 
 # Default TTL / supersede policy per context kind (producers may override
 # per job with `context:`). TTLs: "<n>m|h|d" or "<n> session(s)".
@@ -31,34 +47,50 @@ context_ttl:
   proposal:      {ttl: 1 session, supersede: accumulate}
   journal:       {ttl: 20 sessions, supersede: accumulate}
 
-sources:                        # fetch-only jobs (no LLM), each with its own cadence
-  youtube.stockedup:            # D13/D14: StockedUp next-session outlook
+sources:                        # fetch-only jobs (no LLM), each with its own cadence; quiet heartbeats
+  youtube.stockedup:            # D13/D14: StockedUp next-session outlook (posts Sunday for Monday)
     schedule: ["22:00", "12:00"]
     days: daily
     channel: UC-m6zNItyoDk5lSykDlhE4Q
+    ttl: 3h                     # catch-up window, same as the Scout it feeds
     context: {ttl: 1 session, supersede: latest}     # D14: next video supersedes
   rss:      {every: 30m, window: "06:00-20:00", days: trading}
   edgar:    {every: 15m, window: "06:00-20:00", days: trading}
   earnings: {schedule: ["06:00", "18:00"], days: trading, ttl: 6h}
 
 personas:
-  scout:                        # D15: 22:00 (after-close sources) + 12:00 (midday news)
+  scout:                        # D15: 22:00 (after-close sources) + 12:00 (midday news), every day
     schedule: ["22:00", "12:00"]
     days: daily
     after_sources: true
     ttl: 3h
     notify: card
-  director:
-    schedule: ["09:00"]
+  director:                     # pre-market chain at the open (PLAN §2.6: 06:30 PT)
+    schedule: ["09:30"]
     days: trading
     chain: [quant, risk, propose]
     reads: [candidate, regime, channel_brief]
     ttl: 2h
     notify: card
-  auditor:
+  monitor:                      # intraday: positions, net Greeks, expiries, daily-loss halt (read-only)
+    every: 30m
+    window: "09:30-16:00"
+    days: trading
+    llm: false                  # deterministic; never waits on the LLM lock
+    halt_exempt: true           # keeps watching positions while halted
+    notify: quiet               # folds into the next persona line; halts/expiries post at once
+    reads: [proposal]           # small audit snapshot (today's proposals); E6.4 extends it
+    expiry_warn_days: 1
+  auditor:                      # post-market reconcile + journal (handler: E6.3)
     schedule: ["16:30"]
     days: trading
-    halt_exempt: true           # the only persona that keeps running under !halt
+    halt_exempt: true           # keeps running under !halt
+    ttl: 6h
+  scorecard:                    # weekly paper scorecard to #arc-investor (handler: E7.3)
+    schedule: ["16:45"]
+    days: [fri]
+    llm: false
+    halt_exempt: true
     ttl: 6h
     notify: card
   investor:
@@ -66,11 +98,11 @@ personas:
     notify: card
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
-  quant:   {reads: [shortlist], notify: card}
+  quant:   {reads: [shortlist, regime], notify: card}
   risk:    {reads: [structures], notify: card}
-  propose: {reads: [candidate, shortlist, structures, risk_review], llm: false, notify: summary}  # E6.1 posts the proposal cards
+  propose: {reads: [candidate, regime, shortlist, structures, risk_review], llm: false, notify: summary}  # E6.1 posts the proposal cards
 
 triggers:                       # a run finishing (or an external event) can start another run
-  - on: scout.completed
+  - on: scout.completed         # only the 12:00 Scout can match: 22:00 is never in-session
     if: "new_candidates > 0 and session == 'open'"
     run: director               # which then runs its chain

@@ -79,6 +79,7 @@ def test_arc_package_imports() -> None:
         "arc.routines.handlers",
         "arc.routines.heartbeat",
         "arc.routines.locks",
+        "arc.routines.monitor",
         "arc.routines.runs",
         "arc.routines.schedule",
         "arc.features",
@@ -88,6 +89,13 @@ def test_arc_package_imports() -> None:
         "arc.gate.rules",
         "arc.gate.halt",
         "arc.approvals",
+        "arc.journal",
+        "arc.journal.reasons",
+        "arc.journal.models",
+        "arc.journal.store",
+        "arc.journal.attribution",
+        "arc.journal.report",
+        "arc.journal.cli",
         "arc.approvals.card",
         "arc.approvals.trail",
         "arc.approvals.service",
@@ -102,6 +110,11 @@ def test_arc_package_imports() -> None:
         "arc.broker.alpaca_paper",
         "arc.reconcile",
         "arc.backtest",
+        "arc.exits",
+        "arc.exits.policy",
+        "arc.exits.model",
+        "arc.exits.position",
+        "arc.exits.cli",
     ]
     for pkg in packages:
         mod = importlib.import_module(pkg)

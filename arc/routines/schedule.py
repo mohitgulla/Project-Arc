@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as _dt
 from typing import TYPE_CHECKING
 
-from arc.routines.config import Days
+from arc.routines.config import Days, Weekday
 from arc.utils.calendar import ET, is_session
 
 if TYPE_CHECKING:
@@ -24,8 +24,10 @@ if TYPE_CHECKING:
     from arc.routines.config import JobSpec
 
 
-def day_matches(days: Days, d: _dt.date) -> bool:
+def day_matches(days: Days | list[Weekday], d: _dt.date) -> bool:
     """True if a job with *days* may run on ET date *d*."""
+    if isinstance(days, list):
+        return d.weekday() in {w.weekday_index for w in days}
     if days is Days.DAILY:
         return True
     if days is Days.WEEKDAYS:

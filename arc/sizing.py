@@ -14,10 +14,14 @@ Pure function: no I/O, no LLM, Decimal arithmetic throughout.
 from __future__ import annotations
 
 from decimal import ROUND_FLOOR, Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["SizingResult", "size_contracts"]
+__all__ = ["SizingCode", "SizingResult", "size_contracts"]
+
+# Stable outcome codes (the decision journal records them as ``sizing:<code>``).
+SizingCode = Literal["ok", "capped", "cap_zero", "risk_zero", "unbounded", "invalid_input"]
 
 
 class SizingResult(BaseModel):
@@ -31,6 +35,7 @@ class SizingResult(BaseModel):
     max_loss_total: Decimal = Field(..., ge=0, description="contracts × max loss per contract")
     pct_equity: float = Field(..., ge=0.0, description="max_loss_total / equity")
     reason: str = Field("", description="Why there is no trade (contracts == 0)")
+    code: SizingCode = Field("ok", description="Stable outcome code for the decision journal")
 
     @property
     def trade(self) -> bool:
@@ -47,7 +52,7 @@ def size_contracts(
     """Apply D18. ``max_loss_per_contract`` is dollars per one structure unit."""
     suggestion = max(int(suggestion), 0)
 
-    def none(reason: str, cap: int = 0) -> SizingResult:
+    def none(code: SizingCode, reason: str, cap: int = 0) -> SizingResult:
         return SizingResult(
             contracts=0,
             cap_contracts=cap,
@@ -55,22 +60,27 @@ def size_contracts(
             max_loss_total=Decimal(0),
             pct_equity=0.0,
             reason=reason,
+            code=code,
         )
 
     if max_loss_per_contract is None:
-        return none("max loss is unbounded")
+        return none("unbounded", "max loss is unbounded")
     if max_loss_per_contract <= 0:
-        return none(f"max loss per contract {max_loss_per_contract} is not positive")
+        return none(
+            "invalid_input", f"max loss per contract {max_loss_per_contract} is not positive"
+        )
     if equity <= 0:
-        return none(f"equity {equity} is not positive")
+        return none("invalid_input", f"equity {equity} is not positive")
     budget = Decimal(str(cap_pct)) * equity
     cap = int((budget / max_loss_per_contract).to_integral_value(rounding=ROUND_FLOOR))
     if cap < 1:
         return none(
-            f"one contract (max loss {max_loss_per_contract}) exceeds the {budget} cap", cap
+            "cap_zero",
+            f"one contract (max loss {max_loss_per_contract}) exceeds the {budget} cap",
+            cap,
         )
     if suggestion < 1:
-        return none("Risk suggested 0 contracts", cap)
+        return none("risk_zero", "Risk suggested 0 contracts", cap)
     contracts = min(suggestion, cap)
     total = max_loss_per_contract * contracts
     return SizingResult(
@@ -79,4 +89,5 @@ def size_contracts(
         suggestion=suggestion,
         max_loss_total=total,
         pct_equity=float(total / equity),
+        code="capped" if contracts < suggestion else "ok",
     )

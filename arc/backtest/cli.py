@@ -38,6 +38,12 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     p.add_argument(
         "--offline", action="store_true", help="Use cached underlying closes only (no Alpaca)"
     )
+    p.add_argument(
+        "--exit-policy",
+        choices=["hold_to_expiry", "policy"],
+        default="hold_to_expiry",
+        help="hold_to_expiry (default) or policy = config/exits.yaml rules (E2.4, D23)",
+    )
 
 
 def run_backtest_cli(args: argparse.Namespace) -> int:
@@ -69,6 +75,7 @@ def run_backtest_cli(args: argparse.Namespace) -> int:
         train_months=args.train_months,
         test_months=args.test_months,
         sensitivity=not args.no_sensitivity,
+        exit_policy=args.exit_policy,
     )
     sys.stdout.write(f"report: {args.out / 'report.md'}\n")
     return 0

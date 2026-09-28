@@ -30,7 +30,9 @@ What each step does:
     chain, sizes it per D18 (:mod:`arc.sizing`), builds the ``Proposal``, runs
     the gate (halt switch included), and mints a token when the gate passes, the
     run is live (``env.mint_tokens``) and ``ARC_GATE_SECRET`` is set. It persists
-    ``proposals`` and ``gate_decisions`` rows plus a ``proposal`` context entry.
+    ``proposals`` and ``gate_decisions`` rows plus a ``proposal`` context entry
+    that also carries the re-priced structure's ``exit_model``
+    (:class:`arc.exits.ExitModelResult`, for the E6.1a card).
     It is idempotent per (day, ticker).
 
 Nothing here submits orders. Order submission is ``arc.execution.submit`` (E6).
@@ -40,7 +42,9 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import math
 import sqlite3
+import time
 from collections import Counter
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
@@ -56,8 +60,12 @@ from arc.context.kinds import (
     StructuresPayload,
 )
 from arc.context.store import ContextStore
+from arc.exits import ExitSummary, load_exit_config, model_exits, realized_vol_forecast
 from arc.ingest.llm import ScoutLLMError
 from arc.ingest.scout import extract_json_object
+from arc.journal.models import LegQuote, MarketContext, PersonaCallMeta
+from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage, gate_reason
+from arc.journal.store import JournalStore, Recorder
 from arc.models import LegIntent, Proposal, QuantMetrics, Sizing, Stance
 from arc.personas.builders import (
     build_director_prompt,
@@ -100,8 +108,10 @@ if TYPE_CHECKING:
 
     from arc.config import ArcSettings
     from arc.context.store import ContextSnapshot
+    from arc.exits import ExitConfig, ExitModelResult
     from arc.gate.inputs import Portfolio
     from arc.pipeline.env import PipelineEnv
+    from arc.pipeline.market import PricedStructure
     from arc.routines.handlers import Handler, JobContext
     from arc.scanner import ScanCandidate
 
@@ -109,6 +119,7 @@ log = structlog.get_logger(__name__)
 
 __all__ = [
     "PersonaError",
+    "build_prompt",
     "director",
     "director_step",
     "pipeline_handlers",
@@ -161,25 +172,58 @@ def _with_constraints(prompt: str, rules: list[str], schema: type[BaseModel]) ->
     )
 
 
+# persona → (context adapter, prompt builder, reply schema)
+PROMPT_BUILDERS: dict[str, tuple[Callable[..., Any], Callable[..., str], type[BaseModel]]] = {
+    "director": (director_input_from_context, build_director_prompt, DirectorOutput),
+    "quant": (quant_input_from_context, build_quant_prompt, QuantOutput),
+    "risk": (risk_input_from_context, build_risk_prompt, RiskOutput),
+}
+
+
+def build_prompt(persona: str, snapshot: ContextSnapshot, inputs: Mapping[str, Any]) -> str:
+    """The exact prompt a persona step sends, from its snapshot plus recorded inputs.
+
+    ``inputs`` holds everything that is not in the context snapshot (portfolio,
+    chains, scan date, the hard-constraint lines). The steps call this, and so
+    does ``arc journal replay``, so a replay rebuilds the prompt through the
+    same code path and its sha256 must match ``persona_calls.prompt_sha256``.
+    """
+    from_context, builder, schema = PROMPT_BUILDERS[persona]
+    kwargs = {k: v for k, v in inputs.items() if k != "rules"}
+    return _with_constraints(
+        builder(from_context(snapshot, **kwargs)), list(inputs["rules"]), schema
+    )
+
+
 class _Reply:
-    def __init__(self, model: str, text: str, prompt: str, parsed: Any) -> None:
+    def __init__(
+        self,
+        model: str,
+        text: str,
+        prompt: str,
+        parsed: Any,
+        meta: PersonaCallMeta,
+    ) -> None:
         self.model = model
         self.text = text
         self.prompt = prompt
         self.parsed = parsed
+        self.meta = meta
 
 
 def _ask[M: BaseModel](
     ctx: JobContext,
     env: PipelineEnv,
     persona: str,
-    prompt: str,
+    snapshot: ContextSnapshot,
+    inputs: dict[str, Any],
     schema: type[M],
-    snapshot_id: str,
 ) -> tuple[_Reply, M]:
     """One persona LLM call. Failures are recorded in ``persona_calls`` and raised."""
+    prompt = build_prompt(persona, snapshot, inputs)
     repo = PersonaCallRepo(ctx.conn)
     llm = env.llm(persona)
+    started = time.monotonic()
     try:
         reply = llm.complete(prompt)
     except ScoutLLMError as exc:
@@ -187,15 +231,28 @@ def _ask[M: BaseModel](
             run_id=ctx.run_id,
             persona=persona,
             model=getattr(llm, "model", "unknown"),
-            snapshot_id=snapshot_id,
+            snapshot_id=snapshot.id,
             prompt=prompt,
             raw_response=None,
             status="llm_error",
             error=str(exc),
             at=ctx.now,
+            meta=PersonaCallMeta(
+                prompt_text=prompt,
+                prompt_inputs=inputs,
+                latency_ms=int((time.monotonic() - started) * 1000),
+            ),
         )
         msg = f"{persona} LLM call failed: {exc}"
         raise PersonaError(msg) from exc
+    meta = PersonaCallMeta(
+        prompt_text=prompt,
+        prompt_inputs=inputs,
+        input_tokens=reply.input_tokens,
+        output_tokens=reply.output_tokens,
+        latency_ms=int((time.monotonic() - started) * 1000),
+        cost_usd=reply.cost_usd,
+    )
     try:
         parsed = schema.model_validate(extract_json_object(reply.text))
     except (ValueError, ValidationError) as exc:
@@ -203,22 +260,25 @@ def _ask[M: BaseModel](
             run_id=ctx.run_id,
             persona=persona,
             model=reply.model,
-            snapshot_id=snapshot_id,
+            snapshot_id=snapshot.id,
             prompt=prompt,
             raw_response=reply.text,
             status="parse_error",
             error=str(exc)[:2000],
             at=ctx.now,
+            meta=meta,
         )
         msg = f"{persona} reply does not match {schema.__name__}: {str(exc)[:300]}"
         raise PersonaError(msg) from exc
-    return _Reply(reply.model, reply.text, prompt, parsed), parsed
+    return _Reply(reply.model, reply.text, prompt, parsed, meta), parsed
 
 
 def _record_ok(
     ctx: JobContext, persona: str, reply: _Reply, snapshot_id: str, dropped: Counter[str]
-) -> None:
-    PersonaCallRepo(ctx.conn).insert(
+) -> str:
+    """Record the successful call **without committing**: the step's context write
+    commits it together with its decision records (one transaction)."""
+    return PersonaCallRepo(ctx.conn).insert(
         run_id=ctx.run_id,
         persona=persona,
         model=reply.model,
@@ -228,6 +288,18 @@ def _record_ok(
         status="ok",
         dropped=dict(dropped),
         at=ctx.now,
+        meta=reply.meta,
+        commit=False,
+    )
+
+
+def _journal(ctx: JobContext, snapshot_id: str | None) -> Recorder:
+    return Recorder(
+        ctx.conn,
+        at=ctx.now,
+        chain_run_id=ctx.chain_run_id,
+        run_id=ctx.run_id,
+        inputs_snapshot_id=snapshot_id,
     )
 
 
@@ -283,32 +355,32 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
 
 def _filter_shortlist(
     out: DirectorOutput, candidates: Mapping[str, Stance], limit: int
-) -> tuple[list[DirectorRankedItem], Counter[str], list[tuple[str, str]]]:
-    """Kept items, drop counts by reason, and ``(ticker, reason)`` per drop."""
+) -> tuple[list[DirectorRankedItem], Counter[str], list[tuple[DirectorRankedItem, str]]]:
+    """Kept items, drop counts, and each dropped item with its reason."""
     dropped: Counter[str] = Counter()
-    items: list[tuple[str, str]] = []
+    rejected: list[tuple[DirectorRankedItem, str]] = []
     kept: list[DirectorRankedItem] = []
     seen: set[str] = set()
 
-    def drop(t: str, reason: str) -> None:
+    def drop(item: DirectorRankedItem, reason: str) -> None:
         dropped[reason] += 1
-        items.append((t, reason))
+        rejected.append((item, reason))
 
     for item in sorted(out.shortlist, key=lambda i: (i.rank, -i.confidence)):
         t = item.ticker.strip().upper()
         if t not in candidates:
-            drop(t, DROP_NOT_CANDIDATE)
+            drop(item, DROP_NOT_CANDIDATE)
             continue
         if t in seen:
-            drop(t, DROP_DUPLICATE)
+            drop(item, DROP_DUPLICATE)
             continue
         stype = item.suggested_structure_type.strip().lower()
         stance = item.stance.strip().lower()
         if stype not in STRUCTURE_TYPES or stance not in {s.value for s in Stance}:
-            drop(t, DROP_BAD_FIELD)
+            drop(item, DROP_BAD_FIELD)
             continue
         if len(kept) >= limit:
-            drop(t, DROP_OVER_LIMIT)
+            drop(item, DROP_OVER_LIMIT)
             continue
         seen.add(t)
         kept.append(
@@ -321,13 +393,13 @@ def _filter_shortlist(
                 }
             )
         )
-    return kept, dropped, items
+    return kept, dropped, rejected
 
 
-def _scout_evidence(ctx: JobContext) -> dict[str, str]:
+def _scout_evidence(snapshot: ContextSnapshot) -> dict[str, str]:
     """ticker -> one display line of the Scout data behind a pick (digest card only)."""
     out: dict[str, str] = {}
-    for e in ctx.snapshot.of_kind("candidate"):
+    for e in snapshot.of_kind("candidate"):
         p = e.payload
         when = ""
         if p.get("catalyst_date"):
@@ -335,18 +407,37 @@ def _scout_evidence(ctx: JobContext) -> dict[str, str]:
                 when = f" {_dt.datetime.fromisoformat(str(p['catalyst_date'])):%b %d}"
             except ValueError:
                 when = ""
-        n = len(p.get("sources") or [])
         out[e.subject] = esc(
             f"Scout {p.get('stance', '?')} · {p.get('catalyst_type', '?')} catalyst{when} · "
-            f"{float(p.get('confidence', 0)):.0%} confidence · {n} source{'' if n == 1 else 's'}"
+            f"{float(p.get('confidence', 0)):.0%} confidence"
         )
     return out
 
 
+def _director_rules(cands: Mapping[str, Stance], limit: int) -> list[str]:
+    return [
+        f"shortlist tickers MUST come from the candidates above: {', '.join(sorted(cands))}.",
+        f"At most {limit} tickers, one entry each, rank 1 = highest conviction.",
+        "stance: bullish | bearish | neutral. suggested_structure_type: vertical_spread | "
+        "iron_condor | long_call | long_put.",
+        "An empty shortlist is a valid answer when nothing is worth trading.",
+    ]
+
+
 def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
-    cands = {e.subject: Stance(e.payload["stance"]) for e in ctx.snapshot.of_kind("candidate")}
+    cand_entries = ctx.snapshot.of_kind("candidate")
+    cands = {e.subject: Stance(e.payload["stance"]) for e in cand_entries}
     if not cands:
+        j = _journal(ctx, ctx.snapshot.id)
+        j.add(
+            JournalPersona.DIRECTOR,
+            Stage.SHORTLIST,
+            SESSION_SUBJECT,
+            Choice.NO_TRADE,
+            ReasonCode.NO_CANDIDATES,
+            reason_text="no active Scout candidates",
+        )
         ctx.write(
             "shortlist",
             SESSION_SUBJECT,
@@ -361,30 +452,78 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
     summary, _ = _portfolio_summary(env, settings)
     limit = settings.pipeline_max_shortlist
-    inp = director_input_from_context(
-        snap, portfolio_summary=summary, scan_date=_today(ctx).isoformat()
+    inputs = {
+        "portfolio_summary": summary,
+        "scan_date": _today(ctx).isoformat(),
+        "rules": _director_rules(cands, limit),
+    }
+    reply, out = _ask(ctx, env, "director", snap, inputs, DirectorOutput)
+    kept, dropped, rejected = _filter_shortlist(out, cands, limit)
+    call_id = _record_ok(ctx, "director", reply, snap.id, dropped)
+
+    j = _journal(ctx, snap.id)
+    for e in snap.of_kind("candidate"):  # what the Director was offered
+        j.add(
+            JournalPersona.SCOUT,
+            Stage.CANDIDATE,
+            e.subject,
+            Choice.SELECTED,
+            ReasonCode.SCOUT_CANDIDATE,
+            confidence=e.payload.get("confidence"),
+            payload=e.payload,
+        )
+    j.add(
+        JournalPersona.DIRECTOR,
+        Stage.SHORTLIST,
+        SESSION_SUBJECT,
+        Choice.NOTED,
+        ReasonCode.MARKET_READ,
+        reason_text=f"{out.market_regime}: {out.session_notes}".strip(": "),
+        persona_call_id=call_id,
+        payload={"market_regime": out.market_regime, "session_notes": out.session_notes},
     )
-    prompt = _with_constraints(
-        build_director_prompt(inp),
-        [
-            f"shortlist tickers MUST come from the candidates above: {', '.join(sorted(cands))}.",
-            f"At most {limit} tickers, one entry each, rank 1 = highest conviction.",
-            "stance: bullish | bearish | neutral. suggested_structure_type: vertical_spread | "
-            "iron_condor | long_call | long_put.",
-            "An empty shortlist is a valid answer when nothing is worth trading.",
-        ],
-        DirectorOutput,
-    )
-    reply, out = _ask(ctx, env, "director", prompt, DirectorOutput, snap.id)
-    kept, dropped, drop_items = _filter_shortlist(out, cands, limit)
-    _record_ok(ctx, "director", reply, snap.id, dropped)
+    for item in kept:
+        j.add(
+            JournalPersona.DIRECTOR,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.SELECTED,
+            ReasonCode.SHORTLISTED,
+            reason_text=item.thesis,
+            confidence=item.confidence,
+            persona_call_id=call_id,
+            payload=item.model_dump(mode="json"),
+        )
+    for item, reason in rejected:
+        j.add(
+            JournalPersona.DIRECTOR,
+            Stage.SHORTLIST,
+            item.ticker.strip().upper() or SESSION_SUBJECT,
+            Choice.REJECTED,
+            ReasonCode(reason),
+            reason_text=item.thesis,
+            confidence=item.confidence,
+            persona_call_id=call_id,
+            payload=item.model_dump(mode="json"),
+        )
+    ranked = {i.ticker for i in kept} | {i.ticker.strip().upper() for i, _ in rejected}
+    for t in sorted(set(cands) - ranked):
+        j.add(
+            JournalPersona.DIRECTOR,
+            Stage.SHORTLIST,
+            t,
+            Choice.REJECTED,
+            ReasonCode.NOT_RANKED,
+            reason_text="candidate left out of the Director's shortlist",
+            persona_call_id=call_id,
+        )
     payload = ShortlistPayload(
         shortlist=kept, market_regime=out.market_regime, session_notes=out.session_notes
     )
     ctx.write("shortlist", SESSION_SUBJECT, payload)
     names = ", ".join(f"{i.ticker} ({i.stance})" for i in kept) or "none"
-    picked = {i.ticker for i in kept} | {t for t, _ in drop_items}
-    not_picked = [(t, "not_picked") for t in sorted(cands) if t not in picked]
+    drop_items = [(i.ticker.strip().upper() or "?", reason) for i, reason in rejected]
+    not_picked = [(t, "not_picked") for t in sorted(set(cands) - ranked)]
     return JobResult(
         summary=f"{len(cands)} candidates → shortlist: {names}"
         + (f"; dropped {dict(dropped)}" if dropped else ""),
@@ -393,7 +532,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             payload,
             candidates=len(cands),
             dropped=[*drop_items, *not_picked],
-            evidence=_scout_evidence(ctx),
+            evidence=_scout_evidence(snap),
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
         ),
@@ -436,7 +575,40 @@ def _cost_bps(c: ScanCandidate) -> float:
     return round(2 * c.cost / max_loss * 10_000, 1) if max_loss > 0 else 0.0
 
 
-def _menu_entry(c: ScanCandidate) -> dict[str, Any]:
+def _realized_vol(snapshot: ContextSnapshot, ticker: str) -> float | None:
+    """Realised-vol forecast (mean HV20/HV60) from the ticker's ``regime`` entry, if any."""
+    entry = snapshot.latest("regime", ticker)
+    vol = entry.payload.get("vol") if entry is not None else None
+    if not isinstance(vol, dict):
+        return None
+    return realized_vol_forecast(vol.get("hv20"), vol.get("hv60"))
+
+
+def _exit_model(
+    c: ScanCandidate, spot: float, exits: ExitConfig, r: float, realized_vol: float | None
+) -> ExitModelResult | None:
+    """E2.4 static vs managed numbers for a scanner candidate (None without an IV)."""
+    if c.atm_iv is None or c.dte < 1:
+        return None
+    return model_exits(
+        c.structure,
+        exits.policy_for(c.structure.kind),
+        spot=spot,
+        iv=c.atm_iv,
+        r=r,
+        cfg=exits.model,
+        spreads=c.leg_spreads,
+        realized_vol=realized_vol,
+    )
+
+
+def _menu_rank_key(summary: ExitSummary | None, by: str) -> float:
+    """Sort key (ascending) for ``pipeline.rank_menu_by``; unmodelled entries sort last."""
+    val = None if summary is None else getattr(summary, by)
+    return math.inf if val is None else -float(val)
+
+
+def _menu_entry(c: ScanCandidate, exit_summary: ExitSummary | None = None) -> dict[str, Any]:
     st = c.structure
     return {
         "structure_type": _structure_type(c),
@@ -458,11 +630,17 @@ def _menu_entry(c: ScanCandidate) -> dict[str, Any]:
         "ev_per_contract": c.ev_proxy,
         "cost_bps": _cost_bps(c),
         "greeks": {"delta": st.greeks.delta, "vega": st.greeks.vega, "theta": st.greeks.theta},
+        "exits": None if exit_summary is None else exit_summary.model_dump(mode="json"),
     }
 
 
 def _to_quant_structure(
-    ticker: str, c: ScanCandidate, *, confidence: float, rationale: str
+    ticker: str,
+    c: ScanCandidate,
+    *,
+    confidence: float,
+    rationale: str,
+    exit_summary: ExitSummary | None = None,
 ) -> QuantStructureOut:
     st = c.structure
     return QuantStructureOut(
@@ -482,15 +660,39 @@ def _to_quant_structure(
         cost_bps=_cost_bps(c),
         confidence=confidence,
         rationale=rationale,
+        exits=exit_summary,
     )
+
+
+def _quant_rules(no_chain: list[str]) -> list[str]:
+    return [
+        "Choose ONLY from the per-ticker `menu` above; copy each chosen structure's legs "
+        "(occ_symbol, side, ratio) verbatim. Anything else is discarded.",
+        "At most one structure per ticker, best first. You may omit a ticker.",
+        "All analytics (price, max gain/loss, breakevens, Greeks, PoP, EV, cost, exits) "
+        "are replaced by the pipeline's own numbers; your value-add is the choice, "
+        "confidence and rationale.",
+        "Positions are managed under the exit policy (`exits.policy`), not held to expiry: "
+        "weigh `exits.managed_pop` / `exits.managed_net_ev` next to the static numbers.",
+        f"Tickers without a tradable chain: {', '.join(no_chain) or 'none'}.",
+    ]
 
 
 def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
     from arc.scanner import ScanParams, load_iv_history, scan
 
     settings = ctx.settings
+    j = _journal(ctx, ctx.snapshot.id)
     shortlist = _latest(ctx.snapshot, "shortlist", ShortlistPayload)
     if shortlist is None or not shortlist.shortlist:
+        j.add(
+            JournalPersona.QUANT,
+            Stage.STRUCTURE,
+            SESSION_SUBJECT,
+            Choice.NO_TRADE,
+            ReasonCode.NO_STRUCTURE,
+            reason_text="empty shortlist",
+        )
         ctx.write(
             "structures",
             SESSION_SUBJECT,
@@ -499,10 +701,13 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         return JobResult(summary="empty shortlist; no structures", metrics={"structures": 0})
 
     today = _today(ctx)
+    exits = load_exit_config()
+    summaries: dict[int, ExitSummary] = {}
     menus: dict[str, dict[frozenset[tuple[str, str]], ScanCandidate]] = {}
     chains: dict[str, Any] = {}
     spots: dict[str, float] = {}
     no_chain: list[str] = []
+    no_chain_why: dict[str, str] = {}
     for item in shortlist.shortlist:
         try:
             params = ScanParams.from_settings(
@@ -513,22 +718,50 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         except Exception as exc:  # noqa: BLE001 - one ticker's chain must not sink the rest
             log.warning("pipeline.scan_failed", ticker=item.ticker, error=str(exc))
             no_chain.append(item.ticker)
+            no_chain_why[item.ticker] = f"scan failed: {exc}"[:500]
             continue
         if not res.candidates:
             no_chain.append(item.ticker)
+            no_chain_why[item.ticker] = "scanner found no structure passing its filters"
             continue
         spots[item.ticker] = res.spot
+        cands = list(res.candidates)
+        rv = _realized_vol(ctx.snapshot, item.ticker)
+        for c in cands:
+            model = _exit_model(c, res.spot, exits, settings.scanner_risk_free_rate, rv)
+            if model is not None:
+                summaries[id(c)] = ExitSummary.from_result(model)
+        by = exits.pipeline.rank_menu_by
+        if by != "scanner":
+            cands.sort(key=lambda c: _menu_rank_key(summaries.get(id(c)), by))
         menus[item.ticker] = {
             _legs_key([(leg.occ_symbol, leg.side.value) for leg in c.structure.legs]): c
-            for c in res.candidates
+            for c in cands
         }
         chains[item.ticker] = {
             "stance": item.stance,
             "iv": res.iv.model_dump(mode="json"),
-            "menu": [_menu_entry(c) for c in res.candidates],
+            "exit_policy_note": "exits: static = hold to expiry; managed = under the exit "
+            "policy in config/exits.yaml (both after costs, $ per contract). Paths move at "
+            "the realised-vol forecast (path_vol, mean HV20/HV60) and are priced at IV; "
+            "vrp = IV − forecast; rorc_day = managed net EV / (max loss × days held).",
+            "menu": [_menu_entry(c, summaries.get(id(c))) for c in cands],
         }
 
+    def journal_no_chain(call_id: str | None = None) -> None:
+        for t in no_chain:
+            j.add(
+                JournalPersona.QUANT,
+                Stage.STRUCTURE,
+                t,
+                Choice.NO_TRADE,
+                ReasonCode.NO_CHAIN,
+                reason_text=no_chain_why.get(t, ""),
+                persona_call_id=call_id,
+            )
+
     if not menus:
+        journal_no_chain()
         ctx.write(
             "structures",
             SESSION_SUBJECT,
@@ -541,51 +774,100 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
             metrics={"structures": 0, "no_chain": len(no_chain)},
         )
 
-    inp = quant_input_from_context(
-        ctx.snapshot,
-        chains_json=json.dumps(chains, indent=2, sort_keys=True),
-        underlying_prices_json=json.dumps(spots, sort_keys=True),
-        scan_date=today.isoformat(),
-    )
-    prompt = _with_constraints(
-        build_quant_prompt(inp),
-        [
-            "Choose ONLY from the per-ticker `menu` above; copy each chosen structure's legs "
-            "(occ_symbol, side, ratio) verbatim. Anything else is discarded.",
-            "At most one structure per ticker, best first. You may omit a ticker.",
-            "All analytics (price, max gain/loss, breakevens, Greeks, PoP, EV, cost) are "
-            "replaced by the pipeline's own numbers; your value-add is the choice, confidence "
-            "and rationale.",
-            f"Tickers without a tradable chain: {', '.join(no_chain) or 'none'}.",
-        ],
-        QuantOutput,
-    )
-    reply, out = _ask(ctx, env, "quant", prompt, QuantOutput, ctx.snapshot.id)
+    inputs = {
+        "chains_json": json.dumps(chains, indent=2, sort_keys=True),
+        "underlying_prices_json": json.dumps(spots, sort_keys=True),
+        "scan_date": today.isoformat(),
+        "rules": _quant_rules(no_chain),
+    }
+    reply, out = _ask(ctx, env, "quant", ctx.snapshot, inputs, QuantOutput)
     dropped: Counter[str] = Counter()
-    drop_items: list[tuple[str, str]] = []
     kept: list[QuantStructureOut] = []
-    seen: set[str] = set()
+    chosen: dict[str, frozenset[tuple[str, str]]] = {}
+    rejected: list[tuple[QuantStructureOut, str]] = []
     for s in out.structures:
         t = s.ticker.strip().upper()
+        reason = None
+        match = None
+        key: frozenset[tuple[str, str]] | None = None
         if t not in menus:
             reason = DROP_NOT_SHORTLISTED
-        elif t in seen:
+        elif t in chosen:
             reason = DROP_DUPLICATE
         else:
             try:
-                match = menus[t].get(_legs_key(s.legs))
+                key = _legs_key(s.legs)
+                match = menus[t].get(key)
             except ValueError:
                 match = None
-            if match is not None:
-                seen.add(t)
-                kept.append(
-                    _to_quant_structure(t, match, confidence=s.confidence, rationale=s.rationale)
+            if match is None:
+                reason = DROP_NOT_IN_MENU
+        if reason is not None or match is None or key is None:
+            dropped[reason or DROP_NOT_IN_MENU] += 1
+            rejected.append((s, reason or DROP_NOT_IN_MENU))
+            continue
+        chosen[t] = key
+        kept.append(
+            _to_quant_structure(
+                t,
+                match,
+                confidence=s.confidence,
+                rationale=s.rationale,
+                exit_summary=summaries.get(id(match)),
+            )
+        )
+    call_id = _record_ok(ctx, "quant", reply, ctx.snapshot.id, dropped)
+
+    by_ticker = {q.ticker: q for q in kept}
+    for t, menu in menus.items():
+        if t not in chosen:
+            j.add(
+                JournalPersona.QUANT,
+                Stage.STRUCTURE,
+                t,
+                Choice.NO_TRADE,
+                ReasonCode.QUANT_OMITTED,
+                reason_text="Quant picked no structure from this ticker's menu",
+                persona_call_id=call_id,
+            )
+        for key, c in menu.items():
+            entry = _menu_entry(c, summaries.get(id(c)))
+            if chosen.get(t) == key:
+                q = by_ticker[t]
+                j.add(
+                    JournalPersona.QUANT,
+                    Stage.STRUCTURE,
+                    t,
+                    Choice.SELECTED,
+                    ReasonCode.CHOSEN_FROM_MENU,
+                    reason_text=q.rationale,
+                    confidence=q.confidence,
+                    persona_call_id=call_id,
+                    payload=q.model_dump(mode="json") | {"strategy": entry["strategy"]},
                 )
-                continue
-            reason = DROP_NOT_IN_MENU
-        dropped[reason] += 1
-        drop_items.append((t, reason))
-    _record_ok(ctx, "quant", reply, ctx.snapshot.id, dropped)
+            else:
+                j.add(
+                    JournalPersona.QUANT,
+                    Stage.STRUCTURE,
+                    t,
+                    Choice.REJECTED,
+                    ReasonCode.MENU_NOT_CHOSEN,
+                    persona_call_id=call_id,
+                    payload=entry,
+                )
+    for s, reason in rejected:
+        j.add(
+            JournalPersona.QUANT,
+            Stage.STRUCTURE,
+            s.ticker.strip().upper() or SESSION_SUBJECT,
+            Choice.REJECTED,
+            ReasonCode(reason),
+            reason_text=s.rationale,
+            confidence=s.confidence,
+            persona_call_id=call_id,
+            payload=s.model_dump(mode="json"),
+        )
+    journal_no_chain(call_id)
     payload = StructuresPayload(structures=kept, analysis_notes=out.analysis_notes)
     ctx.write("structures", SESSION_SUBJECT, payload)
     desc = "; ".join(
@@ -602,7 +884,7 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         card=quant_card(
             payload,
             dropped=dropped,
-            dropped_items=drop_items,
+            dropped_items=[(q.ticker.strip().upper() or "?", r) for q, r in rejected],
             no_chain=no_chain,
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
@@ -615,10 +897,33 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
 # ---------------------------------------------------------------------------
 
 
+def _risk_rules(settings: ArcSettings, caps: Mapping[tuple[str, str], int]) -> list[str]:
+    return [
+        "Exactly one assessment per proposed structure, with ticker and structure_type "
+        "copied verbatim from it.",
+        "Each structure's `exits` compares hold-to-expiry (static) with the managed exit "
+        "policy (take profit / stop / DTE exit); positions will be managed, so weigh the "
+        "managed PoP, net EV and stop probability.",
+        "sizing_suggestion is advisory. The pipeline trades min(your suggestion, "
+        f"floor({settings.max_alloc_pct:.0%} × equity / max_loss)); caps per structure: "
+        + ", ".join(f"{t} {k}: {n}" for (t, k), n in sorted(caps.items()))
+        + ". Suggest 0 to decline a trade.",
+    ]
+
+
 def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
+    j = _journal(ctx, ctx.snapshot.id)
     structures = _latest(ctx.snapshot, "structures", StructuresPayload)
     if structures is None or not structures.structures:
+        j.add(
+            JournalPersona.RISK,
+            Stage.RISK_REVIEW,
+            SESSION_SUBJECT,
+            Choice.NO_TRADE,
+            ReasonCode.NO_STRUCTURE,
+            reason_text="nothing to review",
+        )
         ctx.write(
             "risk_review",
             SESSION_SUBJECT,
@@ -660,57 +965,81 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         for s in structures.structures
         if s.max_loss
     }
-    inp = risk_input_from_context(
-        ctx.snapshot,
-        portfolio_json=portfolio.model_dump_json(indent=2),
-        calendar_json=json.dumps(calendar, indent=2),
-        account_equity=float(info.equity),
-        scan_date=today.isoformat(),
-    )
-    prompt = _with_constraints(
-        build_risk_prompt(inp),
-        [
-            "Exactly one assessment per proposed structure, with ticker and structure_type "
-            "copied verbatim from it.",
-            "sizing_suggestion is advisory. The pipeline trades min(your suggestion, "
-            f"floor({settings.max_alloc_pct:.0%} × equity / max_loss)); caps per structure: "
-            + ", ".join(f"{t} {k}: {n}" for (t, k), n in sorted(caps.items()))
-            + ". Suggest 0 to decline a trade.",
-        ],
-        RiskOutput,
-    )
-    reply, out = _ask(ctx, env, "risk", prompt, RiskOutput, ctx.snapshot.id)
+    inputs = {
+        "portfolio_json": portfolio.model_dump_json(indent=2),
+        "calendar_json": json.dumps(calendar, indent=2),
+        "account_equity": float(info.equity),
+        "scan_date": today.isoformat(),
+        "rules": _risk_rules(settings, caps),
+    }
+    reply, out = _ask(ctx, env, "risk", ctx.snapshot, inputs, RiskOutput)
     wanted = {(s.ticker, s.structure_type) for s in structures.structures}
     dropped: Counter[str] = Counter()
-    drop_items: list[tuple[str, str]] = []
     kept: list[RiskAssessment] = []
+    rejected: list[tuple[RiskAssessment, str]] = []
     seen: set[tuple[str, str]] = set()
     for a in out.assessments:
         key = (a.ticker.strip().upper(), a.structure_type.strip().lower())
-        reason = (
-            DROP_UNKNOWN_STRUCTURE if key not in wanted else DROP_DUPLICATE if key in seen else None
-        )
-        if reason is not None:
-            dropped[reason] += 1
-            drop_items.append((f"{key[0]} {key[1]}", reason))
+        if key not in wanted:
+            dropped[DROP_UNKNOWN_STRUCTURE] += 1
+            rejected.append((a, DROP_UNKNOWN_STRUCTURE))
+            continue
+        if key in seen:
+            dropped[DROP_DUPLICATE] += 1
+            rejected.append((a, DROP_DUPLICATE))
             continue
         seen.add(key)
         kept.append(a.model_copy(update={"ticker": key[0], "structure_type": key[1]}))
-    _record_ok(ctx, "risk", reply, ctx.snapshot.id, dropped)
+    call_id = _record_ok(ctx, "risk", reply, ctx.snapshot.id, dropped)
+    for a in kept:
+        declined = a.sizing_suggestion < 1
+        j.add(
+            JournalPersona.RISK,
+            Stage.RISK_REVIEW,
+            a.ticker,
+            Choice.NO_TRADE if declined else Choice.ASSESSED,
+            ReasonCode.RISK_DECLINED if declined else ReasonCode.RISK_ASSESSED,
+            reason_text=f"{a.risk_rating}: {a.narrative}",
+            persona_call_id=call_id,
+            payload=a.model_dump(mode="json")
+            | {"cap_contracts": caps.get((a.ticker, a.structure_type))},
+        )
+    for a, reason in rejected:
+        j.add(
+            JournalPersona.RISK,
+            Stage.RISK_REVIEW,
+            a.ticker.strip().upper() or SESSION_SUBJECT,
+            Choice.REJECTED,
+            ReasonCode(reason),
+            reason_text=a.narrative,
+            persona_call_id=call_id,
+            payload=a.model_dump(mode="json"),
+        )
+    missing = sorted(wanted - seen)
+    for t, k in missing:
+        j.add(
+            JournalPersona.RISK,
+            Stage.RISK_REVIEW,
+            t,
+            Choice.NO_TRADE,
+            ReasonCode.NOT_ASSESSED,
+            reason_text=f"Risk returned no assessment for {t} {k}",
+            persona_call_id=call_id,
+        )
     payload = RiskReviewPayload(
         assessments=kept,
         portfolio_summary=out.portfolio_summary,
         advisory_notes=out.advisory_notes,
     )
     ctx.write("risk_review", SESSION_SUBJECT, payload)
-    max_loss = {(s.ticker, s.structure_type): s.max_loss for s in structures.structures}
+    by_key = {(s.ticker, s.structure_type): s for s in structures.structures}
     sized = {
         (a.ticker, a.structure_type): size_contracts(
             suggestion=a.sizing_suggestion,
             max_loss_per_contract=(
                 None
-                if max_loss.get((a.ticker, a.structure_type)) is None
-                else Decimal(str(max_loss[(a.ticker, a.structure_type)]))
+                if by_key[(a.ticker, a.structure_type)].max_loss is None
+                else Decimal(str(by_key[(a.ticker, a.structure_type)].max_loss))
             ),
             equity=info.equity,
             cap_pct=settings.max_alloc_pct,
@@ -718,20 +1047,23 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         for a in kept
     }
     desc = "; ".join(f"{a.ticker} {a.risk_rating}, suggests {a.sizing_suggestion}" for a in kept)
-    missing = sorted(f"{t} {k}" for t, k in wanted - seen)
+    missing_s = [f"{t} {k}" for t, k in missing]
     return JobResult(
         summary=(desc or "no assessments")
-        + (f"; not assessed: {', '.join(missing)}" if missing else "")
+        + (f"; not assessed: {', '.join(missing_s)}" if missing_s else "")
         + (f"; dropped {dict(dropped)}" if dropped else ""),
-        metrics={"assessments": len(kept), "not_assessed": len(missing), **dropped},
+        metrics={"assessments": len(kept), "not_assessed": len(missing_s), **dropped},
         card=risk_card(
             payload,
             sized=sized,
-            max_gain={(s.ticker, s.structure_type): s.max_gain for s in structures.structures},
+            max_gain={k: s.max_gain for k, s in by_key.items()},
             cap_pct=settings.max_alloc_pct,
             dropped=dropped,
-            dropped_items=drop_items,
-            not_assessed=missing,
+            dropped_items=[
+                (f"{a.ticker.strip().upper()} {a.structure_type.strip().lower()}", r)
+                for a, r in rejected
+            ],
+            not_assessed=missing_s,
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
         ),
@@ -783,6 +1115,76 @@ def _with_position(
     )
 
 
+def _proposal_exit_model(
+    priced: Any, exits: ExitConfig, r: float, realized_vol: float | None
+) -> ExitModelResult | None:
+    """E2.4 model for the re-priced proposal structure (None without spot/IV)."""
+    st = priced.structure
+    if priced.spot is None or priced.atm_iv is None or st.dte < 1:
+        return None
+    try:
+        return model_exits(
+            st,
+            exits.policy_for(st.kind),
+            spot=priced.spot,
+            iv=priced.atm_iv,
+            r=r,
+            cfg=exits.model,
+            spreads=priced.leg_spreads(),
+            realized_vol=realized_vol,
+        )
+    except ValueError as exc:  # e.g. a stop basis that does not fit this structure
+        log.warning("pipeline.exit_model_failed", error=str(exc))
+        return None
+
+
+_SIZING_REASONS = {
+    "ok": ReasonCode.SIZING_OK,
+    "capped": ReasonCode.SIZING_CAPPED,
+    "cap_zero": ReasonCode.SIZING_CAP_ZERO,
+    "risk_zero": ReasonCode.SIZING_RISK_ZERO,
+    "unbounded": ReasonCode.SIZING_UNBOUNDED,
+    "invalid_input": ReasonCode.SIZING_INVALID_INPUT,
+}
+
+
+def _market_context(
+    snapshot: ContextSnapshot,
+    ticker: str,
+    phash: str,
+    priced: PricedStructure,
+    now: _dt.datetime,
+) -> MarketContext:
+    """Freeze what the market looked like when *phash* was proposed."""
+    regime = snapshot.latest("regime", ticker)
+    f = regime.payload if regime else {}
+    vol = f.get("vol") or {}
+    legs = [
+        LegQuote(
+            occ_symbol=sym,
+            bid=c.bid,
+            ask=c.ask,
+            mid=c.mid,
+            iv=c.implied_volatility,
+            quote_time=c.quote_timestamp,
+        )
+        for sym, c in priced.contracts.items()
+    ]
+    times = [q.quote_time for q in legs if q.quote_time is not None]
+    return MarketContext(
+        proposal_hash=phash,
+        subject=ticker,
+        underlying_last=priced.spot,
+        atm_iv=vol.get("iv"),
+        ivr=vol.get("iv_rank"),
+        hv20=vol.get("hv20"),
+        regime=(f.get("regime") or {}).get("current"),
+        legs=legs,
+        quotes_as_of=min(times) if times else None,
+        at=now,
+    )
+
+
 def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     from arc.gate.halt import HaltSwitch, evaluate_with_halt
     from arc.gate.rules import proposal_hash
@@ -791,10 +1193,20 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
     now = ctx.now
     day = _today(ctx).isoformat()
+    j = _journal(ctx, ctx.snapshot.id)
     shortlist = _latest(ctx.snapshot, "shortlist", ShortlistPayload)
     structures = _latest(ctx.snapshot, "structures", StructuresPayload)
     review = _latest(ctx.snapshot, "risk_review", RiskReviewPayload)
     if not (shortlist and structures and review) or not structures.structures:
+        with ctx.conn:
+            j.add(
+                JournalPersona.SYSTEM,
+                Stage.PROPOSE,
+                SESSION_SUBJECT,
+                Choice.NO_TRADE,
+                ReasonCode.NO_STRUCTURE,
+                reason_text="nothing to propose",
+            )
         return JobResult(summary="nothing to propose", metrics={"proposals": 0})
 
     cand_ids = {e.subject: e.payload.get("id") for e in ctx.snapshot.of_kind("candidate")}
@@ -813,26 +1225,33 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
     earnings = next_earnings(ctx.conn, list(by_ticker), _today(ctx))
     switch = HaltSwitch(HaltRepo(ctx.conn))
+    exits = load_exit_config()
 
     skipped: Counter[str] = Counter()
     lines: list[str] = []
     passed = proposals = 0
+
+    def skip(t: str, key: str, code: ReasonCode, text: str) -> None:
+        skipped[key] += 1
+        with ctx.conn:  # no other output for this ticker: commit the decision alone
+            j.add(JournalPersona.SYSTEM, Stage.PROPOSE, t, Choice.NO_TRADE, code, reason_text=text)
+
     for item in shortlist.shortlist:
         t = item.ticker
         qs = by_ticker.get(t)
         if qs is None:
-            skipped["no_structure"] += 1
+            skip(t, "no_structure", ReasonCode.NO_STRUCTURE, "Quant chose no structure")
             continue
         if _existing(ctx.conn, day, t):
-            skipped["exists"] += 1
+            skip(t, "exists", ReasonCode.ALREADY_PROPOSED, f"already proposed on {day}")
             lines.append(f"{t}: already proposed today")
             continue
         a = assessed.get((t, qs.structure_type))
         if a is None:
-            skipped["no_risk_review"] += 1
+            skip(t, "no_risk_review", ReasonCode.NO_RISK_REVIEW, "no Risk assessment")
             continue
         if not cand_ids.get(t):
-            skipped["no_candidate"] += 1
+            skip(t, "no_candidate", ReasonCode.NO_CANDIDATE_ID, "no Scout candidate row")
             continue
         try:
             priced = price_structure(
@@ -843,7 +1262,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             )
         except (LookupError, ValueError) as exc:
             log.warning("pipeline.reprice_failed", ticker=t, error=str(exc))
-            skipped["reprice_failed"] += 1
+            skip(t, "reprice_failed", ReasonCode.REPRICE_FAILED, str(exc)[:500])
             continue
         st = priced.structure
         size = size_contracts(
@@ -852,8 +1271,23 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             equity=info.equity,
             cap_pct=settings.max_alloc_pct,
         )
+        sizing_payload = size.model_dump(mode="json") | {
+            "max_loss_per_contract": str(st.max_loss) if st.max_loss is not None else None,
+            "equity": str(info.equity),
+            "cap_pct": settings.max_alloc_pct,
+        }
         if not size.trade:
             skipped["sizing"] += 1
+            with ctx.conn:
+                j.add(
+                    JournalPersona.SIZING,
+                    Stage.SIZING,
+                    t,
+                    Choice.NO_TRADE,
+                    _SIZING_REASONS[size.code],
+                    reason_text=size.reason,
+                    payload=sizing_payload,
+                )
             lines.append(f"{t}: no trade ({size.reason})")
             continue
         proposal = Proposal(
@@ -885,6 +1319,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             decision = _mint(decision, proposal, settings, now)
         phash = proposal_hash(proposal)
         try:
+            # One transaction: proposal + gate decision + journal + context entry.
             ProposalRepo(ctx.conn).insert(
                 candidate_id=proposal.candidate_id,
                 proposal_hash=phash,
@@ -898,10 +1333,11 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 run_id=ctx.run_id,
                 day=day,
                 ticker=t,
+                commit=False,
             )
         except sqlite3.IntegrityError:  # a concurrent run won the (day, ticker) slot
             ctx.conn.rollback()
-            skipped["exists"] += 1
+            skip(t, "exists", ReasonCode.ALREADY_PROPOSED, "a concurrent run won the slot")
             continue
         GateDecisionRepo(ctx.conn).insert(
             proposal_hash=phash,
@@ -911,8 +1347,62 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             account_snapshot=decision.account_snapshot,
             decided_at=now.isoformat(),
             run_id=ctx.run_id,
+            commit=False,
         )
-        ctx.write("proposal", t, ProposalPayload.model_validate(proposal.model_dump()))
+        j.add(
+            JournalPersona.SYSTEM,
+            Stage.PROPOSE,
+            t,
+            Choice.SELECTED,
+            ReasonCode.PROPOSED,
+            proposal_hash=phash,
+            payload={
+                "structure": st.model_dump(mode="json"),
+                "limit_price": str(proposal.limit_price),
+                "quant": proposal.quant.model_dump(mode="json"),
+            },
+        )
+        j.add(
+            JournalPersona.SIZING,
+            Stage.SIZING,
+            t,
+            Choice.SIZED,
+            _SIZING_REASONS[size.code],
+            reason_text=f"min(Risk {size.suggestion}, cap {size.cap_contracts}) = {size.contracts}",
+            proposal_hash=phash,
+            payload=sizing_payload,
+        )
+        if decision.passed:
+            j.add(
+                JournalPersona.GATE,
+                Stage.GATE,
+                t,
+                Choice.PASSED,
+                ReasonCode.GATE_PASS,
+                reason_text="token issued" if decision.token else "no token (not executable)",
+                proposal_hash=phash,
+            )
+        for v in decision.violations:
+            j.add(
+                JournalPersona.GATE,
+                Stage.GATE,
+                t,
+                Choice.FAILED,
+                gate_reason(v),
+                reason_text=v,
+                proposal_hash=phash,
+            )
+        JournalStore(ctx.conn).record_market_context(
+            _market_context(ctx.snapshot, t, phash, priced, now)
+        )
+        exit_model = _proposal_exit_model(
+            priced, exits, settings.scanner_risk_free_rate, _realized_vol(ctx.snapshot, t)
+        )
+        ctx.write(
+            "proposal",
+            t,
+            ProposalPayload.model_validate(proposal.model_dump() | {"exit_model": exit_model}),
+        )
         proposals += 1
         strikes = "/".join(f"{parse_occ(leg.occ_symbol).strike.normalize():f}" for leg in st.legs)
         verdict = "PASS" if decision.passed else f"FAIL ({'; '.join(decision.violations)})"

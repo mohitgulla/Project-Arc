@@ -755,7 +755,7 @@ class TestHeartbeats:
         assert len(notes.posts) == 1
         text = notes.posts[0][1]
         assert text.startswith("[Scout] scout ✓")
-        assert "rss: rss done" in text
+        assert "rss ×2 (last: rss done)" in text  # E5.3: repeated source runs fold into one
         assert notes.posts[0][0] == dt.date(2026, 9, 28)
 
     def test_labels(self) -> None:
@@ -846,7 +846,7 @@ class TestHeartbeats:
     def test_pending_queue_is_bounded(self, conn: sqlite3.Connection) -> None:
         hb = Heartbeats(conn, RecordingNotifier())
         for i in range(60):
-            hb.queue_source("rss", str(i))
+            hb.queue_source(f"src{i}", str(i))
         assert len(hb._pending()) == 50
 
     def test_slack_notifier_creates_day_thread_once(self, conn: sqlite3.Connection) -> None:
@@ -919,7 +919,8 @@ class TestDryRunAndCli:
         out = capsys.readouterr().out
         assert rc == 0
         order = [ln.split()[3] for ln in out.splitlines() if ln.strip()[:2].rstrip(".").isdigit()]
-        assert order[-1] == "scout" and set(order[:-1]) == {"edgar", "rss", "youtube.stockedup"}
+        assert order[-1] == "scout"
+        assert set(order[:-1]) == {"edgar", "rss", "youtube.stockedup", "monitor"}  # E5.3
         assert "director" in out and "may-run" in out
 
     def test_cli_validate_list_history_context(
