@@ -12,6 +12,7 @@ from __future__ import annotations
 import enum
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
@@ -170,6 +171,24 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("journal", JournalPayload),
     KindSpec("note", NotePayload),
 )
+
+
+SCHEMA_DIR = Path(__file__).resolve().parent.parent.parent / "schemas" / "context"
+
+
+def render_schemas() -> dict[str, str]:
+    """``<kind>.v<N>.json`` -> JSON Schema text for every registered kind (D27 registry).
+
+    Committed under ``schemas/context/``; ``tests/test_context_schemas.py`` fails when a
+    model changes without regenerating (``arc context schemas --write``).
+    """
+    return {
+        f"{name}.v{spec.schema_version}.json": json.dumps(
+            spec.model.model_json_schema(), indent=2, sort_keys=True
+        )
+        + "\n"
+        for name, spec in KINDS.items()
+    }
 
 
 def kind_spec(kind: str) -> KindSpec:

@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "description": "Pointer to a stored ``raw_docs`` row (the text itself stays in raw_docs).",
+  "properties": {
+    "doc_id": {
+      "title": "Doc Id",
+      "type": "string"
+    },
+    "published_at": {
+      "description": "ISO-8601, as stored in raw_docs",
+      "title": "Published At",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "doc_id",
+    "source",
+    "url",
+    "published_at"
+  ],
+  "title": "RawDocRefPayload",
+  "type": "object"
+}

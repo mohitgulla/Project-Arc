@@ -97,6 +97,13 @@ def add_context_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     s.add_argument("--as-of", default=None, help="ISO time (default: now ET)")
     s.add_argument("--snapshot", default=None, help="Show a recorded snapshot by id")
     s.add_argument("--json", action="store_true")
+    sc = csub.add_parser(
+        "schemas", help="Committed JSON Schemas of every context kind (schemas/context/)"
+    )
+    mode = sc.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--write", action="store_true", help="Regenerate schemas/context/*.json")
+    mode.add_argument("--check", action="store_true", help="Exit 1 if any schema is stale")
+    sc.add_argument("--dir", default=None, help="Registry dir (default: <repo>/schemas/context)")
     tr = csub.add_parser(
         "trace", help="Run manifests (D27): what a run or chain read, wrote and used"
     )
@@ -423,6 +430,8 @@ def run_context(args: argparse.Namespace) -> int:
     from arc.context.store import ContextStore
 
     _log_to_stderr()
+    if getattr(args, "context_command", "show") == "schemas":
+        return _run_schemas(args)
     conn = _conn(args)
     if getattr(args, "context_command", "show") == "trace":
         return _run_trace(conn, args)
@@ -483,4 +492,37 @@ def _run_trace(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
         _write(
             f"    git={(m.git_sha or '?')[:10]}{'+dirty' if m.git_dirty else ''} env={m.arc_env}"
         )
+    return 0
+
+
+def _run_schemas(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from arc.context.kinds import SCHEMA_DIR, render_schemas
+
+    root = Path(args.dir) if args.dir else SCHEMA_DIR
+    wanted = render_schemas()
+    existing = {p.name for p in root.glob("*.json")} if root.is_dir() else set()
+    stale = sorted(
+        name
+        for name, text in wanted.items()
+        if not (root / name).is_file() or (root / name).read_text() != text
+    )
+    extra = sorted(existing - set(wanted))
+    if args.check:
+        for name in stale:
+            _write(f"stale: {name}")
+        for name in extra:
+            _write(f"orphan: {name}")
+        if stale or extra:
+            _write("run `arc context schemas --write` (and bump schema_version on a change)")
+            return 1
+        _write(f"OK: {len(wanted)} context schemas up to date")
+        return 0
+    root.mkdir(parents=True, exist_ok=True)
+    for name in stale:
+        (root / name).write_text(wanted[name])
+    for name in extra:
+        (root / name).unlink()
+    _write(f"wrote {len(stale)}, removed {len(extra)}, {len(wanted)} total in {root}")
     return 0
