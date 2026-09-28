@@ -75,18 +75,24 @@ def is_open(dt: _dt.datetime | None = None) -> bool:
 
 
 def next_session(d: _dt.date | None = None) -> _dt.date:
-    """Return the next trading session *after* *d* (default today ET)."""
+    """Return the next trading session *after* *d* (default today ET).
+
+    *d* may be any date, including weekends and holidays.
+    """
     if d is None:
         d = now_et().date()
-    ts = _cal().next_session(_to_ts(d))
+    ts = _cal().date_to_session(_to_ts(d) + pd.Timedelta(days=1), direction="next")
     return ts.date()
 
 
 def previous_session(d: _dt.date | None = None) -> _dt.date:
-    """Return the most recent trading session *before* *d* (default today ET)."""
+    """Return the most recent trading session *before* *d* (default today ET).
+
+    *d* may be any date, including weekends and holidays.
+    """
     if d is None:
         d = now_et().date()
-    ts = _cal().previous_session(_to_ts(d))
+    ts = _cal().date_to_session(_to_ts(d) - pd.Timedelta(days=1), direction="previous")
     return ts.date()
 
 
@@ -115,6 +121,42 @@ def is_early_close(d: _dt.date | None = None) -> bool:
     if not cal.is_session(ts):
         return False
     return bool(ts in cal.early_closes)
+
+
+def session_open(d: _dt.date | None = None) -> _dt.datetime:
+    """Return the open time (ET) for session *d*.
+
+    Raises ValueError if *d* is not a trading session.
+    """
+    if d is None:
+        d = now_et().date()
+    ts = _to_ts(d)
+    cal = _cal()
+    if not cal.is_session(ts):
+        msg = f"{d} is not a trading session"
+        raise ValueError(msg)
+    open_ts: pd.Timestamp = cal.session_open(ts)
+    return open_ts.to_pydatetime().astimezone(ET)
+
+
+def session_phase(dt: _dt.datetime | None = None) -> str:
+    """Classify *dt* (default now ET): ``pre`` | ``open`` | ``post`` | ``closed``.
+
+    ``closed`` means the date is not a trading session (weekend/holiday).
+    """
+    if dt is None:
+        dt = now_et()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ET)
+    dt = dt.astimezone(ET)
+    d = dt.date()
+    if not is_session(d):
+        return "closed"
+    if dt < session_open(d):
+        return "pre"
+    if dt < session_close(d):
+        return "open"
+    return "post"
 
 
 def session_close(d: _dt.date | None = None) -> _dt.datetime:
