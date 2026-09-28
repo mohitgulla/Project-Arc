@@ -75,6 +75,13 @@ def _parse_timeframe(tf: str) -> TimeFrame:
 # ---------------------------------------------------------------------------
 
 
+def _size(v: object) -> float | None:
+    """A quote size (``bs``/``as``) as a float; ``None`` when the feed omits it."""
+    if isinstance(v, bool) or not isinstance(v, int | float):
+        return None
+    return float(v) if v >= 0 else None
+
+
 def _check_quality(
     symbol: str,
     bid: float | None,
@@ -247,6 +254,8 @@ class AlpacaMarketData:
             bid: float | None = None
             ask: float | None = None
             mid: float | None = None
+            bid_size: float | None = None
+            ask_size: float | None = None
             quote_ts: dt.datetime | None = None
             last_trade_price: float | None = None
 
@@ -255,6 +264,9 @@ class AlpacaMarketData:
                 ask = snap.latest_quote.ask_price
                 if bid is not None and ask is not None:
                     mid = (bid + ask) / 2.0
+                # ``bs`` / ``as`` in the raw snapshot: top of book only (no depth on Alpaca)
+                bid_size = _size(getattr(snap.latest_quote, "bid_size", None))
+                ask_size = _size(getattr(snap.latest_quote, "ask_size", None))
                 quote_ts = snap.latest_quote.timestamp
 
             if snap.latest_trade is not None:
@@ -284,6 +296,8 @@ class AlpacaMarketData:
                     bid=bid,
                     ask=ask,
                     mid=mid,
+                    bid_size=bid_size,
+                    ask_size=ask_size,
                     last_trade_price=last_trade_price,
                     open_interest=open_interest.get(symbol),
                     volume=volume.get(symbol),

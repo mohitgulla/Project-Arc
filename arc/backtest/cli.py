@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from arc.backtest.costs import CostModel
+from arc.backtest.costs import load_cost_model
 from arc.backtest.report import DEFAULT_R, closes_for, run_report
 from arc.data.history.store import ParquetHistoryStore
 
@@ -27,10 +27,17 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     p.add_argument("--provider", default="alpaca", help="History provider partition")
     p.add_argument("--data-dir", type=Path, default=Path("data"))
     p.add_argument("--out", type=Path, default=Path("data/backtest"))
-    p.add_argument("--slippage", type=float, default=0.25, help="x in mid ± x·spread")
-    p.add_argument("--fee", type=float, default=0.65, help="$ per contract per side")
-    p.add_argument("--spread-pct", type=float, default=0.04, help="Est. spread / mid (no quote)")
-    p.add_argument("--spread-min", type=float, default=0.03, help="Est. spread floor $/share")
+    p.add_argument(
+        "--slippage", type=float, default=None, help="x in mid ± x·spread (default: costs.yaml)"
+    )
+    p.add_argument(
+        "--fee",
+        type=float,
+        default=None,
+        help="Commission $ per contract per side (default: config/costs.yaml)",
+    )
+    p.add_argument("--spread-pct", type=float, default=None, help="Est. spread / mid (no quote)")
+    p.add_argument("--spread-min", type=float, default=None, help="Est. spread floor $/share")
     p.add_argument("--rate", type=float, default=DEFAULT_R, help="Flat risk-free rate")
     p.add_argument("--train-months", type=int, default=6)
     p.add_argument("--test-months", type=int, default=2)
@@ -56,12 +63,18 @@ def run_backtest_cli(args: argparse.Namespace) -> int:
         _load_alpaca_env()
         source = AlpacaBarsSource()
     closes = closes_for(tickers, args.start, args.end, args.data_dir, source)
-    cost = CostModel(
-        slippage_frac=args.slippage,
-        commission_per_contract=args.fee,
-        spread_pct=args.spread_pct,
-        spread_min=args.spread_min,
-    )
+    # One cost model (D23): config/costs.yaml, with explicit CLI flags overriding it.
+    overrides = {
+        k: v
+        for k, v in (
+            ("slippage_frac", args.slippage),
+            ("commission_per_contract", args.fee),
+            ("spread_pct", args.spread_pct),
+            ("spread_min", args.spread_min),
+        )
+        if v is not None
+    }
+    cost = load_cost_model().model_copy(update=overrides)
     run_report(
         store=ParquetHistoryStore(args.data_dir),
         closes_by_ticker=closes,

@@ -312,7 +312,7 @@ class TestDigestCards:
         assert headers == [
             "[Scout] Scan: 10 Sources → 3 Candidates",
             "[Director] Ranked: 1 / 3 • Market Risk ON",
-            "[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78",
+            "[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
             "[Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
             None,  # propose has no card (E6.1 posts the proposal card)
         ]

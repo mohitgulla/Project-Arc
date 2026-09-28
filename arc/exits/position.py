@@ -19,7 +19,7 @@ import math
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from arc.backtest.costs import CostModel
+from arc.backtest.costs import CostModel, load_cost_model
 from arc.exits.model import MULT, close_values, sim_legs, simulate
 from arc.exits.policy import (
     ExitModelConfig,
@@ -128,7 +128,7 @@ def evaluate_position(
     cfg: ExitModelConfig | None = None,
 ) -> PositionExitState:
     """Evaluate *position* against *policy* at *marks* (see module doc)."""
-    cost = cost or CostModel()
+    cost = cost or load_cost_model()
     st = position.structure
     rules = resolve_rules(st, policy, entry_net=position.entry_net)
     expiry = parse_occ(st.legs[0].occ_symbol).expiration
@@ -145,10 +145,12 @@ def evaluate_position(
     legs = sim_legs(st, cost, marks.leg_spreads or None)
     quoted = {parse_occ(k).format(): v for k, v in marks.leg_mids.items()}
     proceeds = 0.0
+    close_fees = 0.0
     for lg, leg in zip(legs, st.legs, strict=True):
         mid = quoted[parse_occ(leg.occ_symbol).format()]
-        proceeds += lg.sign * lg.ratio * max(mid - lg.sign * cost.slippage_frac * lg.spread, 0.0)
-    close_fees = cost.fees(sum(lg.ratio for lg in legs))
+        fill = max(mid - lg.sign * cost.slippage_frac * lg.spread, 0.0)
+        proceeds += lg.sign * lg.ratio * fill
+        close_fees += cost.trade_fees(lg.ratio, -lg.sign, fill)  # closing a long sells
     close_now_net = (proceeds - value) * MULT - close_fees  # cost of closing vs mid, ≤ 0
 
     gross_ev = net_ev = days = None

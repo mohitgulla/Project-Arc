@@ -16,10 +16,13 @@ Model ``gbm_flat_iv``
 
 Costs (:class:`arc.backtest.costs.CostModel`, shared with the backtester)
 -------------------------------------------------------------------------
-- Entry: every leg fills at ``mid ± x·spread`` and pays the per-contract commission.
+- Entry: every leg fills at ``mid ± x·spread`` and pays the per-contract fees
+  (commission, ORF, OCC, CAT; plus TAF and SEC on the legs it sells).
 - Early close: every leg fills at ``mid ∓ x·spread`` (never below 0) and pays the
-  commission again.
-- Expiry: settlement at intrinsic, no slippage; commission only on ITM legs.
+  fees again (sell-side fees on the legs the close sells).
+- Expiry: settlement at intrinsic, no slippage; closing-trade fees only on ITM legs.
+- ``net_ev = gross_ev − costs.total``: :class:`EvCosts` itemises the gap (spread &
+  slippage in and out, commission, regulatory fees).
 - The spread per leg is the quoted ``ask − bid`` when given, else the cost model's
   estimate; it is held constant over the life of the trade.
 
@@ -49,7 +52,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field
 from scipy.special import ndtr
 
-from arc.backtest.costs import CostModel
+from arc.backtest.costs import CostModel, load_cost_model
 from arc.exits.policy import (
     HOLD_TO_EXPIRY,
     ExitModelConfig,
@@ -65,6 +68,7 @@ from arc.structures import CONTRACT_MULTIPLIER, parse_occ
 
 __all__ = [
     "MODEL_NAME",
+    "EvCosts",
     "ExitModelResult",
     "ExitSummary",
     "ManagedStats",
@@ -99,6 +103,30 @@ _FORBID = ConfigDict(extra="forbid", frozen=True)
 # ---------------------------------------------------------------------------
 
 
+class EvCosts(BaseModel):
+    """Expected costs between gross (mid) EV and net EV, $ per unit (path means).
+
+    ``entry_slippage`` / ``exit_slippage`` are the fills' distance from mid (the fill
+    model's ``x`` × the bid-ask spread, per leg). ``commission`` and
+    ``regulatory_fees`` (ORF, OCC, CAT, TAF, SEC) cover entry plus the expected exit.
+    """
+
+    model_config = _FORBID
+
+    entry_slippage: float
+    exit_slippage: float
+    commission: float
+    regulatory_fees: float
+
+    @property
+    def spread_slippage(self) -> float:
+        return self.entry_slippage + self.exit_slippage
+
+    @property
+    def total(self) -> float:
+        return self.entry_slippage + self.exit_slippage + self.commission + self.regulatory_fees
+
+
 class StaticStats(BaseModel):
     """Hold to expiry."""
 
@@ -108,8 +136,9 @@ class StaticStats(BaseModel):
     pop_gross: float = Field(..., ge=0.0, le=1.0, description="P(P&L > 0) at mid, no costs")
     pop_analytic: float = Field(..., ge=0.0, le=1.0, description="Lognormal PoP over breakevens")
     gross_ev: float = Field(..., description="$ per unit at mid, no costs")
-    net_ev: float = Field(..., description="$ per unit after slippage and commissions")
+    net_ev: float = Field(..., description="$ per unit after slippage and all fees")
     ev_per_bp_day: float | None = Field(None, description="net_ev / (buying power × days held)")
+    costs: EvCosts | None = Field(None, description="gross_ev − net_ev, itemised")
 
 
 class ManagedStats(BaseModel):
@@ -127,6 +156,7 @@ class ManagedStats(BaseModel):
     p_expiry: float = Field(..., ge=0.0, le=1.0)
     expected_days_held: float = Field(..., ge=0.0)
     ev_per_bp_day: float | None = None
+    costs: EvCosts | None = Field(None, description="gross_ev − net_ev, itemised")
 
 
 class TriggerLevels(BaseModel):
@@ -260,9 +290,10 @@ class SimOutcome:
     reason: np.ndarray  # int codes, see _REASON_CODE
     exit_value_mid: np.ndarray  # position value at mid when closed/settled
     exit_proceeds: np.ndarray  # value realised after exit slippage
-    exit_fees: np.ndarray  # $ per unit
+    exit_fees: np.ndarray  # $ per unit, all fees
     exit_spot: np.ndarray
     terminal_spot: np.ndarray  # spot at expiry on every path (hold-to-expiry view)
+    exit_commission: np.ndarray  # $ per unit, the commission part of exit_fees
 
     def share(self, reason: ExitReason) -> float:
         return float(np.mean(self.reason == _REASON_CODE[reason]))
@@ -323,6 +354,46 @@ def _leg_prices(lg: SimLeg, s: np.ndarray, t: float | None, r: float, sigma: flo
     return price_vectorized(np.asarray(lg.kind.value), s, lg.strike, t, r, sigma)
 
 
+def _leg_close_fees(
+    lg: SimLeg, price: np.ndarray, cost: CostModel
+) -> tuple[np.ndarray, np.ndarray]:
+    """(all fees, commission part) $ for closing *lg* at *price*: closing a long sells."""
+    both = cost.per_contract_both_sides * lg.ratio
+    sell = cost.sell_fee_per_contract(price) * lg.ratio if lg.sign > 0 else 0.0
+    return both + sell + 0.0 * price, cost.commission_per_contract * lg.ratio + 0.0 * price
+
+
+def close_costs(
+    legs: Sequence[SimLeg], s: np.ndarray, t: float | None, r: float, sigma: float, cost: CostModel
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """(value at mid, proceeds after slippage, fees $/unit, commission part $/unit).
+
+    ``t is None`` = expiry settlement: intrinsic, no slippage, closing-trade fees on
+    ITM legs only.
+    """
+    value = np.zeros_like(s)
+    proceeds = np.zeros_like(s)
+    fees = np.zeros_like(s)
+    commission = np.zeros_like(s)
+    x = cost.slippage_frac
+    for lg in legs:
+        p = _leg_prices(lg, s, t, r, sigma)
+        value += lg.sign * lg.ratio * p
+        if t is None:
+            proceeds += lg.sign * lg.ratio * p
+            f, c = _leg_close_fees(lg, p, cost)
+            fees += np.where(p > 0, f, 0.0)
+            commission += np.where(p > 0, c, 0.0)
+        else:
+            # closing a long sells at mid − x·spread; closing a short buys at mid + x·spread
+            fill = np.maximum(p - lg.sign * x * lg.spread, 0.0)
+            proceeds += lg.sign * lg.ratio * fill
+            f, c = _leg_close_fees(lg, fill, cost)
+            fees += f
+            commission += c
+    return value, proceeds, fees, commission
+
+
 def close_values(
     legs: Sequence[SimLeg], s: np.ndarray, t: float | None, r: float, sigma: float, cost: CostModel
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -330,21 +401,7 @@ def close_values(
 
     ``t is None`` = expiry settlement: intrinsic, no slippage, fees on ITM legs only.
     """
-    value = np.zeros_like(s)
-    proceeds = np.zeros_like(s)
-    fees = np.zeros_like(s)
-    x = cost.slippage_frac
-    for lg in legs:
-        p = _leg_prices(lg, s, t, r, sigma)
-        value += lg.sign * lg.ratio * p
-        if t is None:
-            proceeds += lg.sign * lg.ratio * p
-            fees += np.where(p > 0, cost.commission_per_contract * lg.ratio, 0.0)
-        else:
-            # closing a long sells at mid − x·spread; closing a short buys at mid + x·spread
-            fill = np.maximum(p - lg.sign * x * lg.spread, 0.0)
-            proceeds += lg.sign * lg.ratio * fill
-            fees += cost.commission_per_contract * lg.ratio
+    value, proceeds, fees, _ = close_costs(legs, s, t, r, sigma, cost)
     return value, proceeds, fees
 
 
@@ -387,6 +444,7 @@ def simulate(
     value = np.zeros(n)
     proceeds = np.zeros(n)
     fees = np.zeros(n)
+    commission = np.zeros(n)
     exit_spot = spots[:, -1].copy()
     open_ = np.ones(n, dtype=bool)
 
@@ -420,21 +478,23 @@ def simulate(
         if not hit.any():
             continue
         rows = idx[hit]
-        cv, cp, cf = close_values(legs, s[hit], t, r, float(sig[d]), cost)
+        cv, cp, cf, cc = close_costs(legs, s[hit], t, r, float(sig[d]), cost)
         exit_day[rows] = d
         reason[rows] = fired[hit]
         value[rows] = cv
         proceeds[rows] = cp
         fees[rows] = cf
+        commission[rows] = cc
         exit_spot[rows] = s[hit]
         open_[rows] = False
 
     rows = np.flatnonzero(open_)
     if rows.size:
-        cv, cp, cf = close_values(legs, spots[rows, -1], None, r, float(sig[-1]), cost)
+        cv, cp, cf, cc = close_costs(legs, spots[rows, -1], None, r, float(sig[-1]), cost)
         value[rows] = cv
         proceeds[rows] = cp
         fees[rows] = cf
+        commission[rows] = cc
     return SimOutcome(
         exit_day=exit_day,
         reason=reason,
@@ -443,6 +503,7 @@ def simulate(
         exit_fees=fees,
         exit_spot=exit_spot,
         terminal_spot=spots[:, -1].copy(),
+        exit_commission=commission,
     )
 
 
@@ -494,12 +555,40 @@ def analytic_pop(
 # ---------------------------------------------------------------------------
 
 
-def _entry(legs: Sequence[SimLeg], structure: Structure, cost: CostModel) -> tuple[float, float]:
-    """(entry price per share after slippage, entry commissions $/unit)."""
+def _entry(
+    legs: Sequence[SimLeg], structure: Structure, cost: CostModel
+) -> tuple[float, float, float]:
+    """(entry price per share after slippage, entry fees $/unit, commission part $/unit).
+
+    Opening a long leg buys; opening a short leg sells (pays TAF + SEC on its fill).
+    """
     fill_net = 0.0
+    fees = 0.0
     for lg, leg in zip(legs, structure.legs, strict=True):
-        fill_net += lg.sign * lg.ratio * cost.fill(float(leg.premium or 0), lg.spread, lg.sign)
-    return fill_net, cost.fees(sum(lg.ratio for lg in legs))
+        fill = cost.fill(float(leg.premium or 0), lg.spread, lg.sign)
+        fill_net += lg.sign * lg.ratio * fill
+        fees += cost.trade_fees(lg.ratio, lg.sign, fill)
+    return fill_net, fees, cost.commission_per_contract * sum(lg.ratio for lg in legs)
+
+
+def _ev_costs(
+    entry_mid: float,
+    entry_fill: float,
+    entry_fees: float,
+    entry_commission: float,
+    exit_value_mid: np.ndarray,
+    exit_proceeds: np.ndarray,
+    exit_fees: np.ndarray,
+    exit_commission: np.ndarray,
+) -> EvCosts:
+    commission = entry_commission + float(np.mean(exit_commission))
+    fees = entry_fees + float(np.mean(exit_fees))
+    return EvCosts(
+        entry_slippage=round((entry_fill - entry_mid) * MULT, 2),
+        exit_slippage=round(float(np.mean(exit_value_mid - exit_proceeds)) * MULT, 2),
+        commission=round(commission, 2),
+        regulatory_fees=round(fees - commission, 2),
+    )
 
 
 def _per_bp_day(ev: float, bp: float | None, days: float) -> float | None:
@@ -583,7 +672,7 @@ def model_exits(
     passes the mean of HV20 and HV60, see :func:`realized_vol_forecast`); ``None``
     or ``cfg.path_vol == "iv"`` moves the paths at IV.
     """
-    cost = cost or CostModel()
+    cost = cost or load_cost_model()
     cfg = cfg or ExitModelConfig()
     legs = sim_legs(structure, cost, spreads)
     rules = resolve_rules(structure, policy)
@@ -603,7 +692,7 @@ def model_exits(
     )
 
     entry_mid = rules.entry_net
-    entry_fill, entry_fees = _entry(legs, structure, cost)
+    entry_fill, entry_fees, entry_comm = _entry(legs, structure, cost)
     entry_costs = (entry_fill - entry_mid) * MULT + entry_fees
     bp = None if structure.buying_power is None else float(structure.buying_power)
 
@@ -611,32 +700,49 @@ def model_exits(
     gross = (out.exit_value_mid - entry_mid) * MULT
     net = (out.exit_proceeds - entry_fill) * MULT - entry_fees - out.exit_fees
     days = float(np.mean(out.exit_day))
+    m_gross = round(float(np.mean(gross)), 2)
+    m_costs = _ev_costs(
+        entry_mid,
+        entry_fill,
+        entry_fees,
+        entry_comm,
+        out.exit_value_mid,
+        out.exit_proceeds,
+        out.exit_fees,
+        out.exit_commission,
+    )
     managed = ManagedStats(
         pop=float(np.mean(net > 0)),
         pop_gross=float(np.mean(gross > 0)),
-        gross_ev=round(float(np.mean(gross)), 2),
-        net_ev=round(float(np.mean(net)), 2),
+        gross_ev=m_gross,
+        net_ev=round(m_gross - m_costs.total, 2),  # = mean(net) up to rounding
         p_take_profit=out.share(ExitReason.TAKE_PROFIT),
         p_stop=out.share(ExitReason.STOP),
         p_dte_exit=out.share(ExitReason.DTE_EXIT),
         p_expiry=out.share(ExitReason.EXPIRY),
         expected_days_held=round(days, 2),
         ev_per_bp_day=_per_bp_day(float(np.mean(net)), bp, days),
+        costs=m_costs,
     )
 
     # static: same paths, settled at expiry
     hold = resolve_rules(structure, HOLD_TO_EXPIRY)
     term = out.terminal_spot
-    t_value, _, t_fees = close_values(legs, term, None, r, iv, cost)
+    t_value, t_proceeds, t_fees, t_comm = close_costs(legs, term, None, r, iv, cost)
     s_gross = (t_value - hold.entry_net) * MULT
     s_net = (t_value - entry_fill) * MULT - entry_fees - t_fees
+    st_gross = round(float(np.mean(s_gross)), 2)
+    s_costs = _ev_costs(
+        hold.entry_net, entry_fill, entry_fees, entry_comm, t_value, t_proceeds, t_fees, t_comm
+    )
     static = StaticStats(
         pop=float(np.mean(s_net > 0)),
         pop_gross=float(np.mean(s_gross > 0)),
         pop_analytic=round(analytic_pop(structure, spot=spot, iv=pvol, r=r), 4),
-        gross_ev=round(float(np.mean(s_gross)), 2),
-        net_ev=round(float(np.mean(s_net)), 2),
+        gross_ev=st_gross,
+        net_ev=round(st_gross - s_costs.total, 2),
         ev_per_bp_day=_per_bp_day(float(np.mean(s_net)), bp, float(dte)),
+        costs=s_costs,
     )
 
     cad = policy.close_at_dte

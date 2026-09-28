@@ -571,7 +571,11 @@ def _quant_leg(sym: str, side: str, ratio: int) -> QuantLeg:
 
 
 def _cost_bps(c: ScanCandidate) -> float:
-    """Round-trip half-spread cost vs. capital at risk (max loss), in bps."""
+    """Round-trip cost vs. capital at risk (max loss), in bps.
+
+    ``c.cost`` is the entry slippage + fees under the shared ``CostModel``
+    (``config/costs.yaml``); the round trip assumes the exit costs the same.
+    """
     max_loss = float(c.structure.max_loss or 0)
     return round(2 * c.cost / max_loss * 10_000, 1) if max_loss > 0 else 0.0
 
