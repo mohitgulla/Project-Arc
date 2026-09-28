@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from pydantic import BaseModel, ConfigDict
 
+from arc.account_profiles import BuyingPower, ShortLegPolicy
 from arc.config import ArcSettings, StructureKind
 from arc.gate.band import PriceBand, band_from_nbbo
 from arc.models import GateDecision, Leg, LegIntent, Proposal
@@ -43,6 +44,7 @@ __all__ = [
     "Derived",
     "RuleCode",
     "Violation",
+    "check_account_profile",
     "check_approval_ttl",
     "check_band",
     "check_closing",
@@ -94,6 +96,11 @@ class RuleCode(StrEnum):
     NO_MAX_GAIN = "limit_no_max_gain"
     BAND = "price_band"
     CLOSE_MISMATCH = "close_mismatch"
+    # D25 account profile (one code per sub-check; E7.4 reason codes reuse them)
+    ACCOUNT_KIND = "account_profile_kind"
+    ACCOUNT_NET_DEBIT = "account_profile_net_debit"
+    ACCOUNT_SHORT_LEG = "account_profile_short_leg"
+    ACCOUNT_CASH = "account_profile_settled_cash"
     RULE_ERROR = "rule_error"
 
 
@@ -445,10 +452,101 @@ def check_greek_caps(
 _KIND_MAP: dict[ModelKind, StructureKind] = {
     ModelKind.LONG_CALL: StructureKind.LONG_CALL,
     ModelKind.LONG_PUT: StructureKind.LONG_PUT,
-    ModelKind.VERTICAL_DEBIT: StructureKind.VERTICAL,
-    ModelKind.VERTICAL_CREDIT: StructureKind.VERTICAL,
+    ModelKind.VERTICAL_DEBIT: StructureKind.VERTICAL_DEBIT,
+    ModelKind.VERTICAL_CREDIT: StructureKind.VERTICAL_CREDIT,
     ModelKind.IRON_CONDOR: StructureKind.IRON_CONDOR,
 }
+
+
+def _uncovered_shorts(legs: Sequence[Leg]) -> list[str]:
+    """Short legs not covered by a long leg of the same type and expiry worth at least as
+    much at any underlying price (call: long strike <= short; put: long strike >= short).
+
+    Ratios count as units. Shorts are matched hardest-first (calls by ascending strike,
+    puts by descending), each to any still-free long that covers it; a free long that
+    covers the hardest short also covers every easier one, so the greedy match is exact.
+    """
+    groups: dict[tuple[str, dt.date], tuple[list[tuple[Decimal, str]], list[Decimal]]] = {}
+    for leg in legs:
+        occ = parse_occ(leg.occ_symbol)
+        # Normalise puts onto the call axis (negate strikes): cover = long <= short.
+        k = occ.strike if occ.kind.value == "c" else -occ.strike
+        shorts, longs = groups.setdefault((occ.kind.value, occ.expiration), ([], []))
+        if leg.side == LegIntent.SHORT:
+            shorts.extend([(k, leg.occ_symbol)] * leg.ratio)
+        else:
+            longs.extend([k] * leg.ratio)
+    out: list[str] = []
+    for shorts, longs in groups.values():
+        free = sorted(longs)
+        for k, sym in sorted(shorts):
+            if free and free[0] <= k:
+                free.pop(0)
+            else:
+                out.append(sym)
+    return out
+
+
+def check_account_profile(
+    proposal: Proposal, d: Derived, account: AccountSnapshot, config: ArcSettings
+) -> list[Violation]:
+    """D25: the structure is one the active account profile can open.
+
+    * kind in ``allowed_kinds``;
+    * ``require_net_debit``: the structure and its limit are a net debit (> 0);
+    * ``allow_short_legs``: ``none`` = no short leg; ``covered_only`` = every short
+      covered (:func:`_uncovered_shorts`); ``any`` = no check;
+    * ``cash_settled``: ``limit × 100 × contracts + fees <= settled cash``. Pass the
+      band's worst case (:func:`worst_case`) so every ladder step fits. Fees are the
+      conservative ``gate_fee_per_leg_contract`` × legs × contracts. Unknown settled
+      cash fails closed.
+
+    A settings object whose profile is unresolved raises, so :func:`evaluate`
+    reports ``rule_error`` (fail closed).
+    """
+    prof = config.profile
+    out: list[Violation] = []
+    if d.kind not in prof.allowed_kinds:
+        allowed = ", ".join(k.value for k in prof.allowed_kinds)
+        out += _v(
+            RuleCode.ACCOUNT_KIND,
+            f"{d.kind} is not allowed under profile {prof.name} (allowed: {allowed})",
+        )
+    if prof.require_net_debit and (d.net_price <= 0 or d.limit_price <= 0):
+        out += _v(
+            RuleCode.ACCOUNT_NET_DEBIT,
+            f"profile {prof.name} requires a net debit; net {d.net_price}, limit {d.limit_price}",
+        )
+    legs = proposal.structure.legs
+    if prof.allow_short_legs is ShortLegPolicy.NONE:
+        shorts = [leg.occ_symbol for leg in legs if leg.side == LegIntent.SHORT]
+        if shorts:
+            out += _v(
+                RuleCode.ACCOUNT_SHORT_LEG,
+                f"profile {prof.name} allows no short legs: {', '.join(shorts)}",
+            )
+    elif prof.allow_short_legs is ShortLegPolicy.COVERED_ONLY:
+        bare = _uncovered_shorts(legs)
+        if bare:
+            out += _v(
+                RuleCode.ACCOUNT_SHORT_LEG,
+                f"uncovered short leg(s) under profile {prof.name}: {', '.join(bare)}",
+            )
+    if prof.buying_power is BuyingPower.CASH_SETTLED:
+        n = proposal.sizing.contracts
+        units = sum(leg.ratio for leg in legs) * n
+        need = max(d.limit_price, _ZERO) * _HUNDRED * n + _d(
+            config.gate_fee_per_leg_contract
+        ) * Decimal(units)
+        if account.settled_cash is None:
+            out += _v(RuleCode.ACCOUNT_CASH, "settled cash unknown (cash_settled profile)")
+        elif need > account.settled_cash:
+            out += _v(
+                RuleCode.ACCOUNT_CASH,
+                f"needs ${need} (limit {d.limit_price} × 100 × {n} + fees) > settled cash "
+                f"${account.settled_cash}",
+            )
+    return out
 
 
 def check_structure_whitelist(
@@ -471,13 +569,15 @@ def check_structure_whitelist(
 
 
 def check_dte_window(d: Derived, config: ArcSettings, now: dt.datetime) -> list[Violation]:
-    """Calendar DTE (from the legs, as of ``now``) in [dte_min, dte_max]; never 0DTE."""
+    """Calendar DTE (from the legs, as of ``now``) inside the entry window; never 0DTE.
+
+    The window is the account profile's ``dte_min/dte_max`` override when it sets
+    one (D25), else ``dte_min/dte_max`` (:attr:`ArcSettings.entry_dte_window`).
+    """
+    lo, hi = config.entry_dte_window
     dte = (d.expiration - now.astimezone(ET).date()).days
-    if dte < 1 or not config.dte_min <= dte <= config.dte_max:
-        return _v(
-            RuleCode.DTE_WINDOW,
-            f"DTE {dte} outside [{max(config.dte_min, 1)}, {config.dte_max}]",
-        )
+    if dte < 1 or not lo <= dte <= hi:
+        return _v(RuleCode.DTE_WINDOW, f"DTE {dte} outside [{max(lo, 1)}, {hi}]")
     return []
 
 
@@ -597,7 +697,7 @@ def evaluate(
     ``closing``: the proposal closes an open position (E6.2 exits). Every leg must
     reduce a held leg (:func:`check_closing`); rules that only limit *opening*
     risk are skipped — daily-loss entry block, max open positions, Greek caps,
-    per-underlying cap, structure whitelist, wash sale, entry DTE window and
+    per-underlying cap, structure whitelist, account profile (D25), wash sale, entry DTE window and
     earnings blackout. The halt, TTL, data freshness, spread/NBBO/tick and band
     checks still run (fail closed).
     """
@@ -634,6 +734,7 @@ def evaluate(
             violations += _run("band", lambda: check_band(p, dd, bb, m, c))
         if not closing:
             violations += _run("structure", lambda: check_structure_whitelist(p, dd, c))
+            violations += _run("account_profile", lambda: check_account_profile(p, risk_d, a, c))
             violations += _run("wash_sale", lambda: check_wash_sale(dd, pf, c, now))
             violations += _run("dte_window", lambda: check_dte_window(dd, c, now))
             violations += _run("earnings", lambda: check_earnings_blackout(p, dd, m, c, now))

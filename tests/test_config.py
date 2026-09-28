@@ -42,7 +42,8 @@ class TestDefaults:
     def test_default_structure_whitelist(self) -> None:
         s = get_settings()
         expected = {
-            StructureKind.VERTICAL,
+            StructureKind.VERTICAL_DEBIT,
+            StructureKind.VERTICAL_CREDIT,
             StructureKind.IRON_CONDOR,
             StructureKind.LONG_CALL,
             StructureKind.LONG_PUT,

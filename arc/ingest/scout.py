@@ -84,6 +84,10 @@ class ScoutRunResult:
     # ticker -> one-line Scout rationale (highest-confidence accepted item this run).
     # Display only (Slack digest); never copied onto ``Candidate`` (funnel discipline).
     rationales: dict[str, str] = field(default_factory=dict)
+    # D27: each ok batch's ``scan_summary`` (+ the doc URLs it covered), written by the
+    # scout job as one ``note`` (topic=observation). Never copied onto ``Candidate``.
+    summaries: list[str] = field(default_factory=list)
+    summary_sources: list[str] = field(default_factory=list)
     _rationale_conf: dict[str, float] = field(default_factory=dict, repr=False)
 
 
@@ -412,6 +416,10 @@ def run_scout(
             continue
 
         allowed_sources = frozenset(d.url for d in batch)
+        summary = payload.get("scan_summary") if isinstance(payload, dict) else None
+        if isinstance(summary, str) and summary.strip():
+            result.summaries.append(summary.strip())
+            result.summary_sources.extend(d.url for d in batch if d.url)
         rejected: Counter[str] = Counter()
         accepted = 0
         for item in items:

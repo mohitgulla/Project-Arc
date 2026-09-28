@@ -1,4 +1,4 @@
-"""Chain scanner: liquid, delta-targeted, defined-risk credit structures.
+"""Chain scanner: liquid, delta-targeted, defined-risk credit and debit structures.
 
 Pipeline for one underlying (:func:`scan`):
 
@@ -11,13 +11,24 @@ Pipeline for one underlying (:func:`scan`):
    (16–30Δ) closest to the target delta, pair each with a long wing about
    ``wing_width`` further OTM, and build bull put / bear call credit verticals
    and iron condors via :mod:`arc.structures` (every leg must pass the filters).
-5. Score and rank.
+5. Debit strategies (D25, E3.4; for the no-margin ``cash_debit`` /
+   ``cash_long_only`` account profiles): long legs whose |Δ| lies in the long
+   band (default 0.40–0.70, target 0.55) become long calls / long puts; each is
+   paired with a further-OTM short of the same type and expiry whose |Δ| lies in
+   the debit short band (default 0.20–0.35) into a bull call / bear put debit
+   vertical (:func:`~arc.structures.debit_vertical`). Every leg must pass the
+   filters.
+6. Score and rank.
 
 Scores (per one unit of the structure):
 
 - ``credit`` — mid-price net credit per share; ``natural_credit`` is the
   worst-case fill (sell at bid, buy at ask).
-- ``credit_width`` — ``credit / max wing width``; the primary rank key.
+- ``credit_width`` — ``credit / max wing width``; the primary rank key for
+  credit structures (``None`` for debit structures).
+- ``ev_ratio`` — ``ev_proxy / max loss``; the primary key for debit structures
+  under ``credit_width`` ranking (a debit has no credit to rank by). For a debit
+  structure, max loss is the debit paid (× 100).
 - ``pop`` — probability of finishing at a profit at expiry, lognormal with
   drift ``r`` and vol = ATM IV, over the structure's breakevens.
 - ``ev_proxy`` — dollars: flat-vol (ATM IV) BSM value of the position minus
@@ -54,7 +65,10 @@ from arc.structures import (
     CONTRACT_MULTIPLIER,
     MarketInputs,
     credit_vertical,
+    debit_vertical,
     iron_condor,
+    long_call,
+    long_put,
     parse_occ,
     payoff_at,
 )
@@ -67,12 +81,16 @@ if TYPE_CHECKING:
     from arc.data.base import MarketDataProvider, OptionContract
 
 __all__ = [
+    "CREDIT_STRATEGIES",
+    "DEBIT_STRATEGIES",
     "RankBy",
     "ScanCandidate",
     "ScanParams",
     "ScanResult",
     "ScanStrategy",
+    "profile_strategy_set",
     "scan",
+    "select_debit_short",
     "select_shorts",
     "select_wing",
 ]
@@ -83,11 +101,28 @@ _ATM_TARGET_DTE = 30
 
 
 class ScanStrategy(StrEnum):
-    """Credit structures the scanner builds (PLAN D4 whitelist)."""
+    """Structures the scanner builds (PLAN D4 whitelist; debit set D25)."""
 
     BULL_PUT = "bull_put"
     BEAR_CALL = "bear_call"
     IRON_CONDOR = "iron_condor"
+    LONG_CALL = "long_call"
+    LONG_PUT = "long_put"
+    BULL_CALL_DEBIT = "bull_call_debit"
+    BEAR_PUT_DEBIT = "bear_put_debit"
+
+
+CREDIT_STRATEGIES: tuple[ScanStrategy, ...] = (
+    ScanStrategy.BULL_PUT,
+    ScanStrategy.BEAR_CALL,
+    ScanStrategy.IRON_CONDOR,
+)
+DEBIT_STRATEGIES: tuple[ScanStrategy, ...] = (
+    ScanStrategy.LONG_CALL,
+    ScanStrategy.LONG_PUT,
+    ScanStrategy.BULL_CALL_DEBIT,
+    ScanStrategy.BEAR_PUT_DEBIT,
+)
 
 
 class RankBy(StrEnum):
@@ -107,7 +142,23 @@ class ScanParams(BaseModel):
     delta_max: float = Field(0.30, gt=0.0, lt=1.0)
     wing_width: float = Field(5.0, gt=0.0)
     shorts_per_side: int = Field(3, ge=1, description="Short strikes tried per side/expiry")
-    strategies: list[ScanStrategy] = Field(default_factory=lambda: list(ScanStrategy))
+    # Debit strategies (D25): long leg band / target, debit-vertical short band.
+    long_target_delta: float = Field(0.55, gt=0.0, lt=1.0)
+    long_delta_min: float = Field(0.40, gt=0.0, lt=1.0)
+    long_delta_max: float = Field(0.70, gt=0.0, lt=1.0)
+    debit_short_target_delta: float = Field(0.30, gt=0.0, lt=1.0)
+    debit_short_delta_min: float = Field(0.20, gt=0.0, lt=1.0)
+    debit_short_delta_max: float = Field(0.35, gt=0.0, lt=1.0)
+    debit_width: float | None = Field(
+        None,
+        gt=0.0,
+        description="Target debit-vertical width ($); None = pick the short by delta only",
+    )
+    longs_per_side: int = Field(3, ge=1, description="Long strikes tried per side/expiry")
+    debit_shorts_per_long: int = Field(2, ge=1, description="Short legs paired with each long")
+    # Default: the credit set, as before D25. Profile-aware callers pass strategies
+    # (ScanParams.from_settings uses the account profile's strategies).
+    strategies: list[ScanStrategy] = Field(default_factory=lambda: list(CREDIT_STRATEGIES))
     rank_by: RankBy = RankBy.CREDIT_WIDTH
     top: int | None = Field(None, ge=1, description="Keep only the best N candidates")
     risk_free_rate: float = 0.04
@@ -133,6 +184,18 @@ class ScanParams(BaseModel):
                 f"[{self.delta_min}, {self.delta_max}]"
             )
             raise ValueError(msg)
+        for name, lo, tgt, hi in (
+            ("long", self.long_delta_min, self.long_target_delta, self.long_delta_max),
+            (
+                "debit short",
+                self.debit_short_delta_min,
+                self.debit_short_target_delta,
+                self.debit_short_delta_max,
+            ),
+        ):
+            if not lo <= tgt <= hi:
+                msg = f"{name} target delta {tgt} is outside its band [{lo}, {hi}]"
+                raise ValueError(msg)
         if not self.strategies:
             msg = "at least one strategy is required"
             raise ValueError(msg)
@@ -140,10 +203,23 @@ class ScanParams(BaseModel):
 
     @classmethod
     def from_settings(cls, settings: ArcSettings, **overrides: object) -> ScanParams:
-        """Defaults from :class:`arc.config.ArcSettings`, then *overrides*."""
+        """Defaults from :class:`arc.config.ArcSettings`, then *overrides*.
+
+        The DTE window is the account profile's entry window (D25) and the default
+        strategies are every strategy the profile maps a stance to.
+        """
+        dte_min, dte_max = settings.entry_dte_window
+        profile_strategies = profile_strategy_set(settings)
         base: dict[str, object] = {
-            "dte_min": settings.dte_min,
-            "dte_max": settings.dte_max,
+            "dte_min": dte_min,
+            "dte_max": dte_max,
+            "long_target_delta": settings.scanner_long_target_delta,
+            "long_delta_min": settings.scanner_long_delta_min,
+            "long_delta_max": settings.scanner_long_delta_max,
+            "debit_short_target_delta": settings.scanner_debit_short_target_delta,
+            "debit_short_delta_min": settings.scanner_debit_short_delta_min,
+            "debit_short_delta_max": settings.scanner_debit_short_delta_max,
+            "debit_width": settings.scanner_debit_width,
             "target_delta": settings.scanner_target_delta,
             "delta_min": settings.scanner_short_delta_min,
             "delta_max": settings.scanner_short_delta_max,
@@ -153,6 +229,8 @@ class ScanParams(BaseModel):
             "iv_lookback": settings.scanner_iv_lookback,
             "iv_min_obs": settings.scanner_iv_min_obs,
         }
+        if profile_strategies:
+            base["strategies"] = profile_strategies
         base.update({k: v for k, v in overrides.items() if v is not None})
         return cls.model_validate(base)
 
@@ -167,10 +245,22 @@ class ScanCandidate(BaseModel):
     dte: int
     structure: Structure
     short_deltas: list[float] = Field(..., description="|Δ| of each short leg (put first)")
-    width: float = Field(..., gt=0, description="Widest wing, dollars per share")
-    credit: float = Field(..., gt=0, description="Mid net credit per share")
+    long_deltas: list[float] = Field(
+        default_factory=list, description="|Δ| of each long leg (put first)"
+    )
+    width: float | None = Field(
+        ..., gt=0, description="Widest wing, dollars per share; None for a single long leg"
+    )
+    credit: float = Field(
+        ..., description="Mid net credit per share (> 0 credit; < 0 = a debit of -credit)"
+    )
     natural_credit: float = Field(..., description="Sell-at-bid / buy-at-ask credit per share")
-    credit_width: float = Field(..., description="credit / width")
+    credit_width: float | None = Field(
+        ..., description="credit / width for credit structures; None for debit structures"
+    )
+    ev_ratio: float | None = Field(
+        None, description="ev_proxy / max loss ($ EV per $ at risk); None without a max loss"
+    )
     pop: float = Field(..., ge=0.0, le=1.0)
     ev_proxy: float = Field(..., description="Dollars per unit, after cost (see module doc)")
     cost: float = Field(
@@ -221,6 +311,38 @@ def select_shorts(
     # Round the distance so float noise (|0.19-0.20| vs |0.21-0.20|) does not break ties.
     band.sort(key=lambda c: (round(abs(_abs_delta(c) - target), 9), _abs_delta(c), c.strike))
     return band[:n]
+
+
+def select_debit_short(
+    long: OptionContract,
+    contracts: Sequence[OptionContract],
+    *,
+    target: float,
+    delta_min: float,
+    delta_max: float,
+    width: float | None,
+    n: int,
+) -> list[OptionContract]:
+    """Up to *n* shorts for a debit vertical on *long*: same type and expiry, further
+    OTM (calls above, puts below), |Δ| in ``[delta_min, delta_max]``.
+
+    Nearest *width* first when a width is set (only ``[width / 2, 2 * width]``
+    qualifies), else nearest *target* |Δ|; ties go to the narrower spread.
+    """
+    sign = -1.0 if long.option_type == "put" else 1.0
+    pool: list[tuple[float, float, float, OptionContract]] = []
+    for c in contracts:
+        if c.option_type != long.option_type or c.expiration != long.expiration:
+            continue
+        dist = sign * (c.strike - long.strike)
+        if dist <= 0 or not delta_min <= _abs_delta(c) <= delta_max:
+            continue
+        if width is not None and not width / 2 <= dist <= 2 * width:
+            continue
+        fit = abs(dist - width) if width is not None else abs(_abs_delta(c) - target)
+        pool.append((round(fit, 9), dist, c.strike, c))
+    pool.sort(key=lambda x: x[:3])
+    return [x[3] for x in pool[:n]]
 
 
 def select_wing(
@@ -286,6 +408,17 @@ def _flat_vol_value(structure: Structure, spot: float, sigma: float, t: float, r
     return total
 
 
+def profile_strategy_set(settings: ArcSettings) -> list[ScanStrategy]:
+    """Every strategy the active account profile maps a stance to (profile order)."""
+    st = settings.profile.stance_strategies
+    out: list[ScanStrategy] = []
+    for name in (*st.bullish, *st.bearish, *st.neutral):
+        s = ScanStrategy(name)
+        if s not in out:
+            out.append(s)
+    return out
+
+
 def _candidate(
     ticker: str,
     strategy: ScanStrategy,
@@ -312,15 +445,17 @@ def _candidate(
         entry_cost += abs(fill - mid) * leg.ratio * float(CONTRACT_MULTIPLIER)
         entry_cost += cm.trade_fees(leg.ratio, side, fill)
     shorts = [c for leg, c in zip(legs, contracts, strict=True) if leg.side.value == "short"]
+    longs = [c for leg, c in zip(legs, contracts, strict=True) if leg.side.value == "long"]
     strikes: dict[str, list[float]] = defaultdict(list)
     for c in contracts:
         strikes[c.option_type].append(c.strike)
-    width = max(max(v) - min(v) for v in strikes.values())
+    width = max(max(v) - min(v) for v in strikes.values()) or None
     mult = float(CONTRACT_MULTIPLIER)
     t = structure.dte / 365.0
     model_value = _flat_vol_value(structure, spot, sigma, t, r)
     cost = entry_cost
     ev = (model_value + credit) * mult - cost
+    max_loss = float(structure.max_loss) if structure.max_loss else None
     spreads = [(c.ask - c.bid) / ((c.ask + c.bid) / 2) for c in contracts]  # type: ignore[operator]
     structure = structure.model_copy(
         update={
@@ -337,11 +472,13 @@ def _candidate(
         expiration=contracts[0].expiration,
         dte=structure.dte,
         structure=structure,
-        short_deltas=[round(_abs_delta(c), 4) for c in sorted(shorts, key=lambda c: c.strike)],
+        short_deltas=[round(_abs_delta(c), 4) for c in sorted(shorts, key=_put_first)],
+        long_deltas=[round(_abs_delta(c), 4) for c in sorted(longs, key=_put_first)],
         width=width,
         credit=round(credit, 4),
         natural_credit=round(natural, 4),
-        credit_width=round(credit / width, 4),
+        credit_width=round(credit / width, 4) if credit > 0 and width else None,
+        ev_ratio=round(ev / max_loss, 4) if max_loss else None,
         pop=round(_pop(structure, spot, sigma, t, r), 4),
         ev_proxy=round(ev, 2),
         cost=round(cost, 2),
@@ -353,15 +490,27 @@ def _candidate(
     )
 
 
+def _put_first(c: OptionContract) -> tuple[bool, float]:
+    return (c.option_type != "put", c.strike)
+
+
 def _rank(cands: list[ScanCandidate], by: RankBy) -> list[ScanCandidate]:
-    def key(c: ScanCandidate) -> tuple[float, float, str]:
-        primary, secondary = (
-            (c.credit_width, c.ev_proxy)
-            if by is RankBy.CREDIT_WIDTH
-            else (c.ev_proxy, c.credit_width)
-        )
+    """Credit structures rank by credit/width (or EV); debit structures, which have
+    no credit, rank by ``ev_ratio`` under ``credit_width``. In a mixed list the
+    credit structures come first under ``credit_width``; ``ev`` ranks all by EV."""
+
+    def key(c: ScanCandidate) -> tuple[int, float, float, str]:
+        ratio = c.ev_ratio if c.ev_ratio is not None else -math.inf
+        if c.credit_width is None:  # debit structure
+            group, primary, secondary = 1, ratio, c.ev_proxy
+            if by is RankBy.EV:
+                group, primary, secondary = 0, c.ev_proxy, ratio
+        elif by is RankBy.CREDIT_WIDTH:
+            group, primary, secondary = 0, c.credit_width, c.ev_proxy
+        else:
+            group, primary, secondary = 0, c.ev_proxy, c.credit_width
         legs = ",".join(leg.occ_symbol for leg in c.structure.legs)
-        return (-primary, -secondary, legs)
+        return (group, -primary, -secondary, legs)
 
     ranked = sorted(cands, key=key)
     return [c.model_copy(update={"rank": i}) for i, c in enumerate(ranked, start=1)]
@@ -413,6 +562,68 @@ def _verticals(
     return out
 
 
+def _debit_structures(
+    ticker: str,
+    exp: dt.date,
+    side: list[OptionContract],
+    params: ScanParams,
+    as_of: dt.date,
+    market: MarketInputs,
+    *,
+    singles: bool,
+    verticals: bool,
+) -> tuple[list[Structure], list[Structure]]:
+    """(long singles, debit verticals) for one option type and expiry."""
+    longs = select_shorts(  # same band/target selection, applied to the long leg
+        side,
+        target=params.long_target_delta,
+        delta_min=params.long_delta_min,
+        delta_max=params.long_delta_max,
+        n=params.longs_per_side,
+    )
+    one: list[Structure] = []
+    two: list[Structure] = []
+    for lg in longs:
+        assert lg.mid is not None
+        if singles:
+            build = long_call if lg.option_type == "call" else long_put
+            try:
+                one.append(
+                    build(ticker, exp, lg.strike, round(lg.mid, 4), as_of=as_of, market=market)
+                )
+            except ValueError as exc:
+                log.debug("scanner.long_skipped", long=lg.symbol, err=str(exc))
+        if not verticals:
+            continue
+        for sh in select_debit_short(
+            lg,
+            side,
+            target=params.debit_short_target_delta,
+            delta_min=params.debit_short_delta_min,
+            delta_max=params.debit_short_delta_max,
+            width=params.debit_width,
+            n=params.debit_shorts_per_long,
+        ):
+            assert sh.mid is not None
+            try:
+                two.append(
+                    debit_vertical(
+                        lg.option_type,
+                        ticker,
+                        exp,
+                        long_strike=lg.strike,
+                        long_premium=round(lg.mid, 4),
+                        short_strike=sh.strike,
+                        short_premium=round(sh.mid, 4),
+                        as_of=as_of,
+                        market=market,
+                    )
+                )
+            except ValueError as exc:
+                log.debug("scanner.debit_skipped", long=lg.symbol, short=sh.symbol, err=str(exc))
+    return one, two
+
+
 def scan(
     provider: MarketDataProvider,
     ticker: str,
@@ -421,7 +632,7 @@ def scan(
     as_of: dt.date,
     iv_history: Mapping[dt.date, float] | None = None,
 ) -> ScanResult:
-    """Scan *ticker*'s chain and return ranked credit-structure candidates."""
+    """Scan *ticker*'s chain and return ranked candidates for ``params.strategies``."""
     ticker = ticker.upper()
     quote = provider.underlying_quote(ticker)
     spot = quote.mid
@@ -514,6 +725,27 @@ def scan(
                         log.debug("scanner.condor_skipped", err=str(exc))
                         continue
                     add(ScanStrategy.IRON_CONDOR, st)
+        for opt, single, vert in (
+            ("call", ScanStrategy.LONG_CALL, ScanStrategy.BULL_CALL_DEBIT),
+            ("put", ScanStrategy.LONG_PUT, ScanStrategy.BEAR_PUT_DEBIT),
+        ):
+            want_one, want_two = single in params.strategies, vert in params.strategies
+            if not (want_one or want_two):
+                continue
+            ones, twos = _debit_structures(
+                ticker,
+                exp,
+                by_exp[(exp, opt)],
+                params,
+                as_of,
+                market,
+                singles=want_one,
+                verticals=want_two,
+            )
+            for st in ones:
+                add(single, st)
+            for st in twos:
+                add(vert, st)
 
     ranked = _rank(cands, params.rank_by)
     if params.top is not None:

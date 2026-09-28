@@ -1,0 +1,351 @@
+{
+  "$defs": {
+    "ExitSummary": {
+      "additionalProperties": false,
+      "description": "Compact static-vs-managed numbers for persona prompts and the Quant menu.\n\nFilled by the pipeline from :class:`ExitModelResult`; money is $ per unit.",
+      "properties": {
+        "expected_days_held": {
+          "title": "Expected Days Held",
+          "type": "number"
+        },
+        "managed_net_ev": {
+          "title": "Managed Net Ev",
+          "type": "number"
+        },
+        "managed_pop": {
+          "description": "Under the exit policy, after costs",
+          "title": "Managed Pop",
+          "type": "number"
+        },
+        "p_dte_exit": {
+          "title": "P Dte Exit",
+          "type": "number"
+        },
+        "p_expiry": {
+          "title": "P Expiry",
+          "type": "number"
+        },
+        "p_stop": {
+          "title": "P Stop",
+          "type": "number"
+        },
+        "p_take_profit": {
+          "title": "P Take Profit",
+          "type": "number"
+        },
+        "path_vol": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Vol the simulated paths moved at",
+          "title": "Path Vol"
+        },
+        "policy": {
+          "description": "Exit rules applied, one line",
+          "title": "Policy",
+          "type": "string"
+        },
+        "rorc_day": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "managed net EV / (max loss \u00d7 days held)",
+          "title": "Rorc Day"
+        },
+        "static_net_ev": {
+          "title": "Static Net Ev",
+          "type": "number"
+        },
+        "static_pop": {
+          "description": "Hold to expiry, after costs",
+          "title": "Static Pop",
+          "type": "number"
+        },
+        "stop_close": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-share price to close at the stop",
+          "title": "Stop Close"
+        },
+        "take_profit_close": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-share price to close at TP",
+          "title": "Take Profit Close"
+        },
+        "vrp": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ATM IV \u2212 realised-vol forecast",
+          "title": "Vrp"
+        }
+      },
+      "required": [
+        "policy",
+        "static_pop",
+        "static_net_ev",
+        "managed_pop",
+        "managed_net_ev",
+        "p_take_profit",
+        "p_stop",
+        "p_dte_exit",
+        "p_expiry",
+        "expected_days_held"
+      ],
+      "title": "ExitSummary",
+      "type": "object"
+    },
+    "QuantGreeks": {
+      "description": "Net position Greeks for a structure.",
+      "properties": {
+        "delta": {
+          "title": "Delta",
+          "type": "number"
+        },
+        "gamma": {
+          "title": "Gamma",
+          "type": "number"
+        },
+        "theta": {
+          "title": "Theta",
+          "type": "number"
+        },
+        "vega": {
+          "title": "Vega",
+          "type": "number"
+        }
+      },
+      "required": [
+        "delta",
+        "gamma",
+        "vega",
+        "theta"
+      ],
+      "title": "QuantGreeks",
+      "type": "object"
+    },
+    "QuantLeg": {
+      "description": "A single leg in a proposed structure.",
+      "properties": {
+        "expiry": {
+          "description": "Expiry date ISO-8601",
+          "title": "Expiry",
+          "type": "string"
+        },
+        "occ_symbol": {
+          "description": "OCC option symbol",
+          "title": "Occ Symbol",
+          "type": "string"
+        },
+        "option_type": {
+          "description": "call | put",
+          "title": "Option Type",
+          "type": "string"
+        },
+        "ratio": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Ratio",
+          "type": "integer"
+        },
+        "side": {
+          "description": "long | short",
+          "title": "Side",
+          "type": "string"
+        },
+        "strike": {
+          "description": "Strike price",
+          "title": "Strike",
+          "type": "number"
+        }
+      },
+      "required": [
+        "occ_symbol",
+        "side",
+        "strike",
+        "expiry",
+        "option_type"
+      ],
+      "title": "QuantLeg",
+      "type": "object"
+    },
+    "QuantStructureOut": {
+      "description": "A single structure proposed by Quant.",
+      "properties": {
+        "breakevens": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Breakevens",
+          "type": "array"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "cost_bps": {
+          "description": "Estimated round-trip cost in basis points",
+          "minimum": 0.0,
+          "title": "Cost Bps",
+          "type": "number"
+        },
+        "dte": {
+          "minimum": 0,
+          "title": "Dte",
+          "type": "integer"
+        },
+        "ev_per_contract": {
+          "description": "Expected value per contract",
+          "title": "Ev Per Contract",
+          "type": "number"
+        },
+        "exits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExitSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Static vs managed-exit PoP/net EV (E2.4). Filled by the pipeline; leave null."
+        },
+        "greeks": {
+          "$ref": "#/$defs/QuantGreeks"
+        },
+        "legs": {
+          "items": {
+            "$ref": "#/$defs/QuantLeg"
+          },
+          "minItems": 1,
+          "title": "Legs",
+          "type": "array"
+        },
+        "max_gain": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Gain"
+        },
+        "max_loss": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Loss"
+        },
+        "net_debit_credit": {
+          "description": "Positive=debit, negative=credit",
+          "title": "Net Debit Credit",
+          "type": "number"
+        },
+        "pop": {
+          "description": "Probability of profit",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Pop",
+          "type": "number"
+        },
+        "rationale": {
+          "description": "Why this structure for this candidate",
+          "title": "Rationale",
+          "type": "string"
+        },
+        "structure_type": {
+          "description": "vertical_spread | iron_condor | long_call | long_put",
+          "title": "Structure Type",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "structure_type",
+        "legs",
+        "net_debit_credit",
+        "greeks",
+        "dte",
+        "pop",
+        "ev_per_contract",
+        "cost_bps",
+        "confidence",
+        "rationale"
+      ],
+      "title": "QuantStructureOut",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Quant structures with analytics.",
+  "properties": {
+    "analysis_notes": {
+      "description": "Quant's overall analysis summary",
+      "title": "Analysis Notes",
+      "type": "string"
+    },
+    "structures": {
+      "description": "Proposed structures, best first",
+      "items": {
+        "$ref": "#/$defs/QuantStructureOut"
+      },
+      "title": "Structures",
+      "type": "array"
+    }
+  },
+  "required": [
+    "structures",
+    "analysis_notes"
+  ],
+  "title": "StructuresPayload",
+  "type": "object"
+}

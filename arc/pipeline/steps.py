@@ -14,8 +14,12 @@ What each step does:
     candidates; the stance and structure type must be valid; at most
     ``pipeline_max_shortlist`` tickers. Writes ``shortlist``.
 ``quant`` (LLM, frontier tier)
-    Runs the deterministic chain scanner (E2.3) for each shortlisted ticker
-    (bullish → bull put, bearish → bear call, neutral → iron condor) and offers
+    Runs the deterministic chain scanner (E2.3) for each shortlisted ticker with
+    the strategies the account profile (D25, ``config/account_profiles.yaml``)
+    maps the stance to: ``margin`` bullish → bull put, bearish → bear call,
+    neutral → iron condor; ``cash_debit`` bullish → bull call debit + long call,
+    bearish → bear put debit + long put, neutral → no trade (journaled
+    ``profile:no_neutral_structure``). It offers
     the Quant a menu of priced structures. The Quant may only pick from the
     menu: a pick is matched to a menu entry by its exact legs, and every number
     (net price, max gain/loss, breakevens, Greeks, PoP, EV, cost) comes from the
@@ -54,6 +58,9 @@ from pydantic import BaseModel, ValidationError
 
 from arc.backtest.costs import CostModel, load_cost_model
 from arc.context.kinds import (
+    Evidence,
+    NotePayload,
+    NoteTopic,
     ProposalPayload,
     RegimePayload,
     RiskReviewPayload,
@@ -108,6 +115,7 @@ from arc.utils.calendar import ET
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from arc.broker.base import AccountInfo, BrokerPosition
     from arc.config import ArcSettings
     from arc.context.store import ContextSnapshot
     from arc.exits import ExitConfig, ExitModelResult
@@ -136,7 +144,7 @@ __all__ = [
 
 SESSION_SUBJECT = "session"
 STRUCTURE_TYPES = frozenset({"vertical_spread", "iron_condor", "long_call", "long_put"})
-DIRECTOR_READS = ["candidate", "regime", "channel_brief"]
+DIRECTOR_READS = ["candidate", "regime", "channel_brief", "note"]  # == routines.yaml director.reads
 
 # Drop reasons (stable keys; stored in persona_calls.dropped and step metrics).
 DROP_NOT_CANDIDATE = "not_a_candidate"
@@ -160,6 +168,51 @@ class PersonaError(RuntimeError):
 
 def _today(ctx: JobContext) -> _dt.date:
     return ctx.now.astimezone(ET).date()
+
+
+def _stance(value: object) -> Stance | None:
+    try:
+        return Stance(str(value).strip().lower())
+    except ValueError:
+        return None
+
+
+def _note(
+    ctx: JobContext,
+    subject: str,
+    *,
+    persona: str,
+    topic: NoteTopic,
+    title: str,
+    body: str,
+    about: list[str],
+    stance: Stance | None = None,
+    confidence: float | None = None,
+    evidence: list[Evidence] | None = None,
+) -> str | None:
+    """Write a D27 ``note`` for persona narrative that would otherwise be discarded.
+
+    Truncates to the model limits. An invalid note is logged (``pipeline.note_invalid``)
+    and skipped: a note never fails its step. A contract violation still does.
+    """
+    body = body.strip()
+    if not body:
+        return None
+    try:
+        payload = NotePayload(
+            persona=persona,  # type: ignore[arg-type]
+            topic=topic,
+            title=(title.strip() or topic.value)[:120],
+            body=body[:4000],
+            stance=stance,
+            confidence=confidence,
+            about=about,
+            evidence=(evidence or [])[:20],
+        )
+    except ValidationError as exc:
+        log.warning("pipeline.note_invalid", persona=persona, topic=topic, error=str(exc))
+        return None
+    return ctx.write("note", subject, payload).id
 
 
 def _schema_block(model: type[BaseModel]) -> str:
@@ -316,9 +369,24 @@ def _legs_key(legs: list[QuantLeg] | list[tuple[str, str]]) -> frozenset[tuple[s
     return frozenset((parse_occ(sym).format(), side.lower()) for sym, side in pairs)
 
 
-def _portfolio_summary(env: PipelineEnv, settings: ArcSettings) -> tuple[str, Decimal]:
+def _source(env: PipelineEnv) -> str:
+    """Where a step's market/broker data came from (D27 run manifest)."""
+    return "fixture" if env.offline else "alpaca"
+
+
+def _account_inputs(ctx: JobContext, env: PipelineEnv) -> tuple[AccountInfo, list[BrokerPosition]]:
+    """Fetch the account and positions, recording both on the run manifest."""
     info = env.account()
     positions = env.positions()
+    ctx.record_input("account", _source(env), info, as_of=ctx.now)
+    ctx.record_input("positions", _source(env), positions, as_of=ctx.now, count=len(positions))
+    return info, positions
+
+
+def _portfolio_summary(
+    ctx: JobContext, env: PipelineEnv, settings: ArcSettings
+) -> tuple[str, Decimal]:
+    info, positions = _account_inputs(ctx, env)
     opts = [p for p in positions if p.asset_class == "us_option"]
     roots = sorted({parse_occ(p.symbol).root for p in opts})
     text = (
@@ -347,6 +415,7 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
             continue
         try:
             bars = env.market.history_bars(t, today - _dt.timedelta(days=400), today)
+            ctx.record_input(f"bars:{t}", _source(env), bars, as_of=ctx.now, count=len(bars))
             snap = build_snapshot_from_bars(t, bars, today)
         except Exception as exc:  # noqa: BLE001 - features are context, not a gate input
             log.warning("pipeline.regime_failed", ticker=t, error=str(exc))
@@ -417,14 +486,29 @@ def _scout_evidence(snapshot: ContextSnapshot) -> dict[str, str]:
     return out
 
 
-def _director_rules(cands: Mapping[str, Stance], limit: int) -> list[str]:
-    return [
+def _profile_rule(settings: ArcSettings) -> str:
+    """The account-profile line every persona prompt carries (D25)."""
+    prof = settings.profile
+    dead = [s for s in ("bullish", "bearish", "neutral") if not prof.strategies_for(s)]
+    line = f"The account can only trade what its {prof.summary()}"
+    if dead:
+        line += f" Stance(s) {', '.join(dead)} have no structure under it: no trade."
+    return line
+
+
+def _director_rules(
+    cands: Mapping[str, Stance], limit: int, settings: ArcSettings | None = None
+) -> list[str]:
+    rules = [
         f"shortlist tickers MUST come from the candidates above: {', '.join(sorted(cands))}.",
         f"At most {limit} tickers, one entry each, rank 1 = highest conviction.",
         "stance: bullish | bearish | neutral. suggested_structure_type: vertical_spread | "
         "iron_condor | long_call | long_put.",
         "An empty shortlist is a valid answer when nothing is worth trading.",
     ]
+    if settings is not None:
+        rules.append(_profile_rule(settings))
+    return rules
 
 
 def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
@@ -453,12 +537,13 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     snap = ContextStore(ctx.conn).snapshot(ctx.now, kinds=DIRECTOR_READS, run_id=ctx.run_id)
     RoutineRunRepo(ctx.conn).set_inputs(ctx.run_id, [ctx.snapshot.id, snap.id])
 
-    summary, _ = _portfolio_summary(env, settings)
+    summary, _ = _portfolio_summary(ctx, env, settings)
     limit = settings.pipeline_max_shortlist
     inputs = {
         "portfolio_summary": summary,
         "scan_date": _today(ctx).isoformat(),
-        "rules": _director_rules(cands, limit),
+        "max_notes": settings.pipeline_max_context_notes,
+        "rules": _director_rules(cands, limit, settings),
     }
     reply, out = _ask(ctx, env, "director", snap, inputs, DirectorOutput)
     kept, dropped, rejected = _filter_shortlist(out, cands, limit)
@@ -523,7 +608,28 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     payload = ShortlistPayload(
         shortlist=kept, market_regime=out.market_regime, session_notes=out.session_notes
     )
-    ctx.write("shortlist", SESSION_SUBJECT, payload)
+    entry = ctx.write("shortlist", SESSION_SUBJECT, payload)
+    _note(
+        ctx,
+        SESSION_SUBJECT,
+        persona="director",
+        topic=NoteTopic.REGIME_VIEW,
+        title=f"Regime: {out.market_regime}",
+        body=f"{out.market_regime}: {out.session_notes}".strip(": "),
+        about=[entry.id],
+    )
+    for item in kept:
+        _note(
+            ctx,
+            item.ticker,
+            persona="director",
+            topic=NoteTopic.THESIS,
+            title=f"{item.ticker} {item.stance} thesis",
+            body="\n\n".join(x for x in (item.thesis, item.regime_context) if x.strip()),
+            about=[entry.id],
+            stance=_stance(item.stance),
+            confidence=item.confidence,
+        )
     names = ", ".join(f"{i.ticker} ({i.stance})" for i in kept) or "none"
     drop_items = [(i.ticker.strip().upper() or "?", reason) for i, reason in rejected]
     not_picked = [(t, "not_picked") for t in sorted(set(cands) - ranked)]
@@ -547,17 +653,20 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
 # ---------------------------------------------------------------------------
 
 
-def _strategies(stance: str) -> list[Any]:
+def _strategies(stance: str, settings: ArcSettings) -> list[Any]:
+    """Scanner strategies for a Director stance under the active account profile (D25).
+
+    ``[]`` means the profile has no structure for the stance (e.g. neutral under
+    ``cash_debit``): no trade.
+    """
     from arc.scanner import ScanStrategy
 
-    return {
-        "bullish": [ScanStrategy.BULL_PUT],
-        "bearish": [ScanStrategy.BEAR_CALL],
-    }.get(stance, [ScanStrategy.IRON_CONDOR])
+    return [ScanStrategy(s) for s in settings.profile.strategies_for(stance)]
 
 
 def _structure_type(c: ScanCandidate) -> str:
-    return "iron_condor" if c.strategy.value == "iron_condor" else "vertical_spread"
+    v = c.strategy.value
+    return v if v in ("iron_condor", "long_call", "long_put") else "vertical_spread"
 
 
 def _quant_leg(sym: str, side: str, ratio: int) -> QuantLeg:
@@ -569,6 +678,14 @@ def _quant_leg(sym: str, side: str, ratio: int) -> QuantLeg:
         strike=float(occ.strike),
         expiry=occ.expiration.isoformat(),
         option_type=occ.kind.value,
+    )
+
+
+def _profile_reason(stance: str) -> ReasonCode:
+    return (
+        ReasonCode.PROFILE_NO_NEUTRAL
+        if stance.strip().lower() == "neutral"
+        else ReasonCode.PROFILE_NO_STRUCTURE
     )
 
 
@@ -671,8 +788,10 @@ def _to_quant_structure(
     )
 
 
-def _quant_rules(no_chain: list[str]) -> list[str]:
+def _quant_rules(no_chain: list[str], settings: ArcSettings | None = None) -> list[str]:
+    extra = [] if settings is None else [_profile_rule(settings)]
     return [
+        *extra,
         "Choose ONLY from the per-ticker `menu` above; copy each chosen structure's legs "
         "(occ_symbol, side, ratio) verbatim. Anything else is discarded.",
         "At most one structure per ticker, best first. You may omit a ticker.",
@@ -715,13 +834,32 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
     spots: dict[str, float] = {}
     no_chain: list[str] = []
     no_chain_why: dict[str, str] = {}
+    no_profile: list[tuple[str, str]] = []  # (ticker, stance) the profile cannot trade
     for item in shortlist.shortlist:
+        strategies = _strategies(item.stance, settings)
+        if not strategies:
+            no_profile.append((item.ticker, item.stance))
+            log.info(
+                "pipeline.profile_no_structure",
+                ticker=item.ticker,
+                stance=item.stance,
+                profile=settings.account_profile,
+                reason=_profile_reason(item.stance).value,
+            )
+            continue
         try:
             params = ScanParams.from_settings(
-                settings, strategies=_strategies(item.stance), top=settings.pipeline_scan_top
+                settings, strategies=strategies, top=settings.pipeline_scan_top
             )
             history = load_iv_history(env.iv_history_dir, item.ticker) if env.iv_history_dir else {}
             res = scan(env.market, item.ticker, params, as_of=today, iv_history=history)
+            ctx.record_input(
+                f"chain:{item.ticker}",
+                _source(env),
+                res,
+                as_of=ctx.now,
+                count=len(res.candidates),
+            )
         except Exception as exc:  # noqa: BLE001 - one ticker's chain must not sink the rest
             log.warning("pipeline.scan_failed", ticker=item.ticker, error=str(exc))
             no_chain.append(item.ticker)
@@ -767,25 +905,53 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 persona_call_id=call_id,
             )
 
+    def journal_no_profile(call_id: str | None = None) -> None:
+        for t, stance in no_profile:
+            j.add(
+                JournalPersona.QUANT,
+                Stage.STRUCTURE,
+                t,
+                Choice.NO_TRADE,
+                _profile_reason(stance),
+                reason_text=(
+                    f"account profile {settings.account_profile} has no structure "
+                    f"for a {stance} stance"
+                ),
+                persona_call_id=call_id,
+                payload={"stance": stance, "account_profile": settings.account_profile},
+            )
+
+    profile_note = "; ".join(
+        f"{t} ({s}): no structure under profile {settings.account_profile}" for t, s in no_profile
+    )
     if not menus:
         journal_no_chain()
+        journal_no_profile()
+        notes = [
+            n
+            for n in (profile_note, no_chain and f"no tradable chain for {', '.join(no_chain)}")
+            if n
+        ]
         ctx.write(
             "structures",
             SESSION_SUBJECT,
-            StructuresPayload(
-                structures=[], analysis_notes=f"no tradable chain for {', '.join(no_chain)}"
-            ),
+            StructuresPayload(structures=[], analysis_notes="; ".join(notes)),
         )
         return JobResult(
-            summary=f"no scanner structures for {', '.join(no_chain)}",
-            metrics={"structures": 0, "no_chain": len(no_chain)},
+            summary="; ".join(
+                [
+                    *([profile_note] if profile_note else []),
+                    *([f"no scanner structures for {', '.join(no_chain)}"] if no_chain else []),
+                ]
+            ),
+            metrics={"structures": 0, "no_chain": len(no_chain), "no_profile": len(no_profile)},
         )
 
     inputs = {
         "chains_json": json.dumps(chains, indent=2, sort_keys=True),
         "underlying_prices_json": json.dumps(spots, sort_keys=True),
         "scan_date": today.isoformat(),
-        "rules": _quant_rules(no_chain),
+        "rules": _quant_rules(no_chain, settings),
     }
     reply, out = _ask(ctx, env, "quant", ctx.snapshot, inputs, QuantOutput)
     dropped: Counter[str] = Counter()
@@ -875,8 +1041,29 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
             payload=s.model_dump(mode="json"),
         )
     journal_no_chain(call_id)
+    journal_no_profile(call_id)
     payload = StructuresPayload(structures=kept, analysis_notes=out.analysis_notes)
-    ctx.write("structures", SESSION_SUBJECT, payload)
+    entry = ctx.write("structures", SESSION_SUBJECT, payload)
+    for s in kept:
+        _note(
+            ctx,
+            s.ticker,
+            persona="quant",
+            topic=NoteTopic.THESIS,
+            title=f"{s.ticker} {s.structure_type}",
+            body=s.rationale,
+            about=[entry.id],
+            confidence=s.confidence,
+        )
+    _note(
+        ctx,
+        SESSION_SUBJECT,
+        persona="quant",
+        topic=NoteTopic.OBSERVATION,
+        title="Quant analysis",
+        body=out.analysis_notes,
+        about=[entry.id],
+    )
     desc = "; ".join(
         f"{s.ticker} {s.structure_type} "
         f"{'/'.join(f'{leg.strike:g}' for leg in s.legs)} {s.legs[0].expiry} "
@@ -886,8 +1073,14 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
     return JobResult(
         summary=(desc or "no structure chosen")
         + (f"; dropped {dict(dropped)}" if dropped else "")
-        + (f"; no chain: {', '.join(no_chain)}" if no_chain else ""),
-        metrics={"structures": len(kept), "no_chain": len(no_chain), **dropped},
+        + (f"; no chain: {', '.join(no_chain)}" if no_chain else "")
+        + (f"; {profile_note}" if profile_note else ""),
+        metrics={
+            "structures": len(kept),
+            "no_chain": len(no_chain),
+            "no_profile": len(no_profile),
+            **dropped,
+        },
         card=quant_card(
             payload,
             dropped=dropped,
@@ -906,6 +1099,7 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
 def _risk_rules(settings: ArcSettings, caps: Mapping[tuple[str, str], int]) -> list[str]:
     return [
+        _profile_rule(settings),
         "Exactly one assessment per proposed structure, with ticker and structure_type "
         "copied verbatim from it.",
         "Each structure's `exits` compares hold-to-expiry (static) with the managed exit "
@@ -941,11 +1135,11 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         return JobResult(summary="no structures to review", metrics={"assessments": 0})
 
     today = _today(ctx)
-    info = env.account()
+    info, positions = _account_inputs(ctx, env)
     try:
         portfolio = build_portfolio(
             ctx.conn,
-            env.positions(),
+            positions,
             env.market,
             now=ctx.now,
             wash_sale_days=settings.wash_sale_days,
@@ -1038,7 +1232,16 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         portfolio_summary=out.portfolio_summary,
         advisory_notes=out.advisory_notes,
     )
-    ctx.write("risk_review", SESSION_SUBJECT, payload)
+    entry = ctx.write("risk_review", SESSION_SUBJECT, payload)
+    _note(
+        ctx,
+        SESSION_SUBJECT,
+        persona="risk",
+        topic=NoteTopic.RISK_FLAG,
+        title="Risk advisory",
+        body="\n\n".join(x for x in (out.advisory_notes, out.portfolio_summary) if x.strip()),
+        about=[entry.id],
+    )
     by_key = {(s.ticker, s.structure_type): s for s in structures.structures}
     sized = {
         (a.ticker, a.structure_type): size_contracts(
@@ -1246,11 +1449,11 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     by_ticker = {s.ticker: s for s in reversed(structures.structures)}  # first (best) wins
     assessed = {(a.ticker, a.structure_type): a for a in review.assessments}
 
-    info = env.account()
+    info, positions = _account_inputs(ctx, env)
     account = account_snapshot(info, now)
     portfolio = build_portfolio(
         ctx.conn,
-        env.positions(),
+        positions,
         env.market,
         now=now,
         wash_sale_days=settings.wash_sale_days,
@@ -1298,6 +1501,13 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             log.warning("pipeline.reprice_failed", ticker=t, error=str(exc))
             skip(t, "reprice_failed", ReasonCode.REPRICE_FAILED, str(exc)[:500])
             continue
+        ctx.record_input(
+            f"quotes:{t}",
+            _source(env),
+            {"contracts": priced.contracts, "spot": priced.spot, "atm_iv": priced.atm_iv},
+            as_of=priced.spot_as_of or now,
+            count=len(priced.contracts),
+        )
         st = priced.structure
         market = market_snapshot(priced.contracts, earnings)
         limit = limit_price(st.net_debit_credit, settings.limit_tick)

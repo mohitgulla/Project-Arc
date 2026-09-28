@@ -61,7 +61,7 @@ SP = format_occ("SPY", EXP, "put", 570)
 
 
 def cfg(**kw: object) -> ArcSettings:
-    return ArcSettings(_env_file=None, **kw)  # type: ignore[call-arg]
+    return ArcSettings(_env_file=None, account_profile="margin", **kw)  # type: ignore[call-arg]
 
 
 def bull_put() -> Structure:
@@ -606,3 +606,17 @@ def test_gate_source_has_no_forbidden_imports() -> None:
         for name in banned:
             assert f"import {name}" not in text, f"{f.name} imports {name}"
             assert f"from {name}" not in text, f"{f.name} imports from {name}"
+
+
+def test_gate_never_reads_context_or_notes() -> None:
+    """D27: persona notes (and the context store) are never gate inputs."""
+    import pathlib
+
+    import arc.gate
+
+    root = pathlib.Path(arc.gate.__file__).parent
+    for f in root.rglob("*.py"):
+        text = f.read_text()
+        assert "arc.context" not in text, f"{f.name} references arc.context"
+        assert "NotePayload" not in text, f"{f.name} references NotePayload"
+        assert '"note"' not in text, f"{f.name} references the note kind"

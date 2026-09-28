@@ -125,6 +125,7 @@ Project-Arc/
 │   ├── skills/arc-*/SKILL.md # persona skills (Scout, Director, Quant, Risk, Investor, Auditor)
 │   ├── hooks/arc-gate/       # pre_tool_call fail-closed hook
 │   └── routines/             # cron job definitions (pre-market, intraday, post-market)
+├── schemas/context/          # committed JSON Schema per context kind, <kind>.v<N>.json (D27)
 └── tests/                    # unit, property (hypothesis), integration (paper account)
 ```
 
@@ -222,7 +223,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E3.1 Gate rules engine — all limits from D4 as pure functions; 100% branch coverage ← E1.3, E2.2
 - E3.2 Enforcement hook — Hermes `pre_tool_call` fail-closed + `GateToken` HMAC ← E3.1
 - E3.3 Kill switch + daily halt — persisted halt state, `!halt`/`!resume` ← E3.1, E1.5
-- E3.4 Account profiles + debit strategies — `margin | cash_debit | cash_long_only`, gate rule `account_profile`, paper default `cash_debit` (D25) ← E2.4
+- E3.4 Account profiles + debit strategies — `margin | cash_debit | cash_long_only`, gate rule `account_profile`, paper default `cash_debit` (D25) ← E2.4. Whitelist `vertical` split into `vertical_debit`/`vertical_credit` (old value = deprecated alias for both); settled cash = min(cash, non-marginable BP, options BP); `cash_*` profiles use a 30–60 DTE entry window
 
 **E4 Ingestion (Scout)**
 - E4.1 Source connectors — RSS, SEC EDGAR (10 req/s, UA header), earnings calendar, YouTube transcripts (yt-dlp) ← E1.2
