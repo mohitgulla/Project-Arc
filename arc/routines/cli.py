@@ -59,6 +59,11 @@ def add_routines_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         "--since", default=None, help="Dry-run window start (default: last tick / 1 interval)"
     )
     t.add_argument("--json", action="store_true", help="JSON output")
+    t.add_argument(
+        "--step",
+        default=None,
+        help="Dry-run only: simulate one tick every STEP (e.g. 5m) from --since to --now",
+    )
     t.add_argument("--no-slack", action="store_true", help="Heartbeats to the log only")
     t.add_argument("--lock-dir", default=str(DEFAULT_LOCK_DIR))
 
@@ -156,6 +161,46 @@ def _write(text: str) -> None:
     sys.stdout.write(text + "\n")
 
 
+def _simulate(args: argparse.Namespace, now: _dt.datetime, since: _dt.datetime | None) -> int:
+    """``tick --dry-run --step 5m``: what each cron tick in ``(since, now]`` would run.
+
+    Pure planning over an in-memory DB (nothing runs, nothing is written);
+    each simulated tick's window is the previous simulated tick.
+    """
+    from arc.context.ttl import parse_duration
+
+    if not args.dry_run:
+        _write("error: --step is only valid with --dry-run")
+        return 2
+    try:
+        step = parse_duration(args.step)
+    except ValueError as exc:
+        _write(f"error: --step: {exc}")
+        return 2
+    start = since or now - _dt.timedelta(days=1)
+    disp = _dispatcher(args, _conn(args, memory=True), dry=True)
+    ticks: list[dict[str, object]] = []
+    prev, cur = start, start + step
+    while cur <= now:
+        report = disp.tick(cur, dry_run=True, since=prev)
+        if report.outcomes:
+            ticks.append(
+                {"tick": cur.isoformat(), "outcomes": [_outcome_json(o) for o in report.outcomes]}
+            )
+            if not args.json:
+                _write(f"tick {cur:%a %Y-%m-%d %H:%M %Z}")
+                _write("\n".join(report.lines()[1:]))
+        prev, cur = cur, cur + step
+    if args.json:
+        _write(json.dumps({"since": start.isoformat(), "now": now.isoformat(), "ticks": ticks}))
+    else:
+        _write(
+            f"{len(ticks)} of the ticks every {args.step} in ({start:%a %Y-%m-%d %H:%M}"
+            f" → {now:%a %H:%M %Z}] had work"
+        )
+    return 0
+
+
 def run_routines(args: argparse.Namespace) -> int:
     _log_to_stderr()
     cmd = args.routines_command
@@ -194,6 +239,8 @@ def run_routines(args: argparse.Namespace) -> int:
     if cmd == "tick":
         now = _parse_now(args.now)
         since = _parse_now(args.since) if args.since else None
+        if args.step:
+            return _simulate(args, now, since)
         conn = _conn(args, memory=args.dry_run and args.db is None)
         disp = _dispatcher(args, conn, dry=args.dry_run)
         report = disp.tick(now, dry_run=args.dry_run, since=since)

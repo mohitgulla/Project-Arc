@@ -152,7 +152,9 @@ class Dispatcher:
         self.routines = routines
         self.handlers = dict(handlers or {})
         self.locks = locks or NullLocks()
-        self.heartbeats = Heartbeats(conn, notifier or LogNotifier())
+        self.heartbeats = Heartbeats(
+            conn, notifier or LogNotifier(), day_rollover=routines.heartbeat.day_rollover
+        )
         self.runs = RoutineRunRepo(conn)
         self.events = RoutineEventRepo(conn)
         self.state = RoutineStateRepo(conn)
@@ -474,7 +476,7 @@ class Dispatcher:
                 run.run_id, status=RunStatus.FAILED, outputs=outputs, error=error, now=now
             )
             log.error("routines.failed", job=run.job, run_id=run.run_id, error=error)
-            self.heartbeats.alert(now.date(), run.job, error)
+            self.heartbeats.alert(now, run.job, error)
             return self._outcome(run, "failed", error)
 
         summary = result.summary
@@ -484,10 +486,15 @@ class Dispatcher:
             run.run_id, status=RunStatus.OK, outputs=ctx.outputs, summary=summary, now=now
         )
         notify = spec.notify or (Notify.QUIET if kind is JobKind.SOURCE else Notify.SUMMARY)
+        if result.notice:
+            self.heartbeats.notice(now, run.job, result.notice)
         if notify is Notify.QUIET:
-            self.heartbeats.queue_source(run.job, summary)
+            new_docs = result.metrics.get("new_docs")
+            self.heartbeats.queue_source(
+                run.job, summary, new_docs=new_docs if isinstance(new_docs, int) else None
+            )
         else:
-            self.heartbeats.summary(now.date(), run.job, summary)
+            self.heartbeats.summary(now, run.job, summary)
         log.info("routines.ok", job=run.job, run_id=run.run_id, outputs=len(ctx.outputs))
         return self._outcome(run, "ok", summary, metrics=result.metrics)
 

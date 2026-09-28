@@ -1,32 +1,40 @@
 """Heartbeats for routine runs: one line per job in the #arc-investor day thread.
 
-Policy (E5.4 §3):
+Policy (E5.4 §3, tuned in E5.3):
 
 - Persona jobs post a one-line summary (``notify: summary``, the default).
 - Source jobs are quiet by default: their summaries queue in ``routine_state``
   and are folded into the next persona heartbeat, so the day thread is not
-  spammed every 15 minutes.
-- Failures always alert, whatever ``notify`` says.
+  spammed every 15 minutes. Repeated runs of one source fold into a single
+  entry (run count, total new docs, last summary).
+- Failures always alert, whatever ``notify`` says. A handler can also raise an
+  immediate notice (e.g. the intraday monitor tripping the daily-loss halt).
+- Day thread: a post goes to today's session thread while today is a trading
+  session and it is before ``heartbeat.day_rollover`` (default 20:00 ET).
+  Later posts (the 22:00 Scout) and weekend/holiday posts go to the **next**
+  session's thread, so Sunday night's StockedUp run lands in Monday's thread.
 
 Posting is best-effort: a Slack error is logged and never fails the run.
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
 from arc.routines.runs import RoutineStateRepo
+from arc.utils.calendar import ET, is_session, next_session
 
 if TYPE_CHECKING:
-    import datetime as _dt
     import sqlite3
 
 log = structlog.get_logger(__name__)
 
 _PENDING_KEY = "heartbeat:pending_sources"
+_MAX_PENDING_JOBS = 50
 _PERSONA_LABELS = {
     "scout": "[Scout]",
     "director": "[Director]",
@@ -40,6 +48,15 @@ _PERSONA_LABELS = {
 def label_for(job: str) -> str:
     """Slack label for a job: the persona tag (D12) or ``[Routines]``."""
     return _PERSONA_LABELS.get(job.split(".", 1)[0], "[Routines]")
+
+
+def thread_day(now: _dt.datetime, rollover: _dt.time = _dt.time(20, 0)) -> _dt.date:
+    """The trading session whose #arc-investor day thread a post at *now* belongs to."""
+    now = now.astimezone(ET)
+    d = now.date()
+    if is_session(d) and now.time() < rollover:
+        return d
+    return next_session(d)
 
 
 class Notifier(Protocol):
@@ -104,26 +121,72 @@ class SlackDayThreadNotifier:
 class Heartbeats:
     """Applies the quiet/summary/alert policy on top of a :class:`Notifier`."""
 
-    def __init__(self, conn: sqlite3.Connection, notifier: Notifier) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        notifier: Notifier,
+        *,
+        day_rollover: _dt.time = _dt.time(20, 0),
+    ) -> None:
         self._state = RoutineStateRepo(conn)
         self._notifier = notifier
+        self._rollover = day_rollover
+
+    def day(self, now: _dt.datetime) -> _dt.date:
+        return thread_day(now, self._rollover)
+
+    def _pending_raw(self) -> list[dict[str, object]]:
+        raw = self._state.get(_PENDING_KEY)
+        items = json.loads(raw) if raw else []
+        # Pre-E5.3 rows were plain "job: summary" strings.
+        out: list[dict[str, object]] = []
+        for i in items:
+            if isinstance(i, dict):
+                out.append(i)
+            else:
+                job, _, last = str(i).partition(": ")
+                out.append({"job": job, "runs": 1, "last": last})
+        return out
 
     def _pending(self) -> list[str]:
-        raw = self._state.get(_PENDING_KEY)
-        return list(json.loads(raw)) if raw else []
+        out: list[str] = []
+        for item in self._pending_raw():
+            runs = int(str(item.get("runs", 1)))
+            job, last = item["job"], item.get("last", "")
+            if runs == 1:
+                out.append(f"{job}: {last}".rstrip(": "))
+            else:
+                docs = item.get("new_docs")
+                total = f", {docs} new docs total" if docs is not None else ""
+                out.append(f"{job} ×{runs}{total} (last: {last})")
+        return out
 
-    def queue_source(self, job: str, summary: str) -> None:
-        pending = self._pending()
-        pending.append(f"{job}: {summary}")
-        self._state.set(_PENDING_KEY, json.dumps(pending[-50:]))
+    def queue_source(self, job: str, summary: str, *, new_docs: int | None = None) -> None:
+        """Fold a quiet run into the pending list (one entry per job)."""
+        items = self._pending_raw()
+        entry = next((i for i in items if i["job"] == job), None)
+        if entry is None:
+            entry = {"job": job, "runs": 0}
+            items.append(entry)
+        entry["runs"] = int(str(entry.get("runs", 0))) + 1
+        entry["last"] = summary
+        if new_docs is not None:
+            entry["new_docs"] = int(str(entry.get("new_docs") or 0)) + new_docs
+        self._state.set(_PENDING_KEY, json.dumps(items[-_MAX_PENDING_JOBS:]))
 
-    def summary(self, day: _dt.date, job: str, text: str) -> None:
+    def summary(self, now: _dt.datetime, job: str, text: str) -> None:
         line = f"{label_for(job)} {job} ✓ {text}".rstrip()
         pending = self._pending()
         if pending:
             line += f"\n> sources since last update: {'; '.join(pending)}"
             self._state.delete(_PENDING_KEY)
-        self._notifier.post(day, line)
+        self._notifier.post(self.day(now), line)
 
-    def alert(self, day: _dt.date, job: str, text: str) -> None:
-        self._notifier.post(day, f":rotating_light: {label_for(job)} {job} FAILED: {text}")
+    def notice(self, now: _dt.datetime, job: str, text: str) -> None:
+        """An immediate, non-failure alert raised by a handler (always posted)."""
+        self._notifier.post(self.day(now), f":warning: {label_for(job)} {job}: {text}")
+
+    def alert(self, now: _dt.datetime, job: str, text: str) -> None:
+        self._notifier.post(
+            self.day(now), f":rotating_light: {label_for(job)} {job} FAILED: {text}"
+        )
