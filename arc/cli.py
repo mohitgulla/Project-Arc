@@ -520,6 +520,17 @@ def _propose(args: argparse.Namespace) -> int:
     _log_to_stderr()
     settings = get_settings()
     routines = load_routines(args.routines)
+    if not (args.fixtures or args.dry_run):
+        from arc.gate.token import TokenError, gate_secret
+
+        try:
+            gate_secret(settings)
+        except TokenError as exc:
+            sys.stderr.write(
+                f"arc propose: {exc}. Set ARC_GATE_SECRET in ~/.hermes/.env, "
+                "or use --dry-run / --fixtures.\n"
+            )
+            return 2
     if args.fixtures:
         _, report = fixture_run(settings, routines, db=args.db)
     else:

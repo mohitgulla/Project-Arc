@@ -349,3 +349,29 @@ def test_cli_propose_fixtures(capsys: pytest.CaptureFixture[str], monkeypatch) -
     out = json.loads(capsys.readouterr().out)
     assert out["mode"] == "fixtures"
     assert [p["ticker"] for p in out["proposals"]] == ["SPY"]
+
+
+def test_cli_live_propose_requires_gate_secret(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import arc.config
+    from arc.cli import main
+
+    monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
+    monkeypatch.setattr(arc.config, "get_settings", lambda: ArcSettings(_env_file=None))  # type: ignore[call-arg]
+
+    def _no_live_env(*_a: object, **_k: object) -> None:
+        raise AssertionError("must refuse before touching Alpaca/Hermes")
+
+    monkeypatch.setattr(PipelineEnv, "live", _no_live_env)
+    assert main(["propose", "--no-scout"]) == 2
+    assert "ARC_GATE_SECRET" in capsys.readouterr().err
+
+
+def test_cli_dry_run_does_not_require_gate_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    import arc.config
+    from arc.cli import main
+
+    monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
+    monkeypatch.setattr(arc.config, "get_settings", lambda: ArcSettings(_env_file=None))  # type: ignore[call-arg]
+    assert main(["propose", "--fixtures", "--json"]) == 0
