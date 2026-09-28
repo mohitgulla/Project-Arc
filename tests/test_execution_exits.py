@@ -333,3 +333,15 @@ def test_build_portfolio_two_expirations_same_root(conn: sqlite3.Connection) -> 
     grouped = build_portfolio(conn, positions, market(), now=NOW, wash_sale_days=30, r=0.04)
     assert len(grouped.positions) == 2
     assert grouped.legs["SPY261030P00711000"] == -1
+
+
+def test_build_portfolio_unvaluable_position_raises(conn: sqlite3.Connection) -> None:
+    """A naked short call has unbounded risk: the portfolio refuses to value it (S-5)."""
+    from arc.broker.base import BrokerPosition
+    from arc.pipeline.market import PortfolioError, build_portfolio
+
+    naked = [
+        BrokerPosition(symbol="SPY261030C00711000", qty=D(-1), side="short", avg_entry_price=D("5"))
+    ]
+    with pytest.raises(PortfolioError):
+        build_portfolio(conn, naked, market(), now=NOW, wash_sale_days=30, r=0.04)
