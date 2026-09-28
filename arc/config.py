@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated
 
 import structlog
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 log = structlog.get_logger()
@@ -188,9 +188,40 @@ class ArcSettings(BaseSettings):
         default=1200,
         description="Approval TTL in seconds (20 min).",
     )
+    # Gate data-quality defaults (E3.1). Not specified in PLAN §5 — proposed
+    # defaults, owner to confirm in the E3.1 PR.
+    quote_max_age_seconds: Annotated[int, Field(ge=1)] = Field(
+        default=60,
+        description="Max age of a leg quote at gate time (data freshness).",
+    )
+    account_max_age_seconds: Annotated[int, Field(ge=1)] = Field(
+        default=300,
+        description="Max age of the account snapshot at gate time (data freshness).",
+    )
+    limit_tick: Annotated[float, Field(gt=0.0)] = Field(
+        default=0.01,
+        description="Limit price must be a whole multiple of this tick ($).",
+    )
+    # -- Gate token (E3.2) ----------------------------------------------------
+    gate_secret: SecretStr | None = Field(
+        default=None,
+        description=(
+            "ARC_GATE_SECRET: HMAC key for gate tokens (>= 32 bytes). Lives in "
+            "~/.hermes/.env only. Unset = no token can be minted or verified (fail closed)."
+        ),
+    )
     auto_approve: bool = Field(
         default=False,
         description="Auto-approve proposals in paper mode (D10). Ignored when env=live.",
+    )
+    owner_slack_user_id: str = Field(
+        default="U0C5KUMH28G",
+        min_length=1,
+        description="Slack user id of the owner (D10). Only this user may `!resume` (E3.3).",
+    )
+    db_path: Path | None = Field(
+        default=None,
+        description="Audit store path (ARC_DB_PATH). None = data/arc.db in the repo.",
     )
 
     # -- Market data feeds (D7) ---------------------------------------------
@@ -201,6 +232,49 @@ class ArcSettings(BaseSettings):
     alpaca_options_feed: AlpacaOptionsFeed = Field(
         default=AlpacaOptionsFeed.INDICATIVE,
         description="Alpaca options data feed (ARC_ALPACA_OPTIONS_FEED). Free tier: indicative.",
+    )
+
+    # -- Chain scanner (E2.3) ------------------------------------------------
+    # Liquidity: the spread rule reuses spread_max_pct / spread_max_abs (§5).
+    scanner_min_open_interest: Annotated[int, Field(ge=0)] = Field(
+        default=100,
+        description="Min open interest per leg (unknown OI fails the filter).",
+    )
+    scanner_min_volume: Annotated[int, Field(ge=0)] = Field(
+        default=10,
+        description="Min daily volume per leg (unknown volume fails the filter).",
+    )
+    scanner_short_delta_min: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.16,
+        description="Lower bound of the short-strike |delta| band (D4: 16-30 delta).",
+    )
+    scanner_short_delta_max: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.30,
+        description="Upper bound of the short-strike |delta| band (D4: 16-30 delta).",
+    )
+    scanner_target_delta: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.20,
+        description="Default target |delta| for short strikes (CLI --delta).",
+    )
+    scanner_wing_width: Annotated[float, Field(gt=0.0)] = Field(
+        default=5.0,
+        description="Target wing width in dollars between short and long strikes.",
+    )
+    scanner_risk_free_rate: float = Field(
+        default=0.04,
+        description="Risk-free rate (annualised, continuous) for scanner Greeks / EV proxy.",
+    )
+    scanner_iv_lookback: Annotated[int, Field(ge=2)] = Field(
+        default=252,
+        description="IV rank / percentile lookback in observations (~1 trading year).",
+    )
+    scanner_iv_min_obs: Annotated[int, Field(ge=2)] = Field(
+        default=20,
+        description="Minimum IV observations before IV rank / percentile are reported.",
+    )
+    scanner_iv_history_dir: Path = Field(
+        default=Path("data/iv_history"),
+        description="Directory of per-ticker ATM IV history CSVs (date,atm_iv).",
     )
 
     # -- Ingestion (E4.1) ----------------------------------------------------
@@ -247,6 +321,36 @@ class ArcSettings(BaseSettings):
     ffmpeg_bin: str = Field(
         default="",
         description="ffmpeg path (ARC_FFMPEG_BIN); empty → PATH, then ~/.hermes/tools/ffmpeg-*.",
+    )
+
+    # -- Scout candidate pipeline (E4.2) -------------------------------------
+    scout_model: str = Field(
+        default="claude-haiku-4-5",
+        description="Cheap-tier model the Scout runs on via Hermes (PLAN §2.4).",
+    )
+    scout_provider: str = Field(
+        default="anthropic",
+        description="Hermes provider for the Scout model (D8: Anthropic subscription).",
+    )
+    scout_hermes_bin: str = Field(
+        default="hermes",
+        description="Hermes CLI executable used for one-shot Scout calls.",
+    )
+    scout_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
+        default=240,
+        description="Timeout for a single Scout LLM batch call.",
+    )
+    scout_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.6,
+        description="Candidates below this Scout confidence are dropped.",
+    )
+    scout_batch_size: Annotated[int, Field(ge=1, le=50)] = Field(
+        default=8,
+        description="Max RawDocs summarised per Scout LLM call.",
+    )
+    scout_max_doc_chars: Annotated[int, Field(ge=200)] = Field(
+        default=4000,
+        description="Per-document text budget in the Scout prompt (truncated beyond).",
     )
 
     # -- Universe (D9) -------------------------------------------------------

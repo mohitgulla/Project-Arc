@@ -21,6 +21,8 @@ dependencies = [
     "exchange_calendars>=4.5",
     "slack_sdk>=3.27",
     "feedparser>=6.0",
+    "pyarrow>=15",
+    "requests>=2.31",
     "yt-dlp>=2024.0",
     # E4.1b / D15: local audio transcription. Apple Silicon only; CI (Linux) skips it.
     "mlx-whisper>=0.4 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
@@ -36,7 +38,10 @@ build-backend = "hatchling.build"
 [tool.uv]
 dev-dependencies = [
     "hypothesis>=6.100",
+    "import-linter>=2.15",
     "pytest>=8.0",
+    "pytest-cov>=7.1.0",
+    "pyyaml>=6.0",
     "ruff>=0.8",
 ]
 
@@ -49,6 +54,8 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
 
 [tool.ruff.lint.per-file-ignores]
 "arc/models.py" = ["TCH003"]
+# pydantic resolves field annotations at runtime; imports must stay real.
+"arc/personas/schemas.py" = ["TC001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -56,3 +63,42 @@ addopts = "-v --tb=short"
 markers = [
     "integration: tests that require real API keys and network access",
 ]
+
+# The risk gate is deterministic (AGENTS.md hard rule, PLAN §2.1 boundary 3).
+# `make lint` runs `lint-imports`; these contracts fail the build if anything under
+# arc/gate reaches an LLM client, the network, a broker/data adapter or persona text.
+[tool.importlinter]
+root_packages = ["arc"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "arc.gate has no LLM, network, broker or persona dependencies"
+type = "forbidden"
+source_modules = ["arc.gate"]
+forbidden_modules = [
+    "anthropic",
+    "openai",
+    "httpx",
+    "requests",
+    "aiohttp",
+    "urllib3",
+    "websockets",
+    "alpaca",
+    "slack_sdk",
+    "feedparser",
+    "arc.broker",
+    "arc.data",
+    "arc.slack",
+    "arc.personas",
+    "arc.ingest",
+    "arc.scanner",
+    "arc.execution",
+    "arc.approvals",
+    "arc.cli",
+]
+
+[[tool.importlinter.contracts]]
+name = "arc.gate rules, token and hook policy are pure: no storage or process I/O"
+type = "forbidden"
+source_modules = ["arc.gate.rules", "arc.gate.inputs", "arc.gate.token", "arc.gate.hook_policy"]
+forbidden_modules = ["arc.store", "sqlite3", "socket", "subprocess", "urllib", "http"]

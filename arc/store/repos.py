@@ -78,6 +78,87 @@ class CandidateRepo:
         row = self.conn.execute("SELECT * FROM candidates WHERE id = ?", (candidate_id,)).fetchone()
         return dict(row) if row else None
 
+    # -- Per ticker/day (E4.2 Scout pipeline) --------------------------------
+
+    def get_for_day(self, ticker: str, day: str) -> dict[str, Any] | None:
+        """Return the merged candidate row for *ticker* on ET trading *day*."""
+        row = self.conn.execute(
+            "SELECT * FROM candidates WHERE ticker = ? AND day = ?", (ticker, day)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def upsert_for_day(
+        self,
+        *,
+        day: str,
+        ticker: str,
+        stance: str,
+        catalyst_type: str,
+        catalyst_date: str | None,
+        confidence: float,
+        sources: list[str],
+        created_at: str,
+        run_id: str | None = None,
+    ) -> str:
+        """Insert or replace the single candidate row for ``(ticker, day)``.
+
+        The caller is responsible for merging with any existing row first;
+        this keeps the original ``id`` and ``created_at`` on update.
+        """
+        existing = self.get_for_day(ticker, day)
+        now = _now_iso()
+        if existing is None:
+            row_id = _uuid()
+            self.conn.execute(
+                """INSERT INTO candidates
+                   (id, ticker, stance, catalyst_type, catalyst_date, confidence,
+                    sources, created_at, run_id, day, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    row_id,
+                    ticker,
+                    stance,
+                    catalyst_type,
+                    catalyst_date,
+                    confidence,
+                    json.dumps(sources),
+                    created_at,
+                    run_id,
+                    day,
+                    now,
+                ),
+            )
+        else:
+            row_id = existing["id"]
+            self.conn.execute(
+                """UPDATE candidates
+                   SET stance = ?, catalyst_type = ?, catalyst_date = ?, confidence = ?,
+                       sources = ?, run_id = ?, updated_at = ?
+                   WHERE id = ?""",
+                (
+                    stance,
+                    catalyst_type,
+                    catalyst_date,
+                    confidence,
+                    json.dumps(sources),
+                    run_id,
+                    now,
+                    row_id,
+                ),
+            )
+        self.conn.commit()
+        return row_id
+
+    def list_for_day(self, day: str, *, min_confidence: float = 0.0) -> list[dict[str, Any]]:
+        """Candidates for *day* at or above *min_confidence*, best first."""
+        rows = self.conn.execute(
+            """SELECT * FROM candidates
+               WHERE day = ? AND confidence >= ?
+               ORDER BY confidence DESC, ticker ASC""",
+            (day, min_confidence),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
 
 # ---------------------------------------------------------------------------
 # Proposal repository
@@ -446,6 +527,13 @@ class PnlSnapshotRepo:
 
 
 class HaltRepo:
+    """Persisted kill-switch rows (``halts``: reason, actor, at, cleared_at).
+
+    A row with ``cleared_at IS NULL`` is an active halt. Rows are never deleted,
+    so the table is also the halt audit trail. Policy (who may clear, when the
+    daily-loss rule trips) lives in :mod:`arc.gate.halt`, not here.
+    """
+
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
 
@@ -454,28 +542,58 @@ class HaltRepo:
         *,
         reason: str = "",
         actor: str = "",
+        kind: str = "manual",
+        session_date: str | None = None,
+        at: str | None = None,
         run_id: str | None = None,
         id: str | None = None,
     ) -> str:
         row_id = id or _uuid()
         self.conn.execute(
-            """INSERT INTO halts (id, halted_at, reason, actor, run_id)
-               VALUES (?, ?, ?, ?, ?)""",
-            (row_id, _now_iso(), reason, actor, run_id),
+            """INSERT INTO halts (id, at, reason, actor, kind, session_date, run_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (row_id, at or _now_iso(), reason, actor, kind, session_date, run_id),
         )
         self.conn.commit()
+        log.info("halt.set", halt_id=row_id, kind=kind, actor=actor, reason=reason)
         return row_id
 
-    def resume(self, halt_id: str, *, actor: str = "") -> None:
+    def resume(self, halt_id: str, *, actor: str = "", at: str | None = None) -> None:
+        """Clear one halt row (no-op if already cleared)."""
         self.conn.execute(
-            "UPDATE halts SET resumed_at = ? WHERE id = ? AND resumed_at IS NULL",
-            (_now_iso(), halt_id),
+            "UPDATE halts SET cleared_at = ?, cleared_by = ? WHERE id = ? AND cleared_at IS NULL",
+            (at or _now_iso(), actor, halt_id),
         )
         self.conn.commit()
 
+    def clear_all(self, *, actor: str, at: str | None = None) -> int:
+        """Clear every active halt atomically; returns how many rows were cleared."""
+        cur = self.conn.execute(
+            "UPDATE halts SET cleared_at = ?, cleared_by = ? WHERE cleared_at IS NULL",
+            (at or _now_iso(), actor),
+        )
+        self.conn.commit()
+        log.info("halt.cleared", actor=actor, count=cur.rowcount)
+        return cur.rowcount
+
+    def active(self) -> list[dict[str, Any]]:
+        """Active (uncleared) halts, oldest first."""
+        rows = self.conn.execute(
+            "SELECT * FROM halts WHERE cleared_at IS NULL ORDER BY at, rowid"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def exists_for_session(self, *, kind: str, session_date: str) -> bool:
+        """True if a halt of ``kind`` was ever raised for ``session_date`` (cleared or not)."""
+        row = self.conn.execute(
+            "SELECT 1 FROM halts WHERE kind = ? AND session_date = ? LIMIT 1",
+            (kind, session_date),
+        ).fetchone()
+        return row is not None
+
     def is_halted(self) -> bool:
-        """True if there is an active (un-resumed) halt."""
-        row = self.conn.execute("SELECT 1 FROM halts WHERE resumed_at IS NULL LIMIT 1").fetchone()
+        """True if there is an active (uncleared) halt."""
+        row = self.conn.execute("SELECT 1 FROM halts WHERE cleared_at IS NULL LIMIT 1").fetchone()
         return row is not None
 
 

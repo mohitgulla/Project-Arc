@@ -7,7 +7,7 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from arc.features._series import InsufficientHistoryError
@@ -208,7 +208,33 @@ class TestDerived:
         with pytest.raises(ValueError):
             stickiness(bad)
 
+    def test_stationary_reducible_slow_transient_is_finite(self) -> None:
+        # Regression (E4.3a): transition matrix of the seed=50 GBM fitted up to
+        # cut=109. State 0 is transient and never re-entered; unnormalised
+        # repeated squaring overflowed to inf/NaN here.
+        p = np.array([[17 / 18, 1 / 18, 0.0], [0.0, 56 / 61, 5 / 61], [0.0, 0.5, 0.5]])
+        pi = stationary_distribution(p)
+        assert np.isfinite(pi).all()
+        np.testing.assert_allclose(pi, [0.0, 61 / 71, 10 / 71], atol=1e-9)
+
+    def test_stationary_absorbing_states(self) -> None:
+        np.testing.assert_allclose(stationary_distribution(np.eye(3)), [1 / 3] * 3)
+        p = np.array([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+        np.testing.assert_allclose(stationary_distribution(p), [0.0, 2 / 3, 1 / 3], atol=1e-9)
+
     @given(stochastic_matrices)
+    @example(
+        p=np.array(
+            [
+                np.array(r) / sum(r)
+                for r in [
+                    [0.37796530748321955, 0.07421875, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 0.0625, 1.0],
+                ]
+            ]
+        )
+    )
     @settings(max_examples=200)
     def test_stationary_is_fixed_point(self, p: np.ndarray) -> None:
         pi = stationary_distribution(p)
@@ -297,13 +323,16 @@ class TestWalkForward:
         cut=st.integers(30, 150),
         shock=st.floats(0.2, 5.0),
     )
+    @example(seed=50, cut=109, shock=1.0)
     @settings(max_examples=40, deadline=None)
     def test_no_look_ahead_property(self, seed: int, cut: int, shock: float) -> None:
         closes = _gbm(200, seed=seed)
         as_of = closes.index[cut]
         future = closes.copy()
         future.iloc[cut + 1 :] = future.iloc[cut + 1 :] * shock
-        assert estimate_regime(future, as_of) == estimate_regime(closes, as_of)
+        got = estimate_regime(future, as_of)
+        assert all(np.isfinite(v) for v in got.stationary.values())
+        assert got == estimate_regime(closes, as_of)
 
     def test_walk_forward_skips_short_history(self) -> None:
         closes = _gbm(60)

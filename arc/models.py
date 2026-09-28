@@ -10,7 +10,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Candidate (from Scout persona)
@@ -27,16 +27,47 @@ class CatalystType(StrEnum):
     TECHNICAL = "technical"
 
 
-class Candidate(BaseModel):
-    """A trading candidate surfaced by the Scout persona."""
+class Stance(StrEnum):
+    """Directional stance of a candidate."""
 
-    ticker: str = Field(..., description="Underlying symbol, e.g. 'AAPL'")
-    stance: str = Field(..., description="Directional stance: bullish | bearish | neutral")
+    BULLISH = "bullish"
+    BEARISH = "bearish"
+    NEUTRAL = "neutral"
+
+
+class Candidate(BaseModel):
+    """A trading candidate surfaced by the Scout persona.
+
+    Funnel discipline (E4.2): this is the only Scout artefact that flows
+    downstream to the scanner. It deliberately carries **no free text** —
+    every field is an enum, a symbol, a number, a date or a source URL.
+    Persona rationale stays in the audit store and never leaves it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = Field(default=None, description="Audit-store row id once persisted")
+    ticker: str = Field(
+        ...,
+        pattern=r"^[A-Z][A-Z0-9.]{0,9}$",
+        description="Underlying symbol, e.g. 'AAPL'",
+    )
+    stance: Stance = Field(..., description="Directional stance: bullish | bearish | neutral")
     catalyst_type: CatalystType
     catalyst_date: datetime | None = Field(None, description="Date of the catalyst event")
     confidence: float = Field(..., ge=0.0, le=1.0)
     sources: list[str] = Field(default_factory=list)
     created_at: datetime
+
+    @field_validator("sources")
+    @classmethod
+    def _sources_are_references(cls, v: list[str]) -> list[str]:
+        """Sources are references (URLs / ids), never prose."""
+        for s in v:
+            if not s or len(s) > 2048 or any(ch.isspace() for ch in s):
+                msg = f"source must be a single reference token (URL or id), got {s[:60]!r}"
+                raise ValueError(msg)
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +184,17 @@ class Proposal(BaseModel):
     risk_narrative: str = ""
     sizing: Sizing
     expires_at: datetime
+    limit_price: Decimal | None = Field(
+        None,
+        description="Per-share net limit price for the order (positive = debit, negative = "
+        "credit). None means the structure's net_debit_credit (mid).",
+    )
+    earnings_play: bool = Field(
+        False, description="Director flagged this as a deliberate earnings play (PLAN §5)."
+    )
+    risk_concurs: bool = Field(
+        False, description="Risk persona concurs with the earnings-play flag (PLAN §5)."
+    )
 
 
 # ---------------------------------------------------------------------------

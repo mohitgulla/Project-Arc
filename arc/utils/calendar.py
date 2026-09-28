@@ -90,6 +90,14 @@ def previous_session(d: _dt.date | None = None) -> _dt.date:
     return ts.date()
 
 
+def sessions_between(start: _dt.date, end: _dt.date) -> list[_dt.date]:
+    """Return all trading sessions in [*start*, *end*] (both inclusive), ascending."""
+    if end < start:
+        return []
+    sessions = _cal().sessions_in_range(_to_ts(start), _to_ts(end))
+    return [ts.date() for ts in sessions]
+
+
 # ---------------------------------------------------------------------------
 # Early closes
 # ---------------------------------------------------------------------------

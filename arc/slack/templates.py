@@ -155,5 +155,26 @@ def halt_notice(*, triggered_by: str, reason: str = "") -> str:
     msg = f"🛑 *HALT* triggered by <@{triggered_by}>"
     if reason:
         msg += f"\nReason: {reason}"
-    msg += "\nAll trading activity is suspended. Use `!resume` to lift."
+    msg += "\nAll trading activity is suspended. Only the owner can `!resume`."
     return msg
+
+
+def daily_loss_halt_notice(*, detail: str) -> str:
+    """Auto-halt notice when the daily-loss rule trips (posted to #arc-investor)."""
+    return (
+        f"🛑 *HALT* — daily loss limit reached\n{detail}\n"
+        "All new orders are refused for the rest of the session. Only the owner can `!resume`."
+    )
+
+
+def resume_notice(*, resumed_by: str, cleared: int) -> str:
+    """Trading resumed by the owner."""
+    if cleared == 0:
+        return f"ℹ️ Trading was not halted (`!resume` by <@{resumed_by}>)."
+    plural = "" if cleared == 1 else "s"
+    return f"✅ *RESUMED* by <@{resumed_by}> — cleared {cleared} halt{plural}. Trading allowed."
+
+
+def resume_denied_notice(*, user: str) -> str:
+    """A non-owner tried to resume."""
+    return f"⛔ <@{user}> is not allowed to `!resume`. Only the owner can lift a halt."
