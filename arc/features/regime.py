@@ -96,7 +96,11 @@ def label_regimes(
 ) -> pd.Series:
     """Per-day regime labels (series of :class:`Regime`, indexed by date)."""
     rets = trailing_returns(closes, lookback)
-    return rets.map(lambda r: classify_return(float(r), bull=bull, bear=bear)).rename("regime")
+    # dtype=object keeps Regime members intact: with pyarrow installed, pandas 3
+    # infers an arrow string dtype for str-enum values and drops the enum type.
+    out = rets.astype(object).rename("regime")
+    out[:] = [classify_return(float(r), bull=bull, bear=bear) for r in rets]
+    return out
 
 
 # ---------------------------------------------------------------------------
