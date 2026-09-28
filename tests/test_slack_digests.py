@@ -215,7 +215,7 @@ class TestScout:
             chain_run_id="chain-1",
         )
         assert (
-            view.text == view.blocks[0]["text"]["text"] == "[Scout] Scan: 12 sources → 2 candidates"
+            view.text == view.blocks[0]["text"]["text"] == "[Scout] Scan: 12 Sources → 2 Candidates"
         )
         text = _all(view)
         assert "*3* accepted this run · 3 rejected" in text
@@ -233,7 +233,7 @@ class TestScout:
     def test_empty_run_and_failed_batches(self) -> None:
         view = D.scout_card(docs=1, accepted=0, candidates=[], rejected={}, failed_batches=2)
         text = _all(view)
-        assert view.text == "[Scout] Scan: 1 source → 0 candidates"
+        assert view.text == "[Scout] Scan: 1 Source → 0 Candidates"
         assert "*Candidates*\nnone" in text
         assert ":warning: 2 failed batches" in text
         assert "Rejected" not in text
@@ -349,8 +349,8 @@ class TestQuant:
         ) in text
         assert "*Breakevens*\n743.34\n799.66" in text
         assert (
-            "*Greeks (1 contract)*\nDelta -2.0 sh\nGamma -0.24 sh\n"
-            "Vega -$17.11 / vol pt\nTheta +$3.14 / day"
+            "*Greeks (1 contract)*\nΔ Delta -2.0 sh\nΓ Gamma -0.24 sh\n"
+            "ν Vega -$17.11 / vol pt\nΘ Theta +$3.14 / day"
         ) in text
         assert "*Confidence*\n70%" in text
         assert "*[Quant] Rationale*\nBalanced deltas." in text
@@ -432,7 +432,7 @@ class TestRisk:
             run_id="r",
             chain_run_id="c",
         )
-        assert view.text == "[Risk] Review: SPY moderate +1 more • suggests 20"
+        assert view.text == "[Risk] Review: SPY Moderate +1 more • Suggests 20"
         text = _all(view)
         assert "*SPY Iron Condor*\nRating *Moderate*" in text
         assert "*Size*\nSuggested 20 (advisory)" in text
@@ -470,7 +470,7 @@ class TestRisk:
             ),
         }
         view = D.risk_card(out, sized=sized, cap_pct=0.05)
-        assert view.text == "[Risk] Review: SPY moderate +1 more • 14 contracts"
+        assert view.text == "[Risk] Review: SPY Moderate +1 more • 14 Contracts"
         text = _all(view)
         assert "*Size*\nSuggested 20\nSized 14 (capped by 5% cap)" in text
         assert "*Max loss (sized)*\n$4,682.30\n4.68% of equity" in text
@@ -497,7 +497,7 @@ class TestRisk:
 class TestInvestor:
     def test_plan_only(self) -> None:
         view = D.investor_card(plan(), run_id="r")
-        assert view.text == "[Investor] Order: SPY Iron Condor • x3 • limit -1.25"
+        assert view.text == "[Investor] Order: SPY Iron Condor • x3 • Limit -1.25"
         text = _all(view)
         assert "Limit order · 3 attempts max · timeout 120s" in text
         assert (
@@ -519,7 +519,7 @@ class TestInvestor:
             detail="Filled at step 1.",
         )
         view = D.investor_card(plan(), res, chain_run_id="c")
-        assert view.text.endswith(" • filled")
+        assert view.text.endswith(" • Filled")
         text = _all(view)
         assert "*Result*\n:white_check_mark: filled" in text
         assert "*Filled*\n3 of 3" in text
@@ -533,7 +533,7 @@ class TestInvestor:
         res = D.ExecutionResult(status="cancelled", steps_used=2, detail=EVIL)
         view = D.investor_card(plan(), res)
         text = _all(view)
-        assert view.text.endswith(" • cancelled")
+        assert view.text.endswith(" • Cancelled")
         assert ":x: cancelled" in text and "*Filled*\n0 of 3" in text
         assert "*Filled on attempt*\nnone of 3" in text
         assert "Slippage" not in text and "Fill price" not in text

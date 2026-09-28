@@ -177,12 +177,12 @@ def scout_card(
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Scout] Scan: 12 sources → 3 candidates``; one evidence line per candidate.
+    """``[Scout] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
     No source links (owner, E5.5 review): the row carries the Scout's one-line
     rationale and a source count; the URLs stay in the audit store.
     """
-    title = f"[Scout] Scan: {_plural(docs, 'source')} → {_plural(len(candidates), 'candidate')}"
+    title = f"[Scout] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
     n_rej = sum(rejected.values())
     blocks = _head(
         title,
@@ -347,7 +347,6 @@ def quant_card(
         title,
         f"*{len(out.structures)}* chosen",
         f"{n_drop} dropped" if n_drop else "",
-        "per contract, before sizing (Risk sizes; the proposal card shows the sized position)",
     )
     for s in out.structures:
         net = s.net_debit_credit
@@ -378,9 +377,9 @@ def quant_card(
                     ("Breakevens", "\n".join(f"{b:.2f}" for b in s.breakevens) or "n/a"),
                     (
                         "Greeks (1 contract)",
-                        f"Delta {g.delta:+.1f} sh\nGamma {g.gamma:+.2f} sh\n"
-                        f"Vega {_money(g.vega / 100, signed=True)} / vol pt\n"
-                        f"Theta {_money(g.theta, signed=True)} / day",
+                        f"Δ Delta {g.delta:+.1f} sh\nΓ Gamma {g.gamma:+.2f} sh\n"
+                        f"ν Vega {_money(g.vega / 100, signed=True)} / vol pt\n"
+                        f"Θ Theta {_money(g.theta, signed=True)} / day",
                     ),
                     ("Confidence", _pct(s.confidence)),
                 ]
@@ -412,7 +411,7 @@ def risk_card(
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Risk] Review: SPY moderate • 14 contracts``; one section per assessment.
+    """``[Risk] Review: SPY Moderate • 14 Contracts``; one section per assessment.
 
     ``sized`` is the deterministic D18 result per ``(ticker, structure_type)``
     (``min(suggestion, floor(cap × equity / max loss))``), so the card shows the size
@@ -423,13 +422,14 @@ def risk_card(
     def size_of(a: RiskAssessment) -> str:
         r = sized.get((a.ticker, a.structure_type))
         if r is None:
-            return f"suggests {a.sizing_suggestion}"
-        return _plural(r.contracts, "contract") if r.trade else "no trade"
+            return f"Suggests {a.sizing_suggestion}"
+        return _plural(r.contracts, "Contract") if r.trade else "No Trade"
 
     if out.assessments:
         a0 = out.assessments[0]
         more = f" +{len(out.assessments) - 1} more" if len(out.assessments) > 1 else ""
-        title = f"[Risk] Review: {a0.ticker} {a0.risk_rating}{more} • {size_of(a0)}"
+        rating = _title_case(a0.risk_rating)
+        title = f"[Risk] Review: {a0.ticker} {rating}{more} • {size_of(a0)}"
     else:
         title = "[Risk] Review: nothing assessed"
     warn = sum(a.concentration_warning for a in out.assessments)
@@ -530,13 +530,13 @@ def investor_card(
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Investor] Order: SPY Iron Condor • x3 • limit -1.25`` (+ fill/cancel outcome)."""
+    """``[Investor] Order: SPY Iron Condor • x3 • Limit -1.25`` (+ fill/cancel outcome)."""
     title = (
         f"[Investor] Order: {plan.ticker} {_title_case(plan.structure_type)} • "
-        f"x{plan.contracts} • limit {plan.initial_limit_price:+.2f}"
+        f"x{plan.contracts} • Limit {plan.initial_limit_price:+.2f}"
     )
     if result is not None:
-        title += f" • {result.status.replace('_', ' ')}"
+        title += f" • {_title_case(result.status)}"
     attempts = 1 + len(plan.improvement_steps)
     blocks = _head(
         title,

@@ -309,10 +309,10 @@ class TestDigestCards:
         texts = [t for _, t in notes.posts]
         headers = [b[0]["text"]["text"] if b else None for b in notes.blocks]
         assert headers == [
-            "[Scout] Scan: 10 sources → 3 candidates",
+            "[Scout] Scan: 10 Sources → 3 Candidates",
             "[Director] Ranked: 1 / 3 • Market Risk ON",
             "[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78",
-            "[Risk] Review: SPY moderate • 14 contracts",  # D18-sized, not the advisory 20
+            "[Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
             None,  # propose has no card (E6.1 posts the proposal card)
         ]
         # Fallback text = the pre-E5.5 one-liners.
@@ -335,6 +335,7 @@ class TestDigestCards:
         )
         assert "• not in universe (1): PLTR" in scout
         assert "http" not in scout  # no source links
+        assert "before sizing" not in json.dumps(notes.blocks[2])
         assert "Buyback plus raised data-center guidance." in scout  # Scout rationale line
         assert "Evidence: Scout neutral · macro catalyst Oct 28 · 62% confidence" in json.dumps(
             notes.blocks[1], ensure_ascii=False
