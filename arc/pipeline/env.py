@@ -4,7 +4,8 @@ Two builders:
 
 * :meth:`PipelineEnv.live`: Alpaca market data, the Alpaca **paper** account
   (read-only: ``account()``/``positions()``; nothing here submits orders), and
-  Hermes on the frontier tier for Director/Quant/Risk (PLAN §2.4). Only a
+  Hermes for Director/Quant/Risk, each on the model its tier in
+  ``config/llm_routing.yaml`` names (PLAN §2.4, E8.1). Only a
   live run with the broker (not --dry-run) mints gate tokens.
 * :meth:`PipelineEnv.fixtures`: fully offline. It uses the recorded SPY chain,
   a fixed paper account and canned persona responses. ``arc propose --fixtures``
@@ -71,12 +72,13 @@ class PipelineEnv:
         account is the fixture account and no broker client is built."""
         from arc.data.alpaca import AlpacaMarketData
 
-        llm = HermesScoutLLM(
-            model=settings.persona_model,
-            provider=settings.persona_provider,
-            hermes_bin=settings.scout_hermes_bin,
-            timeout_seconds=settings.persona_timeout_seconds,
-        )
+        # Each persona's model comes from config/llm_routing.yaml (E8.1).
+        llms: dict[str, ScoutLLM] = {
+            p: HermesScoutLLM.from_settings(
+                settings, p, timeout_seconds=settings.persona_timeout_seconds
+            )
+            for p in PERSONAS
+        }
         if broker:
             from arc.broker.alpaca_paper import AlpacaPaperBroker
 
@@ -89,7 +91,7 @@ class PipelineEnv:
             market=AlpacaMarketData(),
             account=account,
             positions=positions,
-            llms=dict.fromkeys(PERSONAS, llm),
+            llms=llms,
             iv_history_dir=settings.scanner_iv_history_dir,
             mint_tokens=broker,
         )

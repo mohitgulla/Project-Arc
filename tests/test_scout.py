@@ -539,27 +539,27 @@ class _Runner:
 
 
 def _hermes(runner: _Runner) -> HermesScoutLLM:
-    return HermesScoutLLM(model="claude-haiku-4-5", provider="anthropic", runner=runner)
+    return HermesScoutLLM(model="claude-opus-5", provider="anthropic", runner=runner)
 
 
 class TestHermesBackend:
     def test_from_settings_uses_cheap_tier(self) -> None:
         s = ArcSettings(env="paper")
         llm = HermesScoutLLM.from_settings(s)
-        assert llm.model == "claude-haiku-4-5"
+        assert llm.model == "anthropic/claude-opus-5"
         assert llm.provider == "anthropic"
         assert llm.timeout_seconds == s.scout_timeout_seconds
 
     def test_command_and_isolation(self, monkeypatch) -> None:
         monkeypatch.setenv("HERMES_KANBAN_TASK", "t_x")
         monkeypatch.setenv("KEEP_ME", "1")
-        runner = _Runner(stdout='{"candidates": []}', usage={"model": "claude-haiku-4-5"})
+        runner = _Runner(stdout='{"candidates": []}', usage={"model": "claude-opus-5"})
         out = _hermes(runner).complete("PROMPT")
-        assert out == LLMResult('{"candidates": []}', "claude-haiku-4-5")
+        assert out == LLMResult('{"candidates": []}', "claude-opus-5")
         call = runner.calls[0]
         cmd = call["cmd"]
         assert cmd[:3] == ["hermes", "-z", "PROMPT"]
-        assert cmd[cmd.index("-m") + 1] == "claude-haiku-4-5"
+        assert cmd[cmd.index("-m") + 1] == "claude-opus-5"
         assert cmd[cmd.index("--provider") + 1] == "anthropic"
         assert "--ignore-rules" in cmd
         assert cmd[cmd.index("-t") + 1] == "todo"
@@ -569,7 +569,7 @@ class TestHermesBackend:
 
     def test_missing_usage_falls_back_to_configured_model(self) -> None:
         out = _hermes(_Runner(stdout="{}")).complete("p")
-        assert out.model == "claude-haiku-4-5"
+        assert out.model == "claude-opus-5"
 
     def test_nonzero_exit(self) -> None:
         with pytest.raises(ScoutLLMError, match="exited 1: boom stderr"):

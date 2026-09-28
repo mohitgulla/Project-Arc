@@ -349,15 +349,16 @@ class ArcSettings(BaseSettings):
         description="ffmpeg path (ARC_FFMPEG_BIN); empty → PATH, then ~/.hermes/tools/ffmpeg-*.",
     )
 
+    # -- Persona model routing (E8.1, PLAN §2.4, D8) --------------------------
+    llm_routing_file: Path | None = Field(
+        default=None,
+        description=(
+            "Per-persona model routing YAML (ARC_LLM_ROUTING_FILE); "
+            "None → config/llm_routing.yaml. The only place persona/tier models are set."
+        ),
+    )
+
     # -- Scout candidate pipeline (E4.2) -------------------------------------
-    scout_model: str = Field(
-        default="claude-haiku-4-5",
-        description="Cheap-tier model the Scout runs on via Hermes (PLAN §2.4).",
-    )
-    scout_provider: str = Field(
-        default="anthropic",
-        description="Hermes provider for the Scout model (D8: Anthropic subscription).",
-    )
     scout_hermes_bin: str = Field(
         default="hermes",
         description="Hermes CLI executable used for one-shot Scout calls.",
@@ -380,14 +381,6 @@ class ArcSettings(BaseSettings):
     )
 
     # -- Pipeline runner (E5.2) -----------------------------------------------
-    persona_model: str = Field(
-        default="claude-opus-5.5",
-        description="Frontier-tier model for Director/Quant/Risk via Hermes (PLAN §2.4, D8).",
-    )
-    persona_provider: str = Field(
-        default="anthropic",
-        description="Hermes provider for the persona model (D8).",
-    )
     persona_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
         default=600,
         description="Timeout for a single Director/Quant/Risk LLM call.",
