@@ -1,4 +1,4 @@
--- 004_channel_briefs.sql — per-channel processors (E4.4, PLAN D14).
+-- 005_channel_briefs.sql — per-channel processors (E4.4, PLAN D14).
 
 -- -------------------------------------------------------------------
 -- raw_docs: YouTube channel id + title so the right processor is picked.

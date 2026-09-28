@@ -160,6 +160,12 @@ class ArcSlackClient:
         text = halt_notice(triggered_by=triggered_by, reason=reason)
         return self.reply(channel=channel, thread_ts=thread_ts, text=text)
 
+    def post_investor(self, *, text: str, thread_ts: str | None = None) -> SlackResponse:
+        """Post to #arc-investor: into ``thread_ts`` if given, else as a new root."""
+        if thread_ts:
+            return self.reply(channel=CHANNEL_ARC_INVESTOR, thread_ts=thread_ts, text=text)
+        return self.post_thread_root(channel=CHANNEL_ARC_INVESTOR, text=text)
+
     def post_proposal(
         self,
         *,

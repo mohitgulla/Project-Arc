@@ -376,7 +376,7 @@ def video_from_row(row: dict[str, Any]) -> VideoDoc:
 def _processor_for_row(registry: ChannelRegistry, row: dict[str, Any]) -> ChannelProcessor:
     if row.get("channel_id"):
         return registry.for_channel(row["channel_id"])
-    # Rows ingested before migration 004 have no channel_id: match "[<channel>]".
+    # Rows ingested before migration 005 have no channel_id: match "[<channel>]".
     for proc in registry.by_slug.values():
         if row["text"].startswith(f"[{proc.profile.display_name}]"):
             return proc

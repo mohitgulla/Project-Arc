@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated
 
 import structlog
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 log = structlog.get_logger()
@@ -202,9 +202,26 @@ class ArcSettings(BaseSettings):
         default=0.01,
         description="Limit price must be a whole multiple of this tick ($).",
     )
+    # -- Gate token (E3.2) ----------------------------------------------------
+    gate_secret: SecretStr | None = Field(
+        default=None,
+        description=(
+            "ARC_GATE_SECRET: HMAC key for gate tokens (>= 32 bytes). Lives in "
+            "~/.hermes/.env only. Unset = no token can be minted or verified (fail closed)."
+        ),
+    )
     auto_approve: bool = Field(
         default=False,
         description="Auto-approve proposals in paper mode (D10). Ignored when env=live.",
+    )
+    owner_slack_user_id: str = Field(
+        default="U0C5KUMH28G",
+        min_length=1,
+        description="Slack user id of the owner (D10). Only this user may `!resume` (E3.3).",
+    )
+    db_path: Path | None = Field(
+        default=None,
+        description="Audit store path (ARC_DB_PATH). None = data/arc.db in the repo.",
     )
 
     # -- Market data feeds (D7) ---------------------------------------------
