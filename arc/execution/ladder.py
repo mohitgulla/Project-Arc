@@ -1,0 +1,505 @@
+"""The D24 price-band ladder: work one approved proposal to a fill or a cancel (E6.2).
+
+:func:`execute` sends attempt 0 at the band's start (the gated mid limit), lets
+it work for ``execution_step_seconds``, cancels it, waits until the broker
+*confirms* the cancel, then sends the next step — ``max_steps`` improvement
+steps, each ``1/N`` of the way to the band's worst price. Every attempt goes
+through :func:`arc.execution.submission.submit` (halt re-check, token, band,
+approval), so no step can leave the band or outlive a ``!halt``.
+
+Invariants
+- Never two working orders for one proposal: the next step is only sent after
+  the previous attempt is confirmed terminal. An unconfirmed cancel stops the
+  ladder with status ``unconfirmed`` (E6.3 reconcile resolves it).
+- A partial fill that is then cancelled stops the ladder (the token is bound to
+  the full quantity); the filled contracts are recorded.
+- Idempotent: one ``executions`` row per proposal; a second call is a no-op.
+
+Every attempt is an ``orders`` row with its state events, fills go to ``fills``,
+and the outcome updates the local position model (``open_structures``,
+``tax_lots``) and the decision journal. The clock and sleep are injected so the
+ladder is fully testable without waiting.
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+import sqlite3
+from dataclasses import dataclass, field
+from decimal import Decimal
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
+
+import structlog
+
+from arc.context.ttl import to_db
+from arc.execution.submission import SubmitRefused, attempt_order_id, submit
+from arc.gate.band import PriceBand
+from arc.gate.rules import proposal_hash as hash_proposal
+from arc.gate.token import BandToken, TokenError, parse_any
+from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
+from arc.journal.store import JournalStore
+from arc.models import OrderState
+from arc.store.execution import ExecutionRepo, OpenStructureRepo
+from arc.store.repos import FillRepo, OrderRepo, TaxLotRepo
+from arc.structures import parse_occ
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from arc.broker.base import BrokerAdapter, BrokerOrderStatus
+    from arc.config import ArcSettings
+    from arc.gate.halt import HaltSwitch
+    from arc.models import ApprovalRecord, GateDecision, Proposal
+
+__all__ = ["AttemptRecord", "ExecStatus", "ExecutionOutcome", "execute", "fill_net_price"]
+
+log = structlog.get_logger(__name__)
+
+_ACTOR = "arc:execution"
+_FILLED = {"filled"}
+_DONE_NO_FILL = {"canceled", "cancelled", "expired", "rejected", "done_for_day", "replaced"}
+_REJECTED = {"rejected"}
+_HUNDRED = Decimal(100)
+
+
+class ExecStatus(StrEnum):
+    FILLED = "filled"
+    PARTIALLY_FILLED = "partially_filled"
+    CANCELLED = "cancelled"
+    REJECTED = "rejected"
+    UNCONFIRMED = "unconfirmed"
+    ALREADY = "already_executed"
+
+
+@dataclass
+class AttemptRecord:
+    step: int
+    limit_price: Decimal
+    client_order_id: str
+    order_id: str
+    broker_order_id: str | None = None
+    status: str = "approved"
+    filled_qty: int = 0
+    fill_price: Decimal | None = None
+
+
+@dataclass
+class ExecutionOutcome:
+    proposal_hash: str
+    status: ExecStatus
+    band: PriceBand
+    ticker: str = ""
+    attempts: list[AttemptRecord] = field(default_factory=list)
+    filled_qty: int = 0
+    fill_price: Decimal | None = None
+    steps_used: int | None = None
+    structure_id: str | None = None
+    detail: str = ""
+
+    def summary(self) -> str:
+        prices = ", ".join(f"s{a.step} {a.limit_price:+}" for a in self.attempts) or "none"
+        text = f"{self.status}: {len(self.attempts)} attempt(s) [{prices}]"
+        if self.filled_qty:
+            text += f"; filled {self.filled_qty} @ {self.fill_price:+}"
+        return text + (f" ({self.detail})" if self.detail else "")
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers
+# ---------------------------------------------------------------------------
+
+
+def _band_of(decision: GateDecision, proposal: Proposal) -> tuple[PriceBand, str]:
+    """The band to walk and the token version. arc1 = one attempt at the exact limit."""
+    limit = (
+        proposal.structure.net_debit_credit
+        if proposal.limit_price is None
+        else proposal.limit_price
+    )
+    token = decision.token or ""
+    try:
+        t = parse_any(token)
+    except TokenError:
+        # submit() refuses it with a clear reason; walk a single attempt.
+        return PriceBand(lo=limit, hi=limit, max_steps=0), "invalid"
+    if isinstance(t, BandToken):
+        try:
+            return t.band, t.version
+        except ValueError:
+            return PriceBand(lo=limit, hi=limit, max_steps=0), t.version
+    return PriceBand(lo=limit, hi=limit, max_steps=0), t.version
+
+
+def fill_net_price(status: BrokerOrderStatus, fallback: Decimal) -> Decimal:
+    """Per-unit net fill price (+ debit / − credit).
+
+    From the legs' fill prices when every leg reports one (``buy`` +, ``sell`` −,
+    weighted by leg qty / order qty); else the order's own average (a simple
+    one-leg order reports the premium, signed by its side); else ``fallback``.
+    """
+    legs = status.legs or []
+    qty = status.filled_qty
+    if legs and qty > 0 and all(leg.get("filled_avg_price") for leg in legs):
+        net = Decimal(0)
+        for leg in legs:
+            sign = 1 if str(leg.get("side")) == "buy" else -1
+            ratio = Decimal(str(leg.get("filled_qty") or leg.get("qty") or 0)) / qty
+            net += sign * ratio * Decimal(str(leg["filled_avg_price"]))
+        return net.quantize(Decimal("0.0001"))
+    if status.filled_avg_price is not None:
+        return status.filled_avg_price
+    return fallback
+
+
+# ---------------------------------------------------------------------------
+# The ladder
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Ctx:
+    conn: sqlite3.Connection
+    broker: BrokerAdapter
+    config: ArcSettings
+    halt: HaltSwitch
+    clock: Callable[[], _dt.datetime]
+    sleep: Callable[[float], None]
+    run_id: str | None
+    proposal: Proposal
+    decision: GateDecision
+    approval: ApprovalRecord | None
+    phash: str
+    ticker: str
+
+    @property
+    def orders(self) -> OrderRepo:
+        return OrderRepo(self.conn)
+
+    def journal(self, choice: Choice, code: ReasonCode, text: str, **payload: Any) -> None:
+        with self.conn:
+            JournalStore(self.conn).record(
+                persona=JournalPersona.INVESTOR,
+                stage=Stage.ORDER,
+                subject=self.ticker,
+                choice=choice,
+                reason_code=code,
+                reason_text=text[:2000],
+                proposal_hash=self.phash,
+                payload={k: v for k, v in payload.items() if v is not None},
+                at=self.clock(),
+                run_id=self.run_id,
+            )
+
+    def move(self, order_id: str, to: OrderState, detail: str = "") -> None:
+        self.orders.transition(
+            order_id=order_id,
+            to_state=to,
+            actor=_ACTOR,
+            detail=detail,
+            event_at=to_db(self.clock()),
+            run_id=self.run_id,
+        )
+
+
+def _poll(c: _Ctx, broker_id: str, seconds: float) -> BrokerOrderStatus:
+    """Poll until the order is terminal or *seconds* pass; return the last status."""
+    deadline = c.clock() + _dt.timedelta(seconds=seconds)
+    while True:
+        st = c.broker.order_status(broker_id)
+        if st.status in _FILLED | _DONE_NO_FILL or c.clock() >= deadline:
+            return st
+        c.sleep(c.config.execution_poll_seconds)
+
+
+def _record_fill(c: _Ctx, a: AttemptRecord, st: BrokerOrderStatus) -> None:
+    qty = int(st.filled_qty)
+    if qty <= 0:
+        return
+    price = fill_net_price(st, a.limit_price)
+    a.filled_qty, a.fill_price = qty, price
+    FillRepo(c.conn).insert(
+        order_id=a.order_id,
+        qty=qty,
+        price=str(price),
+        filled_at=to_db(st.updated_at or c.clock()),
+        broker_fill_id=st.broker_order_id,
+        run_id=c.run_id,
+    )
+
+
+def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
+    """Send and work one attempt. Returns the record and a verdict:
+    ``filled`` | ``partial`` | ``next`` | ``refused`` | ``rejected`` | ``unconfirmed``."""
+    token = c.decision.token or ""
+    try:
+        coid = attempt_order_id(token, step)
+    except TokenError:
+        coid = f"invalid-token.{c.phash[:16]}.s{step}"
+    order_id = c.orders.create(
+        proposal_hash=c.phash,
+        client_order_id=coid,
+        run_id=c.run_id,
+        created_at=to_db(c.clock()),
+    )
+    a = AttemptRecord(step=step, limit_price=price, client_order_id=coid, order_id=order_id)
+    c.move(order_id, OrderState.GATED, "gate passed (token issued)")
+    c.move(order_id, OrderState.APPROVED, f"approved; step {step} limit {price:+}")
+    ExecutionRepo(c.conn).attempt(c.phash)
+    try:
+        broker_id = submit(
+            c.proposal,
+            c.decision,
+            c.approval,
+            broker=c.broker,
+            config=c.config,
+            now=c.clock(),
+            halt=c.halt,
+            step=step,
+            limit_price=price,
+        )
+    except SubmitRefused as exc:
+        c.move(order_id, OrderState.CANCELLED, f"refused before the broker: {exc}")
+        a.status = "refused"
+        c.journal(
+            Choice.REJECTED,
+            ReasonCode.ORDER_REFUSED,
+            str(exc),
+            step=step,
+            limit=str(price),
+            refusal=str(exc.code),
+        )
+        return a, "refused"
+    except Exception as exc:  # noqa: BLE001 - unknown broker state: stop, reconcile later
+        a.status = "unconfirmed"
+        detail = f"broker error on submit: {type(exc).__name__}: {exc}"
+        c.journal(Choice.FAILED, ReasonCode.ORDER_UNCONFIRMED, detail, step=step)
+        log.error("execution.submit_error", proposal_hash=c.phash, step=step, error=str(exc))
+        return a, "unconfirmed"
+
+    a.broker_order_id = broker_id
+    c.orders.set_broker_order_id(order_id, broker_id)
+    c.move(order_id, OrderState.SUBMITTED, f"broker {broker_id}")
+    c.journal(
+        Choice.SUBMITTED,
+        ReasonCode.ORDER_STEP,
+        f"step {step}: limit {price:+} ({coid[-4:]})",
+        step=step,
+        limit=str(price),
+        broker_order_id=broker_id,
+        client_order_id=coid,
+    )
+
+    st = _poll(c, broker_id, c.config.execution_step_seconds)
+    if st.status not in _FILLED | _DONE_NO_FILL:
+        try:
+            c.broker.cancel(broker_id)
+        except Exception as exc:  # noqa: BLE001 - it may have filled/closed meanwhile
+            log.warning("execution.cancel_error", broker_order_id=broker_id, error=str(exc))
+        st = _poll(c, broker_id, c.config.execution_cancel_confirm_seconds)
+    return a, _settle(c, a, st)
+
+
+def _settle(c: _Ctx, a: AttemptRecord, st: BrokerOrderStatus) -> str:
+    a.status = st.status
+    qty = int(st.filled_qty)
+    if st.status in _FILLED:
+        _record_fill(c, a, st)
+        c.move(a.order_id, OrderState.FILLED, f"filled {qty} @ {a.fill_price}")
+        return "filled"
+    if st.status not in _DONE_NO_FILL:
+        c.journal(
+            Choice.FAILED,
+            ReasonCode.ORDER_UNCONFIRMED,
+            f"cancel not confirmed (broker status {st.status}); ladder stopped",
+            step=a.step,
+            broker_order_id=a.broker_order_id,
+        )
+        return "unconfirmed"
+    if qty > 0:
+        _record_fill(c, a, st)
+        c.move(a.order_id, OrderState.PARTIALLY_FILLED, f"filled {qty} @ {a.fill_price}")
+        c.move(a.order_id, OrderState.CANCELLED, f"remainder {st.status}")
+        return "partial"
+    if st.status in _REJECTED:
+        c.move(a.order_id, OrderState.REJECTED, "broker rejected")
+        c.journal(
+            Choice.REJECTED,
+            ReasonCode.ORDER_REJECTED,
+            f"broker rejected step {a.step} at {a.limit_price:+}",
+            step=a.step,
+        )
+        return "rejected"
+    c.move(a.order_id, OrderState.CANCELLED, f"no fill in time ({st.status})")
+    c.journal(
+        Choice.CANCELLED,
+        ReasonCode.ORDER_TIMEOUT,
+        f"step {a.step} at {a.limit_price:+}: no fill, cancelled",
+        step=a.step,
+    )
+    return "next"
+
+
+def execute(
+    proposal: Proposal,
+    decision: GateDecision,
+    approval: ApprovalRecord | None,
+    *,
+    conn: sqlite3.Connection,
+    broker: BrokerAdapter,
+    config: ArcSettings,
+    halt: HaltSwitch,
+    clock: Callable[[], _dt.datetime],
+    sleep: Callable[[float], None],
+    kind: str = "open",
+    structure_id: str | None = None,
+    ticker: str | None = None,
+    run_id: str | None = None,
+) -> ExecutionOutcome:
+    """Work *proposal* through its price band; record orders, fills and the position.
+
+    ``kind='close'`` closes ``structure_id`` (an ``open_structures`` row) on a fill.
+    """
+    phash = hash_proposal(proposal)
+    band, version = _band_of(decision, proposal)
+    t = ticker or parse_occ(proposal.structure.legs[0].occ_symbol).root
+    c = _Ctx(
+        conn, broker, config, halt, clock, sleep, run_id, proposal, decision, approval, phash, t
+    )
+    execs = ExecutionRepo(conn)
+    claimed = execs.start(
+        proposal_hash=phash,
+        kind=kind,
+        token_version=version,
+        band_lo=band.lo,
+        band_hi=band.hi,
+        max_steps=band.max_steps,
+        contracts=proposal.sizing.contracts,
+        now=clock(),
+        structure_id=structure_id,
+        run_id=run_id,
+    )
+    if not claimed:
+        return ExecutionOutcome(phash, ExecStatus.ALREADY, band, t, detail="already executed")
+
+    out = ExecutionOutcome(phash, ExecStatus.CANCELLED, band, t)
+    ladder = band.ladder(Decimal(str(config.limit_tick)))
+    for step, price in enumerate(ladder):
+        a, verdict = _attempt(c, step, price)
+        out.attempts.append(a)
+        if verdict == "next":
+            continue
+        if verdict in ("filled", "partial"):
+            out.status = ExecStatus.FILLED if verdict == "filled" else ExecStatus.PARTIALLY_FILLED
+            out.filled_qty, out.fill_price, out.steps_used = a.filled_qty, a.fill_price, step
+        elif verdict == "unconfirmed":
+            out.status = ExecStatus.UNCONFIRMED
+        else:  # refused / rejected
+            out.status = ExecStatus.REJECTED
+        break
+    else:
+        out.detail = f"no fill after {len(ladder)} attempt(s); last {ladder[-1]:+}"
+
+    if out.filled_qty:
+        out.structure_id = _apply_fill(c, out, kind=kind, structure_id=structure_id)
+    execs.finish(
+        phash,
+        status=str(out.status),
+        now=clock(),
+        filled_qty=out.filled_qty,
+        fill_price=out.fill_price,
+        steps_used=out.steps_used,
+        structure_id=out.structure_id,
+        detail=out.detail or out.summary(),
+    )
+    if out.filled_qty:
+        full = out.status is ExecStatus.FILLED
+        c.journal(
+            Choice.FILLED,
+            ReasonCode.ORDER_FILLED if full else ReasonCode.ORDER_PARTIAL,
+            out.summary(),
+            filled_qty=out.filled_qty,
+            fill_price=str(out.fill_price),
+            steps_used=out.steps_used,
+            band_lo=str(band.lo),
+            band_hi=str(band.hi),
+        )
+    log.info("execution.done", proposal_hash=phash, kind=kind, summary=out.summary())
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Position model updates
+# ---------------------------------------------------------------------------
+
+
+def _apply_fill(c: _Ctx, out: ExecutionOutcome, *, kind: str, structure_id: str | None) -> str:
+    assert out.fill_price is not None
+    last = out.attempts[-1]
+    now = c.clock()
+    if kind == "open":
+        sid = OpenStructureRepo(c.conn).open(
+            ticker=c.ticker,
+            open_proposal_hash=c.phash,
+            candidate_id=c.proposal.candidate_id,
+            structure_json=c.proposal.structure.model_dump_json(),
+            contracts=out.filled_qty,
+            entry_net=out.fill_price,
+            now=now,
+        )
+        lots = TaxLotRepo(c.conn)
+        for leg in c.proposal.structure.legs:
+            lots.open_lot(
+                order_id=last.order_id,
+                ticker=c.ticker,
+                occ_symbol=leg.occ_symbol,
+                side=str(leg.side),
+                qty=leg.ratio * out.filled_qty,
+                open_price=str(leg.premium if leg.premium is not None else ""),
+                opened_at=to_db(now),
+                run_id=c.run_id,
+            )
+        return sid
+
+    if structure_id is None:
+        msg = "a close execution needs the structure it closes"
+        raise ValueError(msg)
+    repo = OpenStructureRepo(c.conn)
+    row = repo.get(structure_id)
+    closed = repo.reduce(structure_id, closed_qty=out.filled_qty, close_net=out.fill_price, now=now)
+    if row is not None:
+        pnl = -(Decimal(row["entry_net"]) + out.fill_price) * _HUNDRED * out.filled_qty
+        text = f"closed {out.filled_qty} @ {out.fill_price:+}; realized {pnl:+.2f}"
+        if closed:
+            _close_lots(c, row, pnl, now)
+        with c.conn:
+            JournalStore(c.conn).record(
+                persona=JournalPersona.INVESTOR,
+                stage=Stage.EXIT,
+                subject=c.ticker,
+                choice=Choice.FILLED,
+                reason_code=ReasonCode.EXIT_CLOSED,
+                reason_text=text,
+                proposal_hash=c.phash,
+                payload={"structure_id": structure_id, "realized_pnl": str(pnl)},
+                at=now,
+                run_id=c.run_id,
+            )
+    return structure_id
+
+
+def _close_lots(c: _Ctx, row: dict[str, Any], pnl: Decimal, now: _dt.datetime) -> None:
+    """Close the structure's open lots; the realised P&L sits on the first lot (wash sale)."""
+    lots = c.conn.execute(
+        """SELECT l.id FROM tax_lots l JOIN orders o ON o.id = l.order_id
+           WHERE o.proposal_hash = ? AND l.closed_at IS NULL ORDER BY l.rowid""",
+        (row["open_proposal_hash"],),
+    ).fetchall()
+    repo = TaxLotRepo(c.conn)
+    for i, lot in enumerate(lots):
+        repo.close_lot(
+            lot["id"] if isinstance(lot, sqlite3.Row) else lot[0],
+            close_price="",
+            realized_pnl=str(pnl if i == 0 else Decimal(0)),
+            closed_at=now.astimezone(_dt.UTC).isoformat(),
+        )

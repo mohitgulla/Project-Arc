@@ -69,6 +69,9 @@ class Choice(StrEnum):
     APPROVED = "approved"
     EXPIRED = "expired"
     NOTED = "noted"
+    SUBMITTED = "submitted"
+    FILLED = "filled"
+    CANCELLED = "cancelled"
 
 
 class ReasonCode(StrEnum):
@@ -127,7 +130,10 @@ class ReasonCode(StrEnum):
     GATE_MAX_POSITIONS = "gate:max_open_positions"
     GATE_APPROVAL_TTL = "gate:approval_ttl"
     GATE_STALE_DATA = "gate:stale_data"
+    GATE_NO_MAX_GAIN = "gate:limit_no_max_gain"
     GATE_RULE_ERROR = "gate:rule_error"
+    GATE_PRICE_BAND = "gate:price_band"
+    GATE_CLOSE_MISMATCH = "gate:close_mismatch"
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
@@ -137,6 +143,21 @@ class ReasonCode(StrEnum):
     NOT_ACTIONABLE_NO_TOKEN = "not_actionable:no_token"
     NOT_ACTIONABLE_NO_GATE = "not_actionable:no_gate_decision"
     NOT_ACTIONABLE_EXPIRED = "not_actionable:expired_before_post"
+    # order (E6.2: the D24 price-band ladder)
+    ORDER_STEP = "order:step"
+    ORDER_FILLED = "order:filled"
+    ORDER_PARTIAL = "order:partially_filled"
+    ORDER_TIMEOUT = "order:timeout_cancelled"
+    ORDER_REFUSED = "order:refused"
+    ORDER_REJECTED = "order:broker_rejected"
+    ORDER_UNCONFIRMED = "order:cancel_unconfirmed"
+    # exit (E6.2: E2.4 policy on open structures)
+    EXIT_TAKE_PROFIT = "exit:take_profit"
+    EXIT_STOP = "exit:stop"
+    EXIT_DTE = "exit:dte"
+    EXIT_EXPIRY = "exit:expiry"
+    EXIT_NOT_PROPOSED = "exit:not_proposed"
+    EXIT_CLOSED = "exit:closed"
 
 
 def gate_reason(violation: str) -> ReasonCode:

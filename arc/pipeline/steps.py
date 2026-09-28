@@ -109,6 +109,7 @@ if TYPE_CHECKING:
     from arc.config import ArcSettings
     from arc.context.store import ContextSnapshot
     from arc.exits import ExitConfig, ExitModelResult
+    from arc.gate.band import PriceBand
     from arc.gate.inputs import Portfolio
     from arc.pipeline.env import PipelineEnv
     from arc.pipeline.market import PricedStructure
@@ -1077,12 +1078,33 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
 def _existing(conn: sqlite3.Connection, day: str, ticker: str) -> bool:
     row = conn.execute(
-        "SELECT 1 FROM proposals WHERE day = ? AND ticker = ?", (day, ticker)
+        "SELECT 1 FROM proposals WHERE day = ? AND ticker = ? AND kind = 'open'", (day, ticker)
     ).fetchone()
     return row is not None
 
 
-def _mint(decision: Any, proposal: Proposal, settings: ArcSettings, now: _dt.datetime) -> Any:
+def band_for(st: Any, limit: Decimal, market: Any, settings: ArcSettings) -> PriceBand:
+    """D24 band for a structure at *limit* (see :func:`arc.gate.rules.price_band`)."""
+    from arc.gate.rules import price_band
+
+    return price_band(st.legs, limit, market, settings)
+
+
+def worst_loss_per_contract(st: Any, band: PriceBand) -> Decimal | None:
+    """Max loss per contract if filled at the band's worst price (``None`` = unbounded)."""
+    if st.max_loss is None:
+        return None
+    return max(st.max_loss + (band.hi - st.net_debit_credit) * 100, Decimal(0))
+
+
+def _mint(
+    decision: Any,
+    proposal: Proposal,
+    settings: ArcSettings,
+    now: _dt.datetime,
+    *,
+    band: PriceBand | None = None,
+) -> Any:
     from arc.gate.token import TokenError, gate_secret, issue_token
 
     if not decision.passed:
@@ -1092,7 +1114,7 @@ def _mint(decision: Any, proposal: Proposal, settings: ArcSettings, now: _dt.dat
     except TokenError as exc:
         log.warning("pipeline.no_gate_token", reason=str(exc))
         return decision
-    return issue_token(decision, proposal, secret=secret, now=now)
+    return issue_token(decision, proposal, secret=secret, now=now, band=band)
 
 
 def _with_position(
@@ -1265,14 +1287,21 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             skip(t, "reprice_failed", ReasonCode.REPRICE_FAILED, str(exc)[:500])
             continue
         st = priced.structure
+        market = market_snapshot(priced.contracts, earnings)
+        limit = limit_price(st.net_debit_credit, settings.limit_tick)
+        # D24: the gate checks the whole price band; size at its worst price (D18).
+        band = band_for(st, limit, market, settings)
         size = size_contracts(
             suggestion=a.sizing_suggestion,
-            max_loss_per_contract=st.max_loss,
+            max_loss_per_contract=worst_loss_per_contract(st, band),
             equity=info.equity,
             cap_pct=settings.max_alloc_pct,
         )
         sizing_payload = size.model_dump(mode="json") | {
             "max_loss_per_contract": str(st.max_loss) if st.max_loss is not None else None,
+            "worst_loss_per_contract": (
+                str(worst) if (worst := worst_loss_per_contract(st, band)) is not None else None
+            ),
             "equity": str(info.equity),
             "cap_pct": settings.max_alloc_pct,
         }
@@ -1304,7 +1333,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 pct_equity=min(size.pct_equity, 1.0),
             ),
             expires_at=now + _dt.timedelta(seconds=settings.approval_ttl_seconds),
-            limit_price=limit_price(st.net_debit_credit, settings.limit_tick),
+            limit_price=limit,
         )
         decision = evaluate_with_halt(
             switch,
@@ -1312,11 +1341,12 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             account,
             portfolio,
             settings,
-            market=market_snapshot(priced.contracts, earnings),
+            market=market,
             now=now,
+            band=band,
         )
         if env.mint_tokens:
-            decision = _mint(decision, proposal, settings, now)
+            decision = _mint(decision, proposal, settings, now, band=band)
         phash = proposal_hash(proposal)
         try:
             # One transaction: proposal + gate decision + journal + context entry.
@@ -1359,6 +1389,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             payload={
                 "structure": st.model_dump(mode="json"),
                 "limit_price": str(proposal.limit_price),
+                "band": band.model_dump(mode="json"),
                 "quant": proposal.quant.model_dump(mode="json"),
             },
         )

@@ -222,7 +222,8 @@ class TestCard:
         assert "*Net Greeks (position)*" in text and "Δ " in text and "Θ " in text and "ν " in text
         assert "PoP 62%" in text and "EV -$21.78" in text
         assert "*Gate*" in text and "PASS" in text
-        assert "14 contract(s)" in text and "4.68% of equity" in text
+        # D18/D24: sizing is at the band's worst price (max loss $4,760, not $4,682.30 at mid)
+        assert "14 contract(s)" in text and "4.76% of equity" in text
         assert "Expires 16:20 ET" in text
 
     def test_buttons_carry_the_proposal_hash(self, conn: sqlite3.Connection) -> None:
@@ -620,13 +621,17 @@ def test_approval_record_satisfies_submit(
     svc.publish_pending(NOW)
     at = NOW + _dt.timedelta(minutes=2)
     svc.decide(ph, user=OWNER, approve=True, now=at)
-    order = _check(p, decision, approval_record(conn, ph), s, at)
+    from arc.gate.halt import HaltSwitch
+    from arc.store.repos import HaltRepo
+
+    kw = {"halt": HaltSwitch(HaltRepo(conn)), "step": 0, "limit_price": None}
+    order = _check(p, decision, approval_record(conn, ph), s, at, **kw)
     assert order.client_order_id == tok
 
     conn2_ph = ph  # a rejection must be refused by submit()
     conn.execute("UPDATE approvals SET decision = 'rejected' WHERE proposal_hash = ?", (conn2_ph,))
     with pytest.raises(SubmitRefused) as exc:
-        _check(p, decision, approval_record(conn, ph), s, at)
+        _check(p, decision, approval_record(conn, ph), s, at, **kw)
     assert exc.value.code is RefusalCode.NOT_APPROVED
 
 

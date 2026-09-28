@@ -11,7 +11,11 @@ or any exception is a block.
 Tool coverage (Alpaca MCP server v2 names, any ``mcp__<server>__`` prefix):
 
 - ``place_option_order``: allowed only as a *limit*, *day* order whose
-  ``client_order_id`` is a gate token bound to exactly these legs, qty and limit.
+  ``client_order_id`` is a gate token for exactly these legs and qty:
+  ``arc2`` (D24) as ``<token>.s<k>`` with ``k <= max_steps`` and the limit inside
+  the signed price band; legacy ``arc1`` as the bare token bound to the exact
+  limit. An order id the caller reports as already used is refused (the I/O
+  shim keeps that ledger; the broker also rejects a duplicate id).
 - ``place_stock_order``, ``place_crypto_order``, ``replace_order_by_id``,
   ``close_position``, ``close_all_positions``, ``exercise_options_position``:
   always blocked. None can be bound to a gated options payload (stock/crypto
@@ -28,10 +32,17 @@ import re
 import shlex
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from arc.gate.token import OrderPayload, TokenError, TokenErrorCode, verify
+from arc.gate.token import (
+    OrderPayload,
+    TokenError,
+    TokenErrorCode,
+    verify_any,
+    verify_client_order_id,
+)
 
 if TYPE_CHECKING:
     import datetime as dt
+    from collections.abc import Container
 
 __all__ = [
     "BLOCKED_TOOLS",
@@ -167,7 +178,7 @@ def _check_terminal(
         return _block("ARC_GATE_SECRET is not configured")
     for args in invocations:
         try:
-            verify(_token_arg(args), secret=secret or b"", now=now)
+            verify_any(_token_arg(args), secret=secret or b"", now=now)
         except TokenError as exc:
             return _block(f"`arc execute` needs a valid --token ({exc})")
     return _ALLOW  # ordinary shell commands need no secret
@@ -237,13 +248,19 @@ def _mcp_order_payload(args: dict[str, Any]) -> OrderPayload:
 
 
 def _check_option_order(
-    tool_input: dict[str, Any], secret: bytes | None, now: dt.datetime
+    tool_input: dict[str, Any],
+    secret: bytes | None,
+    now: dt.datetime,
+    used_order_ids: Container[str],
 ) -> HookVerdict:
     if not secret:
         return _block("ARC_GATE_SECRET is not configured")
+    coid = tool_input.get("client_order_id")
     try:
         payload = _mcp_order_payload(tool_input)
-        verify(tool_input.get("client_order_id"), secret=secret, now=now, order=payload)
+        verify_client_order_id(coid, secret=secret, now=now, order=payload)
+        if coid in used_order_ids:
+            raise TokenError(TokenErrorCode.REUSED, "client_order_id was already used")
     except TokenError as exc:
         return _block(f"order refused: no valid gate token for this exact order ({exc})")
     return _ALLOW
@@ -260,16 +277,25 @@ def check_tool_call(
     *,
     secret: bytes | None,
     now: dt.datetime,
+    used_order_ids: Container[str] = frozenset(),
 ) -> HookVerdict:
-    """Decide one ``pre_tool_call``. Never raises: any error is a block."""
+    """Decide one ``pre_tool_call``. Never raises: any error is a block.
+
+    ``used_order_ids``: client order ids already sent (the shim's ledger); an
+    order re-using one is blocked.
+    """
     try:
-        return _check(tool_name, tool_input, secret, now)
+        return _check(tool_name, tool_input, secret, now, used_order_ids)
     except Exception as exc:  # noqa: BLE001 — fail closed on anything unexpected
         return _block(f"internal error, failing closed: {type(exc).__name__}: {exc}")
 
 
 def _check(
-    tool_name: object, tool_input: object, secret: bytes | None, now: dt.datetime
+    tool_name: object,
+    tool_input: object,
+    secret: bytes | None,
+    now: dt.datetime,
+    used_order_ids: Container[str],
 ) -> HookVerdict:
     if not isinstance(tool_name, str) or not tool_name:
         return _block("missing tool name")
@@ -284,5 +310,5 @@ def _check(
             "arc.execution.submit() with a gate token and an approval"
         )
     if base in GATED_TOOLS:
-        return _check_option_order(tool_input, secret, now)
+        return _check_option_order(tool_input, secret, now, used_order_ids)
     return _block(f"unrecognised tool {tool_name!r} routed to the order gate")

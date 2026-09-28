@@ -504,7 +504,7 @@ class ExecutionResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    status: Literal["filled", "partially_filled", "cancelled", "rejected", "expired"]
+    status: Literal["filled", "partially_filled", "cancelled", "rejected", "expired", "unconfirmed"]
     filled_qty: int = Field(0, ge=0)
     fill_price: float | None = None
     mid_at_submit: float | None = None
@@ -525,6 +525,7 @@ _STATUS_ICON = {
     "cancelled": ":x:",
     "rejected": ":no_entry:",
     "expired": ":hourglass:",
+    "unconfirmed": ":warning:",
 }
 
 

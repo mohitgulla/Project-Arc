@@ -81,7 +81,21 @@ def build_mleg_request(order: MlegOrder) -> LimitOrderRequest:
 
     Alpaca rejects a top-level ``symbol`` on ``order_class=mleg`` (422
     ``symbol is not allowed for mleg order``); contracts go only in ``legs``.
+    A single leg with ratio 1 (long call / long put, D25 cash_debit) is sent as a
+    simple limit order on that contract: the limit is then the absolute premium.
     """
+    tif = _TIF_MAP.get(order.time_in_force.lower(), TimeInForce.DAY)
+    client_order_id = order.client_order_id or f"arc-{uuid.uuid4().hex[:12]}"
+    if len(order.legs) == 1 and order.legs[0].ratio_qty == 1:
+        (leg,) = order.legs
+        return LimitOrderRequest(
+            symbol=leg.symbol,
+            qty=float(order.qty),
+            side=OrderSide.BUY if leg.side == "buy" else OrderSide.SELL,
+            time_in_force=tif,
+            limit_price=float(abs(order.limit_price)),
+            client_order_id=client_order_id,
+        )
     legs = [
         OptionLegRequest(
             symbol=leg.symbol,
@@ -90,8 +104,6 @@ def build_mleg_request(order: MlegOrder) -> LimitOrderRequest:
         )
         for leg in order.legs
     ]
-    tif = _TIF_MAP.get(order.time_in_force.lower(), TimeInForce.DAY)
-    client_order_id = order.client_order_id or f"arc-{uuid.uuid4().hex[:12]}"
     # LimitOrderRequest (not the base OrderRequest, which has no limit_price
     # field and silently drops it). Positive limit = net debit, negative = credit.
     return LimitOrderRequest(
@@ -202,6 +214,9 @@ class AlpacaPaperBroker:
                         "qty": str(leg.qty),
                         "filled_qty": str(leg.filled_qty or "0"),
                         "status": leg.status.value if leg.status else None,
+                        "filled_avg_price": (
+                            str(leg.filled_avg_price) if leg.filled_avg_price else None
+                        ),
                     }
                     for leg in order.legs
                 ]

@@ -6,9 +6,10 @@ account and positions, values open option positions with the same
 :func:`~arc.pipeline.market.build_portfolio` the gate uses (max loss per
 underlying + net Greeks), and applies the E3.3 daily-loss auto-halt.
 
-It never proposes or submits anything. Exit proposals (early profit-taking,
-close-to-reallocate, D19) are E6.4's position manager, which hooks onto this
-routine.
+It never submits anything. E6.2: it evaluates every open structure against the
+E2.4 exit policy (:mod:`arc.execution.exits`) and *proposes* the fired exits
+(gate + ``arc2`` token + approval card); the Investor executes them only after
+approval. Close-to-reallocate (D19) is E6.4.
 
 Heartbeat policy: the job is ``notify: quiet`` (its line folds into the next
 persona heartbeat), but anything a human must see now is raised as a
@@ -19,6 +20,7 @@ distinct message per day, not every 30 min.
 
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 from typing import TYPE_CHECKING, Any, cast
 
@@ -102,6 +104,7 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
         notices.append(f"cannot value open positions: {exc}")
         metrics.update({"positions": None, "valued": False})
         summary = f"equity ${info.equity:,.2f}{pnl_text}; positions NOT valued ({exc})"
+        portfolio = None
     else:
         g = portfolio.greeks
         n = len(portfolio.positions)
@@ -123,6 +126,30 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
             + (f" [{roots}], max loss ${max_loss:,.0f}" if n else "")
             + (f"; Δ {g.delta:+.1f} Γ {g.gamma:+.3f} ν {g.vega:+.1f} Θ {g.theta:+.1f}" if n else "")
         )
+
+    if portfolio is not None and ctx.options.get("exits", True):
+        from arc.execution.exits import propose_exits
+
+        eod_from = _dt.time.fromisoformat(str(ctx.options.get("eod_marks_from", "15:30")))
+        run = propose_exits(
+            ctx.conn,
+            market=env.market,
+            settings=settings,
+            account=switch.apply(account_snapshot(info, now)),
+            portfolio=portfolio,
+            switch=switch,
+            now=now,
+            run_id=ctx.run_id,
+            write_context=ctx.write,
+            mint=env.mint_tokens,
+            eod_from=eod_from,
+        )
+        metrics["exits_evaluated"] = run.evaluated
+        metrics["exits_proposed"] = len(run.proposed)
+        if run.lines:
+            summary += "; exits: " + "; ".join(run.lines)
+            notices.extend(f"exit proposed: {line}" for line in run.lines if "gate PASS" in line)
+        notices.extend(run.errors)
 
     expiring = _expiring(env, ctx, within)
     metrics["expiring"] = len(expiring)

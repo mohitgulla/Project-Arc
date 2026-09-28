@@ -72,6 +72,10 @@ class Portfolio(_Frozen):
     positions: list[Position] = Field(default_factory=list)
     greeks: Greeks = Field(default_factory=Greeks, description="Net portfolio Greeks")
     closed_lots: list[ClosedLot] = Field(default_factory=list)
+    legs: dict[str, int] = Field(
+        default_factory=dict,
+        description="Held option contracts by OCC symbol: + long / − short (closing checks)",
+    )
 
 
 class Quote(_Frozen):

@@ -185,15 +185,17 @@ class ProposalRepo:
         id: str | None = None,
         day: str | None = None,
         ticker: str | None = None,
+        kind: str = "open",
         commit: bool = True,
     ) -> str:
+        """Insert a proposal; ``kind`` is ``open`` (new structure) or ``close`` (an exit)."""
         row_id = id or _uuid()
         self.conn.execute(
             """INSERT INTO proposals
                (id, candidate_id, proposal_hash, structure_json, thesis,
                 quant_json, risk_narrative, sizing_json, expires_at, created_at, run_id,
-                day, ticker)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                day, ticker, kind)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row_id,
                 candidate_id,
@@ -208,6 +210,7 @@ class ProposalRepo:
                 run_id,
                 day,
                 ticker,
+                kind,
             ),
         )
         if commit:

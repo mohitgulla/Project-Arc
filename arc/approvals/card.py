@@ -17,6 +17,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from arc.approvals.trail import DecisionTrail
+from arc.gate.token import BandToken, TokenError, parse_any
 from arc.models import StructureKind
 from arc.slack import blocks as B
 from arc.slack.blocks import CardView
@@ -27,6 +28,7 @@ from arc.utils.calendar import ET
 if TYPE_CHECKING:
     import datetime as _dt
 
+    from arc.gate.band import PriceBand
     from arc.models import GateDecision, Proposal
 
 __all__ = [
@@ -74,13 +76,15 @@ def strategy_name(p: Proposal) -> str:
     return name.format(side=side)
 
 
-def title(p: Proposal) -> str:
-    """One consistent title: ``[Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor``."""
+def title(p: Proposal, kind: str = "open") -> str:
+    """One consistent title: ``[Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor``.
+
+    An exit (``kind='close'``, E6.2) reads ``[Investor] Exit: SPY • Oct 30 (21 DTE) • Close``.
+    """
     exp = parse_occ(p.structure.legs[0].occ_symbol).expiration
-    return (
-        f"[Quant] Proposal: {ticker_of(p)} • {exp:%b %d} ({p.structure.dte} DTE) • "
-        f"{strategy_name(p)}"
-    )
+    head = "[Investor] Exit" if kind == "close" else "[Quant] Proposal"
+    what = "Close position" if kind == "close" else strategy_name(p)
+    return f"{head}: {ticker_of(p)} • {exp:%b %d} ({p.structure.dte} DTE) • {what}"
 
 
 def ticker_of(p: Proposal) -> str:
@@ -105,12 +109,32 @@ def _net_word(v: Decimal) -> str:
     return "credit" if v < 0 else "debit"
 
 
-def _entry(p: Proposal) -> str:
+def band_of(decision: GateDecision | None) -> PriceBand | None:
+    """The D24 price band signed into an ``arc2`` token (None for arc1 / no token)."""
+    if decision is None or not decision.token:
+        return None
+    try:
+        t = parse_any(decision.token)
+    except TokenError:
+        return None
+    return t.band if isinstance(t, BandToken) else None
+
+
+def limit_text(limit: Decimal, band: PriceBand | None) -> str:
+    """``Limit credit 1.65, worst 1.58 after 3 steps`` (the band one approval authorises)."""
+    text = f"Limit {_net_word(limit)} {abs(limit):.2f}"
+    if band is not None and band.max_steps and band.hi != band.lo:
+        steps = f"{band.max_steps} step{'s' if band.max_steps != 1 else ''}"
+        text += f", worst {_net_word(band.hi)} {abs(band.hi):.2f} after {steps}"
+    return text
+
+
+def _entry(p: Proposal, decision: GateDecision | None = None) -> str:
     net = p.structure.net_debit_credit
     limit = p.limit_price if p.limit_price is not None else net
     return (
         f"{_net_word(net).capitalize()} {abs(net):.2f}/sh (${abs(net) * _MULT:,.0f}/contract)\n"
-        f"Limit {_net_word(limit)} {abs(limit):.2f}"
+        + limit_text(limit, band_of(decision))
     )
 
 
@@ -194,6 +218,7 @@ def _body(
     decision: GateDecision | None,
     proposal_hash: str,
     trail: DecisionTrail | None = None,
+    kind: str = "open",
 ) -> list[dict[str, Any]]:
     """Layout (shared grammar, :mod:`arc.slack.blocks`).
 
@@ -202,7 +227,7 @@ def _body(
     """
     net = p.structure.net_debit_credit
     blocks: list[dict[str, Any] | None] = [
-        B.header(title(p)),
+        B.header(title(p, kind)),
         B.summary(
             f"*{_net_word(net).capitalize()} {abs(net):.2f}*",
             f"max gain {_money(p.structure.max_gain)}",
@@ -216,7 +241,7 @@ def _body(
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*Legs*\n{_legs(p)}"}},
     ]
     pairs = [
-        ("Entry", _entry(p)),
+        ("Entry", _entry(p, decision)),
         ("Payoff (per contract)", _payoff(p)),
         (f"Position (x{p.sizing.contracts})", _position(p)),
         ("Breakevens", _breakevens(p)),
@@ -322,9 +347,9 @@ def _why(p: Proposal, t: DecisionTrail) -> list[dict[str, Any] | None]:
     return out
 
 
-def _fallback(p: Proposal, decision: GateDecision | None) -> str:
+def _fallback(p: Proposal, decision: GateDecision | None, kind: str = "open") -> str:
     verdict = "gate PASS" if decision is not None and decision.passed else "gate FAIL"
-    return f"{title(p)} • x{p.sizing.contracts} • {verdict}"
+    return f"{title(p, kind)} • x{p.sizing.contracts} • {verdict}"
 
 
 def render_card(
@@ -335,13 +360,14 @@ def render_card(
     actionable: bool,
     note: str = "",
     trail: DecisionTrail | None = None,
+    kind: str = "open",
 ) -> CardView:
     """The card as first posted.
 
     ``actionable`` adds the Approve / Reject buttons and the TTL line; an
     informational card (gate failed, no token) gets ``note`` instead.
     """
-    blocks = _body(proposal, decision, proposal_hash, trail)
+    blocks = _body(proposal, decision, proposal_hash, trail, kind)
     if actionable:
         expires = proposal.expires_at.astimezone(ET)
         blocks.append(
@@ -380,7 +406,7 @@ def render_card(
         )
     elif note:
         blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": B.esc(note)}]})
-    return CardView(text=_fallback(proposal, decision), blocks=blocks)
+    return CardView(text=_fallback(proposal, decision, kind), blocks=blocks)
 
 
 def render_resolved(
@@ -391,13 +417,14 @@ def render_resolved(
     outcome: str,
     at: _dt.datetime,
     trail: DecisionTrail | None = None,
+    kind: str = "open",
 ) -> CardView:
     """The card after it resolved: no buttons, one outcome line (``outcome`` is mrkdwn)."""
-    blocks = _body(proposal, decision, proposal_hash, trail)
+    blocks = _body(proposal, decision, proposal_hash, trail, kind)
     blocks.append(
         {
             "type": "context",
             "elements": [{"type": "mrkdwn", "text": f"{outcome} · {at.astimezone(ET):%H:%M} ET"}],
         }
     )
-    return CardView(text=f"{_fallback(proposal, decision)} — {outcome}", blocks=blocks)
+    return CardView(text=f"{_fallback(proposal, decision, kind)} — {outcome}", blocks=blocks)

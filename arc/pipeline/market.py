@@ -113,8 +113,15 @@ def next_earnings(
 # ---------------------------------------------------------------------------
 
 
-def _group_legs(positions: Sequence[BrokerPosition]) -> dict[str, list[Leg]]:
-    groups: dict[str, list[Leg]] = defaultdict(list)
+def _group_legs(
+    positions: Sequence[BrokerPosition],
+) -> dict[tuple[str, _dt.date], list[Leg]]:
+    """Open option legs grouped by ``(root, expiration)``: one structure per group.
+
+    Sentinel S-5: two dated structures on one underlying (e.g. weekly entries)
+    are valued separately; ``check_per_underlying`` sums their max loss.
+    """
+    groups: dict[tuple[str, _dt.date], list[Leg]] = defaultdict(list)
     for p in positions:
         if p.asset_class != "us_option":
             continue
@@ -124,7 +131,7 @@ def _group_legs(positions: Sequence[BrokerPosition]) -> dict[str, list[Leg]]:
             msg = f"position {p.symbol} has non-integral qty {p.qty}"
             raise PortfolioError(msg)
         short = p.side == "short" or p.qty < 0
-        groups[occ.root].append(
+        groups[(occ.root, occ.expiration)].append(
             Leg(
                 occ_symbol=occ.format(),
                 side=LegIntent.SHORT if short else LegIntent.LONG,
@@ -152,7 +159,7 @@ def build_portfolio(
     today = now.astimezone(ET).date()
     open_positions: list[Position] = []
     greeks = Greeks()
-    for root, legs in sorted(_group_legs(positions).items()):
+    for (root, _exp), legs in sorted(_group_legs(positions).items()):
         try:
             _, max_loss = max_gain_loss(legs)
         except Exception as exc:
@@ -201,7 +208,12 @@ def build_portfolio(
         (since,),
     ).fetchall()
     lots = [ClosedLot.from_row(dict(r)) for r in rows]
-    return Portfolio(positions=open_positions, greeks=greeks, closed_lots=lots)
+    held = {
+        leg.occ_symbol: leg.ratio if leg.side == LegIntent.LONG else -leg.ratio
+        for legs in _group_legs(positions).values()
+        for leg in legs
+    }
+    return Portfolio(positions=open_positions, greeks=greeks, closed_lots=lots, legs=held)
 
 
 # ---------------------------------------------------------------------------
