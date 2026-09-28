@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from arc.models import CatalystType, Stance
+
 # ---------------------------------------------------------------------------
 # Scout — surfaces Candidate objects from raw information sources
 # ---------------------------------------------------------------------------
@@ -17,8 +19,8 @@ class ScoutCandidateOut(BaseModel):
     """A single candidate surfaced by Scout."""
 
     ticker: str = Field(..., description="Underlying symbol, e.g. 'AAPL'")
-    stance: str = Field(..., description="Directional stance: bullish | bearish | neutral")
-    catalyst_type: str = Field(
+    stance: Stance = Field(..., description="Directional stance: bullish | bearish | neutral")
+    catalyst_type: CatalystType = Field(
         ...,
         description="One of: earnings, macro, sector, news, technical",
     )

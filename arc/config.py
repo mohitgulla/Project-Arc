@@ -238,6 +238,36 @@ class ArcSettings(BaseSettings):
         ),
     )
 
+    # -- Scout candidate pipeline (E4.2) -------------------------------------
+    scout_model: str = Field(
+        default="claude-haiku-4-5",
+        description="Cheap-tier model the Scout runs on via Hermes (PLAN §2.4).",
+    )
+    scout_provider: str = Field(
+        default="anthropic",
+        description="Hermes provider for the Scout model (D8: Anthropic subscription).",
+    )
+    scout_hermes_bin: str = Field(
+        default="hermes",
+        description="Hermes CLI executable used for one-shot Scout calls.",
+    )
+    scout_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
+        default=240,
+        description="Timeout for a single Scout LLM batch call.",
+    )
+    scout_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.6,
+        description="Candidates below this Scout confidence are dropped.",
+    )
+    scout_batch_size: Annotated[int, Field(ge=1, le=50)] = Field(
+        default=8,
+        description="Max RawDocs summarised per Scout LLM call.",
+    )
+    scout_max_doc_chars: Annotated[int, Field(ge=200)] = Field(
+        default=4000,
+        description="Per-document text budget in the Scout prompt (truncated beyond).",
+    )
+
     # -- Universe (D9) -------------------------------------------------------
     universe: list[str] = Field(
         default_factory=lambda: list(DEFAULT_UNIVERSE),

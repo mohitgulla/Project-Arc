@@ -99,6 +99,84 @@ class RawDocRepo:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    # -- Scout bookkeeping (E4.2) --------------------------------------------
+
+    def list_unscouted(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        """Docs the Scout has not summarised yet, oldest first."""
+        rows = self.conn.execute(
+            """SELECT * FROM raw_docs WHERE scouted_at IS NULL
+               ORDER BY published_at ASC, id ASC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_scouted(self, doc_ids: list[str], *, run_id: str) -> None:
+        """Mark docs as summarised so later runs skip them."""
+        now = _now_iso()
+        self.conn.executemany(
+            "UPDATE raw_docs SET scouted_at = ?, scout_run_id = ? WHERE id = ?",
+            [(now, run_id, d) for d in doc_ids],
+        )
+        self.conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Scout batch audit repository (E4.2)
+# ---------------------------------------------------------------------------
+
+
+class ScoutBatchRepo:
+    """Audit trail of every Scout LLM call.
+
+    Unstructured persona output (the verbatim response, including each
+    candidate's rationale) is stored here and nowhere else.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn = conn
+
+    def insert(
+        self,
+        *,
+        run_id: str,
+        model: str,
+        doc_ids: list[str],
+        prompt: str,
+        raw_response: str | None,
+        status: str,
+        error: str | None = None,
+        accepted: int = 0,
+        rejected: dict[str, int] | None = None,
+    ) -> str:
+        row_id = _uuid()
+        self.conn.execute(
+            """INSERT INTO scout_batches
+               (id, run_id, model, doc_ids, prompt_sha256, raw_response, status,
+                error, accepted, rejected, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                row_id,
+                run_id,
+                model,
+                json.dumps(doc_ids),
+                hashlib.sha256(prompt.encode()).hexdigest(),
+                raw_response,
+                status,
+                error,
+                accepted,
+                json.dumps(rejected or {}, sort_keys=True),
+                _now_iso(),
+            ),
+        )
+        self.conn.commit()
+        return row_id
+
+    def list_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM scout_batches WHERE run_id = ? ORDER BY created_at, id", (run_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
 
 # ---------------------------------------------------------------------------
 # Ingest cursor repository
