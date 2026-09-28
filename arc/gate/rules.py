@@ -53,6 +53,7 @@ __all__ = [
     "check_dte_window",
     "check_earnings_blackout",
     "check_greek_caps",
+    "check_greeks_present",
     "check_halt",
     "check_max_open_positions",
     "check_max_gain",
@@ -96,6 +97,7 @@ class RuleCode(StrEnum):
     NO_MAX_GAIN = "limit_no_max_gain"
     BAND = "price_band"
     CLOSE_MISMATCH = "close_mismatch"
+    MISSING_GREEKS = "missing_greeks"
     # D25 account profile (one code per sub-check; E7.4 reason codes reuse them)
     ACCOUNT_KIND = "account_profile_kind"
     ACCOUNT_NET_DEBIT = "account_profile_net_debit"
@@ -449,6 +451,22 @@ def check_greek_caps(
     return out
 
 
+def check_greeks_present(proposal: Proposal) -> list[Violation]:
+    """A multi-leg opening structure must carry computed Greeks (PLAN §6.8).
+
+    All-zero Δ/Γ/ν/Θ means re-pricing had no implied volatility, not a flat
+    position: the Greek caps would see no contribution and pass. Fail closed.
+    """
+    legs = proposal.structure.legs
+    g = proposal.structure.greeks
+    if len(legs) > 1 and g.delta == g.gamma == g.vega == g.theta == 0:
+        return _v(
+            RuleCode.MISSING_GREEKS,
+            f"{len(legs)}-leg structure has all-zero Greeks (no IV at re-pricing)",
+        )
+    return []
+
+
 _KIND_MAP: dict[ModelKind, StructureKind] = {
     ModelKind.LONG_CALL: StructureKind.LONG_CALL,
     ModelKind.LONG_PUT: StructureKind.LONG_PUT,
@@ -712,6 +730,7 @@ def evaluate(
     else:
         violations += _run("daily_loss", lambda: check_daily_loss(a, c))
         violations += _run("max_open_positions", lambda: check_max_open_positions(pf, c))
+        violations += _run("greeks_present", lambda: check_greeks_present(p))
         violations += _run("greek_caps", lambda: check_greek_caps(p, a, pf, c))
     violations += _run("approval_ttl", lambda: check_approval_ttl(p, c, now))
     violations += _run("data_freshness", lambda: check_data_freshness(p, a, m, c, now))

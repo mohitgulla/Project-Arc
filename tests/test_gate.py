@@ -45,7 +45,7 @@ from arc.models import (
     Structure,
 )
 from arc.models import StructureKind as MK
-from arc.structures import credit_vertical, debit_vertical, format_occ, long_call
+from arc.structures import MarketInputs, credit_vertical, debit_vertical, format_occ, long_call
 from arc.utils.calendar import ET
 
 EXP = dt.date(2026, 11, 20)
@@ -53,6 +53,8 @@ AS_OF = dt.date(2026, 10, 9)
 NOW = dt.datetime(2026, 10, 9, 10, 0, tzinfo=ET)
 LP = format_occ("SPY", EXP, "put", 565)
 SP = format_occ("SPY", EXP, "put", 570)
+# Re-pricing always carries IV on every leg (E5.2a), so the baseline has real Greeks.
+MARKET = MarketInputs(spot=580.0, r=0.04, ivs={LP: 0.20, SP: 0.19})
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +76,7 @@ def bull_put() -> Structure:
         long_strike=565,
         long_premium="1.25",
         as_of=AS_OF,
+        market=MARKET,
     )
 
 
@@ -433,8 +436,36 @@ def test_greek_caps() -> None:
 
 @given(delta=st.floats(min_value=-1000, max_value=1000, allow_nan=False))
 def test_delta_cap_boundary(delta: float) -> None:
-    out = R.check_greek_caps(make_proposal(), acct(), Portfolio(greeks=Greeks(delta=delta)), cfg())
+    flat = make_proposal(bull_put().model_copy(update={"greeks": Greeks()}))  # portfolio Δ only
+    out = R.check_greek_caps(flat, acct(), Portfolio(greeks=Greeks(delta=delta)), cfg())
     assert (out == []) == (abs(D(str(delta))) <= D("300"))
+
+
+# ---------------------------------------------------------------------------
+# Greeks present (E5.2a, PLAN §6.8)
+# ---------------------------------------------------------------------------
+
+
+def test_gate_rejects_zero_greeks_structure() -> None:
+    zero = make_proposal(bull_put().model_copy(update={"greeks": Greeks()}))
+    d = run(zero)
+    assert not d.passed
+    assert codes(d) == [RuleCode.MISSING_GREEKS]
+    assert R.check_greeks_present(make_proposal()) == []
+
+
+def test_greeks_present_single_leg_and_closing_exempt() -> None:
+    # One long leg: zero Greeks cannot hide Greek-cap exposure in a spread; exempt.
+    lc = make_proposal(long_call("SPY", EXP, strike=600, premium="3", as_of=AS_OF))
+    assert R.check_greeks_present(lc) == []
+    # Any single non-zero Greek counts as present.
+    only_theta = bull_put().model_copy(update={"greeks": Greeks(theta=-1.0)})
+    assert R.check_greeks_present(make_proposal(only_theta)) == []
+    # Closing proposals skip the opening-risk rules, including this one.
+    zero = make_proposal(bull_put().model_copy(update={"greeks": Greeks()}))
+    held = Portfolio(legs={SP: -2, LP: 2})
+    closing = evaluate(zero, acct(), held, cfg(), market=mkt(), now=NOW, closing=True)
+    assert RuleCode.MISSING_GREEKS not in codes(closing)
 
 
 # ---------------------------------------------------------------------------

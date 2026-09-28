@@ -30,6 +30,7 @@ from arc.gate import rules as R
 from arc.models import Leg, LegIntent, Proposal, QuantMetrics, Sizing, Structure
 from arc.models import StructureKind as MK
 from arc.structures import (
+    MarketInputs,
     credit_vertical,
     debit_vertical,
     format_occ,
@@ -52,6 +53,15 @@ def occ(kind: str, k: float) -> str:
     return format_occ("SPY", EXP, kind, k)
 
 
+# Re-pricing always carries IV on every leg (E5.2a), so fixtures have real Greeks
+# and the gate's missing_greeks rule does not mask the account-profile checks.
+MARKET = MarketInputs(
+    spot=575.0,
+    r=0.04,
+    ivs={occ(k, s): 0.2 for k in ("call", "put") for s in range(500, 655, 5)},
+)
+
+
 def bull_call() -> Structure:
     """Long 570C 6.00 / short 580C 2.00 -> debit 4.00, max loss $400, width $10."""
     return debit_vertical(
@@ -63,6 +73,7 @@ def bull_call() -> Structure:
         short_strike=580,
         short_premium="2.00",
         as_of=AS_OF,
+        market=MARKET,
     )
 
 
@@ -76,6 +87,7 @@ def bull_put() -> Structure:
         long_strike=565,
         long_premium="1.25",
         as_of=AS_OF,
+        market=MARKET,
     )
 
 
@@ -92,6 +104,7 @@ def condor() -> Structure:
         long_call_strike=605,
         long_call_premium="0.50",
         as_of=AS_OF,
+        market=MARKET,
     )
 
 

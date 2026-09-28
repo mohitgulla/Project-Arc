@@ -292,10 +292,19 @@ def price_structure(
     *,
     as_of: _dt.date,
     r: float,
+    require_iv: bool = True,
 ) -> PricedStructure:
     """Fetch the chain for the legs' expiry and rebuild the structure at current mids.
 
-    Raises ``LookupError`` if a leg is missing from the chain or has no usable quote.
+    Raises ``LookupError`` if a leg is missing from the chain, has no usable quote,
+    or (with ``require_iv``, the default) has no implied volatility (None, <= 0 or
+    NaN). Without an IV on every leg the structure's Greeks cannot be computed, and
+    all-zero Greeks would slip past the gate's Greek caps (PLAN §6.8: data quality
+    fails the proposal closed).
+
+    ``require_iv=False`` is for exits only: a close needs mids, not Greeks (the
+    gate skips Greek caps on closing proposals), and a missing IV must never stop
+    a position from being closed. Greeks are then left at zero when any IV is missing.
     """
     occs = [parse_occ(sym) for sym, _, _ in legs]
     root = occs[0].root
@@ -311,11 +320,19 @@ def price_structure(
         if c is None or c.bid is None or c.ask is None or c.mid is None:
             msg = f"no usable quote for {key}"
             raise LookupError(msg)
+        iv = c.implied_volatility
+        if require_iv and (iv is None or not float(iv) > 0):
+            msg = f"no implied volatility for {key} (iv={iv!r}); cannot compute Greeks"
+            raise LookupError(msg)
         used[key] = c
         out_legs.append(
             Leg(occ_symbol=key, side=side, ratio=ratio, premium=Decimal(str(round(c.mid, 4))))
         )
-    ivs = {k: float(c.implied_volatility) for k, c in used.items() if c.implied_volatility}
+    ivs = {
+        k: float(c.implied_volatility)
+        for k, c in used.items()
+        if c.implied_volatility and float(c.implied_volatility) > 0
+    }
     market_inputs = MarketInputs(spot=spot, r=r, ivs=ivs) if len(ivs) == len(used) else None
     return PricedStructure(
         analyze(out_legs, as_of=as_of, market=market_inputs),

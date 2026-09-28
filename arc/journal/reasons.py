@@ -137,6 +137,7 @@ class ReasonCode(StrEnum):
     GATE_RULE_ERROR = "gate:rule_error"
     GATE_PRICE_BAND = "gate:price_band"
     GATE_CLOSE_MISMATCH = "gate:close_mismatch"
+    GATE_MISSING_GREEKS = "gate:missing_greeks"
     GATE_ACCOUNT_KIND = "gate:account_profile_kind"
     GATE_ACCOUNT_NET_DEBIT = "gate:account_profile_net_debit"
     GATE_ACCOUNT_SHORT_LEG = "gate:account_profile_short_leg"

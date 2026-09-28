@@ -142,7 +142,11 @@ def propose_exits(
         st = Structure.model_validate_json(row["structure_json"])
         try:
             priced = price_structure(
-                market, exit_legs(st), as_of=today, r=settings.scanner_risk_free_rate
+                market,
+                exit_legs(st),
+                as_of=today,
+                r=settings.scanner_risk_free_rate,
+                require_iv=False,  # a close needs mids only; never block an exit on IV
             )
             mids = {k: float(c.mid) for k, c in priced.contracts.items() if c.mid is not None}
             state = evaluate_position(
