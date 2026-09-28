@@ -63,7 +63,7 @@ MARKET = MarketInputs(spot=580.0, r=0.04, ivs={LP: 0.20, SP: 0.19})
 
 
 def cfg(**kw: object) -> ArcSettings:
-    return ArcSettings(_env_file=None, **kw)  # type: ignore[call-arg]
+    return ArcSettings(_env_file=None, account_profile="margin", **kw)  # type: ignore[call-arg]
 
 
 def bull_put() -> Structure:

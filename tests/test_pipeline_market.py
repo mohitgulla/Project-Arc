@@ -249,7 +249,8 @@ def test_propose_skips_reprice_failed_on_missing_iv(monkeypatch: pytest.MonkeyPa
     from arc.routines.heartbeat import RecordingNotifier
 
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
-    cfg = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+    # margin profile: the fixture's SPY iron condor is only built there (cash_debit is D25 default)
+    cfg = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
     env = PipelineEnv.fixtures()
     leg = "SPY261030P00740000"  # a leg of the fixture's SPY iron condor
     # Only the propose-time re-pricing loses the IV: the scanner menu was built earlier.

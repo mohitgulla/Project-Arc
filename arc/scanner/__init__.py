@@ -2,7 +2,8 @@
 
 Public API:
     - :func:`scan` → :class:`ScanResult` of ranked :class:`ScanCandidate`
-    - :class:`ScanParams`, :class:`ScanStrategy`, :class:`RankBy`
+    - :class:`ScanParams`, :class:`ScanStrategy`, :class:`RankBy`,
+      :func:`profile_strategy_set` (D25 account profile)
     - Filters: :class:`LiquidityRules`, :func:`check_contract`, :func:`apply_filters`
     - IV: :func:`atm_iv`, :func:`iv_rank`, :func:`iv_percentile`, :func:`iv_stats`,
       :func:`load_iv_history`, :func:`record_iv`
@@ -26,17 +27,23 @@ from arc.scanner.iv import (
     record_iv,
 )
 from arc.scanner.scan import (
+    CREDIT_STRATEGIES,
+    DEBIT_STRATEGIES,
     RankBy,
     ScanCandidate,
     ScanParams,
     ScanResult,
     ScanStrategy,
+    profile_strategy_set,
     scan,
+    select_debit_short,
     select_shorts,
     select_wing,
 )
 
 __all__ = [
+    "CREDIT_STRATEGIES",
+    "DEBIT_STRATEGIES",
     "FilterReport",
     "IvStats",
     "LiquidityRules",
@@ -53,8 +60,10 @@ __all__ = [
     "iv_rank",
     "iv_stats",
     "load_iv_history",
+    "profile_strategy_set",
     "record_iv",
     "scan",
+    "select_debit_short",
     "select_shorts",
     "select_wing",
     "spread_ok",

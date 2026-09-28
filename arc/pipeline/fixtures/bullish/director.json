@@ -1,0 +1,15 @@
+{
+  "shortlist": [
+    {
+      "ticker": "SPY",
+      "rank": 1,
+      "thesis": "Fixture (bullish set): breadth improving into month end; lean long SPY with defined risk.",
+      "regime_context": "Fixture: uptrend, IV in the low teens (cheap to buy premium).",
+      "suggested_structure_type": "vertical_spread",
+      "stance": "bullish",
+      "confidence": 0.7
+    }
+  ],
+  "market_regime": "risk_on",
+  "session_notes": "Fixture Director reply, bullish set (offline run)."
+}

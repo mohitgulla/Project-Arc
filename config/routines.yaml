@@ -73,7 +73,16 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     channel: UC-m6zNItyoDk5lSykDlhE4Q
     ttl: 3h                     # catch-up window, same as the Scout it feeds
     context: {ttl: 1 session, supersede: latest}     # D14: next video supersedes
-  rss:      {every: 30m, window: "06:00-20:00", days: trading}
+  rss:                          # owner pick 2026-09-28: broad market, single names, macro
+    every: 30m
+    window: "06:00-20:00"
+    days: trading
+    feeds:
+      - https://feeds.content.dowjones.io/public/rss/RSSMarketsMain                 # WSJ Markets
+      - https://www.cnbc.com/id/20910258/device/rss/rss.html                          # CNBC Markets
+      - https://seekingalpha.com/market_currents.xml                                  # Seeking Alpha Market Currents
+      - https://www.nasdaq.com/feed/rssoutbound?category=Markets                      # Nasdaq Markets
+      - https://www.federalreserve.gov/feeds/press_all.xml                            # Federal Reserve press releases
   edgar:    {every: 15m, window: "06:00-20:00", days: trading}
   earnings: {schedule: ["06:00", "18:00"], days: trading, ttl: 6h}
 

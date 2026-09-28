@@ -46,6 +46,7 @@ __all__ = [
     "market_snapshot",
     "next_earnings",
     "price_structure",
+    "settled_cash",
 ]
 
 # Funds have no earnings reports. Every other underlying needs a known date
@@ -64,11 +65,25 @@ class PortfolioError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
+def settled_cash(info: AccountInfo) -> Decimal:
+    """Cash a no-margin (``cash_settled``) account can spend now (D25).
+
+    Alpaca reports no "settled cash" field. The most conservative of the fields it
+    does report is used: ``cash`` (includes unsettled proceeds on a cash account),
+    ``non_marginable_buying_power`` (cash not backed by margin) and
+    ``options_buying_power`` (what Alpaca will let options orders use), floored at 0.
+    A field Alpaca leaves out is skipped; ``cash`` is always present.
+    """
+    fields = [info.cash, info.non_marginable_buying_power, info.options_buying_power]
+    return max(min(v for v in fields if v is not None), Decimal(0))
+
+
 def account_snapshot(info: AccountInfo, now: _dt.datetime) -> AccountSnapshot:
     """Gate view of the account. The halt flag is stamped later by ``HaltSwitch.apply``."""
     return AccountSnapshot(
         equity=info.equity,
         last_equity=info.last_equity if info.last_equity is not None else Decimal(0),
+        settled_cash=settled_cash(info),
         as_of=now,
     )
 

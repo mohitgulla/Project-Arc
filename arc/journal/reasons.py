@@ -93,6 +93,9 @@ class ReasonCode(StrEnum):
     NOT_SHORTLISTED = "not_shortlisted"
     NO_CHAIN = "no_chain"
     QUANT_OMITTED = "quant_omitted"
+    # account profile (D25): the profile maps the stance to no structure
+    PROFILE_NO_NEUTRAL = "profile:no_neutral_structure"
+    PROFILE_NO_STRUCTURE = "profile:no_structure"
     # risk review
     RISK_ASSESSED = "risk_assessed"
     RISK_DECLINED = "risk_declined"
@@ -135,6 +138,10 @@ class ReasonCode(StrEnum):
     GATE_PRICE_BAND = "gate:price_band"
     GATE_CLOSE_MISMATCH = "gate:close_mismatch"
     GATE_MISSING_GREEKS = "gate:missing_greeks"
+    GATE_ACCOUNT_KIND = "gate:account_profile_kind"
+    GATE_ACCOUNT_NET_DEBIT = "gate:account_profile_net_debit"
+    GATE_ACCOUNT_SHORT_LEG = "gate:account_profile_short_leg"
+    GATE_ACCOUNT_CASH = "gate:account_profile_settled_cash"
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"

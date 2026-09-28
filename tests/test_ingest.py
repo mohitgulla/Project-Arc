@@ -177,7 +177,10 @@ class TestRSSConnector:
         )
         parsed = fp.parse(xml)
 
-        with mock.patch("arc.ingest.rss.feedparser") as mock_fp:
+        with (
+            mock.patch("arc.ingest.rss.feedparser") as mock_fp,
+            mock.patch("arc.ingest.rss._download", return_value=b""),
+        ):
             mock_fp.parse.return_value = parsed
             docs = fetch_rss(db, settings)
 
@@ -199,13 +202,42 @@ class TestRSSConnector:
         )
         parsed = fp.parse(xml)
 
-        with mock.patch("arc.ingest.rss.feedparser") as mock_fp:
+        with (
+            mock.patch("arc.ingest.rss.feedparser") as mock_fp,
+            mock.patch("arc.ingest.rss._download", return_value=b""),
+        ):
             mock_fp.parse.return_value = parsed
             docs1 = fetch_rss(db, settings)
             docs2 = fetch_rss(db, settings)
 
         assert len(docs1) == 1
         assert len(docs2) == 0  # incremental: cursor advanced past this entry
+
+    def test_dead_feed_is_skipped_not_fatal(
+        self, db: sqlite3.Connection, settings: ArcSettings
+    ) -> None:
+        import requests
+
+        from arc.ingest.rss import fetch_rss
+
+        good = _make_rss_response(
+            [{"link": "https://example.com/ok", "pubDate": "Wed, 01 Jan 2026 12:00:00 GMT"}]
+        ).encode()
+        two = settings.model_copy(
+            update={"ingest_rss_feeds": ["https://dead.example/feed", "https://ok.example/feed"]}
+        )
+
+        def fake_get(url: str, timeout: float, headers: dict[str, str]) -> mock.Mock:
+            assert timeout == two.ingest_rss_timeout_seconds
+            assert "Mozilla/5.0" in headers["User-Agent"]
+            if "dead" in url:
+                raise requests.ConnectionError("connection reset by peer")
+            return mock.Mock(content=good, raise_for_status=lambda: None)
+
+        with mock.patch("arc.ingest.rss.requests.get", side_effect=fake_get):
+            docs = fetch_rss(db, two)
+
+        assert [d.url for d in docs] == ["https://example.com/ok"]
 
     def test_no_feeds_configured(self, db: sqlite3.Connection) -> None:
         from arc.ingest.rss import fetch_rss

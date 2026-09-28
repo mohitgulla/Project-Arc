@@ -27,6 +27,7 @@ class AccountInfo(BaseModel):
     cash: Decimal
     currency: str = "USD"
     options_buying_power: Decimal | None = None
+    non_marginable_buying_power: Decimal | None = None
     options_approved_level: int | None = None
     last_equity: Decimal | None = Field(
         None, description="Equity at the previous session close (gate daily-loss basis)"
