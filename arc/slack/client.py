@@ -113,6 +113,17 @@ class ArcSlackClient:
         log.info("slack.update", channel=channel, ts=ts)
         return resp
 
+    def ephemeral(
+        self, *, channel: str, user: str, text: str, thread_ts: str | None = None
+    ) -> SlackResponse:
+        """Post a message only *user* can see (e.g. a refused approval click)."""
+        kwargs: dict[str, Any] = {"channel": channel, "user": user, "text": text}
+        if thread_ts:
+            kwargs["thread_ts"] = thread_ts
+        resp = self._client.chat_postEphemeral(**kwargs)
+        log.info("slack.ephemeral", channel=channel, user=user)
+        return resp
+
     # -- convenience methods for Arc channels ----------------------------
 
     def post_card_thread(

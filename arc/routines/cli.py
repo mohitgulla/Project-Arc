@@ -128,6 +128,28 @@ def _dispatcher(
     return _Dispatcher(conn, _load(args), locks=locks, notifier=notifier)
 
 
+def _approval_sweep(
+    args: argparse.Namespace, conn: sqlite3.Connection, now: _dt.datetime
+) -> dict[str, list[str]] | None:
+    """Post new proposal cards and expire overdue ones (E6.1). Never fails the tick.
+
+    With ``--no-slack`` only the TTL is enforced; cards wait for a tick that can post.
+    """
+    from arc.approvals.cli import make_service
+    from arc.approvals.service import SweepReport
+    from arc.config import get_settings
+
+    try:
+        no_slack = bool(getattr(args, "no_slack", False))
+        svc = make_service(conn, get_settings(), slack=not no_slack)
+        if no_slack:
+            return SweepReport([], [], svc.expire_due(now)).as_json()
+        return svc.sweep(now).as_json()
+    except Exception as exc:  # noqa: BLE001 - logged; the next tick retries
+        structlog.get_logger(__name__).error("approvals.sweep_failed", error=str(exc))
+        return None
+
+
 def _outcome_json(o: Outcome) -> dict[str, object]:
     return {
         "job": o.job,
@@ -197,6 +219,7 @@ def run_routines(args: argparse.Namespace) -> int:
         conn = _conn(args, memory=args.dry_run and args.db is None)
         disp = _dispatcher(args, conn, dry=args.dry_run)
         report = disp.tick(now, dry_run=args.dry_run, since=since)
+        approvals = None if args.dry_run else _approval_sweep(args, conn, report.now)
         if args.json:
             _write(
                 json.dumps(
@@ -206,12 +229,19 @@ def run_routines(args: argparse.Namespace) -> int:
                         "halted": report.halted,
                         "expired": report.expired,
                         "outcomes": [_outcome_json(o) for o in report.outcomes],
+                        "approvals": approvals,
                     },
                     indent=2,
                 )
             )
         else:
             _write("\n".join(report.lines()))
+            if approvals:
+                _write(
+                    f"approvals: {len(approvals['published'])} card(s) posted, "
+                    f"{len(approvals['auto_approved'])} auto-approved, "
+                    f"{len(approvals['expired'])} expired"
+                )
         return 1 if any(o.status == "failed" for o in report.outcomes) else 0
 
     if cmd == "run":

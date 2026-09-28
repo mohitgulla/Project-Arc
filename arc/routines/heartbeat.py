@@ -63,6 +63,25 @@ class RecordingNotifier:
         self.posts.append((day, text))
 
 
+def day_thread_ts(conn: sqlite3.Connection, client: object, day: _dt.date) -> str:
+    """``ts`` of the ``📅 <date> · session`` root in #arc-investor, created on first use.
+
+    Shared by heartbeats and proposal cards (E6.1) so both land in one thread.
+    """
+    from arc.slack.client import ArcSlackClient
+
+    state = RoutineStateRepo(conn)
+    key = f"day_thread:{day.isoformat()}"
+    ts = state.get(key)
+    if ts:
+        return ts
+    assert isinstance(client, ArcSlackClient)
+    resp = client.post_daily_session(day)
+    ts = str(resp["ts"])
+    state.set(key, ts)
+    return ts
+
+
 class SlackDayThreadNotifier:
     """Posts into the ``📅 <date> · session`` thread in #arc-investor.
 
@@ -73,21 +92,11 @@ class SlackDayThreadNotifier:
     def __init__(self, conn: sqlite3.Connection, client: object | None = None) -> None:
         from arc.slack.client import ArcSlackClient
 
-        self._state = RoutineStateRepo(conn)
+        self._conn = conn
         self._client = client if client is not None else ArcSlackClient()
 
     def _thread_ts(self, day: _dt.date) -> str:
-        from arc.slack.client import ArcSlackClient
-
-        key = f"day_thread:{day.isoformat()}"
-        ts = self._state.get(key)
-        if ts:
-            return ts
-        assert isinstance(self._client, ArcSlackClient)
-        resp = self._client.post_daily_session(day)
-        ts = str(resp["ts"])
-        self._state.set(key, ts)
-        return ts
+        return day_thread_ts(self._conn, self._client, day)
 
     def post(self, day: _dt.date, text: str) -> None:
         from arc.slack.client import CHANNEL_ARC_INVESTOR, ArcSlackClient
