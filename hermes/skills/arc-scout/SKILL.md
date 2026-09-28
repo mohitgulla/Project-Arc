@@ -6,7 +6,7 @@ description: "Arc Scout (Information Retrieval) persona"
 # Scout (Information Retrieval)
 
 **Slack label:** [Scout]
-**Model tier:** cheap/fallback
+**Model tier:** cheap
 
 ## Role
 
@@ -35,8 +35,8 @@ All output MUST be valid JSON matching the schema. No prose outside the JSON obj
 ## Pipeline (E4.2)
 
 `arc.ingest.scout.run_scout()` batches unscouted `raw_docs` into this prompt and runs it through
-Hermes one-shot (`hermes -z`, cheap tier: `ARC_SCOUT_MODEL`, default `claude-haiku-4-5`, provider
-`anthropic`, `--ignore-rules`, inert toolset). The reply is then filtered with no LLM involved:
+Hermes one-shot (`hermes -z`, cheap tier: model from `config/llm_routing.yaml`, default
+`anthropic/claude-opus-5`, `--ignore-rules`, inert toolset). The reply is then filtered with no LLM involved:
 
 - schema: must validate as `ScoutCandidateOut`
 - ticker must be in `ARC_UNIVERSE`

@@ -16,6 +16,7 @@ def test_arc_package_imports() -> None:
         "arc.utils.calendar",
         "arc.cli",
         "arc.models",
+        "arc.llm_routing",
         "arc.store",
         "arc.data",
         "arc.data.history",

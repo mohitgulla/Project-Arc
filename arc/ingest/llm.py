@@ -1,7 +1,8 @@
 """LLM backends for the Scout persona.
 
-The Scout runs on the cheap model tier through Hermes (PLAN §2.4, D8).
-``HermesScoutLLM`` shells out to ``hermes -z`` (one-shot mode) with a
+The Scout runs on the cheap model tier through Hermes (PLAN §2.4, D8); the
+model for each persona comes from ``config/llm_routing.yaml`` via
+:mod:`arc.llm_routing`. ``HermesScoutLLM`` shells out to ``hermes -z`` (one-shot mode) with a
 pinned model/provider, no project rules and a minimal toolset, so the
 persona has no broker access and no repository context.
 
@@ -108,12 +109,22 @@ class HermesScoutLLM:
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run
 
     @classmethod
-    def from_settings(cls, settings: ArcSettings) -> HermesScoutLLM:
+    def from_settings(
+        cls,
+        settings: ArcSettings,
+        persona: str = "scout",
+        *,
+        timeout_seconds: int | None = None,
+    ) -> HermesScoutLLM:
+        """Backend for *persona*; its model comes from ``config/llm_routing.yaml`` (E8.1)."""
+        from arc.llm_routing import resolve
+
+        route = resolve(persona, settings)
         return cls(
-            model=settings.scout_model,
-            provider=settings.scout_provider,
+            model=route.model,
+            provider=route.provider,
             hermes_bin=settings.scout_hermes_bin,
-            timeout_seconds=settings.scout_timeout_seconds,
+            timeout_seconds=timeout_seconds or settings.scout_timeout_seconds,
         )
 
     def command(self, prompt: str, usage_file: Path) -> list[str]:

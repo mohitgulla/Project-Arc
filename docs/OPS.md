@@ -1,6 +1,6 @@
 # Project Arc — Operations Guide
 
-**Status:** v0.1 · 2026-09-27 · maintained by: Hermes workers (E8 cards)
+**Status:** v0.2 · 2026-09-27 · maintained by: Hermes workers (E8 cards)
 
 ---
 
@@ -11,94 +11,77 @@
 | Setting | Value |
 |---------|-------|
 | Provider | Anthropic (subscription) |
-| Model | `claude-opus-4.6` (via `claude-subscription-directsdk-experimental` plugin) |
+| Default model | `anthropic/claude-opus-5.5` |
 | Auth | `CLAUDE_CODE_OAUTH_TOKEN` in `~/.hermes/.env` |
-| Hermes config | `model.default: anthropic/claude-opus-4.6`, `model.provider: auto` |
+| Hermes config | `model.default: anthropic/claude-opus-5.5`, `model.provider: auto` |
 
 Decision D8 (PLAN.md §0): Anthropic Subscription (Claude Opus 5.5) for all
-implementation/execution tasks.
+implementation/execution tasks. Both persona tiers (§2) also run on the
+subscription.
 
 ### 1.2 Fallback provider
 
-**Status: NOT CONFIGURED — awaiting owner decision.**
-
-Decision D8 deferred fallback to E8.1. The owner must choose a fallback
-provider before this section can be completed. Options considered:
-
-| Option | Cost | Pros | Cons |
-|--------|------|------|------|
-| OpenRouter (pay-as-you-go) | ~$15/1M tok (Sonnet) | 200+ models, single key, auto-routing | Adds a billing account |
-| Nous Portal (OAuth) | Free tier / subscription | Free, built-in to Hermes | Model availability varies |
-| Google Gemini (API key) | Free tier available | Large context, fast | Different tool-calling behavior |
-| DeepSeek | ~$2/1M tok | Cheap, strong coding | China-hosted, latency |
-
-Once decided, configure in `~/.hermes/config.yaml`:
-
-```yaml
-fallback_providers:
-  - provider: <chosen-provider>
-    model: <chosen-model>
-```
-
-Verify with: `hermes fallback list`
-
-### 1.3 Auxiliary task providers
-
-Hermes resolves auxiliary tasks (vision, compression, title generation) via
-auto-detection. No custom auxiliary configuration is needed unless the primary
-provider hits capacity. The auto-detection chain is:
-
-    Main provider → fallback_providers → OpenRouter → Nous Portal → give up
+TODO: Fallback provider: not configured; wire in later — D8.
 
 ---
 
 ## 2. Per-Persona Model Tiers
 
-PLAN.md §2.4 defines two model tiers for Arc personas:
+PLAN.md §2.4 / D8 define two model tiers, both on the Anthropic subscription:
 
-| Tier | Personas | Model | Rationale |
-|------|----------|-------|-----------|
-| **Frontier** | Director, Quant, Risk | `claude-opus-4.6` (primary) | Complex reasoning, multi-step analysis, structured output |
-| **Cheap** | Scout, Execution, Auditor | TBD (fallback provider model) | High-volume, simpler tasks, cost optimization |
+| Tier | Personas | Model |
+|------|----------|-------|
+| **frontier** | Director, Quant, Risk | `anthropic/claude-opus-5.5` |
+| **cheap** | Scout, Investor, Auditor | `anthropic/claude-opus-5` |
 
-### 2.1 Routing mechanism
+### 2.1 Where it is configured (one place)
 
-Per-persona model routing is implemented via Hermes `kanban_create` model
-overrides. When the pipeline runner (E5.2) spawns persona tasks, it sets:
-
-```python
-# Frontier tier (Director, Quant, Risk) — use primary provider
-kanban_create(
-    title="...",
-    assignee="default",
-    # model and provider omitted → uses profile default (claude-opus-4.6)
-)
-
-# Cheap tier (Scout, Execution, Auditor) — use fallback/cheap model
-kanban_create(
-    title="...",
-    assignee="default",
-    model="<cheap-model>",          # e.g. "anthropic/claude-sonnet-4" or fallback model
-    provider="<cheap-provider>",    # e.g. "anthropic" or fallback provider
-)
-```
-
-### 2.2 Persona skill model hints
-
-Each persona skill (E5.1) will declare its model tier in the SKILL.md
-frontmatter metadata, so the pipeline runner can resolve the correct model:
+`config/llm_routing.yaml` is the only place a persona's or a tier's model is
+set:
 
 ```yaml
-# hermes/skills/arc-scout/SKILL.md frontmatter
-metadata:
-  arc:
-    persona: scout
-    model_tier: cheap    # or "frontier"
+tiers:
+  frontier: {model: anthropic/claude-opus-5.5}
+  cheap:    {model: anthropic/claude-opus-5}
+personas:
+  director: frontier
+  quant:    frontier
+  risk:     frontier
+  scout:    cheap
+  investor: cheap
+  auditor:  cheap
 ```
 
-### 2.3 Cost estimation (per pipeline run)
+- Change a whole tier: edit its `model`.
+- Move one persona: change its tier name under `personas`.
+- Model ids are `<provider>/<model>`; the prefix becomes `hermes -z --provider`.
+- Use a different file (e.g. for an experiment) with `ARC_LLM_ROUTING_FILE`.
 
-A single pipeline run (scan → propose → gate) invokes roughly:
+The file is validated by `arc.llm_routing` (pydantic, `extra="forbid"`):
+every §2.4 persona must be listed, every tier it names must exist, and every
+model must be provider-qualified. `tests/test_llm_routing.py` checks that each
+persona resolves to the model above and that the persona SKILL.md
+`**Model tier:**` lines agree with the config.
+
+### 2.2 How call sites use it
+
+Personas run as Hermes one-shots (`hermes -z -m <model> --provider <provider>
+--ignore-rules -t todo`) via `arc.ingest.llm.HermesScoutLLM`. No call site
+names a model:
+
+- Scout (`arc ingest` / `run_scout`): `HermesScoutLLM.from_settings(settings)`
+  → persona `scout`.
+- Director / Quant / Risk (`arc propose`, `PipelineEnv.live`):
+  `HermesScoutLLM.from_settings(settings, persona, timeout_seconds=...)`, one
+  backend per persona.
+- Investor / Auditor: use `arc.llm_routing.resolve("investor"|"auditor", settings)`
+  (or `HermesScoutLLM.from_settings(settings, "<persona>")`) when their
+  runners land.
+
+The model that actually answered is read back from the Hermes usage file and
+stored with each persona reply for audit.
+
+### 2.3 Cost estimation (per pipeline run)
 
 | Persona | Calls/run | Tokens/call (est.) | Tier |
 |---------|-----------|-------------------|------|
@@ -106,26 +89,11 @@ A single pipeline run (scan → propose → gate) invokes roughly:
 | Director | 1 | ~4K in / ~2K out | frontier |
 | Quant | 1-3 | ~4K in / ~3K out | frontier |
 | Risk | 1 | ~3K in / ~2K out | frontier |
-| Execution | 0-2 | ~1K in / ~500 out | cheap |
+| Investor | 0-2 | ~1K in / ~500 out | cheap |
 | Auditor | 1 | ~2K in / ~1K out | cheap |
 
-With the primary provider (Anthropic subscription), all tiers use the
-subscription quota. Once a fallback/cheap provider is configured, cheap-tier
-personas route there to conserve subscription capacity for frontier tasks.
-
-### 2.4 Delegation model override
-
-For subagent delegation within a session, Hermes supports a global cheap-model
-pin in `config.yaml`:
-
-```yaml
-delegation:
-  model: "<cheap-model>"       # all subagents use this unless overridden per-card
-  provider: "<cheap-provider>"
-```
-
-This is useful for Scout fan-outs (E4) where multiple parallel subagents
-process RSS/EDGAR/earnings sources.
+All calls draw on the subscription quota; the cheap tier keeps high-volume
+personas off the frontier model.
 
 ---
 
@@ -141,7 +109,6 @@ process RSS/EDGAR/earnings sources.
 | `ALPACA_API_KEY` | Alpaca paper trading | Yes |
 | `ALPACA_SECRET_KEY` | Alpaca paper trading | Yes |
 | `ALPACA_BASE_URL` | Alpaca API endpoint | Yes |
-| `<FALLBACK_PROVIDER_KEY>` | Fallback LLM provider | **No — pending decision** |
 
 ### 3.2 Environment switch
 
@@ -156,17 +123,16 @@ Never set `ARC_ENV=live` in Phase 1.
 
 | Section | Key | Value |
 |---------|-----|-------|
-| `model.default` | Primary model | `anthropic/claude-opus-4.6` |
+| `model.default` | Primary model | `anthropic/claude-opus-5.5` |
 | `model.provider` | Provider resolution | `auto` (resolves to Anthropic) |
 | `kanban.review_dispatch` | Auto-dispatch reviewers | `true` |
-| `fallback_providers` | Fallback chain | **Not configured** |
 | `delegation.max_iterations` | Subagent turn cap | `250` |
 
 ### 4.2 Profiles
 
 Phase 1 uses a single `default` profile. A dedicated `arc-worker` profile is
-deferred (PLAN.md §2.6). Per-persona routing uses model overrides on kanban
-cards, not separate profiles.
+deferred (PLAN.md §2.6). Per-persona routing is done by Arc itself
+(`config/llm_routing.yaml`), not by separate Hermes profiles.
 
 ---
 
@@ -177,5 +143,6 @@ Placeholder — populated by card E8.2.
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.
-See PLAN.md §2.4 for target: Scout/Execution/Auditor tiers routed locally
-via llama.cpp or omlx server.
+See PLAN.md §2.4 for target: Scout/Investor/Auditor (cheap tier) routed
+locally via llama.cpp or omlx server; that is a `tiers.cheap.model` edit in
+`config/llm_routing.yaml` once Hermes has a local provider.

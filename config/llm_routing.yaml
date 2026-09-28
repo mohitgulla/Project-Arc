@@ -1,0 +1,24 @@
+# Per-persona LLM routing (PLAN §2.4, D8). Validated by arc.llm_routing.
+#
+# This file is the ONE place to change which model a persona runs on:
+# - change a whole tier: edit its `model` under `tiers`
+# - move one persona to another tier: edit its entry under `personas`
+# Every §2.4 persona must be listed, and every tier it names must exist.
+#
+# Model ids are `<provider>/<model>`; the provider prefix is passed to
+# `hermes -z --provider`. Both tiers run on the Anthropic subscription (D8).
+# Fallback provider: not configured; wire in later (D8, docs/OPS.md §1.2).
+
+tiers:
+  frontier:
+    model: anthropic/claude-opus-5.5
+  cheap:
+    model: anthropic/claude-opus-5
+
+personas:
+  director: frontier
+  quant:    frontier
+  risk:     frontier
+  scout:    cheap
+  investor: cheap
+  auditor:  cheap
