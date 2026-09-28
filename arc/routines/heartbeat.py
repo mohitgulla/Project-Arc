@@ -194,7 +194,9 @@ class Heartbeats:
             entry["new_docs"] = int(str(entry.get("new_docs") or 0)) + new_docs
         self._state.set(_PENDING_KEY, json.dumps(items[-_MAX_PENDING_JOBS:]))
 
-    def summary(self, now: _dt.datetime, job: str, text: str, *, blocks: Blocks | None = None) -> None:
+    def summary(
+        self, now: _dt.datetime, job: str, text: str, *, blocks: Blocks | None = None
+    ) -> None:
         """Post a run's heartbeat.
 
         ``text`` is the one-line summary and always the fallback text (what a

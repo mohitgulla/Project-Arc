@@ -86,13 +86,13 @@ personas:
     days: trading
     halt_exempt: true           # keeps running under !halt
     ttl: 6h
+    notify: card
   scorecard:                    # weekly paper scorecard to #arc-investor (handler: E7.3)
     schedule: ["16:45"]
     days: [fri]
     llm: false
     halt_exempt: true
     ttl: 6h
-    notify: card
   investor:
     trigger: approval           # event-driven, never scheduled
     notify: card
