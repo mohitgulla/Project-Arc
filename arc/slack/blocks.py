@@ -17,14 +17,17 @@ Pure functions: dicts in, dicts out. Untrusted persona text is escaped here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from arc.slack.personas import Persona, persona_label
 
 __all__ = [
     "HEADER_MAX",
+    "MAX_BLOCKS",
     "SECTION_MAX",
     "Block",
+    "CardView",
     "bullets",
     "clip",
     "divider",
@@ -42,6 +45,15 @@ HEADER_MAX = 150  # Slack header plain_text limit
 SECTION_MAX = 2900  # Slack caps section text at 3000 chars
 _FIELD_MAX = 1900  # Slack caps a field at 2000 chars
 _MAX_FIELDS = 10  # Slack allows 10 fields per section
+MAX_BLOCKS = 50  # Slack allows 50 blocks per message
+
+
+@dataclass(frozen=True)
+class CardView:
+    """What gets posted: plain fallback text (notifications) + Block Kit blocks."""
+
+    text: str
+    blocks: list[Block]
 
 
 def esc(text: str) -> str:

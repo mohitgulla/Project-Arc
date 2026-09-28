@@ -21,7 +21,9 @@ Job keys (``sources.<name>`` / ``personas.<name>``):
 - ``reads: [kind, ...]`` — kinds included in the input snapshot (default: all).
 - ``handler: "module:function"`` — explicit handler; default resolves by job name.
 - ``halt_exempt: true`` — persona keeps running while halted (Auditor only).
-- ``notify: quiet | summary`` — heartbeat policy (sources default quiet).
+- ``notify: quiet | summary | card`` — heartbeat policy: sources default
+  ``quiet`` (folded into the next persona post), personas and chain steps
+  default ``card`` (E5.5 digest card; the one-liner when a job has no card).
 - ``llm: true|false`` — whether the job takes the global LLM lock (default:
   personas and chain steps yes, sources no).
 - Any other key (e.g. ``only_for: open_positions``, ``channel: <url>``) is kept
@@ -95,6 +97,7 @@ class Weekday(enum.StrEnum):
 class Notify(enum.StrEnum):
     QUIET = "quiet"  # summarised into the next persona heartbeat
     SUMMARY = "summary"  # one-line heartbeat per run
+    CARD = "card"  # E5.5 digest card (Block Kit); one-liner if the job has no card
 
 
 class JobKind(enum.StrEnum):

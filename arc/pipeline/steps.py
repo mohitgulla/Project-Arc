@@ -98,6 +98,8 @@ from arc.pipeline.store import PersonaCallRepo
 from arc.routines.handlers import JobResult
 from arc.routines.runs import RoutineRunRepo
 from arc.sizing import size_contracts
+from arc.slack.blocks import esc
+from arc.slack.digests import director_card, quant_card, risk_card
 from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
@@ -394,6 +396,24 @@ def _filter_shortlist(
     return kept, dropped, rejected
 
 
+def _scout_evidence(snapshot: ContextSnapshot) -> dict[str, str]:
+    """ticker -> one display line of the Scout data behind a pick (digest card only)."""
+    out: dict[str, str] = {}
+    for e in snapshot.of_kind("candidate"):
+        p = e.payload
+        when = ""
+        if p.get("catalyst_date"):
+            try:
+                when = f" {_dt.datetime.fromisoformat(str(p['catalyst_date'])):%b %d}"
+            except ValueError:
+                when = ""
+        out[e.subject] = esc(
+            f"Scout {p.get('stance', '?')} · {p.get('catalyst_type', '?')} catalyst{when} · "
+            f"{float(p.get('confidence', 0)):.0%} confidence"
+        )
+    return out
+
+
 def _director_rules(cands: Mapping[str, Stance], limit: int) -> list[str]:
     return [
         f"shortlist tickers MUST come from the candidates above: {', '.join(sorted(cands))}.",
@@ -497,18 +517,25 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             reason_text="candidate left out of the Director's shortlist",
             persona_call_id=call_id,
         )
-    ctx.write(
-        "shortlist",
-        SESSION_SUBJECT,
-        ShortlistPayload(
-            shortlist=kept, market_regime=out.market_regime, session_notes=out.session_notes
-        ),
+    payload = ShortlistPayload(
+        shortlist=kept, market_regime=out.market_regime, session_notes=out.session_notes
     )
+    ctx.write("shortlist", SESSION_SUBJECT, payload)
     names = ", ".join(f"{i.ticker} ({i.stance})" for i in kept) or "none"
+    drop_items = [(i.ticker.strip().upper() or "?", reason) for i, reason in rejected]
+    not_picked = [(t, "not_picked") for t in sorted(set(cands) - ranked)]
     return JobResult(
         summary=f"{len(cands)} candidates → shortlist: {names}"
         + (f"; dropped {dict(dropped)}" if dropped else ""),
         metrics={"shortlist": len(kept), "regime_written": len(regimes), **dropped},
+        card=director_card(
+            payload,
+            candidates=len(cands),
+            dropped=[*drop_items, *not_picked],
+            evidence=_scout_evidence(snap),
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+        ),
     )
 
 
@@ -841,11 +868,8 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
             payload=s.model_dump(mode="json"),
         )
     journal_no_chain(call_id)
-    ctx.write(
-        "structures",
-        SESSION_SUBJECT,
-        StructuresPayload(structures=kept, analysis_notes=out.analysis_notes),
-    )
+    payload = StructuresPayload(structures=kept, analysis_notes=out.analysis_notes)
+    ctx.write("structures", SESSION_SUBJECT, payload)
     desc = "; ".join(
         f"{s.ticker} {s.structure_type} "
         f"{'/'.join(f'{leg.strike:g}' for leg in s.legs)} {s.legs[0].expiry} "
@@ -857,6 +881,14 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         + (f"; dropped {dict(dropped)}" if dropped else "")
         + (f"; no chain: {', '.join(no_chain)}" if no_chain else ""),
         metrics={"structures": len(kept), "no_chain": len(no_chain), **dropped},
+        card=quant_card(
+            payload,
+            dropped=dropped,
+            dropped_items=[(q.ticker.strip().upper() or "?", r) for q, r in rejected],
+            no_chain=no_chain,
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+        ),
     )
 
 
@@ -994,15 +1026,26 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
             reason_text=f"Risk returned no assessment for {t} {k}",
             persona_call_id=call_id,
         )
-    ctx.write(
-        "risk_review",
-        SESSION_SUBJECT,
-        RiskReviewPayload(
-            assessments=kept,
-            portfolio_summary=out.portfolio_summary,
-            advisory_notes=out.advisory_notes,
-        ),
+    payload = RiskReviewPayload(
+        assessments=kept,
+        portfolio_summary=out.portfolio_summary,
+        advisory_notes=out.advisory_notes,
     )
+    ctx.write("risk_review", SESSION_SUBJECT, payload)
+    by_key = {(s.ticker, s.structure_type): s for s in structures.structures}
+    sized = {
+        (a.ticker, a.structure_type): size_contracts(
+            suggestion=a.sizing_suggestion,
+            max_loss_per_contract=(
+                None
+                if by_key[(a.ticker, a.structure_type)].max_loss is None
+                else Decimal(str(by_key[(a.ticker, a.structure_type)].max_loss))
+            ),
+            equity=info.equity,
+            cap_pct=settings.max_alloc_pct,
+        )
+        for a in kept
+    }
     desc = "; ".join(f"{a.ticker} {a.risk_rating}, suggests {a.sizing_suggestion}" for a in kept)
     missing_s = [f"{t} {k}" for t, k in missing]
     return JobResult(
@@ -1010,6 +1053,20 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         + (f"; not assessed: {', '.join(missing_s)}" if missing_s else "")
         + (f"; dropped {dict(dropped)}" if dropped else ""),
         metrics={"assessments": len(kept), "not_assessed": len(missing_s), **dropped},
+        card=risk_card(
+            payload,
+            sized=sized,
+            max_gain={k: s.max_gain for k, s in by_key.items()},
+            cap_pct=settings.max_alloc_pct,
+            dropped=dropped,
+            dropped_items=[
+                (f"{a.ticker.strip().upper()} {a.structure_type.strip().lower()}", r)
+                for a, r in rejected
+            ],
+            not_assessed=missing_s,
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+        ),
     )
 
 

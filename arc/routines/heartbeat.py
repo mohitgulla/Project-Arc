@@ -1,14 +1,18 @@
-"""Heartbeats for routine runs: one line per job in the #arc-investor day thread.
+"""Heartbeats for routine runs: one post per job in the #arc-investor day thread.
 
-Policy (E5.4 §3, tuned in E5.3):
+Policy (E5.4 §3, tuned in E5.3, cards in E5.5):
 
-- Persona jobs post a one-line summary (``notify: summary``, the default).
+- Persona jobs post a digest card (``notify: card``, the default): the Block
+  Kit layout from :mod:`arc.slack.digests`, with the old one-line summary kept
+  as the notification fallback text. A job whose handler returns no card
+  falls back to the one-liner.
+- ``notify: summary`` posts the one-liner only.
 - Source jobs are quiet by default: their summaries queue in ``routine_state``
   and are folded into the next persona heartbeat, so the day thread is not
   spammed every 15 minutes. Repeated runs of one source fold into a single
   entry (run count, total new docs, last summary).
-- Failures always alert, whatever ``notify`` says. A handler can also raise an
-  immediate notice (e.g. the intraday monitor tripping the daily-loss halt).
+- Failures always alert (one-line format), whatever ``notify`` says. A handler
+  can also raise an immediate notice (e.g. the intraday monitor tripping the daily-loss halt).
 - Day thread: a post goes to today's session thread while today is a trading
   session and it is before ``heartbeat.day_rollover`` (default 20:00 ET).
   Later posts (the 22:00 Scout) and weekend/holiday posts go to the **next**
@@ -21,7 +25,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
 
@@ -32,6 +36,8 @@ if TYPE_CHECKING:
     import sqlite3
 
 log = structlog.get_logger(__name__)
+
+Blocks = list[dict[str, Any]]
 
 _PENDING_KEY = "heartbeat:pending_sources"
 _MAX_PENDING_JOBS = 50
@@ -60,24 +66,26 @@ def thread_day(now: _dt.datetime, rollover: _dt.time = _dt.time(20, 0)) -> _dt.d
 
 
 class Notifier(Protocol):
-    def post(self, day: _dt.date, text: str) -> None: ...
+    def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> None: ...
 
 
 class LogNotifier:
     """Writes heartbeats to the structured log only (dry runs, no Slack token)."""
 
-    def post(self, day: _dt.date, text: str) -> None:
-        log.info("routines.heartbeat", day=day.isoformat(), text=text)
+    def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> None:
+        log.info("routines.heartbeat", day=day.isoformat(), text=text, blocks=len(blocks or []))
 
 
 class RecordingNotifier:
-    """Keeps posted lines in memory (tests)."""
+    """Keeps posted lines (and any blocks) in memory (tests)."""
 
     def __init__(self) -> None:
         self.posts: list[tuple[_dt.date, str]] = []
+        self.blocks: list[Blocks | None] = []
 
-    def post(self, day: _dt.date, text: str) -> None:
+    def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> None:
         self.posts.append((day, text))
+        self.blocks.append(blocks)
 
 
 def day_thread_ts(conn: sqlite3.Connection, client: object, day: _dt.date) -> str:
@@ -115,13 +123,16 @@ class SlackDayThreadNotifier:
     def _thread_ts(self, day: _dt.date) -> str:
         return day_thread_ts(self._conn, self._client, day)
 
-    def post(self, day: _dt.date, text: str) -> None:
+    def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> None:
         from arc.slack.client import CHANNEL_ARC_INVESTOR, ArcSlackClient
 
         try:
             assert isinstance(self._client, ArcSlackClient)
             self._client.reply(
-                channel=CHANNEL_ARC_INVESTOR, thread_ts=self._thread_ts(day), text=text
+                channel=CHANNEL_ARC_INVESTOR,
+                thread_ts=self._thread_ts(day),
+                text=text,
+                blocks=blocks,
             )
         except Exception as exc:  # noqa: BLE001 - heartbeats must never fail a run
             log.warning("routines.heartbeat_failed", error=str(exc), text=text)
@@ -183,13 +194,26 @@ class Heartbeats:
             entry["new_docs"] = int(str(entry.get("new_docs") or 0)) + new_docs
         self._state.set(_PENDING_KEY, json.dumps(items[-_MAX_PENDING_JOBS:]))
 
-    def summary(self, now: _dt.datetime, job: str, text: str) -> None:
+    def summary(
+        self, now: _dt.datetime, job: str, text: str, *, blocks: Blocks | None = None
+    ) -> None:
+        """Post a run's heartbeat.
+
+        ``text`` is the one-line summary and always the fallback text (what a
+        notification shows). With ``blocks`` (a digest card) the post is the
+        card; queued source summaries are folded into both.
+        """
         line = f"{label_for(job)} {job} ✓ {text}".rstrip()
         pending = self._pending()
         if pending:
-            line += f"\n> sources since last update: {'; '.join(pending)}"
+            folded = f"sources since last update: {'; '.join(pending)}"
+            line += f"\n> {folded}"
+            if blocks:
+                from arc.slack import blocks as B
+
+                blocks = [*blocks[: B.MAX_BLOCKS - 1], B.summary(B.clip(B.esc(folded)))]
             self._state.delete(_PENDING_KEY)
-        self._notifier.post(self.day(now), line)
+        self._notifier.post(self.day(now), line, blocks or None)
 
     def notice(self, now: _dt.datetime, job: str, text: str) -> None:
         """An immediate, non-failure alert raised by a handler (always posted)."""

@@ -485,7 +485,7 @@ class Dispatcher:
         self.runs.finish(
             run.run_id, status=RunStatus.OK, outputs=ctx.outputs, summary=summary, now=now
         )
-        notify = spec.notify or (Notify.QUIET if kind is JobKind.SOURCE else Notify.SUMMARY)
+        notify = spec.notify or (Notify.QUIET if kind is JobKind.SOURCE else Notify.CARD)
         if result.notice:
             self.heartbeats.notice(now, run.job, result.notice)
         if notify is Notify.QUIET:
@@ -493,6 +493,8 @@ class Dispatcher:
             self.heartbeats.queue_source(
                 run.job, summary, new_docs=new_docs if isinstance(new_docs, int) else None
             )
+        elif notify is Notify.CARD and result.card is not None:
+            self.heartbeats.summary(now, run.job, summary, blocks=result.card.blocks)
         else:
             self.heartbeats.summary(now, run.job, summary)
         log.info("routines.ok", job=run.job, run_id=run.run_id, outputs=len(ctx.outputs))

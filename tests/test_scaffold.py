@@ -101,6 +101,8 @@ def test_arc_package_imports() -> None:
         "arc.approvals.service",
         "arc.approvals.slack",
         "arc.approvals.cli",
+        "arc.slack.blocks",
+        "arc.slack.digests",
         "arc.execution",
         "arc.execution.guard",
         "arc.broker",

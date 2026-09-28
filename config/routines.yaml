@@ -19,6 +19,10 @@
 #   16:45 Fri       weekly scorecard
 #   18:00           earnings calendar
 #   22:00 daily     StockedUp + Scout (after-close sources; Sunday 22:00 feeds Monday)
+#
+# notify (E5.5): sources default `quiet` (folded into the next persona post);
+# personas and chain steps default `card` (Block Kit digest; the one-liner stays
+# the notification text). `summary` = one-liner only. Failures always alert.
 
 timezone: America/New_York
 
@@ -60,12 +64,14 @@ personas:
     days: daily
     after_sources: true
     ttl: 3h
+    notify: card
   director:                     # pre-market chain at the open (PLAN §2.6: 06:30 PT)
     schedule: ["09:30"]
     days: trading
     chain: [quant, risk, propose]
     reads: [candidate, regime, channel_brief]
     ttl: 2h
+    notify: card
   monitor:                      # intraday: positions, net Greeks, expiries, daily-loss halt (read-only)
     every: 30m
     window: "09:30-16:00"
@@ -80,6 +86,7 @@ personas:
     days: trading
     halt_exempt: true           # keeps running under !halt
     ttl: 6h
+    notify: card
   scorecard:                    # weekly paper scorecard to #arc-investor (handler: E7.3)
     schedule: ["16:45"]
     days: [fri]
@@ -88,11 +95,12 @@ personas:
     ttl: 6h
   investor:
     trigger: approval           # event-driven, never scheduled
+    notify: card
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
-  quant:   {reads: [shortlist, regime]}
-  risk:    {reads: [structures]}
-  propose: {reads: [candidate, regime, shortlist, structures, risk_review], llm: false}
+  quant:   {reads: [shortlist, regime], notify: card}
+  risk:    {reads: [structures], notify: card}
+  propose: {reads: [candidate, regime, shortlist, structures, risk_review], llm: false, notify: summary}  # E6.1 posts the proposal cards
 
 triggers:                       # a run finishing (or an external event) can start another run
   - on: scout.completed         # only the 12:00 Scout can match: 22:00 is never in-session
