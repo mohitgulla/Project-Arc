@@ -133,6 +133,7 @@ class AlpacaPaperBroker:
                 Decimal(acct.options_buying_power) if acct.options_buying_power else None
             ),
             options_approved_level=acct.options_approved_level,
+            last_equity=Decimal(acct.last_equity) if acct.last_equity else None,
         )
 
     # -- positions -----------------------------------------------------------

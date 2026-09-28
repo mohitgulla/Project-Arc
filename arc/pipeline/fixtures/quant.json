@@ -1,0 +1,64 @@
+{
+  "structures": [
+    {
+      "ticker": "SPY",
+      "structure_type": "iron_condor",
+      "legs": [
+        {"occ_symbol": "SPY261030P00700000", "side": "long", "ratio": 1, "strike": 700, "expiry": "2026-10-30", "option_type": "put"},
+        {"occ_symbol": "SPY261030P00760000", "side": "short", "ratio": 1, "strike": 760, "expiry": "2026-10-30", "option_type": "put"}
+      ],
+      "net_debit_credit": -9.99,
+      "max_gain": 999.0,
+      "max_loss": 1.0,
+      "breakevens": [750.0],
+      "greeks": {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 99.0},
+      "dte": 35,
+      "pop": 0.99,
+      "ev_per_contract": 500.0,
+      "cost_bps": 0.0,
+      "confidence": 0.95,
+      "rationale": "Fixture: invented legs that are not on the scanner menu, so the pipeline drops this one."
+    },
+    {
+      "ticker": "SPY",
+      "structure_type": "iron_condor",
+      "legs": [
+        {"occ_symbol": "SPY261030P00740000", "side": "long", "ratio": 1, "strike": 740, "expiry": "2026-10-30", "option_type": "put"},
+        {"occ_symbol": "SPY261030P00745000", "side": "short", "ratio": 1, "strike": 745, "expiry": "2026-10-30", "option_type": "put"},
+        {"occ_symbol": "SPY261030C00798000", "side": "short", "ratio": 1, "strike": 798, "expiry": "2026-10-30", "option_type": "call"},
+        {"occ_symbol": "SPY261030C00803000", "side": "long", "ratio": 1, "strike": 803, "expiry": "2026-10-30", "option_type": "call"}
+      ],
+      "net_debit_credit": -2.5,
+      "max_gain": 250.0,
+      "max_loss": 250.0,
+      "breakevens": [742.5, 800.5],
+      "greeks": {"delta": 1.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0},
+      "dte": 35,
+      "pop": 0.8,
+      "ev_per_contract": 100.0,
+      "cost_bps": 1.0,
+      "confidence": 0.7,
+      "rationale": "Fixture: menu #2, call side one strike further out for a more balanced delta. The LLM's numbers here are wrong on purpose; the pipeline replaces them with the scanner's."
+    },
+    {
+      "ticker": "AAPL",
+      "structure_type": "vertical_spread",
+      "legs": [
+        {"occ_symbol": "AAPL261030P00200000", "side": "short", "ratio": 1, "strike": 200, "expiry": "2026-10-30", "option_type": "put"},
+        {"occ_symbol": "AAPL261030P00195000", "side": "long", "ratio": 1, "strike": 195, "expiry": "2026-10-30", "option_type": "put"}
+      ],
+      "net_debit_credit": -1.0,
+      "max_gain": 100.0,
+      "max_loss": 400.0,
+      "breakevens": [199.0],
+      "greeks": {"delta": 10.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0},
+      "dte": 35,
+      "pop": 0.7,
+      "ev_per_contract": 5.0,
+      "cost_bps": 2.0,
+      "confidence": 0.5,
+      "rationale": "Fixture: AAPL is not on the shortlist, so the pipeline drops it."
+    }
+  ],
+  "analysis_notes": "Fixture Quant reply (offline run)."
+}

@@ -48,6 +48,7 @@ personas:
     schedule: ["09:00"]
     days: trading
     chain: [quant, risk, propose]
+    reads: [candidate, regime, channel_brief]
     ttl: 2h
   auditor:
     schedule: ["16:30"]
@@ -57,7 +58,10 @@ personas:
   investor:
     trigger: approval           # event-driven, never scheduled
 
-steps: {}                       # per-step settings for chain-only steps (quant, risk, propose)
+steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
+  quant:   {reads: [shortlist]}
+  risk:    {reads: [structures]}
+  propose: {reads: [candidate, shortlist, structures, risk_review], llm: false}
 
 triggers:                       # a run finishing (or an external event) can start another run
   - on: scout.completed

@@ -12,8 +12,7 @@ Resolution order for a job/step name (see :func:`resolve_handler`):
 3. the name's first dotted segment (``youtube.stockedup`` -> ``youtube``), so a
    new channel is a YAML-only change,
 4. otherwise :func:`not_implemented`, which records the run as ``skipped``
-   (persona handlers owned by later cards: E5.2 Director/Quant/Risk/propose,
-   E6.x Investor, Auditor).
+   (persona handlers owned by later cards: E6.x Investor, Auditor).
 """
 
 from __future__ import annotations
@@ -35,6 +34,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from arc.config import ArcSettings
+    from arc.ingest.llm import ScoutLLM
     from arc.models import RawDoc
     from arc.routines.config import JobKind, RoutinesConfig, StepSpec
     from arc.routines.runs import RoutineEvent
@@ -203,12 +203,18 @@ def youtube_source(ctx: JobContext) -> JobResult:
     return _source_result(ctx, fetch_youtube(ctx.conn, settings))
 
 
-def scout_persona(ctx: JobContext) -> JobResult:
-    """Scout (E4.2): summarise unscouted docs; write each merged Candidate to context."""
+def scout_persona(ctx: JobContext, llm: ScoutLLM | None = None) -> JobResult:
+    """Scout (E4.2): summarise unscouted docs; write each merged Candidate to context.
+
+    *llm* overrides the Hermes backend (``arc propose --fixtures``, tests).
+    """
     from arc.context.kinds import CandidatePayload
     from arc.ingest.scout import run_scout
 
-    result = run_scout(ctx.conn, ctx.settings, now=ctx.now, run_id=ctx.run_id)
+    kwargs: dict[str, Any] = {"now": ctx.now, "run_id": ctx.run_id}
+    if llm is not None:
+        kwargs["llm"] = llm
+    result = run_scout(ctx.conn, ctx.settings, **kwargs)
     for cand in result.candidates:
         ctx.write("candidate", cand.ticker, CandidatePayload.model_validate(cand.model_dump()))
     return JobResult(
@@ -232,6 +238,11 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "earnings": "arc.routines.handlers:earnings_source",
     "youtube": "arc.routines.handlers:youtube_source",
     "scout": "arc.routines.handlers:scout_persona",
+    # E5.2 pipeline chain: director → quant → risk → propose (arc/pipeline/steps.py)
+    "director": "arc.pipeline.steps:director_step",
+    "quant": "arc.pipeline.steps:quant_step",
+    "risk": "arc.pipeline.steps:risk_step",
+    "propose": "arc.pipeline.steps:propose_step",
 }
 
 

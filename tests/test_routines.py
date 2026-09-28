@@ -533,11 +533,10 @@ class TestTick:
 
     def test_unimplemented_persona_is_skipped_not_failed(self, conn: sqlite3.Connection) -> None:
         d = Dispatcher(conn, cfg(BASE_YAML), notifier=RecordingNotifier(), is_halted=lambda: False)
-        d.handlers = {"director": lambda ctx: JobResult()}
         outcomes = d.run_job(
-            "director", et(2026, 9, 28, 9, 0), reason="manual", now=et(2026, 9, 28, 9, 0)
+            "auditor", et(2026, 9, 28, 16, 30), reason="manual", now=et(2026, 9, 28, 16, 30)
         )
-        assert [o.status for o in outcomes] == ["ok", "skipped"]  # quant has no handler yet
+        assert [o.status for o in outcomes] == ["skipped"]  # auditor has no handler yet
 
     def test_default_halt_reads_halts_table(self, conn: sqlite3.Connection) -> None:
         from arc.store.repos import HaltRepo
@@ -729,7 +728,8 @@ class TestConfigDriven:
 
     def test_handler_resolution(self) -> None:
         spec = JobSpec.model_validate({"every": "5m"})
-        assert resolve_handler("quant", spec) is not_implemented
+        assert resolve_handler("auditor", spec) is not_implemented
+        assert resolve_handler("quant", spec).__name__ == "quant_step"
         assert resolve_handler("rss", spec).__name__ == "rss_source"
         assert resolve_handler("edgar.filings", spec).__name__ == "edgar_source"
         with pytest.raises(TypeError):
@@ -882,7 +882,8 @@ class TestDryRunAndCli:
         )
         data = json.loads(capsys.readouterr().out)
         assert rc == 0
-        assert [o["status"] for o in data["outcomes"]] == ["skipped"]  # no director handler yet
+        # E5.2 handlers: no candidates → empty shortlist → no structures (no network touched)
+        assert [o["status"] for o in data["outcomes"]] == ["ok", "ok"]
         rc = main(
             [
                 "routines",

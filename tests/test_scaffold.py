@@ -116,4 +116,4 @@ def test_cli_stub_command() -> None:
     """Stub commands print 'not yet implemented'."""
     from arc.cli import main
 
-    assert main(["propose"]) == 0
+    assert main(["report"]) == 0

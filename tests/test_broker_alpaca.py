@@ -52,6 +52,7 @@ class TestAlpacaPaperBrokerMocked:
         mock_acct.currency = "USD"
         mock_acct.options_buying_power = "100000.00"
         mock_acct.options_approved_level = 3
+        mock_acct.last_equity = "99000.00"
         mock_client.get_account.return_value = mock_acct
 
         broker = _make_broker(mock_client)
@@ -59,6 +60,7 @@ class TestAlpacaPaperBrokerMocked:
 
         assert info.account_id == "PA12345"
         assert info.equity == Decimal("100000.00")
+        assert info.last_equity == Decimal("99000.00")
         assert info.options_approved_level == 3
 
     def test_positions(self) -> None:
