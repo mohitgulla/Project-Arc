@@ -4,7 +4,8 @@ Two builders:
 
 * :meth:`PipelineEnv.live`: Alpaca market data, the Alpaca **paper** account
   (read-only: ``account()``/``positions()``; nothing here submits orders), and
-  Hermes on the frontier tier for Director/Quant/Risk (PLAN §2.4).
+  Hermes on the frontier tier for Director/Quant/Risk (PLAN §2.4). Only a
+  live run with the broker (not --dry-run) mints gate tokens.
 * :meth:`PipelineEnv.fixtures`: fully offline. It uses the recorded SPY chain,
   a fixed paper account and canned persona responses. ``arc propose --fixtures``
   uses it, and so do the tests.
@@ -55,6 +56,7 @@ class PipelineEnv:
     llms: dict[str, ScoutLLM]
     scout_llm: ScoutLLM | None = None  # None = run_scout's own default (Hermes cheap tier)
     offline: bool = False
+    mint_tokens: bool = False  # issue gate tokens on PASS (live paper runs only)
     iv_history_dir: Path | None = None
     notes: list[str] = field(default_factory=list)
 
@@ -89,6 +91,7 @@ class PipelineEnv:
             positions=positions,
             llms=dict.fromkeys(PERSONAS, llm),
             iv_history_dir=settings.scanner_iv_history_dir,
+            mint_tokens=broker,
         )
 
     @classmethod

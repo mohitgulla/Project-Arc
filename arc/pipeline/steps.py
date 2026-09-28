@@ -28,9 +28,10 @@ What each step does:
     For each shortlisted ticker (best first) that has no proposal yet for the
     session day, it takes Quant's best structure, re-prices it from a fresh
     chain, sizes it per D18 (:mod:`arc.sizing`), builds the ``Proposal``, runs
-    the gate (halt switch included), and mints a token when the gate passes and
-    ``ARC_GATE_SECRET`` is set. It persists ``proposals`` and ``gate_decisions``
-    rows plus a ``proposal`` context entry. It is idempotent per (day, ticker).
+    the gate (halt switch included), and mints a token when the gate passes, the
+    run is live (``env.mint_tokens``) and ``ARC_GATE_SECRET`` is set. It persists
+    ``proposals`` and ``gate_decisions`` rows plus a ``proposal`` context entry.
+    It is idempotent per (day, ticker).
 
 Nothing here submits orders. Order submission is ``arc.execution.submit`` (E6).
 """
@@ -812,7 +813,8 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             market=market_snapshot(priced.contracts, earnings),
             now=now,
         )
-        decision = _mint(decision, proposal, settings, now)
+        if env.mint_tokens:
+            decision = _mint(decision, proposal, settings, now)
         phash = proposal_hash(proposal)
         try:
             ProposalRepo(ctx.conn).insert(

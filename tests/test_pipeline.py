@@ -232,13 +232,35 @@ class TestFixtureRun:
         assert "already proposed" in (propose.summary or "")
         assert len(proposals_for_day(conn, "2026-09-25")) == 1
 
-    def test_gate_token_minted_with_secret(
+    def test_fixtures_never_mint_token_even_with_secret(
         self,
         routines,
         monkeypatch: pytest.MonkeyPatch,  # noqa: ANN001
     ) -> None:
         monkeypatch.setenv("ARC_GATE_SECRET", GATE_SECRET)
         _, report = fixture_run(ArcSettings(_env_file=None), routines)  # type: ignore[call-arg]
+        (p,) = report.proposals
+        assert p["gate_passed"]
+        assert not p["gate_token"]  # dry-run / fixtures: the gate verdict only, no permission
+
+    def test_gate_token_minted_when_env_allows(
+        self,
+        routines,
+        monkeypatch: pytest.MonkeyPatch,  # noqa: ANN001
+    ) -> None:
+        from arc.ingest.scout import load_fixture_docs
+        from arc.pipeline.runner import run_propose
+        from arc.routines.heartbeat import LogNotifier
+
+        monkeypatch.setenv("ARC_GATE_SECRET", GATE_SECRET)
+        settings = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+        conn = open_db(":memory:", copy=False)
+        load_fixture_docs(conn)
+        env = PipelineEnv.fixtures()
+        env.mint_tokens = True  # what PipelineEnv.live(broker=True) sets
+        report = run_propose(
+            conn, settings, routines, env, now=FIXTURE_NOW, notifier=LogNotifier(), mode="live"
+        )
         (p,) = report.proposals
         assert p["gate_passed"] and p["gate_token"]
 
