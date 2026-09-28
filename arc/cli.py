@@ -217,6 +217,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_exits_parser(sub)
 
+    from arc.tower.cli import add_tower_parser
+
+    add_tower_parser(sub)
+
     # -- kill switch (E3.3) ---------------------------------------------------
     halt = sub.add_parser("halt", help="Halt trading now (kill switch)")
     halt.add_argument("--actor", required=True, help="Who is halting (Slack user id or name)")
@@ -664,6 +668,12 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_exits(args)
+
+    if args.command == "tower":
+        from arc.tower.cli import run_tower
+
+        _log_to_stderr()
+        return run_tower(args)
 
     logger.info("command.stub", command=args.command)
     print(f"arc {args.command}: not yet implemented")

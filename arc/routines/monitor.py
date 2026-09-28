@@ -31,6 +31,7 @@ from arc.routines.runs import RoutineStateRepo
 from arc.utils.calendar import ET, dte_calendar
 
 if TYPE_CHECKING:
+    from arc.broker.base import AccountInfo, BrokerPosition
     from arc.pipeline.env import PipelineEnv
     from arc.routines.handlers import JobContext
 
@@ -39,12 +40,12 @@ log = structlog.get_logger(__name__)
 _NOTICE_KEY = "monitor:last_notice"
 
 
-def _expiring(env: PipelineEnv, ctx: JobContext, within_days: int) -> list[str]:
+def _expiring(positions: list[BrokerPosition], ctx: JobContext, within_days: int) -> list[str]:
     from arc.structures.occ import parse_occ
 
     today = ctx.now.astimezone(ET).date()
     out: set[str] = set()
-    for p in env.positions():
+    for p in positions:
         if p.asset_class != "us_option":
             continue
         occ = parse_occ(p.symbol)
@@ -64,6 +65,43 @@ def _dedupe_notice(ctx: JobContext, notice: str) -> str:
         return ""
     state.set(_NOTICE_KEY, digest, now=ctx.now)
     return notice
+
+
+def _record_heartbeat(
+    ctx: JobContext, positions: list[BrokerPosition], info: AccountInfo, metrics: dict[str, Any]
+) -> None:
+    """E8.3: persist what this run saw (net Greeks, marks) for the control tower.
+
+    One append-only ``heartbeats`` row, ``component = monitor``: ``ok`` when the
+    positions were valued, ``degraded`` when not. ``detail`` holds the metrics plus
+    the broker's per-leg marks, so the read-only dashboard never calls the broker.
+    """
+    from arc.monitoring.store import HeartbeatRepo
+
+    legs = [
+        {
+            "symbol": p.symbol,
+            "qty": str(p.qty),
+            "side": p.side,
+            "asset_class": p.asset_class,
+            "avg_entry_price": None if p.avg_entry_price is None else str(p.avg_entry_price),
+            "market_value": None if p.market_value is None else str(p.market_value),
+            "unrealized_pl": None if p.unrealized_pl is None else str(p.unrealized_pl),
+        }
+        for p in positions
+    ]
+    detail = {
+        **metrics,
+        "last_equity": None if info.last_equity is None else float(info.last_equity),
+        "legs": legs,
+    }
+    HeartbeatRepo(ctx.conn).record(
+        "monitor",
+        "ok" if metrics.get("valued") else "degraded",
+        at=ctx.now,
+        correlation={"run_id": ctx.run_id},
+        detail=detail,
+    )
 
 
 def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
@@ -91,10 +129,11 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "halt_raised": new_halt is not None,
     }
 
+    positions = env.positions()
     try:
         portfolio = build_portfolio(
             ctx.conn,
-            env.positions(),
+            positions,
             env.market,
             now=now,
             wash_sale_days=settings.wash_sale_days,
@@ -151,13 +190,14 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
             notices.extend(f"exit proposed: {line}" for line in run.lines if "gate PASS" in line)
         notices.extend(run.errors)
 
-    expiring = _expiring(env, ctx, within)
+    expiring = _expiring(positions, ctx, within)
     metrics["expiring"] = len(expiring)
     if expiring:
         notices.append(f"expiring within {within} day(s): {', '.join(expiring)}")
     if halted:
         summary += "; HALTED"
     log.info("routines.monitor", **{k: v for k, v in metrics.items() if v is not None})
+    _record_heartbeat(ctx, positions, info, metrics)
     return JobResult(
         summary=summary, metrics=metrics, notice=_dedupe_notice(ctx, "; ".join(notices))
     )

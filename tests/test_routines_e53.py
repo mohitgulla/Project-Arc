@@ -370,6 +370,23 @@ class TestMonitor:
         assert "[SPY], max loss $70" in r.summary and "Δ" in r.summary
         assert r.notice == ""
 
+    def test_records_monitor_heartbeat_for_tower(self, conn: sqlite3.Connection) -> None:
+        """E8.3: each run persists its Greeks and broker legs (the tower's only source)."""
+        from arc.monitoring.store import HeartbeatRepo
+
+        ctx = _ctx(conn, "monitor", {"every": "30m"}, FIXTURE_NOW, _settings())
+        r = monitor(ctx, _env(_spread(), equity="100250"))
+        hb = HeartbeatRepo(conn).latest("monitor")
+        assert hb is not None and hb.status == "ok" and hb.at == FIXTURE_NOW
+        assert hb.correlation == {"run_id": "run-1"}
+        assert hb.detail["delta"] == pytest.approx(r.metrics["delta"])
+        assert hb.detail["equity"] == 100250.0 and hb.detail["last_equity"] == 100000.0
+        assert [leg["symbol"] for leg in hb.detail["legs"]] == [
+            "SPY261030P00711000",
+            "SPY261030P00710000",
+        ]
+        assert hb.detail["legs"][0]["qty"] == "-1"
+
     def test_daily_loss_raises_halt_notice_once(self, conn: sqlite3.Connection) -> None:
         from arc.gate.halt import HaltSwitch
         from arc.store.repos import HaltRepo
@@ -397,6 +414,10 @@ class TestMonitor:
         assert r.metrics["valued"] is False and r.metrics["positions"] is None
         assert "positions NOT valued" in r.summary
         assert "cannot value open positions" in r.notice
+        from arc.monitoring.store import HeartbeatRepo
+
+        hb = HeartbeatRepo(conn).latest("monitor")
+        assert hb is not None and hb.status == "degraded" and hb.detail["valued"] is False
         assert "expiring within 3 day(s): SPY 09-28" in r.notice
         # same notice again the same day is not re-posted
         assert monitor(ctx, _env(naked)).notice == ""

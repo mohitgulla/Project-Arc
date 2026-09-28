@@ -226,6 +226,42 @@ arc health trace <id>             # tick_id | run_id | chain_run_id | alert id |
 a traced tick), the alerts, and the JSON log lines, current and rotated files
 alike.
 
+### 5.6 Control tower (E8.3)
+
+A read-only Streamlit dashboard over the audit store, served on the host's
+Tailscale address, port 8501. Code: `arc/tower/`.
+
+```
+arc tower serve                   # http://<tailscale-ip>:8501, re-reads every 30s
+arc tower serve --local           # 127.0.0.1:8501, this machine only
+arc tower serve --print-command   # show the streamlit argv, don't start
+arc tower snapshot [--json]       # the same data as text/JSON, no server
+```
+
+**Bind rules.** The address is `tailscale ip -4` (CLI on PATH or the macOS
+app bundle), otherwise the first `100.64.0.0/10` address on any interface.
+`--address` accepts only a Tailscale or loopback IP. With no Tailscale address,
+`serve` exits 2 rather than fall back to `0.0.0.0` or the LAN.
+
+**Read-only.** The DB is opened with `mode=ro` + `PRAGMA query_only`, and a
+missing DB is an error, not created. The page has no buttons or inputs. Approve,
+halt, resume and config stay in Slack. The tower never calls the broker, market
+data or an LLM. Streamlit runs headless, with XSRF protection on and usage stats off.
+
+| Section | Source |
+|---|---|
+| Status banner | active `halts`, latest `tick`/`health` heartbeats, open `ops_alerts` |
+| P&L | latest `monitor` heartbeat (intraday equity, day P&L); `pnl_snapshots` (reconciled realized/unrealized, Day/MTD/YTD via `arc.reconcile.performance`) |
+| Greeks | latest `monitor` heartbeat: net Δ Γ ν Θ and max loss, against the gate's `portfolio_delta_cap` / `portfolio_vega_cap_pct` |
+| Positions | `open_structures` + broker legs from the `monitor` heartbeat; "held at broker" from the last `positions_snapshots` |
+| Proposals | `proposals` + latest `gate_decisions` + `approval_requests` + `executions` (last 7 days) |
+| Halts | `halts`, active first |
+| Gate violations | failed `gate_decisions`, split by rule code (last 7 days) |
+
+The intraday `monitor` routine writes one `heartbeats` row per run
+(`component = monitor`: Greeks, equity and broker legs). Greeks older than 45 minutes
+are flagged as stale on the page. Outside the session they show the last in-session run.
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.
