@@ -42,10 +42,15 @@ percentage once remaining DTE ≤ ``dte_lte``; the tightest matching bucket
 
 Rules are checked each day in the order **stop → take profit → DTE exit**.
 
-Defaults (``config/exits.yaml``): take profit 50% of max gain (credit) / 100% of
-debit (debit), close at 7 DTE. The stop default is the **owner's open call**; until
-it is answered the file carries E6.2's proposal: ``credit_multiple 2.0`` for
-credit structures and ``pct_debit 0.5`` for debit structures.
+*Stop timing*: with ``stop_eod_only`` (default) the stop is only evaluated on
+end-of-day marks (``check_rules(..., eod=True)``); take profit and the DTE exit may
+fire on any mark. The Monte Carlo model and the backtester step on daily closes, so
+every step is end of day for them.
+
+Defaults (``config/exits.yaml``, D23 owner decision 2026-09-27): take profit 50% of
+max gain (credit) / 100% of debit (debit), close at 7 DTE, and **relaxed stops** so a
+trade can play out: ``pct_max_loss 0.75`` for credit structures and ``pct_debit
+0.75`` for debit structures, on end-of-day marks only.
 
 Everything here is deterministic and pure (no LLM, no network).
 """
@@ -146,6 +151,7 @@ class ExitPolicy(BaseModel):
         1.00, gt=0.0, description="Debit structures: close when pnl reaches this × debit"
     )
     stop: StopRule | None = None
+    stop_eod_only: bool = Field(True, description="Evaluate the stop on end-of-day marks only")
     close_at_dte: int | None = Field(7, ge=0)
     time_adjusted_targets: list[TimeAdjustedTarget] = Field(default_factory=list)
 
@@ -172,9 +178,11 @@ class ExitPolicy(BaseModel):
             parts.append(f"take profit {self.take_profit_pct_of_max_gain:.0%} of max gain (credit)")
         if self.take_profit_pct_of_debit is not None:
             parts.append(f"take profit {self.take_profit_pct_of_debit:.0%} of debit (debit)")
-        parts.append(
-            "no stop" if self.stop is None else f"stop {self.stop.basis.value} {self.stop.value:g}"
-        )
+        if self.stop is None:
+            parts.append("no stop")
+        else:
+            eod = " (end of day)" if self.stop_eod_only else ""
+            parts.append(f"stop {self.stop.basis.value} {self.stop.value:g}{eod}")
         if self.close_at_dte is not None:
             parts.append(f"close at {self.close_at_dte} DTE")
         parts.extend(
@@ -342,14 +350,19 @@ def resolve_rules(
     )
 
 
-def check_rules(rules: ResolvedRules, *, pnl: float, dte: int) -> ExitReason | None:
+def check_rules(
+    rules: ResolvedRules, *, pnl: float, dte: int, eod: bool = True
+) -> ExitReason | None:
     """Which rule fires for a position with per-share *pnl* at mid and *dte* left.
 
     Order: stop → take profit → DTE exit. ``None`` = keep holding. Expiry is the
-    caller's business (``dte == 0`` settles; it is not a rule).
+    caller's business (``dte == 0`` settles; it is not a rule). *eod* says whether
+    the mark is an end-of-day mark; with ``stop_eod_only`` the stop is skipped
+    otherwise.
     """
     stop = rules.stop_pnl
-    if stop is not None and pnl <= stop:
+    stop_live = eod or not rules.policy.stop_eod_only
+    if stop is not None and stop_live and pnl <= stop:
         return ExitReason.STOP
     tp = rules.tp_pnl(dte)
     if tp is not None and pnl >= tp:

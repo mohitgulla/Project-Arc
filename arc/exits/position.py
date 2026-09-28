@@ -60,6 +60,9 @@ class PositionMarks(BaseModel):
     iv: float | None = Field(None, gt=0.0, description="ATM IV (for remaining EV)")
     r: float = 0.04
     leg_spreads: dict[str, float] = Field(default_factory=dict, description="ask − bid per leg")
+    end_of_day: bool = Field(
+        True, description="End-of-day marks; intraday marks never trigger an EOD-only stop"
+    )
 
     @model_validator(mode="after")
     def _finite(self) -> PositionMarks:
@@ -129,7 +132,11 @@ def evaluate_position(
     dte = dte_calendar(marks.as_of, expiry)
     value = _mark(position, marks)
     pnl = value - rules.entry_net
-    fired = ExitReason.EXPIRY if dte <= 0 else check_rules(rules, pnl=pnl, dte=dte)
+    fired = (
+        ExitReason.EXPIRY
+        if dte <= 0
+        else check_rules(rules, pnl=pnl, dte=dte, eod=marks.end_of_day)
+    )
 
     # closing now: every leg at mid ∓ x·spread, commission on every contract
     legs = sim_legs(st, cost, marks.leg_spreads or None)

@@ -126,12 +126,15 @@ class TestPolicyConfig:
         for kind in (StructureKind.VERTICAL_CREDIT, StructureKind.IRON_CONDOR):
             p = cfg.policy_for(kind)
             assert p.take_profit_pct_of_max_gain == 0.5
-            assert p.stop == StopRule(basis=StopBasis.CREDIT_MULTIPLE, value=2.0)
+            # D23: relaxed stops (75% of max loss), end-of-day marks only
+            assert p.stop == StopRule(basis=StopBasis.PCT_MAX_LOSS, value=0.75)
+            assert p.stop_eod_only
             assert p.close_at_dte == 7
         for kind in (StructureKind.VERTICAL_DEBIT, StructureKind.LONG_CALL, StructureKind.LONG_PUT):
             p = cfg.policy_for(kind)
             assert p.take_profit_pct_of_debit == 1.0
-            assert p.stop == StopRule(basis=StopBasis.PCT_DEBIT, value=0.5)
+            assert p.stop == StopRule(basis=StopBasis.PCT_DEBIT, value=0.75)
+            assert p.stop_eod_only
         assert cfg.policy_for(StructureKind.OTHER) == cfg.default
         assert cfg.policy_for(None) == cfg.default
         assert cfg.model.n_paths == 20_000
@@ -215,6 +218,7 @@ class TestPolicyConfig:
         assert "credit_multiple 2" in s
         assert "7 DTE" in s
         assert "≤14 DTE" in s
+        assert "(end of day)" in s
         assert "no stop" in HOLD_TO_EXPIRY.summary()
 
 
@@ -278,6 +282,19 @@ class TestRules:
         assert check_rules(rules, pnl=0.1, dte=7) is ExitReason.DTE_EXIT
         assert check_rules(rules, pnl=0.1, dte=8) is None
         assert check_rules(resolve_rules(bull_put(), HOLD_TO_EXPIRY), pnl=-4, dte=1) is None
+
+    def test_stop_eod_only(self) -> None:
+        rules = resolve_rules(bull_put(), CREDIT_POLICY)
+        assert CREDIT_POLICY.stop_eod_only
+        # intraday marks never trigger an EOD-only stop; TP / DTE exit still fire
+        assert check_rules(rules, pnl=-2.5, dte=20, eod=False) is None
+        assert check_rules(rules, pnl=-2.5, dte=3, eod=False) is ExitReason.DTE_EXIT
+        assert check_rules(rules, pnl=0.6, dte=20, eod=False) is ExitReason.TAKE_PROFIT
+        assert check_rules(rules, pnl=-2.5, dte=20, eod=True) is ExitReason.STOP
+        anytime = resolve_rules(
+            bull_put(), CREDIT_POLICY.model_copy(update={"stop_eod_only": False})
+        )
+        assert check_rules(anytime, pnl=-2.5, dte=20, eod=False) is ExitReason.STOP
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +553,12 @@ class TestEvaluatePosition:
             CREDIT_POLICY,
         )
         assert st_.fired is ExitReason.STOP
+        intraday = evaluate_position(
+            OpenPosition(structure=bull_put()),
+            _marks(bull_put(), _vertical_marks(4.2, 1.1), end_of_day=False),
+            CREDIT_POLICY,
+        )
+        assert intraday.fired is None  # EOD-only stop (D23)
 
     def test_dte_exit_fires(self) -> None:
         st_ = evaluate_position(

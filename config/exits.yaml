@@ -14,11 +14,13 @@
 #   stop.basis pct_debit         close when loss >= value x debit (0.5 = half the debit)
 #   close_at_dte                 close once DTE <= this
 #   time_adjusted_targets        take-profit pct once DTE <= dte_lte (D19 decay target)
+#   stop_eod_only                the stop is evaluated on end-of-day marks only
+#                                (take profit / DTE exit may fire intraday)
 # Checked daily in the order: stop -> take profit -> DTE exit.
 #
-# STOP DEFAULTS ARE PROVISIONAL: the stop is the owner's open call (E2.4/E6.2).
-# Until answered: credit_multiple 2.0 (credit) and pct_debit 0.5 (debit), as E6.2
-# proposed. Time-adjusted targets are empty until the owner sets them.
+# D23 (owner, 2026-09-27): stops are relaxed so a trade can play out:
+# credit 75% of max loss, debit 75% of debit, end-of-day marks only.
+# Time-adjusted targets are empty until the owner sets them.
 
 model:
   n_paths: 20000
@@ -33,6 +35,7 @@ default:
   take_profit_pct_of_max_gain: 0.50
   take_profit_pct_of_debit: 1.00
   stop: null
+  stop_eod_only: true
   close_at_dte: 7
   time_adjusted_targets: []
 
@@ -40,30 +43,35 @@ kinds:
   vertical_credit:
     take_profit_pct_of_max_gain: 0.50
     take_profit_pct_of_debit: null
-    stop: {basis: credit_multiple, value: 2.0}
+    stop: {basis: pct_max_loss, value: 0.75}
+    stop_eod_only: true
     close_at_dte: 7
     time_adjusted_targets: []
   iron_condor:
     take_profit_pct_of_max_gain: 0.50
     take_profit_pct_of_debit: null
-    stop: {basis: credit_multiple, value: 2.0}
+    stop: {basis: pct_max_loss, value: 0.75}
+    stop_eod_only: true
     close_at_dte: 7
     time_adjusted_targets: []
   vertical_debit:
     take_profit_pct_of_max_gain: null
     take_profit_pct_of_debit: 1.00
-    stop: {basis: pct_debit, value: 0.5}
+    stop: {basis: pct_debit, value: 0.75}
+    stop_eod_only: true
     close_at_dte: 7
     time_adjusted_targets: []
   long_call:
     take_profit_pct_of_max_gain: null
     take_profit_pct_of_debit: 1.00
-    stop: {basis: pct_debit, value: 0.5}
+    stop: {basis: pct_debit, value: 0.75}
+    stop_eod_only: true
     close_at_dte: 7
     time_adjusted_targets: []
   long_put:
     take_profit_pct_of_max_gain: null
     take_profit_pct_of_debit: 1.00
-    stop: {basis: pct_debit, value: 0.5}
+    stop: {basis: pct_debit, value: 0.75}
+    stop_eod_only: true
     close_at_dte: 7
     time_adjusted_targets: []
