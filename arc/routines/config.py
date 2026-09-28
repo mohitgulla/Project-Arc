@@ -1,0 +1,387 @@
+"""Schema for ``config/routines.yaml`` (D16): per-source/per-persona cadence, chains, triggers.
+
+Everything the dispatcher does is driven by this file. Adding a source or a
+persona, changing a cadence, or re-ordering a chain is a YAML edit validated by
+``arc routines validate``, never a code change.
+
+Job keys (``sources.<name>`` / ``personas.<name>``):
+
+- ``schedule: ["22:00", "12:00"]`` — fixed ET wall-clock times, or
+- ``every: 30m`` (+ optional ``window: "06:00-20:00"``, inclusive) — a grid
+  anchored at the window start (midnight when no window), or
+- ``trigger: approval`` — event-driven only (``<job>.completed``, ``approval``,
+  ``halt``, or any name emitted with ``arc routines emit``).
+- ``days: daily | trading | weekdays`` (default ``daily``).
+- ``chain: [a, b, c]`` — steps run in order after this job, in one chain run.
+- ``after_sources: true`` — run every source due in the same tick first.
+- ``ttl`` — catch-up window: a missed slot runs (once) only while inside it.
+- ``context: {ttl, supersede}`` — override the TTL/supersede policy of the
+  context entries this job writes (per-source TTL, D14).
+- ``reads: [kind, ...]`` — kinds included in the input snapshot (default: all).
+- ``handler: "module:function"`` — explicit handler; default resolves by job name.
+- ``halt_exempt: true`` — persona keeps running while halted (Auditor only).
+- ``notify: quiet | summary`` — heartbeat policy (sources default quiet).
+- ``llm: true|false`` — whether the job takes the global LLM lock (default:
+  personas and chain steps yes, sources no).
+- Any other key (e.g. ``only_for: open_positions``, ``channel: <url>``) is kept
+  as a handler option in :attr:`JobSpec.options`, so new filters never break
+  validation.
+
+``steps.<name>`` configures chain steps that are not scheduled on their own
+(e.g. ``propose``): same keys as a job minus the cadence.
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+import enum
+import re
+from pathlib import Path
+from typing import Annotated, Any, Literal
+
+import yaml
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+from arc.context.kinds import KINDS
+from arc.context.store import Supersede
+from arc.context.ttl import Ttl, parse_duration
+from arc.routines.conditions import parse_condition
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_ROUTINES_PATH = REPO_ROOT / "config" / "routines.yaml"
+
+_HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+_JOB_NAME = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$")
+
+
+def _parse_hhmm(text: str) -> _dt.time:
+    m = _HHMM.match(str(text).strip())
+    if not m:
+        msg = f"invalid time {text!r}; expected 24h 'HH:MM' in ET"
+        raise ValueError(msg)
+    return _dt.time(int(m.group(1)), int(m.group(2)))
+
+
+class Days(enum.StrEnum):
+    DAILY = "daily"
+    TRADING = "trading"
+    WEEKDAYS = "weekdays"
+
+
+class Notify(enum.StrEnum):
+    QUIET = "quiet"  # summarised into the next persona heartbeat
+    SUMMARY = "summary"  # one-line heartbeat per run
+
+
+class JobKind(enum.StrEnum):
+    SOURCE = "source"
+    PERSONA = "persona"
+
+
+class ContextPolicy(BaseModel):
+    """TTL + supersede policy for context entries a producer writes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ttl: Ttl | None = None
+    supersede: Supersede = Supersede.LATEST
+
+
+class Window(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    start: _dt.time
+    end: _dt.time
+
+    @model_validator(mode="before")
+    @classmethod
+    def _parse(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            parts = v.split("-")
+            if len(parts) != 2:
+                msg = f"invalid window {v!r}; expected 'HH:MM-HH:MM'"
+                raise ValueError(msg)
+            return {"start": _parse_hhmm(parts[0]), "end": _parse_hhmm(parts[1])}
+        return v
+
+    @model_validator(mode="after")
+    def _ordered(self) -> Window:
+        if self.end <= self.start:
+            msg = "window end must be after start (windows cannot cross midnight)"
+            raise ValueError(msg)
+        return self
+
+    def __str__(self) -> str:
+        return f"{self.start:%H:%M}-{self.end:%H:%M}"
+
+
+class StepSpec(BaseModel):
+    """Settings shared by every runnable unit (jobs and chain steps).
+
+    Unknown keys are kept as handler options (:attr:`options`).
+    """
+
+    model_config = ConfigDict(extra="allow", frozen=True)
+
+    context: ContextPolicy | None = None
+    reads: list[str] | None = None
+    handler: str | None = None
+    notify: Notify | None = None
+    llm: bool | None = None  # holds the global LLM lock; default: personas yes, sources no
+
+    @field_validator("reads")
+    @classmethod
+    def _reads(cls, v: list[str] | None) -> list[str] | None:
+        for kind in v or []:
+            if kind not in KINDS:
+                msg = f"unknown context kind {kind!r} in reads"
+                raise ValueError(msg)
+        return v
+
+    @field_validator("handler")
+    @classmethod
+    def _handler(cls, v: str | None) -> str | None:
+        if v is not None and not re.match(r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$", v):
+            msg = f"handler must be 'package.module:function', got {v!r}"
+            raise ValueError(msg)
+        return v
+
+    @property
+    def options(self) -> dict[str, Any]:
+        """Extra per-job filters/params (e.g. ``only_for``, ``channel``)."""
+        return dict(self.model_extra or {})
+
+
+class JobSpec(StepSpec):
+    """One source or persona job: a :class:`StepSpec` plus a cadence."""
+
+    schedule: list[_dt.time] = Field(default_factory=list)
+    every: _dt.timedelta | None = None
+    window: Window | None = None
+    trigger: str | None = None
+    days: Days = Days.DAILY
+    chain: list[str] = Field(default_factory=list)
+    after_sources: bool = False
+    ttl: Ttl | None = None
+    halt_exempt: bool = False
+    enabled: bool = True
+
+    @field_validator("schedule", mode="before")
+    @classmethod
+    def _schedule(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            v = [v]
+        return [_parse_hhmm(t) if isinstance(t, str) else t for t in v]
+
+    @field_validator("every", mode="before")
+    @classmethod
+    def _every(cls, v: Any) -> Any:
+        return parse_duration(v) if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def _cadence(self) -> JobSpec:
+        if self.every is not None and self.every <= _dt.timedelta(0):
+            msg = "every must be positive"
+            raise ValueError(msg)
+        modes = sum(bool(x) for x in (self.schedule, self.every, self.trigger))
+        if modes != 1:
+            msg = "a job needs exactly one of schedule, every, or trigger"
+            raise ValueError(msg)
+        if self.window is not None and self.every is None:
+            msg = "window is only valid with every"
+            raise ValueError(msg)
+        if len(set(self.schedule)) != len(self.schedule):
+            msg = "schedule has duplicate times"
+            raise ValueError(msg)
+        return self
+
+    @property
+    def cadence(self) -> str:
+        if self.schedule:
+            times = ", ".join(f"{t:%H:%M}" for t in sorted(self.schedule))
+            return f"at {times} ET ({self.days})"
+        if self.every is not None:
+            secs = int(self.every.total_seconds())
+            every = f"{secs // 60}m" if secs % 3600 else f"{secs // 3600}h"
+            window = f" {self.window}" if self.window else ""
+            return f"every {every}{window} ET ({self.days})"
+        return f"on {self.trigger}"
+
+
+class TriggerRule(BaseModel):
+    """``on: <event>`` [``if: <condition>``] ``run: <job>``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    on: str
+    run: str
+    condition: str | None = Field(None, alias="if")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _yaml_on(cls, v: Any) -> Any:
+        # YAML 1.1 (PyYAML) reads a bare `on:` key as boolean True.
+        if isinstance(v, dict) and True in v and "on" not in v:
+            v = {("on" if k is True else k): val for k, val in v.items()}
+        return v
+
+    @field_validator("condition")
+    @classmethod
+    def _condition(cls, v: str | None) -> str | None:
+        if v:
+            parse_condition(v)
+        return v
+
+
+class TickSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    interval: _dt.timedelta = _dt.timedelta(minutes=5)
+    max_lookback: _dt.timedelta = _dt.timedelta(days=7)
+    max_trigger_depth: Annotated[int, Field(ge=1, le=20)] = 5
+
+    @field_validator("interval", "max_lookback", mode="before")
+    @classmethod
+    def _dur(cls, v: Any) -> Any:
+        return parse_duration(v) if isinstance(v, str) else v
+
+
+class RoutinesConfig(BaseModel):
+    """Top-level ``config/routines.yaml``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    timezone: Literal["America/New_York"] = "America/New_York"
+    tick: TickSettings = Field(default_factory=TickSettings)
+    context_ttl: dict[str, ContextPolicy] = Field(default_factory=dict)
+    sources: dict[str, JobSpec] = Field(default_factory=dict)
+    personas: dict[str, JobSpec] = Field(default_factory=dict)
+    steps: dict[str, StepSpec] = Field(default_factory=dict)
+    triggers: list[TriggerRule] = Field(default_factory=list)
+
+    @field_validator("sources", "personas", "steps", mode="before")
+    @classmethod
+    def _none_to_empty(cls, v: Any) -> Any:
+        return {} if v is None else v
+
+    @field_validator("context_ttl")
+    @classmethod
+    def _known_kinds(cls, v: dict[str, ContextPolicy]) -> dict[str, ContextPolicy]:
+        for kind in v:
+            if kind not in KINDS:
+                msg = f"context_ttl: unknown context kind {kind!r}"
+                raise ValueError(msg)
+        return v
+
+    @model_validator(mode="after")
+    def _cross_checks(self) -> RoutinesConfig:
+        names = [*self.sources, *self.personas]
+        for name in names:
+            if not _JOB_NAME.match(name):
+                msg = f"invalid job name {name!r} (lower-case, dots allowed)"
+                raise ValueError(msg)
+        dup = set(self.sources) & set(self.personas)
+        if dup:
+            msg = f"job names used as both source and persona: {sorted(dup)}"
+            raise ValueError(msg)
+        for name in self.steps:
+            if not _JOB_NAME.match(name) or name in self.sources:
+                msg = f"invalid step name {name!r} (must be lower-case and not a source)"
+                raise ValueError(msg)
+        for name, spec in self.sources.items():
+            if spec.chain or spec.after_sources or spec.halt_exempt:
+                msg = f"source {name!r}: chain/after_sources/halt_exempt are persona-only"
+                raise ValueError(msg)
+        for name, spec in self.personas.items():
+            if name in spec.chain or len(set(spec.chain)) != len(spec.chain):
+                msg = f"persona {name!r}: chain repeats a step"
+                raise ValueError(msg)
+            for step in spec.chain:
+                if step in self.sources:
+                    msg = f"persona {name!r}: chain step {step!r} is a source"
+                    raise ValueError(msg)
+                if not _JOB_NAME.match(step):
+                    msg = f"persona {name!r}: invalid chain step {step!r}"
+                    raise ValueError(msg)
+            if spec.halt_exempt and spec.chain:
+                msg = f"persona {name!r}: a halt-exempt persona cannot run a chain"
+                raise ValueError(msg)
+        known_jobs = set(names)
+        for rule in self.all_triggers():
+            if rule.run not in self.personas:
+                msg = f"trigger on {rule.on!r}: run target {rule.run!r} is not a persona"
+                raise ValueError(msg)
+            event = rule.on
+            if event.endswith(".completed"):
+                job = event.removesuffix(".completed")
+                if job not in known_jobs and not self._is_chain_step(job):
+                    msg = f"trigger on {event!r}: unknown job {job!r}"
+                    raise ValueError(msg)
+        return self
+
+    def _is_chain_step(self, name: str) -> bool:
+        return any(name in p.chain for p in self.personas.values())
+
+    # -- lookups -------------------------------------------------------------
+
+    def jobs(self) -> dict[str, tuple[JobKind, JobSpec]]:
+        """All enabled jobs (sources first), by name."""
+        out: dict[str, tuple[JobKind, JobSpec]] = {}
+        for name, spec in self.sources.items():
+            if spec.enabled:
+                out[name] = (JobKind.SOURCE, spec)
+        for name, spec in self.personas.items():
+            if spec.enabled:
+                out[name] = (JobKind.PERSONA, spec)
+        return out
+
+    def job(self, name: str) -> tuple[JobKind, JobSpec] | None:
+        if name in self.sources:
+            return JobKind.SOURCE, self.sources[name]
+        if name in self.personas:
+            return JobKind.PERSONA, self.personas[name]
+        return None
+
+    def step(self, name: str) -> tuple[JobKind, StepSpec]:
+        """Settings for *name* as a runnable unit (job or chain-only step)."""
+        found = self.job(name)
+        if found is not None:
+            return found
+        return JobKind.PERSONA, self.steps.get(name, StepSpec())
+
+    def all_triggers(self) -> list[TriggerRule]:
+        """Explicit ``triggers`` plus each persona's ``trigger:`` shorthand."""
+        rules = list(self.triggers)
+        for name, spec in self.personas.items():
+            if spec.trigger and spec.enabled:
+                rules.append(TriggerRule.model_validate({"on": spec.trigger, "run": name}))
+        return rules
+
+    def triggers_for(self, event: str) -> list[TriggerRule]:
+        return [r for r in self.all_triggers() if r.on == event]
+
+    def context_policy(self, kind: str, job: str | None = None) -> ContextPolicy:
+        """Producer policy for *kind*: job/step override > ``context_ttl`` > none."""
+        if job is not None:
+            spec = self.step(job)[1]
+            if spec.context is not None:
+                return spec.context
+        return self.context_ttl.get(kind, ContextPolicy())
+
+
+def load_routines(path: Path | str | None = None) -> RoutinesConfig:
+    """Load and validate a routines YAML file."""
+    p = Path(path) if path is not None else DEFAULT_ROUTINES_PATH
+    data = yaml.safe_load(p.read_text()) or {}
+    if not isinstance(data, dict):
+        msg = f"{p}: top level must be a mapping"
+        raise ValueError(msg)
+    return RoutinesConfig.model_validate(data)
