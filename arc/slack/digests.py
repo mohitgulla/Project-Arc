@@ -197,7 +197,6 @@ def scout_card(
         when = f" {c.catalyst_date:%b %d}" if c.catalyst_date else ""
         facts = (
             f"{c.stance.value} · {c.catalyst_type.value}{when} · {_pct(c.confidence)} confidence"
-            f" · {_plural(len(c.sources), 'source')}"
         )
         why = (rationales or {}).get(c.ticker, "").strip()
         rows.append(f"• *{B.esc(c.ticker)}* {facts}" + (f"\n   {B.esc(why)}" if why else ""))
@@ -404,6 +403,7 @@ def risk_card(
     out: RiskOutput,
     *,
     sized: Mapping[tuple[str, str], SizingResult] | None = None,
+    max_gain: Mapping[tuple[str, str], float | None] | None = None,
     cap_pct: float | None = None,
     dropped: Mapping[str, int] | None = None,
     dropped_items: Sequence[tuple[str, str]] = (),
@@ -449,7 +449,12 @@ def risk_card(
         elif r.trade:
             capped = f" (capped by {cap})" if r.contracts < r.suggestion else ""
             size_txt = f"Suggested {r.suggestion}\nSized {r.contracts}{capped}"
-            loss_txt = f"{_money(float(r.max_loss_total))}\n{r.pct_equity:.2%} of equity"
+            gain = (max_gain or {}).get((a.ticker, a.structure_type))
+            gain_txt = _money(None if gain is None else gain * r.contracts)
+            loss_txt = (
+                f"Max gain {gain_txt}\nMax loss {_money(float(r.max_loss_total))}\n"
+                f"{r.pct_equity:.2%} of equity at risk"
+            )
         else:
             size_txt = f"Suggested {r.suggestion}\nNo trade: {B.esc(r.reason or '')}"
             loss_txt = "n/a"
@@ -461,7 +466,7 @@ def risk_card(
                         f"Rating *{B.esc(a.risk_rating.strip().capitalize())}*",
                     ),
                     ("Size", size_txt),
-                    ("Max loss (sized)" if r is not None else "Max loss", loss_txt),
+                    ("Payoff (sized)" if r is not None and r.trade else "Max loss", loss_txt),
                     (
                         "Concentration",
                         ":warning: over limit" if a.concentration_warning else "OK",

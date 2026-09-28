@@ -727,6 +727,7 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         card=risk_card(
             payload,
             sized=sized,
+            max_gain={(s.ticker, s.structure_type): s.max_gain for s in structures.structures},
             cap_pct=settings.max_alloc_pct,
             dropped=dropped,
             dropped_items=drop_items,

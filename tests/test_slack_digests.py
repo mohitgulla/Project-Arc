@@ -220,10 +220,10 @@ class TestScout:
         text = _all(view)
         assert "*3* accepted this run · 3 rejected" in text
         assert (
-            "• *NVDA* bullish · earnings Oct 28 · 75% confidence · 2 sources\n"
-            "   Buyback plus raised guidance."
+            "• *NVDA* bullish · earnings Oct 28 · 75% confidence\n   Buyback plus raised guidance."
         ) in text
-        assert "• *XOM* bearish · earnings · 75% confidence · 2 sources" in text
+        assert "• *XOM* bearish · earnings · 75% confidence\n" in text + "\n"
+        assert "source" not in text.lower().replace("sources →", "")
         assert "http" not in text  # owner: no source links on the Scout card
         assert "• not in universe (2): PLTR, AAPL" in text
         assert "• invalid reply (1): TSLA" in text
@@ -252,7 +252,6 @@ class TestScout:
         )
         text = _all(view)
         assert "ex.com" not in text and "doc-" not in text  # sources are counted, not shown
-        assert "5 sources" in text
         assert text.count(EVIL_ESC) == 2 and "<!channel>" not in text
 
     def test_many_candidates_clip_under_section_limit(self) -> None:
@@ -469,11 +468,15 @@ class TestRisk:
                 suggestion=0, max_loss_per_contract=Decimal(300), equity=eq, cap_pct=0.05
             ),
         }
-        view = D.risk_card(out, sized=sized, cap_pct=0.05)
+        view = D.risk_card(
+            out, sized=sized, max_gain={("SPY", "iron_condor"): 165.55}, cap_pct=0.05
+        )
         assert view.text == "[Risk] Review: SPY Moderate +1 more • 14 Contracts"
         text = _all(view)
         assert "*Size*\nSuggested 20\nSized 14 (capped by 5% cap)" in text
-        assert "*Max loss (sized)*\n$4,682.30\n4.68% of equity" in text
+        assert (
+            "*Payoff (sized)*\nMax gain $2,317.70\nMax loss $4,682.30\n4.68% of equity at risk"
+        ) in text
         assert "*Size*\nSuggested 0\nNo trade: Risk suggested 0 contracts" in text
         assert "_" not in text.replace("iron_condor", "")  # no italics anywhere
 
