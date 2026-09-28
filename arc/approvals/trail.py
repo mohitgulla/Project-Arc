@@ -8,6 +8,8 @@ run that produced the proposal, so the card shows exactly what was journaled:
 - **Quant**    — confidence and rationale for the chosen structure
 - **Risk**     — rating, advisory sizing vs. the D18 cap, concerns, narrative
 - **Market**   — regime + volatility frozen with the proposal (MarketContext)
+- **Analytics** — E6.1a card v2 numbers (costs, liquidity, moneyness, vol stats,
+  exit model), stored on that same MarketContext row; the card never recomputes them
 
 Everything is optional: a proposal without journal rows (manual run, a DB from
 before migration 009) still renders, just without the trail. Read-only; no
@@ -27,6 +29,7 @@ from arc.journal.store import JournalStore
 if TYPE_CHECKING:
     import sqlite3
 
+    from arc.journal.analytics import ProposalAnalytics
     from arc.journal.models import DecisionRecord, MarketContext
 
 __all__ = ["DecisionTrail", "load_trail"]
@@ -43,6 +46,7 @@ class DecisionTrail:
     quant: dict[str, Any] | None = None  # QuantStructureOut
     risk: dict[str, Any] | None = None  # RiskAssessment
     features: dict[str, Any] | None = None  # regime/vol subset of a FeatureSnapshot
+    analytics: ProposalAnalytics | None = None  # E6.1a: stored with the MarketContext
 
 
 def _first(
@@ -76,6 +80,7 @@ def load_trail(conn: sqlite3.Connection, proposal_hash: str, ticker: str) -> Dec
         ]
         read = next((d for d in decisions if d.reason_code is ReasonCode.MARKET_READ), None)
         t = ticker.upper()
+        mc = journal.market_context(proposal_hash)
         return DecisionTrail(
             chain_run_id=chain,
             director=_first(decisions, Stage.SHORTLIST, t, {Choice.SELECTED}),
@@ -83,7 +88,8 @@ def load_trail(conn: sqlite3.Connection, proposal_hash: str, ticker: str) -> Dec
             market_regime=str(read.payload.get("market_regime", "")) if read else "",
             quant=_first(decisions, Stage.STRUCTURE, t, {Choice.SELECTED}),
             risk=_first(decisions, Stage.RISK_REVIEW, t, {Choice.ASSESSED, Choice.NO_TRADE}),
-            features=_features(journal.market_context(proposal_hash)),
+            features=_features(mc),
+            analytics=mc.analytics if mc else None,
         )
     except (ValueError, TypeError) as exc:  # a malformed row must not block the card
         log.warning("approvals.trail_unreadable", proposal_hash=proposal_hash, error=str(exc))

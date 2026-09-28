@@ -552,7 +552,7 @@ class TestScoring:
                 side = -1 if leg.side.value == "short" else 1
                 fill = cm.fill(float(leg.premium), 2 * HALF, side)
                 want += cm.slippage_frac * 2 * HALF * 100 + cm.trade_fees(1, side, fill)
-            assert c.cost == pytest.approx(want, abs=1e-6)
+            assert c.cost == pytest.approx(want, abs=0.005)  # ScanCandidate rounds to cents
             assert c.ev_proxy == pytest.approx(-c.cost, abs=0.05 * n)
             assert c.natural_credit == pytest.approx(c.credit - HALF * n, abs=1e-3)
 

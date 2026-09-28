@@ -92,6 +92,8 @@ def test_arc_package_imports() -> None:
         "arc.journal",
         "arc.journal.reasons",
         "arc.journal.models",
+        "arc.journal.analytics",
+        "arc.pipeline.analytics",
         "arc.journal.store",
         "arc.journal.attribution",
         "arc.journal.report",

@@ -254,11 +254,13 @@ class PricedStructure:
         *,
         spot: float | None = None,
         atm_iv: float | None = None,
+        spot_as_of: _dt.datetime | None = None,
     ) -> None:
         self.structure = structure
         self.contracts = contracts
         self.spot = spot
         self.atm_iv = atm_iv
+        self.spot_as_of = spot_as_of
 
     def leg_spreads(self) -> dict[str, float]:
         """Quoted ask − bid per leg (per share)."""
@@ -284,7 +286,8 @@ def price_structure(
     root = occs[0].root
     exp = occs[0].expiration
     chain = {parse_occ(c.symbol).format(): c for c in market.option_chain(root, exp, exp)}
-    spot = market.underlying_quote(root).mid
+    uq = market.underlying_quote(root)
+    spot = uq.mid
     out_legs: list[Leg] = []
     used: dict[str, OptionContract] = {}
     for occ, (_, side, ratio) in zip(occs, legs, strict=True):
@@ -304,6 +307,7 @@ def price_structure(
         used,
         spot=spot,
         atm_iv=atm_iv(list(chain.values()), spot),
+        spot_as_of=uq.timestamp,
     )
 
 

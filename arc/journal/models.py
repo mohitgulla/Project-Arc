@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from arc.journal.analytics import ProposalAnalytics  # noqa: TC001 - pydantic field
 from arc.journal.reasons import (
     Choice,
     JournalPersona,
@@ -107,6 +108,9 @@ class MarketContext(BaseModel):
     legs: list[LegQuote] = Field(default_factory=list)
     quotes_as_of: _dt.datetime | None = Field(None, description="Oldest leg quote time")
     at: _dt.datetime
+    analytics: ProposalAnalytics | None = Field(
+        None, description="E6.1a card v2 numbers (cost, liquidity, moneyness, vol, exit model)"
+    )
 
     _at = field_validator("at")(_aware)
 
