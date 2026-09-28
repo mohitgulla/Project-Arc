@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from arc.context.store import ContextSnapshot, ContextStore
+from arc.monitoring.correlation import bind as bind_ids
 from arc.routines.conditions import evaluate_condition
 from arc.routines.config import JobKind, Notify
 from arc.routines.handlers import (
@@ -434,6 +435,23 @@ class Dispatcher:
         event: RoutineEvent | None,
         note: str,
     ) -> Outcome:
+        # E8.2: every log line of this run (handler, Slack, LLM calls) carries its ids.
+        with bind_ids(
+            run_id=run.run_id,
+            chain_run_id=run.chain_run_id,
+            job=run.job,
+            step_index=run.step_index if run.chain_run_id else None,
+        ):
+            return self._execute_bound(run, now=now, event=event, note=note)
+
+    def _execute_bound(
+        self,
+        run: RoutineRun,
+        *,
+        now: _dt.datetime,
+        event: RoutineEvent | None,
+        note: str,
+    ) -> Outcome:
         kind, spec = self.routines.step(run.job)
         ctx: JobContext | None = None
         try:
@@ -476,7 +494,7 @@ class Dispatcher:
                 run.run_id, status=RunStatus.FAILED, outputs=outputs, error=error, now=now
             )
             log.error("routines.failed", job=run.job, run_id=run.run_id, error=error)
-            self.heartbeats.alert(now, run.job, error)
+            self.heartbeats.alert(now, run.job, error, run_id=run.run_id)
             return self._outcome(run, "failed", error)
 
         summary = result.summary

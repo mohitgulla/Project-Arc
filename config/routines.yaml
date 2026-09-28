@@ -35,6 +35,25 @@ heartbeat:
   # later posts (the 22:00 Scout) and weekend/holiday posts go to the NEXT session's.
   day_rollover: "20:00"
 
+# Ops monitoring (E8.2): `arc health check`, run every 5 min by the launchd agent
+# from hermes/monitoring/install.sh (outside the gateway it watches). Alerts go to
+# #project-arc once per problem and again when it clears.
+monitoring:
+  tick_stale_after: 15m    # no `arc routines tick` heartbeat for this long -> alert
+  miss_grace: 10m          # judge a slot this long after its catch-up window closes
+  miss_lookback: 1d
+  stuck_after: 70m         # routine run still `running` (tick timeout is 55m)
+  alert_channel: project_arc
+  gateway:
+    enabled: true
+    hermes_bin: hermes     # resolved on PATH, then ~/.local/bin
+    timeout: 30s
+    alert_on_degraded: false
+  log:
+    path: logs/arc.jsonl   # relative to the DB directory (data/)
+    max_bytes: 5000000
+    backups: 5
+
 # Default TTL / supersede policy per context kind (producers may override
 # per job with `context:`). TTLs: "<n>m|h|d" or "<n> session(s)".
 context_ttl:

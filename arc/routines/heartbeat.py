@@ -219,7 +219,9 @@ class Heartbeats:
         """An immediate, non-failure alert raised by a handler (always posted)."""
         self._notifier.post(self.day(now), f":warning: {label_for(job)} {job}: {text}")
 
-    def alert(self, now: _dt.datetime, job: str, text: str) -> None:
+    def alert(self, now: _dt.datetime, job: str, text: str, *, run_id: str | None = None) -> None:
+        # E8.2: the run id lets a Slack alert be traced (`arc health trace <run_id>`).
+        ref = f" `{run_id}`" if run_id else ""
         self._notifier.post(
-            self.day(now), f":rotating_light: {label_for(job)} {job} FAILED: {text}"
+            self.day(now), f":rotating_light: {label_for(job)} {job} FAILED: {text}{ref}"
         )
