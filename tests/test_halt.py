@@ -46,7 +46,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 @pytest.fixture()
 def cfg() -> ArcSettings:
-    return ArcSettings(_env_file=None, owner_slack_user_id=OWNER)  # type: ignore[call-arg]
+    return ArcSettings(_env_file=None, account_profile="margin", owner_slack_user_id=OWNER)  # type: ignore[call-arg]
 
 
 @pytest.fixture()
@@ -169,7 +169,9 @@ class TestHaltSwitch:
         assert switch.is_halted()
 
     def test_owner_from_config(self, switch: HaltSwitch) -> None:
-        cfg = ArcSettings(_env_file=None, owner_slack_user_id="U_NEW_OWNER")  # type: ignore[call-arg]
+        cfg = ArcSettings(
+            _env_file=None, account_profile="margin", owner_slack_user_id="U_NEW_OWNER"
+        )  # type: ignore[call-arg]
         switch.halt(actor=OTHER, reason="a", now=NOW)
         with pytest.raises(ResumeNotAuthorizedError):
             switch.resume(actor=OWNER, config=cfg, now=NOW)
@@ -336,7 +338,7 @@ class TestDailyLoss:
         loss_bp=st.integers(min_value=-1000, max_value=10_000),
     )
     def test_breach_matches_gate_rule(self, last: D, loss_bp: int) -> None:
-        cfg = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+        cfg = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
         equity = last - last * D(loss_bp) / D(10_000)
         acct = _acct(str(equity), str(last))
         expected = (last - equity) / last >= D(str(cfg.daily_loss_halt_pct))

@@ -266,7 +266,9 @@ class TestTraceCli:
         from arc.routines.config import load_routines
 
         db = str(tmp_path / "arc.db")
-        conn, report = fixture_run(ArcSettings(_env_file=None), load_routines(), db=db)  # type: ignore[call-arg]
+        conn, report = fixture_run(
+            ArcSettings(_env_file=None, account_profile="margin"), load_routines(), db=db
+        )  # type: ignore[call-arg]
         chain = report.outcomes[1].chain_run_id
         assert chain
         capsys.readouterr()
@@ -296,7 +298,9 @@ class TestTraceCli:
         from arc.pipeline.runner import fixture_run
         from arc.routines.config import load_routines
 
-        conn, report = fixture_run(ArcSettings(_env_file=None), load_routines())  # type: ignore[call-arg]
+        conn, report = fixture_run(
+            ArcSettings(_env_file=None, account_profile="margin"), load_routines()
+        )  # type: ignore[call-arg]
         quant = next(o for o in report.outcomes if o.job == "quant")
         m = ManifestRepo(conn).latest(quant.run_id)
         assert m is not None
