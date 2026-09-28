@@ -31,6 +31,7 @@ from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     from arc.config import ArcSettings
+    from arc.gate.band import PriceBand
     from arc.gate.inputs import AccountSnapshot, MarketSnapshot, Portfolio
     from arc.models import GateDecision, Proposal
     from arc.store.repos import HaltRepo
@@ -229,8 +230,17 @@ def evaluate_with_halt(
     *,
     market: MarketSnapshot,
     now: dt.datetime,
+    band: PriceBand | None = None,
+    closing: bool = False,
 ) -> GateDecision:
     """The gate as callers must run it: persisted halt state stamped in, then :func:`evaluate`."""
     return evaluate(
-        proposal, switch.apply(account_snapshot), portfolio, config, market=market, now=now
+        proposal,
+        switch.apply(account_snapshot),
+        portfolio,
+        config,
+        market=market,
+        now=now,
+        band=band,
+        closing=closing,
     )

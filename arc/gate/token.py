@@ -18,6 +18,22 @@ Token wire format (ASCII, 105 chars, fits Alpaca's 128-char ``client_order_id``)
 
 Using the token as the broker ``client_order_id`` makes it single-use: Alpaca
 rejects a duplicate client order id.
+
+``arc2`` — price-band token (D24, card E6.2)::
+
+    arc2.<proposal_hash_prefix>.<legs_hash_prefix>.<lo>.<hi>.<max_steps>.<expires>.<sig>
+
+- ``legs_hash_prefix``: the order payload *without* its limit price (legs, qty,
+  order type, time in force), same 128-bit prefix encoding.
+- ``lo`` / ``hi``: the band in signed integer cents per share (+ debit, − credit);
+  ``lo`` is the mid limit, ``hi`` the worst limit after ``max_steps`` steps.
+- the signature covers every field, so the band cannot be widened.
+
+One ``arc2`` token authorises up to ``max_steps + 1`` attempts. Attempt ``k`` is
+sent with ``client_order_id = <token>.s<k>`` (unique per attempt, so the broker
+still rejects any re-use) and a limit inside ``[lo, hi]``. ``arc1`` tokens keep
+verifying until they expire (exact price, one attempt, bare token as the id);
+new tokens are minted as ``arc2`` whenever the gate evaluated a band.
 """
 
 from __future__ import annotations
@@ -34,6 +50,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from arc.gate.band import MAX_BAND_STEPS, PriceBand
 from arc.models import LegIntent, Proposal
 from arc.utils.calendar import ET
 
@@ -42,19 +59,28 @@ if TYPE_CHECKING:
     from arc.models import GateDecision
 
 __all__ = [
+    "BAND_TOKEN_VERSION",
     "MIN_SECRET_BYTES",
     "TOKEN_VERSION",
+    "BandToken",
     "GateToken",
     "OrderLeg",
     "OrderPayload",
     "TokenError",
     "TokenErrorCode",
     "gate_secret",
+    "client_order_id",
     "issue_token",
+    "legs_hash",
     "mint",
+    "mint_band",
     "order_payload",
+    "parse_any",
     "payload_hash",
     "verify",
+    "verify_any",
+    "verify_band",
+    "verify_client_order_id",
 ]
 
 TOKEN_VERSION = "arc1"
@@ -65,6 +91,15 @@ _TOKEN_RE = re.compile(
     rf"^(?P<v>arc1)\.(?P<ph>{_B64}{{22}})\.(?P<oh>{_B64}{{22}})\.(?P<exp>[1-9][0-9]{{0,11}})"
     rf"\.(?P<sig>{_B64}{{43}})$"
 )
+BAND_TOKEN_VERSION = "arc2"
+_MAX_CENTS = 999_999  # |price| <= $9,999.99 per share keeps the id <= 128 chars
+_CENTS = r"-?(?:0|[1-9][0-9]{0,5})"
+_BAND_RE = re.compile(
+    rf"^(?P<v>arc2)\.(?P<ph>{_B64}{{22}})\.(?P<lh>{_B64}{{22}})\.(?P<lo>{_CENTS})"
+    rf"\.(?P<hi>{_CENTS})\.(?P<n>[0-9])\.(?P<exp>[1-9][0-9]{{0,9}})\.(?P<sig>{_B64}{{43}})$"
+)
+_STEP_RE = re.compile(r"^(?P<tok>.+)\.s(?P<k>[0-9])$")
+_MAX_ID = 128
 
 
 class TokenErrorCode(StrEnum):
@@ -80,6 +115,9 @@ class TokenErrorCode(StrEnum):
     BAD_SECRET = "bad_secret"
     BAD_EXPIRY = "bad_expiry"
     BAD_PAYLOAD = "bad_payload"
+    OUT_OF_BAND = "out_of_band"
+    BAD_STEP = "bad_step"
+    REUSED = "reused_order_id"
 
 
 class TokenError(Exception):
@@ -150,15 +188,16 @@ class OrderPayload(BaseModel):
     order_type: Literal["limit"] = "limit"
     time_in_force: Literal["day"] = "day"
 
-    def canonical_json(self) -> str:
+    def canonical_json(self, *, with_limit: bool = True) -> str:
         legs = sorted((leg.symbol, leg.side, leg.ratio_qty) for leg in self.legs)
-        body = {
+        body: dict[str, object] = {
             "legs": [{"ratio_qty": r, "side": s, "symbol": sym} for sym, s, r in legs],
-            "limit_price": _decimal_str(self.limit_price),
             "order_type": self.order_type,
             "qty": self.qty,
             "time_in_force": self.time_in_force,
         }
+        if with_limit:
+            body["limit_price"] = _decimal_str(self.limit_price)
         return json.dumps(body, sort_keys=True, separators=(",", ":"))
 
     @classmethod
@@ -190,6 +229,11 @@ class OrderPayload(BaseModel):
 def payload_hash(payload: OrderPayload) -> str:
     """SHA-256 hex digest of the canonical order payload."""
     return hashlib.sha256(payload.canonical_json().encode()).hexdigest()
+
+
+def legs_hash(payload: OrderPayload) -> str:
+    """SHA-256 hex digest of the canonical payload *without* its limit price (arc2)."""
+    return hashlib.sha256(payload.canonical_json(with_limit=False).encode()).hexdigest()
 
 
 def order_payload(proposal: Proposal) -> OrderPayload:
@@ -350,22 +394,36 @@ def verify(
 
 
 def issue_token(
-    decision: GateDecision, proposal: Proposal, *, secret: bytes, now: dt.datetime
+    decision: GateDecision,
+    proposal: Proposal,
+    *,
+    secret: bytes,
+    now: dt.datetime,
+    band: PriceBand | None = None,
 ) -> GateDecision:
     """Return ``decision`` with ``token`` set when it passed (expiry = ``proposal.expires_at``).
 
-    A failed decision is returned unchanged (``token=None``).
+    With ``band`` (the band the gate evaluated) the token is ``arc2``; without, the
+    legacy exact-price ``arc1``. A failed decision is returned unchanged (``token=None``).
     """
     if not decision.passed:
         return decision
-    token = mint(
-        decision.proposal_hash,
-        decision,
-        order=order_payload(proposal),
-        secret=secret,
-        expires_at=proposal.expires_at,
-        now=now,
-    )
+    order = order_payload(proposal)
+    ph = decision.proposal_hash
+    if band is None:
+        token = mint(
+            ph, decision, order=order, secret=secret, expires_at=proposal.expires_at, now=now
+        )
+    else:
+        token = mint_band(
+            ph,
+            decision,
+            order=order,
+            band=band,
+            secret=secret,
+            expires_at=proposal.expires_at,
+            now=now,
+        )
     return decision.model_copy(update={"token": token})
 
 
@@ -374,3 +432,204 @@ def gate_secret(config: ArcSettings) -> bytes:
     raw = config.gate_secret.get_secret_value().encode() if config.gate_secret else b""
     _check_secret(raw)
     return raw
+
+
+# ---------------------------------------------------------------------------
+# arc2: price-band token (D24)
+# ---------------------------------------------------------------------------
+
+
+def _to_cents(price: Decimal) -> int:
+    cents = price * 100
+    if cents != cents.to_integral_value() or abs(cents) > _MAX_CENTS:
+        raise TokenError(TokenErrorCode.BAD_PAYLOAD, f"band price {price} is not whole cents")
+    return int(cents)
+
+
+class BandToken(BaseModel):
+    """Parsed ``arc2`` token. ``encode()`` is the wire form stored in ``GateDecision.token``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    version: Literal["arc2"] = BAND_TOKEN_VERSION
+    proposal_prefix: str
+    legs_prefix: str
+    lo_cents: int
+    hi_cents: int
+    max_steps: int
+    expires_epoch: int
+    signature: str
+
+    @property
+    def expires_at(self) -> dt.datetime:
+        return dt.datetime.fromtimestamp(self.expires_epoch, tz=ET)
+
+    @property
+    def band(self) -> PriceBand:
+        """The signed band (raises ``ValueError`` if it is not a valid band)."""
+        return PriceBand(
+            lo=Decimal(self.lo_cents) / 100,
+            hi=Decimal(self.hi_cents) / 100,
+            max_steps=self.max_steps,
+        )
+
+    @property
+    def body(self) -> str:
+        return (
+            f"{self.version}.{self.proposal_prefix}.{self.legs_prefix}.{self.lo_cents}."
+            f"{self.hi_cents}.{self.max_steps}.{self.expires_epoch}"
+        )
+
+    def encode(self) -> str:
+        return f"{self.body}.{self.signature}"
+
+    @classmethod
+    def parse(cls, token: object) -> BandToken:
+        if token is None or token == "":
+            raise TokenError(TokenErrorCode.MISSING, "no gate token")
+        if not isinstance(token, str) or len(token) > _MAX_ID:
+            raise TokenError(TokenErrorCode.MALFORMED, "token is not a short string")
+        m = _BAND_RE.fullmatch(token)
+        if m is None:
+            raise TokenError(TokenErrorCode.MALFORMED, "token does not match arc2 format")
+        return cls(
+            proposal_prefix=m["ph"],
+            legs_prefix=m["lh"],
+            lo_cents=int(m["lo"]),
+            hi_cents=int(m["hi"]),
+            max_steps=int(m["n"]),
+            expires_epoch=int(m["exp"]),
+            signature=m["sig"],
+        )
+
+
+def client_order_id(token: str, step: int) -> str:
+    """The broker id for attempt ``step`` of an ``arc2`` token: ``<token>.s<step>``."""
+    if not 0 <= step <= MAX_BAND_STEPS:
+        raise TokenError(TokenErrorCode.BAD_STEP, f"step {step} outside 0..{MAX_BAND_STEPS}")
+    return f"{token}.s{step}"
+
+
+def parse_any(token: object) -> GateToken | BandToken:
+    """Parse an ``arc1`` or ``arc2`` token (no signature check)."""
+    if isinstance(token, str) and token.startswith(f"{BAND_TOKEN_VERSION}."):
+        return BandToken.parse(token)
+    return GateToken.parse(token)
+
+
+def mint_band(
+    proposal_hash: str,
+    decision: GateDecision,
+    *,
+    order: OrderPayload,
+    band: PriceBand,
+    secret: bytes,
+    expires_at: dt.datetime,
+    now: dt.datetime,
+) -> str:
+    """Mint an ``arc2`` token for a passed decision over ``band``.
+
+    ``order`` is the proposal's order at its (mid) limit, which must equal
+    ``band.lo``: the band starts where the gate-checked limit is.
+    """
+    _check_secret(secret)
+    _check_aware(now)
+    _check_aware(expires_at)
+    if not decision.passed or decision.violations:
+        raise TokenError(TokenErrorCode.NOT_PASSED, "gate decision did not pass")
+    if not hmac.compare_digest(decision.proposal_hash.encode(), proposal_hash.encode()):
+        raise TokenError(TokenErrorCode.PROPOSAL_MISMATCH, "decision is for another proposal")
+    if order.limit_price != band.lo:
+        msg = f"band starts at {band.lo}, order limit is {order.limit_price}"
+        raise TokenError(TokenErrorCode.BAD_PAYLOAD, msg)
+    epoch = int(expires_at.timestamp())
+    if epoch <= now.timestamp() or epoch >= 10**10:
+        raise TokenError(TokenErrorCode.BAD_EXPIRY, "expiry is not in the future")
+    unsigned = BandToken(
+        proposal_prefix=_hash_prefix(proposal_hash),
+        legs_prefix=_hash_prefix(legs_hash(order)),
+        lo_cents=_to_cents(band.lo),
+        hi_cents=_to_cents(band.hi),
+        max_steps=band.max_steps,
+        expires_epoch=epoch,
+        signature="",
+    )
+    return unsigned.model_copy(update={"signature": _sign(secret, unsigned.body)}).encode()
+
+
+def verify_band(
+    token: object,
+    *,
+    secret: bytes,
+    now: dt.datetime,
+    proposal_hash: str | None = None,
+    order: OrderPayload | None = None,
+    step: int | None = None,
+) -> BandToken:
+    """Verify an ``arc2`` token; return it parsed, or raise ``TokenError`` (fail closed).
+
+    Always checks the signature, the expiry and that the signed band is valid.
+    ``order``: its legs/qty must match and its limit must lie inside the band.
+    ``step``: must be within ``0..max_steps``.
+    """
+    _check_secret(secret)
+    _check_aware(now)
+    t = BandToken.parse(token)
+    if not hmac.compare_digest(_sign(secret, t.body).encode(), t.signature.encode()):
+        raise TokenError(TokenErrorCode.BAD_SIGNATURE, "signature does not verify")
+    if now.timestamp() >= t.expires_epoch:
+        raise TokenError(TokenErrorCode.EXPIRED, f"token expired at {t.expires_at.isoformat()}")
+    try:
+        band = t.band
+    except ValueError as exc:
+        raise TokenError(TokenErrorCode.MALFORMED, f"signed band is invalid: {exc}") from exc
+    if proposal_hash is not None and not hmac.compare_digest(
+        _hash_prefix(proposal_hash).encode(), t.proposal_prefix.encode()
+    ):
+        raise TokenError(TokenErrorCode.PROPOSAL_MISMATCH, "token is for another proposal")
+    if order is not None:
+        if not hmac.compare_digest(_hash_prefix(legs_hash(order)).encode(), t.legs_prefix.encode()):
+            raise TokenError(TokenErrorCode.ORDER_MISMATCH, "token is for different legs or qty")
+        if not band.contains(order.limit_price):
+            msg = f"limit {order.limit_price} outside band [{band.lo}, {band.hi}]"
+            raise TokenError(TokenErrorCode.OUT_OF_BAND, msg)
+    if step is not None and not 0 <= step <= t.max_steps:
+        raise TokenError(TokenErrorCode.BAD_STEP, f"step {step} outside 0..{t.max_steps}")
+    return t
+
+
+def verify_any(token: object, *, secret: bytes, now: dt.datetime) -> GateToken | BandToken:
+    """Signature + expiry check for either version (``arc execute --token``)."""
+    if isinstance(token, str) and token.startswith(f"{BAND_TOKEN_VERSION}."):
+        return verify_band(token, secret=secret, now=now)
+    return verify(token, secret=secret, now=now)
+
+
+def verify_client_order_id(
+    coid: object,
+    *,
+    secret: bytes,
+    now: dt.datetime,
+    order: OrderPayload,
+    proposal_hash: str | None = None,
+) -> tuple[GateToken | BandToken, int]:
+    """Verify a broker ``client_order_id`` against the exact order it is sent with.
+
+    ``arc2``: ``<token>.s<k>`` with ``k <= max_steps`` and the limit inside the band.
+    ``arc1`` (legacy): the bare token, bound to this exact order; always step 0.
+    Returns ``(token, step)``.
+    """
+    if not isinstance(coid, str) or len(coid) > _MAX_ID:
+        if coid is None or coid == "":
+            raise TokenError(TokenErrorCode.MISSING, "no client_order_id")
+        raise TokenError(TokenErrorCode.MALFORMED, "client_order_id is not a short string")
+    if coid.startswith(f"{BAND_TOKEN_VERSION}."):
+        m = _STEP_RE.fullmatch(coid)
+        if m is None:
+            raise TokenError(TokenErrorCode.BAD_STEP, "arc2 order id needs a .s<k> step suffix")
+        k = int(m["k"])
+        t = verify_band(
+            m["tok"], secret=secret, now=now, proposal_hash=proposal_hash, order=order, step=k
+        )
+        return t, k
+    return verify(coid, secret=secret, now=now, proposal_hash=proposal_hash, order=order), 0

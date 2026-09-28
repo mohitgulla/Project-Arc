@@ -202,6 +202,40 @@ class ArcSettings(BaseSettings):
         default=0.01,
         description="Limit price must be a whole multiple of this tick ($).",
     )
+    # -- Execution: bounded price improvement (D24, E6.2) --------------------
+    execution_improvement_steps: Annotated[int, Field(ge=0, le=9)] = Field(
+        default=3,
+        description="Price-improvement steps after the mid attempt (D24: 3 = 4 attempts).",
+    )
+    execution_band_reach: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=1.0,
+        description=(
+            "How far toward the far touch of the combo NBBO the band's worst price may go "
+            "(1.0 = far touch). Each step moves 1/N of the band (D24)."
+        ),
+    )
+    execution_step_seconds: Annotated[int, Field(ge=1, le=900)] = Field(
+        default=60,
+        description="Seconds each attempt may work before it is cancelled (D24: 60 s).",
+    )
+    execution_poll_seconds: Annotated[float, Field(gt=0.0, le=30.0)] = Field(
+        default=2.0,
+        description="Order-status poll interval while an attempt works.",
+    )
+    execution_cancel_confirm_seconds: Annotated[int, Field(ge=1, le=300)] = Field(
+        default=30,
+        description=(
+            "Max seconds to wait for the broker to confirm a cancel before the ladder stops "
+            "(D28: never two working orders per structure)."
+        ),
+    )
+    auto_exit_defined_risk: bool = Field(
+        default=False,
+        description=(
+            "D24: when true, fired exits on defined-risk positions skip the Slack approval. "
+            "Default false: every exit is a proposal that needs an approval."
+        ),
+    )
     # -- Gate token (E3.2) ----------------------------------------------------
     gate_secret: SecretStr | None = Field(
         default=None,

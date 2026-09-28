@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, NamedTuple
@@ -24,7 +24,8 @@ from typing import TYPE_CHECKING, NamedTuple
 from pydantic import BaseModel, ConfigDict
 
 from arc.config import ArcSettings, StructureKind
-from arc.models import GateDecision, LegIntent, Proposal
+from arc.gate.band import PriceBand, band_from_nbbo
+from arc.models import GateDecision, Leg, LegIntent, Proposal
 from arc.models import StructureKind as ModelKind
 from arc.structures import (
     classify,
@@ -43,6 +44,8 @@ __all__ = [
     "RuleCode",
     "Violation",
     "check_approval_ttl",
+    "check_band",
+    "check_closing",
     "check_daily_loss",
     "check_data_freshness",
     "check_dte_window",
@@ -54,8 +57,11 @@ __all__ = [
     "check_spread_tick",
     "check_structure_whitelist",
     "check_wash_sale",
+    "combo_nbbo",
     "derive",
     "evaluate",
+    "price_band",
+    "proposal_band",
     "proposal_hash",
 ]
 
@@ -82,6 +88,8 @@ class RuleCode(StrEnum):
     MAX_POSITIONS = "max_open_positions"
     APPROVAL_TTL = "approval_ttl"
     STALE_DATA = "stale_data"
+    BAND = "price_band"
+    CLOSE_MISMATCH = "close_mismatch"
     RULE_ERROR = "rule_error"
 
 
@@ -240,6 +248,107 @@ def check_spread_tick(
     tick = _d(config.limit_tick)
     if d.limit_price % tick != 0:
         out += _v(RuleCode.TICK, f"limit {d.limit_price} is not a multiple of tick {tick}")
+    return out
+
+
+def combo_nbbo(legs: Sequence[Leg], market: MarketSnapshot) -> tuple[Decimal, Decimal] | None:
+    """Combo NBBO ``(low, high)`` per share (+ = debit); ``None`` if a leg quote is missing/crossed.
+
+    ``high`` is the far touch for the buyer of the combo: the worst limit a band may reach.
+    """
+    low = high = _ZERO
+    for leg in legs:
+        q = market.quotes.get(leg.occ_symbol)
+        if q is None or q.bid > q.ask:
+            return None
+        r = Decimal(leg.ratio)
+        if leg.side == LegIntent.LONG:
+            low, high = low + r * q.bid, high + r * q.ask
+        else:
+            low, high = low - r * q.ask, high - r * q.bid
+    return low, high
+
+
+def price_band(
+    legs: Sequence[Leg], limit: Decimal, market: MarketSnapshot, config: ArcSettings
+) -> PriceBand:
+    """D24 band from *limit* toward the far touch of the legs' combo NBBO.
+
+    ``max_steps = config.execution_improvement_steps``; the worst price is
+    ``execution_band_reach`` of the way to the far touch. Without a complete
+    NBBO (or with an off-tick limit) there is no room: a one-attempt band at the
+    limit (the gate's own spread/tick checks then decide). Pure.
+    """
+    nbbo = combo_nbbo(legs, market)
+    tick = _d(config.limit_tick)
+    if nbbo is None or limit % tick != 0:
+        return PriceBand(lo=limit, hi=limit, max_steps=0)
+    return band_from_nbbo(
+        limit,
+        nbbo[1],
+        max_steps=config.execution_improvement_steps,
+        reach=_d(config.execution_band_reach),
+        tick=tick,
+    )
+
+
+def proposal_band(proposal: Proposal, market: MarketSnapshot, config: ArcSettings) -> PriceBand:
+    """:func:`price_band` at the proposal's limit (default: the structure's mid)."""
+    st = proposal.structure
+    limit = st.net_debit_credit if proposal.limit_price is None else proposal.limit_price
+    return price_band(st.legs, limit, market, config)
+
+
+def worst_case(d: Derived, band: PriceBand, contracts: int) -> Derived:
+    """``d`` re-derived at the band's worst limit: paying ``hi − net`` more per share adds
+    exactly that (× 100 × contracts) to a defined-risk structure's max loss."""
+    extra = (band.hi - d.net_price) * _HUNDRED * contracts
+    worst = None if d.max_loss_total is None else max(d.max_loss_total + extra, _ZERO)
+    return d._replace(limit_price=band.hi, max_loss_total=worst)
+
+
+def check_band(
+    proposal: Proposal,
+    d: Derived,
+    band: PriceBand,
+    market: MarketSnapshot,
+    config: ArcSettings,
+) -> list[Violation]:
+    """D24: the band starts at the proposal's limit, its steps are within the configured
+    maximum, and its worst price passes the combo-NBBO and tick checks too.
+
+    (The 5% per-underlying cap at the worst price is checked by
+    :func:`check_per_underlying` on :func:`worst_case`, see :func:`evaluate`.)
+    """
+    out: list[Violation] = []
+    if band.lo != d.limit_price:
+        out += _v(RuleCode.BAND, f"band starts at {band.lo}, not at the limit {d.limit_price}")
+    if band.max_steps > config.execution_improvement_steps:
+        out += _v(
+            RuleCode.BAND,
+            f"{band.max_steps} steps > max {config.execution_improvement_steps}",
+        )
+    worst = d._replace(limit_price=band.hi)
+    for v in check_spread_tick(proposal, worst, market, config):
+        if v.code in (RuleCode.LIMIT_OUTSIDE_NBBO, RuleCode.TICK):
+            out += _v(RuleCode.BAND, f"worst price: {v.detail}")
+    return out
+
+
+def check_closing(proposal: Proposal, portfolio: Portfolio) -> list[Violation]:
+    """A closing order may only reduce held legs: sell ≤ held long, buy ≤ held short."""
+    out: list[Violation] = []
+    n = proposal.sizing.contracts
+    for leg in proposal.structure.legs:
+        held = portfolio.legs.get(leg.occ_symbol, 0)
+        qty = leg.ratio * n
+        closes = held <= -qty if leg.side == LegIntent.LONG else held >= qty
+        if not closes:
+            verb = "buy" if leg.side == LegIntent.LONG else "sell"
+            out += _v(
+                RuleCode.CLOSE_MISMATCH,
+                f"{verb} {qty} {leg.occ_symbol} does not close a held position ({held:+d})",
+            )
     return out
 
 
@@ -423,11 +532,24 @@ def evaluate(
     *,
     market: MarketSnapshot,
     now: dt.datetime,
+    band: PriceBand | None = None,
+    closing: bool = False,
 ) -> GateDecision:
     """Run every rule and return a :class:`GateDecision` listing *all* violations.
 
     ``now`` must be timezone-aware (``arc.utils.calendar.now_et()``); it is an
     argument so the gate stays pure. ``token`` is left ``None`` — minting is E3.2.
+
+    ``band`` (D24): the whole price band is checked — the start at the limit, the
+    worst price inside the combo NBBO and on tick, and the per-underlying cap at
+    the worst price's max loss.
+
+    ``closing``: the proposal closes an open position (E6.2 exits). Every leg must
+    reduce a held leg (:func:`check_closing`); rules that only limit *opening*
+    risk are skipped — daily-loss entry block, max open positions, Greek caps,
+    per-underlying cap, structure whitelist, wash sale, entry DTE window and
+    earnings blackout. The halt, TTL, data freshness, spread/NBBO/tick and band
+    checks still run (fail closed).
     """
     if now.tzinfo is None or now.utcoffset() is None:
         msg = "evaluate() requires a timezone-aware `now` (use arc.utils.calendar.now_et())"
@@ -435,11 +557,14 @@ def evaluate(
     p, a, pf, c, m = proposal, account_snapshot, portfolio, config, market
     violations: list[Violation] = []
     violations += _run("halt", lambda: check_halt(a))
-    violations += _run("daily_loss", lambda: check_daily_loss(a, c))
-    violations += _run("max_open_positions", lambda: check_max_open_positions(pf, c))
+    if closing:
+        violations += _run("closing", lambda: check_closing(p, pf))
+    else:
+        violations += _run("daily_loss", lambda: check_daily_loss(a, c))
+        violations += _run("max_open_positions", lambda: check_max_open_positions(pf, c))
+        violations += _run("greek_caps", lambda: check_greek_caps(p, a, pf, c))
     violations += _run("approval_ttl", lambda: check_approval_ttl(p, c, now))
     violations += _run("data_freshness", lambda: check_data_freshness(p, a, m, c, now))
-    violations += _run("greek_caps", lambda: check_greek_caps(p, a, pf, c))
 
     try:
         d: Derived | None = derive(p)
@@ -449,12 +574,18 @@ def evaluate(
 
     if d is not None:
         dd = d
-        violations += _run("per_underlying", lambda: check_per_underlying(dd, a, pf, c))
+        risk_d = dd if band is None else worst_case(dd, band, p.sizing.contracts)
+        if not closing:
+            violations += _run("per_underlying", lambda: check_per_underlying(risk_d, a, pf, c))
         violations += _run("spread_tick", lambda: check_spread_tick(p, dd, m, c))
-        violations += _run("wash_sale", lambda: check_wash_sale(dd, pf, c, now))
-        violations += _run("structure", lambda: check_structure_whitelist(p, dd, c))
-        violations += _run("dte_window", lambda: check_dte_window(dd, c, now))
-        violations += _run("earnings", lambda: check_earnings_blackout(p, dd, m, c, now))
+        if band is not None:
+            bb = band
+            violations += _run("band", lambda: check_band(p, dd, bb, m, c))
+        if not closing:
+            violations += _run("structure", lambda: check_structure_whitelist(p, dd, c))
+            violations += _run("wash_sale", lambda: check_wash_sale(dd, pf, c, now))
+            violations += _run("dte_window", lambda: check_dte_window(dd, c, now))
+            violations += _run("earnings", lambda: check_earnings_blackout(p, dd, m, c, now))
 
     return GateDecision(
         proposal_hash=proposal_hash(p),

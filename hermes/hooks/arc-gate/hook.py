@@ -15,6 +15,11 @@ has to decide, so a broken ``arc`` install cannot turn into an allow.
 
 Secret: ``ARC_GATE_SECRET`` from the environment, else from ``~/.hermes/.env``
 via ``arc.config``. A missing secret blocks every gated call.
+
+Used order ids (D24): every allowed ``place_option_order`` appends its
+``client_order_id`` to ``$HERMES_HOME/arc-gate/used_order_ids`` (one per line),
+and an order re-using a listed id is blocked. An unreadable or unwritable
+ledger blocks the order (fail closed).
 """
 
 from __future__ import annotations
@@ -61,6 +66,34 @@ def _secret() -> bytes | None:
         return None
 
 
+def _ledger_path() -> object:
+    import os
+    from pathlib import Path
+
+    home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
+    return Path(home) / "arc-gate" / "used_order_ids"
+
+
+def _used_ids(path: object) -> frozenset[str]:
+    from pathlib import Path
+
+    p = Path(str(path))
+    if not p.exists():
+        return frozenset()
+    return frozenset(line.strip() for line in p.read_text().splitlines() if line.strip())
+
+
+def _record_id(path: object, coid: str) -> None:
+    import fcntl
+    from pathlib import Path
+
+    p = Path(str(path))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        fh.write(coid + "\n")
+
+
 def main(stdin: str) -> int:
     try:
         payload = json.loads(stdin)
@@ -71,10 +104,17 @@ def main(stdin: str) -> int:
         if _fast_allow(tool_name, tool_input):
             return _emit(True)
 
-        from arc.gate.hook_policy import check_tool_call
+        from arc.gate.hook_policy import GATED_TOOLS, base_tool_name, check_tool_call
         from arc.utils.calendar import now_et
 
-        verdict = check_tool_call(tool_name, tool_input, secret=_secret(), now=now_et())
+        is_order = isinstance(tool_name, str) and base_tool_name(tool_name) in GATED_TOOLS
+        ledger = _ledger_path()
+        used = _used_ids(ledger) if is_order else frozenset()
+        verdict = check_tool_call(
+            tool_name, tool_input, secret=_secret(), now=now_et(), used_order_ids=used
+        )
+        if verdict.allow and is_order and isinstance(tool_input, dict):
+            _record_id(ledger, str(tool_input["client_order_id"]))
         return _emit(verdict.allow, verdict.message)
     except Exception as exc:  # noqa: BLE001 — fail closed
         return _emit(False, f"arc-gate: hook error, failing closed: {type(exc).__name__}: {exc}")
