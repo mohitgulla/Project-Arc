@@ -9,8 +9,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from arc.config import ArcEnv, ArcSettings
-from arc.execution import RefusalCode, SubmitRefused, build_order, submit
-from arc.gate import issue_token, order_payload, proposal_hash
+from arc.execution import RefusalCode, SubmitRefused, attempt_order_id, build_order, submit
+from arc.gate import HaltSwitch, issue_token, order_payload, proposal_hash
+from arc.gate.band import PriceBand
+from arc.gate.token import TokenError
 from arc.models import (
     ApprovalDecision,
     ApprovalRecord,
@@ -19,6 +21,9 @@ from arc.models import (
     QuantMetrics,
     Sizing,
 )
+from arc.store.db import connect
+from arc.store.migrate import migrate
+from arc.store.repos import HaltRepo
 from arc.structures import credit_vertical, format_occ
 from arc.utils.calendar import ET
 
@@ -71,9 +76,18 @@ def proposal(**kw: object) -> Proposal:
     return Proposal(**base)  # type: ignore[arg-type]
 
 
-def gated(p: Proposal) -> GateDecision:
+def gated(p: Proposal, band: PriceBand | None = None) -> GateDecision:
     d = GateDecision(proposal_hash=proposal_hash(p), passed=True)
-    return issue_token(d, p, secret=SECRET.encode(), now=NOW)
+    return issue_token(d, p, secret=SECRET.encode(), now=NOW, band=band)
+
+
+def switch() -> HaltSwitch:
+    conn = connect(":memory:")
+    migrate(conn)
+    return HaltSwitch(HaltRepo(conn))
+
+
+BAND = PriceBand(lo=D("-0.85"), hi=D("-0.76"), max_steps=3)
 
 
 def approved(p: Proposal, **kw: object) -> ApprovalRecord:
@@ -88,16 +102,30 @@ def approved(p: Proposal, **kw: object) -> ApprovalRecord:
     return ApprovalRecord(**base)  # type: ignore[arg-type]
 
 
-def go(p, d, a, *, config: ArcSettings | None = None, now: dt.datetime = NOW):
+def go(p, d, a, *, config: ArcSettings | None = None, now: dt.datetime = NOW, **kw):
     broker = FakeBroker()
-    result = submit(p, d, a, broker=broker, config=config or cfg(), now=now)
+    halt = kw.pop("halt", None) or switch()
+    result = submit(p, d, a, broker=broker, config=config or cfg(), now=now, halt=halt, **kw)
     return result, broker
+
+
+_UNSET = object()
 
 
 def refused(p, d, a, **kw) -> tuple[RefusalCode, FakeBroker]:
     broker = FakeBroker()
+    halt = kw.pop("halt", _UNSET)
     with pytest.raises(SubmitRefused) as e:
-        submit(p, d, a, broker=broker, config=kw.pop("config", cfg()), now=kw.pop("now", NOW))
+        submit(
+            p,
+            d,
+            a,
+            broker=broker,
+            config=kw.pop("config", cfg()),
+            now=kw.pop("now", NOW),
+            halt=switch() if halt is _UNSET else halt,
+            **kw,
+        )
     assert broker.orders == [], "broker must not be touched on refusal"
     return e.value.code, broker
 
@@ -125,10 +153,14 @@ def test_submits_exact_order_with_token_as_client_order_id() -> None:
 
 def test_build_order_matches_order_payload() -> None:
     p = proposal(limit_price=D("-0.80"))
-    o = build_order(p, "tok")
+    tok = gated(p).token
+    assert tok is not None
+    o = build_order(p, tok)
     op = order_payload(p)
     assert o.limit_price == op.limit_price == D("-0.80")
-    assert o.client_order_id == "tok"
+    assert o.client_order_id == tok
+    with pytest.raises(TokenError):
+        build_order(p, "not-a-token")
 
 
 # ---------------------------------------------------------------------------
@@ -256,3 +288,87 @@ def test_refuses_non_paper_env() -> None:
 def test_refusal_str() -> None:
     assert str(SubmitRefused(RefusalCode.NO_APPROVAL)) == "no_approval"
     assert str(SubmitRefused(RefusalCode.NO_APPROVAL, "x")) == "no_approval: x"
+
+
+# ---------------------------------------------------------------------------
+# Halt (Sentinel S-4): re-read at submit time, before token/approval, fail closed
+# ---------------------------------------------------------------------------
+
+
+def test_submit_refuses_when_halted() -> None:
+    p = proposal()
+    sw = switch()
+    sw.halt(actor="U1", reason="vol spike", now=NOW)
+    code, broker = refused(p, gated(p, BAND), approved(p), halt=sw)
+    assert code is RefusalCode.HALTED
+    assert broker.orders == []
+
+
+def test_submit_refuses_halted_before_checking_the_token() -> None:
+    """Halt wins even over a missing decision: it is checked first."""
+    p = proposal()
+    sw = switch()
+    sw.halt(actor="U1", reason="x", now=NOW)
+    assert refused(p, None, None, halt=sw)[0] is RefusalCode.HALTED
+
+
+def test_submit_without_halt_switch_fails_closed() -> None:
+    p = proposal()
+    assert refused(p, gated(p, BAND), approved(p), halt=None)[0] is RefusalCode.HALTED
+
+
+# ---------------------------------------------------------------------------
+# arc2 price band (D24)
+# ---------------------------------------------------------------------------
+
+
+def test_arc2_steps_inside_band_use_unique_ids() -> None:
+    p = proposal()
+    d = gated(p, BAND)
+    assert d.token is not None and d.token.startswith("arc2.")
+    ids = []
+    for k, price in enumerate(BAND.ladder(D("0.01"))):
+        _, broker = go(p, d, approved(p), step=k, limit_price=price)
+        (order,) = broker.orders
+        assert order.limit_price == price
+        assert order.client_order_id == f"{d.token}.s{k}"
+        assert len(order.client_order_id) <= 128
+        ids.append(order.client_order_id)
+    assert len(set(ids)) == 4
+
+
+def test_arc2_refuses_price_outside_band() -> None:
+    p = proposal()
+    d = gated(p, BAND)
+    for bad in (D("-0.86"), D("-0.75")):
+        code, _ = refused(p, d, approved(p), step=1, limit_price=bad)
+        assert code is RefusalCode.TOKEN_INVALID
+
+
+def test_arc2_refuses_step_beyond_max_steps() -> None:
+    p = proposal()
+    d = gated(p, BAND)
+    code, _ = refused(p, d, approved(p), step=4, limit_price=D("-0.80"))
+    assert code is RefusalCode.TOKEN_INVALID
+
+
+def test_arc1_legacy_token_allows_one_exact_attempt_only() -> None:
+    p = proposal()
+    d = gated(p)  # arc1
+    assert d.token is not None and d.token.startswith("arc1.")
+    _, broker = go(p, d, approved(p))
+    assert broker.orders[0].client_order_id == d.token
+    assert refused(p, d, approved(p), step=1)[0] is RefusalCode.TOKEN_INVALID
+    code, _ = refused(p, d, approved(p), limit_price=D("-0.84"))
+    assert code is RefusalCode.TOKEN_INVALID
+
+
+def test_attempt_order_id() -> None:
+    p = proposal()
+    arc2 = gated(p, BAND).token
+    arc1 = gated(p).token
+    assert arc2 is not None and arc1 is not None
+    assert attempt_order_id(arc2, 2) == f"{arc2}.s2"
+    assert attempt_order_id(arc1, 0) == arc1
+    with pytest.raises(TokenError):
+        attempt_order_id(arc1, 1)
