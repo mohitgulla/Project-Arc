@@ -59,9 +59,9 @@ personas:
     trigger: approval           # event-driven, never scheduled
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
-  quant:   {reads: [shortlist]}
+  quant:   {reads: [shortlist, regime]}
   risk:    {reads: [structures]}
-  propose: {reads: [candidate, shortlist, structures, risk_review], llm: false}
+  propose: {reads: [candidate, shortlist, structures, risk_review, regime], llm: false}
 
 triggers:                       # a run finishing (or an external event) can start another run
   - on: scout.completed

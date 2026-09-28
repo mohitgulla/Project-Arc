@@ -29,8 +29,9 @@ Let ``N`` = the entry net price (positive debit paid, negative credit received),
 *Stops* (``stop.basis``), a loss threshold ``L`` such that the stop fires when
 ``pnl ≤ −L``:
 
-- ``credit_multiple``: ``L = value · C``. **2.0 means a loss of twice the credit**
-  (debit to close = 3 × credit). Credit structures only.
+- ``credit_multiple``: close when the **debit to close reaches value × credit**, i.e.
+  ``L = (value − 1) · C`` (the usual "2x credit stop": a $1.66 credit is stopped at a
+  $3.32 debit, a $1.66 loss). ``value > 1``. Credit structures only.
 - ``pct_max_loss``: ``L = value · max_loss``. Any structure.
 - ``pct_debit``: ``L = value · D`` (0.5 = the position lost half its debit). Debit
   structures only.
@@ -70,6 +71,7 @@ if TYPE_CHECKING:
     from arc.models import Structure
 
 __all__ = [
+    "MenuRank",
     "CREDIT_KINDS",
     "DEBIT_KINDS",
     "DEFAULT_EXITS_PATH",
@@ -124,7 +126,11 @@ class StopRule(BaseModel):
 
     @model_validator(mode="after")
     def _range(self) -> StopRule:
-        if self.basis is not StopBasis.CREDIT_MULTIPLE and self.value > 1.0:
+        if self.basis is StopBasis.CREDIT_MULTIPLE:
+            if self.value <= 1.0:
+                msg = f"credit_multiple is a debit-to-close multiple, > 1; got {self.value}"
+                raise ValueError(msg)
+        elif self.value > 1.0:
             msg = f"stop {self.basis.value} is a fraction in (0, 1]; got {self.value}"
             raise ValueError(msg)
         return self
@@ -225,6 +231,14 @@ class ExitModelConfig(BaseModel):
     n_paths: int = Field(20_000, ge=100)
     seed: int = Field(20260927, ge=0)
     iv_model: IvModel = Field(default_factory=IvModel)
+    path_vol: Literal["realized_forecast", "iv"] = Field(
+        "realized_forecast",
+        description="Vol the paths move at: the realised-vol forecast (mean HV20/HV60) when "
+        "the caller has one, else IV; 'iv' always uses IV. Marks are always priced at IV.",
+    )
+
+
+MenuRank = Literal["scanner", "managed_net_ev", "rorc_day", "vrp"]
 
 
 class PipelineExitConfig(BaseModel):
@@ -232,8 +246,10 @@ class PipelineExitConfig(BaseModel):
 
     model_config = _FORBID
 
-    rank_menu_by_managed_net_ev: bool = Field(
-        False, description="Rank the Quant menu by managed net EV (off until the owner decides)"
+    rank_menu_by: MenuRank = Field(
+        "scanner",
+        description="Quant menu order: 'scanner' keeps the scanner's rank_by (credit_width); "
+        "or managed_net_ev / rorc_day / vrp, highest first (owner decision pending)",
     )
 
 
@@ -303,7 +319,7 @@ class ResolvedRules(BaseModel):
             if not self.credit:
                 msg = "credit_multiple stop on a debit structure"
                 raise ValueError(msg)
-            return -s.value * -self.entry_net
+            return -(s.value - 1.0) * -self.entry_net
         if s.basis is StopBasis.PCT_DEBIT:
             if self.credit:
                 msg = "pct_debit stop on a credit structure"

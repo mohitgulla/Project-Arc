@@ -445,26 +445,49 @@ def test_exit_model_wired_into_pipeline(settings: ArcSettings, routines) -> None
     assert "exit_model" not in json.loads(p["structure_json"])
 
 
-def test_rank_menu_by_managed_net_ev_flag(
+@pytest.mark.parametrize("by", ["managed_net_ev", "rorc_day"])
+def test_rank_menu_by_flag(
     settings: ArcSettings,
     routines,  # noqa: ANN001
     monkeypatch: pytest.MonkeyPatch,
+    by: str,
 ) -> None:
     import arc.pipeline.steps as steps
     from arc.exits import load_exit_config
 
-    def menu_evs(prompt: str) -> list[float]:
-        return [float(x) for x in re.findall(r'"managed_net_ev": (-?[0-9.]+)', prompt)]
+    def menu_vals(prompt: str) -> list[float]:
+        return [float(x) for x in re.findall(rf'"{by}": (-?[0-9.e-]+)', prompt)]
 
     _, _, off = _recording_fixture_run(settings, routines)
     cfg = load_exit_config()
     on_cfg = cfg.model_copy(
-        update={"pipeline": cfg.pipeline.model_copy(update={"rank_menu_by_managed_net_ev": True})}
+        update={"pipeline": cfg.pipeline.model_copy(update={"rank_menu_by": by})}
     )
     monkeypatch.setattr(steps, "load_exit_config", lambda: on_cfg)
     _, _, on = _recording_fixture_run(settings, routines)
-    evs = menu_evs(on["quant"])
-    assert len(evs) >= 2
-    assert evs == sorted(evs, reverse=True)
-    assert sorted(menu_evs(off["quant"])) == sorted(evs)  # same menu, reordered
-    assert menu_evs(off["quant"]) != evs  # default (off) keeps the scanner's credit/width order
+    vals = menu_vals(on["quant"])
+    assert len(vals) >= 2
+    assert vals == sorted(vals, reverse=True)
+    assert sorted(menu_vals(off["quant"])) == sorted(vals)  # same menu, reordered
+
+
+def test_menu_rank_key_unmodelled_last() -> None:
+    from arc.pipeline.steps import _menu_rank_key
+
+    assert _menu_rank_key(None, "vrp") == float("inf")
+
+
+def test_realized_vol_from_regime_context(settings: ArcSettings, routines) -> None:  # noqa: ANN001
+    conn, _, prompts = _recording_fixture_run(settings, routines)
+    (s,) = _latest_payload(conn, "structures")["structures"]
+    em = _latest_payload(conn, "proposal")["exit_model"]
+    regime = _latest_payload(conn, "regime")["vol"]
+    from arc.exits import realized_vol_forecast
+
+    rv = realized_vol_forecast(regime["hv20"], regime["hv60"])  # fixture: HV20 only
+    assert rv is not None
+    assert em["path_vol_source"] == "realized_forecast"
+    assert em["path_vol"] == pytest.approx(rv)
+    assert em["vrp"] == pytest.approx(em["iv_used"] - rv, abs=1e-4)
+    assert s["exits"]["vrp"] is not None and s["exits"]["rorc_day"] is not None
+    assert '"vrp"' in prompts["quant"]

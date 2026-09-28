@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import math
 import sqlite3
 from collections import Counter
 from decimal import Decimal
@@ -58,7 +59,7 @@ from arc.context.kinds import (
     StructuresPayload,
 )
 from arc.context.store import ContextStore
-from arc.exits import ExitSummary, load_exit_config, model_exits
+from arc.exits import ExitSummary, load_exit_config, model_exits, realized_vol_forecast
 from arc.ingest.llm import ScoutLLMError
 from arc.ingest.scout import extract_json_object
 from arc.models import LegIntent, Proposal, QuantMetrics, Sizing, Stance
@@ -405,8 +406,17 @@ def _cost_bps(c: ScanCandidate) -> float:
     return round(2 * c.cost / max_loss * 10_000, 1) if max_loss > 0 else 0.0
 
 
+def _realized_vol(snapshot: ContextSnapshot, ticker: str) -> float | None:
+    """Realised-vol forecast (mean HV20/HV60) from the ticker's ``regime`` entry, if any."""
+    entry = snapshot.latest("regime", ticker)
+    vol = entry.payload.get("vol") if entry is not None else None
+    if not isinstance(vol, dict):
+        return None
+    return realized_vol_forecast(vol.get("hv20"), vol.get("hv60"))
+
+
 def _exit_model(
-    c: ScanCandidate, spot: float, exits: ExitConfig, r: float
+    c: ScanCandidate, spot: float, exits: ExitConfig, r: float, realized_vol: float | None
 ) -> ExitModelResult | None:
     """E2.4 static vs managed numbers for a scanner candidate (None without an IV)."""
     if c.atm_iv is None or c.dte < 1:
@@ -419,7 +429,14 @@ def _exit_model(
         r=r,
         cfg=exits.model,
         spreads=c.leg_spreads,
+        realized_vol=realized_vol,
     )
+
+
+def _menu_rank_key(summary: ExitSummary | None, by: str) -> float:
+    """Sort key (ascending) for ``pipeline.rank_menu_by``; unmodelled entries sort last."""
+    val = None if summary is None else getattr(summary, by)
+    return math.inf if val is None else -float(val)
 
 
 def _menu_entry(c: ScanCandidate, exit_summary: ExitSummary | None = None) -> dict[str, Any]:
@@ -514,14 +531,14 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
             continue
         spots[item.ticker] = res.spot
         cands = list(res.candidates)
+        rv = _realized_vol(ctx.snapshot, item.ticker)
         for c in cands:
-            model = _exit_model(c, res.spot, exits, settings.scanner_risk_free_rate)
+            model = _exit_model(c, res.spot, exits, settings.scanner_risk_free_rate, rv)
             if model is not None:
                 summaries[id(c)] = ExitSummary.from_result(model)
-        if exits.pipeline.rank_menu_by_managed_net_ev:
-            cands.sort(
-                key=lambda c: -summaries[id(c)].managed_net_ev if id(c) in summaries else 1e18
-            )
+        by = exits.pipeline.rank_menu_by
+        if by != "scanner":
+            cands.sort(key=lambda c: _menu_rank_key(summaries.get(id(c)), by))
         menus[item.ticker] = {
             _legs_key([(leg.occ_symbol, leg.side.value) for leg in c.structure.legs]): c
             for c in cands
@@ -530,7 +547,9 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "stance": item.stance,
             "iv": res.iv.model_dump(mode="json"),
             "exit_policy_note": "exits: static = hold to expiry; managed = under the exit "
-            "policy in config/exits.yaml (both after costs, $ per contract)",
+            "policy in config/exits.yaml (both after costs, $ per contract). Paths move at "
+            "the realised-vol forecast (path_vol, mean HV20/HV60) and are priced at IV; "
+            "vrp = IV − forecast; rorc_day = managed net EV / (max loss × days held).",
             "menu": [_menu_entry(c, summaries.get(id(c))) for c in cands],
         }
 
@@ -769,7 +788,9 @@ def _with_position(
     )
 
 
-def _proposal_exit_model(priced: Any, exits: ExitConfig, r: float) -> ExitModelResult | None:
+def _proposal_exit_model(
+    priced: Any, exits: ExitConfig, r: float, realized_vol: float | None
+) -> ExitModelResult | None:
     """E2.4 model for the re-priced proposal structure (None without spot/IV)."""
     st = priced.structure
     if priced.spot is None or priced.atm_iv is None or st.dte < 1:
@@ -783,6 +804,7 @@ def _proposal_exit_model(priced: Any, exits: ExitConfig, r: float) -> ExitModelR
             r=r,
             cfg=exits.model,
             spreads=priced.leg_spreads(),
+            realized_vol=realized_vol,
         )
     except ValueError as exc:  # e.g. a stop basis that does not fit this structure
         log.warning("pipeline.exit_model_failed", error=str(exc))
@@ -919,7 +941,9 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             decided_at=now.isoformat(),
             run_id=ctx.run_id,
         )
-        exit_model = _proposal_exit_model(priced, exits, settings.scanner_risk_free_rate)
+        exit_model = _proposal_exit_model(
+            priced, exits, settings.scanner_risk_free_rate, _realized_vol(ctx.snapshot, t)
+        )
         ctx.write(
             "proposal",
             t,

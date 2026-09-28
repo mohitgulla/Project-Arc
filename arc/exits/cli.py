@@ -9,9 +9,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import argparse
+    from collections.abc import Sequence
 
     from arc.data.base import MarketDataProvider
     from arc.exits.model import ExitModelResult, TriggerLevels
+    from arc.exits.policy import ExitPolicy
     from arc.scanner import ScanCandidate
 
 __all__ = ["add_exits_parser", "format_result", "run_exits"]
@@ -39,6 +41,15 @@ def add_exits_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     m.add_argument("--paths", type=int, default=None, help="Override n_paths")
     m.add_argument("--seed", type=int, default=None, help="Override the seed")
     m.add_argument("--as-of", type=dt.date.fromisoformat, default=None, help="YYYY-MM-DD")
+    m.add_argument(
+        "--path-vol",
+        choices=["realized_forecast", "iv"],
+        default=None,
+        help="Paths at the realised-vol forecast (mean HV20/HV60, config default) or at IV",
+    )
+    m.add_argument(
+        "--no-compare", action="store_true", help="Skip the 2x-credit / no-stop comparison rows"
+    )
     m.add_argument("--json", action="store_true", help="Emit the ExitModelResult as JSON")
 
 
@@ -71,8 +82,18 @@ def _trigger(name: str, t: TriggerLevels | None) -> str:
     )
 
 
-def format_result(c: ScanCandidate, r: ExitModelResult) -> str:
-    """Human-readable static vs managed table."""
+def _row(label: str, pop: float, pop_gross: float, gross: float, net: float, days: float,
+         per: float | None) -> str:  # fmt: skip
+    return (
+        f"  {label:<26}{_pct(pop):>10}{_pct(pop_gross):>11}{_money(gross):>11}{_money(net):>11}"
+        f"{days:>7.1f}{'' if per is None else f'{per * 1e3:+.3f}':>12}"
+    )
+
+
+def format_result(
+    c: ScanCandidate, r: ExitModelResult, compare: Sequence[tuple[str, ExitModelResult]] = ()
+) -> str:
+    """Human-readable static vs managed table; *compare* adds managed rows for other policies."""
     from arc.structures import parse_occ
 
     strikes = "/".join(
@@ -84,19 +105,37 @@ def format_result(c: ScanCandidate, r: ExitModelResult) -> str:
         f"{c.ticker} {c.strategy.value} {strikes} exp {c.expiration} ({r.dte} DTE)  "
         f"spot {r.spot:.2f}  {side} {abs(r.entry_net):.2f}  "
         f"max loss ${float(c.structure.max_loss or 0):,.0f}",
-        f"model {r.model}  IV {_pct(r.iv_used)} ({r.iv_model.kind})  r {r.r:.2%}  "
+        f"model {r.model}  marks at IV {_pct(r.iv_used)} ({r.iv_model.kind})  "
+        f"paths at {_pct(r.path_vol)} ({r.path_vol_source})  r {r.r:.2%}  "
         f"paths {r.n_paths:,}  seed {r.seed}  PoP s.e. ±{_pct(r.pop_std_error)}",
+        "ranking inputs: "
+        f"managed net EV {_money(r.managed.net_ev)}  "
+        f"rorc/day {'n/a' if r.rorc_day is None else f'{r.rorc_day * 100:+.3f}%'}  "
+        f"VRP {'n/a (no realised-vol forecast)' if r.vrp is None else f'{r.vrp * 100:+.1f} pts'}",
         f"policy: {r.policy.summary()}",
         f"entry costs {_money(-r.entry_costs)} (slippage + commissions)",
         "",
-        f"  {'':<22}{'PoP (net)':>10}{'PoP (mid)':>11}{'Gross EV':>11}{'Net EV':>11}"
+        f"  {'':<26}{'PoP (net)':>10}{'PoP (mid)':>11}{'Gross EV':>11}{'Net EV':>11}"
         f"{'Days':>7}{'$/1kBP/day':>12}",
-        f"  {'static (hold to exp.)':<22}{_pct(s.pop):>10}{_pct(s.pop_gross):>11}"
+        f"  {'static (hold to exp.)':<26}{_pct(s.pop):>10}{_pct(s.pop_gross):>11}"
         f"{_money(s.gross_ev):>11}{_money(s.net_ev):>11}{r.dte:>7}"
         f"{'' if s.ev_per_bp_day is None else f'{s.ev_per_bp_day * 1e3:+.3f}':>12}",
-        f"  {'managed (policy)':<22}{_pct(m.pop):>10}{_pct(m.pop_gross):>11}"
+        f"  {'managed (policy)':<26}{_pct(m.pop):>10}{_pct(m.pop_gross):>11}"
         f"{_money(m.gross_ev):>11}{_money(m.net_ev):>11}{m.expected_days_held:>7.1f}"
         f"{'' if m.ev_per_bp_day is None else f'{m.ev_per_bp_day * 1e3:+.3f}':>12}",
+        *(
+            _row(
+                f"managed ({name})",
+                x.managed.pop,
+                x.managed.pop_gross,
+                x.managed.gross_ev,
+                x.managed.net_ev,
+                x.managed.expected_days_held,
+                x.managed.ev_per_bp_day,
+            )
+            + f"   stop p={_pct(x.managed.p_stop)}"
+            for name, x in compare
+        ),
         f"  analytic lognormal PoP (mid, hold to expiry): {_pct(s.pop_analytic)}"
         f"   scanner PoP {_pct(c.pop)}  scanner EV {_money(c.ev_proxy)}",
         "",
@@ -116,7 +155,7 @@ def format_result(c: ScanCandidate, r: ExitModelResult) -> str:
 
 def run_exits(args: argparse.Namespace) -> int:
     from arc.config import get_settings
-    from arc.exits import load_exit_config, model_exits
+    from arc.exits import StopBasis, StopRule, load_exit_config, model_exits
     from arc.scanner import ScanParams, ScanStrategy, scan
     from arc.utils.calendar import now_et
 
@@ -126,7 +165,11 @@ def run_exits(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as exc:
         sys.stderr.write(f"arc exits: {exc}\n")
         return 2
-    overrides = {k: v for k, v in (("n_paths", args.paths), ("seed", args.seed)) if v is not None}
+    overrides = {
+        k: v
+        for k, v in (("n_paths", args.paths), ("seed", args.seed), ("path_vol", args.path_vol))
+        if v is not None
+    }
     model_cfg = cfg.model.model_copy(update=overrides)
 
     provider: MarketDataProvider
@@ -161,17 +204,44 @@ def run_exits(args: argparse.Namespace) -> int:
     if c.atm_iv is None:
         sys.stderr.write("arc exits: no ATM IV for the expiration\n")
         return 1
-    r = model_exits(
-        c.structure,
-        cfg.policy_for(c.structure.kind),
-        spot=res.spot,
-        iv=c.atm_iv,
-        r=settings.scanner_risk_free_rate,
-        cfg=model_cfg,
-        spreads=c.leg_spreads,
-    )
+    rv = _realized_vol(provider, ticker, as_of)
+    policy = cfg.policy_for(c.structure.kind)
+
+    def run(pol: ExitPolicy) -> ExitModelResult:
+        return model_exits(
+            c.structure,
+            pol,
+            spot=res.spot,
+            iv=c.atm_iv,  # type: ignore[arg-type]  # checked above
+            r=settings.scanner_risk_free_rate,
+            cfg=model_cfg,
+            spreads=c.leg_spreads,
+            realized_vol=rv,
+        )
+
+    r = run(policy)
     if args.json:
         sys.stdout.write(r.model_dump_json(indent=2) + "\n")
-    else:
-        sys.stdout.write(format_result(c, r))
+        return 0
+    compare: list[tuple[str, ExitModelResult]] = []
+    if not args.no_compare and r.entry_net < 0:
+        two_x = StopRule(basis=StopBasis.CREDIT_MULTIPLE, value=2.0)
+        compare = [
+            ("2x credit stop", run(policy.model_copy(update={"stop": two_x}))),
+            ("no stop", run(policy.model_copy(update={"stop": None}))),
+        ]
+    sys.stdout.write(format_result(c, r, compare))
     return 0
+
+
+def _realized_vol(provider: MarketDataProvider, ticker: str, as_of: dt.date) -> float | None:
+    """mean(HV20, HV60) from daily history; None when history is too short or unavailable."""
+    from arc.exits import realized_vol_forecast
+    from arc.features.snapshot import build_snapshot_from_bars
+
+    try:
+        bars = provider.history_bars(ticker, as_of - dt.timedelta(days=400), as_of)
+        vol = build_snapshot_from_bars(ticker, bars, as_of).vol
+    except Exception:  # noqa: BLE001 - optional input; fall back to IV paths
+        return None
+    return realized_vol_forecast(vol.hv20, vol.hv60)

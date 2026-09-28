@@ -76,6 +76,7 @@ __all__ = [
     "close_values",
     "iv_path",
     "model_exits",
+    "realized_vol_forecast",
     "sim_legs",
     "simulate",
 ]
@@ -152,7 +153,7 @@ class TriggerLevels(BaseModel):
     reachable: bool = Field(
         True,
         description="False when the threshold lies beyond max gain / max loss, so the rule "
-        "can never fire (e.g. a 2x-credit stop on a condor whose max loss is < 2x credit)",
+        "can never fire (e.g. a 3x-credit stop on a condor whose max loss is < 2x credit)",
     )
 
 
@@ -166,7 +167,15 @@ class ExitModelResult(BaseModel):
     spot: float
     dte: int
     r: float
-    iv_used: float
+    iv_used: float = Field(..., description="Vol the marks are priced at (ATM IV)")
+    path_vol: float = Field(..., description="Vol the underlying paths move at")
+    path_vol_source: Literal["iv", "realized_forecast"] = "iv"
+    vrp: float | None = Field(
+        None, description="ATM IV − realised-vol forecast (None = no forecast)"
+    )
+    rorc_day: float | None = Field(
+        None, description="managed.net_ev / (max_loss × expected_days_held): return on risk per day"
+    )
     iv_model: IvModel
     entry_net: float = Field(..., description="Per-share entry price at mid, + debit / − credit")
     entry_costs: float = Field(..., description="$ per unit: entry slippage + commissions")
@@ -200,6 +209,9 @@ class ExitSummary(BaseModel):
     p_dte_exit: float
     p_expiry: float
     expected_days_held: float
+    rorc_day: float | None = Field(None, description="managed net EV / (max loss × days held)")
+    vrp: float | None = Field(None, description="ATM IV − realised-vol forecast")
+    path_vol: float | None = Field(None, description="Vol the simulated paths moved at")
     take_profit_close: float | None = Field(None, description="Per-share price to close at TP")
     stop_close: float | None = Field(None, description="Per-share price to close at the stop")
 
@@ -216,6 +228,9 @@ class ExitSummary(BaseModel):
             p_dte_exit=round(r.managed.p_dte_exit, 4),
             p_expiry=round(r.managed.p_expiry, 4),
             expected_days_held=r.managed.expected_days_held,
+            rorc_day=r.rorc_day,
+            vrp=r.vrp,
+            path_vol=round(r.path_vol, 4),
             take_profit_close=None if r.take_profit is None else r.take_profit.close_price,
             stop_close=None if r.stop is None else r.stop.close_price,
         )
@@ -343,20 +358,27 @@ def simulate(
     dte: int,
     cost: CostModel,
     cfg: ExitModelConfig,
+    path_vol: float | None = None,
 ) -> SimOutcome:
-    """Run the policy over ``cfg.n_paths`` daily GBM paths from *spot* to expiry (*dte* days)."""
+    """Run the policy over ``cfg.n_paths`` daily GBM paths from *spot* to expiry (*dte* days).
+
+    Marks are always priced at *iv* (the IV path). The underlying paths move at
+    *path_vol* (a realised-vol forecast) when given, else along the IV path. Priced
+    and simulated at IV alone, EV is ≈ −costs by construction; a realised-vol
+    forecast below IV is what makes short premium worth anything (and vice versa).
+    """
     if dte < 1:
         msg = "the exit model needs dte >= 1"
         raise ValueError(msg)
-    if spot <= 0 or iv <= 0:
-        msg = "spot and iv must be > 0"
+    if spot <= 0 or iv <= 0 or (path_vol is not None and path_vol <= 0):
+        msg = "spot, iv and path_vol must be > 0"
         raise ValueError(msg)
     n = cfg.n_paths
     rng = np.random.default_rng(cfg.seed)
     sig = iv_path(iv, dte, cfg.iv_model)
     dt = 1.0 / 365.0
     z = rng.standard_normal((n, dte))
-    step_sig = sig[:dte]  # vol over day d → d+1
+    step_sig = sig[:dte] if path_vol is None else np.full(dte, path_vol)  # vol over day d → d+1
     log_ret = (r - 0.5 * step_sig**2) * dt + step_sig * math.sqrt(dt) * z
     spots = spot * np.exp(np.cumsum(log_ret, axis=1))  # spots[:, d-1] = spot at end of day d
 
@@ -514,6 +536,21 @@ def _trigger(
     )
 
 
+def _rorc_day(net_ev: float, structure: Structure, days: float) -> float | None:
+    """Return on risk per day: net EV / (max loss × days held); None if undefined."""
+    ml = None if structure.max_loss is None else float(structure.max_loss)
+    if ml is None or ml <= 0 or days <= 0:
+        return None
+    return round(net_ev / (ml * days), 6)
+
+
+def realized_vol_forecast(hv20: float | None, hv60: float | None) -> float | None:
+    """Realised-vol forecast for the paths: mean of HV20 and HV60 (either alone if one is
+    missing; None if both are)."""
+    vals = [v for v in (hv20, hv60) if v is not None and v > 0 and math.isfinite(v)]
+    return sum(vals) / len(vals) if vals else None
+
+
 def _round(x: float | None, nd: int = 2) -> float | None:
     return None if x is None else round(x, nd)
 
@@ -536,18 +573,34 @@ def model_exits(
     cost: CostModel | None = None,
     cfg: ExitModelConfig | None = None,
     spreads: Mapping[str, float] | None = None,
+    realized_vol: float | None = None,
 ) -> ExitModelResult:
     """Static (hold to expiry) vs managed (under *policy*) PoP and EV for *structure*.
 
-    *structure* legs must carry ``premium`` (the entry mid); *iv* is the vol used for
-    the paths and repricing (ATM IV); *spreads* are per-leg quoted spreads per share.
+    *structure* legs must carry ``premium`` (the entry mid); *iv* is the vol the marks
+    are priced at (ATM IV); *spreads* are per-leg quoted spreads per share.
+    *realized_vol* is the realised-vol forecast the paths move at (the pipeline
+    passes the mean of HV20 and HV60, see :func:`realized_vol_forecast`); ``None``
+    or ``cfg.path_vol == "iv"`` moves the paths at IV.
     """
     cost = cost or CostModel()
     cfg = cfg or ExitModelConfig()
     legs = sim_legs(structure, cost, spreads)
     rules = resolve_rules(structure, policy)
     dte = structure.dte
-    out = simulate(legs, rules, spot=spot, iv=iv, r=r, dte=dte, cost=cost, cfg=cfg)
+    use_rv = realized_vol is not None and cfg.path_vol == "realized_forecast"
+    pvol = realized_vol if use_rv and realized_vol is not None else iv
+    out = simulate(
+        legs,
+        rules,
+        spot=spot,
+        iv=iv,
+        r=r,
+        dte=dte,
+        cost=cost,
+        cfg=cfg,
+        path_vol=pvol if use_rv else None,
+    )
 
     entry_mid = rules.entry_net
     entry_fill, entry_fees = _entry(legs, structure, cost)
@@ -580,7 +633,7 @@ def model_exits(
     static = StaticStats(
         pop=float(np.mean(s_net > 0)),
         pop_gross=float(np.mean(s_gross > 0)),
-        pop_analytic=round(analytic_pop(structure, spot=spot, iv=iv, r=r), 4),
+        pop_analytic=round(analytic_pop(structure, spot=spot, iv=pvol, r=r), 4),
         gross_ev=round(float(np.mean(s_gross)), 2),
         net_ev=round(float(np.mean(s_net)), 2),
         ev_per_bp_day=_per_bp_day(float(np.mean(s_net)), bp, float(dte)),
@@ -595,6 +648,10 @@ def model_exits(
         dte=dte,
         r=r,
         iv_used=iv,
+        path_vol=pvol,
+        path_vol_source="realized_forecast" if use_rv else "iv",
+        vrp=None if realized_vol is None else round(iv - realized_vol, 4),
+        rorc_day=_rorc_day(managed.net_ev, structure, managed.expected_days_held),
         iv_model=cfg.iv_model,
         entry_net=entry_mid,
         entry_costs=round(entry_costs, 2),

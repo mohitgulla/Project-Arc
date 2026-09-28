@@ -60,6 +60,9 @@ class PositionMarks(BaseModel):
     iv: float | None = Field(None, gt=0.0, description="ATM IV (for remaining EV)")
     r: float = 0.04
     leg_spreads: dict[str, float] = Field(default_factory=dict, description="ask − bid per leg")
+    realized_vol: float | None = Field(
+        None, gt=0.0, description="Realised-vol forecast the remaining paths move at (else IV)"
+    )
     end_of_day: bool = Field(
         True, description="End-of-day marks; intraday marks never trigger an EOD-only stop"
     )
@@ -161,6 +164,7 @@ def evaluate_position(
             dte=dte,
             cost=cost,
             cfg=cfg,
+            path_vol=marks.realized_vol if cfg.path_vol == "realized_forecast" else None,
         )
         # Model-consistent "now" value so the EV compares like with like.
         v0, p0, f0 = close_values(

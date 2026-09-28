@@ -33,6 +33,7 @@ from arc.exits import (
     evaluate_position,
     load_exit_config,
     model_exits,
+    realized_vol_forecast,
     resolve_rules,
 )
 from arc.exits.model import iv_path, sim_legs, simulate
@@ -138,7 +139,8 @@ class TestPolicyConfig:
         assert cfg.policy_for(StructureKind.OTHER) == cfg.default
         assert cfg.policy_for(None) == cfg.default
         assert cfg.model.n_paths == 20_000
-        assert cfg.pipeline.rank_menu_by_managed_net_ev is False
+        assert cfg.pipeline.rank_menu_by == "scanner"  # scanner rank_by unchanged by default
+        assert cfg.model.path_vol == "realized_forecast"
 
     def test_threshold_change_needs_no_code_change(self, tmp_path: Path) -> None:
         data = yaml.safe_load(DEFAULT_EXITS_PATH.read_text())
@@ -185,6 +187,8 @@ class TestPolicyConfig:
         with pytest.raises(ValidationError, match="fraction"):
             StopRule(basis=StopBasis.PCT_MAX_LOSS, value=1.5)
         assert StopRule(basis=StopBasis.CREDIT_MULTIPLE, value=3.0).value == 3.0
+        with pytest.raises(ValidationError, match="> 1"):
+            StopRule(basis=StopBasis.CREDIT_MULTIPLE, value=1.0)
 
     def test_time_adjusted_targets_sorted_and_unique(self) -> None:
         p = ExitPolicy(
@@ -229,7 +233,8 @@ class TestPolicyConfig:
 
 class TestRules:
     def test_credit_thresholds_hand_values(self) -> None:
-        # $1.66 credit vertical: TP 50% → $0.83 debit to close; stop 2x → $4.98 debit
+        # $1.66 credit vertical: TP 50% → $0.83 debit to close; "2x credit" stop → buy back
+        # at a $3.32 debit (a $1.66 loss)
         s = credit_vertical(
             "put",
             "TST",
@@ -245,8 +250,15 @@ class TestRules:
         assert rules.entry_net == pytest.approx(-1.66)
         assert rules.tp_pnl(30) == pytest.approx(0.83)
         assert abs(rules.value_at_pnl(rules.tp_pnl(30) or 0)) == pytest.approx(0.83)
-        assert rules.stop_pnl == pytest.approx(-3.32)
-        assert abs(rules.value_at_pnl(rules.stop_pnl or 0)) == pytest.approx(4.98)
+        assert rules.stop_pnl == pytest.approx(-1.66)
+        assert abs(rules.value_at_pnl(rules.stop_pnl or 0)) == pytest.approx(3.32)
+        # D23 default: 75% of max loss (5 − 1.66 = 3.34) → a $2.505 loss, $4.165 debit
+        d23 = CREDIT_POLICY.model_copy(
+            update={"stop": StopRule(basis=StopBasis.PCT_MAX_LOSS, value=0.75)}
+        )
+        r23 = resolve_rules(s, d23)
+        assert r23.stop_pnl == pytest.approx(-2.505)
+        assert abs(r23.value_at_pnl(r23.stop_pnl or 0)) == pytest.approx(4.165)
 
     def test_debit_thresholds(self) -> None:
         rules = resolve_rules(lcall(), DEBIT_POLICY)
@@ -329,7 +341,7 @@ class TestModel:
         assert r.take_profit.close_side == "debit"
         assert r.take_profit.close_price == pytest.approx(credit / 2, abs=1e-4)
         assert r.stop is not None
-        assert r.stop.close_price == pytest.approx(3 * credit, abs=1e-4)
+        assert r.stop.close_price == pytest.approx(2 * credit, abs=1e-4)
         # the 2x-credit stop on this $1.00 credit condor ($4 max loss) is reachable
         assert r.stop.reachable
         assert r.static.ev_per_bp_day is not None
@@ -337,7 +349,7 @@ class TestModel:
         assert type(r).model_validate_json(r.model_dump_json()) == r
 
     def test_unreachable_stop_flagged(self) -> None:
-        # $1.67 credit, $5 wide: max loss $3.33 < 2 x credit → the stop can never fire
+        # $1.67 credit, $5 wide: max loss $3.33 < a 3x-credit stop's 2 x credit loss
         s = iron_condor(
             "TST",
             EXP,
@@ -351,7 +363,10 @@ class TestModel:
             long_call_premium=0.30,
             as_of=AS_OF,
         )
-        r = model_exits(s, CREDIT_POLICY, spot=SPOT, iv=IV, r=R, cfg=FAST)
+        three_x = CREDIT_POLICY.model_copy(
+            update={"stop": StopRule(basis=StopBasis.CREDIT_MULTIPLE, value=3.0)}
+        )
+        r = model_exits(s, three_x, spot=SPOT, iv=IV, r=R, cfg=FAST)
         assert r.stop is not None
         assert not r.stop.reachable
         assert r.managed.p_stop == 0.0
@@ -490,6 +505,51 @@ class TestModel:
         assert s.take_profit_close == r.take_profit.close_price  # type: ignore[union-attr]
         assert "50% of max gain" in s.policy
 
+    def test_realized_vol_paths(self) -> None:
+        cond = condor()
+        at_iv = model_exits(cond, CREDIT_POLICY, spot=SPOT, iv=IV, r=R, cfg=FAST)
+        assert at_iv.path_vol == IV and at_iv.path_vol_source == "iv" and at_iv.vrp is None
+        rich = model_exits(cond, CREDIT_POLICY, spot=SPOT, iv=IV, r=R, cfg=FAST, realized_vol=0.12)
+        assert rich.path_vol == 0.12 and rich.path_vol_source == "realized_forecast"
+        assert rich.iv_used == IV
+        assert rich.vrp == pytest.approx(0.08)
+        # IV above realised vol: selling premium earns the VRP
+        assert rich.managed.net_ev > at_iv.managed.net_ev
+        assert rich.static.net_ev > at_iv.static.net_ev
+        assert rich.static.pop_analytic > at_iv.static.pop_analytic
+        # config "iv" ignores the forecast for the paths but still reports the VRP
+        iv_cfg = FAST.model_copy(update={"path_vol": "iv"})
+        forced = model_exits(
+            cond, CREDIT_POLICY, spot=SPOT, iv=IV, r=R, cfg=iv_cfg, realized_vol=0.12
+        )
+        assert forced.path_vol == IV and forced.vrp == pytest.approx(0.08)
+        assert forced.managed == at_iv.managed
+        with pytest.raises(ValueError, match="path_vol"):
+            simulate(
+                sim_legs(cond, NO_COST), resolve_rules(cond, CREDIT_POLICY), spot=SPOT, iv=IV,
+                r=R, dte=5, cost=NO_COST, cfg=FAST, path_vol=0.0,
+            )  # fmt: skip
+
+    def test_ranking_inputs(self) -> None:
+        r = model_exits(condor(), CREDIT_POLICY, spot=SPOT, iv=IV, r=R, cfg=FAST, realized_vol=0.15)
+        assert r.rorc_day == pytest.approx(
+            r.managed.net_ev / (400.0 * r.managed.expected_days_held), abs=1e-6
+        )
+        s = ExitSummary.from_result(r)
+        assert s.rorc_day == r.rorc_day and s.vrp == r.vrp and s.path_vol == 0.15
+        # unbounded max loss → no rorc
+        from arc.exits.model import _rorc_day
+
+        assert _rorc_day(5.0, lcall().model_copy(update={"max_loss": None}), 10) is None
+        assert _rorc_day(5.0, lcall(), 0) is None
+
+    def test_realized_vol_forecast(self) -> None:
+        assert realized_vol_forecast(0.10, 0.20) == pytest.approx(0.15)
+        assert realized_vol_forecast(None, 0.20) == 0.20
+        assert realized_vol_forecast(0.10, None) == 0.10
+        assert realized_vol_forecast(None, None) is None
+        assert realized_vol_forecast(float("nan"), 0.0) is None
+
     def test_performance_20k_paths(self) -> None:
         cfg = load_exit_config().model
         assert cfg.n_paths == 20_000
@@ -533,7 +593,7 @@ class TestEvaluatePosition:
         assert st_.close_side == "debit"
         assert st_.close_price == pytest.approx(0.80)
         assert st_.take_profit_pnl == pytest.approx(0.50)
-        assert st_.stop_pnl == pytest.approx(-2.0)
+        assert st_.stop_pnl == pytest.approx(-1.0)  # 2x credit: buy back at $2.00
         assert st_.close_now_net < 0  # closing costs slippage + commissions
         assert st_.remaining_net_ev is None  # no spot / IV given
 
@@ -632,6 +692,16 @@ class TestEvaluatePosition:
         # net-vs-gross gap is bounded by one round of exit costs
         assert abs(a.remaining_net_ev - a.remaining_gross_ev) < 10.0
 
+    def test_remaining_ev_realized_vol(self) -> None:
+        base = _marks(bull_put(), _vertical_marks(1.3, 0.5), spot=SPOT, iv=IV, r=R)
+        calm = _marks(
+            bull_put(), _vertical_marks(1.3, 0.5), spot=SPOT, iv=IV, r=R, realized_vol=0.10
+        )
+        a = evaluate_position(OpenPosition(structure=bull_put()), base, CREDIT_POLICY, cfg=FAST)
+        b = evaluate_position(OpenPosition(structure=bull_put()), calm, CREDIT_POLICY, cfg=FAST)
+        assert b.remaining_net_ev is not None and a.remaining_net_ev is not None
+        assert b.remaining_net_ev > a.remaining_net_ev  # short premium, IV > realised
+
     def test_missing_mark(self) -> None:
         with pytest.raises(LookupError, match="no mark"):
             evaluate_position(
@@ -659,6 +729,16 @@ def test_cli_exits_model_fixture(capsys: pytest.CaptureFixture[str]) -> None:
     assert "static (hold to exp.)" in out
     assert "managed (policy)" in out
     assert "take profit" in out and "debit" in out
+    # D23: the relaxed default next to a 2x-credit stop and no stop
+    assert "stop pct_max_loss 0.75 (end of day)" in out
+    assert "managed (2x credit stop)" in out
+    assert "managed (no stop)" in out
+    assert "(realized_forecast)" in out and "VRP" in out and "rorc/day" in out
+
+    assert main(["exits", "model", "--fixture", "spy", "--paths", "500", "--path-vol", "iv",
+                 "--no-compare"]) == 0  # fmt: skip
+    out = capsys.readouterr().out
+    assert "(iv)" in out and "2x credit stop" not in out
 
     assert main(["exits", "model", "--fixture", "spy", "--paths", "500", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
@@ -674,3 +754,14 @@ def test_cli_exits_bad_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     bad.write_text("default: {bogus: 1}\n")
     assert main(["exits", "model", "--fixture", "spy", "--config", str(bad)]) == 2
     assert "arc exits" in capsys.readouterr().err
+
+
+def test_cli_exits_debit_structure_and_errors(capsys: pytest.CaptureFixture[str]) -> None:
+    from arc.cli import main
+
+    assert main(["exits", "model", "--fixture", "spy", "--rank", "99", "--paths", "500"]) == 1
+    assert "no iron_condor candidate #99" in capsys.readouterr().err
+    assert main(["exits", "model", "QQQ", "--fixture", "spy"]) == 2
+    assert main(["exits", "model", "--fixture", "spy", "--strategy", "bull_put",
+                 "--paths", "500"]) == 0  # fmt: skip
+    assert "managed (no stop)" in capsys.readouterr().out
