@@ -1,0 +1,33 @@
+{
+  "shortlist": [
+    {
+      "ticker": "SPY",
+      "rank": 1,
+      "thesis": "Fixture: FOMC hold is priced; index range-bound into the Oct 28 meeting, so sell premium on both sides.",
+      "regime_context": "Fixture: low realised vol, IV in the low teens.",
+      "suggested_structure_type": "iron_condor",
+      "stance": "neutral",
+      "confidence": 0.7
+    },
+    {
+      "ticker": "AAPL",
+      "rank": 2,
+      "thesis": "Fixture: not among the offline Scout candidates (NVDA/XOM/SPY), so the pipeline drops it.",
+      "regime_context": "Fixture: uptrend.",
+      "suggested_structure_type": "vertical_spread",
+      "stance": "bullish",
+      "confidence": 0.65
+    },
+    {
+      "ticker": "PLTR",
+      "rank": 3,
+      "thesis": "Fixture: not a Scout candidate, so the pipeline drops it.",
+      "regime_context": "n/a",
+      "suggested_structure_type": "long_call",
+      "stance": "bullish",
+      "confidence": 0.9
+    }
+  ],
+  "market_regime": "risk_on",
+  "session_notes": "Fixture Director reply (offline run)."
+}

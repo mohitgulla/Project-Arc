@@ -160,6 +160,27 @@ def _make_parser() -> argparse.ArgumentParser:
             show = bsub.add_parser("show", help="Print the active brief(s) as JSON")
             show.add_argument("--channel", default=None, help="Channel slug, e.g. stockedup")
             show.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+        elif cmd == "propose":
+            p = sub.add_parser(
+                cmd, help="Run Scout → Director → Quant → Risk → propose (+ gate) now (E5.2)"
+            )
+            mode = p.add_mutually_exclusive_group()
+            mode.add_argument(
+                "--dry-run",
+                action="store_true",
+                help="No Slack, no broker; in-memory copy of the DB unless --db is given.",
+            )
+            mode.add_argument(
+                "--fixtures",
+                action="store_true",
+                help="Fully offline: recorded SPY chain + canned persona replies, in-memory DB.",
+            )
+            p.add_argument("--no-scout", action="store_true", help="Skip the Scout job.")
+            p.add_argument("--no-slack", action="store_true", help="Log heartbeats only.")
+            p.add_argument("--json", action="store_true", help="Print the report as JSON.")
+            p.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+            p.add_argument("--routines", default=None, help="routines.yaml path")
+            p.add_argument("--lock-dir", default="data/locks")
         else:
             sub.add_parser(cmd, help=f"{cmd.capitalize()} (stub)")
 
@@ -484,6 +505,58 @@ def _brief(args: argparse.Namespace) -> int:
     return 0 if briefs else 1
 
 
+def _propose(args: argparse.Namespace) -> int:
+    """``arc propose``: one end-to-end pipeline pass now (E5.2). Never submits orders."""
+    import json
+
+    from arc.config import get_settings
+    from arc.pipeline import PipelineEnv, run_propose
+    from arc.pipeline.runner import fixture_run, open_db
+    from arc.routines.config import load_routines
+    from arc.routines.heartbeat import LogNotifier, Notifier, SlackDayThreadNotifier
+    from arc.routines.locks import LockManager, NullLocks
+    from arc.utils.calendar import now_et
+
+    _log_to_stderr()
+    settings = get_settings()
+    routines = load_routines(args.routines)
+    if not (args.fixtures or args.dry_run):
+        from arc.gate.token import TokenError, gate_secret
+
+        try:
+            gate_secret(settings)
+        except TokenError as exc:
+            sys.stderr.write(
+                f"arc propose: {exc}. Set ARC_GATE_SECRET in ~/.hermes/.env, "
+                "or use --dry-run / --fixtures.\n"
+            )
+            return 2
+    if args.fixtures:
+        _, report = fixture_run(settings, routines, db=args.db)
+    else:
+        conn = open_db(args.db, copy=args.dry_run and args.db is None)
+        env = PipelineEnv.live(settings, broker=not args.dry_run)
+        notifier: Notifier = (
+            LogNotifier() if args.dry_run or args.no_slack else SlackDayThreadNotifier(conn)
+        )
+        report = run_propose(
+            conn,
+            settings,
+            routines,
+            env,
+            now=now_et(),
+            notifier=notifier,
+            scout=not args.no_scout,
+            locks=NullLocks() if args.dry_run else LockManager(args.lock_dir),
+            mode="dry-run" if args.dry_run else "live",
+        )
+    if args.json:
+        _out(json.dumps(report.as_json(), indent=2))
+    else:
+        _out("\n".join(report.lines()))
+    return 1 if report.failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = _make_parser()
@@ -503,6 +576,8 @@ def main(argv: list[str] | None = None) -> int:
         return _ingest(args)
     if args.command == "brief":
         return _brief(args)
+    if args.command == "propose":
+        return _propose(args)
     if args.command == "history":
         from arc.data.history.cli import run_history
 

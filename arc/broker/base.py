@@ -28,6 +28,9 @@ class AccountInfo(BaseModel):
     currency: str = "USD"
     options_buying_power: Decimal | None = None
     options_approved_level: int | None = None
+    last_equity: Decimal | None = Field(
+        None, description="Equity at the previous session close (gate daily-loss basis)"
+    )
 
 
 class BrokerPosition(BaseModel):

@@ -1,0 +1,28 @@
+{
+  "assessments": [
+    {
+      "ticker": "SPY",
+      "structure_type": "iron_condor",
+      "risk_rating": "moderate",
+      "concentration_warning": false,
+      "greek_budget_impact": "Fixture: small short vega, near-flat delta.",
+      "calendar_concerns": "Fixture: FOMC Oct 28 is inside the trade; no earnings (ETF).",
+      "sizing_suggestion": 20,
+      "max_loss_pct_equity": 0.067,
+      "narrative": "Fixture: defined-risk condor, wings 5 wide. Advisory 20; the pipeline caps it at floor(5% x equity / max loss)."
+    },
+    {
+      "ticker": "QQQ",
+      "structure_type": "iron_condor",
+      "risk_rating": "low",
+      "concentration_warning": false,
+      "greek_budget_impact": "n/a",
+      "calendar_concerns": "n/a",
+      "sizing_suggestion": 5,
+      "max_loss_pct_equity": 0.01,
+      "narrative": "Fixture: Quant did not propose QQQ, so the pipeline drops this assessment."
+    }
+  ],
+  "portfolio_summary": "Fixture: flat book.",
+  "advisory_notes": "Fixture Risk reply (offline run)."
+}

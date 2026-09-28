@@ -379,6 +379,28 @@ class ArcSettings(BaseSettings):
         description="Per-document text budget in the Scout prompt (truncated beyond).",
     )
 
+    # -- Pipeline runner (E5.2) -----------------------------------------------
+    persona_model: str = Field(
+        default="claude-opus-5.5",
+        description="Frontier-tier model for Director/Quant/Risk via Hermes (PLAN §2.4, D8).",
+    )
+    persona_provider: str = Field(
+        default="anthropic",
+        description="Hermes provider for the persona model (D8).",
+    )
+    persona_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
+        default=600,
+        description="Timeout for a single Director/Quant/Risk LLM call.",
+    )
+    pipeline_max_shortlist: Annotated[int, Field(ge=1, le=20)] = Field(
+        default=3,
+        description="Max tickers the Director shortlist may carry into Quant.",
+    )
+    pipeline_scan_top: Annotated[int, Field(ge=1, le=20)] = Field(
+        default=5,
+        description="Scanner candidates per ticker offered to Quant (Quant picks among them).",
+    )
+
     # -- Universe (D9) -------------------------------------------------------
     universe: list[str] = Field(
         default_factory=lambda: list(DEFAULT_UNIVERSE),

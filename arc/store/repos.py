@@ -183,13 +183,16 @@ class ProposalRepo:
         created_at: str | None = None,
         run_id: str | None = None,
         id: str | None = None,
+        day: str | None = None,
+        ticker: str | None = None,
     ) -> str:
         row_id = id or _uuid()
         self.conn.execute(
             """INSERT INTO proposals
                (id, candidate_id, proposal_hash, structure_json, thesis,
-                quant_json, risk_narrative, sizing_json, expires_at, created_at, run_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                quant_json, risk_narrative, sizing_json, expires_at, created_at, run_id,
+                day, ticker)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row_id,
                 candidate_id,
@@ -202,6 +205,8 @@ class ProposalRepo:
                 expires_at,
                 created_at or _now_iso(),
                 run_id,
+                day,
+                ticker,
             ),
         )
         self.conn.commit()
