@@ -446,6 +446,13 @@ class PnlSnapshotRepo:
 
 
 class HaltRepo:
+    """Persisted kill-switch rows (``halts``: reason, actor, at, cleared_at).
+
+    A row with ``cleared_at IS NULL`` is an active halt. Rows are never deleted,
+    so the table is also the halt audit trail. Policy (who may clear, when the
+    daily-loss rule trips) lives in :mod:`arc.gate.halt`, not here.
+    """
+
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
 
@@ -454,28 +461,58 @@ class HaltRepo:
         *,
         reason: str = "",
         actor: str = "",
+        kind: str = "manual",
+        session_date: str | None = None,
+        at: str | None = None,
         run_id: str | None = None,
         id: str | None = None,
     ) -> str:
         row_id = id or _uuid()
         self.conn.execute(
-            """INSERT INTO halts (id, halted_at, reason, actor, run_id)
-               VALUES (?, ?, ?, ?, ?)""",
-            (row_id, _now_iso(), reason, actor, run_id),
+            """INSERT INTO halts (id, at, reason, actor, kind, session_date, run_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (row_id, at or _now_iso(), reason, actor, kind, session_date, run_id),
         )
         self.conn.commit()
+        log.info("halt.set", halt_id=row_id, kind=kind, actor=actor, reason=reason)
         return row_id
 
-    def resume(self, halt_id: str, *, actor: str = "") -> None:
+    def resume(self, halt_id: str, *, actor: str = "", at: str | None = None) -> None:
+        """Clear one halt row (no-op if already cleared)."""
         self.conn.execute(
-            "UPDATE halts SET resumed_at = ? WHERE id = ? AND resumed_at IS NULL",
-            (_now_iso(), halt_id),
+            "UPDATE halts SET cleared_at = ?, cleared_by = ? WHERE id = ? AND cleared_at IS NULL",
+            (at or _now_iso(), actor, halt_id),
         )
         self.conn.commit()
 
+    def clear_all(self, *, actor: str, at: str | None = None) -> int:
+        """Clear every active halt atomically; returns how many rows were cleared."""
+        cur = self.conn.execute(
+            "UPDATE halts SET cleared_at = ?, cleared_by = ? WHERE cleared_at IS NULL",
+            (at or _now_iso(), actor),
+        )
+        self.conn.commit()
+        log.info("halt.cleared", actor=actor, count=cur.rowcount)
+        return cur.rowcount
+
+    def active(self) -> list[dict[str, Any]]:
+        """Active (uncleared) halts, oldest first."""
+        rows = self.conn.execute(
+            "SELECT * FROM halts WHERE cleared_at IS NULL ORDER BY at, rowid"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def exists_for_session(self, *, kind: str, session_date: str) -> bool:
+        """True if a halt of ``kind`` was ever raised for ``session_date`` (cleared or not)."""
+        row = self.conn.execute(
+            "SELECT 1 FROM halts WHERE kind = ? AND session_date = ? LIMIT 1",
+            (kind, session_date),
+        ).fetchone()
+        return row is not None
+
     def is_halted(self) -> bool:
-        """True if there is an active (un-resumed) halt."""
-        row = self.conn.execute("SELECT 1 FROM halts WHERE resumed_at IS NULL LIMIT 1").fetchone()
+        """True if there is an active (uncleared) halt."""
+        row = self.conn.execute("SELECT 1 FROM halts WHERE cleared_at IS NULL LIMIT 1").fetchone()
         return row is not None
 
 

@@ -13,5 +13,5 @@ test:
 	uv run pytest
 
 test-gate:
-	uv run pytest tests/test_gate.py -v --tb=short \
+	uv run pytest tests/test_gate.py tests/test_halt.py -v --tb=short \
 		--cov=arc.gate --cov-branch --cov-report=term-missing --cov-fail-under=100

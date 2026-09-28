@@ -195,6 +195,15 @@ class ArcSettings(BaseSettings):
         default=False,
         description="Auto-approve proposals in paper mode (D10). Ignored when env=live.",
     )
+    owner_slack_user_id: str = Field(
+        default="U0C5KUMH28G",
+        min_length=1,
+        description="Slack user id of the owner (D10). Only this user may `!resume` (E3.3).",
+    )
+    db_path: Path | None = Field(
+        default=None,
+        description="Audit store path (ARC_DB_PATH). None = data/arc.db in the repo.",
+    )
 
     # -- Market data feeds (D7) ---------------------------------------------
     alpaca_data_feed: AlpacaDataFeed = Field(
