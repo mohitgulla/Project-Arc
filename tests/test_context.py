@@ -346,3 +346,55 @@ def test_prompt_inputs_come_from_snapshot(store: ContextStore) -> None:
         )
     with pytest.raises(LookupError):
         investor_input_from_context(snap, proposal_id="p", current_quotes_json="{}", scan_date="x")
+
+
+# -- note kind (E5.6, D27) ------------------------------------------------------
+
+
+def _note(**kw: object) -> dict[str, object]:
+    return {"persona": "director", "topic": "regime_view", "title": "t", "body": "b", **kw}
+
+
+class TestNoteKind:
+    def test_minimal_note_validates(self) -> None:
+        from arc.context import NoteHorizon, NotePayload
+
+        note = validate_payload("note", _note())
+        assert isinstance(note, NotePayload)
+        assert note.horizon is NoteHorizon.SESSION
+        assert note.about == [] and note.evidence == []
+
+    def test_full_note_roundtrips(self, store: ContextStore) -> None:
+        payload = _note(
+            stance="bullish",
+            confidence=0.7,
+            tags=["macro"],
+            evidence=[{"ref": "https://x/y", "quote": "q"}],
+            about=["ctx-1"],
+            horizon="swing",
+        )
+        entry = store.write(
+            kind="note", subject="SPY", payload=payload, produced_by="director", now=T0
+        )
+        assert entry.model() == validate_payload("note", payload)
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"extra": 1},
+            {"body": ""},
+            {"title": ""},
+            {"title": "x" * 121},
+            {"confidence": 1.5},
+            {"topic": "gossip"},
+            {"persona": "oracle"},
+            {"evidence": [{"ref": ""}]},
+            {"tags": [str(i) for i in range(13)]},
+        ],
+    )
+    def test_invalid_notes_rejected(self, bad: dict[str, object]) -> None:
+        with pytest.raises(ValidationError):
+            validate_payload("note", _note(**bad))
+
+    def test_note_is_registered(self) -> None:
+        assert "note" in KINDS

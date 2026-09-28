@@ -65,6 +65,7 @@ context_ttl:
   risk_review:   {ttl: 1 session, supersede: latest}
   proposal:      {ttl: 1 session, supersede: accumulate}
   journal:       {ttl: 20 sessions, supersede: accumulate}
+  note:          {ttl: 1 session, supersede: accumulate}   # D27 persona text (thesis, regime view, ...)
 
 sources:                        # fetch-only jobs (no LLM), each with its own cadence; quiet heartbeats
   youtube.stockedup:            # D13/D14: StockedUp next-session outlook (posts Sunday for Monday)
