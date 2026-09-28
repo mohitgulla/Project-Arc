@@ -33,6 +33,7 @@ Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a 
 | D20 | Card thread lifecycle | Every card gets its own #project-arc thread when it is created (gatekeeper cron, 1 min). When the card is done **and** its PR has merged, the thread's parent message is edited to :white_check_mark: with the PR link. Any issue found after merge is discussed **in the original card's thread** until a follow-up fix card is agreed. The fix card then gets its own thread, and the original thread gets a pointer to it. | Owner choice 2026-09-27. |
 | D18 | Paper sizing | **Not fixed at 1 contract.** `contracts = min(Risk.sizing_suggestion, floor(5% equity / max_loss_per_contract))`, minimum 1 when a single contract fits under the 5% cap; otherwise no trade. The gate still enforces every portfolio cap. | Owner choice 2026-09-27 (answers E5.2 Q2). |
 | D19 | Exit management + reallocation | Open positions are re-evaluated on the intraday routine. **Investor** proposes **early profit-taking closes** (per-structure profit target, e.g. 50% of max gain for credit structures, plus a time-decay-adjusted target, with no waiting to expiry). **Risk** can propose **close-to-reallocate**: close a position to free buying power when a new candidate's expected risk/reward, net of costs and slippage, beats the open position's remaining EV by a configured margin. Every close is a Proposal that goes through gate + approval (`ARC_AUTO_APPROVE` applies in paper). | Owner choice 2026-09-27. Note: D4's evidence says management rules don't beat hold-to-expiry *statistically* for defined-risk. E7.2 backtests D19's rules against hold-to-expiry, and the paper scorecard reports both. |
+| D21 | CLI verbs | `arc scan` = Scout candidate pipeline (E4.2). The option-chain scanner (E2.3) is `arc chains SPY --dte 30-45 --delta 20`. | Owner choice 2026-09-27; both PRs claimed `arc scan`. |
 
 Open items requiring a decision are listed in §9 — all five original items are now resolved (D8–D11 + keys stored).
 
@@ -108,7 +109,7 @@ Project-Arc/
 │   ├── broker/               # BrokerAdapter protocol; alpaca_paper.py
 │   ├── reconcile/            # broker vs local, PnL snapshots, alerts
 │   ├── backtest/             # cost-aware engine, walk-forward, reports
-│   └── cli.py                # `arc scan|propose|gate|approve|execute|reconcile|report`
+│   └── cli.py                # `arc scan|chains|propose|gate|approve|execute|reconcile|report`
 ├── hermes/
 │   ├── skills/arc-*/SKILL.md # persona skills (Scout, Director, Quant, Risk, Investor, Auditor)
 │   ├── hooks/arc-gate/       # pre_tool_call fail-closed hook
@@ -202,7 +203,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 **E2 Pricing & Greeks (deterministic)**
 - E2.1 Pricing + Greeks — py_vollib with QuantLib cross-check; Δ Γ ν Θ ρ Vanna Volga; property tests ← E1.1
 - E2.2 Structure model — legs → payoff, max gain/loss, breakevens, net Greeks, margin estimate ← E2.1
-- E2.3 Chain scanner — liquidity filters, IVR/percentile, delta-targeted strikes 30–45 DTE ← E1.4, E2.2
+- E2.3 Chain scanner (`arc chains`, D21) — liquidity filters, IVR/percentile, delta-targeted strikes 30–45 DTE ← E1.4, E2.2
 
 **E3 Risk Proxy Gate (non-bypassable)**
 - E3.1 Gate rules engine — all limits from D4 as pure functions; 100% branch coverage ← E1.3, E2.2

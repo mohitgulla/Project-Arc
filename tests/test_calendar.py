@@ -177,6 +177,31 @@ class TestSessionNavigation:
         prev = cal.previous_session(dt.date(2026, 1, 5))
         assert prev == dt.date(2026, 1, 2)
 
+    def test_next_session_from_weekend_and_holiday(self) -> None:
+        assert cal.next_session(dt.date(2026, 1, 3)) == dt.date(2026, 1, 5)  # Saturday
+        assert cal.next_session(dt.date(2026, 1, 19)) == dt.date(2026, 1, 20)  # MLK Day
+
+    def test_previous_session_from_weekend(self) -> None:
+        assert cal.previous_session(dt.date(2026, 1, 4)) == dt.date(2026, 1, 2)  # Sunday
+
+    def test_add_sessions(self) -> None:
+        assert cal.add_sessions(dt.date(2026, 1, 16), 0) == dt.date(2026, 1, 16)
+        assert cal.add_sessions(dt.date(2026, 1, 17), 0) == dt.date(2026, 1, 20)
+        assert cal.add_sessions(dt.date(2026, 1, 16), 2) == dt.date(2026, 1, 21)
+        with pytest.raises(ValueError, match="n must be"):
+            cal.add_sessions(dt.date(2026, 1, 16), -1)
+
+
+class TestSessionOpen:
+    def test_regular_open(self) -> None:
+        assert cal.session_open(dt.date(2026, 1, 5)) == dt.datetime(
+            2026, 1, 5, 9, 30, tzinfo=cal.ET
+        )
+
+    def test_non_session_raises(self) -> None:
+        with pytest.raises(ValueError, match="not a trading session"):
+            cal.session_open(dt.date(2026, 1, 3))
+
 
 # ---------------------------------------------------------------------------
 # DTE

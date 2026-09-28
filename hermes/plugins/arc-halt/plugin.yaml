@@ -1,0 +1,4 @@
+name: arc-halt
+version: 0.1.0
+description: "Project Arc kill switch: `!halt [reason]` from any Slack thread halts trading immediately; `!resume` clears halts for the owner only (E3.3)."
+author: mohit

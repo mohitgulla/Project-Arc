@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from arc.context import ContextStore, EntryStatus, Supersede, Ttl, parse_duration
 from arc.context.kinds import KINDS, validate_payload
 from arc.context.ttl import from_db, to_db
+from arc.models import ChannelBrief
 from arc.personas.builders import (
     director_input_from_context,
     investor_input_from_context,
@@ -288,6 +289,42 @@ def test_for_run(store: ContextStore) -> None:
     )
     assert len(store.for_run("r1")) == 1
     assert store.for_run("r2") == []
+
+
+def test_channel_brief_kind_is_the_e44_model(store: ContextStore) -> None:
+    """``channel_brief`` stores the strict E4.4 ChannelBrief and reads it back typed."""
+    brief = ChannelBrief(
+        brief_id="b1",
+        channel_slug="stockedup",
+        video_id="v1",
+        video_url="https://www.youtube.com/watch?v=v1",
+        title="t",
+        published_at=dt.datetime(2026, 9, 27, 22, 0, tzinfo=ET),
+        applies_to_session=dt.date(2026, 9, 28),
+        guidelines_version="g1",
+    )
+    e = store.write(
+        kind="channel_brief",
+        subject="stockedup",
+        payload=brief,
+        produced_by="youtube.stockedup",
+        ttl="1 session",
+        now=T0,
+    )
+    back = store.get(e.id)
+    assert back is not None
+    model = back.model()
+    assert isinstance(model, ChannelBrief)
+    assert model.applies_to_session == dt.date(2026, 9, 28)
+    assert back.expires_at == dt.datetime(2026, 9, 28, 16, 0, tzinfo=ET)
+    with pytest.raises(ValidationError):
+        store.write(
+            kind="channel_brief",
+            subject="stockedup",
+            payload={**brief.model_dump(mode="json"), "contracts": 3},
+            produced_by="x",
+            now=T0,
+        )
 
 
 # -- builders read from snapshots ---------------------------------------------------

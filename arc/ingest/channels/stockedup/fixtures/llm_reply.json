@@ -1,0 +1,41 @@
+{
+  "market_bias": {
+    "stance": "neutral",
+    "confidence": 0.4,
+    "quote": "It's close to new all-time highs, but these resistances have been strong."
+  },
+  "levels": [
+    {"ticker": "SPY", "kind": "resistance", "price": 775.0, "quote": "SPY is at 772 with the first major resistance around 775."},
+    {"ticker": "SPY", "kind": "resistance", "price": 780.0, "quote": "the most significant resistance level going forward is that all-time high just under 780"},
+    {"ticker": "SPY", "kind": "support", "price": 768.0, "quote": "768 has been a key point the market has bounced off of"},
+    {"ticker": "SPY", "kind": "support", "price": 762.0, "quote": "I would even argue that 762 and 756 are potentially even more important"},
+    {"ticker": "SPY", "kind": "support", "price": 756.0, "quote": "I would even argue that 762 and 756 are potentially even more important"},
+    {"ticker": "SPY", "kind": "support", "price": 750.0, "quote": "if those levels break, the next major level underneath that is just under 750"},
+    {"ticker": "DELL", "kind": "resistance", "price": 600.0, "quote": "Looking at Dell right now, there is major resistance just below the $600 level."},
+    {"ticker": "DELL", "kind": "target", "price": 400.0, "quote": "if it does turn over, I wouldn't be surprised if it got below $400 a share"},
+    {"ticker": "RKLB", "kind": "pivot", "price": 75.5, "quote": "This one's on the radar for a potential breakout tomorrow past 7550."},
+    {"ticker": "COIN", "kind": "pivot", "price": 197.0, "quote": "we have Coinbase, ticker symbol CO IN with a potential breakout past 197"},
+    {"ticker": "CRWD", "kind": "pivot", "price": 251.4, "quote": "we have Crowd Strike, ticker symbol CRWD, for a potential break down past 25140"}
+  ],
+  "calls": [
+    {"ticker": "DELL", "stance": "bearish", "horizon": "swing", "instrument_hint": "none", "conviction": 0.6, "quote": "I think this can make for a good riskreward trade in a downside sense over the coming weeks and months"},
+    {"ticker": "RKLB", "stance": "bullish", "horizon": "next_session", "instrument_hint": "none", "conviction": 0.4, "quote": "This one's on the radar for a potential breakout tomorrow past 7550."},
+    {"ticker": "COIN", "stance": "bullish", "horizon": "next_session", "instrument_hint": "none", "conviction": 0.4, "quote": "we have Coinbase, ticker symbol CO IN with a potential breakout past 197"},
+    {"ticker": "CRWD", "stance": "bearish", "horizon": "next_session", "instrument_hint": "none", "conviction": 0.4, "quote": "we have Crowd Strike, ticker symbol CRWD, for a potential break down past 25140"},
+    {"ticker": "NVDA", "stance": "bullish", "horizon": "next_session", "instrument_hint": "calls", "conviction": 0.9, "quote": "I'm loading up on Nvidia calls tomorrow morning before the open."},
+    {"ticker": "MSFT", "stance": "bullish", "horizon": "next_session", "instrument_hint": "calls", "conviction": 0.7, "quote": "made just under $1,500 with some Microsoft call options"}
+  ],
+  "catalysts": [
+    {"event": "Jobs data 30 minutes after the open", "kind": "macro", "date": "2026-09-29", "tickers": [], "expected_impact": "volatile", "quote": "important jobs data set to release 30 minutes after the market opens on Tuesday"},
+    {"event": "Inflation data before the open", "kind": "macro", "date": "2026-09-30", "tickers": [], "expected_impact": "volatile", "quote": "Important inflation data will release 1 hour before open on Wednesday."},
+    {"event": "GDP data before the open", "kind": "macro", "date": "2026-09-30", "tickers": [], "expected_impact": "volatile", "quote": "GDP data will release one hour before open on Wednesday."},
+    {"event": "Jobs report", "kind": "macro", "date": "2026-10-02", "tickers": [], "expected_impact": "volatile", "quote": "we have a jobs report on Friday, 1 hour before open"},
+    {"event": "Micron earnings after close", "kind": "earnings", "date": "2026-09-30", "tickers": ["MU"], "expected_impact": "volatile", "quote": "Micron will report after close on Wednesday, though. This will be a big earnings report."},
+    {"event": "Nike earnings", "kind": "earnings", "date": "2026-10-01", "tickers": ["NKE"], "expected_impact": "unknown", "quote": "Nike will also report on Thursday."}
+  ],
+  "risk_flags": [
+    {"flag": "10-year yield spiked to 5.22%", "severity": "high", "quote": "The 10-year Treasury yield has surged to a high of 5.22%."},
+    {"flag": "Rapid yield spikes preceded crashes 16/16 times", "severity": "high", "quote": "There were 16 times yield spiked this rapidly over the last 50 years. And every one of those was followed by some form of crash."},
+    {"flag": "Weak market breadth", "severity": "med", "quote": "Breath has only been this bad twice, and on both occasions, the S&P 500 crashed nearly 50%."}
+  ]
+}

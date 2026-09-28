@@ -1,4 +1,4 @@
--- 004_routines.sql — Context store + routine dispatcher (E5.4, D16).
+-- 006_routines.sql — Context store + routine dispatcher (E5.4, D16).
 
 -- -------------------------------------------------------------------
 -- Context entries: the shared, append-only memory between agents.

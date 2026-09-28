@@ -161,9 +161,11 @@ class Dispatcher:
         self._settings_factory = settings_factory
 
     def _default_halted(self) -> bool:
+        # E3.3 kill switch; fails closed (halted) if the halt store is unreadable.
+        from arc.gate.halt import HaltSwitch
         from arc.store.repos import HaltRepo
 
-        return HaltRepo(self.conn).is_halted()
+        return HaltSwitch(HaltRepo(self.conn)).is_halted()
 
     # -- planning ------------------------------------------------------------
 

@@ -9,7 +9,7 @@ All payload models use ``extra="forbid"`` at the top level (D16).
 
 from __future__ import annotations
 
-import datetime as _dt  # noqa: TC003 — used at runtime in pydantic models
+import json
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.features.snapshot import FeatureSnapshot
-from arc.models import Candidate, Proposal
+from arc.models import Candidate, ChannelBrief, Proposal
 from arc.personas.schemas import AuditorOutput, DirectorOutput, QuantOutput, RiskOutput
 
 if TYPE_CHECKING:
@@ -37,21 +37,12 @@ class RawDocRefPayload(BaseModel):
     published_at: str = Field(..., description="ISO-8601, as stored in raw_docs")
 
 
-class ChannelBriefPayload(BaseModel):
-    """Minimal channel brief (E4.4 replaces this with its full ``ChannelBrief``).
+class ChannelBriefPayload(ChannelBrief):
+    """Channel brief (E4.4 ``ChannelBrief``, D14); keeps its strict/frozen config.
 
     TTL and supersede policy come from the channel profile (D14), passed by the
     producer on write.
     """
-
-    model_config = _FORBID
-
-    channel: str
-    video_id: str
-    url: str
-    published_at: _dt.datetime
-    tickers: list[str] = Field(default_factory=list)
-    summary: str = ""
 
 
 class CandidatePayload(Candidate):
@@ -133,7 +124,12 @@ def kind_spec(kind: str) -> KindSpec:
 
 
 def validate_payload(kind: str, payload: BaseModel | Mapping[str, object]) -> BaseModel:
-    """Validate *payload* against *kind*'s model and return the model instance."""
+    """Validate *payload* against *kind*'s model and return the model instance.
+
+    Payloads are normalised to JSON first (that is how they are stored), and
+    validated in JSON mode so strict models (e.g. ``ChannelBrief``) accept
+    ISO-8601 dates on read-back.
+    """
     spec = kind_spec(kind)
     data = payload.model_dump(mode="json") if isinstance(payload, BaseModel) else dict(payload)
-    return spec.model.model_validate(data)
+    return spec.model.model_validate_json(json.dumps(data, default=str))
