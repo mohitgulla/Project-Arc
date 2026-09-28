@@ -3,135 +3,32 @@
 from __future__ import annotations
 
 import importlib
+import pkgutil
 import subprocess
 import sys
 
+import arc
+
+
+def _arc_modules() -> list[str]:
+    """Every module under ``arc/``, discovered rather than hand-listed."""
+    return ["arc", *(m.name for m in pkgutil.walk_packages(arc.__path__, "arc."))]
+
 
 def test_arc_package_imports() -> None:
-    """All subpackages import without error."""
-    packages = [
-        "arc",
-        "arc.config",
-        "arc.utils",
-        "arc.utils.calendar",
-        "arc.cli",
-        "arc.models",
-        "arc.llm_routing",
-        "arc.store",
-        "arc.data",
-        "arc.data.history",
-        "arc.data.history.base",
-        "arc.data.history.store",
-        "arc.data.history.alpaca",
-        "arc.data.history.thetadata",
-        "arc.data.history.download",
-        "arc.data.history.cli",
-        "arc.data.base",
-        "arc.data.alpaca",
-        "arc.data.recorded",
-        "arc.data.history",
-        "arc.data.history.base",
-        "arc.data.history.store",
-        "arc.data.history.alpaca",
-        "arc.data.history.thetadata",
-        "arc.data.history.download",
-        "arc.data.history.cli",
-        "arc.backtest.costs",
-        "arc.backtest.chain",
-        "arc.backtest.strategies",
-        "arc.backtest.engine",
-        "arc.backtest.metrics",
-        "arc.backtest.regime",
-        "arc.backtest.report",
-        "arc.backtest.underlying",
-        "arc.backtest.cli",
-        "arc.pricing",
-        "arc.structures",
-        "arc.structures.occ",
-        "arc.structures.analytics",
-        "arc.structures.builders",
-        "arc.scanner",
-        "arc.scanner.filters",
-        "arc.scanner.iv",
-        "arc.scanner.scan",
-        "arc.ingest",
-        "arc.ingest.store",
-        "arc.ingest.rss",
-        "arc.ingest.edgar",
-        "arc.ingest.earnings",
-        "arc.ingest.youtube",
-        "arc.ingest.caption_backoff",
-        "arc.ingest.transcribe",
-        "arc.ingest.llm",
-        "arc.ingest.scout",
-        "arc.ingest.channels",
-        "arc.ingest.channels.base",
-        "arc.ingest.channels.briefs",
-        "arc.context",
-        "arc.context.kinds",
-        "arc.context.store",
-        "arc.context.ttl",
-        "arc.routines",
-        "arc.routines.cli",
-        "arc.routines.conditions",
-        "arc.routines.config",
-        "arc.routines.dispatcher",
-        "arc.routines.handlers",
-        "arc.routines.heartbeat",
-        "arc.routines.locks",
-        "arc.routines.monitor",
-        "arc.routines.runs",
-        "arc.routines.schedule",
-        "arc.features",
-        "arc.personas",
-        "arc.gate",
-        "arc.gate.inputs",
-        "arc.gate.rules",
-        "arc.gate.halt",
-        "arc.approvals",
-        "arc.journal",
-        "arc.journal.reasons",
-        "arc.journal.models",
-        "arc.journal.analytics",
-        "arc.pipeline.analytics",
-        "arc.journal.store",
-        "arc.journal.attribution",
-        "arc.journal.report",
-        "arc.journal.cli",
-        "arc.approvals.card",
-        "arc.approvals.trail",
-        "arc.approvals.service",
-        "arc.approvals.slack",
-        "arc.approvals.cli",
-        "arc.slack.blocks",
-        "arc.slack.digests",
-        "arc.execution",
-        "arc.execution.guard",
-        "arc.execution.submission",
-        "arc.execution.ladder",
-        "arc.execution.exits",
-        "arc.execution.cli",
-        "arc.gate.band",
-        "arc.store.execution",
-        "arc.routines.investor",
-        "arc.broker",
-        "arc.broker.base",
-        "arc.broker.alpaca_paper",
-        "arc.reconcile",
-        "arc.backtest",
-        "arc.exits",
-        "arc.exits.policy",
-        "arc.exits.model",
-        "arc.exits.position",
-        "arc.exits.cli",
-        "arc.tower",
-        "arc.tower.data",
-        "arc.tower.net",
-        "arc.tower.cli",
-    ]
+    """Every arc module imports without error."""
+    packages = _arc_modules()
+    assert len(packages) == len(set(packages)), "duplicate module names"
     for pkg in packages:
         mod = importlib.import_module(pkg)
         assert mod is not None, f"Failed to import {pkg}"
+
+
+def test_module_discovery_covers_core_packages() -> None:
+    """Discovery is not silently empty: core domain packages are found."""
+    found = set(_arc_modules())
+    for pkg in ("arc.cli", "arc.gate", "arc.gate.rules", "arc.execution", "arc.broker.base"):
+        assert pkg in found, f"{pkg} not discovered"
 
 
 def test_cli_help() -> None:

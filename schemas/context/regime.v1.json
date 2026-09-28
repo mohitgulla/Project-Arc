@@ -1,0 +1,336 @@
+{
+  "$defs": {
+    "Regime": {
+      "description": "Market regime label.",
+      "enum": [
+        "bear",
+        "sideways",
+        "bull"
+      ],
+      "title": "Regime",
+      "type": "string"
+    },
+    "RegimeFeatures": {
+      "description": "Markov regime state for one underlying as of one session close.",
+      "properties": {
+        "as_of": {
+          "format": "date",
+          "title": "As Of",
+          "type": "string"
+        },
+        "current": {
+          "$ref": "#/$defs/Regime"
+        },
+        "expected_duration": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Expected remaining run length of current state in steps; None = absorbing",
+          "title": "Expected Duration"
+        },
+        "forecasts": {
+          "items": {
+            "$ref": "#/$defs/RegimeForecast"
+          },
+          "title": "Forecasts",
+          "type": "array"
+        },
+        "lookback_days": {
+          "title": "Lookback Days",
+          "type": "integer"
+        },
+        "n_transitions": {
+          "description": "Transitions used to fit the matrix",
+          "title": "N Transitions",
+          "type": "integer"
+        },
+        "stationary": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/Regime"
+          },
+          "title": "Stationary",
+          "type": "object"
+        },
+        "step": {
+          "description": "Sessions between the two labels of a transition",
+          "title": "Step",
+          "type": "integer"
+        },
+        "stickiness": {
+          "description": "P[current][current]",
+          "title": "Stickiness",
+          "type": "number"
+        },
+        "stickiness_by_state": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/Regime"
+          },
+          "title": "Stickiness By State",
+          "type": "object"
+        },
+        "trailing_return": {
+          "description": "Trailing lookback return at as_of",
+          "title": "Trailing Return",
+          "type": "number"
+        },
+        "transition_matrix": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "propertyNames": {
+              "$ref": "#/$defs/Regime"
+            },
+            "type": "object"
+          },
+          "description": "P[from][to], rows sum to 1",
+          "propertyNames": {
+            "$ref": "#/$defs/Regime"
+          },
+          "title": "Transition Matrix",
+          "type": "object"
+        }
+      },
+      "required": [
+        "as_of",
+        "current",
+        "trailing_return",
+        "lookback_days",
+        "step",
+        "n_transitions",
+        "transition_matrix",
+        "stickiness",
+        "stickiness_by_state",
+        "expected_duration",
+        "forecasts",
+        "stationary"
+      ],
+      "title": "RegimeFeatures",
+      "type": "object"
+    },
+    "RegimeForecast": {
+      "description": "Regime distribution *horizon* steps ahead.",
+      "properties": {
+        "horizon": {
+          "description": "Steps ahead (1 step = `step` sessions)",
+          "minimum": 0,
+          "title": "Horizon",
+          "type": "integer"
+        },
+        "probabilities": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/Regime"
+          },
+          "title": "Probabilities",
+          "type": "object"
+        }
+      },
+      "required": [
+        "horizon",
+        "probabilities"
+      ],
+      "title": "RegimeForecast",
+      "type": "object"
+    },
+    "VolFeatures": {
+      "description": "Volatility features for one underlying as of one session close.\n\nFields are ``None`` when the underlying history is too short; the\nreason is recorded in ``missing``.",
+      "properties": {
+        "as_of": {
+          "format": "date",
+          "title": "As Of",
+          "type": "string"
+        },
+        "hv20": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Annualised 20-session close-to-close HV",
+          "title": "Hv20"
+        },
+        "hv60": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Annualised 60-session close-to-close HV",
+          "title": "Hv60"
+        },
+        "iv": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ATM ~30-DTE implied vol at as_of",
+          "title": "Iv"
+        },
+        "iv_hv20_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iv Hv20 Ratio"
+        },
+        "iv_hv60_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iv Hv60 Ratio"
+        },
+        "iv_lookback": {
+          "default": 252,
+          "title": "Iv Lookback",
+          "type": "integer"
+        },
+        "iv_observations": {
+          "default": 0,
+          "description": "IV observations in the rank/percentile window",
+          "title": "Iv Observations",
+          "type": "integer"
+        },
+        "iv_percentile": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iv Percentile"
+        },
+        "iv_rank": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iv Rank"
+        },
+        "missing": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing",
+          "type": "array"
+        }
+      },
+      "required": [
+        "as_of"
+      ],
+      "title": "VolFeatures",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Regime + vol features for one underlying (E4.3).",
+  "properties": {
+    "as_of": {
+      "description": "Session date (ET); uses data up to that close only",
+      "format": "date",
+      "title": "As Of",
+      "type": "string"
+    },
+    "last_close": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Close"
+    },
+    "regime": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RegimeFeatures"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "None if history is too short"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "ticker": {
+      "description": "Underlying symbol, e.g. 'SPY'",
+      "title": "Ticker",
+      "type": "string"
+    },
+    "vol": {
+      "$ref": "#/$defs/VolFeatures"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "ticker",
+    "as_of",
+    "vol"
+  ],
+  "title": "RegimePayload",
+  "type": "object"
+}

@@ -1,0 +1,374 @@
+{
+  "$defs": {
+    "BriefCall": {
+      "additionalProperties": false,
+      "description": "A directional call the host asserts or recommends.",
+      "properties": {
+        "conviction": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Conviction",
+          "type": "number"
+        },
+        "horizon": {
+          "$ref": "#/$defs/CallHorizon"
+        },
+        "instrument_hint": {
+          "$ref": "#/$defs/InstrumentHint"
+        },
+        "quote": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "stance": {
+          "$ref": "#/$defs/Stance"
+        },
+        "ticker": {
+          "pattern": "^[A-Z][A-Z0-9.]{0,9}$",
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "stance",
+        "horizon",
+        "instrument_hint",
+        "conviction",
+        "quote"
+      ],
+      "title": "BriefCall",
+      "type": "object"
+    },
+    "BriefCatalyst": {
+      "additionalProperties": false,
+      "description": "A scheduled or ongoing event the host says matters.",
+      "properties": {
+        "date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date"
+        },
+        "event": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Event",
+          "type": "string"
+        },
+        "expected_impact": {
+          "$ref": "#/$defs/ExpectedImpact"
+        },
+        "kind": {
+          "$ref": "#/$defs/BriefCatalystKind"
+        },
+        "quote": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "tickers": {
+          "items": {
+            "pattern": "^[A-Z][A-Z0-9.]{0,9}$",
+            "type": "string"
+          },
+          "title": "Tickers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "event",
+        "kind",
+        "expected_impact",
+        "quote"
+      ],
+      "title": "BriefCatalyst",
+      "type": "object"
+    },
+    "BriefCatalystKind": {
+      "enum": [
+        "earnings",
+        "macro",
+        "fed",
+        "geopolitical",
+        "sector",
+        "other"
+      ],
+      "title": "BriefCatalystKind",
+      "type": "string"
+    },
+    "BriefLevel": {
+      "additionalProperties": false,
+      "description": "A price level the host names on a ticker.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/LevelKind"
+        },
+        "price": {
+          "exclusiveMinimum": 0.0,
+          "title": "Price",
+          "type": "number"
+        },
+        "quote": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "ticker": {
+          "pattern": "^[A-Z][A-Z0-9.]{0,9}$",
+          "title": "Ticker",
+          "type": "string"
+        },
+        "unverified_price": {
+          "default": false,
+          "description": "True when no underlying price was available to sanity-check it",
+          "title": "Unverified Price",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ticker",
+        "kind",
+        "price",
+        "quote"
+      ],
+      "title": "BriefLevel",
+      "type": "object"
+    },
+    "BriefRiskFlag": {
+      "additionalProperties": false,
+      "description": "A market-wide risk the host flags (e.g. 'yields > 5%').",
+      "properties": {
+        "flag": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Flag",
+          "type": "string"
+        },
+        "quote": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "required": [
+        "flag",
+        "severity",
+        "quote"
+      ],
+      "title": "BriefRiskFlag",
+      "type": "object"
+    },
+    "CallHorizon": {
+      "enum": [
+        "intraday",
+        "next_session",
+        "swing",
+        "long_term"
+      ],
+      "title": "CallHorizon",
+      "type": "string"
+    },
+    "ExpectedImpact": {
+      "enum": [
+        "bullish",
+        "bearish",
+        "volatile",
+        "unknown"
+      ],
+      "title": "ExpectedImpact",
+      "type": "string"
+    },
+    "InstrumentHint": {
+      "enum": [
+        "shares",
+        "calls",
+        "puts",
+        "spread",
+        "none"
+      ],
+      "title": "InstrumentHint",
+      "type": "string"
+    },
+    "LevelKind": {
+      "enum": [
+        "support",
+        "resistance",
+        "pivot",
+        "target",
+        "stop"
+      ],
+      "title": "LevelKind",
+      "type": "string"
+    },
+    "MarketBias": {
+      "additionalProperties": false,
+      "description": "The host's overall market stance for the session the brief applies to.",
+      "properties": {
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "quote": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "stance": {
+          "$ref": "#/$defs/Stance"
+        }
+      },
+      "required": [
+        "stance",
+        "confidence",
+        "quote"
+      ],
+      "title": "MarketBias",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "low",
+        "med",
+        "high"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "Stance": {
+      "description": "Directional stance of a candidate.",
+      "enum": [
+        "bullish",
+        "bearish",
+        "neutral"
+      ],
+      "title": "Stance",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Channel brief (E4.4 ``ChannelBrief``, D14); keeps its strict/frozen config.\n\nTTL and supersede policy come from the channel profile (D14), passed by the\nproducer on write.",
+  "properties": {
+    "applies_to_session": {
+      "format": "date",
+      "title": "Applies To Session",
+      "type": "string"
+    },
+    "brief_id": {
+      "minLength": 1,
+      "title": "Brief Id",
+      "type": "string"
+    },
+    "calls": {
+      "items": {
+        "$ref": "#/$defs/BriefCall"
+      },
+      "title": "Calls",
+      "type": "array"
+    },
+    "catalysts": {
+      "items": {
+        "$ref": "#/$defs/BriefCatalyst"
+      },
+      "title": "Catalysts",
+      "type": "array"
+    },
+    "channel_slug": {
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Channel Slug",
+      "type": "string"
+    },
+    "guidelines_version": {
+      "minLength": 1,
+      "title": "Guidelines Version",
+      "type": "string"
+    },
+    "levels": {
+      "items": {
+        "$ref": "#/$defs/BriefLevel"
+      },
+      "title": "Levels",
+      "type": "array"
+    },
+    "market_bias": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MarketBias"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "published_at": {
+      "format": "date-time",
+      "title": "Published At",
+      "type": "string"
+    },
+    "risk_flags": {
+      "items": {
+        "$ref": "#/$defs/BriefRiskFlag"
+      },
+      "title": "Risk Flags",
+      "type": "array"
+    },
+    "sponsor_segments_removed": {
+      "default": false,
+      "title": "Sponsor Segments Removed",
+      "type": "boolean"
+    },
+    "tickers_mentioned": {
+      "items": {
+        "pattern": "^[A-Z][A-Z0-9.]{0,9}$",
+        "type": "string"
+      },
+      "title": "Tickers Mentioned",
+      "type": "array"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "video_id": {
+      "minLength": 1,
+      "title": "Video Id",
+      "type": "string"
+    },
+    "video_url": {
+      "minLength": 1,
+      "title": "Video Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "brief_id",
+    "channel_slug",
+    "video_id",
+    "video_url",
+    "title",
+    "published_at",
+    "applies_to_session",
+    "guidelines_version"
+  ],
+  "title": "ChannelBriefPayload",
+  "type": "object"
+}

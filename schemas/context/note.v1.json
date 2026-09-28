@@ -1,0 +1,160 @@
+{
+  "$defs": {
+    "Evidence": {
+      "additionalProperties": false,
+      "description": "One piece of support for a note.",
+      "properties": {
+        "quote": {
+          "anyOf": [
+            {
+              "maxLength": 400,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Verbatim excerpt, if textual",
+          "title": "Quote"
+        },
+        "ref": {
+          "description": "URL, context entry id, or 'metric:<name>'",
+          "minLength": 1,
+          "title": "Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "NoteHorizon": {
+      "enum": [
+        "intraday",
+        "session",
+        "swing",
+        "macro"
+      ],
+      "title": "NoteHorizon",
+      "type": "string"
+    },
+    "NoteTopic": {
+      "description": "What a :class:`NotePayload` is about (D27).",
+      "enum": [
+        "thesis",
+        "regime_view",
+        "observation",
+        "risk_flag",
+        "lesson",
+        "execution"
+      ],
+      "title": "NoteTopic",
+      "type": "string"
+    },
+    "Stance": {
+      "description": "Directional stance of a candidate.",
+      "enum": [
+        "bullish",
+        "bearish",
+        "neutral"
+      ],
+      "title": "Stance",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Free-form but structured persona text (D27): thesis, regime view, observation, ...\n\nNotes are context that other personas may read back. They are never a gate\ninput and never widen :class:`~arc.models.Candidate`.",
+  "properties": {
+    "about": {
+      "description": "Context entry ids this note comments on",
+      "items": {
+        "type": "string"
+      },
+      "title": "About",
+      "type": "array"
+    },
+    "body": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Body",
+      "type": "string"
+    },
+    "confidence": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "maxItems": 20,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "horizon": {
+      "$ref": "#/$defs/NoteHorizon",
+      "default": "session"
+    },
+    "persona": {
+      "enum": [
+        "scout",
+        "director",
+        "quant",
+        "risk",
+        "investor",
+        "auditor"
+      ],
+      "title": "Persona",
+      "type": "string"
+    },
+    "stance": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Stance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 12,
+      "title": "Tags",
+      "type": "array"
+    },
+    "title": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "topic": {
+      "$ref": "#/$defs/NoteTopic"
+    }
+  },
+  "required": [
+    "persona",
+    "topic",
+    "title",
+    "body"
+  ],
+  "title": "NotePayload",
+  "type": "object"
+}

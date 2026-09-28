@@ -125,6 +125,7 @@ Project-Arc/
 │   ├── skills/arc-*/SKILL.md # persona skills (Scout, Director, Quant, Risk, Investor, Auditor)
 │   ├── hooks/arc-gate/       # pre_tool_call fail-closed hook
 │   └── routines/             # cron job definitions (pre-market, intraday, post-market)
+├── schemas/context/          # committed JSON Schema per context kind, <kind>.v<N>.json (D27)
 └── tests/                    # unit, property (hypothesis), integration (paper account)
 ```
 

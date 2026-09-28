@@ -19,6 +19,9 @@ Job keys (``sources.<name>`` / ``personas.<name>``):
 - ``context: {ttl, supersede}`` — override the TTL/supersede policy of the
   context entries this job writes (per-source TTL, D14).
 - ``reads: [kind, ...]`` — kinds included in the input snapshot (default: all).
+- ``writes: [kind, ...]`` — kinds the job may write (D27). Declared I/O contract:
+  a write of any other kind fails the run, and a job with no ``writes`` may
+  write nothing (fail-closed). ``[]`` declares a job that writes nothing.
 - ``handler: "module:function"`` — explicit handler; default resolves by job name.
 - ``halt_exempt: true`` — persona keeps running while halted (Auditor only).
 - ``notify: quiet | summary | card`` — heartbeat policy: sources default
@@ -47,6 +50,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -153,17 +157,23 @@ class StepSpec(BaseModel):
 
     context: ContextPolicy | None = None
     reads: list[str] | None = None
+    # D27: kinds this unit may write. None = undeclared -> ANY write fails the run;
+    # [] = writes nothing. Enforced in JobContext.write (fail-closed).
+    writes: list[str] | None = None
     handler: str | None = None
     notify: Notify | None = None
     llm: bool | None = None  # holds the global LLM lock; default: personas yes, sources no
 
-    @field_validator("reads")
+    @field_validator("reads", "writes")
     @classmethod
-    def _reads(cls, v: list[str] | None) -> list[str] | None:
+    def _kinds(cls, v: list[str] | None, info: ValidationInfo) -> list[str] | None:
         for kind in v or []:
             if kind not in KINDS:
-                msg = f"unknown context kind {kind!r} in reads"
+                msg = f"unknown context kind {kind!r} in {info.field_name}"
                 raise ValueError(msg)
+        if v is not None and len(set(v)) != len(v):
+            msg = f"{info.field_name} lists a kind twice"
+            raise ValueError(msg)
         return v
 
     @field_validator("handler")
