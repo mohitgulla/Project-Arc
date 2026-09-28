@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import re
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -375,3 +376,118 @@ def test_cli_dry_run_does_not_require_gate_secret(monkeypatch: pytest.MonkeyPatc
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
     monkeypatch.setattr(arc.config, "get_settings", lambda: ArcSettings(_env_file=None))  # type: ignore[call-arg]
     assert main(["propose", "--fixtures", "--json"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# E2.4: managed-exit numbers in the Quant menu, structures and proposal context
+# ---------------------------------------------------------------------------
+
+
+def _latest_payload(conn, kind: str) -> dict:  # noqa: ANN001
+    row = conn.execute(
+        "SELECT payload FROM context_entries WHERE kind = ? ORDER BY created_at DESC LIMIT 1",
+        (kind,),
+    ).fetchone()
+    return json.loads(row["payload"])
+
+
+def _recording_fixture_run(settings: ArcSettings, routines):  # noqa: ANN001, ANN202
+    """fixture_run, but keeping each persona prompt (persona_calls stores only a hash)."""
+    from arc.ingest.scout import load_fixture_docs
+    from arc.pipeline.runner import run_propose
+    from arc.routines.heartbeat import LogNotifier
+
+    env = PipelineEnv.fixtures()
+    prompts: dict[str, str] = {}
+
+    class _Rec:
+        def __init__(self, persona: str, inner) -> None:  # noqa: ANN001
+            self.persona, self.inner = persona, inner
+            self.model = getattr(inner, "model", "fixture")
+
+        def complete(self, prompt: str):  # noqa: ANN202
+            prompts[self.persona] = prompt
+            return self.inner.complete(prompt)
+
+    env.llms = {k: _Rec(k, v) for k, v in env.llms.items()}  # type: ignore[misc]
+    conn = open_db(":memory:", copy=False)
+    load_fixture_docs(conn)
+    report = run_propose(
+        conn, settings, routines, env, now=FIXTURE_NOW, notifier=LogNotifier(), mode="fixtures"
+    )
+    return conn, report, prompts
+
+
+def test_exit_model_wired_into_pipeline(settings: ArcSettings, routines) -> None:  # noqa: ANN001
+    conn, report, prompts = _recording_fixture_run(settings, routines)
+    assert not report.failed
+    (s,) = _latest_payload(conn, "structures")["structures"]
+    ex = s["exits"]
+    assert ex is not None
+    assert "50% of max gain" in ex["policy"]
+    assert 0 < ex["managed_pop"] < 1 and 0 < ex["static_pop"] < 1
+    assert ex["p_take_profit"] + ex["p_stop"] + ex["p_dte_exit"] + ex["p_expiry"] == (
+        pytest.approx(1.0, abs=1e-3)
+    )
+    # the Quant and Risk prompts saw the managed numbers next to the static ones
+    for persona in ("quant", "risk"):
+        assert "managed_net_ev" in prompts[persona]
+        assert "static_net_ev" in prompts[persona]
+
+    prop = _latest_payload(conn, "proposal")
+    em = prop["exit_model"]
+    assert em["model"] == "gbm_flat_iv"
+    assert em["n_paths"] == 20_000
+    assert em["policy"]["take_profit_pct_of_max_gain"] == 0.5
+    assert em["take_profit"]["close_side"] == "debit"
+    # the stored Proposal (and so the gate hash) is unchanged: exit_model is context only
+    (p,) = report.proposals
+    assert "exit_model" not in json.loads(p["structure_json"])
+
+
+@pytest.mark.parametrize("by", ["managed_net_ev", "rorc_day"])
+def test_rank_menu_by_flag(
+    settings: ArcSettings,
+    routines,  # noqa: ANN001
+    monkeypatch: pytest.MonkeyPatch,
+    by: str,
+) -> None:
+    import arc.pipeline.steps as steps
+    from arc.exits import load_exit_config
+
+    def menu_vals(prompt: str) -> list[float]:
+        return [float(x) for x in re.findall(rf'"{by}": (-?[0-9.e-]+)', prompt)]
+
+    _, _, off = _recording_fixture_run(settings, routines)
+    cfg = load_exit_config()
+    on_cfg = cfg.model_copy(
+        update={"pipeline": cfg.pipeline.model_copy(update={"rank_menu_by": by})}
+    )
+    monkeypatch.setattr(steps, "load_exit_config", lambda: on_cfg)
+    _, _, on = _recording_fixture_run(settings, routines)
+    vals = menu_vals(on["quant"])
+    assert len(vals) >= 2
+    assert vals == sorted(vals, reverse=True)
+    assert sorted(menu_vals(off["quant"])) == sorted(vals)  # same menu, reordered
+
+
+def test_menu_rank_key_unmodelled_last() -> None:
+    from arc.pipeline.steps import _menu_rank_key
+
+    assert _menu_rank_key(None, "vrp") == float("inf")
+
+
+def test_realized_vol_from_regime_context(settings: ArcSettings, routines) -> None:  # noqa: ANN001
+    conn, _, prompts = _recording_fixture_run(settings, routines)
+    (s,) = _latest_payload(conn, "structures")["structures"]
+    em = _latest_payload(conn, "proposal")["exit_model"]
+    regime = _latest_payload(conn, "regime")["vol"]
+    from arc.exits import realized_vol_forecast
+
+    rv = realized_vol_forecast(regime["hv20"], regime["hv60"])  # fixture: HV20 only
+    assert rv is not None
+    assert em["path_vol_source"] == "realized_forecast"
+    assert em["path_vol"] == pytest.approx(rv)
+    assert em["vrp"] == pytest.approx(em["iv_used"] - rv, abs=1e-4)
+    assert s["exits"]["vrp"] is not None and s["exits"]["rorc_day"] is not None
+    assert '"vrp"' in prompts["quant"]

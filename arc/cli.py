@@ -201,6 +201,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_backtest_parser(sub)
 
+    from arc.exits.cli import add_exits_parser
+
+    add_exits_parser(sub)
+
     # -- kill switch (E3.3) ---------------------------------------------------
     halt = sub.add_parser("halt", help="Halt trading now (kill switch)")
     halt.add_argument("--actor", required=True, help="Who is halting (Slack user id or name)")
@@ -627,6 +631,12 @@ def main(argv: list[str] | None = None) -> int:
         from arc.backtest.cli import run_backtest_cli
 
         return run_backtest_cli(args)
+
+    if args.command == "exits":
+        from arc.exits.cli import run_exits
+
+        _log_to_stderr()
+        return run_exits(args)
 
     logger.info("command.stub", command=args.command)
     print(f"arc {args.command}: not yet implemented")

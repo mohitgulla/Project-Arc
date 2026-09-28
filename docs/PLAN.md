@@ -108,6 +108,7 @@ Project-Arc/
 │   ├── pricing/              # BS + Greeks (py_vollib, QuantLib cross-check)
 │   ├── structures/           # legs → payoff, max gain/loss, breakevens, net Greeks
 │   ├── scanner/              # chain filters, IVR, delta-targeted strikes
+│   ├── exits/                # ExitPolicy (config/exits.yaml), managed-exit MC model, evaluate_position (D23)
 │   ├── ingest/               # rss, edgar, earnings, youtube → Candidate
 │   ├── features/             # regime (Markov 3-state), IV/HV, IVR
 │   ├── personas/             # JSON schemas + prompt builders (no side effects)

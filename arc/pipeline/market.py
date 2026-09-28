@@ -22,6 +22,7 @@ import structlog
 
 from arc.gate.inputs import AccountSnapshot, ClosedLot, MarketSnapshot, Portfolio, Position, Quote
 from arc.models import Greeks, Leg, LegIntent
+from arc.scanner.iv import atm_iv
 from arc.structures import MarketInputs, analyze, max_gain_loss, net_greeks, parse_occ
 from arc.utils.calendar import ET, dte_calendar
 
@@ -209,17 +210,32 @@ def build_portfolio(
 
 
 class PricedStructure:
-    """A structure re-priced at mid from fresh quotes, plus the gate's quote map."""
+    """A structure re-priced at mid from fresh quotes, plus the gate's quote map.
+
+    ``spot`` and ``atm_iv`` (the expiry's ATM IV, ``None`` if the chain has no IVs)
+    feed the E2.4 exit model.
+    """
 
     def __init__(
         self,
         structure: Structure,
         contracts: dict[str, OptionContract],
+        *,
         spot: float | None = None,
+        atm_iv: float | None = None,
     ) -> None:
         self.structure = structure
         self.contracts = contracts
         self.spot = spot
+        self.atm_iv = atm_iv
+
+    def leg_spreads(self) -> dict[str, float]:
+        """Quoted ask − bid per leg (per share)."""
+        return {
+            k: c.ask - c.bid
+            for k, c in self.contracts.items()
+            if c.ask is not None and c.bid is not None
+        }
 
 
 def price_structure(
@@ -252,7 +268,12 @@ def price_structure(
         )
     ivs = {k: float(c.implied_volatility) for k, c in used.items() if c.implied_volatility}
     market_inputs = MarketInputs(spot=spot, r=r, ivs=ivs) if len(ivs) == len(used) else None
-    return PricedStructure(analyze(out_legs, as_of=as_of, market=market_inputs), used, spot)
+    return PricedStructure(
+        analyze(out_legs, as_of=as_of, market=market_inputs),
+        used,
+        spot=spot,
+        atm_iv=atm_iv(list(chain.values()), spot),
+    )
 
 
 def limit_price(net: Decimal, tick: float) -> Decimal:

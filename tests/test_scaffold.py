@@ -108,6 +108,11 @@ def test_arc_package_imports() -> None:
         "arc.broker.alpaca_paper",
         "arc.reconcile",
         "arc.backtest",
+        "arc.exits",
+        "arc.exits.policy",
+        "arc.exits.model",
+        "arc.exits.position",
+        "arc.exits.cli",
     ]
     for pkg in packages:
         mod = importlib.import_module(pkg)

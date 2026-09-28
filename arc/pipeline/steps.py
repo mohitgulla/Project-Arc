@@ -30,7 +30,9 @@ What each step does:
     chain, sizes it per D18 (:mod:`arc.sizing`), builds the ``Proposal``, runs
     the gate (halt switch included), and mints a token when the gate passes, the
     run is live (``env.mint_tokens``) and ``ARC_GATE_SECRET`` is set. It persists
-    ``proposals`` and ``gate_decisions`` rows plus a ``proposal`` context entry.
+    ``proposals`` and ``gate_decisions`` rows plus a ``proposal`` context entry
+    that also carries the re-priced structure's ``exit_model``
+    (:class:`arc.exits.ExitModelResult`, for the E6.1a card).
     It is idempotent per (day, ticker).
 
 Nothing here submits orders. Order submission is ``arc.execution.submit`` (E6).
@@ -40,6 +42,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import math
 import sqlite3
 import time
 from collections import Counter
@@ -57,6 +60,7 @@ from arc.context.kinds import (
     StructuresPayload,
 )
 from arc.context.store import ContextStore
+from arc.exits import ExitSummary, load_exit_config, model_exits, realized_vol_forecast
 from arc.ingest.llm import ScoutLLMError
 from arc.ingest.scout import extract_json_object
 from arc.journal.models import LegQuote, MarketContext, PersonaCallMeta
@@ -102,6 +106,7 @@ if TYPE_CHECKING:
 
     from arc.config import ArcSettings
     from arc.context.store import ContextSnapshot
+    from arc.exits import ExitConfig, ExitModelResult
     from arc.gate.inputs import Portfolio
     from arc.pipeline.env import PipelineEnv
     from arc.pipeline.market import PricedStructure
@@ -543,7 +548,40 @@ def _cost_bps(c: ScanCandidate) -> float:
     return round(2 * c.cost / max_loss * 10_000, 1) if max_loss > 0 else 0.0
 
 
-def _menu_entry(c: ScanCandidate) -> dict[str, Any]:
+def _realized_vol(snapshot: ContextSnapshot, ticker: str) -> float | None:
+    """Realised-vol forecast (mean HV20/HV60) from the ticker's ``regime`` entry, if any."""
+    entry = snapshot.latest("regime", ticker)
+    vol = entry.payload.get("vol") if entry is not None else None
+    if not isinstance(vol, dict):
+        return None
+    return realized_vol_forecast(vol.get("hv20"), vol.get("hv60"))
+
+
+def _exit_model(
+    c: ScanCandidate, spot: float, exits: ExitConfig, r: float, realized_vol: float | None
+) -> ExitModelResult | None:
+    """E2.4 static vs managed numbers for a scanner candidate (None without an IV)."""
+    if c.atm_iv is None or c.dte < 1:
+        return None
+    return model_exits(
+        c.structure,
+        exits.policy_for(c.structure.kind),
+        spot=spot,
+        iv=c.atm_iv,
+        r=r,
+        cfg=exits.model,
+        spreads=c.leg_spreads,
+        realized_vol=realized_vol,
+    )
+
+
+def _menu_rank_key(summary: ExitSummary | None, by: str) -> float:
+    """Sort key (ascending) for ``pipeline.rank_menu_by``; unmodelled entries sort last."""
+    val = None if summary is None else getattr(summary, by)
+    return math.inf if val is None else -float(val)
+
+
+def _menu_entry(c: ScanCandidate, exit_summary: ExitSummary | None = None) -> dict[str, Any]:
     st = c.structure
     return {
         "structure_type": _structure_type(c),
@@ -565,11 +603,17 @@ def _menu_entry(c: ScanCandidate) -> dict[str, Any]:
         "ev_per_contract": c.ev_proxy,
         "cost_bps": _cost_bps(c),
         "greeks": {"delta": st.greeks.delta, "vega": st.greeks.vega, "theta": st.greeks.theta},
+        "exits": None if exit_summary is None else exit_summary.model_dump(mode="json"),
     }
 
 
 def _to_quant_structure(
-    ticker: str, c: ScanCandidate, *, confidence: float, rationale: str
+    ticker: str,
+    c: ScanCandidate,
+    *,
+    confidence: float,
+    rationale: str,
+    exit_summary: ExitSummary | None = None,
 ) -> QuantStructureOut:
     st = c.structure
     return QuantStructureOut(
@@ -589,6 +633,7 @@ def _to_quant_structure(
         cost_bps=_cost_bps(c),
         confidence=confidence,
         rationale=rationale,
+        exits=exit_summary,
     )
 
 
@@ -597,9 +642,11 @@ def _quant_rules(no_chain: list[str]) -> list[str]:
         "Choose ONLY from the per-ticker `menu` above; copy each chosen structure's legs "
         "(occ_symbol, side, ratio) verbatim. Anything else is discarded.",
         "At most one structure per ticker, best first. You may omit a ticker.",
-        "All analytics (price, max gain/loss, breakevens, Greeks, PoP, EV, cost) are "
-        "replaced by the pipeline's own numbers; your value-add is the choice, confidence "
-        "and rationale.",
+        "All analytics (price, max gain/loss, breakevens, Greeks, PoP, EV, cost, exits) "
+        "are replaced by the pipeline's own numbers; your value-add is the choice, "
+        "confidence and rationale.",
+        "Positions are managed under the exit policy (`exits.policy`), not held to expiry: "
+        "weigh `exits.managed_pop` / `exits.managed_net_ev` next to the static numbers.",
         f"Tickers without a tradable chain: {', '.join(no_chain) or 'none'}.",
     ]
 
@@ -627,6 +674,8 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         return JobResult(summary="empty shortlist; no structures", metrics={"structures": 0})
 
     today = _today(ctx)
+    exits = load_exit_config()
+    summaries: dict[int, ExitSummary] = {}
     menus: dict[str, dict[frozenset[tuple[str, str]], ScanCandidate]] = {}
     chains: dict[str, Any] = {}
     spots: dict[str, float] = {}
@@ -649,14 +698,27 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
             no_chain_why[item.ticker] = "scanner found no structure passing its filters"
             continue
         spots[item.ticker] = res.spot
+        cands = list(res.candidates)
+        rv = _realized_vol(ctx.snapshot, item.ticker)
+        for c in cands:
+            model = _exit_model(c, res.spot, exits, settings.scanner_risk_free_rate, rv)
+            if model is not None:
+                summaries[id(c)] = ExitSummary.from_result(model)
+        by = exits.pipeline.rank_menu_by
+        if by != "scanner":
+            cands.sort(key=lambda c: _menu_rank_key(summaries.get(id(c)), by))
         menus[item.ticker] = {
             _legs_key([(leg.occ_symbol, leg.side.value) for leg in c.structure.legs]): c
-            for c in res.candidates
+            for c in cands
         }
         chains[item.ticker] = {
             "stance": item.stance,
             "iv": res.iv.model_dump(mode="json"),
-            "menu": [_menu_entry(c) for c in res.candidates],
+            "exit_policy_note": "exits: static = hold to expiry; managed = under the exit "
+            "policy in config/exits.yaml (both after costs, $ per contract). Paths move at "
+            "the realised-vol forecast (path_vol, mean HV20/HV60) and are priced at IV; "
+            "vrp = IV − forecast; rorc_day = managed net EV / (max loss × days held).",
+            "menu": [_menu_entry(c, summaries.get(id(c))) for c in cands],
         }
 
     def journal_no_chain(call_id: str | None = None) -> None:
@@ -718,7 +780,15 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
             rejected.append((s, reason or DROP_NOT_IN_MENU))
             continue
         chosen[t] = key
-        kept.append(_to_quant_structure(t, match, confidence=s.confidence, rationale=s.rationale))
+        kept.append(
+            _to_quant_structure(
+                t,
+                match,
+                confidence=s.confidence,
+                rationale=s.rationale,
+                exit_summary=summaries.get(id(match)),
+            )
+        )
     call_id = _record_ok(ctx, "quant", reply, ctx.snapshot.id, dropped)
 
     by_ticker = {q.ticker: q for q in kept}
@@ -734,7 +804,7 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 persona_call_id=call_id,
             )
         for key, c in menu.items():
-            entry = _menu_entry(c)
+            entry = _menu_entry(c, summaries.get(id(c)))
             if chosen.get(t) == key:
                 q = by_ticker[t]
                 j.add(
@@ -799,6 +869,9 @@ def _risk_rules(settings: ArcSettings, caps: Mapping[tuple[str, str], int]) -> l
     return [
         "Exactly one assessment per proposed structure, with ticker and structure_type "
         "copied verbatim from it.",
+        "Each structure's `exits` compares hold-to-expiry (static) with the managed exit "
+        "policy (take profit / stop / DTE exit); positions will be managed, so weigh the "
+        "managed PoP, net EV and stop probability.",
         "sizing_suggestion is advisory. The pipeline trades min(your suggestion, "
         f"floor({settings.max_alloc_pct:.0%} × equity / max_loss)); caps per structure: "
         + ", ".join(f"{t} {k}: {n}" for (t, k), n in sorted(caps.items()))
@@ -985,6 +1058,29 @@ def _with_position(
     )
 
 
+def _proposal_exit_model(
+    priced: Any, exits: ExitConfig, r: float, realized_vol: float | None
+) -> ExitModelResult | None:
+    """E2.4 model for the re-priced proposal structure (None without spot/IV)."""
+    st = priced.structure
+    if priced.spot is None or priced.atm_iv is None or st.dte < 1:
+        return None
+    try:
+        return model_exits(
+            st,
+            exits.policy_for(st.kind),
+            spot=priced.spot,
+            iv=priced.atm_iv,
+            r=r,
+            cfg=exits.model,
+            spreads=priced.leg_spreads(),
+            realized_vol=realized_vol,
+        )
+    except ValueError as exc:  # e.g. a stop basis that does not fit this structure
+        log.warning("pipeline.exit_model_failed", error=str(exc))
+        return None
+
+
 _SIZING_REASONS = {
     "ok": ReasonCode.SIZING_OK,
     "capped": ReasonCode.SIZING_CAPPED,
@@ -1072,6 +1168,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
     earnings = next_earnings(ctx.conn, list(by_ticker), _today(ctx))
     switch = HaltSwitch(HaltRepo(ctx.conn))
+    exits = load_exit_config()
 
     skipped: Counter[str] = Counter()
     lines: list[str] = []
@@ -1241,7 +1338,14 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
         JournalStore(ctx.conn).record_market_context(
             _market_context(ctx.snapshot, t, phash, priced, now)
         )
-        ctx.write("proposal", t, ProposalPayload.model_validate(proposal.model_dump()))
+        exit_model = _proposal_exit_model(
+            priced, exits, settings.scanner_risk_free_rate, _realized_vol(ctx.snapshot, t)
+        )
+        ctx.write(
+            "proposal",
+            t,
+            ProposalPayload.model_validate(proposal.model_dump() | {"exit_model": exit_model}),
+        )
         proposals += 1
         strikes = "/".join(f"{parse_occ(leg.occ_symbol).strike.normalize():f}" for leg in st.legs)
         verdict = "PASS" if decision.passed else f"FAIL ({'; '.join(decision.violations)})"

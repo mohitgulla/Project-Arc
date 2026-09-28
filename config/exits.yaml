@@ -1,0 +1,78 @@
+# Exit policy (PLAN D19, D23; card E2.4). Validated by arc.exits.policy.
+#
+# ONE place for exit rules. The proposal card (E6.1a), the Investor's live exits
+# (E6.2 base rules, E6.4 profit-taking / close-to-reallocate, via
+# arc.exits.evaluate_position) and the backtester (E7.2, exit_policy: policy)
+# all read this file. Changing a threshold here needs no code change.
+#
+# Semantics (per share, P&L at mid vs the entry price; see arc/exits/policy.py):
+#   take_profit_pct_of_max_gain  credit: close when P&L >= pct x max gain
+#                                (0.50 on a $1.66 credit = $0.83 debit to close)
+#   take_profit_pct_of_debit     debit: close when P&L >= pct x debit paid
+#   stop.basis credit_multiple   close when debit to close >= value x credit (2.0 = "2x credit")
+#   stop.basis pct_max_loss      close when loss >= value x max loss
+#   stop.basis pct_debit         close when loss >= value x debit (0.5 = half the debit)
+#   close_at_dte                 close once DTE <= this
+#   time_adjusted_targets        take-profit pct once DTE <= dte_lte (D19 decay target)
+#   stop_eod_only                the stop is evaluated on end-of-day marks only
+#                                (take profit / DTE exit may fire intraday)
+# Checked daily in the order: stop -> take profit -> DTE exit.
+#
+# D23 (owner, 2026-09-27): stops are relaxed so a trade can play out:
+# credit 75% of max loss, debit 75% of debit, end-of-day marks only.
+# Time-adjusted targets are empty until the owner sets them.
+
+model:
+  n_paths: 20000
+  seed: 20260927
+  iv_model:
+    kind: constant          # or mean_reverting (needs long_run, half_life_days)
+  path_vol: realized_forecast   # paths at mean(HV20, HV60) when known, marks at IV; or "iv"
+
+pipeline:
+  rank_menu_by: scanner   # scanner (credit_width) | managed_net_ev | rorc_day | vrp; owner decision pending
+
+default:
+  take_profit_pct_of_max_gain: 0.50
+  take_profit_pct_of_debit: 1.00
+  stop: null
+  stop_eod_only: true
+  close_at_dte: 7
+  time_adjusted_targets: []
+
+kinds:
+  vertical_credit:
+    take_profit_pct_of_max_gain: 0.50
+    take_profit_pct_of_debit: null
+    stop: {basis: pct_max_loss, value: 0.75}
+    stop_eod_only: true
+    close_at_dte: 7
+    time_adjusted_targets: []
+  iron_condor:
+    take_profit_pct_of_max_gain: 0.50
+    take_profit_pct_of_debit: null
+    stop: {basis: pct_max_loss, value: 0.75}
+    stop_eod_only: true
+    close_at_dte: 7
+    time_adjusted_targets: []
+  vertical_debit:
+    take_profit_pct_of_max_gain: null
+    take_profit_pct_of_debit: 1.00
+    stop: {basis: pct_debit, value: 0.75}
+    stop_eod_only: true
+    close_at_dte: 7
+    time_adjusted_targets: []
+  long_call:
+    take_profit_pct_of_max_gain: null
+    take_profit_pct_of_debit: 1.00
+    stop: {basis: pct_debit, value: 0.75}
+    stop_eod_only: true
+    close_at_dte: 7
+    time_adjusted_targets: []
+  long_put:
+    take_profit_pct_of_max_gain: null
+    take_profit_pct_of_debit: 1.00
+    stop: {basis: pct_debit, value: 0.75}
+    stop_eod_only: true
+    close_at_dte: 7
+    time_adjusted_targets: []

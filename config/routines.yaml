@@ -90,7 +90,7 @@ personas:
     trigger: approval           # event-driven, never scheduled
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
-  quant:   {reads: [shortlist]}
+  quant:   {reads: [shortlist, regime]}
   risk:    {reads: [structures]}
   propose: {reads: [candidate, regime, shortlist, structures, risk_review], llm: false}
 
