@@ -114,31 +114,50 @@ def next_earnings(
 
 
 def _group_legs(
+    conn: sqlite3.Connection | None,
     positions: Sequence[BrokerPosition],
-) -> dict[tuple[str, _dt.date], list[Leg]]:
-    """Open option legs grouped by ``(root, expiration)``: one structure per group.
+) -> list[tuple[str, str, list[Leg]]]:
+    """Open option legs as valuation groups ``(root, label, legs)``: one per structure.
 
-    Sentinel S-5: two dated structures on one underlying (e.g. weekly entries)
-    are valued separately; ``check_per_underlying`` sums their max loss.
+    E6.3 / Sentinel S-5: broker legs are attributed to Arc's ``open_structures``
+    (:func:`arc.reconcile.attribution.attribute`), so each structure is valued on
+    its own even when two share an underlying and an expiration. Legs no local
+    structure accounts for are grouped by ``(root, expiration)``; the reconciler
+    reports them as a mismatch. ``check_per_underlying`` sums the rows per root.
     """
-    groups: dict[tuple[str, _dt.date], list[Leg]] = defaultdict(list)
-    for p in positions:
-        if p.asset_class != "us_option":
-            continue
-        occ = parse_occ(p.symbol)
-        qty = abs(p.qty)
-        if qty != qty.to_integral_value() or qty == 0:
-            msg = f"position {p.symbol} has non-integral qty {p.qty}"
-            raise PortfolioError(msg)
-        short = p.side == "short" or p.qty < 0
-        groups[(occ.root, occ.expiration)].append(
-            Leg(
-                occ_symbol=occ.format(),
-                side=LegIntent.SHORT if short else LegIntent.LONG,
-                ratio=int(qty),
-                premium=abs(p.avg_entry_price) if p.avg_entry_price is not None else None,
-            )
+    from arc.reconcile.attribution import attribute, broker_legs, holdings_from_rows
+
+    try:
+        legs, _ = broker_legs(positions)
+    except ValueError as exc:
+        raise PortfolioError(str(exc)) from exc
+    entry = {leg.occ_symbol: leg.avg_entry_price for leg in legs}
+    holdings = []
+    if conn is not None:
+        rows = conn.execute(
+            "SELECT * FROM open_structures WHERE status = 'open' ORDER BY opened_at, id"
+        ).fetchall()
+        holdings = holdings_from_rows(dict(r) for r in rows)
+    att = attribute(holdings, legs)
+    groups: list[tuple[str, str, list[Leg]]] = [
+        (
+            h.ticker,
+            h.structure_id,
+            [
+                Leg(
+                    occ_symbol=sym,
+                    side=LegIntent.LONG if q > 0 else LegIntent.SHORT,
+                    ratio=abs(q),
+                    premium=h.premiums.get(sym) or entry.get(sym),
+                )
+                for sym, q in sorted(h.legs.items())
+                if q != 0
+            ],
         )
+        for h in att.attributed
+    ]
+    for (root, exp), group in sorted(att.leftover_groups(entry).items()):
+        groups.append((root, f"{root} {exp.isoformat()}", group))
     return groups
 
 
@@ -159,14 +178,15 @@ def build_portfolio(
     today = now.astimezone(ET).date()
     open_positions: list[Position] = []
     greeks = Greeks()
-    for (root, _exp), legs in sorted(_group_legs(positions).items()):
+    groups = _group_legs(conn, positions)
+    for root, label, legs in groups:
         try:
             _, max_loss = max_gain_loss(legs)
         except Exception as exc:
-            msg = f"cannot value open {root} position: {exc}"
+            msg = f"cannot value open {root} position ({label}): {exc}"
             raise PortfolioError(msg) from exc
         if max_loss is None:
-            msg = f"open {root} position has unbounded risk"
+            msg = f"open {root} position ({label}) has unbounded risk"
             raise PortfolioError(msg)
         open_positions.append(Position(underlying=root, max_loss=max_loss))
         exps = sorted({parse_occ(leg.occ_symbol).expiration for leg in legs})
@@ -208,12 +228,11 @@ def build_portfolio(
         (since,),
     ).fetchall()
     lots = [ClosedLot.from_row(dict(r)) for r in rows]
-    held = {
-        leg.occ_symbol: leg.ratio if leg.side == LegIntent.LONG else -leg.ratio
-        for legs in _group_legs(positions).values()
-        for leg in legs
-    }
-    return Portfolio(positions=open_positions, greeks=greeks, closed_lots=lots, legs=held)
+    held: dict[str, int] = defaultdict(int)
+    for _, _, legs in groups:
+        for leg in legs:
+            held[leg.occ_symbol] += leg.ratio if leg.side == LegIntent.LONG else -leg.ratio
+    return Portfolio(positions=open_positions, greeks=greeks, closed_lots=lots, legs=dict(held))
 
 
 # ---------------------------------------------------------------------------

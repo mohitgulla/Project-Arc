@@ -102,12 +102,14 @@ personas:
     expiry_warn_days: 1
     exits: true                 # E6.2: propose fired E2.4 exits (gate + approval, never auto-sent)
     eod_marks_from: "15:30"     # marks from here count as end of day (stops are EOD-only, D23)
-  auditor:                      # post-market reconcile + journal (handler: E6.3)
+  auditor:                      # E6.3: post-market reconcile + snapshots + tax lots; mismatch -> halt + alert
     schedule: ["16:30"]
     days: trading
     halt_exempt: true           # keeps running under !halt
+    llm: false                  # deterministic: broker (read-only) vs local store
     ttl: 6h
-    notify: card
+    notify: card                # [Auditor] Journal card: reconciliation + Day/MTD/YTD P&L (D28)
+    halt_on_mismatch: true      # any mismatch raises an arc:reconcile halt until the owner !resume
   scorecard:                    # weekly paper scorecard to #arc-investor (handler: E7.3)
     schedule: ["16:45"]
     days: [fri]

@@ -532,11 +532,15 @@ class TestTick:
         assert by_job["rss"].status == "failed" and "JobResult" in by_job["rss"].summary
 
     def test_unimplemented_persona_is_skipped_not_failed(self, conn: sqlite3.Connection) -> None:
-        d = Dispatcher(conn, cfg(BASE_YAML), notifier=RecordingNotifier(), is_halted=lambda: False)
-        outcomes = d.run_job(
-            "auditor", et(2026, 9, 28, 16, 30), reason="manual", now=et(2026, 9, 28, 16, 30)
+        yaml_text = BASE_YAML.replace(
+            "investor: {trigger: approval}",
+            'investor: {trigger: approval}\n      scorecard: {schedule: ["16:45"], days: [fri]}',
         )
-        assert [o.status for o in outcomes] == ["skipped"]  # auditor has no handler yet
+        d = Dispatcher(conn, cfg(yaml_text), notifier=RecordingNotifier(), is_halted=lambda: False)
+        outcomes = d.run_job(
+            "scorecard", et(2026, 10, 2, 16, 45), reason="manual", now=et(2026, 10, 2, 16, 45)
+        )
+        assert [o.status for o in outcomes] == ["skipped"]  # scorecard has no handler yet (E7.3)
 
     def test_default_halt_reads_halts_table(self, conn: sqlite3.Connection) -> None:
         from arc.store.repos import HaltRepo
@@ -728,7 +732,8 @@ class TestConfigDriven:
 
     def test_handler_resolution(self) -> None:
         spec = JobSpec.model_validate({"every": "5m"})
-        assert resolve_handler("auditor", spec) is not_implemented
+        assert resolve_handler("scorecard", spec) is not_implemented
+        assert resolve_handler("auditor", spec).__name__ == "auditor_step"
         assert resolve_handler("quant", spec).__name__ == "quant_step"
         assert resolve_handler("rss", spec).__name__ == "rss_source"
         assert resolve_handler("edgar.filings", spec).__name__ == "edgar_source"
