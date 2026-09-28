@@ -20,7 +20,7 @@ Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a 
 | D5 | Kanban execution | **Auto-dispatch**: worker profile claims cards, implements in git worktrees, PR completion contract, review gate before merge. `max_in_progress: 1`. | Owner choice. Board is released by completing the P0 gate card. |
 | D6 | Python | **3.12 via uv** (`~/.hermes/tools/uv-0.12.3`) | All required wheels resolve on 3.12 and 3.13; OpenBB (optional) pins ≤3.12. |
 | D7 | Market data | **Alpaca Basic (free, indicative feed)** for Phase 1; ThetaData free EOD tier for backtest history; upgrade path: Alpaca Algo Trader Plus ($99/mo OPRA) or ThetaData Value ($40/mo) | Cheapest path that still gives chains + Greeks. Decide on paid tier only after the backtester exists (E7). |
-| D8 | LLM provider | **Anthropic Subscription (Claude Opus 5.5)** for all implementation/execution tasks. No fallback provider for now: E8.1 keeps `fallback_providers` as a documented placeholder (not configured). Persona model tiers (§2.4), both on the subscription: **frontier = `anthropic/claude-opus-5.5`** (Director, Quant, Risk); **cheap = `anthropic/claude-opus-5`** (Scout, Investor, Auditor). | Single provider simplifies Phase 1; subscription already in place. Tiers refined by owner 2026-09-27 (E8.1). |
+| D8 | LLM provider | **Anthropic Subscription (Claude Opus 5.5)** for all implementation/execution tasks. No fallback provider for now and none required: E8.1 only leaves a TODO note in docs/OPS.md to wire one in later. Persona model tiers (§2.4), both on the subscription: **frontier = `anthropic/claude-opus-5.5`** (Director, Quant, Risk); **cheap = `anthropic/claude-opus-5`** (Scout, Investor, Auditor). | Single provider simplifies Phase 1; subscription already in place. Tiers refined by owner 2026-09-27 (E8.1). |
 | D9 | Universe | **Confirmed**: SPY QQQ IWM DIA XLF XLE XLK AAPL MSFT NVDA AMZN GOOGL META TSLA AMD JPM BAC XOM UNH HD. **Configurable** — Scout persona may propose additions based on catalyst discovery. | Starting set covers liquid ETFs + large caps across sectors. |
 | D10 | Approval policy | **Owner-only** (`U0C5KUMH28G`). Add a **self-approval / auto-approve mode** for paper account (configurable flag `ARC_AUTO_APPROVE=true`, paper-only, enforced by gate). | Lets paper pipeline run fully autonomous for evaluation. |
 | D11 | Push policy | **Auto-push**: workers push branches and open PRs automatically (completion contract). | Owner preference; review gate still required before merge. |
@@ -236,7 +236,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E7.3 Paper scorecard — metrics, weekly report to `#arc-investor` ← E6.3
 
 **E8 Ops**
-- E8.1 Fallback provider + per-persona model routing ← P0
+- E8.1 Per-persona model routing (fallback provider: later, note only) ← P0
 - E8.2 Monitoring — heartbeat, gateway health, log rotation, alerts ← E5.3
 - E8.3 Streamlit control tower over Tailscale ← E6.3
 - E8.4 Local model path (Mac Studio) — deferred ← E8.1
@@ -289,13 +289,13 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 
 ## 8. Costs (Phase 1)
 
-Alpaca paper: $0 · Alpaca Basic data: $0 · ThetaData free EOD: $0 · Slack free: $0 · Claude subscription: existing · fallback provider: pay-as-you-go (E8.1). Optional later: Alpaca Algo Trader Plus $99/mo, ThetaData Value $40/mo, Massive Options Starter $29/mo.
+Alpaca paper: $0 · Alpaca Basic data: $0 · ThetaData free EOD: $0 · Slack free: $0 · Claude subscription: existing · fallback provider: none for now (wire in later). Optional later: Alpaca Algo Trader Plus $99/mo, ThetaData Value $40/mo, Massive Options Starter $29/mo.
 
 ## 9. Open decisions (ask, don't assume)
 
 All original items resolved on 2026-09-27:
 
-1. ~~Fallback provider~~ → **D8**: Anthropic Subscription, no fallback for now (placeholder). Frontier = Opus 5.5, cheap = Opus 5.
+1. ~~Fallback provider~~ → **D8**: Anthropic Subscription, no fallback for now (note to wire in later). Frontier = Opus 5.5, cheap = Opus 5.
 2. ~~Universe~~ → **D9**: Confirmed 20-ticker list, configurable via Scout.
 3. ~~Approval TTL & approvers~~ → **D10**: Owner-only + auto-approve mode for paper (`ARC_AUTO_APPROVE`). TTL stays at 20 min default.
 4. ~~Alpaca paper API keys~~ → Stored in `~/.hermes/.env`. **⚠️ Keys were exposed in Slack — rotate them.**
