@@ -158,6 +158,13 @@ class ReasonCode(StrEnum):
     EXIT_EXPIRY = "exit:expiry"
     EXIT_NOT_PROPOSED = "exit:not_proposed"
     EXIT_CLOSED = "exit:closed"
+    # reconcile (E6.3: post-market broker vs local)
+    RECONCILE_CLEAN = "reconcile:clean"
+    RECONCILE_MISMATCH = "reconcile:mismatch"
+    RECONCILE_RESOLVED = "reconcile:resolved"
+    RECONCILE_EXPIRED = "reconcile:expired"
+    RECONCILE_WASH_SALE = "reconcile:wash_sale"
+    RECONCILE_LOT_PRICE = "reconcile:lot_price"
 
 
 def gate_reason(violation: str) -> ReasonCode:

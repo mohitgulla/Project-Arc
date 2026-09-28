@@ -288,6 +288,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "monitor": "arc.routines.monitor:monitor_step",
     # E6.2 Investor: works an approved proposal through its D24 price band
     "investor": "arc.routines.investor:investor_step",
+    # E6.3 Auditor: post-market reconcile (broker vs local), snapshots, tax lots, card
+    "auditor": "arc.routines.auditor:auditor_step",
 }
 
 
