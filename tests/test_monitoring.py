@@ -446,6 +446,187 @@ def test_non_alerting_findings_are_silent(conn: sqlite3.Connection) -> None:
     assert n.posts == []
 
 
+# ---------------------------------------------------------------------------
+# alerts: outages fold missed windows into the incident (review round 1)
+# ---------------------------------------------------------------------------
+
+
+def _health(
+    conn: sqlite3.Connection, routines: RoutinesConfig, now: dt.datetime, n: Any
+) -> alerts.AlertOutcome:
+    results = [
+        checks.tick_staleness(conn, MS, now),
+        checks.missed_windows(conn, routines, MS, now),
+        checks.stuck_runs(conn, MS, now),
+    ]
+    return alerts.apply(conn, results, now=now, correlation={"check_id": "h"}, notifier=n)
+
+
+def _missed(job: str, slot: dt.datetime, deadline: dt.datetime | None = None) -> checks.Finding:
+    detail = {"job": job, "slot": slot.isoformat()}
+    if deadline is not None:
+        detail["deadline"] = deadline.isoformat()
+    return checks.Finding(
+        key=f"missed:{job}:{slot.isoformat()}", kind="missed_window", severity="failed",
+        message=f"{job} {slot:%H:%M} missed its window", mode=checks.ONE_OFF, detail=detail,
+    )  # fmt: skip
+
+
+def test_outage_posts_are_bounded(conn: sqlite3.Connection) -> None:
+    routines = cfg()
+    d = _dispatcher(conn, routines)
+    n = alerts.RecordingOpsNotifier()
+    hb = HeartbeatRepo(conn)
+    # Healthy ticks + checks every 5 min 06:00-08:00, then the tick cron dies until 14:00.
+    t = et(2026, 9, 28, 6, 0)
+    while t <= et(2026, 9, 28, 15, 0):
+        if not (et(2026, 9, 28, 8, 0) < t < et(2026, 9, 28, 14, 0)):
+            d.tick(t)
+            hb.record("tick", "ok", at=t, correlation={"tick_id": f"tick-{t:%H%M}"})
+        _health(conn, routines, t, n)
+        t += dt.timedelta(minutes=5)
+    # One open post, one resolve summary: nothing else for the whole outage.
+    assert len(n.posts) == 2, n.posts
+    assert n.replies == []
+    opened, resolved = n.posts
+    assert "last routines tick" in opened and "missed its window" not in opened
+    assert "resolved: routines tick heartbeat is fresh again" in resolved
+    assert "routine slot(s) missed: rss ×" in resolved and "director ×1" in resolved
+    # Every missed slot is still on record, folded into the incident and traceable.
+    repo = AlertRepo(conn)
+    incident = repo.find("tick_stale")[0]
+    folded = repo.folded_into(incident.id)
+    assert len(folded) >= 10
+    assert {alerts.missed_job(a) for a in folded} == {"rss", "director"}
+    assert all(a.posted_ts == "ts-2" for a in folded)
+
+
+def test_first_check_after_long_outage_posts_once(conn: sqlite3.Connection) -> None:
+    # Reviewer repro: one tick 08:00, the first check only at 11:00 (health agent was down too).
+    routines = cfg()
+    _dispatcher(conn, routines).tick(et(2026, 9, 29, 8, 0))
+    HeartbeatRepo(conn).record("tick", "ok", at=et(2026, 9, 29, 8, 0))
+    n = alerts.RecordingOpsNotifier()
+    out = _health(conn, routines, et(2026, 9, 29, 11, 0), n)
+    assert [a.key for a in out.opened] == ["tick_stale"]
+    assert len(out.folded) >= 4 and len(n.posts) == 1
+    assert "missed its window" not in n.posts[0]
+    # A day later: still nothing new posted.
+    for h in range(12, 24):
+        _health(conn, routines, et(2026, 9, 29, h, 0), n)
+    assert len(n.posts) == 1
+
+
+def test_single_miss_with_healthy_ticks_alerts_once(conn: sqlite3.Connection) -> None:
+    # Ticks are healthy but director never runs (e.g. dropped from the tick's config).
+    rss_only = cfg(
+        """
+        sources:
+          rss: {every: 30m, window: "06:00-20:00", days: trading}
+        """
+    )
+    d = _dispatcher(conn, rss_only)
+    n = alerts.RecordingOpsNotifier()
+    t = et(2026, 9, 28, 6, 0)
+    while t <= et(2026, 9, 28, 13, 0):
+        d.tick(t)
+        HeartbeatRepo(conn).record("tick", "ok", at=t)
+        _health(conn, cfg(), t, n)
+        t += dt.timedelta(minutes=5)
+    assert len(n.posts) == 1
+    assert "director" in n.posts[0] and "missed its window" in n.posts[0]
+    assert AlertRepo(conn).open_alerts() == []
+
+
+def test_missed_slots_collapse_to_one_line_per_job(conn: sqlite3.Connection) -> None:
+    n = alerts.RecordingOpsNotifier()
+    slots = [et(2026, 9, 28, h, 0) for h in (9, 10, 11)]
+    fs = (*[_missed("rss", s) for s in slots], _missed("director", slots[0]))
+    alerts.apply(conn, [checks.CheckResult("routine_windows", "failed", "", fs)],
+                 now=et(2026, 9, 28, 12, 0), correlation={}, notifier=n)  # fmt: skip
+    (post,) = n.posts
+    lines = [x for x in post.splitlines() if x.startswith(":rotating_light:")]
+    assert len(lines) == 2
+    rss = next(x for x in lines if "rss:" in x)
+    assert "3 slots missed" in rss and "09:00" in rss and "11:00" in rss
+    assert any("director 09:00 missed its window" in x for x in lines)
+
+
+def test_miss_judged_after_incident_resolved_replies_in_thread(conn: sqlite3.Connection) -> None:
+    n = alerts.RecordingOpsNotifier()
+    t0 = et(2026, 9, 28, 10, 0)
+    alerts.apply(conn, [_cond()], now=t0, correlation={}, notifier=n)
+    alerts.apply(conn, [checks.CheckResult("tick", "ok", "ok")], now=t0 + dt.timedelta(hours=1),
+                 correlation={}, notifier=n)  # fmt: skip
+    assert len(n.posts) == 2
+    # Window closed during the outage, grace ran out after it resolved: reply, not a root post.
+    late = _missed("director", et(2026, 9, 28, 9, 30), deadline=t0 + dt.timedelta(minutes=55))
+    later = t0 + dt.timedelta(hours=1, minutes=10)
+    out = alerts.apply(conn, [checks.CheckResult("routine_windows", "failed", "", (late,))],
+                       now=later, correlation={}, notifier=n)  # fmt: skip
+    assert len(n.posts) == 2
+    assert n.replies == [("ts-1", out.replies[0][1])]
+    assert "1 routine slot(s) missed: director ×1" in n.replies[0][1]
+    assert AlertRepo(conn).find(late.key)[0].posted_ts == "ts-1"
+    # A miss whose window closed well after the incident is a normal alert again.
+    fresh = _missed("director", et(2026, 9, 29, 9, 30), deadline=et(2026, 9, 29, 11, 30))
+    alerts.apply(conn, [checks.CheckResult("routine_windows", "failed", "", (fresh,))],
+                 now=et(2026, 9, 29, 11, 45), correlation={}, notifier=n)  # fmt: skip
+    assert len(n.posts) == 3 and "director" in n.posts[2]
+
+
+def test_miss_after_unposted_incident_is_posted(conn: sqlite3.Connection) -> None:
+    quiet = alerts.LogOpsNotifier()  # Slack down: incident never gets a ts
+    t0 = et(2026, 9, 28, 10, 0)
+    alerts.apply(conn, [_cond()], now=t0, correlation={}, notifier=quiet)
+    alerts.apply(conn, [checks.CheckResult("tick", "ok", "ok")], now=t0 + dt.timedelta(hours=1),
+                 correlation={}, notifier=quiet)  # fmt: skip
+    n = alerts.RecordingOpsNotifier()
+    late = _missed("rss", t0, deadline=t0 + dt.timedelta(minutes=30))
+    out = alerts.apply(conn, [checks.CheckResult("routine_windows", "failed", "", (late,))],
+                       now=t0 + dt.timedelta(hours=2), correlation={}, notifier=n)  # fmt: skip
+    assert not out.folded and len(n.posts) == 1 and "rss" in n.posts[0]
+
+
+def test_gateway_down_absorbs_misses(conn: sqlite3.Connection) -> None:
+    n = alerts.RecordingOpsNotifier()
+    t0 = et(2026, 9, 28, 10, 0)
+    miss = _missed("rss", t0, deadline=t0 + dt.timedelta(minutes=30))
+    res = [_cond("gateway", "gateway"),
+           checks.CheckResult("routine_windows", "failed", "", (miss,))]  # fmt: skip
+    out = alerts.apply(conn, res, now=t0 + dt.timedelta(minutes=45), correlation={}, notifier=n)
+    assert [a.key for a in out.opened] == ["gateway"] and len(out.folded) == 1
+    assert "rss" not in n.posts[0]
+    gw_ok = checks.CheckResult("gateway", "ok", "Gateway is running (PID 7)")
+    alerts.apply(conn, [gw_ok], now=t0 + dt.timedelta(hours=1), correlation={}, notifier=n)
+    assert "resolved: Hermes gateway healthy again (Gateway is running (PID 7))" in n.posts[1]
+    assert "1 routine slot(s) missed: rss ×1" in n.posts[1]
+
+
+def test_resolve_text_reflects_current_state(conn: sqlite3.Connection) -> None:
+    n = alerts.RecordingOpsNotifier()
+    now = et(2026, 9, 28, 9, 0)
+    _health(conn, cfg(), now, n)  # no tick heartbeat yet
+    assert "no `arc routines tick` heartbeat recorded yet" in n.posts[0]
+    HeartbeatRepo(conn).record("tick", "ok", at=now, correlation={"tick_id": "tick-new"})
+    _health(conn, cfg(), now + dt.timedelta(minutes=5), n)
+    assert "recorded yet" not in n.posts[1]
+    assert "routines tick heartbeat is fresh again" in n.posts[1] and "tick-new" in n.posts[1]
+    stuck = checks.Finding(key="stuck:run-9", kind="stuck_run", severity="failed", message="m")
+    alerts.apply(conn, [checks.CheckResult("stuck_runs", "failed", "", (stuck,))], now=now,
+                 correlation={}, notifier=n)  # fmt: skip
+    alerts.apply(conn, [checks.CheckResult("stuck_runs", "ok", "")], now=now, correlation={},
+                 notifier=n)  # fmt: skip
+    assert "resolved: run run-9 is no longer stuck" in n.posts[-1]
+    other = checks.Finding(key="gateway_degraded", kind="gateway_degraded", severity="degraded",
+                           message="warned")  # fmt: skip
+    alerts.apply(conn, [checks.CheckResult("gateway", "degraded", "", (other,))], now=now,
+                 correlation={}, notifier=n)  # fmt: skip
+    alerts.apply(conn, [checks.CheckResult("gateway", "ok", "")], now=now, correlation={},
+                 notifier=n)  # fmt: skip
+    assert "resolved: warned" in n.posts[-1]
+
+
 class FakeWeb:
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail
@@ -465,6 +646,9 @@ def test_slack_ops_notifier_channels_and_failures() -> None:
     n = alerts.SlackOpsNotifier(AlertChannel.PROJECT_ARC, ArcSlackClient(web))  # type: ignore[arg-type]
     assert n.post("hello") == "111.222"
     assert web.calls[0]["channel"] == CHANNEL_PROJECT_ARC
+    assert n.post("in thread", thread_ts="111.222") == "111.222"
+    assert web.calls[1]["thread_ts"] == "111.222" and web.calls[1]["text"] == "in thread"
+    assert alerts.LogOpsNotifier().post("x", thread_ts="1.1") is None
     web2 = FakeWeb()
     alerts.SlackOpsNotifier(AlertChannel.ARC_INVESTOR, ArcSlackClient(web2)).post("x")  # type: ignore[arg-type]
     assert web2.calls[0]["channel"] == CHANNEL_ARC_INVESTOR

@@ -212,6 +212,26 @@ class AlertRepo:
                 "UPDATE ops_alerts SET posted_ts = ? WHERE id = ?", [(ts, i) for i in alert_ids]
             )
 
+    def incidents(self, keys: tuple[str, ...], *, since: _dt.datetime) -> list[OpsAlert]:
+        """Alerts for *keys* that are open or resolved after *since*, newest first."""
+        marks = ",".join("?" for _ in keys)
+        rows = self.conn.execute(
+            f"""SELECT * FROM ops_alerts WHERE key IN ({marks})
+                AND (resolved_at IS NULL OR resolved_at >= ?)
+                ORDER BY opened_at DESC""",  # noqa: S608 - placeholders only
+            (*keys, to_db(since)),
+        ).fetchall()
+        return [_alert(r) for r in rows]
+
+    def folded_into(self, incident_id: str) -> list[OpsAlert]:
+        """One-off alerts recorded under *incident_id* instead of posted on their own."""
+        rows = self.conn.execute(
+            """SELECT * FROM ops_alerts
+               WHERE json_extract(correlation, '$.folded_into') = ? ORDER BY key""",
+            (incident_id,),
+        ).fetchall()
+        return [_alert(r) for r in rows]
+
     def find(self, needle: str, *, limit: int = 50) -> list[OpsAlert]:
         like = f"%{needle}%"
         rows = self.conn.execute(

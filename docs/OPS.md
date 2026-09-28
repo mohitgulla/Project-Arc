@@ -176,8 +176,20 @@ per check run:
 
 - A condition alert (tick, stuck run, gateway) is posted once when it opens.
 - While the condition persists, it is not posted again.
-- When the check passes again, a `resolved` line is posted.
-- A missed routine window is posted exactly once.
+- When the check passes again, a `resolved` line is posted. It describes the
+  current state (e.g. "routines tick heartbeat is fresh again (last tick 2 min
+  ago, tick-…)"), not the text the alert opened with.
+- A missed routine window is posted exactly once. Several missed slots of the
+  same job in one post collapse into one line per job.
+- Outages don't flood the channel. While a `tick_stale` or `gateway` incident is
+  open, or opens in the same run, any missed slot whose window closed during
+  it (from the last good tick onward) is recorded with
+  `correlation.folded_into = <incident alert id>` and is not posted on its own.
+  The incident's resolve line summarises them, e.g. "during it 23 routine
+  slot(s) missed: rss ×18, edgar ×4, director ×1". A slot judged after the
+  incident resolved goes out as one thread reply under the incident post. A
+  full outage therefore produces two root posts: one when it opens and one
+  when it resolves.
 
 Each post carries the alert id and the correlation ids. If Slack is
 unreachable, the alert is still recorded in the DB with `posted_ts` NULL.
