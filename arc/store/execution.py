@@ -1,4 +1,4 @@
-"""Execution and open-structure repositories (E6.2; migration ``010_execution.sql``).
+"""Execution and open-structure repositories (E6.2; migration ``011_execution.sql``).
 
 ``ExecutionRepo`` keeps one row per approved proposal: the D24 price-band ladder
 and its outcome. ``OpenStructureRepo`` is Arc's local position model — one row
