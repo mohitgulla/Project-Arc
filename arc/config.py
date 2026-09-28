@@ -432,6 +432,10 @@ class ArcSettings(BaseSettings):
         default=3,
         description="Max tickers the Director shortlist may carry into Quant.",
     )
+    pipeline_max_context_notes: Annotated[int, Field(ge=0, le=100)] = Field(
+        default=20,
+        description="Max prior D27 notes (regime view/thesis/observation) shown to the Director.",
+    )
     pipeline_scan_top: Annotated[int, Field(ge=1, le=20)] = Field(
         default=5,
         description="Scanner candidates per ticker offered to Quant (Quant picks among them).",

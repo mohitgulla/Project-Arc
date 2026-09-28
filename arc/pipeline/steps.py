@@ -523,6 +523,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     inputs = {
         "portfolio_summary": summary,
         "scan_date": _today(ctx).isoformat(),
+        "max_notes": settings.pipeline_max_context_notes,
         "rules": _director_rules(cands, limit),
     }
     reply, out = _ask(ctx, env, "director", snap, inputs, DirectorOutput)
