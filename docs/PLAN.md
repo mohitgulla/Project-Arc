@@ -138,6 +138,12 @@ Project-Arc/
 
 AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits are enforced by the gate. AutoHedge's stock-centric `QUANT_ANALYSIS_PROMPT` is replaced by an options schema (IV/HV, IVR, regime, PoP, EV after spread cost).
 
+**Shared context (D16, E5.4).** Personas never hand results to each other in memory. Every producer (source job or persona) appends a typed entry to `context_entries` (`arc/context/`). Entry kinds are `raw_doc_ref`, `channel_brief`, `candidate`, `regime`, `shortlist`, `structures`, `risk_review`, `proposal` and `journal`; each is a pydantic model with `extra="forbid"`. TTL and supersede policy come from the producer: `context_ttl` defaults in `config/routines.yaml`, with per-job `context:` overrides for the D14 source-profile TTLs.
+- Writes are append-only, enforced by DB triggers. Superseding inserts a new row and flips the old row's status.
+- Before a persona runs, the dispatcher takes a `ContextSnapshot` (active and unexpired at `as_of`, filtered by the kinds the persona `reads`). It records the snapshot id in `routine_runs.inputs_snapshot`, so any decision can be replayed against exactly what the persona saw.
+- The prompt builders take that snapshot (`*_input_from_context`).
+- The gate still receives only typed inputs from the runner and never queries the store.
+
 ### 2.5 Slack design
 
 - **`#project-arc` (dev).** Every Kanban card gets one thread: creation post → worker progress comments → PR link → review verdict. Hermes' kanban notification subscriptions post into the same thread. Use `!cmd` prefix inside threads (Slack blocks slash commands there).
@@ -148,6 +154,17 @@ AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits a
 
 - **Kanban**: board `project-arc`, project-bound → worktrees under `.worktrees/<id>/`, `--completion-contract mohitgulla/Project-Arc` → PR required; `review_dispatch: true` runs the review lane before `done`. `max_in_progress: 1`, `auto_decompose: false`.
 - **Routines** (E5.4 dispatcher, E5.3 defaults, D16): one Hermes cron → `arc routines tick` every 5 min; cadences/chains live in `config/routines.yaml`. Defaults: **Scout at 22:00 ET and 12:00 ET (D15)**, `06:30 PT` pre-market scan, `every 30m 06:30–13:00 PT` intraday monitor, `13:30 PT` post-market reconcile + journal, weekly scorecard Friday.
+  - **Tick algorithm.** Each tick:
+    1. Expires context entries past their TTL.
+    2. Plans the due slots in `(cursor, now]` for each job. Missed slots collapse into one catch-up run, which happens only while the slot's catch-up window (`ttl`, default 2h, or one `every` interval) is still open. Otherwise the slot is recorded as `skipped`.
+    3. Runs source jobs before personas, so `after_sources` is satisfied.
+    4. Runs each persona's `chain` under one `chain_run_id`.
+    5. Fires `<job>.completed` triggers, whose `if:` expressions are evaluated safely over the run's metrics plus `session`.
+    6. Drains queued external events (`arc routines emit approval|halt`).
+  - **Idempotency.** `routine_runs` is unique on `(job, scheduled_for)` and on `(chain_run_id, step)`, so a doubled tick never re-runs a job. Retrying a failed chain resumes from its failed step.
+  - **Locks and halt.** There is a flock per job, plus one global `llm` lock so personas run one at a time. `!halt` skips every persona except those marked `halt_exempt` (Auditor); sources keep fetching.
+  - **Heartbeats.** Personas post one line to the #arc-investor day thread. Sources are quiet and get folded into the next persona line. Failures always alert.
+  - **CLI.** `arc routines validate|list|tick [--dry-run]|run <job> [--chain]|history|emit`, and `arc context show`.
 - **MCP**: Alpaca MCP server v2 (`uvx alpaca-mcp-server`, `ALPACA_TOOLSETS` restricted to read-only in persona sessions); order submission goes through `arc.execution`, not MCP, in Phase 1.
 - **Hooks**: `hermes/hooks/arc-gate` — `pre_tool_call`, matcher on broker order tools, fail-closed.
 - **Profiles**: single `default` profile is the worker in Phase 1 (assignee `default`). A dedicated `arc-worker` profile is an E8 item once provider auth for profiles is settled.
