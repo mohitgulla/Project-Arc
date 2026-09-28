@@ -124,6 +124,10 @@ def test_arc_package_imports() -> None:
         "arc.exits.model",
         "arc.exits.position",
         "arc.exits.cli",
+        "arc.tower",
+        "arc.tower.data",
+        "arc.tower.net",
+        "arc.tower.cli",
     ]
     for pkg in packages:
         mod = importlib.import_module(pkg)
@@ -138,7 +142,17 @@ def test_cli_help() -> None:
         text=True,
     )
     assert result.returncode == 0
-    for cmd in ("scan", "chains", "propose", "gate", "approve", "execute", "reconcile", "report"):
+    for cmd in (
+        "scan",
+        "chains",
+        "propose",
+        "gate",
+        "approve",
+        "execute",
+        "reconcile",
+        "report",
+        "tower",
+    ):
         assert cmd in result.stdout, f"{cmd} not in help output"
 
 
