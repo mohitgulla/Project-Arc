@@ -25,6 +25,14 @@ Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a 
 | D10 | Approval policy | **Owner-only** (`U0C5KUMH28G`). Add a **self-approval / auto-approve mode** for paper account (configurable flag `ARC_AUTO_APPROVE=true`, paper-only, enforced by gate). | Lets paper pipeline run fully autonomous for evaluation. |
 | D11 | Push policy | **Auto-push**: workers push branches and open PRs automatically (completion contract). | Owner preference; review gate still required before merge. |
 | D12 | Persona names | **Scout, Director, Quant, Risk, Investor, Auditor** (Execution/Exec renamed to Investor). Slack labels: `[Scout] [Director] [Quant] [Risk] [Investor] [Auditor]`. | Owner choice 2026-09-27. |
+| D13 | Initial YouTube source | **StockedUp** (channel `UC-m6zNItyoDk5lSykDlhE4Q`), default in `ARC_INGEST_YOUTUBE_CHANNELS`. Posts a next-session outlook almost every trading day. | Owner choice 2026-09-27. |
+| D14 | Channel processors | Each YouTube channel gets a **profile + extraction guidelines** (`arc/ingest/channels/<slug>/`). Newest video → validated `ChannelBrief` (schema §E4.4). TTL is **per source** (`ttl_sessions` in the profile). **StockedUp = 1 session**, and its next video supersedes it (`supersede: latest`). Macro-guidance sources can set longer TTLs (e.g. 5–20 sessions, `supersede: accumulate`). Expired briefs never inform trading. Every extracted item carries a verbatim transcript quote, checked deterministically; items that fail are dropped. | Owner: newest video informs next-day trading until a new video replaces it; recent info for daily sources, longer horizon for macro. |
+| D15 | Scout cadence + transcription | Scout runs **twice daily at 22:00 ET** (after-close sources, e.g. StockedUp) and **12:00 ET** (midday news), processing all new sources (YouTube, RSS, EDGAR, earnings). Videos without captions fall back to **local audio transcription** (mlx-whisper, no paid STT). | Owner choice 2026-09-27. |
+| D16 | Orchestration | **Config-driven routines** (`config/routines.yaml`). Every source and persona has its own cadence (`schedule` / `every`+`window` / event `trigger`), and personas can be **chained** (e.g. Director→Quant→Risk→propose). A single Hermes cron runs `arc routines tick` every 5 min. All agent outputs go to an append-only **context store** (`context_entries`, TTL + supersede). Downstream agents read a `ContextSnapshot`, and its id is recorded on every run for audit/replay. | Owner: flexible per-source frequency, per-persona cadence, chained executions, shared DB context. |
+| D17 | Build order | **New work starts from latest `main`, after the open PRs it depends on have merged.** A card whose parents (or the PRs they depend on) are unmerged waits in `triage` with an `[awaiting-merge]` gate. The arc-board plugin promotes it once every parent PR is merged, and the worker rebases on `origin/main` first. Workers never stack on unmerged branches. | Owner choice 2026-09-27: avoids conflict-resolution by workers and stale bases. |
+| D20 | Card thread lifecycle | Every card gets its own #project-arc thread when it is created (gatekeeper cron, 1 min). When the card is done **and** its PR has merged, the thread's parent message is edited to :white_check_mark: with the PR link. Any issue found after merge is discussed **in the original card's thread** until a follow-up fix card is agreed. The fix card then gets its own thread, and the original thread gets a pointer to it. | Owner choice 2026-09-27. |
+| D18 | Paper sizing | **Not fixed at 1 contract.** `contracts = min(Risk.sizing_suggestion, floor(5% equity / max_loss_per_contract))`, minimum 1 when a single contract fits under the 5% cap; otherwise no trade. The gate still enforces every portfolio cap. | Owner choice 2026-09-27 (answers E5.2 Q2). |
+| D19 | Exit management + reallocation | Open positions are re-evaluated on the intraday routine. **Investor** proposes **early profit-taking closes** (per-structure profit target, e.g. 50% of max gain for credit structures, plus a time-decay-adjusted target, with no waiting to expiry). **Risk** can propose **close-to-reallocate**: close a position to free buying power when a new candidate's expected risk/reward, net of costs and slippage, beats the open position's remaining EV by a configured margin. Every close is a Proposal that goes through gate + approval (`ARC_AUTO_APPROVE` applies in paper). | Owner choice 2026-09-27. Note: D4's evidence says management rules don't beat hold-to-expiry *statistically* for defined-risk. E7.2 backtests D19's rules against hold-to-expiry, and the paper scorecard reports both. |
 
 Open items requiring a decision are listed in §9 — all five original items are now resolved (D8–D11 + keys stored).
 
@@ -139,7 +147,7 @@ AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits a
 ### 2.6 Hermes orchestration
 
 - **Kanban**: board `project-arc`, project-bound → worktrees under `.worktrees/<id>/`, `--completion-contract mohitgulla/Project-Arc` → PR required; `review_dispatch: true` runs the review lane before `done`. `max_in_progress: 1`, `auto_decompose: false`.
-- **Cron routines** (E5.3): `06:30 PT` pre-market scan, `every 30m 06:30–13:00 PT` intraday monitor, `13:30 PT` post-market reconcile + journal, weekly scorecard Friday.
+- **Routines** (E5.4 dispatcher, E5.3 defaults, D16): one Hermes cron → `arc routines tick` every 5 min; cadences/chains live in `config/routines.yaml`. Defaults: **Scout at 22:00 ET and 12:00 ET (D15)**, `06:30 PT` pre-market scan, `every 30m 06:30–13:00 PT` intraday monitor, `13:30 PT` post-market reconcile + journal, weekly scorecard Friday.
 - **MCP**: Alpaca MCP server v2 (`uvx alpaca-mcp-server`, `ALPACA_TOOLSETS` restricted to read-only in persona sessions); order submission goes through `arc.execution`, not MCP, in Phase 1.
 - **Hooks**: `hermes/hooks/arc-gate` — `pre_tool_call`, matcher on broker order tools, fail-closed.
 - **Profiles**: single `default` profile is the worker in Phase 1 (assignee `default`). A dedicated `arc-worker` profile is an E8 item once provider auth for profiles is settled.
@@ -186,17 +194,21 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 
 **E4 Ingestion (Scout)**
 - E4.1 Source connectors — RSS, SEC EDGAR (10 req/s, UA header), earnings calendar, YouTube transcripts (yt-dlp) ← E1.2
+- E4.1b YouTube audio-transcription fallback — local mlx-whisper when no captions (D15) ← E4.1
 - E4.2 Candidate pipeline — LLM summarization filter → `Candidate`, dedupe, storage, confidence threshold ← E4.1, E1.3
 - E4.3 Regime features — Markov 3-state regime + IV/HV + IVR as structured inputs ← E1.4
+- E4.4 Channel processors — per-channel profile + extraction guidelines → `ChannelBrief` (levels, directional calls, catalysts, risk flags, tickers; each with verbatim quote); active-brief lifecycle (superseded by next video); StockedUp first (D13, D14) ← E4.1, E4.2
 
 **E5 Personas & orchestration**
 - E5.1 Persona skills — six `SKILL.md` + JSON output schemas + prompt builders ← E1.1
 - E5.2 Pipeline runner — candidate → structures → gate → proposal; idempotent, resumable, fully logged, dry-run mode ← E2.3, E3.1, E4.2, E5.1
-- E5.3 Cron routines — pre-market, intraday, post-market, weekly ← E5.2
+- E5.3 Cron routines — install `arc routines tick` cron + default routines.yaml (Scout 22:00/12:00 ET, pre-market, intraday, post-market, weekly) ← E5.2, E5.4
+- E5.4 Routine dispatcher + context store — per-source/per-persona cadence, chains, event triggers, `context_entries` + snapshots (D16) ← E1.3, E4.2
 
 **E6 Approval & execution**
 - E6.1 Slack proposal card — `#arc-investor` daily thread, clarify Approve/Reject, TTL ← E1.5, E5.2
 - E6.2 Execution — approved → limit `mleg` at mid with bounded improvement; fills; cancel on timeout; configurable exits ← E6.1, E1.4, E3.2
+- E6.4 Position manager — early profit-taking + close-to-reallocate proposals (D19) ← E6.2, E5.4
 - E6.3 Reconciliation — broker vs local positions, PnL snapshots, mismatch alerts ← E6.2
 
 **E7 Backtest & evaluation**

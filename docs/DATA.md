@@ -48,5 +48,6 @@ end = the last completed session. Coverage prints a per-ticker table
 
 ```python
 from arc.data.history import ParquetHistoryStore
+
 df = ParquetHistoryStore("data").read("alpaca", "SPY", start=date(2025, 1, 2))
 ```
