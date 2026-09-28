@@ -211,9 +211,15 @@ def build_portfolio(
 class PricedStructure:
     """A structure re-priced at mid from fresh quotes, plus the gate's quote map."""
 
-    def __init__(self, structure: Structure, contracts: dict[str, OptionContract]) -> None:
+    def __init__(
+        self,
+        structure: Structure,
+        contracts: dict[str, OptionContract],
+        spot: float | None = None,
+    ) -> None:
         self.structure = structure
         self.contracts = contracts
+        self.spot = spot
 
 
 def price_structure(
@@ -246,7 +252,7 @@ def price_structure(
         )
     ivs = {k: float(c.implied_volatility) for k, c in used.items() if c.implied_volatility}
     market_inputs = MarketInputs(spot=spot, r=r, ivs=ivs) if len(ivs) == len(used) else None
-    return PricedStructure(analyze(out_legs, as_of=as_of, market=market_inputs), used)
+    return PricedStructure(analyze(out_legs, as_of=as_of, market=market_inputs), used, spot)
 
 
 def limit_price(net: Decimal, tick: float) -> Decimal:

@@ -92,7 +92,7 @@ personas:
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
   quant:   {reads: [shortlist]}
   risk:    {reads: [structures]}
-  propose: {reads: [candidate, shortlist, structures, risk_review], llm: false}
+  propose: {reads: [candidate, regime, shortlist, structures, risk_review], llm: false}
 
 triggers:                       # a run finishing (or an external event) can start another run
   - on: scout.completed         # only the 12:00 Scout can match: 22:00 is never in-session
