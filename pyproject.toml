@@ -24,6 +24,8 @@ dependencies = [
     "pyarrow>=15",
     "requests>=2.31",
     "yt-dlp>=2024.0",
+    # E4.1b / D15: local audio transcription. Apple Silicon only; CI (Linux) skips it.
+    "mlx-whisper>=0.4 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "pyyaml>=6.0.3",
 ]
 

@@ -298,6 +298,31 @@ class ArcSettings(BaseSettings):
         ),
     )
 
+    # -- YouTube audio-transcription fallback (E4.1b, D15) -------------------
+    yt_caption_grace_minutes: Annotated[int, Field(ge=0)] = Field(
+        default=30,
+        description=(
+            "Only transcribe audio for caption-less videos older than this "
+            "(ARC_YT_CAPTION_GRACE_MINUTES); younger ones wait for YouTube's captions."
+        ),
+    )
+    yt_max_audio_minutes: Annotated[int, Field(ge=1)] = Field(
+        default=60,
+        description="Skip audio transcription for longer videos (ARC_YT_MAX_AUDIO_MINUTES).",
+    )
+    yt_max_audio_per_run: Annotated[int, Field(ge=0)] = Field(
+        default=3,
+        description="Max audio transcriptions per ingest run (ARC_YT_MAX_AUDIO_PER_RUN).",
+    )
+    whisper_model: str = Field(
+        default="mlx-community/whisper-large-v3-turbo",
+        description="Local mlx-whisper model repo (ARC_WHISPER_MODEL).",
+    )
+    ffmpeg_bin: str = Field(
+        default="",
+        description="ffmpeg path (ARC_FFMPEG_BIN); empty → PATH, then ~/.hermes/tools/ffmpeg-*.",
+    )
+
     # -- Scout candidate pipeline (E4.2) -------------------------------------
     scout_model: str = Field(
         default="claude-haiku-4-5",

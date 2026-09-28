@@ -147,6 +147,12 @@ def _make_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="Skip the market-data price check (levels are flagged unverified_price).",
             )
+            p.add_argument(
+                "--force-audio",
+                action="store_true",
+                help="Skip captions and transcribe audio locally (ignores grace period, E4.1b).",
+            )
+            p.add_argument("--max-videos", type=int, default=5, help="Videos per channel.")
             p.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
         elif cmd == "brief":
             p = sub.add_parser(cmd, help="Channel briefs (E4.4)")
@@ -413,6 +419,7 @@ def _ingest(args: argparse.Namespace) -> int:
     conn = connect(":memory:" if args.dry_run else args.db)
     migrate(conn)
     registry = default_registry()
+    sources: list[object] = []
 
     if args.dry_run:
         proc = registry.for_slug("stockedup") or registry.default
@@ -420,10 +427,16 @@ def _ingest(args: argparse.Namespace) -> int:
         new_docs = 1
         llm = fixture_llm(proc)
     else:
-        new_docs = len(fetch_youtube(conn, settings))
+        docs = fetch_youtube(
+            conn, settings, force_audio=args.force_audio, max_videos=args.max_videos
+        )
+        new_docs = len(docs)
+        sources = [d.transcript_source for d in docs]
         llm = HermesScoutLLM.from_settings(settings)
 
     report: dict[str, object] = {"dry_run": args.dry_run, "new_videos": new_docs}
+    if not args.dry_run:
+        report["transcript_sources"] = [str(src) if src else None for src in sources]
     if args.process:
         lookup = None if (args.dry_run or args.no_prices) else _market_price_lookup()
         run = process_new_videos(conn, settings, llm, registry=registry, price_lookup=lookup)

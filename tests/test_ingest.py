@@ -412,7 +412,10 @@ class TestYouTubeConnector:
         assert len(docs) == 1
         assert docs[0].source == "youtube"
         assert docs[0].url == "https://www.youtube.com/watch?v=abc123"
-        assert docs[0].text.startswith("[StockedUp] [AAPL Analysis 2026] AAPL is testing")
+        assert docs[0].text.startswith(
+            "[transcript:captions] [StockedUp] [AAPL Analysis 2026] AAPL is testing"
+        )
+        assert docs[0].transcript_source == "captions"
         assert "AAPL" in docs[0].tickers_hint
         assert docs[0].published_at == datetime(2026, 1, 15, tzinfo=UTC)
 
