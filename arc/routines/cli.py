@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     import sqlite3
 
     from arc.routines.config import RoutinesConfig
-    from arc.routines.dispatcher import Dispatcher, Outcome
+    from arc.routines.dispatcher import Dispatcher, Outcome, TickReport
 
 DEFAULT_LOCK_DIR = Path("data") / "locks"
 
@@ -183,6 +183,104 @@ def _write(text: str) -> None:
     sys.stdout.write(text + "\n")
 
 
+def _db_dir(args: argparse.Namespace) -> Path:
+    from arc.monitoring.cli import db_dir
+
+    return db_dir(args.db)
+
+
+def _tick(
+    args: argparse.Namespace,
+    now: _dt.datetime,
+    since: _dt.datetime | None,
+    conn: sqlite3.Connection | None = None,
+    correlation: dict[str, str] | None = None,
+) -> int:
+    if conn is None:
+        conn = _conn(args, memory=args.dry_run and args.db is None)
+    disp = _dispatcher(args, conn, dry=args.dry_run)
+    report = disp.tick(now, dry_run=args.dry_run, since=since)
+    approvals = None if args.dry_run else _approval_sweep(args, conn, report.now)
+    if correlation is not None:
+        _record_tick(conn, report, correlation)
+    if args.json:
+        payload: dict[str, object] = {
+            "now": report.now.isoformat(),
+            "dry_run": report.dry_run,
+            "halted": report.halted,
+            "expired": report.expired,
+            "outcomes": [_outcome_json(o) for o in report.outcomes],
+            "approvals": approvals,
+        }
+        if correlation is not None:
+            payload["correlation"] = correlation
+        _write(json.dumps(payload, indent=2))
+    else:
+        _write("\n".join(report.lines()))
+        if approvals:
+            _write(
+                f"approvals: {len(approvals['published'])} card(s) posted, "
+                f"{len(approvals['auto_approved'])} auto-approved, "
+                f"{len(approvals['expired'])} expired"
+            )
+        if correlation is not None:
+            _write(f"tick_id: {correlation['tick_id']}")
+    return 1 if any(o.status == "failed" for o in report.outcomes) else 0
+
+
+def _record_tick(conn: sqlite3.Connection, report: TickReport, correlation: dict[str, str]) -> None:
+    """E8.2 liveness: one ``tick`` heartbeat per live tick (read by ``arc health check``)."""
+    from collections import Counter
+
+    from arc.monitoring.store import HeartbeatRepo
+
+    counts = Counter(o.status for o in report.outcomes)
+    HeartbeatRepo(conn).record(
+        "tick",
+        "failed" if counts.get("failed") else "ok",
+        at=report.now,
+        correlation=correlation,
+        detail={
+            "counts": dict(counts),
+            "halted": report.halted,
+            "expired": report.expired,
+            "outcomes": [
+                {"job": o.job, "status": o.status, "run_id": o.run_id}
+                for o in report.outcomes
+                if o.run_id
+            ],
+        },
+    )
+
+
+def _live_tick(args: argparse.Namespace, now: _dt.datetime, since: _dt.datetime | None) -> int:
+    """A real tick: rotated JSON log, correlation ids bound, tick heartbeat recorded.
+
+    A crash still records a ``failed`` heartbeat before propagating, so the
+    watchdog sees "ticking but broken" rather than "not ticking".
+    """
+    from arc.monitoring import correlation as corr_mod
+    from arc.monitoring.logs import configure
+    from arc.monitoring.store import HeartbeatRepo
+
+    configure(_load(args).monitoring.log, base_dir=_db_dir(args))
+    ids = corr_mod.tick_correlation()
+    with corr_mod.bind(**ids):
+        conn = _conn(args)
+        try:
+            return _tick(args, now, since, conn=conn, correlation=ids)
+        except Exception as exc:
+            structlog.get_logger(__name__).exception("routines.tick_crashed")
+            HeartbeatRepo(conn).record(
+                "tick",
+                "failed",
+                at=now,
+                correlation=ids,
+                detail={"error": f"{type(exc).__name__}: {exc}"},
+            )
+            raise
+
+
 def _simulate(args: argparse.Namespace, now: _dt.datetime, since: _dt.datetime | None) -> int:
     """``tick --dry-run --step 5m``: what each cron tick in ``(since, now]`` would run.
 
@@ -263,41 +361,22 @@ def run_routines(args: argparse.Namespace) -> int:
         since = _parse_now(args.since) if args.since else None
         if args.step:
             return _simulate(args, now, since)
-        conn = _conn(args, memory=args.dry_run and args.db is None)
-        disp = _dispatcher(args, conn, dry=args.dry_run)
-        report = disp.tick(now, dry_run=args.dry_run, since=since)
-        approvals = None if args.dry_run else _approval_sweep(args, conn, report.now)
-        if args.json:
-            _write(
-                json.dumps(
-                    {
-                        "now": report.now.isoformat(),
-                        "dry_run": report.dry_run,
-                        "halted": report.halted,
-                        "expired": report.expired,
-                        "outcomes": [_outcome_json(o) for o in report.outcomes],
-                        "approvals": approvals,
-                    },
-                    indent=2,
-                )
-            )
-        else:
-            _write("\n".join(report.lines()))
-            if approvals:
-                _write(
-                    f"approvals: {len(approvals['published'])} card(s) posted, "
-                    f"{len(approvals['auto_approved'])} auto-approved, "
-                    f"{len(approvals['expired'])} expired"
-                )
-        return 1 if any(o.status == "failed" for o in report.outcomes) else 0
+        if args.dry_run:
+            return _tick(args, now, since)
+        return _live_tick(args, now, since)
 
     if cmd == "run":
+        from arc.monitoring import correlation
+        from arc.monitoring.logs import configure
+
+        configure(_load(args).monitoring.log, base_dir=_db_dir(args))
         conn = _conn(args)
         disp = _dispatcher(args, conn)
         try:
-            outcomes = disp.run_manual(
-                args.job, now=_parse_now(args.now), chain=args.chain, fresh=args.fresh
-            )
+            with correlation.bind(**correlation.from_env()):
+                outcomes = disp.run_manual(
+                    args.job, now=_parse_now(args.now), chain=args.chain, fresh=args.fresh
+                )
         except KeyError as exc:
             _write(f"error: {exc.args[0]}")
             return 2

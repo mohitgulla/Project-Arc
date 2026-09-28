@@ -825,9 +825,9 @@ class TestHeartbeats:
     def test_failures_keep_one_line_alert(self, conn: sqlite3.Connection) -> None:
         d, rec, notes = make(conn)
         rec.fail.add("auditor")
-        d.run_manual("auditor", now=et(2026, 9, 28, 16, 30))
+        (o,) = d.run_manual("auditor", now=et(2026, 9, 28, 16, 30))
         assert notes.posts[0][1] == (
-            ":rotating_light: [Auditor] auditor FAILED: RuntimeError: auditor boom"
+            f":rotating_light: [Auditor] auditor FAILED: RuntimeError: auditor boom `{o.run_id}`"
         )
         assert notes.blocks == [None]
 
