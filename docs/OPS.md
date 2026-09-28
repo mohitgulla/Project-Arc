@@ -138,7 +138,81 @@ deferred (PLAN.md §2.6). Per-persona routing is done by Arc itself
 
 ## 5. Monitoring (E8.2)
 
-Placeholder — populated by card E8.2.
+Config: the `monitoring:` section of `config/routines.yaml` (validated by
+`arc routines validate`). Code: `arc/monitoring/`. Tables: `heartbeats`
+(append-only) and `ops_alerts` (migration 010).
+
+### 5.1 What runs
+
+| Piece | Runs as | Does |
+|---|---|---|
+| `arc routines tick` | Hermes cron `arc-routines-tick`, every 5m (`hermes/routines/install.sh`) | Records one `tick` heartbeat per live tick with its `tick_id`, outcome counts and run ids. A crash still records a `failed` heartbeat. |
+| `arc health check` | launchd agent `com.projectarc.health-check`, every 5m (`hermes/monitoring/install.sh`) | Runs the checks below, records a `health` heartbeat, and opens/resolves ops alerts. Exit 1 while anything is failing. |
+
+The health check runs under launchd rather than as a Hermes cron. The gateway
+hosts the cron ticker, so a check running inside it could not report the
+gateway (or the ticker) being down.
+
+Install or refresh it with `hermes/monitoring/install.sh [REPO_DIR]`. Preview
+the plist with `--print`, and remove it with `--uninstall`.
+
+### 5.2 Checks
+
+| Check | Fails when | Alert key |
+|---|---|---|
+| tick | There is no `tick` heartbeat for `tick_stale_after` (15m), or none ever. | `tick_stale` |
+| routine_windows | A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
+| stuck_runs | A `routine_runs` row is still `running` after `stuck_after` (70m). | `stuck:<run_id>` |
+| gateway | `hermes gateway status` or `hermes cron status` shows a `✗`, exits non-zero, or times out. `⚠` warnings count as degraded: they are recorded but not alerted unless `gateway.alert_on_degraded: true`. | `gateway` |
+
+Some skips are deliberate and are never counted as misses: halted personas and
+jobs with no handler yet. Job failures are already alerted in the #arc-investor
+day thread, and those alerts now end with the run id.
+
+### 5.3 Alerts
+
+Alerts are posted to `#project-arc` (`monitoring.alert_channel`) as one message
+per check run:
+
+- A condition alert (tick, stuck run, gateway) is posted once when it opens.
+- While the condition persists, it is not posted again.
+- When the check passes again, a `resolved` line is posted.
+- A missed routine window is posted exactly once.
+
+Each post carries the alert id and the correlation ids. If Slack is
+unreachable, the alert is still recorded in the DB with `posted_ts` NULL.
+
+### 5.4 Logs and rotation
+
+| File | Written by | Rotation |
+|---|---|---|
+| `data/logs/arc.jsonl` | Structured JSON lines from `routines tick` / `routines run` / `health check` (info and above) | 5 MB x 5 (`monitoring.log`) |
+| `data/logs/routines-tick.log` | Report and stderr from the cron wrapper, per tick | 5 MB x 3 |
+| `data/logs/health-check.log` | Report from the launchd wrapper, per check | 5 MB x 3 |
+| `data/logs/health-check.launchd.log` | launchd stdout/stderr (normally empty) | none needed |
+
+### 5.5 Run-id correlation (PLAN §6.12)
+
+A single set of ids follows the work from the Hermes cron, through the
+dispatcher, to Slack:
+
+- The cron wrapper mints `ARC_TICK_ID` and sets `ARC_CRON_JOB`.
+- `HERMES_KANBAN_TASK` / `HERMES_SESSION_ID` are picked up when they are present.
+- The dispatcher binds `run_id`, `chain_run_id`, `job` and `step_index` for each run.
+
+All of these ids are bound to every JSON log line and stored on the heartbeat.
+Failure alerts end with the `run_id`, ops alerts show `tick_id`/`check_id`, and
+a crashed tick's cron alert prints `arc health trace <tick_id>`.
+
+```
+arc health status                 # last tick/health heartbeat, open alerts
+arc health check --no-slack       # run the checks now, alerts to the log only
+arc health trace <id>             # tick_id | run_id | chain_run_id | alert id | Slack ts
+```
+
+`trace` lists the matching heartbeats, the routine runs (including every run of
+a traced tick), the alerts, and the JSON log lines, current and rotated files
+alike.
 
 ## 6. Local Models (E8.4)
 

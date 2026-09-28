@@ -20,6 +20,11 @@ Behaviour:
   non-zero, so Hermes delivers a cron failure alert (to #project-arc).
 - Each tick's report is appended to ``data/logs/routines-tick.log`` (rotated at
   5 MB, 3 files kept).
+- E8.2: every tick gets an ``ARC_TICK_ID`` (and ``ARC_CRON_JOB``) in its
+  environment. Arc binds it to every structured log line
+  (``data/logs/arc.jsonl``), records it on the ``tick`` heartbeat and prints it,
+  so a cron failure alert, a log line and a DB row share one id
+  (``arc health trace <tick_id>``).
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ import datetime as dt
 import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 REPO = Path.cwd()
@@ -39,6 +45,7 @@ PASS_PREFIXES = ("ARC_",)
 TIMEOUT_S = int(os.environ.get("ARC_TICK_TIMEOUT_SECONDS", "3300"))
 LOG_MAX_BYTES = 5_000_000
 LOG_KEEP = 3
+CRON_JOB = "arc-routines-tick"
 
 
 def _dotenv(path: Path) -> dict[str, str]:
@@ -57,8 +64,10 @@ def _dotenv(path: Path) -> dict[str, str]:
     return out
 
 
-def _env() -> dict[str, str]:
+def _env(tick_id: str) -> dict[str, str]:
     env = dict(os.environ)
+    env["ARC_TICK_ID"] = tick_id
+    env["ARC_CRON_JOB"] = CRON_JOB
     for key, value in _dotenv(HERMES_ENV).items():
         if (key in PASS_THROUGH or key.startswith(PASS_PREFIXES)) and not env.get(key):
             env[key] = value
@@ -91,25 +100,32 @@ def main() -> int:
         sys.stdout.write(f"arc routines tick: {ARC} not found (run `uv sync` in {REPO})\n")
         return 2
     started = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+    tick_id = f"tick-{uuid.uuid4().hex[:12]}"
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
             [str(ARC), "routines", "tick"],
             cwd=REPO,
-            env=_env(),
+            env=_env(tick_id),
             capture_output=True,
             text=True,
             timeout=TIMEOUT_S,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        _log(f"=== {started} TIMEOUT after {TIMEOUT_S}s\n{exc.stdout or ''}{exc.stderr or ''}")
-        sys.stdout.write(f"arc routines tick timed out after {TIMEOUT_S}s (see {LOG})\n")
+        _log(
+            f"=== {started} {tick_id} TIMEOUT after {TIMEOUT_S}s\n"
+            f"{exc.stdout or ''}{exc.stderr or ''}"
+        )
+        sys.stdout.write(f"arc routines tick {tick_id} timed out after {TIMEOUT_S}s (see {LOG})\n")
         return 3
-    _log(f"=== {started} exit={proc.returncode}\n{proc.stdout}{proc.stderr}")
+    _log(f"=== {started} {tick_id} exit={proc.returncode}\n{proc.stdout}{proc.stderr}")
     if proc.returncode in (0, 1):  # 1 = a job failed; already alerted in the day thread
         return 0
     tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-20:])
-    sys.stdout.write(f"arc routines tick crashed (exit {proc.returncode}):\n{tail}\n")
+    sys.stdout.write(
+        f"arc routines tick {tick_id} crashed (exit {proc.returncode}):\n{tail}\n"
+        f"trace: arc health trace {tick_id}\n"
+    )
     return proc.returncode
 
 

@@ -197,6 +197,10 @@ def _make_parser() -> argparse.ArgumentParser:
     add_routines_parser(sub)
     add_context_parser(sub)
 
+    from arc.monitoring.cli import add_health_parser
+
+    add_health_parser(sub)
+
     from arc.backtest.cli import add_backtest_parser
 
     add_backtest_parser(sub)
@@ -621,6 +625,11 @@ def main(argv: list[str] | None = None) -> int:
         from arc.routines.cli import run_routines
 
         return run_routines(args)
+
+    if args.command == "health":
+        from arc.monitoring.cli import run_health
+
+        return run_health(args)
 
     if args.command == "context":
         from arc.routines.cli import run_context

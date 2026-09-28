@@ -54,6 +54,7 @@ from pydantic import (
 from arc.context.kinds import KINDS
 from arc.context.store import Supersede
 from arc.context.ttl import Ttl, parse_duration
+from arc.monitoring.config import MonitoringSettings
 from arc.routines.conditions import parse_condition
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -319,6 +320,7 @@ class RoutinesConfig(BaseModel):
     timezone: Literal["America/New_York"] = "America/New_York"
     tick: TickSettings = Field(default_factory=TickSettings)
     heartbeat: HeartbeatSettings = Field(default_factory=HeartbeatSettings)
+    monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)  # E8.2
     context_ttl: dict[str, ContextPolicy] = Field(default_factory=dict)
     sources: dict[str, JobSpec] = Field(default_factory=dict)
     personas: dict[str, JobSpec] = Field(default_factory=dict)
