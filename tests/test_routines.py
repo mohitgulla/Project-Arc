@@ -5,9 +5,10 @@ from __future__ import annotations
 import datetime as dt
 import json
 import textwrap
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
+import structlog
 import yaml
 from freezegun import freeze_time
 from hypothesis import given, settings
@@ -38,7 +39,7 @@ from arc.routines.handlers import (
 )
 from arc.routines.heartbeat import Heartbeats, RecordingNotifier, label_for
 from arc.routines.locks import LLM_LOCK, LockBusyError, LockManager
-from arc.routines.runs import RoutineRunRepo, RunStatus
+from arc.routines.runs import RoutineRun, RoutineRunRepo, RunStatus
 from arc.routines.schedule import (
     catchup_deadline,
     day_matches,
@@ -73,7 +74,8 @@ BASE_YAML = """
       rss: {every: 30m, window: "06:00-20:00", days: trading}
     personas:
       scout: {schedule: ["22:00", "12:00"], days: daily, after_sources: true, ttl: 3h}
-      director: {schedule: ["09:00"], days: trading, chain: [quant, risk, propose], ttl: 2h}
+      director: {schedule: ["09:00"], days: trading, chain: [quant, risk, propose], ttl: 2h,
+                 writes: [shortlist]}
       auditor: {schedule: ["16:30"], days: trading, halt_exempt: true, ttl: 6h}
       investor: {trigger: approval}
     triggers:
@@ -236,6 +238,20 @@ class TestConfig:
     def test_invalid_configs_rejected(self, bad: str) -> None:
         with pytest.raises((ValidationError, ValueError)):
             cfg(bad)
+
+    def test_writes_parse(self) -> None:
+        c = cfg("personas: {d: {schedule: ['09:00'], writes: [shortlist, note]}}")
+        assert c.personas["d"].writes == ["shortlist", "note"]
+        assert cfg("steps: {propose: {writes: []}}").steps["propose"].writes == []
+        assert cfg("personas: {d: {schedule: ['09:00']}}").personas["d"].writes is None
+
+    def test_unknown_write_kind_message(self) -> None:
+        with pytest.raises(ValidationError, match="unknown context kind 'bogus' in writes"):
+            cfg("personas: {d: {schedule: ['09:00'], writes: [bogus]}}")
+        with pytest.raises(ValidationError, match="unknown context kind 'bogus' in reads"):
+            cfg("personas: {d: {schedule: ['09:00'], reads: [bogus]}}")
+        with pytest.raises(ValidationError, match="writes lists a kind twice"):
+            cfg("personas: {d: {schedule: ['09:00'], writes: [note, note]}}")
 
     def test_chain_step_completion_is_a_valid_trigger(self) -> None:
         c = cfg(
@@ -684,9 +700,8 @@ class TestContextIntegration:
 
     def test_persona_reads_only_configured_kinds(self, conn: sqlite3.Connection) -> None:
         text = BASE_YAML.replace(
-            "chain: [quant, risk, propose], ttl: 2h}",
-            "chain: [quant, risk, propose], ttl: 2h}\n"
-            "    steps:\n      quant: {reads: [candidate]}",
+            "                 writes: [shortlist]}",
+            "                 writes: [shortlist]}\n    steps:\n      quant: {reads: [candidate]}",
         )
         c = cfg(text)
         assert c.steps["quant"].reads == ["candidate"]
@@ -703,7 +718,76 @@ class TestContextIntegration:
         assert entry.produced_by == "director"
 
 
+class TestWriteContract:
+    """D27: undeclared writes fail the run (fail-closed)."""
+
+    def _run(self, conn: sqlite3.Connection, writes: str | None) -> tuple[RoutineRun, list[Any]]:
+        extra = f", writes: {writes}" if writes is not None else ""
+        text = f"personas:\n  director: {{schedule: ['09:00']{extra}}}\n"
+        d = Dispatcher(
+            conn,
+            cfg(text),
+            handlers={"director": Recorder()("director")},
+            notifier=RecordingNotifier(),
+            is_halted=lambda: False,
+        )
+        with structlog.testing.capture_logs() as logs:
+            d.run_manual("director", now=et(2026, 9, 28, 9, 0))
+        run = RoutineRunRepo(conn).history(job="director")[0]
+        return run, logs
+
+    def _shortlists(self, conn: sqlite3.Connection) -> int:
+        return conn.execute(
+            "SELECT COUNT(*) FROM context_entries WHERE kind='shortlist'"
+        ).fetchone()[0]
+
+    def test_undeclared_write_fails_job(self, conn: sqlite3.Connection) -> None:
+        run, _ = self._run(conn, "[candidate]")
+        assert run.status is RunStatus.FAILED
+        assert run.error is not None and "writes" in run.error and "shortlist" in run.error
+        assert self._shortlists(conn) == 0
+
+    def test_declared_write_ok(self, conn: sqlite3.Connection) -> None:
+        run, _ = self._run(conn, "[shortlist]")
+        assert run.status is RunStatus.OK
+        assert self._shortlists(conn) == 1
+
+    def test_writes_none_fails(self, conn: sqlite3.Connection) -> None:
+        from arc.routines.manifest import ManifestRepo
+
+        run, _ = self._run(conn, None)
+        assert run.status is RunStatus.FAILED
+        assert run.error is not None and run.error.startswith("ContractViolationError")
+        manifest = ManifestRepo(conn).latest(run.run_id)
+        assert manifest is not None
+        assert manifest.error_class == "ContractViolationError"
+        assert manifest.declared_writes is None
+
+    def test_empty_writes_declares_nothing(self, conn: sqlite3.Connection) -> None:
+        run, _ = self._run(conn, "[]")
+        assert run.status is RunStatus.FAILED and self._shortlists(conn) == 0
+
+    def test_violation_logged(self, conn: sqlite3.Connection) -> None:
+        _, logs = self._run(conn, "[candidate]")
+        rejected = [e for e in logs if e["event"] == "context.write_rejected"]
+        assert rejected and rejected[0]["job"] == "director"
+        assert rejected[0]["kind"] == "shortlist" and rejected[0]["declared"] == ["candidate"]
+        assert rejected[0]["log_level"] == "error"
+
+
 class TestConfigDriven:
+    def test_every_unit_declares_io(self) -> None:
+        """D27: every job and chain step in the shipped config declares its writes."""
+        c = load_routines(DEFAULT_ROUTINES_PATH)
+        units = set(c.jobs()) | {s for p in c.personas.values() for s in p.chain} | set(c.steps)
+        missing = sorted(u for u in units if c.step(u)[1].writes is None)
+        assert missing == [], f"declare `writes:` for {missing} in config/routines.yaml"
+
+    def test_director_reads_match_config(self) -> None:
+        from arc.pipeline.steps import DIRECTOR_READS
+
+        assert load_routines(DEFAULT_ROUTINES_PATH).personas["director"].reads == DIRECTOR_READS
+
     def test_new_source_and_persona_need_no_code(self, conn: sqlite3.Connection) -> None:
         """Adding YAML entries is enough: built-in handlers resolve by name prefix."""
         text = BASE_YAML.replace(
@@ -953,7 +1037,10 @@ class TestDryRunAndCli:
     ) -> None:
         db = str(tmp_path / "arc.db")
         cfg_path = tmp_path / "r.yaml"
-        cfg_path.write_text("personas:\n  director: {schedule: ['09:00'], chain: [quant]}\n")
+        cfg_path.write_text(
+            "personas:\n  director: {schedule: ['09:00'], chain: [quant], writes: [shortlist]}\n"
+            "steps:\n  quant: {writes: [structures, note]}\n"
+        )
         base = ["--config", str(cfg_path), "--db", db]
         rc = main(
             [

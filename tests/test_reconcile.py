@@ -543,7 +543,8 @@ def test_performance_reads_latest_snapshot_per_day(conn: sqlite3.Connection) -> 
 def _ctx(conn: sqlite3.Connection) -> JobContext:
     routines = RoutinesConfig.model_validate(
         {"personas": {"auditor": {"schedule": ["16:30"], "llm": False, "notify": "card",
-                                  "halt_exempt": True, "ttl": "6h"}}}
+                                  "halt_exempt": True, "ttl": "6h",
+                                  "writes": ["journal", "note"]}}}
     )  # fmt: skip
     kind, step = routines.step("auditor")
     return JobContext(
