@@ -128,6 +128,9 @@ def test_arc_package_imports() -> None:
         "arc.tower.data",
         "arc.tower.net",
         "arc.tower.cli",
+        "arc.remote",
+        "arc.remote.cli",
+        "arc.remote.envfile",
     ]
     for pkg in packages:
         mod = importlib.import_module(pkg)

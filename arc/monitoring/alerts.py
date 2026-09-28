@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 # Condition kinds this module may auto-resolve (keys of findings from the checks).
-CONDITION_PREFIXES = ("tick_stale", "gateway", "stuck:")
+CONDITION_PREFIXES = ("tick_stale", "gateway", "stuck:", "remote_")
 # Conditions that make routine slots miss: while open they absorb missed-window alerts.
 INCIDENT_KEYS = ("tick_stale", "gateway")
 # A slot whose window closed this long before an incident opened is still blamed on it
@@ -172,6 +172,15 @@ def _resolve_line(alert: OpsAlert, results: dict[str, CheckResult]) -> str:
         return f"Hermes gateway healthy again{now}"
     if alert.key.startswith("stuck:"):
         return f"run {alert.key.removeprefix('stuck:')} is no longer stuck"
+    if alert.key.startswith("remote_"):
+        ra = results.get("remote_access")
+        what = {
+            "remote_hermes": "remote Hermes dashboard answering with basic auth again",
+            "remote_tower": "remote tower answering again",
+            "remote_exposed": "remote access no longer answering off the tailnet",
+        }.get(alert.key, f"{alert.key} cleared")
+        ok = ra.summary if ra and ra.severity == "ok" else ""
+        return f"{what} ({ok})" if ok else what
     return alert.message
 
 
@@ -271,6 +280,8 @@ def apply(
         if a.key == "tick_stale" and "tick" not in checked:
             continue
         if a.key.startswith("stuck:") and "stuck_runs" not in checked:
+            continue
+        if a.key.startswith("remote_") and "remote_access" not in checked:
             continue
         resolved = repo.resolve(a.key, at=now)
         if resolved is not None:

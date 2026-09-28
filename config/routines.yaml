@@ -49,6 +49,11 @@ monitoring:
     hermes_bin: hermes     # resolved on PATH, then ~/.local/bin
     timeout: 30s
     alert_on_degraded: false
+  remote_access:           # E8.6 / D29: Hermes dashboard :9119 (basic auth) + tower :8501,
+    enabled: false         # tailnet only. Turn on after OPS §5.7 steps 1-5 (Tailscale + install.sh).
+    dashboard_port: 9119
+    tower_port: 8501
+    timeout: 5s
   log:
     path: logs/arc.jsonl   # relative to the DB directory (data/)
     max_bytes: 5000000

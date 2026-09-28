@@ -41,6 +41,26 @@ class GatewayCheck(BaseModel):
         return _dur(v)
 
 
+class RemoteAccessCheck(BaseModel):
+    """E8.6: Hermes dashboard (:9119, basic auth) and tower (:8501) on the tailnet only.
+
+    Off until the owner has installed Tailscale and the two LaunchAgents
+    (``hermes/remote/install.sh``); then set ``enabled: true``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    dashboard_port: Annotated[int, Field(ge=1, le=65535)] = 9119
+    tower_port: Annotated[int, Field(ge=1, le=65535)] = 8501
+    timeout: _dt.timedelta = _dt.timedelta(seconds=5)
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _timeout(cls, v: Any) -> Any:
+        return _dur(v)
+
+
 class LogSettings(BaseModel):
     """Structured JSON-lines log written by unattended commands (tick, health)."""
 
@@ -66,6 +86,7 @@ class MonitoringSettings(BaseModel):
     stuck_after: _dt.timedelta = _dt.timedelta(minutes=70)
     alert_channel: AlertChannel = AlertChannel.PROJECT_ARC
     gateway: GatewayCheck = Field(default_factory=GatewayCheck)
+    remote_access: RemoteAccessCheck = Field(default_factory=RemoteAccessCheck)
     log: LogSettings = Field(default_factory=LogSettings)
 
     @field_validator(

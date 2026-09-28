@@ -221,6 +221,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_tower_parser(sub)
 
+    from arc.remote.cli import add_remote_parser
+
+    add_remote_parser(sub)
+
     # -- kill switch (E3.3) ---------------------------------------------------
     halt = sub.add_parser("halt", help="Halt trading now (kill switch)")
     halt.add_argument("--actor", required=True, help="Who is halting (Slack user id or name)")
@@ -674,6 +678,12 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_tower(args)
+
+    if args.command == "remote":
+        from arc.remote.cli import run_remote
+
+        _log_to_stderr()
+        return run_remote(args)
 
     logger.info("command.stub", command=args.command)
     print(f"arc {args.command}: not yet implemented")
