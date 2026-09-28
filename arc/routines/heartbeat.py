@@ -66,14 +66,17 @@ def thread_day(now: _dt.datetime, rollover: _dt.time = _dt.time(20, 0)) -> _dt.d
 
 
 class Notifier(Protocol):
-    def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> None: ...
+    def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> str | None:
+        """Post *text*; return the message ``ts`` when the backend has one (D27 manifest)."""
+        ...
 
 
 class LogNotifier:
     """Writes heartbeats to the structured log only (dry runs, no Slack token)."""
 
-    def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> None:
+    def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> str | None:
         log.info("routines.heartbeat", day=day.isoformat(), text=text, blocks=len(blocks or []))
+        return None
 
 
 class RecordingNotifier:
@@ -83,9 +86,10 @@ class RecordingNotifier:
         self.posts: list[tuple[_dt.date, str]] = []
         self.blocks: list[Blocks | None] = []
 
-    def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> None:
+    def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> str | None:
         self.posts.append((day, text))
         self.blocks.append(blocks)
+        return f"rec-{len(self.posts)}"
 
 
 def day_thread_ts(conn: sqlite3.Connection, client: object, day: _dt.date) -> str:
@@ -128,7 +132,7 @@ class SlackDayThreadNotifier:
 
         try:
             assert isinstance(self._client, ArcSlackClient)
-            self._client.reply(
+            resp = self._client.reply(
                 channel=CHANNEL_ARC_INVESTOR,
                 thread_ts=self._thread_ts(day),
                 text=text,
@@ -136,6 +140,9 @@ class SlackDayThreadNotifier:
             )
         except Exception as exc:  # noqa: BLE001 - heartbeats must never fail a run
             log.warning("routines.heartbeat_failed", error=str(exc), text=text)
+            return None
+        ts = resp.get("ts") if hasattr(resp, "get") else None
+        return str(ts) if ts else None
 
 
 class Heartbeats:
@@ -196,7 +203,7 @@ class Heartbeats:
 
     def summary(
         self, now: _dt.datetime, job: str, text: str, *, blocks: Blocks | None = None
-    ) -> None:
+    ) -> str | None:
         """Post a run's heartbeat.
 
         ``text`` is the one-line summary and always the fallback text (what a
@@ -213,15 +220,17 @@ class Heartbeats:
 
                 blocks = [*blocks[: B.MAX_BLOCKS - 1], B.summary(B.clip(B.esc(folded)))]
             self._state.delete(_PENDING_KEY)
-        self._notifier.post(self.day(now), line, blocks or None)
+        return self._notifier.post(self.day(now), line, blocks or None)
 
-    def notice(self, now: _dt.datetime, job: str, text: str) -> None:
+    def notice(self, now: _dt.datetime, job: str, text: str) -> str | None:
         """An immediate, non-failure alert raised by a handler (always posted)."""
-        self._notifier.post(self.day(now), f":warning: {label_for(job)} {job}: {text}")
+        return self._notifier.post(self.day(now), f":warning: {label_for(job)} {job}: {text}")
 
-    def alert(self, now: _dt.datetime, job: str, text: str, *, run_id: str | None = None) -> None:
+    def alert(
+        self, now: _dt.datetime, job: str, text: str, *, run_id: str | None = None
+    ) -> str | None:
         # E8.2: the run id lets a Slack alert be traced (`arc health trace <run_id>`).
         ref = f" `{run_id}`" if run_id else ""
-        self._notifier.post(
+        return self._notifier.post(
             self.day(now), f":rotating_light: {label_for(job)} {job} FAILED: {text}{ref}"
         )

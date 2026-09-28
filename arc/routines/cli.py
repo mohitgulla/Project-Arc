@@ -97,6 +97,12 @@ def add_context_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     s.add_argument("--as-of", default=None, help="ISO time (default: now ET)")
     s.add_argument("--snapshot", default=None, help="Show a recorded snapshot by id")
     s.add_argument("--json", action="store_true")
+    tr = csub.add_parser(
+        "trace", help="Run manifests (D27): what a run or chain read, wrote and used"
+    )
+    tr.add_argument("id", help="run_id (run-...) or chain_run_id (chain-...)")
+    tr.add_argument("--db", default=None)
+    tr.add_argument("--json", action="store_true")
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +424,8 @@ def run_context(args: argparse.Namespace) -> int:
 
     _log_to_stderr()
     conn = _conn(args)
+    if getattr(args, "context_command", "show") == "trace":
+        return _run_trace(conn, args)
     store = ContextStore(conn)
     if args.snapshot:
         entries = store.load_snapshot(args.snapshot).entries
@@ -436,5 +444,43 @@ def run_context(args: argparse.Namespace) -> int:
         _write(
             f"{e.valid_from:%Y-%m-%d %H:%M} {e.kind:<13} {e.subject:<18} by={e.produced_by:<18}"
             f" exp={expires:<11} {e.id} {payload}"
+        )
+    return 0
+
+
+def _run_trace(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
+    from arc.routines.manifest import RunManifest
+
+    rows = conn.execute(
+        "SELECT payload FROM run_manifests WHERE run_id = ? OR chain_run_id = ?"
+        " ORDER BY created_at, rowid",
+        (args.id, args.id),
+    ).fetchall()
+    manifests = [RunManifest.model_validate_json(r["payload"]) for r in rows]
+    if not manifests:
+        _write(f"error: no run manifest for {args.id}")
+        return 1
+    if args.json:
+        _write(json.dumps([m.model_dump(mode="json") for m in manifests], indent=2))
+        return 0
+    for m in manifests:
+        outs = ", ".join(f"{k}={len(v)}" for k, v in m.output_ids.items()) or "-"
+        ins = ", ".join(f"{k}={n}" for k, n in m.input_counts.items()) or "-"
+        ext = ", ".join(e.name for e in m.external_inputs) or "-"
+        err = f" {m.error_class}: {m.error}" if m.error_class else ""
+        _write(
+            f"{m.started_at:%Y-%m-%d %H:%M:%S} {m.job:<10} #{m.step_index} a{m.attempt}"
+            f" {m.status:<7} {m.duration_ms}ms {m.run_id}{err}"
+        )
+        _write(f"    reads={m.declared_reads} writes={m.declared_writes}")
+        _write(f"    in: {ins}  external: {ext}")
+        _write(f"    out: {outs}  dropped: {m.dropped or '-'}")
+        if m.persona_call_ids or m.scout_batch_ids:
+            _write(
+                f"    llm: served={m.models_served} requested={m.models_requested}"
+                f" tokens={m.input_tokens}/{m.output_tokens} cost={m.cost_usd}"
+            )
+        _write(
+            f"    git={(m.git_sha or '?')[:10]}{'+dirty' if m.git_dirty else ''} env={m.arc_env}"
         )
     return 0

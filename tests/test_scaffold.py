@@ -76,6 +76,7 @@ def test_arc_package_imports() -> None:
         "arc.routines.conditions",
         "arc.routines.config",
         "arc.routines.dispatcher",
+        "arc.routines.manifest",
         "arc.routines.handlers",
         "arc.routines.heartbeat",
         "arc.routines.locks",
