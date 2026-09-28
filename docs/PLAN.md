@@ -28,6 +28,7 @@ Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a 
 | D13 | Initial YouTube source | **StockedUp** (channel `UC-m6zNItyoDk5lSykDlhE4Q`), default in `ARC_INGEST_YOUTUBE_CHANNELS`. Posts a next-session outlook almost every trading day. | Owner choice 2026-09-27. |
 | D14 | Channel processors | Each YouTube channel gets a **profile + extraction guidelines** (`arc/ingest/channels/<slug>/`). Newest video → validated `ChannelBrief` (schema §E4.4). TTL is **per source** (`ttl_sessions` in the profile). **StockedUp = 1 session**, and its next video supersedes it (`supersede: latest`). Macro-guidance sources can set longer TTLs (e.g. 5–20 sessions, `supersede: accumulate`). Expired briefs never inform trading. Every extracted item carries a verbatim transcript quote, checked deterministically; items that fail are dropped. | Owner: newest video informs next-day trading until a new video replaces it; recent info for daily sources, longer horizon for macro. |
 | D15 | Scout cadence + transcription | Scout runs **twice daily at 22:00 ET** (after-close sources, e.g. StockedUp) and **12:00 ET** (midday news), processing all new sources (YouTube, RSS, EDGAR, earnings). Videos without captions fall back to **local audio transcription** (mlx-whisper, no paid STT). | Owner choice 2026-09-27. |
+| D16 | Orchestration | **Config-driven routines** (`config/routines.yaml`). Every source and persona has its own cadence (`schedule` / `every`+`window` / event `trigger`), and personas can be **chained** (e.g. Director→Quant→Risk→propose). A single Hermes cron runs `arc routines tick` every 5 min. All agent outputs go to an append-only **context store** (`context_entries`, TTL + supersede). Downstream agents read a `ContextSnapshot`, and its id is recorded on every run for audit/replay. | Owner: flexible per-source frequency, per-persona cadence, chained executions, shared DB context. |
 
 Open items requiring a decision are listed in §9 — all five original items are now resolved (D8–D11 + keys stored).
 
@@ -142,7 +143,7 @@ AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits a
 ### 2.6 Hermes orchestration
 
 - **Kanban**: board `project-arc`, project-bound → worktrees under `.worktrees/<id>/`, `--completion-contract mohitgulla/Project-Arc` → PR required; `review_dispatch: true` runs the review lane before `done`. `max_in_progress: 1`, `auto_decompose: false`.
-- **Cron routines** (E5.3): **Scout ingest+extract at 22:00 ET and 12:00 ET (D15)**, `06:30 PT` pre-market scan, `every 30m 06:30–13:00 PT` intraday monitor, `13:30 PT` post-market reconcile + journal, weekly scorecard Friday.
+- **Routines** (E5.4 dispatcher, E5.3 defaults, D16): one Hermes cron → `arc routines tick` every 5 min; cadences/chains live in `config/routines.yaml`. Defaults: **Scout at 22:00 ET and 12:00 ET (D15)**, `06:30 PT` pre-market scan, `every 30m 06:30–13:00 PT` intraday monitor, `13:30 PT` post-market reconcile + journal, weekly scorecard Friday.
 - **MCP**: Alpaca MCP server v2 (`uvx alpaca-mcp-server`, `ALPACA_TOOLSETS` restricted to read-only in persona sessions); order submission goes through `arc.execution`, not MCP, in Phase 1.
 - **Hooks**: `hermes/hooks/arc-gate` — `pre_tool_call`, matcher on broker order tools, fail-closed.
 - **Profiles**: single `default` profile is the worker in Phase 1 (assignee `default`). A dedicated `arc-worker` profile is an E8 item once provider auth for profiles is settled.
@@ -197,7 +198,8 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 **E5 Personas & orchestration**
 - E5.1 Persona skills — six `SKILL.md` + JSON output schemas + prompt builders ← E1.1
 - E5.2 Pipeline runner — candidate → structures → gate → proposal; idempotent, resumable, fully logged, dry-run mode ← E2.3, E3.1, E4.2, E5.1
-- E5.3 Cron routines — pre-market, intraday, post-market, weekly ← E5.2
+- E5.3 Cron routines — install `arc routines tick` cron + default routines.yaml (Scout 22:00/12:00 ET, pre-market, intraday, post-market, weekly) ← E5.2, E5.4
+- E5.4 Routine dispatcher + context store — per-source/per-persona cadence, chains, event triggers, `context_entries` + snapshots (D16) ← E1.3, E4.2
 
 **E6 Approval & execution**
 - E6.1 Slack proposal card — `#arc-investor` daily thread, clarify Approve/Reject, TTL ← E1.5, E5.2
