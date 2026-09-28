@@ -402,9 +402,11 @@ class TestMonitor:
         assert monitor(ctx, _env(naked)).notice == ""
 
     def test_monitor_never_submits(self) -> None:
+        """E6.2: the monitor may *propose* exits (gate + token + card) but never sends one."""
         src = (REPO / "arc" / "routines" / "monitor.py").read_text()
-        assert "submit" not in src.replace("never proposes or submits", "")
-        assert "issue_token" not in src
+        src += (REPO / "arc" / "execution" / "exits.py").read_text()
+        for forbidden in ("submit(", "submit_mleg", "arc.execution.ladder", "import execute"):
+            assert forbidden not in src, forbidden
 
 
 # ---------------------------------------------------------------------------

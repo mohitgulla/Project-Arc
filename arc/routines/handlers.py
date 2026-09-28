@@ -286,6 +286,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "propose": "arc.pipeline.steps:propose_step",
     # E5.3 intraday monitor (read-only: positions, Greeks, expiries, daily-loss halt)
     "monitor": "arc.routines.monitor:monitor_step",
+    # E6.2 Investor: works an approved proposal through its D24 price band
+    "investor": "arc.routines.investor:investor_step",
 }
 
 

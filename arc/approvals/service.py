@@ -54,6 +54,7 @@ from arc.gate.rules import proposal_hash as hash_proposal
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.journal.store import JournalStore
 from arc.models import ApprovalDecision, ApprovalRecord, GateDecision, Proposal
+from arc.structures import is_defined_risk
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -301,7 +302,7 @@ class ApprovalService:
 
     def _unpublished(self, day: str | None) -> list[sqlite3.Row]:
         sql = """
-            SELECT p.proposal_hash, p.ticker, p.day, p.run_id,
+            SELECT p.proposal_hash, p.ticker, p.day, p.run_id, p.kind,
                    g.passed AS gate_passed, g.violations_json AS gate_violations,
                    g.token AS gate_token,
                    (SELECT c.payload FROM context_entries c
@@ -343,6 +344,7 @@ class ApprovalService:
                 actionable=actionable,
                 note=reason,
                 trail=load_trail(self.conn, phash, row["ticker"]),
+                kind=row["kind"],
             )
             day_date = _dt.date.fromisoformat(row["day"])
             posted = self._post(day_date, view, phash)
@@ -366,16 +368,33 @@ class ApprovalService:
                 log.info(
                     "approvals.rejected", proposal_hash=phash, ticker=row["ticker"], reason=reason
                 )
-            if actionable and self._auto_approve_enabled():
-                res = self._resolve(
-                    phash, RequestStatus.APPROVED, AUTO_APPROVER, "auto-approve (paper, D10)", now
-                )
+            auto = self._auto_reason(proposal, row["kind"]) if actionable else None
+            if auto is not None:
+                res = self._resolve(phash, RequestStatus.APPROVED, AUTO_APPROVER, auto, now)
                 if res.outcome is Outcome.APPROVED:
                     report.auto_approved.append(phash)
         return report
 
     def _auto_approve_enabled(self) -> bool:
         return self.settings.auto_approve and self.settings.env is ArcEnv.PAPER
+
+    def _auto_reason(self, proposal: Proposal, kind: str) -> str | None:
+        """Why this actionable proposal is approved without a click, else None.
+
+        D10 ``auto_approve`` (paper only) covers everything; D24
+        ``auto_exit_defined_risk`` (default false, paper only) covers exits whose
+        closing legs are defined risk.
+        """
+        if self._auto_approve_enabled():
+            return "auto-approve (paper, D10)"
+        if (
+            kind == "close"
+            and self.settings.auto_exit_defined_risk
+            and self.settings.env is ArcEnv.PAPER
+            and is_defined_risk(proposal.structure.legs)
+        ):
+            return "auto-exit (defined risk, D24)"
+        return None
 
     @staticmethod
     def _initial_status(
@@ -732,6 +751,12 @@ class ApprovalService:
         self._update_card(req, RequestStatus.REJECTED, user, now, reason=text)
         return ReasonResult("recorded", proposal_hash, "Reason recorded.", dec_id)
 
+    def _kind(self, proposal_hash: str) -> str:
+        row = self.conn.execute(
+            "SELECT kind FROM proposals WHERE proposal_hash = ?", (proposal_hash,)
+        ).fetchone()
+        return str(row["kind"]) if row else "open"
+
     def _update_card(
         self,
         req: _Request,
@@ -753,6 +778,7 @@ class ApprovalService:
             outcome=outcome,
             at=now,
             trail=load_trail(self.conn, req.proposal_hash, req.ticker),
+            kind=self._kind(req.proposal_hash),
         )
         try:
             self.poster.update(req.channel, req.message_ts, view)

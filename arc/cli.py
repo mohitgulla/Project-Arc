@@ -185,6 +185,10 @@ def _make_parser() -> argparse.ArgumentParser:
             from arc.approvals.cli import add_approve_parser
 
             add_approve_parser(sub)
+        elif cmd == "execute":
+            from arc.execution.cli import add_execute_parser
+
+            add_execute_parser(sub)
         else:
             sub.add_parser(cmd, help=f"{cmd.capitalize()} (stub)")
 
@@ -607,6 +611,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_approve(args)
+    if args.command == "execute":
+        from arc.execution.cli import run_execute
+
+        _log_to_stderr()
+        return run_execute(args)
     if args.command == "journal":
         from arc.journal.cli import run_journal
 

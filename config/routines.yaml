@@ -81,6 +81,8 @@ personas:
     notify: quiet               # folds into the next persona line; halts/expiries post at once
     reads: [proposal]           # small audit snapshot (today's proposals); E6.4 extends it
     expiry_warn_days: 1
+    exits: true                 # E6.2: propose fired E2.4 exits (gate + approval, never auto-sent)
+    eod_marks_from: "15:30"     # marks from here count as end of day (stops are EOD-only, D23)
   auditor:                      # post-market reconcile + journal (handler: E6.3)
     schedule: ["16:30"]
     days: trading
@@ -93,9 +95,10 @@ personas:
     llm: false
     halt_exempt: true
     ttl: 6h
-  investor:
+  investor:                     # E6.2: works an approved proposal through its D24 price band
     trigger: approval           # event-driven, never scheduled
-    notify: card
+    llm: false                  # deterministic: gate token + approval -> arc.execution.submit()
+    notify: card                # [Investor] Order card with the ExecutionResult (E5.5)
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
   quant:   {reads: [shortlist, regime], notify: card}
