@@ -24,6 +24,11 @@ Rules enforced here, in code:
   publish time, as ``arc:auto-approve``.
 - Every rejection and expiry is logged (``approvals.rejected`` /
   ``approvals.expired``) with its reason.
+- Every resolution (and every not-actionable card) is written to the decision
+  journal (E7.4) in the same transaction as the request row. An owner may add
+  an optional reject reason afterwards (:meth:`ApprovalService.record_reason`,
+  the Slack modal): it is a follow-up journal record, the decision itself was
+  already recorded on the click.
 
 Slack is best-effort: state is committed before anything is posted, so a Slack
 failure never changes a decision.
@@ -46,6 +51,8 @@ from arc.approvals.trail import load_trail
 from arc.config import ArcEnv
 from arc.context.ttl import from_db, require_aware, to_db
 from arc.gate.rules import proposal_hash as hash_proposal
+from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
+from arc.journal.store import JournalStore
 from arc.models import ApprovalDecision, ApprovalRecord, GateDecision, Proposal
 from arc.utils.calendar import ET
 
@@ -63,6 +70,7 @@ __all__ = [
     "LogCardPoster",
     "Outcome",
     "PostedCard",
+    "ReasonResult",
     "RequestStatus",
     "SweepReport",
     "approval_record",
@@ -102,6 +110,20 @@ class DecideResult:
     @property
     def accepted(self) -> bool:
         return self.outcome in (Outcome.APPROVED, Outcome.REJECTED)
+
+
+@dataclass(frozen=True)
+class ReasonResult:
+    """Result of :meth:`ApprovalService.record_reason` (the optional reject reason)."""
+
+    outcome: str  # recorded | blank | unauthorized | not_rejected | unknown_proposal
+    proposal_hash: str
+    message: str
+    decision_id: str | None = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.outcome in ("recorded", "blank")
 
 
 @dataclass(frozen=True)
@@ -402,9 +424,57 @@ class ApprovalService:
                         row["run_id"],
                     ),
                 )
+                if status is RequestStatus.NOT_ACTIONABLE:
+                    self._journal(
+                        phash,
+                        persona=JournalPersona.SYSTEM,
+                        choice=Choice.NO_TRADE,
+                        code=_not_actionable_code(reason),
+                        text=reason,
+                        now=now,
+                        subject=row["ticker"] or ticker_of(proposal),
+                        run_id=row["run_id"],
+                    )
         except sqlite3.IntegrityError:
             return False
         return True
+
+    def _journal(
+        self,
+        phash: str,
+        *,
+        persona: JournalPersona,
+        choice: Choice,
+        code: ReasonCode,
+        text: str,
+        now: _dt.datetime,
+        subject: str | None = None,
+        run_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+        supersedes_id: str | None = None,
+    ) -> str:
+        """Append an approval-stage decision (no commit: the caller's transaction)."""
+        journal = JournalStore(self.conn)
+        if subject is None or run_id is None:
+            row = self.conn.execute(
+                "SELECT ticker, run_id FROM approval_requests WHERE proposal_hash = ?", (phash,)
+            ).fetchone()
+            subject = subject or (row["ticker"] if row else "session")
+            run_id = run_id or (row["run_id"] if row else None)
+        return journal.record(
+            persona=persona,
+            stage=Stage.APPROVAL,
+            subject=subject,
+            choice=choice,
+            reason_code=code,
+            reason_text=text,
+            at=now,
+            chain_run_id=journal.chain_for_proposal(phash),
+            run_id=run_id,
+            proposal_hash=phash,
+            payload=payload or {},
+            supersedes_id=supersedes_id,
+        ).id
 
     def _post(self, day: _dt.date, view: CardView, phash: str) -> PostedCard | None:
         try:
@@ -556,6 +626,16 @@ class ApprovalService:
                 )
                 if cur.rowcount != 1:
                     raise _LostRaceError
+                persona, code = _journal_actor(status, actor)
+                self._journal(
+                    proposal_hash,
+                    persona=persona,
+                    choice=Choice(str(decision)),
+                    code=code,
+                    text=reason or _outcome_plain(status, actor),
+                    now=now,
+                    payload={"approval_id": approval_id, "by": actor},
+                )
                 if status is RequestStatus.APPROVED:
                     self.conn.execute(
                         """INSERT INTO routine_events (id, name, payload, created_at)
@@ -600,16 +680,77 @@ class ApprovalService:
         }[status]
         return DecideResult(outcome, proposal_hash, _outcome_text(status, actor), status)
 
+    # -- optional reject reason (D22) ----------------------------------------
+
+    def record_reason(
+        self, proposal_hash: str, *, user: str, text: str, now: _dt.datetime
+    ) -> ReasonResult:
+        """Journal an owner's optional reason for a Reject that is already recorded.
+
+        The rejection itself was written on the click; this only adds a follow-up
+        ``owner_reject`` decision (superseding the click's record) and fills the
+        request's reason. A blank reason is accepted and changes nothing.
+        """
+        now = require_aware(now, "now").astimezone(ET)
+        req = self._request(proposal_hash)
+        if req is None:
+            return ReasonResult("unknown_proposal", proposal_hash, "Unknown proposal.")
+        if not user or user not in self.approvers:
+            log.warning("approvals.reason_unauthorized", proposal_hash=proposal_hash, user=user)
+            return ReasonResult(
+                "unauthorized", proposal_hash, f"<@{user}> is not an allowed approver."
+            )
+        if req.status is not RequestStatus.REJECTED:
+            return ReasonResult(
+                "not_rejected", proposal_hash, f"Request is {req.status}, not rejected."
+            )
+        text = text.strip()
+        if not text:
+            return ReasonResult("blank", proposal_hash, "No reason given; the rejection stands.")
+        prior = self.conn.execute(
+            """SELECT id FROM decisions WHERE proposal_hash = ? AND stage = 'approval'
+               AND choice = 'rejected' ORDER BY at DESC, rowid DESC LIMIT 1""",
+            (proposal_hash,),
+        ).fetchone()
+        with self.conn:
+            dec_id = self._journal(
+                proposal_hash,
+                persona=JournalPersona.OWNER,
+                choice=Choice.REJECTED,
+                code=ReasonCode.OWNER_REJECT,
+                text=text,
+                now=now,
+                payload={"by": user, "follow_up": True},
+                supersedes_id=prior["id"] if prior else None,
+            )
+            self.conn.execute(
+                """UPDATE approval_requests SET reason = ?
+                   WHERE proposal_hash = ? AND reason IN ('', ?)""",
+                (f"rejected by <@{user}>: {text}", proposal_hash, f"rejected by <@{user}>"),
+            )
+        log.info("approvals.reject_reason", proposal_hash=proposal_hash, by=user, reason=text)
+        self._update_card(req, RequestStatus.REJECTED, user, now, reason=text)
+        return ReasonResult("recorded", proposal_hash, "Reason recorded.", dec_id)
+
     def _update_card(
-        self, req: _Request, status: RequestStatus, actor: str, now: _dt.datetime
+        self,
+        req: _Request,
+        status: RequestStatus,
+        actor: str,
+        now: _dt.datetime,
+        *,
+        reason: str = "",
     ) -> None:
         if req.channel == "log" or not req.message_ts:
             return
+        outcome = _outcome_text(status, actor)
+        if reason:
+            outcome += f" — _{reason}_"
         view = render_resolved(
             req.proposal,
             self._decision_for(req.proposal_hash),
             proposal_hash=req.proposal_hash,
-            outcome=_outcome_text(status, actor),
+            outcome=outcome,
             at=now,
             trail=load_trail(self.conn, req.proposal_hash, req.ticker),
         )
@@ -621,6 +762,30 @@ class ApprovalService:
 
 class _LostRaceError(Exception):
     pass
+
+
+def _journal_actor(status: RequestStatus, actor: str) -> tuple[JournalPersona, ReasonCode]:
+    if status is RequestStatus.EXPIRED:
+        return JournalPersona.SYSTEM, ReasonCode.TTL_EXPIRED
+    if actor == AUTO_APPROVER:
+        return JournalPersona.SYSTEM, ReasonCode.AUTO_APPROVE
+    if status is RequestStatus.APPROVED:
+        return JournalPersona.OWNER, ReasonCode.OWNER_APPROVE
+    return JournalPersona.OWNER, ReasonCode.OWNER_REJECT
+
+
+def _not_actionable_code(reason: str) -> ReasonCode:
+    if reason.startswith("gate failed"):
+        return ReasonCode.NOT_ACTIONABLE_GATE_FAIL
+    if reason.startswith("no gate token"):
+        return ReasonCode.NOT_ACTIONABLE_NO_TOKEN
+    if reason.startswith("proposal expired"):
+        return ReasonCode.NOT_ACTIONABLE_EXPIRED
+    return ReasonCode.NOT_ACTIONABLE_NO_GATE
+
+
+def _outcome_plain(status: RequestStatus, actor: str) -> str:
+    return f"{status} by {actor}"
 
 
 def _ttl_reason(req: _Request) -> str:

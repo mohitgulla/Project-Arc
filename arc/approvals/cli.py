@@ -3,6 +3,8 @@
 - ``arc approve sweep``  post cards for new proposals, expire overdue ones.
 - ``arc approve decide`` apply one click (called by the ``arc-approvals``
   Hermes plugin with the clicker's Slack user id from the platform event).
+- ``arc approve reason`` journal an owner's optional reject reason (the Slack
+  modal a Reject click opens; D22). The rejection itself is already recorded.
 - ``arc approve list``   show approval requests (optionally for one day).
 
 ``arc routines tick`` and ``arc propose`` also run the sweep, so cards appear
@@ -45,6 +47,13 @@ def add_approve_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
     d.add_argument("--slack-ts", default="", help="ts of the clicked message")
     d.add_argument("--no-slack", action="store_true", help="Do not update the card in Slack")
     d.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+
+    r = asub.add_parser("reason", help="Record the optional reason for a Reject (D22)")
+    r.add_argument("proposal", help="Proposal hash (the modal's private_metadata)")
+    r.add_argument("--user", required=True, help="Submitter's Slack user id (from the platform)")
+    r.add_argument("--text", default="", help="Reason text; blank is fine")
+    r.add_argument("--no-slack", action="store_true", help="Do not update the card in Slack")
+    r.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
 
     ls = asub.add_parser("list", help="Show approval requests")
     ls.add_argument("--day", default=None, help="YYYY-MM-DD")
@@ -100,6 +109,18 @@ def run_approve(args: argparse.Namespace) -> int:
             return 0
         _write(svc.sweep(now_et(), day=args.day).as_json())
         return 0
+
+    if cmd == "reason":
+        rr = svc.record_reason(args.proposal, user=args.user, text=args.text, now=now_et())
+        _write(
+            {
+                "outcome": rr.outcome,
+                "proposal_hash": rr.proposal_hash,
+                "message": rr.message,
+                "decision_id": rr.decision_id,
+            }
+        )
+        return 0 if rr.accepted else 1
 
     res = svc.decide(
         args.proposal, user=args.user, approve=args.approve, now=now_et(), slack_ts=args.slack_ts

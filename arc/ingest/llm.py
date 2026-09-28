@@ -46,10 +46,18 @@ class ScoutLLMError(RuntimeError):
 
 @dataclass(frozen=True)
 class LLMResult:
-    """Raw text returned by a Scout LLM call plus the model that produced it."""
+    """Raw text returned by a Scout LLM call plus the model that produced it.
+
+    Usage fields come from ``hermes -z --usage-file`` and are ``None`` when
+    unknown (fixtures). ``cost_usd`` is 0 on a subscription ("included") plan;
+    the token counts are still reported.
+    """
 
     text: str
     model: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
 
 
 class ScoutLLM(Protocol):
@@ -172,7 +180,29 @@ class HermesScoutLLM:
             cost_usd=usage.get("estimated_cost_usd"),
             total_tokens=usage.get("total_tokens"),
         )
-        return LLMResult(text=proc.stdout, model=model)
+        return LLMResult(
+            text=proc.stdout,
+            model=model,
+            input_tokens=_int(usage.get("input_tokens")),
+            output_tokens=_int(usage.get("output_tokens")),
+            cost_usd=_cost(usage),
+        )
+
+
+def _int(v: object) -> int | None:
+    return int(v) if isinstance(v, int | float) and not isinstance(v, bool) else None
+
+
+def _cost(usage: dict[str, object]) -> float | None:
+    if usage.get("cost_status") == "included":
+        return 0.0
+    v = usage.get("estimated_cost_usd")
+    if isinstance(v, int | float | str) and not isinstance(v, bool):
+        try:
+            return max(float(v), 0.0)
+        except ValueError:
+            return None
+    return None
 
 
 def _read_usage(path: Path) -> dict[str, object]:

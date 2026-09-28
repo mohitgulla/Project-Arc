@@ -185,6 +185,7 @@ class ProposalRepo:
         id: str | None = None,
         day: str | None = None,
         ticker: str | None = None,
+        commit: bool = True,
     ) -> str:
         row_id = id or _uuid()
         self.conn.execute(
@@ -209,7 +210,8 @@ class ProposalRepo:
                 ticker,
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return row_id
 
     def get_by_hash(self, proposal_hash: str) -> dict[str, Any] | None:
@@ -239,6 +241,7 @@ class GateDecisionRepo:
         decided_at: str | None = None,
         run_id: str | None = None,
         id: str | None = None,
+        commit: bool = True,
     ) -> str:
         row_id = id or _uuid()
         self.conn.execute(
@@ -257,7 +260,8 @@ class GateDecisionRepo:
                 run_id,
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return row_id
 
 
