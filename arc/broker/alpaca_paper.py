@@ -144,6 +144,11 @@ class AlpacaPaperBroker:
             options_buying_power=(
                 Decimal(acct.options_buying_power) if acct.options_buying_power else None
             ),
+            non_marginable_buying_power=(
+                Decimal(acct.non_marginable_buying_power)
+                if acct.non_marginable_buying_power
+                else None
+            ),
             options_approved_level=acct.options_approved_level,
             last_equity=Decimal(acct.last_equity) if acct.last_equity else None,
         )

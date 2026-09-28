@@ -1,0 +1,58 @@
+# Account profiles (PLAN D25; card E3.4). Validated by arc.account_profiles.
+#
+# Selected by ARC_ACCOUNT_PROFILE (default cash_debit: paper mimics the expected
+# no-margin real-money account). Switching profile, or editing one, needs no
+# code change. The gate enforces the selected profile (rule account_profile);
+# the scanner, the persona prompts and the entry DTE window follow it.
+#
+#   allowed_kinds      structure kinds the account may open
+#                      (long_call | long_put | vertical_debit | vertical_credit | iron_condor)
+#   require_net_debit  the order must be a net debit
+#   buying_power       cash_settled: debit x 100 x contracts + entry fees <= settled cash
+#                      margin: broker margin buying power (per-underlying cap still binds)
+#   allow_short_legs   none | covered_only (same type + expiry, long worth >= short) | any
+#   dte_min/dte_max    optional entry DTE window override (else ARC_DTE_MIN/ARC_DTE_MAX)
+#   stance_strategies  scanner strategies per Director stance; [] = no trade (journaled)
+#
+# Open owner question (E3.4 PR): does the real broker account allow debit spreads
+# without margin? If not, switch the default to cash_long_only.
+
+profiles:
+  margin:
+    description: "D4 set: credit verticals, iron condors, debit verticals, long calls/puts."
+    allowed_kinds: [vertical_credit, vertical_debit, iron_condor, long_call, long_put]
+    require_net_debit: false
+    buying_power: margin
+    allow_short_legs: any
+    dte_min: null
+    dte_max: null
+    stance_strategies:
+      bullish: [bull_put]
+      bearish: [bear_call]
+      neutral: [iron_condor]
+
+  cash_debit:
+    description: "No margin: long calls/puts and debit verticals, net debit, fits settled cash."
+    allowed_kinds: [vertical_debit, long_call, long_put]
+    require_net_debit: true
+    buying_power: cash_settled
+    allow_short_legs: covered_only
+    dte_min: 30
+    dte_max: 60
+    stance_strategies:
+      bullish: [bull_call_debit, long_call]
+      bearish: [bear_put_debit, long_put]
+      neutral: []
+
+  cash_long_only:
+    description: "No spreads: long calls and long puts only, fits settled cash."
+    allowed_kinds: [long_call, long_put]
+    require_net_debit: true
+    buying_power: cash_settled
+    allow_short_legs: none
+    dte_min: 30
+    dte_max: 60
+    stance_strategies:
+      bullish: [long_call]
+      bearish: [long_put]
+      neutral: []

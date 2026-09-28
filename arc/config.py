@@ -6,12 +6,15 @@ See PLAN.md §5 for risk defaults and §9.2 (D9) for the default universe.
 from __future__ import annotations
 
 import enum
+import json
 from pathlib import Path
 from typing import Annotated
 
 import structlog
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from arc.account_profiles import DEFAULT_ACCOUNT_PROFILE, AccountProfile, load_account_profiles
 
 log = structlog.get_logger()
 
@@ -35,12 +38,24 @@ class ArcEnv(enum.StrEnum):
 
 
 class StructureKind(enum.StrEnum):
-    """Allowed option structure types (D4)."""
+    """Allowed option structure types (D4; split by D25/E3.4).
 
-    VERTICAL = "vertical"
+    ``vertical`` was split into ``vertical_debit`` and ``vertical_credit``. The old
+    value is still accepted in ``ARC_STRUCTURE_WHITELIST`` as a deprecated alias
+    that expands to both (see :data:`LEGACY_WHITELIST_ALIASES`).
+    """
+
+    VERTICAL_DEBIT = "vertical_debit"
+    VERTICAL_CREDIT = "vertical_credit"
     IRON_CONDOR = "iron_condor"
     LONG_CALL = "long_call"
     LONG_PUT = "long_put"
+
+
+# Deprecated whitelist spellings -> the kinds they stand for.
+LEGACY_WHITELIST_ALIASES: dict[str, tuple[StructureKind, ...]] = {
+    "vertical": (StructureKind.VERTICAL_DEBIT, StructureKind.VERTICAL_CREDIT),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -159,14 +174,39 @@ class ArcSettings(BaseSettings):
         default=0.005,
         description="|ν| cap: 0.5% of equity per vol-point.",
     )
-    structure_whitelist: list[StructureKind] = Field(
+    # NoDecode: the env value may be comma-separated or JSON; see _parse_whitelist.
+    structure_whitelist: Annotated[list[StructureKind], NoDecode] = Field(
         default=[
-            StructureKind.VERTICAL,
+            StructureKind.VERTICAL_DEBIT,
+            StructureKind.VERTICAL_CREDIT,
             StructureKind.IRON_CONDOR,
             StructureKind.LONG_CALL,
             StructureKind.LONG_PUT,
         ],
-        description="Allowed structure types (D4).",
+        description=(
+            "Allowed structure types (D4). The account profile narrows this further (D25). "
+            "Deprecated alias 'vertical' = vertical_debit + vertical_credit."
+        ),
+    )
+    # -- Account profile (D25, E3.4) -------------------------------------------
+    account_profile: str = Field(
+        default=DEFAULT_ACCOUNT_PROFILE,
+        min_length=1,
+        description=(
+            "ARC_ACCOUNT_PROFILE: a profile in config/account_profiles.yaml "
+            "(margin | cash_debit | cash_long_only). Paper default cash_debit (D25)."
+        ),
+    )
+    account_profiles_file: Path | None = Field(
+        default=None,
+        description="ARC_ACCOUNT_PROFILES_FILE; None -> config/account_profiles.yaml.",
+    )
+    account_profile_spec: AccountProfile | None = Field(
+        default=None,
+        description=(
+            "The resolved profile (filled from the file at load time). The gate reads it "
+            "and fails closed when it is missing or names a different profile."
+        ),
     )
     dte_min: Annotated[int, Field(ge=0)] = Field(
         default=30,
@@ -197,6 +237,14 @@ class ArcSettings(BaseSettings):
     account_max_age_seconds: Annotated[int, Field(ge=1)] = Field(
         default=300,
         description="Max age of the account snapshot at gate time (data freshness).",
+    )
+    gate_fee_per_leg_contract: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.05,
+        description=(
+            "Fee allowance per leg-contract in the gate's settled-cash check (D25). "
+            "Conservative round-up of config/costs.yaml buy-side fees (ORF + OCC + CAT "
+            "~= $0.04); the gate cannot read the cost model file (pure, no I/O)."
+        ),
     )
     limit_tick: Annotated[float, Field(gt=0.0)] = Field(
         default=0.01,
@@ -302,6 +350,32 @@ class ArcSettings(BaseSettings):
     scanner_wing_width: Annotated[float, Field(gt=0.0)] = Field(
         default=5.0,
         description="Target wing width in dollars between short and long strikes.",
+    )
+    # Debit strategies (D25, E3.4): long-leg band and debit-vertical short band.
+    scanner_long_delta_min: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.40, description="Lower bound of the long-leg |delta| band (debit strategies)."
+    )
+    scanner_long_delta_max: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.70, description="Upper bound of the long-leg |delta| band (debit strategies)."
+    )
+    scanner_long_target_delta: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.55, description="Target |delta| for the long leg of debit strategies."
+    )
+    scanner_debit_short_delta_min: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.20, description="Lower bound of the debit-vertical short-leg |delta| band."
+    )
+    scanner_debit_short_delta_max: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.35, description="Upper bound of the debit-vertical short-leg |delta| band."
+    )
+    scanner_debit_short_target_delta: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.30, description="Target |delta| for the debit-vertical short leg."
+    )
+    scanner_debit_width: Annotated[float | None, Field(gt=0.0)] = Field(
+        default=None,
+        description=(
+            "Target debit-vertical width in dollars; None = pick the short by its delta "
+            "band/target only (the width then follows the underlying's price)."
+        ),
     )
     scanner_risk_free_rate: float = Field(
         default=0.04,
@@ -459,6 +533,26 @@ class ArcSettings(BaseSettings):
             return [s.strip() for s in v.split(",") if s.strip()]
         return v
 
+    @field_validator("structure_whitelist", mode="before")
+    @classmethod
+    def _parse_whitelist(cls, v: object) -> object:
+        """Comma-separated or JSON list; expand the deprecated ``vertical`` alias."""
+        if isinstance(v, str):
+            s = v.strip()
+            v = json.loads(s) if s.startswith("[") else [p.strip() for p in s.split(",")]
+        if not isinstance(v, list | tuple):
+            return v
+        out: list[object] = []
+        for item in v:
+            key = str(item).strip().lower() if isinstance(item, str) else item
+            alias = LEGACY_WHITELIST_ALIASES.get(key) if isinstance(key, str) else None
+            if alias is not None:
+                log.warning("config.deprecated_whitelist_alias", alias=key, expands_to=alias)
+                out.extend(k for k in alias if k not in out)
+            elif key and key not in out:
+                out.append(key)
+        return out
+
     @field_validator("dte_max")
     @classmethod
     def _dte_range(cls, v: int, info: object) -> int:
@@ -481,6 +575,44 @@ class ArcSettings(BaseSettings):
             )
             raise ValueError(msg)
         return self
+
+    @model_validator(mode="after")
+    def _resolve_account_profile(self) -> ArcSettings:
+        """Load the selected profile (unknown name -> error at startup, not at trade time)."""
+        spec = self.account_profile_spec
+        if spec is None or spec.name != self.account_profile:
+            profiles = load_account_profiles(self.account_profiles_file)
+            self.account_profile_spec = profiles.get(self.account_profile)
+        return self
+
+    @property
+    def profile(self) -> AccountProfile:
+        """The active account profile. Raises if it does not match ``account_profile``."""
+        spec = self.account_profile_spec
+        if spec is None or spec.name != self.account_profile:
+            msg = (
+                f"account profile {self.account_profile!r} is not resolved; build settings "
+                "with ArcSettings(...) / with_profile(), not model_copy()"
+            )
+            raise ValueError(msg)
+        return spec
+
+    def with_profile(self, name: str) -> ArcSettings:
+        """A copy of these settings under account profile *name* (re-resolved)."""
+        return self.model_copy(
+            update={
+                "account_profile": name,
+                "account_profile_spec": load_account_profiles(self.account_profiles_file).get(name),
+            }
+        )
+
+    @property
+    def entry_dte_window(self) -> tuple[int, int]:
+        """Entry DTE window: the profile's override when set, else ``dte_min/dte_max``."""
+        p = self.profile
+        if p.dte_min is not None and p.dte_max is not None:
+            return p.dte_min, p.dte_max
+        return self.dte_min, self.dte_max
 
     @model_validator(mode="after")
     def _auto_approve_paper_only(self) -> ArcSettings:

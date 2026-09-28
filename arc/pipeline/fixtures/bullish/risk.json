@@ -1,0 +1,17 @@
+{
+  "assessments": [
+    {
+      "ticker": "SPY",
+      "structure_type": "vertical_spread",
+      "risk_rating": "moderate",
+      "concentration_warning": false,
+      "greek_budget_impact": "Fixture: long delta, small long vega.",
+      "calendar_concerns": "Fixture: FOMC Oct 28 is inside the trade; no earnings (ETF).",
+      "sizing_suggestion": 20,
+      "max_loss_pct_equity": 0.05,
+      "narrative": "Fixture: debit spread, max loss = the debit paid. Advisory 20; the pipeline caps it at floor(5% x equity / max loss)."
+    }
+  ],
+  "portfolio_summary": "Fixture: flat book.",
+  "advisory_notes": "Fixture Risk reply, bullish set (offline run)."
+}

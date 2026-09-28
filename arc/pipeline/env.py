@@ -36,10 +36,13 @@ if TYPE_CHECKING:
     from arc.data.base import MarketDataProvider
     from arc.ingest.llm import ScoutLLM
 
-__all__ = ["FIXTURES_DIR", "FIXTURE_NOW", "PERSONAS", "PipelineEnv"]
+__all__ = ["FIXTURES_DIR", "FIXTURE_NOW", "FIXTURE_SETS", "PERSONAS", "PipelineEnv"]
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 PERSONAS = ("director", "quant", "risk")
+# Canned persona reply sets: "neutral" (SPY iron condor; the default) and
+# "bullish" (SPY bull call debit, for the D25 cash_debit profile).
+FIXTURE_SETS: dict[str, Path] = {"neutral": FIXTURES_DIR, "bullish": FIXTURES_DIR / "bullish"}
 
 # The recorded SPY chain holds the 2026-09-25 close (quotes stamped 15:59:17-15:59:59
 # ET). Offline runs happen "at" that close so quote-freshness and DTE checks mean

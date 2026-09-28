@@ -1,0 +1,24 @@
+{
+  "structures": [
+    {
+      "ticker": "SPY",
+      "structure_type": "vertical_spread",
+      "legs": [
+        {"occ_symbol": "SPY261030C00770000", "side": "long", "ratio": 1, "strike": 770, "expiry": "2026-10-30", "option_type": "call"},
+        {"occ_symbol": "SPY261030C00789000", "side": "short", "ratio": 1, "strike": 789, "expiry": "2026-10-30", "option_type": "call"}
+      ],
+      "net_debit_credit": 9.0,
+      "max_gain": 1000.0,
+      "max_loss": 900.0,
+      "breakevens": [779.0],
+      "greeks": {"delta": 25.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0},
+      "dte": 35,
+      "pop": 0.45,
+      "ev_per_contract": 10.0,
+      "cost_bps": 1.0,
+      "confidence": 0.65,
+      "rationale": "Fixture: bull call debit from the menu (56-delta long, 30-delta short). The LLM's numbers are placeholders; the pipeline replaces them with the scanner's."
+    }
+  ],
+  "analysis_notes": "Fixture Quant reply, bullish set (offline run)."
+}

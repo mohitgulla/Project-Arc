@@ -51,6 +51,7 @@ class TestAlpacaPaperBrokerMocked:
         mock_acct.cash = "50000.00"
         mock_acct.currency = "USD"
         mock_acct.options_buying_power = "100000.00"
+        mock_acct.non_marginable_buying_power = "40000.00"
         mock_acct.options_approved_level = 3
         mock_acct.last_equity = "99000.00"
         mock_client.get_account.return_value = mock_acct
