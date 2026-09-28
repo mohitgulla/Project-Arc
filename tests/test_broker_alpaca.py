@@ -8,7 +8,15 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from alpaca.trading.enums import OrderClass
+from alpaca.trading.enums import (
+    AssetClass,
+    AssetExchange,
+    OrderClass,
+    OrderSide,
+    OrderStatus,
+    PositionSide,
+)
+from alpaca.trading.models import Position
 
 from arc.broker.alpaca_paper import AlpacaPaperBroker, _require_paper, build_mleg_request
 from arc.broker.base import MlegLeg, MlegOrder
@@ -41,6 +49,18 @@ def _make_broker(mock_client: MagicMock | None = None) -> AlpacaPaperBroker:
         return AlpacaPaperBroker(client=mock_client or MagicMock())
 
 
+def _alpaca_position(symbol: str, qty: str, side: object, asset_class: object) -> MagicMock:
+    pos = MagicMock()
+    pos.symbol = symbol
+    pos.qty = qty
+    pos.side = side
+    pos.market_value = "700.00"
+    pos.avg_entry_price = "3.50"
+    pos.unrealized_pl = "50.00"
+    pos.asset_class = asset_class
+    return pos
+
+
 class TestAlpacaPaperBrokerMocked:
     def test_account(self) -> None:
         mock_client = MagicMock()
@@ -64,24 +84,45 @@ class TestAlpacaPaperBrokerMocked:
         assert info.last_equity == Decimal("99000.00")
         assert info.options_approved_level == 3
 
-    def test_positions(self) -> None:
+    @pytest.mark.parametrize(
+        ("asset_class", "expected"),
+        [
+            (AssetClass.US_OPTION, "us_option"),
+            (AssetClass.US_EQUITY, "us_equity"),
+            (AssetClass.CRYPTO, "crypto"),
+            ("us_option", "us_option"),  # plain str passes through unchanged
+            (None, "us_option"),  # missing keeps the historical default
+        ],
+    )
+    def test_positions_asset_class_is_plain_wire_value(
+        self, asset_class: object, expected: str
+    ) -> None:
+        """E6.3a: ``str(AssetClass.US_OPTION)`` is ``"AssetClass.US_OPTION"``; map via .value."""
         mock_client = MagicMock()
-        mock_pos = MagicMock()
-        mock_pos.symbol = "SPY261016C00450000"
-        mock_pos.qty = "2"
-        mock_pos.side = MagicMock(value="long")
-        mock_pos.market_value = "700.00"
-        mock_pos.avg_entry_price = "3.50"
-        mock_pos.unrealized_pl = "50.00"
-        mock_pos.asset_class = MagicMock(__str__=lambda self: "us_option")
-        mock_client.get_all_positions.return_value = [mock_pos]
+        mock_client.get_all_positions.return_value = [
+            _alpaca_position("SPY261016C00450000", "-2", PositionSide.SHORT, asset_class)
+        ]
+        (pos,) = _make_broker(mock_client).positions()
 
-        broker = _make_broker(mock_client)
-        positions = broker.positions()
+        assert pos.asset_class == expected
+        assert type(pos.asset_class) is str and type(pos.side) is str
+        assert pos.side == "short"
+        assert pos.symbol == "SPY261016C00450000"
+        assert pos.qty == Decimal("-2")
 
-        assert len(positions) == 1
-        assert positions[0].symbol == "SPY261016C00450000"
-        assert positions[0].qty == Decimal("2")
+    def test_positions_from_real_alpaca_model(self) -> None:
+        """Positions built by alpaca-py's own model parse to plain values."""
+        raw = Position(
+            asset_id=uuid4(), symbol="SPY261030C00736000", exchange=AssetExchange.EMPTY,
+            asset_class=AssetClass.US_OPTION, avg_entry_price="5.10", qty="1",
+            side=PositionSide.LONG, cost_basis="510", unrealized_pl="12.5",
+            market_value="522.5",
+        )  # fmt: skip
+        mock_client = MagicMock()
+        mock_client.get_all_positions.return_value = [raw]
+        (pos,) = _make_broker(mock_client).positions()
+        assert (pos.asset_class, pos.side) == ("us_option", "long")
+        assert pos.unrealized_pl == Decimal("12.5")
 
     def test_submit_mleg(self) -> None:
         mock_client = MagicMock()
@@ -155,13 +196,11 @@ class TestAlpacaPaperBrokerMocked:
         mock_client.cancel_order_by_id.assert_called_once_with("order-123")
 
     def test_order_status(self) -> None:
-        from alpaca.trading.enums import OrderStatus as AlpacaOrderStatus
-
         mock_client = MagicMock()
         mock_order = MagicMock()
         mock_order.id = uuid4()
         mock_order.client_order_id = "arc-test-001"
-        mock_order.status = AlpacaOrderStatus.NEW
+        mock_order.status = OrderStatus.NEW
         mock_order.filled_qty = "0"
         mock_order.filled_avg_price = None
         mock_order.legs = None
@@ -172,25 +211,22 @@ class TestAlpacaPaperBrokerMocked:
         broker = _make_broker(mock_client)
         status = broker.order_status(str(mock_order.id))
 
-        assert status.status == "new"
+        assert status.status == "new" and type(status.status) is str
         assert status.client_order_id == "arc-test-001"
 
     def test_order_status_with_legs(self) -> None:
-        from alpaca.trading.enums import OrderSide
-        from alpaca.trading.enums import OrderStatus as AlpacaOrderStatus
-
         mock_client = MagicMock()
         mock_leg = MagicMock()
         mock_leg.symbol = "SPY261016C00450000"
         mock_leg.side = OrderSide.BUY
         mock_leg.qty = "1"
         mock_leg.filled_qty = "0"
-        mock_leg.status = AlpacaOrderStatus.NEW
+        mock_leg.status = OrderStatus.NEW
 
         mock_order = MagicMock()
         mock_order.id = uuid4()
         mock_order.client_order_id = "arc-test-002"
-        mock_order.status = AlpacaOrderStatus.NEW
+        mock_order.status = OrderStatus.NEW
         mock_order.filled_qty = "0"
         mock_order.filled_avg_price = None
         mock_order.legs = [mock_leg]
@@ -204,6 +240,9 @@ class TestAlpacaPaperBrokerMocked:
         assert status.legs is not None
         assert len(status.legs) == 1
         assert status.legs[0]["symbol"] == "SPY261016C00450000"
+        # plain wire values, never "OrderSide.BUY" / "OrderStatus.NEW"
+        assert (status.legs[0]["side"], status.legs[0]["status"]) == ("buy", "new")
+        assert type(status.legs[0]["side"]) is str and type(status.legs[0]["status"]) is str
 
     def test_fills_empty(self) -> None:
         mock_client = MagicMock()
@@ -219,7 +258,7 @@ class TestAlpacaPaperBrokerMocked:
         mock_order = MagicMock()
         mock_order.id = uuid4()
         mock_order.symbol = "SPY261016C00450000"
-        mock_order.side = MagicMock(value="buy")
+        mock_order.side = OrderSide.BUY
         mock_order.filled_at = dt.datetime(2026, 10, 1, 11, 0, tzinfo=ET)
         mock_order.filled_qty = "1"
         mock_order.filled_avg_price = "3.50"
@@ -235,3 +274,27 @@ class TestAlpacaPaperBrokerMocked:
 
         assert len(fills) == 1
         assert fills[0].price == Decimal("3.50")
+        assert fills[0].side == "buy" and type(fills[0].side) is str
+
+    def test_fills_mleg_legs_use_plain_side(self) -> None:
+        filled = dt.datetime(2026, 10, 1, 11, 0, tzinfo=ET)
+        legs = []
+        for sym, side in (
+            ("SPY261016C00450000", OrderSide.BUY),
+            ("SPY261016C00460000", OrderSide.SELL),
+        ):
+            leg = MagicMock()
+            leg.symbol, leg.side, leg.filled_at = sym, side, filled
+            leg.filled_qty, leg.filled_avg_price = "1", "2.00"
+            legs.append(leg)
+        order = MagicMock()
+        order.id, order.filled_at, order.legs = uuid4(), filled, legs
+        mock_client = MagicMock()
+        mock_client.get_orders.return_value = [order]
+
+        fills = _make_broker(mock_client).fills(dt.datetime(2026, 10, 1, tzinfo=ET))
+
+        assert [(f.symbol, f.side) for f in fills] == [
+            ("SPY261016C00450000", "buy"),
+            ("SPY261016C00460000", "sell"),
+        ]

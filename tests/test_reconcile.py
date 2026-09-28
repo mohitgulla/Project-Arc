@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import uuid
 from decimal import Decimal as D
 from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -318,6 +320,49 @@ def test_missing_position_and_unknown_fill_halt(conn: sqlite3.Connection) -> Non
     assert rep2.halt_id == rep.halt_id
     assert len(HaltSwitch(HaltRepo(conn)).state().active) == 1
     assert ReasonCode.RECONCILE_MISMATCH.value in reasons(conn)
+
+
+def test_adapter_built_option_positions_are_not_non_option(conn: sqlite3.Connection) -> None:
+    """E6.3a: positions parsed by the Alpaca adapter from real alpaca-py enums reconcile clean.
+
+    Before the fix ``str(AssetClass.US_OPTION)`` leaked ``"AssetClass.US_OPTION"`` and every
+    held option leg became ``position_non_option``.
+    """
+    from alpaca.trading.enums import AssetClass, AssetExchange, PositionSide
+    from alpaca.trading.models import Position
+
+    from arc.broker.alpaca_paper import AlpacaPaperBroker
+
+    pos = open_position(conn)
+    st = pos["st"]
+    short, long = legs_of(st)
+    raw = [
+        Position(asset_id=uuid.uuid4(), symbol=short, exchange=AssetExchange.EMPTY,
+                 asset_class=AssetClass.US_OPTION, avg_entry_price="5.50", qty="-2",
+                 side=PositionSide.SHORT, cost_basis="-1100", unrealized_pl="-20"),
+        Position(asset_id=uuid.uuid4(), symbol=long, exchange=AssetExchange.EMPTY,
+                 asset_class=AssetClass.US_OPTION, avg_entry_price="4.62", qty="2",
+                 side=PositionSide.LONG, cost_basis="924", unrealized_pl="5"),
+    ]  # fmt: skip
+    client = MagicMock()
+    client.get_all_positions.return_value = raw
+    with patch.dict("os.environ", {"ALPACA_API_KEY": "k", "ALPACA_SECRET_KEY": "s"}):
+        adapter_positions = AlpacaPaperBroker(client=client).positions()
+
+    rep = run(conn, FakeBroker(positions=adapter_positions, fills=open_fills(st)))
+    assert MismatchKind.POSITION_NON_OPTION not in {m.kind for m in rep.mismatches}
+    assert rep.clean, rep.mismatches
+    assert rep.structures_attributed == 1 and rep.unrealized == D(-15)
+
+    # an equity position from the adapter is still flagged (fail-closed unchanged)
+    equity = Position(asset_id=uuid.uuid4(), symbol="SPY", exchange=AssetExchange.ARCA,
+                      asset_class=AssetClass.US_EQUITY, avg_entry_price="500", qty="100",
+                      side=PositionSide.LONG, cost_basis="50000")  # fmt: skip
+    client.get_all_positions.return_value = [*raw, equity]
+    with patch.dict("os.environ", {"ALPACA_API_KEY": "k", "ALPACA_SECRET_KEY": "s"}):
+        adapter_positions = AlpacaPaperBroker(client=client).positions()
+    rep = run(conn, FakeBroker(positions=adapter_positions, fills=open_fills(st)), halt=False)
+    assert [m.kind for m in rep.mismatches] == [MismatchKind.POSITION_NON_OPTION]
 
 
 def test_fill_missing_and_qty(conn: sqlite3.Connection) -> None:

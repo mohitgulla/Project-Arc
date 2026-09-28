@@ -50,6 +50,15 @@ _TIF_MAP: dict[str, TimeInForce] = {
 _PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 
 
+def _enum_value(v: object) -> str:
+    """Plain Alpaca wire value of an alpaca-py enum *or* a plain str.
+
+    alpaca-py enums are ``str`` subclasses whose ``str()`` is ``"AssetClass.US_OPTION"``,
+    not the wire value ``"us_option"``; always normalise through ``.value``.
+    """
+    return str(getattr(v, "value", v))
+
+
 def _require_paper() -> None:
     """Fail-fast if ARC_ENV is not paper."""
     env_val = os.environ.get("ARC_ENV", "paper").lower()
@@ -163,11 +172,11 @@ class AlpacaPaperBroker:
                 BrokerPosition(
                     symbol=pos.symbol,
                     qty=Decimal(pos.qty),
-                    side=pos.side.value if pos.side else "long",
+                    side=_enum_value(pos.side) if pos.side else "long",
                     market_value=Decimal(pos.market_value) if pos.market_value else None,
                     avg_entry_price=Decimal(pos.avg_entry_price) if pos.avg_entry_price else None,
                     unrealized_pl=Decimal(pos.unrealized_pl) if pos.unrealized_pl else None,
-                    asset_class=str(pos.asset_class) if pos.asset_class else "us_option",
+                    asset_class=_enum_value(pos.asset_class) if pos.asset_class else "us_option",
                 )
             )
         return result
@@ -206,7 +215,7 @@ class AlpacaPaperBroker:
         return BrokerOrderStatus(
             broker_order_id=str(order.id),
             client_order_id=order.client_order_id,
-            status=order.status.value if order.status else "unknown",
+            status=_enum_value(order.status) if order.status else "unknown",
             filled_qty=Decimal(str(order.filled_qty or "0")),
             filled_avg_price=(
                 Decimal(str(order.filled_avg_price)) if order.filled_avg_price else None
@@ -215,10 +224,10 @@ class AlpacaPaperBroker:
                 [
                     {
                         "symbol": leg.symbol,
-                        "side": leg.side.value if leg.side else None,
+                        "side": _enum_value(leg.side) if leg.side else None,
                         "qty": str(leg.qty),
                         "filled_qty": str(leg.filled_qty or "0"),
-                        "status": leg.status.value if leg.status else None,
+                        "status": _enum_value(leg.status) if leg.status else None,
                         "filled_avg_price": (
                             str(leg.filled_avg_price) if leg.filled_avg_price else None
                         ),
@@ -258,7 +267,7 @@ class AlpacaPaperBroker:
                             Fill(
                                 broker_order_id=str(order.id),
                                 symbol=leg.symbol or "",
-                                side=leg.side.value if leg.side else "buy",
+                                side=_enum_value(leg.side) if leg.side else "buy",
                                 qty=Decimal(str(leg.filled_qty)),
                                 price=Decimal(str(leg.filled_avg_price)),
                                 filled_at=leg.filled_at,
@@ -269,7 +278,7 @@ class AlpacaPaperBroker:
                     Fill(
                         broker_order_id=str(order.id),
                         symbol=order.symbol or "",
-                        side=order.side.value if order.side else "buy",
+                        side=_enum_value(order.side) if order.side else "buy",
                         qty=Decimal(str(order.filled_qty)),
                         price=Decimal(str(order.filled_avg_price)),
                         filled_at=order.filled_at,
