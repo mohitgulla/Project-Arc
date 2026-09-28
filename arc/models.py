@@ -153,6 +153,17 @@ class Proposal(BaseModel):
     risk_narrative: str = ""
     sizing: Sizing
     expires_at: datetime
+    limit_price: Decimal | None = Field(
+        None,
+        description="Per-share net limit price for the order (positive = debit, negative = "
+        "credit). None means the structure's net_debit_credit (mid).",
+    )
+    earnings_play: bool = Field(
+        False, description="Director flagged this as a deliberate earnings play (PLAN §5)."
+    )
+    risk_concurs: bool = Field(
+        False, description="Risk persona concurs with the earnings-play flag (PLAN §5)."
+    )
 
 
 # ---------------------------------------------------------------------------

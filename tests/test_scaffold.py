@@ -42,6 +42,8 @@ def test_arc_package_imports() -> None:
         "arc.features",
         "arc.personas",
         "arc.gate",
+        "arc.gate.inputs",
+        "arc.gate.rules",
         "arc.approvals",
         "arc.execution",
         "arc.broker",
