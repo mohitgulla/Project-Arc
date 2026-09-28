@@ -51,3 +51,34 @@ audit.
 
 Dry run: `arc scan --dry-run` uses fixture docs and canned replies in `arc/ingest/fixtures/scout/`
 (no network).
+
+## Channel briefs (E4.4)
+
+Each YouTube channel has one processor: `arc/ingest/channels/<slug>/profile.yaml` +
+`GUIDELINES.md` (+ `fixtures/`). Shared code lives in `arc/ingest/channels/base.py`. Adding a
+channel is a new directory; no code change. Unknown channels fall back to `channels/default/`.
+The newest transcript becomes a strict `ChannelBrief` (`arc/models.py`, `extra="forbid"`):
+market_bias, levels, calls, catalysts, risk_flags, tickers_mentioned. It uses the same Hermes
+one-shot backend as the pipeline above (`HermesScoutLLM`); there is no second client.
+
+Code enforces these rules, independent of the LLM:
+- sponsor/ad sentences (profile `sponsor_patterns`) are stripped before the prompt is built
+- quote grounding: every item's `quote` (<=240 chars) must appear verbatim in the normalized
+  transcript, or the item is dropped and logged as `channel.brief.drop`
+- levels must be within +-25% of the reference price (quote mid, or the last close off-hours).
+  With no price available they are kept with `unverified_price=true`
+- tickers are normalized (S&P / "the market" -> SPY, Nasdaq -> QQQ, Dow -> DIA, Russell -> IWM).
+  Non-universe tickers stay in the brief but never become Candidates (logged as proposed
+  universe additions, D9)
+- no sizing/order fields exist in the schema
+
+Lifecycle (`channel_briefs` table, migration 004): the profile sets `ttl_sessions`,
+`supersede: latest|accumulate` and `source_kind`. `expires_at` is the close of the Nth trading
+session from `applies_to_session`, counted with `arc.utils.calendar`. StockedUp: 1 session,
+`latest`, so a Sunday-night video informs Monday only and the next video supersedes it. Macro
+sources use a long TTL with `accumulate`. Downstream reads `active_briefs(now)`.
+`brief_to_candidates()` deterministically maps universe calls and ticker catalysts to
+`Candidate` (confidence = conviction x trust_weight).
+
+CLI: `arc ingest youtube --process [--dry-run] [--no-prices]`, `arc brief show [--channel <slug>]`.
+Scheduling belongs to E5.3; the audio fallback for caption-less videos belongs to E4.1b.

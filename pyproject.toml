@@ -24,6 +24,7 @@ dependencies = [
     "pyarrow>=15",
     "requests>=2.31",
     "yt-dlp>=2024.0",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]

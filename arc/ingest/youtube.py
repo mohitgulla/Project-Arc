@@ -98,7 +98,10 @@ def _get_video_info(video_url: str) -> dict:
     return info if isinstance(info, dict) else {}
 
 
-_CAPTION_LANGS = ("en", "en-US", "en-orig")
+# ``en-orig`` is the original-language ASR track. The ``en`` auto-caption entry
+# is a machine-translation URL (``tlang=en``) that YouTube rate-limits with 429,
+# so the original track is tried first.
+_CAPTION_LANGS = ("en-orig", "en", "en-US")
 
 
 def _pick_caption_url(info: dict) -> str:
@@ -106,15 +109,20 @@ def _pick_caption_url(info: dict) -> str:
 
     Most finance channels (e.g. StockedUp) publish auto-generated captions only,
     so falling back to ``automatic_captions`` is required to get any text.
+    Untranslated tracks win over ``tlang=`` (translated) ones.
     """
     for key in ("subtitles", "automatic_captions"):
         tracks = info.get(key) or {}
         if not isinstance(tracks, dict):
             continue
-        for lang in _CAPTION_LANGS:
-            for entry in tracks.get(lang) or []:
-                if entry.get("ext") == "vtt" and entry.get("url"):
-                    return str(entry["url"])
+        urls = [
+            str(entry["url"])
+            for lang in _CAPTION_LANGS
+            for entry in tracks.get(lang) or []
+            if entry.get("ext") == "vtt" and entry.get("url")
+        ]
+        if urls:
+            return next((u for u in urls if "tlang=" not in u), urls[0])
     return ""
 
 
@@ -139,6 +147,8 @@ def _download_subtitle(url: str) -> str:
                 line = line.strip()
                 # Skip VTT header, timestamps, notes
                 if not line or line.startswith("WEBVTT") or "-->" in line:
+                    continue
+                if line.startswith(("Kind:", "Language:", "NOTE")):
                     continue
                 if re.match(r"^\d+$", line):
                     continue
@@ -234,6 +244,7 @@ def fetch_youtube(
             channel = info.get("channel") or info.get("uploader") or ""
             text = f"[{channel}] [{title}] {transcript}" if channel else f"[{title}] {transcript}"
             tickers = _extract_tickers(text, settings.universe)
+            channel_id = info.get("channel_id") or video.get("channel_id") or None
 
             doc = RawDoc(
                 source=CONNECTOR,
@@ -242,6 +253,8 @@ def fetch_youtube(
                 text=text,
                 tickers_hint=tickers,
                 content_hash=h,
+                channel_id=channel_id,
+                title=title,
             )
 
             doc_id = doc_repo.insert(
@@ -251,6 +264,8 @@ def fetch_youtube(
                 text=doc.text,
                 tickers_hint=doc.tickers_hint,
                 hash_val=h,
+                channel_id=channel_id,
+                title=title,
             )
 
             if doc_id is not None:

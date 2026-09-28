@@ -17,7 +17,18 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-COMMANDS = ("scan", "chains", "propose", "gate", "approve", "execute", "reconcile", "report")
+COMMANDS = (
+    "scan",
+    "chains",
+    "ingest",
+    "brief",
+    "propose",
+    "gate",
+    "approve",
+    "execute",
+    "reconcile",
+    "report",
+)
 HALT_COMMANDS = ("halt", "resume", "halt-status", "slack-command")
 
 
@@ -29,6 +40,13 @@ class _StderrProxy:
 
     def flush(self) -> None:
         sys.stderr.flush()
+
+
+def _log_to_stderr() -> None:
+    """stdout carries JSON reports; structured logs go to stderr."""
+    structlog.configure(
+        logger_factory=structlog.PrintLoggerFactory(file=_StderrProxy())  # type: ignore[arg-type]
+    )
 
 
 def _dte_range(text: str) -> tuple[int, int]:
@@ -111,6 +129,31 @@ def _make_parser() -> argparse.ArgumentParser:
             _add_scan_args(
                 sub.add_parser(cmd, help="Scan option chains for ranked credit structures")
             )
+        elif cmd == "ingest":
+            p = sub.add_parser(cmd, help="Ingest source documents")
+            p.add_argument("source", choices=["youtube"], help="Connector to run")
+            p.add_argument(
+                "--process",
+                action="store_true",
+                help="Run each channel processor on new transcripts and store ChannelBriefs.",
+            )
+            p.add_argument(
+                "--dry-run",
+                action="store_true",
+                help="Fixture transcript + canned LLM reply in an in-memory DB (no network).",
+            )
+            p.add_argument(
+                "--no-prices",
+                action="store_true",
+                help="Skip the market-data price check (levels are flagged unverified_price).",
+            )
+            p.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+        elif cmd == "brief":
+            p = sub.add_parser(cmd, help="Channel briefs (E4.4)")
+            bsub = p.add_subparsers(dest="brief_command", required=True)
+            show = bsub.add_parser("show", help="Print the active brief(s) as JSON")
+            show.add_argument("--channel", default=None, help="Channel slug, e.g. stockedup")
+            show.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
         else:
             sub.add_parser(cmd, help=f"{cmd.capitalize()} (stub)")
 
@@ -220,9 +263,7 @@ def _chains(args: argparse.Namespace) -> int:
 
     # stdout carries the report; structured logs go to whatever sys.stderr is at write
     # time (a proxy, so a replaced/closed stream is never captured in global config).
-    structlog.configure(
-        logger_factory=structlog.PrintLoggerFactory(file=_StderrProxy())  # type: ignore[arg-type]
-    )
+    _log_to_stderr()
     settings = get_settings()
 
     provider: MarketDataProvider
@@ -310,7 +351,7 @@ def _scan(args: argparse.Namespace) -> int:
     from arc.store.migrate import migrate
 
     # stdout carries the JSON report; keep structured logs on stderr.
-    structlog.configure(logger_factory=structlog.PrintLoggerFactory(file=sys.stderr))
+    _log_to_stderr()
     settings = get_settings()
     conn = connect(":memory:" if args.dry_run else args.db)
     migrate(conn)
@@ -333,6 +374,100 @@ def _scan(args: argparse.Namespace) -> int:
     return 1 if result.failed_batches and not result.docs_scouted else 0
 
 
+def _market_price_lookup():  # noqa: ANN202 — Callable[[str], float | None] | None
+    """Reference underlying price from the market-data provider, or None if unavailable.
+
+    Market data only: the processor never gets a broker handle (AGENTS.md).
+    """
+    try:
+        from arc.data.alpaca import AlpacaMarketData
+        from arc.data.base import reference_price
+        from arc.utils.calendar import now_et
+
+        md = AlpacaMarketData()
+    except Exception as exc:  # noqa: BLE001 — no keys / no network → unverified levels
+        logger.warning("brief.price_lookup_unavailable", error=str(exc))
+        return None
+
+    def lookup(symbol: str) -> float | None:
+        return reference_price(md, symbol, today=now_et().date())
+
+    return lookup
+
+
+def _ingest(args: argparse.Namespace) -> int:
+    from arc.config import get_settings
+    from arc.ingest.channels import default_registry
+    from arc.ingest.channels.briefs import (
+        fixture_llm,
+        load_channel_fixture,
+        process_new_videos,
+    )
+    from arc.ingest.llm import HermesScoutLLM
+    from arc.ingest.youtube import fetch_youtube
+    from arc.store.db import connect
+    from arc.store.migrate import migrate
+
+    _log_to_stderr()
+    settings = get_settings()
+    conn = connect(":memory:" if args.dry_run else args.db)
+    migrate(conn)
+    registry = default_registry()
+
+    if args.dry_run:
+        proc = registry.for_slug("stockedup") or registry.default
+        load_channel_fixture(conn, proc)
+        new_docs = 1
+        llm = fixture_llm(proc)
+    else:
+        new_docs = len(fetch_youtube(conn, settings))
+        llm = HermesScoutLLM.from_settings(settings)
+
+    report: dict[str, object] = {"dry_run": args.dry_run, "new_videos": new_docs}
+    if args.process:
+        lookup = None if (args.dry_run or args.no_prices) else _market_price_lookup()
+        run = process_new_videos(conn, settings, llm, registry=registry, price_lookup=lookup)
+        report.update(
+            {
+                "processed": run.processed,
+                "stored": run.stored,
+                "skipped": run.skipped,
+                "failed": run.failed,
+                "briefs": [
+                    {
+                        "brief": r.brief.model_dump(mode="json"),
+                        "kept": r.kept,
+                        "dropped": r.dropped_by_reason,
+                        "dropped_items": [d.as_dict() for d in r.dropped],
+                        "sponsor_sentences_removed": r.sponsor_sentences_removed,
+                        "model": r.model,
+                    }
+                    for r in run.results
+                ],
+                "candidates": [c.model_dump(mode="json") for c in run.candidates],
+            }
+        )
+    sys.stdout.write(json.dumps(report, indent=2, default=str) + "\n")
+    return 1 if args.process and report.get("failed") and not report.get("processed") else 0
+
+
+def _brief(args: argparse.Namespace) -> int:
+    from arc.ingest.channels.briefs import active_briefs
+    from arc.store.db import connect
+    from arc.store.migrate import migrate
+
+    _log_to_stderr()
+    conn = connect(args.db)
+    migrate(conn)
+    briefs = active_briefs(conn, channel_slug=args.channel)
+    if args.channel:
+        payload: object = briefs[0].model_dump(mode="json") if briefs else None
+    else:
+        payload = [b.model_dump(mode="json") for b in briefs]
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+    return 0 if briefs else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = _make_parser()
@@ -348,6 +483,10 @@ def main(argv: list[str] | None = None) -> int:
         return _scan(args)
     if args.command == "chains":
         return _chains(args)
+    if args.command == "ingest":
+        return _ingest(args)
+    if args.command == "brief":
+        return _brief(args)
     if args.command == "history":
         from arc.data.history.cli import run_history
 

@@ -80,10 +80,10 @@ class TestMigration:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(halts)")}
         assert {"reason", "actor", "at", "cleared_at", "cleared_by", "kind"} <= cols
         assert "halted_at" not in cols and "resumed_at" not in cols
-        assert current_version(conn) == 4
+        assert current_version(conn) == 5
 
     def test_upgrade_preserves_active_v1_halt(self, db_path: Path) -> None:
-        """A halt written under schema v1 is still active after migrating to v4 (halts = 004)."""
+        """A halt written under schema v1 is still active after migrating to v5 (halts = 004)."""
         conn = connect(db_path)
         v1 = (REPO_ROOT / "arc/store/migrations/001_initial.sql").read_text()
         conn.executescript(v1)
@@ -93,7 +93,7 @@ class TestMigration:
             "'2026-10-08T14:00:00.000000Z', 'legacy', 'owner')"
         )
         conn.commit()
-        assert migrate(conn) == [2, 3, 4]
+        assert migrate(conn) == [2, 3, 4, 5]
         state = HaltSwitch(HaltRepo(conn)).state()
         assert state.halted
         (rec,) = state.active
