@@ -50,13 +50,15 @@ TTL = _dt.timedelta(seconds=1200)
 def arc_settings(monkeypatch: pytest.MonkeyPatch) -> ArcSettings:
     for var in ("ARC_AUTO_APPROVE", "ARC_APPROVER_SLACK_USER_IDS", "ARC_APPROVAL_TTL_SECONDS"):
         monkeypatch.delenv(var, raising=False)
-    return ArcSettings(_env_file=None)  # type: ignore[call-arg]
+    return ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
 
 
 @pytest.fixture(scope="module")
 def _pipeline_db() -> bytes:
     """One offline `arc propose --fixtures` run, serialised so each test gets a copy."""
-    conn, report = fixture_run(ArcSettings(_env_file=None), load_routines())  # type: ignore[call-arg]
+    conn, report = fixture_run(
+        ArcSettings(_env_file=None, account_profile="margin"), load_routines()
+    )  # type: ignore[call-arg]
     assert len(report.proposals) == 1
     return conn.serialize()
 
@@ -173,7 +175,8 @@ class TestLayout:
         summary = blocks[1]["elements"][0]["text"]
         assert summary == (  # item 1: sentence case, Net EV, x14, gate
             "Credit 1.66 · Max gain $165.55 · Max loss $334.45 · PoP 62% · "
-            "Net EV $9.22 managed / $32.36 hold · x14 · :white_check_mark: Gate PASS"
+            "Net EV $9.22 managed / $32.36 hold · x14 · Account margin · "
+            ":white_check_mark: Gate PASS"
         )
 
     def test_trail_attributes_each_persona(self, conn: sqlite3.Connection) -> None:
@@ -442,7 +445,7 @@ class TestDecide:
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ARC_APPROVER_SLACK_USER_IDS", f"{STRANGER}, U0OTHER")
-        s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+        s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
         assert s.approver_slack_user_ids == [STRANGER, "U0OTHER"]
         svc = ApprovalService(conn, s, RecordingPoster())
         svc.publish_pending(NOW)
@@ -539,7 +542,7 @@ class TestTTL:
 
     def test_ttl_comes_from_config(self, _pipeline_db: bytes, monkeypatch) -> None:  # noqa: ANN001
         monkeypatch.setenv("ARC_APPROVAL_TTL_SECONDS", "300")
-        s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+        s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
         conn, _ = fixture_run(s, load_routines())
         conn.execute("UPDATE gate_decisions SET token = 'tok'")
         conn.commit()
@@ -559,7 +562,7 @@ class TestTTL:
     @given(offset=st.integers(min_value=-60, max_value=3 * 1200))
     def test_click_accepted_iff_before_expiry(self, _pipeline_db: bytes, offset: int) -> None:
         conn = _db(_pipeline_db)
-        s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+        s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
         svc = ApprovalService(conn, s, LogCardPoster())
         svc.publish_pending(NOW)
         ph = _phash(conn)
@@ -584,7 +587,7 @@ class TestAutoApprove:
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ARC_AUTO_APPROVE", "true")
-        s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+        s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
         rep = ApprovalService(conn, s, RecordingPoster()).publish_pending(NOW)
         ph = _phash(conn)
         assert rep.auto_approved == [ph]
@@ -595,7 +598,7 @@ class TestAutoApprove:
     def test_not_for_informational_cards(self, _pipeline_db: bytes, monkeypatch) -> None:  # noqa: ANN001
         monkeypatch.setenv("ARC_AUTO_APPROVE", "true")
         conn = _db(_pipeline_db, token=None)
-        s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+        s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
         assert ApprovalService(conn, s, RecordingPoster()).publish_pending(NOW).auto_approved == []
         assert _approvals(conn) == []
 
@@ -613,7 +616,7 @@ def test_approval_record_satisfies_submit(
 
     secret = "s" * 40
     monkeypatch.setenv("ARC_GATE_SECRET", secret)
-    s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+    s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
     p = _proposal(conn)
     ph = proposal_hash(p)
     decision = issue_token(
@@ -708,7 +711,7 @@ class TestCLI:
         from arc.cli import main
 
         with structlog.testing.capture_logs() as logs:
-            assert main(["propose", "--fixtures", "--json"]) == 0
+            assert main(["propose", "--fixtures", "--json", "--profile", "margin"]) == 0
         out = json.loads(capsys.readouterr().out)
         assert len(out["approvals"]["published"]) == 1
         pub = next(e for e in logs if e["event"] == "approvals.published")

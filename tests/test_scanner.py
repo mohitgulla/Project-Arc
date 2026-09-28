@@ -24,6 +24,7 @@ from arc.data.base import UnderlyingQuote as Quote
 from arc.data.recorded import SPY_CHAIN_FIXTURE, RecordedMarketData, load_recording
 from arc.pricing.bs import BSMInputs, OptionKind, delta, price
 from arc.scanner import (
+    CREDIT_STRATEGIES,
     LiquidityRules,
     RankBy,
     Reject,
@@ -412,7 +413,7 @@ class TestScanRecordedSpy:
         keys = [c.credit_width for c in spy_result.candidates]
         assert keys == sorted(keys, reverse=True)
         strategies = {c.strategy for c in spy_result.candidates}
-        assert strategies == set(ScanStrategy)
+        assert strategies == set(CREDIT_STRATEGIES)  # ScanParams() default: the credit set
         for c in spy_result.candidates:
             assert_defined_risk(c.structure)
             assert 30 <= c.dte <= 45
@@ -607,8 +608,9 @@ class TestParams:
             ScanParams(strategies=[])
 
     def test_from_settings(self) -> None:
-        s = get_settings(scanner_wing_width=10.0, dte_min=21, dte_max=50)
+        s = get_settings(scanner_wing_width=10.0, dte_min=21, dte_max=50, account_profile="margin")
         p = ScanParams.from_settings(s, target_delta=0.25, dte_min=None)
+        assert p.strategies == list(CREDIT_STRATEGIES)  # margin profile's stance map
         assert p.wing_width == 10.0
         assert p.target_delta == 0.25
         assert (p.dte_min, p.dte_max) == (21, 50)  # None override keeps the setting
@@ -627,14 +629,14 @@ class TestCli:
         rc = main(
             [
                 "chains", "SPY", "--dte", "30-45", "--delta", "20", "--fixture", "spy",
-                "--iv-history-dir", str(tmp_path), "--top", "3",
+                "--iv-history-dir", str(tmp_path), "--top", "3", "--profile", "margin",
             ]
         )  # fmt: skip
         out = capsys.readouterr().out
         assert rc == 0
         assert "SPY spot 771.34" in out
         assert "IVR n/a" in out
-        assert "1  iron_condor 2026-10-30  33d  740/745/797/802" in out
+        assert "1  iron_condor     2026-10-30  33d  740/745/797/802" in out
         assert out.count("iron_condor") == 3
 
     def test_scan_fixture_json_and_record_iv(self, capsys, tmp_path) -> None:  # noqa: ANN001
@@ -739,3 +741,99 @@ class TestAlpacaEnrichment:
         md = AlpacaMarketData(option_client=option, stock_client=MagicMock())
         assert md.option_chain("SPY", dt.date(2026, 10, 1), dt.date(2026, 10, 30)) == []
         assert option.get_option_chain.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Debit strategies (D25, E3.4)
+# ---------------------------------------------------------------------------
+
+
+class TestDebitStrategies:
+    AS_OF = dt.date(2026, 9, 27)
+
+    def _scan(self, spy: RecordedMarketData, *strategies: ScanStrategy, **kw: object):  # noqa: ANN202
+        params = ScanParams(strategies=list(strategies), top=50, **kw)  # type: ignore[arg-type]
+        return scan(spy, "SPY", params, as_of=self.AS_OF)
+
+    def test_bull_call_debit(self, spy: RecordedMarketData) -> None:
+        r = self._scan(spy, ScanStrategy.BULL_CALL_DEBIT)
+        assert r.candidates
+        for c in r.candidates:
+            assert c.strategy is ScanStrategy.BULL_CALL_DEBIT
+            long_leg, short_leg = c.structure.legs
+            assert long_leg.side.value == "long" and short_leg.side.value == "short"
+            lk = parse_occ(long_leg.occ_symbol).strike
+            sk = parse_occ(short_leg.occ_symbol).strike
+            assert lk < sk  # short is further OTM
+            assert c.structure.net_debit_credit > 0
+            assert c.credit < 0 and c.credit_width is None
+            assert 0.40 <= c.long_deltas[0] <= 0.70
+            assert 0.20 <= c.short_deltas[0] <= 0.35
+            assert float(c.structure.max_loss) == pytest.approx(
+                float(c.structure.net_debit_credit) * 100
+            )
+            assert c.ev_ratio == pytest.approx(c.ev_proxy / float(c.structure.max_loss), abs=1e-3)
+            assert_defined_risk(c.structure)
+        ratios = [c.ev_ratio for c in r.candidates]
+        assert ratios == sorted(ratios, reverse=True)
+
+    def test_bear_put_debit(self, spy: RecordedMarketData) -> None:
+        r = self._scan(spy, ScanStrategy.BEAR_PUT_DEBIT)
+        assert r.candidates
+        for c in r.candidates:
+            long_leg, short_leg = c.structure.legs
+            assert parse_occ(long_leg.occ_symbol).kind.value == "p"
+            assert parse_occ(long_leg.occ_symbol).strike > parse_occ(short_leg.occ_symbol).strike
+            assert c.structure.net_debit_credit > 0
+
+    def test_long_singles(self, spy: RecordedMarketData) -> None:
+        r = self._scan(spy, ScanStrategy.LONG_CALL, ScanStrategy.LONG_PUT)
+        assert {c.strategy for c in r.candidates} == {ScanStrategy.LONG_CALL, ScanStrategy.LONG_PUT}
+        for c in r.candidates:
+            assert len(c.structure.legs) == 1 and c.width is None and c.short_deltas == []
+            assert 0.40 <= c.long_deltas[0] <= 0.70
+            assert float(c.structure.max_loss) == pytest.approx(
+                float(c.structure.net_debit_credit) * 100
+            )
+
+    def test_debit_width_target(self, spy: RecordedMarketData) -> None:
+        r = self._scan(spy, ScanStrategy.BULL_CALL_DEBIT, debit_width=10.0)
+        assert r.candidates
+        assert all(5.0 <= (c.width or 0) <= 20.0 for c in r.candidates)
+
+    def test_mixed_credit_first_then_debit(self, spy: RecordedMarketData) -> None:
+        r = self._scan(spy, ScanStrategy.BULL_PUT, ScanStrategy.LONG_CALL)
+        kinds = [c.credit_width is None for c in r.candidates]
+        assert kinds == sorted(kinds)  # credit (False) before debit (True)
+        ev = self._scan(spy, ScanStrategy.BULL_PUT, ScanStrategy.LONG_CALL, rank_by=RankBy.EV)
+        evs = [c.ev_proxy for c in ev.candidates]
+        assert evs == sorted(evs, reverse=True)
+
+    def test_bad_debit_band_rejected(self) -> None:
+        with pytest.raises(ValueError, match="long target delta"):
+            ScanParams(long_target_delta=0.9)
+
+    def test_profile_sets_default_strategies(self) -> None:
+        s = get_settings(account_profile="cash_debit")
+        p = ScanParams.from_settings(s)
+        assert p.strategies == [
+            ScanStrategy.BULL_CALL_DEBIT,
+            ScanStrategy.LONG_CALL,
+            ScanStrategy.BEAR_PUT_DEBIT,
+            ScanStrategy.LONG_PUT,
+        ]
+        assert (p.dte_min, p.dte_max) == (30, 60)
+
+    def test_cli_debit_table(self, capsys, tmp_path) -> None:  # noqa: ANN001
+        from arc.cli import main
+
+        rc = main(
+            ["chains", "SPY", "--fixture", "spy", "--iv-history-dir", str(tmp_path), "--top", "3",
+             "--profile", "cash_debit"]
+        )  # fmt: skip
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "profile cash_debit" in out
+        assert "db " in out and "ev/L" in out
+        assert "iron_condor" not in out
+        assert main(["chains", "SPY", "--fixture", "spy", "--profile", "nope"]) == 2
