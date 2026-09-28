@@ -25,7 +25,7 @@ import pandas as pd
 import structlog
 
 from arc.backtest.costs import CostModel
-from arc.backtest.engine import prepare_chains, run_backtest, trades_frame
+from arc.backtest.engine import ExitPolicyMode, prepare_chains, run_backtest, trades_frame
 from arc.backtest.metrics import (
     breakdown,
     compute_metrics,
@@ -161,6 +161,7 @@ def run_report(
     train_months: int = 6,
     test_months: int = 2,
     sensitivity: bool = True,
+    exit_policy: ExitPolicyMode = "hold_to_expiry",
 ) -> dict[str, pd.DataFrame]:
     """Run baseline + D4 grid on cached data, write CSVs and ``report.md``; return frames."""
     cost = cost or CostModel()
@@ -178,7 +179,13 @@ def run_report(
                     raw[t], closes, cost=c, r=r, dte_min=1, dte_max=60
                 )
             chains = chain_cache[key]
-            frames.append(trades_frame(run_backtest(chains, closes, specs, underlying=t, cost=c)))
+            frames.append(
+                trades_frame(
+                    run_backtest(
+                        chains, closes, specs, underlying=t, cost=c, exit_policy=exit_policy
+                    )
+                )
+            )
         return pd.concat(frames, ignore_index=True) if frames else trades_frame([])
 
     base = run(baseline_specs(), cost)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from arc.exits.model import ExitSummary
 from arc.models import CatalystType, Stance
 
 # ---------------------------------------------------------------------------
@@ -117,6 +118,10 @@ class QuantStructureOut(BaseModel):
     cost_bps: float = Field(..., ge=0.0, description="Estimated round-trip cost in basis points")
     confidence: float = Field(..., ge=0.0, le=1.0)
     rationale: str = Field(..., description="Why this structure for this candidate")
+    exits: ExitSummary | None = Field(
+        None,
+        description="Static vs managed-exit PoP/net EV (E2.4). Filled by the pipeline; leave null.",
+    )
 
 
 class QuantOutput(BaseModel):

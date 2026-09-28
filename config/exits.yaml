@@ -1,0 +1,69 @@
+# Exit policy (PLAN D19, D23; card E2.4). Validated by arc.exits.policy.
+#
+# ONE place for exit rules. The proposal card (E6.1a), the Investor's live exits
+# (E6.2 base rules, E6.4 profit-taking / close-to-reallocate, via
+# arc.exits.evaluate_position) and the backtester (E7.2, exit_policy: policy)
+# all read this file. Changing a threshold here needs no code change.
+#
+# Semantics (per share, P&L at mid vs the entry price; see arc/exits/policy.py):
+#   take_profit_pct_of_max_gain  credit: close when P&L >= pct x max gain
+#                                (0.50 on a $1.66 credit = $0.83 debit to close)
+#   take_profit_pct_of_debit     debit: close when P&L >= pct x debit paid
+#   stop.basis credit_multiple   close when loss >= value x credit (2.0 = 2x credit)
+#   stop.basis pct_max_loss      close when loss >= value x max loss
+#   stop.basis pct_debit         close when loss >= value x debit (0.5 = half the debit)
+#   close_at_dte                 close once DTE <= this
+#   time_adjusted_targets        take-profit pct once DTE <= dte_lte (D19 decay target)
+# Checked daily in the order: stop -> take profit -> DTE exit.
+#
+# STOP DEFAULTS ARE PROVISIONAL: the stop is the owner's open call (E2.4/E6.2).
+# Until answered: credit_multiple 2.0 (credit) and pct_debit 0.5 (debit), as E6.2
+# proposed. Time-adjusted targets are empty until the owner sets them.
+
+model:
+  n_paths: 20000
+  seed: 20260927
+  iv_model:
+    kind: constant          # or mean_reverting (needs long_run, half_life_days)
+
+pipeline:
+  rank_menu_by_managed_net_ev: false   # owner decision pending; off by default
+
+default:
+  take_profit_pct_of_max_gain: 0.50
+  take_profit_pct_of_debit: 1.00
+  stop: null
+  close_at_dte: 7
+  time_adjusted_targets: []
+
+kinds:
+  vertical_credit:
+    take_profit_pct_of_max_gain: 0.50
+    take_profit_pct_of_debit: null
+    stop: {basis: credit_multiple, value: 2.0}
+    close_at_dte: 7
+    time_adjusted_targets: []
+  iron_condor:
+    take_profit_pct_of_max_gain: 0.50
+    take_profit_pct_of_debit: null
+    stop: {basis: credit_multiple, value: 2.0}
+    close_at_dte: 7
+    time_adjusted_targets: []
+  vertical_debit:
+    take_profit_pct_of_max_gain: null
+    take_profit_pct_of_debit: 1.00
+    stop: {basis: pct_debit, value: 0.5}
+    close_at_dte: 7
+    time_adjusted_targets: []
+  long_call:
+    take_profit_pct_of_max_gain: null
+    take_profit_pct_of_debit: 1.00
+    stop: {basis: pct_debit, value: 0.5}
+    close_at_dte: 7
+    time_adjusted_targets: []
+  long_put:
+    take_profit_pct_of_max_gain: null
+    take_profit_pct_of_debit: 1.00
+    stop: {basis: pct_debit, value: 0.5}
+    close_at_dte: 7
+    time_adjusted_targets: []

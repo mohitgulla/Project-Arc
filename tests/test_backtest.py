@@ -762,3 +762,64 @@ class TestReport:
         )
         assert rc == 0
         assert (tmp_path / "report.md").is_file()
+
+
+# ---------------------------------------------------------------------------
+# E2.4: exit_policy hook (config/exits.yaml rules on daily EOD marks)
+# ---------------------------------------------------------------------------
+
+
+class TestExitPolicyHook:
+    def _run(self, synth_env: dict[str, object], **kw: object) -> pd.DataFrame:
+        store: ParquetHistoryStore = synth_env["store"]  # type: ignore[assignment]
+        closes: pd.Series = synth_env["closes"]  # type: ignore[assignment]
+        cost = CostModel()
+        chains = prepare_chains(store.read("synth", "TST"), closes, cost=cost, r=R)
+        specs = d4_specs((0.20,))
+        days = sorted(chains)[:30]
+        trades = run_backtest(
+            chains, closes, specs, underlying="TST", cost=cost, entry_dates=days, **kw
+        )
+        return trades_frame(trades)
+
+    def test_default_is_hold_to_expiry(self, synth_env: dict[str, object]) -> None:
+        df = self._run(synth_env)
+        assert set(df["exit_reason"]) == {"expiry"}
+        assert df["exit_date"].isna().all()
+
+    def test_policy_mode_closes_early(self, synth_env: dict[str, object]) -> None:
+        from arc.exits import load_exit_config
+
+        hold = self._run(synth_env)
+        managed = self._run(synth_env, exit_policy="policy", policies=load_exit_config())
+        assert len(managed) == len(hold)  # same entries, only exits differ
+        reasons = set(managed["exit_reason"])
+        assert reasons & {"take_profit", "stop", "dte_exit"}
+        early = managed[managed["exit_reason"] != "expiry"]
+        assert (early["exit_date"] > early["entry_date"]).all()
+        assert (early["exit_date"] < early["expiration"]).all()
+        # early closes pay a commission on every leg and slippage on the way out
+        assert (early["pnl"] <= early["pnl_mid"] + 1e-9).all()
+        assert (managed["pnl"] >= -managed["max_loss"] - 1e-6).all()
+
+    def test_policy_thresholds_respected(self, synth_env: dict[str, object]) -> None:
+        from arc.exits import ExitConfig, ExitPolicy
+
+        # take profit only, at 30% of max gain / 30% of debit; nothing else
+        pol = ExitPolicy(
+            take_profit_pct_of_max_gain=0.3,
+            take_profit_pct_of_debit=0.3,
+            stop=None,
+            close_at_dte=None,
+        )
+        df = self._run(synth_env, exit_policy="policy", policies=ExitConfig(default=pol))
+        assert set(df["exit_reason"]) <= {"take_profit", "expiry"}
+        tp = df[df["exit_reason"] == "take_profit"]
+        assert len(tp) > 0
+        # at mid, a take-profit close realises >= 30% of the mid entry economics
+        credit = tp["entry_net_mid"] < 0
+        assert (tp.loc[credit, "pnl_mid"] > 0).all()
+
+    def test_unknown_mode_rejected(self, synth_env: dict[str, object]) -> None:
+        with pytest.raises(ValueError, match="exit_policy"):
+            self._run(synth_env, exit_policy="d19")

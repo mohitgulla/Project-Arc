@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic field
 from arc.features.snapshot import FeatureSnapshot
 from arc.models import Candidate, ChannelBrief, Proposal
 from arc.personas.schemas import AuditorOutput, DirectorOutput, QuantOutput, RiskOutput
@@ -76,9 +77,15 @@ class RiskReviewPayload(RiskOutput):
 
 
 class ProposalPayload(Proposal):
-    """Full trade proposal (pre-gate)."""
+    """Full trade proposal (pre-gate), plus the E2.4 exit model for the card.
+
+    ``exit_model`` is context only: it is not part of :class:`Proposal`, so it never
+    enters the gate's proposal hash.
+    """
 
     model_config = _FORBID
+
+    exit_model: ExitModelResult | None = None
 
 
 class JournalPayload(AuditorOutput):
