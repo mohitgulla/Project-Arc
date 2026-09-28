@@ -15,7 +15,7 @@ Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a 
 |---|----------|--------|-----|
 | D1 | Phase-1 broker | **Alpaca paper account** (official options API, `mleg` multi-leg orders, official MCP server v2, free indicative options feed) | Brief named Robinhood, but Robinhood's official Agentic MCP (`agent.robinhood.com/mcp/trading`, May 2026) has **no paper mode, single-leg only, localhost-only OAuth**; `robin_stocks` is ToS-risk. Broker is an adapter interface so venues can be added later. Alpaca has no index options (SPX) — Section 1256 treatment is deferred. |
 | D2 | Persona presentation in Slack | **Single Hermes bot** (`hermes` app, user `U0C4UH9TT5X`) posting persona-labelled messages in threads | One credential; personas are internal roles (skills + JSON schemas). Can split into per-persona profiles later without changing the pipeline. |
-| D3 | Compute | **Cloud-only now** (Claude subscription + a fallback provider for rate limits); local models when the 128 GB Mac Studio arrives | Current Mac is M6 / 16 GB. Qwen3.8-Flash-Next is real (2026-08-26) but needs ~99 GB. |
+| D3 | Compute | **Cloud-only now**: every card implements against the cloud frontier model paths (Anthropic subscription, tiers per D8 / `config/llm_routing.yaml`); no local-model code, servers or benchmarks until then. Local models (E8.4) stay **blocked until the 128 GB Mac Studio arrives** and are picked up then. Fallback provider: none for now (D8). | Owner reconfirmed 2026-09-27: park E8.4, no hardware-independent prep card. | Current Mac is M6 / 16 GB. Qwen3.8-Flash-Next is real (2026-08-26) but needs ~99 GB. |
 | D4 | Phase-1 strategy scope | **Defined-risk only**: vertical spreads, iron condors, plus single-leg long calls/puts (debit). Liquid ETFs + ~20 large caps. 30–45 DTE entries, 16–30Δ short strikes. Brief's limits as defaults. | Evidence: management rules don't beat hold-to-expiry statistically; 21-DTE exits only matter for undefined-risk; defined-risk caps tails structurally. |
 | D5 | Kanban execution | **Auto-dispatch**: worker profile claims cards, implements in git worktrees, PR completion contract, review gate before merge. `max_in_progress: 1`. | Owner choice. Board is released by completing the P0 gate card. |
 | D6 | Python | **3.12 via uv** (`~/.hermes/tools/uv-0.12.3`) | All required wheels resolve on 3.12 and 3.13; OpenBB (optional) pins ≤3.12. |
@@ -182,7 +182,7 @@ AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits a
 | **3 Ingestion + Personas** (E4, E5) | Scout→Director→Quant→Risk pipeline, cron | dry-run produces a Proposal end-to-end with no broker call |
 | **4 Approval + Execution** (E6) | Slack card → approval → paper order → fills → reconcile | first approved paper trade logged with full audit trail |
 | **5 Evaluation** (E7) | cost-aware backtest, paper scorecard | 4 weeks of paper results + written go/no-go for anything further |
-| **6 Ops** (E8) | fallback provider, monitoring, control tower, local models | ongoing |
+| **6 Ops** (E8) | model routing (fallback later), monitoring, control tower, local models (blocked on Mac Studio) | ongoing |
 
 ---
 
@@ -239,7 +239,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E8.1 Per-persona model routing (fallback provider: later, note only) ← P0
 - E8.2 Monitoring — heartbeat, gateway health, log rotation, alerts ← E5.3
 - E8.3 Streamlit control tower over Tailscale ← E6.3
-- E8.4 Local model path (Mac Studio) — deferred ← E8.1
+- E8.4 Local model path (Mac Studio) — blocked until hardware arrives (D3) ← E8.1
 
 ---
 
