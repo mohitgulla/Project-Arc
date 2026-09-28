@@ -1,0 +1,36 @@
+# StockedUp (@StockedUp) — daily next-session outlook, posted after the close.
+slug: stockedup
+channel_id: UC-m6zNItyoDk5lSykDlhE4Q
+display_name: StockedUp
+url: https://www.youtube.com/channel/UC-m6zNItyoDk5lSykDlhE4Q
+cadence: trading_daily
+horizon: next_session
+publish_window_et: "16:00-22:00"
+focus:
+  - market_bias
+  - levels
+  - calls
+  - catalysts
+  - risk_flags
+trust_weight: 0.5
+guidelines_version: "stockedup-2026-09-27.2"
+# Active from publish until the next video, hard cap 2 sessions (D14).
+max_active_sessions: 2
+# Sponsor / self-promo reads stripped before extraction (in addition to the
+# shared defaults in base.py: sponsor, "use code", subscribe, patreon, ...).
+sponsor_patterns:
+  - '\bbookmap\b'
+  - '\bmoomoo\b'
+  - '\bbig ?money\b.*\bcode\b'
+  - '\bcode\b.*\bbig ?money\b'
+  - '\bdiscord\b'
+  - '\bmember of the day\b'
+  - '\b(?:my|our|the) (?:trading |options )?course\b'
+  - '\bfree stocks?\b'
+hedge_words:
+  - could
+  - might
+  - may
+  - watch
+  - on the radar
+  - if and only if

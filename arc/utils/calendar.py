@@ -75,19 +75,47 @@ def is_open(dt: _dt.datetime | None = None) -> bool:
 
 
 def next_session(d: _dt.date | None = None) -> _dt.date:
-    """Return the next trading session *after* *d* (default today ET)."""
+    """Return the next trading session *after* *d* (default today ET).
+
+    *d* may be a weekend or holiday; the first session strictly after it is
+    returned.
+    """
     if d is None:
         d = now_et().date()
-    ts = _cal().next_session(_to_ts(d))
-    return ts.date()
+    ts = _to_ts(d)
+    cal = _cal()
+    if cal.is_session(ts):
+        return cal.next_session(ts).date()
+    return cal.date_to_session(ts, direction="next").date()
 
 
 def previous_session(d: _dt.date | None = None) -> _dt.date:
-    """Return the most recent trading session *before* *d* (default today ET)."""
+    """Return the most recent trading session *before* *d* (default today ET).
+
+    *d* may be a weekend or holiday; the last session strictly before it is
+    returned.
+    """
     if d is None:
         d = now_et().date()
-    ts = _cal().previous_session(_to_ts(d))
-    return ts.date()
+    ts = _to_ts(d)
+    cal = _cal()
+    if cal.is_session(ts):
+        return cal.previous_session(ts).date()
+    return cal.date_to_session(ts, direction="previous").date()
+
+
+def add_sessions(d: _dt.date, n: int) -> _dt.date:
+    """Return the session *n* trading sessions after session-or-date *d* (n >= 0).
+
+    ``add_sessions(d, 0)`` is *d* when it is a session, else the next session.
+    """
+    if n < 0:
+        msg = "n must be >= 0"
+        raise ValueError(msg)
+    cur = d if is_session(d) else next_session(d)
+    for _ in range(n):
+        cur = next_session(cur)
+    return cur
 
 
 def sessions_between(start: _dt.date, end: _dt.date) -> list[_dt.date]:
@@ -115,6 +143,22 @@ def is_early_close(d: _dt.date | None = None) -> bool:
     if not cal.is_session(ts):
         return False
     return bool(ts in cal.early_closes)
+
+
+def session_open(d: _dt.date | None = None) -> _dt.datetime:
+    """Return the open time (ET) for session *d*.
+
+    Raises ValueError if *d* is not a trading session.
+    """
+    if d is None:
+        d = now_et().date()
+    ts = _to_ts(d)
+    cal = _cal()
+    if not cal.is_session(ts):
+        msg = f"{d} is not a trading session"
+        raise ValueError(msg)
+    open_ts: pd.Timestamp = cal.session_open(ts)
+    return open_ts.to_pydatetime().astimezone(ET)
 
 
 def session_close(d: _dt.date | None = None) -> _dt.datetime:

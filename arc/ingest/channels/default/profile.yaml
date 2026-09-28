@@ -1,0 +1,19 @@
+# Fallback processor for YouTube channels without their own profile.
+slug: default
+channel_id: null
+display_name: Unprofiled YouTube channel
+url: ""
+cadence: irregular
+horizon: multi_day
+publish_window_et: ""
+focus:
+  - market_bias
+  - levels
+  - calls
+  - catalysts
+  - risk_flags
+# Unknown sources get less weight than profiled ones.
+trust_weight: 0.3
+guidelines_version: "default-2026-09-27.1"
+max_active_sessions: 2
+sponsor_patterns: []

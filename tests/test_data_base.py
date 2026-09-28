@@ -11,8 +11,48 @@ from arc.data.base import (
     OptionContract,
     OptionGreeks,
     UnderlyingQuote,
+    reference_price,
 )
 from arc.utils.calendar import ET
+
+
+class _StubProvider:
+    def __init__(self, bid: float, ask: float, closes: list[float]) -> None:
+        self.bid, self.ask, self.closes = bid, ask, closes
+        self.bar_calls = 0
+
+    def option_chain(self, underlying, exp_start, exp_end):  # noqa: ANN001, ANN201
+        return []
+
+    def underlying_quote(self, symbol: str) -> UnderlyingQuote:
+        ts = dt.datetime(2026, 9, 25, 16, tzinfo=ET)
+        mid = (self.bid + self.ask) / 2
+        return UnderlyingQuote(symbol=symbol, bid=self.bid, ask=self.ask, mid=mid, timestamp=ts)
+
+    def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+        self.bar_calls += 1
+        ts = dt.datetime(2026, 9, 25, tzinfo=ET)
+        return [
+            HistoryBar(timestamp=ts, open=c, high=c, low=c, close=c, volume=1.0)
+            for c in self.closes
+        ]
+
+
+class TestReferencePrice:
+    today = dt.date(2026, 9, 27)
+
+    def test_two_sided_quote_uses_mid(self) -> None:
+        p = _StubProvider(99.0, 101.0, [50.0])
+        assert reference_price(p, "X", today=self.today) == 100.0
+        assert p.bar_calls == 0
+
+    def test_one_sided_quote_falls_back_to_close(self) -> None:
+        # Off-hours IEX: ask=0 would halve the mid.
+        assert reference_price(_StubProvider(70.44, 0.0, [73.9]), "X", today=self.today) == 73.9
+
+    def test_no_data_returns_none(self) -> None:
+        assert reference_price(_StubProvider(0.0, 0.0, []), "X", today=self.today) is None
+        assert reference_price(_StubProvider(0.0, 0.0, [0.0]), "X", today=self.today) is None
 
 
 def test_market_data_provider_is_runtime_checkable() -> None:
