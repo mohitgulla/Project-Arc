@@ -32,6 +32,20 @@ model:
 pipeline:
   rank_menu_by: scanner   # scanner (credit_width) | managed_net_ev | rorc_day | vrp; owner decision pending
 
+# E6.4 position manager (D19): the intraday positions.evaluate step reviews every
+# open position against the per-kind rules below plus this remaining-EV floor.
+#   remaining_ev_floor_per_bp  suggest a close once remaining net EV (hold under this
+#                              policy vs close now, after spread + fees) per $ of
+#                              buying power held is below this. null = off.
+#                              -0.01 = holding is expected to lose > 1% of the BP it
+#                              ties up vs closing now. 0.0 is too tight: at IV paths a
+#                              fresh position's remaining EV is ~0 minus costs, so it
+#                              would flag nearly every position.
+# Stated default, owner's call (ask in the E6.4 PR).
+positions:
+  remaining_ev_floor_per_bp: -0.01
+  kinds: {}
+
 default:
   take_profit_pct_of_max_gain: 0.50
   take_profit_pct_of_debit: 1.00

@@ -1,0 +1,35 @@
+{
+  "note": "E6.4 fixture book on the bundled SPY recording (2026-09-25 16:00 ET, spot ~771.3). entry_net is per share (+ debit / - credit).",
+  "positions": [
+    {
+      "id": "fx-bull-put",
+      "ticker": "SPY",
+      "legs": [["SPY261030P00711000", "short", 1], ["SPY261030P00710000", "long", 1]],
+      "entry_net": -0.90,
+      "contracts": 2
+    },
+    {
+      "id": "fx-call-debit",
+      "ticker": "SPY",
+      "legs": [["SPY261030C00775000", "long", 1], ["SPY261030C00785000", "short", 1]],
+      "entry_net": 2.00,
+      "contracts": 1
+    },
+    {
+      "id": "fx-long-call",
+      "ticker": "SPY",
+      "legs": [["SPY261030C00775000", "long", 1]],
+      "entry_net": 11.415,
+      "contracts": 1
+    }
+  ],
+  "candidates": [
+    {
+      "ref": "fx-cand-put-debit",
+      "ticker": "SPY",
+      "legs": [["SPY261030P00760000", "long", 1], ["SPY261030P00755000", "short", 1]],
+      "rejected_for": "buying_power",
+      "violation_codes": ["per_underlying_limit"]
+    }
+  ]
+}

@@ -47,9 +47,10 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     )
     p.add_argument(
         "--exit-policy",
-        choices=["hold_to_expiry", "policy"],
+        choices=["hold_to_expiry", "policy", "d19_rules"],
         default="hold_to_expiry",
-        help="hold_to_expiry (default) or policy = config/exits.yaml rules (E2.4, D23)",
+        help="hold_to_expiry (default) or policy / d19_rules (same thing) = config/exits.yaml "
+        "rules (E2.4, D19, D23)",
     )
 
 

@@ -364,6 +364,10 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "investor": "arc.routines.investor:investor_step",
     # E6.3 Auditor: post-market reconcile (broker vs local), snapshots, tax lots, card
     "auditor": "arc.routines.auditor:auditor_step",
+    # E6.4 position manager: review -> exits -> close-to-reallocate (arc/positions/steps.py)
+    "positions.evaluate": "arc.positions.steps:evaluate_step",
+    "investor.exits": "arc.positions.steps:exits_step",
+    "risk.reallocate": "arc.positions.steps:reallocate_step",
 }
 
 

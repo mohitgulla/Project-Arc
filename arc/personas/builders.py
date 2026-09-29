@@ -412,6 +412,85 @@ Respond with JSON matching the QuantOutput schema:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class RiskSwapInput:
+    """Input context for the Risk close-to-reallocate review (E6.4)."""
+
+    suggestions_json: str  # deterministic SwapSuggestion rows, each with its swap_id
+    reviews_json: str  # position_review entries of the positions to be closed
+    portfolio_json: str
+    account_equity: float
+    scan_date: str
+
+
+def risk_swap_input_from_context(
+    snapshot: ContextSnapshot,
+    *,
+    suggestions_json: str,
+    portfolio_json: str,
+    account_equity: float,
+    scan_date: str,
+) -> RiskSwapInput:
+    """Risk reads the active ``position_review`` entries (all subjects)."""
+    reviews = [e.payload for e in snapshot.of_kind("position_review")]
+    return RiskSwapInput(
+        suggestions_json=suggestions_json,
+        reviews_json=_dump(reviews),
+        portfolio_json=portfolio_json,
+        account_equity=account_equity,
+        scan_date=scan_date,
+    )
+
+
+def build_risk_swap_prompt(inp: RiskSwapInput) -> str:
+    """Build the Risk prompt that reviews close-to-reallocate swaps (veto only)."""
+    return f"""{_SYSTEM_PREAMBLE}
+{_ADVISORY_DISCLAIMER}
+## Role: Risk (Close-to-reallocate review)
+Slack label: [Risk]
+
+A deterministic scorer found open positions whose remaining expected value per
+dollar of buying power is clearly worse than a new trade the gate rejected only
+for capacity (buying power, per-underlying budget or the open-position cap).
+Each suggestion closes one open position first; the new trade is proposed only
+after that close fills. Both still go through the risk gate and approval.
+
+Review each suggestion and APPROVE or VETO it. Veto when, for example, the new
+trade duplicates exposure you already hold, an event (earnings, FOMC) makes the
+switch worse than the numbers show, or the open position's thesis is intact and
+close to paying off. You cannot add swaps or change sizes or prices.
+
+## Forbidden actions
+- Do NOT call any broker API or place any orders.
+- Do NOT override or bypass the risk gate.
+
+## Inputs
+
+### Suggested swaps (deterministic; edge = EV per $ of buying power, after costs)
+{inp.suggestions_json}
+
+### Reviews of the positions that would be closed
+{inp.reviews_json}
+
+### Current portfolio
+{inp.portfolio_json}
+
+### Account equity
+${inp.account_equity:,.2f}
+
+Date: {inp.scan_date}
+
+## Output format
+Respond with JSON matching the RiskSwapReview schema:
+{{
+  "verdicts": [
+    {{"swap_id": "...", "approve": true, "narrative": "..."}}
+  ],
+  "advisory_notes": "..."
+}}
+"""
+
+
 def build_risk_prompt(inp: RiskInput) -> str:
     """Build the Risk persona prompt.
 

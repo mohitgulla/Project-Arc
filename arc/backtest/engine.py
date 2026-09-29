@@ -75,7 +75,10 @@ __all__ = [
 
 MULT = 100.0
 
-ExitPolicyMode = Literal["hold_to_expiry", "policy"]
+ExitPolicyMode = Literal["hold_to_expiry", "policy", "d19_rules"]
+# "d19_rules" (E6.4 card name) = "policy": the same config/exits.yaml rules the live
+# position evaluator (arc.positions) and the Investor's exits use.
+_POLICY_MODES = ("policy", "d19_rules")
 
 # Backtest strategy kind → the structure kind whose ExitPolicy applies.
 STRUCTURE_KIND: dict[str, StructureKind] = {
@@ -396,10 +399,10 @@ def run_backtest(
     per-kind :class:`arc.exits.ExitPolicy` from *policies* (default:
     ``config/exits.yaml``) on each later session's marks (see module doc).
     """
-    if exit_policy not in ("hold_to_expiry", "policy"):
+    if exit_policy not in ("hold_to_expiry", *_POLICY_MODES):
         msg = f"unknown exit_policy {exit_policy!r}"
         raise ValueError(msg)
-    if exit_policy == "policy" and policies is None:
+    if exit_policy in _POLICY_MODES and policies is None:
         from arc.exits.policy import load_exit_config
 
         policies = load_exit_config()
@@ -429,7 +432,7 @@ def run_backtest(
                     skipped_open += 1
                     continue
                 t = None
-                if policies is not None and exit_policy == "policy":
+                if policies is not None and exit_policy in _POLICY_MODES:
                     rules = _rules_for(o, policies)
                     t = _managed_exit(o, rules, chains, all_days, closes, cost)
                 if t is None:

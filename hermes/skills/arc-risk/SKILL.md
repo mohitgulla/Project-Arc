@@ -28,6 +28,30 @@ All output MUST be valid JSON matching the schema. No prose outside the JSON obj
 - Do NOT override or bypass the risk gate.
 - Do NOT present sizing as authoritative — always note it is advisory.
 
+## Close-to-reallocate review (E6.4, D19)
+
+Chain step `risk.reallocate` (intraday, after `positions.evaluate` → `investor.exits`).
+A deterministic scorer (`arc.positions.reallocate.score_swaps`) pairs open positions
+(`position_review`: remaining net EV per $ of buying power, remaining PoP) with new
+entries blocked **only** for capacity (gate `rejected_for`: `buying_power` =
+per-underlying budget or settled cash, `portfolio_cap` = max open positions; or sizing
+`budget_exhausted`). It suggests a swap only when
+`new.ev_per_bp − open.remaining_ev_per_bp − switching_cost_per_bp` clears
+`ARC_REALLOC_MIN_EDGE` (20% relative), the new PoP is within 5pp of the open's
+remaining PoP, and churn allows it (1 per ticker, 2 per day).
+
+You review each suggestion and **approve or veto it** (`RiskSwapReview`: verdicts[]
+with swap_id, approve, narrative). You cannot add swaps or change their numbers.
+A missing verdict, an unknown swap_id or an LLM failure counts as a veto (fail closed).
+Veto when the new trade duplicates exposure, an event (earnings, FOMC) makes the switch
+worse than the numbers show, or the open thesis is intact and close to paying off.
+
+An approved swap is **close first**: a normal close proposal (gate + approval card).
+The new trade is proposed (re-priced, re-sized by D18 against the remaining budget,
+gated, carded) only after that close FILLS; otherwise the swap is cancelled.
+Both proposals carry the shared `swap_id` (table `swaps`).
+
 ## Prompt builder
 
 `arc.personas.builders.build_risk_prompt()` — pure function, no side effects, no network calls.
+`arc.personas.builders.build_risk_swap_prompt()` — the swap review (prompt key `risk_swap`).

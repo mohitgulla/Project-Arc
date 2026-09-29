@@ -190,6 +190,25 @@ class RiskOutput(BaseModel):
     )
 
 
+class SwapVerdict(BaseModel):
+    """Risk's verdict on one close-to-reallocate suggestion (E6.4, D19)."""
+
+    swap_id: str = Field(..., description="The suggestion's swap_id, copied verbatim")
+    approve: bool = Field(..., description="false = veto; the swap is dropped")
+    narrative: str = Field(..., description="Why, in one or two sentences (advisory)")
+
+
+class RiskSwapReview(BaseModel):
+    """Risk persona output for ``risk.reallocate``: a verdict per suggested swap.
+
+    Risk can only veto: a suggestion missing from ``verdicts`` counts as a veto,
+    and nothing here can add a swap or change its numbers (deterministic scorer).
+    """
+
+    verdicts: list[SwapVerdict] = Field(default_factory=list)
+    advisory_notes: str = Field("", description="Overall note on reallocating now")
+
+
 # ---------------------------------------------------------------------------
 # Investor — order plan for approved proposals
 # ---------------------------------------------------------------------------

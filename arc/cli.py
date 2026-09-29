@@ -235,6 +235,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_exits_parser(sub)
 
+    from arc.positions.cli import add_positions_parser
+
+    add_positions_parser(sub)
+
     from arc.tower.cli import add_tower_parser
 
     add_tower_parser(sub)
@@ -710,6 +714,12 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_exits(args)
+
+    if args.command == "positions":
+        from arc.positions.cli import run_positions
+
+        _log_to_stderr()
+        return run_positions(args)
 
     if args.command == "tower":
         from arc.tower.cli import run_tower
