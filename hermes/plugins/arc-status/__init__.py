@@ -281,7 +281,13 @@ def order_budget_line() -> str:
     cmd = [str(_arc_bin()), "budget", "status", "--json"]
     try:
         out = subprocess.run(
-            cmd, cwd=REPO_DIR, capture_output=True, text=True, timeout=BUDGET_TIMEOUT_S, check=False
+            cmd,
+            cwd=REPO_DIR,
+            env=_arc_env(),
+            capture_output=True,
+            text=True,
+            timeout=BUDGET_TIMEOUT_S,
+            check=False,
         )
         b = json.loads(out.stdout)
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
@@ -317,6 +323,21 @@ def _session(name: str) -> str:
 
 def _arc_bin() -> Path:
     return REPO_DIR / ".venv" / "bin" / "arc"
+
+
+# The gateway runs on Hermes's own Python and exports PYTHONPATH/PYTHONHOME for it.
+# Inherited by `arc`, they put Hermes's site-packages ahead of Arc's venv and the CLI
+# dies importing a foreign pydantic_core ("arc config exit 1"). Arc gets a clean env.
+_PY_ENV_PREFIXES = ("PYTHON", "VIRTUAL_ENV", "CONDA_", "UV_", "PIP_", "__PYVENV")
+
+
+def _arc_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """``os.environ`` minus Python/venv variables, with Arc's venv first on PATH."""
+    env = {k: v for k, v in (os.environ if base is None else base).items()
+           if not k.startswith(_PY_ENV_PREFIXES)}
+    venv_bin = str(REPO_DIR / ".venv" / "bin")
+    env["PATH"] = os.pathsep.join([venv_bin, env.get("PATH", "")]).rstrip(os.pathsep)
+    return env
 
 
 def parse_config(raw_args: str) -> list[str] | None:
@@ -363,7 +384,8 @@ def run_config(argv: list[str], actor: str) -> dict:
     cmd = [str(_arc_bin()), "config", *argv, "--json", "--actor", actor, "--source", "slack"]
     try:
         out = subprocess.run(
-            cmd, cwd=REPO_DIR, capture_output=True, text=True, timeout=CONFIG_TIMEOUT_S, check=False
+            cmd, cwd=REPO_DIR, env=_arc_env(), capture_output=True, text=True,
+            timeout=CONFIG_TIMEOUT_S, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         logger.error("arc-status: arc config failed: %s", exc)

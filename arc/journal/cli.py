@@ -21,6 +21,9 @@ from arc.journal.reasons import ReviewLabel, RootCause
 
 if TYPE_CHECKING:
     import argparse
+    import sqlite3
+
+    from arc.config import ArcSettings
 
 __all__ = ["add_journal_parser", "run_journal"]
 
@@ -52,9 +55,59 @@ def add_journal_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
     v.add_argument("--notes", default="")
     v.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
 
+    sc = jsub.add_parser("scorecard", help="Weekly paper scorecard (E7.3), from the audit store")
+    sc.add_argument(
+        "--week", default=None, help="Any date (YYYY-MM-DD, ET) in the week; default: this week"
+    )
+    sc.add_argument(
+        "--write",
+        default=None,
+        metavar="DIR",
+        help="Also write <DIR>/<monday>.md (e.g. docs/RESEARCH/weekly)",
+    )
+    sc.add_argument("--json", action="store_true", help="Print the Scorecard model as JSON")
+    sc.add_argument(
+        "--settle",
+        action="store_true",
+        help="Price D19 hold-to-expiry shadows from Alpaca daily bars (network, read-only)",
+    )
+    sc.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+
 
 def _out(lines: list[str]) -> None:
     sys.stdout.write("\n".join(lines) + "\n")
+
+
+def _scorecard(conn: sqlite3.Connection, args: argparse.Namespace, settings: ArcSettings) -> int:
+    """``arc journal scorecard``: print (and optionally write) the weekly scorecard."""
+    from arc.journal.scorecard import build_scorecard, render_markdown, week_window
+    from arc.routines.scorecard import budget_limits, report_path
+    from arc.utils.calendar import ET, now_et
+
+    now = now_et()
+    at = (
+        _dt.datetime.combine(_dt.date.fromisoformat(args.week), _dt.time(12), tzinfo=ET)
+        if args.week
+        else now
+    )
+    settle = None
+    if args.settle:
+        from arc.data.alpaca import AlpacaMarketData
+        from arc.routines.auditor import settle_from_market
+
+        settle = settle_from_market(AlpacaMarketData())
+    start, end = week_window(at)
+    sc = build_scorecard(
+        conn, start=start, end=end, now=now, limits=budget_limits(settings), settle_price=settle
+    )
+    text = render_markdown(sc)
+    if args.write:
+        path = report_path(args.write, start.date())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        sys.stderr.write(f"wrote {path}\n")
+    sys.stdout.write(sc.model_dump_json(indent=2) + "\n" if args.json else text)
+    return 0
 
 
 def run_journal(args: argparse.Namespace) -> int:
@@ -113,6 +166,8 @@ def run_journal(args: argparse.Namespace) -> int:
             )
             sys.stdout.write(json.dumps({"review_id": rid, "proposal_hash": hashes[0]}) + "\n")
             return 0
+        if cmd == "scorecard":
+            return _scorecard(conn, args, settings)
     except (LookupError, ReviewCitationError, ValueError) as exc:
         sys.stderr.write(f"arc journal {cmd}: {exc}\n")
         return 2
