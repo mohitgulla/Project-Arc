@@ -320,7 +320,16 @@ curl http://<addr>:<port>/api/health        # {status, db, as_of}
   `web/openapi.json` and the typed client; a pytest fails if they drift),
   `make web-e2e` (Playwright screenshots at 390×844, 768×1024 and 1440×900 in both
   themes, against a scratch DB; set `PLAYWRIGHT_BROWSERS_PATH` to a dir with
-  Chromium, e.g. `~/.hermes/tools`).
+  Chromium, e.g. `~/.hermes/tools`). The Overview specs run against a populated
+  fixture store: `.venv/bin/python scripts/tower_fixture_db.py <new.db> [--now ISO]`
+  builds one (3 open + 1 closed structure, 10 reconciled days, 30 monitor marks,
+  proposals in every status, a halt, alerts), anchored at *now* so it reads as live;
+  it refuses to overwrite an existing file. Serve it with
+  `arc tower serve --v2 --local --db <new.db>` to look at a full tower by hand.
+- **Overview (E8.7a):** `GET /api/overview?range=1D|1W|1M|3M|YTD|ALL` (status strip,
+  equity + range series, day P&L, positions, Greeks vs caps, 24 h proposals, movers,
+  last 20 activity lines) and `GET /api/positions?status=open|closed|all`. `1D`
+  plots today's monitor marks; other ranges plot reconciled daily closes.
 
 ### 5.7 Remote access over Tailscale (E8.6, D29)
 
