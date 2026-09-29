@@ -111,7 +111,31 @@ def day_thread_ts(conn: sqlite3.Connection, client: object, day: _dt.date) -> st
     resp = client.post_daily_session(day)
     ts = str(resp["ts"])
     state.set(key, ts)
+    _post_day_banner(conn, client, ts)
     return ts
+
+
+def day_banner(conn: sqlite3.Connection) -> str:
+    """D34: the first line of every day thread, ``Auto-approve: ON (paper)`` etc.
+
+    Read from the effective config (store overrides included) so a flip made
+    through ``arc approve auto`` / ``!arc config`` shows on the next day thread.
+    """
+    from arc.approvals.auto import notice_text
+    from arc.control.effective import effective_settings
+
+    s = effective_settings(conn)
+    return notice_text(s.env.value, bool(s.auto_approve))
+
+
+def _post_day_banner(conn: sqlite3.Connection, client: object, thread_ts: str) -> None:
+    from arc.slack.client import CHANNEL_ARC_INVESTOR, ArcSlackClient
+
+    try:
+        assert isinstance(client, ArcSlackClient)
+        client.reply(channel=CHANNEL_ARC_INVESTOR, thread_ts=thread_ts, text=day_banner(conn))
+    except Exception as exc:  # noqa: BLE001 - a banner must never block the thread
+        log.warning("routines.day_banner_failed", error=str(exc))
 
 
 class SlackDayThreadNotifier:

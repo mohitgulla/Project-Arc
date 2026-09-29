@@ -172,13 +172,16 @@ def apply_changes(
     """Pure core of :func:`effective_settings` (no DB).
 
     D34: a per-env switch (``auto_approve.live`` etc.) only applies to the
-    running ``ARC_ENV``. In live the settings validator forces the env-var
-    shortcut off, so the switches whose value came from the store are passed as
-    validation context (``store_switches``) and survive it.
+    running ``ARC_ENV``. The settings validator forces every per-env switch off
+    in live (the env var is paper-only), so a store value for the *live* key is
+    applied after validation, with ``model_copy``: the store is the only path
+    that can turn a switch on in live.
     """
+    from arc.config import PER_ENV_SWITCHES
+
     data = base.model_dump()
+    post: dict[str, Any] = {}  # per-env switches applied after validation (live only)
     env = base.env.value
-    store_switches: set[str] = set()
     for key, change in sorted(changes.items(), key=lambda kv: kv[1].id):
         try:
             t = lookup(key)
@@ -189,25 +192,26 @@ def apply_changes(
             continue
         if t.env is not None and t.env != env:
             continue  # e.g. auto_approve.live while running paper
+        if t.env == "live" and t.field in PER_ENV_SWITCHES:
+            post[t.field] = bool(change.new)
+            continue
         trial = {**data, t.field: change.new}
-        switches = store_switches | ({t.field} if t.env is not None else set())
         try:
-            ArcSettings.model_validate(trial, context={"store_switches": switches})
+            ArcSettings.model_validate(trial)
         except ValueError as exc:
             log.error("control.override_invalid", key=key, change_id=change.id, error=str(exc))
             continue
         data = trial
-        store_switches = switches
     yaml_ov = yaml_overrides(changes, profiles_path=base.account_profiles_file)
     if data.get("account_profile") != base.account_profile or yaml_ov.get("account_profiles"):
         data["account_profile_spec"] = None
     data["config_version"] = version
-    settings = ArcSettings.model_validate(data, context={"store_switches": store_switches})
+    settings = ArcSettings.model_validate(data)
     profiles = load_account_profiles(
         settings.account_profiles_file, overrides=yaml_ov.get("account_profiles")
     )
     settings = settings.model_copy(
-        update={"account_profile_spec": profiles.get(settings.account_profile)}
+        update={"account_profile_spec": profiles.get(settings.account_profile), **post}
     )
     settings._yaml_overrides = yaml_ov  # noqa: SLF001 - owned by arc.control
     return settings

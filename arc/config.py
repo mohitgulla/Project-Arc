@@ -11,14 +11,7 @@ from pathlib import Path
 from typing import Annotated
 
 import structlog
-from pydantic import (
-    Field,
-    PrivateAttr,
-    SecretStr,
-    ValidationInfo,
-    field_validator,
-    model_validator,
-)
+from pydantic import Field, PrivateAttr, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from arc.account_profiles import DEFAULT_ACCOUNT_PROFILE, AccountProfile, load_account_profiles
@@ -784,21 +777,18 @@ class ArcSettings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _env_switches_paper_only(self, info: ValidationInfo) -> ArcSettings:
+    def _env_switches_paper_only(self) -> ArcSettings:
         """The env-var shortcuts for the per-env switches never reach live (D34).
 
         ``ARC_AUTO_APPROVE`` / ``ARC_AUTO_EXIT_DEFINED_RISK`` set the *paper* value
-        only. In live the only way to enable either is the config store
-        (``auto_approve.live``, ``auto_exit_defined_risk.live``, confirm code
-        required): :func:`arc.control.effective.apply_changes` validates with
-        ``context={"store_switches": {<field>, ...}}`` naming the switches whose
-        value came from the store for the running env, and only those survive here.
+        only: a live process always validates them to off. The only way to enable
+        either in live is the config store (``auto_approve.live``,
+        ``auto_exit_defined_risk.live``, confirm code required), which
+        :func:`arc.control.effective.apply_changes` applies *after* validation.
         """
         if self.env is not ArcEnv.LIVE:
             return self
-        ctx = info.context if isinstance(info.context, dict) else {}
-        from_store = set(ctx.get("store_switches") or ())
-        for name in sorted(PER_ENV_SWITCHES - from_store):
+        for name in sorted(PER_ENV_SWITCHES):
             if getattr(self, name):
                 log.warning("per-env switch forced off in live (env var is paper-only)", key=name)
                 setattr(self, name, False)
