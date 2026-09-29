@@ -159,8 +159,8 @@ def _dispatcher(
     clock = now_et if not dry and not getattr(args, "now", None) else None
     routines = _effective_load(args, conn)
     run_env = RunEnv(
-        db_path=args.db,
-        config_path=args.config,
+        db_path=getattr(args, "db", None),
+        config_path=getattr(args, "config", None),
         lock_dir=None if dry else str(getattr(args, "lock_dir", "") or "") or None,
         slack=not (dry or getattr(args, "no_slack", False)),
     )

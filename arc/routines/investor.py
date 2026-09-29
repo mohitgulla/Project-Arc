@@ -44,9 +44,9 @@ if TYPE_CHECKING:
 
     from arc.approvals.service import ApprovalService
     from arc.broker.base import BrokerAdapter
+    from arc.data.base import MarketDataProvider
     from arc.execution.ladder import ExecutionOutcome
     from arc.models import GateDecision, Proposal
-    from arc.pipeline.market import MarketDataProvider
     from arc.routines.handlers import JobContext, RunEnv
     from arc.slack.blocks import CardView
 

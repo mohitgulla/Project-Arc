@@ -951,17 +951,18 @@ class TestHeartbeats:
         from arc.slack.client import ArcSlackClient
 
         web = mock.MagicMock()
-        web.chat_postMessage.side_effect = [{"ts": "111.1"}, {"ts": "2"}, {"ts": "3"}]
+        web.chat_postMessage.side_effect = [{"ts": "111.1"}, {"ts": "b"}, {"ts": "2"}, {"ts": "3"}]
         n = SlackDayThreadNotifier(conn, ArcSlackClient(client=web))
         n.post(dt.date(2026, 9, 28), "one")
         n.post(dt.date(2026, 9, 28), "two", [{"type": "divider"}])
         calls = web.chat_postMessage.call_args_list
-        assert len(calls) == 3
+        assert len(calls) == 4  # root, D34 auto-approve banner, one, two
         assert "2026-09-28" in calls[0].kwargs["text"]
-        assert calls[1].kwargs["thread_ts"] == "111.1" == calls[2].kwargs["thread_ts"]
-        assert "blocks" not in calls[1].kwargs
-        assert calls[2].kwargs["blocks"] == [{"type": "divider"}]
-        assert calls[2].kwargs["text"] == "two"
+        assert calls[1].kwargs["text"].startswith("Auto-approve: ")
+        assert calls[2].kwargs["thread_ts"] == "111.1" == calls[3].kwargs["thread_ts"]
+        assert "blocks" not in calls[2].kwargs
+        assert calls[3].kwargs["blocks"] == [{"type": "divider"}]
+        assert calls[3].kwargs["text"] == "two"
         web.chat_postMessage.side_effect = RuntimeError("slack down")
         n.post(dt.date(2026, 9, 29), "never raises")
 

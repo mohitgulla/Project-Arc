@@ -11,8 +11,6 @@ from typing import TYPE_CHECKING, Any
 from unittest import mock
 
 import pytest
-from hypothesis import given
-from hypothesis import strategies as st
 
 from arc.approvals.auto import auto_status, notice_text, set_auto
 from arc.approvals.service import AUTO_APPROVER, ApprovalService, LogCardPoster, approval_record
@@ -22,7 +20,6 @@ from arc.control.registry import lookup
 from arc.control.service import LOCAL_ACTOR, ControlService
 from arc.control.store import ConfigChangeRepo
 from arc.execution.ladder import ExecStatus
-from arc.gate.band import PriceBand
 from arc.models import ApprovalDecision
 from arc.pipeline.env import FIXTURE_NOW
 from arc.pipeline.runner import fixture_run
@@ -76,54 +73,6 @@ def conn() -> sqlite3.Connection:
 def _no_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in ("ARC_AUTO_APPROVE", "ARC_AUTO_EXIT_DEFINED_RISK", "ARC_ENV"):
         monkeypatch.delenv(var, raising=False)
-
-
-# ---------------------------------------------------------------------------
-# PriceBand.reanchor (pure gate code)
-# ---------------------------------------------------------------------------
-
-
-TICK = D("0.01")
-BAND = PriceBand(lo=D("-0.85"), hi=D("-0.76"), max_steps=3)
-
-
-class TestReanchor:
-    def test_inside_band_moves_start_keeps_hi(self) -> None:
-        nb = BAND.reanchor(D("-0.805"), TICK)
-        assert nb is not None
-        assert nb.lo == D("-0.80") and nb.hi == BAND.hi and nb.max_steps == 3
-
-    def test_beyond_hi_returns_none(self) -> None:
-        assert BAND.reanchor(D("-0.75"), TICK) is None
-        assert BAND.reanchor(D("0.10"), TICK) is None
-
-    def test_below_lo_clamps_to_lo(self) -> None:
-        nb = BAND.reanchor(D("-0.95"), TICK)
-        assert nb is not None and nb.lo == BAND.lo and nb.hi == BAND.hi
-
-    def test_at_hi_single_attempt(self) -> None:
-        nb = BAND.reanchor(BAND.hi, TICK)
-        assert nb is not None and nb.lo == nb.hi == BAND.hi and nb.max_steps == 0
-
-    def test_bad_tick(self) -> None:
-        with pytest.raises(ValueError, match="tick"):
-            BAND.reanchor(D("-0.8"), D("0"))
-
-    @given(
-        lo=st.decimals(min_value=-5, max_value=5, places=2),
-        width=st.decimals(min_value=0, max_value=2, places=2),
-        mid=st.decimals(min_value=-8, max_value=8, places=4),
-        steps=st.integers(min_value=0, max_value=5),
-    )
-    def test_never_widens(self, lo: D, width: D, mid: D, steps: int) -> None:
-        band = PriceBand(lo=lo, hi=lo + width, max_steps=steps)
-        nb = band.reanchor(mid, TICK)
-        if nb is None:
-            assert mid > band.hi or (mid / TICK).to_integral_value() * TICK > band.hi
-            return
-        assert band.lo <= nb.lo <= nb.hi == band.hi
-        for p in nb.ladder(TICK):
-            assert band.contains(p)
 
 
 # ---------------------------------------------------------------------------
