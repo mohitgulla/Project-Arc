@@ -37,6 +37,7 @@ from arc.backtest.ranking import (
     picked_outcomes,
     profile_allows_credit,
     rankers_for,
+    remark_chains,
     run_portfolio,
     subperiod_stats,
     summarize,
@@ -99,7 +100,10 @@ def ticker_job(
     bt = cfg.backtest
     mc = exits.model.model_copy(update={"n_paths": bt.n_paths})
     chains = prepare_chains(raw, closes, cost=cost, r=bt.risk_free_rate, dte_min=1, dte_max=70)
-    chains = clean_chains(chains, max_dev=bt.max_leg_iv_dev, window=bt.smile_window)
+    if bt.marks == "smile":
+        chains = remark_chains(chains, closes, r=bt.risk_free_rate, cost=cost)
+    else:
+        chains = clean_chains(chains, max_dev=bt.max_leg_iv_dev, window=bt.smile_window)
     days = [d for d in sorted(chains) if start <= d <= end and d in closes.index]
     menus: dict[_Key, dict[dt.date, list[Candidate]]] = {}
     outcomes: dict[_Key, dict[tuple[str, dt.date, str], Outcome | None]] = {}
@@ -465,9 +469,21 @@ def _render(
         "trade close and the bid/ask spread is *estimated* as "
         f"max({cost.spread_min}, {cost.spread_pct}·mid) (E7.1 finding). Costs, slippage and "
         "the cost-sensitivity grid are therefore modelled, not observed.\n"
-        "- A trade close can be hours stale. Legs whose IV is more than "
-        f"{'off' if bt.max_leg_iv_dev is None else f'{bt.max_leg_iv_dev:.0%}'} from the median "
-        f"of their {bt.smile_window} neighbouring strikes are dropped (same-session data only).\n"
+        "- A trade close can be hours stale, so neighbouring strikes on one Alpaca EOD row set "
+        "routinely break monotonicity and put-call parity (on sampled SPY/QQQ/IWM sessions, "
+        "13–65% of near-the-money strikes sat in a non-monotone pair). "
+        + (
+            "Every leg is therefore **re-marked from a same-session fitted IV smile** "
+            "(volume-weighted quadratic in log-moneyness over OTM IVs, 3-MAD outlier trim, "
+            "no extrapolation) for entries, daily marks and early exits alike. Expiry "
+            "settles on the underlying close. This removes the stale-close noise but also "
+            "any real skew kinks the quadratic cannot follow.\n"
+            if bt.marks == "smile"
+            else "Legs whose IV is more than "
+            f"{'off' if bt.max_leg_iv_dev is None else f'{bt.max_leg_iv_dev:.0%}'} from the "
+            f"median of their {bt.smile_window} neighbouring strikes are dropped "
+            "(same-session data only); remaining marks are raw trade closes.\n"
+        ),
         "- Daily EOD decisions and marks only: stops and take-profits are checked on closes, "
         "so intraday paths are not seen (matches the owner's relaxed, end-of-day stop "
         "preference).\n"

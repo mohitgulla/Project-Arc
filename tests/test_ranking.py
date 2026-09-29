@@ -31,7 +31,9 @@ from arc.backtest.ranking import (
     decide,
     load_ranking_file,
     rankers_for,
+    remark_chains,
     smile_deviation,
+    smile_marks,
     subperiod_stats,
 )
 from arc.backtest.strategies import StrategyKind, StrategySpec
@@ -213,6 +215,30 @@ def test_smile_deviation_flags_stale_leg_and_clean_drops_it() -> None:
     out = clean_chains({e: ch}, max_dev=0.15)
     assert 98.0 not in set(out[e]["strike"])
     assert len(clean_chains({e: ch}, max_dev=None)[e]) == 7
+
+
+def test_smile_marks_repair_a_stale_close_and_stay_monotone() -> None:
+    day, spot = dt.date(2024, 4, 15), 100.0
+    cost = load_cost_model()
+    raw = pd.DataFrame([r.model_dump() for r in _rows(day, spot)])
+    ch = prepare_chains(raw, pd.Series([spot], index=[day]), cost=cost, r=R, dte_min=1, dte_max=70)[
+        day
+    ]
+    exp = sorted(ch["expiration"].unique())[4]
+    stale = (ch["expiration"] == exp) & (ch["right"] == "put") & (ch["strike"] == 95.0)
+    true_mid = float(ch.loc[stale, "mid"].iloc[0])
+    ch.loc[stale, "mid"] = true_mid * 1.6  # a stale print far above fair
+    ch.loc[stale, "iv"] = 0.32
+    sm = smile_marks(ch, spot, r=R, cost=cost)
+    got = sm[(sm["expiration"] == exp) & (sm["right"] == "put") & (sm["strike"] == 95.0)]
+    assert float(got["mid"].iloc[0]) == pytest.approx(true_mid, rel=0.03)
+    assert float(got["iv"].iloc[0]) == pytest.approx(VOL, abs=0.005)
+    for (_, right), g in sm.groupby(["expiration", "right"]):
+        d = np.diff(g.sort_values("strike")["mid"].to_numpy())
+        assert (d >= -1e-9).all() if right == "put" else (d <= 1e-9).all()
+    # same session only: an unrelated session's chain cannot change these marks
+    again = remark_chains({day: ch}, pd.Series([spot], index=[day]), r=R, cost=cost)[day]
+    pd.testing.assert_frame_equal(again, sm)
 
 
 def test_atm_iv_nearest_strike_and_missing() -> None:

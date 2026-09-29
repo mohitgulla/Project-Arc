@@ -43,13 +43,14 @@ import datetime as dt
 import math
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
 import structlog
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
+from scipy.stats import norm
 
 from arc.account_profiles import BuyingPower, load_account_profiles
 from arc.backtest.engine import (
@@ -198,6 +199,11 @@ class BacktestSettings(BaseModel):
         "strikes by more than this fraction (stale trade-close filter); None = off",
     )
     smile_window: int = Field(5, ge=3, description="Strikes in the centred neighbour window")
+    marks: Literal["smile", "close"] = Field(
+        "smile",
+        description="smile = price every leg off a same-session fitted IV smile (default); "
+        "close = raw last-trade closes",
+    )
     slippage_grid: list[float] = Field(default_factory=lambda: [0.0, 0.25, 0.5])
     tickers: list[str] = Field(default_factory=lambda: ["SPY", "QQQ"])
     bootstrap: BootstrapSpec = Field(default_factory=lambda: BootstrapSpec())
@@ -318,6 +324,90 @@ def smile_deviation(chain: pd.DataFrame, window: int = 5) -> pd.Series:
         g = g.sort_values("strike")
         med = g["iv"].rolling(window, center=True, min_periods=3).median()
         out.loc[g.index] = g["iv"] / med - 1.0
+    return out
+
+
+def smile_marks(
+    ch: pd.DataFrame,
+    spot: float,
+    *,
+    r: float,
+    cost: CostModel,
+    min_points: int = 5,
+    iterations: int = 2,
+) -> pd.DataFrame:
+    """Re-mark one session's chain from a same-session fitted IV smile.
+
+    Alpaca EOD closes are last trades printed at different times, so neighbouring
+    strikes routinely violate monotonicity and put-call parity. Per expiration, a
+    volume-weighted quadratic in log-moneyness ``log(K/F)`` is fitted to the OTM
+    options' IVs (puts below the forward, calls above), with points more than
+    3 MADs off the fit dropped and the fit repeated *iterations* times. Every row
+    in the fitted strike range is then priced by BSM at the fitted IV: ``mid``,
+    ``iv``, ``delta`` and the estimated ``spread`` are replaced. Rows outside the
+    range (no extrapolation) and expiries with < *min_points* OTM points are dropped.
+    Uses the session's own rows only, so it cannot look ahead.
+    """
+    keep: list[pd.DataFrame] = []
+    base = ch[np.isfinite(ch["iv"]) & (ch["iv"] > 0)]
+    for exp, g in ch.groupby("expiration", sort=True):
+        t = float(g["dte"].iloc[0]) / 365.0
+        fwd = spot * math.exp(r * t)
+        gb = base[base["expiration"] == exp]
+        otm = gb[
+            ((gb["right"] == "put") & (gb["strike"] < fwd))
+            | ((gb["right"] == "call") & (gb["strike"] >= fwd))
+        ]
+        if len(otm) < min_points:
+            continue
+        x = np.log(otm["strike"].to_numpy(dtype=float) / fwd)
+        y = otm["iv"].to_numpy(dtype=float)
+        w = np.sqrt(np.nan_to_num(otm["volume"].to_numpy(dtype=float)) + 1.0)
+        mask = np.ones(len(x), dtype=bool)
+        coef = np.polyfit(x, y, 2, w=w)
+        for _ in range(iterations):
+            res = y - np.polyval(coef, x)
+            mad = float(np.median(np.abs(res - np.median(res)))) or 1e-9
+            mask = np.abs(res) <= 3.0 * 1.4826 * mad
+            if mask.sum() < min_points:
+                break
+            coef = np.polyfit(x[mask], y[mask], 2, w=w[mask])
+        lo, hi = float(x[mask].min()), float(x[mask].max())
+        gx = np.log(g["strike"].to_numpy(dtype=float) / fwd)
+        inside = (gx >= lo) & (gx <= hi)
+        if not inside.any():
+            continue
+        g = g[inside].copy()
+        sig = np.clip(np.polyval(coef, gx[inside]), 0.03, 3.0)
+        k = g["strike"].to_numpy(dtype=float)
+        is_call = (g["right"].astype(str) == "call").to_numpy()
+        flag = np.where(is_call, "c", "p")
+        n = len(g)
+        mid = price_vectorized(flag, np.full(n, spot), k, np.full(n, t), np.full(n, r), sig)
+        g["mid"] = np.round(np.maximum(mid, 0.0), 4)
+        g["iv"] = sig
+        with np.errstate(invalid="ignore", divide="ignore"):
+            d1 = (np.log(spot / k) + (r + 0.5 * sig**2) * t) / (sig * math.sqrt(t))
+        g["delta"] = np.where(is_call, norm.cdf(d1), norm.cdf(d1) - 1.0)
+        g["spread"] = [cost.spread(float(m)) for m in g["mid"]]
+        keep.append(g[g["mid"] > 0])
+    if not keep:
+        return ch.iloc[0:0]
+    return pd.concat(keep, ignore_index=True)
+
+
+def remark_chains(
+    chains: Mapping[dt.date, pd.DataFrame],
+    closes: pd.Series,
+    *,
+    r: float,
+    cost: CostModel,
+) -> dict[dt.date, pd.DataFrame]:
+    """:func:`smile_marks` for every session (session spot from *closes* at that date)."""
+    out: dict[dt.date, pd.DataFrame] = {}
+    for d, ch in chains.items():
+        if d in closes.index and len(ch):
+            out[d] = smile_marks(ch, float(closes[d]), r=r, cost=cost)
     return out
 
 
