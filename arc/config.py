@@ -568,11 +568,60 @@ class ArcSettings(BaseSettings):
     )
     scout_batch_size: Annotated[int, Field(ge=1, le=50)] = Field(
         default=8,
-        description="Max RawDocs summarised per Scout LLM call.",
+        description="Max stories digested per stage-1 (digest) LLM call (E4.5).",
     )
     scout_max_doc_chars: Annotated[int, Field(ge=200)] = Field(
         default=4000,
         description="Per-document text budget in the Scout prompt (truncated beyond).",
+    )
+    # -- Source fairness + synthesis (E4.5, D30) --------------------------------
+    scout_doc_budget: Annotated[int, Field(ge=1, le=1000)] = Field(
+        default=120,
+        description=(
+            "D30: docs the Scout reads per run, shared across sources by weighted "
+            "round-robin (config/routines.yaml sources); the rest wait or are "
+            "marked skipped_budget when their context TTL runs out."
+        ),
+    )
+    scout_story_threshold: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+        default=0.5,
+        description="D30: token-set Jaccard of normalised headlines to cluster two docs.",
+    )
+    scout_story_window_hours: Annotated[float, Field(gt=0, le=168)] = Field(
+        default=24.0,
+        description="D30: docs cluster into one story only within this many hours.",
+    )
+    scout_story_batch_size: Annotated[int, Field(ge=1, le=200)] = Field(
+        default=40,
+        description="D30: story digests per stage-2 Scout LLM call.",
+    )
+    scout_story_doc_chars: Annotated[int, Field(ge=100)] = Field(
+        default=1500,
+        description="D30: per-document text in the stage-1 digest prompt (3 docs per story).",
+    )
+    ingest_macro_horizon_days: Annotated[int, Field(ge=1, le=180)] = Field(
+        default=45,
+        description="E4.5: macro calendar (FOMC/BLS) looks this many days ahead.",
+    )
+    uoa_min_volume: Annotated[int, Field(ge=1)] = Field(
+        default=500,
+        description="E4.5 UOA: a contract needs this daily volume to be flagged vol/OI.",
+    )
+    uoa_vol_oi_ratio: Annotated[float, Field(gt=0)] = Field(
+        default=2.0,
+        description="E4.5 UOA: contract volume / open interest at or above this is flagged.",
+    )
+    uoa_volume_spike_ratio: Annotated[float, Field(gt=0)] = Field(
+        default=2.0,
+        description="E4.5 UOA: underlying volume / 20-day average at or above this is flagged.",
+    )
+    uoa_max_dte: Annotated[int, Field(ge=1, le=365)] = Field(
+        default=60,
+        description="E4.5 UOA: expiries within this many days are scanned.",
+    )
+    ex_dividend_horizon_days: Annotated[int, Field(ge=1, le=180)] = Field(
+        default=45,
+        description="E4.5: ex-dividend dates looked up this many days ahead.",
     )
 
     # -- Pipeline runner (E5.2) -----------------------------------------------

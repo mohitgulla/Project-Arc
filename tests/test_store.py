@@ -105,7 +105,7 @@ class TestMigrations:
         assert expected.issubset(tables), f"Missing: {expected - tables}"
 
     def test_current_version_after_migrate(self, conn: sqlite3.Connection):
-        assert current_version(conn) == 14
+        assert current_version(conn) == 15
 
     def test_no_pending_after_migrate(self, conn: sqlite3.Connection):
         assert pending_migrations(conn) == []

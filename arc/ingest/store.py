@@ -61,8 +61,13 @@ class RawDocRepo:
         id: str | None = None,
         channel_id: str | None = None,
         title: str | None = None,
+        source_key: str | None = None,
     ) -> str | None:
-        """Insert a raw doc, skipping duplicates. Returns id or None if duplicate."""
+        """Insert a raw doc, skipping duplicates. Returns id or None if duplicate.
+
+        *source_key* is the E4.5 registry source (an RSS feed name). NULL = derived
+        at read time by :meth:`arc.ingest.sources.SourceRegistry.key_for`.
+        """
         h = hash_val or content_hash(source, url)
         if self.exists(h):
             log.debug("rawdoc.duplicate", source=source, url=url)
@@ -72,8 +77,8 @@ class RawDocRepo:
         self.conn.execute(
             """INSERT INTO raw_docs
                (id, source, url, published_at, text, tickers_hint,
-                content_hash, ingested_at, run_id, channel_id, title)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                content_hash, ingested_at, run_id, channel_id, title, source_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row_id,
                 source,
@@ -86,6 +91,7 @@ class RawDocRepo:
                 run_id,
                 channel_id,
                 title,
+                source_key,
             ),
         )
         self.conn.commit()
@@ -105,23 +111,47 @@ class RawDocRepo:
 
     # -- Scout bookkeeping (E4.2) --------------------------------------------
 
-    def list_unscouted(self, *, limit: int = 200) -> list[dict[str, Any]]:
-        """Docs the Scout has not summarised yet, oldest first."""
-        rows = self.conn.execute(
-            """SELECT * FROM raw_docs WHERE scouted_at IS NULL
-               ORDER BY published_at ASC, id ASC LIMIT ?""",
-            (limit,),
-        ).fetchall()
+    def list_unscouted(self, *, limit: int | None = 200) -> list[dict[str, Any]]:
+        """Docs the Scout has not closed yet (read or budget-skipped), oldest first."""
+        sql = "SELECT * FROM raw_docs WHERE scouted_at IS NULL ORDER BY published_at ASC, id ASC"
+        if limit is None:
+            return [dict(r) for r in self.conn.execute(sql).fetchall()]
+        rows = self.conn.execute(f"{sql} LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
     def mark_scouted(self, doc_ids: list[str], *, run_id: str) -> None:
         """Mark docs as summarised so later runs skip them."""
+        self._close(doc_ids, run_id=run_id, status="scouted")
+
+    def mark_skipped_budget(self, doc_ids: list[str], *, run_id: str) -> None:
+        """E4.5: never selected by the per-source budget before its context TTL ran out.
+
+        Audited (status + run id), never silently dropped; later runs skip them.
+        """
+        self._close(doc_ids, run_id=run_id, status="skipped_budget")
+
+    def _close(self, doc_ids: list[str], *, run_id: str, status: str) -> None:
         now = _now_iso()
         self.conn.executemany(
-            "UPDATE raw_docs SET scouted_at = ?, scout_run_id = ? WHERE id = ?",
-            [(now, run_id, d) for d in doc_ids],
+            """UPDATE raw_docs SET scouted_at = ?, scout_run_id = ?, scout_status = ?
+               WHERE id = ?""",
+            [(now, run_id, status, d) for d in doc_ids],
         )
         self.conn.commit()
+
+    def source_keys_for_urls(self, urls: list[str]) -> dict[str, dict[str, Any]]:
+        """``url -> row`` (source, source_key, url, channel_id) for stored docs."""
+        out: dict[str, dict[str, Any]] = {}
+        for i in range(0, len(urls), 500):
+            chunk = urls[i : i + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = self.conn.execute(
+                f"SELECT url, source, source_key, channel_id FROM raw_docs WHERE url IN ({marks})",  # noqa: S608
+                chunk,
+            ).fetchall()
+            for r in rows:
+                out.setdefault(r["url"], dict(r))
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -151,13 +181,18 @@ class ScoutBatchRepo:
         error: str | None = None,
         accepted: int = 0,
         rejected: dict[str, int] | None = None,
+        stage: str = "scout",
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        cost_usd: float | None = None,
     ) -> str:
         row_id = _uuid()
         self.conn.execute(
             """INSERT INTO scout_batches
                (id, run_id, model, doc_ids, prompt_sha256, raw_response, status,
-                error, accepted, rejected, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                error, accepted, rejected, created_at, stage, input_tokens,
+                output_tokens, cost_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row_id,
                 run_id,
@@ -170,6 +205,10 @@ class ScoutBatchRepo:
                 accepted,
                 json.dumps(rejected or {}, sort_keys=True),
                 _now_iso(),
+                stage,
+                input_tokens,
+                output_tokens,
+                cost_usd,
             ),
         )
         self.conn.commit()

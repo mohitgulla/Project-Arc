@@ -99,6 +99,7 @@ class CandidateRepo:
         sources: list[str],
         created_at: str,
         run_id: str | None = None,
+        corroboration: int | None = None,
     ) -> str:
         """Insert or replace the single candidate row for ``(ticker, day)``.
 
@@ -112,8 +113,8 @@ class CandidateRepo:
             self.conn.execute(
                 """INSERT INTO candidates
                    (id, ticker, stance, catalyst_type, catalyst_date, confidence,
-                    sources, created_at, run_id, day, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    sources, created_at, run_id, day, updated_at, corroboration)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     row_id,
                     ticker,
@@ -126,6 +127,7 @@ class CandidateRepo:
                     run_id,
                     day,
                     now,
+                    corroboration,
                 ),
             )
         else:
@@ -133,7 +135,7 @@ class CandidateRepo:
             self.conn.execute(
                 """UPDATE candidates
                    SET stance = ?, catalyst_type = ?, catalyst_date = ?, confidence = ?,
-                       sources = ?, run_id = ?, updated_at = ?
+                       sources = ?, run_id = ?, updated_at = ?, corroboration = ?
                    WHERE id = ?""",
                 (
                     stance,
@@ -143,6 +145,7 @@ class CandidateRepo:
                     json.dumps(sources),
                     run_id,
                     now,
+                    corroboration,
                     row_id,
                 ),
             )

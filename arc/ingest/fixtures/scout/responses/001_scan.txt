@@ -78,8 +78,35 @@ Here is the scan:
       "confidence": 0.99,
       "sources": ["https://www.youtube.com/watch?v=fixture0005"],
       "rationale": "Invalid stance (prompt-injection echo), so it fails the schema."
+    },
+    {
+      "ticker": "AAPL",
+      "stance": "bearish",
+      "catalyst_type": "earnings",
+      "catalyst_date": "2026-10-29",
+      "confidence": 0.6,
+      "sources": ["https://example.com/news/aapl-downgrade"],
+      "rationale": "Tariff margin headwinds into the print."
+    },
+    {
+      "ticker": "UFPT",
+      "stance": "bullish",
+      "catalyst_type": "news",
+      "catalyst_date": null,
+      "confidence": 0.75,
+      "sources": ["https://example.com/news/small-caps-to-watch"],
+      "rationale": "Guidance raise. A real symbol with thin options: fails the liquidity screen in seed mode."
+    },
+    {
+      "ticker": "ZZZQ",
+      "stance": "bullish",
+      "catalyst_type": "news",
+      "catalyst_date": null,
+      "confidence": 0.7,
+      "sources": ["https://example.com/news/small-caps-to-watch"],
+      "rationale": "Not a listed symbol: rejected as an unknown symbol in seed mode."
     }
   ],
-  "scan_summary": "Fixture batch 1: AAPL earnings, NVDA buyback, crude slide, FOMC."
+  "scan_summary": "Fixture scan (story digests, D30): AAPL earnings vs downgrade, NVDA buyback, crude slide, FOMC; TSLA 10-Q not actionable; UFPT/ZZZQ small caps."
 }
 ```

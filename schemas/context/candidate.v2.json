@@ -49,6 +49,20 @@
       "title": "Confidence",
       "type": "number"
     },
+    "corroboration": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Distinct registry sources behind `sources` (D30), computed by the pipeline; repeated items from one source count once. None = not computed (pre-E4.5).",
+      "title": "Corroboration"
+    },
     "created_at": {
       "format": "date-time",
       "title": "Created At",
