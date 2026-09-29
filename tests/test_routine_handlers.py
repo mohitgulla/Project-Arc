@@ -43,9 +43,9 @@ def _ctx(
     conn: sqlite3.Connection, job: str, options: dict[str, object] | None = None
 ) -> JobContext:
     routines = RoutinesConfig.model_validate(
-        {"sources": {job: {"every": "5m", **(options or {})}}}
+        {"sources": {job: {"every": "5m", "writes": ["raw_doc_ref"], **(options or {})}}}
         if job != "scout"
-        else {"personas": {"scout": {"schedule": ["12:00"]}}}
+        else {"personas": {"scout": {"schedule": ["12:00"], "writes": ["candidate", "note"]}}}
     )
     kind, spec = routines.step(job)
     return JobContext(

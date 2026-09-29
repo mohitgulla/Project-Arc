@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "DirectorRankedItem": {
+      "description": "A single ticker ranked by the Director.",
+      "properties": {
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "rank": {
+          "description": "1 = highest conviction",
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "regime_context": {
+          "description": "Current regime assessment for this underlying",
+          "title": "Regime Context",
+          "type": "string"
+        },
+        "stance": {
+          "description": "bullish | bearish | neutral",
+          "title": "Stance",
+          "type": "string"
+        },
+        "suggested_structure_type": {
+          "description": "Suggested structure: vertical_spread | iron_condor | long_call | long_put",
+          "title": "Suggested Structure Type",
+          "type": "string"
+        },
+        "thesis": {
+          "description": "Director's thesis: why this ticker, what structure style",
+          "title": "Thesis",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "rank",
+        "thesis",
+        "regime_context",
+        "suggested_structure_type",
+        "stance",
+        "confidence"
+      ],
+      "title": "DirectorRankedItem",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Director ranked shortlist.",
+  "properties": {
+    "market_regime": {
+      "description": "Overall market regime: risk_on | risk_off | transitional",
+      "title": "Market Regime",
+      "type": "string"
+    },
+    "session_notes": {
+      "description": "Director's summary of today's opportunity landscape",
+      "title": "Session Notes",
+      "type": "string"
+    },
+    "shortlist": {
+      "description": "Ranked candidates, best first",
+      "items": {
+        "$ref": "#/$defs/DirectorRankedItem"
+      },
+      "title": "Shortlist",
+      "type": "array"
+    }
+  },
+  "required": [
+    "shortlist",
+    "market_regime",
+    "session_notes"
+  ],
+  "title": "ShortlistPayload",
+  "type": "object"
+}

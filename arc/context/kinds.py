@@ -9,16 +9,18 @@ All payload models use ``extra="forbid"`` at the top level (D16).
 
 from __future__ import annotations
 
+import enum
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic field
 from arc.features.snapshot import FeatureSnapshot
-from arc.models import Candidate, ChannelBrief, Proposal
+from arc.models import Candidate, ChannelBrief, Proposal, Stance
 from arc.personas.schemas import AuditorOutput, DirectorOutput, QuantOutput, RiskOutput
 
 if TYPE_CHECKING:
@@ -94,6 +96,56 @@ class JournalPayload(AuditorOutput):
     model_config = _FORBID
 
 
+class NoteTopic(enum.StrEnum):
+    """What a :class:`NotePayload` is about (D27)."""
+
+    THESIS = "thesis"  # why a trade/ticker/idea (Director, Quant)
+    REGIME_VIEW = "regime_view"  # market/sector regime read (Director, Scout)
+    OBSERVATION = "observation"  # informational: news theme, scan summary (Scout)
+    RISK_FLAG = "risk_flag"  # portfolio/calendar concern (Risk)
+    LESSON = "lesson"  # post-trade learning (Auditor)
+    EXECUTION = "execution"  # fill/market-conditions note (Investor)
+
+
+class NoteHorizon(enum.StrEnum):
+    INTRADAY = "intraday"
+    SESSION = "session"
+    SWING = "swing"  # days-weeks
+    MACRO = "macro"  # weeks+
+
+
+class Evidence(BaseModel):
+    """One piece of support for a note."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ref: str = Field(..., min_length=1, description="URL, context entry id, or 'metric:<name>'")
+    quote: str | None = Field(None, max_length=400, description="Verbatim excerpt, if textual")
+
+
+class NotePayload(BaseModel):
+    """Free-form but structured persona text (D27): thesis, regime view, observation, ...
+
+    Notes are context that other personas may read back. They are never a gate
+    input and never widen :class:`~arc.models.Candidate`.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    persona: Literal["scout", "director", "quant", "risk", "investor", "auditor"]
+    topic: NoteTopic
+    horizon: NoteHorizon = NoteHorizon.SESSION
+    stance: Stance | None = None
+    title: str = Field(..., min_length=1, max_length=120)
+    body: str = Field(..., min_length=1, max_length=4000)
+    confidence: float | None = Field(None, ge=0.0, le=1.0)
+    tags: list[str] = Field(default_factory=list, max_length=12)
+    evidence: list[Evidence] = Field(default_factory=list, max_length=20)
+    about: list[str] = Field(
+        default_factory=list, description="Context entry ids this note comments on"
+    )
+
+
 @dataclass(frozen=True)
 class KindSpec:
     """A context kind: its payload model and current schema version."""
@@ -117,7 +169,26 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("risk_review", RiskReviewPayload),
     KindSpec("proposal", ProposalPayload),
     KindSpec("journal", JournalPayload),
+    KindSpec("note", NotePayload),
 )
+
+
+SCHEMA_DIR = Path(__file__).resolve().parent.parent.parent / "schemas" / "context"
+
+
+def render_schemas() -> dict[str, str]:
+    """``<kind>.v<N>.json`` -> JSON Schema text for every registered kind (D27 registry).
+
+    Committed under ``schemas/context/``; ``tests/test_context_schemas.py`` fails when a
+    model changes without regenerating (``arc context schemas --write``).
+    """
+    return {
+        f"{name}.v{spec.schema_version}.json": json.dumps(
+            spec.model.model_json_schema(), indent=2, sort_keys=True
+        )
+        + "\n"
+        for name, spec in KINDS.items()
+    }
 
 
 def kind_spec(kind: str) -> KindSpec:

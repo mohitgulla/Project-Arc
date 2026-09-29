@@ -1,0 +1,126 @@
+{
+  "$defs": {
+    "AnomalyReport": {
+      "description": "A single anomaly detected during reconciliation.",
+      "properties": {
+        "affected_orders": {
+          "description": "Order IDs affected",
+          "items": {
+            "type": "string"
+          },
+          "title": "Affected Orders",
+          "type": "array"
+        },
+        "category": {
+          "description": "fill_discrepancy | position_mismatch | pnl_deviation | missing_event | other",
+          "title": "Category",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "severity": {
+          "description": "info | warning | critical",
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "severity",
+        "description"
+      ],
+      "title": "AnomalyReport",
+      "type": "object"
+    },
+    "LessonLearned": {
+      "description": "A lesson extracted from recent trading activity.",
+      "properties": {
+        "observation": {
+          "title": "Observation",
+          "type": "string"
+        },
+        "recommendation": {
+          "title": "Recommendation",
+          "type": "string"
+        },
+        "topic": {
+          "title": "Topic",
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic",
+        "observation",
+        "recommendation"
+      ],
+      "title": "LessonLearned",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Auditor daily journal.",
+  "properties": {
+    "anomalies": {
+      "items": {
+        "$ref": "#/$defs/AnomalyReport"
+      },
+      "title": "Anomalies",
+      "type": "array"
+    },
+    "closed_today": {
+      "minimum": 0,
+      "title": "Closed Today",
+      "type": "integer"
+    },
+    "daily_pnl": {
+      "description": "Net daily P&L",
+      "title": "Daily Pnl",
+      "type": "number"
+    },
+    "fills_reviewed": {
+      "minimum": 0,
+      "title": "Fills Reviewed",
+      "type": "integer"
+    },
+    "journal_date": {
+      "description": "ISO-8601 date",
+      "title": "Journal Date",
+      "type": "string"
+    },
+    "journal_narrative": {
+      "description": "Full daily journal narrative",
+      "title": "Journal Narrative",
+      "type": "string"
+    },
+    "lessons": {
+      "items": {
+        "$ref": "#/$defs/LessonLearned"
+      },
+      "title": "Lessons",
+      "type": "array"
+    },
+    "open_positions": {
+      "minimum": 0,
+      "title": "Open Positions",
+      "type": "integer"
+    },
+    "reconciliation_status": {
+      "description": "clean | discrepancies_found | pending",
+      "title": "Reconciliation Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "journal_date",
+    "daily_pnl",
+    "open_positions",
+    "closed_today",
+    "fills_reviewed",
+    "journal_narrative",
+    "reconciliation_status"
+  ],
+  "title": "JournalPayload",
+  "type": "object"
+}

@@ -1,0 +1,1034 @@
+{
+  "$defs": {
+    "EvCosts": {
+      "additionalProperties": false,
+      "description": "Expected costs between gross (mid) EV and net EV, $ per unit (path means).\n\n``entry_slippage`` / ``exit_slippage`` are the fills' distance from mid (the fill\nmodel's ``x`` \u00d7 the bid-ask spread, per leg). ``commission`` and\n``regulatory_fees`` (ORF, OCC, CAT, TAF, SEC) cover entry plus the expected exit.",
+      "properties": {
+        "commission": {
+          "title": "Commission",
+          "type": "number"
+        },
+        "entry_slippage": {
+          "title": "Entry Slippage",
+          "type": "number"
+        },
+        "exit_slippage": {
+          "title": "Exit Slippage",
+          "type": "number"
+        },
+        "regulatory_fees": {
+          "title": "Regulatory Fees",
+          "type": "number"
+        }
+      },
+      "required": [
+        "entry_slippage",
+        "exit_slippage",
+        "commission",
+        "regulatory_fees"
+      ],
+      "title": "EvCosts",
+      "type": "object"
+    },
+    "ExitModelResult": {
+      "additionalProperties": false,
+      "description": "Static vs managed numbers for one structure under one policy.",
+      "properties": {
+        "buying_power": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "$ per unit",
+          "title": "Buying Power"
+        },
+        "dte": {
+          "title": "Dte",
+          "type": "integer"
+        },
+        "dte_exit_day": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Days from today until the DTE exit",
+          "title": "Dte Exit Day"
+        },
+        "entry_costs": {
+          "description": "$ per unit: entry slippage + commissions",
+          "title": "Entry Costs",
+          "type": "number"
+        },
+        "entry_net": {
+          "description": "Per-share entry price at mid, + debit / \u2212 credit",
+          "title": "Entry Net",
+          "type": "number"
+        },
+        "iv_model": {
+          "$ref": "#/$defs/IvModel"
+        },
+        "iv_used": {
+          "description": "Vol the marks are priced at (ATM IV)",
+          "title": "Iv Used",
+          "type": "number"
+        },
+        "managed": {
+          "$ref": "#/$defs/ManagedStats"
+        },
+        "model": {
+          "const": "gbm_flat_iv",
+          "default": "gbm_flat_iv",
+          "title": "Model",
+          "type": "string"
+        },
+        "n_paths": {
+          "title": "N Paths",
+          "type": "integer"
+        },
+        "path_vol": {
+          "description": "Vol the underlying paths move at",
+          "title": "Path Vol",
+          "type": "number"
+        },
+        "path_vol_source": {
+          "default": "iv",
+          "enum": [
+            "iv",
+            "realized_forecast"
+          ],
+          "title": "Path Vol Source",
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/ExitPolicy"
+        },
+        "pop_std_error": {
+          "description": "MC standard error of a PoP estimate",
+          "title": "Pop Std Error",
+          "type": "number"
+        },
+        "r": {
+          "title": "R",
+          "type": "number"
+        },
+        "rorc_day": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "managed.net_ev / (max_loss \u00d7 expected_days_held): return on risk per day",
+          "title": "Rorc Day"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        },
+        "spot": {
+          "title": "Spot",
+          "type": "number"
+        },
+        "static": {
+          "$ref": "#/$defs/StaticStats"
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TriggerLevels"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "structure_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StructureKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "take_profit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TriggerLevels"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "vrp": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ATM IV \u2212 realised-vol forecast (None = no forecast)",
+          "title": "Vrp"
+        }
+      },
+      "required": [
+        "policy",
+        "structure_kind",
+        "spot",
+        "dte",
+        "r",
+        "iv_used",
+        "path_vol",
+        "iv_model",
+        "entry_net",
+        "entry_costs",
+        "static",
+        "managed",
+        "pop_std_error",
+        "n_paths",
+        "seed"
+      ],
+      "title": "ExitModelResult",
+      "type": "object"
+    },
+    "ExitPolicy": {
+      "additionalProperties": false,
+      "description": "Exit rules for one structure kind (see module doc for exact semantics).",
+      "properties": {
+        "close_at_dte": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 7,
+          "title": "Close At Dte"
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StopRule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stop_eod_only": {
+          "default": true,
+          "description": "Evaluate the stop on end-of-day marks only",
+          "title": "Stop Eod Only",
+          "type": "boolean"
+        },
+        "take_profit_pct_of_debit": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 1.0,
+          "description": "Debit structures: close when pnl reaches this \u00d7 debit",
+          "title": "Take Profit Pct Of Debit"
+        },
+        "take_profit_pct_of_max_gain": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "maximum": 1.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 0.5,
+          "description": "Credit structures: close at this share of max gain",
+          "title": "Take Profit Pct Of Max Gain"
+        },
+        "time_adjusted_targets": {
+          "items": {
+            "$ref": "#/$defs/TimeAdjustedTarget"
+          },
+          "title": "Time Adjusted Targets",
+          "type": "array"
+        }
+      },
+      "title": "ExitPolicy",
+      "type": "object"
+    },
+    "Greeks": {
+      "description": "Position-level Greeks.",
+      "properties": {
+        "delta": {
+          "default": 0.0,
+          "title": "Delta",
+          "type": "number"
+        },
+        "gamma": {
+          "default": 0.0,
+          "title": "Gamma",
+          "type": "number"
+        },
+        "rho": {
+          "default": 0.0,
+          "title": "Rho",
+          "type": "number"
+        },
+        "theta": {
+          "default": 0.0,
+          "title": "Theta",
+          "type": "number"
+        },
+        "vanna": {
+          "default": 0.0,
+          "title": "Vanna",
+          "type": "number"
+        },
+        "vega": {
+          "default": 0.0,
+          "title": "Vega",
+          "type": "number"
+        },
+        "volga": {
+          "default": 0.0,
+          "title": "Volga",
+          "type": "number"
+        }
+      },
+      "title": "Greeks",
+      "type": "object"
+    },
+    "IvModel": {
+      "additionalProperties": false,
+      "description": "IV path for the model. ``constant`` (default) or deterministic mean reversion.\n\n``mean_reverting``: ``iv_d = long_run + (iv_0 \u2212 long_run) \u00b7 0.5 ** (d / half_life_days)``.",
+      "properties": {
+        "half_life_days": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Half Life Days"
+        },
+        "kind": {
+          "default": "constant",
+          "enum": [
+            "constant",
+            "mean_reverting"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "long_run": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Long Run"
+        }
+      },
+      "title": "IvModel",
+      "type": "object"
+    },
+    "Leg": {
+      "description": "A single option leg within a structure.",
+      "properties": {
+        "intent": {
+          "default": "",
+          "description": "Human-readable role, e.g. 'long call wing'",
+          "title": "Intent",
+          "type": "string"
+        },
+        "occ_symbol": {
+          "description": "OCC option symbol",
+          "title": "Occ Symbol",
+          "type": "string"
+        },
+        "premium": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-share option price used for analytics (e.g. mid). Required by arc.structures payoff / max gain / max loss math.",
+          "title": "Premium"
+        },
+        "ratio": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Ratio",
+          "type": "integer"
+        },
+        "side": {
+          "$ref": "#/$defs/LegIntent"
+        }
+      },
+      "required": [
+        "occ_symbol",
+        "side"
+      ],
+      "title": "Leg",
+      "type": "object"
+    },
+    "LegIntent": {
+      "description": "Intent of an individual leg.",
+      "enum": [
+        "long",
+        "short"
+      ],
+      "title": "LegIntent",
+      "type": "string"
+    },
+    "Liquidity": {
+      "description": "Liquidity metrics for the structure.",
+      "properties": {
+        "open_interest": {
+          "default": 0,
+          "title": "Open Interest",
+          "type": "integer"
+        },
+        "spread_pct": {
+          "default": 0.0,
+          "description": "Bid-ask spread as % of mid",
+          "title": "Spread Pct",
+          "type": "number"
+        },
+        "volume": {
+          "default": 0,
+          "title": "Volume",
+          "type": "integer"
+        }
+      },
+      "title": "Liquidity",
+      "type": "object"
+    },
+    "ManagedStats": {
+      "additionalProperties": false,
+      "description": "Under the exit policy.",
+      "properties": {
+        "costs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvCosts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "gross_ev \u2212 net_ev, itemised"
+        },
+        "ev_per_bp_day": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ev Per Bp Day"
+        },
+        "expected_days_held": {
+          "minimum": 0.0,
+          "title": "Expected Days Held",
+          "type": "number"
+        },
+        "gross_ev": {
+          "title": "Gross Ev",
+          "type": "number"
+        },
+        "net_ev": {
+          "title": "Net Ev",
+          "type": "number"
+        },
+        "p_dte_exit": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "P Dte Exit",
+          "type": "number"
+        },
+        "p_expiry": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "P Expiry",
+          "type": "number"
+        },
+        "p_stop": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "P Stop",
+          "type": "number"
+        },
+        "p_take_profit": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "P Take Profit",
+          "type": "number"
+        },
+        "pop": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Pop",
+          "type": "number"
+        },
+        "pop_gross": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Pop Gross",
+          "type": "number"
+        }
+      },
+      "required": [
+        "pop",
+        "pop_gross",
+        "gross_ev",
+        "net_ev",
+        "p_take_profit",
+        "p_stop",
+        "p_dte_exit",
+        "p_expiry",
+        "expected_days_held"
+      ],
+      "title": "ManagedStats",
+      "type": "object"
+    },
+    "QuantMetrics": {
+      "description": "Quantitative metrics for a proposal.",
+      "properties": {
+        "cost_bps": {
+          "default": 0.0,
+          "description": "Estimated round-trip cost in basis points",
+          "title": "Cost Bps",
+          "type": "number"
+        },
+        "ev": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "description": "Expected value per contract",
+          "title": "Ev"
+        },
+        "pop": {
+          "description": "Probability of profit",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Pop",
+          "type": "number"
+        }
+      },
+      "required": [
+        "pop",
+        "ev"
+      ],
+      "title": "QuantMetrics",
+      "type": "object"
+    },
+    "Sizing": {
+      "description": "Position sizing for a proposal.",
+      "properties": {
+        "contracts": {
+          "minimum": 1,
+          "title": "Contracts",
+          "type": "integer"
+        },
+        "notional": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "description": "Notional exposure",
+          "title": "Notional"
+        },
+        "pct_equity": {
+          "description": "% of account equity",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Pct Equity",
+          "type": "number"
+        }
+      },
+      "required": [
+        "contracts",
+        "notional",
+        "pct_equity"
+      ],
+      "title": "Sizing",
+      "type": "object"
+    },
+    "StaticStats": {
+      "additionalProperties": false,
+      "description": "Hold to expiry.",
+      "properties": {
+        "costs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvCosts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "gross_ev \u2212 net_ev, itemised"
+        },
+        "ev_per_bp_day": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "net_ev / (buying power \u00d7 days held)",
+          "title": "Ev Per Bp Day"
+        },
+        "gross_ev": {
+          "description": "$ per unit at mid, no costs",
+          "title": "Gross Ev",
+          "type": "number"
+        },
+        "net_ev": {
+          "description": "$ per unit after slippage and all fees",
+          "title": "Net Ev",
+          "type": "number"
+        },
+        "pop": {
+          "description": "P(net P&L > 0) after costs",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Pop",
+          "type": "number"
+        },
+        "pop_analytic": {
+          "description": "Lognormal PoP over breakevens",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Pop Analytic",
+          "type": "number"
+        },
+        "pop_gross": {
+          "description": "P(P&L > 0) at mid, no costs",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Pop Gross",
+          "type": "number"
+        }
+      },
+      "required": [
+        "pop",
+        "pop_gross",
+        "pop_analytic",
+        "gross_ev",
+        "net_ev"
+      ],
+      "title": "StaticStats",
+      "type": "object"
+    },
+    "StopBasis": {
+      "description": "What the stop's ``value`` multiplies (see module doc).",
+      "enum": [
+        "credit_multiple",
+        "pct_max_loss",
+        "pct_debit"
+      ],
+      "title": "StopBasis",
+      "type": "string"
+    },
+    "StopRule": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "$ref": "#/$defs/StopBasis"
+        },
+        "value": {
+          "exclusiveMinimum": 0.0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "basis",
+        "value"
+      ],
+      "title": "StopRule",
+      "type": "object"
+    },
+    "Structure": {
+      "description": "A multi-leg option structure with analytics.\n\nUnits (as produced by :mod:`arc.structures`):\n  - ``net_debit_credit``: per-share price (the mleg limit-price convention).\n  - ``max_gain`` / ``max_loss`` / ``buying_power``: dollars per one unit of the\n    structure (contract multiplier applied). ``None`` means unbounded.\n  - ``greeks``: position Greeks in share-equivalents (per-share Greek x 100 x\n    signed ratio, summed over legs).",
+      "properties": {
+        "breakevens": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Breakevens",
+          "type": "array"
+        },
+        "buying_power": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Estimated buying-power reduction per unit (Reg-T style)",
+          "title": "Buying Power"
+        },
+        "dte": {
+          "minimum": 0,
+          "title": "Dte",
+          "type": "integer"
+        },
+        "greeks": {
+          "$ref": "#/$defs/Greeks"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StructureKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "legs": {
+          "items": {
+            "$ref": "#/$defs/Leg"
+          },
+          "title": "Legs",
+          "type": "array"
+        },
+        "liquidity": {
+          "$ref": "#/$defs/Liquidity"
+        },
+        "max_gain": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Gain"
+        },
+        "max_loss": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Loss"
+        },
+        "net_debit_credit": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "description": "Positive = debit, negative = credit",
+          "title": "Net Debit Credit"
+        }
+      },
+      "required": [
+        "legs",
+        "net_debit_credit",
+        "dte"
+      ],
+      "title": "Structure",
+      "type": "object"
+    },
+    "StructureKind": {
+      "description": "Structure classification (Phase-1 whitelist per PLAN D4, plus OTHER).",
+      "enum": [
+        "long_call",
+        "long_put",
+        "vertical_debit",
+        "vertical_credit",
+        "iron_condor",
+        "other"
+      ],
+      "title": "StructureKind",
+      "type": "string"
+    },
+    "TimeAdjustedTarget": {
+      "additionalProperties": false,
+      "description": "Take-profit percentage that applies once remaining DTE \u2264 ``dte_lte`` (D19).",
+      "properties": {
+        "dte_lte": {
+          "minimum": 0,
+          "title": "Dte Lte",
+          "type": "integer"
+        },
+        "take_profit_pct": {
+          "exclusiveMinimum": 0.0,
+          "title": "Take Profit Pct",
+          "type": "number"
+        }
+      },
+      "required": [
+        "dte_lte",
+        "take_profit_pct"
+      ],
+      "title": "TimeAdjustedTarget",
+      "type": "object"
+    },
+    "TriggerLevels": {
+      "additionalProperties": false,
+      "description": "Where a rule fires: the close price per share, and the underlying when it fired.\n\n``close_price`` is what the order pays (``close_side = \"debit\"``, e.g. $0.83 to buy\nback a $1.66 credit at 50%) or receives (``\"credit\"``). ``pnl`` is the P&L per\nshare at that price. The underlying levels are the medians of the simulated spot\non the paths where this rule fired, split below / above today's spot (``None``\nwhen no path fired on that side); ``median_day`` is the median day it fired.\n``pnl``/``close_price`` for take profit use the base target (before any\ntime-adjusted bucket).",
+      "properties": {
+        "close_price": {
+          "title": "Close Price",
+          "type": "number"
+        },
+        "close_side": {
+          "enum": [
+            "debit",
+            "credit"
+          ],
+          "title": "Close Side",
+          "type": "string"
+        },
+        "median_day": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Median Day"
+        },
+        "pnl": {
+          "title": "Pnl",
+          "type": "number"
+        },
+        "probability": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Probability",
+          "type": "number"
+        },
+        "reachable": {
+          "default": true,
+          "description": "False when the threshold lies beyond max gain / max loss, so the rule can never fire (e.g. a 3x-credit stop on a condor whose max loss is < 2x credit)",
+          "title": "Reachable",
+          "type": "boolean"
+        },
+        "underlying_down": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Underlying Down"
+        },
+        "underlying_up": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Underlying Up"
+        }
+      },
+      "required": [
+        "pnl",
+        "close_price",
+        "close_side",
+        "probability"
+      ],
+      "title": "TriggerLevels",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Full trade proposal (pre-gate), plus the E2.4 exit model for the card.\n\n``exit_model`` is context only: it is not part of :class:`Proposal`, so it never\nenters the gate's proposal hash.",
+  "properties": {
+    "candidate_id": {
+      "title": "Candidate Id",
+      "type": "string"
+    },
+    "earnings_play": {
+      "default": false,
+      "description": "Director flagged this as a deliberate earnings play (PLAN \u00a75).",
+      "title": "Earnings Play",
+      "type": "boolean"
+    },
+    "exit_model": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExitModelResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "limit_price": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Per-share net limit price for the order (positive = debit, negative = credit). None means the structure's net_debit_credit (mid).",
+      "title": "Limit Price"
+    },
+    "quant": {
+      "$ref": "#/$defs/QuantMetrics"
+    },
+    "risk_concurs": {
+      "default": false,
+      "description": "Risk persona concurs with the earnings-play flag (PLAN \u00a75).",
+      "title": "Risk Concurs",
+      "type": "boolean"
+    },
+    "risk_narrative": {
+      "default": "",
+      "title": "Risk Narrative",
+      "type": "string"
+    },
+    "sizing": {
+      "$ref": "#/$defs/Sizing"
+    },
+    "structure": {
+      "$ref": "#/$defs/Structure"
+    },
+    "thesis": {
+      "description": "Persona-generated thesis text",
+      "title": "Thesis",
+      "type": "string"
+    }
+  },
+  "required": [
+    "candidate_id",
+    "structure",
+    "thesis",
+    "quant",
+    "sizing",
+    "expires_at"
+  ],
+  "title": "ProposalPayload",
+  "type": "object"
+}

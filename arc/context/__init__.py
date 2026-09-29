@@ -10,7 +10,16 @@ Usage::
     snap = store.snapshot(now, kinds=["candidate", "regime"])   # recorded; snap.id -> run
 """
 
-from arc.context.kinds import KINDS, KindSpec, kind_spec, validate_payload
+from arc.context.kinds import (
+    KINDS,
+    Evidence,
+    KindSpec,
+    NoteHorizon,
+    NotePayload,
+    NoteTopic,
+    kind_spec,
+    validate_payload,
+)
 from arc.context.store import (
     ContextEntry,
     ContextSnapshot,
@@ -26,7 +35,11 @@ __all__ = [
     "ContextSnapshot",
     "ContextStore",
     "EntryStatus",
+    "Evidence",
     "KindSpec",
+    "NoteHorizon",
+    "NotePayload",
+    "NoteTopic",
     "Supersede",
     "Ttl",
     "kind_spec",

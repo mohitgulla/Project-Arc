@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as _dt
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -165,6 +166,7 @@ class Dispatcher:
         self._settings_factory = settings_factory
         # E5.2b: fresh wall clock handed to steps (None = the tick's frozen ``now``).
         self._clock = clock
+        self._manifest_alerted = False
 
     def _default_halted(self) -> bool:
         # E3.3 kill switch; fails closed (halted) if the halt store is unreadable.
@@ -283,6 +285,7 @@ class Dispatcher:
             log.info("routines.skipped", job=d.job, slot=d.slot.isoformat(), why=reason)
             if claimed is None:
                 return [Outcome(d.job, d.slot, "duplicate", "already recorded for this slot")]
+            self._write_manifest(claimed, _RunTrace(), now=now, started=now, t0=time.monotonic())
             return [Outcome(d.job, d.slot, "skipped", reason, run_id=claimed.run_id)]
         outcomes = self.run_job(d.job, d.slot, reason="schedule", now=now, note=reason)
         if outcomes[0].status == "deferred":
@@ -309,6 +312,7 @@ class Dispatcher:
         event: RoutineEvent | None = None,
         depth: int = 0,
         note: str = "",
+        parent_run_id: str | None = None,
     ) -> list[Outcome]:
         """Run *job* for *scheduled_for* (plus its chain), then fire triggers."""
         found = self.routines.job(job)
@@ -329,6 +333,7 @@ class Dispatcher:
                     chain_run_id=chain_run_id,
                     event=event,
                     note=note,
+                    parent_run_id=parent_run_id,
                 )
         except LockBusyError as exc:
             log.info("routines.deferred", job=job, why=str(exc))
@@ -373,8 +378,10 @@ class Dispatcher:
         event: RoutineEvent | None = None,
         existing: Mapping[str, RoutineRun] | None = None,
         note: str = "",
+        parent_run_id: str | None = None,
     ) -> list[Outcome]:
         outcomes: list[Outcome] = []
+        prev_run_id = parent_run_id
         existing = existing or {}
         for index, step in enumerate(steps):
             prior = existing.get(step)
@@ -416,7 +423,14 @@ class Dispatcher:
                     )
                     break
                 run = claimed
-            outcome = self._execute(run, now=now, event=event, note=note if index == 0 else "")
+            outcome = self._execute(
+                run,
+                now=now,
+                event=event,
+                note=note if index == 0 else "",
+                parent_run_id=prev_run_id,
+            )
+            prev_run_id = run.run_id
             outcomes.append(outcome)
             if outcome.status != "ok":
                 if chain_run_id and index + 1 < len(steps):
@@ -437,6 +451,7 @@ class Dispatcher:
         now: _dt.datetime,
         event: RoutineEvent | None,
         note: str,
+        parent_run_id: str | None = None,
     ) -> Outcome:
         # E8.2: every log line of this run (handler, Slack, LLM calls) carries its ids.
         with bind_ids(
@@ -445,7 +460,13 @@ class Dispatcher:
             job=run.job,
             step_index=run.step_index if run.chain_run_id else None,
         ):
-            return self._execute_bound(run, now=now, event=event, note=note)
+            trace = _RunTrace(event_id=event.id if event else None, parent_run_id=parent_run_id)
+            started, t0 = now_et(), time.monotonic()
+            try:
+                return self._execute_bound(run, now=now, event=event, note=note, trace=trace)
+            finally:
+                # D27: one manifest per run attempt, on every path (ok / failed / skipped).
+                self._write_manifest(run, trace, now=now, started=started, t0=t0)
 
     def _execute_bound(
         self,
@@ -454,6 +475,7 @@ class Dispatcher:
         now: _dt.datetime,
         event: RoutineEvent | None,
         note: str,
+        trace: _RunTrace,
     ) -> Outcome:
         kind, spec = self.routines.step(run.job)
         ctx: JobContext | None = None
@@ -479,12 +501,14 @@ class Dispatcher:
                 settings_factory=self._settings_factory,
                 clock_fn=self._clock,
             )
+            trace.ctx = ctx
             with self.locks.hold(run.job) if run.step_index else contextlib.nullcontext():
                 result = handler(ctx)
             if not isinstance(result, JobResult):
                 msg = f"handler for {run.job!r} returned {type(result).__name__}, not JobResult"
                 raise TypeError(msg)
         except JobSkippedError as exc:
+            trace.exc = exc
             outputs = ctx.outputs if ctx else []
             self.runs.finish(
                 run.run_id, status=RunStatus.SKIPPED, outputs=outputs, summary=str(exc), now=now
@@ -492,15 +516,19 @@ class Dispatcher:
             log.info("routines.step_skipped", job=run.job, why=str(exc))
             return self._outcome(run, "skipped", str(exc))
         except Exception as exc:  # noqa: BLE001 - a job failure is recorded, never raised
+            trace.exc = exc
             error = f"{type(exc).__name__}: {exc}"
             outputs = ctx.outputs if ctx else []
             self.runs.finish(
                 run.run_id, status=RunStatus.FAILED, outputs=outputs, error=error, now=now
             )
             log.error("routines.failed", job=run.job, run_id=run.run_id, error=error)
-            self.heartbeats.alert(now, run.job, error, run_id=run.run_id)
+            trace.notifications.append(
+                self.heartbeats.alert(now, run.job, error, run_id=run.run_id)
+            )
             return self._outcome(run, "failed", error)
 
+        trace.metrics = result.metrics
         summary = result.summary
         if note and note != "schedule":
             summary = f"{summary} ({note})" if summary else note
@@ -508,19 +536,87 @@ class Dispatcher:
             run.run_id, status=RunStatus.OK, outputs=ctx.outputs, summary=summary, now=now
         )
         notify = spec.notify or (Notify.QUIET if kind is JobKind.SOURCE else Notify.CARD)
+        posts = trace.notifications
         if result.notice:
-            self.heartbeats.notice(now, run.job, result.notice)
+            posts.append(self.heartbeats.notice(now, run.job, result.notice))
         if notify is Notify.QUIET:
             new_docs = result.metrics.get("new_docs")
             self.heartbeats.queue_source(
                 run.job, summary, new_docs=new_docs if isinstance(new_docs, int) else None
             )
         elif notify is Notify.CARD and result.card is not None:
-            self.heartbeats.summary(now, run.job, summary, blocks=result.card.blocks)
+            posts.append(self.heartbeats.summary(now, run.job, summary, blocks=result.card.blocks))
         else:
-            self.heartbeats.summary(now, run.job, summary)
+            posts.append(self.heartbeats.summary(now, run.job, summary))
         log.info("routines.ok", job=run.job, run_id=run.run_id, outputs=len(ctx.outputs))
         return self._outcome(run, "ok", summary, metrics=result.metrics)
+
+    def _write_manifest(
+        self,
+        run: RoutineRun,
+        trace: _RunTrace,
+        *,
+        now: _dt.datetime,
+        started: _dt.datetime,
+        t0: float,
+    ) -> None:
+        """Append the D27 run manifest. A manifest failure never masks the job's result."""
+        from arc.monitoring.correlation import from_env
+        from arc.routines.manifest import ManifestRepo, build_manifest
+
+        try:
+            final = self.runs.get(run.run_id) or run
+            kind, spec = self.routines.step(run.job)
+            ctx = trace.ctx
+            settings = None
+            try:
+                if ctx is not None and ctx._settings is not None:
+                    settings = ctx._settings
+                elif self._settings_factory is not None:
+                    settings = self._settings_factory()
+                else:
+                    from arc.config import get_settings
+
+                    settings = get_settings()
+            except Exception:  # noqa: BLE001 - settings are metadata here, never required
+                settings = None
+            try:
+                halted: bool | None = self._is_halted()
+            except Exception:  # noqa: BLE001
+                halted = None
+            ids = structlog.contextvars.get_contextvars()
+            correlation = {**from_env(), **{
+                k: str(v) for k, v in ids.items() if k in _CORRELATION_KEYS and v
+            }}  # fmt: skip
+            manifest = build_manifest(
+                self.conn,
+                final,
+                kind=kind,
+                spec=spec,
+                routines=self.routines,
+                tick_now=now,
+                started_at=started,
+                finished_at=now_et(),
+                duration_ms=int((time.monotonic() - t0) * 1000),
+                exc=trace.exc,
+                metrics=trace.metrics,
+                external_inputs=ctx.external_inputs if ctx is not None else (),
+                event_id=trace.event_id,
+                parent_run_id=trace.parent_run_id,
+                notifications=[n for n in trace.notifications if n],
+                settings=settings,
+                halted=halted,
+                correlation=correlation,
+            )
+            ManifestRepo(self.conn).insert(manifest)
+        except Exception as exc:  # noqa: BLE001 - audit metadata must not fail the job
+            log.error("manifest.write_failed", job=run.job, run_id=run.run_id, error=repr(exc))
+            if not self._manifest_alerted:
+                self._manifest_alerted = True
+                with contextlib.suppress(Exception):
+                    self.heartbeats.alert(
+                        now, run.job, f"run manifest not written: {exc!r}", run_id=run.run_id
+                    )
 
     @staticmethod
     def _outcome(
@@ -554,7 +650,11 @@ class Dispatcher:
                 "hour": now.hour,
                 "weekday": now.weekday(),
             }
-            fired.extend(self._fire(f"{o.job}.completed", env, o.scheduled_for, now, depth))
+            fired.extend(
+                self._fire(
+                    f"{o.job}.completed", env, o.scheduled_for, now, depth, parent_run_id=o.run_id
+                )
+            )
         return fired
 
     def _fire(
@@ -565,6 +665,7 @@ class Dispatcher:
         now: _dt.datetime,
         depth: int,
         event: RoutineEvent | None = None,
+        parent_run_id: str | None = None,
     ) -> list[Outcome]:
         out: list[Outcome] = []
         if depth >= self.routines.tick.max_trigger_depth:
@@ -588,6 +689,7 @@ class Dispatcher:
                     now=now,
                     event=event,
                     depth=depth + 1,
+                    parent_run_id=parent_run_id,
                 )
             )
         return out
@@ -624,6 +726,21 @@ class Dispatcher:
                 if self.routines.sources[source].enabled:
                     outcomes.extend(self.run_job(source, now, reason="manual", now=now))
         return outcomes + self.run_job(job, now, reason="manual", now=now, chain=chain)
+
+
+_CORRELATION_KEYS = frozenset({"tick_id", "cron_job", "kanban_task", "hermes_session"})
+
+
+@dataclass
+class _RunTrace:
+    """What the manifest needs from one execution besides the (final) run row."""
+
+    event_id: str | None = None
+    parent_run_id: str | None = None
+    ctx: JobContext | None = None
+    exc: BaseException | None = None
+    metrics: dict[str, Any] = field(default_factory=dict)
+    notifications: list[str | None] = field(default_factory=list)
 
 
 def _empty_snapshot(now: _dt.datetime) -> ContextSnapshot:

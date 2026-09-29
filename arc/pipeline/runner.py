@@ -181,14 +181,21 @@ def fixture_run(
     *,
     db: str | Path | None = None,
     now: _dt.datetime | None = None,
+    fixture_set: str = "neutral",
 ) -> tuple[sqlite3.Connection, ProposeReport]:
-    """``arc propose --fixtures``: offline end to end (seeded raw docs, canned personas)."""
+    """``arc propose --fixtures``: offline end to end (seeded raw docs, canned personas).
+
+    ``fixture_set`` picks the canned Director/Quant/Risk replies
+    (:data:`~arc.pipeline.env.FIXTURE_SETS`): ``neutral`` (SPY iron condor) or
+    ``bullish`` (SPY bull call debit, D25).
+    """
     from arc.ingest.scout import load_fixture_docs
+    from arc.pipeline.env import FIXTURE_SETS
     from arc.routines.heartbeat import LogNotifier
 
     conn = open_db(db or ":memory:", copy=False)
     load_fixture_docs(conn)
-    env = PipelineEnv.fixtures()
+    env = PipelineEnv.fixtures(FIXTURE_SETS[fixture_set])
     report = run_propose(
         conn,
         settings,

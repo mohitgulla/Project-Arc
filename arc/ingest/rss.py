@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     import sqlite3
 
 import feedparser
+import requests
 import structlog
 
 from arc.ingest.store import IngestCursorRepo, RawDocRepo, content_hash
@@ -26,6 +27,19 @@ if TYPE_CHECKING:
 log = structlog.get_logger()
 
 CONNECTOR = "rss"
+# Some publishers (e.g. Nasdaq) reset connections from non-browser user agents.
+USER_AGENT = "Mozilla/5.0 (compatible; ProjectArc/0.1)"
+
+
+def _download(feed_url: str, timeout: float) -> bytes:
+    """GET one feed with a hard timeout (feedparser.parse(url) has none and can hang a tick)."""
+    resp = requests.get(
+        feed_url,
+        timeout=timeout,
+        headers={"User-Agent": USER_AGENT, "Accept": "*/*"},
+    )
+    resp.raise_for_status()
+    return resp.content
 
 
 def _parse_published(entry: dict) -> datetime:
@@ -96,7 +110,12 @@ def fetch_rss(
         )
 
         log.info("rss.fetching", feed_url=feed_url, cursor=last_cursor)
-        parsed = feedparser.parse(feed_url)
+        try:
+            body = _download(feed_url, settings.ingest_rss_timeout_seconds)
+        except requests.RequestException as exc:
+            log.warning("rss.fetch_error", feed_url=feed_url, error=str(exc))
+            continue
+        parsed = feedparser.parse(body)
 
         if parsed.bozo and not parsed.entries:
             log.warning("rss.parse_error", feed_url=feed_url, error=str(parsed.bozo_exception))
