@@ -54,7 +54,9 @@ STRANGER = "U0STRANGER"
 
 @pytest.fixture(scope="module")
 def _pipeline_db() -> bytes:
-    conn, report = fixture_run(ArcSettings(_env_file=None), load_routines())  # type: ignore[call-arg]
+    conn, report = fixture_run(
+        ArcSettings(_env_file=None, account_profile="margin"), load_routines()
+    )  # type: ignore[call-arg]
     assert len(report.proposals) == 1
     return conn.serialize()
 
@@ -193,7 +195,7 @@ class TestPipelineRecords:
             now = FIXTURE_NOW
             chain_run_id = "chain-x"
             run_id = "run-x"
-            settings = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+            settings = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
 
             def __init__(self) -> None:
                 self.conn = connect(":memory:")
@@ -283,7 +285,9 @@ def test_unknown_reason_code_is_refused(conn: sqlite3.Connection) -> None:
 def _svc(conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch) -> ApprovalService:
     monkeypatch.delenv("ARC_AUTO_APPROVE", raising=False)
     monkeypatch.setenv("ARC_APPROVER_SLACK_USER_IDS", OWNER)
-    return ApprovalService(conn, ArcSettings(_env_file=None), LogCardPoster())  # type: ignore[call-arg]
+    return ApprovalService(
+        conn, ArcSettings(_env_file=None, account_profile="margin"), LogCardPoster()
+    )  # type: ignore[call-arg]
 
 
 def _actionable(conn: sqlite3.Connection) -> None:

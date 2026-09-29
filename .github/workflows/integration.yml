@@ -1,0 +1,49 @@
+name: Integration (Alpaca paper)
+
+# Weekly live check of the Alpaca paper adapter during regular trading hours.
+# 15:00 UTC Wednesday = 11:00 ET (EDT) / 10:00 ET (EST): inside RTH all year.
+# The workflow run is reported as a check on the commit it ran against.
+on:
+  schedule:
+    - cron: "0 15 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-alpaca-paper
+  cancel-in-progress: false
+
+jobs:
+  alpaca-paper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ARC_ENV: paper
+      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (lockfile must be current)
+        run: uv sync --locked
+
+      # The tests skip without keys; a skip must not look like a pass here.
+      - name: Require paper secrets
+        run: |
+          if [ -z "$ALPACA_API_KEY" ] || [ -z "$ALPACA_SECRET_KEY" ]; then
+            echo "::error::ALPACA_API_KEY / ALPACA_SECRET_KEY repo secrets are not set"
+            exit 1
+          fi
+
+      - name: Alpaca paper integration tests
+        run: uv run pytest tests/test_integration_alpaca.py -rA --tb=short

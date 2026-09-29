@@ -51,7 +51,9 @@ from arc.utils.calendar import ET
 
 @pytest.fixture(scope="module")
 def run() -> SimpleNamespace:
-    conn, report = fixture_run(ArcSettings(_env_file=None), load_routines())  # type: ignore[call-arg]
+    conn, report = fixture_run(
+        ArcSettings(_env_file=None, account_profile="margin"), load_routines()
+    )  # type: ignore[call-arg]
     assert len(report.proposals) == 1
     raw = conn.execute("SELECT payload FROM context_entries WHERE kind = 'proposal'").fetchone()[0]
     p = Proposal.model_validate_json(raw)
@@ -114,7 +116,7 @@ class TestCardItems:
         summary = run.view.blocks[1]["elements"][0]["text"]
         assert summary.startswith("Credit 1.66 · Max gain $165.55 · Max loss $334.45 · PoP 62%")
         assert "Net EV $9.22 managed / $32.36 hold" in summary
-        assert summary.endswith("x14 · :white_check_mark: Gate PASS")
+        assert summary.endswith("x14 · Account margin · :white_check_mark: Gate PASS")
 
     def test_2_legs_are_plain_lines(self, run: SimpleNamespace) -> None:
         legs = _section(run.view, "Legs")
@@ -571,9 +573,17 @@ class TestQuoteSizes:
         assert _size("7") is None
 
 
-def test_scaffold_lists_new_modules() -> None:
-    text = Path("tests/test_scaffold.py").read_text()
-    assert '"arc.journal.analytics"' in text and '"arc.pipeline.analytics"' in text
+def test_scaffold_discovers_new_modules() -> None:
+    # test_scaffold imports every module found by pkgutil.walk_packages (E1.1a).
+    import importlib
+    import pkgutil
+
+    import arc
+
+    found = {m.name for m in pkgutil.walk_packages(arc.__path__, "arc.")}
+    assert {"arc.journal.analytics", "arc.pipeline.analytics"} <= found
+    importlib.import_module("arc.journal.analytics")
+    importlib.import_module("arc.pipeline.analytics")
 
 
 def test_fixture_db_is_in_memory(run: SimpleNamespace) -> None:

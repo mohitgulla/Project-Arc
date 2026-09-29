@@ -262,10 +262,20 @@ def approval_record(conn: sqlite3.Connection, proposal_hash: str) -> ApprovalRec
 
 
 class ApprovalService:
-    def __init__(self, conn: sqlite3.Connection, settings: ArcSettings, poster: CardPoster) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        settings: ArcSettings,
+        poster: CardPoster,
+        *,
+        live: bool = False,
+    ) -> None:
         self.conn = conn
         self.settings = settings
         self.poster = poster
+        # E5.2b: a live sweep (Slack) explains a token-less PASS as a missing
+        # secret; an offline one (dry run / fixtures) as the expected no-permission.
+        self.live = live
 
     # -- queries -------------------------------------------------------------
 
@@ -396,15 +406,19 @@ class ApprovalService:
             return "auto-exit (defined risk, D24)"
         return None
 
-    @staticmethod
     def _initial_status(
-        proposal: Proposal, decision: GateDecision | None, now: _dt.datetime
+        self, proposal: Proposal, decision: GateDecision | None, now: _dt.datetime
     ) -> tuple[RequestStatus, str]:
         if decision is None:
             return RequestStatus.NOT_ACTIONABLE, "no gate decision"
         if not decision.passed:
             return RequestStatus.NOT_ACTIONABLE, "gate failed: " + "; ".join(decision.violations)
         if not decision.token:
+            if self.live:
+                return (
+                    RequestStatus.NOT_ACTIONABLE,
+                    "no gate token (ARC_GATE_SECRET missing when proposed): not executable",
+                )
             return (
                 RequestStatus.NOT_ACTIONABLE,
                 "no gate token (dry run / fixtures): informational only",

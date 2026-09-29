@@ -97,6 +97,12 @@ def _add_scan_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument("--top", type=int, default=10, help="Candidates kept per ticker")
     p.add_argument(
+        "--profile",
+        default=None,
+        help="Account profile (margin | cash_debit | cash_long_only); default ARC_ACCOUNT_PROFILE. "
+        "Sets the default strategies and DTE window (D25).",
+    )
+    p.add_argument(
         "--fixture",
         action="append",
         default=None,
@@ -127,7 +133,7 @@ def _make_parser() -> argparse.ArgumentParser:
             p.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
         elif cmd == "chains":
             _add_scan_args(
-                sub.add_parser(cmd, help="Scan option chains for ranked credit structures")
+                sub.add_parser(cmd, help="Scan option chains for ranked option structures")
             )
         elif cmd == "ingest":
             p = sub.add_parser(cmd, help="Ingest source documents")
@@ -174,6 +180,18 @@ def _make_parser() -> argparse.ArgumentParser:
                 "--fixtures",
                 action="store_true",
                 help="Fully offline: recorded SPY chain + canned persona replies, in-memory DB.",
+            )
+            p.add_argument(
+                "--fixture-set",
+                choices=["neutral", "bullish"],
+                default="neutral",
+                help="Canned persona replies for --fixtures: neutral (SPY condor) or bullish "
+                "(SPY bull call debit).",
+            )
+            p.add_argument(
+                "--profile",
+                default=None,
+                help="Account profile for this run (overrides ARC_ACCOUNT_PROFILE; D25).",
             )
             p.add_argument("--no-scout", action="store_true", help="Skip the Scout job.")
             p.add_argument("--no-slack", action="store_true", help="Log heartbeats only.")
@@ -305,12 +323,21 @@ def _fmt_candidate(c: ScanCandidate) -> str:
     strikes = "/".join(
         f"{parse_occ(leg.occ_symbol).strike.normalize():f}" for leg in c.structure.legs
     )
+    head = f"{c.rank:>3}  {c.strategy.value:<15} {c.expiration} {c.dte:>3}d  {strikes:<16} "
+    tail = f"PoP {c.pop:.2f}  EV {c.ev_proxy:>7.2f}  maxL {c.structure.max_loss:.2f}"
+    if c.credit_width is None:  # debit structure (D25): long Δ / short Δ, debit, EV/maxL
+        longs = "/".join(f"{d * 100:.0f}" for d in c.long_deltas)
+        shorts = "/".join(f"{d * 100:.0f}" for d in c.short_deltas) or "-"
+        width = "-" if c.width is None else f"{c.width:g}"
+        ratio = "n/a" if c.ev_ratio is None else f"{c.ev_ratio:.3f}"
+        return (
+            f"{head}Δ+{longs}/-{shorts:<5} w{width:<4} db {-c.credit:>5.2f} "
+            f"nat {-c.natural_credit:>5.2f}  ev/L {ratio}  {tail}"
+        )
     deltas = "/".join(f"{d * 100:.0f}" for d in c.short_deltas)
     return (
-        f"{c.rank:>3}  {c.strategy.value:<11} {c.expiration} {c.dte:>3}d  {strikes:<16} "
-        f"Δ{deltas:<6} w{c.width:<4g} cr {c.credit:>5.2f} nat {c.natural_credit:>5.2f}  "
-        f"cr/w {c.credit_width:.3f}  PoP {c.pop:.2f}  EV {c.ev_proxy:>7.2f}  "
-        f"maxL {c.structure.max_loss:.2f}"
+        f"{head}Δ{deltas:<6} w{c.width:<4g} cr {c.credit:>5.2f} nat {c.natural_credit:>5.2f}  "
+        f"cr/w {c.credit_width:.3f}  {tail}"
     )
 
 
@@ -325,6 +352,12 @@ def _chains(args: argparse.Namespace) -> int:
     # time (a proxy, so a replaced/closed stream is never captured in global config).
     _log_to_stderr()
     settings = get_settings()
+    if args.profile:
+        try:
+            settings = settings.with_profile(args.profile)
+        except KeyError as exc:
+            sys.stderr.write(f"arc chains: {exc.args[0]}\n")
+            return 2
 
     provider: MarketDataProvider
     recorded = None
@@ -391,7 +424,10 @@ def _chains(args: argparse.Namespace) -> int:
         atm = "n/a" if iv.atm_iv is None else f"{iv.atm_iv * 100:.1f}%"
         fr = r.filter_report
         exps = ", ".join(str(e) for e in r.expirations) or "none"
-        lines.append(f"{r.ticker} spot {r.spot:.2f}  as_of {r.as_of}  expirations {exps}")
+        lines.append(
+            f"{r.ticker} spot {r.spot:.2f}  as_of {r.as_of}  expirations {exps}  "
+            f"profile {settings.account_profile}"
+        )
         lines.append(
             f"  ATM IV {atm}  IVR {ivr}  IVP {ivp}  ({iv.observations} obs, lookback {iv.lookback})"
         )
@@ -549,6 +585,12 @@ def _propose(args: argparse.Namespace) -> int:
 
     _log_to_stderr()
     settings = get_settings()
+    if args.profile:
+        try:
+            settings = settings.with_profile(args.profile)
+        except KeyError as exc:
+            sys.stderr.write(f"arc propose: {exc.args[0]}\n")
+            return 2
     routines = load_routines(args.routines)
     if not (args.fixtures or args.dry_run):
         from arc.gate.token import TokenError, gate_secret
@@ -562,7 +604,7 @@ def _propose(args: argparse.Namespace) -> int:
             )
             return 2
     if args.fixtures:
-        conn, report = fixture_run(settings, routines, db=args.db)
+        conn, report = fixture_run(settings, routines, db=args.db, fixture_set=args.fixture_set)
     else:
         conn = open_db(args.db, copy=args.dry_run and args.db is None)
         env = PipelineEnv.live(settings, broker=not args.dry_run)
@@ -575,6 +617,7 @@ def _propose(args: argparse.Namespace) -> int:
             routines,
             env,
             now=now_et(),
+            clock=now_et,  # E5.2b: quotes/gate/token/expiry judged at step time
             notifier=notifier,
             scout=not args.no_scout,
             locks=NullLocks() if args.dry_run else LockManager(args.lock_dir),

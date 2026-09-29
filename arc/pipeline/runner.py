@@ -35,6 +35,7 @@ from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     import datetime as _dt
+    from collections.abc import Callable
 
     from arc.config import ArcSettings
     from arc.routines.config import RoutinesConfig
@@ -134,8 +135,14 @@ def run_propose(
     scout: bool = True,
     locks: Any = None,
     mode: str = "live",
+    clock: Callable[[], _dt.datetime] | None = None,
 ) -> ProposeReport:
-    """Run the Scout job, then the Director chain, through the routine dispatcher."""
+    """Run the Scout job, then the Director chain, through the routine dispatcher.
+
+    *now* is the run's start (slot and ``day`` idempotency). *clock* is the wall
+    clock steps use to judge data age and stamp gate/token/expiry (E5.2b); live
+    runs pass ``now_et``, fixtures keep the frozen *now*.
+    """
     from arc.routines.dispatcher import Dispatcher
 
     now = now.astimezone(ET)
@@ -146,6 +153,7 @@ def run_propose(
         locks=locks,
         notifier=notifier,
         settings_factory=lambda: settings,
+        clock=clock,
     )
     report = ProposeReport(now=now, day=now.date().isoformat(), mode=mode)
     if routines.job(ROOT_JOB) is None:
@@ -173,14 +181,21 @@ def fixture_run(
     *,
     db: str | Path | None = None,
     now: _dt.datetime | None = None,
+    fixture_set: str = "neutral",
 ) -> tuple[sqlite3.Connection, ProposeReport]:
-    """``arc propose --fixtures``: offline end to end (seeded raw docs, canned personas)."""
+    """``arc propose --fixtures``: offline end to end (seeded raw docs, canned personas).
+
+    ``fixture_set`` picks the canned Director/Quant/Risk replies
+    (:data:`~arc.pipeline.env.FIXTURE_SETS`): ``neutral`` (SPY iron condor) or
+    ``bullish`` (SPY bull call debit, D25).
+    """
     from arc.ingest.scout import load_fixture_docs
+    from arc.pipeline.env import FIXTURE_SETS
     from arc.routines.heartbeat import LogNotifier
 
     conn = open_db(db or ":memory:", copy=False)
     load_fixture_docs(conn)
-    env = PipelineEnv.fixtures()
+    env = PipelineEnv.fixtures(FIXTURE_SETS[fixture_set])
     report = run_propose(
         conn,
         settings,

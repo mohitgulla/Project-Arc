@@ -36,7 +36,7 @@ GATE_SECRET = "x" * 40
 @pytest.fixture
 def settings(monkeypatch: pytest.MonkeyPatch) -> ArcSettings:
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
-    return ArcSettings(_env_file=None)  # type: ignore[call-arg]
+    return ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
 
 
 @pytest.fixture
@@ -165,6 +165,47 @@ class TestMarketHelpers:
 
 
 class TestFixtureRun:
+    def test_personas_emit_notes(self, settings: ArcSettings, routines) -> None:  # noqa: ANN001
+        """D27: persona narrative is stored as typed ``note`` entries, each annotating a real
+        entry, and every run's writes stay inside its declared contract."""
+        conn, report = fixture_run(settings, routines)
+        assert not report.failed
+        rows = conn.execute(
+            "SELECT id, subject, payload FROM context_entries WHERE kind = 'note'"
+        ).fetchall()
+        got = {
+            (r["subject"], json.loads(r["payload"])["persona"], json.loads(r["payload"])["topic"])
+            for r in rows
+        }
+        assert {
+            ("market", "scout", "observation"),
+            ("session", "director", "regime_view"),
+            ("SPY", "director", "thesis"),
+            ("SPY", "quant", "thesis"),
+            ("session", "quant", "observation"),
+            ("session", "risk", "risk_flag"),
+        } <= got
+        ids = {r[0] for r in conn.execute("SELECT id FROM context_entries")}
+        for r in rows:
+            about = json.loads(r["payload"])["about"]
+            assert about and set(about) <= ids
+        scout_notes = [s for s in got if s[1] == "scout"]
+        assert len(scout_notes) == 1  # one per scout run, not per batch
+
+    def test_long_note_is_truncated_not_failed(self) -> None:
+        from unittest.mock import MagicMock
+
+        from arc.context.kinds import NoteTopic
+        from arc.pipeline.steps import _note
+
+        ctx = MagicMock()
+        _note(
+            ctx, "session", persona="quant", topic=NoteTopic.OBSERVATION, title="x" * 300,
+            body="y" * 5000, about=["e1"],
+        )  # fmt: skip
+        payload = ctx.write.call_args.args[2]
+        assert len(payload.body) == 4000 and len(payload.title) == 120
+
     def test_end_to_end(self, settings: ArcSettings, routines) -> None:  # noqa: ANN001
         conn, report = fixture_run(settings, routines)
         assert [(o.job, o.status) for o in report.outcomes] == [
@@ -239,7 +280,7 @@ class TestFixtureRun:
         monkeypatch: pytest.MonkeyPatch,  # noqa: ANN001
     ) -> None:
         monkeypatch.setenv("ARC_GATE_SECRET", GATE_SECRET)
-        _, report = fixture_run(ArcSettings(_env_file=None), routines)  # type: ignore[call-arg]
+        _, report = fixture_run(ArcSettings(_env_file=None, account_profile="margin"), routines)  # type: ignore[call-arg]
         (p,) = report.proposals
         assert p["gate_passed"]
         assert not p["gate_token"]  # dry-run / fixtures: the gate verdict only, no permission
@@ -254,7 +295,7 @@ class TestFixtureRun:
         from arc.routines.heartbeat import LogNotifier
 
         monkeypatch.setenv("ARC_GATE_SECRET", GATE_SECRET)
-        settings = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+        settings = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
         conn = open_db(":memory:", copy=False)
         load_fixture_docs(conn)
         env = PipelineEnv.fixtures()
@@ -406,7 +447,7 @@ def test_cli_propose_fixtures(capsys: pytest.CaptureFixture[str], monkeypatch) -
     from arc.cli import main
 
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
-    assert main(["propose", "--fixtures", "--json"]) == 0
+    assert main(["propose", "--fixtures", "--json", "--profile", "margin"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["mode"] == "fixtures"
     assert [p["ticker"] for p in out["proposals"]] == ["SPY"]
@@ -419,7 +460,9 @@ def test_cli_live_propose_requires_gate_secret(
     from arc.cli import main
 
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
-    monkeypatch.setattr(arc.config, "get_settings", lambda: ArcSettings(_env_file=None))  # type: ignore[call-arg]
+    monkeypatch.setattr(
+        arc.config, "get_settings", lambda: ArcSettings(_env_file=None, account_profile="margin")
+    )  # type: ignore[call-arg]
 
     def _no_live_env(*_a: object, **_k: object) -> None:
         raise AssertionError("must refuse before touching Alpaca/Hermes")
@@ -434,7 +477,9 @@ def test_cli_dry_run_does_not_require_gate_secret(monkeypatch: pytest.MonkeyPatc
     from arc.cli import main
 
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
-    monkeypatch.setattr(arc.config, "get_settings", lambda: ArcSettings(_env_file=None))  # type: ignore[call-arg]
+    monkeypatch.setattr(
+        arc.config, "get_settings", lambda: ArcSettings(_env_file=None, account_profile="margin")
+    )  # type: ignore[call-arg]
     assert main(["propose", "--fixtures", "--json"]) == 0
 
 
@@ -551,3 +596,260 @@ def test_realized_vol_from_regime_context(settings: ArcSettings, routines) -> No
     assert em["vrp"] == pytest.approx(em["iv_used"] - rv, abs=1e-4)
     assert s["exits"]["vrp"] is not None and s["exits"]["rorc_day"] is not None
     assert '"vrp"' in prompts["quant"]
+
+
+# ---------------------------------------------------------------------------
+# E5.2b: fresh clock for the propose step; live runs fail loudly without a secret
+# ---------------------------------------------------------------------------
+
+
+class TestLiveProposeClock:
+    """Chain start (``ctx.now``) keys idempotency; ``ctx.clock()`` judges data age."""
+
+    STARTED = FIXTURE_NOW - _dt.timedelta(minutes=2)  # before the LLM steps ran
+
+    def _run(
+        self,
+        settings: ArcSettings,
+        routines,  # noqa: ANN001
+        *,
+        now: _dt.datetime,
+        clock=None,  # noqa: ANN001
+        mint: bool = False,
+        account=None,  # noqa: ANN001
+    ):  # noqa: ANN202
+        from arc.ingest.scout import load_fixture_docs
+        from arc.pipeline.runner import run_propose
+        from arc.routines.heartbeat import RecordingNotifier
+
+        conn = open_db(":memory:", copy=False)
+        load_fixture_docs(conn)
+        env = PipelineEnv.fixtures()
+        env.mint_tokens = mint
+        if account is not None:
+            env.account = account
+        notes = RecordingNotifier()
+        report = run_propose(
+            conn, settings, routines, env, now=now, clock=clock, notifier=notes, mode="live"
+        )
+        return conn, report, notes
+
+    def test_frozen_start_time_fails_freshness(self, settings: ArcSettings, routines) -> None:  # noqa: ANN001
+        """The bug: with only the chain-start time, later-stamped quotes are 'in the future'."""
+        _, report, _ = self._run(settings, routines, now=self.STARTED)
+        (p,) = report.proposals
+        assert not p["gate_passed"]
+        assert "in the future" in p["gate_violations"]
+
+    def test_propose_passes_when_chain_started_before_quotes(
+        self,
+        routines,  # noqa: ANN001
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("ARC_GATE_SECRET", GATE_SECRET)
+        settings = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
+        conn, report, _ = self._run(
+            settings, routines, now=self.STARTED, clock=lambda: FIXTURE_NOW, mint=True
+        )
+        assert not report.failed
+        (p,) = report.proposals
+        assert p["gate_passed"], p["gate_violations"]
+        assert p["gate_token"]
+        assert p["day"] == self.STARTED.date().isoformat()  # idempotency keeps ctx.now
+        ttl = _dt.timedelta(seconds=settings.approval_ttl_seconds)
+        assert _dt.datetime.fromisoformat(p["expires_at"]) == FIXTURE_NOW + ttl
+        g = conn.execute("SELECT decided_at FROM gate_decisions").fetchone()
+        assert _dt.datetime.fromisoformat(g["decided_at"]) == FIXTURE_NOW
+
+    def test_account_snapshot_as_of_is_fetch_time(self, settings: ArcSettings, routines) -> None:  # noqa: ANN001
+        from arc.pipeline.env import fixture_account
+
+        ticks = iter(FIXTURE_NOW + _dt.timedelta(seconds=s) for s in range(0, 600, 10))
+        events: list[tuple[str, _dt.datetime | None]] = []
+
+        def clock() -> _dt.datetime:
+            t = next(ticks)
+            events.append(("clock", t))
+            return t
+
+        def account():  # noqa: ANN202
+            events.append(("fetch", None))
+            return fixture_account()
+
+        conn, report, _ = self._run(
+            settings, routines, now=self.STARTED, clock=clock, account=account
+        )
+        assert report.proposals
+        row = conn.execute("SELECT account_snapshot FROM gate_decisions").fetchone()
+        as_of = _dt.datetime.fromisoformat(json.loads(row["account_snapshot"])["as_of"])
+        last_fetch = max(i for i, (kind, _) in enumerate(events) if kind == "fetch")
+        # the first clock read after propose's broker fetch, not the chain start
+        read_after = next(t for kind, t in events[last_fetch + 1 :] if kind == "clock")
+        assert as_of == read_after
+        assert as_of != self.STARTED
+
+    def test_default_clock_is_ctx_now(self) -> None:
+        from arc.routines.handlers import JobContext
+
+        ctx = JobContext.__new__(JobContext)
+        ctx.now = FIXTURE_NOW
+        ctx.clock_fn = None
+        assert ctx.clock() == FIXTURE_NOW
+        ctx.clock_fn = lambda: FIXTURE_NOW + _dt.timedelta(minutes=1)
+        assert ctx.clock() == FIXTURE_NOW + _dt.timedelta(minutes=1)
+
+    def test_live_env_without_secret_fails_run(self, settings: ArcSettings, routines) -> None:  # noqa: ANN001
+        conn, report, notes = self._run(settings, routines, now=FIXTURE_NOW, mint=True)
+        propose = next(o for o in report.outcomes if o.job == "propose")
+        assert propose.status == "failed"
+        assert "GateSecretMissingError" in propose.summary
+        assert "ARC_GATE_SECRET" in propose.summary
+        assert report.failed
+        row = conn.execute(
+            "SELECT status, error FROM routine_runs WHERE run_id = ?", (propose.run_id,)
+        ).fetchone()
+        assert row["status"] == "failed"
+        # no token-less PASS was stored (no proposal row at all)
+        bad = conn.execute(
+            "SELECT COUNT(*) FROM gate_decisions WHERE passed = 1 AND token IS NULL"
+        ).fetchone()[0]
+        assert bad == 0
+        assert report.proposals == []
+        assert any("ARC_GATE_SECRET" in t for _, t in notes.posts)  # heartbeat alert
+
+    def test_offline_env_without_secret_still_records_gate_verdict(
+        self,
+        settings: ArcSettings,
+        routines,  # noqa: ANN001
+    ) -> None:
+        _, report, _ = self._run(settings, routines, now=FIXTURE_NOW, mint=False)
+        assert not report.failed
+        (p,) = report.proposals
+        assert p["gate_passed"] and not p["gate_token"]
+
+
+def test_tick_exit_code_nonzero_when_propose_fails_for_missing_secret(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``arc routines tick`` returns 1 when a step (e.g. a secret-less live propose) failed."""
+    import argparse
+
+    from arc.routines import cli as rcli
+    from arc.routines.dispatcher import Outcome, TickReport
+
+    class _Disp:
+        def tick(self, now, *, dry_run, since):  # noqa: ANN001, ANN202
+            r = TickReport(now=now, since=since, dry_run=dry_run, halted=False)
+            r.outcomes.append(
+                Outcome(
+                    "propose",
+                    now,
+                    "failed",
+                    "GateSecretMissingError: live propose cannot mint a gate token",
+                )
+            )
+            return r
+
+    monkeypatch.setattr(rcli, "_dispatcher", lambda *a, **k: _Disp())
+    monkeypatch.setattr(rcli, "_approval_sweep", lambda *a, **k: None)
+    args = argparse.Namespace(dry_run=False, json=False, db=str(tmp_path / "a.db"))
+    conn = open_db(tmp_path / "a.db", copy=False)
+    assert rcli._tick(args, FIXTURE_NOW, None, conn=conn) == 1
+
+
+def test_routines_dispatcher_uses_wall_clock_only_when_not_pinned(tmp_path: Path) -> None:
+    import argparse
+
+    from arc.routines import cli as rcli
+    from arc.utils.calendar import now_et
+
+    conn = open_db(tmp_path / "a.db", copy=False)
+    base = {"config": None, "no_slack": True, "lock_dir": str(tmp_path / "locks")}
+    live = rcli._dispatcher(argparse.Namespace(**base, now=None), conn)
+    assert live._clock is now_et
+    pinned = rcli._dispatcher(argparse.Namespace(**base, now="2026-09-25T16:00"), conn)
+    assert pinned._clock is None
+    dry = rcli._dispatcher(argparse.Namespace(**base, now=None), conn, dry=True)
+    assert dry._clock is None
+
+
+# ---------------------------------------------------------------------------
+# D25 account profiles through the pipeline (E3.4)
+# ---------------------------------------------------------------------------
+
+
+class TestAccountProfilePipeline:
+    def _run(self, profile: str, fixture_set: str, monkeypatch: pytest.MonkeyPatch, routines):  # noqa: ANN001, ANN202
+        monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
+        s = ArcSettings(_env_file=None, account_profile=profile)  # type: ignore[call-arg]
+        return fixture_run(s, routines, fixture_set=fixture_set)
+
+    def test_cash_debit_bullish_proposes_a_debit_spread(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        routines,  # noqa: ANN001
+    ) -> None:
+        conn, report = self._run("cash_debit", "bullish", monkeypatch, routines)
+        (p,) = report.proposals
+        assert p["gate_passed"], p
+        (row,) = proposals_for_day(conn, FIXTURE_NOW.date().isoformat())
+        assert row["kind"] == "open"
+        structure = json.loads(row["structure_json"])
+        assert [leg["side"] for leg in structure["legs"]] == ["long", "short"]
+        assert Decimal(str(structure["net_debit_credit"])) > 0
+        prompts = [r["prompt_text"] for r in conn.execute("SELECT prompt_text FROM persona_calls")]
+        assert prompts and all("account profile `cash_debit`" in t for t in prompts)
+
+    def test_cash_debit_neutral_is_journaled_no_trade(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        routines,  # noqa: ANN001
+    ) -> None:
+        conn, report = self._run("cash_debit", "neutral", monkeypatch, routines)
+        assert report.proposals == []
+        rows = conn.execute(
+            "SELECT subject, choice, reason_code FROM decisions WHERE reason_code LIKE 'profile:%'"
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [("SPY", "no_trade", "profile:no_neutral_structure")]
+
+    def test_margin_neutral_still_trades_condor(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        routines,  # noqa: ANN001
+    ) -> None:
+        _, report = self._run("margin", "neutral", monkeypatch, routines)
+        (p,) = report.proposals
+        assert p["gate_passed"]
+
+    def test_strategies_follow_profile(self) -> None:
+        from arc.pipeline.steps import _strategies, _structure_type
+        from arc.scanner import ScanStrategy
+
+        m = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
+        c = m.with_profile("cash_debit")
+        assert _strategies("neutral", m) == [ScanStrategy.IRON_CONDOR]
+        assert _strategies("neutral", c) == []
+        assert _strategies("bearish", c) == [ScanStrategy.BEAR_PUT_DEBIT, ScanStrategy.LONG_PUT]
+
+        class _C:
+            def __init__(self, v: str) -> None:
+                self.strategy = ScanStrategy(v)
+
+        assert _structure_type(_C("long_call")) == "long_call"  # type: ignore[arg-type]
+        assert _structure_type(_C("bull_call_debit")) == "vertical_spread"  # type: ignore[arg-type]
+
+    def test_account_snapshot_settled_cash(self) -> None:
+        from arc.broker.base import AccountInfo
+        from arc.pipeline.market import settled_cash
+
+        base = {"account_id": "x", "equity": Decimal(100), "buying_power": Decimal(500)}
+        info = AccountInfo(
+            **base,
+            cash=Decimal(80),
+            options_buying_power=Decimal(60),
+            non_marginable_buying_power=Decimal(70),
+        )  # type: ignore[arg-type]
+        assert settled_cash(info) == Decimal(60)
+        assert account_snapshot(info, FIXTURE_NOW).settled_cash == Decimal(60)
+        neg = AccountInfo(**base, cash=Decimal(-5))  # type: ignore[arg-type]
+        assert settled_cash(neg) == Decimal(0)

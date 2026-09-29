@@ -46,6 +46,7 @@ __all__ = [
     "market_snapshot",
     "next_earnings",
     "price_structure",
+    "settled_cash",
 ]
 
 # Funds have no earnings reports. Every other underlying needs a known date
@@ -64,11 +65,25 @@ class PortfolioError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
+def settled_cash(info: AccountInfo) -> Decimal:
+    """Cash a no-margin (``cash_settled``) account can spend now (D25).
+
+    Alpaca reports no "settled cash" field. The most conservative of the fields it
+    does report is used: ``cash`` (includes unsettled proceeds on a cash account),
+    ``non_marginable_buying_power`` (cash not backed by margin) and
+    ``options_buying_power`` (what Alpaca will let options orders use), floored at 0.
+    A field Alpaca leaves out is skipped; ``cash`` is always present.
+    """
+    fields = [info.cash, info.non_marginable_buying_power, info.options_buying_power]
+    return max(min(v for v in fields if v is not None), Decimal(0))
+
+
 def account_snapshot(info: AccountInfo, now: _dt.datetime) -> AccountSnapshot:
     """Gate view of the account. The halt flag is stamped later by ``HaltSwitch.apply``."""
     return AccountSnapshot(
         equity=info.equity,
         last_equity=info.last_equity if info.last_equity is not None else Decimal(0),
+        settled_cash=settled_cash(info),
         as_of=now,
     )
 
@@ -277,10 +292,19 @@ def price_structure(
     *,
     as_of: _dt.date,
     r: float,
+    require_iv: bool = True,
 ) -> PricedStructure:
     """Fetch the chain for the legs' expiry and rebuild the structure at current mids.
 
-    Raises ``LookupError`` if a leg is missing from the chain or has no usable quote.
+    Raises ``LookupError`` if a leg is missing from the chain, has no usable quote,
+    or (with ``require_iv``, the default) has no implied volatility (None, <= 0 or
+    NaN). Without an IV on every leg the structure's Greeks cannot be computed, and
+    all-zero Greeks would slip past the gate's Greek caps (PLAN §6.8: data quality
+    fails the proposal closed).
+
+    ``require_iv=False`` is for exits only: a close needs mids, not Greeks (the
+    gate skips Greek caps on closing proposals), and a missing IV must never stop
+    a position from being closed. Greeks are then left at zero when any IV is missing.
     """
     occs = [parse_occ(sym) for sym, _, _ in legs]
     root = occs[0].root
@@ -296,11 +320,19 @@ def price_structure(
         if c is None or c.bid is None or c.ask is None or c.mid is None:
             msg = f"no usable quote for {key}"
             raise LookupError(msg)
+        iv = c.implied_volatility
+        if require_iv and (iv is None or not float(iv) > 0):
+            msg = f"no implied volatility for {key} (iv={iv!r}); cannot compute Greeks"
+            raise LookupError(msg)
         used[key] = c
         out_legs.append(
             Leg(occ_symbol=key, side=side, ratio=ratio, premium=Decimal(str(round(c.mid, 4))))
         )
-    ivs = {k: float(c.implied_volatility) for k, c in used.items() if c.implied_volatility}
+    ivs = {
+        k: float(c.implied_volatility)
+        for k, c in used.items()
+        if c.implied_volatility and float(c.implied_volatility) > 0
+    }
     market_inputs = MarketInputs(spot=spot, r=r, ivs=ivs) if len(ivs) == len(used) else None
     return PricedStructure(
         analyze(out_legs, as_of=as_of, market=market_inputs),

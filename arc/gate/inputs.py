@@ -33,6 +33,15 @@ class AccountSnapshot(_Frozen):
         ..., description="Equity at the previous session close (start-of-day basis), dollars"
     )
     halted: bool = Field(False, description="Kill switch / daily halt is active (E3.3)")
+    settled_cash: Decimal | None = Field(
+        None,
+        description=(
+            "Cash a cash account may spend now (D25). Built by "
+            "arc.pipeline.market.settled_cash: the most conservative of Alpaca's `cash`, "
+            "`non_marginable_buying_power` and `options_buying_power`, floored at 0. "
+            "None = unknown, which fails the cash_settled profile check closed."
+        ),
+    )
     as_of: dt.datetime = Field(..., description="When the snapshot was taken (tz-aware)")
 
 
