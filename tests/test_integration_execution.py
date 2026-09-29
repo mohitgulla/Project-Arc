@@ -1,8 +1,10 @@
 """E6.2 paper integration: gate (band) → arc2 token → approval → ladder → audit trail.
 
-Runs against the Alpaca **paper** account during RTH only; outside RTH it is
-skipped (an off-hours run is not a pass for the E6.2 acceptance). Keys come
-from ``~/.hermes/.env`` via ``ArcSettings`` / the Alpaca adapters.
+**Opt-in** (E6.2a): it trades real paper spreads, so it runs only with
+``ARC_LIVE_EXEC_TESTS=1`` (plus paper keys and ``ARC_GATE_SECRET``) and only
+during RTH; otherwise it is skipped (an off-hours run is not a pass for the
+E6.2 acceptance). Keys come from ``~/.hermes/.env`` via ``ArcSettings`` / the
+Alpaca adapters. See docs/OPS.md "Live execution test".
 
 The proposal is a 1-lot SPY bull call vertical ~30-45 DTE near the money, whose
 combo far touch is below its width (:func:`select_sane_bull_call_vertical`), so
@@ -13,10 +15,16 @@ every attempt's price was inside the approved band and the audit trail
 (orders, order events, execution row, journal, fills/position on a fill) is
 complete.
 
-Cleanup: on a fill the test closes the position through the same path (closing
-gate → arc2 token → approval → ladder, ``kind='close'``) and asserts the broker
-no longer holds the legs. If the close does not fill, the test fails and names
-the open legs so they can be closed by hand.
+E6.2a quote check: every price (open and close) goes through the same
+:func:`arc.execution.exits.check_close_quotes` the live exit paths use. Before
+opening, the test prices the *close* from fresh quotes; if they are unusable it
+skips with that reason (nothing traded).
+
+Cleanup: on a fill the test closes the position through the same path (quote
+check → closing gate → arc2 token → approval → ladder, ``kind='close'``). If the
+close does not fill, or its quotes are unusable, it re-fetches quotes and tries
+once more. If that also fails, the test fails and names the open legs so they
+can be closed by hand.
 """
 
 from __future__ import annotations
@@ -33,10 +41,46 @@ from arc.utils.calendar import is_open, now_et
 from tests.vertical_legs import select_sane_bull_call_vertical
 
 _HAS_KEYS = bool(os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY"))
+_LIVE_EXEC = os.environ.get("ARC_LIVE_EXEC_TESTS") == "1"
 pytestmark = [
     pytest.mark.integration,
+    pytest.mark.live_exec,
     pytest.mark.skipif(not _HAS_KEYS, reason="ALPACA_API_KEY/SECRET not set"),
+    pytest.mark.skipif(
+        not _LIVE_EXEC, reason="trades live paper spreads: opt in with ARC_LIVE_EXEC_TESTS=1"
+    ),
 ]
+
+
+_READS = 5  # quote reads per step before giving up (open, preflight, each close try)
+_READ_GAP_S = 5
+
+
+class QuotesUnusableError(RuntimeError):
+    """The legs' quotes failed the E6.2a check: nothing was proposed or sent."""
+
+
+def _row(structure_id: str | None) -> dict[str, Any]:
+    return {"ticker": "SPY", "id": structure_id or "e62-integration"}
+
+
+def _quote_check(conn: Any, priced: Any, settings: Any, *, fired: str, sid: str | None) -> None:
+    """The live exit paths' quote check (same function, no test-only shortcut)."""
+    from arc.execution.exits import check_close_quotes
+    from arc.journal.reasons import JournalPersona
+
+    problems, _ = check_close_quotes(
+        conn,
+        row=_row(sid),
+        priced=priced,
+        settings=settings,
+        now=now_et(),
+        persona=JournalPersona.INVESTOR,
+        run_id=f"e62-integration-{fired}",
+        fired=fired,
+    )
+    if problems:
+        raise QuotesUnusableError("; ".join(problems))
 
 
 def _gate_approve_execute(
@@ -52,7 +96,7 @@ def _gate_approve_execute(
     closing: bool,
     structure_id: str | None = None,
 ) -> tuple[Any, Any, Any, str]:
-    """Price → band → gate → arc2 token → proposal/context/decision → approval → ladder."""
+    """Price → quote check → band → gate → arc2 token → proposal/decision → approval → ladder."""
     from arc.approvals.service import ApprovalService, LogCardPoster, approval_record
     from arc.context.store import ContextStore
     from arc.execution.ladder import execute
@@ -65,7 +109,8 @@ def _gate_approve_execute(
     from arc.store.repos import GateDecisionRepo, HaltRepo, ProposalRepo
 
     today = now_et().date()
-    priced = price_structure(data, legs, as_of=today, r=0.04)
+    priced = price_structure(data, legs, as_of=today, r=0.04, require_iv=not closing)
+    _quote_check(conn, priced, settings, fired="close" if closing else "open", sid=structure_id)
     limit = limit_price(priced.structure.net_debit_credit, settings.limit_tick)
     snap = market_snapshot(priced.contracts, {"SPY": None})
     band = price_band(priced.structure.legs, limit, snap, settings)
@@ -167,14 +212,63 @@ def _held(broker: Any, symbols: set[str]) -> dict[str, int]:
     }
 
 
+def _close_with_retry(
+    *, conn: Any, broker: Any, data: Any, settings: Any, legs: list[Any], cid: str,
+    held: dict[str, int], structure_id: str | None,
+) -> list[str]:  # fmt: skip
+    """Close through the live path; one more try from freshly fetched quotes. Outcome lines."""
+    from arc.execution.ladder import ExecStatus
+    from arc.gate import Portfolio
+    from arc.pipeline.market import price_structure
+
+    tries: list[str] = []
+    for attempt in (1, 2):
+        for _ in range(_READS - 1):  # re-read while only the quotes are unusable
+            pre = price_structure(data, legs, as_of=now_et().date(), r=0.04, require_iv=False)
+            try:
+                _quote_check(conn, pre, settings, fired="close-preread", sid=structure_id)
+                break
+            except QuotesUnusableError:
+                time.sleep(_READ_GAP_S)
+        try:
+            _, close_band, closed, _ = _gate_approve_execute(
+                conn=conn,
+                broker=broker,
+                data=data,
+                settings=settings,
+                legs=legs,
+                candidate_id=cid,
+                run_id=f"e62-integration-close-{attempt}",
+                portfolio=Portfolio(legs=held),
+                closing=True,
+                structure_id=structure_id,
+            )
+        except QuotesUnusableError as exc:
+            tries.append(f"close try {attempt}: quotes unusable ({exc})")
+        else:
+            assert all(close_band.contains(a.limit_price) for a in closed.attempts)
+            tries.append(f"close try {attempt}: band {close_band.lo}..{close_band.hi} "
+                         f"-> {closed.summary()}")  # fmt: skip
+            if closed.status is ExecStatus.FILLED:
+                return tries
+            if closed.filled_qty:  # partial: close only what is still held
+                held = {s: q - (closed.filled_qty if q > 0 else -closed.filled_qty)
+                        for s, q in held.items()}  # fmt: skip
+        if attempt == 1:
+            time.sleep(5)  # fresh quotes for the retry
+    return tries
+
+
 def test_approve_then_work_band_on_paper() -> None:
     from arc.broker.alpaca_paper import AlpacaPaperBroker
     from arc.config import get_settings
     from arc.data.alpaca import AlpacaMarketData
+    from arc.execution.exits import exit_legs
     from arc.execution.ladder import ExecStatus
     from arc.gate import Portfolio
     from arc.gate.token import TokenError, gate_secret
     from arc.models import LegIntent
+    from arc.pipeline.market import price_structure
     from arc.store.db import connect
     from arc.store.execution import ExecutionRepo, OpenStructureRepo
     from arc.store.migrate import migrate
@@ -204,21 +298,50 @@ def test_approve_then_work_band_on_paper() -> None:
     symbols = {long_leg.symbol, short_leg.symbol}
     before = _held(broker, symbols)
     legs = [(long_leg.symbol, LegIntent.LONG, 1), (short_leg.symbol, LegIntent.SHORT, 1)]
+    close_legs = [(s, LegIntent.SHORT if i == LegIntent.LONG else LegIntent.LONG, n)
+                  for s, i, n in legs]  # fmt: skip
     cid = CandidateRepo(conn).insert(
         ticker="SPY", stance="bullish", catalyst_type="integration", confidence=0.5
     )
 
-    proposal, band, out, phash = _gate_approve_execute(
-        conn=conn,
-        broker=broker,
-        data=data,
-        settings=settings,
-        legs=legs,
-        candidate_id=cid,
-        run_id="e62-integration-open",
-        portfolio=Portfolio(),
-        closing=False,
-    )
+    # (a) before opening: the close must be priceable from fresh quotes, else skip.
+    # The indicative feed jitters per read (docs/OPS.md 5.12), so re-read a few times;
+    # every read goes through the unchanged check.
+    reads: list[str] = []
+    for _ in range(_READS):
+        pre = price_structure(data, close_legs, as_of=today, r=0.04, require_iv=False)
+        try:
+            _quote_check(conn, pre, settings, fired="preflight", sid=None)
+        except QuotesUnusableError as exc:
+            reads.append(str(exc))
+            time.sleep(_READ_GAP_S)
+        else:
+            break
+    else:
+        pytest.skip(f"close quotes unusable on {_READS} reads, nothing traded: {reads}")
+
+    opened = None
+    for _ in range(_READS):
+        try:
+            opened = _gate_approve_execute(
+                conn=conn,
+                broker=broker,
+                data=data,
+                settings=settings,
+                legs=legs,
+                candidate_id=cid,
+                run_id="e62-integration-open",
+                portfolio=Portfolio(),
+                closing=False,
+            )
+        except QuotesUnusableError as exc:  # raised before any proposal or order
+            reads.append(str(exc))
+            time.sleep(_READ_GAP_S)
+        else:
+            break
+    if opened is None:
+        pytest.skip(f"open quotes unusable on {_READS} reads, nothing traded: {reads}")
+    proposal, band, out, phash = opened
     width = D(str(short_leg.strike - long_leg.strike))
 
     try:
@@ -272,30 +395,21 @@ def test_approve_then_work_band_on_paper() -> None:
             final = broker.order_status(out.attempts[-1].broker_order_id or "")
             assert final.status in ("canceled", "filled", "expired"), final.status
     finally:
-        # -- cleanup: close whatever filled through the same gate/approval/ladder --
+        # -- cleanup: close whatever filled through the same check/gate/approval/ladder --
         if out.filled_qty:
-            from arc.execution.exits import exit_legs
-
             held = {long_leg.symbol: out.filled_qty, short_leg.symbol: -out.filled_qty}
-            _, close_band, closed, _ = _gate_approve_execute(
-                conn=conn,
-                broker=broker,
-                data=data,
-                settings=settings,
-                legs=exit_legs(proposal.structure),
-                candidate_id=cid,
-                run_id="e62-integration-close",
-                portfolio=Portfolio(legs=held),
-                closing=True,
+            tries = _close_with_retry(
+                conn=conn, broker=broker, data=data, settings=settings,
+                legs=exit_legs(proposal.structure), cid=cid, held=held,
                 structure_id=out.structure_id,
-            )
-            assert all(close_band.contains(a.limit_price) for a in closed.attempts)
+            )  # fmt: skip
             left = {
                 s: q - before.get(s, 0)
                 for s, q in _held(broker, symbols).items()
                 if q != before.get(s, 0)
             }
-            assert closed.status is ExecStatus.FILLED and not left, (
-                f"cleanup close did not fill ({closed.summary()}); "
+            # (c) a final failure still fails the test and names the legs
+            assert not left, (
+                f"cleanup close did not fill ({' | '.join(tries)}); "
                 f"close these paper legs by hand: {left}"
             )

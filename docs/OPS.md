@@ -548,6 +548,47 @@ Every Scout source is a named entry in `config/routines.yaml`: each RSS feed und
   vol/OI ≥ `uoa_vol_oi_ratio` (≥ `uoa_min_dte` DTE, OI ≥ `uoa_min_open_interest`)
   carry ≥ `uoa_min_hot_share` of its volume.
 
+### 5.12 Close quote check (E6.2a) and the live execution test
+
+Every close (monitor exits, Investor exits, the close leg of a swap) is priced
+from quotes that must pass `close_quote_sanity` first; otherwise nothing is
+proposed, no gate token is minted and no order is sent. The journal gets an
+`exit:quote_unusable` row with every leg's bid/ask/sizes/quote time/spread, and
+the next tick re-prices. The `close.quotes` log line carries the same evidence
+on every close attempt (pass or fail), so a missed close can be diagnosed from
+the logs.
+
+| Check | Knob (`!arc config execution`) | Default |
+|---|---|---|
+| each leg's quote age, from the quote's own timestamp | `close_quote.max_age_seconds` | 60 s |
+| gap between the legs' quote timestamps | `close_quote.max_skew_seconds` | 30 s |
+| each leg's spread (passes if under either cap) | `close_quote.max_spread_pct` / `close_quote.max_spread_abs` | 10% / $0.10 |
+| combo mid vs the same combo read off the expiry's strike curve | `close_quote.max_curve_dev` | $0.15/share |
+| owner alert in #arc-investor after N failures in a row (defined risk) | `close_quote.alert_after` | 6 (30 min at the 5-min monitor) |
+
+Why the curve check: the free `indicative` options feed (D7) is derived, not
+OPRA. Its per-strike quotes are fresh and tight on every read but jitter by
+$0.10–0.30 from read to read, so a vertical priced from one read can sit
+entirely outside the market (the 2026-09-29 cleanup miss). The neighbouring
+strikes smooth that out; a read that disagrees with them is skipped.
+
+**Live execution test.** `tests/test_integration_execution.py` opens and closes a
+real 1-lot SPY paper vertical. It is opt-in, so `make check` and ordinary full
+suites never trade:
+
+```
+set -a; source ~/.hermes/.env; set +a
+ARC_LIVE_EXEC_TESTS=1 .venv/bin/pytest tests/test_integration_execution.py -rA
+.venv/bin/python ~/.hermes/skills/software-development/project-arc-development/scripts/paper_account_audit.py
+```
+
+It needs paper keys, `ARC_GATE_SECRET` and RTH (off-hours it skips; a skip is
+not a pass). It skips without trading if the close's quotes are unusable before
+the open. Cleanup retries the close once from fresh quotes; if that also fails
+the test fails and names the legs to close by hand. Each run sends up to ~12
+orders against the D32 daily budget. Run one at a time: two concurrent runs
+trade against each other (wash-trade rejects) and leave spreads open.
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.

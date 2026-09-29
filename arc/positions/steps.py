@@ -306,7 +306,8 @@ def exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
     day = _today(ctx).isoformat()
     lines: list[str] = []
     errors: list[str] = []
-    proposed = passed = 0
+    alerts: list[str] = []
+    proposed = passed = quote_blocked = 0
     for rv in flagged:
         row = repo.get(rv.structure_id)
         if row is None or row["status"] != "open":
@@ -342,13 +343,25 @@ def exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
             secret=secret,
             payload={"review": rv.model_dump(mode="json", exclude={"structure"})},
         )
+        if res.alert:
+            alerts.append(res.alert)
+        if res.proposal_hash is None:  # E6.2a: quotes unusable; the next tick retries
+            quote_blocked += 1
+            errors.append(res.line)
+            continue
         proposed += 1
         passed += res.passed
         lines.append(f"{res.line} ({sig.detail})")
+    notices = [f"exit proposed: {line}" for line in lines if "gate PASS" in line] + alerts
     return JobResult(
         summary="; ".join(lines + errors) or "no exits proposed",
-        metrics={"signals": len(flagged), "proposed": proposed, "gate_passed": passed},
-        notice="; ".join(f"exit proposed: {line}" for line in lines if "gate PASS" in line),
+        metrics={
+            "signals": len(flagged),
+            "proposed": proposed,
+            "gate_passed": passed,
+            "quote_blocked": quote_blocked,
+        },
+        notice="; ".join(notices),
     )
 
 
@@ -765,6 +778,7 @@ def reallocate(ctx: JobContext, env: PipelineEnv) -> JobResult:
         _journal_pairs(ctx, pairs, call_id)
     repo = OpenStructureRepo(ctx.conn)
     started = vetoed = 0
+    alerts: list[str] = []
     for key, s in keyed.items():
         ok, why = verdicts[key]
         suggestion_json = json.dumps(
@@ -850,6 +864,12 @@ def reallocate(ctx: JobContext, env: PipelineEnv) -> JobResult:
             swap_id=sid,
         )
         swaps.update(sid, status="closing", now=ctx.now, close_proposal_hash=res.proposal_hash)
+        if res.alert:
+            alerts.append(res.alert)
+        if res.proposal_hash is None:  # E6.2a: no close on unusable quotes, so no open
+            _cancel(ctx, swaps.get(sid) or {}, "close quotes unusable")
+            lines.append(f"swap {sid} cancelled: {res.line}")
+            continue
         if not res.passed:
             _cancel(ctx, swaps.get(sid) or {}, "close failed the gate")
         started += 1
@@ -863,7 +883,7 @@ def reallocate(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "vetoed": vetoed,
             "swaps_started": started,
         },
-        notice="; ".join(line for line in lines if "gate PASS" in line),
+        notice="; ".join([*(line for line in lines if "gate PASS" in line), *alerts]),
     )
 
 

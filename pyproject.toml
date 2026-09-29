@@ -71,6 +71,7 @@ testpaths = ["tests"]
 addopts = "-v --tb=short"
 markers = [
     "integration: tests that require real API keys and network access",
+    "live_exec: trades real paper orders; runs only with ARC_LIVE_EXEC_TESTS=1 (docs/OPS.md 5.12)",
 ]
 
 # The risk gate is deterministic (AGENTS.md hard rule, PLAN §2.1 boundary 3).

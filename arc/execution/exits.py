@@ -82,12 +82,101 @@ class ExitRun:
 
 @dataclass(frozen=True)
 class CloseOutcome:
-    """What :func:`propose_close` wrote: the close proposal and its gate verdict."""
+    """What :func:`propose_close` wrote: the close proposal and its gate verdict.
 
-    proposal_hash: str
+    ``proposal_hash`` is ``None`` when the close legs' quotes failed the E6.2a check
+    (:func:`check_close_quotes`): nothing was proposed, no token was minted, and
+    ``violations`` holds the quote problems. ``alert`` is set on the try that
+    reaches ``close_quote_alert_after`` consecutive failures for the structure.
+    """
+
+    proposal_hash: str | None
     passed: bool
     violations: list[str]
     line: str
+    alert: str = ""
+
+
+def _fail_key(structure_id: str) -> str:
+    return f"close_quote_fail:{structure_id}"
+
+
+def check_close_quotes(
+    conn: sqlite3.Connection,
+    *,
+    row: dict[str, Any],
+    priced: PricedStructure,
+    settings: ArcSettings,
+    now: _dt.datetime,
+    persona: JournalPersona,
+    run_id: str | None,
+    fired: str,
+    swap_id: str | None = None,
+) -> tuple[list[str], str]:
+    """E6.2a: may this close be priced from *priced*'s leg quotes? ``(problems, alert)``.
+
+    Runs :func:`arc.pipeline.market.close_quote_sanity` (the one check every close
+    path uses: monitor exits, Investor exits, swap closes and the live exec test),
+    logs ``close.quotes`` with every leg's evidence either way, and counts
+    consecutive failures per structure in ``routine_state``. On failure it writes an
+    ``exit:quote_unusable`` journal row carrying every leg's quote. No retry here: the
+    next tick re-prices. ``alert`` is a one-line owner alert on the try that reaches
+    ``close_quote_alert_after`` consecutive failures (the caller posts it through
+    the existing notice path to #arc-investor), else ``""``.
+    """
+    from arc.pipeline.market import close_quote_sanity
+    from arc.routines.runs import RoutineStateRepo
+
+    t = str(row["ticker"])
+    sid = str(row["id"])
+    quotes = priced.leg_quotes()
+    problems = close_quote_sanity(quotes, now, settings)
+    evidence = [q.model_dump(mode="json") for q in quotes]
+    log.info(
+        "close.quotes",
+        ticker=t,
+        structure_id=sid,
+        fired=fired,
+        ok=not problems,
+        problems=problems,
+        net_mid=str(priced.structure.net_debit_credit),
+        legs=evidence,
+        at=now.isoformat(),
+    )
+    state = RoutineStateRepo(conn)
+    if not problems:
+        state.delete(_fail_key(sid))
+        return [], ""
+    fails = int(state.get(_fail_key(sid)) or 0) + 1
+    state.set(_fail_key(sid), str(fails), now=now)
+    with conn:
+        JournalStore(conn).record(
+            persona=persona,
+            stage=Stage.EXIT,
+            subject=t,
+            choice=Choice.NO_TRADE,
+            reason_code=ReasonCode.EXIT_QUOTE_UNUSABLE,
+            reason_text=f"close {fired} not proposed: quotes unusable ({'; '.join(problems)})",
+            payload={
+                "structure_id": sid,
+                "fired": fired,
+                "problems": problems,
+                "consecutive_failures": fails,
+                "net_mid": str(priced.structure.net_debit_credit),
+                "legs": evidence,
+                **({"swap_id": swap_id} if swap_id else {}),
+            },
+            at=now,
+            run_id=run_id,
+        )
+    alert = ""
+    if fails == settings.close_quote_alert_after and priced.structure.max_loss is not None:
+        alert = (
+            f"{t} close ({fired}, structure {sid}) blocked {fails} tries in a row: "
+            f"quotes unusable ({problems[0]})"
+        )
+        log.warning("close.quotes_alert", ticker=t, structure_id=sid, failures=fails)
+    return problems, alert
 
 
 def exit_legs(structure: Structure) -> list[tuple[str, LegIntent, int]]:
@@ -165,6 +254,10 @@ def propose_close(
     then one transaction: proposal (``kind='close'``) + gate decision + the
     structure's pending exit + a journal row + the ``proposal`` context entry the
     approval card renders from. Never submits: the Investor does, after approval.
+
+    E6.2a: first the leg quotes must pass :func:`check_close_quotes`. If they do
+    not, nothing is proposed or minted (``proposal_hash=None``); the structure is
+    left without a pending exit, so the next tick re-prices and tries again.
     """
     from arc.gate.halt import evaluate_with_halt
     from arc.gate.rules import price_band, proposal_hash
@@ -174,6 +267,20 @@ def propose_close(
     from arc.store.repos import GateDecisionRepo, ProposalRepo
 
     t = str(row["ticker"])
+    problems, alert = check_close_quotes(
+        conn,
+        row=row,
+        priced=priced,
+        settings=settings,
+        now=now,
+        persona=persona,
+        run_id=run_id,
+        fired=reason,
+        swap_id=swap_id,
+    )
+    if problems:
+        line = f"{t} exit {reason} not proposed: quotes unusable ({'; '.join(problems)})"
+        return CloseOutcome(None, False, problems, line, alert)
     day = now.astimezone(ET).date().isoformat()
     close = priced.structure
     limit = limit_price(close.net_debit_credit, settings.limit_tick)
@@ -368,6 +475,10 @@ def propose_exits(
             secret=secret,
             payload={"state": state.model_dump(mode="json")},
         )
-        out.proposed.append(res.proposal_hash)
         out.lines.append(res.line)
+        if res.alert:
+            out.errors.append(res.alert)
+        if res.proposal_hash is None:
+            continue
+        out.proposed.append(res.proposal_hash)
     return out
