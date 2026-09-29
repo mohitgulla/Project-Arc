@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
@@ -37,8 +36,6 @@ if TYPE_CHECKING:
     from arc.config import ArcSettings
 
 __all__ = ["STATIC_DIR", "TowerConfig", "TowerError", "create_app"]
-
-log = structlog.get_logger(__name__)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 API_PREFIX = "/api"
@@ -155,5 +152,4 @@ def create_app(
             status_code=503,
         )
 
-    log.info("tower.api.created", db=str(cfg.db_path), static=str(cfg.static_dir))
     return app

@@ -151,3 +151,7 @@ forbidden_modules = [
     "alpaca",
     "slack_sdk",
 ]
+# The tower reads routines.yaml cadences via arc.routines.config, whose context-kind
+# registry types persona outputs (pydantic schemas only; no client, no network). Only
+# that one edge is allowed: arc.tower itself may still not import arc.personas.
+ignore_imports = ["arc.context.kinds -> arc.personas.schemas"]

@@ -263,6 +263,45 @@ The intraday `monitor` routine writes one `heartbeats` row per run
 (`component = monitor`: Greeks, equity and broker legs). Greeks older than 45 minutes
 are flagged as stale on the page. Outside the session they show the last in-session run.
 
+#### v2 (preview, E8.7 / D35)
+
+A FastAPI JSON API plus a React SPA (design spec: `docs/TOWER_DESIGN.md`). It runs
+alongside Streamlit until the E8.7e cutover: `arc tower serve` is still Streamlit and
+`--v2` starts the new tower. Code: `arc/tower/api.py`, `arc/tower/routes/`, `web/`.
+
+```
+make web                                    # build the SPA into arc/tower/static/ (needs Node >= 22.12)
+arc tower serve --v2                        # http://<tailscale-ip>:4174, uvicorn
+arc tower serve --v2 --local --port 4180    # 127.0.0.1 only (Streamlit can keep :4174)
+arc tower serve --v2 --refresh 30           # client poll interval: 30 | 60 (default) | 120 s
+arc tower serve --v2 --print-command        # show the uvicorn argv, don't start
+curl http://<addr>:<port>/api/health        # {status, db, as_of}
+```
+
+- **Endpoints (GET only):** `/api/health`, `/api/meta` (version, git sha, `ARC_ENV`,
+  account profile, `config_version`, `monitor`/`auditor`/`tick` cadences with stale =
+  3 × cadence, gate caps), `/api/snapshot` (the `arc tower snapshot --json` payload).
+  Every response carries `as_of` (ET); errors are `{error, detail, as_of}` (e.g. 503
+  `db_unavailable`). `/api/docs` is the OpenAPI browser. `/kitchen-sink` shows every
+  design-system component in both themes.
+- **Bind rules** are the Streamlit ones above: Tailscale or loopback only, exit 2
+  without a Tailscale address, on `0.0.0.0`/a LAN IP, or when the DB is missing.
+- **Read-only.** Each request opens the DB `mode=ro` + `query_only`; the app has no
+  POST/PUT/DELETE route (a test checks the OpenAPI spec), and the import-linter
+  contract `arc.tower is read-only` forbids the broker, market data, personas, LLM
+  routing, Alpaca and Slack. D26 config overrides are read from the store on every
+  request, so a Slack `!arc config` change shows without a restart.
+- **No auth, no CORS.** Same as Streamlit: the tailnet-only bind is the boundary.
+  Don't bind it anywhere else.
+- **Offline.** Inter is bundled (`@fontsource/inter`); the page fetches nothing
+  outside the tower.
+- **Dev:** `make web-check` (eslint, tsc, vitest for `web/src/lib/format.ts`),
+  `make web-api` after changing a route or response model (regenerates
+  `web/openapi.json` and the typed client; a pytest fails if they drift),
+  `make web-e2e` (Playwright screenshots at 390×844, 768×1024 and 1440×900 in both
+  themes, against a scratch DB; set `PLAYWRIGHT_BROWSERS_PATH` to a dir with
+  Chromium, e.g. `~/.hermes/tools`).
+
 ### 5.7 Remote access over Tailscale (E8.6, D29)
 
 Use Hermes (chat, sessions, cron, kanban, config) and the control tower from a

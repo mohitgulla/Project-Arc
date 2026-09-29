@@ -332,3 +332,29 @@ def test_app_from_env(db: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noq
     assert m["refresh_interval_s"] == 120 and m["lookback_days"] == 14
     as_of = dt.datetime.fromisoformat(m["as_of"])
     assert as_of.utcoffset() == as_of.astimezone(ET).utcoffset()  # ET wall clock
+
+
+# ---------------------------------------------------------------------------
+# the SPA's typed client is generated from this spec: it must not drift
+# ---------------------------------------------------------------------------
+
+
+def test_committed_openapi_matches_the_app() -> None:
+    """``web/openapi.json`` is what ``npm run gen:api`` types the client from.
+
+    After changing a route or response model: ``make web-api`` and commit both files.
+    """
+    from arc.tower.openapi import render
+
+    committed = (REPO / "web" / "openapi.json").read_text()
+    assert committed == render(), "web/openapi.json is stale: run `make web-api`"
+
+
+def test_openapi_cli_writes_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from arc.tower.openapi import main as openapi_main
+
+    out = tmp_path / "spec.json"
+    assert openapi_main([str(out)]) == 0
+    assert '"/api/meta"' in out.read_text()
+    assert openapi_main([]) == 0
+    assert '"/api/health"' in capsys.readouterr().out

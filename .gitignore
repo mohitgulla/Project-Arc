@@ -8,3 +8,11 @@ __pycache__/
 .ruff_cache/
 /data/
 .coverage
+
+# Control tower v2 (E8.7): build output and web tooling
+arc/tower/static/
+web/node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/
+web/e2e/screenshots/
