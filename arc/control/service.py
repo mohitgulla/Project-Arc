@@ -244,9 +244,27 @@ class ControlService:
         )
 
     def keys(self) -> list[str]:
-        """Registry keys plus the pattern keys that currently carry an override."""
-        extra = [k for k in self.changes.active() if k not in REGISTRY]
-        return [*REGISTRY, *sorted(extra)]
+        """Registry keys, each profile's entry DTE window, and overridden pattern keys."""
+        profile = self._profile_keys()
+        extra = [k for k in self.changes.active() if k not in REGISTRY and k not in profile]
+        return [*REGISTRY, *profile, *sorted(extra)]
+
+    def _profile_keys(self) -> list[str]:
+        """``profiles.<name>.dte_min|dte_max`` for every profile that sets a window.
+
+        These are the entry DTE window the scanner and gate actually use under
+        that profile (the global ``dte_min``/``dte_max`` only apply to a profile
+        without a window, i.e. ``margin``), so the summary must show them.
+        """
+        raw = raw_yaml(Target.PROFILES, self._yaml_path(Target.PROFILES))
+        out: list[str] = []
+        for name, spec in (raw.get("profiles") or {}).items():
+            if not isinstance(spec, dict):
+                continue
+            for attr in ("dte_min", "dte_max"):
+                if spec.get(attr) is not None:
+                    out.append(f"profiles.{name}.{attr}")
+        return out
 
     def show(self, what: str | None = None) -> list[KeyView]:
         """Every key, one group, or one key."""
@@ -259,7 +277,9 @@ class ControlService:
                     keys = sorted(set(keys) | set(self._routine_keys()))
                 return [self.view(k) for k in keys]
             return [self.view(w)]
-        return [self.view(k) for k in self.keys()]
+        keys = self.keys()
+        keys += [k for k in self._routine_keys() if k not in keys]
+        return [self.view(k) for k in keys]
 
     def _routine_keys(self) -> list[str]:
         raw = raw_yaml(Target.ROUTINES)

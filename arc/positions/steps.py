@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
-from arc.exits import load_exit_config
 from arc.exits.position import OpenPosition, PositionMarks
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.models import LegIntent, Structure
@@ -187,12 +186,15 @@ def _reviews(ctx: JobContext) -> dict[str, PositionReview]:
 
 def evaluate(ctx: JobContext, env: PipelineEnv, *, exit_cfg: ExitConfig | None = None) -> JobResult:
     """Review every open structure; write one ``position_review`` per position."""
+    from arc.control.effective import cost_model, exit_config
     from arc.execution.exits import exit_pending, price_close
     from arc.pipeline.steps import _realized_vol
     from arc.store.execution import OpenStructureRepo
 
     settings = ctx.settings
-    cfg = exit_cfg or load_exit_config()
+    # D26: exits.yaml / costs.yaml + control-panel overrides carried by the settings
+    cfg = exit_cfg or exit_config(settings)
+    cost = cost_model(settings)
     today = _today(ctx)
     rows = OpenStructureRepo(ctx.conn).list_open()
     lines: list[str] = []
@@ -222,6 +224,7 @@ def evaluate(ctx: JobContext, env: PipelineEnv, *, exit_cfg: ExitConfig | None =
                     end_of_day=_eod(ctx),
                 ),
                 exits=cfg,
+                cost=cost,
                 theta_per_day=_theta(priced, st, today, settings.scanner_risk_free_rate),
                 exit_pending=exit_pending(ctx.conn, row),
             )

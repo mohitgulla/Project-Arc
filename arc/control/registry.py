@@ -31,6 +31,7 @@ from typing import Any
 __all__ = [
     "EXIT_KINDS",
     "NEVER_TUNABLE",
+    "NOT_EXPOSED",
     "REGISTRY",
     "Direction",
     "Group",
@@ -57,6 +58,7 @@ class Group(StrEnum):
     RISK = "risk"
     ENTRIES = "entries"
     EXITS = "exits"
+    POSITIONS = "positions"
     EXECUTION = "execution"
     COSTS = "costs"
     APPROVALS = "approvals"
@@ -165,6 +167,46 @@ NEVER_TUNABLE: frozenset[str] = frozenset(
         "ffmpeg_bin",
     }
 )
+
+# Settings fields that are deliberately NOT runtime-tunable (plumbing, data feeds,
+# ingestion, model internals). tests/test_control.py fails when a new ArcSettings
+# field is in neither REGISTRY, NEVER_TUNABLE nor here, so every new knob a card
+# adds gets an explicit exposed / not-exposed decision.
+NOT_EXPOSED: dict[str, str] = {
+    "wash_sale_days": "tax rule, not a strategy knob",
+    "structure_whitelist": "account_profile decides the allowed structures",
+    "quote_max_age_seconds": "data freshness guard (gate); change by PR",
+    "account_max_age_seconds": "data freshness guard (gate); change by PR",
+    "gate_fee_per_leg_contract": "gate fee assumption; broker schedule",
+    "limit_tick": "exchange tick size",
+    "execution_poll_seconds": "broker polling plumbing",
+    "execution_cancel_confirm_seconds": "broker cancel plumbing",
+    "alpaca_data_feed": "data subscription tier",
+    "alpaca_options_feed": "data subscription tier",
+    "scanner_target_delta": "target inside the tunable short band",
+    "scanner_long_target_delta": "target inside the tunable long band",
+    "scanner_debit_short_target_delta": "target inside the tunable debit-short band",
+    "scanner_risk_free_rate": "pricing input",
+    "scanner_iv_lookback": "IV-rank statistics window",
+    "scanner_iv_min_obs": "IV-rank statistics guard",
+    "scanner_iv_history_dir": "path",
+    "ingest_rss_feeds": "sources live in routines.yaml",
+    "ingest_rss_timeout_seconds": "network plumbing",
+    "ingest_youtube_channels": "sources live in routines.yaml",
+    "yt_caption_grace_minutes": "ingestion plumbing",
+    "yt_max_audio_minutes": "ingestion plumbing",
+    "yt_max_audio_per_run": "ingestion plumbing",
+    "yt_caption_sleep_seconds": "ingestion plumbing",
+    "yt_caption_cooldown_base_minutes": "ingestion plumbing",
+    "yt_caption_cooldown_max_minutes": "ingestion plumbing",
+    "yt_caption_cooldown_jitter": "ingestion plumbing",
+    "whisper_model": "ingestion model",
+    "scout_timeout_seconds": "LLM plumbing",
+    "scout_batch_size": "LLM plumbing",
+    "scout_max_doc_chars": "LLM plumbing",
+    "persona_timeout_seconds": "LLM plumbing",
+    "pipeline_max_context_notes": "LLM context size",
+}
 
 EXIT_KINDS: tuple[str, ...] = (
     "vertical_credit",
@@ -312,6 +354,13 @@ _STATIC: tuple[Tunable, ...] = (
         max=0.01,
         hard_ceiling=0.01,
     ),
+    _s(
+        "earnings_blackout",
+        Group.RISK,
+        _B,
+        "Gate rule earnings_blackout: no new debit entries spanning the next earnings date.",
+        Risk.FALSE,
+    ),
     # -- entries -----------------------------------------------------------------
     _s(
         "dte_min",
@@ -396,6 +445,103 @@ _STATIC: tuple[Tunable, ...] = (
         min=1,
         max=20,
     ),
+    _s(
+        "debit_short_delta_min",
+        Group.ENTRIES,
+        _F,
+        "Debit-vertical short-leg |delta| band, lower bound (E3.4, cash_debit).",
+        Risk.NONE,
+        field="scanner_debit_short_delta_min",
+        min=0.05,
+        max=0.60,
+    ),
+    _s(
+        "debit_short_delta_max",
+        Group.ENTRIES,
+        _F,
+        "Debit-vertical short-leg |delta| band, upper bound (E3.4, cash_debit).",
+        Risk.NONE,
+        field="scanner_debit_short_delta_max",
+        min=0.05,
+        max=0.60,
+    ),
+    _s(
+        "debit_width",
+        Group.ENTRIES,
+        ValueType.FLOAT_OR_NONE,
+        "Target debit-vertical width in dollars; 'none' = pick the short leg by delta only.",
+        Risk.ANY,
+        field="scanner_debit_width",
+        unit="$",
+        min=1.0,
+        max=25.0,
+    ),
+    _s(
+        "spread_max_pct",
+        Group.ENTRIES,
+        _F,
+        "Liquidity: max leg bid-ask spread as a share of mid (scanner filter + gate rule \
+liquidity; a leg passes if within this OR spread_max_abs).",
+        Risk.UP,
+        unit="pct",
+        min=0.02,
+        max=0.25,
+        hard_ceiling=0.25,
+    ),
+    _s(
+        "spread_max_abs",
+        Group.ENTRIES,
+        _F,
+        "Liquidity: max leg bid-ask spread in dollars (OR with spread_max_pct).",
+        Risk.UP,
+        unit="$",
+        min=0.01,
+        max=0.50,
+        hard_ceiling=0.50,
+    ),
+    _s(
+        "min_open_interest",
+        Group.ENTRIES,
+        _I,
+        "Liquidity: scanner drops contracts with open interest below this.",
+        Risk.DOWN,
+        field="scanner_min_open_interest",
+        min=10,
+        max=5000,
+        hard_ceiling=10,
+    ),
+    _s(
+        "min_volume",
+        Group.ENTRIES,
+        _I,
+        "Liquidity: scanner drops contracts with day volume below this.",
+        Risk.DOWN,
+        field="scanner_min_volume",
+        min=1,
+        max=1000,
+        hard_ceiling=1,
+    ),
+    _s(
+        "scout_min_confidence",
+        Group.ENTRIES,
+        _F,
+        "Scout keeps a candidate only at or above this confidence (lower = more ideas).",
+        Risk.DOWN,
+        min=0.30,
+        max=0.95,
+        hard_ceiling=0.30,
+    ),
+    _s(
+        "max_shortlist",
+        Group.ENTRIES,
+        _I,
+        "Tickers the Director may shortlist per run.",
+        Risk.UP,
+        field="pipeline_max_shortlist",
+        min=1,
+        max=10,
+        hard_ceiling=10,
+    ),
     Tunable(
         key="rank_by",
         group=Group.ENTRIES,
@@ -405,6 +551,63 @@ _STATIC: tuple[Tunable, ...] = (
         risk=Risk.NONE,
         path=("pipeline", "rank_menu_by"),
         choices=RANK_MENU_BY,
+    ),
+    # -- positions (E6.4, D19): early exits + close-to-reallocate -----------------
+    Tunable(
+        key="positions.remaining_ev_floor",
+        group=Group.POSITIONS,
+        type=ValueType.FLOAT_OR_NONE,
+        description="Suggest closing once remaining net EV per $ of buying power held drops "
+        "below this (-0.01 = expected to lose >1% of that BP vs closing now); 'none' = off.",
+        target=Target.EXITS,
+        risk=Risk.ANY,
+        path=("positions", "remaining_ev_floor_per_bp"),
+        unit="pct",
+        min=-0.10,
+        max=0.05,
+    ),
+    _s(
+        "realloc_min_edge",
+        Group.POSITIONS,
+        _F,
+        "Close-to-reallocate: a swap needs net edge (EV per $ BP, after switching costs) of "
+        "at least this share of the larger |EV per BP| (lower = more swaps).",
+        Risk.DOWN,
+        unit="pct",
+        min=0.05,
+        max=2.0,
+        hard_ceiling=0.05,
+    ),
+    _s(
+        "realloc_pop_tolerance",
+        Group.POSITIONS,
+        _F,
+        "Close-to-reallocate: the new trade's PoP may be this much below the open's remaining PoP.",
+        Risk.UP,
+        unit="pct",
+        min=0.0,
+        max=0.20,
+        hard_ceiling=0.20,
+    ),
+    _s(
+        "realloc_max_swaps_per_day",
+        Group.POSITIONS,
+        _I,
+        "Churn limit: swaps suggested per ET day, all tickers (0 = reallocation off).",
+        Risk.UP,
+        min=0,
+        max=10,
+        hard_ceiling=10,
+    ),
+    _s(
+        "realloc_max_swaps_per_ticker_per_day",
+        Group.POSITIONS,
+        _I,
+        "Churn limit: swaps per ticker (closed or opened) per ET day.",
+        Risk.UP,
+        min=0,
+        max=3,
+        hard_ceiling=3,
     ),
     # -- execution (D24, E6.2) ---------------------------------------------------
     _s(
@@ -478,6 +681,14 @@ _STATIC: tuple[Tunable, ...] = (
         max=3600,
         hard_ceiling=3600,
         aliases=("approval_ttl",),
+    ),
+    _s(
+        "auto_exit_defined_risk",
+        Group.APPROVALS,
+        _B,
+        "D24: fired exits on defined-risk positions skip the Slack approval (gate still "
+        "applies). Off = every exit is a proposal needing an approval.",
+        Risk.TRUE,
     ),
 )
 

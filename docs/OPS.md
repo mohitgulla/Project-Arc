@@ -383,6 +383,15 @@ The plugin shells out to the CLI; the CLI owns every rule.
 - **Registry** (`arc/control/registry.py`, `arc config keys`): every tunable has a type,
   bounds/choices, risk direction and a code-level hard ceiling Slack cannot exceed.
   Never tunable: `ARC_ENV`, gate code, secrets, paths, `config_version`.
+  `!arc config` lists every key grouped (account, universe, risk, entries incl. each
+  profile's DTE window, exits, positions, execution, costs, approvals, routines);
+  categorical keys show their options inline, e.g. `account_profile = cash_debit
+  (options: cash_long_only | cash_debit | margin)`.
+- **Adding a knob** (any card): add the `ArcSettings` field / YAML path to the registry,
+  or list it in `NOT_EXPOSED` with a reason. `tests/test_control.py::
+  test_every_setting_is_classified_tunable_or_not` fails otherwise. Code that reads
+  exits/costs must go through `arc.control.effective.exit_config|cost_model(settings)`,
+  not `load_exit_config()`, or Slack overrides won't reach it.
 - **Owner-only**: the Slack user id (from the gateway event, never message text) must be
   in `ARC_APPROVER_SLACK_USER_IDS` from `~/.hermes/.env`. A local shell (`--actor local`)
   counts as the owner. Refusals are logged.

@@ -121,6 +121,47 @@ def test_every_registry_key_maps_to_a_real_setting_or_yaml_value() -> None:
     assert s.config_version is None
 
 
+def test_every_setting_is_classified_tunable_or_not() -> None:
+    """Config audit: a new ArcSettings field must be added to REGISTRY, NOT_EXPOSED or
+    NEVER_TUNABLE, so no card ships a knob the control panel silently ignores."""
+    from arc.control.registry import NOT_EXPOSED
+
+    exposed = {t.field for t in REGISTRY.values() if t.target is Target.SETTINGS}
+    unclassified = set(ArcSettings.model_fields) - exposed - set(NOT_EXPOSED) - NEVER_TUNABLE
+    assert not unclassified, f"classify in arc/control/registry.py: {sorted(unclassified)}"
+    assert not (set(NOT_EXPOSED) & exposed)
+    assert set(NOT_EXPOSED) <= set(ArcSettings.model_fields)
+
+
+def test_summary_lists_options_for_categorical_keys(svc: ControlService) -> None:
+    card = cards.config_summary(svc.show(), version=svc.version())
+    assert "`account_profile` = cash_debit _(options: cash_long_only | cash_debit | margin)_" in (
+        card.text
+    )
+    assert "_(options: scanner | managed_net_ev | rorc_day | vrp)_" in card.text
+    assert "_(options: intraday | eod)_" in card.text
+    # the active profile's DTE window, the E6.4 knobs and routines are all in the summary
+    for key in ("profiles.cash_debit.dte_min", "realloc_min_edge", "routines.scout.cadence"):
+        assert f"`{key}`" in card.text
+    assert all(len(b["text"]["text"]) <= 3000 for b in card.blocks if "text" in b)
+
+
+def test_new_knobs_bounds_and_direction(svc: ControlService) -> None:
+    assert svc.set("realloc_max_swaps_per_day", "0", actor=OWNER, source="slack").outcome == (
+        "applied"
+    )  # fewer swaps is safer
+    assert svc.settings().realloc_max_swaps_per_day == 0
+    r = svc.set("earnings_blackout", "off", actor=OWNER, source="slack")
+    assert r.pending is not None  # turning a gate rule off needs a confirm
+    assert svc.set("spread_max_pct", "40%", actor=OWNER, source="slack").outcome == "refused"
+    r = svc.set("positions.remaining_ev_floor", "none", actor=OWNER, source="slack")
+    assert r.pending is not None
+    svc.confirm(r.pending.code, actor=OWNER, source="slack")
+    from arc.control.effective import exit_config
+
+    assert exit_config(svc.settings()).positions.remaining_ev_floor_per_bp is None
+
+
 @pytest.mark.parametrize("key", ["env", "ARC_ENV", "gate_secret", "db_path", "config_version"])
 def test_never_tunable(key: str) -> None:
     with pytest.raises(TunableError, match="never tunable"):

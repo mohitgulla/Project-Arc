@@ -110,8 +110,11 @@ def change_card(r: Result, *, actor: str | None = None) -> CardView:
 
 
 def _line(v: KeyView) -> str:
+    """One summary row; categorical keys list their options (``margin | cash_debit``)."""
     mark = " ✎" if v.overridden else ""
-    return f"`{v.tunable.key}` = {format_value(v.tunable, v.value)}{mark}"
+    t = v.tunable
+    opts = f" _(options: {' | '.join(t.choices)})_" if len(t.choices) > 1 else ""
+    return f"`{t.key}` = {format_value(t, v.value)}{mark}{opts}"
 
 
 def config_summary(views: list[KeyView], *, version: int) -> CardView:
@@ -132,7 +135,10 @@ def config_summary(views: list[KeyView], *, version: int) -> CardView:
             blocks.append(b)
         lines.append(f"\n*{g.value.capitalize()}*")
         lines += [f"• {i}" for i in items]
-    lines.append("\n_`!arc config <group|key>` · `!arc set <key> <value> [-- reason]`_")
+    lines.append(
+        "\n_`!arc config <group|key>` (bounds, default, history) · "
+        "`!arc set <key> <value> [-- reason]`_"
+    )
     return CardView(text=_text_from(title, lines), blocks=blocks[:50])
 
 

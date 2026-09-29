@@ -24,6 +24,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.backtest.costs import CostModel  # noqa: TC001 - runtime default arg type
 from arc.exits.policy import ExitConfig, ExitReason, resolve_rules
 from arc.exits.position import OpenPosition, PositionMarks, evaluate_position
 from arc.models import Structure  # noqa: TC001 - pydantic field
@@ -114,11 +115,12 @@ def review_position(
     exits: ExitConfig,
     theta_per_day: float | None = None,
     exit_pending: bool = False,
+    cost: CostModel | None = None,
 ) -> PositionReview:
     """Review one open position (see module doc). Raises ``LookupError`` on a missing mark."""
     st = position.structure
     policy = exits.policy_for(st.kind)
-    state = evaluate_position(position, marks, policy, cfg=exits.model)
+    state = evaluate_position(position, marks, policy, cost=cost, cfg=exits.model)
     rules = resolve_rules(st, policy, entry_net=position.entry_net)
     per = state.pnl_per_share
     pct_gain = state.pct_of_max_gain
