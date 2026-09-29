@@ -108,9 +108,9 @@ class JobContext:
             if self.settings_factory is not None:
                 self._settings = self.settings_factory()
             else:
-                from arc.config import get_settings
+                from arc.control.effective import effective_settings
 
-                self._settings = get_settings()
+                self._settings = effective_settings(self.conn)  # D26 overrides
         return self._settings
 
     @property

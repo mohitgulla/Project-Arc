@@ -239,6 +239,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_tower_parser(sub)
 
+    from arc.control.cli import add_config_parser
+
+    add_config_parser(sub)
+
     from arc.remote.cli import add_remote_parser
 
     add_remote_parser(sub)
@@ -578,20 +582,27 @@ def _propose(args: argparse.Namespace) -> int:
     from arc.config import get_settings
     from arc.pipeline import PipelineEnv, run_propose
     from arc.pipeline.runner import fixture_run, open_db
-    from arc.routines.config import load_routines
     from arc.routines.heartbeat import LogNotifier, Notifier, SlackDayThreadNotifier
     from arc.routines.locks import LockManager, NullLocks
     from arc.utils.calendar import now_et
 
     _log_to_stderr()
     settings = get_settings()
+    # D26: the same effective config (DB overrides) the routines tick uses. Read-only:
+    # --fixtures without --db runs in memory, so no overrides apply there.
+    from arc.control.effective import effective_from_path
+
+    settings, routines = effective_from_path(
+        ":memory:" if args.fixtures and not args.db else args.db,
+        base=settings,
+        routines_path=args.routines,
+    )
     if args.profile:
         try:
             settings = settings.with_profile(args.profile)
         except KeyError as exc:
             sys.stderr.write(f"arc propose: {exc.args[0]}\n")
             return 2
-    routines = load_routines(args.routines)
     if not (args.fixtures or args.dry_run):
         from arc.gate.token import TokenError, gate_secret
 
@@ -727,6 +738,12 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_remote(args)
+
+    if args.command == "config":
+        from arc.control.cli import run_config
+
+        _log_to_stderr()
+        return run_config(args)
 
     logger.info("command.stub", command=args.command)
     print(f"arc {args.command}: not yet implemented")

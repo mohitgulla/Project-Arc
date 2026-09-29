@@ -68,6 +68,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from arc.models import StructureKind
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from arc.models import Structure
 
 __all__ = [
@@ -283,11 +285,19 @@ class ExitConfig(BaseModel):
         return self.default
 
 
-def load_exit_config(path: Path | str | None = None) -> ExitConfig:
-    """Load and validate an exits YAML file (default: ``config/exits.yaml``)."""
+def load_exit_config(
+    path: Path | str | None = None, *, overrides: Mapping[tuple[str, ...], object] | None = None
+) -> ExitConfig:
+    """Load and validate an exits YAML file (default: ``config/exits.yaml``).
+
+    *overrides* (D26 control panel, ``path -> value``) patch the YAML before
+    validation; :func:`arc.control.exit_config` returns the effective config.
+    """
+    from arc.utils.yamlpatch import apply_overrides
+
     p = Path(path) if path is not None else DEFAULT_EXITS_PATH
     data = yaml.safe_load(p.read_text()) or {}
-    return ExitConfig.model_validate(data)
+    return ExitConfig.model_validate(apply_overrides(data, overrides))
 
 
 # ---------------------------------------------------------------------------

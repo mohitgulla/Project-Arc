@@ -568,7 +568,7 @@ def test_rank_menu_by_flag(
     on_cfg = cfg.model_copy(
         update={"pipeline": cfg.pipeline.model_copy(update={"rank_menu_by": by})}
     )
-    monkeypatch.setattr(steps, "load_exit_config", lambda: on_cfg)
+    monkeypatch.setattr(steps, "exit_config", lambda _settings=None: on_cfg)
     _, _, on = _recording_fixture_run(settings, routines)
     vals = menu_vals(on["quant"])
     assert len(vals) >= 2

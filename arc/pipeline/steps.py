@@ -56,7 +56,6 @@ from typing import TYPE_CHECKING, Any, cast
 import structlog
 from pydantic import BaseModel, ValidationError
 
-from arc.backtest.costs import CostModel, load_cost_model
 from arc.context.kinds import (
     Evidence,
     NotePayload,
@@ -68,7 +67,9 @@ from arc.context.kinds import (
     StructuresPayload,
 )
 from arc.context.store import ContextStore
-from arc.exits import ExitSummary, load_exit_config, model_exits, realized_vol_forecast
+from arc.control.effective import cost_model as cost_config
+from arc.control.effective import exit_config
+from arc.exits import ExitSummary, model_exits, realized_vol_forecast
 from arc.ingest.llm import ScoutLLMError
 from arc.ingest.scout import extract_json_object
 from arc.journal.models import LegQuote, MarketContext, PersonaCallMeta
@@ -115,6 +116,7 @@ from arc.utils.calendar import ET
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from arc.backtest.costs import CostModel
     from arc.broker.base import AccountInfo, BrokerPosition
     from arc.config import ArcSettings
     from arc.context.store import ContextSnapshot
@@ -827,7 +829,7 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         return JobResult(summary="empty shortlist; no structures", metrics={"structures": 0})
 
     today = _today(ctx)
-    exits = load_exit_config()
+    exits = exit_config(settings)  # D26: exits.yaml + control-panel overrides
     summaries: dict[int, ExitSummary] = {}
     menus: dict[str, dict[frozenset[tuple[str, str]], ScanCandidate]] = {}
     chains: dict[str, Any] = {}
@@ -1480,8 +1482,8 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
     earnings = next_earnings(ctx.conn, list(by_ticker), _today(ctx))
     switch = HaltSwitch(HaltRepo(ctx.conn))
-    exits = load_exit_config()
-    cost_model = load_cost_model()
+    exits = exit_config(settings)  # D26: exits/costs yaml + control-panel overrides
+    cost_model = cost_config(settings)
 
     skipped: Counter[str] = Counter()
     lines: list[str] = []

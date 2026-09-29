@@ -93,6 +93,9 @@ def run_approve(args: argparse.Namespace) -> int:
     settings = get_settings()
     conn = connect(args.db or settings.db_path)
     migrate(conn)
+    from arc.control import effective_settings
+
+    settings = effective_settings(conn, base=settings)  # D26 overrides (approver list, TTL)
     cmd = args.approve_command
 
     if cmd == "list":

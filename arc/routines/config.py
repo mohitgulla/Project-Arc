@@ -43,7 +43,7 @@ import datetime as _dt
 import enum
 import re
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import yaml
 from pydantic import (
@@ -60,6 +60,9 @@ from arc.context.store import Supersede
 from arc.context.ttl import Ttl, parse_duration
 from arc.monitoring.config import MonitoringSettings
 from arc.routines.conditions import parse_condition
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_ROUTINES_PATH = REPO_ROOT / "config" / "routines.yaml"
@@ -447,11 +450,19 @@ class RoutinesConfig(BaseModel):
         return self.context_ttl.get(kind, ContextPolicy())
 
 
-def load_routines(path: Path | str | None = None) -> RoutinesConfig:
-    """Load and validate a routines YAML file."""
+def load_routines(
+    path: Path | str | None = None, *, overrides: Mapping[tuple[str, ...], Any] | None = None
+) -> RoutinesConfig:
+    """Load and validate a routines YAML file.
+
+    *overrides* (D26 control panel: routine enable/cadence, ``path -> value``)
+    patch the YAML before validation, so they pass the same checks as the file.
+    """
+    from arc.utils.yamlpatch import apply_overrides
+
     p = Path(path) if path is not None else DEFAULT_ROUTINES_PATH
     data = yaml.safe_load(p.read_text()) or {}
     if not isinstance(data, dict):
         msg = f"{p}: top level must be a mapping"
         raise ValueError(msg)
-    return RoutinesConfig.model_validate(data)
+    return RoutinesConfig.model_validate(apply_overrides(data, overrides))

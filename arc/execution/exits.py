@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from arc.exits import load_exit_config
 from arc.exits.policy import ExitReason
 from arc.exits.position import OpenPosition, PositionMarks, evaluate_position
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
@@ -139,7 +138,11 @@ def propose_exits(
             out.errors.append(msg)
             log.error("exits.no_gate_secret", reason=str(exc))
             return out
-    cfg = exits or load_exit_config()
+    if exits is None:
+        from arc.control.effective import exit_config
+
+        exits = exit_config(settings)  # D26: exits.yaml + control-panel overrides
+    cfg = exits
     repo = OpenStructureRepo(conn)
     today = now.astimezone(ET).date()
     day = today.isoformat()

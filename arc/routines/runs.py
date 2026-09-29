@@ -130,6 +130,15 @@ class RoutineRunRepo:
         assert run is not None
         return run
 
+    def set_config_version(self, run_id: str, version: int | None) -> None:
+        """D26: record the ``config_changes`` version a run executes under."""
+        if version is None:
+            return
+        with self.conn:
+            self.conn.execute(
+                "UPDATE routine_runs SET config_version = ? WHERE run_id = ?", (version, run_id)
+            )
+
     def set_inputs(self, run_id: str, snapshot_ids: Iterable[str]) -> None:
         with self.conn:
             self.conn.execute(
