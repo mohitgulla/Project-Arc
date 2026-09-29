@@ -44,6 +44,12 @@ class BrokerPosition(BaseModel):
     avg_entry_price: Decimal | None = None
     unrealized_pl: Decimal | None = None
     asset_class: str = "us_option"
+    # E5.3a: intraday marks the monitor heartbeat carries for the tower.
+    current_price: Decimal | None = Field(None, description="Broker's latest mark per share")
+    lastday_price: Decimal | None = Field(None, description="Previous session close per share")
+    change_today: Decimal | None = Field(
+        None, description="Fractional change vs lastday_price (0.05 = +5%)"
+    )
 
 
 class MlegLeg(BaseModel):
@@ -75,6 +81,17 @@ class BrokerOrderStatus(BaseModel):
     legs: list[dict] | None = None
     created_at: dt.datetime | None = None
     updated_at: dt.datetime | None = None
+
+
+class BrokerOrderRef(BaseModel):
+    """One broker order as listed for the day (D32 order-budget cross-check)."""
+
+    broker_order_id: str
+    client_order_id: str | None = None
+    status: str = ""
+    asset_class: str = ""  # us_option for single-leg option orders; "" on mleg parents
+    mleg: bool = False
+    submitted_at: dt.datetime | None = None
 
 
 class Fill(BaseModel):
@@ -111,6 +128,13 @@ class BrokerAdapter(Protocol):
         Poll the current status of an order.
     fills(since)
         Return fills since *since*.
+
+    Optional (duck-typed, not part of the protocol so fakes stay small):
+
+    option_orders_since(since) -> list[BrokerOrderRef]
+        Every option order (single-leg ``us_option`` or mleg) the broker lists
+        since *since*, any status. The D32 order budget cross-checks the local
+        count against it; adapters without it are counted locally only.
     """
 
     def account(self) -> AccountInfo: ...

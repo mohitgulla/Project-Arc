@@ -239,6 +239,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_positions_parser(sub)
 
+    from arc.budget.cli import add_budget_parser
+
+    add_budget_parser(sub)
+
     from arc.tower.cli import add_tower_parser
 
     add_tower_parser(sub)
@@ -246,6 +250,10 @@ def _make_parser() -> argparse.ArgumentParser:
     from arc.control.cli import add_config_parser
 
     add_config_parser(sub)
+
+    from arc.universe.cli import add_universe_parser
+
+    add_universe_parser(sub)
 
     from arc.remote.cli import add_remote_parser
 
@@ -695,6 +703,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_reconcile(args)
+    if args.command == "universe":
+        from arc.universe.cli import run_universe
+
+        _log_to_stderr()
+        return run_universe(args)
     if args.command == "journal":
         from arc.journal.cli import run_journal
 
@@ -730,6 +743,12 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_exits(args)
+
+    if args.command == "budget":
+        from arc.budget.cli import run_budget
+
+        _log_to_stderr()
+        return run_budget(args)
 
     if args.command == "positions":
         from arc.positions.cli import run_positions

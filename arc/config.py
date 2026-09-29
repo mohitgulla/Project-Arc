@@ -25,6 +25,13 @@ log = structlog.get_logger()
 _LIVE_ENV_PATH = Path.home() / ".arc" / "live.env"
 
 
+class UniverseMode(enum.StrEnum):
+    """D28: ``seed`` = ``universe`` is a watch list (open universe); ``strict`` = allow-list."""
+
+    SEED = "seed"
+    STRICT = "strict"
+
+
 class ArcEnv(enum.StrEnum):
     """Execution environment: paper (default) or live."""
 
@@ -284,6 +291,52 @@ class ArcSettings(BaseSettings):
             "Default false: every exit is a proposal that needs an approval."
         ),
     )
+    # -- Daily options order budget (E6.5, D32) ---------------------------------
+    order_budget_daily_max: Annotated[int, Field(ge=1, le=200)] = Field(
+        default=200,
+        description=(
+            "Hard cap on broker option orders per ET day (every ladder attempt, opens and "
+            "closes, dashboard orders). Code ceiling 200 (arc.budget.HARD_CEILING)."
+        ),
+    )
+    order_budget_restrict_at: Annotated[int, Field(ge=0, le=200)] = Field(
+        default=100,
+        description="Orders used at which selection turns restrictive (D32 tier).",
+    )
+    order_budget_close_reserve: Annotated[int, Field(ge=0, le=199)] = Field(
+        default=25,
+        description=(
+            "Orders kept for closes: opens stop at daily_max - reserve (175), closes may "
+            "use the rest up to daily_max."
+        ),
+    )
+    order_budget_restrictive_director_max_shortlist: Annotated[int, Field(ge=0, le=10)] = Field(
+        default=1, description="Restrictive tier: Director shortlist cap."
+    )
+    order_budget_restrictive_max_new_opens_per_loop: Annotated[int, Field(ge=0, le=10)] = Field(
+        default=1, description="Restrictive tier: new open proposals per pipeline run."
+    )
+    order_budget_restrictive_min_net_ev_multiplier: Annotated[float, Field(ge=1.0, le=10.0)] = (
+        Field(
+            default=1.5,
+            description=(
+                "Restrictive tier: managed Net EV must clear this x max(base floor, round-trip "
+                "cost)."
+            ),
+        )
+    )
+    order_budget_restrictive_min_pop_delta_pp: Annotated[float, Field(ge=0.0, le=50.0)] = Field(
+        default=5.0,
+        description=(
+            "Restrictive tier: managed PoP must clear the breakeven PoP by this many points."
+        ),
+    )
+    order_budget_restrictive_max_improvement_steps: Annotated[int, Field(ge=0, le=9)] = Field(
+        default=2, description="Restrictive tier: ladder improvement-step cap."
+    )
+    order_budget_restrictive_dedupe_cooldown_multiplier: Annotated[
+        float, Field(ge=1.0, le=10.0)
+    ] = Field(default=2.0, description="Restrictive tier: E5.9 dedupe cooldown multiplier.")
     # -- Close-to-reallocate (E6.4, D19) ----------------------------------------
     realloc_min_edge: Annotated[float, Field(ge=0.0, le=10.0)] = Field(
         default=0.20,
@@ -528,8 +581,12 @@ class ArcSettings(BaseSettings):
         description="Timeout for a single Director/Quant/Risk LLM call.",
     )
     pipeline_max_shortlist: Annotated[int, Field(ge=1, le=20)] = Field(
-        default=3,
-        description="Max tickers the Director shortlist may carry into Quant.",
+        default=10,
+        description=(
+            "Quant/Risk budget (D28): the first N Director-ranked tickers get a structure. "
+            "Never shown to the Director; ranked items beyond it stay on the card as "
+            "'Ranked, not structured'."
+        ),
     )
     pipeline_max_context_notes: Annotated[int, Field(ge=0, le=100)] = Field(
         default=20,
@@ -540,10 +597,31 @@ class ArcSettings(BaseSettings):
         description="Scanner candidates per ticker offered to Quant (Quant picks among them).",
     )
 
-    # -- Universe (D9) -------------------------------------------------------
+    # -- Universe (D9 revised, D28) ------------------------------------------
     universe: list[str] = Field(
         default_factory=lambda: list(DEFAULT_UNIVERSE),
-        description="Ticker universe for scanning.",
+        description=(
+            "Seed/watch list (D28): always scanned and always accepted. In strict mode "
+            "(ARC_UNIVERSE_MODE=strict) it is the allow-list."
+        ),
+    )
+    universe_mode: UniverseMode = Field(
+        default=UniverseMode.SEED,
+        description=(
+            "ARC_UNIVERSE_MODE: seed (default) = any symbol-master ticker that passes the "
+            "liquidity screen may become a Scout candidate; strict = universe only."
+        ),
+    )
+    universe_config_file: Path | None = Field(
+        default=None,
+        description="ARC_UNIVERSE_CONFIG_FILE; None -> config/universe.yaml.",
+    )
+    scout_max_new_tickers: Annotated[int, Field(ge=0, le=50)] = Field(
+        default=10,
+        description=(
+            "Max non-seed tickers the Scout may accept per run (D28); extra ones are "
+            "rejected as over_new_ticker_cap."
+        ),
     )
 
     # -- Control panel (D26, E8.5) --------------------------------------------
@@ -662,6 +740,24 @@ class ArcSettings(BaseSettings):
         if p.dte_min is not None and p.dte_max is not None:
             return p.dte_min, p.dte_max
         return self.dte_min, self.dte_max
+
+    @model_validator(mode="after")
+    def _order_budget_consistent(self) -> ArcSettings:
+        """D32: reserve below the cap; the restrictive tier starts at or below the open limit."""
+        open_limit = self.order_budget_daily_max - self.order_budget_close_reserve
+        if open_limit < 1:
+            msg = (
+                f"order_budget_close_reserve ({self.order_budget_close_reserve}) must be below "
+                f"order_budget_daily_max ({self.order_budget_daily_max})"
+            )
+            raise ValueError(msg)
+        if self.order_budget_restrict_at > open_limit:
+            msg = (
+                f"order_budget_restrict_at ({self.order_budget_restrict_at}) must not exceed "
+                f"the open limit {open_limit} (daily_max - close_reserve)"
+            )
+            raise ValueError(msg)
+        return self
 
     @model_validator(mode="after")
     def _auto_approve_paper_only(self) -> ArcSettings:

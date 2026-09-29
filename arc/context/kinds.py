@@ -27,6 +27,8 @@ from arc.positions.evaluate import PositionReview
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from arc.personas.schemas import DirectorRankedItem
+
 _FORBID = ConfigDict(extra="forbid")
 
 
@@ -62,15 +64,39 @@ class RegimePayload(FeatureSnapshot):
 
 
 class ShortlistPayload(DirectorOutput):
-    """Director ranked shortlist."""
+    """Director ranked shortlist (v2, E5.7: every ranked name, exclusions, evidence).
+
+    ``budget`` is the Quant/Risk budget (``pipeline_max_shortlist``) in force when the
+    Director ran: the first ``budget`` ranked tickers get a structure; the rest stay
+    on the card as "Ranked, not structured". Never shown to the Director.
+    """
 
     model_config = _FORBID
+
+    budget: int | None = Field(None, ge=0)
+
+    def budgeted(self) -> list[DirectorRankedItem]:
+        """The ranked items inside the Quant/Risk budget (all of them when unset)."""
+        ranked = sorted(self.shortlist, key=lambda i: i.rank)
+        return ranked if self.budget is None else ranked[: self.budget]
+
+    def over_budget(self) -> list[DirectorRankedItem]:
+        ranked = sorted(self.shortlist, key=lambda i: i.rank)
+        return [] if self.budget is None else ranked[self.budget :]
 
 
 class StructuresPayload(QuantOutput):
-    """Quant structures with analytics."""
+    """Quant structures with analytics (v2, E5.7: every budgeted ticker accounted for).
+
+    ``skipped`` holds the Quant's own skips plus the deterministic ones (no chain,
+    account profile). ``not_structured`` = budgeted tickers with a menu that got
+    neither a structure nor a reason. ``over_budget`` = ranked beyond the budget.
+    """
 
     model_config = _FORBID
+
+    not_structured: list[str] = Field(default_factory=list)
+    over_budget: list[str] = Field(default_factory=list)
 
 
 class RiskReviewPayload(RiskOutput):
@@ -171,8 +197,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload),
     KindSpec("regime", RegimePayload),
-    KindSpec("shortlist", ShortlistPayload),
-    KindSpec("structures", StructuresPayload),
+    KindSpec("shortlist", ShortlistPayload, schema_version=2),  # E5.7: excluded/evidence/budget
+    KindSpec("structures", StructuresPayload, schema_version=2),  # E5.7: skipped/not_structured
     KindSpec("risk_review", RiskReviewPayload),
     KindSpec("proposal", ProposalPayload),
     KindSpec("position_review", PositionReviewPayload),

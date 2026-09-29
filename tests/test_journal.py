@@ -138,10 +138,10 @@ class TestPipelineRecords:
     def test_director_selected_rejected_and_not_ranked(self, conn: sqlite3.Connection) -> None:
         rows = _codes(conn, Stage.SHORTLIST)
         assert ("SPY", "selected", "shortlisted") in rows
+        assert ("NVDA", "selected", "shortlisted") in rows
+        assert ("XOM", "selected", "shortlisted") in rows
         assert ("AAPL", "rejected", "not_a_candidate") in rows
-        assert ("PLTR", "rejected", "not_a_candidate") in rows
-        assert ("NVDA", "rejected", "not_ranked") in rows
-        assert ("XOM", "rejected", "not_ranked") in rows
+        assert ("PLTR", "rejected", "director_excluded") in rows  # E5.7: with its reason
         assert ("session", "noted", "market_read") in rows
 
     def test_quant_records_every_menu_alternative(self, conn: sqlite3.Connection) -> None:
@@ -520,8 +520,8 @@ def test_gaps_without_history(conn: sqlite3.Connection, tmp_path: Path) -> None:
     from arc.journal.report import ShadowPricer
 
     rep = gaps(conn, pricer=ShadowPricer(tmp_path))
-    assert rep.rejected["structure:menu_not_chosen"] == 4
-    assert rep.rejected["shortlist:not_ranked"] == 2
+    assert rep.rejected["structure:menu_not_chosen"] == 6  # SPY 4 + NVDA 2 (skipped)
+    assert rep.rejected["shortlist:director_excluded"] == 1  # PLTR, with its reason
     assert rep.shadow.startswith("n/a")
     assert all(a.better_by is None for a in rep.alternatives)
     text = "\n".join(rep.lines())

@@ -106,6 +106,8 @@ class RuleCode(StrEnum):
     ACCOUNT_NET_DEBIT = "account_profile_net_debit"
     ACCOUNT_SHORT_LEG = "account_profile_short_leg"
     ACCOUNT_CASH = "account_profile_settled_cash"
+    # D32 daily options order budget (E6.5)
+    ORDER_BUDGET = "order_budget"
     RULE_ERROR = "rule_error"
 
 
@@ -252,6 +254,34 @@ def check_halt(account: AccountSnapshot) -> list[Violation]:
     """Kill switch / daily halt must not be active."""
     if account.halted:
         return _v(RuleCode.HALTED, "trading is halted")
+    return []
+
+
+def check_order_budget(
+    account: AccountSnapshot, config: ArcSettings, *, attempts: int, closing: bool
+) -> list[Violation]:
+    """D32: ``used + worst-case attempts`` must fit the daily options order budget.
+
+    An open must fit under ``order_budget_daily_max - order_budget_close_reserve``;
+    a close under ``order_budget_daily_max``. *attempts* is the ladder's worst
+    case (the band's attempts; the caller passes the tier-adjusted band). Skipped
+    when the snapshot carries no count (``orders_used_today is None``).
+    """
+    used = account.orders_used_today
+    if used is None:
+        return []
+    cap = config.order_budget_daily_max
+    if not closing:
+        cap -= config.order_budget_close_reserve
+    if used + attempts > cap:
+        what = "close" if closing else "open"
+        return _v(
+            RuleCode.ORDER_BUDGET,
+            f"{what} needs {attempts} order(s) but {used} of {cap} used today "
+            f"(daily max {config.order_budget_daily_max}"
+            + ("" if closing else f", close reserve {config.order_budget_close_reserve}")
+            + ")",
+        )
     return []
 
 
@@ -708,6 +738,10 @@ class CapacityRejection(StrEnum):
 
     BUYING_POWER = "buying_power"  # settled cash (D25 cash_debit) or per-underlying budget
     PORTFOLIO_CAP = "portfolio_cap"  # max open positions
+    # D32: the daily order budget is used up. Typed like the capacity reasons so the
+    # audit rows carry it, but closing a position frees no orders (it costs some), so
+    # risk.reallocate never pairs it (:func:`arc.positions.reallocate._frees`).
+    ORDER_BUDGET = "order_budget"
 
 
 def capacity_rejection(violations: Sequence[str]) -> CapacityRejection | None:
@@ -718,6 +752,8 @@ def capacity_rejection(violations: Sequence[str]) -> CapacityRejection | None:
     loss also reports ``per_underlying_limit``; callers only pair bounded structures.
     """
     codes: set[str] = {v.split(":", 1)[0].strip() for v in violations}
+    if codes == {RuleCode.ORDER_BUDGET.value}:
+        return CapacityRejection.ORDER_BUDGET
     if not codes or not codes <= {c.value for c in CAPACITY_CODES}:
         return None
     if codes == {RuleCode.MAX_POSITIONS.value}:
@@ -745,6 +781,11 @@ def evaluate(
     worst price inside the combo NBBO and on tick, and the per-underlying cap at
     the worst price's max loss.
 
+    ``order_budget`` (D32): when the account snapshot carries ``orders_used_today``,
+    the proposal's worst-case attempts (``band.attempts``, else
+    ``1 + execution_improvement_steps``) must fit the daily options order budget:
+    opens under ``daily_max - close_reserve``, closes under ``daily_max``.
+
     ``closing``: the proposal closes an open position (E6.2 exits). Every leg must
     reduce a held leg (:func:`check_closing`); rules that only limit *opening*
     risk are skipped — daily-loss entry block, max open positions, Greek caps,
@@ -767,6 +808,10 @@ def evaluate(
         violations += _run("greek_caps", lambda: check_greek_caps(p, a, pf, c))
     violations += _run("approval_ttl", lambda: check_approval_ttl(p, c, now))
     violations += _run("data_freshness", lambda: check_data_freshness(p, a, m, c, now))
+    attempts = band.attempts if band is not None else 1 + c.execution_improvement_steps
+    violations += _run(
+        "order_budget", lambda: check_order_budget(a, c, attempts=attempts, closing=closing)
+    )
 
     try:
         d: Derived | None = derive(p)

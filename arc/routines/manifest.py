@@ -116,6 +116,8 @@ class RunManifest(BaseModel):
     account_profile: str | None = None
     halted: bool | None = None
     auto_approve: bool | None = None
+    # D32 daily options order budget as this run saw it: {used, limit, tier}
+    order_budget: dict[str, Any] | None = None
     arc_version: str
     git_sha: str | None = None
     git_dirty: bool | None = None
@@ -231,6 +233,14 @@ def _models_requested(personas: Iterable[str], settings: ArcSettings | None) -> 
     return out
 
 
+def _order_budget_of(metrics: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The ``order_budget`` a handler reported in its metrics (``read_budget`` sets it)."""
+    ob = (metrics or {}).get("order_budget")
+    if not isinstance(ob, dict) or not {"used", "limit", "tier"} <= set(ob):
+        return None
+    return {"used": int(ob["used"]), "limit": int(ob["limit"]), "tier": str(ob["tier"])}
+
+
 def build_manifest(
     conn: sqlite3.Connection,
     run: RoutineRun,
@@ -328,6 +338,7 @@ def build_manifest(
         account_profile=_opt_str(settings, "account_profile"),
         halted=halted,
         auto_approve=bool(settings.auto_approve) if settings is not None else None,
+        order_budget=_order_budget_of(metrics),
         arc_version=_arc_version(),
         git_sha=git_sha,
         git_dirty=git_dirty,

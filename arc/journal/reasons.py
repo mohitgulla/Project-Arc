@@ -78,13 +78,19 @@ class Choice(StrEnum):
 class ReasonCode(StrEnum):
     # candidate (what the Director was offered)
     SCOUT_CANDIDATE = "scout_candidate"
+    # candidate: the Scout's universe check (D28; arc.universe.guard)
+    UNIVERSE_NOT_IN_UNIVERSE = "universe:not_in_universe"
+    UNIVERSE_UNKNOWN_SYMBOL = "universe:unknown_symbol"
+    UNIVERSE_ILLIQUID = "universe:illiquid"
+    UNIVERSE_NEW_TICKER_CAP = "universe:over_new_ticker_cap"
     # shortlist (Director)
     SHORTLISTED = "shortlisted"
     NOT_RANKED = "not_ranked"
     NOT_A_CANDIDATE = "not_a_candidate"
     DUPLICATE = "duplicate"
     INVALID_FIELD = "invalid_field"
-    OVER_LIMIT = "over_limit"
+    OVER_LIMIT = "over_limit"  # pre-E5.7 rows only: the Director no longer has a cap
+    DIRECTOR_EXCLUDED = "director_excluded"  # E5.7: excluded with a stated reason
     MARKET_READ = "market_read"
     NO_CANDIDATES = "no_candidates"
     # structure (Quant + scanner)
@@ -93,7 +99,10 @@ class ReasonCode(StrEnum):
     NOT_IN_MENU = "not_in_menu"
     NOT_SHORTLISTED = "not_shortlisted"
     NO_CHAIN = "no_chain"
-    QUANT_OMITTED = "quant_omitted"
+    QUANT_OMITTED = "quant_omitted"  # pre-E5.7 rows only; now NOT_STRUCTURED
+    QUANT_SKIPPED = "quant_skipped"  # E5.7: Quant skipped a budgeted ticker, with a reason
+    NOT_STRUCTURED = "not_structured"  # E5.7: no structure and no reason from Quant
+    OVER_BUDGET = "over_budget"  # E5.7: ranked beyond pipeline_max_shortlist
     # account profile (D25): the profile maps the stance to no structure
     PROFILE_NO_NEUTRAL = "profile:no_neutral_structure"
     PROFILE_NO_STRUCTURE = "profile:no_structure"
@@ -109,6 +118,9 @@ class ReasonCode(StrEnum):
     NO_RISK_REVIEW = "no_risk_review"
     NO_CANDIDATE_ID = "no_candidate_id"
     REPRICE_FAILED = "reprice_failed"
+    # daily options order budget (E6.5, D32)
+    BUDGET_RESTRICTIVE = "budget_restrictive"
+    ORDER_BUDGET_EXHAUSTED = "order_budget_exhausted"
     # sizing (D18)
     SIZING_OK = "sizing:ok"
     SIZING_CAPPED = "sizing:capped"
@@ -144,6 +156,7 @@ class ReasonCode(StrEnum):
     GATE_ACCOUNT_NET_DEBIT = "gate:account_profile_net_debit"
     GATE_ACCOUNT_SHORT_LEG = "gate:account_profile_short_leg"
     GATE_ACCOUNT_CASH = "gate:account_profile_settled_cash"
+    GATE_ORDER_BUDGET = "gate:order_budget"
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
@@ -161,6 +174,7 @@ class ReasonCode(StrEnum):
     ORDER_REFUSED = "order:refused"
     ORDER_REJECTED = "order:broker_rejected"
     ORDER_UNCONFIRMED = "order:cancel_unconfirmed"
+    ORDER_BUDGET_STOP = "order:budget_exhausted"
     # exit (E6.2: E2.4 policy on open structures)
     EXIT_TAKE_PROFIT = "exit:take_profit"
     EXIT_STOP = "exit:stop"

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from arc.journal.attribution import MULTIPLIER, calibration
 from arc.journal.models import OutcomeStatus
 from arc.journal.reasons import STAGE_ORDER, Choice, ReasonCode, Stage
+from arc.journal.scorecard import calibration_points
 from arc.journal.store import JournalStore
 from arc.structures import parse_occ
 from arc.utils.calendar import ET
@@ -458,25 +459,11 @@ def gaps(
         and o.realised_pnl is not None
     ]
     rep.realised = len(realised)
-    points: list[tuple[str, float, bool]] = []
-    for o in realised:
-        hit = bool(o.realised_pnl and o.realised_pnl > 0)
-        for d in j.decisions(proposal_hash=o.proposal_hash):
-            if d.reason_code is ReasonCode.PROPOSED and "quant" in d.payload:
-                points.append(("quant_pop", float(d.payload["quant"]["pop"]), hit))
-        chain = j.chain_for_proposal(o.proposal_hash)
-        ticker = conn.execute(
-            "SELECT ticker FROM proposals WHERE proposal_hash = ?", (o.proposal_hash,)
-        ).fetchone()
-        for d in j.decisions(chain_run_id=chain) if chain and ticker else []:
-            if (
-                d.subject == ticker[0]
-                and d.choice is Choice.SELECTED
-                and d.confidence is not None
-                and d.stage in (Stage.SHORTLIST, Stage.STRUCTURE)
-            ):
-                points.append((d.persona.value, d.confidence, hit))
-    rep.calibration = calibration(points)
+    rep.calibration = calibration(
+        calibration_points(
+            conn, [(o.proposal_hash, bool(o.realised_pnl and o.realised_pnl > 0)) for o in realised]
+        )
+    )
     rep.slippage = [
         (o.proposal_hash, o.slippage_bps, o.cost_bps)
         for o in j.outcomes(since=since)

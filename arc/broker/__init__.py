@@ -9,6 +9,7 @@ Usage::
 from arc.broker.base import (
     AccountInfo,
     BrokerAdapter,
+    BrokerOrderRef,
     BrokerOrderStatus,
     BrokerPosition,
     Fill,
@@ -19,6 +20,7 @@ from arc.broker.base import (
 __all__ = [
     "AccountInfo",
     "BrokerAdapter",
+    "BrokerOrderRef",
     "BrokerOrderStatus",
     "BrokerPosition",
     "Fill",

@@ -21,6 +21,7 @@ import structlog
 
 from arc.ingest.store import IngestCursorRepo, RawDocRepo, content_hash
 from arc.models import RawDoc
+from arc.universe.ingest import IngestUniverse
 
 if TYPE_CHECKING:
     from arc.config import ArcSettings
@@ -32,6 +33,7 @@ EFTS_BASE = "https://efts.sec.gov/LATEST/search-index"
 SUBMISSIONS_BASE = "https://data.sec.gov/submissions"
 FILING_BASE = "https://www.sec.gov/Archives/edgar/data"
 FORM_TYPES = ("8-K", "10-Q", "4")
+_HINT_SCAN_CHARS = 20_000  # ticker hints: scan the head of the filing only
 
 # EDGAR asks ≤10 req/s; we target ~5 to be safe
 _MIN_REQUEST_INTERVAL = 0.2
@@ -153,11 +155,14 @@ def fetch_edgar(
     cursor_repo = IngestCursorRepo(conn)
     doc_repo = RawDocRepo(conn)
     tickers = settings.universe
+    # D28: CIKs come from the cached symbol master when it has them (no per-ticker
+    # download of the SEC file); ticker hints add master-validated symbols in the text.
+    uni = IngestUniverse.from_settings(settings)
 
     results: list[RawDoc] = []
 
     for ticker in tickers:
-        cik = _ticker_to_cik(ticker, settings)
+        cik = uni.cik(ticker) or _ticker_to_cik(ticker, settings)
         if not cik:
             continue
 
@@ -196,7 +201,9 @@ def fetch_edgar(
                     url=url,
                     published_at=pub_dt,
                     text=text,
-                    tickers_hint=[ticker],
+                    tickers_hint=list(
+                        dict.fromkeys([ticker, *uni.tickers_in(text[:_HINT_SCAN_CHARS])])
+                    ),
                     content_hash=h,
                 )
 

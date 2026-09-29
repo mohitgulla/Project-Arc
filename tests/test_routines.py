@@ -550,13 +550,13 @@ class TestTick:
     def test_unimplemented_persona_is_skipped_not_failed(self, conn: sqlite3.Connection) -> None:
         yaml_text = BASE_YAML.replace(
             "investor: {trigger: approval}",
-            'investor: {trigger: approval}\n      scorecard: {schedule: ["16:45"], days: [fri]}',
+            'investor: {trigger: approval}\n      lessons: {schedule: ["16:45"], days: [fri]}',
         )
         d = Dispatcher(conn, cfg(yaml_text), notifier=RecordingNotifier(), is_halted=lambda: False)
         outcomes = d.run_job(
-            "scorecard", et(2026, 10, 2, 16, 45), reason="manual", now=et(2026, 10, 2, 16, 45)
+            "lessons", et(2026, 10, 2, 16, 45), reason="manual", now=et(2026, 10, 2, 16, 45)
         )
-        assert [o.status for o in outcomes] == ["skipped"]  # scorecard has no handler yet (E7.3)
+        assert [o.status for o in outcomes] == ["skipped"]  # "lessons" has no handler
 
     def test_default_halt_reads_halts_table(self, conn: sqlite3.Connection) -> None:
         from arc.store.repos import HaltRepo
@@ -816,7 +816,8 @@ class TestConfigDriven:
 
     def test_handler_resolution(self) -> None:
         spec = JobSpec.model_validate({"every": "5m"})
-        assert resolve_handler("scorecard", spec) is not_implemented
+        assert resolve_handler("lessons", spec) is not_implemented
+        assert resolve_handler("scorecard", spec).__name__ == "scorecard_step"
         assert resolve_handler("auditor", spec).__name__ == "auditor_step"
         assert resolve_handler("quant", spec).__name__ == "quant_step"
         assert resolve_handler("rss", spec).__name__ == "rss_source"
@@ -908,7 +909,12 @@ class TestHeartbeats:
         d.run_manual("scout", now=et(2026, 9, 28, 12, 0))
         blocks = notes.blocks[0]
         assert blocks is not None
-        assert blocks[-1]["elements"][0]["text"] == "sources since last update: rss: 3 new docs"
+        # E5.5b: the folded line is a [Scout] Session notes section before the
+        # footer; the footer stays last. The card fixture has no footer, so the
+        # section is simply the last block here.
+        assert blocks[-1]["text"]["text"] == (
+            "*[Scout] Session notes*\nsources since last update: rss: 3 new docs"
+        )
         assert notes.posts[0][1].endswith("\n> sources since last update: rss: 3 new docs")
 
     def test_failures_keep_one_line_alert(self, conn: sqlite3.Connection) -> None:

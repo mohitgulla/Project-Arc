@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -233,3 +234,80 @@ def test_action_ids_match_the_cards() -> None:
     from arc.control import cards
 
     assert set(plugin.CONFIRM_ACTIONS) == {cards.CONFIRM_ACTION, cards.CANCEL_ACTION}
+
+
+# ---------------------------------------------------------------------------
+# D32 order budget line (`!arc budget`, and under every digest)
+# ---------------------------------------------------------------------------
+
+
+def test_order_budget_line_from_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kw):  # noqa: ANN001, ANN202
+        calls.append([str(c) for c in cmd])
+        assert kw["timeout"] == plugin.BUDGET_TIMEOUT_S
+        assert "PYTHONPATH" not in kw["env"]  # E8.5a: clean Python env for the arc CLI
+        return _completed(
+            {"used": 120, "limit": 200, "tier": "restrictive", "local": 118, "broker": 120}
+        )
+
+    monkeypatch.setattr(plugin.subprocess, "run", fake_run)
+    line = plugin.order_budget_line()
+    assert line == "orders today 120/200 (restrictive) · local 118 vs broker 120 (mismatch)"
+    assert calls[0][1:] == ["budget", "status", "--json"]
+    # `!arc budget` renders only that line
+    assert plugin._render("budget") == line
+
+
+def test_order_budget_line_survives_cli_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise subprocess.TimeoutExpired("arc", 60)
+
+    monkeypatch.setattr(plugin.subprocess, "run", boom)
+    assert plugin.order_budget_line() == "orders today: n/a (arc budget status failed)"
+    monkeypatch.setattr(
+        plugin.subprocess,
+        "run",
+        lambda *a, **k: _completed({"used": 3, "limit": 200, "tier": "normal"}),
+    )
+    assert plugin.order_budget_line() == "orders today 3/200 (normal)"
+
+
+def test_arc_subprocess_gets_a_clean_python_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gateway's PYTHONPATH (Hermes's site-packages) must not reach Arc's venv."""
+    monkeypatch.setenv("PYTHONPATH", "/hermes/venv/lib/python3.14/site-packages")
+    monkeypatch.setenv("PYTHONHOME", "/hermes/python")
+    monkeypatch.setenv("VIRTUAL_ENV", "/hermes/venv")
+    monkeypatch.setenv("ARC_ENV", "paper")
+    seen: dict[str, dict[str, str]] = {}
+
+    def fake_run(cmd, **kw):  # noqa: ANN001, ANN003, ANN202
+        seen["env"] = kw["env"]
+        return _completed({"text": "ok", "blocks": None, "result": {"outcome": "ok"}})
+
+    monkeypatch.setattr(plugin.subprocess, "run", fake_run)
+    plugin.run_config(["config"], "U0OWNER001")
+    env = seen["env"]
+    assert not {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"} & set(env)
+    assert env["ARC_ENV"] == "paper"  # non-Python settings still pass through
+    assert env["PATH"].split(":")[0].endswith(".venv/bin")
+
+
+def test_arc_cli_runs_under_a_polluted_gateway_env() -> None:
+    """End to end: the real `arc config` exits 0 with a foreign PYTHONPATH set."""
+    import subprocess as sp
+
+    if not plugin._arc_bin().exists():
+        pytest.skip("no .venv/bin/arc in this checkout")
+    polluted = {**os.environ, "PYTHONPATH": "/nonexistent/site-packages"}
+    out = sp.run(
+        [str(plugin._arc_bin()), "config", "keys"],
+        cwd=plugin.REPO_DIR,
+        env=plugin._arc_env(polluted),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr[-500:]
