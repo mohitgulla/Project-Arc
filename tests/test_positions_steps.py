@@ -192,7 +192,7 @@ def test_evaluate_writes_reviews_and_exits_propose_through_gate_and_approval(
     assert reviews[0].payload["remaining_pop"] is not None
 
     out = _run(conn, env, "investor.exits")
-    assert out.metrics == {"signals": 1, "proposed": 1, "gate_passed": 1}
+    assert out.metrics == {"signals": 1, "proposed": 1, "gate_passed": 1, "quote_blocked": 0}
     assert "+98% of max gain at 35 DTE" in out.summary
     row = conn.execute("SELECT * FROM proposals WHERE kind = 'close'").fetchone()
     gate = conn.execute(
@@ -336,6 +336,30 @@ def test_swap_whose_close_never_fills_cancels_its_open(conn: sqlite3.Connection,
         ).fetchone()[0]
         == 1
     )
+
+
+def test_swap_close_on_unusable_quotes_is_cancelled_before_any_order(
+    conn: sqlite3.Connection,
+) -> None:
+    """E6.2a: the swap's close leg goes through the same quote check; no close, no open."""
+    env, _, _ = _swap_setup(conn, _approve_swap())
+    stale = NOW - dt.timedelta(minutes=10)
+    for c in env.market.recording("SPY").contracts:  # type: ignore[attr-defined]
+        if c.symbol == LONG_CALL[0][0]:
+            c.quote_timestamp = stale
+    out = _run(conn, env, "risk.reallocate")
+    assert out.metrics["swaps_started"] == 0, out.summary
+    assert "quotes unusable" in out.summary and "stale" in out.summary
+    (sw,) = SwapRepo(conn).for_day("2026-09-25")
+    assert sw["status"] == "cancelled" and sw["close_proposal_hash"] is None
+    assert (
+        conn.execute("SELECT COUNT(*) FROM proposals WHERE swap_id IS NOT NULL").fetchone()[0] == 0
+    )
+    j = conn.execute(
+        "SELECT payload FROM decisions WHERE reason_code = ?",
+        (ReasonCode.EXIT_QUOTE_UNUSABLE.value,),
+    ).fetchone()
+    assert j is not None and json.loads(j[0])["swap_id"] == sw["id"]
 
 
 def test_risk_veto_stops_the_swap(conn: sqlite3.Connection) -> None:

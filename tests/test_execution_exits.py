@@ -8,6 +8,7 @@ tests/test_routines_e53.py values (mid close debit ≈ 0.30/share).
 from __future__ import annotations
 
 import datetime as dt
+import json
 from decimal import Decimal as D
 from typing import TYPE_CHECKING, Any
 
@@ -229,6 +230,57 @@ def test_unpriceable_structure_is_reported(conn: sqlite3.Connection) -> None:
     )  # fmt: skip
     run = propose(conn)
     assert run.proposed == [] and "cannot evaluate exit" in run.errors[0]
+
+
+def _skew_market() -> Any:
+    """The fixture market with the 710P quote 5 minutes older than the 711P."""
+    m = market()
+    rec = m.recording("SPY")
+    for c in rec.contracts:
+        if c.symbol == "SPY261030P00710000" and c.quote_timestamp is not None:
+            c.quote_timestamp = c.quote_timestamp - dt.timedelta(minutes=5)
+    return m
+
+
+def test_unusable_quotes_block_the_close_without_a_proposal_or_token(
+    conn: sqlite3.Connection,
+) -> None:
+    """E6.2a: skewed leg quotes -> no proposal, no token, a journal row with every leg's quote."""
+    sid = open_structure(conn)
+    run = propose(conn, market=_skew_market())
+    assert run.proposed == [], run.lines
+    assert "quotes unusable" in run.lines[0] and "stale" in run.lines[0], run.lines
+    assert conn.execute("SELECT COUNT(*) FROM proposals WHERE kind = 'close'").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM gate_decisions").fetchone()[0] == 0
+    row = OpenStructureRepo(conn).get(sid)
+    assert row is not None and row["exit_proposal_hash"] is None  # next tick retries
+    j = conn.execute(
+        "SELECT reason_code, choice, payload FROM decisions WHERE reason_code = ?",
+        ("exit:quote_unusable",),
+    ).fetchall()
+    assert len(j) == 1 and j[0]["choice"] == "no_trade"
+    payload = json.loads(j[0]["payload"])
+    assert payload["structure_id"] == sid and payload["consecutive_failures"] == 1
+    assert {leg["symbol"] for leg in payload["legs"]} == {
+        "SPY261030P00710000", "SPY261030P00711000"
+    }  # fmt: skip
+    assert all({"bid", "ask", "quote_ts", "spread_pct"} <= set(leg) for leg in payload["legs"])
+
+
+def test_consecutive_quote_failures_alert_once_then_reset(conn: sqlite3.Connection) -> None:
+    from arc.routines.runs import RoutineStateRepo
+
+    sid = open_structure(conn)
+    s = settings(close_quote_alert_after=2)
+    first = propose(conn, market=_skew_market(), settings=s)
+    assert first.errors == []
+    second = propose(conn, market=_skew_market(), settings=s, now=NOW + dt.timedelta(minutes=5))
+    assert len(second.errors) == 1 and "blocked 2 tries in a row" in second.errors[0]
+    third = propose(conn, market=_skew_market(), settings=s, now=NOW + dt.timedelta(minutes=10))
+    assert third.errors == []  # alerted once, not on every tick
+    ok = propose(conn, settings=s)  # sane quotes: proposed, counter cleared
+    assert len(ok.proposed) == 1
+    assert RoutineStateRepo(conn).get(f"close_quote_fail:{sid}") is None
 
 
 # ---------------------------------------------------------------------------

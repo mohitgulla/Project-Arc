@@ -284,6 +284,37 @@ class ArcSettings(BaseSettings):
             "(D28: never two working orders per structure)."
         ),
     )
+    # -- Close quote check (E6.2a; PLAN §6.8: data quality fails closed) --------
+    close_quote_max_age_seconds: Annotated[int, Field(ge=1, le=600)] = Field(
+        default=60,
+        description="Max age of each close leg's quote, measured from the quote's own timestamp.",
+    )
+    close_quote_max_skew_seconds: Annotated[int, Field(ge=0, le=600)] = Field(
+        default=30,
+        description="Max gap between the close legs' quote timestamps.",
+    )
+    close_quote_max_spread_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+        default=0.10,
+        description="Max close-leg bid-ask spread as a fraction of mid (OR the $ cap below).",
+    )
+    close_quote_max_spread_abs: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.10,
+        description="Max close-leg bid-ask spread in $ (a cheap wing passes on this).",
+    )
+    close_quote_max_curve_dev: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+        default=0.15,
+        description=(
+            "Max $/share gap between the close's combo mid and the same combo read off the "
+            "expiry's strike curve (indicative-feed jitter guard)."
+        ),
+    )
+    close_quote_alert_after: Annotated[int, Field(ge=1, le=100)] = Field(
+        default=6,
+        description=(
+            "Alert #arc-investor after this many consecutive unusable-quote close tries "
+            "(6 = 30 min at the 5-min monitor)."
+        ),
+    )
     auto_exit_defined_risk: bool = Field(
         default=False,
         description=(
