@@ -325,6 +325,44 @@ class HeartbeatSettings(BaseModel):
         return _parse_hhmm(v) if isinstance(v, str) else v
 
 
+class LoopLayout(enum.StrEnum):
+    ROOT_PER_LOOP = "root_per_loop"  # D36: one #arc-investor root line per loop slot
+    DAY_THREAD = "day_thread"  # rollback: everything in the day thread (pre-D36)
+
+
+class LoopSettings(BaseModel):
+    """The 5-min trading loop (D31 / D36): cost, overlap and Slack-shape knobs.
+
+    ``job`` names the persona whose chain is the loop. ``max_idle`` bounds the
+    change-aware skip: a loop whose input digest equals the previous one skips the
+    LLM chain as ``no_change`` unless that long has passed since the last full
+    run. ``max_runtime`` is the chain deadline: a step still running at the
+    deadline finishes, but no new step starts after it. ``pnl_bucket_pct`` rounds
+    P&L (as % of equity) before it enters the digest.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    job: str = "director"
+    max_idle: _dt.timedelta = _dt.timedelta(minutes=30)
+    max_runtime: _dt.timedelta = _dt.timedelta(minutes=4)
+    pnl_bucket_pct: Annotated[float, Field(gt=0, le=10)] = 0.5
+    post_hold_roots: bool = True
+    slack_layout: LoopLayout = LoopLayout.ROOT_PER_LOOP
+
+    @field_validator("max_idle", "max_runtime", mode="before")
+    @classmethod
+    def _dur(cls, v: Any) -> Any:
+        return parse_duration(v) if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def _positive(self) -> LoopSettings:
+        if self.max_idle <= _dt.timedelta(0) or self.max_runtime <= _dt.timedelta(0):
+            msg = "loop.max_idle and loop.max_runtime must be positive"
+            raise ValueError(msg)
+        return self
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -334,6 +372,7 @@ class RoutinesConfig(BaseModel):
     tick: TickSettings = Field(default_factory=TickSettings)
     heartbeat: HeartbeatSettings = Field(default_factory=HeartbeatSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)  # E8.2
+    loop: LoopSettings = Field(default_factory=LoopSettings)  # D31/D36 trading loop
     context_ttl: dict[str, ContextPolicy] = Field(default_factory=dict)
     sources: dict[str, JobSpec] = Field(default_factory=dict)
     personas: dict[str, JobSpec] = Field(default_factory=dict)
@@ -388,6 +427,9 @@ class RoutinesConfig(BaseModel):
                 msg = f"persona {name!r}: a halt-exempt persona cannot run a chain"
                 raise ValueError(msg)
         known_jobs = set(names)
+        if "loop" in self.model_fields_set and self.loop.job not in self.personas:
+            msg = f"loop.job: unknown persona {self.loop.job!r}"
+            raise ValueError(msg)
         for job in self.monitoring.stuck_after_jobs:
             if job not in known_jobs and not self._is_chain_step(job):
                 msg = f"monitoring.stuck_after_jobs: unknown job {job!r}"
@@ -406,6 +448,10 @@ class RoutinesConfig(BaseModel):
 
     def _is_chain_step(self, name: str) -> bool:
         return any(name in p.chain for p in self.personas.values())
+
+    def is_loop(self, job: str) -> bool:
+        """True when *job* is the D31 trading-loop persona (its chain is the loop)."""
+        return job == self.loop.job and job in self.personas
 
     # -- lookups -------------------------------------------------------------
 

@@ -355,9 +355,39 @@ class Dispatcher:
                     parent_run_id=parent_run_id,
                 )
         except LockBusyError as exc:
+            if self.routines.is_loop(job) and reason == "schedule":
+                # D31 non-overlap: a loop slot never queues behind the previous loop
+                # (or a Scout holding the LLM lock); it is recorded as skipped and
+                # the next slot gets a fresh look. No catch-up, no deferral counter.
+                return [self._skip_loop_slot(job, scheduled_for, exc, now)]
             log.info("routines.deferred", job=job, why=str(exc))
             return [Outcome(job, scheduled_for, "deferred", f"lock busy ({exc})")]
         return outcomes + self._fire_completed(outcomes, now, depth)
+
+    def _skip_loop_slot(
+        self, job: str, scheduled_for: _dt.datetime, exc: LockBusyError, now: _dt.datetime
+    ) -> Outcome:
+        held = str(exc)
+        why = (
+            "previous loop running"
+            if f"lock {job!r}" in held
+            else f"{LLM_LOCK} lock busy (another persona running)"
+        )
+        summary = f"skipped: {why}"
+        claimed = self.runs.claim(
+            job=job,
+            scheduled_for=scheduled_for,
+            reason="schedule",
+            status=RunStatus.SKIPPED,
+            summary=summary,
+            now=now,
+        )
+        log.info("routines.loop_skipped", job=job, slot=scheduled_for.isoformat(), why=why)
+        if claimed is None:
+            return Outcome(job, scheduled_for, "duplicate", "already recorded for this slot")
+        trace = _RunTrace(metrics={"loop_skipped": why})
+        self._write_manifest(claimed, trace, now=now, started=now, t0=time.monotonic())
+        return Outcome(job, scheduled_for, "skipped", summary, run_id=claimed.run_id)
 
     def resume_chain(self, chain_run_id: str, *, now: _dt.datetime) -> list[Outcome]:
         """Re-run a chain from its first failed/skipped step; ok steps are not re-run."""
@@ -402,6 +432,14 @@ class Dispatcher:
         outcomes: list[Outcome] = []
         prev_run_id = parent_run_id
         existing = existing or {}
+        # D31: the loop chain has a deadline. A step that is running when it passes
+        # may finish; no later step starts. `no_change` (the Director found the same
+        # inputs as last time) skips the LLM steps and runs the deterministic tail.
+        is_loop = bool(chain_run_id) and self.routines.is_loop(steps[0])
+        deadline = time.monotonic() + self.routines.loop.max_runtime.total_seconds()
+        durations: dict[str, int] = {}
+        no_change = False
+        timed_out = False
         for index, step in enumerate(steps):
             prior = existing.get(step)
             if prior is not None and prior.status is RunStatus.OK:
@@ -415,6 +453,34 @@ class Dispatcher:
                         chain_run_id=chain_run_id,
                         step_index=index,
                         summary=prior.summary or "",
+                    )
+                )
+                continue
+            kind, step_spec = self.routines.step(step)
+            if is_loop and index and time.monotonic() > deadline:
+                timed_out = True
+                outcomes.append(
+                    self._record_skipped_step(
+                        step,
+                        scheduled_for,
+                        reason=f"chain:{steps[0]}",
+                        chain_run_id=chain_run_id,
+                        step_index=index,
+                        summary=f"timeout: loop exceeded {self._max_runtime_label()}",
+                        now=now,
+                    )
+                )
+                continue
+            if is_loop and no_change and index and self._llm(kind, step_spec):
+                outcomes.append(
+                    self._record_skipped_step(
+                        step,
+                        scheduled_for,
+                        reason=f"chain:{steps[0]}",
+                        chain_run_id=chain_run_id,
+                        step_index=index,
+                        summary="no_change: inputs unchanged since the last full loop",
+                        now=now,
                     )
                 )
                 continue
@@ -442,6 +508,7 @@ class Dispatcher:
                     )
                     break
                 run = claimed
+            t_step = time.monotonic()
             outcome = self._execute(
                 run,
                 now=now,
@@ -449,8 +516,11 @@ class Dispatcher:
                 note=note if index == 0 else "",
                 parent_run_id=prev_run_id,
             )
+            durations[step] = int((time.monotonic() - t_step) * 1000)
             prev_run_id = run.run_id
             outcomes.append(outcome)
+            if index == 0 and outcome.metrics.get("no_change"):
+                no_change = True
             stop = outcome.status != "ok" or bool(outcome.metrics.get("stop_chain"))
             if stop:
                 if chain_run_id and index + 1 < len(steps):
@@ -463,7 +533,105 @@ class Dispatcher:
                         remaining=steps[index + 1 :],
                     )
                 break
+        if is_loop and chain_run_id:
+            self._finish_loop(
+                chain_run_id, outcomes, durations, now=now, timed_out=timed_out, no_change=no_change
+            )
         return outcomes
+
+    def _max_runtime_label(self) -> str:
+        secs = int(self.routines.loop.max_runtime.total_seconds())
+        return f"{secs // 60}m" if secs % 60 == 0 else f"{secs}s"
+
+    def _record_skipped_step(
+        self,
+        step: str,
+        scheduled_for: _dt.datetime,
+        *,
+        reason: str,
+        chain_run_id: str | None,
+        step_index: int,
+        summary: str,
+        now: _dt.datetime,
+    ) -> Outcome:
+        """A chain step the loop decided not to run (timeout / no_change), on the record."""
+        claimed = self.runs.claim(
+            job=step,
+            scheduled_for=scheduled_for,
+            reason=reason,
+            chain_run_id=chain_run_id,
+            step_index=step_index,
+            status=RunStatus.SKIPPED,
+            summary=summary,
+            now=now,
+        )
+        log.info("routines.step_skipped", job=step, why=summary, chain_run_id=chain_run_id)
+        if claimed is None:
+            return Outcome(
+                step,
+                scheduled_for,
+                "duplicate",
+                "already ran for this slot",
+                chain_run_id=chain_run_id,
+                step_index=step_index,
+            )
+        self._write_manifest(
+            claimed,
+            _RunTrace(metrics={"loop_skipped": summary.split(":", 1)[0]}),
+            now=now,
+            started=now,
+            t0=time.monotonic(),
+        )
+        return Outcome(
+            step,
+            scheduled_for,
+            "skipped",
+            summary,
+            run_id=claimed.run_id,
+            chain_run_id=chain_run_id,
+            step_index=step_index,
+        )
+
+    def _finish_loop(
+        self,
+        chain_run_id: str,
+        outcomes: list[Outcome],
+        durations: dict[str, int],
+        *,
+        now: _dt.datetime,
+        timed_out: bool,
+        no_change: bool,
+    ) -> None:
+        """Record the loop's step durations / flags (D27) and alert a timeout once a day."""
+        from arc.routines.loop import LoopState
+
+        state = LoopState(self.conn)
+        state.set_chain_summary(
+            chain_run_id,
+            {
+                "durations_ms": durations,
+                "timeout": timed_out,
+                "no_change": no_change,
+                "steps": [(o.job, o.status) for o in outcomes],
+            },
+        )
+        if timed_out:
+            root = outcomes[0]
+            log.warning(
+                "routines.loop_timeout",
+                chain_run_id=chain_run_id,
+                durations_ms=durations,
+                max_runtime=self._max_runtime_label(),
+            )
+            day = self.heartbeats.day(now)
+            if state.first_timeout_today(day):
+                self.heartbeats.alert(
+                    now,
+                    root.job,
+                    f"loop exceeded {self._max_runtime_label()} (steps after the deadline "
+                    f"skipped; once-a-day notice)",
+                    run_id=root.run_id,
+                )
 
     def _execute(
         self,

@@ -170,7 +170,19 @@ class TestConfig:
         c = load_routines(DEFAULT_ROUTINES_PATH)
         assert c.personas["scout"].after_sources
         assert c.personas["director"].chain == ["quant", "risk", "propose", "execute"]
-        assert {r.run for r in c.triggers_for("scout.completed")} == {"director"}
+        # D31: the 5-min loop replaces the scout.completed -> director trigger.
+        assert c.triggers_for("scout.completed") == []
+        assert c.is_loop("director") and not c.is_loop("scout")
+        assert c.personas["director"].every == dt.timedelta(minutes=5)
+        assert str(c.personas["director"].window) == "09:40-15:50"
+        assert c.personas["director"].ttl is not None
+        assert c.personas["director"].ttl.duration == dt.timedelta(minutes=5)
+        assert c.personas["scout"].every == dt.timedelta(minutes=30)
+        assert c.personas["scout.overnight"].schedule == [dt.time(22, 0)]
+        assert c.sources["youtube.stockedup"].schedule == [dt.time(22, 0), dt.time(12, 0)]
+        assert c.monitoring.stuck_after_for("director") == dt.timedelta(minutes=10)
+        assert c.loop.max_idle == dt.timedelta(minutes=30)
+        assert c.loop.max_runtime == dt.timedelta(minutes=4)
         assert {r.run for r in c.triggers_for("approval")} == {"investor"}
         stockedup = c.sources["youtube.stockedup"]
         assert stockedup.options == {
@@ -1020,8 +1032,10 @@ class TestDryRunAndCli:
         assert rc == 0
         order = [ln.split()[3] for ln in out.splitlines() if ln.strip()[:2].rstrip(".").isdigit()]
         assert order[-1] == "scout"
-        assert set(order[:-1]) == {"edgar", "rss", "youtube.stockedup", "monitor"}  # E5.3
-        assert "director" in out and "may-run" in out
+        # D31: 12:00 is a loop slot too; the loop runs before the Scout of the same tick.
+        assert set(order[:-1]) == {"edgar", "rss", "youtube.stockedup", "director", "monitor"}
+        assert order.index("director") < order.index("scout")
+        assert "quant" in out and "may-run" not in out  # no trigger any more
 
     def test_cli_validate_list_history_context(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
