@@ -23,6 +23,9 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Re-exported: Performance moved to arc.models (E8.7) so the read-only tower can use it
+# without importing the Slack/persona stack.
+from arc.models import Performance
 from arc.slack import blocks as B
 from arc.slack.blocks import Block, CardView
 from arc.slack.personas import Persona
@@ -598,20 +601,6 @@ def _day(raw: str) -> str:
         return f"{_dt.date.fromisoformat(raw[:10]):%b %d}"
     except ValueError:
         return raw[:20]
-
-
-class Performance(BaseModel):
-    """Account performance for the Auditor digest (E6.3 pnl_snapshots). $ and fractions."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    day_pnl: float
-    day_pct: float | None = None
-    mtd_pnl: float | None = None
-    mtd_pct: float | None = None
-    ytd_pnl: float | None = None
-    ytd_pct: float | None = None
-    equity: float | None = None
 
 
 def _pnl(v: float | None, pct: float | None) -> str:

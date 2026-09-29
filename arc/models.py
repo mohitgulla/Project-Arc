@@ -470,3 +470,20 @@ class ChannelBrief(BaseModel):
             msg = "published_at must be timezone-aware"
             raise ValueError(msg)
         return v.astimezone(ET)
+
+
+class Performance(BaseModel):
+    """Account Day/MTD/YTD performance from ``pnl_snapshots`` (E6.3, D28). $ and fractions.
+
+    Shared by the Auditor digest (:mod:`arc.slack.digests`) and the control tower.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    day_pnl: float
+    day_pct: float | None = None
+    mtd_pnl: float | None = None
+    mtd_pct: float | None = None
+    ytd_pnl: float | None = None
+    ytd_pct: float | None = None
+    equity: float | None = None

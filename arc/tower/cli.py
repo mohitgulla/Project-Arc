@@ -1,8 +1,10 @@
-"""``arc tower serve|snapshot`` (E8.3): the read-only Streamlit control tower.
+"""``arc tower serve|snapshot`` (E8.3, E8.7): the read-only control tower.
 
 - ``serve``     start Streamlit on the Tailscale address, port 4174 (see
                 :mod:`arc.tower.net`). Refuses to start without a Tailscale
                 address unless ``--local`` (127.0.0.1) is given.
+                ``--v2`` serves the FastAPI + React tower (D35, :mod:`arc.tower.api`)
+                with uvicorn under the same bind rules.
 - ``snapshot``  print what the dashboard would show, as JSON or text (no server).
 
 Neither command creates, migrates or writes the DB: it is opened ``mode=ro``.
@@ -33,11 +35,17 @@ def add_tower_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     tsub = p.add_subparsers(dest="tower_command", required=True)
 
     s = tsub.add_parser("serve", help="Serve the dashboard on the Tailscale interface, :4174")
+    s.add_argument("--v2", action="store_true", help="FastAPI + React tower (D35 preview)")
     _common(s)
     s.add_argument("--port", type=int, default=DEFAULT_PORT)
     s.add_argument("--address", default=None, help="Tailscale (100.64/10) or loopback IP")
     s.add_argument("--local", action="store_true", help="Bind 127.0.0.1 (this machine only)")
-    s.add_argument("--refresh", type=int, default=30, help="Seconds between re-reads (0 = off)")
+    s.add_argument(
+        "--refresh",
+        type=int,
+        default=None,
+        help="Seconds between re-reads (Streamlit: default 30, 0 = off; v2: 30|60|120, default 60)",
+    )
     s.add_argument("--print-command", action="store_true", help="Print the command, don't run")
 
     n = tsub.add_parser("snapshot", help="Print the dashboard's data (no server)")
@@ -92,6 +100,16 @@ def streamlit_command(address: str, port: int) -> list[str]:
 
 def _serve(args: argparse.Namespace) -> int:
     from arc.tower.net import NoTailscaleAddressError, resolve_bind_address
+    from arc.tower.schemas import REFRESH_CHOICES
+    from arc.tower.serve import ENV_DB, ENV_LOOKBACK, ENV_REFRESH, uvicorn_command
+
+    if args.v2:
+        refresh = 60 if args.refresh is None else args.refresh
+        if refresh not in REFRESH_CHOICES:
+            _write(f"error: --refresh for --v2 must be one of {list(REFRESH_CHOICES)}")
+            return 2
+    else:
+        refresh = 30 if args.refresh is None else max(args.refresh, 0)
 
     db = _db(args)
     if not db.is_file():
@@ -102,18 +120,19 @@ def _serve(args: argparse.Namespace) -> int:
     except NoTailscaleAddressError as exc:
         _write(f"error: {exc}")
         return 2
-    argv = streamlit_command(address, args.port)
+    argv = uvicorn_command(address, args.port) if args.v2 else streamlit_command(address, args.port)
     env = {
         **os.environ,
-        "ARC_TOWER_DB": str(db),
-        "ARC_TOWER_REFRESH": str(max(args.refresh, 0)),
-        "ARC_TOWER_LOOKBACK_DAYS": str(args.lookback_days),
+        ENV_DB: str(db),
+        ENV_REFRESH: str(refresh),
+        ENV_LOOKBACK: str(args.lookback_days),
     }
     if args.print_command:
         _write(" ".join(argv))
         return 0
-    _write(f"arc tower: http://{address}:{args.port} (read-only, db {db})")
-    log.info("tower.serve", address=address, port=args.port, db=str(db))
+    label = "arc tower v2" if args.v2 else "arc tower"
+    _write(f"{label}: http://{address}:{args.port} (read-only, db {db})")
+    log.info("tower.serve", address=address, port=args.port, db=str(db), v2=args.v2)
     return subprocess.call(argv, env=env)  # noqa: S603 - fixed argv, no shell
 
 
