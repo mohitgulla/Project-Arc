@@ -82,6 +82,20 @@ context_ttl:
   position_review: {ttl: 1h, supersede: latest}          # E6.4; subject = open structure id
   journal:       {ttl: 20 sessions, supersede: accumulate}
   note:          {ttl: 1 session, supersede: accumulate}   # D27 persona text (thesis, regime view, ...)
+  story:         {ttl: 1 session, supersede: latest}       # D30 stage-1 digest; subject = story id
+  vol_term:      {ttl: 1 session, supersede: latest}       # D30 options data; subject = market
+  put_call:      {ttl: 1 session, supersede: latest}
+  macro_calendar: {ttl: 7d, supersede: latest}             # long-lived: FOMC/BLS dates move rarely
+  unusual_options: {ttl: 1 session, supersede: latest}     # subject = ticker
+  ex_dividend:   {ttl: 7d, supersede: latest}              # subject = ticker
+
+# D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Scout
+# source; each RSS feed is its own source. Per-source knobs (no code change to add or
+# re-weight one): category (market_news | company_news | macro | filings | options_data
+# | calendar | video), weight (default 1 = equal share), max_docs_per_run, label (shown
+# in the Scout card's source mix). The Scout reads `scout_doc_budget` docs per run,
+# shared by weighted round-robin; the rest wait, and are closed `skipped_budget` once
+# older than the raw_doc_ref TTL above.
 
 sources:                        # fetch-only jobs (no LLM), each with its own cadence; quiet heartbeats
   youtube.stockedup:            # D13/D14: StockedUp next-session outlook (posts Sunday for Monday)
@@ -90,20 +104,51 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     channel: UC-m6zNItyoDk5lSykDlhE4Q
     ttl: 3h                     # catch-up window, same as the Scout it feeds
     context: {ttl: 1 session, supersede: latest}     # D14: next video supersedes
+    category: video
+    label: StockedUp
     writes: [raw_doc_ref]
   rss:                          # owner pick 2026-09-28: broad market, single names, macro
     every: 30m
     window: "06:00-20:00"
     days: trading
     writes: [raw_doc_ref]
-    feeds:
-      - https://feeds.content.dowjones.io/public/rss/RSSMarketsMain                 # WSJ Markets
-      - https://www.cnbc.com/id/20910258/device/rss/rss.html                          # CNBC Markets
-      - https://seekingalpha.com/market_currents.xml                                  # Seeking Alpha Market Currents
-      - https://www.nasdaq.com/feed/rssoutbound?category=Markets                      # Nasdaq Markets
-      - https://www.federalreserve.gov/feeds/press_all.xml                            # Federal Reserve press releases
-  edgar:    {every: 15m, window: "06:00-20:00", days: trading, writes: [raw_doc_ref]}
-  earnings: {schedule: ["06:00", "18:00"], days: trading, ttl: 6h, writes: [raw_doc_ref]}
+    feeds:                      # a plain URL still works (name = its domain, category market_news)
+      - {name: wsj, label: WSJ, url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", hosts: [wsj.com]}
+      - {name: cnbc, label: CNBC, url: "https://www.cnbc.com/id/20910258/device/rss/rss.html"}
+      - {name: seekingalpha, label: SA, url: "https://seekingalpha.com/market_currents.xml", category: company_news}
+      - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets"}
+      - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro}
+  edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: filings, label: EDGAR, writes: [raw_doc_ref]}
+  earnings: {schedule: ["06:00", "18:00"], days: trading, ttl: 6h, category: calendar, label: Earnings, writes: [raw_doc_ref]}
+  # D30 options-trading data (free, no key; typed context kinds, never raw docs).
+  vol_term:                     # Cboe VIX9D/VIX/VIX3M/VVIX closes -> contango/backwardation
+    schedule: ["09:00", "16:45"]
+    days: trading
+    ttl: 6h
+    flat_band: 0.02             # |VIX3M/VIX - 1| below this = flat
+    writes: [vol_term]
+  put_call:                     # Cboe daily market statistics (previous session's ratios)
+    schedule: ["09:00"]
+    days: trading
+    ttl: 6h
+    writes: [put_call]
+  macro_calendar:               # FOMC decisions (federalreserve.gov) + BLS CPI/PPI/NFP/JOLTS/ECI
+    schedule: ["05:45"]
+    days: weekdays
+    ttl: 24h
+    horizon_days: 45
+    writes: [macro_calendar]
+  unusual_options:              # self-computed from Alpaca chain snapshots: seed + today's candidates
+    schedule: ["12:30", "15:45"]
+    days: trading
+    ttl: 2h
+    writes: [unusual_options]
+  ex_dividend:                  # Alpaca corporate actions: early-assignment risk on short calls
+    schedule: ["06:15"]
+    days: trading
+    ttl: 12h
+    horizon_days: 45
+    writes: [ex_dividend]
   symbols:                      # E5.7 / D28: weekly symbol master (SEC tickers + Alpaca optionable)
     schedule: ["05:30"]         # before the 06:00 earnings calendar; `arc universe refresh` = by hand
     days: [mon]
@@ -117,12 +162,12 @@ personas:
     after_sources: true
     ttl: 3h
     notify: card
-    writes: [candidate, note]   # note: one scan-summary observation per run (D27)
+    writes: [candidate, note, story]   # note: scan summary (D27); story: D30 stage-1 digests
   director:                     # pre-market chain at the open (PLAN §2.6: 06:30 PT)
     schedule: ["09:30"]
     days: trading
     chain: [quant, risk, propose, execute]   # D34: execute = publish + auto-approve + hand off ladders
-    reads: [candidate, regime, channel_brief, note]   # == DIRECTOR_READS (arc/pipeline/steps.py)
+    reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options]   # == DIRECTOR_READS (arc/pipeline/steps.py)
     writes: [shortlist, regime, note]
     ttl: 2h
     notify: card
@@ -174,7 +219,7 @@ personas:
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
   quant:   {reads: [shortlist, regime], writes: [structures, note], notify: card}
-  risk:    {reads: [structures], writes: [risk_review, note], notify: card}
+  risk:    {reads: [structures, ex_dividend, macro_calendar], writes: [risk_review, note], notify: card}
   propose: {reads: [candidate, regime, shortlist, structures, risk_review], writes: [proposal], llm: false, notify: summary}  # E6.1 posts the proposal cards
   # E6.4 chain steps (after positions.evaluate). Every close / swap open is a proposal: gate + approval.
   investor.exits:  {reads: [position_review], writes: [proposal], llm: false, notify: summary}

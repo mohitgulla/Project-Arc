@@ -1,0 +1,176 @@
+{
+  "$defs": {
+    "UnusualContract": {
+      "additionalProperties": false,
+      "properties": {
+        "expiry": {
+          "title": "Expiry",
+          "type": "string"
+        },
+        "open_interest": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Open Interest"
+        },
+        "option_type": {
+          "enum": [
+            "call",
+            "put"
+          ],
+          "title": "Option Type",
+          "type": "string"
+        },
+        "strike": {
+          "title": "Strike",
+          "type": "number"
+        },
+        "symbol": {
+          "title": "Symbol",
+          "type": "string"
+        },
+        "vol_oi": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vol Oi"
+        },
+        "volume": {
+          "minimum": 0,
+          "title": "Volume",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "symbol",
+        "expiry",
+        "strike",
+        "option_type",
+        "volume"
+      ],
+      "title": "UnusualContract",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Self-computed unusual options activity for one underlying (Alpaca snapshots).",
+  "properties": {
+    "as_of": {
+      "title": "As Of",
+      "type": "string"
+    },
+    "avg_volume": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Mean daily total over prior sessions",
+      "title": "Avg Volume"
+    },
+    "call_volume": {
+      "minimum": 0,
+      "title": "Call Volume",
+      "type": "integer"
+    },
+    "contracts": {
+      "items": {
+        "$ref": "#/$defs/UnusualContract"
+      },
+      "maxItems": 10,
+      "title": "Contracts",
+      "type": "array"
+    },
+    "flags": {
+      "items": {
+        "enum": [
+          "volume_spike",
+          "vol_oi"
+        ],
+        "type": "string"
+      },
+      "title": "Flags",
+      "type": "array"
+    },
+    "history_days": {
+      "default": 0,
+      "minimum": 0,
+      "title": "History Days",
+      "type": "integer"
+    },
+    "hot_volume_share": {
+      "default": 0.0,
+      "description": "Share of total volume in lines with vol/OI over threshold",
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Hot Volume Share",
+      "type": "number"
+    },
+    "put_call_volume": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Put Call Volume"
+    },
+    "put_volume": {
+      "minimum": 0,
+      "title": "Put Volume",
+      "type": "integer"
+    },
+    "ticker": {
+      "title": "Ticker",
+      "type": "string"
+    },
+    "total_volume": {
+      "minimum": 0,
+      "title": "Total Volume",
+      "type": "integer"
+    },
+    "volume_ratio": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "total_volume / avg_volume",
+      "title": "Volume Ratio"
+    }
+  },
+  "required": [
+    "ticker",
+    "as_of",
+    "call_volume",
+    "put_volume",
+    "total_volume"
+  ],
+  "title": "UnusualOptionsPayload",
+  "type": "object"
+}

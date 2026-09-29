@@ -541,6 +541,46 @@ screen in `config/universe.yaml`. `ARC_UNIVERSE_MODE=strict` restores the allow-
 4. Knobs: `scout_max_new_tickers` (Slack-tunable, ceiling 25), `universe_mode`,
    `pipeline_max_shortlist` (the Quant/Risk budget, not a Director cap).
 
+### 5.11 Source fairness + options data (E4.5, D30)
+
+Every Scout source is a named entry in `config/routines.yaml`: each RSS feed under
+`sources.rss.feeds` (`name`, `url`, optional `label`, `category`, `weight`,
+`max_docs_per_run`, `hosts`), and `edgar` / `earnings` / `youtube.*` with a
+`category` and `label`. Adding or re-weighting a source is a YAML edit only.
+
+- **Budget.** Each Scout run reads `scout_doc_budget` docs (default 120, Slack-tunable
+  20-400), shared by weighted round-robin (equal weights by default; per-category
+  split via `personas.scout.category_weights`). Newest first within a source. Docs
+  over budget wait for the next run; once older than the `raw_doc_ref` TTL (5d)
+  they are closed `raw_docs.scout_status='skipped_budget'` with the run id. Never
+  deleted. The Scout card's *Source mix* fact shows `read (N over budget)` per source.
+- **Stories.** Near-duplicate headlines (Jaccard ≥ `scout_story_threshold` within
+  `scout_story_window_hours`) are one story; EDGAR filings group by filer + form.
+  Corroboration on a candidate = distinct *sources* behind its URLs, computed in code
+  (`candidates.corroboration`); the LLM cannot raise it.
+- **Two stages.** Stage 1 digests stories in batches of `scout_batch_size` on the
+  Scout's (cheap) model; evidence quotes must appear verbatim in a doc, else dropped;
+  a failed batch falls back to an extractive digest (headline + lead). Stage 2 reads
+  the digests, `scout_story_batch_size` (40) per Scout call. Both stages'
+  tokens/cost land in `scout_batches`
+  (`stage` = `digest` | `scout`) and the run manifest.
+- **Options data** (free, no key; typed context kinds, read by the Director and Risk):
+
+  | Job | Source | Kind | When (ET) |
+  |---|---|---|---|
+  | `vol_term` | Cboe VIX9D/VIX/VIX3M/VVIX daily history | `vol_term` (contango/backwardation) | 09:00, 16:45 |
+  | `put_call` | Cboe daily market statistics | `put_call` | 09:00 |
+  | `macro_calendar` | federalreserve.gov FOMC page + BLS release ICS | `macro_calendar` | 05:45 |
+  | `unusual_options` | Alpaca chain snapshots (self-computed) | `unusual_options` per ticker | 12:30, 15:45 |
+  | `ex_dividend` | Alpaca corporate actions | `ex_dividend` per ticker | 06:15 |
+
+  BLS rejects a User-Agent without a contact email (403): it is sent
+  `ARC_EDGAR_USER_AGENT`, same as EDGAR. UOA flags a ticker when its option volume is
+  ≥ `uoa_volume_spike_ratio` × its 20-session average (needs 5+ sessions of
+  `options_volume_daily` history, which the job builds itself), or when lines with
+  vol/OI ≥ `uoa_vol_oi_ratio` (≥ `uoa_min_dte` DTE, OI ≥ `uoa_min_open_interest`)
+  carry ≥ `uoa_min_hot_share` of its volume.
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.

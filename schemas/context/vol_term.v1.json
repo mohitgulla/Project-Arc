@@ -1,0 +1,99 @@
+{
+  "additionalProperties": false,
+  "description": "VIX term structure (Cboe daily closes): feeds the regime read (E4.3).",
+  "properties": {
+    "as_of": {
+      "description": "Trading date of the closes (YYYY-MM-DD)",
+      "title": "As Of",
+      "type": "string"
+    },
+    "ratio_3m_1m": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "VIX3M / VIX (> 1 = contango)",
+      "title": "Ratio 3M 1M"
+    },
+    "ratio_9d_1m": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "VIX9D / VIX (> 1 = front stress)",
+      "title": "Ratio 9D 1M"
+    },
+    "source": {
+      "default": "cboe",
+      "title": "Source",
+      "type": "string"
+    },
+    "structure": {
+      "enum": [
+        "contango",
+        "flat",
+        "backwardation"
+      ],
+      "title": "Structure",
+      "type": "string"
+    },
+    "vix": {
+      "exclusiveMinimum": 0,
+      "title": "Vix",
+      "type": "number"
+    },
+    "vix3m": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vix3M"
+    },
+    "vix9d": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vix9D"
+    },
+    "vvix": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vvix"
+    }
+  },
+  "required": [
+    "as_of",
+    "vix",
+    "structure"
+  ],
+  "title": "VolTermPayload",
+  "type": "object"
+}

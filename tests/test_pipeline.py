@@ -360,7 +360,7 @@ class TestDigestCards:
             None,  # execute (D34): summary only; the Investor posts the order card
         ]
         # Fallback text = the pre-E5.5 one-liners.
-        assert texts[0] == "[Scout] scout ✓ 11 docs → 6 accepted, 4 candidates today"
+        assert texts[0] == ("[Scout] scout ✓ 11 docs (11 stories) → 6 accepted, 4 candidates today")
         assert texts[1] == (
             "[Director] director ✓ 4 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
             "XOM (bearish); excluded 1; dropped {'not_a_candidate': 1}"
@@ -379,7 +379,10 @@ class TestDigestCards:
         )
         # E5.7 open universe: PLTR is new and passes the screen, UFPT fails it, ZZZQ is
         # not a listed symbol; the failed checks are shown for the illiquid name.
-        assert "*PLTR*\nbullish · news · 90% confidence · new, passed liquidity screen" in scout
+        assert (
+            "*PLTR*\nbullish · news · 90% confidence · 1 source · new, passed liquidity screen"
+        ) in scout
+        assert "*Source mix*\nStockedUp 1 · EDGAR 2 · Earnings 1 · rss 7" in scout  # D30
         assert "• failed liquidity screen (1): UFPT" in scout
         assert "UFPT: ADV 118k &lt; 1.0M; no expiry in the DTE window" in scout
         assert "• unknown symbol (1): ZZZQ" in scout

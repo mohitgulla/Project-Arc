@@ -179,6 +179,17 @@ def _head(title: str, *summary: str) -> list[Block | None]:
 # ---------------------------------------------------------------------------
 
 
+def source_mix_line(mix: Sequence[tuple[str, int, int]]) -> str:
+    """``WSJ 12 · CNBC 12 · EDGAR 24 (157 over budget)`` (D30)."""
+    parts = []
+    for label, read, over in mix:
+        part = f"{B.esc(label)} {read}"
+        if over:
+            part += f" ({over} over budget)"
+        parts.append(part)
+    return " · ".join(parts)
+
+
 def scout_card(
     *,
     docs: int,
@@ -192,6 +203,8 @@ def scout_card(
     chain_run_id: str | None = None,
     reject_details: Mapping[str, str] | None = None,
     new_tickers: Sequence[str] = (),
+    source_mix: Sequence[tuple[str, int, int]] = (),
+    stories: int | None = None,
 ) -> CardView:
     """``[Scout] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
@@ -199,6 +212,8 @@ def scout_card(
     rationale and a source count; the URLs stay in the audit store. D28: non-seed
     tickers admitted by the liquidity screen are tagged ``new``; universe rejects
     (``illiquid`` etc.) are grouped by reason under Rejected with the failed checks.
+    D30 (E4.5): a *Source mix* fact (docs read per source, over-budget counts) and
+    the story count; each candidate shows how many distinct sources back it.
     """
     title = f"[Scout] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
     n_rej = sum(rejected.values())
@@ -206,12 +221,16 @@ def scout_card(
     blocks = _head(
         title,
         f"*{accepted}* accepted this run",
+        (f"{stories} stor{'y' if stories == 1 else 'ies'}" if stories is not None else ""),
         f"{len(new)} new (screened)" if new else "",
         f"{n_rej} rejected",
         f":warning: {failed_batches} failed batch{'es' if failed_batches != 1 else ''}"
         if failed_batches
         else "",
     )
+    # D30: which sources this run read (and what waited), before the candidate rows.
+    if source_mix:
+        blocks.append(_section("Source mix", [source_mix_line(source_mix)]))
     # E5.5b: one section per candidate with dividers (like the Director's ranked
     # list), so each row folds on its own. Lines start at column 0: no indent.
     ranked = sorted(candidates, key=lambda c: -c.confidence)
@@ -220,6 +239,8 @@ def scout_card(
         facts = (
             f"{c.stance.value} · {c.catalyst_type.value}{when} · {_pct(c.confidence)} confidence"
         )
+        if c.corroboration is not None:
+            facts += f" · {_plural(c.corroboration, 'source')}"
         tag = " · new, passed liquidity screen" if c.ticker in new else ""
         why = (rationales or {}).get(c.ticker, "").strip()
         lines = [f"*{B.esc(c.ticker)}*", facts + tag]
