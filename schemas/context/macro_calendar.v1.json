@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "MacroEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "description": "YYYY-MM-DD (ET)",
+          "title": "Date",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "fomc",
+            "cpi",
+            "ppi",
+            "nfp",
+            "jolts",
+            "eci",
+            "pce",
+            "gdp",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 120,
+          "title": "Name",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "HH:MM ET when known",
+          "title": "Time"
+        }
+      },
+      "required": [
+        "date",
+        "kind",
+        "name",
+        "source"
+      ],
+      "title": "MacroEvent",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Upcoming scheduled macro events (FOMC decisions, BLS releases): IV-crush/event risk.",
+  "properties": {
+    "as_of": {
+      "title": "As Of",
+      "type": "string"
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/MacroEvent"
+      },
+      "title": "Events",
+      "type": "array"
+    },
+    "horizon_days": {
+      "minimum": 1,
+      "title": "Horizon Days",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "as_of",
+    "horizon_days"
+  ],
+  "title": "MacroCalendarPayload",
+  "type": "object"
+}

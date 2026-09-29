@@ -23,6 +23,8 @@ from arc.models import RawDoc
 from arc.universe.ingest import IngestUniverse
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from arc.config import ArcSettings
 
 log = structlog.get_logger()
@@ -90,11 +92,16 @@ def _extract_tickers(text: str, universe: list[str] | IngestUniverse) -> list[st
 def fetch_rss(
     conn: sqlite3.Connection,
     settings: ArcSettings,
+    *,
+    source_keys: Mapping[str, str] | None = None,
 ) -> list[RawDoc]:
     """Fetch all configured RSS feeds and store new entries.
 
+    *source_keys* maps a feed URL to its E4.5 registry name (``wsj_markets``); the
+    name is stored on each doc so the Scout's per-source budget can group by feed.
     Returns only newly stored documents (duplicates are skipped).
     """
+    keys: Mapping[str, str] = source_keys or {}
     cursor_repo = IngestCursorRepo(conn)
     doc_repo = RawDocRepo(conn)
     feeds = settings.ingest_rss_feeds
@@ -156,6 +163,8 @@ def fetch_rss(
                 text=doc.text,
                 tickers_hint=doc.tickers_hint,
                 hash_val=h,
+                title=(str(entry.get("title") or "").strip() or None),
+                source_key=keys.get(feed_url),
             )
 
             if doc_id is not None:

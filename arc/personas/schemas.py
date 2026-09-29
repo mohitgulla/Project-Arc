@@ -41,6 +41,36 @@ class ScoutOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Scout stage 1 (E4.5, D30) — one short digest per story
+# ---------------------------------------------------------------------------
+
+
+class StoryEvidenceOut(BaseModel):
+    """A verbatim quote from one of the story's documents."""
+
+    url: str = Field(..., description="The url= of the document the quote is copied from")
+    quote: str = Field(..., description="Verbatim excerpt (<= 200 chars), copied exactly")
+
+
+class StoryDigestOut(BaseModel):
+    """Stage-1 digest of one story."""
+
+    story_id: str = Field(..., description="The story id exactly as given ([story <id>])")
+    summary: str = Field(..., description="One sentence: what happened and why it matters")
+    catalyst_type: CatalystType | None = Field(
+        None, description="earnings | macro | sector | news | technical, or null"
+    )
+    catalyst_date: str | None = Field(None, description="ISO date of the catalyst, or null")
+    evidence: list[StoryEvidenceOut] = Field(default_factory=list, max_length=3)
+
+
+class StoryDigestOutput(BaseModel):
+    """Stage-1 reply: one digest per story in the batch."""
+
+    stories: list[StoryDigestOut]
+
+
+# ---------------------------------------------------------------------------
 # Director — ranks and filters candidates, adds thesis
 # ---------------------------------------------------------------------------
 

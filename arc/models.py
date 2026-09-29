@@ -60,6 +60,14 @@ class Candidate(BaseModel):
     catalyst_date: datetime | None = Field(None, description="Date of the catalyst event")
     confidence: float = Field(..., ge=0.0, le=1.0)
     sources: list[str] = Field(default_factory=list)
+    corroboration: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Distinct registry sources behind `sources` (D30), computed by the pipeline; "
+            "repeated items from one source count once. None = not computed (pre-E4.5)."
+        ),
+    )
     created_at: datetime
 
     @field_validator("sources")

@@ -173,7 +173,11 @@ class TestConfig:
         assert {r.run for r in c.triggers_for("scout.completed")} == {"director"}
         assert {r.run for r in c.triggers_for("approval")} == {"investor"}
         stockedup = c.sources["youtube.stockedup"]
-        assert stockedup.options == {"channel": "UC-m6zNItyoDk5lSykDlhE4Q"}
+        assert stockedup.options == {
+            "channel": "UC-m6zNItyoDk5lSykDlhE4Q",
+            "category": "video",
+            "label": "StockedUp",
+        }
         assert c.context_policy("channel_brief", "youtube.stockedup").ttl is not None
 
     def test_card_example_parses(self) -> None:

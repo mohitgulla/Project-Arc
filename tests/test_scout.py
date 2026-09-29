@@ -124,7 +124,8 @@ def _seed(conn, n: int, *, ticker: str = "AAPL") -> list[str]:
                 source="rss",
                 url=f"https://example.com/{ticker.lower()}/{i}",
                 published_at=f"2026-09-27T1{i % 10}:00:00+00:00",
-                text=f"{ticker} news item {i}",
+                # distinct words per doc, so each seeded doc is its own story (D30)
+                text=f"{ticker} news item {i}: topic{i} detail{i} angle{i}",
                 tickers_hint=[ticker],
                 id=f"doc-{i:03d}",
             )
@@ -399,7 +400,7 @@ class _RaisingLLM:
 
 class TestRunScout:
     def test_happy_path_batches_and_audit(self, conn, settings) -> None:
-        settings.scout_batch_size = 2
+        settings.scout_story_batch_size = 2
         _seed(conn, 3)
         llm = FixtureScoutLLM(
             [
@@ -519,7 +520,10 @@ class TestRunScout:
         monkeypatch.setattr(HermesScoutLLM, "from_settings", classmethod(lambda cls, s: Spy()))
         _seed(conn, 1)
         run_scout(conn, settings, now=NOW)
-        assert len(seen) == 1
+        # live: stage-1 digest call, then the stage-2 Scout call, both on the backend
+        assert len(seen) == 2
+        assert "story digest (stage 1)" in seen[0]
+        assert "story digests (D30)" in seen[1]
 
 
 # ---------------------------------------------------------------------------
@@ -599,8 +603,8 @@ class TestFixtureBackend:
 
     def test_from_dir_sorted(self) -> None:
         llm = FixtureScoutLLM.from_dir(FIXTURES_DIR / "responses")
-        assert len(llm.responses) == 2
-        assert "Fixture batch 1" in llm.responses[0]
+        assert len(llm.responses) == 1  # D30: one stage-2 call reads every story digest
+        assert "Fixture scan" in llm.responses[0]
 
 
 # ---------------------------------------------------------------------------

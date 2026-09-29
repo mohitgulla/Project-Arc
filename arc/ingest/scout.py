@@ -41,11 +41,19 @@ from typing import TYPE_CHECKING, Any, cast
 import structlog
 from pydantic import ValidationError
 
-from arc.ingest.llm import FixtureScoutLLM, HermesScoutLLM, ScoutLLMError
+from arc.context.kinds import StoryEvidence, StoryPayload
+from arc.ingest.llm import FixtureScoutLLM, HermesScoutLLM, LLMResult, ScoutLLMError
+from arc.ingest.sources import SourceRegistry, format_source_mix, select_fair
 from arc.ingest.store import RawDocRepo, ScoutBatchRepo
+from arc.ingest.stories import ClusterDoc, Story, cluster_stories, form_type_of, headline_of
 from arc.models import Candidate, CatalystType, Stance
-from arc.personas.builders import ScoutInput, build_scout_prompt
-from arc.personas.schemas import ScoutCandidateOut, ScoutOutput
+from arc.personas.builders import (
+    ScoutInput,
+    StoryDigestInput,
+    build_scout_prompt,
+    build_story_digest_prompt,
+)
+from arc.personas.schemas import ScoutCandidateOut, ScoutOutput, StoryDigestOutput
 from arc.store.repos import CandidateRepo
 from arc.universe.guard import (
     REJECT_ILLIQUID,
@@ -58,10 +66,11 @@ from arc.utils.calendar import ET, now_et
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Collection
+    from collections.abc import Callable, Collection
 
     from arc.config import ArcSettings
     from arc.ingest.llm import ScoutLLM
+    from arc.routines.config import RoutinesConfig
 
 log = structlog.get_logger()
 
@@ -109,7 +118,23 @@ class ScoutRunResult:
     # non-seed tickers admitted this run. Display + journal only.
     reject_details: dict[str, str] = field(default_factory=dict)
     new_tickers: list[str] = field(default_factory=list)
+    # E4.5 (D30): fair selection + story synthesis accounting (display + manifest).
+    source_mix: list[tuple[str, int, int]] = field(default_factory=list)  # label, read, over
+    over_budget: int = 0
+    skipped_budget: int = 0
+    stories: list[StoryPayload] = field(default_factory=list)
+    digest_batches: int = 0
+    failed_digest_batches: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
     _rationale_conf: dict[str, float] = field(default_factory=dict, repr=False)
+
+    def add_usage(self, reply: LLMResult) -> None:
+        for name in ("input_tokens", "output_tokens", "cost_usd"):
+            v = getattr(reply, name)
+            if v is not None:
+                setattr(self, name, (getattr(self, name) or 0) + v)
 
 
 @dataclass(frozen=True)
@@ -120,6 +145,10 @@ class _Doc:
     published_at: str
     text: str
     tickers_hint: list[str]
+    title: str | None = None
+    source_key: str = ""
+    ingested_at: str = ""
+    category: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +317,128 @@ def build_prompt(
     )
 
 
+# -- E4.5 (D30) two-stage synthesis: renderers --------------------------------
+
+_DOCS_PER_STORY = 3  # stage 1 reads at most this many docs of one story
+
+
+def _safe(text: str) -> str:
+    return text.replace(_FEED_DELIMITER, "FEEDS>")
+
+
+def render_story(story: Story, docs: dict[str, _Doc], *, max_chars: int) -> str:
+    """Stage-1 rendering: story header + up to 3 docs (one per source first)."""
+    by_source: dict[str, _Doc] = {}
+    for cd in story.docs:
+        by_source.setdefault(cd.source_key, docs[cd.id])
+    picked = list(by_source.values())[:_DOCS_PER_STORY]
+    lines = [
+        f"[story {story.id}] category={story.category} "
+        f"distinct_sources={story.distinct_sources} docs={len(story.docs)} "
+        f"headline={_safe(story.headline)[:200]}"
+    ]
+    for d in picked:
+        text = _safe(d.text)
+        if len(text) > max_chars:
+            text = text[:max_chars] + " …[truncated]"
+        lines.append(
+            f"  (doc) source={d.source_key} url={d.url} published={d.published_at}\n{text}"
+        )
+    return "\n".join(lines)
+
+
+def render_digest(p: StoryPayload) -> str:
+    """Stage-2 rendering of one story digest (what the Scout reads instead of docs)."""
+    ev = "".join(f'\n  evidence: "{_safe(e.quote)}" ({e.url})' for e in p.evidence)
+    cat = p.catalyst_type.value if p.catalyst_type else "-"
+    return (
+        f"[story {p.story_id}] category={p.category} distinct_sources={p.distinct_sources} "
+        f"sources={','.join(p.source_keys)} tickers={','.join(p.tickers) or '-'} "
+        f"catalyst={cat} catalyst_date={p.catalyst_date or '-'} "
+        f"published={p.last_published}\n  urls={' '.join(p.urls)}\n  {_safe(p.summary)}{ev}"
+    )
+
+
+def build_digest_prompt(stories: list[str], day: str) -> str:
+    return build_story_digest_prompt(
+        StoryDigestInput(
+            stories=stories,
+            scan_date=day,
+            output_schema_json=json.dumps(StoryDigestOutput.model_json_schema(), sort_keys=True),
+        )
+    )
+
+
+def build_stage2_prompt(
+    digests: list[StoryPayload], settings: ArcSettings, day: str, *, open_universe: bool
+) -> str:
+    return build_scout_prompt(
+        ScoutInput(
+            universe=list(settings.universe),
+            raw_feeds=[render_digest(p) for p in digests],
+            scan_date=day,
+            min_confidence=settings.scout_min_confidence,
+            output_schema_json=json.dumps(ScoutOutput.model_json_schema(), sort_keys=True),
+            open_universe=open_universe,
+            digests=True,
+        )
+    )
+
+
+def _norm_ws(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def extractive_summary(story: Story, docs: dict[str, _Doc]) -> str:
+    """No-LLM digest: the headline, else the first sentence of the first doc."""
+    head = story.headline or headline_of(None, docs[story.docs[0].id].text)
+    return (" ".join(head.split()) or "(no text)")[:600]
+
+
+def story_payload(
+    story: Story,
+    docs: dict[str, _Doc],
+    *,
+    digest: Any | None = None,
+) -> StoryPayload:
+    """Build the stored digest; code-owned fields come from the cluster, never the LLM.
+
+    Evidence quotes from the LLM are kept only when they occur (whitespace- and
+    case-insensitively) in the text of a document of this story with that url.
+    """
+    texts = {docs[cd.id].url: _norm_ws(docs[cd.id].text) for cd in story.docs}
+    evidence: list[StoryEvidence] = []
+    summary = ""
+    catalyst_type: CatalystType | None = None
+    catalyst_date: str | None = None
+    if digest is not None:
+        summary = " ".join(str(digest.summary).split())[:600]
+        catalyst_type = digest.catalyst_type
+        parsed = parse_catalyst_date(digest.catalyst_date)
+        catalyst_date = parsed.date().isoformat() if parsed else None
+        for ev in digest.evidence:
+            quote = " ".join(ev.quote.split())[:300]
+            if quote and ev.url in texts and _norm_ws(quote) in texts[ev.url]:
+                evidence.append(StoryEvidence(url=ev.url, quote=quote))
+    return StoryPayload(
+        story_id=story.id,
+        headline=story.headline[:300],
+        category=story.category,
+        source_keys=story.source_keys,
+        distinct_sources=story.distinct_sources,
+        doc_ids=[cd.id for cd in story.docs],
+        urls=story.urls[:50],
+        first_published=story.first_published.isoformat(),
+        last_published=story.last_published.isoformat(),
+        tickers=story.tickers[:20],
+        summary=summary or extractive_summary(story, docs),
+        catalyst_type=catalyst_type,
+        catalyst_date=catalyst_date,
+        evidence=evidence[:3],
+        mode="llm" if digest is not None and summary else "extractive",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Storage mapping
 # ---------------------------------------------------------------------------
@@ -305,14 +456,40 @@ def _row_to_candidate(row: dict[str, Any]) -> Candidate:
         catalyst_date=parse_catalyst_date(row["catalyst_date"]),
         confidence=row["confidence"],
         sources=json.loads(row["sources"]),
+        corroboration=row.get("corroboration"),
         created_at=created.astimezone(ET),
     )
 
 
-def store_candidate(repo: CandidateRepo, c: Candidate, *, day: str, run_id: str) -> Candidate:
-    """Merge *c* into the stored row for ``(ticker, day)`` and persist it."""
+def count_corroboration(urls: Collection[str], source_key_of: Callable[[str], str]) -> int:
+    """D30 rule (code, not the LLM): distinct registry sources behind *urls*.
+
+    Ten URLs from one source count once; the LLM's own confidence or the number
+    of URLs it cites never raises this number.
+    """
+    return len({source_key_of(u) for u in urls})
+
+
+def store_candidate(
+    repo: CandidateRepo,
+    c: Candidate,
+    *,
+    day: str,
+    run_id: str,
+    source_key_of: Callable[[str], str] | None = None,
+) -> Candidate:
+    """Merge *c* into the stored row for ``(ticker, day)`` and persist it.
+
+    With *source_key_of* (E4.5) the merged row's ``corroboration`` is recomputed
+    from all of its sources, so repeated coverage by one source across runs still
+    counts once.
+    """
     existing = repo.get_for_day(c.ticker, day)
     merged = merge_candidates(_row_to_candidate(existing), c) if existing else c
+    corroboration = (
+        count_corroboration(merged.sources, source_key_of) if source_key_of is not None else None
+    )
+    merged = merged.model_copy(update={"corroboration": corroboration})
     row_id = repo.upsert_for_day(
         day=day,
         ticker=merged.ticker,
@@ -323,6 +500,7 @@ def store_candidate(repo: CandidateRepo, c: Candidate, *, day: str, run_id: str)
         sources=merged.sources,
         created_at=merged.created_at.isoformat(),
         run_id=run_id,
+        corroboration=corroboration,
     )
     return merged.model_copy(update={"id": row_id})
 
@@ -344,18 +522,33 @@ def candidates_for_scanner(
 # ---------------------------------------------------------------------------
 
 
-def _load_docs(rows: list[dict[str, Any]]) -> list[_Doc]:
-    return [
-        _Doc(
-            id=r["id"],
-            source=r["source"],
-            url=r["url"],
-            published_at=r["published_at"],
-            text=r["text"],
-            tickers_hint=json.loads(r["tickers_hint"] or "[]"),
+def _parse_ts(raw: str | None) -> _dt.datetime:
+    if not raw:
+        return _dt.datetime.min.replace(tzinfo=ET)
+    ts = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    return ts if ts.tzinfo is not None else ts.replace(tzinfo=ET)
+
+
+def _load_docs(rows: list[dict[str, Any]], registry: SourceRegistry | None = None) -> list[_Doc]:
+    reg = registry or SourceRegistry(sources={})
+    out: list[_Doc] = []
+    for r in rows:
+        key = reg.key_for(r)
+        out.append(
+            _Doc(
+                id=r["id"],
+                source=r["source"],
+                url=r["url"],
+                published_at=r["published_at"],
+                text=r["text"],
+                tickers_hint=json.loads(r["tickers_hint"] or "[]"),
+                title=r.get("title"),
+                source_key=key,
+                ingested_at=r.get("ingested_at") or "",
+                category=reg.spec_for(key).category.value,
+            )
         )
-        for r in rows
-    ]
+    return out
 
 
 def load_fixture_docs(conn: sqlite3.Connection, path: Path | None = None) -> int:
@@ -371,9 +564,162 @@ def load_fixture_docs(conn: sqlite3.Connection, path: Path | None = None) -> int
             text=d["text"],
             tickers_hint=d.get("tickers_hint", []),
             id=d.get("id"),
+            title=d.get("title"),
+            source_key=d.get("source_key"),
         ):
             inserted += 1
     return inserted
+
+
+def _default_registry() -> SourceRegistry:
+    from arc.routines.config import load_routines
+
+    try:
+        return SourceRegistry.from_routines(load_routines())
+    except (OSError, ValueError) as exc:  # pragma: no cover - broken config fails loudly elsewhere
+        log.warning("scout.registry_unavailable", error=str(exc))
+        return SourceRegistry(sources={})
+
+
+def _raw_doc_ttl(routines: RoutinesConfig | None) -> _dt.timedelta:
+    """How long an unselected doc may wait before it is closed as ``skipped_budget``."""
+    ttl = routines.context_policy("raw_doc_ref").ttl if routines is not None else None
+    if ttl is not None and ttl.duration is not None:
+        return ttl.duration
+    if ttl is not None and ttl.sessions is not None:
+        return _dt.timedelta(days=ttl.sessions)
+    return _dt.timedelta(days=5)
+
+
+def select_docs(
+    docs: list[_Doc], registry: SourceRegistry, budget: int
+) -> tuple[list[_Doc], list[_Doc], list[tuple[str, int, int]]]:
+    """D30 fair pick: ``(selected, unselected, source_mix)``; newest first per source."""
+    by_source: dict[str, list[_Doc]] = {}
+    for d in sorted(docs, key=lambda d: (_parse_ts(d.published_at), d.id), reverse=True):
+        by_source.setdefault(d.source_key, []).append(d)
+    weights = registry.effective_weights()
+    caps = {k: registry.spec_for(k).max_docs_per_run for k in by_source}
+    sel = select_fair(
+        {k: [d.id for d in v] for k, v in by_source.items()}, weights, budget, caps=caps
+    )
+    chosen = set(sel.selected)
+    selected = [d for d in docs if d.id in chosen]
+    unselected = [d for d in docs if d.id not in chosen]
+    return selected, unselected, format_source_mix(sel, registry)
+
+
+def _cluster(docs: list[_Doc], settings: ArcSettings) -> list[Story]:
+    cdocs = [
+        ClusterDoc(
+            id=d.id,
+            source_key=d.source_key,
+            source=d.source,
+            url=d.url,
+            published_at=_parse_ts(d.published_at),
+            headline=headline_of(d.title, d.text),
+            tickers=tuple(d.tickers_hint),
+            category=d.category,
+            form_type=form_type_of(d.title, d.url, d.text) if d.category == "filings" else None,
+        )
+        for d in docs
+    ]
+    return cluster_stories(
+        cdocs,
+        threshold=settings.scout_story_threshold,
+        window=_dt.timedelta(hours=settings.scout_story_window_hours),
+    )
+
+
+def _digest_stories(
+    stories: list[Story],
+    docs: dict[str, _Doc],
+    *,
+    digest_llm: ScoutLLM | None,
+    settings: ArcSettings,
+    day: str,
+    run_id: str,
+    batch_repo: ScoutBatchRepo,
+    result: ScoutRunResult,
+) -> list[StoryPayload]:
+    """Stage 1: one digest per story, batched per source category (cheap tier).
+
+    Without *digest_llm* (dry-run / fixtures) or when a batch fails, stories get an
+    extractive digest (headline) so the Scout still sees them; failures are audited.
+    """
+    out: dict[str, StoryPayload] = {}
+    if digest_llm is None:
+        return [story_payload(s, docs) for s in stories]
+    by_cat: dict[str, list[Story]] = {}
+    for s in stories:
+        by_cat.setdefault(s.category, []).append(s)
+    size = settings.scout_batch_size
+    for cat in sorted(by_cat):
+        group = by_cat[cat]
+        for i in range(0, len(group), size):
+            batch = group[i : i + size]
+            doc_ids = [cd.id for s in batch for cd in s.docs]
+            prompt = build_digest_prompt(
+                [render_story(s, docs, max_chars=settings.scout_story_doc_chars) for s in batch],
+                day,
+            )
+            result.digest_batches += 1
+            try:
+                reply = digest_llm.complete(prompt)
+            except ScoutLLMError as exc:
+                result.failed_digest_batches += 1
+                batch_repo.insert(
+                    run_id=run_id,
+                    model=getattr(digest_llm, "model", "unknown"),
+                    doc_ids=doc_ids,
+                    prompt=prompt,
+                    raw_response=None,
+                    status="llm_error",
+                    error=str(exc),
+                    stage="digest",
+                )
+                log.warning("scout.digest.llm_error", run_id=run_id, error=str(exc))
+                continue
+            result.add_usage(reply)
+            try:
+                parsed = StoryDigestOutput.model_validate(extract_json_object(reply.text))
+            except (ValueError, ValidationError) as exc:
+                result.failed_digest_batches += 1
+                batch_repo.insert(
+                    run_id=run_id,
+                    model=reply.model,
+                    doc_ids=doc_ids,
+                    prompt=prompt,
+                    raw_response=reply.text,
+                    status="parse_error",
+                    error=str(exc)[:500],
+                    stage="digest",
+                    input_tokens=reply.input_tokens,
+                    output_tokens=reply.output_tokens,
+                    cost_usd=reply.cost_usd,
+                )
+                log.warning("scout.digest.parse_error", run_id=run_id, error=str(exc)[:200])
+                continue
+            wanted = {s.id: s for s in batch}
+            for d in parsed.stories:
+                story = wanted.get(d.story_id.strip())
+                if story is not None and story.id not in out:
+                    out[story.id] = story_payload(story, docs, digest=d)
+            batch_repo.insert(
+                run_id=run_id,
+                model=reply.model,
+                doc_ids=doc_ids,
+                prompt=prompt,
+                raw_response=reply.text,
+                status="ok",
+                accepted=sum(1 for s in batch if s.id in out),
+                stage="digest",
+                input_tokens=reply.input_tokens,
+                output_tokens=reply.output_tokens,
+                cost_usd=reply.cost_usd,
+            )
+    # Stories the LLM skipped or whose batch failed: extractive fallback.
+    return [out.get(s.id) or story_payload(s, docs) for s in stories]
 
 
 def run_scout(
@@ -381,43 +727,109 @@ def run_scout(
     settings: ArcSettings,
     *,
     llm: ScoutLLM | None = None,
+    digest_llm: ScoutLLM | None = None,
     dry_run: bool = False,
     now: _dt.datetime | None = None,
     run_id: str | None = None,
     guard: UniverseGuard | None = None,
+    routines: RoutinesConfig | None = None,
+    registry: SourceRegistry | None = None,
+    on_story: Callable[[StoryPayload], None] | None = None,
 ) -> ScoutRunResult:
-    """Summarise all unscouted RawDocs into stored, merged ``Candidate`` rows.
+    """Fair-select unscouted docs, cluster them into stories, digest, then scout (D30).
 
-    ``dry_run=True`` swaps the Hermes backend for canned fixture responses
-    (``arc/ingest/fixtures/scout/responses``) unless *llm* is given; it never
-    makes a network call. *guard* (D28) overrides the universe policy built from
-    *settings* (tests and ``arc propose --fixtures`` pass one with recorded data).
+    1. **Select** (:func:`select_docs`): ``scout_doc_budget`` docs shared across the
+       registry's sources by weighted round-robin, newest first per source. Docs
+       left over wait for the next run; once older than the ``raw_doc_ref`` context
+       TTL they are closed as ``skipped_budget`` with this run id.
+    2. **Cluster** (:mod:`arc.ingest.stories`) near-duplicates into stories.
+    3. **Stage 1** (*digest_llm*, cheap tier): one short digest per story, batched by
+       category. Default: the Scout backend when live; extractive (no LLM) in
+       dry-run or when *llm* is injected without a *digest_llm*.
+    4. **Stage 2** (*llm*): the Scout reads digests, ``scout_story_batch_size`` per
+       call; candidates are validated as before, and ``corroboration`` is set by
+       code from distinct sources (:func:`count_corroboration`).
+
+    *on_story* is called with every digest (the job writes it as a ``story`` context
+    entry). ``dry_run=True`` uses the canned fixture responses and never calls the
+    network. *guard* (D28) overrides the universe policy built from *settings*.
     """
     now = (now or now_et()).astimezone(ET)
     day = now.date().isoformat()
     run_id = run_id or f"scout-{uuid.uuid4().hex[:12]}"
     if llm is None:
-        llm = (
-            FixtureScoutLLM.from_dir(FIXTURES_DIR / "responses")
-            if dry_run
-            else HermesScoutLLM.from_settings(settings)
+        if dry_run:
+            llm = FixtureScoutLLM.from_dir(FIXTURES_DIR / "responses")
+        else:
+            llm = HermesScoutLLM.from_settings(settings)
+            digest_llm = digest_llm or llm
+    if registry is None:
+        registry = (
+            SourceRegistry.from_routines(routines) if routines is not None else _default_registry()
         )
 
     result = ScoutRunResult(run_id=run_id, day=day, dry_run=dry_run)
     doc_repo = RawDocRepo(conn)
     batch_repo = ScoutBatchRepo(conn)
     cand_repo = CandidateRepo(conn)
-    docs = _load_docs(doc_repo.list_unscouted(limit=_MAX_UNSCOUTED_PER_RUN))
+
+    # 1. fair selection
+    all_docs = _load_docs(doc_repo.list_unscouted(limit=None), registry)
+    selected, unselected, result.source_mix = select_docs(
+        all_docs, registry, settings.scout_doc_budget
+    )
+    result.over_budget = len(unselected)
+    ttl = _raw_doc_ttl(routines)
+    expired = [d.id for d in unselected if _parse_ts(d.ingested_at or d.published_at) + ttl <= now]
+    if expired:
+        doc_repo.mark_skipped_budget(expired, run_id=run_id)
+        result.skipped_budget = len(expired)
+    docs = {d.id: d for d in selected}
+    key_by_url = {d.url: d.source_key for d in all_docs}
+
+    def source_key_of(url: str) -> str:
+        if url in key_by_url:
+            return key_by_url[url]
+        row = doc_repo.source_keys_for_urls([url]).get(url)
+        return registry.key_for(row) if row else url
+
     if guard is None:
         guard = UniverseGuard.from_settings(settings, now=now, load_master=bool(docs))
     open_universe = guard.mode == "seed"
-    size = settings.scout_batch_size
-    log.info("scout.run.start", run_id=run_id, day=day, docs=len(docs), dry_run=dry_run)
+    log.info(
+        "scout.run.start",
+        run_id=run_id,
+        day=day,
+        unscouted=len(all_docs),
+        selected=len(selected),
+        over_budget=result.over_budget,
+        skipped_budget=result.skipped_budget,
+        dry_run=dry_run,
+    )
 
-    for i in range(0, len(docs), size):
-        batch = docs[i : i + size]
-        doc_ids = [d.id for d in batch]
-        prompt = build_prompt(batch, settings, day, open_universe=open_universe)
+    # 2. cluster, 3. stage-1 digests
+    stories = _cluster(selected, settings)
+    digests = _digest_stories(
+        stories,
+        docs,
+        digest_llm=digest_llm,
+        settings=settings,
+        day=day,
+        run_id=run_id,
+        batch_repo=batch_repo,
+        result=result,
+    )
+    result.stories = digests
+    for p in digests:
+        if on_story is not None:
+            on_story(p)
+
+    # 4. stage 2: the Scout reads digests
+    size = settings.scout_story_batch_size
+    for i in range(0, len(digests), size):
+        batch = digests[i : i + size]
+        doc_ids = [d for p in batch for d in p.doc_ids]
+        prompt = build_stage2_prompt(batch, settings, day, open_universe=open_universe)
         result.batches += 1
 
         try:
@@ -436,6 +848,12 @@ def run_scout(
             )
             log.warning("scout.batch.llm_error", run_id=run_id, error=str(exc))
             continue
+        result.add_usage(reply)
+        usage = {
+            "input_tokens": reply.input_tokens,
+            "output_tokens": reply.output_tokens,
+            "cost_usd": reply.cost_usd,
+        }
 
         try:
             payload = extract_json_object(reply.text)
@@ -452,15 +870,16 @@ def run_scout(
                 raw_response=reply.text,
                 status="parse_error",
                 error=str(exc),
+                **usage,
             )
             log.warning("scout.batch.parse_error", run_id=run_id, error=str(exc))
             continue
 
-        allowed_sources = frozenset(d.url for d in batch)
+        allowed_sources = frozenset(u for p in batch for u in p.urls)
         summary = payload.get("scan_summary") if isinstance(payload, dict) else None
         if isinstance(summary, str) and summary.strip():
             result.summaries.append(summary.strip())
-            result.summary_sources.extend(d.url for d in batch if d.url)
+            result.summary_sources.extend(u for p in batch for u in p.urls if u)
         rejected: Counter[str] = Counter()
         accepted = 0
         for item in items:
@@ -479,7 +898,7 @@ def run_scout(
                 if label in guard.details:
                     result.reject_details[label] = guard.details[label]
                 continue
-            store_candidate(cand_repo, outcome, day=day, run_id=run_id)
+            store_candidate(cand_repo, outcome, day=day, run_id=run_id, source_key_of=source_key_of)
             accepted += 1
             why = item.get("rationale") if isinstance(item, dict) else None
             best = result._rationale_conf.get(outcome.ticker, -1.0)
@@ -496,15 +915,17 @@ def run_scout(
             status="ok",
             accepted=accepted,
             rejected=dict(rejected),
+            **usage,
         )
         doc_repo.mark_scouted(doc_ids, run_id=run_id)
-        result.docs_scouted += len(batch)
+        result.docs_scouted += len(doc_ids)
         result.accepted += accepted
         result.rejected.update(rejected)
         log.info(
             "scout.batch.ok",
             run_id=run_id,
-            docs=len(batch),
+            stories=len(batch),
+            docs=len(doc_ids),
             accepted=accepted,
             rejected=dict(rejected),
         )
@@ -518,10 +939,17 @@ def run_scout(
         run_id=run_id,
         batches=result.batches,
         failed=result.failed_batches,
+        digest_batches=result.digest_batches,
+        failed_digest=result.failed_digest_batches,
+        stories=len(result.stories),
         accepted=result.accepted,
         candidates=len(result.candidates),
         universe_mode=str(guard.mode),
         new_tickers=result.new_tickers,
         rejected=dict(result.rejected),
+        source_mix=result.source_mix,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cost_usd=result.cost_usd,
     )
     return result

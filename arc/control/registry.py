@@ -205,6 +205,19 @@ NOT_EXPOSED: dict[str, str] = {
     "scout_timeout_seconds": "LLM plumbing",
     "scout_batch_size": "LLM plumbing",
     "scout_max_doc_chars": "LLM plumbing",
+    "scout_story_threshold": "D30 clustering internals",
+    "scout_story_window_hours": "D30 clustering internals",
+    "scout_story_batch_size": "LLM plumbing",
+    "scout_story_doc_chars": "LLM plumbing",
+    "ingest_macro_horizon_days": "ingestion plumbing",
+    "uoa_min_volume": "UOA detector internals (data, not a trading limit)",
+    "uoa_vol_oi_ratio": "UOA detector internals (data, not a trading limit)",
+    "uoa_volume_spike_ratio": "UOA detector internals (data, not a trading limit)",
+    "uoa_max_dte": "UOA detector internals (data, not a trading limit)",
+    "uoa_min_dte": "UOA detector internals (data, not a trading limit)",
+    "uoa_min_open_interest": "UOA detector internals (data, not a trading limit)",
+    "uoa_min_hot_share": "UOA detector internals (data, not a trading limit)",
+    "ex_dividend_horizon_days": "ingestion plumbing",
     "persona_timeout_seconds": "LLM plumbing",
     "pipeline_max_context_notes": "LLM context size",
 }
@@ -318,6 +331,17 @@ _STATIC: tuple[Tunable, ...] = (
         min=0,
         max=25,
         hard_ceiling=25,
+    ),
+    _s(
+        "scout_doc_budget",
+        Group.UNIVERSE,
+        _I,
+        "D30: docs the Scout reads per run, shared equally across sources (round-robin); "
+        "higher = more LLM tokens, never more trades.",
+        Risk.NONE,
+        min=20,
+        max=400,
+        hard_ceiling=400,
     ),
     # -- risk --------------------------------------------------------------------
     _s(
