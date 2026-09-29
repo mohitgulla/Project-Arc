@@ -102,6 +102,9 @@ class PositionExitState(BaseModel):
         None, description="E[net P&L if held] − net P&L of closing now (after exit costs)"
     )
     remaining_days_held: float | None = None
+    remaining_pop: float | None = Field(
+        None, ge=0.0, le=1.0, description="P(holding under the policy nets more than closing now)"
+    )
     n_paths: int | None = None
     seed: int | None = None
 
@@ -153,7 +156,7 @@ def evaluate_position(
         close_fees += cost.trade_fees(lg.ratio, -lg.sign, fill)  # closing a long sells
     close_now_net = (proceeds - value) * MULT - close_fees  # cost of closing vs mid, ≤ 0
 
-    gross_ev = net_ev = days = None
+    gross_ev = net_ev = days = rem_pop = None
     n_paths = seed = None
     if dte >= 1 and marks.spot is not None and marks.iv is not None:
         cfg = cfg or ExitModelConfig()
@@ -173,9 +176,11 @@ def evaluate_position(
             legs, np.array([marks.spot]), dte / 365.0, marks.r, marks.iv, cost
         )
         gross_ev = round(float(np.mean(out.exit_value_mid) - v0[0]) * MULT, 2)
-        held_net = float(np.mean(out.exit_proceeds * MULT - out.exit_fees))
+        held_paths = out.exit_proceeds * MULT - out.exit_fees
+        held_net = float(np.mean(held_paths))
         now_net = float(p0[0] * MULT - f0[0])
         net_ev = round(held_net - now_net, 2)
+        rem_pop = round(float(np.mean(held_paths > now_net)), 4)
         days = round(float(np.mean(out.exit_day)), 2)
         n_paths, seed = cfg.n_paths, cfg.seed
 
@@ -199,6 +204,7 @@ def evaluate_position(
         remaining_gross_ev=gross_ev,
         remaining_net_ev=net_ev,
         remaining_days_held=days,
+        remaining_pop=rem_pop,
         n_paths=n_paths,
         seed=seed,
     )

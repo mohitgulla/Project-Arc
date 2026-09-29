@@ -18,6 +18,8 @@
 #   06:00           earnings calendar; rss (30m) / edgar (15m) polling until 20:00
 #   09:30           pre-market chain: director -> quant -> risk -> propose
 #   09:30-16:00     intraday monitor every 30 min (positions, Greeks, expiries, halts)
+#   09:45-16:00     position manager every 30 min: positions.evaluate -> investor.exits
+#                   -> risk.reallocate (early exits + close-to-reallocate swaps, E6.4)
 #   12:00           StockedUp + Scout (midday news); new candidates in-session -> director chain
 #   16:30           auditor (reconcile + journal)
 #   16:45 Fri       weekly scorecard
@@ -73,6 +75,7 @@ context_ttl:
   structures:    {ttl: 1 session, supersede: latest}
   risk_review:   {ttl: 1 session, supersede: latest}
   proposal:      {ttl: 1 session, supersede: accumulate}
+  position_review: {ttl: 1h, supersede: latest}          # E6.4; subject = open structure id
   journal:       {ttl: 20 sessions, supersede: accumulate}
   note:          {ttl: 1 session, supersede: accumulate}   # D27 persona text (thesis, regime view, ...)
 
@@ -121,10 +124,20 @@ personas:
     llm: false                  # deterministic; never waits on the LLM lock
     halt_exempt: true           # keeps watching positions while halted
     notify: quiet               # folds into the next persona line; halts/expiries post at once
-    reads: [proposal]           # small audit snapshot (today's proposals); E6.4 extends it
+    reads: [proposal]           # small audit snapshot (today's proposals)
     writes: [proposal]          # E6.2 exit proposals (gate + approval)
     expiry_warn_days: 1
-    exits: true                 # E6.2: propose fired E2.4 exits (gate + approval, never auto-sent)
+    exits: false                # E6.4: the positions.evaluate chain below owns exit proposals
+    eod_marks_from: "15:30"     # marks from here count as end of day (stops are EOD-only, D23)
+  positions.evaluate:           # E6.4 (D19): review open positions -> exits -> close-to-reallocate
+    every: 30m
+    window: "09:45-16:00"       # offset from the monitor; never at the open's first quotes
+    days: trading
+    llm: false                  # the review is deterministic; risk.reallocate calls the LLM
+    chain: [investor.exits, risk.reallocate]
+    notify: quiet               # folds into the next persona line; proposals post their own cards
+    reads: [regime]             # realised-vol forecast for the remaining-EV paths
+    writes: [position_review]
     eod_marks_from: "15:30"     # marks from here count as end of day (stops are EOD-only, D23)
   auditor:                      # E6.3: post-market reconcile + snapshots + tax lots; mismatch -> halt + alert
     schedule: ["16:30"]
@@ -152,6 +165,9 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   quant:   {reads: [shortlist, regime], writes: [structures, note], notify: card}
   risk:    {reads: [structures], writes: [risk_review, note], notify: card}
   propose: {reads: [candidate, regime, shortlist, structures, risk_review], writes: [proposal], llm: false, notify: summary}  # E6.1 posts the proposal cards
+  # E6.4 chain steps (after positions.evaluate). Every close / swap open is a proposal: gate + approval.
+  investor.exits:  {reads: [position_review], writes: [proposal], llm: false, notify: summary}
+  risk.reallocate: {reads: [position_review], writes: [proposal], notify: summary}   # Risk vetoes swaps (LLM)
 
 triggers:                       # a run finishing (or an external event) can start another run
   - on: scout.completed         # only the 12:00 Scout can match: 22:00 is never in-session

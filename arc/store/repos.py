@@ -186,16 +186,20 @@ class ProposalRepo:
         day: str | None = None,
         ticker: str | None = None,
         kind: str = "open",
+        swap_id: str | None = None,
         commit: bool = True,
     ) -> str:
-        """Insert a proposal; ``kind`` is ``open`` (new structure) or ``close`` (an exit)."""
+        """Insert a proposal; ``kind`` is ``open`` (new structure) or ``close`` (an exit).
+
+        ``swap_id`` links the two proposals of an E6.4 close-to-reallocate swap.
+        """
         row_id = id or _uuid()
         self.conn.execute(
             """INSERT INTO proposals
                (id, candidate_id, proposal_hash, structure_json, thesis,
                 quant_json, risk_narrative, sizing_json, expires_at, created_at, run_id,
-                day, ticker, kind)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                day, ticker, kind, swap_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row_id,
                 candidate_id,
@@ -211,6 +215,7 @@ class ProposalRepo:
                 day,
                 ticker,
                 kind,
+                swap_id,
             ),
         )
         if commit:

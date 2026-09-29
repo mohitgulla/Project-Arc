@@ -1,0 +1,520 @@
+{
+  "$defs": {
+    "ExitSignal": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "description": "Plain-language why, used in the Investor's post",
+          "title": "Detail",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/SignalKind"
+        }
+      },
+      "required": [
+        "kind",
+        "detail"
+      ],
+      "title": "ExitSignal",
+      "type": "object"
+    },
+    "Greeks": {
+      "description": "Position-level Greeks.",
+      "properties": {
+        "delta": {
+          "default": 0.0,
+          "title": "Delta",
+          "type": "number"
+        },
+        "gamma": {
+          "default": 0.0,
+          "title": "Gamma",
+          "type": "number"
+        },
+        "rho": {
+          "default": 0.0,
+          "title": "Rho",
+          "type": "number"
+        },
+        "theta": {
+          "default": 0.0,
+          "title": "Theta",
+          "type": "number"
+        },
+        "vanna": {
+          "default": 0.0,
+          "title": "Vanna",
+          "type": "number"
+        },
+        "vega": {
+          "default": 0.0,
+          "title": "Vega",
+          "type": "number"
+        },
+        "volga": {
+          "default": 0.0,
+          "title": "Volga",
+          "type": "number"
+        }
+      },
+      "title": "Greeks",
+      "type": "object"
+    },
+    "Leg": {
+      "description": "A single option leg within a structure.",
+      "properties": {
+        "intent": {
+          "default": "",
+          "description": "Human-readable role, e.g. 'long call wing'",
+          "title": "Intent",
+          "type": "string"
+        },
+        "occ_symbol": {
+          "description": "OCC option symbol",
+          "title": "Occ Symbol",
+          "type": "string"
+        },
+        "premium": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-share option price used for analytics (e.g. mid). Required by arc.structures payoff / max gain / max loss math.",
+          "title": "Premium"
+        },
+        "ratio": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Ratio",
+          "type": "integer"
+        },
+        "side": {
+          "$ref": "#/$defs/LegIntent"
+        }
+      },
+      "required": [
+        "occ_symbol",
+        "side"
+      ],
+      "title": "Leg",
+      "type": "object"
+    },
+    "LegIntent": {
+      "description": "Intent of an individual leg.",
+      "enum": [
+        "long",
+        "short"
+      ],
+      "title": "LegIntent",
+      "type": "string"
+    },
+    "Liquidity": {
+      "description": "Liquidity metrics for the structure.",
+      "properties": {
+        "open_interest": {
+          "default": 0,
+          "title": "Open Interest",
+          "type": "integer"
+        },
+        "spread_pct": {
+          "default": 0.0,
+          "description": "Bid-ask spread as % of mid",
+          "title": "Spread Pct",
+          "type": "number"
+        },
+        "volume": {
+          "default": 0,
+          "title": "Volume",
+          "type": "integer"
+        }
+      },
+      "title": "Liquidity",
+      "type": "object"
+    },
+    "SignalKind": {
+      "description": "Why the position manager suggests closing (journal ``exit:<kind>``).",
+      "enum": [
+        "stop",
+        "profit_target",
+        "time_adjusted_target",
+        "dte_exit",
+        "expiry",
+        "remaining_ev_floor"
+      ],
+      "title": "SignalKind",
+      "type": "string"
+    },
+    "Structure": {
+      "description": "A multi-leg option structure with analytics.\n\nUnits (as produced by :mod:`arc.structures`):\n  - ``net_debit_credit``: per-share price (the mleg limit-price convention).\n  - ``max_gain`` / ``max_loss`` / ``buying_power``: dollars per one unit of the\n    structure (contract multiplier applied). ``None`` means unbounded.\n  - ``greeks``: position Greeks in share-equivalents (per-share Greek x 100 x\n    signed ratio, summed over legs).",
+      "properties": {
+        "breakevens": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Breakevens",
+          "type": "array"
+        },
+        "buying_power": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Estimated buying-power reduction per unit (Reg-T style)",
+          "title": "Buying Power"
+        },
+        "dte": {
+          "minimum": 0,
+          "title": "Dte",
+          "type": "integer"
+        },
+        "greeks": {
+          "$ref": "#/$defs/Greeks"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StructureKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "legs": {
+          "items": {
+            "$ref": "#/$defs/Leg"
+          },
+          "title": "Legs",
+          "type": "array"
+        },
+        "liquidity": {
+          "$ref": "#/$defs/Liquidity"
+        },
+        "max_gain": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Gain"
+        },
+        "max_loss": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Loss"
+        },
+        "net_debit_credit": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "description": "Positive = debit, negative = credit",
+          "title": "Net Debit Credit"
+        }
+      },
+      "required": [
+        "legs",
+        "net_debit_credit",
+        "dte"
+      ],
+      "title": "Structure",
+      "type": "object"
+    },
+    "StructureKind": {
+      "description": "Structure classification (Phase-1 whitelist per PLAN D4, plus OTHER).",
+      "enum": [
+        "long_call",
+        "long_put",
+        "vertical_debit",
+        "vertical_credit",
+        "iron_condor",
+        "other"
+      ],
+      "title": "StructureKind",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "E6.4 deterministic review of one open position (subject = open structure id).",
+  "properties": {
+    "as_of": {
+      "format": "date",
+      "title": "As Of",
+      "type": "string"
+    },
+    "buying_power": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "$ per unit held by the position",
+      "title": "Buying Power"
+    },
+    "close_now_net": {
+      "description": "$ per unit: closing now vs mid, after costs",
+      "title": "Close Now Net",
+      "type": "number"
+    },
+    "contracts": {
+      "minimum": 1,
+      "title": "Contracts",
+      "type": "integer"
+    },
+    "credit": {
+      "description": "Opened for a net credit",
+      "title": "Credit",
+      "type": "boolean"
+    },
+    "current_value": {
+      "description": "Per share at mid (long +, short \u2212)",
+      "title": "Current Value",
+      "type": "number"
+    },
+    "dte": {
+      "title": "Dte",
+      "type": "integer"
+    },
+    "entry_net": {
+      "description": "Per share, + debit / \u2212 credit",
+      "title": "Entry Net",
+      "type": "number"
+    },
+    "exit_pending": {
+      "default": false,
+      "description": "An exit proposal is already pending/working",
+      "title": "Exit Pending",
+      "type": "boolean"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Kind"
+    },
+    "pct_of_debit": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Debit structures: P&L / debit paid",
+      "title": "Pct Of Debit"
+    },
+    "pct_of_max_gain": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "P&L / max gain",
+      "title": "Pct Of Max Gain"
+    },
+    "pct_of_max_loss": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Loss / max loss (0 when in profit)",
+      "title": "Pct Of Max Loss"
+    },
+    "pnl": {
+      "description": "$ per unit at mid, before costs",
+      "title": "Pnl",
+      "type": "number"
+    },
+    "pnl_total": {
+      "description": "$ for all contracts at mid, before costs",
+      "title": "Pnl Total",
+      "type": "number"
+    },
+    "remaining_days_held": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Remaining Days Held"
+    },
+    "remaining_ev": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "E[net if held under the policy] \u2212 net of closing now, $ per unit",
+      "title": "Remaining Ev"
+    },
+    "remaining_ev_per_bp": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "remaining_ev / buying_power",
+      "title": "Remaining Ev Per Bp"
+    },
+    "remaining_pop": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Remaining Pop"
+    },
+    "signals": {
+      "items": {
+        "$ref": "#/$defs/ExitSignal"
+      },
+      "title": "Signals",
+      "type": "array"
+    },
+    "structure": {
+      "$ref": "#/$defs/Structure"
+    },
+    "structure_id": {
+      "title": "Structure Id",
+      "type": "string"
+    },
+    "take_profit_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "TP percentage in force at this DTE",
+      "title": "Take Profit Pct"
+    },
+    "theta_per_day": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "$ per unit per calendar day",
+      "title": "Theta Per Day"
+    },
+    "ticker": {
+      "title": "Ticker",
+      "type": "string"
+    }
+  },
+  "required": [
+    "structure_id",
+    "ticker",
+    "kind",
+    "credit",
+    "contracts",
+    "as_of",
+    "dte",
+    "entry_net",
+    "current_value",
+    "pnl",
+    "pnl_total",
+    "close_now_net",
+    "structure"
+  ],
+  "title": "PositionReviewPayload",
+  "type": "object"
+}

@@ -52,6 +52,7 @@ class Stage(StrEnum):
     APPROVAL = "approval"
     ORDER = "order"
     EXIT = "exit"
+    REALLOCATE = "reallocate"
     RECONCILE = "reconcile"
 
 
@@ -112,6 +113,7 @@ class ReasonCode(StrEnum):
     SIZING_OK = "sizing:ok"
     SIZING_CAPPED = "sizing:capped"
     SIZING_CAP_ZERO = "sizing:cap_zero"
+    SIZING_BUDGET_EXHAUSTED = "sizing:budget_exhausted"
     SIZING_RISK_ZERO = "sizing:risk_zero"
     SIZING_UNBOUNDED = "sizing:unbounded"
     SIZING_INVALID_INPUT = "sizing:invalid_input"
@@ -166,6 +168,23 @@ class ReasonCode(StrEnum):
     EXIT_EXPIRY = "exit:expiry"
     EXIT_NOT_PROPOSED = "exit:not_proposed"
     EXIT_CLOSED = "exit:closed"
+    # E6.4 position manager (D19): review signals beyond E6.2's fired rules
+    EXIT_TIME_ADJUSTED = "exit:time_adjusted_target"
+    EXIT_EV_FLOOR = "exit:remaining_ev_floor"
+    EXIT_REALLOCATE = "exit:reallocate"
+    # reallocate (E6.4: close-to-reallocate swaps; one row per scored pair / swap step)
+    REALLOC_SUGGESTED = "realloc:suggested"
+    REALLOC_EDGE_BELOW_MIN = "realloc:edge_below_min"
+    REALLOC_POP_BELOW_OPEN = "realloc:pop_below_open"
+    REALLOC_FREES_NOTHING = "realloc:frees_nothing"
+    REALLOC_NO_OPEN_NUMBERS = "realloc:no_open_numbers"
+    REALLOC_CHURN_TICKER = "realloc:churn_ticker"
+    REALLOC_CHURN_DAY = "realloc:churn_day"
+    REALLOC_ALREADY_PAIRED = "realloc:already_paired"
+    REALLOC_APPROVED = "realloc:risk_approved"
+    REALLOC_VETOED = "realloc:risk_vetoed"
+    REALLOC_OPEN_PROPOSED = "realloc:open_proposed"
+    REALLOC_CANCELLED = "realloc:cancelled"
     # reconcile (E6.3: post-market broker vs local)
     RECONCILE_CLEAN = "reconcile:clean"
     RECONCILE_MISMATCH = "reconcile:mismatch"

@@ -651,3 +651,36 @@ def test_gate_never_reads_context_or_notes() -> None:
         assert "arc.context" not in text, f"{f.name} references arc.context"
         assert "NotePayload" not in text, f"{f.name} references NotePayload"
         assert '"note"' not in text, f"{f.name} references the note kind"
+
+
+# ---------------------------------------------------------------------------
+# E6.4: typed capacity-only rejection (rejected_for) for close-to-reallocate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("violations", "expected"),
+    [
+        (["per_underlying_limit: SPY 5,682 > 5,000"], R.CapacityRejection.BUYING_POWER),
+        (["account_profile_settled_cash: needs $612 > $100"], R.CapacityRejection.BUYING_POWER),
+        (["max_open_positions: 9 > max 8"], R.CapacityRejection.PORTFOLIO_CAP),
+        (
+            ["per_underlying_limit: x", "max_open_positions: y"],
+            R.CapacityRejection.BUYING_POWER,
+        ),
+        ([], None),
+        (["per_underlying_limit: x", "trading_halted: manual"], None),
+        (["stale_data: quote is 90s old"], None),
+    ],
+)
+def test_capacity_rejection(violations: list[str], expected: object) -> None:
+    assert R.capacity_rejection(violations) == expected
+
+
+def test_capacity_rejection_matches_real_gate_output() -> None:
+    """A decision the gate fails only on the per-underlying cap is capacity-only."""
+    held = Portfolio(positions=[Position(underlying="SPY", max_loss=D("4900"))])
+    d = run(portfolio=held)
+    assert codes(d) == [RuleCode.PER_UNDERLYING.value]
+    assert R.capacity_rejection(d.violations) is R.CapacityRejection.BUYING_POWER
+    assert R.capacity_rejection(run().violations) is None  # passed: nothing to reallocate

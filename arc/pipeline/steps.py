@@ -79,9 +79,11 @@ from arc.personas.builders import (
     build_director_prompt,
     build_quant_prompt,
     build_risk_prompt,
+    build_risk_swap_prompt,
     director_input_from_context,
     quant_input_from_context,
     risk_input_from_context,
+    risk_swap_input_from_context,
 )
 from arc.personas.schemas import (
     DirectorOutput,
@@ -92,6 +94,7 @@ from arc.personas.schemas import (
     QuantStructureOut,
     RiskAssessment,
     RiskOutput,
+    RiskSwapReview,
 )
 from arc.pipeline.analytics import build_analytics
 from arc.pipeline.market import (
@@ -233,7 +236,12 @@ PROMPT_BUILDERS: dict[str, tuple[Callable[..., Any], Callable[..., str], type[Ba
     "director": (director_input_from_context, build_director_prompt, DirectorOutput),
     "quant": (quant_input_from_context, build_quant_prompt, QuantOutput),
     "risk": (risk_input_from_context, build_risk_prompt, RiskOutput),
+    # E6.4 risk.reallocate: the Risk persona's close-to-reallocate review (veto only)
+    "risk_swap": (risk_swap_input_from_context, build_risk_swap_prompt, RiskSwapReview),
 }
+
+# prompt key → the persona whose LLM answers it (config/llm_routing.yaml)
+LLM_PERSONA = {"risk_swap": "risk"}
 
 
 def build_prompt(persona: str, snapshot: ContextSnapshot, inputs: Mapping[str, Any]) -> str:
@@ -278,7 +286,7 @@ def _ask[M: BaseModel](
     """One persona LLM call. Failures are recorded in ``persona_calls`` and raised."""
     prompt = build_prompt(persona, snapshot, inputs)
     repo = PersonaCallRepo(ctx.conn)
-    llm = env.llm(persona)
+    llm = env.llm(LLM_PERSONA.get(persona, persona))
     started = time.monotonic()
     try:
         reply = llm.complete(prompt)
@@ -1162,7 +1170,10 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
     }
     budget = Decimal(str(settings.max_alloc_pct)) * info.equity
     caps = {
-        (s.ticker, s.structure_type): int(budget // Decimal(str(s.max_loss)))
+        (s.ticker, s.structure_type): int(
+            max(budget - existing_max_loss(portfolio, s.ticker), Decimal(0))
+            // Decimal(str(s.max_loss))
+        )
         for s in structures.structures
         if s.max_loss
     }
@@ -1253,6 +1264,7 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
             ),
             equity=info.equity,
             cap_pct=settings.max_alloc_pct,
+            existing_max_loss=existing_max_loss(portfolio, a.ticker),
         )
         for a in kept
     }
@@ -1297,6 +1309,11 @@ def band_for(st: Any, limit: Decimal, market: Any, settings: ArcSettings) -> Pri
     from arc.gate.rules import price_band
 
     return price_band(st.legs, limit, market, settings)
+
+
+def existing_max_loss(portfolio: Portfolio, underlying: str) -> Decimal:
+    """Max loss already open on *underlying* (Sentinel S-7: sizing uses what is left)."""
+    return sum((p.max_loss for p in portfolio.positions if p.underlying == underlying), Decimal(0))
 
 
 def worst_loss_per_contract(st: Any, band: PriceBand) -> Decimal | None:
@@ -1380,10 +1397,46 @@ def _proposal_exit_model(
         return None
 
 
+def _realloc_source(
+    priced: Any,
+    exits: ExitConfig,
+    settings: ArcSettings,
+    cost: CostModel | None,
+    *,
+    realized_vol: float | None,
+    candidate_id: str,
+    thesis: str,
+    quant: QuantMetrics,
+    risk_narrative: str,
+    suggestion: int,
+) -> dict[str, Any]:
+    """What ``risk.reallocate`` needs to re-propose a capacity-blocked entry (E6.4).
+
+    Stored on the ``sizing:budget_exhausted`` journal row (no new table). Managed net
+    EV and PoP come from the E2.4 model at the re-priced mids, after all costs.
+    """
+    st = priced.structure
+    model = _proposal_exit_model(priced, exits, settings.scanner_risk_free_rate, realized_vol, cost)
+    bp = st.buying_power if st.buying_power is not None else st.max_loss
+    return {
+        "candidate_id": candidate_id,
+        "thesis": thesis,
+        "quant": quant.model_dump(mode="json"),
+        "risk_narrative": risk_narrative,
+        "suggestion": suggestion,
+        "kind": st.kind.value if st.kind else None,
+        "legs": [[leg.occ_symbol, leg.side.value, leg.ratio] for leg in st.legs],
+        "net_ev": None if model is None else model.managed.net_ev,
+        "pop": None if model is None else model.managed.pop,
+        "buying_power": None if bp is None else float(bp),
+    }
+
+
 _SIZING_REASONS = {
     "ok": ReasonCode.SIZING_OK,
     "capped": ReasonCode.SIZING_CAPPED,
     "cap_zero": ReasonCode.SIZING_CAP_ZERO,
+    "budget_exhausted": ReasonCode.SIZING_BUDGET_EXHAUSTED,
     "risk_zero": ReasonCode.SIZING_RISK_ZERO,
     "unbounded": ReasonCode.SIZING_UNBOUNDED,
     "invalid_input": ReasonCode.SIZING_INVALID_INPUT,
@@ -1541,6 +1594,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             max_loss_per_contract=worst_loss_per_contract(st, band),
             equity=info.equity,
             cap_pct=settings.max_alloc_pct,
+            existing_max_loss=existing_max_loss(portfolio, t),  # S-7: remaining budget
         )
         sizing_payload = size.model_dump(mode="json") | {
             "max_loss_per_contract": str(st.max_loss) if st.max_loss is not None else None,
@@ -1552,6 +1606,23 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
         }
         if not size.trade:
             skipped["sizing"] += 1
+            if size.code == "budget_exhausted":
+                # E6.4: existing exposure on this underlying uses the budget up. Keep
+                # what a close-to-reallocate swap needs (risk.reallocate reads it back).
+                sizing_payload["realloc_source"] = _realloc_source(
+                    priced,
+                    exits,
+                    settings,
+                    cost_model,
+                    realized_vol=_realized_vol(ctx.snapshot, t),
+                    candidate_id=str(cand_ids[t]),
+                    thesis=item.thesis,
+                    quant=QuantMetrics(
+                        pop=qs.pop, ev=Decimal(str(qs.ev_per_contract)), cost_bps=qs.cost_bps
+                    ),
+                    risk_narrative=a.narrative,
+                    suggestion=a.sizing_suggestion,
+                )
             with ctx.conn:
                 j.add(
                     JournalPersona.SIZING,
