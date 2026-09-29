@@ -1306,6 +1306,10 @@ def worst_loss_per_contract(st: Any, band: PriceBand) -> Decimal | None:
     return max(st.max_loss + (band.hi - st.net_debit_credit) * 100, Decimal(0))
 
 
+class GateSecretMissingError(RuntimeError):
+    """A token-minting (live) propose run has no usable ``ARC_GATE_SECRET``."""
+
+
 def _mint(
     decision: Any,
     proposal: Proposal,
@@ -1321,8 +1325,10 @@ def _mint(
     try:
         secret = gate_secret(settings)
     except TokenError as exc:
-        log.warning("pipeline.no_gate_token", reason=str(exc))
-        return decision
+        # E5.2b: a live run that should mint but cannot fails the run (alert), rather
+        # than storing a token-less PASS that can never execute and nobody notices.
+        msg = f"live propose cannot mint a gate token: {exc} (set ARC_GATE_SECRET)"
+        raise GateSecretMissingError(msg) from exc
     return issue_token(decision, proposal, secret=secret, now=now, band=band)
 
 
@@ -1427,7 +1433,11 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     from arc.store.repos import GateDecisionRepo, HaltRepo, ProposalRepo
 
     settings = ctx.settings
-    now = ctx.now
+    # E5.2b: ``ctx.now`` is the chain start (before the Director/Quant/Risk LLM
+    # calls) and keys ``day`` idempotency only. Data age, the gate, the token and
+    # the proposal's expiry use ``ctx.clock()``: read at step start, after the
+    # account fetch, and again after each ticker's quotes are fetched.
+    now = ctx.clock()
     day = _today(ctx).isoformat()
     j = _journal(ctx, ctx.snapshot.id)
     shortlist = _latest(ctx.snapshot, "shortlist", ShortlistPayload)
@@ -1445,12 +1455,21 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             )
         return JobResult(summary="nothing to propose", metrics={"proposals": 0})
 
+    if env.mint_tokens:
+        from arc.gate.token import TokenError, gate_secret
+
+        try:  # fail before any broker call or proposal row, not after the gate
+            gate_secret(settings)
+        except TokenError as exc:
+            msg = f"live propose cannot mint a gate token: {exc} (set ARC_GATE_SECRET)"
+            raise GateSecretMissingError(msg) from exc
+
     cand_ids = {e.subject: e.payload.get("id") for e in ctx.snapshot.of_kind("candidate")}
     by_ticker = {s.ticker: s for s in reversed(structures.structures)}  # first (best) wins
     assessed = {(a.ticker, a.structure_type): a for a in review.assessments}
 
     info, positions = _account_inputs(ctx, env)
-    account = account_snapshot(info, now)
+    account = account_snapshot(info, ctx.clock())  # as_of = broker fetch time
     portfolio = build_portfolio(
         ctx.conn,
         positions,
@@ -1510,6 +1529,9 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             count=len(priced.contracts),
         )
         st = priced.structure
+        # Quotes were just fetched: judge their age (and stamp the gate, token and
+        # expiry) against a clock read now, never a time taken before the fetch.
+        now = ctx.clock()
         market = market_snapshot(priced.contracts, earnings)
         limit = limit_price(st.net_debit_credit, settings.limit_tick)
         # D24: the gate checks the whole price band; size at its worst price (D18).

@@ -149,6 +149,7 @@ class Dispatcher:
         notifier: Notifier | None = None,
         is_halted: Callable[[], bool] | None = None,
         settings_factory: Callable[[], ArcSettings] | None = None,
+        clock: Callable[[], _dt.datetime] | None = None,
     ) -> None:
         self.conn = conn
         self.routines = routines
@@ -163,6 +164,8 @@ class Dispatcher:
         self.store = ContextStore(conn)
         self._is_halted = is_halted or self._default_halted
         self._settings_factory = settings_factory
+        # E5.2b: fresh wall clock handed to steps (None = the tick's frozen ``now``).
+        self._clock = clock
         self._manifest_alerted = False
 
     def _default_halted(self) -> bool:
@@ -496,6 +499,7 @@ class Dispatcher:
                 routines=self.routines,
                 event=event,
                 settings_factory=self._settings_factory,
+                clock_fn=self._clock,
             )
             trace.ctx = ctx
             with self.locks.hold(run.job) if run.step_index else contextlib.nullcontext():

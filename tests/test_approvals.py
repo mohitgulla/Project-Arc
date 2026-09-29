@@ -310,6 +310,26 @@ class TestPublish:
         assert res.outcome is Outcome.NOT_ACTIONABLE
         assert _approvals(conn) == []
 
+    @pytest.mark.parametrize(
+        ("live", "note"),
+        [(False, "dry run / fixtures"), (True, "ARC_GATE_SECRET missing")],
+    )
+    def test_no_token_note_says_why(
+        self,
+        _pipeline_db: bytes,
+        arc_settings: ArcSettings,
+        poster: RecordingPoster,
+        live: bool,
+        note: str,
+    ) -> None:
+        """E5.2b: a live sweep never labels a token-less PASS as a dry run."""
+        conn = _db(_pipeline_db, token=None)
+        ApprovalService(conn, arc_settings, poster, live=live).publish_pending(NOW)
+        row = conn.execute("SELECT reason FROM approval_requests").fetchone()
+        assert note in row[0]
+        other = "ARC_GATE_SECRET" if not live else "dry run"
+        assert other not in row[0]
+
     def test_gate_fail_is_informational_and_logged(
         self, conn: sqlite3.Connection, svc: ApprovalService
     ) -> None:
