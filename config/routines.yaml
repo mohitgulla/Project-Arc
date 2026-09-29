@@ -80,6 +80,7 @@ context_ttl:
   risk_review:   {ttl: 1 session, supersede: latest}
   proposal:      {ttl: 1 session, supersede: accumulate}
   position_review: {ttl: 1h, supersede: latest}          # E6.4; subject = open structure id
+  portfolio_context: {ttl: 10m, supersede: latest}       # E5.9 (D33); subject = session
   journal:       {ttl: 20 sessions, supersede: accumulate}
   note:          {ttl: 1 session, supersede: accumulate}   # D27 persona text (thesis, regime view, ...)
   story:         {ttl: 1 session, supersede: latest}       # D30 stage-1 digest; subject = story id
@@ -167,8 +168,8 @@ personas:
     schedule: ["09:30"]
     days: trading
     chain: [quant, risk, propose]
-    reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options]   # == DIRECTOR_READS (arc/pipeline/steps.py)
-    writes: [shortlist, regime, note]
+    reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options, position_review]   # == DIRECTOR_READS (arc/pipeline/steps.py)
+    writes: [shortlist, regime, note, portfolio_context]   # E5.9: portfolio_context + portfolio_view/thesis_check notes
     ttl: 2h
     notify: card
   monitor:                      # intraday: positions, net Greeks, expiries, daily-loss halt (read-only)
@@ -220,10 +221,10 @@ personas:
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
   quant:   {reads: [shortlist, regime], writes: [structures, note], notify: card}
   risk:    {reads: [structures, ex_dividend, macro_calendar], writes: [risk_review, note], notify: card}
-  propose: {reads: [candidate, regime, shortlist, structures, risk_review], writes: [proposal], llm: false, notify: summary}  # E6.1 posts the proposal cards
+  propose: {reads: [candidate, regime, shortlist, structures, risk_review], writes: [proposal], llm: false, notify: summary}  # E6.1 posts the proposal cards; E5.9 fingerprint dedupe
   # E6.4 chain steps (after positions.evaluate). Every close / swap open is a proposal: gate + approval.
   investor.exits:  {reads: [position_review], writes: [proposal], llm: false, notify: summary}
-  risk.reallocate: {reads: [position_review], writes: [proposal], notify: summary}   # Risk vetoes swaps (LLM)
+  risk.reallocate: {reads: [position_review, note], writes: [proposal], notify: summary}   # Risk vetoes swaps (LLM); E5.9 thesis_check notes are advisory input
 
 triggers:                       # a run finishing (or an external event) can start another run
   - on: scout.completed         # only the 12:00 Scout can match: 22:00 is never in-session

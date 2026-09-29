@@ -23,6 +23,7 @@ from arc.features.snapshot import FeatureSnapshot
 from arc.models import Candidate, CatalystType, ChannelBrief, Proposal, Stance
 from arc.personas.schemas import AuditorOutput, DirectorOutput, QuantOutput, RiskOutput
 from arc.positions.evaluate import PositionReview
+from arc.positions.portfolio import MarketGuard, PortfolioContext
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -74,6 +75,14 @@ class ShortlistPayload(DirectorOutput):
     model_config = _FORBID
 
     budget: int | None = Field(None, ge=0)
+    # E5.9 (D33), schema v3. All default: v2 rows still validate.
+    market_guard: MarketGuard | None = Field(
+        None, description="The deterministic market-conditions guard result for this run"
+    )
+    suppressed: list[str] = Field(
+        default_factory=list,
+        description="Ideas (ticker stance structure) the dedupe held back from the Director",
+    )
 
     def budgeted(self) -> list[DirectorRankedItem]:
         """The ranked items inside the Quant/Risk budget (all of them when unset)."""
@@ -123,6 +132,12 @@ class PositionReviewPayload(PositionReview):
     model_config = _FORBID
 
 
+class PortfolioContextPayload(PortfolioContext):
+    """E5.9 (D33): the Director's deterministic view of the open book (subject ``session``)."""
+
+    model_config = _FORBID
+
+
 class JournalPayload(AuditorOutput):
     """Auditor daily journal."""
 
@@ -134,6 +149,8 @@ class NoteTopic(enum.StrEnum):
 
     THESIS = "thesis"  # why a trade/ticker/idea (Director, Quant)
     REGIME_VIEW = "regime_view"  # market/sector regime read (Director, Scout)
+    PORTFOLIO_VIEW = "portfolio_view"  # E5.9: the Director's read of the open book
+    THESIS_CHECK = "thesis_check"  # E5.9: is an open position's thesis still intact?
     OBSERVATION = "observation"  # informational: news theme, scan summary (Scout)
     RISK_FLAG = "risk_flag"  # portfolio/calendar concern (Risk)
     LESSON = "lesson"  # post-trade learning (Auditor)
@@ -337,11 +354,12 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload, schema_version=2),  # E4.5: corroboration
     KindSpec("regime", RegimePayload),
-    KindSpec("shortlist", ShortlistPayload, schema_version=2),  # E5.7: excluded/evidence/budget
+    KindSpec("shortlist", ShortlistPayload, schema_version=3),  # E5.9: portfolio_view/no_trade
     KindSpec("structures", StructuresPayload, schema_version=2),  # E5.7: skipped/not_structured
     KindSpec("risk_review", RiskReviewPayload),
     KindSpec("proposal", ProposalPayload),
     KindSpec("position_review", PositionReviewPayload),
+    KindSpec("portfolio_context", PortfolioContextPayload),  # E5.9 (D33)
     KindSpec("journal", JournalPayload),
     KindSpec("note", NotePayload),
     # E4.5 (D30): story digests + options-trading data sources

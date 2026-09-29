@@ -309,20 +309,50 @@ def director_card(
     beyond = [] if budget is None else ranked[budget:]
     excluded = [(t, r) for t, k, r in funnel if k == "excluded"]
     unranked = [(t, k) for t, k, _ in funnel if k != "excluded"]
-    title = f"[Director] Ranked: {len(ranked)} / {candidates} • Market {regime}"
+    # E5.9 (D33): explicit no-trade, market guard, portfolio view and suppressed ideas.
+    guard = getattr(out, "market_guard", None)
+    no_trade = getattr(out, "no_trade_reason", None)
+    pview = getattr(out, "portfolio_view", None)
+    checks = list(getattr(out, "thesis_checks", []) or [])
+    suppressed = list(getattr(out, "suppressed", []) or [])
+    if guard is not None and not guard.opens_allowed:
+        title = f"[Director] No trade: market unclear • Market {regime}"
+    elif not ranked and no_trade:
+        title = f"[Director] No trade: {_title_case(no_trade)} • Market {regime}"
+    else:
+        title = f"[Director] Ranked: {len(ranked)} / {candidates} • Market {regime}"
     blocks = _head(
         title,
         f"*{len(ranked)}* ranked",
         f"{len(inside)} to Quant (budget {budget})" if beyond else "",
         f"{len(excluded)} excluded" if excluded else "",
         f"{len(dropped) + len(unranked)} dropped" if dropped or unranked else "",
+        f"{len(suppressed)} suppressed (dedupe)" if suppressed else "",
+        f"Portfolio {B.esc(_title_case(pview.verdict))}" if pview is not None else "",
     )
+    if guard is not None:
+        vix = f"VIX {guard.vix.value:.1f}" if guard.vix else "VIX n/a"
+        reg = (
+            f"SPY regime {B.esc(guard.regime)}"
+            + (f" (stickiness {guard.regime_stickiness:.2f})" if guard.regime_stickiness else "")
+            if guard.regime
+            else ""
+        )
+        state = "clear" if guard.opens_allowed else "no new opens"
+        blocks.append(
+            _section(
+                f"Market guard: {state}",
+                [x for x in (vix, reg, *[B.esc(r) for r in guard.reasons]) if x],
+            )
+        )
     for item in inside:
         blocks.append(B.divider())
+        fit = getattr(item, "portfolio_fit", None)
         meta = (
             f"Rank {item.rank} · {B.esc(item.stance.strip().capitalize())} · "
             f"{_pct(item.confidence)} confidence · "
             f"{B.esc(_title_case(item.suggested_structure_type))}"
+            + (f" · Fit: {B.esc(_title_case(fit))}" if fit else "")
         )
         lines = [f"*{B.esc(item.ticker)}*", meta]
         if item.thesis.strip():
@@ -338,7 +368,29 @@ def director_card(
             {"type": "section", "text": {"type": "mrkdwn", "text": B.clip("\n".join(lines))}}
         )
     if not ranked:
-        blocks.append(_section("Ranked", ["nothing worth trading today"]))
+        why = (
+            f"nothing worth trading today ({_title_case(no_trade)})"
+            if no_trade
+            else ("nothing worth trading today")
+        )
+        blocks.append(_section("Ranked", [why]))
+    if pview is not None:
+        blocks.append(B.divider())
+        rows = [B.esc(pview.notes.strip())] if pview.notes.strip() else []
+        rows += [
+            f"• {B.esc(c.structure_id)}: {B.esc(_title_case(c.status))}"
+            + (f" · {B.esc(_clip_line(c.reason))}" if c.reason.strip() else "")
+            for c in checks
+        ]
+        blocks.append(_section(f"Portfolio: {_title_case(pview.verdict)}", rows or ["-"]))
+    if suppressed:
+        blocks.append(B.divider())
+        blocks.append(
+            _section(
+                f"Suppressed by dedupe ({len(suppressed)})",
+                [f"• {B.esc(_clip_line(x))}" for x in suppressed],
+            )
+        )
     if beyond:
         blocks.append(B.divider())
         blocks.append(

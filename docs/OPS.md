@@ -589,6 +589,56 @@ the test fails and names the legs to close by hand. Each run sends up to ~12
 orders against the D32 daily budget. Run one at a time: two concurrent runs
 trade against each other (wash-trade rejects) and leave spreads open.
 
+### 5.13 Portfolio-aware Director, idea dedupe, no-trade (E5.9, D33)
+
+Before every entry chain the Director step runs three deterministic pieces
+(no LLM, audit DB only), in this order:
+
+1. **Market guard** (`arc/pipeline/market_guard.py`). VIX comes from the fresh
+   `vol_term` context (E4.5), else `PipelineEnv.vix_quote` (fixtures:
+   `arc/pipeline/fixtures/vix.json`). New opens are blocked, and the chain stops
+   before any LLM call, when VIX ≥ `no_trade.vix_max`, the term structure is in
+   backwardation (`no_trade.on_backwardation`), or SPY's regime stickiness is
+   under `no_trade.transitional_min_confidence`. No VIX at all fails closed
+   (`market_data_missing`) unless `no_trade.require_vix` is off. Exits never go
+   through the guard: the positions chain keeps closing.
+2. **Portfolio context** (`arc/pipeline/portfolio_context.py`, kind
+   `portfolio_context`, subject `session`, 10 min TTL). Account, every open
+   structure with its mark P&L, max loss, Greeks, sector
+   (`config/sectors.yaml`; unmapped → `unknown`), expiry bucket and original
+   thesis, plus aggregates (allocation by underlying/sector/stance/expiry, HHI,
+   Greeks vs caps, flags, underlyings at the 5% cap). With an empty book the
+   prompt is E5.7's plus one line; otherwise the rendered block (capped at
+   `portfolio.context_max_positions`) is added and the Director must return a
+   `portfolio_view`, a `portfolio_fit` per pick and `thesis_checks` per holding.
+   Those go to `note` context (`portfolio_view`, `thesis_check` topics) and the
+   journal; they never reach the gate.
+3. **Idea dedupe** (`arc/pipeline/dedupe.py`). Fingerprint = ticker, stance,
+   structure type, expiry ISO week, short-strike bucket (1% of spot). An idea
+   is held while its fingerprint was executed (open, or closed within
+   `dedupe.executed_cooldown` sessions), proposed (`dedupe.proposed_cooldown`)
+   or owner-rejected (`dedupe.rejected_cooldown`). Windows double in the D32
+   restrictive tier. A closed/proposed/rejected prior is re-admitted when spot
+   moved ≥ `dedupe.reprice_move_pct` or the regime changed
+   (`dedupe_override` journal row); an open structure is never overridden. The
+   Director stage holds `ticker|stance` prefixes (listed to the Director as
+   "recently suggested or held"); the propose stage checks the full fingerprint
+   on the live spot. Migration 016 replaces the one-open-per-ticker-per-day
+   index with `(chain_run_id, ticker)`; manual `arc propose` runs use
+   `manual-<day>-<run_id>`.
+
+An empty shortlist is an explicit outcome: the Director's `no_trade_reason`
+(`no_fit | too_volatile | unclear | budget | portfolio_full`) is journalled as
+`director_no_trade`, shown on the card as `[Director] No trade: …`, and the
+chain stops (`stop_chain` in the run's metrics; no Quant/Risk calls).
+
+Deterministic Director-stage drops, journalled per ticker: `dedupe_executed`
+(the ticker is held in that stance), `drop_at_cap` (underlying at its max-loss
+cap), `drop_concentration` (the Director says `adds_concentration` on a sector,
+stance or underlying that is already flagged).
+
+Knobs live under `!arc config dedupe | portfolio | no_trade`.
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.

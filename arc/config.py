@@ -368,6 +368,94 @@ class ArcSettings(BaseSettings):
     order_budget_restrictive_dedupe_cooldown_multiplier: Annotated[
         float, Field(ge=1.0, le=10.0)
     ] = Field(default=2.0, description="Restrictive tier: E5.9 dedupe cooldown multiplier.")
+    # -- Portfolio-aware Director, dedupe, no-trade guard (E5.9, D33) ----------
+    dedupe_executed_cooldown_sessions: Annotated[int, Field(ge=0, le=60)] = Field(
+        default=5,
+        description=(
+            "D33: an idea whose fingerprint was executed (open, or closed within this many "
+            "trading sessions) is suppressed. Doubled in the restrictive order-budget tier."
+        ),
+    )
+    dedupe_proposed_cooldown_sessions: Annotated[int, Field(ge=0, le=60)] = Field(
+        default=1,
+        description=(
+            "D33: an idea proposed (not rejected / TTL-expired) within this many sessions "
+            "is suppressed. Doubled in the restrictive tier."
+        ),
+    )
+    dedupe_rejected_cooldown_sessions: Annotated[int, Field(ge=0, le=60)] = Field(
+        default=1,
+        description=(
+            "D33: an idea the owner rejected within this many sessions is suppressed. "
+            "Doubled in the restrictive tier."
+        ),
+    )
+    dedupe_reprice_move_pct: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.03,
+        description=(
+            "D33 material-change override: a suppressed idea is re-admitted when spot moved "
+            "at least this fraction since the last one (or the regime changed)."
+        ),
+    )
+    portfolio_sector_max_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+        default=0.40,
+        description=(
+            "D33: share of open max loss in one sector above which the book is flagged "
+            "over_concentrated_sector and adds_concentration picks in it are dropped."
+        ),
+    )
+    portfolio_stance_max_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+        default=0.75,
+        description=(
+            "D33: share of open max loss in one stance (bull/bear) above which the book is "
+            "flagged stance_skew; adds_concentration picks in that stance are dropped."
+        ),
+    )
+    portfolio_expiry_max_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+        default=0.60,
+        description=(
+            "D33: share of open max loss in one expiry bucket above which the book is "
+            "flagged expiry_cluster."
+        ),
+    )
+    portfolio_greek_near_cap_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+        default=0.80,
+        description=(
+            "D33: net |delta| / |vega| usage of the PLAN §5 cap above which the book is "
+            "flagged delta_near_cap / vega_near_cap."
+        ),
+    )
+    portfolio_context_max_positions: Annotated[int, Field(ge=1, le=50)] = Field(
+        default=12,
+        description="D33: positions rendered in full in the Director prompt (largest first).",
+    )
+    no_trade_vix_max: Annotated[float, Field(gt=0.0, le=200.0)] = Field(
+        default=35.0,
+        description=(
+            "D33 market-conditions guard: at or above this VIX the loop proposes no new "
+            "opens (reason market_unclear). Exits are unaffected."
+        ),
+    )
+    no_trade_on_backwardation: bool = Field(
+        default=True,
+        description=(
+            "D33: a VIX term structure in backwardation (vol_term context) blocks new opens."
+        ),
+    )
+    no_trade_transitional_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.55,
+        description=(
+            "D33: when the snapshot holds a SPY regime entry whose stickiness (P[stay]) is "
+            "below this, the regime counts as transitional and new opens are blocked."
+        ),
+    )
+    no_trade_require_vix: bool = Field(
+        default=True,
+        description=(
+            "D33: fail closed for new opens when no VIX reading is available "
+            "(reason market_data_missing). Off = the guard skips the VIX checks."
+        ),
+    )
     # -- Close-to-reallocate (E6.4, D19) ----------------------------------------
     realloc_min_edge: Annotated[float, Field(ge=0.0, le=10.0)] = Field(
         default=0.20,

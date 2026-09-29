@@ -70,6 +70,11 @@ class PipelineEnv:
     # D28: builds the Scout's universe guard (None = from settings, live Alpaca data).
     # Fixtures pass one backed by the recordings and a fixture symbol master.
     universe_guard: Callable[[ArcSettings, _dt.datetime], UniverseGuard] | None = None
+    # E5.9 / D33: a VIX reading for the market-conditions guard when no `vol_term`
+    # context entry is fresh. None = try the market provider's index quote. Fixtures
+    # return the bundled calm reading (arc/pipeline/fixtures/vix.json), so offline runs
+    # exercise the guard instead of failing closed on missing data.
+    vix_quote: Callable[[], tuple[float, str] | None] | None = None
 
     def llm(self, persona: str) -> ScoutLLM:
         return self.llms[persona]
@@ -132,7 +137,14 @@ class PipelineEnv:
             scout_llm=FixtureScoutLLM.from_dir(SCOUT_FIXTURES / "responses"),
             offline=True,
             universe_guard=lambda s, now: fixture_universe_guard(s, now, market),
+            vix_quote=fixture_vix,
         )
+
+
+def fixture_vix() -> tuple[float, str]:
+    """The bundled VIX reading offline runs feed the D33 market guard."""
+    data = json.loads((FIXTURES_DIR / "vix.json").read_text())
+    return float(data["vix"]), str(data["as_of"])
 
 
 def fixture_universe_guard(

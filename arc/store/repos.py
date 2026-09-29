@@ -190,19 +190,25 @@ class ProposalRepo:
         ticker: str | None = None,
         kind: str = "open",
         swap_id: str | None = None,
+        chain_run_id: str | None = None,
+        fingerprint: str | None = None,
+        spot: str | None = None,
+        regime: str | None = None,
         commit: bool = True,
     ) -> str:
         """Insert a proposal; ``kind`` is ``open`` (new structure) or ``close`` (an exit).
 
         ``swap_id`` links the two proposals of an E6.4 close-to-reallocate swap.
+        E5.9 (D33): ``chain_run_id`` keys per-chain idempotency (one open per ticker
+        per chain); ``fingerprint`` / ``spot`` / ``regime`` feed the idea dedupe.
         """
         row_id = id or _uuid()
         self.conn.execute(
             """INSERT INTO proposals
                (id, candidate_id, proposal_hash, structure_json, thesis,
                 quant_json, risk_narrative, sizing_json, expires_at, created_at, run_id,
-                day, ticker, kind, swap_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                day, ticker, kind, swap_id, chain_run_id, fingerprint, spot, regime)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row_id,
                 candidate_id,
@@ -219,6 +225,10 @@ class ProposalRepo:
                 ticker,
                 kind,
                 swap_id,
+                chain_run_id,
+                fingerprint,
+                spot,
+                regime,
             ),
         )
         if commit:

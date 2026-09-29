@@ -189,6 +189,13 @@ def _make_parser() -> argparse.ArgumentParser:
                 "(SPY bull call debit).",
             )
             p.add_argument(
+                "--fixture-offset-minutes",
+                type=int,
+                default=0,
+                help="With --fixtures: run the clock this many minutes after the recording "
+                "(a second run on the same --db then exercises the E5.9 idea dedupe).",
+            )
+            p.add_argument(
                 "--profile",
                 default=None,
                 help="Account profile for this run (overrides ARC_ACCOUNT_PROFILE; D25).",
@@ -627,7 +634,15 @@ def _propose(args: argparse.Namespace) -> int:
             )
             return 2
     if args.fixtures:
-        conn, report = fixture_run(settings, routines, db=args.db, fixture_set=args.fixture_set)
+        from arc.pipeline.env import FIXTURE_NOW
+
+        conn, report = fixture_run(
+            settings,
+            routines,
+            db=args.db,
+            fixture_set=args.fixture_set,
+            now=FIXTURE_NOW + dt.timedelta(minutes=args.fixture_offset_minutes),
+        )
     else:
         conn = open_db(args.db, copy=args.dry_run and args.db is None)
         env = PipelineEnv.live(settings, broker=not args.dry_run)

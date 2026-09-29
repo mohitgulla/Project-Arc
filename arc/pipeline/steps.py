@@ -101,6 +101,15 @@ from arc.personas.schemas import (
 )
 from arc.pipeline.analytics import build_analytics
 from arc.pipeline.budget import BudgetView, budget_notice, read_budget
+from arc.pipeline.dedupe import (
+    DedupeConfig,
+    IdeaFingerprint,
+    RecentIdea,
+    check_idea,
+    fingerprint,
+    next_admissible,
+    recent_ideas,
+)
 from arc.pipeline.market import (
     PortfolioError,
     account_snapshot,
@@ -109,6 +118,12 @@ from arc.pipeline.market import (
     market_snapshot,
     next_earnings,
     price_structure,
+)
+from arc.pipeline.market_guard import MarketGuard, market_guard
+from arc.pipeline.portfolio_context import (
+    PortfolioContext,
+    build_portfolio_context,
+    render_portfolio_context,
 )
 from arc.pipeline.store import PersonaCallRepo
 from arc.routines.handlers import JobResult
@@ -161,7 +176,12 @@ DIRECTOR_READS = [
     "put_call",
     "macro_calendar",
     "unusual_options",
+    "position_review",  # E5.9: fresh E6.4 reviews feed the portfolio context
 ]  # == routines.yaml director.reads (D30 adds the options-data kinds)
+# E5.9 drop reasons (Director stage; deterministic). Values == ReasonCode values.
+DROP_CONCENTRATION = ReasonCode.DROP_CONCENTRATION.value
+DROP_AT_CAP = ReasonCode.DROP_AT_CAP.value
+DROP_DEDUPE = ReasonCode.DEDUPE_EXECUTED.value
 
 # Drop reasons (stable keys; stored in persona_calls.dropped and step metrics).
 DROP_NOT_CANDIDATE = "not_a_candidate"
@@ -540,6 +560,7 @@ def _director_rules(
     cands: Mapping[str, Stance],
     settings: ArcSettings | None = None,
     budget: BudgetView | None = None,
+    portfolio: PortfolioContext | None = None,
 ) -> list[str]:
     """Director constraints (E5.7: rank, don't gatekeep; no count cap in the prompt).
 
@@ -567,6 +588,19 @@ def _director_rules(
             f"order budget tier: {b.tier.value} ({b.used}/{b.limit}); propose at most one "
             "high-conviction idea or none."
         )
+    if portfolio is not None and not portfolio.empty and portfolio.aggregates is not None:
+        ag = portfolio.aggregates
+        rules.append(
+            "portfolio_fit is required per pick (diversifies | hedges | adds_concentration | "
+            "neutral); adds_concentration picks on a flagged sector/stance/expiry are dropped "
+            "by the pipeline. Names at their per-underlying max-loss cap "
+            f"({', '.join(ag.at_cap_underlyings) or 'none'}) cannot be opened."
+        )
+        rules.append(
+            "portfolio_view.verdict: balanced | concentrated | hedge_needed | reduce_risk; "
+            "one thesis_checks entry per open structure_id "
+            f"({', '.join(p.structure_id for p in portfolio.positions[:12])})."
+        )
     return rules
 
 
@@ -576,6 +610,250 @@ def _shortlist_limit(settings: ArcSettings, budget: BudgetView) -> int:
     if budget.tier.restricted:
         limit = min(limit, settings.order_budget_restrictive_director_max_shortlist)
     return limit
+
+
+def _director_no_opens(
+    ctx: JobContext,
+    guard: MarketGuard,
+    budget: BudgetView,
+    notice: str,
+    cands: Mapping[str, Stance],
+) -> JobResult:
+    """E5.9: the market guard blocked new opens; stop the entry chain before the LLM."""
+    code = guard.code or ReasonCode.MARKET_UNCLEAR
+    why = guard.summary()
+    j = _journal(ctx, ctx.snapshot.id)
+    j.add(
+        JournalPersona.SYSTEM,
+        Stage.SHORTLIST,
+        SESSION_SUBJECT,
+        Choice.NO_TRADE,
+        code,
+        reason_text=why,
+        payload=guard.model_dump(mode="json"),
+    )
+    payload = ShortlistPayload(
+        shortlist=[],
+        market_regime=guard.regime or "unknown",
+        session_notes=why,
+        no_trade_reason="unclear",
+        market_guard=guard,
+    )
+    ctx.write("shortlist", SESSION_SUBJECT, payload)
+    log.info("pipeline.market_guard_blocked", reasons=guard.reasons, code=code.value)
+    return JobResult(
+        summary=f"{why}; empty shortlist ({len(cands)} candidates not ranked)",
+        metrics={"shortlist": 0, "market_guard_blocked": 1, **budget.metrics()},
+        notice=notice,
+        stop_chain=True,
+        card=director_card(
+            payload,
+            candidates=len(cands),
+            dropped=[],
+            funnel=(),
+            budget=0,
+            evidence=[],
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+        ),
+    )
+
+
+def _portfolio_context(
+    ctx: JobContext, env: PipelineEnv, settings: ArcSettings, budget: BudgetView
+) -> PortfolioContext:
+    """Build, record and store the E5.9 portfolio context for this run."""
+    from arc.gate.halt import HaltSwitch
+    from arc.pipeline.market import PortfolioError, build_portfolio
+    from arc.store.repos import HaltRepo
+
+    info, positions = _account_inputs(ctx, env)
+    portfolio = None
+    try:
+        portfolio = build_portfolio(
+            ctx.conn,
+            positions,
+            env.market,
+            now=ctx.now,
+            wash_sale_days=settings.wash_sale_days,
+            r=settings.scanner_risk_free_rate,
+        )
+    except PortfolioError as exc:  # Greeks fall back to as-opened; propose re-checks
+        log.warning("pipeline.portfolio_context_unvalued", error=str(exc))
+    pctx = build_portfolio_context(
+        ctx.conn,
+        env,
+        settings,
+        info=info,
+        now=ctx.now,
+        halted=HaltSwitch(HaltRepo(ctx.conn)).is_halted(),
+        budget_tier=budget.tier.value,
+        portfolio=portfolio,
+        snapshot=ctx.snapshot,
+    )
+    ctx.write("portfolio_context", SESSION_SUBJECT, pctx)
+    return pctx
+
+
+def _held_and_recent(
+    cands: Mapping[str, Stance],
+    priors: list[RecentIdea],
+    pctx: PortfolioContext,
+    now: _dt.datetime,
+    cfg: DedupeConfig,
+) -> tuple[dict[str, str], list[str]]:
+    """Director-stage dedupe by ``ticker|stance``.
+
+    Returns ``held`` (candidate ticker -> stance held by an OPEN structure; those
+    picks are dropped outright) and the prompt lines for every recently suggested
+    idea on a candidate, so the Director sees why a name is off the table.
+    """
+    held: dict[str, str] = {}
+    for p in pctx.positions:
+        if p.ticker in cands:
+            held[p.ticker] = p.stance.value
+    lines: list[str] = []
+    seen: set[str] = set()
+    for r in priors:
+        fp = IdeaFingerprint.parse(r.fingerprint)
+        if fp.ticker not in cands or fp.prefix() in seen:
+            continue
+        seen.add(fp.prefix())
+        until = next_admissible(now, r, cfg)
+        when = "held (open position)" if r.open_structure else f"{r.kind.value} {r.at:%b %d}"
+        lines.append(
+            f"- {fp.ticker} {fp.stance.value} {fp.structure_type}: {when}"
+            + (f"; admissible again {until:%b %d}" if until else "")
+            + (
+                f" (or if spot moves {cfg.reprice_move_pct:.0%} from {r.spot} / regime changes)"
+                if not r.open_structure and r.spot is not None
+                else ""
+            )
+        )
+    return held, lines
+
+
+def _portfolio_filter(
+    kept: list[DirectorRankedItem],
+    pctx: PortfolioContext,
+    held: Mapping[str, str],
+    settings: ArcSettings,
+) -> tuple[list[DirectorRankedItem], Counter[str], list[tuple[DirectorRankedItem, str]]]:
+    """E5.9 deterministic Director-stage drops (portfolio + held ideas).
+
+    * ``dedupe``: an open structure already holds this ticker in this stance.
+    * ``at_cap``: the underlying is at its per-underlying max-loss cap.
+    * ``adds_concentration``: the Director says the pick adds concentration and the
+      dimension it lands on (sector / stance / expiry) is already flagged.
+    Re-ranks the survivors 1..n.
+    """
+    dropped: Counter[str] = Counter()
+    rejected: list[tuple[DirectorRankedItem, str]] = []
+    out: list[DirectorRankedItem] = []
+    ag = pctx.aggregates
+    sectors = pctx.thresholds and {p.ticker: p.sector for p in pctx.positions}
+    for item in kept:
+        if held.get(item.ticker) == item.stance:
+            dropped[DROP_DEDUPE] += 1
+            rejected.append((item, DROP_DEDUPE))
+            continue
+        if ag is not None and item.ticker in ag.at_cap_underlyings:
+            dropped[DROP_AT_CAP] += 1
+            rejected.append((item, DROP_AT_CAP))
+            continue
+        if ag is not None and item.portfolio_fit == "adds_concentration":
+            sector = sectors.get(item.ticker) if sectors else None
+            if sector is None:
+                from arc.pipeline.portfolio_context import load_sectors
+
+                sector = load_sectors().get(item.ticker, "unknown")
+            flagged = (
+                sector in ag.flagged_sectors
+                or item.stance in ag.flagged_stances
+                or item.ticker in ag.by_underlying
+            )
+            if flagged:
+                dropped[DROP_CONCENTRATION] += 1
+                rejected.append((item, DROP_CONCENTRATION))
+                continue
+        out.append(item.model_copy(update={"rank": len(out) + 1}))
+    return out, dropped, rejected
+
+
+def _no_trade_reason(out: DirectorOutput, kept: list[DirectorRankedItem]) -> str | None:
+    """The explicit no-trade outcome (E5.9): only meaningful with an empty shortlist."""
+    if kept:
+        return None
+    r = out.no_trade_reason
+    return r if r and r != "none" else "no_fit"
+
+
+def _valid_thesis_checks(out: DirectorOutput, pctx: PortfolioContext) -> list[Any]:
+    ids = {p.structure_id for p in pctx.positions}
+    seen: set[str] = set()
+    checks = []
+    for c in out.thesis_checks:
+        if c.structure_id in ids and c.structure_id not in seen:
+            seen.add(c.structure_id)
+            checks.append(c)
+    return checks
+
+
+def _portfolio_notes(
+    ctx: JobContext,
+    payload: ShortlistPayload,
+    pctx: PortfolioContext,
+    entry_id: str,
+    call_id: str,
+) -> None:
+    """E5.9: the Director's portfolio read and thesis checks as note context + journal."""
+    if pctx.empty:
+        return
+    j = _journal(ctx, ctx.snapshot.id)
+    if payload.portfolio_view is not None:
+        pv = payload.portfolio_view
+        _note(
+            ctx,
+            SESSION_SUBJECT,
+            persona="director",
+            topic=NoteTopic.PORTFOLIO_VIEW,
+            title=f"Portfolio: {pv.verdict}",
+            body=f"{pv.verdict}: {pv.notes}".strip(": "),
+            about=[entry_id],
+        )
+        j.add(
+            JournalPersona.DIRECTOR,
+            Stage.SHORTLIST,
+            SESSION_SUBJECT,
+            Choice.NOTED,
+            ReasonCode.PORTFOLIO_VIEW,
+            reason_text=f"{pv.verdict}: {pv.notes}".strip(": "),
+            persona_call_id=call_id,
+            payload=pv.model_dump(mode="json"),
+        )
+    by_id = {p.structure_id: p for p in pctx.positions}
+    for c in payload.thesis_checks:
+        pos = by_id[c.structure_id]
+        _note(
+            ctx,
+            c.structure_id,
+            persona="director",
+            topic=NoteTopic.THESIS_CHECK,
+            title=f"{pos.ticker} thesis {c.status}",
+            body=f"{c.status}: {c.reason}".strip(": "),
+            about=[entry_id],
+            stance=pos.stance,
+        )
+        j.add(
+            JournalPersona.DIRECTOR,
+            Stage.SHORTLIST,
+            c.structure_id,
+            Choice.NOTED,
+            ReasonCode.THESIS_CHECK,
+            reason_text=f"{pos.ticker}: {c.status}: {c.reason}".strip(": "),
+            persona_call_id=call_id,
+            payload=c.model_dump(mode="json"),
+        )
 
 
 def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
@@ -633,20 +911,41 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     snap = ContextStore(ctx.conn).snapshot(ctx.now, kinds=DIRECTOR_READS, run_id=ctx.run_id)
     RoutineRunRepo(ctx.conn).set_inputs(ctx.run_id, [ctx.snapshot.id, snap.id])
 
+    # E5.9 (D33): market-conditions guard, before any LLM spend. Missing VIX fails
+    # closed for new opens; exits (the positions chain) never come through here.
+    guard = market_guard(snap, settings, now=ctx.now, vix_quote=env.vix_quote)
+    ctx.record_input("market_guard", "context", guard, as_of=ctx.now)
+    if not guard.opens_allowed:
+        return _director_no_opens(ctx, guard, budget, notice, cands)
+
     summary, _ = _portfolio_summary(ctx, env, settings)
+    # E5.9 (D33): the open book as the Director sees it (deterministic, stored as context).
+    pctx = _portfolio_context(ctx, env, settings, budget)
+    dedupe_cfg = DedupeConfig.from_settings(settings, budget.tier)
+    priors = recent_ideas(ctx.conn, now=ctx.now, cfg=dedupe_cfg)
+    ctx.record_input(
+        "recent_ideas", "db", [r.model_dump(mode="json") for r in priors], count=len(priors)
+    )
+    held, recent_lines = _held_and_recent(cands, priors, pctx, ctx.now, dedupe_cfg)
     # Quant/Risk budget (never shown to the Director); D32 lowers it in the restrictive tier.
     qr_budget = _shortlist_limit(settings, budget)
     inputs = {
         "portfolio_summary": summary,
         "scan_date": _today(ctx).isoformat(),
         "max_notes": settings.pipeline_max_context_notes,
-        "rules": _director_rules(cands, settings, budget),
+        "portfolio_block": "" if pctx.empty else render_portfolio_context(pctx, settings),
+        "recent_ideas": "\n".join(recent_lines),
+        "rules": _director_rules(cands, settings, budget, pctx),
     }
     reply, out = _ask(ctx, env, "director", snap, inputs, DirectorOutput)
     kept, dropped, rejected = _filter_shortlist(out, cands)
+    kept, pdropped, prejected = _portfolio_filter(kept, pctx, held, settings)
+    dropped.update(pdropped)
+    rejected.extend(prejected)
     ranked = {i.ticker for i in kept}
     excluded = _filter_excluded(out, cands, ranked)
     call_id = _record_ok(ctx, "director", reply, snap.id, dropped)
+    no_trade = _no_trade_reason(out, kept)
 
     j = _journal(ctx, snap.id)
     for e in snap.of_kind("candidate"):  # what the Director was offered
@@ -715,14 +1014,31 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             reason_text="neither ranked nor excluded by the Director (no reason given)",
             persona_call_id=call_id,
         )
+    if no_trade is not None:
+        j.add(
+            JournalPersona.DIRECTOR,
+            Stage.SHORTLIST,
+            SESSION_SUBJECT,
+            Choice.NO_TRADE,
+            ReasonCode.DIRECTOR_NO_TRADE,
+            reason_text=f"{no_trade}: {out.session_notes}".strip(": "),
+            persona_call_id=call_id,
+            payload={"no_trade_reason": no_trade, "market_regime": out.market_regime},
+        )
     payload = ShortlistPayload(
         shortlist=kept,
         excluded=excluded,
         market_regime=out.market_regime,
         session_notes=out.session_notes,
         budget=qr_budget,
+        portfolio_view=out.portfolio_view if not pctx.empty else None,
+        thesis_checks=_valid_thesis_checks(out, pctx),
+        no_trade_reason=no_trade,
+        market_guard=guard,
+        suppressed=[ln.removeprefix("- ") for ln in recent_lines],
     )
     entry = ctx.write("shortlist", SESSION_SUBJECT, payload)
+    _portfolio_notes(ctx, payload, pctx, entry.id, call_id)
     _note(
         ctx,
         SESSION_SUBJECT,
@@ -765,7 +1081,8 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         summary=f"{len(cands)} candidates → ranked {len(kept)}: {names}"
         + (f" (budget {qr_budget}; {len(over)} not structured)" if over else "")
         + (f"; excluded {len(excluded)}" if excluded else "")
-        + (f"; dropped {dict(dropped)}" if dropped else ""),
+        + (f"; dropped {dict(dropped)}" if dropped else "")
+        + (f"; no trade ({no_trade})" if no_trade else ""),
         metrics={
             "shortlist": len(kept),
             "budgeted": len(payload.budgeted()),
@@ -773,10 +1090,14 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "excluded": len(excluded),
             "not_ranked": len(not_ranked),
             "regime_written": len(regimes),
+            "open_positions": len(pctx.positions),
+            "suppressed": len(recent_lines),
+            "thesis_checks": len(payload.thesis_checks),
             **dropped,
             **budget.metrics(),
         },
         notice=notice,
+        stop_chain=no_trade is not None,  # E5.9: no Quant/Risk LLM calls on an empty shortlist
         card=director_card(
             payload,
             candidates=len(cands),
@@ -1532,11 +1853,18 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
 # ---------------------------------------------------------------------------
 
 
-def _existing(conn: sqlite3.Connection, day: str, ticker: str) -> bool:
+def _existing(conn: sqlite3.Connection, chain_run_id: str, ticker: str) -> bool:
+    """One open proposal per ticker per chain run (retry / resume idempotency, E5.9)."""
     row = conn.execute(
-        "SELECT 1 FROM proposals WHERE day = ? AND ticker = ? AND kind = 'open'", (day, ticker)
+        "SELECT 1 FROM proposals WHERE chain_run_id = ? AND ticker = ? AND kind = 'open'",
+        (chain_run_id, ticker),
     ).fetchone()
     return row is not None
+
+
+def _chain_key(ctx: JobContext, day: str) -> str:
+    """The proposal idempotency key: the chain run id, or a per-run key for manual runs."""
+    return ctx.chain_run_id or f"manual-{day}-{ctx.run_id}"
 
 
 def band_for(st: Any, limit: Decimal, market: Any, settings: ArcSettings) -> PriceBand:
@@ -1761,6 +2089,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     # account fetch, and again after each ticker's quotes are fetched.
     now = ctx.clock()
     day = _today(ctx).isoformat()
+    chain_key = _chain_key(ctx, day)
     j = _journal(ctx, ctx.snapshot.id)
     shortlist = _latest(ctx.snapshot, "shortlist", ShortlistPayload)
     structures = _latest(ctx.snapshot, "structures", StructuresPayload)
@@ -1844,6 +2173,11 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     max_opens = (
         settings.order_budget_restrictive_max_new_opens_per_loop if budget.tier.restricted else None
     )
+    dedupe_cfg = DedupeConfig.from_settings(settings, budget.tier)
+    priors = recent_ideas(ctx.conn, now=now, cfg=dedupe_cfg)
+    ctx.record_input(
+        "recent_ideas", "db", [r.model_dump(mode="json") for r in priors], count=len(priors)
+    )
 
     # Over-budget names were journalled OVER_BUDGET by the Quant step (E5.7).
     for item in shortlist.budgeted():
@@ -1862,9 +2196,9 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             )
             lines.append(f"{t}: skipped (restrictive tier: {max_opens} open(s) per run)")
             continue
-        if _existing(ctx.conn, day, t):
-            skip(t, "exists", ReasonCode.ALREADY_PROPOSED, f"already proposed on {day}")
-            lines.append(f"{t}: already proposed today")
+        if _existing(ctx.conn, chain_key, t):
+            skip(t, "exists", ReasonCode.ALREADY_PROPOSED, "already proposed in this chain run")
+            lines.append(f"{t}: already proposed in this chain run")
             continue
         a = assessed.get((t, qs.structure_type))
         if a is None:
@@ -1893,6 +2227,38 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             count=len(priced.contracts),
         )
         st = priced.structure
+        # E5.9 (D33): final idea dedupe on the full fingerprint (needs the live spot).
+        fp = fingerprint(t, item.stance, st, priced.spot, structure_type=qs.structure_type)
+        verdict = check_idea(
+            fp,
+            priors,
+            spot=priced.spot,
+            regime=shortlist.market_regime,
+            cfg=dedupe_cfg,
+        )
+        if verdict.suppressed:
+            code = verdict.reason_code or ReasonCode.DEDUPE_PROPOSED
+            skip(
+                t,
+                "dedupe",
+                code,
+                f"repeat idea ({verdict.detail})",
+                fingerprint=fp.key(),
+                prior=verdict.prior.model_dump(mode="json") if verdict.prior else None,
+            )
+            lines.append(f"{t}: repeat idea ({verdict.detail})")
+            continue
+        if verdict.override is not None:
+            with ctx.conn:
+                j.add(
+                    JournalPersona.SYSTEM,
+                    Stage.PROPOSE,
+                    t,
+                    Choice.NOTED,
+                    ReasonCode.DEDUPE_OVERRIDE,
+                    reason_text=verdict.detail,
+                    payload={"fingerprint": fp.key(), "override": verdict.override},
+                )
         if budget.tier.restricted:
             # D32 restrictive tier: stricter managed Net EV / PoP floors, deterministic.
             ok, why = _restrictive_check(
@@ -2005,9 +2371,13 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 run_id=ctx.run_id,
                 day=day,
                 ticker=t,
+                chain_run_id=chain_key,
+                fingerprint=fp.key(),
+                spot=str(priced.spot),
+                regime=shortlist.market_regime,
                 commit=False,
             )
-        except sqlite3.IntegrityError:  # a concurrent run won the (day, ticker) slot
+        except sqlite3.IntegrityError:  # a concurrent run won the (chain, ticker) slot
             ctx.conn.rollback()
             skip(t, "exists", ReasonCode.ALREADY_PROPOSED, "a concurrent run won the slot")
             continue

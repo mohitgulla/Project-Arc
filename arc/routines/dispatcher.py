@@ -447,13 +447,15 @@ class Dispatcher:
             )
             prev_run_id = run.run_id
             outcomes.append(outcome)
-            if outcome.status != "ok":
+            stop = outcome.status != "ok" or bool(outcome.metrics.get("stop_chain"))
+            if stop:
                 if chain_run_id and index + 1 < len(steps):
                     log.warning(
                         "routines.chain_stopped",
                         chain_run_id=chain_run_id,
                         at=step,
                         status=outcome.status,
+                        reason="stop_chain" if outcome.status == "ok" else outcome.status,
                         remaining=steps[index + 1 :],
                     )
                 break
@@ -545,6 +547,8 @@ class Dispatcher:
             )
             return self._outcome(run, "failed", error)
 
+        if result.stop_chain:
+            result.metrics = {**result.metrics, "stop_chain": True}
         trace.metrics = result.metrics
         summary = result.summary
         if note and note != "schedule":

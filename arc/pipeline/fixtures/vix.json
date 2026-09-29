@@ -1,0 +1,5 @@
+{
+  "note": "E5.9 fixture VIX for offline runs: the D33 market guard fails closed without a reading. Calm level on the recording date (2026-09-25).",
+  "vix": 15.6,
+  "as_of": "2026-09-25T15:59:00-04:00"
+}

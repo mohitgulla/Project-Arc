@@ -73,6 +73,9 @@ class JobResult:
     metrics: dict[str, Any] = field(default_factory=dict)
     card: CardView | None = None
     notice: str = ""
+    # E5.9 (D33): an OK result that ends the chain here (e.g. the Director found no trade:
+    # no Quant/Risk LLM calls). Recorded as ``metrics["stop_chain"]`` for the audit trail.
+    stop_chain: bool = False
 
 
 @dataclass
