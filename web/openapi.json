@@ -1,6 +1,100 @@
 {
   "components": {
     "schemas": {
+      "ActivityItem": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "fill",
+              "execution",
+              "exit",
+              "halt",
+              "resume",
+              "reconcile",
+              "alert"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "proposal hash for a drill-down link",
+            "title": "Ref"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "tone": {
+            "default": "neutral",
+            "enum": [
+              "neutral",
+              "neg",
+              "warn",
+              "pos"
+            ],
+            "title": "Tone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "kind",
+          "text"
+        ],
+        "title": "ActivityItem",
+        "type": "object"
+      },
+      "AlertView": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "opened_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened At"
+          }
+        },
+        "required": [
+          "kind",
+          "key",
+          "message",
+          "opened_at"
+        ],
+        "title": "AlertView",
+        "type": "object"
+      },
       "AppInfo": {
         "additionalProperties": false,
         "properties": {
@@ -87,6 +181,310 @@
           "stale_after_s"
         ],
         "title": "Cadence",
+        "type": "object"
+      },
+      "DayPnlSection": {
+        "additionalProperties": false,
+        "description": "Day P&L (equity \u2212 broker's prior close), realized vs unrealized, MTD / YTD.",
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "day_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Pct"
+          },
+          "day_pnl": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Pnl"
+          },
+          "performance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Performance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "performance_day": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Day MTD/YTD refer to",
+            "title": "Performance Day"
+          },
+          "prev_equity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Equity"
+          },
+          "realized": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Realized today (reconciled)",
+            "title": "Realized"
+          },
+          "realized_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized At"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "intraday",
+                  "reconciled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "unrealized": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Open legs' broker P&L",
+            "title": "Unrealized"
+          },
+          "unrealized_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized At"
+          }
+        },
+        "title": "DayPnlSection",
+        "type": "object"
+      },
+      "EquityPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          },
+          "v": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "V",
+            "type": "string"
+          }
+        },
+        "required": [
+          "t",
+          "v"
+        ],
+        "title": "EquityPoint",
+        "type": "object"
+      },
+      "EquitySection": {
+        "additionalProperties": false,
+        "description": "Hero equity, its change over the selected range and the series to plot.",
+        "properties": {
+          "change": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change"
+          },
+          "change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "change / start_value (fraction)",
+            "title": "Change Pct"
+          },
+          "range": {
+            "enum": [
+              "1D",
+              "1W",
+              "1M",
+              "3M",
+              "YTD",
+              "ALL"
+            ],
+            "title": "Range",
+            "type": "string"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/EquityPoint"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "series_source": {
+            "default": "daily",
+            "enum": [
+              "intraday",
+              "daily"
+            ],
+            "title": "Series Source",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "intraday",
+                  "reconciled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "intraday = latest monitor mark; reconciled = pnl_snapshots",
+            "title": "Source"
+          },
+          "start_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start At"
+          },
+          "start_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "'prev close' or the start day",
+            "title": "Start Label"
+          },
+          "start_value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Equity at the range start",
+            "title": "Start Value"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "value_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value At"
+          }
+        },
+        "required": [
+          "range"
+        ],
+        "title": "EquitySection",
         "type": "object"
       },
       "ErrorResponse": {
@@ -191,6 +589,45 @@
           "proposal_hash"
         ],
         "title": "GateViolation",
+        "type": "object"
+      },
+      "GreeksSection": {
+        "additionalProperties": false,
+        "properties": {
+          "greeks": {
+            "$ref": "#/components/schemas/GreeksView"
+          },
+          "max_alloc_pct": {
+            "title": "Max Alloc Pct",
+            "type": "number"
+          },
+          "max_loss_by_underlying": {
+            "additionalProperties": {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            "title": "Max Loss By Underlying",
+            "type": "object"
+          },
+          "per_underlying_cap": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "max_alloc_pct \u00d7 equity (gate rule)",
+            "title": "Per Underlying Cap"
+          }
+        },
+        "required": [
+          "greeks",
+          "max_alloc_pct"
+        ],
+        "title": "GreeksSection",
         "type": "object"
       },
       "GreeksView": {
@@ -628,6 +1065,85 @@
         "title": "MetaResponse",
         "type": "object"
       },
+      "MoverTile": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "change_today": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Structure day change: legs' change_today weighted by value",
+            "title": "Change Today"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "open_proposal_hash": {
+            "title": "Open Proposal Hash",
+            "type": "string"
+          },
+          "spark": {
+            "description": "Unrealized $ over today's marks",
+            "items": {
+              "type": "number"
+            },
+            "title": "Spark",
+            "type": "array"
+          },
+          "structure_id": {
+            "title": "Structure Id",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "unrealized_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pct"
+          }
+        },
+        "required": [
+          "structure_id",
+          "ticker",
+          "kind",
+          "open_proposal_hash"
+        ],
+        "title": "MoverTile",
+        "type": "object"
+      },
       "OpsView": {
         "additionalProperties": false,
         "properties": {
@@ -736,6 +1252,114 @@
           "tier"
         ],
         "title": "OrderBudgetView",
+        "type": "object"
+      },
+      "OverviewResponse": {
+        "additionalProperties": false,
+        "description": "``GET /api/overview``: every Overview card in one read.",
+        "properties": {
+          "activity": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityItem"
+            },
+            "title": "Activity",
+            "type": "array"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "day_pnl": {
+            "$ref": "#/components/schemas/DayPnlSection"
+          },
+          "equity": {
+            "$ref": "#/components/schemas/EquitySection"
+          },
+          "greeks": {
+            "$ref": "#/components/schemas/GreeksSection"
+          },
+          "marks_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latest monitor heartbeat",
+            "title": "Marks At"
+          },
+          "marks_stale": {
+            "description": "No monitor mark, or older than stale_after_s at as_of",
+            "title": "Marks Stale",
+            "type": "boolean"
+          },
+          "movers": {
+            "items": {
+              "$ref": "#/components/schemas/MoverTile"
+            },
+            "title": "Movers",
+            "type": "array"
+          },
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/PositionRow"
+            },
+            "title": "Positions",
+            "type": "array"
+          },
+          "proposals": {
+            "items": {
+              "$ref": "#/components/schemas/ProposalRow"
+            },
+            "title": "Proposals",
+            "type": "array"
+          },
+          "proposals_since": {
+            "format": "date-time",
+            "title": "Proposals Since",
+            "type": "string"
+          },
+          "range": {
+            "enum": [
+              "1D",
+              "1W",
+              "1M",
+              "3M",
+              "YTD",
+              "ALL"
+            ],
+            "title": "Range",
+            "type": "string"
+          },
+          "stale_after_s": {
+            "description": "Monitor marks older than this are stale",
+            "title": "Stale After S",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StatusSection"
+          }
+        },
+        "required": [
+          "as_of",
+          "range",
+          "stale_after_s",
+          "marks_stale",
+          "status",
+          "equity",
+          "day_pnl",
+          "positions",
+          "greeks",
+          "proposals",
+          "proposals_since",
+          "movers",
+          "activity"
+        ],
+        "title": "OverviewResponse",
         "type": "object"
       },
       "Performance": {
@@ -987,6 +1611,516 @@
         "title": "PnlView",
         "type": "object"
       },
+      "PositionRow": {
+        "additionalProperties": false,
+        "description": "One structure: entry vs mark per share (+ debit / \u2212 credit), P&L from its legs.",
+        "properties": {
+          "close_net": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Net"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "contracts": {
+            "title": "Contracts",
+            "type": "integer"
+          },
+          "day_change": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "$ change today (broker marks)",
+            "title": "Day Change"
+          },
+          "dte": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dte"
+          },
+          "entry_net": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Entry Net",
+            "type": "string"
+          },
+          "exit_pending": {
+            "default": false,
+            "title": "Exit Pending",
+            "type": "boolean"
+          },
+          "exit_proposal_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Proposal Hash"
+          },
+          "exit_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Reason"
+          },
+          "expiration": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration"
+          },
+          "held": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last reconcile found it at the broker",
+            "title": "Held"
+          },
+          "held_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Held At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "legs": {
+            "description": "Compact OCC symbols",
+            "items": {
+              "type": "string"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "mark_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mark At"
+          },
+          "mark_net": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u03a3 legs' broker mark, per share",
+            "title": "Mark Net"
+          },
+          "max_loss": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Structure max loss \u00d7 contracts",
+            "title": "Max Loss"
+          },
+          "open_proposal_hash": {
+            "title": "Open Proposal Hash",
+            "type": "string"
+          },
+          "opened_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened At"
+          },
+          "realized_pl": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Closed: \u2212(entry+close)\u00d7100\u00d7n",
+            "title": "Realized Pl"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "unrealized_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "P&L / |entry| \u00d7 100 \u00d7 n",
+            "title": "Unrealized Pct"
+          },
+          "unrealized_pl": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pl"
+          }
+        },
+        "required": [
+          "id",
+          "ticker",
+          "kind",
+          "status",
+          "legs",
+          "contracts",
+          "entry_net",
+          "open_proposal_hash"
+        ],
+        "title": "PositionRow",
+        "type": "object"
+      },
+      "PositionsResponse": {
+        "additionalProperties": false,
+        "description": "``GET /api/positions``: open and/or closed structures.",
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PositionRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "marks_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marks At"
+          },
+          "stale_after_s": {
+            "title": "Stale After S",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "closed",
+              "all"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "as_of",
+          "status",
+          "stale_after_s",
+          "items"
+        ],
+        "title": "PositionsResponse",
+        "type": "object"
+      },
+      "ProposalRow": {
+        "additionalProperties": false,
+        "description": "A proposal with its net EV after costs (E2.4 managed model \u00d7 contracts).",
+        "properties": {
+          "approval": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval"
+          },
+          "contracts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contracts"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "ev": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ev"
+          },
+          "execution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution"
+          },
+          "fill_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Price"
+          },
+          "gate_passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gate Passed"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "net_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Managed net EV \u00d7 contracts, $",
+            "title": "Net Ev"
+          },
+          "pop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pop"
+          },
+          "pop_managed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pop Managed"
+          },
+          "proposal_hash": {
+            "title": "Proposal Hash",
+            "type": "string"
+          },
+          "structure_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structure Kind"
+          },
+          "ticker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticker"
+          },
+          "violations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Violations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "proposal_hash",
+          "day",
+          "ticker",
+          "kind",
+          "structure_kind",
+          "contracts",
+          "limit",
+          "ev",
+          "pop",
+          "created_at",
+          "gate_passed"
+        ],
+        "title": "ProposalRow",
+        "type": "object"
+      },
       "ProposalView": {
         "additionalProperties": false,
         "properties": {
@@ -1156,6 +2290,101 @@
           "gate_passed"
         ],
         "title": "ProposalView",
+        "type": "object"
+      },
+      "StatusSection": {
+        "additionalProperties": false,
+        "description": "Full-width strip: trading state, scheduler health, alerts, D32 budget.",
+        "properties": {
+          "active_halts": {
+            "default": 0,
+            "title": "Active Halts",
+            "type": "integer"
+          },
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/AlertView"
+            },
+            "title": "Alerts",
+            "type": "array"
+          },
+          "halt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HaltView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Most recent active halt"
+          },
+          "halted": {
+            "title": "Halted",
+            "type": "boolean"
+          },
+          "health_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health At"
+          },
+          "health_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health Status"
+          },
+          "order_budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrderBudgetView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent until the monitor heartbeat carries it (E6.5)"
+          },
+          "tick_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tick At"
+          },
+          "tick_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tick Status"
+          }
+        },
+        "required": [
+          "halted"
+        ],
+        "title": "StatusSection",
         "type": "object"
       },
       "StructureView": {
@@ -1463,6 +2692,127 @@
         "summary": "Meta",
         "tags": [
           "meta"
+        ]
+      }
+    },
+    "/api/overview": {
+      "get": {
+        "description": "Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,\nmovers and recent activity, read in one pass (SELECT only).",
+        "operationId": "overview_api_overview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "1D",
+              "enum": [
+                "1D",
+                "1W",
+                "1M",
+                "3M",
+                "YTD",
+                "ALL"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Overview",
+        "tags": [
+          "overview"
+        ]
+      }
+    },
+    "/api/positions": {
+      "get": {
+        "description": "Open, closed or all structures with the latest broker marks.",
+        "operationId": "positions_api_positions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "open",
+              "enum": [
+                "open",
+                "closed",
+                "all"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PositionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Positions",
+        "tags": [
+          "overview"
         ]
       }
     },

@@ -13,6 +13,7 @@ export type Health = Schemas["HealthResponse"];
 export type Meta = Schemas["MetaResponse"];
 export type Cadence = Schemas["Cadence"];
 export type Snapshot = Schemas["TowerSnapshot"];
+export type Positions = Schemas["PositionsResponse"];
 export type ApiErrorBody = Schemas["ErrorResponse"];
 
 /** Every GET path the API declares. */

@@ -44,6 +44,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Overview
+         * @description Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,
+         *     movers and recent activity, read in one pass (SELECT only).
+         */
+        get: operations["overview_api_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/positions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Positions
+         * @description Open, closed or all structures with the latest broker marks.
+         */
+        get: operations["positions_api_positions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/snapshot": {
         parameters: {
             query?: never;
@@ -68,6 +109,43 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActivityItem */
+        ActivityItem: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "fill" | "execution" | "exit" | "halt" | "resume" | "reconcile" | "alert";
+            /**
+             * Ref
+             * @description proposal hash for a drill-down link
+             */
+            ref?: string | null;
+            /** Text */
+            text: string;
+            /**
+             * Tone
+             * @default neutral
+             * @enum {string}
+             */
+            tone: "neutral" | "neg" | "warn" | "pos";
+        };
+        /** AlertView */
+        AlertView: {
+            /** Key */
+            key: string;
+            /** Kind */
+            kind: string;
+            /** Message */
+            message: string;
+            /** Opened At */
+            opened_at: string | null;
+        };
         /** AppInfo */
         AppInfo: {
             /** Git Sha */
@@ -113,6 +191,99 @@ export interface components {
              * @description Intraday window (ET), if any
              */
             window?: string | null;
+        };
+        /**
+         * DayPnlSection
+         * @description Day P&L (equity − broker's prior close), realized vs unrealized, MTD / YTD.
+         */
+        DayPnlSection: {
+            /** As Of */
+            as_of?: string | null;
+            /** Day Pct */
+            day_pct?: number | null;
+            /** Day Pnl */
+            day_pnl?: string | null;
+            performance?: components["schemas"]["Performance"] | null;
+            /**
+             * Performance Day
+             * @description Day MTD/YTD refer to
+             */
+            performance_day?: string | null;
+            /** Prev Equity */
+            prev_equity?: string | null;
+            /**
+             * Realized
+             * @description Realized today (reconciled)
+             */
+            realized?: string | null;
+            /** Realized At */
+            realized_at?: string | null;
+            /** Source */
+            source?: ("intraday" | "reconciled") | null;
+            /**
+             * Unrealized
+             * @description Open legs' broker P&L
+             */
+            unrealized?: string | null;
+            /** Unrealized At */
+            unrealized_at?: string | null;
+        };
+        /** EquityPoint */
+        EquityPoint: {
+            /**
+             * T
+             * Format: date-time
+             */
+            t: string;
+            /** V */
+            v: string;
+        };
+        /**
+         * EquitySection
+         * @description Hero equity, its change over the selected range and the series to plot.
+         */
+        EquitySection: {
+            /** Change */
+            change?: string | null;
+            /**
+             * Change Pct
+             * @description change / start_value (fraction)
+             */
+            change_pct?: number | null;
+            /**
+             * Range
+             * @enum {string}
+             */
+            range: "1D" | "1W" | "1M" | "3M" | "YTD" | "ALL";
+            /** Series */
+            series?: components["schemas"]["EquityPoint"][];
+            /**
+             * Series Source
+             * @default daily
+             * @enum {string}
+             */
+            series_source: "intraday" | "daily";
+            /**
+             * Source
+             * @description intraday = latest monitor mark; reconciled = pnl_snapshots
+             */
+            source?: ("intraday" | "reconciled") | null;
+            /** Start At */
+            start_at?: string | null;
+            /**
+             * Start Label
+             * @description 'prev close' or the start day
+             */
+            start_label?: string | null;
+            /**
+             * Start Value
+             * @description Equity at the range start
+             */
+            start_value?: string | null;
+            /** Value */
+            value?: string | null;
+            /** Value At */
+            value_at?: string | null;
         };
         /**
          * ErrorResponse
@@ -165,6 +336,21 @@ export interface components {
             proposal_hash: string;
             /** Ticker */
             ticker: string | null;
+        };
+        /** GreeksSection */
+        GreeksSection: {
+            greeks: components["schemas"]["GreeksView"];
+            /** Max Alloc Pct */
+            max_alloc_pct: number;
+            /** Max Loss By Underlying */
+            max_loss_by_underlying?: {
+                [key: string]: string;
+            };
+            /**
+             * Per Underlying Cap
+             * @description max_alloc_pct × equity (gate rule)
+             */
+            per_underlying_cap?: string | null;
         };
         /**
          * GreeksView
@@ -326,6 +512,31 @@ export interface components {
              */
             theme_default: "system" | "light" | "dark";
         };
+        /** MoverTile */
+        MoverTile: {
+            /** At */
+            at?: string | null;
+            /**
+             * Change Today
+             * @description Structure day change: legs' change_today weighted by value
+             */
+            change_today?: number | null;
+            /** Kind */
+            kind: string | null;
+            /** Open Proposal Hash */
+            open_proposal_hash: string;
+            /**
+             * Spark
+             * @description Unrealized $ over today's marks
+             */
+            spark?: number[];
+            /** Structure Id */
+            structure_id: string;
+            /** Ticker */
+            ticker: string;
+            /** Unrealized Pct */
+            unrealized_pct?: number | null;
+        };
         /** OpsView */
         OpsView: {
             /** Health At */
@@ -355,6 +566,54 @@ export interface components {
             tier: string;
             /** Used */
             used: number;
+        };
+        /**
+         * OverviewResponse
+         * @description ``GET /api/overview``: every Overview card in one read.
+         */
+        OverviewResponse: {
+            /** Activity */
+            activity: components["schemas"]["ActivityItem"][];
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            day_pnl: components["schemas"]["DayPnlSection"];
+            equity: components["schemas"]["EquitySection"];
+            greeks: components["schemas"]["GreeksSection"];
+            /**
+             * Marks At
+             * @description Latest monitor heartbeat
+             */
+            marks_at?: string | null;
+            /**
+             * Marks Stale
+             * @description No monitor mark, or older than stale_after_s at as_of
+             */
+            marks_stale: boolean;
+            /** Movers */
+            movers: components["schemas"]["MoverTile"][];
+            /** Positions */
+            positions: components["schemas"]["PositionRow"][];
+            /** Proposals */
+            proposals: components["schemas"]["ProposalRow"][];
+            /**
+             * Proposals Since
+             * Format: date-time
+             */
+            proposals_since: string;
+            /**
+             * Range
+             * @enum {string}
+             */
+            range: "1D" | "1W" | "1M" | "3M" | "YTD" | "ALL";
+            /**
+             * Stale After S
+             * @description Monitor marks older than this are stale
+             */
+            stale_after_s: number;
+            status: components["schemas"]["StatusSection"];
         };
         /**
          * Performance
@@ -412,6 +671,154 @@ export interface components {
             /** Unrealized */
             unrealized?: string | null;
         };
+        /**
+         * PositionRow
+         * @description One structure: entry vs mark per share (+ debit / − credit), P&L from its legs.
+         */
+        PositionRow: {
+            /** Close Net */
+            close_net?: string | null;
+            /** Closed At */
+            closed_at?: string | null;
+            /** Contracts */
+            contracts: number;
+            /**
+             * Day Change
+             * @description $ change today (broker marks)
+             */
+            day_change?: string | null;
+            /** Dte */
+            dte?: number | null;
+            /** Entry Net */
+            entry_net: string;
+            /**
+             * Exit Pending
+             * @default false
+             */
+            exit_pending: boolean;
+            /** Exit Proposal Hash */
+            exit_proposal_hash?: string | null;
+            /** Exit Reason */
+            exit_reason?: string | null;
+            /** Expiration */
+            expiration?: string | null;
+            /**
+             * Held
+             * @description Last reconcile found it at the broker
+             */
+            held?: boolean | null;
+            /** Held At */
+            held_at?: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string | null;
+            /**
+             * Legs
+             * @description Compact OCC symbols
+             */
+            legs: string[];
+            /** Mark At */
+            mark_at?: string | null;
+            /**
+             * Mark Net
+             * @description Σ legs' broker mark, per share
+             */
+            mark_net?: string | null;
+            /**
+             * Max Loss
+             * @description Structure max loss × contracts
+             */
+            max_loss?: string | null;
+            /** Open Proposal Hash */
+            open_proposal_hash: string;
+            /** Opened At */
+            opened_at?: string | null;
+            /**
+             * Realized Pl
+             * @description Closed: −(entry+close)×100×n
+             */
+            realized_pl?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "closed";
+            /** Ticker */
+            ticker: string;
+            /**
+             * Unrealized Pct
+             * @description P&L / |entry| × 100 × n
+             */
+            unrealized_pct?: number | null;
+            /** Unrealized Pl */
+            unrealized_pl?: string | null;
+        };
+        /**
+         * PositionsResponse
+         * @description ``GET /api/positions``: open and/or closed structures.
+         */
+        PositionsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Items */
+            items: components["schemas"]["PositionRow"][];
+            /** Marks At */
+            marks_at?: string | null;
+            /** Stale After S */
+            stale_after_s: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "closed" | "all";
+        };
+        /**
+         * ProposalRow
+         * @description A proposal with its net EV after costs (E2.4 managed model × contracts).
+         */
+        ProposalRow: {
+            /** Approval */
+            approval?: string | null;
+            /** Contracts */
+            contracts: number | null;
+            /** Created At */
+            created_at: string | null;
+            /** Day */
+            day: string | null;
+            /** Ev */
+            ev: string | null;
+            /** Execution */
+            execution?: string | null;
+            /** Fill Price */
+            fill_price?: string | null;
+            /** Gate Passed */
+            gate_passed: boolean | null;
+            /** Kind */
+            kind: string;
+            /** Limit */
+            limit: string | null;
+            /**
+             * Net Ev
+             * @description Managed net EV × contracts, $
+             */
+            net_ev?: number | null;
+            /** Pop */
+            pop: number | null;
+            /** Pop Managed */
+            pop_managed?: number | null;
+            /** Proposal Hash */
+            proposal_hash: string;
+            /** Structure Kind */
+            structure_kind: string | null;
+            /** Ticker */
+            ticker: string | null;
+            /** Violations */
+            violations?: string[];
+        };
         /** ProposalView */
         ProposalView: {
             /** Approval */
@@ -444,6 +851,33 @@ export interface components {
             ticker: string | null;
             /** Violations */
             violations?: string[];
+        };
+        /**
+         * StatusSection
+         * @description Full-width strip: trading state, scheduler health, alerts, D32 budget.
+         */
+        StatusSection: {
+            /**
+             * Active Halts
+             * @default 0
+             */
+            active_halts: number;
+            /** Alerts */
+            alerts?: components["schemas"]["AlertView"][];
+            /** @description Most recent active halt */
+            halt?: components["schemas"]["HaltView"] | null;
+            /** Halted */
+            halted: boolean;
+            /** Health At */
+            health_at?: string | null;
+            /** Health Status */
+            health_status?: string | null;
+            /** @description Absent until the monitor heartbeat carries it (E6.5) */
+            order_budget?: components["schemas"]["OrderBudgetView"] | null;
+            /** Tick At */
+            tick_at?: string | null;
+            /** Tick Status */
+            tick_status?: string | null;
         };
         /** StructureView */
         StructureView: {
@@ -578,6 +1012,86 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MetaResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    overview_api_overview_get: {
+        parameters: {
+            query?: {
+                range?: "1D" | "1W" | "1M" | "3M" | "YTD" | "ALL";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OverviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    positions_api_positions_get: {
+        parameters: {
+            query?: {
+                status?: "open" | "closed" | "all";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PositionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Service Unavailable */

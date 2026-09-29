@@ -7,14 +7,9 @@ import { SettingsPanel } from "./components/Shell";
 import { Card } from "./components/Card";
 import { SettingsProvider } from "./lib/settings";
 import { KitchenSink } from "./pages/KitchenSink";
-import {
-  NotFoundPage,
-  OpsPage,
-  OverviewPage,
-  PerformancePage,
-  PositionsPage,
-  TradesPage,
-} from "./routes/pages";
+import { OverviewPage } from "./pages/Overview";
+import { PositionsPage } from "./pages/Positions";
+import { NotFoundPage, OpsPage, PerformancePage, TradesPage } from "./routes/pages";
 
 function makeClient() {
   return new QueryClient({
