@@ -678,3 +678,47 @@ class TestAccountProfilePipeline:
         assert account_snapshot(info, FIXTURE_NOW).settled_cash == Decimal(60)
         neg = AccountInfo(**base, cash=Decimal(-5))  # type: ignore[arg-type]
         assert settled_cash(neg) == Decimal(0)
+
+
+# ---------------------------------------------------------------------------
+# Sentinel S-7 / E6.4: sizing uses the remaining per-underlying budget
+# ---------------------------------------------------------------------------
+
+
+def test_propose_sizes_against_existing_exposure_and_keeps_realloc_source(
+    monkeypatch: pytest.MonkeyPatch,
+    routines,  # noqa: ANN001
+) -> None:
+    """An open SPY position using the whole 5% budget -> no trade (budget_exhausted),
+    recorded with what risk.reallocate needs to re-propose it after a close."""
+    from arc.broker.base import BrokerPosition
+    from arc.ingest.scout import load_fixture_docs
+    from arc.pipeline.env import FIXTURE_SETS
+    from arc.pipeline.runner import run_propose
+    from arc.routines.heartbeat import LogNotifier
+
+    monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
+    s = ArcSettings(_env_file=None, account_profile="cash_debit")  # type: ignore[call-arg]
+    conn = open_db(":memory:", copy=False)
+    load_fixture_docs(conn)
+    env = PipelineEnv.fixtures(FIXTURE_SETS["bullish"])
+    # 5 long Nov 780 calls: max loss = premium paid, $5,355 > the $5,000 SPY budget
+    env.positions = lambda: [
+        BrokerPosition(
+            symbol="SPY261106C00780000", qty=Decimal(5), side="long",
+            avg_entry_price=Decimal("10.71"),
+        )
+    ]  # fmt: skip
+    report = run_propose(
+        conn, s, routines, env, now=FIXTURE_NOW, notifier=LogNotifier(), mode="fixtures"
+    )
+    assert report.proposals == []
+    (row,) = conn.execute(
+        "SELECT choice, reason_code, payload FROM decisions WHERE stage = 'sizing'"
+    ).fetchall()
+    assert (row["choice"], row["reason_code"]) == ("no_trade", "sizing:budget_exhausted")
+    payload = json.loads(row["payload"])
+    assert Decimal(payload["existing_max_loss"]) > 0
+    src = payload["realloc_source"]
+    assert src["legs"][0][0] == "SPY261030C00770000" and src["suggestion"] >= 1
+    assert src["net_ev"] is not None and src["buying_power"] > 0
