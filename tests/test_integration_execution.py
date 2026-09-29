@@ -52,6 +52,10 @@ pytestmark = [
 ]
 
 
+_READS = 5  # quote reads per step before giving up (open, preflight, each close try)
+_READ_GAP_S = 5
+
+
 class QuotesUnusableError(RuntimeError):
     """The legs' quotes failed the E6.2a check: nothing was proposed or sent."""
 
@@ -215,9 +219,17 @@ def _close_with_retry(
     """Close through the live path; one more try from freshly fetched quotes. Outcome lines."""
     from arc.execution.ladder import ExecStatus
     from arc.gate import Portfolio
+    from arc.pipeline.market import price_structure
 
     tries: list[str] = []
     for attempt in (1, 2):
+        for _ in range(_READS - 1):  # re-read while only the quotes are unusable
+            pre = price_structure(data, legs, as_of=now_et().date(), r=0.04, require_iv=False)
+            try:
+                _quote_check(conn, pre, settings, fired="close-preread", sid=structure_id)
+                break
+            except QuotesUnusableError:
+                time.sleep(_READ_GAP_S)
         try:
             _, close_band, closed, _ = _gate_approve_execute(
                 conn=conn,
@@ -292,27 +304,44 @@ def test_approve_then_work_band_on_paper() -> None:
         ticker="SPY", stance="bullish", catalyst_type="integration", confidence=0.5
     )
 
-    # (a) before opening: the close must be priceable from fresh quotes, else skip
-    pre = price_structure(data, close_legs, as_of=today, r=0.04, require_iv=False)
-    try:
-        _quote_check(conn, pre, settings, fired="preflight", sid=None)
-    except QuotesUnusableError as exc:
-        pytest.skip(f"close quotes unusable before opening, nothing traded: {exc}")
+    # (a) before opening: the close must be priceable from fresh quotes, else skip.
+    # The indicative feed jitters per read (docs/OPS.md 5.11), so re-read a few times;
+    # every read goes through the unchanged check.
+    reads: list[str] = []
+    for _ in range(_READS):
+        pre = price_structure(data, close_legs, as_of=today, r=0.04, require_iv=False)
+        try:
+            _quote_check(conn, pre, settings, fired="preflight", sid=None)
+        except QuotesUnusableError as exc:
+            reads.append(str(exc))
+            time.sleep(_READ_GAP_S)
+        else:
+            break
+    else:
+        pytest.skip(f"close quotes unusable on {_READS} reads, nothing traded: {reads}")
 
-    try:
-        proposal, band, out, phash = _gate_approve_execute(
-            conn=conn,
-            broker=broker,
-            data=data,
-            settings=settings,
-            legs=legs,
-            candidate_id=cid,
-            run_id="e62-integration-open",
-            portfolio=Portfolio(),
-            closing=False,
-        )
-    except QuotesUnusableError as exc:
-        pytest.skip(f"open quotes unusable, nothing traded: {exc}")
+    opened = None
+    for _ in range(_READS):
+        try:
+            opened = _gate_approve_execute(
+                conn=conn,
+                broker=broker,
+                data=data,
+                settings=settings,
+                legs=legs,
+                candidate_id=cid,
+                run_id="e62-integration-open",
+                portfolio=Portfolio(),
+                closing=False,
+            )
+        except QuotesUnusableError as exc:  # raised before any proposal or order
+            reads.append(str(exc))
+            time.sleep(_READ_GAP_S)
+        else:
+            break
+    if opened is None:
+        pytest.skip(f"open quotes unusable on {_READS} reads, nothing traded: {reads}")
+    proposal, band, out, phash = opened
     width = D(str(short_leg.strike - long_leg.strike))
 
     try:
