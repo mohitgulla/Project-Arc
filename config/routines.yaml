@@ -250,7 +250,9 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   # D34: publishes this chain's proposal cards (auto-approved when `auto_approve` is on for
   # ARC_ENV) and hands each approved one to an Investor subprocess (own lock, ~6 min ladder).
   # With auto-approve off it reports "awaiting approval". The Investor run joins the chain.
-  execute: {reads: [proposal], writes: [], llm: false, notify: summary}
+  # D31: `on_no_change: run` = the only step a no_change loop still runs (carries pending
+  # approvals / ladders forward); every other chain step defaults to `skip`.
+  execute: {reads: [proposal], writes: [], llm: false, notify: summary, on_no_change: run}
 
 triggers: []                    # D31: no scout.completed -> director trigger any more; the 5-min
                                 # loop picks new candidates up within one slot

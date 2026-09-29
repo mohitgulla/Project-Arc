@@ -435,7 +435,7 @@ class Dispatcher:
         # D31: the loop chain has a deadline. A step that is running when it passes
         # may finish; no later step starts. `no_change` (the Director found the same
         # inputs as last time) skips the LLM steps and runs the deterministic tail.
-        is_loop = bool(chain_run_id) and self.routines.is_loop(steps[0])
+        is_loop = bool(chain_run_id) and reason == "schedule" and self.routines.is_loop(steps[0])
         deadline = time.monotonic() + self.routines.loop.max_runtime.total_seconds()
         durations: dict[str, int] = {}
         no_change = False
@@ -456,7 +456,7 @@ class Dispatcher:
                     )
                 )
                 continue
-            kind, step_spec = self.routines.step(step)
+            _, step_spec = self.routines.step(step)
             if is_loop and index and time.monotonic() > deadline:
                 timed_out = True
                 outcomes.append(
@@ -471,7 +471,7 @@ class Dispatcher:
                     )
                 )
                 continue
-            if is_loop and no_change and index and self._llm(kind, step_spec):
+            if is_loop and no_change and index and step_spec.on_no_change == "skip":
                 outcomes.append(
                     self._record_skipped_step(
                         step,
@@ -696,6 +696,7 @@ class Dispatcher:
                 settings_factory=self._settings_factory,
                 clock_fn=self._clock,
                 run_env=self.run_env,
+                reason=run.reason,
             )
             trace.ctx = ctx
             hold = run.step_index and job_lock  # a chain step; run_event holds its own lock

@@ -166,6 +166,10 @@ class StepSpec(BaseModel):
     handler: str | None = None
     notify: Notify | None = None
     llm: bool | None = None  # holds the global LLM lock; default: personas yes, sources no
+    # D31: what a chain step does when the loop's root step reports `no_change`.
+    # `skip` (default) records a skipped run; `run` executes it anyway (e.g. `execute`,
+    # which carries pending approvals and ladders forward).
+    on_no_change: Literal["skip", "run"] = "skip"
 
     @field_validator("reads", "writes")
     @classmethod
