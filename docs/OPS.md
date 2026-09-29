@@ -162,7 +162,7 @@ the plist with `--print`, and remove it with `--uninstall`.
 |---|---|---|
 | tick | There is no `tick` heartbeat for `tick_stale_after` (15m), or none ever. | `tick_stale` |
 | routine_windows | A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
-| stuck_runs | A `routine_runs` row is still `running` after `stuck_after` (70m). | `stuck:<run_id>` |
+| stuck_runs | A `routine_runs` row is still `running` after `stuck_after` (70m), or after its job's `stuck_after_jobs` override (`monitor: 10m`, E5.3a). | `stuck:<run_id>` |
 | gateway | `hermes gateway status` or `hermes cron status` shows a `✗`, exits non-zero, or times out. `⚠` warnings count as degraded: they are recorded but not alerted unless `gateway.alert_on_degraded: true`. | `gateway` |
 | remote_access (E8.6, off until enabled) | `GET <ts-ip>:1994/api/status` doesn't answer, or answers without `auth_required: true` and `basic` in `auth_providers`; `GET <ts-ip>:4174/_stcore/health` isn't 200; or either port accepts a connection on a LAN address. See §5.7. | `remote_hermes`, `remote_tower`, `remote_exposed` |
 
@@ -259,9 +259,29 @@ data or an LLM. Streamlit runs headless, with XSRF protection on and usage stats
 | Halts | `halts`, active first |
 | Gate violations | failed `gate_decisions`, split by rule code (last 7 days) |
 
-The intraday `monitor` routine writes one `heartbeats` row per run
-(`component = monitor`: Greeks, equity and broker legs). Greeks older than 45 minutes
-are flagged as stale on the page. Outside the session they show the last in-session run.
+The intraday `monitor` routine runs every 5 minutes in session (D35; `personas.monitor`
+in `config/routines.yaml`) and writes one `heartbeats` row per run (`component = monitor`):
+Greeks, `equity`, `last_equity`, `cash`, `buying_power`, `options_buying_power`,
+`non_marginable_bp`, `broker_requests` (the run's request estimate), and the broker legs
+with `current_price`, `lastday_price` and `change_today` when Alpaca reports them. The
+tower reads only this row, so marks are at most ~6 minutes old in session.
+
+**Stale rule (E5.3a).** Greeks are flagged stale once the latest monitor row is older than
+3 × the monitor's `every` (15 minutes at 5m). The cadence is read from the effective routines
+config (`routines.yaml` plus any `!arc set routines.monitor.cadence` override), so changing the
+cadence moves the threshold with no code change. The snapshot exposes it as
+`greeks.stale_after_s` (`arc tower snapshot --json`), which the Streamlit page and the E8.7 API
+share. Outside the session the page shows the last in-session run.
+
+Broker load: each run makes 2 + 4 × (open underlyings) Alpaca requests (account, positions,
+then quote, chain snapshot, contracts page and volume snapshot per underlying): 34 at the
+default 8 open positions, one run per 5 minutes, far below Alpaca Basic's 200 requests/min.
+
+Quick check of the fields on a DB:
+
+```
+sqlite3 data/arc.db "select at, json_extract(detail,'$.equity'), json_extract(detail,'$.buying_power') from heartbeats where component='monitor' order by at desc limit 3"
+```
 
 ### 5.7 Remote access over Tailscale (E8.6, D29)
 

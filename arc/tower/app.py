@@ -31,7 +31,8 @@ if TYPE_CHECKING:
 
 __all__ = ["main", "render"]
 
-STALE_AFTER = _dt.timedelta(minutes=45)  # monitor runs every 30 min in session
+# Greeks staleness: ``snap.greeks.stale_after_s`` (3x the monitor cadence from
+# routines.yaml, arc.tower.data.monitor_stale_after), shared with the E8.7 API.
 
 
 def _db_path() -> Path:
@@ -152,7 +153,7 @@ def _greeks(snap: TowerSnapshot) -> None:
     if not g.valued:
         st.warning(f"Positions could not be valued at {_ts(g.at)}: Greeks unavailable.")
         return
-    if snap.as_of - g.at > STALE_AFTER:
+    if snap.as_of - g.at > _dt.timedelta(seconds=g.stale_after_s):
         st.warning(f"Greeks are stale: last monitor run {_ts(g.at)} ({_age(g.at, snap.as_of)}).")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Δ (share-eq)", f"{g.delta:+.1f}" if g.delta is not None else "n/a",

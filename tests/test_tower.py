@@ -192,6 +192,60 @@ def test_lookback_widens_window(db: Path) -> None:
     assert s.violation_counts["halted"] == 1
 
 
+def test_greeks_stale_after_follows_monitor_cadence(db: Path) -> None:
+    """E5.3a (D35): stale = 3x ``personas.monitor.every`` (5m -> 15 min), one shared rule."""
+    from arc.tower.data import monitor_stale_after
+
+    assert monitor_stale_after() == dt.timedelta(minutes=15)
+    s = _snap(db)
+    assert s.greeks.stale_after_s == 900
+    assert _snap(db, stale_after=dt.timedelta(minutes=45)).greeks.stale_after_s == 2700
+    # a D26 control-panel cadence override reaches the tower through the same DB
+    from arc.config import ArcSettings
+    from arc.control.service import ControlService
+
+    rw = connect(db)
+    try:
+        owner = "U0OWNER001"
+        svc = ControlService(
+            rw,
+            base=ArcSettings(_env_file=None, approver_slack_user_ids=[owner]),  # type: ignore[call-arg]
+            now=lambda: NOW,
+        )
+        r = svc.set("routines.monitor.cadence", "every 10m 09:30-16:00",
+                    actor=owner, source="slack")  # fmt: skip
+        if r.pending is not None:
+            svc.confirm(r.pending.code, actor=owner, source="slack")
+    finally:
+        rw.close()
+    ro = connect_ro(db)
+    try:
+        assert monitor_stale_after(ro) == dt.timedelta(minutes=30)
+    finally:
+        ro.close()
+    assert _snap(db).greeks.stale_after_s == 1800
+    # unreadable routines config -> the default, never an error on the page
+    with mock.patch("arc.control.effective.load_routines", side_effect=ValueError("x")):
+        assert monitor_stale_after() == dt.timedelta(minutes=15)
+
+
+def test_leg_marks_reach_the_snapshot(tmp_path: Path) -> None:
+    path = tmp_path / "marks.db"
+    conn = connect(path)
+    migrate(conn)
+    HeartbeatRepo(conn).record(
+        "monitor", "ok", at=NOW,
+        detail={"valued": True, "legs": [{"symbol": SHORT, "qty": "-1", "side": "short",
+                "current_price": "1.25", "lastday_price": "1.10", "change_today": "0.1364"}]},
+    )  # fmt: skip
+    conn.commit()
+    conn.close()
+    (leg,) = _snap(path).legs
+    assert (leg.current_price, leg.lastday_price, leg.change_today) == (
+        D("1.25"), D("1.10"), D("0.1364"),
+    )  # fmt: skip
+
+
 def test_empty_db_renders_nothing_but_does_not_fail(tmp_path: Path) -> None:
     path = tmp_path / "empty.db"
     conn = connect(path)

@@ -59,6 +59,16 @@ def _enum_value(v: object) -> str:
     return str(getattr(v, "value", v))
 
 
+def _opt_dec(v: object) -> Decimal | None:
+    """Optional Alpaca decimal field (wire string); anything else (None, "") -> ``None``."""
+    if isinstance(v, bool) or not isinstance(v, str | int | float | Decimal) or v == "":
+        return None
+    try:
+        return Decimal(str(v))
+    except ArithmeticError:  # decimal.InvalidOperation: not a number
+        return None
+
+
 def _require_paper() -> None:
     """Fail-fast if ARC_ENV is not paper."""
     env_val = os.environ.get("ARC_ENV", "paper").lower()
@@ -177,6 +187,9 @@ class AlpacaPaperBroker:
                     avg_entry_price=Decimal(pos.avg_entry_price) if pos.avg_entry_price else None,
                     unrealized_pl=Decimal(pos.unrealized_pl) if pos.unrealized_pl else None,
                     asset_class=_enum_value(pos.asset_class) if pos.asset_class else "us_option",
+                    current_price=_opt_dec(getattr(pos, "current_price", None)),
+                    lastday_price=_opt_dec(getattr(pos, "lastday_price", None)),
+                    change_today=_opt_dec(getattr(pos, "change_today", None)),
                 )
             )
         return result

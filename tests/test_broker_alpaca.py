@@ -110,19 +110,41 @@ class TestAlpacaPaperBrokerMocked:
         assert pos.symbol == "SPY261016C00450000"
         assert pos.qty == Decimal("-2")
 
+    def test_positions_carry_intraday_marks(self) -> None:
+        """E5.3a: current_price / lastday_price / change_today mapped when present."""
+        pos = _alpaca_position("SPY261016C00450000", "1", PositionSide.LONG, "us_option")
+        pos.current_price = "3.75"
+        pos.lastday_price = "3.40"
+        pos.change_today = "0.1029"
+        bare = _alpaca_position("SPY261016C00455000", "1", PositionSide.LONG, "us_option")
+        bare.current_price = None
+        bare.lastday_price = ""
+        bare.change_today = "n/a"
+        mock_client = MagicMock()
+        mock_client.get_all_positions.return_value = [pos, bare]
+        got, missing = _make_broker(mock_client).positions()
+        assert (got.current_price, got.lastday_price, got.change_today) == (
+            Decimal("3.75"), Decimal("3.40"), Decimal("0.1029"),
+        )  # fmt: skip
+        assert (missing.current_price, missing.lastday_price, missing.change_today) == (
+            None, None, None,
+        )  # fmt: skip
+
     def test_positions_from_real_alpaca_model(self) -> None:
         """Positions built by alpaca-py's own model parse to plain values."""
         raw = Position(
             asset_id=uuid4(), symbol="SPY261030C00736000", exchange=AssetExchange.EMPTY,
             asset_class=AssetClass.US_OPTION, avg_entry_price="5.10", qty="1",
             side=PositionSide.LONG, cost_basis="510", unrealized_pl="12.5",
-            market_value="522.5",
+            market_value="522.5", current_price="5.225", lastday_price="5.00",
+            change_today="0.045",
         )  # fmt: skip
         mock_client = MagicMock()
         mock_client.get_all_positions.return_value = [raw]
         (pos,) = _make_broker(mock_client).positions()
         assert (pos.asset_class, pos.side) == ("us_option", "long")
         assert pos.unrealized_pl == Decimal("12.5")
+        assert pos.current_price == Decimal("5.225") and pos.change_today == Decimal("0.045")
 
     def test_submit_mleg(self) -> None:
         mock_client = MagicMock()

@@ -88,7 +88,8 @@ class TestShippedDefaults:
         assert p["scout"].cadence == "at 12:00, 22:00 ET (daily)" and p["scout"].after_sources
         assert p["director"].cadence == "at 09:30 ET (trading)"
         assert p["director"].chain == ["quant", "risk", "propose"]
-        assert p["monitor"].cadence == "every 30m 09:30-16:00 ET (trading)"
+        assert p["monitor"].cadence == "every 5m 09:30-16:00 ET (trading)"  # D35 (E5.3a)
+        assert p["monitor"].options["eod_marks_from"] == "15:50"
         assert p["monitor"].llm is False and p["monitor"].halt_exempt
         assert p["auditor"].cadence == "at 16:30 ET (trading)" and p["auditor"].halt_exempt
         assert p["scorecard"].cadence == "at 16:45 ET (fri)"
@@ -108,7 +109,9 @@ class TestShippedDefaults:
         assert len(plan["rss"]) == 29 and plan["rss"][0] == "Mon 06:00"  # 06:00..20:00 / 30m
         assert len(plan["edgar"]) == 57 and plan["edgar"][-1] == "Mon 20:00"
         assert plan["director"] == ["Mon 09:30"]
-        assert len(plan["monitor"]) == 14
+        # D35: every 5 min, 09:30..16:00 inclusive = 6.5 h x 12 + 1 = 79 slots
+        assert len(plan["monitor"]) == 79
+        assert len(set(plan["monitor"])) == 79  # no slot planned twice
         assert (plan["monitor"][0], plan["monitor"][-1]) == ("Mon 09:30", "Mon 16:00")
         assert plan["auditor"] == ["Mon 16:30"]
         assert "scorecard" not in plan and "investor" not in plan
@@ -512,6 +515,119 @@ class TestMonitor:
         assert "expiring within 3 day(s): SPY 09-28" in r.notice
         # same notice again the same day is not re-posted
         assert monitor(ctx, _env(naked)).notice == ""
+
+    def test_heartbeat_carries_account_fields_and_leg_marks(self, conn: sqlite3.Connection) -> None:
+        """E5.3a (D35): cash / buying power / per-leg marks for the tower, no migration."""
+        from arc.monitoring.store import HeartbeatRepo
+
+        legs = [
+            p.model_copy(update={"current_price": Decimal("5.25"),
+                                 "lastday_price": Decimal("5.00"),
+                                 "change_today": Decimal("0.05")})
+            for p in _spread()
+        ]  # fmt: skip
+        env = _env(legs, equity="100250")
+        info = AccountInfo(
+            account_id="PAPER", equity=Decimal("100250"), last_equity=Decimal("100000"),
+            cash=Decimal("98000.5"), buying_power=Decimal("196001"),
+            options_buying_power=Decimal("98000.5"), non_marginable_buying_power=Decimal("97000"),
+        )  # fmt: skip
+        env.account = lambda: info
+        ctx = _ctx(conn, "monitor", {"every": "5m"}, FIXTURE_NOW, _settings())
+        monitor(ctx, env)
+        hb = HeartbeatRepo(conn).latest("monitor")
+        assert hb is not None
+        d = hb.detail
+        assert d["equity"] == 100250.0 and d["last_equity"] == 100000.0
+        assert d["cash"] == 98000.5 and d["buying_power"] == 196001.0
+        assert d["options_buying_power"] == 98000.5 and d["non_marginable_bp"] == 97000.0
+        leg = d["legs"][0]
+        assert (leg["current_price"], leg["lastday_price"], leg["change_today"]) == (
+            "5.25", "5.00", "0.05",
+        )  # fmt: skip
+        assert d["broker_requests"] == 6  # account + positions + 4 for the one SPY root
+
+    def test_missing_optional_account_fields_are_null(self, conn: sqlite3.Connection) -> None:
+        from arc.monitoring.store import HeartbeatRepo
+
+        env = _env([])
+        env.account = lambda: AccountInfo(
+            account_id="PAPER", equity=Decimal(1), buying_power=Decimal(2), cash=Decimal(3)
+        )
+        monitor(_ctx(conn, "monitor", {"every": "5m"}, FIXTURE_NOW, _settings()), env)
+        hb = HeartbeatRepo(conn).latest("monitor")
+        assert hb is not None
+        assert hb.detail["options_buying_power"] is None and hb.detail["last_equity"] is None
+        assert hb.detail["non_marginable_bp"] is None and hb.detail["cash"] == 3.0
+
+    def test_notices_post_once_per_day_when_the_mix_changes(self, conn: sqlite3.Connection) -> None:
+        """At 5 min the notice mix changes run to run; each distinct text posts once a day."""
+        naked = [
+            BrokerPosition(symbol="SPY260928P00700000", qty=Decimal(-1), side="short",
+                           avg_entry_price=Decimal("1")),
+        ]  # fmt: skip
+        spec = {"every": "5m", "expiry_warn_days": 3}
+        t0 = et(2026, 9, 25, 10, 0)
+        r1 = monitor(_ctx(conn, "monitor", spec, t0, _settings()),
+                     _env(naked, equity="96000", last="100000"))  # fmt: skip
+        assert "daily-loss halt raised" in r1.notice and "expiring within 3" in r1.notice
+        assert "cannot value open positions" in r1.notice
+        seen: list[str] = []
+        for i in range(1, 12):  # the rest of the hour, every 5 min: nothing new
+            ctx = _ctx(conn, "monitor", spec, t0 + dt.timedelta(minutes=5 * i), _settings())
+            seen.append(monitor(ctx, _env(naked, equity="96000", last="100000")).notice)
+        assert seen == [""] * 11
+        # a different notice the same day posts, alone
+        spec2 = {"every": "5m", "expiry_warn_days": 5}
+        r2 = monitor(_ctx(conn, "monitor", spec2, t0 + dt.timedelta(hours=1), _settings()),
+                     _env(naked))  # fmt: skip
+        assert r2.notice == "expiring within 5 day(s): SPY 09-28"
+        # next ET day: posted again
+        r3 = monitor(_ctx(conn, "monitor", spec, et(2026, 9, 26, 10, 0), _settings()),
+                     _env(naked))  # fmt: skip
+        assert "expiring within 3 day(s): SPY 09-28" in r3.notice
+
+    @pytest.mark.parametrize("legacy", ["0123456789abcdef", "1234567890123456"])
+    def test_legacy_notice_state_is_replaced(self, conn: sqlite3.Connection, legacy: str) -> None:
+        """A pre-E5.3a bare digest in routine_state is not a JSON object: nothing seen."""
+        from arc.routines.monitor import _NOTICE_KEY
+        from arc.routines.runs import RoutineStateRepo
+
+        RoutineStateRepo(conn).set(_NOTICE_KEY, legacy, now=FIXTURE_NOW)
+        env = _env([], equity="96000", last="100000")
+        r = monitor(_ctx(conn, "monitor", {"every": "5m"}, FIXTURE_NOW, _settings()), env)
+        assert r.notice.startswith("daily-loss halt raised:")
+
+    def test_two_runs_in_one_session_propose_at_most_one_exit(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """E5.3a: at a 5-min cadence the exit dedupe (exit pending / exit_day) still holds."""
+        from tests.test_execution_exits import NOW, bull_put, open_structure
+        from tests.test_execution_exits import settings as exit_settings
+
+        open_structure(conn)  # 2 x SPY 711/710 bull put, take profit fires on the fixture
+        held = [
+            BrokerPosition(symbol=leg.occ_symbol, qty=Decimal(2 if leg.side == "long" else -2),
+                           side=str(leg.side), avg_entry_price=Decimal("1"))
+            for leg in bull_put().legs
+        ]  # fmt: skip
+        spec = {"every": "5m", "exits": True, "eod_marks_from": "15:50", "writes": ["proposal"]}
+        proposed = []
+        for i in range(3):
+            ctx = _ctx(conn, "monitor", spec, NOW + dt.timedelta(minutes=5 * i), exit_settings())
+            proposed.append(monitor(ctx, _env(held)).metrics["exits_proposed"])
+        assert proposed == [1, 0, 0]
+        n = conn.execute("SELECT COUNT(*) FROM proposals WHERE kind = 'close'").fetchone()[0]
+        assert n == 1
+
+    @pytest.mark.parametrize("roots", [0, 1, 8, 15])
+    def test_broker_requests_stay_under_alpaca_basic_limit(self, roots: int) -> None:
+        """E5.3a: one run per 5 min; even 3 overlapping jobs in a minute stay under 200/min."""
+        from arc.routines.monitor import ALPACA_BASIC_REQ_PER_MIN, broker_requests
+
+        assert broker_requests(roots) == 2 + 4 * roots
+        assert 3 * broker_requests(roots) < ALPACA_BASIC_REQ_PER_MIN
+        assert 3 * broker_requests(_settings().max_open_positions) < ALPACA_BASIC_REQ_PER_MIN
 
     def test_monitor_never_submits(self) -> None:
         """E6.2: the monitor may *propose* exits (gate + token + card) but never sends one."""
