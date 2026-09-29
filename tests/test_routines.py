@@ -909,7 +909,12 @@ class TestHeartbeats:
         d.run_manual("scout", now=et(2026, 9, 28, 12, 0))
         blocks = notes.blocks[0]
         assert blocks is not None
-        assert blocks[-1]["elements"][0]["text"] == "sources since last update: rss: 3 new docs"
+        # E5.5b: the folded line is a [Scout] Session notes section before the
+        # footer; the footer stays last. The card fixture has no footer, so the
+        # section is simply the last block here.
+        assert blocks[-1]["text"]["text"] == (
+            "*[Scout] Session notes*\nsources since last update: rss: 3 new docs"
+        )
         assert notes.posts[0][1].endswith("\n> sources since last update: rss: 3 new docs")
 
     def test_failures_keep_one_line_alert(self, conn: sqlite3.Connection) -> None:
