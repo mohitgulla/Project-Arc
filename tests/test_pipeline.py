@@ -214,9 +214,10 @@ class TestFixtureRun:
             ("quant", "ok"),
             ("risk", "ok"),
             ("propose", "ok"),
+            ("execute", "ok"),  # D34: no Slack in fixtures -> publishes nothing, dispatches nothing
         ]
         assert not report.failed
-        # every chain step (director → propose) shares one chain_run_id
+        # every chain step (director → execute) shares one chain_run_id
         root = report.outcomes[1].run_id
         chain_ids = {o.chain_run_id for o in report.outcomes[1:]}
         assert len(chain_ids) == 1
@@ -356,6 +357,7 @@ class TestDigestCards:
             "[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
             "[Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
             None,  # propose has no card (E6.1 posts the proposal card)
+            None,  # execute (D34): summary only; the Investor posts the order card
         ]
         # Fallback text = the pre-E5.5 one-liners.
         assert texts[0] == ("[Scout] scout ✓ 11 docs (11 stories) → 6 accepted, 4 candidates today")

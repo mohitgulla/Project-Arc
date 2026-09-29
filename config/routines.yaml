@@ -166,7 +166,7 @@ personas:
   director:                     # pre-market chain at the open (PLAN §2.6: 06:30 PT)
     schedule: ["09:30"]
     days: trading
-    chain: [quant, risk, propose]
+    chain: [quant, risk, propose, execute]   # D34: execute = publish + auto-approve + hand off ladders
     reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options]   # == DIRECTOR_READS (arc/pipeline/steps.py)
     writes: [shortlist, regime, note]
     ttl: 2h
@@ -188,7 +188,7 @@ personas:
     window: "09:45-16:00"       # offset from the monitor; never at the open's first quotes
     days: trading
     llm: false                  # the review is deterministic; risk.reallocate calls the LLM
-    chain: [investor.exits, risk.reallocate]
+    chain: [investor.exits, risk.reallocate, execute]   # D34: auto-approved closes/swaps go out in-run
     notify: quiet               # folds into the next persona line; proposals post their own cards
     reads: [regime]             # realised-vol forecast for the remaining-EV paths
     writes: [position_review]
@@ -224,6 +224,10 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   # E6.4 chain steps (after positions.evaluate). Every close / swap open is a proposal: gate + approval.
   investor.exits:  {reads: [position_review], writes: [proposal], llm: false, notify: summary}
   risk.reallocate: {reads: [position_review], writes: [proposal], notify: summary}   # Risk vetoes swaps (LLM)
+  # D34: publishes this chain's proposal cards (auto-approved when `auto_approve` is on for
+  # ARC_ENV) and hands each approved one to an Investor subprocess (own lock, ~6 min ladder).
+  # With auto-approve off it reports "awaiting approval". The Investor run joins the chain.
+  execute: {reads: [proposal], writes: [], llm: false, notify: summary}
 
 triggers:                       # a run finishing (or an external event) can start another run
   - on: scout.completed         # only the 12:00 Scout can match: 22:00 is never in-session

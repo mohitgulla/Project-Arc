@@ -75,6 +75,14 @@ def add_routines_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     r.add_argument("--now", default=None)
     r.add_argument("--no-slack", action="store_true")
     r.add_argument("--lock-dir", default=str(DEFAULT_LOCK_DIR))
+    r.add_argument(
+        "--event",
+        default=None,
+        metavar="ID",
+        help="D34: run the job for one queued routine_events row (own lock, not the LLM lock)",
+    )
+    r.add_argument("--chain-run-id", default=None, help="with --event: join this chain run")
+    r.add_argument("--parent-run-id", default=None, help="with --event: the dispatching run")
 
     h = rsub.add_parser("history", help="Recent routine runs")
     _common(h)
@@ -134,6 +142,7 @@ def _dispatcher(
     args: argparse.Namespace, conn: sqlite3.Connection, *, dry: bool = False
 ) -> Dispatcher:
     from arc.routines.dispatcher import Dispatcher as _Dispatcher
+    from arc.routines.handlers import RunEnv
     from arc.routines.heartbeat import LogNotifier, Notifier, SlackDayThreadNotifier
     from arc.routines.locks import LockManager, NullLocks
     from arc.utils.calendar import now_et
@@ -149,7 +158,13 @@ def _dispatcher(
     # ``--now`` replays keep the frozen time for every step.
     clock = now_et if not dry and not getattr(args, "now", None) else None
     routines = _effective_load(args, conn)
-    return _Dispatcher(conn, routines, locks=locks, notifier=notifier, clock=clock)
+    run_env = RunEnv(
+        db_path=getattr(args, "db", None),
+        config_path=getattr(args, "config", None),
+        lock_dir=None if dry else str(getattr(args, "lock_dir", "") or "") or None,
+        slack=not (dry or getattr(args, "no_slack", False)),
+    )
+    return _Dispatcher(conn, routines, locks=locks, notifier=notifier, clock=clock, run_env=run_env)
 
 
 def _effective_load(args: argparse.Namespace, conn: sqlite3.Connection) -> RoutinesConfig:
@@ -400,9 +415,24 @@ def run_routines(args: argparse.Namespace) -> int:
         disp = _dispatcher(args, conn)
         try:
             with correlation.bind(**correlation.from_env()):
-                outcomes = disp.run_manual(
-                    args.job, now=_parse_now(args.now), chain=args.chain, fresh=args.fresh
-                )
+                if args.event:
+                    from arc.routines.runs import RoutineEventRepo
+
+                    ev = RoutineEventRepo(conn).get(args.event)
+                    if ev is None:
+                        _write(f"error: unknown event {args.event!r}")
+                        return 2
+                    outcomes = disp.run_event(
+                        args.job,
+                        ev,
+                        now=_parse_now(args.now),
+                        chain_run_id=args.chain_run_id,
+                        parent_run_id=args.parent_run_id,
+                    )
+                else:
+                    outcomes = disp.run_manual(
+                        args.job, now=_parse_now(args.now), chain=args.chain, fresh=args.fresh
+                    )
         except KeyError as exc:
             _write(f"error: {exc.args[0]}")
             return 2

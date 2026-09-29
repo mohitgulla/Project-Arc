@@ -274,7 +274,7 @@ class TestTraceCli:
         capsys.readouterr()
         assert main(["context", "trace", chain, "--db", db, "--json"]) == 0
         steps = json.loads(capsys.readouterr().out)
-        assert [s["job"] for s in steps] == ["director", "quant", "risk", "propose"]
+        assert [s["job"] for s in steps] == ["director", "quant", "risk", "propose", "execute"]
         for s in steps:
             assert set(s) >= {"job", "run_id", "status", "declared", "read", "wrote",
                               "persona_calls", "manifest"}  # fmt: skip
@@ -285,10 +285,10 @@ class TestTraceCli:
         # every routine run in the DB has exactly one manifest
         runs = conn.execute("SELECT COUNT(*) FROM routine_runs").fetchone()[0]
         mans = conn.execute("SELECT COUNT(DISTINCT run_id) FROM run_manifests").fetchone()[0]
-        assert runs == mans == 5
+        assert runs == mans == 6
         assert main(["context", "trace", chain, "--db", db]) == 0
         text = capsys.readouterr().out
-        assert text.count("== ") == 4 and "declared reads=" in text and "routines.yaml=" in text
+        assert text.count("== ") == 5 and "declared reads=" in text and "routines.yaml=" in text
         assert main(["context", "trace", steps[1]["run_id"], "--db", db, "--json"]) == 0
         assert len(json.loads(capsys.readouterr().out)) == 1
         assert main(["context", "trace", "run-nope", "--db", db]) == 1

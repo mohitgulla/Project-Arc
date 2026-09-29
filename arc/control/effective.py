@@ -169,8 +169,18 @@ def effective_settings(
 def apply_changes(
     base: ArcSettings, changes: dict[str, ConfigChange], *, version: int
 ) -> ArcSettings:
-    """Pure core of :func:`effective_settings` (no DB)."""
+    """Pure core of :func:`effective_settings` (no DB).
+
+    D34: a per-env switch (``auto_approve.live`` etc.) only applies to the
+    running ``ARC_ENV``. The settings validator forces every per-env switch off
+    in live (the env var is paper-only), so a store value for the *live* key is
+    applied after validation, with ``model_copy``: the store is the only path
+    that can turn a switch on in live.
+    """
+    from arc.config import PER_ENV_SWITCHES
+
     data = base.model_dump()
+    post: dict[str, Any] = {}  # per-env switches applied after validation (live only)
     env = base.env.value
     for key, change in sorted(changes.items(), key=lambda kv: kv[1].id):
         try:
@@ -182,6 +192,9 @@ def apply_changes(
             continue
         if t.env is not None and t.env != env:
             continue  # e.g. auto_approve.live while running paper
+        if t.env == "live" and t.field in PER_ENV_SWITCHES:
+            post[t.field] = bool(change.new)
+            continue
         trial = {**data, t.field: change.new}
         try:
             ArcSettings.model_validate(trial)
@@ -198,7 +211,7 @@ def apply_changes(
         settings.account_profiles_file, overrides=yaml_ov.get("account_profiles")
     )
     settings = settings.model_copy(
-        update={"account_profile_spec": profiles.get(settings.account_profile)}
+        update={"account_profile_spec": profiles.get(settings.account_profile), **post}
     )
     settings._yaml_overrides = yaml_ov  # noqa: SLF001 - owned by arc.control
     return settings

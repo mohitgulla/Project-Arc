@@ -75,6 +75,21 @@ class JobResult:
     notice: str = ""
 
 
+@dataclass(frozen=True)
+class RunEnv:
+    """How this dispatcher process was started (D34: what a spawned Investor inherits).
+
+    ``db_path`` / ``config_path`` / ``lock_dir`` are the CLI's ``--db`` /
+    ``--config`` / ``--lock-dir`` (None = the defaults); ``slack`` is False under
+    ``--no-slack`` or a dry run.
+    """
+
+    db_path: str | None = None
+    config_path: str | None = None
+    lock_dir: str | None = None
+    slack: bool = False
+
+
 @dataclass
 class JobContext:
     """Everything a handler may use. Created by the dispatcher per run."""
@@ -97,6 +112,8 @@ class JobContext:
     # Wall clock for steps that judge data age (E5.2b). ``now`` is the tick/chain
     # start time and stays the idempotency key; ``clock()`` is "now, really".
     clock_fn: Callable[[], _dt.datetime] | None = None
+    # D34: the process environment a handler needs to hand work to a subprocess.
+    run_env: RunEnv = field(default_factory=RunEnv)
 
     @property
     def clock(self) -> Callable[[], _dt.datetime]:
@@ -604,6 +621,9 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "monitor": "arc.routines.monitor:monitor_step",
     # E6.2 Investor: works an approved proposal through its D24 price band
     "investor": "arc.routines.investor:investor_step",
+    # D34 in-chain Execute: publish + auto-approve this chain's proposals, hand each
+    # to an Investor subprocess (own lock, not the LLM lock); a no-op when auto is off
+    "execute": "arc.routines.investor:execute_step",
     # E6.3 Auditor: post-market reconcile (broker vs local), snapshots, tax lots, card
     "auditor": "arc.routines.auditor:auditor_step",
     # E6.4 position manager: review -> exits -> close-to-reallocate (arc/positions/steps.py)

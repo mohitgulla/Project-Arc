@@ -688,6 +688,20 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         max=1.0,
         hard_ceiling=1.0,
     ),
+    _s(
+        "max_quote_age",
+        Group.EXECUTION,
+        _I,
+        "D34: seconds between the proposal's pricing and the ladder's first attempt after "
+        "which the Investor re-prices at mid (a mid outside the gate band is not sent).",
+        Risk.UP,
+        field="execution_max_quote_age_seconds",
+        unit="s",
+        min=0,
+        max=600,
+        hard_ceiling=600,
+        aliases=("execute.max_quote_age",),
+    ),
     # -- close quote check (E6.2a) -------------------------------------------------
     _s(
         "close_quote.max_age_seconds",
@@ -901,13 +915,27 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         hard_ceiling=3600,
         aliases=("approval_ttl",),
     ),
+    # D34: per-env like auto_approve; the env var only sets the paper value.
     _s(
-        "auto_exit_defined_risk",
+        "auto_exit_defined_risk.paper",
         Group.APPROVALS,
         _B,
-        "D24: fired exits on defined-risk positions skip the Slack approval (gate still "
-        "applies). Off = every exit is a proposal needing an approval.",
+        "D24: fired exits on defined-risk positions skip the Slack approval when "
+        "ARC_ENV=paper (gate still applies). Off = every exit needs an approval.",
         Risk.TRUE,
+        field="auto_exit_defined_risk",
+        env="paper",
+        aliases=("auto_exit_defined_risk",),
+    ),
+    _s(
+        "auto_exit_defined_risk.live",
+        Group.APPROVALS,
+        _B,
+        "D24: fired exits on defined-risk positions skip the Slack approval when "
+        "ARC_ENV=live; turning it on needs the one-time confirm code.",
+        Risk.TRUE,
+        field="auto_exit_defined_risk",
+        env="live",
     ),
 )
 

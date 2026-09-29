@@ -175,6 +175,7 @@ class ReasonCode(StrEnum):
     ORDER_REJECTED = "order:broker_rejected"
     ORDER_UNCONFIRMED = "order:cancel_unconfirmed"
     ORDER_BUDGET_STOP = "order:budget_exhausted"
+    ORDER_STALE_BAND = "order:stale_band"  # D34: re-priced mid left the gate-approved band
     # exit (E6.2: E2.4 policy on open structures)
     EXIT_TAKE_PROFIT = "exit:take_profit"
     EXIT_STOP = "exit:stop"

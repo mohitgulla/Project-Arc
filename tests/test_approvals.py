@@ -835,9 +835,11 @@ def test_slack_poster_uses_shared_day_thread(
     svc = ApprovalService(conn, arc_settings, SlackCardPoster(conn, client))
     svc.publish_pending(NOW)
     kinds = [k for k, _ in web.calls]
-    assert kinds == ["post", "post", "post"]  # day root, heartbeat, card — one root only
+    # day root, D34 auto-approve banner, heartbeat, card — one root only
+    assert kinds == ["post", "post", "post", "post"]
     root_ts = "1.0"
-    card = web.calls[2][1]
+    assert web.calls[1][1]["text"].startswith("Auto-approve: OFF")
+    card = web.calls[3][1]
     assert card["channel"] == CHANNEL_ARC_INVESTOR and card["thread_ts"] == root_ts
     assert any(b["type"] == "actions" for b in card["blocks"])
 
@@ -846,7 +848,7 @@ def test_slack_poster_uses_shared_day_thread(
     assert web.calls[-1][0] == "ephemeral" and web.calls[-1][1]["user"] == STRANGER
     svc.decide(ph, user=OWNER, approve=False, now=NOW)
     kind, kw = web.calls[-1]
-    assert kind == "update" and kw["ts"] == "3.0"
+    assert kind == "update" and kw["ts"] == "4.0"
     assert "Rejected" in kw["text"]
 
 
