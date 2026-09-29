@@ -169,7 +169,7 @@ class TestConfig:
     def test_shipped_config_validates(self) -> None:
         c = load_routines(DEFAULT_ROUTINES_PATH)
         assert c.personas["scout"].after_sources
-        assert c.personas["director"].chain == ["quant", "risk", "propose"]
+        assert c.personas["director"].chain == ["quant", "risk", "propose", "execute"]
         assert {r.run for r in c.triggers_for("scout.completed")} == {"director"}
         assert {r.run for r in c.triggers_for("approval")} == {"investor"}
         stockedup = c.sources["youtube.stockedup"]

@@ -87,7 +87,7 @@ class TestShippedDefaults:
         p = shipped.personas
         assert p["scout"].cadence == "at 12:00, 22:00 ET (daily)" and p["scout"].after_sources
         assert p["director"].cadence == "at 09:30 ET (trading)"
-        assert p["director"].chain == ["quant", "risk", "propose"]
+        assert p["director"].chain == ["quant", "risk", "propose", "execute"]
         assert p["monitor"].cadence == "every 5m 09:30-16:00 ET (trading)"  # D35 (E5.3a)
         assert p["monitor"].options["eod_marks_from"] == "15:50"
         assert p["monitor"].llm is False and p["monitor"].halt_exempt

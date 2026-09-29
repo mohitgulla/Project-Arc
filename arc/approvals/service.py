@@ -20,8 +20,9 @@ Rules enforced here, in code:
   ``approvals.proposal_hash`` backs this up.
 - The stored proposal is re-hashed on load, so the ApprovalRecord is bound to
   the exact payload the gate saw.
-- ``ARC_AUTO_APPROVE`` (D10, paper only) approves an actionable request at
-  publish time, as ``arc:auto-approve``.
+- ``auto_approve`` (D34, one switch per environment, default off) approves an
+  actionable request at publish time, as ``arc:auto-approve``. The card is still
+  posted, marked ``Auto-approved (paper|LIVE)`` and not actionable.
 - Every rejection and expiry is logged (``approvals.rejected`` /
   ``approvals.expired``) with its reason.
 - Every resolution (and every not-actionable card) is written to the decision
@@ -48,7 +49,6 @@ import structlog
 
 from arc.approvals.card import CardView, render_card, render_resolved, ticker_of
 from arc.approvals.trail import load_trail
-from arc.config import ArcEnv
 from arc.context.ttl import from_db, require_aware, to_db
 from arc.gate.rules import proposal_hash as hash_proposal
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
@@ -58,6 +58,8 @@ from arc.structures import is_defined_risk
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from arc.config import ArcSettings
 
 log = structlog.get_logger(__name__)
@@ -310,7 +312,7 @@ class ApprovalService:
 
     # -- publish -------------------------------------------------------------
 
-    def _unpublished(self, day: str | None) -> list[sqlite3.Row]:
+    def _unpublished(self, day: str | None, only: Sequence[str] | None = None) -> list[sqlite3.Row]:
         sql = """
             SELECT p.proposal_hash, p.ticker, p.day, p.run_id, p.kind,
                    g.passed AS gate_passed, g.violations_json AS gate_violations,
@@ -325,17 +327,33 @@ class ApprovalService:
             WHERE p.day IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM approval_requests r
                               WHERE r.proposal_hash = p.proposal_hash)"""
-        params: tuple[str, ...] = ()
+        params: list[str] = []
         if day:
             sql += " AND p.day = ?"
-            params = (day,)
+            params.append(day)
+        if only is not None:
+            if not only:
+                return []
+            sql += f" AND p.proposal_hash IN ({','.join('?' * len(only))})"
+            params.extend(only)
         return self.conn.execute(sql + " ORDER BY p.created_at, p.rowid", params).fetchall()
 
-    def publish_pending(self, now: _dt.datetime, *, day: str | None = None) -> SweepReport:
-        """Post a card for every proposal that has none yet; auto-approve if enabled."""
+    def publish_pending(
+        self,
+        now: _dt.datetime,
+        *,
+        day: str | None = None,
+        only: Sequence[str] | None = None,
+    ) -> SweepReport:
+        """Post a card for every proposal that has none yet; auto-approve if enabled.
+
+        ``only`` restricts the sweep to those proposal hashes (D34: the in-chain
+        ``execute`` step publishes its own chain's proposals through this same path;
+        the later tick sweep then finds nothing left for them, per proposal_hash).
+        """
         now = require_aware(now, "now").astimezone(ET)
         report = SweepReport(published=[], auto_approved=[], expired=[])
-        for row in self._unpublished(day):
+        for row in self._unpublished(day, only):
             phash = row["proposal_hash"]
             try:
                 proposal = _proposal_from_row(row)
@@ -347,12 +365,14 @@ class ApprovalService:
             if not self._insert_request(phash, row, proposal, status, reason, now):
                 continue  # a concurrent sweep won
             actionable = status is RequestStatus.PENDING
+            auto = self._auto_reason(proposal, row["kind"]) if actionable else None
+            # D34: an auto-approved card posts without buttons, marked as such.
             view = render_card(
                 proposal,
                 decision,
                 proposal_hash=phash,
-                actionable=actionable,
-                note=reason,
+                actionable=actionable and auto is None,
+                note=self._auto_label() if auto is not None else reason,
                 trail=load_trail(self.conn, phash, row["ticker"]),
                 kind=row["kind"],
             )
@@ -378,32 +398,39 @@ class ApprovalService:
                 log.info(
                     "approvals.rejected", proposal_hash=phash, ticker=row["ticker"], reason=reason
                 )
-            auto = self._auto_reason(proposal, row["kind"]) if actionable else None
             if auto is not None:
                 res = self._resolve(phash, RequestStatus.APPROVED, AUTO_APPROVER, auto, now)
                 if res.outcome is Outcome.APPROVED:
                     report.auto_approved.append(phash)
         return report
 
+    def _auto_label(self) -> str:
+        """``Auto-approved (paper)`` / ``Auto-approved (LIVE)`` (D34 card marker)."""
+        env = self.settings.env.value
+        return f"Auto-approved ({'LIVE' if env == 'live' else env})"
+
     def _auto_approve_enabled(self) -> bool:
-        return self.settings.auto_approve and self.settings.env is ArcEnv.PAPER
+        """D34: the per-env switch. ``settings.auto_approve`` already *is* the value
+        for the running ``ARC_ENV`` (the env var is paper-only; live comes from the
+        config store only, see ``ArcSettings._env_switches_paper_only``)."""
+        return bool(self.settings.auto_approve)
 
     def _auto_reason(self, proposal: Proposal, kind: str) -> str | None:
         """Why this actionable proposal is approved without a click, else None.
 
-        D10 ``auto_approve`` (paper only) covers everything; D24
-        ``auto_exit_defined_risk`` (default false, paper only) covers exits whose
-        closing legs are defined risk.
+        D34 ``auto_approve`` (per environment, default off) covers everything;
+        D24 ``auto_exit_defined_risk`` (per environment, default off) covers exits
+        whose closing legs are defined risk.
         """
+        env = self.settings.env.value
         if self._auto_approve_enabled():
-            return "auto-approve (paper, D10)"
+            return f"auto-approve ({env}, D34)"
         if (
             kind == "close"
             and self.settings.auto_exit_defined_risk
-            and self.settings.env is ArcEnv.PAPER
             and is_defined_risk(proposal.structure.legs)
         ):
-            return "auto-exit (defined risk, D24)"
+            return f"auto-exit (defined risk, {env}, D24)"
         return None
 
     def _initial_status(
@@ -667,7 +694,11 @@ class ApprovalService:
                     code=code,
                     text=reason or _outcome_plain(status, actor),
                     now=now,
-                    payload={"approval_id": approval_id, "by": actor},
+                    payload={
+                        "approval_id": approval_id,
+                        "by": actor,
+                        **({"env": self.settings.env.value} if actor == AUTO_APPROVER else {}),
+                    },
                 )
                 if status is RequestStatus.APPROVED:
                     self.conn.execute(
@@ -711,7 +742,9 @@ class ApprovalService:
             RequestStatus.REJECTED: Outcome.REJECTED,
             RequestStatus.EXPIRED: Outcome.EXPIRED,
         }[status]
-        return DecideResult(outcome, proposal_hash, _outcome_text(status, actor), status)
+        return DecideResult(
+            outcome, proposal_hash, _outcome_text(status, actor, self.settings.env.value), status
+        )
 
     # -- optional reject reason (D22) ----------------------------------------
 
@@ -782,7 +815,7 @@ class ApprovalService:
     ) -> None:
         if req.channel == "log" or not req.message_ts:
             return
-        outcome = _outcome_text(status, actor)
+        outcome = _outcome_text(status, actor, self.settings.env.value)
         if reason:
             outcome += f" — _{reason}_"
         view = render_resolved(
@@ -836,7 +869,9 @@ def _who(actor: str) -> str:
     return actor if actor.startswith("arc:") else f"<@{actor}>"
 
 
-def _outcome_text(status: RequestStatus, actor: str) -> str:
+def _outcome_text(status: RequestStatus, actor: str, env: str | None = None) -> str:
+    if status is RequestStatus.APPROVED and actor == AUTO_APPROVER and env:
+        return f":white_check_mark: *Auto-approved ({'LIVE' if env == 'live' else env})*"
     if status is RequestStatus.APPROVED:
         return f":white_check_mark: *Approved* by {_who(actor)}"
     if status is RequestStatus.REJECTED:

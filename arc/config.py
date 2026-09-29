@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import Annotated
 
 import structlog
-from pydantic import Field, PrivateAttr, SecretStr, field_validator, model_validator
+from pydantic import (
+    Field,
+    PrivateAttr,
+    SecretStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from arc.account_profiles import DEFAULT_ACCOUNT_PROFILE, AccountProfile, load_account_profiles
@@ -284,11 +291,21 @@ class ArcSettings(BaseSettings):
             "(D28: never two working orders per structure)."
         ),
     )
+    execution_max_quote_age_seconds: Annotated[int, Field(ge=0, le=600)] = Field(
+        default=60,
+        description=(
+            "D34: if more than this passed between the proposal's pricing and the ladder's "
+            "first attempt, the Investor re-prices at the current mid. A mid outside the "
+            "gate-approved band is not sent (journal reason stale_band)."
+        ),
+    )
     auto_exit_defined_risk: bool = Field(
         default=False,
         description=(
             "D24: when true, fired exits on defined-risk positions skip the Slack approval. "
-            "Default false: every exit is a proposal that needs an approval."
+            "Default false: every exit is a proposal that needs an approval. Per environment "
+            "(D34): ARC_AUTO_EXIT_DEFINED_RISK is the paper shortcut; live is only switched "
+            "through the config store (`auto_exit_defined_risk.live`)."
         ),
     )
     # -- Daily options order budget (E6.5, D32) ---------------------------------
@@ -366,7 +383,14 @@ class ArcSettings(BaseSettings):
     )
     auto_approve: bool = Field(
         default=False,
-        description="Auto-approve proposals in paper mode (D10). Ignored when env=live.",
+        description=(
+            "D34: auto-approve gate-passed proposals (approver arc:auto-approve) and execute "
+            "them in the same chain run. The effective value is per environment: the "
+            "ARC_AUTO_APPROVE env var is a paper-only shortcut (ignored when env=live); the "
+            "config store keys `auto_approve.paper` / `auto_approve.live` (arc approve auto, "
+            "!arc config) set it for one environment each, and enabling live needs the "
+            "one-time confirm code."
+        ),
     )
     owner_slack_user_id: str = Field(
         default="U0C5KUMH28G",
@@ -760,12 +784,30 @@ class ArcSettings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _auto_approve_paper_only(self) -> ArcSettings:
-        """auto_approve is forced off when env=live."""
-        if self.env is ArcEnv.LIVE and self.auto_approve:
-            log.warning("auto_approve forced off in live mode")
-            self.auto_approve = False
+    def _env_switches_paper_only(self, info: ValidationInfo) -> ArcSettings:
+        """The env-var shortcuts for the per-env switches never reach live (D34).
+
+        ``ARC_AUTO_APPROVE`` / ``ARC_AUTO_EXIT_DEFINED_RISK`` set the *paper* value
+        only. In live the only way to enable either is the config store
+        (``auto_approve.live``, ``auto_exit_defined_risk.live``, confirm code
+        required): :func:`arc.control.effective.apply_changes` validates with
+        ``context={"store_switches": {<field>, ...}}`` naming the switches whose
+        value came from the store for the running env, and only those survive here.
+        """
+        if self.env is not ArcEnv.LIVE:
+            return self
+        ctx = info.context if isinstance(info.context, dict) else {}
+        from_store = set(ctx.get("store_switches") or ())
+        for name in sorted(PER_ENV_SWITCHES - from_store):
+            if getattr(self, name):
+                log.warning("per-env switch forced off in live (env var is paper-only)", key=name)
+                setattr(self, name, False)
         return self
+
+
+# Settings switches with one value per ARC_ENV (D34). The env var sets the paper
+# value only; `arc.control` applies the store's `<field>.<env>` key for the running env.
+PER_ENV_SWITCHES: frozenset[str] = frozenset({"auto_approve", "auto_exit_defined_risk"})
 
 
 def get_settings(**overrides: object) -> ArcSettings:

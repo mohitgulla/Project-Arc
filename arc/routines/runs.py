@@ -254,6 +254,18 @@ class RoutineEventRepo:
             )
         return ev
 
+    def get(self, event_id: str) -> RoutineEvent | None:
+        """One event by id, consumed or not (D34: a spawned Investor reads its own)."""
+        r = self.conn.execute("SELECT * FROM routine_events WHERE id = ?", (event_id,)).fetchone()
+        if r is None:
+            return None
+        return RoutineEvent(
+            id=r["id"],
+            name=r["name"],
+            payload=json.loads(r["payload"]),
+            created_at=from_db(r["created_at"]),
+        )
+
     def pending(self, *, until: _dt.datetime) -> list[RoutineEvent]:
         rows = self.conn.execute(
             """SELECT * FROM routine_events WHERE consumed_at IS NULL AND created_at <= ?
