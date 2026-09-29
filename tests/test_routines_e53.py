@@ -536,8 +536,54 @@ class TestTickScript:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         mod = _load_tick_script(tmp_path, monkeypatch, tmp_path)
+        mod.VENV_WAIT_S = 0
         assert mod.main() == 2
         assert "not found" in capsys.readouterr().out
+
+    def test_arc_appearing_during_wait_runs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        mod = _load_tick_script(repo, monkeypatch, tmp_path)
+        monkeypatch.setattr(mod.time, "sleep", lambda _s: _fake_arc(repo, "sys.exit(0)"))
+        assert mod.main() == 0
+        assert capsys.readouterr().out == ""
+
+    def test_arc_vanishing_before_exec_is_loud(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        repo = tmp_path / "repo"
+        _fake_arc(repo, "sys.exit(0)")
+        mod = _load_tick_script(repo, monkeypatch, tmp_path)
+
+        def gone(*_a: object, **_k: object) -> None:
+            raise FileNotFoundError(str(mod.ARC))
+
+        monkeypatch.setattr(mod.subprocess, "run", gone)
+        assert mod.main() == 2
+        assert "vanished" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(("points_home", "rc"), [(True, 0), (False, 4)])
+    def test_editable_install_must_point_at_repo(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        points_home: bool,
+        rc: int,
+    ) -> None:
+        repo = tmp_path / "repo"
+        _fake_arc(repo, "sys.exit(0)")
+        site = repo / ".venv" / "lib" / "python3.12" / "site-packages"
+        site.mkdir(parents=True)
+        target = repo if points_home else tmp_path / "scratch-wt"
+        (site / "_editable_impl_arc.pth").write_text(f"{target}\n")
+        mod = _load_tick_script(repo, monkeypatch, tmp_path)
+        assert mod.main() == rc
+        out = capsys.readouterr().out
+        assert ("scratch-wt" in out) is (not points_home)
+        assert (repo / "data" / "logs" / "routines-tick.log").exists() is points_home
 
     def test_timeout_is_loud(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

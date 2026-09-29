@@ -20,6 +20,11 @@ Behaviour:
   non-zero, so Hermes delivers a cron failure alert (to #project-arc).
 - Each tick's report is appended to ``data/logs/routines-tick.log`` (rotated at
   5 MB, 3 files kept).
+- The tick refuses to run when the venv's editable ``arc`` install points at a
+  different checkout (``uv sync`` through a symlinked ``.venv`` in a scratch
+  worktree repoints it), because it would run foreign code against a foreign
+  ``data/arc.db``. A ``.venv/bin/arc`` that is missing because ``uv sync`` is
+  reinstalling it is retried for ``ARC_TICK_VENV_WAIT_SECONDS`` before alerting.
 - E8.2: every tick gets an ``ARC_TICK_ID`` (and ``ARC_CRON_JOB``) in its
   environment. Arc binds it to every structured log line
   (``data/logs/arc.jsonl``), records it on the ``tick`` heartbeat and prints it,
@@ -33,6 +38,7 @@ import datetime as dt
 import os
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -46,6 +52,7 @@ TIMEOUT_S = int(os.environ.get("ARC_TICK_TIMEOUT_SECONDS", "3300"))
 LOG_MAX_BYTES = 5_000_000
 LOG_KEEP = 3
 CRON_JOB = "arc-routines-tick"
+VENV_WAIT_S = float(os.environ.get("ARC_TICK_VENV_WAIT_SECONDS", "60"))
 
 
 def _dotenv(path: Path) -> dict[str, str]:
@@ -95,10 +102,40 @@ def _log(text: str) -> None:
         fh.write(text if text.endswith("\n") else text + "\n")
 
 
+def _wait_for_arc() -> bool:
+    deadline = time.monotonic() + VENV_WAIT_S
+    while not ARC.is_file():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(2)
+    return True
+
+
+def _foreign_editable_install() -> str | None:
+    """Return the checkout the venv's editable ``arc`` points at, if it isn't REPO."""
+    for pth in (REPO / ".venv" / "lib").glob("python*/site-packages/_editable_impl_arc*.pth"):
+        for line in pth.read_text().splitlines():
+            target = line.strip()
+            if (
+                target
+                and not target.startswith(("#", "import "))
+                and Path(target).resolve() != REPO.resolve()
+            ):
+                return target
+    return None
+
+
 def main() -> int:
-    if not ARC.is_file():
+    if not _wait_for_arc():
         sys.stdout.write(f"arc routines tick: {ARC} not found (run `uv sync` in {REPO})\n")
         return 2
+    foreign = _foreign_editable_install()
+    if foreign:
+        sys.stdout.write(
+            f"arc routines tick skipped: {REPO}/.venv's editable arc install points at "
+            f"{foreign}, not {REPO}. Run `uv sync` in {REPO} to repair it.\n"
+        )
+        return 4
     started = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
     tick_id = f"tick-{uuid.uuid4().hex[:12]}"
     try:
@@ -111,6 +148,9 @@ def main() -> int:
             timeout=TIMEOUT_S,
             check=False,
         )
+    except FileNotFoundError:  # removed between the check and the exec (uv sync race)
+        sys.stdout.write(f"arc routines tick: {ARC} vanished mid-start (uv sync running?)\n")
+        return 2
     except subprocess.TimeoutExpired as exc:
         _log(
             f"=== {started} {tick_id} TIMEOUT after {TIMEOUT_S}s\n"
