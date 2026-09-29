@@ -37,7 +37,7 @@ NOT_RUNNING = (0, "No hermes dashboard or serve processes running.\n")
 
 def _args(**kw: Any) -> argparse.Namespace:
     base: dict[str, Any] = {
-        "port": 4174,
+        "port": 1994,
         "address": None,
         "local": False,
         "env_file": None,
@@ -91,7 +91,7 @@ def test_dashboard_uses_tailscale_address(env_file: Path) -> None:
             probe=lambda h, p: False,
         )
     assert argv == [
-        "/x/hermes", "dashboard", "--host", "100.77.0.5", "--port", "4174",
+        "/x/hermes", "dashboard", "--host", "100.77.0.5", "--port", "1994",
         "--no-open", "--skip-build",
     ]  # fmt: skip
 
@@ -159,9 +159,9 @@ def test_read_dotenv_keys_never_returns_values(tmp_path: Path) -> None:
 def test_second_copy_refused() -> None:
     running = (0, "1 hermes dashboard/serve process(es) running:\n    PID 9 [dashboard]: ...")
     with pytest.raises(cli.PreflightError, match="already running"):
-        cli.check_not_running("h", "100.64.0.9", 4174, status=lambda h: running)
+        cli.check_not_running("h", "100.64.0.9", 1994, status=lambda h: running)
     with pytest.raises(cli.PreflightError, match="exited 1"):
-        cli.check_not_running("h", "100.64.0.9", 4174, status=lambda h: (1, "boom"))
+        cli.check_not_running("h", "100.64.0.9", 1994, status=lambda h: (1, "boom"))
     # `--status` misses launcher-started dashboards; the port probe catches them.
     seen: list[str] = []
 
@@ -169,11 +169,11 @@ def test_second_copy_refused() -> None:
         seen.append(host)
         return host == "100.64.0.9"
 
-    with pytest.raises(cli.PreflightError, match="port 4174 already in use on 100.64.0.9"):
-        cli.check_not_running("h", "100.64.0.9", 4174, status=lambda h: NOT_RUNNING,
+    with pytest.raises(cli.PreflightError, match="port 1994 already in use on 100.64.0.9"):
+        cli.check_not_running("h", "100.64.0.9", 1994, status=lambda h: NOT_RUNNING,
                               probe=busy_on_ts)  # fmt: skip
     assert seen == ["127.0.0.1", "100.64.0.9"]
-    cli.check_not_running("h", "127.0.0.1", 4174, status=lambda h: NOT_RUNNING,
+    cli.check_not_running("h", "127.0.0.1", 1994, status=lambda h: NOT_RUNNING,
                           probe=lambda h, p: False)  # fmt: skip
 
 
@@ -193,7 +193,7 @@ def test_cli_print_command_and_exec(
             str(hermes)]  # fmt: skip
     with mock.patch.object(cli, "port_open", return_value=False):
         assert main([*base, "--print-command"]) == 0
-        assert f"{hermes} dashboard --host 127.0.0.1 --port 4174" in capsys.readouterr().out
+        assert f"{hermes} dashboard --host 127.0.0.1 --port 1994" in capsys.readouterr().out
         with mock.patch.object(cli.os, "execv") as execv:
             main(base)
     execv.assert_called_once()
@@ -415,7 +415,7 @@ GATED = json.dumps({"auth_required": True, "auth_providers": ["basic"]})
 
 def _get(dash: tuple[int, str], tower: tuple[int, str]) -> Any:
     def get(url: str, timeout: float) -> tuple[int, str]:
-        return dash if ":4174/" in url else tower
+        return dash if ":1994/" in url else tower
 
     return get
 
@@ -466,9 +466,9 @@ def test_remote_down() -> None:
 
 
 def test_remote_exposed_on_lan() -> None:
-    r = _run(lan=["192.168.1.20"], open_={"192.168.1.20:4174"})
+    r = _run(lan=["192.168.1.20"], open_={"192.168.1.20:1994"})
     assert _keys(r) == {"remote_exposed"}
-    assert "192.168.1.20:4174" in r.findings[0].message
+    assert "192.168.1.20:1994" in r.findings[0].message
 
 
 def test_remote_no_tailscale_fails() -> None:
@@ -515,7 +515,7 @@ def test_http_get_status_codes() -> None:
 
 def test_shipped_config_remote_access_off_by_default() -> None:
     ra = load_routines(REPO / "config" / "routines.yaml").monitoring.remote_access
-    assert ra.enabled is False and ra.dashboard_port == 4174 and ra.tower_port == 1994
+    assert ra.enabled is False and ra.dashboard_port == 1994 and ra.tower_port == 4174
     assert MonitoringSettings().remote_access.enabled is False
     assert RemoteAccessCheck.model_validate({"timeout": "7s"}).timeout.total_seconds() == 7
     with pytest.raises(ValueError):
@@ -556,7 +556,7 @@ def test_health_check_runs_remote_access_when_enabled(
         a.key for a in alerts.AlertRepo(connect(db)).open_alerts()
     }
     # Back up: resolved with a line that says what is true now.
-    ok = CheckResult("remote_access", "ok", "dashboard :4174 gated (basic), tower :1994 up")
+    ok = CheckResult("remote_access", "ok", "dashboard :1994 gated (basic), tower :4174 up")
     with mock.patch.object(checks, "remote_access", return_value=ok):
         main(["health", "check", "--db", db, "--config", str(config), "--no-slack",
               "--now", "2026-09-28T09:02"])  # fmt: skip

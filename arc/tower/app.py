@@ -1,6 +1,6 @@
 """Streamlit control tower (E8.3): a read-only view of the audit store.
 
-Run it with ``arc tower`` (binds the Tailscale interface on :1994). The page has
+Run it with ``arc tower`` (binds the Tailscale interface on :4174). The page has
 no inputs that change state: no approve, halt, resume or config buttons. Those
 stay in Slack, where they are authenticated and audited. The DB is opened
 ``mode=ro`` (:func:`arc.tower.data.connect_ro`), so a bug here cannot write.

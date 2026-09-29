@@ -1,6 +1,6 @@
 """``arc tower serve|snapshot`` (E8.3): the read-only Streamlit control tower.
 
-- ``serve``     start Streamlit on the Tailscale address, port 1994 (see
+- ``serve``     start Streamlit on the Tailscale address, port 4174 (see
                 :mod:`arc.tower.net`). Refuses to start without a Tailscale
                 address unless ``--local`` (127.0.0.1) is given.
 - ``snapshot``  print what the dashboard would show, as JSON or text (no server).
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-DEFAULT_PORT = 1994
+DEFAULT_PORT = 4174
 APP_PATH = Path(__file__).resolve().parent / "app.py"
 
 
@@ -32,7 +32,7 @@ def add_tower_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p = sub.add_parser("tower", help="Read-only Streamlit control tower over Tailscale (E8.3)")
     tsub = p.add_subparsers(dest="tower_command", required=True)
 
-    s = tsub.add_parser("serve", help="Serve the dashboard on the Tailscale interface, :1994")
+    s = tsub.add_parser("serve", help="Serve the dashboard on the Tailscale interface, :4174")
     _common(s)
     s.add_argument("--port", type=int, default=DEFAULT_PORT)
     s.add_argument("--address", default=None, help="Tailscale (100.64/10) or loopback IP")
