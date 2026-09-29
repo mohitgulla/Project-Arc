@@ -305,7 +305,7 @@ def test_approve_then_work_band_on_paper() -> None:
     )
 
     # (a) before opening: the close must be priceable from fresh quotes, else skip.
-    # The indicative feed jitters per read (docs/OPS.md 5.11), so re-read a few times;
+    # The indicative feed jitters per read (docs/OPS.md 5.12), so re-read a few times;
     # every read goes through the unchanged check.
     reads: list[str] = []
     for _ in range(_READS):

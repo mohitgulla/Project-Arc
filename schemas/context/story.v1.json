@@ -1,0 +1,163 @@
+{
+  "$defs": {
+    "CatalystType": {
+      "description": "Type of catalyst identified by the Scout.",
+      "enum": [
+        "earnings",
+        "macro",
+        "sector",
+        "news",
+        "technical"
+      ],
+      "title": "CatalystType",
+      "type": "string"
+    },
+    "StoryEvidence": {
+      "additionalProperties": false,
+      "description": "A verbatim quote from one of the story's documents (checked against the text).",
+      "properties": {
+        "quote": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "url": {
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "quote"
+      ],
+      "title": "StoryEvidence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Stage-1 digest of one story (a cluster of near-duplicate docs, D30).\n\n``distinct_sources`` / ``source_keys`` / ``urls`` are computed by the code from\nthe cluster, never by the LLM; the LLM only writes ``summary``, the catalyst and\nthe evidence quotes (each quote must occur in its document or it is dropped).\n``mode`` = ``llm`` (cheap-tier digest) or ``extractive`` (no LLM: fixtures, or\nthe digest call failed).",
+  "properties": {
+    "catalyst_date": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Catalyst Date"
+    },
+    "catalyst_type": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CatalystType"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "category": {
+      "title": "Category",
+      "type": "string"
+    },
+    "distinct_sources": {
+      "minimum": 1,
+      "title": "Distinct Sources",
+      "type": "integer"
+    },
+    "doc_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Doc Ids",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/StoryEvidence"
+      },
+      "maxItems": 3,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "first_published": {
+      "title": "First Published",
+      "type": "string"
+    },
+    "headline": {
+      "maxLength": 300,
+      "title": "Headline",
+      "type": "string"
+    },
+    "last_published": {
+      "title": "Last Published",
+      "type": "string"
+    },
+    "mode": {
+      "default": "llm",
+      "enum": [
+        "llm",
+        "extractive"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "source_keys": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Source Keys",
+      "type": "array"
+    },
+    "story_id": {
+      "minLength": 1,
+      "title": "Story Id",
+      "type": "string"
+    },
+    "summary": {
+      "maxLength": 600,
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "tickers": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Tickers",
+      "type": "array"
+    },
+    "urls": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "title": "Urls",
+      "type": "array"
+    }
+  },
+  "required": [
+    "story_id",
+    "headline",
+    "category",
+    "source_keys",
+    "distinct_sources",
+    "doc_ids",
+    "urls",
+    "first_published",
+    "last_published",
+    "summary"
+  ],
+  "title": "StoryPayload",
+  "type": "object"
+}

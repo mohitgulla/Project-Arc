@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic field
 from arc.features.snapshot import FeatureSnapshot
-from arc.models import Candidate, ChannelBrief, Proposal, Stance
+from arc.models import Candidate, CatalystType, ChannelBrief, Proposal, Stance
 from arc.personas.schemas import AuditorOutput, DirectorOutput, QuantOutput, RiskOutput
 from arc.positions.evaluate import PositionReview
 
@@ -179,6 +179,146 @@ class NotePayload(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# E4.5 (D30): story digests + options-trading data sources
+# ---------------------------------------------------------------------------
+
+
+class StoryEvidence(BaseModel):
+    """A verbatim quote from one of the story's documents (checked against the text)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    url: str = Field(..., min_length=1)
+    quote: str = Field(..., min_length=1, max_length=300)
+
+
+class StoryPayload(BaseModel):
+    """Stage-1 digest of one story (a cluster of near-duplicate docs, D30).
+
+    ``distinct_sources`` / ``source_keys`` / ``urls`` are computed by the code from
+    the cluster, never by the LLM; the LLM only writes ``summary``, the catalyst and
+    the evidence quotes (each quote must occur in its document or it is dropped).
+    ``mode`` = ``llm`` (cheap-tier digest) or ``extractive`` (no LLM: fixtures, or
+    the digest call failed).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    story_id: str = Field(..., min_length=1)
+    headline: str = Field(..., max_length=300)
+    category: str
+    source_keys: list[str] = Field(..., min_length=1)
+    distinct_sources: int = Field(..., ge=1)
+    doc_ids: list[str] = Field(..., min_length=1)
+    urls: list[str] = Field(..., min_length=1, max_length=50)
+    first_published: str
+    last_published: str
+    tickers: list[str] = Field(default_factory=list, max_length=20)
+    summary: str = Field(..., min_length=1, max_length=600)
+    catalyst_type: CatalystType | None = None
+    catalyst_date: str | None = None
+    evidence: list[StoryEvidence] = Field(default_factory=list, max_length=3)
+    mode: Literal["llm", "extractive"] = "llm"
+
+
+class VolTermPayload(BaseModel):
+    """VIX term structure (Cboe daily closes): feeds the regime read (E4.3)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str = Field(..., description="Trading date of the closes (YYYY-MM-DD)")
+    vix9d: float | None = None
+    vix: float = Field(..., gt=0)
+    vix3m: float | None = None
+    vvix: float | None = None
+    ratio_3m_1m: float | None = Field(None, description="VIX3M / VIX (> 1 = contango)")
+    ratio_9d_1m: float | None = Field(None, description="VIX9D / VIX (> 1 = front stress)")
+    structure: Literal["contango", "flat", "backwardation"]
+    source: str = "cboe"
+
+
+class PutCallPayload(BaseModel):
+    """Cboe daily put/call ratios (options sentiment)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str
+    total: float | None = None
+    equity: float | None = None
+    index: float | None = None
+    etp: float | None = None
+    spx: float | None = None
+    vix: float | None = None
+    source: str = "cboe"
+
+
+class MacroEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    date: str = Field(..., description="YYYY-MM-DD (ET)")
+    time: str | None = Field(None, description="HH:MM ET when known")
+    kind: Literal["fomc", "cpi", "ppi", "nfp", "jolts", "eci", "pce", "gdp", "other"]
+    name: str = Field(..., max_length=120)
+    source: str
+
+
+class MacroCalendarPayload(BaseModel):
+    """Upcoming scheduled macro events (FOMC decisions, BLS releases): IV-crush/event risk."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str
+    horizon_days: int = Field(..., ge=1)
+    events: list[MacroEvent] = Field(default_factory=list)
+
+
+class UnusualContract(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    symbol: str
+    expiry: str
+    strike: float
+    option_type: Literal["call", "put"]
+    volume: int = Field(..., ge=0)
+    open_interest: int | None = Field(None, ge=0)
+    vol_oi: float | None = Field(None, ge=0)
+
+
+class UnusualOptionsPayload(BaseModel):
+    """Self-computed unusual options activity for one underlying (Alpaca snapshots)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ticker: str
+    as_of: str
+    call_volume: int = Field(..., ge=0)
+    put_volume: int = Field(..., ge=0)
+    total_volume: int = Field(..., ge=0)
+    avg_volume: float | None = Field(None, description="Mean daily total over prior sessions")
+    history_days: int = Field(0, ge=0)
+    volume_ratio: float | None = Field(None, description="total_volume / avg_volume")
+    put_call_volume: float | None = None
+    hot_volume_share: float = Field(
+        0.0, ge=0, le=1, description="Share of total volume in lines with vol/OI over threshold"
+    )
+    flags: list[Literal["volume_spike", "vol_oi"]] = Field(default_factory=list)
+    contracts: list[UnusualContract] = Field(default_factory=list, max_length=10)
+
+
+class ExDividendPayload(BaseModel):
+    """Next cash dividend for one underlying (early-assignment risk on short calls)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ticker: str
+    ex_date: str
+    amount: float | None = Field(None, ge=0)
+    record_date: str | None = None
+    payable_date: str | None = None
+    source: str = "alpaca"
+
+
 @dataclass(frozen=True)
 class KindSpec:
     """A context kind: its payload model and current schema version."""
@@ -195,7 +335,7 @@ def _registry(*specs: KindSpec) -> Mapping[str, KindSpec]:
 KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("raw_doc_ref", RawDocRefPayload),
     KindSpec("channel_brief", ChannelBriefPayload),
-    KindSpec("candidate", CandidatePayload),
+    KindSpec("candidate", CandidatePayload, schema_version=2),  # E4.5: corroboration
     KindSpec("regime", RegimePayload),
     KindSpec("shortlist", ShortlistPayload, schema_version=2),  # E5.7: excluded/evidence/budget
     KindSpec("structures", StructuresPayload, schema_version=2),  # E5.7: skipped/not_structured
@@ -204,6 +344,13 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("position_review", PositionReviewPayload),
     KindSpec("journal", JournalPayload),
     KindSpec("note", NotePayload),
+    # E4.5 (D30): story digests + options-trading data sources
+    KindSpec("story", StoryPayload),
+    KindSpec("vol_term", VolTermPayload),
+    KindSpec("put_call", PutCallPayload),
+    KindSpec("macro_calendar", MacroCalendarPayload),
+    KindSpec("unusual_options", UnusualOptionsPayload),
+    KindSpec("ex_dividend", ExDividendPayload),
 )
 
 

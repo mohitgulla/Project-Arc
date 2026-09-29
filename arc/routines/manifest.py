@@ -296,9 +296,12 @@ def build_manifest(
     for b in batches:
         dropped.update(json.loads(b["rejected"] or "{}"))
     keys = set(calls[0].keys()) if calls else set()
+    bkeys = set(batches[0].keys()) if batches else set()
 
     def col(name: str) -> list[Any]:
-        return [c[name] for c in calls] if name in keys else []
+        # E4.5: scout_batches carry usage (both Scout stages) since migration 015.
+        out = [c[name] for c in calls] if name in keys else []
+        return out + ([b[name] for b in batches] if name in bkeys else [])
 
     personas = [c["persona"] for c in calls] + (["scout"] if batches else [])
     served = sorted({*(c["model"] for c in calls), *(b["model"] for b in batches)})

@@ -1,0 +1,62 @@
+{
+  "additionalProperties": false,
+  "description": "Next cash dividend for one underlying (early-assignment risk on short calls).",
+  "properties": {
+    "amount": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Amount"
+    },
+    "ex_date": {
+      "title": "Ex Date",
+      "type": "string"
+    },
+    "payable_date": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Payable Date"
+    },
+    "record_date": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Record Date"
+    },
+    "source": {
+      "default": "alpaca",
+      "title": "Source",
+      "type": "string"
+    },
+    "ticker": {
+      "title": "Ticker",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ticker",
+    "ex_date"
+  ],
+  "title": "ExDividendPayload",
+  "type": "object"
+}
