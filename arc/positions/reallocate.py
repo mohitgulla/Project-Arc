@@ -129,6 +129,8 @@ class ScoredPair(BaseModel):
 
 
 def _frees(c: CapacityCandidate, r: PositionReview) -> bool:
+    if c.rejected_for is CapacityRejection.ORDER_BUDGET:
+        return False  # D32: a close spends orders; it frees none
     codes = set(c.violation_codes)
     if RuleCode.PER_UNDERLYING.value in codes and r.ticker != c.ticker:
         return False

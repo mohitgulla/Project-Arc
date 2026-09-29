@@ -255,6 +255,18 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
     expiring = _expiring(positions, ctx, within)
     metrics["expiring"] = len(expiring)
+    # D32: the day's order budget, for the heartbeat detail (tower) and the manifest.
+    try:
+        from arc.pipeline.budget import read_budget
+
+        budget = read_budget(ctx, env, settings, now=now).budget
+        metrics["order_budget"] = budget.brief()
+        metrics["orders_used"] = budget.used
+        metrics["orders_limit"] = budget.limit
+        if budget.tier.value != "normal":
+            notices.append(budget.summary())
+    except Exception as exc:  # noqa: BLE001 - the heartbeat must still be written
+        log.warning("routines.monitor.order_budget_failed", error=str(exc))
     if expiring:
         notices.append(f"expiring within {within} day(s): {', '.join(expiring)}")
     if halted:

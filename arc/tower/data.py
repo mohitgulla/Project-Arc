@@ -269,6 +269,17 @@ class GateViolation(BaseModel):
     proposal_hash: str
 
 
+class OrderBudgetView(BaseModel):
+    """D32 daily order budget as the last monitor heartbeat saw it."""
+
+    model_config = _FROZEN
+
+    used: int
+    limit: int
+    tier: str
+    as_of: _dt.datetime | None = None
+
+
 class OpsView(BaseModel):
     model_config = _FROZEN
 
@@ -277,6 +288,7 @@ class OpsView(BaseModel):
     health_at: _dt.datetime | None = None
     health_status: str | None = None
     open_alerts: list[dict[str, str]] = Field(default_factory=list)
+    order_budget: OrderBudgetView | None = None
 
 
 class TowerSnapshot(BaseModel):
@@ -575,9 +587,22 @@ def _violations(conn: sqlite3.Connection, since: _dt.datetime, limit: int) -> li
     return out
 
 
+def _order_budget(monitor: sqlite3.Row | None) -> OrderBudgetView | None:
+    if not monitor:
+        return None
+    ob = _json(monitor["detail"], {}).get("order_budget")
+    if not isinstance(ob, dict) or not {"used", "limit", "tier"} <= set(ob):
+        return None
+    return OrderBudgetView(
+        used=int(ob["used"]), limit=int(ob["limit"]), tier=str(ob["tier"]),
+        as_of=parse_ts(monitor["at"]),
+    )  # fmt: skip
+
+
 def _ops(conn: sqlite3.Connection) -> OpsView:
     tick = _latest_heartbeat(conn, "tick")
     health = _latest_heartbeat(conn, "health")
+    monitor = _latest_heartbeat(conn, "monitor")
     alerts: list[dict[str, str]] = []
     if _has_table(conn, "ops_alerts"):
         for r in conn.execute(
@@ -599,6 +624,7 @@ def _ops(conn: sqlite3.Connection) -> OpsView:
         health_at=parse_ts(health["at"]) if health else None,
         health_status=health["status"] if health else None,
         open_alerts=alerts,
+        order_budget=_order_budget(monitor),
     )
 
 

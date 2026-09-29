@@ -78,12 +78,20 @@ def settled_cash(info: AccountInfo) -> Decimal:
     return max(min(v for v in fields if v is not None), Decimal(0))
 
 
-def account_snapshot(info: AccountInfo, now: _dt.datetime) -> AccountSnapshot:
-    """Gate view of the account. The halt flag is stamped later by ``HaltSwitch.apply``."""
+def account_snapshot(
+    info: AccountInfo, now: _dt.datetime, *, orders_used_today: int | None = None
+) -> AccountSnapshot:
+    """Gate view of the account. The halt flag is stamped later by ``HaltSwitch.apply``.
+
+    ``orders_used_today`` (D32) is the day's order count from
+    :func:`arc.budget.current_budget`; live callers pass it so the gate's
+    ``order_budget`` rule runs. ``None`` skips the rule (fixtures, dry runs).
+    """
     return AccountSnapshot(
         equity=info.equity,
         last_equity=info.last_equity if info.last_equity is not None else Decimal(0),
         settled_cash=settled_cash(info),
+        orders_used_today=orders_used_today,
         as_of=now,
     )
 

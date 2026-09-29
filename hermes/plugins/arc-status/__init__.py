@@ -259,8 +259,44 @@ def _card(task_id: str) -> str:
 def _render(raw_args: str) -> str:
     arg = (raw_args or "").strip()
     if arg in ("", "all"):
-        return _digest(show_all=arg == "all")
+        return _digest(show_all=arg == "all") + "\n" + order_budget_line()
+    if arg.split()[0].lower() == "budget":
+        return order_budget_line()
     return _card(arg.split()[0])
+
+
+# ---------------------------------------------------------------------------
+# D32 daily options order budget: `!arc budget` and one line under the digest
+# ---------------------------------------------------------------------------
+
+BUDGET_TIMEOUT_S = 60
+
+
+def order_budget_line() -> str:
+    """``orders today N/200 (tier)`` from ``arc budget status --json`` (E6.5, D32).
+
+    Read-only (an in-memory copy of the audit DB plus the paper account's order
+    list); a failing CLI yields a warning line, never an exception.
+    """
+    cmd = [str(_arc_bin()), "budget", "status", "--json"]
+    try:
+        out = subprocess.run(
+            cmd,
+            cwd=REPO_DIR,
+            env=_arc_env(),
+            capture_output=True,
+            text=True,
+            timeout=BUDGET_TIMEOUT_S,
+            check=False,
+        )
+        b = json.loads(out.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        logger.warning("arc-status: arc budget status failed: %s", exc)
+        return "orders today: n/a (arc budget status failed)"
+    line = f"orders today {b['used']}/{b['limit']} ({b['tier']})"
+    if b.get("broker") is not None and b.get("local") is not None and b["broker"] != b["local"]:
+        line += f" · local {b['local']} vs broker {b['broker']} (mismatch)"
+    return line
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +491,7 @@ async def _handle(raw_args: str) -> str:
 def register(ctx) -> None:
     ctx.register_command(
         "arc", handler=_handle,
-        args_hint="[all|<task_id>|config|set|diff|history|revert|profile|confirm|cancel]",
+        args_hint="[all|<task_id>|budget|config|set|diff|history|revert|profile|confirm|cancel]",
         description="Project Arc board status + control panel (config/set/revert/confirm)")
     register_action = getattr(ctx, "register_slack_action_handler", None)
     if register_action is not None:

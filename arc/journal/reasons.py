@@ -118,6 +118,9 @@ class ReasonCode(StrEnum):
     NO_RISK_REVIEW = "no_risk_review"
     NO_CANDIDATE_ID = "no_candidate_id"
     REPRICE_FAILED = "reprice_failed"
+    # daily options order budget (E6.5, D32)
+    BUDGET_RESTRICTIVE = "budget_restrictive"
+    ORDER_BUDGET_EXHAUSTED = "order_budget_exhausted"
     # sizing (D18)
     SIZING_OK = "sizing:ok"
     SIZING_CAPPED = "sizing:capped"
@@ -153,6 +156,7 @@ class ReasonCode(StrEnum):
     GATE_ACCOUNT_NET_DEBIT = "gate:account_profile_net_debit"
     GATE_ACCOUNT_SHORT_LEG = "gate:account_profile_short_leg"
     GATE_ACCOUNT_CASH = "gate:account_profile_settled_cash"
+    GATE_ORDER_BUDGET = "gate:order_budget"
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
@@ -170,6 +174,7 @@ class ReasonCode(StrEnum):
     ORDER_REFUSED = "order:refused"
     ORDER_REJECTED = "order:broker_rejected"
     ORDER_UNCONFIRMED = "order:cancel_unconfirmed"
+    ORDER_BUDGET_STOP = "order:budget_exhausted"
     # exit (E6.2: E2.4 policy on open structures)
     EXIT_TAKE_PROFIT = "exit:take_profit"
     EXIT_STOP = "exit:stop"

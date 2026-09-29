@@ -101,6 +101,12 @@ def _status(snap: TowerSnapshot) -> None:
         f"tick {ops.tick_status or 'n/a'} {_age(ops.tick_at, snap.as_of)}".strip(),
         f"health {ops.health_status or 'n/a'} {_age(ops.health_at, snap.as_of)}".strip(),
         f"{len(ops.open_alerts)} open ops alert(s)",
+        (
+            f"orders today {ops.order_budget.used}/{ops.order_budget.limit} "
+            f"({ops.order_budget.tier}) {_age(ops.order_budget.as_of, snap.as_of)}".strip()
+            if ops.order_budget
+            else "orders today n/a"
+        ),
     ]
     st.caption(" · ".join(parts))
     for a in ops.open_alerts:

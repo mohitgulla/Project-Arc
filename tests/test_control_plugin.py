@@ -236,6 +236,44 @@ def test_action_ids_match_the_cards() -> None:
     assert set(plugin.CONFIRM_ACTIONS) == {cards.CONFIRM_ACTION, cards.CANCEL_ACTION}
 
 
+# ---------------------------------------------------------------------------
+# D32 order budget line (`!arc budget`, and under every digest)
+# ---------------------------------------------------------------------------
+
+
+def test_order_budget_line_from_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kw):  # noqa: ANN001, ANN202
+        calls.append([str(c) for c in cmd])
+        assert kw["timeout"] == plugin.BUDGET_TIMEOUT_S
+        assert "PYTHONPATH" not in kw["env"]  # E8.5a: clean Python env for the arc CLI
+        return _completed(
+            {"used": 120, "limit": 200, "tier": "restrictive", "local": 118, "broker": 120}
+        )
+
+    monkeypatch.setattr(plugin.subprocess, "run", fake_run)
+    line = plugin.order_budget_line()
+    assert line == "orders today 120/200 (restrictive) · local 118 vs broker 120 (mismatch)"
+    assert calls[0][1:] == ["budget", "status", "--json"]
+    # `!arc budget` renders only that line
+    assert plugin._render("budget") == line
+
+
+def test_order_budget_line_survives_cli_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise subprocess.TimeoutExpired("arc", 60)
+
+    monkeypatch.setattr(plugin.subprocess, "run", boom)
+    assert plugin.order_budget_line() == "orders today: n/a (arc budget status failed)"
+    monkeypatch.setattr(
+        plugin.subprocess,
+        "run",
+        lambda *a, **k: _completed({"used": 3, "limit": 200, "tier": "normal"}),
+    )
+    assert plugin.order_budget_line() == "orders today 3/200 (normal)"
+
+
 def test_arc_subprocess_gets_a_clean_python_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """The gateway's PYTHONPATH (Hermes's site-packages) must not reach Arc's venv."""
     monkeypatch.setenv("PYTHONPATH", "/hermes/venv/lib/python3.14/site-packages")

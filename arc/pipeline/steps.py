@@ -100,6 +100,7 @@ from arc.personas.schemas import (
     RiskSwapReview,
 )
 from arc.pipeline.analytics import build_analytics
+from arc.pipeline.budget import BudgetView, budget_notice, read_budget
 from arc.pipeline.market import (
     PortfolioError,
     account_snapshot,
@@ -526,8 +527,16 @@ def _profile_rule(settings: ArcSettings) -> str:
     return line
 
 
-def _director_rules(cands: Mapping[str, Stance], settings: ArcSettings | None = None) -> list[str]:
-    """Director constraints (E5.7: rank, don't gatekeep; no count cap in the prompt)."""
+def _director_rules(
+    cands: Mapping[str, Stance],
+    settings: ArcSettings | None = None,
+    budget: BudgetView | None = None,
+) -> list[str]:
+    """Director constraints (E5.7: rank, don't gatekeep; no count cap in the prompt).
+
+    D32: in the restrictive order-budget tier an advisory line is added; the
+    deterministic cap is the lowered Quant/Risk budget (:func:`_shortlist_limit`).
+    """
     rules = [
         f"shortlist tickers MUST come from the candidates above: {', '.join(sorted(cands))}.",
         "Rank every candidate you would consider trading, best first (rank 1 = highest "
@@ -543,7 +552,21 @@ def _director_rules(cands: Mapping[str, Stance], settings: ArcSettings | None = 
     ]
     if settings is not None:
         rules.append(_profile_rule(settings))
+    if budget is not None and budget.tier.restricted:
+        b = budget.budget
+        rules.append(
+            f"order budget tier: {b.tier.value} ({b.used}/{b.limit}); propose at most one "
+            "high-conviction idea or none."
+        )
     return rules
+
+
+def _shortlist_limit(settings: ArcSettings, budget: BudgetView) -> int:
+    """Quant/Risk budget: the restrictive tier's lower cap once ``used >= restrict_at`` (D32)."""
+    limit = settings.pipeline_max_shortlist
+    if budget.tier.restricted:
+        limit = min(limit, settings.order_budget_restrictive_director_max_shortlist)
+    return limit
 
 
 def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
@@ -567,18 +590,48 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
         return JobResult(summary="no active candidates; empty shortlist", metrics={"shortlist": 0})
 
+    # D32: the day's order budget decides how much the entry chain may do.
+    budget = read_budget(ctx, env, settings, now=ctx.clock())
+    notice = budget_notice(ctx, budget.budget)
+    if not budget.tier.opens_allowed:
+        # Opens are exhausted: stop the entry chain here, before any LLM spend.
+        # Quant/Risk/propose see an empty shortlist and do nothing.
+        why = f"order budget {budget.tier.value}: {budget.budget.summary()}; no new opens"
+        j = _journal(ctx, ctx.snapshot.id)
+        j.add(
+            JournalPersona.DIRECTOR,
+            Stage.SHORTLIST,
+            SESSION_SUBJECT,
+            Choice.NO_TRADE,
+            ReasonCode.ORDER_BUDGET_EXHAUSTED,
+            reason_text=why,
+            payload=budget.budget.model_dump(mode="json"),
+        )
+        ctx.write(
+            "shortlist",
+            SESSION_SUBJECT,
+            ShortlistPayload(shortlist=[], market_regime="unknown", session_notes=why),
+        )
+        log.info("pipeline.order_budget_exhausted", **budget.budget.brief())
+        return JobResult(
+            summary=f"{why}; empty shortlist",
+            metrics={"shortlist": 0, **budget.metrics()},
+            notice=notice,
+        )
+
     regimes = _regime_entries(ctx, env, sorted(cands))
     # Re-read (and record) the context now that today's regime entries exist.
     snap = ContextStore(ctx.conn).snapshot(ctx.now, kinds=DIRECTOR_READS, run_id=ctx.run_id)
     RoutineRunRepo(ctx.conn).set_inputs(ctx.run_id, [ctx.snapshot.id, snap.id])
 
     summary, _ = _portfolio_summary(ctx, env, settings)
-    budget = settings.pipeline_max_shortlist  # Quant/Risk budget; never shown to Director
+    # Quant/Risk budget (never shown to the Director); D32 lowers it in the restrictive tier.
+    qr_budget = _shortlist_limit(settings, budget)
     inputs = {
         "portfolio_summary": summary,
         "scan_date": _today(ctx).isoformat(),
         "max_notes": settings.pipeline_max_context_notes,
-        "rules": _director_rules(cands, settings),
+        "rules": _director_rules(cands, settings, budget),
     }
     reply, out = _ask(ctx, env, "director", snap, inputs, DirectorOutput)
     kept, dropped, rejected = _filter_shortlist(out, cands)
@@ -658,7 +711,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         excluded=excluded,
         market_regime=out.market_regime,
         session_notes=out.session_notes,
-        budget=budget,
+        budget=qr_budget,
     )
     entry = ctx.write("shortlist", SESSION_SUBJECT, payload)
     _note(
@@ -701,7 +754,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     over = payload.over_budget()
     return JobResult(
         summary=f"{len(cands)} candidates → ranked {len(kept)}: {names}"
-        + (f" (budget {budget}; {len(over)} not structured)" if over else "")
+        + (f" (budget {qr_budget}; {len(over)} not structured)" if over else "")
         + (f"; excluded {len(excluded)}" if excluded else "")
         + (f"; dropped {dict(dropped)}" if dropped else ""),
         metrics={
@@ -712,13 +765,15 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "not_ranked": len(not_ranked),
             "regime_written": len(regimes),
             **dropped,
+            **budget.metrics(),
         },
+        notice=notice,
         card=director_card(
             payload,
             candidates=len(cands),
             dropped=drop_items,
             funnel=funnel,
-            budget=budget,
+            budget=qr_budget,
             evidence=_scout_evidence(snap),
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
@@ -1603,6 +1658,40 @@ def _realloc_source(
     }
 
 
+def _restrictive_check(
+    priced: Any,
+    exits: ExitConfig,
+    settings: ArcSettings,
+    cost: CostModel | None,
+    realized_vol: float | None,
+) -> tuple[bool, str]:
+    """D32 restrictive tier: does the re-priced structure clear the stricter floors?
+
+    Net EV floor = ``min_net_ev_multiplier × round-trip costs`` (entry costs twice);
+    PoP floor = breakeven PoP (``max_loss / (max_loss + max_gain)``) +
+    ``min_pop_delta_pp``. Both on the managed (exit-policy) numbers after costs; a
+    structure without a managed model fails closed.
+    """
+    from arc.budget.orders import RestrictiveConfig, restrictive_floors
+
+    st = priced.structure
+    model = _proposal_exit_model(priced, exits, settings.scanner_risk_free_rate, realized_vol, cost)
+    floors = restrictive_floors(
+        RestrictiveConfig(
+            min_net_ev_multiplier=settings.order_budget_restrictive_min_net_ev_multiplier,
+            min_pop_delta_pp=settings.order_budget_restrictive_min_pop_delta_pp,
+        ),
+        base_net_ev_floor=0.0,
+        base_pop_floor=0.0,
+        round_trip_cost=0.0 if model is None else 2 * model.entry_costs,
+        max_loss=None if st.max_loss is None else float(st.max_loss),
+        max_gain=None if st.max_gain is None else float(st.max_gain),
+    )
+    if model is None:
+        return floors.passes(None, None)
+    return floors.passes(model.managed.net_ev, model.managed.pop)
+
+
 _SIZING_REASONS = {
     "ok": ReasonCode.SIZING_OK,
     "capped": ReasonCode.SIZING_CAPPED,
@@ -1693,7 +1782,12 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     assessed = {(a.ticker, a.structure_type): a for a in review.assessments}
 
     info, positions = _account_inputs(ctx, env)
-    account = account_snapshot(info, ctx.clock())  # as_of = broker fetch time
+    fetched_at = ctx.clock()  # as_of = broker fetch time
+    # D32: today's order count stamps the gate snapshot; the tier caps the ladder.
+    budget = read_budget(ctx, env, settings, now=fetched_at)
+    notice = budget_notice(ctx, budget.budget)
+    settings = budget.settings  # tier-adjusted improvement steps (band, gate, token agree)
+    account = account_snapshot(info, fetched_at, orders_used_today=budget.budget.used)
     portfolio = build_portfolio(
         ctx.conn,
         positions,
@@ -1711,10 +1805,36 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     lines: list[str] = []
     passed = proposals = 0
 
-    def skip(t: str, key: str, code: ReasonCode, text: str) -> None:
+    def skip(t: str, key: str, code: ReasonCode, text: str, **payload: Any) -> None:
         skipped[key] += 1
         with ctx.conn:  # no other output for this ticker: commit the decision alone
-            j.add(JournalPersona.SYSTEM, Stage.PROPOSE, t, Choice.NO_TRADE, code, reason_text=text)
+            j.add(
+                JournalPersona.SYSTEM,
+                Stage.PROPOSE,
+                t,
+                Choice.NO_TRADE,
+                code,
+                reason_text=text,
+                payload=payload or None,
+            )
+
+    if not budget.tier.opens_allowed:
+        for item in shortlist.shortlist:
+            skip(
+                item.ticker,
+                "order_budget",
+                ReasonCode.ORDER_BUDGET_EXHAUSTED,
+                f"order budget {budget.tier.value}: {budget.budget.summary()}",
+                **budget.budget.brief(),
+            )
+        return JobResult(
+            summary=f"no proposals: {budget.budget.summary()}",
+            metrics={"proposals": 0, **skipped, **budget.metrics()},
+            notice=notice,
+        )
+    max_opens = (
+        settings.order_budget_restrictive_max_new_opens_per_loop if budget.tier.restricted else None
+    )
 
     # Over-budget names were journalled OVER_BUDGET by the Quant step (E5.7).
     for item in shortlist.budgeted():
@@ -1722,6 +1842,16 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
         qs = by_ticker.get(t)
         if qs is None:
             skip(t, "no_structure", ReasonCode.NO_STRUCTURE, "Quant chose no structure")
+            continue
+        if max_opens is not None and proposals >= max_opens:
+            skip(
+                t,
+                "budget_restrictive",
+                ReasonCode.BUDGET_RESTRICTIVE,
+                f"restrictive tier: at most {max_opens} new open(s) per run",
+                **budget.budget.brief(),
+            )
+            lines.append(f"{t}: skipped (restrictive tier: {max_opens} open(s) per run)")
             continue
         if _existing(ctx.conn, day, t):
             skip(t, "exists", ReasonCode.ALREADY_PROPOSED, f"already proposed on {day}")
@@ -1754,6 +1884,21 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             count=len(priced.contracts),
         )
         st = priced.structure
+        if budget.tier.restricted:
+            # D32 restrictive tier: stricter managed Net EV / PoP floors, deterministic.
+            ok, why = _restrictive_check(
+                priced, exits, settings, cost_model, _realized_vol(ctx.snapshot, t)
+            )
+            if not ok:
+                skip(
+                    t,
+                    "budget_restrictive",
+                    ReasonCode.BUDGET_RESTRICTIVE,
+                    f"restrictive tier: {why}",
+                    **budget.budget.brief(),
+                )
+                lines.append(f"{t}: dropped (restrictive tier: {why})")
+                continue
         # Quotes were just fetched: judge their age (and stamp the gate, token and
         # expiry) against a clock read now, never a time taken before the fetch.
         now = ctx.clock()
@@ -1964,7 +2109,8 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             portfolio = _with_position(portfolio, t, size.max_loss_total, st.greeks, size.contracts)
     return JobResult(
         summary="; ".join(lines) or f"no proposals ({dict(skipped)})",
-        metrics={"proposals": proposals, "gate_passed": passed, **skipped},
+        metrics={"proposals": proposals, "gate_passed": passed, **skipped, **budget.metrics()},
+        notice=notice,
     )
 
 

@@ -429,7 +429,29 @@ The plugin shells out to the CLI; the CLI owns every rule.
   the Confirm/Cancel buttons need one gateway restart (when no kanban worker runs).
   Without the restart, type `!arc confirm <code>`.
 
-### 5.9 Open universe (E5.7, D9/D28)
+### 5.9 Daily options order budget (E6.5, D32)
+
+At most `order_budget.daily_max` broker option-order submissions per ET day (default and
+code hard ceiling 200). Every ladder attempt counts, filled or cancelled, opens and closes,
+plus orders placed by hand in the Alpaca dashboard (the count is `max(local orders rows,
+broker order list)` plus the remaining attempts of ladders still working).
+
+| Tier | When (defaults) | Effect |
+|---|---|---|
+| normal | used < `restrict_at` (100) | none |
+| restrictive | used ≥ 100 | Quant/Risk budget (`pipeline_max_shortlist`) ≤ 1 (Director still ranks all), ≤ 1 new open per loop, managed Net EV ≥ 1.5× round-trip costs, PoP ≥ breakeven + 5pp, ≤ 2 improvement steps; E5.9's idea-dedupe cooldown reads `arc.budget.effective_cooldown` (×2) |
+| opens_exhausted | used ≥ `daily_max − close_reserve` (175) | no new opens (entry chain stops before any LLM call); closes still run |
+| exhausted | used ≥ 200 | nothing goes to the broker, closes included; use the Alpaca dashboard |
+
+Enforced twice, deterministically: the gate rule `order_budget` (charges the band's worst-case
+attempts) and the ladder guard (re-counts before every attempt, journal `order:budget_exhausted`).
+Each tier crossing posts one notice in the day thread. `!arc budget` / `arc budget status
+[--db …] [--day …] [--json]` shows used/limit/tier and the local-vs-broker cross-check; the
+tower's ops strip and the monitor heartbeat carry the same numbers. Tunables:
+`order_budget.daily_max|restrict_at|close_reserve` plus the `order_budget.restrictive.*`
+knobs (see `!arc config execution`). Raising the cap is the riskier direction (confirm step).
+
+### 5.10 Open universe (E5.7, D9/D28)
 
 `settings.universe` is a seed list (`ARC_UNIVERSE_MODE=seed`, the default). Other
 names reach the Scout only if they are in the symbol master and pass the liquidity
