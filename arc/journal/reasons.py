@@ -89,7 +89,8 @@ class ReasonCode(StrEnum):
     NOT_A_CANDIDATE = "not_a_candidate"
     DUPLICATE = "duplicate"
     INVALID_FIELD = "invalid_field"
-    OVER_LIMIT = "over_limit"
+    OVER_LIMIT = "over_limit"  # pre-E5.7 rows only: the Director no longer has a cap
+    DIRECTOR_EXCLUDED = "director_excluded"  # E5.7: excluded with a stated reason
     MARKET_READ = "market_read"
     NO_CANDIDATES = "no_candidates"
     # structure (Quant + scanner)
@@ -98,7 +99,10 @@ class ReasonCode(StrEnum):
     NOT_IN_MENU = "not_in_menu"
     NOT_SHORTLISTED = "not_shortlisted"
     NO_CHAIN = "no_chain"
-    QUANT_OMITTED = "quant_omitted"
+    QUANT_OMITTED = "quant_omitted"  # pre-E5.7 rows only; now NOT_STRUCTURED
+    QUANT_SKIPPED = "quant_skipped"  # E5.7: Quant skipped a budgeted ticker, with a reason
+    NOT_STRUCTURED = "not_structured"  # E5.7: no structure and no reason from Quant
+    OVER_BUDGET = "over_budget"  # E5.7: ranked beyond pipeline_max_shortlist
     # account profile (D25): the profile maps the stance to no structure
     PROFILE_NO_NEUTRAL = "profile:no_neutral_structure"
     PROFILE_NO_STRUCTURE = "profile:no_structure"

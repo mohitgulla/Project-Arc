@@ -147,9 +147,24 @@ def director_input_from_context(
 def quant_input_from_context(
     snapshot: ContextSnapshot, *, chains_json: str, underlying_prices_json: str, scan_date: str
 ) -> QuantInput:
-    """Quant reads the latest active ``shortlist``."""
+    """Quant reads the latest active ``shortlist``: only the budgeted names (E5.7).
+
+    Names ranked beyond ``budget`` (``pipeline_max_shortlist``) and the Director's
+    exclusions are not the Quant's job, so they are cut from its prompt.
+    """
+    payload = _latest_payload(snapshot, "shortlist")
+    if payload.get("budget") is not None:
+        from arc.context.kinds import ShortlistPayload
+        from arc.personas.schemas import DirectorOutput
+
+        sl = ShortlistPayload.model_validate(payload)
+        payload = DirectorOutput(
+            shortlist=sl.budgeted(),
+            market_regime=sl.market_regime,
+            session_notes=sl.session_notes,
+        ).model_dump(mode="json", exclude={"excluded"})
     return QuantInput(
-        shortlist_json=_dump(_latest_payload(snapshot, "shortlist")),
+        shortlist_json=_dump(payload),
         chains_json=chains_json,
         underlying_prices_json=underlying_prices_json,
         scan_date=scan_date,
@@ -319,8 +334,9 @@ def build_director_prompt(inp: DirectorInput) -> str:
 Slack label: [Director]
 
 You receive candidates from Scout plus regime features and portfolio state.
-Your job: rank candidates by conviction, assign a thesis and suggested
-structure type, and assess the overall market regime.
+Your job: rank every candidate you would consider trading by conviction (no cap),
+each with a thesis, suggested structure type and up to 3 grounded evidence facts;
+exclude the rest with a one-line reason; assess the overall market regime.
 
 ## Forbidden actions
 - Do NOT call any broker API or place any orders.
@@ -354,9 +370,11 @@ Respond with JSON matching the DirectorOutput schema:
       "regime_context": "...",
       "suggested_structure_type": "vertical_spread",
       "stance": "bullish",
-      "confidence": 0.85
+      "confidence": 0.85,
+      "evidence": ["8-K: buyback $50B, Sep 24", "IV rank 18"]
     }}
   ],
+  "excluded": [{{"ticker": "...", "reason": "..."}}],
   "market_regime": "risk_on",
   "session_notes": "..."
 }}
@@ -425,6 +443,7 @@ Respond with JSON matching the QuantOutput schema:
       "rationale": "..."
     }}
   ],
+  "skipped": [{{"ticker": "...", "reason": "..."}}],
   "analysis_notes": "..."
 }}
 """

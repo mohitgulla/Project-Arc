@@ -296,7 +296,7 @@ class TestDirector:
         assert "Rank 2 · Bullish · 70% confidence · Vertical Spread" in text
         assert "[Director] SPY" not in text and "_Regime:_" not in text
         assert "• not a Scout candidate (1): AAPL" in text
-        assert "• not picked by Director (2): XOM, TSLA" in text
+        assert "• not ranked or excluded by Director (2): XOM, TSLA" in text
         assert "*[Director] Session notes*\nTwo setups." in text
         assert _footer(view) == "run `r` · chain `c`"
         _assert_slack_limits(view)

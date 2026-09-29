@@ -7,26 +7,41 @@
       "regime_context": "Fixture: low realised vol, IV in the low teens.",
       "suggested_structure_type": "iron_condor",
       "stance": "neutral",
-      "confidence": 0.7
+      "confidence": 0.7,
+      "evidence": ["FOMC hold priced in futures", "IV in the low teens", "20-day realised vol below implied"]
+    },
+    {
+      "ticker": "NVDA",
+      "rank": 2,
+      "thesis": "Fixture: buyback supports the tape into earnings.",
+      "regime_context": "Fixture: uptrend, elevated IV.",
+      "suggested_structure_type": "vertical_spread",
+      "stance": "bullish",
+      "confidence": 0.65,
+      "evidence": ["8-K: buyback $50B, Sep 24", "uptrend above the 50-day", "IV above its 1-month average", "a fourth item is cut"]
+    },
+    {
+      "ticker": "XOM",
+      "rank": 3,
+      "thesis": "Fixture: crude slide pressures upstream margins.",
+      "regime_context": "Fixture: downtrend in energy.",
+      "suggested_structure_type": "vertical_spread",
+      "stance": "bearish",
+      "confidence": 0.6,
+      "evidence": ["WTI down 6% on the week"]
     },
     {
       "ticker": "AAPL",
-      "rank": 2,
-      "thesis": "Fixture: not among the offline Scout candidates (NVDA/XOM/SPY), so the pipeline drops it.",
+      "rank": 4,
+      "thesis": "Fixture: not among the offline Scout candidates, so the pipeline drops it.",
       "regime_context": "Fixture: uptrend.",
       "suggested_structure_type": "vertical_spread",
       "stance": "bullish",
       "confidence": 0.65
-    },
-    {
-      "ticker": "PLTR",
-      "rank": 3,
-      "thesis": "Fixture: not a Scout candidate, so the pipeline drops it.",
-      "regime_context": "n/a",
-      "suggested_structure_type": "long_call",
-      "stance": "bullish",
-      "confidence": 0.9
     }
+  ],
+  "excluded": [
+    {"ticker": "PLTR", "reason": "Fixture: new open-universe name on one source only; wait for a second source."}
   ],
   "market_regime": "risk_on",
   "session_notes": "Fixture Director reply (offline run)."

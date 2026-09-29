@@ -15,9 +15,10 @@
 symbol_master:
   # Local cache of the SEC ticker file + Alpaca active US-equity assets
   # (tradable / has_options flags). Relative paths are from the repo root.
-  # The `symbols` source job (config/routines.yaml) refreshes it weekly; an
-  # older file is still used (stale-file fallback, logged). A missing file is
-  # fetched once on first use.
+  # The `symbols` source job (config/routines.yaml) refreshes it weekly, or run
+  # `arc universe refresh`. An older file is still used (stale-file fallback,
+  # logged). With no file, ingest and the Scout fall back to the seed list
+  # (non-seed names fail closed as unknown_symbol); they never fetch mid-run.
   cache: data/symbol_master.json
   refresh_days: 7
   sec_url: https://www.sec.gov/files/company_tickers_exchange.json
