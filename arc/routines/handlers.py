@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from arc.context.store import ContextEntry, ContextSnapshot, ContextStore
+from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     import datetime as _dt
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from arc.config import ArcSettings
+    from arc.data.base import MarketDataProvider
     from arc.ingest.llm import ScoutLLM
     from arc.ingest.scout import ScoutRunResult
     from arc.models import RawDoc
@@ -227,13 +229,154 @@ def _source_result(ctx: JobContext, docs: list[RawDoc]) -> JobResult:
 
 
 def rss_source(ctx: JobContext) -> JobResult:
+    """RSS feeds; each feed is its own D30 source (``source_key`` on every doc)."""
     from arc.ingest.rss import fetch_rss
+    from arc.ingest.sources import FeedSpec
 
     settings = ctx.settings
-    feeds = ctx.options.get("feeds")
+    feeds = [FeedSpec.parse(f) for f in ctx.options.get("feeds") or []]
+    keys: dict[str, str] = {}
     if feeds:
-        settings = settings.model_copy(update={"ingest_rss_feeds": list(feeds)})
-    return _source_result(ctx, fetch_rss(ctx.conn, settings))
+        settings = settings.model_copy(update={"ingest_rss_feeds": [f.url for f in feeds]})
+        keys = {f.url: f.key for f in feeds}
+    return _source_result(ctx, fetch_rss(ctx.conn, settings, source_keys=keys))
+
+
+def _data_result(ctx: JobContext, name: str, source: str, payload: object, n: int) -> None:
+    ctx.record_input(name, source, payload, as_of=ctx.now, count=n)
+
+
+def vol_term_source(ctx: JobContext) -> JobResult:
+    """E4.5: VIX9D / VIX / VIX3M / VVIX closes (Cboe) -> one ``vol_term`` entry."""
+    from arc.ingest.options_data import fetch_vol_term
+
+    band = float(ctx.options.get("flat_band", 0.02))
+    payload = fetch_vol_term(band=band)
+    if payload is None:
+        msg = "Cboe VIX history unavailable"
+        raise JobSkippedError(msg)
+    _data_result(ctx, "vol_term", "cboe", payload.model_dump(mode="json"), 4)
+    ctx.write("vol_term", "market", payload)
+    return JobResult(
+        summary=(
+            f"VIX {payload.vix:.2f} · VIX3M/VIX {payload.ratio_3m_1m} ({payload.structure})"
+            f" · as of {payload.as_of}"
+        ),
+        metrics={"vix": payload.vix, "ratio_3m_1m": payload.ratio_3m_1m or 0.0},
+    )
+
+
+def put_call_source(ctx: JobContext) -> JobResult:
+    """E4.5: Cboe daily put/call ratios -> one ``put_call`` entry."""
+    from arc.ingest.options_data import fetch_put_call
+
+    payload = fetch_put_call(ctx.now.astimezone(ET).date())
+    if payload is None:
+        msg = "no Cboe put/call ratios in the last week"
+        raise JobSkippedError(msg)
+    _data_result(ctx, "put_call", "cboe", payload.model_dump(mode="json"), 1)
+    ctx.write("put_call", "market", payload)
+    return JobResult(
+        summary=f"put/call total {payload.total} · equity {payload.equity} · {payload.as_of}",
+        metrics={"total": payload.total or 0.0, "equity": payload.equity or 0.0},
+    )
+
+
+def macro_calendar_source(ctx: JobContext) -> JobResult:
+    """E4.5: FOMC decisions + BLS releases (CPI/PPI/NFP/JOLTS/ECI) -> ``macro_calendar``."""
+    from arc.ingest.options_data import fetch_macro_calendar
+
+    horizon = int(ctx.options.get("horizon_days", ctx.settings.ingest_macro_horizon_days))
+    payload, counts = fetch_macro_calendar(ctx.now.astimezone(ET).date(), horizon)
+    if not any(counts.values()):
+        msg = "FOMC and BLS calendars both unavailable"
+        raise JobSkippedError(msg)
+    _data_result(
+        ctx, "macro_calendar", "fed+bls", payload.model_dump(mode="json"), len(payload.events)
+    )
+    ctx.write("macro_calendar", "market", payload)
+    nxt = payload.events[0] if payload.events else None
+    return JobResult(
+        summary=(
+            f"{len(payload.events)} events in {horizon}d"
+            + (f" · next {nxt.kind.upper()} {nxt.date}" if nxt else "")
+            + "".join(f" · {k} unavailable" for k, v in counts.items() if not v)
+        ),
+        metrics={"events": len(payload.events), **{f"{k}_events": v for k, v in counts.items()}},
+    )
+
+
+def _data_tickers(ctx: JobContext) -> list[str]:
+    """Seed universe plus today's candidates (what the chain may trade)."""
+    tickers = [str(t).upper() for t in ctx.options.get("tickers") or ctx.settings.universe]
+    rows = ctx.conn.execute(
+        "SELECT DISTINCT ticker FROM candidates WHERE day = ?",
+        (ctx.now.astimezone(ET).date().isoformat(),),
+    ).fetchall()
+    return list(dict.fromkeys([*tickers, *(r[0] for r in rows)]))
+
+
+def unusual_options_source(ctx: JobContext, market: MarketDataProvider | None = None) -> JobResult:
+    """E4.5: self-computed unusual options activity per ticker (Alpaca chain snapshot)."""
+    from arc.ingest.options_data import UoaThresholds, scan_unusual
+
+    s = ctx.settings
+    if market is None:  # pragma: no cover - live Alpaca (integration)
+        from arc.data.alpaca import AlpacaMarketData
+
+        market = AlpacaMarketData()
+    provider: MarketDataProvider = market
+    t = UoaThresholds(
+        min_volume=s.uoa_min_volume,
+        vol_oi_ratio=s.uoa_vol_oi_ratio,
+        volume_spike_ratio=s.uoa_volume_spike_ratio,
+    )
+    tickers = _data_tickers(ctx)
+    payloads, errors = scan_unusual(
+        ctx.conn,
+        provider,
+        tickers,
+        ctx.now.astimezone(ET).date(),
+        t,
+        max_dte=s.uoa_max_dte,
+        now=ctx.now.isoformat(),
+    )
+    _data_result(
+        ctx, "option_chains", "alpaca", [p.model_dump(mode="json") for p in payloads], len(payloads)
+    )
+    flagged = [p for p in payloads if p.flags]
+    for p in payloads:
+        ctx.write("unusual_options", p.ticker, p)
+    return JobResult(
+        summary=(
+            f"{len(payloads)} tickers · {len(flagged)} unusual"
+            + (f" ({', '.join(p.ticker for p in flagged[:8])})" if flagged else "")
+            + (f" · {len(errors)} chain errors" if errors else "")
+        ),
+        metrics={"tickers": len(payloads), "unusual": len(flagged), "errors": len(errors)},
+    )
+
+
+def ex_dividend_source(ctx: JobContext) -> JobResult:
+    """E4.5: next cash-dividend ex-date per ticker (Alpaca corporate actions)."""
+    from arc.ingest.options_data import fetch_ex_dividends
+
+    horizon = int(ctx.options.get("horizon_days", ctx.settings.ex_dividend_horizon_days))
+    tickers = _data_tickers(ctx)
+    found = fetch_ex_dividends(tickers, ctx.now.astimezone(ET).date(), horizon)
+    _data_result(
+        ctx,
+        "corporate_actions",
+        "alpaca",
+        {k: v.model_dump(mode="json") for k, v in found.items()},
+        len(found),
+    )
+    for ticker, payload in sorted(found.items()):
+        ctx.write("ex_dividend", ticker, payload)
+    return JobResult(
+        summary=f"{len(found)} ex-dividend dates within {horizon}d of {len(tickers)} tickers",
+        metrics={"ex_dividends": len(found), "tickers": len(tickers)},
+    )
 
 
 def edgar_source(ctx: JobContext) -> JobResult:
@@ -380,11 +523,13 @@ def scout_persona(
     from arc.context.kinds import CandidatePayload
     from arc.ingest.scout import run_scout
 
-    kwargs: dict[str, Any] = {"now": ctx.now, "run_id": ctx.run_id}
+    kwargs: dict[str, Any] = {"now": ctx.now, "run_id": ctx.run_id, "routines": ctx.routines}
     if llm is not None:
         kwargs["llm"] = llm
     if guard is not None:
         kwargs["guard"] = guard
+    if "story" in (ctx.spec.writes or []):  # D30 stage-1 digests, readable by other personas
+        kwargs["on_story"] = lambda p: ctx.write("story", p.story_id, p)
     result = run_scout(ctx.conn, ctx.settings, **kwargs)
     _journal_universe_rejects(ctx, result)
     written = [
@@ -396,16 +541,23 @@ def scout_persona(
 
     return JobResult(
         summary=(
-            f"{result.docs_scouted} docs → {result.accepted} accepted, "
-            f"{len(result.candidates)} candidates today"
+            f"{result.docs_scouted} docs ({len(result.stories)} stories) → "
+            f"{result.accepted} accepted, {len(result.candidates)} candidates today"
+            + (f", {result.over_budget} over budget" if result.over_budget else "")
             + (f", {result.failed_batches} failed batches" if result.failed_batches else "")
         ),
         metrics={
             "new_candidates": result.accepted,
             "candidates": len(result.candidates),
             "docs_scouted": result.docs_scouted,
+            "stories": len(result.stories),
+            "over_budget": result.over_budget,
+            "skipped_budget": result.skipped_budget,
+            "digest_batches": result.digest_batches,
+            "failed_digest_batches": result.failed_digest_batches,
             "failed_batches": result.failed_batches,
             "new_tickers": len(result.new_tickers),
+            **{f"source_{label}": read for label, read, _ in result.source_mix},
         },
         card=scout_card(
             docs=result.docs_scouted,
@@ -419,6 +571,8 @@ def scout_persona(
             chain_run_id=ctx.chain_run_id,
             reject_details=result.reject_details,
             new_tickers=result.new_tickers,
+            source_mix=result.source_mix,
+            stories=len(result.stories),
         ),
     )
 
@@ -429,6 +583,12 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "earnings": "arc.routines.handlers:earnings_source",
     "symbols": "arc.routines.handlers:symbols_source",  # E5.7 weekly symbol master
     "youtube": "arc.routines.handlers:youtube_source",
+    # E4.5 / D30 options-trading data (no LLM; typed context kinds)
+    "vol_term": "arc.routines.handlers:vol_term_source",
+    "put_call": "arc.routines.handlers:put_call_source",
+    "macro_calendar": "arc.routines.handlers:macro_calendar_source",
+    "unusual_options": "arc.routines.handlers:unusual_options_source",
+    "ex_dividend": "arc.routines.handlers:ex_dividend_source",
     "scout": "arc.routines.handlers:scout_persona",
     # E5.2 pipeline chain: director → quant → risk → propose (arc/pipeline/steps.py)
     "director": "arc.pipeline.steps:director_step",

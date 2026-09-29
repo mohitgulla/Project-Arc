@@ -152,7 +152,16 @@ __all__ = [
 
 SESSION_SUBJECT = "session"
 STRUCTURE_TYPES = frozenset({"vertical_spread", "iron_condor", "long_call", "long_put"})
-DIRECTOR_READS = ["candidate", "regime", "channel_brief", "note"]  # == routines.yaml director.reads
+DIRECTOR_READS = [
+    "candidate",
+    "regime",
+    "channel_brief",
+    "note",
+    "vol_term",
+    "put_call",
+    "macro_calendar",
+    "unusual_options",
+]  # == routines.yaml director.reads (D30 adds the options-data kinds)
 
 # Drop reasons (stable keys; stored in persona_calls.dropped and step metrics).
 DROP_NOT_CANDIDATE = "not_a_candidate"

@@ -249,7 +249,33 @@ class TestScout:
         assert "*Candidates*\nnone" in text
         assert ":warning: 2 failed batches" in text
         assert "Rejected" not in text
+        assert "Source mix" not in text and "stor" not in text  # pre-D30 callers unchanged
         assert _footer(view) == " "
+
+    def test_source_mix_story_count_and_corroboration(self) -> None:
+        """D30: source mix fact with over-budget counts, story count, distinct sources."""
+        view = D.scout_card(
+            docs=70,
+            accepted=1,
+            candidates=[cand(corroboration=3)],
+            rejected={},
+            source_mix=[("WSJ", 12, 46), ("CNBC", 12, 0), ("Fed", 3, 0), ("EDGAR", 24, 157)],
+            stories=41,
+        )
+        text = _all(view)
+        assert "41 stories" in text
+        assert (
+            "*Source mix*\nWSJ 12 (46 over budget) · CNBC 12 · Fed 3 · EDGAR 24 (157 over budget)"
+            in text
+        )
+        assert "75% confidence · 3 sources" in text
+        _assert_slack_limits(view)
+        one = _all(
+            D.scout_card(
+                docs=1, accepted=0, candidates=[cand(corroboration=1)], rejected={}, stories=1
+            )
+        )
+        assert "1 story" in one and "· 1 source" in one
 
     def test_escapes_rationale_and_rejected_names(self) -> None:
         view = D.scout_card(

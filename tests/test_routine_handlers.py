@@ -155,7 +155,10 @@ def test_scout_persona_writes_candidates_and_metrics(conn: sqlite3.Connection) -
     assert ctx.kind is JobKind.PERSONA
     with mock.patch("arc.ingest.scout.run_scout", return_value=result) as run:
         out = scout_persona(ctx)
-    assert run.call_args.kwargs == {"now": NOW, "run_id": "run-1"}
+    kwargs = run.call_args.kwargs
+    assert kwargs["now"] == NOW and kwargs["run_id"] == "run-1"
+    assert kwargs["routines"] is ctx.routines  # D30: the registry comes from the same config
+    assert "on_story" not in kwargs  # this scout does not declare `writes: [story]`
     assert out.metrics["new_candidates"] == 1
     assert "1 failed batches" in out.summary
     entries = ContextStore(conn).query(as_of=NOW, kinds=["candidate"])
