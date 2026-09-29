@@ -252,9 +252,9 @@ def remote_access(
 ) -> CheckResult:
     """Hermes dashboard + tower answer on the Tailscale IP, gated, and nowhere on the LAN.
 
-    - ``remote_hermes``  ``GET /api/status`` on :9119 must answer with
+    - ``remote_hermes``  ``GET /api/status`` on :4174 must answer with
       ``auth_required: true`` and ``basic`` in ``auth_providers``.
-    - ``remote_tower``   ``GET /_stcore/health`` on :8501 must answer 200.
+    - ``remote_tower``   ``GET /_stcore/health`` on :1994 must answer 200.
     - ``remote_exposed`` either port accepting a connection on a LAN address.
     """
     from arc.tower.net import NoTailscaleAddressError, host_lan_addresses, resolve_bind_address

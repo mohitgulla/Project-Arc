@@ -42,7 +42,7 @@ class GatewayCheck(BaseModel):
 
 
 class RemoteAccessCheck(BaseModel):
-    """E8.6: Hermes dashboard (:9119, basic auth) and tower (:8501) on the tailnet only.
+    """E8.6: Hermes dashboard (:4174, basic auth) and tower (:1994) on the tailnet only.
 
     Off until the owner has installed Tailscale and the two LaunchAgents
     (``hermes/remote/install.sh``); then set ``enabled: true``.
@@ -51,8 +51,8 @@ class RemoteAccessCheck(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     enabled: bool = False
-    dashboard_port: Annotated[int, Field(ge=1, le=65535)] = 9119
-    tower_port: Annotated[int, Field(ge=1, le=65535)] = 8501
+    dashboard_port: Annotated[int, Field(ge=1, le=65535)] = 4174
+    tower_port: Annotated[int, Field(ge=1, le=65535)] = 1994
     timeout: _dt.timedelta = _dt.timedelta(seconds=5)
 
     @field_validator("timeout", mode="before")

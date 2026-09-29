@@ -8,7 +8,7 @@
 #      (Tailscale 100.64/10 IPv4 only; never 0.0.0.0 or the LAN),
 #   2. checks the three HERMES_DASHBOARD_BASIC_AUTH_* keys are set (no plaintext password),
 #   3. checks `hermes dashboard --status` and the port: no second copy,
-# then execs `hermes dashboard --host <ts-ip> --port 9119 --no-open --skip-build`.
+# then execs `hermes dashboard --host <ts-ip> --port 4174 --no-open --skip-build`.
 # Any failed check exits 2 with a one-line reason; launchd retries after ThrottleInterval.
 set -euo pipefail
 

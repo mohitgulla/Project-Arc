@@ -17,7 +17,7 @@ checks, in order, and exits 2 with a one-line reason on the first failure:
    matters: ``--status`` matches process argv, and a dashboard started through the
    source launcher (``python3 -I -c …``) does not show up in it.
 
-Then ``exec hermes dashboard --host <ip> --port 9119 --no-open --skip-build``.
+Then ``exec hermes dashboard --host <ip> --port 4174 --no-open --skip-build``.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def add_remote_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
     rsub = p.add_subparsers(dest="remote_command", required=True)
 
     d = rsub.add_parser(
-        "dashboard", help="Start `hermes dashboard` on the Tailscale address, :9119 (basic auth)"
+        "dashboard", help="Start `hermes dashboard` on the Tailscale address, :4174 (basic auth)"
     )
     d.add_argument("--port", type=int, default=DASHBOARD_PORT)
     d.add_argument("--address", default=None, help="Tailscale (100.64/10) or loopback IP")
