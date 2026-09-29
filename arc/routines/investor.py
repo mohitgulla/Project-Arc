@@ -11,10 +11,25 @@ Orders are only worked while the regular session is open: an approval that
 lands outside RTH (e.g. a late click) is recorded as ``rejected`` (market
 closed) and never sent. An exit (``kind='close'``) closes the open structure
 it was proposed for.
+
+D34 in-chain Execute (:func:`execute_step`, chain step ``execute`` right after
+``propose`` / ``risk.reallocate``): publishes this chain's proposals through the
+approval service (the same path as the tick sweep, so cards, journal and
+``approval_id`` are identical), and when ``auto_approve`` is on for the running
+environment, hands every auto-approved proposal to an Investor **subprocess**
+(``arc routines run investor --event <id>``) that joins the chain run but holds
+its own per-event lock, never the LLM lock. A D24 ladder takes ~6 min; running it
+inline would block every loop. With auto-approve off the step is a no-op
+("awaiting approval"). Freshness: the ladder re-prices at the current mid when the
+proposal is older than ``execution_max_quote_age_seconds`` (pure band code,
+:meth:`arc.gate.band.PriceBand.reanchor`).
 """
 
 from __future__ import annotations
 
+import datetime as _dt
+import subprocess
+import sys
 import time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -24,17 +39,26 @@ import structlog
 from arc.routines.handlers import JobResult, JobSkippedError
 
 if TYPE_CHECKING:
-    import datetime as _dt
     import sqlite3
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
+    from arc.approvals.service import ApprovalService
     from arc.broker.base import BrokerAdapter
+    from arc.data.base import MarketDataProvider
     from arc.execution.ladder import ExecutionOutcome
     from arc.models import GateDecision, Proposal
-    from arc.routines.handlers import JobContext
+    from arc.routines.handlers import JobContext, RunEnv
     from arc.slack.blocks import CardView
 
-__all__ = ["execution_card", "investor", "investor_step", "load_approved"]
+__all__ = [
+    "execute_step",
+    "execution_card",
+    "fresh_mid_of",
+    "investor",
+    "investor_step",
+    "load_approved",
+    "spawn_investor",
+]
 
 log = structlog.get_logger(__name__)
 
@@ -144,6 +168,43 @@ def execution_card(
     return investor_card(plan, result, run_id=run_id)
 
 
+def priced_at_of(conn: sqlite3.Connection, proposal_hash: str) -> _dt.datetime | None:
+    """When the proposal was priced (its ``proposals.created_at``), tz-aware, else None."""
+    row = conn.execute(
+        "SELECT created_at FROM proposals WHERE proposal_hash = ?", (proposal_hash,)
+    ).fetchone()
+    if row is None or not row["created_at"]:
+        return None
+    try:
+        dt = _dt.datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=_dt.UTC)
+
+
+def fresh_mid_of(
+    market: MarketDataProvider, proposal: Proposal, *, as_of: _dt.date, r: float
+) -> Callable[[], Decimal | None]:
+    """A thunk that re-prices the proposal's legs at the current mid (D34 freshness).
+
+    Uses :func:`arc.pipeline.market.price_structure` with ``require_iv=False``: an
+    execution needs mids only. ``None`` when any leg has no usable quote.
+    """
+    from arc.pipeline.market import price_structure
+
+    legs = [(leg.occ_symbol, leg.side, leg.ratio) for leg in proposal.structure.legs]
+
+    def _mid() -> Decimal | None:
+        try:
+            priced = price_structure(market, legs, as_of=as_of, r=r, require_iv=False)
+        except LookupError as exc:
+            log.warning("investor.reprice_no_quote", error=str(exc))
+            return None
+        return Decimal(priced.structure.net_debit_credit)
+
+    return _mid
+
+
 def investor(
     ctx: JobContext,
     *,
@@ -151,6 +212,7 @@ def investor(
     clock: Callable[[], _dt.datetime],
     sleep: Callable[[float], None],
     market_open: Callable[[_dt.datetime], bool],
+    market: MarketDataProvider | None = None,
 ) -> JobResult:
     from arc.approvals.service import approval_record
     from arc.execution.ladder import ExecStatus, execute
@@ -169,6 +231,13 @@ def investor(
         return _refuse_closed(ctx, phash, ticker, "no gate decision")
     if kind == "close" and sid is None:
         return _refuse_closed(ctx, phash, ticker, "exit has no open structure to close")
+    # D34 freshness: the ladder re-prices when the proposal is older than the max
+    # quote age; without a market data provider the band is walked as approved.
+    fresh_mid = None
+    if market is not None:
+        fresh_mid = fresh_mid_of(
+            market, proposal, as_of=clock().date(), r=ctx.settings.scanner_risk_free_rate
+        )
     out: ExecutionOutcome = execute(
         proposal,
         decision,
@@ -183,6 +252,8 @@ def investor(
         structure_id=sid,
         ticker=ticker,
         run_id=ctx.run_id,
+        priced_at=priced_at_of(ctx.conn, phash) if market is not None else None,
+        fresh_mid=fresh_mid,
     )
     what = "exit" if kind == "close" else "entry"
     card = None
@@ -211,6 +282,7 @@ def investor(
 def investor_step(ctx: JobContext) -> JobResult:
     """Dispatcher entry point: Alpaca paper broker, wall clock, real sleep."""
     from arc.broker.alpaca_paper import AlpacaPaperBroker
+    from arc.data.alpaca import AlpacaMarketData
     from arc.utils.calendar import is_open, now_et
 
     return investor(
@@ -219,4 +291,154 @@ def investor_step(ctx: JobContext) -> JobResult:
         clock=now_et,
         sleep=time.sleep,
         market_open=is_open,
+        market=AlpacaMarketData(),
+    )
+
+
+# -- D34: in-chain Execute -----------------------------------------------------
+
+
+def chain_proposals(conn: sqlite3.Connection, chain_run_id: str) -> list[str]:
+    """Proposal hashes written by any run of *chain_run_id*, highest rank first.
+
+    Rank = the propose step's order (``proposals.rowid``): the Director's shortlist
+    is ranked, and propose inserts in that order.
+    """
+    rows = conn.execute(
+        """SELECT p.proposal_hash FROM proposals p
+           JOIN routine_runs r ON r.run_id = p.run_id
+           WHERE r.chain_run_id = ? ORDER BY p.rowid""",
+        (chain_run_id,),
+    ).fetchall()
+    return [r["proposal_hash"] for r in rows]
+
+
+def approval_events(conn: sqlite3.Connection, proposal_hashes: Sequence[str]) -> dict[str, str]:
+    """``{proposal_hash: routine_events.id}`` of the unconsumed ``approval`` events."""
+    out: dict[str, str] = {}
+    rows = conn.execute(
+        "SELECT id, payload FROM routine_events WHERE name = 'approval' AND consumed_at IS NULL"
+    ).fetchall()
+    import json
+
+    wanted = set(proposal_hashes)
+    for r in rows:
+        ph = str(json.loads(r["payload"]).get("proposal_hash") or "")
+        if ph in wanted and ph not in out:
+            out[ph] = r["id"]
+    return out
+
+
+def investor_command(
+    env: RunEnv, event_id: str, *, chain_run_id: str, parent_run_id: str
+) -> list[str]:
+    """The ``arc routines run investor --event`` argv a spawned ladder runs with."""
+    # Same interpreter as this process; `arc.cli:main` is the `arc` console script.
+    argv = [sys.executable, "-c", "from arc.cli import main; raise SystemExit(main())"]
+    argv += ["routines", "run", "investor", "--event", event_id]
+    argv += ["--chain-run-id", chain_run_id, "--parent-run-id", parent_run_id]
+    if env.db_path:
+        argv += ["--db", env.db_path]
+    if env.config_path:
+        argv += ["--config", env.config_path]
+    if env.lock_dir:
+        argv += ["--lock-dir", env.lock_dir]
+    if not env.slack:
+        argv.append("--no-slack")
+    return argv
+
+
+def spawn_investor(argv: Sequence[str]) -> int:
+    """Start the Investor subprocess detached (its own session); returns the pid."""
+    proc = subprocess.Popen(  # noqa: S603 - argv is built from our own constants
+        list(argv),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return proc.pid
+
+
+def execute_step(
+    ctx: JobContext,
+    *,
+    spawn: Callable[[Sequence[str]], int] = spawn_investor,
+    service: ApprovalService | None = None,
+) -> JobResult:
+    """Chain step ``execute`` (D34): publish + auto-approve, then hand off ladders.
+
+    Deterministic (``llm: false``). Returns at once; each ladder runs in its own
+    ``arc routines run investor --event <id>`` process joined to this chain.
+
+    Without Slack (``--no-slack`` / dry run) nothing is published, like the tick's
+    sweep: a card published to the log would be stranded with no button to click.
+    The proposals then wait for a tick that can post. Tests pass a *service* with a
+    recording poster.
+    """
+    from arc.approvals.cli import make_service
+    from arc.gate.halt import HaltSwitch
+    from arc.store.repos import HaltRepo
+
+    if not ctx.chain_run_id:
+        msg = "execute runs only as a chain step (after propose)"
+        raise JobSkippedError(msg)
+    hashes = chain_proposals(ctx.conn, ctx.chain_run_id)
+    settings = ctx.settings
+    if service is None and not ctx.run_env.slack:
+        return JobResult(
+            summary=f"{len(hashes)} proposal(s) not published (no Slack); awaiting the next tick",
+            metrics={"proposals": len(hashes), "published": 0, "auto_approved": 0, "dispatched": 0},
+        )
+    svc = service if service is not None else make_service(ctx.conn, settings, slack=True)
+    # Same code path as the tick's sweep, restricted to this chain's proposals; the
+    # later sweep finds nothing left for them (approval_requests exists per hash).
+    report = svc.publish_pending(ctx.now, only=hashes)
+    auto_on = bool(settings.auto_approve) or bool(settings.auto_exit_defined_risk)
+    env = settings.env.value
+    metrics: dict[str, Any] = {
+        "proposals": len(hashes),
+        "published": len(report.published),
+        "auto_approved": len(report.auto_approved),
+        "dispatched": 0,
+        "auto_approve": int(bool(settings.auto_approve)),
+    }
+    if not hashes:
+        return JobResult(summary="no proposals to execute", metrics=metrics)
+    if not auto_on or not report.auto_approved:
+        why = "auto-approve off" if not auto_on else "nothing auto-approved"
+        return JobResult(
+            summary=f"awaiting approval ({len(hashes)} card(s); {why}, {env})", metrics=metrics
+        )
+    if HaltSwitch(HaltRepo(ctx.conn)).is_halted():
+        return JobResult(
+            summary=f"halted: {len(report.auto_approved)} auto-approved proposal(s) not dispatched",
+            metrics=metrics,
+        )
+    events = approval_events(ctx.conn, report.auto_approved)
+    pids: list[int] = []
+    for ph in hashes:  # ranked order
+        ev = events.get(ph)
+        if ev is None:
+            continue
+        argv = investor_command(
+            ctx.run_env, ev, chain_run_id=ctx.chain_run_id, parent_run_id=ctx.run_id
+        )
+        pid = spawn(argv)
+        pids.append(pid)
+        log.info(
+            "execute.dispatched",
+            proposal_hash=ph,
+            event_id=ev,
+            pid=pid,
+            chain_run_id=ctx.chain_run_id,
+        )
+    metrics["dispatched"] = len(pids)
+    return JobResult(
+        summary=(
+            f"auto-approved {len(report.auto_approved)} ({env}); "
+            f"{len(pids)} ladder(s) dispatched to the Investor"
+        ),
+        metrics=metrics,
+        notice=f"Auto-approve: {len(pids)} order ladder(s) started ({env})" if pids else "",
     )

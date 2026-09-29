@@ -19,6 +19,13 @@ Invariants
   one more order would exceed the cap (opens: ``daily_max - close_reserve``,
   closes: ``daily_max``) the ladder stops with status ``cancelled`` and detail
   ``order budget exhausted``, even when the gate's view was stale.
+- D34 freshness: when more than ``execution_max_quote_age_seconds`` passed
+  between the proposal's pricing (*priced_at*) and the first attempt, the ladder
+  re-prices at the current mid (*fresh_mid*) and re-anchors the band there
+  (:meth:`arc.gate.band.PriceBand.reanchor`, pure gate code bound to the same
+  token). A mid outside the signed band, or no usable mid, sends nothing: the
+  execution ends ``cancelled`` with journal reason ``order:stale_band`` and the
+  next loop may propose afresh. The band is never widened.
 
 Every attempt is an ``orders`` row with its state events, fills go to ``fills``,
 and the outcome updates the local position model (``open_structures``,
@@ -178,6 +185,7 @@ class _Ctx:
     approval: ApprovalRecord | None
     phash: str
     ticker: str
+    stale_detail: str = ""
 
     @property
     def orders(self) -> OrderRepo:
@@ -347,6 +355,58 @@ def _settle(c: _Ctx, a: AttemptRecord, st: BrokerOrderStatus) -> str:
     return "next"
 
 
+def _fresh_band(
+    c: _Ctx,
+    band: PriceBand,
+    tick: Decimal,
+    *,
+    priced_at: _dt.datetime | None,
+    fresh_mid: Callable[[], Decimal | None] | None,
+) -> PriceBand | None:
+    """D34: the band to walk; ``None`` (nothing sent) when the re-priced mid left it."""
+    if priced_at is None or fresh_mid is None:
+        return band
+    age = (c.clock() - priced_at).total_seconds()
+    max_age = c.config.execution_max_quote_age_seconds
+    if age <= max_age:
+        return band
+    try:
+        mid = fresh_mid()
+    except Exception as exc:  # noqa: BLE001 - no quote = fail closed, never widen
+        log.warning("execution.reprice_failed", proposal_hash=c.phash, error=str(exc))
+        mid = None
+    walk = band.reanchor(mid, tick) if mid is not None else None
+    if walk is None:
+        why = f"mid {mid:+}" if mid is not None else "no usable mid"
+        c.stale_detail = (
+            f"stale band: quotes {age:.0f}s old (> {max_age}s), {why} outside the gate band "
+            f"{band.lo:+} .. {band.hi:+}; not sent"
+        )
+        c.journal(
+            Choice.NO_TRADE,
+            ReasonCode.ORDER_STALE_BAND,
+            c.stale_detail,
+            quote_age_s=int(age),
+            mid=str(mid) if mid is not None else None,
+            band_lo=str(band.lo),
+            band_hi=str(band.hi),
+        )
+        log.warning("execution.stale_band", proposal_hash=c.phash, age_s=int(age), mid=str(mid))
+        return None
+    if walk != band:
+        c.journal(
+            Choice.SELECTED,
+            ReasonCode.ORDER_STEP,
+            f"re-priced at mid {mid:+} after {age:.0f}s: band now {walk.lo:+} .. {walk.hi:+}",
+            quote_age_s=int(age),
+            mid=str(mid),
+            band_lo=str(walk.lo),
+            band_hi=str(walk.hi),
+        )
+        log.info("execution.repriced", proposal_hash=c.phash, age_s=int(age), lo=str(walk.lo))
+    return walk
+
+
 def _budget_blocks(c: _Ctx, kind: str) -> str | None:
     """D32: re-count the day's orders; the reason the next attempt may not be sent, or None."""
     cfg = OrderBudgetConfig.from_settings(c.config)
@@ -373,10 +433,13 @@ def execute(
     structure_id: str | None = None,
     ticker: str | None = None,
     run_id: str | None = None,
+    priced_at: _dt.datetime | None = None,
+    fresh_mid: Callable[[], Decimal | None] | None = None,
 ) -> ExecutionOutcome:
     """Work *proposal* through its price band; record orders, fills and the position.
 
     ``kind='close'`` closes ``structure_id`` (an ``open_structures`` row) on a fill.
+    ``priced_at`` + ``fresh_mid`` enable the D34 re-price (see the module docstring).
     """
     phash = hash_proposal(proposal)
     band, version = _band_of(decision, proposal)
@@ -401,7 +464,11 @@ def execute(
         return ExecutionOutcome(phash, ExecStatus.ALREADY, band, t, detail="already executed")
 
     out = ExecutionOutcome(phash, ExecStatus.CANCELLED, band, t)
-    ladder = band.ladder(Decimal(str(config.limit_tick)))
+    tick = Decimal(str(config.limit_tick))
+    walk = _fresh_band(c, band, tick, priced_at=priced_at, fresh_mid=fresh_mid)
+    ladder = walk.ladder(tick) if walk is not None else ()
+    if walk is None:
+        out.detail = c.stale_detail
     for step, price in enumerate(ladder):
         blocked = _budget_blocks(c, kind)
         if blocked is not None:
@@ -422,7 +489,8 @@ def execute(
             out.status = ExecStatus.REJECTED
         break
     else:
-        out.detail = f"no fill after {len(ladder)} attempt(s); last {ladder[-1]:+}"
+        if ladder:
+            out.detail = f"no fill after {len(ladder)} attempt(s); last {ladder[-1]:+}"
 
     if out.filled_qty:
         out.structure_id = _apply_fill(c, out, kind=kind, structure_id=structure_id)

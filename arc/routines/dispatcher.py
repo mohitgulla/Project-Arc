@@ -45,6 +45,7 @@ from arc.routines.handlers import (
     JobContext,
     JobResult,
     JobSkippedError,
+    RunEnv,
     resolve_handler,
 )
 from arc.routines.heartbeat import Heartbeats, LogNotifier, Notifier
@@ -150,9 +151,12 @@ class Dispatcher:
         is_halted: Callable[[], bool] | None = None,
         settings_factory: Callable[[], ArcSettings] | None = None,
         clock: Callable[[], _dt.datetime] | None = None,
+        run_env: RunEnv | None = None,
     ) -> None:
         self.conn = conn
         self.routines = routines
+        # D34: what a step hands to a subprocess it spawns (db, config, locks, slack).
+        self.run_env = run_env or RunEnv()
         self.handlers = dict(handlers or {})
         self.locks = locks or NullLocks()
         self.heartbeats = Heartbeats(
@@ -469,6 +473,7 @@ class Dispatcher:
         event: RoutineEvent | None,
         note: str,
         parent_run_id: str | None = None,
+        job_lock: bool = True,
     ) -> Outcome:
         # E8.2: every log line of this run (handler, Slack, LLM calls) carries its ids.
         with bind_ids(
@@ -482,7 +487,9 @@ class Dispatcher:
             # D26: the config_changes version this run executes under (E7.4 attribution).
             self.runs.set_config_version(run.run_id, self._config_version())
             try:
-                return self._execute_bound(run, now=now, event=event, note=note, trace=trace)
+                return self._execute_bound(
+                    run, now=now, event=event, note=note, trace=trace, job_lock=job_lock
+                )
             finally:
                 # D27: one manifest per run attempt, on every path (ok / failed / skipped).
                 self._write_manifest(run, trace, now=now, started=started, t0=t0)
@@ -495,6 +502,7 @@ class Dispatcher:
         event: RoutineEvent | None,
         note: str,
         trace: _RunTrace,
+        job_lock: bool = True,
     ) -> Outcome:
         kind, spec = self.routines.step(run.job)
         ctx: JobContext | None = None
@@ -519,9 +527,11 @@ class Dispatcher:
                 event=event,
                 settings_factory=self._settings_factory,
                 clock_fn=self._clock,
+                run_env=self.run_env,
             )
             trace.ctx = ctx
-            with self.locks.hold(run.job) if run.step_index else contextlib.nullcontext():
+            hold = run.step_index and job_lock  # a chain step; run_event holds its own lock
+            with self.locks.hold(run.job) if hold else contextlib.nullcontext():
                 result = handler(ctx)
             if not isinstance(result, JobResult):
                 msg = f"handler for {run.job!r} returned {type(result).__name__}, not JobResult"
@@ -726,6 +736,56 @@ class Dispatcher:
             self.events.consume(ev.id, [o.run_id for o in results if o.run_id], now=now)
             out.extend(results)
         return out
+
+    # -- one event, out of band (D34) ------------------------------------------
+
+    def run_event(
+        self,
+        job: str,
+        event: RoutineEvent,
+        *,
+        now: _dt.datetime,
+        chain_run_id: str | None = None,
+        parent_run_id: str | None = None,
+    ) -> list[Outcome]:
+        """``arc routines run <job> --event <id>``: run *job* for one queued event.
+
+        Used by the in-chain ``execute`` step to hand an auto-approved proposal to
+        an Investor subprocess. The run joins the chain (``chain_run_id``, next step
+        index) so ``arc context trace <chain>`` shows it, holds a per-event lock
+        (``<job>:<event id>``) rather than the job's lock, and never the LLM lock, so
+        ladders run in parallel with the next loop. The event is marked consumed by
+        this run whatever the outcome; the ``executions`` PK stops a second ladder.
+        """
+        found = self.routines.job(job)
+        if found is None:
+            msg = f"unknown job {job!r}"
+            raise KeyError(msg)
+        step_index = 0
+        if chain_run_id:
+            step_index = max((r.step_index for r in self.runs.chain(chain_run_id)), default=-1) + 1
+        run = self.runs.claim(
+            job=job,
+            scheduled_for=now,
+            reason=f"event:{event.name}",
+            chain_run_id=chain_run_id,
+            step_index=step_index,
+            now=now,
+        )
+        if run is None:
+            return [Outcome(job, now, "duplicate", "already ran for this slot")]
+        try:
+            with self.locks.hold(f"{job}:{event.id}"):
+                outcome = self._execute(
+                    run, now=now, event=event, note="", parent_run_id=parent_run_id, job_lock=False
+                )
+        except LockBusyError as exc:
+            self.runs.finish(
+                run.run_id, status=RunStatus.SKIPPED, summary=f"lock busy ({exc})", now=now
+            )
+            return [Outcome(job, now, "deferred", f"lock busy ({exc})", run_id=run.run_id)]
+        self.events.consume(event.id, [run.run_id], now=now)
+        return [outcome, *self._fire_completed([outcome], now, 0)]
 
     # -- manual ---------------------------------------------------------------
 

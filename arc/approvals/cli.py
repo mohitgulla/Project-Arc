@@ -59,6 +59,10 @@ def add_approve_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
     ls.add_argument("--day", default=None, help="YYYY-MM-DD")
     ls.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
 
+    from arc.approvals.auto import add_auto_parser
+
+    add_auto_parser(asub)  # D34: `arc approve auto on|off|status [--env] [--confirm-live]`
+
 
 def make_service(
     conn: sqlite3.Connection,
@@ -93,10 +97,14 @@ def run_approve(args: argparse.Namespace) -> int:
     settings = get_settings()
     conn = connect(args.db or settings.db_path)
     migrate(conn)
+    cmd = args.approve_command
+    if cmd == "auto":
+        from arc.approvals.auto import run_auto
+
+        return run_auto(args, base=settings, conn=conn)
     from arc.control import effective_settings
 
     settings = effective_settings(conn, base=settings)  # D26 overrides (approver list, TTL)
-    cmd = args.approve_command
 
     if cmd == "list":
         svc = make_service(conn, settings, slack=False)

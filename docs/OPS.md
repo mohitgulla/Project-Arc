@@ -490,7 +490,40 @@ tower's ops strip and the monitor heartbeat carry the same numbers. Tunables:
 `order_budget.daily_max|restrict_at|close_reserve` plus the `order_budget.restrictive.*`
 knobs (see `!arc config execution`). Raising the cap is the riskier direction (confirm step).
 
-### 5.10 Open universe (E5.7, D9/D28)
+### 5.10 Auto-approve and in-chain Execute (E6.6, D34)
+
+`auto_approve` is one switch per environment, both **off** by default. When it is on for the
+running `ARC_ENV`, the chain step `execute` (right after `propose`, and after
+`risk.reallocate` in the position-manager chain) publishes that chain's proposal cards,
+approves them as `arc:auto-approve` (card marked `Auto-approved (paper|LIVE)`, no buttons),
+and hands each one to an Investor subprocess (`arc routines run investor --event <id>`,
+its own per-event lock, never the LLM lock), so the ladder starts in the same tick. When it
+is off, `execute` reports `awaiting approval (N cards)` and the click flow is unchanged.
+
+Not relaxed by the switch: the gate, the order budget (§5.9), the daily-loss halt, `!halt`,
+and the GateToken + ApprovalRecord requirement in `submit()`. The ApprovalRecord's approver
+is `arc:auto-approve`; the journal row carries `env`.
+
+Freshness (`max_quote_age`, default 60 s, ceiling 600): when the proposal is older than
+that at the first attempt, the ladder re-prices at the current mid and re-anchors the band
+there (`PriceBand.reanchor`, pure gate code; the band is never widened). A mid outside the
+signed band sends nothing (journal `order:stale_band`); the next loop may propose afresh.
+
+Runbook (paper):
+1. `cd ~/GitHub/Project-Arc && .venv/bin/arc approve auto on --reason "paper loop"`
+2. `.venv/bin/arc approve auto status` → `auto_approve: on (paper); paper=on live=off`
+3. Off at any time: `.venv/bin/arc approve auto off`, or `!halt` to stop all trading.
+
+Live: `arc approve auto on --env live` only *stages* the change and prints a one-time code;
+re-run within 10 min with `--confirm-live <code>`. `off` is immediate. `ARC_AUTO_APPROVE`
+(env var) sets the paper value only: a live process forces it off, whatever the env says.
+Every flip is a `config_changes` row (`arc config history auto_approve.paper|live`,
+revertable) and posts `Auto-approve: ON|OFF (env)` to the day thread; each day thread's
+first line repeats the current state. The same keys are Slack-tunable
+(`!arc config set auto_approve.paper true` → confirm code, owner only).
+`auto_exit_defined_risk` (D24) is per-env the same way.
+
+### 5.11 Open universe (E5.7, D9/D28)
 
 `settings.universe` is a seed list (`ARC_UNIVERSE_MODE=seed`, the default). Other
 names reach the Scout only if they are in the symbol master and pass the liquidity

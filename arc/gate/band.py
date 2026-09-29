@@ -16,7 +16,7 @@ Pure: no clock, no I/O.
 
 from __future__ import annotations
 
-from decimal import ROUND_FLOOR, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -56,6 +56,26 @@ class PriceBand(BaseModel):
 
     def contains(self, price: Decimal) -> bool:
         return self.lo <= price <= self.hi
+
+    def reanchor(self, mid: Decimal, tick: Decimal) -> PriceBand | None:
+        """The band re-started at a fresh *mid* (D34 stale-quote re-price), or ``None``.
+
+        Pure. ``mid`` is rounded onto *tick* toward the marketable side (up: pay
+        at most one tick more, as :func:`arc.pipeline.market.limit_price` does).
+        The result keeps ``hi`` and ``max_steps``, so every attempt is still inside
+        the band the gate signed into the token; a fresh mid that is already
+        *better* than ``lo`` also starts at ``lo`` (never outside the band). A mid
+        past ``hi`` returns ``None``: the band is stale and nothing may be sent
+        without a new gate decision. The band is never widened.
+        """
+        if tick <= 0:
+            msg = f"tick must be positive, got {tick}"
+            raise ValueError(msg)
+        start = (mid / tick).to_integral_value(rounding=ROUND_CEILING) * tick
+        if start > self.hi:
+            return None
+        start = max(start, self.lo)
+        return PriceBand(lo=start, hi=self.hi, max_steps=self.max_steps if self.hi > start else 0)
 
     def ladder(self, tick: Decimal) -> tuple[Decimal, ...]:
         """Price for attempt ``k`` (0 = mid): ``lo + (hi − lo)·k/N`` floored to ``tick``.

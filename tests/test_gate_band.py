@@ -137,6 +137,52 @@ class TestPriceBand:
 
 
 # ---------------------------------------------------------------------------
+# PriceBand.reanchor (D34 stale-quote re-price; never widens)
+# ---------------------------------------------------------------------------
+
+RB = PriceBand(lo=D("-0.85"), hi=D("-0.76"), max_steps=3)
+
+
+class TestReanchor:
+    def test_inside_band_moves_start_keeps_hi(self) -> None:
+        nb = RB.reanchor(D("-0.805"), TICK)
+        assert nb is not None
+        assert nb.lo == D("-0.80") and nb.hi == RB.hi and nb.max_steps == 3
+
+    def test_beyond_hi_returns_none(self) -> None:
+        assert RB.reanchor(D("-0.75"), TICK) is None
+        assert RB.reanchor(D("0.10"), TICK) is None
+
+    def test_below_lo_clamps_to_lo(self) -> None:
+        nb = RB.reanchor(D("-0.95"), TICK)
+        assert nb is not None and nb.lo == RB.lo and nb.hi == RB.hi
+
+    def test_at_hi_single_attempt(self) -> None:
+        nb = RB.reanchor(RB.hi, TICK)
+        assert nb is not None and nb.lo == nb.hi == RB.hi and nb.max_steps == 0
+
+    def test_bad_tick(self) -> None:
+        with pytest.raises(ValueError, match="tick"):
+            RB.reanchor(D("-0.8"), D("0"))
+
+    @given(
+        lo=st.decimals(min_value=-5, max_value=5, places=2),
+        width=st.decimals(min_value=0, max_value=2, places=2),
+        mid=st.decimals(min_value=-8, max_value=8, places=4),
+        steps=st.integers(min_value=0, max_value=5),
+    )
+    def test_never_widens(self, lo: D, width: D, mid: D, steps: int) -> None:
+        band = PriceBand(lo=lo, hi=lo + width, max_steps=steps)
+        nb = band.reanchor(mid, TICK)
+        if nb is None:
+            assert mid > band.hi or (mid / TICK).to_integral_value() * TICK > band.hi
+            return
+        assert band.lo <= nb.lo <= nb.hi == band.hi
+        for p in nb.ladder(TICK):
+            assert band.contains(p)
+
+
+# ---------------------------------------------------------------------------
 # Gate rules: combo NBBO, band, worst-case, closing
 # ---------------------------------------------------------------------------
 
