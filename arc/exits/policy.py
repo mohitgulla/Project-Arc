@@ -255,6 +255,26 @@ class PipelineExitConfig(BaseModel):
     )
 
 
+class PositionsConfig(BaseModel):
+    """E6.4 position manager (``positions:`` in exits.yaml).
+
+    ``remaining_ev_floor_per_bp``: suggest closing a position once its remaining
+    net EV (hold under the policy vs close now, after costs) per $ of buying power
+    it holds falls below this (``-0.01`` = expected to lose > 1% of that BP vs
+    closing now); ``null`` = off. ``kinds`` overrides per structure kind.
+    """
+
+    model_config = _FORBID
+
+    remaining_ev_floor_per_bp: float | None = Field(-0.01, ge=-1.0, le=1.0)
+    kinds: dict[StructureKind, float | None] = Field(default_factory=dict)
+
+    def floor_for(self, kind: StructureKind | None) -> float | None:
+        if kind is not None and kind in self.kinds:
+            return self.kinds[kind]
+        return self.remaining_ev_floor_per_bp
+
+
 class ExitConfig(BaseModel):
     """Validated ``config/exits.yaml``."""
 
@@ -262,6 +282,7 @@ class ExitConfig(BaseModel):
 
     model: ExitModelConfig = Field(default_factory=ExitModelConfig)
     pipeline: PipelineExitConfig = Field(default_factory=PipelineExitConfig)
+    positions: PositionsConfig = Field(default_factory=PositionsConfig)
     default: ExitPolicy = Field(default_factory=ExitPolicy)
     kinds: dict[StructureKind, ExitPolicy] = Field(default_factory=dict)
 

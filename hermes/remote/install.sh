@@ -6,9 +6,9 @@
 #   hermes/remote/install.sh --uninstall             unload + remove both
 #
 #   com.projectarc.hermes-dashboard  hermes/remote/run_dashboard.sh
-#                                    -> hermes dashboard on <tailscale-ip>:4174 (basic auth)
+#                                    -> hermes dashboard on <tailscale-ip>:1994 (basic auth)
 #   com.projectarc.tower             .venv/bin/arc tower serve
-#                                    -> read-only control tower on <tailscale-ip>:1994
+#                                    -> read-only control tower on <tailscale-ip>:4174
 #
 # Both are KeepAlive + RunAtLoad and bind only the Tailscale address
 # (arc.tower.net.resolve_bind_address). Without one they exit 2 and launchd retries

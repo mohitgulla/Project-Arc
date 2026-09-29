@@ -1,13 +1,13 @@
 """Remote access over Tailscale (E8.6, PLAN D29).
 
 ``hermes dashboard`` (web admin, Chat tab, the Hermes Desktop remote backend) on
-``<tailscale-ip>:4174``, next to the E8.3 control tower on ``:1994``. Both bind only
+``<tailscale-ip>:1994``, next to the E8.3 control tower on ``:4174``. Both bind only
 the address :func:`arc.tower.net.resolve_bind_address` returns (Tailscale or
 loopback); nothing here can widen it.
 """
 
-DASHBOARD_PORT = 4174
-TOWER_PORT = 1994
+DASHBOARD_PORT = 1994
+TOWER_PORT = 4174
 
 # The three keys `hermes/remote/set-password.sh` writes to ~/.hermes/.env. Hermes'
 # bundled `basic` dashboard-auth provider reads them.

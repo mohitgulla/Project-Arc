@@ -571,5 +571,6 @@ def test_yaml_comment_overview_matches_config() -> None:
     raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
     assert raw["tick"]["interval"] == "5m"
     assert set(raw["personas"]) == {
-        "scout", "director", "monitor", "auditor", "scorecard", "investor"
+        "scout", "director", "monitor", "auditor", "scorecard", "investor",
+        "positions.evaluate",
     }  # fmt: skip

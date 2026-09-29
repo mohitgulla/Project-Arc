@@ -284,6 +284,25 @@ class ArcSettings(BaseSettings):
             "Default false: every exit is a proposal that needs an approval."
         ),
     )
+    # -- Close-to-reallocate (E6.4, D19) ----------------------------------------
+    realloc_min_edge: Annotated[float, Field(ge=0.0, le=10.0)] = Field(
+        default=0.20,
+        description=(
+            "D19: a swap is suggested only when its net edge in EV per $ of buying power "
+            "(after switching costs) is >= this share of the larger |EV per BP| of the two "
+            "positions (0.20 = 20% relative). Env: ARC_REALLOC_MIN_EDGE."
+        ),
+    )
+    realloc_pop_tolerance: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.05,
+        description="D19: the new trade's PoP must be >= the open's remaining PoP minus this.",
+    )
+    realloc_max_swaps_per_day: Annotated[int, Field(ge=0, le=20)] = Field(
+        default=2, description="D19 churn limit: swaps suggested per ET day, all tickers."
+    )
+    realloc_max_swaps_per_ticker_per_day: Annotated[int, Field(ge=0, le=5)] = Field(
+        default=1, description="D19 churn limit: swaps per ticker (closed or opened) per ET day."
+    )
     # -- Gate token (E3.2) ----------------------------------------------------
     gate_secret: SecretStr | None = Field(
         default=None,

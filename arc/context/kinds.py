@@ -22,6 +22,7 @@ from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic field
 from arc.features.snapshot import FeatureSnapshot
 from arc.models import Candidate, ChannelBrief, Proposal, Stance
 from arc.personas.schemas import AuditorOutput, DirectorOutput, QuantOutput, RiskOutput
+from arc.positions.evaluate import PositionReview
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -88,6 +89,12 @@ class ProposalPayload(Proposal):
     model_config = _FORBID
 
     exit_model: ExitModelResult | None = None
+
+
+class PositionReviewPayload(PositionReview):
+    """E6.4 deterministic review of one open position (subject = open structure id)."""
+
+    model_config = _FORBID
 
 
 class JournalPayload(AuditorOutput):
@@ -168,6 +175,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("structures", StructuresPayload),
     KindSpec("risk_review", RiskReviewPayload),
     KindSpec("proposal", ProposalPayload),
+    KindSpec("position_review", PositionReviewPayload),
     KindSpec("journal", JournalPayload),
     KindSpec("note", NotePayload),
 )

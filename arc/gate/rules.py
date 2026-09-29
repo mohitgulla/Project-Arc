@@ -41,9 +41,12 @@ if TYPE_CHECKING:
     from arc.gate.inputs import AccountSnapshot, MarketSnapshot, Portfolio
 
 __all__ = [
+    "CAPACITY_CODES",
+    "CapacityRejection",
     "Derived",
     "RuleCode",
     "Violation",
+    "capacity_rejection",
     "check_account_profile",
     "check_approval_ttl",
     "check_band",
@@ -690,6 +693,36 @@ def _run(name: str, rule: Rule) -> list[Violation]:
         return rule()
     except Exception as exc:  # noqa: BLE001 — fail closed: any rule error is a violation
         return _v(RuleCode.RULE_ERROR, f"{name}: {type(exc).__name__}: {exc}")
+
+
+# Capacity codes (E6.4, D19): a proposal failing ONLY on these would pass if an open
+# position were closed to free room. Everything else (halt, band, profile, data) is
+# not fixable by reallocating, so it never qualifies.
+CAPACITY_CODES: frozenset[RuleCode] = frozenset(
+    {RuleCode.PER_UNDERLYING, RuleCode.MAX_POSITIONS, RuleCode.ACCOUNT_CASH}
+)
+
+
+class CapacityRejection(StrEnum):
+    """Typed ``rejected_for`` reason of a capacity-only gate failure (E6.4)."""
+
+    BUYING_POWER = "buying_power"  # settled cash (D25 cash_debit) or per-underlying budget
+    PORTFOLIO_CAP = "portfolio_cap"  # max open positions
+
+
+def capacity_rejection(violations: Sequence[str]) -> CapacityRejection | None:
+    """``rejected_for`` for a failed decision, or ``None`` when a non-capacity rule failed.
+
+    *violations* are the stored ``"<code>: <detail>"`` strings of a
+    :class:`GateDecision`. Pure: reads nothing but its argument. An unbounded max
+    loss also reports ``per_underlying_limit``; callers only pair bounded structures.
+    """
+    codes: set[str] = {v.split(":", 1)[0].strip() for v in violations}
+    if not codes or not codes <= {c.value for c in CAPACITY_CODES}:
+        return None
+    if codes == {RuleCode.MAX_POSITIONS.value}:
+        return CapacityRejection.PORTFOLIO_CAP
+    return CapacityRejection.BUYING_POWER
 
 
 def evaluate(
