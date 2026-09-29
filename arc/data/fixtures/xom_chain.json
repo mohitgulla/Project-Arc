@@ -1,0 +1,1467 @@
+{
+  "underlying": "XOM",
+  "recorded_at": "2026-09-29T01:58:35.784101-04:00",
+  "source": "alpaca indicative options snapshot + trading contracts OI + snapshot dailyBar volume; SIP daily bars",
+  "note": "E5.7 fixture. Option quotes/OI recorded from Alpaca paper (indicative feed) after the close on 2026-09-29 (i.e. that session's closing quotes). Quote and contract timestamps are rebased to 2026-09-25 15:59:50 ET and the underlying quote is set to the 2026-09-25 close, so the set shares the SPY recording's offline clock (FIXTURE_NOW). Closes/volume are the real SIP daily bars through 2026-09-25. Strikes trimmed to +/-8% of spot, first two expiries in the recorded window; stale_timestamp flags stripped. Test data, not a live mark.",
+  "quote": {
+    "symbol": "XOM",
+    "bid": 160.57,
+    "ask": 160.61,
+    "mid": 160.59,
+    "timestamp": "2026-09-25T19:59:50+00:00"
+  },
+  "closes": [
+    {
+      "date": "2026-07-17",
+      "close": 147.36,
+      "volume": 19037702.0
+    },
+    {
+      "date": "2026-07-20",
+      "close": 148.36,
+      "volume": 12156402.0
+    },
+    {
+      "date": "2026-07-21",
+      "close": 151.71,
+      "volume": 13151353.0
+    },
+    {
+      "date": "2026-07-22",
+      "close": 154.45,
+      "volume": 13794808.0
+    },
+    {
+      "date": "2026-07-23",
+      "close": 156.89,
+      "volume": 15824496.0
+    },
+    {
+      "date": "2026-07-24",
+      "close": 156.94,
+      "volume": 12084518.0
+    },
+    {
+      "date": "2026-07-27",
+      "close": 154.77,
+      "volume": 13961434.0
+    },
+    {
+      "date": "2026-07-28",
+      "close": 153.04,
+      "volume": 16292592.0
+    },
+    {
+      "date": "2026-07-29",
+      "close": 156.75,
+      "volume": 14577598.0
+    },
+    {
+      "date": "2026-07-30",
+      "close": 156.97,
+      "volume": 12583761.0
+    },
+    {
+      "date": "2026-07-31",
+      "close": 155.44,
+      "volume": 15715774.0
+    },
+    {
+      "date": "2026-08-03",
+      "close": 155.06,
+      "volume": 14537374.0
+    },
+    {
+      "date": "2026-08-04",
+      "close": 153.96,
+      "volume": 14352304.0
+    },
+    {
+      "date": "2026-08-05",
+      "close": 151.63,
+      "volume": 12233027.0
+    },
+    {
+      "date": "2026-08-06",
+      "close": 154.84,
+      "volume": 11883767.0
+    },
+    {
+      "date": "2026-08-07",
+      "close": 153.04,
+      "volume": 18460999.0
+    },
+    {
+      "date": "2026-08-10",
+      "close": 159.79,
+      "volume": 19765075.0
+    },
+    {
+      "date": "2026-08-11",
+      "close": 159.8,
+      "volume": 13748296.0
+    },
+    {
+      "date": "2026-08-12",
+      "close": 159.75,
+      "volume": 13217815.0
+    },
+    {
+      "date": "2026-08-13",
+      "close": 158.61,
+      "volume": 10547809.0
+    },
+    {
+      "date": "2026-08-14",
+      "close": 160.1,
+      "volume": 10234453.0
+    },
+    {
+      "date": "2026-08-17",
+      "close": 161.46,
+      "volume": 12858292.0
+    },
+    {
+      "date": "2026-08-18",
+      "close": 165.56,
+      "volume": 18953938.0
+    },
+    {
+      "date": "2026-08-19",
+      "close": 164.77,
+      "volume": 13651456.0
+    },
+    {
+      "date": "2026-08-20",
+      "close": 166.15,
+      "volume": 13806164.0
+    },
+    {
+      "date": "2026-08-21",
+      "close": 165.11,
+      "volume": 14319240.0
+    },
+    {
+      "date": "2026-08-24",
+      "close": 164.05,
+      "volume": 10847099.0
+    },
+    {
+      "date": "2026-08-25",
+      "close": 160.64,
+      "volume": 17529157.0
+    },
+    {
+      "date": "2026-08-26",
+      "close": 158.19,
+      "volume": 14850739.0
+    },
+    {
+      "date": "2026-08-27",
+      "close": 156.44,
+      "volume": 14302012.0
+    },
+    {
+      "date": "2026-08-28",
+      "close": 156.71,
+      "volume": 11366908.0
+    },
+    {
+      "date": "2026-08-31",
+      "close": 160.95,
+      "volume": 18989878.0
+    },
+    {
+      "date": "2026-09-01",
+      "close": 164.55,
+      "volume": 11389657.0
+    },
+    {
+      "date": "2026-09-02",
+      "close": 164.15,
+      "volume": 11291773.0
+    },
+    {
+      "date": "2026-09-03",
+      "close": 162.21,
+      "volume": 13766182.0
+    },
+    {
+      "date": "2026-09-04",
+      "close": 159.47,
+      "volume": 16209704.0
+    },
+    {
+      "date": "2026-09-08",
+      "close": 160.66,
+      "volume": 12621639.0
+    },
+    {
+      "date": "2026-09-09",
+      "close": 164.23,
+      "volume": 13126057.0
+    },
+    {
+      "date": "2026-09-10",
+      "close": 165.23,
+      "volume": 16613704.0
+    },
+    {
+      "date": "2026-09-11",
+      "close": 165.99,
+      "volume": 11367050.0
+    },
+    {
+      "date": "2026-09-14",
+      "close": 165.08,
+      "volume": 13942297.0
+    },
+    {
+      "date": "2026-09-15",
+      "close": 169.32,
+      "volume": 12343554.0
+    },
+    {
+      "date": "2026-09-16",
+      "close": 163.32,
+      "volume": 13412320.0
+    },
+    {
+      "date": "2026-09-17",
+      "close": 163.27,
+      "volume": 10981686.0
+    },
+    {
+      "date": "2026-09-18",
+      "close": 163.54,
+      "volume": 37643569.0
+    },
+    {
+      "date": "2026-09-21",
+      "close": 158.3,
+      "volume": 15749898.0
+    },
+    {
+      "date": "2026-09-22",
+      "close": 158.71,
+      "volume": 14175669.0
+    },
+    {
+      "date": "2026-09-23",
+      "close": 161.23,
+      "volume": 12578755.0
+    },
+    {
+      "date": "2026-09-24",
+      "close": 162.14,
+      "volume": 12489097.0
+    },
+    {
+      "date": "2026-09-25",
+      "close": 160.59,
+      "volume": 10992588.0
+    }
+  ],
+  "contracts": [
+    {
+      "symbol": "XOM261030C00157500",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 157.5,
+      "option_type": "call",
+      "bid": 8.6,
+      "ask": 9.66,
+      "mid": 9.129999999999999,
+      "bid_size": 129.0,
+      "ask_size": 95.0,
+      "last_trade_price": 7.84,
+      "open_interest": 32,
+      "volume": 12,
+      "implied_volatility": 0.3154,
+      "greeks": {
+        "delta": 0.6674,
+        "gamma": 0.0243,
+        "theta": -0.0982,
+        "vega": 0.1722,
+        "rho": 0.0844
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030C00162500",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 162.5,
+      "option_type": "call",
+      "bid": 5.64,
+      "ask": 6.48,
+      "mid": 6.0600000000000005,
+      "bid_size": 95.0,
+      "ask_size": 102.0,
+      "last_trade_price": 5.81,
+      "open_interest": 424,
+      "volume": 37,
+      "implied_volatility": 0.3024,
+      "greeks": {
+        "delta": 0.537,
+        "gamma": 0.0277,
+        "theta": -0.1005,
+        "vega": 0.1883,
+        "rho": 0.069
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00157500",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 157.5,
+      "option_type": "call",
+      "bid": 9.22,
+      "ask": 10.05,
+      "mid": 9.635000000000002,
+      "bid_size": 79.0,
+      "ask_size": 50.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.3073,
+      "greeks": {
+        "delta": 0.6612,
+        "gamma": 0.0227,
+        "theta": -0.0881,
+        "vega": 0.192,
+        "rho": 0.1019
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00165000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 165.0,
+      "option_type": "call",
+      "bid": 5.17,
+      "ask": 5.9,
+      "mid": 5.535,
+      "bid_size": 391.0,
+      "ask_size": 99.0,
+      "last_trade_price": 5.4,
+      "open_interest": 2,
+      "volume": 25,
+      "implied_volatility": 0.3011,
+      "greeks": {
+        "delta": 0.4775,
+        "gamma": 0.0252,
+        "theta": -0.0906,
+        "vega": 0.209,
+        "rho": 0.0751
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00162500",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 162.5,
+      "option_type": "call",
+      "bid": 5.65,
+      "ask": 7.12,
+      "mid": 6.385,
+      "bid_size": 206.0,
+      "ask_size": 35.0,
+      "last_trade_price": 6.92,
+      "open_interest": 19,
+      "volume": 2,
+      "implied_volatility": 0.2858,
+      "greeks": {
+        "delta": 0.5402,
+        "gamma": 0.0265,
+        "theta": -0.0871,
+        "vega": 0.2083,
+        "rho": 0.0848
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030C00160000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 160.0,
+      "option_type": "call",
+      "bid": 7.02,
+      "ask": 7.78,
+      "mid": 7.4,
+      "bid_size": 320.0,
+      "ask_size": 119.0,
+      "last_trade_price": 7.17,
+      "open_interest": 62,
+      "volume": 9,
+      "implied_volatility": 0.3025,
+      "greeks": {
+        "delta": 0.6059,
+        "gamma": 0.0268,
+        "theta": -0.0987,
+        "vega": 0.1824,
+        "rho": 0.0774
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00150000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 150.0,
+      "option_type": "put",
+      "bid": 1.43,
+      "ask": 1.58,
+      "mid": 1.505,
+      "bid_size": 1.0,
+      "ask_size": 1.0,
+      "last_trade_price": 1.6,
+      "open_interest": 827,
+      "volume": 50,
+      "implied_volatility": 0.3247,
+      "greeks": {
+        "delta": -0.174,
+        "gamma": 0.0167,
+        "theta": -0.0606,
+        "vega": 0.1217,
+        "rho": -0.0253
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030C00167500",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 167.5,
+      "option_type": "call",
+      "bid": 3.43,
+      "ask": 4.07,
+      "mid": 3.75,
+      "bid_size": 413.0,
+      "ask_size": 77.0,
+      "last_trade_price": 3.66,
+      "open_interest": 48,
+      "volume": 12,
+      "implied_volatility": 0.2942,
+      "greeks": {
+        "delta": 0.3972,
+        "gamma": 0.0276,
+        "theta": -0.0933,
+        "vega": 0.1828,
+        "rho": 0.0517
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00152500",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 152.5,
+      "option_type": "call",
+      "bid": 11.74,
+      "ask": 13.7,
+      "mid": 12.719999999999999,
+      "bid_size": 88.0,
+      "ask_size": 61.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.2871,
+      "greeks": {
+        "delta": 0.7843,
+        "gamma": 0.0194,
+        "theta": -0.0703,
+        "vega": 0.1537,
+        "rho": 0.1196
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030C00152500",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 152.5,
+      "option_type": "call",
+      "bid": 11.76,
+      "ask": 12.88,
+      "mid": 12.32,
+      "bid_size": 282.0,
+      "ask_size": 141.0,
+      "last_trade_price": 13.0,
+      "open_interest": 8,
+      "volume": 10,
+      "implied_volatility": 0.295,
+      "greeks": {
+        "delta": 0.7972,
+        "gamma": 0.0202,
+        "theta": -0.0762,
+        "vega": 0.1338,
+        "rho": 0.0997
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00165000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 165.0,
+      "option_type": "put",
+      "bid": 6.52,
+      "ask": 7.8,
+      "mid": 7.16,
+      "bid_size": 18.0,
+      "ask_size": 151.0,
+      "last_trade_price": 6.64,
+      "open_interest": 41,
+      "volume": 15,
+      "implied_volatility": 0.3273,
+      "greeks": {
+        "delta": -0.5269,
+        "gamma": 0.0257,
+        "theta": -0.0897,
+        "vega": 0.1887,
+        "rho": -0.0789
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00162500",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 162.5,
+      "option_type": "put",
+      "bid": 5.29,
+      "ask": 6.63,
+      "mid": 5.96,
+      "bid_size": 67.0,
+      "ask_size": 340.0,
+      "last_trade_price": 5.55,
+      "open_interest": 30,
+      "volume": 11,
+      "implied_volatility": 0.3341,
+      "greeks": {
+        "delta": -0.463,
+        "gamma": 0.0251,
+        "theta": -0.0928,
+        "vega": 0.1883,
+        "rho": -0.069
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00157500",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 157.5,
+      "option_type": "put",
+      "bid": 3.27,
+      "ask": 4.22,
+      "mid": 3.745,
+      "bid_size": 36.0,
+      "ask_size": 309.0,
+      "last_trade_price": 3.51,
+      "open_interest": 43,
+      "volume": 12,
+      "implied_volatility": 0.3324,
+      "greeks": {
+        "delta": -0.3389,
+        "gamma": 0.0232,
+        "theta": -0.0867,
+        "vega": 0.1735,
+        "rho": -0.05
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00170000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 170.0,
+      "option_type": "call",
+      "bid": 3.37,
+      "ask": 3.92,
+      "mid": 3.645,
+      "bid_size": 420.0,
+      "ask_size": 55.0,
+      "last_trade_price": 3.4,
+      "open_interest": 1,
+      "volume": 12,
+      "implied_volatility": 0.3011,
+      "greeks": {
+        "delta": 0.358,
+        "gamma": 0.0236,
+        "theta": -0.0835,
+        "vega": 0.196,
+        "rho": 0.0568
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00155000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 155.0,
+      "option_type": "put",
+      "bid": 2.4,
+      "ask": 2.87,
+      "mid": 2.635,
+      "bid_size": 131.0,
+      "ask_size": 398.0,
+      "last_trade_price": 2.55,
+      "open_interest": 262,
+      "volume": 32,
+      "implied_volatility": 0.3166,
+      "greeks": {
+        "delta": -0.2726,
+        "gamma": 0.0221,
+        "theta": -0.0754,
+        "vega": 0.1575,
+        "rho": -0.0399
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00162500",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 162.5,
+      "option_type": "put",
+      "bid": 5.78,
+      "ask": 6.82,
+      "mid": 6.300000000000001,
+      "bid_size": 164.0,
+      "ask_size": 335.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.321,
+      "greeks": {
+        "delta": -0.4599,
+        "gamma": 0.0236,
+        "theta": -0.0793,
+        "vega": 0.2083,
+        "rho": -0.0844
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00148000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 148.0,
+      "option_type": "put",
+      "bid": 1.07,
+      "ask": 1.5,
+      "mid": 1.2850000000000001,
+      "bid_size": 54.0,
+      "ask_size": 176.0,
+      "last_trade_price": 1.26,
+      "open_interest": 8,
+      "volume": 2,
+      "implied_volatility": 0.3377,
+      "greeks": {
+        "delta": -0.1486,
+        "gamma": 0.0145,
+        "theta": -0.0571,
+        "vega": 0.1098,
+        "rho": -0.0216
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00170000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 170.0,
+      "option_type": "put",
+      "bid": 9.4,
+      "ask": 10.82,
+      "mid": 10.11,
+      "bid_size": 44.0,
+      "ask_size": 193.0,
+      "last_trade_price": 9.76,
+      "open_interest": 61,
+      "volume": 22,
+      "implied_volatility": 0.3179,
+      "greeks": {
+        "delta": -0.6533,
+        "gamma": 0.0245,
+        "theta": -0.0773,
+        "vega": 0.175,
+        "rho": -0.0988
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00148000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 148.0,
+      "option_type": "put",
+      "bid": 1.25,
+      "ask": 1.72,
+      "mid": 1.4849999999999999,
+      "bid_size": 380.0,
+      "ask_size": 360.0,
+      "last_trade_price": 1.38,
+      "open_interest": null,
+      "volume": 15,
+      "implied_volatility": 0.3227,
+      "greeks": {
+        "delta": -0.1591,
+        "gamma": 0.0143,
+        "theta": -0.0511,
+        "vega": 0.1272,
+        "rho": -0.0285
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00165000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 165.0,
+      "option_type": "put",
+      "bid": 7.04,
+      "ask": 8.27,
+      "mid": 7.654999999999999,
+      "bid_size": 123.0,
+      "ask_size": 309.0,
+      "last_trade_price": 7.32,
+      "open_interest": 30,
+      "volume": 1,
+      "implied_volatility": 0.3227,
+      "greeks": {
+        "delta": -0.5184,
+        "gamma": 0.0235,
+        "theta": -0.0789,
+        "vega": 0.2092,
+        "rho": -0.0958
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00167500",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 167.5,
+      "option_type": "put",
+      "bid": 6.88,
+      "ask": 9.66,
+      "mid": 8.27,
+      "bid_size": 228.0,
+      "ask_size": 245.0,
+      "last_trade_price": 8.51,
+      "open_interest": 39,
+      "volume": 2,
+      "implied_volatility": 0.307,
+      "greeks": {
+        "delta": -0.5972,
+        "gamma": 0.0266,
+        "theta": -0.0796,
+        "vega": 0.1835,
+        "rho": -0.0895
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00160000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 160.0,
+      "option_type": "put",
+      "bid": 3.62,
+      "ask": 5.02,
+      "mid": 4.32,
+      "bid_size": 482.0,
+      "ask_size": 395.0,
+      "last_trade_price": 4.54,
+      "open_interest": 82,
+      "volume": 18,
+      "implied_volatility": 0.3085,
+      "greeks": {
+        "delta": -0.3954,
+        "gamma": 0.0263,
+        "theta": -0.0835,
+        "vega": 0.1826,
+        "rho": -0.0583
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00172500",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 172.5,
+      "option_type": "call",
+      "bid": 2.62,
+      "ask": 3.57,
+      "mid": 3.0949999999999998,
+      "bid_size": 142.0,
+      "ask_size": 347.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.3113,
+      "greeks": {
+        "delta": 0.3106,
+        "gamma": 0.0216,
+        "theta": -0.081,
+        "vega": 0.1853,
+        "rho": 0.0494
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00149000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 149.0,
+      "option_type": "call",
+      "bid": 14.17,
+      "ask": 17.01,
+      "mid": 15.59,
+      "bid_size": 59.0,
+      "ask_size": 43.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.2956,
+      "greeks": {
+        "delta": 0.8438,
+        "gamma": 0.0154,
+        "theta": -0.0619,
+        "vega": 0.1257,
+        "rho": 0.1267
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00167500",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 167.5,
+      "option_type": "call",
+      "bid": 4.2,
+      "ask": 5.17,
+      "mid": 4.6850000000000005,
+      "bid_size": 110.0,
+      "ask_size": 341.0,
+      "last_trade_price": 4.72,
+      "open_interest": 8,
+      "volume": 2,
+      "implied_volatility": 0.3093,
+      "greeks": {
+        "delta": 0.4195,
+        "gamma": 0.0241,
+        "theta": -0.0903,
+        "vega": 0.2051,
+        "rho": 0.0662
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00150000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 150.0,
+      "option_type": "call",
+      "bid": 14.02,
+      "ask": 16.56,
+      "mid": 15.29,
+      "bid_size": 79.0,
+      "ask_size": 73.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.3317,
+      "greeks": {
+        "delta": 0.802,
+        "gamma": 0.016,
+        "theta": -0.0761,
+        "vega": 0.1461,
+        "rho": 0.1199
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00149000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 149.0,
+      "option_type": "put",
+      "bid": 1.03,
+      "ask": 1.7,
+      "mid": 1.365,
+      "bid_size": 322.0,
+      "ask_size": 295.0,
+      "last_trade_price": 1.43,
+      "open_interest": 4,
+      "volume": 50,
+      "implied_volatility": 0.329,
+      "greeks": {
+        "delta": -0.1593,
+        "gamma": 0.0156,
+        "theta": -0.0581,
+        "vega": 0.115,
+        "rho": -0.0232
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00152500",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 152.5,
+      "option_type": "put",
+      "bid": 2.14,
+      "ask": 2.81,
+      "mid": 2.475,
+      "bid_size": 346.0,
+      "ask_size": 351.0,
+      "last_trade_price": 2.6,
+      "open_interest": 2,
+      "volume": 8,
+      "implied_volatility": 0.3208,
+      "greeks": {
+        "delta": -0.2376,
+        "gamma": 0.0184,
+        "theta": -0.0641,
+        "vega": 0.1623,
+        "rho": -0.0428
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00160000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 160.0,
+      "option_type": "call",
+      "bid": 7.08,
+      "ask": 8.92,
+      "mid": 8.0,
+      "bid_size": 378.0,
+      "ask_size": 304.0,
+      "last_trade_price": 7.57,
+      "open_interest": 30,
+      "volume": 9,
+      "implied_volatility": 0.2995,
+      "greeks": {
+        "delta": 0.603,
+        "gamma": 0.0245,
+        "theta": -0.0894,
+        "vega": 0.2024,
+        "rho": 0.0938
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00152500",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 152.5,
+      "option_type": "put",
+      "bid": 1.77,
+      "ask": 2.67,
+      "mid": 2.2199999999999998,
+      "bid_size": 66.0,
+      "ask_size": 424.0,
+      "last_trade_price": 2.02,
+      "open_interest": 74,
+      "volume": 57,
+      "implied_volatility": 0.3355,
+      "greeks": {
+        "delta": -0.229,
+        "gamma": 0.019,
+        "theta": -0.0735,
+        "vega": 0.1436,
+        "rho": -0.0335
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00155000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 155.0,
+      "option_type": "put",
+      "bid": 2.77,
+      "ask": 3.66,
+      "mid": 3.215,
+      "bid_size": 134.0,
+      "ask_size": 141.0,
+      "last_trade_price": 3.31,
+      "open_interest": 9,
+      "volume": 12,
+      "implied_volatility": 0.3208,
+      "greeks": {
+        "delta": -0.2887,
+        "gamma": 0.0203,
+        "theta": -0.0703,
+        "vega": 0.1793,
+        "rho": -0.0522
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00170000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 170.0,
+      "option_type": "put",
+      "bid": 9.77,
+      "ask": 11.37,
+      "mid": 10.57,
+      "bid_size": 151.0,
+      "ask_size": 240.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.3151,
+      "greeks": {
+        "delta": -0.6343,
+        "gamma": 0.0227,
+        "theta": -0.0697,
+        "vega": 0.1974,
+        "rho": -0.1184
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030C00149000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 149.0,
+      "option_type": "call",
+      "bid": 14.27,
+      "ask": 16.4,
+      "mid": 15.334999999999999,
+      "bid_size": 50.0,
+      "ask_size": 36.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.3128,
+      "greeks": {
+        "delta": 0.8518,
+        "gamma": 0.0156,
+        "theta": -0.0685,
+        "vega": 0.1096,
+        "rho": 0.1046
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00148000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 148.0,
+      "option_type": "call",
+      "bid": 15.24,
+      "ask": 17.62,
+      "mid": 16.43,
+      "bid_size": 79.0,
+      "ask_size": 39.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.2968,
+      "greeks": {
+        "delta": 0.8592,
+        "gamma": 0.0143,
+        "theta": -0.059,
+        "vega": 0.1173,
+        "rho": 0.1284
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00172500",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 172.5,
+      "option_type": "put",
+      "bid": 11.8,
+      "ask": 13.31,
+      "mid": 12.555,
+      "bid_size": 80.0,
+      "ask_size": 79.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.3284,
+      "greeks": {
+        "delta": -0.6783,
+        "gamma": 0.0208,
+        "theta": -0.0681,
+        "vega": 0.1881,
+        "rho": -0.1279
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00160000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 160.0,
+      "option_type": "put",
+      "bid": 4.74,
+      "ask": 5.48,
+      "mid": 5.11,
+      "bid_size": 35.0,
+      "ask_size": 425.0,
+      "last_trade_price": 4.71,
+      "open_interest": 333,
+      "volume": 36,
+      "implied_volatility": 0.3203,
+      "greeks": {
+        "delta": -0.4011,
+        "gamma": 0.023,
+        "theta": -0.078,
+        "vega": 0.2029,
+        "rho": -0.0732
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00167500",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 167.5,
+      "option_type": "put",
+      "bid": 7.65,
+      "ask": 9.73,
+      "mid": 8.690000000000001,
+      "bid_size": 184.0,
+      "ask_size": 188.0,
+      "last_trade_price": 8.77,
+      "open_interest": null,
+      "volume": 1,
+      "implied_volatility": 0.3018,
+      "greeks": {
+        "delta": -0.5834,
+        "gamma": 0.0246,
+        "theta": -0.0702,
+        "vega": 0.2048,
+        "rho": -0.1078
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030C00155000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 155.0,
+      "option_type": "call",
+      "bid": 9.35,
+      "ask": 11.24,
+      "mid": 10.295,
+      "bid_size": 105.0,
+      "ask_size": 100.0,
+      "last_trade_price": 11.21,
+      "open_interest": 44,
+      "volume": 15,
+      "implied_volatility": 0.2835,
+      "greeks": {
+        "delta": 0.7471,
+        "gamma": 0.0238,
+        "theta": -0.0812,
+        "vega": 0.1516,
+        "rho": 0.0945
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00157500",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 157.5,
+      "option_type": "put",
+      "bid": 3.11,
+      "ask": 4.38,
+      "mid": 3.745,
+      "bid_size": 290.0,
+      "ask_size": 107.0,
+      "last_trade_price": 4.12,
+      "open_interest": 6,
+      "volume": 10,
+      "implied_volatility": 0.3026,
+      "greeks": {
+        "delta": -0.337,
+        "gamma": 0.023,
+        "theta": -0.07,
+        "vega": 0.1916,
+        "rho": -0.061
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030C00148000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 148.0,
+      "option_type": "call",
+      "bid": 14.92,
+      "ask": 17.34,
+      "mid": 16.13,
+      "bid_size": 44.0,
+      "ask_size": 38.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.3087,
+      "greeks": {
+        "delta": 0.8711,
+        "gamma": 0.0144,
+        "theta": -0.063,
+        "vega": 0.0997,
+        "rho": 0.1066
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030C00170000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 170.0,
+      "option_type": "call",
+      "bid": 2.75,
+      "ask": 3.03,
+      "mid": 2.8899999999999997,
+      "bid_size": 238.0,
+      "ask_size": 1.0,
+      "last_trade_price": 2.9,
+      "open_interest": 150,
+      "volume": 193,
+      "implied_volatility": 0.2925,
+      "greeks": {
+        "delta": 0.3313,
+        "gamma": 0.0262,
+        "theta": -0.0865,
+        "vega": 0.1719,
+        "rho": 0.0433
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030C00172500",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 172.5,
+      "option_type": "call",
+      "bid": 2.02,
+      "ask": 2.58,
+      "mid": 2.3,
+      "bid_size": 515.0,
+      "ask_size": 137.0,
+      "last_trade_price": 2.21,
+      "open_interest": 114,
+      "volume": 15,
+      "implied_volatility": 0.298,
+      "greeks": {
+        "delta": 0.276,
+        "gamma": 0.0237,
+        "theta": -0.0807,
+        "vega": 0.1585,
+        "rho": 0.0362
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030P00172500",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 172.5,
+      "option_type": "put",
+      "bid": 11.33,
+      "ask": 12.35,
+      "mid": 11.84,
+      "bid_size": 92.0,
+      "ask_size": 120.0,
+      "last_trade_price": 12.15,
+      "open_interest": 5,
+      "volume": 3,
+      "implied_volatility": 0.3148,
+      "greeks": {
+        "delta": -0.7116,
+        "gamma": 0.0229,
+        "theta": -0.0686,
+        "vega": 0.1618,
+        "rho": -0.1084
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00149000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 149.0,
+      "option_type": "put",
+      "bid": 1.27,
+      "ask": 2.27,
+      "mid": 1.77,
+      "bid_size": 13.0,
+      "ask_size": 232.0,
+      "last_trade_price": 1.86,
+      "open_interest": null,
+      "volume": 72,
+      "implied_volatility": 0.3294,
+      "greeks": {
+        "delta": -0.1796,
+        "gamma": 0.0152,
+        "theta": -0.0563,
+        "vega": 0.1375,
+        "rho": -0.0323
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030C00150000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 150.0,
+      "option_type": "call",
+      "bid": 13.37,
+      "ask": 15.29,
+      "mid": 14.329999999999998,
+      "bid_size": 107.0,
+      "ask_size": 62.0,
+      "last_trade_price": 13.65,
+      "open_interest": 15,
+      "volume": 1,
+      "implied_volatility": 0.2965,
+      "greeks": {
+        "delta": 0.8459,
+        "gamma": 0.0169,
+        "theta": -0.067,
+        "vega": 0.1125,
+        "rho": 0.1047
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261030C00165000",
+      "underlying": "XOM",
+      "expiration": "2026-10-30",
+      "strike": 165.0,
+      "option_type": "call",
+      "bid": 4.55,
+      "ask": 5.22,
+      "mid": 4.885,
+      "bid_size": 324.0,
+      "ask_size": 201.0,
+      "last_trade_price": 4.93,
+      "open_interest": 101,
+      "volume": 14,
+      "implied_volatility": 0.3018,
+      "greeks": {
+        "delta": 0.4678,
+        "gamma": 0.0278,
+        "theta": -0.0994,
+        "vega": 0.1885,
+        "rho": 0.0605
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106P00150000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 150.0,
+      "option_type": "put",
+      "bid": 1.46,
+      "ask": 2.029,
+      "mid": 1.7445,
+      "bid_size": 427.0,
+      "ask_size": 48.0,
+      "last_trade_price": 1.95,
+      "open_interest": 153,
+      "volume": 84,
+      "implied_volatility": 0.3124,
+      "greeks": {
+        "delta": -0.1855,
+        "gamma": 0.0163,
+        "theta": -0.0543,
+        "vega": 0.1403,
+        "rho": -0.0332
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "XOM261106C00155000",
+      "underlying": "XOM",
+      "expiration": "2026-11-06",
+      "strike": 155.0,
+      "option_type": "call",
+      "bid": 10.63,
+      "ask": 11.94,
+      "mid": 11.285,
+      "bid_size": 134.0,
+      "ask_size": 115.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.3085,
+      "greeks": {
+        "delta": 0.7175,
+        "gamma": 0.0209,
+        "theta": -0.0833,
+        "vega": 0.1774,
+        "rho": 0.1097
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    }
+  ]
+}

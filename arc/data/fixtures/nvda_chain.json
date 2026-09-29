@@ -1,0 +1,967 @@
+{
+  "underlying": "NVDA",
+  "recorded_at": "2026-09-29T01:58:35.204441-04:00",
+  "source": "alpaca indicative options snapshot + trading contracts OI + snapshot dailyBar volume; SIP daily bars",
+  "note": "E5.7 fixture. Option quotes/OI recorded from Alpaca paper (indicative feed) after the close on 2026-09-29 (i.e. that session's closing quotes). Quote and contract timestamps are rebased to 2026-09-25 15:59:50 ET and the underlying quote is set to the 2026-09-25 close, so the set shares the SPY recording's offline clock (FIXTURE_NOW). Closes/volume are the real SIP daily bars through 2026-09-25. Strikes trimmed to +/-8% of spot, first two expiries in the recorded window; stale_timestamp flags stripped. Test data, not a live mark.",
+  "quote": {
+    "symbol": "NVDA",
+    "bid": 225.05,
+    "ask": 225.09,
+    "mid": 225.07,
+    "timestamp": "2026-09-25T19:59:50+00:00"
+  },
+  "closes": [
+    {
+      "date": "2026-07-17",
+      "close": 202.81,
+      "volume": 145165772.0
+    },
+    {
+      "date": "2026-07-20",
+      "close": 203.28,
+      "volume": 89614735.0
+    },
+    {
+      "date": "2026-07-21",
+      "close": 207.29,
+      "volume": 109537221.0
+    },
+    {
+      "date": "2026-07-22",
+      "close": 212.06,
+      "volume": 138507101.0
+    },
+    {
+      "date": "2026-07-23",
+      "close": 208.76,
+      "volume": 111300100.0
+    },
+    {
+      "date": "2026-07-24",
+      "close": 206.84,
+      "volume": 115547219.0
+    },
+    {
+      "date": "2026-07-27",
+      "close": 196.51,
+      "volume": 155372595.0
+    },
+    {
+      "date": "2026-07-28",
+      "close": 197.01,
+      "volume": 134849659.0
+    },
+    {
+      "date": "2026-07-29",
+      "close": 190.01,
+      "volume": 148374432.0
+    },
+    {
+      "date": "2026-07-30",
+      "close": 195.04,
+      "volume": 129750733.0
+    },
+    {
+      "date": "2026-07-31",
+      "close": 200.75,
+      "volume": 140779438.0
+    },
+    {
+      "date": "2026-08-03",
+      "close": 206.64,
+      "volume": 129322281.0
+    },
+    {
+      "date": "2026-08-04",
+      "close": 211.94,
+      "volume": 135747704.0
+    },
+    {
+      "date": "2026-08-05",
+      "close": 219.22,
+      "volume": 159043785.0
+    },
+    {
+      "date": "2026-08-06",
+      "close": 218.99,
+      "volume": 114757254.0
+    },
+    {
+      "date": "2026-08-07",
+      "close": 223.96,
+      "volume": 106394101.0
+    },
+    {
+      "date": "2026-08-10",
+      "close": 217.55,
+      "volume": 116639154.0
+    },
+    {
+      "date": "2026-08-11",
+      "close": 217.5,
+      "volume": 102084307.0
+    },
+    {
+      "date": "2026-08-12",
+      "close": 224.09,
+      "volume": 109554449.0
+    },
+    {
+      "date": "2026-08-13",
+      "close": 225.3,
+      "volume": 99603175.0
+    },
+    {
+      "date": "2026-08-14",
+      "close": 225.16,
+      "volume": 76502320.0
+    },
+    {
+      "date": "2026-08-17",
+      "close": 225.01,
+      "volume": 94548785.0
+    },
+    {
+      "date": "2026-08-18",
+      "close": 219.74,
+      "volume": 103948755.0
+    },
+    {
+      "date": "2026-08-19",
+      "close": 217.56,
+      "volume": 97595606.0
+    },
+    {
+      "date": "2026-08-20",
+      "close": 216.85,
+      "volume": 93235829.0
+    },
+    {
+      "date": "2026-08-21",
+      "close": 214.72,
+      "volume": 99710122.0
+    },
+    {
+      "date": "2026-08-24",
+      "close": 208.48,
+      "volume": 136212253.0
+    },
+    {
+      "date": "2026-08-25",
+      "close": 213.05,
+      "volume": 123073328.0
+    },
+    {
+      "date": "2026-08-26",
+      "close": 209.66,
+      "volume": 180722096.0
+    },
+    {
+      "date": "2026-08-27",
+      "close": 227.98,
+      "volume": 299641110.0
+    },
+    {
+      "date": "2026-08-28",
+      "close": 217.55,
+      "volume": 195850526.0
+    },
+    {
+      "date": "2026-08-31",
+      "close": 220.78,
+      "volume": 125620166.0
+    },
+    {
+      "date": "2026-09-01",
+      "close": 217.44,
+      "volume": 110556276.0
+    },
+    {
+      "date": "2026-09-02",
+      "close": 224.41,
+      "volume": 157802919.0
+    },
+    {
+      "date": "2026-09-03",
+      "close": 228.45,
+      "volume": 135429028.0
+    },
+    {
+      "date": "2026-09-04",
+      "close": 230.36,
+      "volume": 136094146.0
+    },
+    {
+      "date": "2026-09-08",
+      "close": 225.73,
+      "volume": 123863958.0
+    },
+    {
+      "date": "2026-09-09",
+      "close": 223.67,
+      "volume": 83765394.0
+    },
+    {
+      "date": "2026-09-10",
+      "close": 218.36,
+      "volume": 106720602.0
+    },
+    {
+      "date": "2026-09-11",
+      "close": 218.29,
+      "volume": 90036579.0
+    },
+    {
+      "date": "2026-09-14",
+      "close": 210.96,
+      "volume": 133340789.0
+    },
+    {
+      "date": "2026-09-15",
+      "close": 212.17,
+      "volume": 89116786.0
+    },
+    {
+      "date": "2026-09-16",
+      "close": 213.9,
+      "volume": 97487314.0
+    },
+    {
+      "date": "2026-09-17",
+      "close": 219.34,
+      "volume": 95312874.0
+    },
+    {
+      "date": "2026-09-18",
+      "close": 222.27,
+      "volume": 191487694.0
+    },
+    {
+      "date": "2026-09-21",
+      "close": 227.38,
+      "volume": 111548034.0
+    },
+    {
+      "date": "2026-09-22",
+      "close": 228.87,
+      "volume": 97682362.0
+    },
+    {
+      "date": "2026-09-23",
+      "close": 225.51,
+      "volume": 91557343.0
+    },
+    {
+      "date": "2026-09-24",
+      "close": 224.58,
+      "volume": 79577171.0
+    },
+    {
+      "date": "2026-09-25",
+      "close": 225.07,
+      "volume": 92032652.0
+    }
+  ],
+  "contracts": [
+    {
+      "symbol": "NVDA261106P00210000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 210.0,
+      "option_type": "put",
+      "bid": 2.94,
+      "ask": 3.02,
+      "mid": 2.98,
+      "bid_size": 16.0,
+      "ask_size": 25.0,
+      "last_trade_price": 3.02,
+      "open_interest": 455,
+      "volume": 799,
+      "implied_volatility": 0.3554,
+      "greeks": {
+        "delta": -0.1937,
+        "gamma": 0.0104,
+        "theta": -0.09,
+        "vega": 0.2033,
+        "rho": -0.0494
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030C00220000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 220.0,
+      "option_type": "call",
+      "bid": 14.36,
+      "ask": 14.55,
+      "mid": 14.455,
+      "bid_size": 57.0,
+      "ask_size": 8.0,
+      "last_trade_price": 14.36,
+      "open_interest": 1426,
+      "volume": 541,
+      "implied_volatility": 0.3233,
+      "greeks": {
+        "delta": 0.701,
+        "gamma": 0.0161,
+        "theta": -0.1367,
+        "vega": 0.2321,
+        "rho": 0.1243
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030P00240000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 240.0,
+      "option_type": "put",
+      "bid": 14.43,
+      "ask": 15.4,
+      "mid": 14.915,
+      "bid_size": 159.0,
+      "ask_size": 151.0,
+      "last_trade_price": 14.45,
+      "open_interest": 66,
+      "volume": 21,
+      "implied_volatility": 0.3381,
+      "greeks": {
+        "delta": -0.6461,
+        "gamma": 0.0165,
+        "theta": -0.1182,
+        "vega": 0.2486,
+        "rho": -0.1386
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106P00240000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 240.0,
+      "option_type": "put",
+      "bid": 15.27,
+      "ask": 15.74,
+      "mid": 15.504999999999999,
+      "bid_size": 101.0,
+      "ask_size": 234.0,
+      "last_trade_price": 14.6,
+      "open_interest": null,
+      "volume": 40,
+      "implied_volatility": 0.3311,
+      "greeks": {
+        "delta": -0.6295,
+        "gamma": 0.0154,
+        "theta": -0.1047,
+        "vega": 0.2796,
+        "rho": -0.1665
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030C00210000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 210.0,
+      "option_type": "call",
+      "bid": 21.12,
+      "ask": 22.13,
+      "mid": 21.625,
+      "bid_size": 71.0,
+      "ask_size": 53.0,
+      "last_trade_price": 22.26,
+      "open_interest": 895,
+      "volume": 166,
+      "implied_volatility": 0.3041,
+      "greeks": {
+        "delta": 0.8598,
+        "gamma": 0.011,
+        "theta": -0.0918,
+        "vega": 0.1489,
+        "rho": 0.1492
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030P00210000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 210.0,
+      "option_type": "put",
+      "bid": 2.33,
+      "ask": 2.36,
+      "mid": 2.3449999999999998,
+      "bid_size": 44.0,
+      "ask_size": 112.0,
+      "last_trade_price": 2.35,
+      "open_interest": 3390,
+      "volume": 1873,
+      "implied_volatility": 0.3559,
+      "greeks": {
+        "delta": -0.1745,
+        "gamma": 0.0108,
+        "theta": -0.0942,
+        "vega": 0.172,
+        "rho": -0.036
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030C00240000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 240.0,
+      "option_type": "call",
+      "bid": 4.18,
+      "ask": 4.48,
+      "mid": 4.33,
+      "bid_size": 65.0,
+      "ask_size": 172.0,
+      "last_trade_price": 4.29,
+      "open_interest": 6500,
+      "volume": 5994,
+      "implied_volatility": 0.3057,
+      "greeks": {
+        "delta": 0.3357,
+        "gamma": 0.0178,
+        "theta": -0.128,
+        "vega": 0.2438,
+        "rho": 0.0617
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106P00225000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 225.0,
+      "option_type": "put",
+      "bid": 7.17,
+      "ask": 7.43,
+      "mid": 7.3,
+      "bid_size": 15.0,
+      "ask_size": 46.0,
+      "last_trade_price": 7.43,
+      "open_interest": 92,
+      "volume": 250,
+      "implied_volatility": 0.3337,
+      "greeks": {
+        "delta": -0.3927,
+        "gamma": 0.0156,
+        "theta": -0.1145,
+        "vega": 0.2846,
+        "rho": -0.1014
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106C00225000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 225.0,
+      "option_type": "call",
+      "bid": 12.26,
+      "ask": 12.42,
+      "mid": 12.34,
+      "bid_size": 18.0,
+      "ask_size": 28.0,
+      "last_trade_price": 12.26,
+      "open_interest": 356,
+      "volume": 257,
+      "implied_volatility": 0.3234,
+      "greeks": {
+        "delta": 0.6094,
+        "gamma": 0.016,
+        "theta": -0.1346,
+        "vega": 0.2842,
+        "rho": 0.1327
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106C00220000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 220.0,
+      "option_type": "call",
+      "bid": 14.92,
+      "ask": 15.67,
+      "mid": 15.295,
+      "bid_size": 9.0,
+      "ask_size": 1.0,
+      "last_trade_price": 15.17,
+      "open_interest": 256,
+      "volume": 54,
+      "implied_volatility": 0.3202,
+      "greeks": {
+        "delta": 0.6904,
+        "gamma": 0.0149,
+        "theta": -0.1253,
+        "vega": 0.261,
+        "rho": 0.149
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030C00235000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 235.0,
+      "option_type": "call",
+      "bid": 6.11,
+      "ask": 6.22,
+      "mid": 6.165,
+      "bid_size": 43.0,
+      "ask_size": 122.0,
+      "last_trade_price": 6.16,
+      "open_interest": 3097,
+      "volume": 2749,
+      "implied_volatility": 0.3098,
+      "greeks": {
+        "delta": 0.4269,
+        "gamma": 0.0189,
+        "theta": -0.1408,
+        "vega": 0.2622,
+        "rho": 0.0779
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106P00215000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 215.0,
+      "option_type": "put",
+      "bid": 3.92,
+      "ask": 4.14,
+      "mid": 4.029999999999999,
+      "bid_size": 166.0,
+      "ask_size": 80.0,
+      "last_trade_price": 4.13,
+      "open_interest": 151,
+      "volume": 518,
+      "implied_volatility": 0.3452,
+      "greeks": {
+        "delta": -0.2498,
+        "gamma": 0.0124,
+        "theta": -0.1002,
+        "vega": 0.2351,
+        "rho": -0.0639
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030P00215000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 215.0,
+      "option_type": "put",
+      "bid": 3.23,
+      "ask": 3.34,
+      "mid": 3.285,
+      "bid_size": 192.0,
+      "ask_size": 42.0,
+      "last_trade_price": 3.34,
+      "open_interest": 3353,
+      "volume": 762,
+      "implied_volatility": 0.3443,
+      "greeks": {
+        "delta": -0.2326,
+        "gamma": 0.0133,
+        "theta": -0.1074,
+        "vega": 0.2043,
+        "rho": -0.0481
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106C00215000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 215.0,
+      "option_type": "call",
+      "bid": 18.44,
+      "ask": 19.47,
+      "mid": 18.955,
+      "bid_size": 44.0,
+      "ask_size": 137.0,
+      "last_trade_price": 19.9,
+      "open_interest": 44,
+      "volume": 20,
+      "implied_volatility": 0.3293,
+      "greeks": {
+        "delta": 0.7588,
+        "gamma": 0.0128,
+        "theta": -0.1166,
+        "vega": 0.2308,
+        "rho": 0.1615
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030P00225000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 225.0,
+      "option_type": "put",
+      "bid": 6.26,
+      "ask": 6.53,
+      "mid": 6.395,
+      "bid_size": 43.0,
+      "ask_size": 60.0,
+      "last_trade_price": 6.42,
+      "open_interest": 2552,
+      "volume": 582,
+      "implied_volatility": 0.3313,
+      "greeks": {
+        "delta": -0.3882,
+        "gamma": 0.0173,
+        "theta": -0.1267,
+        "vega": 0.2562,
+        "rho": -0.0811
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030P00220000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 220.0,
+      "option_type": "put",
+      "bid": 4.68,
+      "ask": 4.83,
+      "mid": 4.755,
+      "bid_size": 103.0,
+      "ask_size": 126.0,
+      "last_trade_price": 4.68,
+      "open_interest": 1241,
+      "volume": 1179,
+      "implied_volatility": 0.3424,
+      "greeks": {
+        "delta": -0.3074,
+        "gamma": 0.0154,
+        "theta": -0.1218,
+        "vega": 0.235,
+        "rho": -0.0639
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030C00225000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 225.0,
+      "option_type": "call",
+      "bid": 11.09,
+      "ask": 11.18,
+      "mid": 11.135,
+      "bid_size": 41.0,
+      "ask_size": 63.0,
+      "last_trade_price": 11.09,
+      "open_interest": 4813,
+      "volume": 948,
+      "implied_volatility": 0.3148,
+      "greeks": {
+        "delta": 0.6156,
+        "gamma": 0.0182,
+        "theta": -0.1436,
+        "vega": 0.2555,
+        "rho": 0.1105
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030P00235000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 235.0,
+      "option_type": "put",
+      "bid": 11.12,
+      "ask": 11.47,
+      "mid": 11.295,
+      "bid_size": 40.0,
+      "ask_size": 124.0,
+      "last_trade_price": 11.47,
+      "open_interest": 155,
+      "volume": 214,
+      "implied_volatility": 0.3223,
+      "greeks": {
+        "delta": -0.5689,
+        "gamma": 0.0182,
+        "theta": -0.1214,
+        "vega": 0.2627,
+        "rho": -0.1205
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106P00220000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 220.0,
+      "option_type": "put",
+      "bid": 5.48,
+      "ask": 5.54,
+      "mid": 5.51,
+      "bid_size": 41.0,
+      "ask_size": 27.0,
+      "last_trade_price": 5.54,
+      "open_interest": 151,
+      "volume": 540,
+      "implied_volatility": 0.3403,
+      "greeks": {
+        "delta": -0.3178,
+        "gamma": 0.0142,
+        "theta": -0.1098,
+        "vega": 0.264,
+        "rho": -0.0816
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030P00230000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 230.0,
+      "option_type": "put",
+      "bid": 8.65,
+      "ask": 8.93,
+      "mid": 8.79,
+      "bid_size": 41.0,
+      "ask_size": 201.0,
+      "last_trade_price": 8.7,
+      "open_interest": 424,
+      "volume": 1071,
+      "implied_volatility": 0.3332,
+      "greeks": {
+        "delta": -0.4774,
+        "gamma": 0.0179,
+        "theta": -0.1305,
+        "vega": 0.2663,
+        "rho": -0.1005
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030C00215000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 215.0,
+      "option_type": "call",
+      "bid": 17.87,
+      "ask": 18.14,
+      "mid": 18.005000000000003,
+      "bid_size": 87.0,
+      "ask_size": 161.0,
+      "last_trade_price": 18.0,
+      "open_interest": 690,
+      "volume": 168,
+      "implied_volatility": 0.3239,
+      "greeks": {
+        "delta": 0.7793,
+        "gamma": 0.0137,
+        "theta": -0.1208,
+        "vega": 0.1983,
+        "rho": 0.1366
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106P00235000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 235.0,
+      "option_type": "put",
+      "bid": 12.27,
+      "ask": 12.48,
+      "mid": 12.375,
+      "bid_size": 121.0,
+      "ask_size": 131.0,
+      "last_trade_price": 12.48,
+      "open_interest": 22,
+      "volume": 52,
+      "implied_volatility": 0.3317,
+      "greeks": {
+        "delta": -0.5529,
+        "gamma": 0.0161,
+        "theta": -0.1129,
+        "vega": 0.2927,
+        "rho": -0.1449
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106P00230000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 230.0,
+      "option_type": "put",
+      "bid": 9.36,
+      "ask": 9.64,
+      "mid": 9.5,
+      "bid_size": 21.0,
+      "ask_size": 84.0,
+      "last_trade_price": 9.64,
+      "open_interest": 45,
+      "volume": 396,
+      "implied_volatility": 0.3281,
+      "greeks": {
+        "delta": -0.4731,
+        "gamma": 0.0164,
+        "theta": -0.1145,
+        "vega": 0.2946,
+        "rho": -0.1229
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106C00210000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 210.0,
+      "option_type": "call",
+      "bid": 21.94,
+      "ask": 23.4,
+      "mid": 22.67,
+      "bid_size": 88.0,
+      "ask_size": 59.0,
+      "last_trade_price": 24.1,
+      "open_interest": 82,
+      "volume": 32,
+      "implied_volatility": 0.3258,
+      "greeks": {
+        "delta": 0.8245,
+        "gamma": 0.0107,
+        "theta": -0.0998,
+        "vega": 0.1912,
+        "rho": 0.1733
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261030C00230000",
+      "underlying": "NVDA",
+      "expiration": "2026-10-30",
+      "strike": 230.0,
+      "option_type": "call",
+      "bid": 8.31,
+      "ask": 8.32,
+      "mid": 8.315000000000001,
+      "bid_size": 41.0,
+      "ask_size": 55.0,
+      "last_trade_price": 8.32,
+      "open_interest": 5612,
+      "volume": 3266,
+      "implied_volatility": 0.3086,
+      "greeks": {
+        "delta": 0.5214,
+        "gamma": 0.0193,
+        "theta": -0.1444,
+        "vega": 0.2663,
+        "rho": 0.0945
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106C00230000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 230.0,
+      "option_type": "call",
+      "bid": 9.43,
+      "ask": 9.77,
+      "mid": 9.6,
+      "bid_size": 78.0,
+      "ask_size": 94.0,
+      "last_trade_price": 9.43,
+      "open_interest": 161,
+      "volume": 814,
+      "implied_volatility": 0.3194,
+      "greeks": {
+        "delta": 0.5265,
+        "gamma": 0.0168,
+        "theta": -0.1358,
+        "vega": 0.2947,
+        "rho": 0.1158
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106C00235000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 235.0,
+      "option_type": "call",
+      "bid": 7.04,
+      "ask": 7.39,
+      "mid": 7.215,
+      "bid_size": 31.0,
+      "ask_size": 129.0,
+      "last_trade_price": 7.27,
+      "open_interest": 145,
+      "volume": 928,
+      "implied_volatility": 0.3135,
+      "greeks": {
+        "delta": 0.4417,
+        "gamma": 0.017,
+        "theta": -0.1306,
+        "vega": 0.2922,
+        "rho": 0.098
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "NVDA261106C00240000",
+      "underlying": "NVDA",
+      "expiration": "2026-11-06",
+      "strike": 240.0,
+      "option_type": "call",
+      "bid": 5.13,
+      "ask": 5.5,
+      "mid": 5.3149999999999995,
+      "bid_size": 172.0,
+      "ask_size": 170.0,
+      "last_trade_price": 5.32,
+      "open_interest": 368,
+      "volume": 1912,
+      "implied_volatility": 0.31,
+      "greeks": {
+        "delta": 0.3594,
+        "gamma": 0.0163,
+        "theta": -0.1212,
+        "vega": 0.2768,
+        "rho": 0.0803
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    }
+  ]
+}

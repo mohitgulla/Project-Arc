@@ -60,5 +60,8 @@
       "rationale": "Fixture: AAPL is not on the shortlist, so the pipeline drops it."
     }
   ],
+  "skipped": [
+    {"ticker": "NVDA", "reason": "Fixture: bull put credit is thin for the risk into earnings; wait."}
+  ],
   "analysis_notes": "Fixture Quant reply (offline run)."
 }

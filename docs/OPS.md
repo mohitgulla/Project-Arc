@@ -409,6 +409,24 @@ The plugin shells out to the CLI; the CLI owns every rule.
   the Confirm/Cancel buttons need one gateway restart (when no kanban worker runs).
   Without the restart, type `!arc confirm <code>`.
 
+### 5.9 Open universe (E5.7, D9/D28)
+
+`settings.universe` is a seed list (`ARC_UNIVERSE_MODE=seed`, the default). Other
+names reach the Scout only if they are in the symbol master and pass the liquidity
+screen in `config/universe.yaml`. `ARC_UNIVERSE_MODE=strict` restores the allow-list.
+
+1. First install (once, before the first seed-mode Scout run; needs the paper keys):
+   `set -a; source ~/.hermes/.env; set +a; arc universe refresh`
+   (about 10k symbols; writes `data/symbol_master.json`). After that the weekly
+   `symbols` routine (Mon 05:30 ET) keeps it fresh.
+2. Check it: `arc universe status` (exit 1 = missing cache; ingest then uses the seed
+   list only and the Scout rejects non-seed names as `unknown_symbol`).
+3. Would a name be admitted? `arc universe check PLTR HOOD` (read-only market data;
+   `--fixture` = offline). The same checks run in the Scout; rejects are journalled
+   as `universe:<reason>` and shown on the Scout card.
+4. Knobs: `scout_max_new_tickers` (Slack-tunable, ceiling 25), `universe_mode`,
+   `pipeline_max_shortlist` (the Quant/Risk budget, not a Director cap).
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.
