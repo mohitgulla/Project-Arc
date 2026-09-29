@@ -92,9 +92,9 @@ def screen_liquidity(m: LiquidityMetrics, t: LiquidityThresholds) -> ScreenResul
     if m.expiries_in_window < 1:
         f.append("no expiry in the DTE window")
     if m.atm_open_interest is None:
-        f.append("ATM OI unknown")
+        f.append("near-ATM OI unknown")
     elif m.atm_open_interest < t.min_atm_open_interest:
-        f.append(f"ATM OI {m.atm_open_interest} < {t.min_atm_open_interest}")
+        f.append(f"near-ATM OI {m.atm_open_interest} < {t.min_atm_open_interest}")
     if m.atm_spread_pct is None:
         f.append("ATM spread unknown")
     elif m.atm_spread_pct > t.max_atm_spread_pct:
@@ -126,10 +126,14 @@ def measure_liquidity(
     try:
         price = reference_price(market, ticker, today=today)
         out["price"] = price
+        # End the request yesterday: completed sessions only, and the free SIP tier
+        # refuses any window that reaches into the last 15 minutes.
         bars = [
             b
             for b in (adv_market or market).history_bars(
-                ticker, today - _dt.timedelta(days=_ADV_LOOKBACK_CALENDAR_DAYS), today
+                ticker,
+                today - _dt.timedelta(days=_ADV_LOOKBACK_CALENDAR_DAYS),
+                today - _dt.timedelta(days=1),
             )
             if b.timestamp.date() < today
         ][-thresholds.adv_days :]
@@ -148,9 +152,15 @@ def measure_liquidity(
         if expiries and price:
             exp = min(expiries, key=lambda e: (abs((e - today).days - ATM_TARGET_DTE), e))
             near = [c for c in chain if c.expiration == exp]
-            strike = min({c.strike for c in near}, key=lambda k: (abs(k - price), k))
+            by_distance = sorted({c.strike for c in near}, key=lambda k: (abs(k - price), k))
+            strike = by_distance[0]
             atm = [c for c in near if c.strike == strike]
-            ois = [c.open_interest for c in atm if c.open_interest is not None]
+            near_atm = set(by_distance[: thresholds.atm_strikes])
+            ois = [
+                c.open_interest
+                for c in near
+                if c.strike in near_atm and c.open_interest is not None
+            ]
             spreads = [s for c in atm if (s := _spread_pct(c)) is not None]
             out |= {
                 "atm_expiry": exp,

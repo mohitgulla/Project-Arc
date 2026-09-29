@@ -51,6 +51,7 @@ class LiquidityThresholds(BaseModel):
     adv_days: int = Field(20, ge=1)
     adv_feed: Literal["iex", "sip", "delayed_sip"] = "sip"
     min_atm_open_interest: int = Field(500, ge=0)
+    atm_strikes: int = Field(3, ge=1, le=11, description="strikes nearest spot counted as near-ATM")
     max_atm_spread_pct: float = Field(0.10, ge=0.0)
 
 

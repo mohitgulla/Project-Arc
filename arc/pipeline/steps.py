@@ -1210,6 +1210,9 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         summary=(desc or "no structure chosen")
         + (f"; dropped {dict(dropped)}" if dropped else "")
         + (f"; no chain: {', '.join(no_chain)}" if no_chain else "")
+        + (f"; skipped: {', '.join(quant_skips)}" if quant_skips else "")
+        + (f"; not structured: {', '.join(not_structured)}" if not_structured else "")
+        + (f"; over budget: {len(over_budget)}" if over_budget else "")
         + (f"; {profile_note}" if profile_note else ""),
         metrics={
             "structures": len(kept),

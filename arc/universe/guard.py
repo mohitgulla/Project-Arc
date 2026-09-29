@@ -129,6 +129,7 @@ class UniverseGuard:
             self.details[sym] = "symbol master unavailable (fails closed for non-seed names)"
             return REJECT_UNKNOWN_SYMBOL
         if sym not in self.master:
+            self.details[sym] = "not in the symbol master (SEC listed + Alpaca optionable)"
             return REJECT_UNKNOWN_SYMBOL
         return None
 

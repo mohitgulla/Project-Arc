@@ -252,6 +252,32 @@ def earnings_source(ctx: JobContext) -> JobResult:
     return _source_result(ctx, fetch_earnings(ctx.conn, ctx.settings))
 
 
+def symbols_source(ctx: JobContext) -> JobResult:
+    """Weekly symbol-master refresh (E5.7 / D28): SEC tickers ∪ Alpaca optionable.
+
+    The only scheduled writer of the cache that ingest and the Scout read (they
+    never fetch mid-run). Writes no context; the symbol list's digest is recorded.
+    """
+    from arc.universe import load_universe_config, refresh_symbol_master
+
+    cfg = load_universe_config(ctx.settings.universe_config_file)
+    master = refresh_symbol_master(
+        cfg.symbol_master, user_agent=ctx.settings.edgar_user_agent, now=ctx.now
+    )
+    ctx.record_input(
+        "symbol_master",
+        "sec+alpaca",
+        sorted(master.symbols),
+        as_of=master.fetched_at,
+        count=len(master.symbols),
+    )
+    optionable = sum(1 for s in master.symbols.values() if s.options)
+    return JobResult(
+        summary=f"{len(master.symbols)} symbols ({optionable} optionable)",
+        metrics={"symbols": len(master.symbols), "optionable": optionable, **master.sources},
+    )
+
+
 def youtube_url(channel: str) -> str:
     """Accept a full URL or a bare ``UC...`` channel id."""
     if channel.startswith(("http://", "https://")):
@@ -401,6 +427,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "rss": "arc.routines.handlers:rss_source",
     "edgar": "arc.routines.handlers:edgar_source",
     "earnings": "arc.routines.handlers:earnings_source",
+    "symbols": "arc.routines.handlers:symbols_source",  # E5.7 weekly symbol master
     "youtube": "arc.routines.handlers:youtube_source",
     "scout": "arc.routines.handlers:scout_persona",
     # E5.2 pipeline chain: director → quant → risk → propose (arc/pipeline/steps.py)

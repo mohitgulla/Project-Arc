@@ -456,6 +456,113 @@ class TestFailures:
         assert not report.proposals
 
 
+def _decisions(conn, stage: str, code: str) -> dict[str, str]:  # noqa: ANN001
+    """subject -> reason_text of the *stage* decisions journalled with *code*."""
+    rows = conn.execute(
+        "SELECT subject, reason_text FROM decisions WHERE stage = ? AND reason_code = ?",
+        (stage, code),
+    ).fetchall()
+    return {r["subject"]: r["reason_text"] or "" for r in rows}
+
+
+class TestFunnel:
+    """E5.7: the Director ranks everything; pipeline_max_shortlist budgets Quant/Risk."""
+
+    _run = TestFailures._run
+    _env = TestFailures._env
+
+    def test_budget_cuts_quant_not_director(self, settings, routines) -> None:  # noqa: ANN001
+        settings = settings.model_copy(update={"pipeline_max_shortlist": 1})
+        env = self._env()
+        conn, report = self._run(settings, routines, env)
+        status = {o.job: o for o in report.outcomes}
+        assert status["quant"].status == "ok"
+        # the Director saw every candidate; no budget in its prompt, all three ranked
+        director_prompt = env.llms["director"].prompts[0]  # type: ignore[attr-defined]
+        assert "pipeline_max_shortlist" not in director_prompt
+        assert "do not cap" in director_prompt.lower()
+        sl = _latest_payload(conn, "shortlist")
+        assert [i["ticker"] for i in sl["shortlist"]] == ["SPY", "NVDA", "XOM"]
+        assert sl["budget"] == 1
+        # the Quant only saw SPY; NVDA and XOM are over budget, journalled with rank
+        quant_prompt = env.llms["quant"].prompts[0]  # type: ignore[attr-defined]
+        assert '"NVDA"' not in quant_prompt
+        st = _latest_payload(conn, "structures")
+        assert st["over_budget"] == ["NVDA", "XOM"]
+        rows = _decisions(conn, "structure", "over_budget")
+        assert set(rows) == {"NVDA", "XOM"}
+        assert "ranked #2, beyond the Quant/Risk budget" in rows["NVDA"]
+        assert status["quant"].metrics["over_budget"] == 2
+        assert [p["ticker"] for p in report.proposals] == ["SPY"]
+
+    def test_every_budgeted_ticker_is_accounted_for(self, settings, routines) -> None:  # noqa: ANN001
+        conn, report = self._run(settings, routines, self._env())
+        st = _latest_payload(conn, "structures")
+        structured = {s["ticker"] for s in st["structures"]}
+        skipped = {s["ticker"] for s in st["skipped"]}
+        accounted = structured | skipped | set(st["not_structured"]) | set(st["over_budget"])
+        sl = _latest_payload(conn, "shortlist")
+        assert {i["ticker"] for i in sl["shortlist"] if i["ticker"] != "AAPL"} <= accounted
+        assert structured == {"SPY"}
+        assert skipped == {"NVDA", "XOM"}  # NVDA by Quant (reason), XOM auto: no chain
+        assert "credit is thin" in _decisions(conn, "structure", "quant_skipped")["NVDA"]
+
+    def test_quant_silent_ticker_is_not_structured(self, settings, routines) -> None:  # noqa: ANN001
+        quant = json.loads((FIXTURES_DIR / "quant.json").read_text())
+        quant["skipped"] = []
+        conn, _ = self._run(
+            settings, routines, self._env(quant=FixtureScoutLLM([json.dumps(quant)]))
+        )
+        assert _latest_payload(conn, "structures")["not_structured"] == ["NVDA"]
+        assert set(_decisions(conn, "structure", "not_structured")) == {"NVDA"}
+
+    def test_director_exclusion_needs_reason_and_candidate(self, settings, routines) -> None:  # noqa: ANN001
+        d = json.loads((FIXTURES_DIR / "director.json").read_text())
+        d["excluded"] += [
+            {"ticker": "TSLA", "reason": "not a candidate today"},
+            {"ticker": "SPY", "reason": "ranked and excluded at once"},
+        ]
+        conn, _ = self._run(
+            settings, routines, self._env(director=FixtureScoutLLM([json.dumps(d)]))
+        )
+        sl = _latest_payload(conn, "shortlist")
+        assert [e["ticker"] for e in sl["excluded"]] == ["PLTR"]
+        assert "SPY" in {i["ticker"] for i in sl["shortlist"]}
+
+    def test_risk_repair_reask(self, settings, routines) -> None:  # noqa: ANN001
+        quant = json.loads((FIXTURES_DIR / "quant.json").read_text())
+        risk = json.loads((FIXTURES_DIR / "risk.json").read_text())
+        first = {**risk, "assessments": []}  # Risk forgets the SPY structure
+        risk_llm = FixtureScoutLLM([json.dumps(first), json.dumps(risk)])
+        conn, report = self._run(
+            settings,
+            routines,
+            self._env(quant=FixtureScoutLLM([json.dumps(quant)]), risk=risk_llm),
+        )
+        assert len(risk_llm.prompts) == 2
+        assert (
+            "REPAIR: your previous reply had no assessment for SPY iron_condor"
+            in (risk_llm.prompts[1])
+        )
+        outcome = next(o for o in report.outcomes if o.job == "risk")
+        assert outcome.metrics["repaired"] == 1 and outcome.metrics["not_assessed"] == 0
+        n = conn.execute("SELECT COUNT(*) FROM persona_calls WHERE persona='risk'").fetchone()[0]
+        assert n == 2
+        assert [p["ticker"] for p in report.proposals] == ["SPY"]
+
+    def test_risk_still_missing_after_repair(self, settings, routines) -> None:  # noqa: ANN001
+        risk = json.loads((FIXTURES_DIR / "risk.json").read_text())
+        empty = json.dumps({**risk, "assessments": []})
+        risk_llm = FixtureScoutLLM([empty, empty])
+        conn, report = self._run(settings, routines, self._env(risk=risk_llm))
+        assert len(risk_llm.prompts) == 2  # exactly one re-ask
+        outcome = next(o for o in report.outcomes if o.job == "risk")
+        assert outcome.metrics["not_assessed"] == 1
+        missing = _decisions(conn, "risk_review", "not_assessed")
+        assert "after one repair re-ask" in missing["SPY"]
+        assert not report.proposals
+
+
 def test_cli_propose_fixtures(capsys: pytest.CaptureFixture[str], monkeypatch) -> None:  # noqa: ANN001
     from arc.cli import main
 

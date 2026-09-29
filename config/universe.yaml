@@ -31,8 +31,9 @@ liquidity_screen:
   min_adv_shares: 1000000         # mean daily share volume over the last adv_days completed sessions
   adv_days: 20
   adv_feed: sip                   # completed sessions only; the free IEX feed carries ~2-3% of volume
-  min_atm_open_interest: 500      # call OI + put OI at the strike nearest spot, expiry nearest 30 DTE
-  max_atm_spread_pct: 0.10        # mean (ask - bid) / mid of that call and put
+  min_atm_open_interest: 500      # call + put OI summed over the atm_strikes strikes nearest spot,
+  atm_strikes: 3                  #   expiry nearest 30 DTE (one strike alone fails PLTR/HOOD: OI 448/141)
+  max_atm_spread_pct: 0.10        # mean (ask - bid) / mid of the call and put at the strike nearest spot
   # The chain must have >= 1 expiry inside the active account profile's entry DTE window.
 
 extraction:
