@@ -31,6 +31,7 @@ backtest:
   marks: smile                # smile = price legs off a same-session fitted IV smile; close = raw trade closes
   max_leg_iv_dev: 0.15        # marks=close only: drop legs whose IV is >15% off their strike neighbours
   smile_window: 5
+  stance: trend               # trend = 20-session trend label picks the profile's stance_strategies; none = all structures
   slippage_grid: [0.0, 0.25, 0.5]   # x in mid +/- x*spread; 0.25 = config/costs.yaml default
   tickers: [SPY, QQQ, IWM, AAPL, NVDA, TSLA, AMZN, AMD]
   bootstrap:

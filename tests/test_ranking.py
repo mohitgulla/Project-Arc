@@ -24,6 +24,7 @@ from arc.backtest.ranking import (
     BootstrapSpec,
     DecisionRule,
     RankRun,
+    apply_stance,
     atm_iv,
     block_bootstrap_ci,
     build_menu,
@@ -34,6 +35,7 @@ from arc.backtest.ranking import (
     remark_chains,
     smile_deviation,
     smile_marks,
+    stance_kinds,
     subperiod_stats,
 )
 from arc.backtest.strategies import StrategyKind, StrategySpec
@@ -239,6 +241,26 @@ def test_smile_marks_repair_a_stale_close_and_stay_monotone() -> None:
     # same session only: an unrelated session's chain cannot change these marks
     again = remark_chains({day: ch}, pd.Series([spot], index=[day]), r=R, cost=cost)[day]
     pd.testing.assert_frame_equal(again, sm)
+
+
+def test_stance_kinds_and_apply_stance() -> None:
+    k = stance_kinds("cash_debit")
+    assert k["bull"] == {"bull_call", "long_call"}
+    assert k["bear"] == {"bear_put", "long_put"}
+    assert k["sideways"] == frozenset()
+    m = stance_kinds("margin")
+    assert m["sideways"] == {"iron_condor"} and m["bull"] == {"bull_put"}
+    d1, d2, d3 = dt.date(2025, 1, 2), dt.date(2025, 1, 3), dt.date(2025, 1, 6)
+
+    def cand(kind: str) -> object:
+        return type("C", (), {"kind": kind})()
+
+    menus = {d: [cand("bull_call"), cand("bear_put"), cand("long_put")] for d in (d1, d2, d3)}
+    trend = pd.Series({d1: "bull", d2: "bear"})  # d3 unknown → no trade
+    out = apply_stance(menus, trend, k)  # type: ignore[arg-type]
+    assert [c.kind for c in out[d1]] == ["bull_call"]
+    assert [c.kind for c in out[d2]] == ["bear_put", "long_put"]
+    assert out[d3] == []
 
 
 def test_atm_iv_nearest_strike_and_missing() -> None:

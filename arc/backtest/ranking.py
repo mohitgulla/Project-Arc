@@ -204,6 +204,12 @@ class BacktestSettings(BaseModel):
         description="smile = price every leg off a same-session fitted IV smile (default); "
         "close = raw last-trade closes",
     )
+    stance: Literal["none", "trend"] = Field(
+        "trend",
+        description="none = every profile structure is on every menu; trend = a deterministic "
+        "Director proxy: the 20-session trend label at the decision close (bull/bear/sideways) "
+        "picks the profile's stance_strategies (bullish/bearish/neutral)",
+    )
     slippage_grid: list[float] = Field(default_factory=lambda: [0.0, 0.25, 0.5])
     tickers: list[str] = Field(default_factory=lambda: ["SPY", "QQQ"])
     bootstrap: BootstrapSpec = Field(default_factory=lambda: BootstrapSpec())
@@ -1034,6 +1040,45 @@ def decide(
 def profile_allows_credit(profile: str, path: Path | str | None = None) -> bool:
     p = load_account_profiles(path).get(profile)
     return not p.require_net_debit
+
+
+# account_profiles.yaml strategy names → backtest StrategyKind
+_STRATEGY_KIND = {
+    "bull_put": StrategyKind.BULL_PUT,
+    "bear_call": StrategyKind.BEAR_CALL,
+    "iron_condor": StrategyKind.IRON_CONDOR,
+    "long_call": StrategyKind.LONG_CALL,
+    "long_put": StrategyKind.LONG_PUT,
+    "bull_call_debit": StrategyKind.BULL_CALL,
+    "bear_put_debit": StrategyKind.BEAR_PUT,
+}
+_TREND_STANCE = {"bull": "bullish", "bear": "bearish", "sideways": "neutral"}
+
+
+def stance_kinds(profile: str, path: Path | str | None = None) -> dict[str, frozenset[str]]:
+    """Trend label → the profile's allowed StrategyKind values for that stance."""
+    p = load_account_profiles(path).get(profile)
+    return {
+        lab: frozenset(str(_STRATEGY_KIND[s]) for s in p.strategies_for(stance))
+        for lab, stance in _TREND_STANCE.items()
+    }
+
+
+def apply_stance(
+    menus: Mapping[dt.date, list[Candidate]],
+    trend: pd.Series,
+    kinds_by_label: Mapping[str, frozenset[str]],
+) -> dict[dt.date, list[Candidate]]:
+    """Keep only the candidates the day's trend stance allows (unknown label → no trade).
+
+    *trend* must be computed from closes ≤ each day (``label_trend`` is), so this adds
+    no look-ahead.
+    """
+    out: dict[dt.date, list[Candidate]] = {}
+    for d, menu in menus.items():
+        allowed = kinds_by_label.get(str(trend.get(d, "unknown")), frozenset())
+        out[d] = [c for c in menu if c.kind in allowed]
+    return out
 
 
 def rankers_for(requested: Sequence[Ranker], *, allows_credit: bool) -> list[Ranker]:

@@ -30,6 +30,7 @@ from arc.backtest.ranking import (
     Outcome,
     RankingFile,
     RankRun,
+    apply_stance,
     build_menus,
     clean_chains,
     decide,
@@ -39,6 +40,7 @@ from arc.backtest.ranking import (
     rankers_for,
     remark_chains,
     run_portfolio,
+    stance_kinds,
     subperiod_stats,
     summarize,
 )
@@ -94,6 +96,7 @@ def ticker_job(
     windows: Mapping[str, tuple[int, int]],
     rankers: Mapping[str, Sequence[Ranker]],
     slippages: Sequence[float],
+    stances: Mapping[str, Mapping[str, frozenset[str]]] | None = None,
 ) -> TickerResult:
     """Everything that depends on one ticker only (safe to run in a worker process)."""
     closes = closes.sort_index()
@@ -105,6 +108,7 @@ def ticker_job(
     else:
         chains = clean_chains(chains, max_dev=bt.max_leg_iv_dev, window=bt.smile_window)
     days = [d for d in sorted(chains) if start <= d <= end and d in closes.index]
+    trend, vol = labels_for(closes)
     menus: dict[_Key, dict[dt.date, list[Candidate]]] = {}
     outcomes: dict[_Key, dict[tuple[str, dt.date, str], Outcome | None]] = {}
     for profile, (lo, hi) in sorted(windows.items()):
@@ -122,6 +126,8 @@ def ticker_job(
                 mc=mc,
                 r=bt.risk_free_rate,
             )
+            if stances is not None:
+                m = apply_stance(m, trend, stances[profile])
             menus[(profile, x)] = m
             outcomes[(profile, x)] = picked_outcomes(
                 m,
@@ -133,7 +139,6 @@ def ticker_job(
                 cost=c,
                 exits=exits,
             )
-    trend, vol = labels_for(closes)
     log.info("backtest.rank_ticker", ticker=ticker, sessions=len(days))
     return TickerResult(ticker, menus, outcomes, trend, vol)
 
@@ -222,6 +227,9 @@ def run_rank_report(
         "windows": windows,
         "rankers": rk,
         "slippages": slippages,
+        "stances": {p: stance_kinds(p, settings.account_profiles_file) for p in profiles}
+        if bt.stance == "trend"
+        else None,
     }
     results: dict[str, TickerResult] = {}
     if workers > 1:
@@ -483,6 +491,17 @@ def _render(
             f"{'off' if bt.max_leg_iv_dev is None else f'{bt.max_leg_iv_dev:.0%}'} from the "
             f"median of their {bt.smile_window} neighbouring strikes are dropped "
             "(same-session data only); remaining marks are raw trade closes.\n"
+        ),
+        (
+            "- **Stance** (which structures are on the menu) is a deterministic Director "
+            "proxy: the 20-session trend label at the decision close (bull → bullish, "
+            "bear → bearish, sideways → neutral) picks the profile's `stance_strategies`. "
+            "`cash_debit` has no neutral structure, so it does not trade in sideways "
+            "sessions. The live Director uses more information; its stance quality is "
+            "outside this test. Every ranker sees the same stance-filtered menu.\n"
+            if bt.stance == "trend"
+            else "- **No stance filter**: every profile structure is on every menu, so the "
+            "ranker also chooses direction (the live Director does that).\n"
         ),
         "- Daily EOD decisions and marks only: stops and take-profits are checked on closes, "
         "so intraday paths are not seen (matches the owner's relaxed, end-of-day stop "
