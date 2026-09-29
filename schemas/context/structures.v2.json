@@ -202,6 +202,28 @@
       "title": "QuantLeg",
       "type": "object"
     },
+    "QuantSkip": {
+      "additionalProperties": false,
+      "description": "A budgeted ticker the Quant does not structure, with its reason (E5.7).",
+      "properties": {
+        "reason": {
+          "description": "One line: why no structure",
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "reason"
+      ],
+      "title": "QuantSkip",
+      "type": "object"
+    },
     "QuantStructureOut": {
       "description": "A single structure proposed by Quant.",
       "properties": {
@@ -326,12 +348,34 @@
     }
   },
   "additionalProperties": false,
-  "description": "Quant structures with analytics.",
+  "description": "Quant structures with analytics (v2, E5.7: every budgeted ticker accounted for).\n\n``skipped`` holds the Quant's own skips plus the deterministic ones (no chain,\naccount profile). ``not_structured`` = budgeted tickers with a menu that got\nneither a structure nor a reason. ``over_budget`` = ranked beyond the budget.",
   "properties": {
     "analysis_notes": {
       "description": "Quant's overall analysis summary",
       "title": "Analysis Notes",
       "type": "string"
+    },
+    "not_structured": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Not Structured",
+      "type": "array"
+    },
+    "over_budget": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Over Budget",
+      "type": "array"
+    },
+    "skipped": {
+      "description": "Shortlisted tickers with no structure, each with a one-line reason",
+      "items": {
+        "$ref": "#/$defs/QuantSkip"
+      },
+      "title": "Skipped",
+      "type": "array"
     },
     "structures": {
       "description": "Proposed structures, best first",

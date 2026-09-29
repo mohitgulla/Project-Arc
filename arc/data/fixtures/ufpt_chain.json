@@ -1,0 +1,467 @@
+{
+  "underlying": "UFPT",
+  "recorded_at": "2026-09-29T01:58:36.865926-04:00",
+  "source": "alpaca indicative options snapshot + trading contracts OI + snapshot dailyBar volume; SIP daily bars",
+  "note": "E5.7 fixture. Option quotes/OI recorded from Alpaca paper (indicative feed) after the close on 2026-09-29 (i.e. that session's closing quotes). Quote and contract timestamps are rebased to 2026-09-25 15:59:50 ET and the underlying quote is set to the 2026-09-25 close, so the set shares the SPY recording's offline clock (FIXTURE_NOW). Closes/volume are the real SIP daily bars through 2026-09-25. Strikes trimmed to +/-8% of spot, first two expiries in the recorded window; stale_timestamp flags stripped. Test data, not a live mark.",
+  "quote": {
+    "symbol": "UFPT",
+    "bid": 295.63,
+    "ask": 295.67,
+    "mid": 295.65,
+    "timestamp": "2026-09-25T19:59:50+00:00"
+  },
+  "closes": [
+    {
+      "date": "2026-07-17",
+      "close": 242.05,
+      "volume": 179982.0
+    },
+    {
+      "date": "2026-07-20",
+      "close": 245.61,
+      "volume": 157697.0
+    },
+    {
+      "date": "2026-07-21",
+      "close": 243.94,
+      "volume": 116834.0
+    },
+    {
+      "date": "2026-07-22",
+      "close": 237.96,
+      "volume": 143041.0
+    },
+    {
+      "date": "2026-07-23",
+      "close": 236.21,
+      "volume": 143308.0
+    },
+    {
+      "date": "2026-07-24",
+      "close": 237.2,
+      "volume": 205025.0
+    },
+    {
+      "date": "2026-07-27",
+      "close": 248.63,
+      "volume": 241894.0
+    },
+    {
+      "date": "2026-07-28",
+      "close": 258.07,
+      "volume": 254812.0
+    },
+    {
+      "date": "2026-07-29",
+      "close": 255.09,
+      "volume": 181064.0
+    },
+    {
+      "date": "2026-07-30",
+      "close": 255.03,
+      "volume": 178270.0
+    },
+    {
+      "date": "2026-07-31",
+      "close": 254.78,
+      "volume": 121242.0
+    },
+    {
+      "date": "2026-08-03",
+      "close": 267.53,
+      "volume": 189805.0
+    },
+    {
+      "date": "2026-08-04",
+      "close": 334.84,
+      "volume": 637799.0
+    },
+    {
+      "date": "2026-08-05",
+      "close": 322.06,
+      "volume": 341538.0
+    },
+    {
+      "date": "2026-08-06",
+      "close": 311.87,
+      "volume": 215178.0
+    },
+    {
+      "date": "2026-08-07",
+      "close": 314.01,
+      "volume": 132788.0
+    },
+    {
+      "date": "2026-08-10",
+      "close": 325.0,
+      "volume": 136139.0
+    },
+    {
+      "date": "2026-08-11",
+      "close": 321.91,
+      "volume": 149394.0
+    },
+    {
+      "date": "2026-08-12",
+      "close": 322.46,
+      "volume": 132393.0
+    },
+    {
+      "date": "2026-08-13",
+      "close": 319.86,
+      "volume": 223449.0
+    },
+    {
+      "date": "2026-08-14",
+      "close": 321.76,
+      "volume": 104694.0
+    },
+    {
+      "date": "2026-08-17",
+      "close": 321.31,
+      "volume": 89055.0
+    },
+    {
+      "date": "2026-08-18",
+      "close": 313.99,
+      "volume": 93566.0
+    },
+    {
+      "date": "2026-08-19",
+      "close": 312.84,
+      "volume": 101628.0
+    },
+    {
+      "date": "2026-08-20",
+      "close": 304.38,
+      "volume": 147739.0
+    },
+    {
+      "date": "2026-08-21",
+      "close": 309.13,
+      "volume": 142858.0
+    },
+    {
+      "date": "2026-08-24",
+      "close": 305.39,
+      "volume": 108384.0
+    },
+    {
+      "date": "2026-08-25",
+      "close": 304.21,
+      "volume": 104931.0
+    },
+    {
+      "date": "2026-08-26",
+      "close": 304.57,
+      "volume": 163665.0
+    },
+    {
+      "date": "2026-08-27",
+      "close": 299.95,
+      "volume": 102310.0
+    },
+    {
+      "date": "2026-08-28",
+      "close": 300.05,
+      "volume": 102901.0
+    },
+    {
+      "date": "2026-08-31",
+      "close": 297.95,
+      "volume": 147261.0
+    },
+    {
+      "date": "2026-09-01",
+      "close": 294.06,
+      "volume": 141947.0
+    },
+    {
+      "date": "2026-09-02",
+      "close": 292.44,
+      "volume": 120192.0
+    },
+    {
+      "date": "2026-09-03",
+      "close": 286.52,
+      "volume": 152672.0
+    },
+    {
+      "date": "2026-09-04",
+      "close": 288.79,
+      "volume": 105556.0
+    },
+    {
+      "date": "2026-09-08",
+      "close": 281.21,
+      "volume": 117322.0
+    },
+    {
+      "date": "2026-09-09",
+      "close": 278.59,
+      "volume": 136557.0
+    },
+    {
+      "date": "2026-09-10",
+      "close": 277.4,
+      "volume": 94125.0
+    },
+    {
+      "date": "2026-09-11",
+      "close": 277.89,
+      "volume": 83846.0
+    },
+    {
+      "date": "2026-09-14",
+      "close": 277.99,
+      "volume": 91828.0
+    },
+    {
+      "date": "2026-09-15",
+      "close": 275.47,
+      "volume": 111262.0
+    },
+    {
+      "date": "2026-09-16",
+      "close": 279.41,
+      "volume": 94681.0
+    },
+    {
+      "date": "2026-09-17",
+      "close": 275.41,
+      "volume": 86926.0
+    },
+    {
+      "date": "2026-09-18",
+      "close": 276.69,
+      "volume": 146421.0
+    },
+    {
+      "date": "2026-09-21",
+      "close": 281.69,
+      "volume": 157121.0
+    },
+    {
+      "date": "2026-09-22",
+      "close": 285.2,
+      "volume": 91765.0
+    },
+    {
+      "date": "2026-09-23",
+      "close": 287.38,
+      "volume": 83324.0
+    },
+    {
+      "date": "2026-09-24",
+      "close": 298.48,
+      "volume": 184131.0
+    },
+    {
+      "date": "2026-09-25",
+      "close": 295.65,
+      "volume": 72321.0
+    }
+  ],
+  "contracts": [
+    {
+      "symbol": "UFPT261120C00310000",
+      "underlying": "UFPT",
+      "expiration": "2026-11-20",
+      "strike": 310.0,
+      "option_type": "call",
+      "bid": 9.86,
+      "ask": 19.7,
+      "mid": 14.78,
+      "bid_size": 3.0,
+      "ask_size": 6.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.415,
+      "greeks": {
+        "delta": 0.4555,
+        "gamma": 0.0085,
+        "theta": -0.1918,
+        "vega": 0.4478,
+        "rho": 0.1731
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "UFPT261120P00290000",
+      "underlying": "UFPT",
+      "expiration": "2026-11-20",
+      "strike": 290.0,
+      "option_type": "put",
+      "bid": 10.26,
+      "ask": 20.3,
+      "mid": 15.280000000000001,
+      "bid_size": 3.0,
+      "ask_size": 6.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.4582,
+      "greeks": {
+        "delta": -0.3821,
+        "gamma": 0.0074,
+        "theta": -0.1758,
+        "vega": 0.4307,
+        "rho": -0.1847
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "UFPT261120C00280000",
+      "underlying": "UFPT",
+      "expiration": "2026-11-20",
+      "strike": 280.0,
+      "option_type": "call",
+      "bid": 26.38,
+      "ask": 36.02,
+      "mid": 31.200000000000003,
+      "bid_size": 3.0,
+      "ask_size": 6.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.4381,
+      "greeks": {
+        "delta": 0.6978,
+        "gamma": 0.007,
+        "theta": -0.1852,
+        "vega": 0.394,
+        "rho": 0.253
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "UFPT261120C00290000",
+      "underlying": "UFPT",
+      "expiration": "2026-11-20",
+      "strike": 290.0,
+      "option_type": "call",
+      "bid": 19.74,
+      "ask": 29.67,
+      "mid": 24.705,
+      "bid_size": 3.0,
+      "ask_size": 6.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.4251,
+      "greeks": {
+        "delta": 0.6218,
+        "gamma": 0.0079,
+        "theta": -0.193,
+        "vega": 0.4294,
+        "rho": 0.2299
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "UFPT261120P00280000",
+      "underlying": "UFPT",
+      "expiration": "2026-11-20",
+      "strike": 280.0,
+      "option_type": "put",
+      "bid": 6.99,
+      "ask": 16.95,
+      "mid": 11.969999999999999,
+      "bid_size": 3.0,
+      "ask_size": 3.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.4774,
+      "greeks": {
+        "delta": -0.3122,
+        "gamma": 0.0066,
+        "theta": -0.1721,
+        "vega": 0.3997,
+        "rho": -0.1501
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "UFPT261120P00310000",
+      "underlying": "UFPT",
+      "expiration": "2026-11-20",
+      "strike": 310.0,
+      "option_type": "put",
+      "bid": 19.39,
+      "ask": 28.6,
+      "mid": 23.995,
+      "bid_size": 3.0,
+      "ask_size": 6.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.4188,
+      "greeks": {
+        "delta": -0.5435,
+        "gamma": 0.0084,
+        "theta": -0.1602,
+        "vega": 0.4479,
+        "rho": -0.2659
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "UFPT261120C00300000",
+      "underlying": "UFPT",
+      "expiration": "2026-11-20",
+      "strike": 300.0,
+      "option_type": "call",
+      "bid": 14.77,
+      "ask": 24.64,
+      "mid": 19.705,
+      "bid_size": 3.0,
+      "ask_size": 6.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.4284,
+      "greeks": {
+        "delta": 0.5396,
+        "gamma": 0.0082,
+        "theta": -0.2,
+        "vega": 0.4483,
+        "rho": 0.202
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "UFPT261120P00300000",
+      "underlying": "UFPT",
+      "expiration": "2026-11-20",
+      "strike": 300.0,
+      "option_type": "put",
+      "bid": 14.04,
+      "ask": 23.82,
+      "mid": 18.93,
+      "bid_size": 3.0,
+      "ask_size": 6.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.4312,
+      "greeks": {
+        "delta": -0.4602,
+        "gamma": 0.0082,
+        "theta": -0.1689,
+        "vega": 0.4483,
+        "rho": -0.2231
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    }
+  ]
+}

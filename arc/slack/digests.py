@@ -66,6 +66,13 @@ _MAX_SCOUT_ROWS = 20
 _REASONS = {
     "schema": "invalid reply",
     "not_in_universe": "not in universe",
+    "unknown_symbol": "unknown symbol",
+    "illiquid": "failed liquidity screen",
+    "over_new_ticker_cap": "over new-ticker cap",
+    "excluded": "excluded by Director",
+    "over_budget": "ranked, not structured (budget)",
+    "skipped": "skipped by Quant",
+    "not_structured": "no structure, no reason",
     "below_threshold": "below confidence threshold",
     "no_grounded_source": "no grounded source",
     "not_a_candidate": "not a Scout candidate",
@@ -75,7 +82,7 @@ _REASONS = {
     "not_in_menu": "not in the scanner menu",
     "not_shortlisted": "not shortlisted",
     "unknown_structure": "structure Quant did not propose",
-    "not_picked": "not picked by Director",
+    "not_picked": "not ranked or excluded by Director",
     "no_chain": "no tradable chain",
     "not_assessed": "not assessed by Risk",
 }
@@ -180,17 +187,23 @@ def scout_card(
     failed_batches: int = 0,
     run_id: str | None = None,
     chain_run_id: str | None = None,
+    reject_details: Mapping[str, str] | None = None,
+    new_tickers: Sequence[str] = (),
 ) -> CardView:
     """``[Scout] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
     No source links (owner, E5.5 review): the row carries the Scout's one-line
-    rationale and a source count; the URLs stay in the audit store.
+    rationale and a source count; the URLs stay in the audit store. D28: non-seed
+    tickers admitted by the liquidity screen are tagged ``new``; universe rejects
+    (``illiquid`` etc.) are grouped by reason under Rejected with the failed checks.
     """
     title = f"[Scout] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
     n_rej = sum(rejected.values())
+    new = set(new_tickers)
     blocks = _head(
         title,
         f"*{accepted}* accepted this run",
+        f"{len(new)} new (screened)" if new else "",
         f"{n_rej} rejected",
         f":warning: {failed_batches} failed batch{'es' if failed_batches != 1 else ''}"
         if failed_batches
@@ -204,8 +217,9 @@ def scout_card(
         facts = (
             f"{c.stance.value} · {c.catalyst_type.value}{when} · {_pct(c.confidence)} confidence"
         )
+        tag = " · new, passed liquidity screen" if c.ticker in new else ""
         why = (rationales or {}).get(c.ticker, "").strip()
-        lines = [f"*{B.esc(c.ticker)}*", facts]
+        lines = [f"*{B.esc(c.ticker)}*", facts + tag]
         if why:
             lines.append(B.esc(why))
         blocks.append(B.divider())
@@ -219,7 +233,11 @@ def scout_card(
         blocks.append(B.divider())
         blocks.append(_section("Candidates", ["none"]))
     items = [(t, reason) for reason, ts in (rejected_items or {}).items() for t in ts]
-    rejected_block = _section("Rejected", _drops(rejected, items))
+    rej_rows = _drops(rejected, items)
+    # E5.7 failed-check details; E5.5b: column 0, no indent.
+    for ticker, detail in (reject_details or {}).items():
+        rej_rows.append(f"{B.esc(ticker)}: {B.esc(detail)}")
+    rejected_block = _section("Rejected", rej_rows)
     if rejected_block is not None:
         blocks.append(B.divider())
         blocks.append(rejected_block)
@@ -245,24 +263,37 @@ def director_card(
     *,
     candidates: int,
     dropped: Sequence[tuple[str, str]] = (),
+    funnel: Sequence[tuple[str, str, str]] = (),
+    budget: int | None = None,
     evidence: Mapping[str, str] | None = None,
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Director] Ranked: 2 / 5 • Market Risk ON``; one section per ranked pick.
+    """``[Director] Ranked: 12 / 30 • Market Risk ON``; a section per budgeted pick.
 
-    ``dropped`` is ``(ticker, reason_key)`` for every candidate not kept.
+    E5.7: the Director ranks every candidate it would trade. The first ``budget``
+    (the Quant/Risk budget, ``pipeline_max_shortlist``) get full sections; the rest
+    are listed under "Ranked, not structured". ``funnel`` is ``(ticker, key, reason)``
+    for candidates the Director excluded (with its reason) or left unranked.
+    ``dropped`` is ``(ticker, reason_key)`` for invalid shortlist entries.
     ``evidence`` is ticker → a pre-escaped one-line summary of the upstream Scout
     data (stance, catalyst, confidence, sources) shown under the thesis.
     """
     regime = regime_name(out.market_regime)
-    title = f"[Director] Ranked: {len(out.shortlist)} / {candidates} • Market {regime}"
+    ranked = sorted(out.shortlist, key=lambda i: i.rank)
+    inside = ranked if budget is None else ranked[:budget]
+    beyond = [] if budget is None else ranked[budget:]
+    excluded = [(t, r) for t, k, r in funnel if k == "excluded"]
+    unranked = [(t, k) for t, k, _ in funnel if k != "excluded"]
+    title = f"[Director] Ranked: {len(ranked)} / {candidates} • Market {regime}"
     blocks = _head(
         title,
-        f"*{len(out.shortlist)}* ranked",
-        f"{len(dropped)} dropped" if dropped else "",
+        f"*{len(ranked)}* ranked",
+        f"{len(inside)} to Quant (budget {budget})" if beyond else "",
+        f"{len(excluded)} excluded" if excluded else "",
+        f"{len(dropped) + len(unranked)} dropped" if dropped or unranked else "",
     )
-    for item in sorted(out.shortlist, key=lambda i: i.rank):
+    for item in inside:
         blocks.append(B.divider())
         meta = (
             f"Rank {item.rank} · {B.esc(item.stance.strip().capitalize())} · "
@@ -277,19 +308,49 @@ def director_card(
         ev = (evidence or {}).get(item.ticker, "")
         if ev:
             lines.append(f"Evidence: {ev}")
+        if item.evidence:
+            lines.append("Director evidence: " + " · ".join(B.esc(e) for e in item.evidence))
         blocks.append(
             {"type": "section", "text": {"type": "mrkdwn", "text": B.clip("\n".join(lines))}}
         )
-    if not out.shortlist:
+    if not ranked:
         blocks.append(_section("Ranked", ["nothing worth trading today"]))
-    counts: dict[str, int] = {}
-    for _, reason in dropped:
-        counts[reason] = counts.get(reason, 0) + 1
-    if dropped:
+    if beyond:
         blocks.append(B.divider())
-    blocks.append(_section("Dropped", _drops(counts, dropped)))
+        blocks.append(
+            _section(
+                f"Ranked, not structured ({len(beyond)}, over the budget of {budget})",
+                [
+                    f"#{i.rank} *{B.esc(i.ticker)}* · {B.esc(i.stance.strip().capitalize())} · "
+                    f"{_pct(i.confidence)}"
+                    + (f" · {B.esc(_clip_line(i.thesis))}" if i.thesis.strip() else "")
+                    for i in beyond
+                ],
+            )
+        )
+    if excluded:
+        blocks.append(B.divider())
+        blocks.append(
+            _section(
+                f"Excluded ({len(excluded)})",
+                [f"• *{B.esc(t)}*: {B.esc(_clip_line(r))}" for t, r in excluded],
+            )
+        )
+    items = [*dropped, *unranked]
+    counts: dict[str, int] = {}
+    for _, reason in items:
+        counts[reason] = counts.get(reason, 0) + 1
+    if items:
+        blocks.append(B.divider())
+    blocks.append(_section("Dropped", _drops(counts, items)))
     blocks.append(B.persona_section(Persona.DIRECTOR, "Session notes", out.session_notes))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
+
+
+def _clip_line(text: str, limit: int = 140) -> str:
+    """One line of at most *limit* chars (list rows in the funnel sections)."""
+    line = " ".join(text.split())
+    return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
 
 
 # ---------------------------------------------------------------------------
@@ -347,10 +408,17 @@ def quant_card(
     dropped: Mapping[str, int] | None = None,
     dropped_items: Sequence[tuple[str, str]] = (),
     no_chain: Sequence[str] = (),
+    not_structured: Sequence[str] = (),
+    over_budget: Sequence[str] = (),
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78`` + legs per structure."""
+    """``[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78`` + legs per structure.
+
+    E5.7: every budgeted ticker is accounted for: a structure, a skip with its reason
+    (``out.skipped``), "no structure, no reason" (``not_structured``) or no chain.
+    ``over_budget`` = ranked by the Director beyond the Quant/Risk budget.
+    """
     if out.structures:
         best = out.structures[0]
         more = f" +{len(out.structures) - 1} more" if len(out.structures) > 1 else ""
@@ -360,11 +428,14 @@ def quant_card(
         )
     else:
         title = "[Quant] Structures: none chosen"
-    n_drop = sum((dropped or {}).values()) + len(no_chain)
+    n_drop = sum((dropped or {}).values()) + len(no_chain) + len(not_structured)
+    skipped = [s for s in out.skipped if s.ticker not in set(no_chain)]
     blocks = _head(
         title,
         f"*{len(out.structures)}* chosen",
+        f"{len(skipped)} skipped" if skipped else "",
         f"{n_drop} dropped" if n_drop else "",
+        f"{len(over_budget)} over budget" if over_budget else "",
     )
     for s in out.structures:
         net = s.net_debit_credit
@@ -412,7 +483,19 @@ def quant_card(
             )
         )
         blocks.append(B.persona_section(Persona.QUANT, "Rationale", s.rationale))
-    items = [*dropped_items, *((t, "no_chain") for t in no_chain)]
+    if skipped:
+        blocks.append(
+            _section(
+                f"Skipped ({len(skipped)})",
+                [f"• *{B.esc(s.ticker)}*: {B.esc(_clip_line(s.reason))}" for s in skipped],
+            )
+        )
+    items = [
+        *dropped_items,
+        *((t, "no_chain") for t in no_chain),
+        *((t, "not_structured") for t in not_structured),
+        *((t, "over_budget") for t in over_budget),
+    ]
     counts = dict(dropped or {})
     if no_chain:
         counts["no_chain"] = len(no_chain)

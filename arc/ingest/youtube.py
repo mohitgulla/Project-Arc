@@ -47,6 +47,7 @@ from arc.ingest.transcribe import (
     transcribe_video_audio,
 )
 from arc.models import RawDoc, TranscriptSource
+from arc.universe.ingest import IngestUniverse
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -210,10 +211,12 @@ def _download_subtitle(url: str) -> CaptionResult:
     return CaptionResult(CaptionStatus.OK, text=text, http_status=status)
 
 
-def _extract_tickers(text: str, universe: list[str]) -> list[str]:
-    """Simple ticker mention extraction against the configured universe."""
+def _extract_tickers(text: str, universe: list[str] | IngestUniverse) -> list[str]:
+    """Ticker hints: seed list + (D28 seed mode) master-validated cashtags/symbols."""
     import re
 
+    if not isinstance(universe, list):
+        return universe.tickers_in(text)
     upper = text.upper()
     found = []
     for t in universe:
@@ -540,6 +543,7 @@ def fetch_youtube(
         )
     )
     results: list[RawDoc] = []
+    uni = IngestUniverse.from_settings(settings)
 
     for channel_url in channels:
         cursor_key = f"{CONNECTOR}:{channel_url}"
@@ -586,7 +590,7 @@ def fetch_youtube(
             channel = info.get("channel") or info.get("uploader") or ""
             header = f"[{channel}] [{title}]" if channel else f"[{title}]"
             text = f"{TRANSCRIPT_PREFIX[source]} {header} {transcript}"
-            tickers = _extract_tickers(text, settings.universe)
+            tickers = _extract_tickers(text, uni)
             channel_id = info.get("channel_id") or video.get("channel_id") or None
 
             doc = RawDoc(
