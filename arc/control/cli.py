@@ -52,6 +52,7 @@ def add_config_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[
             default="none",
             help="Also post the card to a Slack channel",
         )
+        sp.add_argument("--thread-ts", default=None, help="With --post: reply in this thread")
         return sp
 
     s = common(csub.add_parser("show", help="Grouped summary, or one group/key in detail"))
@@ -113,19 +114,23 @@ def _service(args: argparse.Namespace) -> ControlService:
     return ControlService(conn, base=base, optionable=_optionable())
 
 
-def _post(card: CardView, where: str) -> None:
+def _post(card: CardView, where: str, thread_ts: str | None = None) -> None:
     if where == "none":
         return
     from arc.slack.client import CHANNEL_ARC_INVESTOR, CHANNEL_PROJECT_ARC, ArcSlackClient
 
     channel = CHANNEL_PROJECT_ARC if where == "project-arc" else CHANNEL_ARC_INVESTOR
-    ArcSlackClient().post_thread_root(channel=channel, text=card.text, blocks=card.blocks)
+    client = ArcSlackClient()
+    if thread_ts:
+        client.reply(channel=channel, thread_ts=thread_ts, text=card.text, blocks=card.blocks)
+    else:
+        client.post_thread_root(channel=channel, text=card.text, blocks=card.blocks)
 
 
 def _emit(
     args: argparse.Namespace, card: CardView, result: dict[str, Any] | None, code: int
 ) -> int:
-    _post(card, args.post)
+    _post(card, args.post, args.thread_ts)
     if args.json:
         payload = {"text": card.text, "blocks": card.blocks, "result": result}
         sys.stdout.write(json.dumps(payload, default=str) + "\n")
