@@ -20,6 +20,7 @@ import structlog
 
 from arc.ingest.store import IngestCursorRepo, RawDocRepo, content_hash
 from arc.models import RawDoc
+from arc.universe.ingest import IngestUniverse
 
 if TYPE_CHECKING:
     from arc.config import ArcSettings
@@ -71,10 +72,12 @@ def _entry_text(entry: dict) -> str:
     return entry.get("title", "")
 
 
-def _extract_tickers(text: str, universe: list[str]) -> list[str]:
-    """Simple ticker mention extraction against the configured universe."""
+def _extract_tickers(text: str, universe: list[str] | IngestUniverse) -> list[str]:
+    """Ticker hints: seed list + (D28 seed mode) master-validated cashtags/symbols."""
     import re
 
+    if not isinstance(universe, list):
+        return universe.tickers_in(text)
     upper = text.upper()
     found = []
     for t in universe:
@@ -101,6 +104,7 @@ def fetch_rss(
         return []
 
     results: list[RawDoc] = []
+    uni = IngestUniverse.from_settings(settings)
 
     for feed_url in feeds:
         cursor_key = f"{CONNECTOR}:{feed_url}"
@@ -133,7 +137,7 @@ def fetch_rss(
                 continue
 
             text = _entry_text(entry)
-            tickers = _extract_tickers(text, settings.universe)
+            tickers = _extract_tickers(text, uni)
             h = content_hash(CONNECTOR, url)
 
             doc = RawDoc(

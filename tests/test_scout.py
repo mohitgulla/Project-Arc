@@ -65,9 +65,12 @@ def conn():
 
 @pytest.fixture()
 def settings() -> ArcSettings:
+    # Strict mode keeps the pre-D28 allow-list semantics these tests pin; the open
+    # (seed) universe is covered by TestOpenUniverse / tests/test_universe.py.
     return ArcSettings(
         env="paper",
         universe=sorted(UNIVERSE),
+        universe_mode="strict",
         scout_min_confidence=0.6,
         scout_batch_size=8,
         scout_max_doc_chars=500,

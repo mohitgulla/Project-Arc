@@ -78,6 +78,11 @@ class Choice(StrEnum):
 class ReasonCode(StrEnum):
     # candidate (what the Director was offered)
     SCOUT_CANDIDATE = "scout_candidate"
+    # candidate: the Scout's universe check (D28; arc.universe.guard)
+    UNIVERSE_NOT_IN_UNIVERSE = "universe:not_in_universe"
+    UNIVERSE_UNKNOWN_SYMBOL = "universe:unknown_symbol"
+    UNIVERSE_ILLIQUID = "universe:illiquid"
+    UNIVERSE_NEW_TICKER_CAP = "universe:over_new_ticker_cap"
     # shortlist (Director)
     SHORTLISTED = "shortlisted"
     NOT_RANKED = "not_ranked"

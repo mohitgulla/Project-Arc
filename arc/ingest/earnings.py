@@ -21,6 +21,8 @@ import structlog
 
 from arc.ingest.store import IngestCursorRepo, RawDocRepo, content_hash
 from arc.models import RawDoc
+from arc.universe.ingest import IngestUniverse
+from arc.universe.master import normalize_symbol
 
 if TYPE_CHECKING:
     from arc.config import ArcSettings
@@ -53,7 +55,7 @@ def fetch_earnings(
     conn: sqlite3.Connection,
     settings: ArcSettings,
 ) -> list[RawDoc]:
-    """Fetch earnings calendar events for the configured universe.
+    """Fetch earnings calendar events (D28: any symbol-master ticker, seed list otherwise).
 
     Returns only newly stored documents.
     """
@@ -85,13 +87,17 @@ def fetch_earnings(
         to_date.isoformat(),
     )
 
-    # Filter to universe tickers
-    universe_set = {t.upper() for t in settings.universe}
+    # D28: keep events for every symbol-master ticker (next_earnings and the gate's
+    # earnings blackout need them for any name the open universe may trade). Without
+    # a master (strict mode / no cache) this is the seed list, as before.
+    uni = IngestUniverse.from_settings(settings)
+    seed_only_to_scout = uni.config.earnings.scout == "seed"
     results: list[RawDoc] = []
+    calendar_only: list[str] = []
 
     for event in events:
-        symbol = event.get("symbol", "").upper()
-        if symbol not in universe_set:
+        symbol = normalize_symbol(event.get("symbol", ""))
+        if not symbol or not uni.known(symbol):
             continue
 
         report_date = event.get("date", "")
@@ -141,9 +147,17 @@ def fetch_earnings(
 
         if doc_id is not None:
             results.append(doc)
+            if seed_only_to_scout and not uni.is_seed(symbol):
+                calendar_only.append(doc_id)
+
+    # Non-seed events are calendar data only (config/universe.yaml earnings.scout: seed):
+    # stored for next_earnings / the gate, but marked scouted so the ~1k-event calendar
+    # does not crowd the Scout's batches.
+    if calendar_only:
+        doc_repo.mark_scouted(calendar_only, run_id="earnings:calendar-only")
 
     # Update cursor to today
     cursor_repo.set(CONNECTOR, today.isoformat())
 
-    log.info("earnings.done", new_docs=len(results))
+    log.info("earnings.done", new_docs=len(results), calendar_only=len(calendar_only))
     return results

@@ -25,6 +25,13 @@ log = structlog.get_logger()
 _LIVE_ENV_PATH = Path.home() / ".arc" / "live.env"
 
 
+class UniverseMode(enum.StrEnum):
+    """D28: ``seed`` = ``universe`` is a watch list (open universe); ``strict`` = allow-list."""
+
+    SEED = "seed"
+    STRICT = "strict"
+
+
 class ArcEnv(enum.StrEnum):
     """Execution environment: paper (default) or live."""
 
@@ -528,8 +535,12 @@ class ArcSettings(BaseSettings):
         description="Timeout for a single Director/Quant/Risk LLM call.",
     )
     pipeline_max_shortlist: Annotated[int, Field(ge=1, le=20)] = Field(
-        default=3,
-        description="Max tickers the Director shortlist may carry into Quant.",
+        default=10,
+        description=(
+            "Quant/Risk budget (D28): the first N Director-ranked tickers get a structure. "
+            "Never shown to the Director; ranked items beyond it stay on the card as "
+            "'Ranked, not structured'."
+        ),
     )
     pipeline_max_context_notes: Annotated[int, Field(ge=0, le=100)] = Field(
         default=20,
@@ -540,10 +551,31 @@ class ArcSettings(BaseSettings):
         description="Scanner candidates per ticker offered to Quant (Quant picks among them).",
     )
 
-    # -- Universe (D9) -------------------------------------------------------
+    # -- Universe (D9 revised, D28) ------------------------------------------
     universe: list[str] = Field(
         default_factory=lambda: list(DEFAULT_UNIVERSE),
-        description="Ticker universe for scanning.",
+        description=(
+            "Seed/watch list (D28): always scanned and always accepted. In strict mode "
+            "(ARC_UNIVERSE_MODE=strict) it is the allow-list."
+        ),
+    )
+    universe_mode: UniverseMode = Field(
+        default=UniverseMode.SEED,
+        description=(
+            "ARC_UNIVERSE_MODE: seed (default) = any symbol-master ticker that passes the "
+            "liquidity screen may become a Scout candidate; strict = universe only."
+        ),
+    )
+    universe_config_file: Path | None = Field(
+        default=None,
+        description="ARC_UNIVERSE_CONFIG_FILE; None -> config/universe.yaml.",
+    )
+    scout_max_new_tickers: Annotated[int, Field(ge=0, le=50)] = Field(
+        default=10,
+        description=(
+            "Max non-seed tickers the Scout may accept per run (D28); extra ones are "
+            "rejected as over_new_ticker_cap."
+        ),
     )
 
     # -- Control panel (D26, E8.5) --------------------------------------------

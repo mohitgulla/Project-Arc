@@ -62,6 +62,13 @@ _MULT = 100  # option contract multiplier
 _REASONS = {
     "schema": "invalid reply",
     "not_in_universe": "not in universe",
+    "unknown_symbol": "unknown symbol",
+    "illiquid": "failed liquidity screen",
+    "over_new_ticker_cap": "over new-ticker cap",
+    "excluded": "excluded by Director",
+    "over_budget": "ranked, not structured (budget)",
+    "skipped": "skipped by Quant",
+    "not_structured": "no structure, no reason",
     "below_threshold": "below confidence threshold",
     "no_grounded_source": "no grounded source",
     "not_a_candidate": "not a Scout candidate",
@@ -176,17 +183,23 @@ def scout_card(
     failed_batches: int = 0,
     run_id: str | None = None,
     chain_run_id: str | None = None,
+    reject_details: Mapping[str, str] | None = None,
+    new_tickers: Sequence[str] = (),
 ) -> CardView:
     """``[Scout] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
     No source links (owner, E5.5 review): the row carries the Scout's one-line
-    rationale and a source count; the URLs stay in the audit store.
+    rationale and a source count; the URLs stay in the audit store. D28: non-seed
+    tickers admitted by the liquidity screen are tagged ``new``; universe rejects
+    (``illiquid`` etc.) are grouped by reason under Rejected with the failed checks.
     """
     title = f"[Scout] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
     n_rej = sum(rejected.values())
+    new = set(new_tickers)
     blocks = _head(
         title,
         f"*{accepted}* accepted this run",
+        f"{len(new)} new (screened)" if new else "",
         f"{n_rej} rejected",
         f":warning: {failed_batches} failed batch{'es' if failed_batches != 1 else ''}"
         if failed_batches
@@ -198,12 +211,16 @@ def scout_card(
         facts = (
             f"{c.stance.value} · {c.catalyst_type.value}{when} · {_pct(c.confidence)} confidence"
         )
+        tag = " · new, passed liquidity screen" if c.ticker in new else ""
         why = (rationales or {}).get(c.ticker, "").strip()
-        rows.append(f"• *{B.esc(c.ticker)}* {facts}" + (f"\n   {B.esc(why)}" if why else ""))
+        rows.append(f"• *{B.esc(c.ticker)}* {facts}{tag}" + (f"\n   {B.esc(why)}" if why else ""))
     blocks.append(B.divider())
     blocks.append(_section("Candidates", rows) or _section("Candidates", ["none"]))
     items = [(t, reason) for reason, ts in (rejected_items or {}).items() for t in ts]
-    blocks.append(_section("Rejected", _drops(rejected, items)))
+    rej_rows = _drops(rejected, items)
+    for ticker, detail in (reject_details or {}).items():
+        rej_rows.append(f"   {B.esc(ticker)}: {B.esc(detail)}")
+    blocks.append(_section("Rejected", rej_rows))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 
 

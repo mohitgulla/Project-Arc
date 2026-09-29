@@ -27,6 +27,9 @@ class ScoutInput:
     scan_date: str  # ISO-8601
     min_confidence: float | None = None  # threshold the pipeline will apply
     output_schema_json: str = ""  # JSON Schema of ScoutOutput, embedded verbatim
+    # D28: True = `universe` is a seed/watch list and any US-listed optionable
+    # ticker the feeds discuss may be proposed (screened deterministically after).
+    open_universe: bool = False
 
 
 @dataclass(frozen=True)
@@ -224,22 +227,42 @@ def build_scout_prompt(inp: ScoutInput) -> str:
         if inp.output_schema_json
         else ""
     )
+    if inp.open_universe:
+        scope = (
+            "transcripts) and surface trading candidates: the seed/watch list below plus any\n"
+            "other US-listed, optionable stock or ETF the feeds actually discuss."
+        )
+        task_line = f"Analyze the feeds below. Seed/watch list: {', '.join(inp.universe)}."
+        ticker_rule = (
+            "- ticker MUST be the exact US-listed symbol (upper-case, e.g. NVDA, BRK.B) of a\n"
+            "  company or ETF the feeds discuss. Seed-list names are always accepted; any other\n"
+            "  ticker must be a real listed symbol and then passes a deterministic liquidity\n"
+            "  screen (price, volume, option open interest and spreads). Unknown symbols are\n"
+            "  discarded."
+        )
+    else:
+        scope = "transcripts) and surface trading candidates for the configured universe."
+        task_line = f"Analyze the feeds below for the universe: {', '.join(inp.universe)}."
+        ticker_rule = (
+            "- ticker MUST be one of the universe symbols above, upper-case. "
+            "Anything else is discarded."
+        )
     return f"""{_SYSTEM_PREAMBLE}
 ## Role: Scout (Information Retrieval)
 Slack label: [Scout]
 
 You scan raw information sources (RSS, SEC EDGAR, earnings calendars, YouTube
-transcripts) and surface trading candidates for the configured universe.
+{scope}
 
 ## Your task
-Analyze the feeds below for the universe: {", ".join(inp.universe)}.
+{task_line}
 Identify actionable catalysts. For each, produce a candidate with:
 - ticker, stance (bullish/bearish/neutral), catalyst_type, catalyst_date
 - confidence (0-1), at least one source reference
 - a concise rationale paragraph
 
 ## Rules
-- ticker MUST be one of the universe symbols above, upper-case. Anything else is discarded.
+{ticker_rule}
 - stance MUST be one of: bullish, bearish, neutral.
 - catalyst_type MUST be one of: earnings, macro, sector, news, technical.
 - catalyst_date is an ISO-8601 date (YYYY-MM-DD) or null when unknown.
