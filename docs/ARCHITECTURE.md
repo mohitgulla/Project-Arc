@@ -85,7 +85,7 @@ shipped job and step to declare `writes`.
 | `propose` | `candidate`, `regime`, `shortlist`, `structures`, `risk_review` | `proposal` |
 | `monitor` | `proposal` | `proposal` (E6.2 exit proposals) |
 | `auditor` | all | `journal`, `note` |
-| `scorecard` | all | nothing yet |
+| `scorecard` | audit store (read-only) | nothing (writes the `docs/RESEARCH/weekly/<monday>.md` report, E7.3) |
 | `investor` | all | `note` |
 
 - **`note` kind.** `NotePayload` holds persona, topic (`thesis`, `regime_view`,

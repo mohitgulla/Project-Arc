@@ -148,13 +148,15 @@ personas:
     notify: card                # [Auditor] Journal card: reconciliation + Day/MTD/YTD P&L (D28)
     halt_on_mismatch: true      # any mismatch raises an arc:reconcile halt until the owner !resume
     writes: [journal, note]     # note: lessons (E7.x); override TTL with context: when emitted
-  scorecard:                    # weekly paper scorecard to #arc-investor (handler: E7.3)
+  scorecard:                    # E7.3 weekly paper scorecard -> #arc-investor + docs/RESEARCH/weekly/
     schedule: ["16:45"]
     days: [fri]
-    llm: false
+    llm: false                  # deterministic: audit store (read-only) + Alpaca bars for D19 settles
     halt_exempt: true
     ttl: 6h
-    writes: []                  # no handler yet (E7.3)
+    notify: card                # [Auditor] Scorecard card
+    report_dir: docs/RESEARCH/weekly   # <monday>.md, relative to the repo root
+    writes: []                  # reads the audit store; writes the Markdown report, no context
   investor:                     # E6.2: works an approved proposal through its D24 price band
     trigger: approval           # event-driven, never scheduled
     llm: false                  # deterministic: gate token + approval -> arc.execution.submit()
