@@ -219,10 +219,22 @@ class TestScout:
         )
         text = _all(view)
         assert "*3* accepted this run · 3 rejected" in text
-        assert (
-            "• *NVDA* bullish · earnings Oct 28 · 75% confidence\n   Buyback plus raised guidance."
-        ) in text
-        assert "• *XOM* bearish · earnings · 75% confidence\n" in text + "\n"
+        # E5.5b: one section per candidate, divider-separated, no indented subtext.
+        sections = [
+            b["text"]["text"]
+            for b in view.blocks
+            if b["type"] == "section" and b["text"]["text"].startswith("*")
+        ]
+        assert sections[0] == (
+            "*NVDA*\nbullish · earnings Oct 28 · 75% confidence\nBuyback plus raised guidance."
+        )
+        assert sections[1] == "*XOM*\nbearish · earnings · 75% confidence"
+        kinds = [b["type"] for b in view.blocks]
+        assert kinds[2:6] == ["divider", "section", "divider", "section"]
+        assert not any(line.startswith(" ") for t in _texts(view) for line in t.split("\n")), (
+            "no line in any block starts with a space"
+        )
+        assert "•" not in sections[0] and "•" not in sections[1]
         assert "source" not in text.lower().replace("sources →", "")
         assert "http" not in text  # owner: no source links on the Scout card
         assert "• not in universe (2): PLTR, AAPL" in text
@@ -254,9 +266,28 @@ class TestScout:
         assert "ex.com" not in text and "doc-" not in text  # sources are counted, not shown
         assert text.count(EVIL_ESC) == 2 and "<!channel>" not in text
 
-    def test_many_candidates_clip_under_section_limit(self) -> None:
+    def test_many_candidates_clip_under_block_limit(self) -> None:
+        # E5.5b: one section per candidate, so a long list is clipped to rows
+        # plus a "+N more" line, and the whole card stays under 50 blocks.
         many = [cand(f"T{i}", sources=[f"https://example.com/{'z' * 80}/{i}"]) for i in range(80)]
-        view = D.scout_card(docs=80, accepted=80, candidates=many, rejected={})
+        view = D.scout_card(docs=80, accepted=80, candidates=many, rejected={"schema": 1})
+        _assert_slack_limits(view)
+        contexts = [b["elements"][0]["text"] for b in view.blocks if b["type"] == "context"]
+        assert any(t.startswith("+60 more: T20, T21") for t in contexts)
+        assert sum(b["type"] == "divider" for b in view.blocks) == 21  # 20 rows + Rejected
+        assert view.blocks[-1]["type"] == "context"  # footer stays last
+
+    def test_ten_candidates_fit_without_clipping(self) -> None:
+        many = [cand(f"T{i}") for i in range(10)]
+        view = D.scout_card(docs=10, accepted=10, candidates=many, rejected={})
+        _assert_slack_limits(view)
+        assert "more" not in _all(view)
+        assert sum(b["type"] == "divider" for b in view.blocks) == 10
+
+    def test_long_rationale_is_clipped(self) -> None:
+        view = D.scout_card(
+            docs=1, accepted=1, candidates=[cand()], rejected={}, rationales={"NVDA": LONG}
+        )
         _assert_slack_limits(view)
         assert any(t.endswith("…") for t in _texts(view))
 
@@ -366,20 +397,26 @@ class TestQuant:
         text = _all(view)
         assert (
             "*SPY Iron Condor · Oct 30 (35 DTE)*\nLong 1x 740P\nShort 1x 745P\n"
-            "Short 1x 798C\nLong 1x 803C"
+            "Short 1x 798C\nLong 1x 803C\n"  # E5.5b: blank line between legs and metrics
         ) in text
         assert "```" not in text  # legs are plain lines, like the proposal card
-        assert "*Entry (1 contract)*\nCredit 1.66/sh\n$166 per contract" in text
-        assert "*Payoff*\nMax gain $165.55\nMax loss $334.45\nRisk/Reward 2.02 : 1" in text
+        # E5.5b: every metric category ends with a blank line ("\n\n" once the
+        # fields are joined), so categories never run together on mobile.
+        fields = [f["text"] for b in view.blocks for f in b.get("fields", [])]
+        assert len(fields) == 6
+        assert all(f.endswith("\n") and not f.endswith("\n\n") for f in fields)
+        assert "\n".join(fields).count("\n\n") == 5  # one blank line between each category
+        assert "*Entry (1 contract)*\nCredit 1.66/sh\n$166 per contract\n" in fields
+        assert "*Payoff*\nMax gain $165.55\nMax loss $334.45\nRisk/Reward 2.02 : 1\n" in fields
         assert (
-            "*Edge (hold to expiry)*\nPoP 62%\nEV -$21.78 per contract\nCost 386 bps round trip"
-        ) in text
-        assert "*Breakevens*\n743.34\n799.66" in text
+            "*Edge (hold to expiry)*\nPoP 62%\nEV -$21.78 per contract\nCost 386 bps round trip\n"
+        ) in fields
+        assert "*Breakevens*\n743.34\n799.66\n" in fields
         assert (
             "*Greeks (1 contract)*\nΔ Delta -2.0 sh\nΓ Gamma -0.24 sh\n"
-            "ν Vega -$17.11 / vol pt\nΘ Theta +$3.14 / day"
-        ) in text
-        assert "*Confidence*\n70%" in text
+            "ν Vega -$17.11 / vol pt\nΘ Theta +$3.14 / day\n"
+        ) in fields
+        assert "*Confidence*\n70%\n" in fields
         assert "*[Quant] Rationale*\nBalanced deltas." in text
         assert "• not in the scanner menu (1): SPY" in text
         assert "• no tradable chain (1): XOM" in text

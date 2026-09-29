@@ -57,6 +57,10 @@ __all__ = [
 ]
 
 _MULT = 100  # option contract multiplier
+# Scout rows are two blocks each (divider + section); 20 keeps a card with the
+# head, a "+N more" line, the Rejected list, folded Session notes and the footer
+# under Slack's 50-block cap.
+_MAX_SCOUT_ROWS = 20
 
 # Human text for stable drop/reject reason keys (arc.ingest.scout, arc.pipeline.steps).
 _REASONS = {
@@ -205,22 +209,38 @@ def scout_card(
         if failed_batches
         else "",
     )
-    rows = []
-    for c in sorted(candidates, key=lambda c: -c.confidence):
+    # E5.5b: one section per candidate with dividers (like the Director's ranked
+    # list), so each row folds on its own. Lines start at column 0: no indent.
+    ranked = sorted(candidates, key=lambda c: -c.confidence)
+    for c in ranked[:_MAX_SCOUT_ROWS]:
         when = f" {c.catalyst_date:%b %d}" if c.catalyst_date else ""
         facts = (
             f"{c.stance.value} · {c.catalyst_type.value}{when} · {_pct(c.confidence)} confidence"
         )
         tag = " · new, passed liquidity screen" if c.ticker in new else ""
         why = (rationales or {}).get(c.ticker, "").strip()
-        rows.append(f"• *{B.esc(c.ticker)}* {facts}{tag}" + (f"\n   {B.esc(why)}" if why else ""))
-    blocks.append(B.divider())
-    blocks.append(_section("Candidates", rows) or _section("Candidates", ["none"]))
+        lines = [f"*{B.esc(c.ticker)}*", facts + tag]
+        if why:
+            lines.append(B.esc(why))
+        blocks.append(B.divider())
+        blocks.append(
+            {"type": "section", "text": {"type": "mrkdwn", "text": B.clip("\n".join(lines))}}
+        )
+    if len(ranked) > _MAX_SCOUT_ROWS:
+        rest = ", ".join(B.esc(c.ticker) for c in ranked[_MAX_SCOUT_ROWS:])
+        blocks.append(B.summary(B.clip(f"+{len(ranked) - _MAX_SCOUT_ROWS} more: {rest}")))
+    if not ranked:
+        blocks.append(B.divider())
+        blocks.append(_section("Candidates", ["none"]))
     items = [(t, reason) for reason, ts in (rejected_items or {}).items() for t in ts]
     rej_rows = _drops(rejected, items)
+    # E5.7 failed-check details; E5.5b: column 0, no indent.
     for ticker, detail in (reject_details or {}).items():
-        rej_rows.append(f"   {B.esc(ticker)}: {B.esc(detail)}")
-    blocks.append(_section("Rejected", rej_rows))
+        rej_rows.append(f"{B.esc(ticker)}: {B.esc(detail)}")
+    rejected_block = _section("Rejected", rej_rows)
+    if rejected_block is not None:
+        blocks.append(B.divider())
+        blocks.append(rejected_block)
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 
 
@@ -422,35 +442,43 @@ def quant_card(
         word = "credit" if net < 0 else "debit"
         blocks.append(B.divider())
         blocks.append(
-            _section(f"{B.esc(s.ticker)} {structure_name(s)} · {_expiry(s)}", _legs_lines(s.legs))
+            _section(
+                f"{B.esc(s.ticker)} {structure_name(s)} · {_expiry(s)}",
+                [*_legs_lines(s.legs), ""],  # trailing blank line before the metrics
+            )
         )
         g = s.greeks
+        # E5.5b: every metric category ends with a blank line, so categories
+        # don't run together in the grid or when Slack stacks fields on mobile.
         blocks.extend(
             B.facts(
                 [
-                    (
-                        "Entry (1 contract)",
-                        f"{word.capitalize()} {abs(net):.2f}/sh\n"
-                        f"${abs(net) * _MULT:,.0f} per contract",
-                    ),
-                    (
-                        "Payoff",
-                        f"Max gain {_money(s.max_gain)}\nMax loss {_money(s.max_loss)}\n"
-                        f"Risk/Reward {_risk_reward(s)}",
-                    ),
-                    (
-                        "Edge (hold to expiry)",
-                        f"PoP {_pct(s.pop)}\nEV {_money(s.ev_per_contract)} per contract\n"
-                        f"Cost {s.cost_bps:.0f} bps round trip",
-                    ),
-                    ("Breakevens", "\n".join(f"{b:.2f}" for b in s.breakevens) or "n/a"),
-                    (
-                        "Greeks (1 contract)",
-                        f"Δ Delta {g.delta:+.1f} sh\nΓ Gamma {g.gamma:+.2f} sh\n"
-                        f"ν Vega {_money(g.vega / 100, signed=True)} / vol pt\n"
-                        f"Θ Theta {_money(g.theta, signed=True)} / day",
-                    ),
-                    ("Confidence", _pct(s.confidence)),
+                    (label, value + "\n")
+                    for label, value in [
+                        (
+                            "Entry (1 contract)",
+                            f"{word.capitalize()} {abs(net):.2f}/sh\n"
+                            f"${abs(net) * _MULT:,.0f} per contract",
+                        ),
+                        (
+                            "Payoff",
+                            f"Max gain {_money(s.max_gain)}\nMax loss {_money(s.max_loss)}\n"
+                            f"Risk/Reward {_risk_reward(s)}",
+                        ),
+                        (
+                            "Edge (hold to expiry)",
+                            f"PoP {_pct(s.pop)}\nEV {_money(s.ev_per_contract)} per contract\n"
+                            f"Cost {s.cost_bps:.0f} bps round trip",
+                        ),
+                        ("Breakevens", "\n".join(f"{b:.2f}" for b in s.breakevens) or "n/a"),
+                        (
+                            "Greeks (1 contract)",
+                            f"Δ Delta {g.delta:+.1f} sh\nΓ Gamma {g.gamma:+.2f} sh\n"
+                            f"ν Vega {_money(g.vega / 100, signed=True)} / vol pt\n"
+                            f"Θ Theta {_money(g.theta, signed=True)} / day",
+                        ),
+                        ("Confidence", _pct(s.confidence)),
+                    ]
                 ]
             )
         )
