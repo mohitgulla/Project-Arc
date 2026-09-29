@@ -38,8 +38,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.models import Performance  # noqa: TC001 - pydantic field
 from arc.reconcile.performance import daily_equity, performance_from
-from arc.slack.digests import Performance  # noqa: TC001 - pydantic field
 from arc.utils.calendar import ET
 
 __all__ = [

@@ -1,0 +1,116 @@
+/*
+ * Control tower design tokens: docs/TOWER_DESIGN.md §2 (D35). The single source of every
+ * colour, radius, spacing and type size. Components use them through Tailwind
+ * (tailwind.config.ts) or var(--token); never a raw hex value.
+ *
+ * Themes switch on [data-theme] (on <html>, or on any subtree: /kitchen-sink renders
+ * each component in both themes side by side).
+ */
+
+:root,
+[data-theme="dark"] {
+  --bg-page: #00080f;
+  --bg-sidebar: #030d19;
+  --bg-card: #02101c;
+  --bg-header: #041322;
+  --bg-control: #041a2e;
+  --bg-hover: #0c2135;
+  --border: #112943;
+  --border-input: #2a5d92;
+  --track: #112943;
+  --text-primary: #d0dbe5;
+  --text-title: #ffffff;
+  --text-secondary: #7089aa;
+  --text-muted: #567799;
+  --accent: #6aa7f8;
+  --accent-bar: #3787f7;
+  --accent-slate: #365c8b;
+  --range-active: #2a3a5c;
+  --range-active-text: #ffffff;
+  --pos: #0bbb00;
+  --pos-text: #41af24;
+  --pos-bg: #103621;
+  --neg: #ee0000;
+  --neg-text: #e52329;
+  --neg-bg: #3a1821;
+  --warn: #ff7f02;
+  --now-label: #ffffff;
+  --now-label-text: #00080f;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg-page: #f5f7fa;
+  --bg-sidebar: #ffffff;
+  --bg-card: #ffffff;
+  --bg-header: #ffffff;
+  --bg-control: #eef2f7;
+  --bg-hover: #e9eef5;
+  --border: #e3e8ef;
+  --border-input: #b9c7da;
+  --track: #e3e8ef;
+  --text-primary: #0b1524;
+  --text-title: #0b1524;
+  --text-secondary: #4a5a70;
+  --text-muted: #7a8797;
+  --accent: #2f7cf6;
+  --accent-bar: #2f7cf6;
+  --accent-slate: #a9bbd3;
+  --range-active: #dce6f5;
+  --range-active-text: #0b1524;
+  --pos: #1a9e2c;
+  --pos-text: #177f24;
+  --pos-bg: #e3f5e6;
+  --neg: #d9232b;
+  --neg-text: #b8161d;
+  --neg-bg: #fbe5e6;
+  --warn: #e56f00;
+  --now-label: #0b1524;
+  --now-label-text: #ffffff;
+  color-scheme: light;
+}
+
+/* Series extras and shape/spacing/type: identical in both themes. */
+:root,
+[data-theme] {
+  --series-1: #a34ff6;
+  --series-2: #e0ac25;
+  --series-3: #ea1bc6;
+  --series-4: #49cccb;
+  --series-5: #b9c0cc;
+
+  --r-card: 12px;
+  --r-control: 8px;
+  --r-pill: 6px;
+  --r-full: 999px;
+  --r-label: 4px;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --sidebar-w: 260px;
+  --rail-w: 56px;
+  --tabbar-h: 56px;
+  --header-h: 46px;
+  --bar-h: 4px;
+  --line-w: 2.5px;
+  --font: Inter, "Nunito Sans", -apple-system, system-ui, sans-serif;
+  --fs-hero: 28px;
+  --fs-stat: 22px;
+  --fs-title: 16px;
+  --fs-body: 14px;
+  --fs-caption: 12px;
+  --fs-micro: 11px;
+  --card-pad: 24px;
+}
+
+@media (max-width: 768px) {
+  :root,
+  [data-theme] {
+    --card-pad: 16px;
+    --fs-hero: var(--fs-stat);
+  }
+}

@@ -1,4 +1,4 @@
-.PHONY: check test test-gate lint fmt audit lock-check
+.PHONY: check test test-gate lint fmt audit lock-check web web-check web-api web-e2e
 
 check: lock-check lint fmt audit test test-gate
 
@@ -25,3 +25,25 @@ test-gate:
 		tests/test_gate_hook_policy.py tests/test_gate_band.py tests/test_account_profiles.py \
 		-v --tb=short \
 		--cov=arc.gate --cov-branch --cov-report=term-missing --cov-fail-under=100
+
+# ---------------------------------------------------------------------------
+# Control tower v2 web app (E8.7, D35). Needs Node >= 22.12; `make check` does not.
+# ---------------------------------------------------------------------------
+
+# Build the SPA into arc/tower/static/ (served by `arc tower serve --v2`).
+web:
+	cd web && npm ci && npm run build
+
+# Lint, typecheck and unit tests (vitest) for the web app.
+web-check:
+	cd web && npm run lint && npm run typecheck && npm test
+
+# Regenerate web/openapi.json and the typed client from the FastAPI app.
+web-api:
+	uv run python -m arc.tower.openapi web/openapi.json
+	cd web && npm run gen:api
+
+# Playwright: shell + /kitchen-sink at 390x844, 768x1024, 1440x900 in both themes, against
+# `arc tower serve --v2 --local` on a scratch DB. Screenshots in web/e2e/screenshots/.
+web-e2e: web
+	cd web && npx playwright test

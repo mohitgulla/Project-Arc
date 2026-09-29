@@ -1,0 +1,74 @@
+@import "./theme/tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--bg-page);
+    color: var(--text-primary);
+    font-family: var(--font);
+    font-size: var(--fs-body);
+    font-feature-settings: "tnum" 1, "cv11" 1; /* tabular numerals everywhere */
+    -webkit-font-smoothing: antialiased;
+  }
+  [data-theme] {
+    color: var(--text-primary);
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* §2 Card: bg-card, 1px border, r-card, padding 24 (16 on mobile), no shadow. */
+  .arc-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-card);
+    padding: var(--card-pad);
+  }
+  /* §2 action link: 12px uppercase, 0.06em tracking, text-muted, with ↗. */
+  .arc-action {
+    font-size: var(--fs-caption);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+  .arc-action:hover {
+    color: var(--accent);
+  }
+  .arc-micro-header {
+    font-size: var(--fs-micro);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+  .arc-money-glyph {
+    font-size: 0.62em;
+    vertical-align: 0.38em;
+    margin-right: 0.04em;
+    font-weight: inherit;
+  }
+  .arc-scroll-x {
+    /* relative: absolutely positioned children (sr-only text) stay clipped by the scroller */
+    position: relative;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+  .arc-touch {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

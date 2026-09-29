@@ -2,7 +2,7 @@
 
 Pure over the store: :func:`performance` reads the daily snapshots the
 reconciler writes (one per ET day, ``details_json.day``; a re-run the same day
-supersedes the earlier row) and returns :class:`arc.slack.digests.Performance`.
+supersedes the earlier row) and returns :class:`arc.models.Performance`.
 
 Definitions (owner, E5.5 review: "% = pnl / equity at the start of the period"):
 
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from arc.slack.digests import Performance
+from arc.models import Performance
 from arc.store.repos import PnlSnapshotRepo
 
 if TYPE_CHECKING:
