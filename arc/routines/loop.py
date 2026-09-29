@@ -10,17 +10,20 @@ timeout notice. Pure bookkeeping; nothing here calls an LLM or the broker.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
+import structlog
 from pydantic import BaseModel, ConfigDict
 
 from arc.routines.manifest import digest as _digest
 from arc.routines.runs import RoutineStateRepo
-from arc.utils.calendar import ET
+from arc.slack.loop import LoopRoot, slot_stamp
 
 if TYPE_CHECKING:
     import datetime as _dt
     import sqlite3
+
+log = structlog.get_logger(__name__)
 
 _LAST_DIGEST = "loop:last_digest"
 _LAST_FULL = "loop:last_full_run"
@@ -134,9 +137,142 @@ class LoopState:
         return True
 
 
-def slot_stamp(slot: _dt.datetime) -> str:
-    """``YYYY-MM-DD HH:MMET`` (owner's format, no space before ET), DST-correct."""
-    return f"{slot.astimezone(ET):%Y-%m-%d %H:%M}ET"
+# ---------------------------------------------------------------------------
+# D36: the root line per loop, computed from the audit DB
+# ---------------------------------------------------------------------------
 
 
-__all__ = ["LoopInputs", "LoopState", "pnl_bucket", "slot_stamp"]
+def loop_root_from_db(
+    conn: sqlite3.Connection,
+    chain_run_id: str,
+    slot: _dt.datetime,
+    *,
+    no_change: bool = False,
+    timeout: bool = False,
+    skipped: str | None = None,
+) -> LoopRoot:
+    """Build the :class:`LoopRoot` for *chain_run_id* from what the chain wrote.
+
+    Deterministic and re-runnable: an approval, a fill or an expiry later just
+    recomputes it. Equity / day P&L come from the chain's ``portfolio_context``
+    entry, the order budget from the root run's manifest, the action lists from
+    the chain's proposals joined to their approval request and execution.
+    """
+
+    equity = day_pnl = None
+    row = conn.execute(
+        """SELECT payload FROM context_entries
+           WHERE kind = 'portfolio_context' AND chain_run_id = ?
+           ORDER BY rowid DESC LIMIT 1""",
+        (chain_run_id,),
+    ).fetchone()
+    if row is not None:
+        acct = json.loads(row["payload"]).get("account") or {}
+        equity, day_pnl = acct.get("equity"), acct.get("day_pnl")
+    used = limit = None
+    row = conn.execute(
+        """SELECT m.payload FROM run_manifests m
+           JOIN routine_runs r ON r.run_id = m.run_id
+           WHERE r.chain_run_id = ? AND r.step_index = 0
+           ORDER BY m.rowid DESC LIMIT 1""",
+        (chain_run_id,),
+    ).fetchone()
+    if row is not None:
+        budget = json.loads(row["payload"]).get("order_budget") or {}
+        used, limit = budget.get("used"), budget.get("limit")
+    buys: list[str] = []
+    sells: list[str] = []
+    pending: list[str] = []
+    working: list[str] = []
+    rows = conn.execute(
+        """SELECT p.ticker, p.kind, a.status AS approval, e.status AS execution
+           FROM proposals p
+           JOIN routine_runs r ON r.run_id = p.run_id
+           LEFT JOIN approval_requests a ON a.proposal_hash = p.proposal_hash
+           LEFT JOIN executions e ON e.proposal_hash = p.proposal_hash
+           WHERE r.chain_run_id = ? ORDER BY p.rowid""",
+        (chain_run_id,),
+    ).fetchall()
+    for r in rows:
+        ticker, kind = str(r["ticker"]), str(r["kind"])
+        execution, approval = r["execution"], r["approval"]
+        if execution in ("filled", "partially_filled"):
+            (sells if kind == "close" else buys).append(ticker)
+        elif approval == "pending":
+            pending.append(ticker)
+        elif approval == "approved" and execution in (None, "working", "unconfirmed"):
+            working.append(ticker)
+    return LoopRoot(
+        slot=slot,
+        equity=equity,
+        day_pnl=day_pnl,
+        orders_used=used,
+        orders_limit=limit,
+        buys=_dedupe(buys),
+        sells=_dedupe(sells),
+        pending=_dedupe(pending),
+        working=_dedupe(working),
+        no_change=no_change,
+        timeout=timeout,
+        skipped=skipped,
+    )
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    return [x for x in items if not (x in seen or seen.add(x))]
+
+
+class RootEditor(Protocol):
+    """Whoever can edit an #arc-investor root line (a Notifier, a card poster)."""
+
+    def update_root(self, ts: str, text: str) -> None: ...
+
+
+def refresh_loop_root(
+    conn: sqlite3.Connection, editor: RootEditor, chain_run_id: str | None
+) -> str | None:
+    """Recompute and edit the root line of *chain_run_id* (approval, fill, expiry).
+
+    No-op when the chain has no root (day-thread layout, dry runs, a proposal
+    from a manual ``arc propose``). Returns the new text.
+    """
+    if not chain_run_id:
+        return None
+    state = LoopState(conn)
+    ts = state.thread_ts(chain_run_id)
+    stored = state.root(chain_run_id)
+    if ts is None or stored is None:
+        return None
+
+    prev = LoopRoot.model_validate(stored)
+    root = loop_root_from_db(
+        conn,
+        chain_run_id,
+        prev.slot,
+        no_change=prev.no_change,
+        timeout=prev.timeout,
+        skipped=prev.skipped,
+    )
+    text = root.text()
+    if text == prev.text():
+        return text
+    state.set_root(chain_run_id, root.model_dump(mode="json"))
+    try:
+        editor.update_root(ts, text)
+    except Exception as exc:  # noqa: BLE001 - the decision/fill is committed; the edit is best-effort
+        log.warning("routines.loop_root_update_failed", chain_run_id=chain_run_id, error=str(exc))
+    else:
+        log.info("routines.loop_root_updated", chain_run_id=chain_run_id, text=text)
+    return text
+
+
+__all__ = [
+    "LoopInputs",
+    "LoopState",
+    "RootEditor",
+    "loop_root_from_db",
+    "pnl_bucket",
+    "refresh_loop_root",
+    "slot_stamp",
+]

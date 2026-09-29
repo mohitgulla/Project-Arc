@@ -21,16 +21,27 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from arc.approvals.service import ApprovalService, LogCardPoster, PostedCard
 from arc.context.store import ContextStore
 from arc.ingest.scout import load_fixture_docs
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
 from arc.pipeline.runner import open_db, pipeline_handlers
 from arc.routines.config import RoutinesConfig, load_routines
 from arc.routines.dispatcher import LLM_LOCK, Dispatcher
+from arc.routines.handlers import RunEnv
 from arc.routines.heartbeat import RecordingNotifier
+from arc.routines.investor import execute_step
 from arc.routines.locks import LockManager
-from arc.routines.loop import LoopInputs, LoopState, pnl_bucket, slot_stamp
+from arc.routines.loop import (
+    LoopInputs,
+    LoopState,
+    loop_root_from_db,
+    pnl_bucket,
+    refresh_loop_root,
+    slot_stamp,
+)
 from arc.routines.runs import RoutineRunRepo
+from arc.slack.loop import LoopRoot
 from arc.utils.calendar import ET
 from tests.test_e59_director_portfolio import _settings
 
@@ -326,3 +337,204 @@ class TestOverlapAndDeadline:
         summary = LoopState(conn).chain_summary(chain_id)
         assert summary is not None and summary["timeout"] is True
         assert set(summary["durations_ms"]) == {"director"}
+
+
+# ---------------------------------------------------------------------------
+# D36: one root per loop slot in #arc-investor
+# ---------------------------------------------------------------------------
+
+
+OWNER = _settings().approver_slack_user_ids[0]
+
+
+class ThreadAwarePoster(LogCardPoster):
+    """A card poster that, like ``SlackCardPoster``, threads under the loop root."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        super().__init__()
+        self._conn = conn
+        self.thread_of: list[str | None] = []
+
+    def post(self, day: dt.date, view: Any, *, chain_run_id: str | None = None) -> PostedCard:
+        super().post(day, view, chain_run_id=chain_run_id)
+        ts = LoopState(self._conn).thread_ts(chain_run_id) if chain_run_id else None
+        self.thread_of.append(ts)
+        return PostedCard(channel="C_INV", thread_ts=ts, message_ts=f"200.{len(self.posted)}")
+
+
+def _disp_with_cards(
+    conn: sqlite3.Connection, routines: RoutinesConfig
+) -> tuple[Dispatcher, RecordingNotifier, ThreadAwarePoster, ApprovalService]:
+    """A dispatcher whose ``execute`` step publishes cards through a recording poster."""
+    settings = _settings()
+    poster = ThreadAwarePoster(conn)
+    service = ApprovalService(conn, settings, poster)
+    notes = RecordingNotifier()
+
+    def handlers() -> dict[str, Any]:
+        h = dict(pipeline_handlers(PipelineEnv.fixtures()))
+        h["execute"] = lambda ctx: execute_step(ctx, spawn=lambda _argv: 0, service=service)
+        return h
+
+    disp = Dispatcher(
+        conn,
+        routines,
+        handlers=handlers(),
+        notifier=notes,
+        settings_factory=lambda: settings,
+        run_env=RunEnv(slack=True),
+    )
+    disp._fresh_handlers = handlers  # type: ignore[attr-defined]
+    return disp, notes, poster, service
+
+
+def _slot_cards(disp: Dispatcher, at: dt.datetime) -> dict[str, Any]:
+    disp.handlers = disp._fresh_handlers()  # type: ignore[attr-defined]
+    outs = disp.run_job("director", at, reason="schedule", now=at, chain=True)
+    return {o.job: o for o in outs}
+
+
+class TestRootPerLoop:
+    def test_root_then_cards_in_its_thread_then_metadata(self, routines: RoutinesConfig) -> None:
+        conn = _conn()
+        _seed_scout(conn, routines)
+        disp, notes, poster, _ = _disp_with_cards(conn, routines)
+        out = _slot_cards(disp, SLOT0)
+        chain = out["director"].chain_run_id
+        assert chain is not None
+        ts = LoopState(conn).thread_ts(chain)
+        assert ts is not None and ts in notes.roots
+        # every persona post of this loop is a reply under the root, none in the day thread
+        replies = notes.in_thread(ts)
+        assert replies and notes.day_thread_posts() == []
+        assert any("[Director]" in r for r in replies)
+        assert replies[-1].startswith("```\n[Routines] " + chain)
+        assert "director=" in replies[-1] and "digest=" in replies[-1]
+        # the proposal card went into the same thread
+        assert poster.posted and poster.thread_of == [ts]
+        # the root line: the slot stamp and the facts. Fixture proposals carry no gate
+        # token, so the card is informational (not_actionable) and the loop is a HOLD.
+        root = notes.roots[ts]
+        assert root == (
+            f":heavy_multiplication_x: {slot_stamp(SLOT0)} • Portfolio: $100,000 • P&L: +$0"
+            " • Trades: 0/200 • HOLD"
+        )
+        assert LoopRoot.model_validate(LoopState(conn).root(chain) or {}).outcome.value == "hold"
+        # the notifier is unbound again after the loop
+        assert notes.thread_ts is None
+
+    def test_root_updates_on_approval_and_rejection(self, routines: RoutinesConfig) -> None:
+        conn = _conn()
+        _seed_scout(conn, routines)
+        disp, notes, poster, svc = _disp_with_cards(conn, routines)
+        out = _slot_cards(disp, SLOT0)
+        chain = out["director"].chain_run_id
+        assert chain is not None
+        ts = LoopState(conn).thread_ts(chain)
+        assert ts is not None
+        phash = conn.execute("SELECT proposal_hash FROM approval_requests").fetchone()[0]
+        # a pending card (a tokened proposal awaiting the owner's click) → PENDING
+        conn.execute(
+            "UPDATE approval_requests SET status = 'pending' WHERE proposal_hash = ?", (phash,)
+        )
+        conn.commit()
+        assert refresh_loop_root(conn, poster, chain) is not None
+        assert poster.root_edits[-1][0] == ts
+        assert poster.root_edits[-1][1].startswith(":hourglass_flowing_sand: ")
+        assert poster.root_edits[-1][1].endswith("• PENDING: SPY")
+        # the owner approves: the service re-renders the root → WORKING (ladder running)
+        res = svc.decide(phash, user=OWNER, approve=True, now=SLOT0 + dt.timedelta(minutes=1))
+        assert res.outcome.value == "approved", res
+        assert poster.root_edits[-1][0] == ts and "WORKING: SPY" in poster.root_edits[-1][1]
+        # a rejection (here: the request row as a Reject click leaves it) → HOLD again
+        conn.execute(
+            "UPDATE approval_requests SET status = 'rejected' WHERE proposal_hash = ?", (phash,)
+        )
+        conn.commit()
+        svc.refresh_loop_root(phash)
+        assert poster.root_edits[-1][1].endswith("• HOLD")
+        assert len({e[0] for e in poster.root_edits}) == 1
+        # an unchanged root is not re-posted
+        n = len(poster.root_edits)
+        refresh_loop_root(conn, poster, chain)
+        assert len(poster.root_edits) == n
+
+    def test_no_change_and_hold_roots(self, routines: RoutinesConfig) -> None:
+        conn = _conn()
+        _seed_scout(conn, routines)
+        disp, notes, _, _ = _disp_with_cards(conn, routines)
+        _slot_cards(disp, SLOT0)
+        _slot_cards(disp, SLOT0 + dt.timedelta(minutes=5))
+        out = _slot_cards(disp, SLOT0 + dt.timedelta(minutes=10))
+        assert out["director"].metrics["no_change"] is True
+        chain = out["director"].chain_run_id
+        assert chain is not None
+        ts = LoopState(conn).thread_ts(chain)
+        assert ts is not None
+        assert notes.roots[ts].endswith("• HOLD (no change)")
+        assert notes.roots[ts].startswith(":heavy_multiplication_x: ")
+        # three slots, three roots, each a distinct stamp
+        stamps = [r.split(" • ")[0].split(" ", 1)[1] for r in notes.roots.values()]
+        assert stamps == [slot_stamp(SLOT0 + dt.timedelta(minutes=5 * k)) for k in range(3)]
+
+    def test_skipped_slot_posts_hold_root(self, routines: RoutinesConfig, tmp_path: Path) -> None:
+        conn = _conn()
+        _seed_scout(conn, routines)
+        locks = LockManager(tmp_path)
+        notes = RecordingNotifier()
+        disp = _disp(conn, routines, locks=locks, notifier=notes)
+        with locks.hold("director"):
+            disp.run_job("director", SLOT0, reason="schedule", now=SLOT0, chain=True)
+        assert list(notes.roots.values()) == [
+            f":heavy_multiplication_x: {slot_stamp(SLOT0)} • Portfolio: n/a • P&L: n/a"
+            " • Trades: n/a • HOLD (skipped: previous loop running)"
+        ]
+        # …unless post_hold_roots is off
+        quiet = load_routines(overrides=_loop_overrides(post_hold_roots=False))
+        notes2 = RecordingNotifier()
+        disp2 = _disp(conn, quiet, locks=locks, notifier=notes2)
+        with locks.hold("director"):
+            disp2.run_job(
+                "director",
+                SLOT0 + dt.timedelta(minutes=5),
+                reason="schedule",
+                now=SLOT0 + dt.timedelta(minutes=5),
+                chain=True,
+            )
+        assert notes2.roots == {}
+
+    def test_day_thread_layout_is_the_rollback(self, routines: RoutinesConfig) -> None:
+        conn = _conn()
+        _seed_scout(conn, routines)
+        legacy = load_routines(overrides=_loop_overrides(slack_layout="day_thread"))
+        disp, notes, poster, _ = _disp_with_cards(conn, legacy)
+        out = _slot_cards(disp, SLOT0)
+        chain = out["director"].chain_run_id
+        assert chain is not None
+        assert notes.roots == {} and LoopState(conn).thread_ts(chain) is None
+        assert notes.day_thread_posts() and poster.thread_of == [None]
+        assert not any(t.startswith("```[Routines] chain-") for t in notes.day_thread_posts())
+
+    def test_root_from_db_lists_fills(self, routines: RoutinesConfig) -> None:
+        conn = _conn()
+        _seed_scout(conn, routines)
+        disp, notes, poster, svc = _disp_with_cards(conn, routines)
+        out = _slot_cards(disp, SLOT0)
+        chain = out["director"].chain_run_id
+        assert chain is not None
+        phash = conn.execute("SELECT proposal_hash FROM approval_requests").fetchone()[0]
+        conn.execute(
+            "UPDATE approval_requests SET status = 'approved' WHERE proposal_hash = ?", (phash,)
+        )
+        conn.execute(
+            """INSERT INTO executions (proposal_hash, kind, status, token_version, band_lo,
+                   band_hi, max_steps, contracts, filled_qty, started_at)
+               VALUES (?, 'open', 'filled', 'arc2', '1.00', '1.10', 3, 1, 1, ?)""",
+            (phash, SLOT0.isoformat()),
+        )
+        conn.commit()
+        root = loop_root_from_db(conn, chain, SLOT0)
+        assert root.buys == ["SPY"] and root.pending == [] and root.working == []
+        assert root.text().startswith(":white_check_mark: ")
+        assert refresh_loop_root(conn, poster, chain) == root.text()
+        assert poster.root_edits[-1][1].endswith("• BUY: SPY")

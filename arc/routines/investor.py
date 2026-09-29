@@ -205,6 +205,21 @@ def fresh_mid_of(
     return _mid
 
 
+def _refresh_root(ctx: JobContext, phash: str) -> None:
+    """D36: after a fill (or a failed ladder) re-render the loop's root line.
+
+    The Investor runs in its own process with no card poster of its own; with
+    Slack on it edits through a :class:`SlackCardPoster`, otherwise the update
+    goes to the log (nothing to edit).
+    """
+    from arc.approvals.cli import make_service
+
+    try:
+        make_service(ctx.conn, ctx.settings, slack=ctx.run_env.slack).refresh_loop_root(phash)
+    except Exception as exc:  # noqa: BLE001 - the fill is recorded; the root edit is best-effort
+        log.warning("investor.loop_root_refresh_failed", proposal_hash=phash, error=str(exc))
+
+
 def investor(
     ctx: JobContext,
     *,
@@ -266,6 +281,7 @@ def investor(
             step_seconds=ctx.settings.execution_step_seconds,
             run_id=ctx.run_id,
         )
+        _refresh_root(ctx, phash)
     return JobResult(
         card=card,
         summary=f"{ticker} {what}: {out.summary()}",

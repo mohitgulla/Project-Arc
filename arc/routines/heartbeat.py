@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import structlog
 
@@ -74,12 +74,49 @@ class Notifier(Protocol):
         ...
 
 
+@runtime_checkable
+class ThreadBound(Protocol):
+    """D36: a notifier / poster that can redirect its posts into one loop's thread.
+
+    ``bind_thread(ts)`` routes every following ``post`` as a reply to *ts* (a loop
+    root in #arc-investor) until ``bind_thread(None)``. ``post_root`` posts a new
+    root in the channel and ``update_root`` edits one.
+    """
+
+    def bind_thread(self, ts: str | None) -> None: ...
+
+    def post_root(self, text: str) -> str | None: ...
+
+    def update_root(self, ts: str, text: str) -> None: ...
+
+
 class LogNotifier:
     """Writes heartbeats to the structured log only (dry runs, no Slack token)."""
 
+    def __init__(self) -> None:
+        self.thread_ts: str | None = None
+        self._roots = 0
+
     def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> str | None:
-        log.info("routines.heartbeat", day=day.isoformat(), text=text, blocks=len(blocks or []))
+        log.info(
+            "routines.heartbeat",
+            day=day.isoformat(),
+            text=text,
+            blocks=len(blocks or []),
+            thread_ts=self.thread_ts,
+        )
         return None
+
+    def bind_thread(self, ts: str | None) -> None:
+        self.thread_ts = ts
+
+    def post_root(self, text: str) -> str | None:
+        self._roots += 1
+        log.info("routines.loop_root", text=text)
+        return f"log-root-{self._roots}"
+
+    def update_root(self, ts: str, text: str) -> None:
+        log.info("routines.loop_root_update", ts=ts, text=text)
 
 
 class RecordingNotifier:
@@ -88,11 +125,34 @@ class RecordingNotifier:
     def __init__(self) -> None:
         self.posts: list[tuple[_dt.date, str]] = []
         self.blocks: list[Blocks | None] = []
+        self.threads: list[str | None] = []  # the bound thread at each post (D36)
+        self.roots: dict[str, str] = {}  # ts -> current text (D36 root lines)
+        self.root_edits: list[tuple[str, str]] = []
+        self.thread_ts: str | None = None
 
     def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> str | None:
         self.posts.append((day, text))
         self.blocks.append(blocks)
+        self.threads.append(self.thread_ts)
         return f"rec-{len(self.posts)}"
+
+    def bind_thread(self, ts: str | None) -> None:
+        self.thread_ts = ts
+
+    def post_root(self, text: str) -> str | None:
+        ts = f"root-{len(self.roots) + 1}"
+        self.roots[ts] = text
+        return ts
+
+    def update_root(self, ts: str, text: str) -> None:
+        self.roots[ts] = text
+        self.root_edits.append((ts, text))
+
+    def in_thread(self, ts: str) -> list[str]:
+        return [t for (_, t), th in zip(self.posts, self.threads, strict=True) if th == ts]
+
+    def day_thread_posts(self) -> list[str]:
+        return [t for (_, t), th in zip(self.posts, self.threads, strict=True) if th is None]
 
 
 def day_thread_ts(conn: sqlite3.Connection, client: object, day: _dt.date) -> str:
@@ -150,9 +210,34 @@ class SlackDayThreadNotifier:
 
         self._conn = conn
         self._client = client if client is not None else ArcSlackClient()
+        self.thread_ts: str | None = None  # D36: bound loop root, else the day thread
 
     def _thread_ts(self, day: _dt.date) -> str:
+        if self.thread_ts:
+            return self.thread_ts
         return day_thread_ts(self._conn, self._client, day)
+
+    def bind_thread(self, ts: str | None) -> None:
+        self.thread_ts = ts
+
+    def post_root(self, text: str) -> str | None:
+        """D36: a new one-line loop root in #arc-investor (not in the day thread)."""
+        from arc.slack.client import CHANNEL_ARC_INVESTOR, ArcSlackClient
+
+        try:
+            assert isinstance(self._client, ArcSlackClient)
+            resp = self._client.post_thread_root(channel=CHANNEL_ARC_INVESTOR, text=text)
+        except Exception as exc:  # noqa: BLE001 - a missing root must never fail the loop
+            log.warning("routines.loop_root_failed", error=str(exc), text=text)
+            return None
+        ts = resp.get("ts") if hasattr(resp, "get") else None
+        return str(ts) if ts else None
+
+    def update_root(self, ts: str, text: str) -> None:
+        from arc.slack.client import CHANNEL_ARC_INVESTOR, ArcSlackClient
+
+        assert isinstance(self._client, ArcSlackClient)
+        self._client.update(channel=CHANNEL_ARC_INVESTOR, ts=ts, text=text)
 
     def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> None:
         from arc.slack.client import CHANNEL_ARC_INVESTOR, ArcSlackClient
@@ -267,6 +352,36 @@ class Heartbeats:
         return self._notifier.post(
             self.day(now), f":rotating_light: {_detail(job, f'FAILED: {text}{ref}', sep=' ')}"
         )
+
+    # -- D36: one root per loop slot ---------------------------------------
+
+    def open_loop_root(self, text: str) -> str | None:
+        """Post a loop root line in the channel and route later posts into its thread.
+
+        Returns the root ``ts`` (None when the notifier cannot post roots, e.g. a
+        plain fake, in which case posts keep going to the day thread).
+        """
+        n = self._notifier
+        if not isinstance(n, ThreadBound):
+            return None
+        ts = n.post_root(text)
+        if ts:
+            n.bind_thread(ts)
+        return ts
+
+    def close_loop_root(self) -> None:
+        n = self._notifier
+        if isinstance(n, ThreadBound):
+            n.bind_thread(None)
+
+    def update_loop_root(self, ts: str, text: str) -> None:
+        n = self._notifier
+        if isinstance(n, ThreadBound):
+            n.update_root(ts, text)
+
+    def loop_metadata(self, now: _dt.datetime, text: str) -> str | None:
+        """The ``[Routines]`` reply in a loop thread (step durations, digest, run ids)."""
+        return self._notifier.post(self.day(now), B.code_block(f"{_ROUTINES_LABEL} {text}"))
 
 
 def _detail(job: str, text: str, *, sep: str = ": ") -> str:

@@ -387,7 +387,21 @@ class Dispatcher:
             return Outcome(job, scheduled_for, "duplicate", "already recorded for this slot")
         trace = _RunTrace(metrics={"loop_skipped": why})
         self._write_manifest(claimed, trace, now=now, started=now, t0=time.monotonic())
+        self._post_skipped_root(claimed.run_id, scheduled_for, why)
         return Outcome(job, scheduled_for, "skipped", summary, run_id=claimed.run_id)
+
+    def _post_skipped_root(self, run_id: str, slot: _dt.datetime, why: str) -> None:
+        """D36: a skipped slot still gets its one-line root (``HOLD (skipped: …)``)
+        when ``loop.post_hold_roots`` is on, so the channel shows every slot."""
+        from arc.routines.config import LoopLayout
+        from arc.slack.loop import LoopRoot
+
+        loop = self.routines.loop
+        if loop.slack_layout is not LoopLayout.ROOT_PER_LOOP or not loop.post_hold_roots:
+            return
+        ts = self.heartbeats.open_loop_root(LoopRoot(slot=slot, skipped=why).text())
+        self.heartbeats.close_loop_root()
+        log.info("routines.loop_root", run_id=run_id, ts=ts, skipped=why)
 
     def resume_chain(self, chain_run_id: str, *, now: _dt.datetime) -> list[Outcome]:
         """Re-run a chain from its first failed/skipped step; ok steps are not re-run."""
@@ -440,104 +454,138 @@ class Dispatcher:
         durations: dict[str, int] = {}
         no_change = False
         timed_out = False
-        for index, step in enumerate(steps):
-            prior = existing.get(step)
-            if prior is not None and prior.status is RunStatus.OK:
-                outcomes.append(
-                    Outcome(
-                        step,
-                        scheduled_for,
-                        "ok",
-                        "already done (resume)",
-                        run_id=prior.run_id,
-                        chain_run_id=chain_run_id,
-                        step_index=index,
-                        summary=prior.summary or "",
-                    )
-                )
-                continue
-            _, step_spec = self.routines.step(step)
-            if is_loop and index and time.monotonic() > deadline:
-                timed_out = True
-                outcomes.append(
-                    self._record_skipped_step(
-                        step,
-                        scheduled_for,
-                        reason=f"chain:{steps[0]}",
-                        chain_run_id=chain_run_id,
-                        step_index=index,
-                        summary=f"timeout: loop exceeded {self._max_runtime_label()}",
-                        now=now,
-                    )
-                )
-                continue
-            if is_loop and no_change and index and step_spec.on_no_change == "skip":
-                outcomes.append(
-                    self._record_skipped_step(
-                        step,
-                        scheduled_for,
-                        reason=f"chain:{steps[0]}",
-                        chain_run_id=chain_run_id,
-                        step_index=index,
-                        summary="no_change: inputs unchanged since the last full loop",
-                        now=now,
-                    )
-                )
-                continue
-            if prior is not None:
-                run = self.runs.restart(prior.run_id, now=now)
-            else:
-                claimed = self.runs.claim(
-                    job=step,
-                    scheduled_for=scheduled_for,
-                    reason=reason if index == 0 else f"chain:{steps[0]}",
-                    chain_run_id=chain_run_id,
-                    step_index=index,
-                    now=now,
-                )
-                if claimed is None:
+        root_ts: str | None = None
+        if is_loop and chain_run_id:
+            root_ts = self._open_loop_root(chain_run_id, scheduled_for)
+        try:
+            for index, step in enumerate(steps):
+                prior = existing.get(step)
+                if prior is not None and prior.status is RunStatus.OK:
                     outcomes.append(
                         Outcome(
                             step,
                             scheduled_for,
-                            "duplicate",
-                            "already ran for this slot",
+                            "ok",
+                            "already done (resume)",
+                            run_id=prior.run_id,
                             chain_run_id=chain_run_id,
                             step_index=index,
+                            summary=prior.summary or "",
                         )
                     )
-                    break
-                run = claimed
-            t_step = time.monotonic()
-            outcome = self._execute(
-                run,
-                now=now,
-                event=event,
-                note=note if index == 0 else "",
-                parent_run_id=prev_run_id,
-            )
-            durations[step] = int((time.monotonic() - t_step) * 1000)
-            prev_run_id = run.run_id
-            outcomes.append(outcome)
-            if index == 0 and outcome.metrics.get("no_change"):
-                no_change = True
-            stop = outcome.status != "ok" or bool(outcome.metrics.get("stop_chain"))
-            if stop:
-                if chain_run_id and index + 1 < len(steps):
-                    log.warning(
-                        "routines.chain_stopped",
-                        chain_run_id=chain_run_id,
-                        at=step,
-                        status=outcome.status,
-                        reason="stop_chain" if outcome.status == "ok" else outcome.status,
-                        remaining=steps[index + 1 :],
+                    continue
+                _, step_spec = self.routines.step(step)
+                if is_loop and index and time.monotonic() > deadline:
+                    timed_out = True
+                    outcomes.append(
+                        self._record_skipped_step(
+                            step,
+                            scheduled_for,
+                            reason=f"chain:{steps[0]}",
+                            chain_run_id=chain_run_id,
+                            step_index=index,
+                            summary=f"timeout: loop exceeded {self._max_runtime_label()}",
+                            now=now,
+                        )
                     )
-                break
-        if is_loop and chain_run_id:
-            self._finish_loop(
-                chain_run_id, outcomes, durations, now=now, timed_out=timed_out, no_change=no_change
-            )
+                    continue
+                if is_loop and no_change and index and step_spec.on_no_change == "skip":
+                    outcomes.append(
+                        self._record_skipped_step(
+                            step,
+                            scheduled_for,
+                            reason=f"chain:{steps[0]}",
+                            chain_run_id=chain_run_id,
+                            step_index=index,
+                            summary="no_change: inputs unchanged since the last full loop",
+                            now=now,
+                        )
+                    )
+                    continue
+                if prior is not None:
+                    run = self.runs.restart(prior.run_id, now=now)
+                else:
+                    claimed = self.runs.claim(
+                        job=step,
+                        scheduled_for=scheduled_for,
+                        reason=reason if index == 0 else f"chain:{steps[0]}",
+                        chain_run_id=chain_run_id,
+                        step_index=index,
+                        now=now,
+                    )
+                    if claimed is None:
+                        outcomes.append(
+                            Outcome(
+                                step,
+                                scheduled_for,
+                                "duplicate",
+                                "already ran for this slot",
+                                chain_run_id=chain_run_id,
+                                step_index=index,
+                            )
+                        )
+                        break
+                    run = claimed
+                t_step = time.monotonic()
+                outcome = self._execute(
+                    run,
+                    now=now,
+                    event=event,
+                    note=note if index == 0 else "",
+                    parent_run_id=prev_run_id,
+                )
+                durations[step] = int((time.monotonic() - t_step) * 1000)
+                prev_run_id = run.run_id
+                outcomes.append(outcome)
+                if index == 0 and outcome.metrics.get("no_change"):
+                    no_change = True
+                stop = outcome.status != "ok" or bool(outcome.metrics.get("stop_chain"))
+                if stop:
+                    if chain_run_id and index + 1 < len(steps):
+                        log.warning(
+                            "routines.chain_stopped",
+                            chain_run_id=chain_run_id,
+                            at=step,
+                            status=outcome.status,
+                            reason="stop_chain" if outcome.status == "ok" else outcome.status,
+                            remaining=steps[index + 1 :],
+                        )
+                    break
+            if is_loop and chain_run_id:
+                self._finish_loop(
+                    chain_run_id,
+                    outcomes,
+                    durations,
+                    now=now,
+                    timed_out=timed_out,
+                    no_change=no_change,
+                    scheduled_for=scheduled_for,
+                    root_ts=root_ts,
+                )
+        finally:
+            if root_ts:
+                self.heartbeats.close_loop_root()
         return outcomes
+
+    def _open_loop_root(self, chain_run_id: str, slot: _dt.datetime) -> str | None:
+        """D36: post the loop's root line first, so every persona card threads under it.
+
+        The line starts as ``HOLD`` and is re-rendered from the DB when the chain
+        ends (and again on approval / fill / expiry). ``slack_layout: day_thread``
+        keeps everything in the day thread (the rollback).
+        """
+        from arc.routines.config import LoopLayout
+        from arc.routines.loop import LoopState, loop_root_from_db
+
+        if self.routines.loop.slack_layout is not LoopLayout.ROOT_PER_LOOP:
+            return None
+        root = loop_root_from_db(self.conn, chain_run_id, slot)
+        ts = self.heartbeats.open_loop_root(root.text())
+        if ts:
+            state = LoopState(self.conn)
+            state.set_thread_ts(chain_run_id, ts)
+            state.set_root(chain_run_id, root.model_dump(mode="json"))
+        return ts
 
     def _max_runtime_label(self) -> str:
         secs = int(self.routines.loop.max_runtime.total_seconds())
@@ -601,9 +649,12 @@ class Dispatcher:
         now: _dt.datetime,
         timed_out: bool,
         no_change: bool,
+        scheduled_for: _dt.datetime,
+        root_ts: str | None,
     ) -> None:
-        """Record the loop's step durations / flags (D27) and alert a timeout once a day."""
-        from arc.routines.loop import LoopState
+        """Record the loop's step durations / flags (D27), alert a timeout once a day,
+        and (D36) re-render the root line plus post the ``[Routines]`` metadata reply."""
+        from arc.routines.loop import LoopState, loop_root_from_db
 
         state = LoopState(self.conn)
         state.set_chain_summary(
@@ -632,6 +683,28 @@ class Dispatcher:
                     f"skipped; once-a-day notice)",
                     run_id=root.run_id,
                 )
+        if not root_ts:
+            return
+        # The metadata reply, then the root re-rendered from what the chain wrote.
+        steps = " ".join(
+            f"{o.job}={durations[o.job]}ms" if o.job in durations else f"{o.job}={o.status}"
+            for o in outcomes
+        )
+        digest = str(outcomes[0].metrics.get("loop_digest") or "")[:12]
+        flags = " ".join(f for f, on in (("no_change", no_change), ("timeout", timed_out)) if on)
+        meta = f"{chain_run_id} {steps} digest={digest or 'n/a'}"
+        if flags:
+            meta += f" {flags}"
+        self.heartbeats.loop_metadata(now, meta)
+        line = loop_root_from_db(
+            self.conn, chain_run_id, scheduled_for, no_change=no_change, timeout=timed_out
+        )
+        state.set_root(chain_run_id, line.model_dump(mode="json"))
+        try:
+            self.heartbeats.update_loop_root(root_ts, line.text())
+        except Exception as exc:  # noqa: BLE001 - the loop's work is committed; the edit is best-effort
+            log.warning("routines.loop_root_update_failed", chain_run_id=chain_run_id, err=str(exc))
+        log.info("routines.loop_root", chain_run_id=chain_run_id, ts=root_ts, text=line.text())
 
     def _execute(
         self,
