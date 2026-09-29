@@ -232,11 +232,99 @@ class TestHeartbeatPolicy:
         hb = Heartbeats(conn, notes)
         hb.notice(et(2026, 9, 28, 10, 0), "monitor", "halt")
         hb.alert(et(2026, 9, 28, 22, 0), "scout", "boom")
-        assert notes.posts[0] == (dt.date(2026, 9, 28), ":warning: [Routines] monitor: halt")
+        # E5.5b: a [Routines] notice is fenced; the emoji stays outside the fence.
+        assert notes.posts[0] == (
+            dt.date(2026, 9, 28),
+            ":warning: ```\n[Routines] monitor: halt\n```",
+        )
         assert notes.posts[1] == (
             dt.date(2026, 9, 29),
             ":rotating_light: [Scout] scout FAILED: boom",
         )
+
+    def test_routines_lines_are_code_blocks_and_persona_lines_are_not(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """E5.5b: every ``[Routines]`` heartbeat is wrapped in ``` fences."""
+        notes = RecordingNotifier()
+        hb = Heartbeats(conn, notes)
+        hb.queue_source("rss", "3 new docs", new_docs=3)
+        hb.summary(et(2026, 9, 28, 10, 0), "propose", "1 proposal")
+        text = notes.posts[0][1]
+        assert text.startswith("```\n[Routines] propose ✓ 1 proposal")
+        assert text.endswith("\n```")
+        assert "> sources since last update: rss: 3 new docs\n```" in text  # folded inside
+        hb.alert(et(2026, 9, 28, 10, 5), "monitor", "boom", run_id="r-1")
+        assert notes.posts[1][1] == (
+            ":rotating_light: ```\n[Routines] monitor FAILED: boom `r-1`\n```"
+        )
+        hb.summary(et(2026, 9, 28, 12, 0), "director", "ranked 2")
+        assert notes.posts[2][1] == "[Director] director ✓ ranked 2"
+        hb.alert(et(2026, 9, 28, 12, 5), "quant", "boom")
+        assert notes.posts[3][1] == ":rotating_light: [Quant] quant FAILED: boom"
+
+    def test_routines_code_block_escapes_inner_fences(self, conn: sqlite3.Connection) -> None:
+        notes = RecordingNotifier()
+        hb = Heartbeats(conn, notes)
+        hb.summary(et(2026, 9, 28, 10, 0), "propose", "saw ``` in output")
+        text = notes.posts[0][1]
+        assert text.count("```") == 2  # only the outer fence survives
+        assert text.startswith("```\n") and text.endswith("\n```")
+        assert "saw `\u200b`\u200b` in output" in text
+
+    def test_card_folds_sources_into_scout_session_notes_before_footer(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """E5.5b: folded sources → ``[Scout] Session notes`` section, footer stays last."""
+        from arc.slack import blocks as B
+        from arc.slack.personas import Persona
+
+        notes = RecordingNotifier()
+        hb = Heartbeats(conn, notes)
+        hb.queue_source("rss", "3 new <docs>", new_docs=3)
+        card = [B.header("[Director] Ranked"), B.divider(), B.footer(run="r-1", chain="c-1")]
+        hb.summary(et(2026, 9, 28, 12, 0), "director", "ranked", blocks=card)
+        posted = notes.blocks[0]
+        assert posted is not None
+        assert [b["type"] for b in posted] == ["header", "divider", "section", "context"]
+        assert posted[-1] == B.footer(run="r-1", chain="c-1")
+        # Attributed to the Scout even on a Director card; persona text is escaped.
+        assert posted[2]["text"]["text"] == (
+            "*[Scout] Session notes*\nsources since last update: rss: 3 new &lt;docs&gt;"
+        )
+        assert card[-1]["type"] == "context"  # the caller's list is not mutated
+        assert "> sources since last update: rss: 3 new <docs>" in notes.posts[0][1]
+
+        # A Scout card that already has session notes gets the line appended.
+        hb.queue_source("edgar", "1 new doc", new_docs=1)
+        card2 = [
+            B.header("[Scout] Scan"),
+            B.persona_section(Persona.SCOUT, "Session notes", "Quiet tape."),
+            B.footer(run="r-2"),
+        ]
+        hb.summary(et(2026, 9, 28, 12, 30), "scout", "scan", blocks=card2)
+        posted2 = notes.blocks[1]
+        assert posted2 is not None
+        assert [b["type"] for b in posted2] == ["header", "section", "context"]
+        assert posted2[1]["text"]["text"] == (
+            "*[Scout] Session notes*\nQuiet tape.\nsources since last update: edgar: 1 new doc"
+        )
+        assert posted2[-1] == B.footer(run="r-2")
+
+    def test_card_fold_keeps_fifty_block_cap(self, conn: sqlite3.Connection) -> None:
+        from arc.slack import blocks as B
+
+        notes = RecordingNotifier()
+        hb = Heartbeats(conn, notes)
+        hb.queue_source("rss", "1 new doc")
+        card = [B.header("[Director] Ranked"), *[B.divider() for _ in range(48)], B.footer(run="r")]
+        assert len(card) == B.MAX_BLOCKS
+        hb.summary(et(2026, 9, 28, 12, 0), "director", "x", blocks=card)
+        posted = notes.blocks[0]
+        assert posted is not None
+        assert len(posted) == B.MAX_BLOCKS
+        assert posted[-1] == B.footer(run="r")
+        assert posted[-2]["text"]["text"].startswith("*[Scout] Session notes*")
 
     def test_dispatcher_posts_quiet_job_notice_and_rolls_over(
         self, conn: sqlite3.Connection
@@ -256,7 +344,10 @@ class TestHeartbeatPolicy:
         }
         d = Dispatcher(conn, cfg, handlers=handlers, notifier=notes, is_halted=lambda: False)
         d.tick(et(2026, 9, 28, 22, 0), since=et(2026, 9, 28, 21, 55))
-        assert notes.posts[0] == (dt.date(2026, 9, 29), ":warning: [Routines] monitor: HALT")
+        assert notes.posts[0] == (
+            dt.date(2026, 9, 29),
+            ":warning: ```\n[Routines] monitor: HALT\n```",
+        )
         assert notes.posts[1][0] == dt.date(2026, 9, 29)
         assert notes.posts[1][1].startswith("[Scout] scout ✓ 3 candidates")
         assert "monitor: ok" in notes.posts[1][1]

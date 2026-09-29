@@ -377,7 +377,7 @@ class TestDigestCards:
         )
         # E5.7 open universe: PLTR is new and passes the screen, UFPT fails it, ZZZQ is
         # not a listed symbol; the failed checks are shown for the illiquid name.
-        assert "*PLTR* bullish · news · 90% confidence · new, passed liquidity screen" in scout
+        assert "*PLTR*\nbullish · news · 90% confidence · new, passed liquidity screen" in scout
         assert "• failed liquidity screen (1): UFPT" in scout
         assert "UFPT: ADV 118k &lt; 1.0M; no expiry in the DTE window" in scout
         assert "• unknown symbol (1): ZZZQ" in scout

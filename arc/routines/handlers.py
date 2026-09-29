@@ -445,6 +445,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "positions.evaluate": "arc.positions.steps:evaluate_step",
     "investor.exits": "arc.positions.steps:exits_step",
     "risk.reallocate": "arc.positions.steps:reallocate_step",
+    # E7.3 weekly paper scorecard (deterministic, from the audit store)
+    "scorecard": "arc.routines.scorecard:scorecard_step",
 }
 
 

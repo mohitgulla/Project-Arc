@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -233,3 +234,42 @@ def test_action_ids_match_the_cards() -> None:
     from arc.control import cards
 
     assert set(plugin.CONFIRM_ACTIONS) == {cards.CONFIRM_ACTION, cards.CANCEL_ACTION}
+
+
+def test_arc_subprocess_gets_a_clean_python_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gateway's PYTHONPATH (Hermes's site-packages) must not reach Arc's venv."""
+    monkeypatch.setenv("PYTHONPATH", "/hermes/venv/lib/python3.14/site-packages")
+    monkeypatch.setenv("PYTHONHOME", "/hermes/python")
+    monkeypatch.setenv("VIRTUAL_ENV", "/hermes/venv")
+    monkeypatch.setenv("ARC_ENV", "paper")
+    seen: dict[str, dict[str, str]] = {}
+
+    def fake_run(cmd, **kw):  # noqa: ANN001, ANN003, ANN202
+        seen["env"] = kw["env"]
+        return _completed({"text": "ok", "blocks": None, "result": {"outcome": "ok"}})
+
+    monkeypatch.setattr(plugin.subprocess, "run", fake_run)
+    plugin.run_config(["config"], "U0OWNER001")
+    env = seen["env"]
+    assert not {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"} & set(env)
+    assert env["ARC_ENV"] == "paper"  # non-Python settings still pass through
+    assert env["PATH"].split(":")[0].endswith(".venv/bin")
+
+
+def test_arc_cli_runs_under_a_polluted_gateway_env() -> None:
+    """End to end: the real `arc config` exits 0 with a foreign PYTHONPATH set."""
+    import subprocess as sp
+
+    if not plugin._arc_bin().exists():
+        pytest.skip("no .venv/bin/arc in this checkout")
+    polluted = {**os.environ, "PYTHONPATH": "/nonexistent/site-packages"}
+    out = sp.run(
+        [str(plugin._arc_bin()), "config", "keys"],
+        cwd=plugin.REPO_DIR,
+        env=plugin._arc_env(polluted),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr[-500:]

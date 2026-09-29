@@ -30,6 +30,7 @@ __all__ = [
     "CardView",
     "bullets",
     "clip",
+    "code_block",
     "divider",
     "esc",
     "facts",
@@ -119,6 +120,16 @@ def bullets(title: str, items: list[str], *, escape: bool = True) -> Block | Non
 
 def divider() -> Block:
     return {"type": "divider"}
+
+
+def code_block(text: str) -> str:
+    """Wrap *text* in a ``` fence for mrkdwn (E5.5b: ``[Routines]`` lines).
+
+    A fence inside the content would close ours early, so triple backticks in
+    *text* are broken up with zero-width spaces.
+    """
+    body = text.replace("```", "`\u200b`\u200b`").strip("\n")
+    return f"```\n{body}\n```"
 
 
 def footer(**ids: str | None) -> Block:

@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 import structlog
 
 from arc.routines.runs import RoutineStateRepo
+from arc.slack import blocks as B
+from arc.slack.personas import Persona, persona_label
 from arc.utils.calendar import ET, is_session, next_session
 
 if TYPE_CHECKING:
@@ -41,6 +43,7 @@ Blocks = list[dict[str, Any]]
 
 _PENDING_KEY = "heartbeat:pending_sources"
 _MAX_PENDING_JOBS = 50
+_ROUTINES_LABEL = "[Routines]"
 _PERSONA_LABELS = {
     "scout": "[Scout]",
     "director": "[Director]",
@@ -209,22 +212,28 @@ class Heartbeats:
         ``text`` is the one-line summary and always the fallback text (what a
         notification shows). With ``blocks`` (a digest card) the post is the
         card; queued source summaries are folded into both.
+
+        E5.5b: a ``[Routines]`` line (non-persona job) is posted inside a ```
+        code block, folded sources included. On a card the folded sources go in
+        a ``[Scout] Session notes`` section before the audit footer (the sources
+        belong to the Scout, whatever card they land on).
         """
-        line = f"{label_for(job)} {job} ✓ {text}".rstrip()
+        label = label_for(job)
+        line = f"{label} {job} ✓ {text}".rstrip()
         pending = self._pending()
         if pending:
             folded = f"sources since last update: {'; '.join(pending)}"
             line += f"\n> {folded}"
             if blocks:
-                from arc.slack import blocks as B
-
-                blocks = [*blocks[: B.MAX_BLOCKS - 1], B.summary(B.clip(B.esc(folded)))]
+                blocks = _fold_sources_into_card(blocks, folded)
             self._state.delete(_PENDING_KEY)
+        if label == _ROUTINES_LABEL:
+            line = B.code_block(line)
         return self._notifier.post(self.day(now), line, blocks or None)
 
     def notice(self, now: _dt.datetime, job: str, text: str) -> str | None:
         """An immediate, non-failure alert raised by a handler (always posted)."""
-        return self._notifier.post(self.day(now), f":warning: {label_for(job)} {job}: {text}")
+        return self._notifier.post(self.day(now), f":warning: {_detail(job, text)}")
 
     def alert(
         self, now: _dt.datetime, job: str, text: str, *, run_id: str | None = None
@@ -232,5 +241,45 @@ class Heartbeats:
         # E8.2: the run id lets a Slack alert be traced (`arc health trace <run_id>`).
         ref = f" `{run_id}`" if run_id else ""
         return self._notifier.post(
-            self.day(now), f":rotating_light: {label_for(job)} {job} FAILED: {text}{ref}"
+            self.day(now), f":rotating_light: {_detail(job, f'FAILED: {text}{ref}', sep=' ')}"
         )
+
+
+def _detail(job: str, text: str, *, sep: str = ": ") -> str:
+    """``[Label] job<sep>text``; for ``[Routines]`` jobs the whole detail is fenced.
+
+    Alerts keep their emoji outside the fence (the notification stays readable).
+    """
+    body = f"{label_for(job)} {job}{sep}{text}"
+    return B.code_block(body) if label_for(job) == _ROUTINES_LABEL else body
+
+
+def _fold_sources_into_card(blocks: Blocks, folded: str) -> Blocks:
+    """Put the folded sources line in ``[Scout] Session notes`` before the footer.
+
+    The footer (a context block of audit ids, always last on a digest card) stays
+    last. When the card already has a ``[Scout] Session notes`` section, the line
+    is appended to it; otherwise a new one is inserted before the footer.
+    """
+    body = [*blocks]
+    footer = body.pop() if body and body[-1].get("type") == "context" else None
+    title = f"*{persona_label(Persona.SCOUT)} Session notes*"
+    idx = next(
+        (
+            i
+            for i, b in enumerate(body)
+            if b.get("type") == "section" and b.get("text", {}).get("text", "").startswith(title)
+        ),
+        None,
+    )
+    if idx is not None:
+        merged = f"{body[idx]['text']['text']}\n{B.esc(folded)}"
+        body[idx] = {"type": "section", "text": {"type": "mrkdwn", "text": B.clip(merged)}}
+    else:
+        body = body[: B.MAX_BLOCKS - 2]
+        section = B.persona_section(Persona.SCOUT, "Session notes", folded)
+        assert section is not None  # ``folded`` is never empty
+        body.append(section)
+    if footer is not None:
+        body.append(footer)
+    return body
