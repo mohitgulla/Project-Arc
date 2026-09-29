@@ -267,13 +267,23 @@ class TestFixtureRun:
         # same slot: the dispatcher dedupes the whole run
         _, again = fixture_run(settings, routines, db=db)
         assert {o.status for o in again.outcomes} == {"duplicate"}
-        # later the same day: steps run, propose skips the existing (day, ticker)
+        # later the same day: steps run; E5.9 idea dedupe holds the repeat (same
+        # fingerprint, spot unchanged, regime unchanged -> dedupe_proposed)
         later = FIXTURE_NOW + _dt.timedelta(minutes=5)
         conn, report = fixture_run(settings, routines, db=db, now=later)
         assert len(report.proposals) == 1
         propose = next(o for o in report.outcomes if o.job == "propose")
-        assert "already proposed" in (propose.summary or "")
+        assert "repeat idea" in (propose.summary or "")
+        assert propose.metrics["dedupe"] == 1
         assert len(proposals_for_day(conn, "2026-09-25")) == 1
+        row = conn.execute(
+            "SELECT fingerprint, spot, regime, chain_run_id FROM proposals WHERE kind='open'"
+        ).fetchone()
+        assert row["fingerprint"].startswith("SPY|") and row["spot"] and row["chain_run_id"]
+        codes = {
+            r["reason_code"] for r in conn.execute("SELECT reason_code FROM decisions").fetchall()
+        }
+        assert "dedupe_proposed" in codes
 
     def test_fixtures_never_mint_token_even_with_secret(
         self,

@@ -1,0 +1,17 @@
+# Sector map for the portfolio context (E5.9, D33).
+#
+# The E5.7 symbol master carries no sector, so allocation-by-sector uses this
+# small fallback: seed universe + broad ETFs. Unknown tickers land in "unknown"
+# (still counted, so a concentration in unmapped names is visible, not hidden).
+# Adding a name is an edit here, not a code change.
+sectors:
+  broad_market: [SPY, QQQ, IWM, DIA, VTI, VOO]
+  technology: [AAPL, MSFT, NVDA, AMD, GOOGL, META, XLK, PLTR, CRM, ORCL, AVGO, INTC]
+  consumer_discretionary: [AMZN, TSLA, HD, NKE, SBUX, MCD]
+  financials: [JPM, BAC, XLF, GS, MS, WFC, C]
+  energy: [XOM, CVX, XLE, COP]
+  health_care: [UNH, JNJ, PFE, LLY, XLV]
+  industrials: [UFPT, CAT, BA, XLI]
+  communication: [NFLX, DIS, T, VZ]
+  utilities: [XLU]
+  real_estate: [XLRE]

@@ -1,0 +1,409 @@
+{
+  "$defs": {
+    "DirectorExclusion": {
+      "additionalProperties": false,
+      "description": "A candidate the Director will not trade, with its one-line reason (E5.7).",
+      "properties": {
+        "reason": {
+          "description": "One line: why this candidate is excluded",
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "reason"
+      ],
+      "title": "DirectorExclusion",
+      "type": "object"
+    },
+    "DirectorPortfolioView": {
+      "additionalProperties": false,
+      "description": "The Director's read of the open book (E5.9); ``notes`` is stored as a note.",
+      "properties": {
+        "notes": {
+          "default": "",
+          "description": "One or two lines on diversification and risk",
+          "title": "Notes",
+          "type": "string"
+        },
+        "verdict": {
+          "$ref": "#/$defs/PortfolioVerdict"
+        }
+      },
+      "required": [
+        "verdict"
+      ],
+      "title": "DirectorPortfolioView",
+      "type": "object"
+    },
+    "DirectorRankedItem": {
+      "description": "A single ticker ranked by the Director.",
+      "properties": {
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "evidence": {
+          "description": "Up to 3 short, grounded facts behind the pick, e.g. '8-K: buyback $50B, Sep 24', 'IV rank 18'. Extra items / characters are cut.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "portfolio_fit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortfolioFit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "E5.9 (D33), only when the book is not empty: diversifies | hedges | adds_concentration | neutral. The pipeline drops adds_concentration picks that push a flagged dimension over its threshold."
+        },
+        "rank": {
+          "description": "1 = highest conviction",
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "regime_context": {
+          "description": "Current regime assessment for this underlying",
+          "title": "Regime Context",
+          "type": "string"
+        },
+        "stance": {
+          "description": "bullish | bearish | neutral",
+          "title": "Stance",
+          "type": "string"
+        },
+        "suggested_structure_type": {
+          "description": "Suggested structure: vertical_spread | iron_condor | long_call | long_put",
+          "title": "Suggested Structure Type",
+          "type": "string"
+        },
+        "thesis": {
+          "description": "Director's thesis: why this ticker, what structure style",
+          "title": "Thesis",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "rank",
+        "thesis",
+        "regime_context",
+        "suggested_structure_type",
+        "stance",
+        "confidence"
+      ],
+      "title": "DirectorRankedItem",
+      "type": "object"
+    },
+    "DirectorThesisCheck": {
+      "additionalProperties": false,
+      "description": "Is an open position's original thesis still intact? Advisory for E6.4 (E5.9).",
+      "properties": {
+        "reason": {
+          "default": "",
+          "description": "One line: what changed, or why it still holds",
+          "title": "Reason",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ThesisStatus"
+        },
+        "structure_id": {
+          "title": "Structure Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "structure_id",
+        "status"
+      ],
+      "title": "DirectorThesisCheck",
+      "type": "object"
+    },
+    "MarketGuard": {
+      "additionalProperties": false,
+      "description": "What the guard decided and why (journaled, shown on the Director card).",
+      "properties": {
+        "checked": {
+          "description": "Checks that ran",
+          "items": {
+            "type": "string"
+          },
+          "title": "Checked",
+          "type": "array"
+        },
+        "opens_allowed": {
+          "title": "Opens Allowed",
+          "type": "boolean"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "enum": [
+                "market_unclear",
+                "market_data_missing"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason Code"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "regime": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Regime"
+        },
+        "regime_stickiness": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Regime Stickiness"
+        },
+        "vix": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VixReading"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "opens_allowed"
+      ],
+      "title": "MarketGuard",
+      "type": "object"
+    },
+    "NoTradeReason": {
+      "enum": [
+        "none",
+        "no_fit",
+        "too_volatile",
+        "unclear",
+        "budget",
+        "portfolio_full"
+      ],
+      "type": "string"
+    },
+    "PortfolioFit": {
+      "enum": [
+        "diversifies",
+        "hedges",
+        "adds_concentration",
+        "neutral"
+      ],
+      "type": "string"
+    },
+    "PortfolioVerdict": {
+      "enum": [
+        "balanced",
+        "concentrated",
+        "hedge_needed",
+        "reduce_risk"
+      ],
+      "type": "string"
+    },
+    "ThesisStatus": {
+      "enum": [
+        "intact",
+        "weakened",
+        "invalidated"
+      ],
+      "type": "string"
+    },
+    "VixReading": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "title": "As Of",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "vol_term",
+            "market"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "structure": {
+          "anyOf": [
+            {
+              "enum": [
+                "contango",
+                "flat",
+                "backwardation"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Structure"
+        },
+        "value": {
+          "exclusiveMinimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "as_of",
+        "source"
+      ],
+      "title": "VixReading",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Director ranked shortlist (v2, E5.7: every ranked name, exclusions, evidence).\n\n``budget`` is the Quant/Risk budget (``pipeline_max_shortlist``) in force when the\nDirector ran: the first ``budget`` ranked tickers get a structure; the rest stay\non the card as \"Ranked, not structured\". Never shown to the Director.",
+  "properties": {
+    "budget": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Budget"
+    },
+    "excluded": {
+      "description": "Candidates not ranked, each with a one-line reason",
+      "items": {
+        "$ref": "#/$defs/DirectorExclusion"
+      },
+      "title": "Excluded",
+      "type": "array"
+    },
+    "market_guard": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MarketGuard"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The deterministic market-conditions guard result for this run"
+    },
+    "market_regime": {
+      "description": "Overall market regime: risk_on | risk_off | transitional",
+      "title": "Market Regime",
+      "type": "string"
+    },
+    "no_trade_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NoTradeReason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Why the shortlist is empty: no_fit | too_volatile | unclear | budget | portfolio_full (none / null when something is ranked)"
+    },
+    "portfolio_view": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DirectorPortfolioView"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Only when the book is not empty: verdict + notes"
+    },
+    "session_notes": {
+      "description": "Director's summary of today's opportunity landscape",
+      "title": "Session Notes",
+      "type": "string"
+    },
+    "shortlist": {
+      "description": "Every candidate you would consider trading, best first (no cap)",
+      "items": {
+        "$ref": "#/$defs/DirectorRankedItem"
+      },
+      "title": "Shortlist",
+      "type": "array"
+    },
+    "suppressed": {
+      "description": "Ideas (ticker stance structure) the dedupe held back from the Director",
+      "items": {
+        "type": "string"
+      },
+      "title": "Suppressed",
+      "type": "array"
+    },
+    "thesis_checks": {
+      "description": "One per open structure when the book is not empty",
+      "items": {
+        "$ref": "#/$defs/DirectorThesisCheck"
+      },
+      "title": "Thesis Checks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "shortlist",
+    "market_regime",
+    "session_notes"
+  ],
+  "title": "ShortlistPayload",
+  "type": "object"
+}

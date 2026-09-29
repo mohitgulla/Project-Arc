@@ -121,6 +121,18 @@ class ReasonCode(StrEnum):
     # daily options order budget (E6.5, D32)
     BUDGET_RESTRICTIVE = "budget_restrictive"
     ORDER_BUDGET_EXHAUSTED = "order_budget_exhausted"
+    # E5.9 (D33): portfolio-aware Director, idea dedupe, explicit no-trade
+    DROP_CONCENTRATION = "drop_concentration"  # adds_concentration over a flagged threshold
+    DROP_AT_CAP = "drop_at_cap"  # underlying already at the per-underlying max-loss cap
+    DEDUPE_EXECUTED = "dedupe_executed"  # same idea is open / closed within the cooldown
+    DEDUPE_PROPOSED = "dedupe_proposed"  # same idea proposed within the cooldown
+    DEDUPE_REJECTED = "dedupe_rejected"  # same idea rejected by the owner within the cooldown
+    DEDUPE_OVERRIDE = "dedupe_override"  # re-admitted: spot moved or the regime changed
+    DIRECTOR_NO_TRADE = "director_no_trade"  # the Director chose an empty shortlist
+    MARKET_UNCLEAR = "market_unclear"  # VIX / term structure / regime guard: no new opens
+    MARKET_DATA_MISSING = "market_data_missing"  # no VIX reading: fail closed for new opens
+    PORTFOLIO_VIEW = "portfolio_view"  # the Director's read of the open book (noted)
+    THESIS_CHECK = "thesis_check"  # the Director's check of an open position's thesis
     # sizing (D18)
     SIZING_OK = "sizing:ok"
     SIZING_CAPPED = "sizing:capped"

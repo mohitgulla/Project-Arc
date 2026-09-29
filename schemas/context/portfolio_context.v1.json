@@ -1,0 +1,559 @@
+{
+  "$defs": {
+    "GreekUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "cap": {
+          "title": "Cap",
+          "type": "number"
+        },
+        "net": {
+          "title": "Net",
+          "type": "number"
+        },
+        "pct_used": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "|net| / cap; None when the cap is 0",
+          "title": "Pct Used"
+        }
+      },
+      "required": [
+        "net",
+        "cap"
+      ],
+      "title": "GreekUsage",
+      "type": "object"
+    },
+    "Greeks": {
+      "description": "Position-level Greeks.",
+      "properties": {
+        "delta": {
+          "default": 0.0,
+          "title": "Delta",
+          "type": "number"
+        },
+        "gamma": {
+          "default": 0.0,
+          "title": "Gamma",
+          "type": "number"
+        },
+        "rho": {
+          "default": 0.0,
+          "title": "Rho",
+          "type": "number"
+        },
+        "theta": {
+          "default": 0.0,
+          "title": "Theta",
+          "type": "number"
+        },
+        "vanna": {
+          "default": 0.0,
+          "title": "Vanna",
+          "type": "number"
+        },
+        "vega": {
+          "default": 0.0,
+          "title": "Vega",
+          "type": "number"
+        },
+        "volga": {
+          "default": 0.0,
+          "title": "Volga",
+          "type": "number"
+        }
+      },
+      "title": "Greeks",
+      "type": "object"
+    },
+    "PortfolioAccount": {
+      "additionalProperties": false,
+      "properties": {
+        "buying_power": {
+          "title": "Buying Power",
+          "type": "number"
+        },
+        "cash": {
+          "title": "Cash",
+          "type": "number"
+        },
+        "day_pnl": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "equity \u2212 last_equity",
+          "title": "Day Pnl"
+        },
+        "equity": {
+          "title": "Equity",
+          "type": "number"
+        },
+        "halted": {
+          "title": "Halted",
+          "type": "boolean"
+        },
+        "open_pnl_total": {
+          "default": 0.0,
+          "description": "Sum of open positions' mark P&L ($)",
+          "title": "Open Pnl Total",
+          "type": "number"
+        },
+        "order_budget_tier": {
+          "title": "Order Budget Tier",
+          "type": "string"
+        }
+      },
+      "required": [
+        "equity",
+        "cash",
+        "buying_power",
+        "halted",
+        "order_budget_tier"
+      ],
+      "title": "PortfolioAccount",
+      "type": "object"
+    },
+    "PortfolioAggregates": {
+      "additionalProperties": false,
+      "properties": {
+        "at_cap_underlyings": {
+          "description": "Names at the per-underlying max-loss cap",
+          "items": {
+            "type": "string"
+          },
+          "title": "At Cap Underlyings",
+          "type": "array"
+        },
+        "by_expiry_bucket": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "By Expiry Bucket",
+          "type": "object"
+        },
+        "by_sector": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "By Sector",
+          "type": "object"
+        },
+        "by_stance": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "By Stance",
+          "type": "object"
+        },
+        "by_underlying": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "share of max loss",
+          "title": "By Underlying",
+          "type": "object"
+        },
+        "delta": {
+          "$ref": "#/$defs/GreekUsage"
+        },
+        "flagged_expiry_buckets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Flagged Expiry Buckets",
+          "type": "array"
+        },
+        "flagged_sectors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Flagged Sectors",
+          "type": "array"
+        },
+        "flagged_stances": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Flagged Stances",
+          "type": "array"
+        },
+        "flags": {
+          "items": {
+            "enum": [
+              "over_concentrated_sector",
+              "stance_skew",
+              "expiry_cluster",
+              "delta_near_cap",
+              "vega_near_cap"
+            ],
+            "type": "string"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "gamma": {
+          "title": "Gamma",
+          "type": "number"
+        },
+        "greeks_source": {
+          "default": "market",
+          "enum": [
+            "market",
+            "as_opened"
+          ],
+          "title": "Greeks Source",
+          "type": "string"
+        },
+        "hhi_underlying": {
+          "default": 0.0,
+          "description": "\u03a3 share\u00b2 over underlyings (1 = one name)",
+          "title": "Hhi Underlying",
+          "type": "number"
+        },
+        "max_positions": {
+          "title": "Max Positions",
+          "type": "integer"
+        },
+        "positions": {
+          "title": "Positions",
+          "type": "integer"
+        },
+        "theta": {
+          "title": "Theta",
+          "type": "number"
+        },
+        "total_max_loss": {
+          "title": "Total Max Loss",
+          "type": "number"
+        },
+        "vega": {
+          "$ref": "#/$defs/GreekUsage"
+        }
+      },
+      "required": [
+        "total_max_loss",
+        "delta",
+        "vega",
+        "gamma",
+        "theta",
+        "positions",
+        "max_positions"
+      ],
+      "title": "PortfolioAggregates",
+      "type": "object"
+    },
+    "PortfolioPosition": {
+      "additionalProperties": false,
+      "description": "One open structure as the Director sees it (money in $ for all contracts).",
+      "properties": {
+        "contracts": {
+          "title": "Contracts",
+          "type": "integer"
+        },
+        "dte": {
+          "title": "Dte",
+          "type": "integer"
+        },
+        "entry_net": {
+          "description": "Per share, + debit / \u2212 credit",
+          "title": "Entry Net",
+          "type": "number"
+        },
+        "exit_pending": {
+          "default": false,
+          "title": "Exit Pending",
+          "type": "boolean"
+        },
+        "expiry_bucket": {
+          "enum": [
+            "0-7",
+            "8-21",
+            "22-45",
+            "46+"
+          ],
+          "title": "Expiry Bucket",
+          "type": "string"
+        },
+        "greeks": {
+          "$ref": "#/$defs/Greeks",
+          "description": "Contribution, all contracts"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Kind"
+        },
+        "mark_pnl_per_share": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mark Pnl Per Share"
+        },
+        "mark_pnl_total": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mark Pnl Total"
+        },
+        "max_loss_pct_equity": {
+          "title": "Max Loss Pct Equity",
+          "type": "number"
+        },
+        "max_loss_total": {
+          "title": "Max Loss Total",
+          "type": "number"
+        },
+        "opened_at": {
+          "title": "Opened At",
+          "type": "string"
+        },
+        "pct_of_max_gain": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pct Of Max Gain"
+        },
+        "pct_of_max_loss": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pct Of Max Loss"
+        },
+        "remaining_ev": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "$ per unit (E6.4 review)",
+          "title": "Remaining Ev"
+        },
+        "review_source": {
+          "default": "none",
+          "enum": [
+            "position_review",
+            "computed",
+            "none"
+          ],
+          "title": "Review Source",
+          "type": "string"
+        },
+        "sector": {
+          "title": "Sector",
+          "type": "string"
+        },
+        "signals": {
+          "description": "Fired exit signals (kinds)",
+          "items": {
+            "type": "string"
+          },
+          "title": "Signals",
+          "type": "array"
+        },
+        "stance": {
+          "$ref": "#/$defs/Stance"
+        },
+        "structure_id": {
+          "title": "Structure Id",
+          "type": "string"
+        },
+        "thesis": {
+          "$ref": "#/$defs/PortfolioThesis"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "structure_id",
+        "ticker",
+        "sector",
+        "kind",
+        "stance",
+        "dte",
+        "expiry_bucket",
+        "contracts",
+        "entry_net",
+        "max_loss_total",
+        "max_loss_pct_equity",
+        "opened_at"
+      ],
+      "title": "PortfolioPosition",
+      "type": "object"
+    },
+    "PortfolioThesis": {
+      "additionalProperties": false,
+      "properties": {
+        "director": {
+          "default": "",
+          "description": "The Director's thesis when the position was proposed",
+          "title": "Director",
+          "type": "string"
+        },
+        "scout_catalyst": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scout Catalyst"
+        },
+        "scout_catalyst_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scout Catalyst Date"
+        },
+        "scout_confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scout Confidence"
+        },
+        "scout_stance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Stance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "PortfolioThesis",
+      "type": "object"
+    },
+    "Stance": {
+      "description": "Directional stance of a candidate.",
+      "enum": [
+        "bullish",
+        "bearish",
+        "neutral"
+      ],
+      "title": "Stance",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "E5.9 (D33): the Director's deterministic view of the open book (subject ``session``).",
+  "properties": {
+    "account": {
+      "$ref": "#/$defs/PortfolioAccount"
+    },
+    "aggregates": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PortfolioAggregates"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "as_of": {
+      "format": "date-time",
+      "title": "As Of",
+      "type": "string"
+    },
+    "empty": {
+      "title": "Empty",
+      "type": "boolean"
+    },
+    "positions": {
+      "items": {
+        "$ref": "#/$defs/PortfolioPosition"
+      },
+      "title": "Positions",
+      "type": "array"
+    },
+    "thresholds": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Thresholds",
+      "type": "object"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "as_of",
+    "empty",
+    "account"
+  ],
+  "title": "PortfolioContextPayload",
+  "type": "object"
+}

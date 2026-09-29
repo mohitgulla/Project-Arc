@@ -6,6 +6,8 @@ Schemas are referenced by the SKILL.md files and used in golden tests.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from arc.exits.model import ExitSummary
@@ -78,6 +80,15 @@ class StoryDigestOutput(BaseModel):
 _EVIDENCE_MAX_ITEMS = 3
 _EVIDENCE_MAX_CHARS = 160
 
+# E5.9 (D33): portfolio-aware Director vocabulary. Deterministic code reads these
+# values; the free text next to them goes to `note` context entries, never to the gate.
+type PortfolioFit = Literal["diversifies", "hedges", "adds_concentration", "neutral"]
+type PortfolioVerdict = Literal["balanced", "concentrated", "hedge_needed", "reduce_risk"]
+type ThesisStatus = Literal["intact", "weakened", "invalidated"]
+type NoTradeReason = Literal[
+    "none", "no_fit", "too_volatile", "unclear", "budget", "portfolio_full"
+]
+
 
 class DirectorRankedItem(BaseModel):
     """A single ticker ranked by the Director."""
@@ -100,6 +111,15 @@ class DirectorRankedItem(BaseModel):
         ),
     )
 
+    portfolio_fit: PortfolioFit | None = Field(
+        None,
+        description=(
+            "E5.9 (D33), only when the book is not empty: diversifies | hedges | "
+            "adds_concentration | neutral. The pipeline drops adds_concentration picks that "
+            "push a flagged dimension over its threshold."
+        ),
+    )
+
     @field_validator("evidence", mode="before")
     @classmethod
     def _trim_evidence(cls, v: object) -> object:
@@ -119,6 +139,25 @@ class DirectorExclusion(BaseModel):
     reason: str = Field(..., min_length=1, description="One line: why this candidate is excluded")
 
 
+class DirectorPortfolioView(BaseModel):
+    """The Director's read of the open book (E5.9); ``notes`` is stored as a note."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: PortfolioVerdict
+    notes: str = Field("", description="One or two lines on diversification and risk")
+
+
+class DirectorThesisCheck(BaseModel):
+    """Is an open position's original thesis still intact? Advisory for E6.4 (E5.9)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    structure_id: str
+    status: ThesisStatus
+    reason: str = Field("", description="One line: what changed, or why it still holds")
+
+
 class DirectorOutput(BaseModel):
     """Director persona output: every candidate ranked or excluded with a reason."""
 
@@ -136,6 +175,22 @@ class DirectorOutput(BaseModel):
     )
     session_notes: str = Field(
         ..., description="Director's summary of today's opportunity landscape"
+    )
+    # E5.9 (D33): portfolio assessment. Every field defaults, so the empty-book reply
+    # (and every stored v2 shortlist) validates unchanged.
+    portfolio_view: DirectorPortfolioView | None = Field(
+        None, description="Only when the book is not empty: verdict + notes"
+    )
+    thesis_checks: list[DirectorThesisCheck] = Field(
+        default_factory=list,
+        description="One per open structure when the book is not empty",
+    )
+    no_trade_reason: NoTradeReason | None = Field(
+        None,
+        description=(
+            "Why the shortlist is empty: no_fit | too_volatile | unclear | budget | "
+            "portfolio_full (none / null when something is ranked)"
+        ),
     )
 
 

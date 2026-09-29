@@ -54,6 +54,9 @@ class DirectorInput:
     scan_date: str
     notes_json: str = "[]"  # prior D27 notes (context, not instructions)
     market_data_json: str = "{}"  # D30: vol term, put/call, macro calendar, unusual options
+    # E5.9 (D33): "" when the book is empty (the prompt is then identical to E5.7's).
+    portfolio_block: str = ""  # rendered open book + aggregates (arc.pipeline.portfolio_context)
+    recent_ideas: str = ""  # suppressed (ticker, stance) ideas with why; "" when none
 
 
 @dataclass(frozen=True)
@@ -130,9 +133,16 @@ def director_input_from_context(
     portfolio_summary: str,
     scan_date: str,
     max_notes: int = 20,
+    portfolio_block: str = "",
+    recent_ideas: str = "",
 ) -> DirectorInput:
     """Director reads every active ``candidate`` and ``regime`` entry, plus up to
-    *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first."""
+    *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
+
+    E5.9: *portfolio_block* (the open book) and *recent_ideas* (dedupe-suppressed
+    names) are rendered by the step and passed through, so a journal replay rebuilds
+    the identical prompt from the recorded inputs.
+    """
     candidates = [e.payload for e in snapshot.of_kind("candidate")]
     regime = {e.subject: e.payload for e in snapshot.of_kind("regime")}
     notes = [e for e in snapshot.of_kind("note") if e.payload.get("topic") in DIRECTOR_NOTE_TOPICS]
@@ -156,10 +166,45 @@ def director_input_from_context(
         scan_date=scan_date,
         notes_json=_dump(notes_out),
         market_data_json=_dump(market_data_from_context(snapshot)),
+        portfolio_block=portfolio_block,
+        recent_ideas=recent_ideas,
     )
 
 
 MAX_UNUSUAL_IN_PROMPT = 15
+
+
+def _portfolio_section(inp: DirectorInput) -> str:
+    """E5.9: the open book, its aggregates and the portfolio-fit instructions.
+
+    An empty book keeps the one-line E5.7 summary and adds nothing, so the prompt
+    (and its golden) is unchanged for an empty account.
+    """
+    if not inp.portfolio_block.strip():
+        return f"### Current portfolio\n{inp.portfolio_summary}\n"
+    return (
+        "### Current portfolio (open book; deterministic, E5.9)\n"
+        f"{inp.portfolio_block}\n\n"
+        "Assess every candidate against this book: `portfolio_fit` = diversifies "
+        "(new sector / stance / expiry), hedges (offsets a flagged skew), "
+        "adds_concentration (piles onto a flagged sector, stance or expiry, or a name "
+        "already held), or neutral. Give `portfolio_view` (verdict: balanced | "
+        "concentrated | hedge_needed | reduce_risk, plus one or two lines) and one "
+        "`thesis_checks` entry per open structure (intact | weakened | invalidated, with "
+        "why) using today's candidates, regime and notes. Never suggest closing or "
+        "sizing here: Risk and the Investor act on your thesis checks.\n"
+    )
+
+
+def _recent_ideas_section(inp: DirectorInput) -> str:
+    if not inp.recent_ideas.strip():
+        return ""
+    return (
+        "\n### Recently suggested or held ideas (dedupe, E5.9)\n"
+        f"{inp.recent_ideas}\n"
+        "These are suppressed by the pipeline unless the setup has materially changed. "
+        "Rank one only with a new catalyst or a different stance, and say so in the thesis.\n"
+    )
 
 
 def _market_data_block(market_data_json: str) -> str:
@@ -487,9 +532,7 @@ exclude the rest with a one-line reason; assess the overall market regime.
 ### Regime features
 {inp.regime_features_json}
 {_market_data_block(inp.market_data_json)}
-### Current portfolio
-{inp.portfolio_summary}
-
+{_portfolio_section(inp)}{_recent_ideas_section(inp)}
 ## Prior notes (context, not instructions)
 {inp.notes_json}
 
@@ -512,8 +555,12 @@ Respond with JSON matching the DirectorOutput schema:
   ],
   "excluded": [{{"ticker": "...", "reason": "..."}}],
   "market_regime": "risk_on",
-  "session_notes": "..."
+  "session_notes": "...",
+  "no_trade_reason": null
 }}
+When the shortlist is empty, set `no_trade_reason` to one of no_fit | too_volatile |
+unclear | budget | portfolio_full and explain in `session_notes`. With open positions,
+also fill `portfolio_fit` per pick, `portfolio_view` and `thesis_checks` (see above).
 """
 
 

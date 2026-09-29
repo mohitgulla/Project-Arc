@@ -46,6 +46,8 @@
       "enum": [
         "thesis",
         "regime_view",
+        "portfolio_view",
+        "thesis_check",
         "observation",
         "risk_flag",
         "lesson",
