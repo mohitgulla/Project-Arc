@@ -38,3 +38,10 @@ def test_bullets_and_footer() -> None:
 
 def test_summary_skips_empty_parts() -> None:
     assert B.summary("a", "", "b")["elements"][0]["text"] == "a · b"
+
+
+def test_code_block_fences_and_escapes_inner_fences() -> None:
+    """E5.5b: ``[Routines]`` lines go in a ``` fence; inner fences can't close it."""
+    assert B.code_block("[Routines] propose ✓ ok") == "```\n[Routines] propose ✓ ok\n```"
+    fenced = B.code_block("a ``` b\n")
+    assert fenced.count("```") == 2 and fenced == "```\na `\u200b`\u200b` b\n```"
