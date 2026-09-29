@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Annotated
 
 import structlog
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, PrivateAttr, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from arc.account_profiles import DEFAULT_ACCOUNT_PROFILE, AccountProfile, load_account_profiles
@@ -546,6 +546,23 @@ class ArcSettings(BaseSettings):
         description="Ticker universe for scanning.",
     )
 
+    # -- Control panel (D26, E8.5) --------------------------------------------
+    config_version: int | None = Field(
+        default=None,
+        description=(
+            "Set by arc.control.effective_settings(): the latest config_changes id these "
+            "settings include (0 = no override ever). None = built without the override store. "
+            "Recorded on every routine run and run manifest. Never tunable."
+        ),
+    )
+    # YAML-file overrides (target -> {path: value}) applied by arc.control; read them
+    # through arc.control.exit_config()/cost_model()/effective_routines().
+    _yaml_overrides: dict[str, dict[tuple[str, ...], object]] = PrivateAttr(default_factory=dict)
+
+    def yaml_overrides(self, target: str) -> dict[tuple[str, ...], object]:
+        """D26 overrides for one YAML config (``exits``, ``costs``, ...); ``{}`` if none."""
+        return dict(self._yaml_overrides.get(target, {}))
+
     # -- Validators ----------------------------------------------------------
 
     @field_validator(
@@ -628,10 +645,13 @@ class ArcSettings(BaseSettings):
 
     def with_profile(self, name: str) -> ArcSettings:
         """A copy of these settings under account profile *name* (re-resolved)."""
+        profiles = load_account_profiles(
+            self.account_profiles_file, overrides=self.yaml_overrides("account_profiles")
+        )
         return self.model_copy(
             update={
                 "account_profile": name,
-                "account_profile_spec": load_account_profiles(self.account_profiles_file).get(name),
+                "account_profile_spec": profiles.get(name),
             }
         )
 

@@ -211,6 +211,27 @@ def test_evaluate_writes_reviews_and_exits_propose_through_gate_and_approval(
     assert _run(conn, env, "investor.exits").metrics["proposed"] == 0
 
 
+def test_control_panel_exit_override_reaches_position_manager(conn: sqlite3.Connection) -> None:
+    """D26: `!arc set exits.vertical_credit.take_profit` must reach positions.evaluate."""
+    from arc.control.service import ControlService
+
+    env = _env_with(_held(BULL_PUT))
+    _open(conn, env, BULL_PUT, "-0.90")  # ~98% of max gain: fires at the 50% default
+    svc = ControlService(
+        conn,
+        base=settings(approver_slack_user_ids=["U0C5KUMH28G"]),
+        now=lambda: NOW,
+        is_halted=lambda: False,
+    )
+    r = svc.set("exits.vertical_credit.take_profit", "100%", actor="U0C5KUMH28G", source="slack")
+    assert r.pending is not None  # holding longer is the riskier direction
+    svc.confirm(r.pending.code, actor="U0C5KUMH28G", source="slack")
+    spec = SPECS["positions.evaluate"]
+    ev = evaluate(_ctx(conn, "positions.evaluate", spec, NOW, svc.settings()), env)
+    assert ev.metrics["reviewed"] == 1
+    assert ev.metrics.get("signal_profit_target", 0) == 0
+
+
 def test_exits_halted_proposes_nothing(conn: sqlite3.Connection) -> None:
     from arc.gate.halt import HaltSwitch
     from arc.store.repos import HaltRepo

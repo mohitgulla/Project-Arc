@@ -39,12 +39,15 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arc.models import StructureKind
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 __all__ = [
     "DEFAULT_ACCOUNT_PROFILE",
@@ -173,8 +176,16 @@ class AccountProfiles(BaseModel):
             raise KeyError(msg) from None
 
 
-def load_account_profiles(path: Path | str | None = None) -> AccountProfiles:
-    """Load and validate ``config/account_profiles.yaml`` (or *path*)."""
+def load_account_profiles(
+    path: Path | str | None = None, *, overrides: Mapping[tuple[str, ...], object] | None = None
+) -> AccountProfiles:
+    """Load and validate ``config/account_profiles.yaml`` (or *path*).
+
+    *overrides* (D26, ``path -> value`` into the file, e.g. a profile's DTE window)
+    patch it before validation.
+    """
+    from arc.utils.yamlpatch import apply_overrides
+
     p = Path(path) if path is not None else DEFAULT_PROFILES_PATH
     data = yaml.safe_load(p.read_text()) or {}
-    return AccountProfiles.model_validate(data)
+    return AccountProfiles.model_validate(apply_overrides(data, overrides))

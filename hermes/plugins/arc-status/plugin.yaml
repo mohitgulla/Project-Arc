@@ -1,0 +1,4 @@
+name: arc-status
+version: 0.1.0
+description: "/arc — Project Arc board status: progress, running/blocked cards with reasons, open PRs, up-next, with links to card threads."
+author: mohit

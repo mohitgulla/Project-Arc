@@ -42,9 +42,13 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 __all__ = [
     "DEFAULT_COSTS_PATH",
@@ -193,10 +197,17 @@ class CostModel(BaseModel):
         )
 
 
-def load_cost_model(path: Path | str | None = None) -> CostModel:
-    """Load and validate the cost config (default: ``config/costs.yaml``)."""
+def load_cost_model(
+    path: Path | str | None = None, *, overrides: Mapping[tuple[str, ...], object] | None = None
+) -> CostModel:
+    """Load and validate the cost config (default: ``config/costs.yaml``).
+
+    *overrides* (D26, ``path -> value`` into the file) patch it before validation.
+    """
+    from arc.utils.yamlpatch import apply_overrides
+
     p = Path(path) if path is not None else DEFAULT_COSTS_PATH
-    data = yaml.safe_load(p.read_text()) or {}
+    data = apply_overrides(yaml.safe_load(p.read_text()) or {}, overrides)
     return CostModel.model_validate(data.get("costs", data))
 
 

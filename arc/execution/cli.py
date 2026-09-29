@@ -75,6 +75,9 @@ def run_execute(args: argparse.Namespace, *, broker: BrokerAdapter | None = None
 
     conn = connect(args.db or settings.db_path)
     migrate(conn)
+    from arc.control import effective_settings
+
+    settings = effective_settings(conn, base=settings)  # D26 overrides (ladder, caps)
     phash = _resolve(conn, args.proposal)
     if phash is None:
         _out({"status": "refused", "detail": f"no unique approval request for {args.proposal!r}"})

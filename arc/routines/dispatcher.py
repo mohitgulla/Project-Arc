@@ -163,10 +163,25 @@ class Dispatcher:
         self.state = RoutineStateRepo(conn)
         self.store = ContextStore(conn)
         self._is_halted = is_halted or self._default_halted
-        self._settings_factory = settings_factory
+        # D26: without an explicit factory every run reads the effective config
+        # (defaults < YAML/env < config_changes overrides) from this DB.
+        self._settings_factory = settings_factory or self._effective_settings
         # E5.2b: fresh wall clock handed to steps (None = the tick's frozen ``now``).
         self._clock = clock
         self._manifest_alerted = False
+
+    def _effective_settings(self) -> ArcSettings:
+        from arc.control.effective import effective_settings
+
+        return effective_settings(self.conn)
+
+    def _config_version(self) -> int | None:
+        from arc.control.store import ConfigChangeRepo
+
+        try:
+            return ConfigChangeRepo(self.conn).version()
+        except Exception:  # noqa: BLE001 - store not migrated: no version to record
+            return None
 
     def _default_halted(self) -> bool:
         # E3.3 kill switch; fails closed (halted) if the halt store is unreadable.
@@ -462,6 +477,8 @@ class Dispatcher:
         ):
             trace = _RunTrace(event_id=event.id if event else None, parent_run_id=parent_run_id)
             started, t0 = now_et(), time.monotonic()
+            # D26: the config_changes version this run executes under (E7.4 attribution).
+            self.runs.set_config_version(run.run_id, self._config_version())
             try:
                 return self._execute_bound(run, now=now, event=event, note=note, trace=trace)
             finally:

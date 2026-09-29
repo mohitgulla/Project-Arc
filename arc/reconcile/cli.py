@@ -44,6 +44,9 @@ def run_reconcile(args: argparse.Namespace, *, broker: BrokerAdapter | None = No
     settings = get_settings()
     conn = connect(args.db or settings.db_path)
     migrate(conn)
+    from arc.control import effective_settings
+
+    settings = effective_settings(conn, base=settings)  # D26 overrides
     settle = None
     if broker is None:
         from arc.broker.alpaca_paper import AlpacaPaperBroker

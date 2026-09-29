@@ -365,6 +365,50 @@ The live check from a second tailnet device (tower loads, dashboard login, Chat 
 reply, Desktop "Remote gateway" connects, `remote_access` green) is owner-gated and
 runs after steps 1–6.
 
+### 5.8 Control panel (E8.5, D26)
+
+Owner-only runtime config from Slack (`@hermes !arc …`) or the shell (`arc config …`).
+The plugin shells out to the CLI; the CLI owns every rule.
+
+| Slack | CLI | What |
+|---|---|---|
+| `!arc config [group\|key]` | `arc config show [group\|key]` | grouped summary; detail = value, default, bounds, hard ceiling, last change |
+| `!arc set <key> <value> [-- reason]` | `arc config set <key> <value> [--reason R]` | change a key |
+| `!arc profile <name>` | `arc config profile <name>` | shortcut for `account_profile` |
+| `!arc diff` | `arc config diff` | overrides vs the file/env default |
+| `!arc history [key]` | `arc config history [key]` | change log, newest first |
+| `!arc revert <change_id\|key>` | `arc config revert <ref>` | undo a change / reset a key |
+| `!arc confirm <code>` / `cancel <code>` | `arc config confirm\|cancel <code>` | riskier-change confirm step (also buttons) |
+
+- **Registry** (`arc/control/registry.py`, `arc config keys`): every tunable has a type,
+  bounds/choices, risk direction and a code-level hard ceiling Slack cannot exceed.
+  Never tunable: `ARC_ENV`, gate code, secrets, paths, `config_version`.
+  `!arc config` lists every key grouped (account, universe, risk, entries incl. each
+  profile's DTE window, exits, positions, execution, costs, approvals, routines);
+  categorical keys show their options inline, e.g. `account_profile = cash_debit
+  (options: cash_long_only | cash_debit | margin)`.
+- **Adding a knob** (any card): add the `ArcSettings` field / YAML path to the registry,
+  or list it in `NOT_EXPOSED` with a reason. `tests/test_control.py::
+  test_every_setting_is_classified_tunable_or_not` fails otherwise. Code that reads
+  exits/costs must go through `arc.control.effective.exit_config|cost_model(settings)`,
+  not `load_exit_config()`, or Slack overrides won't reach it.
+- **Owner-only**: the Slack user id (from the gateway event, never message text) must be
+  in `ARC_APPROVER_SLACK_USER_IDS` from `~/.hermes/.env`. A local shell (`--actor local`)
+  counts as the owner. Refusals are logged.
+- **Riskier-direction** changes (raise a cap, loosen/remove a stop, `margin`, add a
+  ticker, `auto_approve.paper|live` on, disable a routine) create a pending change with a
+  6-char code and a 10-minute TTL; safer/neutral changes apply immediately.
+- **Audit**: `config_changes` is append-only (triggers); reverts are new rows. The latest
+  id is the `config_version` every `routine_runs` row and run manifest records.
+- **Applies at the next tick**, no restart: the tick, `arc propose`, approvals,
+  execution, reconcile and exits read `arc.control.effective_settings()` (defaults <
+  YAML/env < DB overrides); YAML keys (exits, costs, profiles, routines) patch the raw
+  YAML before pydantic validation.
+- **Install / update the plugin** (repo is the source of truth):
+  `cp -r hermes/plugins/arc-status ~/.hermes/plugins/`. The slash command reloads live;
+  the Confirm/Cancel buttons need one gateway restart (when no kanban worker runs).
+  Without the restart, type `!arc confirm <code>`.
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.

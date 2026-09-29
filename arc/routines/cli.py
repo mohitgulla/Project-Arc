@@ -148,7 +148,15 @@ def _dispatcher(
     # proposal expiry are judged when the step runs, not when the tick started.
     # ``--now`` replays keep the frozen time for every step.
     clock = now_et if not dry and not getattr(args, "now", None) else None
-    return _Dispatcher(conn, _load(args), locks=locks, notifier=notifier, clock=clock)
+    routines = _effective_load(args, conn)
+    return _Dispatcher(conn, routines, locks=locks, notifier=notifier, clock=clock)
+
+
+def _effective_load(args: argparse.Namespace, conn: sqlite3.Connection) -> RoutinesConfig:
+    """routines.yaml with D26 routine overrides (enable/cadence) from *conn*."""
+    from arc.control.effective import effective_routines
+
+    return effective_routines(conn, args.config)
 
 
 def _approval_sweep(
@@ -160,11 +168,11 @@ def _approval_sweep(
     """
     from arc.approvals.cli import make_service
     from arc.approvals.service import SweepReport
-    from arc.config import get_settings
+    from arc.control import effective_settings
 
     try:
         no_slack = bool(getattr(args, "no_slack", False))
-        svc = make_service(conn, get_settings(), slack=not no_slack)
+        svc = make_service(conn, effective_settings(conn), slack=not no_slack)
         if no_slack:
             return SweepReport([], [], svc.expire_due(now)).as_json()
         return svc.sweep(now).as_json()

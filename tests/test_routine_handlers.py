@@ -164,8 +164,9 @@ def test_scout_persona_writes_candidates_and_metrics(conn: sqlite3.Connection) -
 
 
 def test_settings_default_factory(conn: sqlite3.Connection) -> None:
+    """No factory: the D26 effective settings for this DB, computed once per run."""
     ctx = _ctx(conn, "rss")
     ctx.settings_factory = None
-    with mock.patch("arc.config.get_settings", return_value=ArcSettings()) as gs:
+    with mock.patch("arc.control.effective.effective_settings", return_value=ArcSettings()) as eff:
         assert ctx.settings is ctx.settings
-    gs.assert_called_once()
+    eff.assert_called_once_with(conn)
