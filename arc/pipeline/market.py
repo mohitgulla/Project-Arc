@@ -19,6 +19,7 @@ from decimal import ROUND_CEILING, Decimal
 from typing import TYPE_CHECKING
 
 import structlog
+from pydantic import BaseModel, ConfigDict
 
 from arc.gate.inputs import AccountSnapshot, ClosedLot, MarketSnapshot, Portfolio, Position, Quote
 from arc.models import Greeks, Leg, LegIntent
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
     from arc.broker.base import AccountInfo, BrokerPosition
+    from arc.config import ArcSettings
     from arc.data.base import MarketDataProvider, OptionContract
     from arc.models import Structure
 
@@ -38,10 +40,13 @@ log = structlog.get_logger(__name__)
 
 __all__ = [
     "ETF_UNDERLYINGS",
+    "LegQuote",
     "PortfolioError",
     "PricedStructure",
     "account_snapshot",
     "build_portfolio",
+    "close_quote_sanity",
+    "curve_mid",
     "limit_price",
     "market_snapshot",
     "next_earnings",
@@ -263,11 +268,39 @@ def build_portfolio(
 # ---------------------------------------------------------------------------
 
 
+class LegQuote(BaseModel):
+    """One leg's quote evidence, as used to price a structure (E6.2a).
+
+    ``curve_mid`` is the leg's fair mid read off the expiry's strike curve
+    (:func:`curve_mid`), ``None`` when the chain has too few neighbours.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    symbol: str
+    side: LegIntent
+    ratio: int
+    bid: float | None
+    ask: float | None
+    mid: float | None
+    bid_size: float | None = None
+    ask_size: float | None = None
+    quote_ts: _dt.datetime | None = None
+    spread_pct: float | None = None
+    curve_mid: float | None = None
+
+    @property
+    def sign(self) -> int:
+        """+1 for a leg bought, -1 for a leg sold (per-share net convention)."""
+        return self.ratio if self.side == LegIntent.LONG else -self.ratio
+
+
 class PricedStructure:
     """A structure re-priced at mid from fresh quotes, plus the gate's quote map.
 
     ``spot`` and ``atm_iv`` (the expiry's ATM IV, ``None`` if the chain has no IVs)
-    feed the E2.4 exit model.
+    feed the E2.4 exit model. ``curve`` holds each leg's strike-curve fair mid
+    (E6.2a quote check).
     """
 
     def __init__(
@@ -278,12 +311,14 @@ class PricedStructure:
         spot: float | None = None,
         atm_iv: float | None = None,
         spot_as_of: _dt.datetime | None = None,
+        curve: dict[str, float | None] | None = None,
     ) -> None:
         self.structure = structure
         self.contracts = contracts
         self.spot = spot
         self.atm_iv = atm_iv
         self.spot_as_of = spot_as_of
+        self.curve = curve or {}
 
     def leg_spreads(self) -> dict[str, float]:
         """Quoted ask − bid per leg (per share)."""
@@ -292,6 +327,128 @@ class PricedStructure:
             for k, c in self.contracts.items()
             if c.ask is not None and c.bid is not None
         }
+
+    def leg_quotes(self) -> list[LegQuote]:
+        """Per-leg quote evidence (bid, ask, sizes, quote time, spread %, curve mid)."""
+        out: list[LegQuote] = []
+        for leg in self.structure.legs:
+            c = self.contracts.get(leg.occ_symbol)
+            mid = c.mid if c is not None else None
+            spread_pct = (
+                (c.ask - c.bid) / mid
+                if c is not None and c.bid is not None and c.ask is not None and mid
+                else None
+            )
+            out.append(
+                LegQuote(
+                    symbol=leg.occ_symbol,
+                    side=leg.side,
+                    ratio=leg.ratio,
+                    bid=c.bid if c is not None else None,
+                    ask=c.ask if c is not None else None,
+                    mid=mid,
+                    bid_size=c.bid_size if c is not None else None,
+                    ask_size=c.ask_size if c is not None else None,
+                    quote_ts=c.quote_timestamp if c is not None else None,
+                    spread_pct=spread_pct,
+                    curve_mid=self.curve.get(leg.occ_symbol),
+                )
+            )
+        return out
+
+
+def curve_mid(chain: Sequence[OptionContract], symbol: str, *, neighbours: int = 6) -> float | None:
+    """Fair mid of *symbol* read off its expiry's strike curve, from its neighbours only.
+
+    A least-squares quadratic in strike through the mids of the ``neighbours``
+    nearest strikes of the same expiry and type (the leg itself excluded), so one
+    jittery quote cannot vouch for itself. ``None`` unless there are at least 4
+    usable neighbours with at least one strike on each side. Pure.
+    """
+    import numpy as np
+
+    occ = parse_occ(symbol)
+    strike = float(occ.strike)
+    pts: list[tuple[float, float]] = []
+    for c in chain:
+        if c.mid is None or c.bid is None or c.ask is None or c.bid <= 0 or c.ask < c.bid:
+            continue
+        o = parse_occ(c.symbol)
+        if o.expiration != occ.expiration or o.kind != occ.kind or float(o.strike) == strike:
+            continue
+        pts.append((float(o.strike), float(c.mid)))
+    pts.sort(key=lambda p: (abs(p[0] - strike), p[0]))
+    near = pts[:neighbours]
+    if len(near) < 4 or not (min(k for k, _ in near) < strike < max(k for k, _ in near)):
+        return None
+    ks = np.array([k for k, _ in near]) - strike
+    ms = np.array([m for _, m in near])
+    return float(np.polyfit(ks, ms, 2)[-1])  # value of the fit at the strike itself
+
+
+def close_quote_sanity(
+    quotes: Sequence[LegQuote], now: _dt.datetime, cfg: ArcSettings
+) -> list[str]:
+    """Why a close must not be priced from these leg quotes; ``[]`` when they are usable.
+
+    Deterministic and pure (E6.2a, PLAN §6.8 data quality fails closed). Every leg:
+
+    * ``missing``: has a bid, an ask (bid <= ask) and a quote timestamp;
+    * ``stale``: quote timestamp within ``close_quote_max_age_seconds`` of *now*
+      (the quote's own time, not the fetch time; a future stamp fails too);
+    * ``spread``: spread <= ``close_quote_max_spread_pct`` of mid, or
+      <= ``close_quote_max_spread_abs`` (a cheap wing is never unclosable);
+
+    across legs:
+
+    * ``skew``: leg quote times within ``close_quote_max_skew_seconds`` of each other;
+    * ``off_curve``: the combo mid is within ``close_quote_max_curve_dev`` ($/share)
+      of the combo read off the strike curve. This is the observed failure: the
+      indicative feed's per-leg quotes jitter by $0.10-0.30 read to read while each
+      looks fresh and tight, so a band built from one read can sit wholly outside
+      the market. Skipped when a leg has no curve mid (chain edge).
+
+    Each problem is ``"<code>: <detail>"``.
+    """
+    out: list[str] = []
+    stamps: list[_dt.datetime] = []
+    max_age, max_skew = cfg.close_quote_max_age_seconds, cfg.close_quote_max_skew_seconds
+    max_pct, max_abs = cfg.close_quote_max_spread_pct, cfg.close_quote_max_spread_abs
+    for q in quotes:
+        if q.bid is None or q.ask is None or q.mid is None or q.bid > q.ask or q.quote_ts is None:
+            out.append(
+                f"missing: {q.symbol} has no usable quote "
+                f"(bid {q.bid}, ask {q.ask}, ts {q.quote_ts})"
+            )
+            continue
+        stamps.append(q.quote_ts)
+        age = (now - q.quote_ts).total_seconds()
+        if age < 0 or age > max_age:
+            out.append(
+                f"stale: {q.symbol} quote is {age:.0f}s old "
+                f"(max {max_age}s, quote {q.quote_ts.isoformat()})"
+            )
+        spread = q.ask - q.bid
+        pct = spread / q.mid if q.mid > 0 else float("inf")
+        if pct > max_pct and spread > max_abs + 1e-9:
+            out.append(
+                f"spread: {q.symbol} {q.bid:.2f}/{q.ask:.2f} spread {pct:.1%} of mid "
+                f"(max {max_pct:.0%} or ${max_abs:.2f})"
+            )
+    if len(stamps) > 1:
+        skew = (max(stamps) - min(stamps)).total_seconds()
+        if skew > max_skew:
+            out.append(f"skew: leg quote times are {skew:.0f}s apart (max {max_skew}s)")
+    if quotes and all(q.mid is not None and q.curve_mid is not None for q in quotes):
+        combo = sum(q.sign * (q.mid or 0.0) for q in quotes)
+        fair = sum(q.sign * (q.curve_mid or 0.0) for q in quotes)
+        dev = combo - fair
+        if abs(dev) > cfg.close_quote_max_curve_dev + 1e-9:
+            out.append(
+                f"off_curve: combo mid {combo:+.2f} is {dev:+.2f} from the strike-curve "
+                f"value {fair:+.2f} (max ${cfg.close_quote_max_curve_dev:.2f})"
+            )
+    return out
 
 
 def price_structure(
@@ -342,12 +499,14 @@ def price_structure(
         if c.implied_volatility and float(c.implied_volatility) > 0
     }
     market_inputs = MarketInputs(spot=spot, r=r, ivs=ivs) if len(ivs) == len(used) else None
+    chain_list = list(chain.values())
     return PricedStructure(
         analyze(out_legs, as_of=as_of, market=market_inputs),
         used,
         spot=spot,
-        atm_iv=atm_iv(list(chain.values()), spot),
+        atm_iv=atm_iv(chain_list, spot),
         spot_as_of=uq.timestamp,
+        curve={k: curve_mid(chain_list, k) for k in used},
     )
 
 

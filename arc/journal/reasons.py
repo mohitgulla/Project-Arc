@@ -182,6 +182,7 @@ class ReasonCode(StrEnum):
     EXIT_DTE = "exit:dte"
     EXIT_EXPIRY = "exit:expiry"
     EXIT_NOT_PROPOSED = "exit:not_proposed"
+    EXIT_QUOTE_UNUSABLE = "exit:quote_unusable"  # E6.2a: close legs' quotes failed the check
     EXIT_CLOSED = "exit:closed"
     # E6.4 position manager (D19): review signals beyond E6.2's fired rules
     EXIT_TIME_ADJUSTED = "exit:time_adjusted_target"
