@@ -1,0 +1,62 @@
+# Candidate ranking (PLAN D25; card E7.5). Validated by arc.scanner.rank / arc.backtest.ranking.
+#
+# `ranking` configures the pure rankers in arc/scanner/rank.py:
+#   credit_width   incumbent (scanner rank_by=credit_width): credit / widest wing
+#   debit_width    debit analogue for cash accounts: payoff width / debit
+#   ev_proxy       static hold-to-expiry flat-vol EV after entry costs ($)
+#   managed_net_ev E2.4 managed-exit Monte Carlo Net EV after all costs ($)
+#   rorc_day       managed Net EV / (max loss x expected days held)
+#   rorc_day_vrp   rorc_day, skipping candidates with ATM IV - RV forecast <= vrp_threshold
+# Hard filters run before every ranker (same for all): managed Net EV > floor and
+# managed PoP >= floor.
+#
+# NOTE: this file does NOT change the live default. The scanner still ranks by
+# ScanParams.rank_by (credit_width) and the pipeline by exits.yaml
+# pipeline.rank_menu_by. The E7.5 report recommends; the owner flips the switch.
+#
+# `backtest` configures `arc backtest rank` (arc/backtest/ranking.py).
+
+ranking:
+  rankers: [credit_width, debit_width, ev_proxy, managed_net_ev, rorc_day, rorc_day_vrp]
+  vrp_threshold: 0.0          # vol points as a fraction: 0.02 = IV must exceed the RV forecast by 2 pts
+  filters:
+    enabled: true
+    min_managed_net_ev: 0.0   # $ per unit, strict >
+    min_managed_pop: 0.0      # no PoP floor by default (owner has not set one)
+
+backtest:
+  starting_equity: 100000
+  risk_free_rate: 0.045
+  n_paths: 5000               # managed-exit MC paths per candidate (live uses exits.yaml n_paths)
+  marks: smile                # smile = price legs off a same-session fitted IV smile; close = raw trade closes
+  max_leg_iv_dev: 0.15        # marks=close only: drop legs whose IV is >15% off their strike neighbours
+  smile_window: 5
+  stance: trend               # trend = 20-session trend label picks the profile's stance_strategies; none = all structures
+  slippage_grid: [0.0, 0.25, 0.5]   # x in mid +/- x*spread; 0.25 = config/costs.yaml default
+  tickers: [SPY, QQQ, IWM, AAPL, NVDA, TSLA, AMZN, AMD]
+  bootstrap:
+    resamples: 2000
+    block_days: 20
+    ci: 0.90
+    seed: 7
+  decision:                   # D25 switch rule, fixed before the run
+    min_subperiod_wins: 2
+    subperiods: [bear, sideways, bull]
+  # Menu per account profile: the strategies the profile maps a stance to
+  # (config/account_profiles.yaml), each at these anchor deltas. Anchor = the short
+  # strike for verticals / condors, the bought strike for single long options.
+  # DTE window = the profile's entry window; one expiration nearest its middle.
+  menus:
+    margin:
+      - kinds: [bull_put, bear_call, iron_condor]
+        deltas: [0.16, 0.20, 0.25, 0.30]
+        width_pct: 0.02
+    cash_debit:
+      - kinds: [bull_call, bear_put]        # short leg at 20-35 delta (scanner debit_short band)
+        deltas: [0.20, 0.25, 0.30, 0.35]
+        width_pct: 0.02
+      - kinds: [long_call, long_put]        # bought leg at 40-70 delta (scanner long band)
+        deltas: [0.40, 0.55, 0.70]
+    cash_long_only:
+      - kinds: [long_call, long_put]
+        deltas: [0.40, 0.55, 0.70]
