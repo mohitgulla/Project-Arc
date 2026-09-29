@@ -173,6 +173,10 @@ class Dispatcher:
         # E5.2b: fresh wall clock handed to steps (None = the tick's frozen ``now``).
         self._clock = clock
         self._manifest_alerted = False
+        self._loop_root_ts: str | None = None  # D36: set while a loop chain's root is open
+        self._loop_no_change = (
+            False  # D36: this loop skipped its LLM steps (thread = [Routines] only)
+        )
 
     def _effective_settings(self) -> ArcSettings:
         from arc.control.effective import effective_settings
@@ -457,6 +461,7 @@ class Dispatcher:
         root_ts: str | None = None
         if is_loop and chain_run_id:
             root_ts = self._open_loop_root(chain_run_id, scheduled_for)
+        self._loop_root_ts = root_ts
         try:
             for index, step in enumerate(steps):
                 prior = existing.get(step)
@@ -539,6 +544,7 @@ class Dispatcher:
                 outcomes.append(outcome)
                 if index == 0 and outcome.metrics.get("no_change"):
                     no_change = True
+                    self._loop_no_change = True
                 stop = outcome.status != "ok" or bool(outcome.metrics.get("stop_chain"))
                 if stop:
                     if chain_run_id and index + 1 < len(steps):
@@ -563,6 +569,8 @@ class Dispatcher:
                     root_ts=root_ts,
                 )
         finally:
+            self._loop_root_ts = None
+            self._loop_no_change = False
             if root_ts:
                 self.heartbeats.close_loop_root()
         return outcomes
@@ -586,6 +594,19 @@ class Dispatcher:
             state.set_thread_ts(chain_run_id, ts)
             state.set_root(chain_run_id, root.model_dump(mode="json"))
         return ts
+
+    def _post_scout_context(self, now: _dt.datetime, ctx: JobContext) -> str | None:
+        """D36 thread item 1: the ``[Scout]`` card of the candidates the Director read.
+
+        Rendered from the Director run's recorded context snapshot (the same
+        ``candidate`` entries it was given), so the card names the Scout run
+        and its time without re-posting the Scout's own 30-min card.
+        """
+        from arc.slack.digests import scout_context_card
+
+        entries = ctx.snapshot.of_kind("candidate")
+        card = scout_context_card(entries, chain_run_id=ctx.chain_run_id)
+        return self.heartbeats.summary(now, "scout", card.text, blocks=card.blocks)
 
     def _max_runtime_label(self) -> str:
         secs = int(self.routines.loop.max_runtime.total_seconds())
@@ -812,6 +833,15 @@ class Dispatcher:
         posts = trace.notifications
         if result.notice:
             posts.append(self.heartbeats.notice(now, run.job, result.notice))
+        in_loop_thread = bool(self._loop_root_ts)
+        if in_loop_thread and (self._loop_no_change or result.metrics.get("no_change")):
+            # D36: a no_change loop gets only the [Routines] metadata reply in its thread;
+            # the step's own summary is folded into that reply (``execute=…ms``).
+            log.info("routines.ok", job=run.job, run_id=run.run_id, outputs=len(ctx.outputs))
+            return self._outcome(run, "ok", summary, metrics=result.metrics)
+        if in_loop_thread and run.step_index == 0:
+            # D36 thread item 1: the Scout context the Director read, before its own card.
+            posts.append(self._post_scout_context(now, ctx))
         if notify is Notify.QUIET:
             new_docs = result.metrics.get("new_docs")
             self.heartbeats.queue_source(

@@ -923,7 +923,9 @@ def _loop_no_change(
         return None
     state = LoopState(ctx.conn)
     if not state.should_skip(new_digest, ctx.now, loop.max_idle):
-        state.record_digest(new_digest, ctx.now, full_run=True)
+        # A full run: the digest and ``last_full_run`` are recorded only once the
+        # Director's evaluation has completed (see ``_loop_record_full_run``), so a
+        # failed LLM call never mutes the next ``max_idle`` of slots as ``no_change``.
         return None
     state.record_digest(new_digest, ctx.now, full_run=False)
     last = state.last_full_run()
@@ -950,6 +952,20 @@ def _loop_no_change(
             **budget.metrics(),
         },
     )
+
+
+def _loop_record_full_run(ctx: JobContext) -> None:
+    """D31: a completed Director evaluation is the loop's new ``last_full_run``.
+
+    Called only after the LLM reply was parsed and the shortlist written, so a
+    Director run that failed (LLM outage, schema error) leaves the previous
+    ``last_full_run`` in place and the next slot evaluates in full again.
+    """
+    if not ctx.is_loop_run:
+        return
+    digest = _loop_digest_of(ctx)
+    if digest:
+        LoopState(ctx.conn).record_digest(digest, ctx.now, full_run=True)
 
 
 def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
@@ -1139,6 +1155,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         suppressed=[ln.removeprefix("- ") for ln in recent_lines],
     )
     entry = ctx.write("shortlist", SESSION_SUBJECT, payload)
+    _loop_record_full_run(ctx)
     _portfolio_notes(ctx, payload, pctx, entry.id, call_id)
     _note(
         ctx,

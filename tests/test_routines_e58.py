@@ -23,6 +23,7 @@ import pytest
 
 from arc.approvals.service import ApprovalService, LogCardPoster, PostedCard
 from arc.context.store import ContextStore
+from arc.ingest.llm import LLMResult, ScoutLLMError
 from arc.ingest.scout import load_fixture_docs
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
 from arc.pipeline.runner import open_db, pipeline_handlers
@@ -208,6 +209,116 @@ class TestNoChange:
         out = _slot(disp, SLOT0 + dt.timedelta(minutes=10))
         assert out["director"].metrics["no_change"] is False
         assert _llm_calls(conn) > before
+
+    def test_failed_director_does_not_mute_the_next_slot(self, routines: RoutinesConfig) -> None:
+        """Review round 1 repro: slot 1 evaluates; slot 2 brings new inputs (the SPY
+        proposal now in the dedupe window) but the Director's LLM raises; slot 3 has
+        the same inputs as slot 2. Slot 2 must not become ``last_full_run``, so slot 3
+        is a full evaluation and not ``no_change`` with zero LLM calls."""
+        conn = _conn()
+        _seed_scout(conn, routines)
+        disp = _disp(conn, routines)
+        first = _slot(disp, SLOT0)
+        assert first["director"].metrics["no_change"] is False
+        digest1 = first["director"].metrics["loop_digest"]
+        assert LoopState(conn).last_full_run() == SLOT0
+        calls = _llm_calls(conn)
+
+        # slot 2: a slow, then failing fake Director LLM (transport outage)
+        env = PipelineEnv.fixtures()
+        env.llms["director"] = _BrokenLLM()
+        disp.handlers = pipeline_handlers(env)
+        at2 = SLOT0 + dt.timedelta(minutes=5)
+        outs = {
+            o.job: o for o in disp.run_job("director", at2, reason="schedule", now=at2, chain=True)
+        }
+        assert outs["director"].status == "failed" and "outage" in outs["director"].summary
+        assert "quant" not in outs  # the chain stopped at the failure
+        assert LoopState(conn).last_full_run() == SLOT0  # the failed slot did not advance it
+        assert LoopState(conn).last_digest() == digest1
+        # the failure is on the record as an llm_error persona call, not a completed evaluation
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM persona_calls WHERE status = 'llm_error'"
+            ).fetchone()[0]
+            == 1
+        )
+        calls_after_fail = _llm_calls(conn)
+
+        # slot 3: same inputs as slot 2; the LLM is back. A full run, not no_change.
+        third = _slot(disp, SLOT0 + dt.timedelta(minutes=10))
+        assert third["director"].status == "ok"
+        assert third["director"].metrics["no_change"] is False
+        assert third["director"].metrics["loop_digest"] != digest1
+        assert _llm_calls(conn) > calls_after_fail > calls
+        assert {s for s, o in third.items() if o.status == "ok"} >= {"quant", "risk", "propose"}
+        assert LoopState(conn).last_full_run() == SLOT0 + dt.timedelta(minutes=10)
+        # and from here the same inputs do skip (the skip itself still works)
+        fourth = _slot(disp, SLOT0 + dt.timedelta(minutes=15))
+        assert fourth["director"].metrics["no_change"] is True
+
+    def test_failed_first_director_records_no_full_run(self, routines: RoutinesConfig) -> None:
+        conn = _conn()
+        _seed_scout(conn, routines)
+        disp = _disp(conn, routines)
+        env = PipelineEnv.fixtures()
+        env.llms["director"] = _BrokenLLM()
+        disp.handlers = pipeline_handlers(env)
+        (out,) = disp.run_job("director", SLOT0, reason="schedule", now=SLOT0, chain=True)
+        assert out.status == "failed"
+        assert LoopState(conn).last_full_run() is None and LoopState(conn).last_digest() is None
+        nxt = _slot(disp, SLOT0 + dt.timedelta(minutes=5))
+        assert nxt["director"].status == "ok" and nxt["director"].metrics["no_change"] is False
+
+
+class _BrokenLLM:
+    """A Director LLM that is slow and then fails (the card's "slow fake LLM")."""
+
+    model = "fake-broken"
+
+    def complete(self, prompt: str) -> LLMResult:
+        time.sleep(0.05)
+        msg = "simulated LLM outage"
+        raise ScoutLLMError(msg)
+
+
+class TestConfigOnlyCadence:
+    """Acceptance: a config-only cadence change (loop ``every: 10m``) needs no code change."""
+
+    def _day_plan(self, cfg: RoutinesConfig) -> list[dt.datetime]:
+        from arc.store.db import connect
+        from arc.store.migrate import migrate
+
+        conn = connect(":memory:")
+        migrate(conn)
+        d = Dispatcher(conn, cfg, is_halted=lambda: False)
+        start = dt.datetime(2026, 9, 28, 0, 0, tzinfo=ET)  # a Monday
+        end = start + dt.timedelta(days=1)
+        slots: list[dt.datetime] = []
+        prev, cur = start, start + dt.timedelta(minutes=5)
+        while cur <= end:
+            slots += [j.slot for j in d.plan(cur, since=prev, halted=False) if j.job == "director"]
+            prev, cur = cur, cur + dt.timedelta(minutes=5)
+        return slots
+
+    def test_every_10m_gives_38_slots_and_loop_semantics_hold(
+        self, routines: RoutinesConfig
+    ) -> None:
+        assert len(self._day_plan(routines)) == 75  # shipped: 5m, 09:40-15:50
+        ten = load_routines(overrides={("personas", "director", "every"): "10m"})
+        slots = self._day_plan(ten)
+        assert len(slots) == 38  # 09:40, 09:50, …, 15:50
+        assert slots[0].strftime("%H:%M") == "09:40" and slots[-1].strftime("%H:%M") == "15:50"
+        assert ten.is_loop("director") and ten.personas["director"].ttl is not None
+        # the loop semantics (no_change skip) still apply under the new cadence
+        conn = _conn()
+        _seed_scout(conn, ten)
+        disp = _disp(conn, ten)
+        _slot(disp, SLOT0)
+        _slot(disp, SLOT0 + dt.timedelta(minutes=10))
+        third = _slot(disp, SLOT0 + dt.timedelta(minutes=20))
+        assert third["director"].metrics["no_change"] is True
+        assert third["quant"].status == "skipped" and third["execute"].status == "ok"
 
 
 class TestDigest:
@@ -407,7 +518,16 @@ class TestRootPerLoop:
         # every persona post of this loop is a reply under the root, none in the day thread
         replies = notes.in_thread(ts)
         assert replies and notes.day_thread_posts() == []
-        assert any("[Director]" in r for r in replies)
+        # D36 thread order: [Scout] context first, then the chain's persona cards,
+        # the proposal card (recorded by the poster), and [Routines] last.
+        labels = [r.split(" ", 1)[0].lstrip("`\n") for r in replies]
+        order = [lbl for lbl in labels if lbl in {"[Scout]", "[Director]", "[Quant]", "[Risk]"}]
+        assert order == ["[Scout]", "[Director]", "[Quant]", "[Risk]"], replies
+        assert replies[0].startswith("[Scout] scout ✓ [Scout] Context: ")
+        assert "run " + slot_stamp(SLOT0) in replies[0]  # the Scout run the Director read
+        scout_blocks = notes.blocks[notes.threads.index(ts)]
+        assert scout_blocks and scout_blocks[0]["text"]["text"].startswith("[Scout] Context: ")
+        assert any("SPY" in (b.get("text") or {}).get("text", "") for b in scout_blocks)
         assert replies[-1].startswith("```\n[Routines] " + chain)
         assert "director=" in replies[-1] and "digest=" in replies[-1]
         # the proposal card went into the same thread
@@ -473,6 +593,10 @@ class TestRootPerLoop:
         assert ts is not None
         assert notes.roots[ts].endswith("• HOLD (no change)")
         assert notes.roots[ts].startswith(":heavy_multiplication_x: ")
+        # a no_change loop gets only the [Routines] reply in its thread (no Scout / Director card)
+        replies = notes.in_thread(ts)
+        assert len(replies) == 1 and replies[0].startswith("```\n[Routines] " + chain)
+        assert "no_change" in replies[0]
         # three slots, three roots, each a distinct stamp
         stamps = [r.split(" • ")[0].split(" ", 1)[1] for r in notes.roots.values()]
         assert stamps == [slot_stamp(SLOT0 + dt.timedelta(minutes=5 * k)) for k in range(3)]
