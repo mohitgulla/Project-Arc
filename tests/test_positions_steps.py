@@ -375,3 +375,26 @@ def test_no_direct_submit_path_in_the_position_manager() -> None:
                 assert not names & {"submit", "execute", "AlpacaPaperBroker"}, (path, names)
             if isinstance(node, ast.Attribute):
                 assert node.attr not in {"submit", "submit_order", "place_order"}, path
+
+
+def test_live_run_without_gate_secret_fails_before_any_proposal(conn: sqlite3.Connection) -> None:
+    """E5.2b: a minting run with no ARC_GATE_SECRET raises; no token-less PASS is stored."""
+    from arc.pipeline.steps import GateSecretMissingError
+
+    env = _env_with(_held(BULL_PUT))
+    _open(conn, env, BULL_PUT, "-0.90")
+    _run(conn, env, "positions.evaluate")
+    ctx = _ctx(conn, "investor.exits", SPECS["investor.exits"], NOW, settings(gate_secret=None))
+    with pytest.raises(GateSecretMissingError):
+        exits(ctx, env)
+    assert conn.execute("SELECT COUNT(*) FROM proposals WHERE kind = 'close'").fetchone()[0] == 0
+
+
+def test_dry_run_never_mints(conn: sqlite3.Connection) -> None:
+    env = _env_with(_held(BULL_PUT))
+    env.mint_tokens = False  # fixtures / --dry-run
+    _open(conn, env, BULL_PUT, "-0.90")
+    _run(conn, env, "positions.evaluate")
+    assert _run(conn, env, "investor.exits").metrics["gate_passed"] == 1
+    (tok,) = conn.execute("SELECT token FROM gate_decisions").fetchone()
+    assert tok is None

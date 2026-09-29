@@ -77,7 +77,7 @@ def make_service(
             poster = SlackCardPoster(conn)
         else:
             poster = LogCardPoster()
-    return ApprovalService(conn, settings, poster)
+    return ApprovalService(conn, settings, poster, live=slack)
 
 
 def _write(obj: object) -> None:

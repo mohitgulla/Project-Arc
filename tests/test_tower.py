@@ -324,16 +324,16 @@ def test_run_swallows_missing_binary() -> None:
 
 
 def test_streamlit_command_is_hardened() -> None:
-    argv = streamlit_command("100.77.0.5", 8501)
+    argv = streamlit_command("100.77.0.5", 1994)
     pairs = dict(zip(argv[5::2], argv[6::2], strict=False))
     assert argv[1:4] == ["-m", "streamlit", "run"] and argv[4].endswith("arc/tower/app.py")
-    assert pairs["--server.address"] == "100.77.0.5" and pairs["--server.port"] == "8501"
+    assert pairs["--server.address"] == "100.77.0.5" and pairs["--server.port"] == "1994"
     assert pairs["--server.headless"] == "true"
     assert pairs["--server.enableXsrfProtection"] == "true"
     assert pairs["--browser.gatherUsageStats"] == "false"
 
 
-def test_cli_serve_binds_tailscale_on_8501(db: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_serve_binds_tailscale_on_1994(db: Path, capsys: pytest.CaptureFixture[str]) -> None:
     with (
         mock.patch("arc.tower.net.resolve_bind_address", return_value="100.77.0.5"),
         mock.patch("arc.tower.cli.subprocess.call", return_value=0) as call,
@@ -342,9 +342,9 @@ def test_cli_serve_binds_tailscale_on_8501(db: Path, capsys: pytest.CaptureFixtu
     argv = call.call_args.args[0]
     env = call.call_args.kwargs["env"]
     assert argv[argv.index("--server.address") + 1] == "100.77.0.5"
-    assert argv[argv.index("--server.port") + 1] == "8501"
+    assert argv[argv.index("--server.port") + 1] == "1994"
     assert env["ARC_TOWER_DB"] == str(db.resolve()) and env["ARC_TOWER_REFRESH"] == "30"
-    assert "http://100.77.0.5:8501" in capsys.readouterr().out
+    assert "http://100.77.0.5:1994" in capsys.readouterr().out
 
 
 def test_cli_serve_refuses_without_tailscale(db: Path, capsys: pytest.CaptureFixture[str]) -> None:

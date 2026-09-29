@@ -155,20 +155,21 @@ def propose_close(
     now: _dt.datetime,
     run_id: str | None,
     write_context: Any,
-    mint: bool,
+    secret: bytes | None,
     payload: dict[str, Any],
     swap_id: str | None = None,
 ) -> CloseOutcome:
     """Propose closing the open structure *row* at the re-priced *priced* legs.
 
-    Gate (``closing=True``) over the D24 band, ``arc2`` token on PASS when *mint*,
+    Gate (``closing=True``) over the D24 band, ``arc2`` token on PASS when *secret*
+    is given (live paper runs resolve it up front and fail without it, E5.2b),
     then one transaction: proposal (``kind='close'``) + gate decision + the
     structure's pending exit + a journal row + the ``proposal`` context entry the
     approval card renders from. Never submits: the Investor does, after approval.
     """
     from arc.gate.halt import evaluate_with_halt
     from arc.gate.rules import price_band, proposal_hash
-    from arc.gate.token import TokenError, gate_secret, issue_token
+    from arc.gate.token import issue_token
     from arc.pipeline.market import limit_price, market_snapshot
     from arc.store.execution import OpenStructureRepo
     from arc.store.repos import GateDecisionRepo, ProposalRepo
@@ -207,13 +208,8 @@ def propose_close(
         band=band,
         closing=True,
     )
-    if mint and decision.passed:
-        try:
-            decision = issue_token(
-                decision, proposal, secret=gate_secret(settings), now=now, band=band
-            )
-        except TokenError as exc:
-            log.warning("exits.no_gate_token", reason=str(exc))
+    if secret is not None and decision.passed:
+        decision = issue_token(decision, proposal, secret=secret, now=now, band=band)
     phash = proposal_hash(proposal)
     with conn:
         ProposalRepo(conn).insert(
@@ -300,12 +296,22 @@ def propose_exits(
     ``write_context(kind, subject, payload)`` records the proposal context entry the
     approval card is rendered from (``JobContext.write``).
     """
+    from arc.gate.token import TokenError, gate_secret
     from arc.store.execution import OpenStructureRepo
 
     out = ExitRun()
     if switch.is_halted():
         out.lines.append("halted: no exit proposals")
         return out
+    secret: bytes | None = None
+    if mint:
+        try:  # E5.2b: a live run never stores a token-less PASS it cannot execute
+            secret = gate_secret(settings)
+        except TokenError as exc:
+            msg = f"exit proposals disabled: cannot mint a gate token ({exc}); set ARC_GATE_SECRET"
+            out.errors.append(msg)
+            log.error("exits.no_gate_secret", reason=str(exc))
+            return out
     cfg = exits or load_exit_config()
     repo = OpenStructureRepo(conn)
     today = now.astimezone(ET).date()
@@ -356,7 +362,7 @@ def propose_exits(
             now=now,
             run_id=run_id,
             write_context=write_context,
-            mint=mint,
+            secret=secret,
             payload={"state": state.model_dump(mode="json")},
         )
         out.proposed.append(res.proposal_hash)

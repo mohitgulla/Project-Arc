@@ -40,6 +40,7 @@ def add_health_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
     c.add_argument("--now", default=None, help="ISO time (default: now ET)")
     c.add_argument("--no-slack", action="store_true", help="Alerts to the log only")
     c.add_argument("--no-gateway", action="store_true", help="Skip the Hermes gateway check")
+    c.add_argument("--no-remote", action="store_true", help="Skip the remote-access check (E8.6)")
     c.add_argument("--json", action="store_true")
 
     s = hsub.add_parser("status", help="Last heartbeats and open alerts")
@@ -105,6 +106,8 @@ def run_checks(
             results.append(checks.gateway_health(ms.gateway))
         else:
             results.append(checks.gateway_health(ms.gateway, gateway_runner))
+    if ms.remote_access.enabled and not getattr(args, "no_remote", False):
+        results.append(checks.remote_access(ms.remote_access))
     return results
 
 

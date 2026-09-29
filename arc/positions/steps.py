@@ -136,6 +136,24 @@ def _book(ctx: JobContext, env: PipelineEnv) -> tuple[Any, AccountSnapshot, Port
     return info, switch.apply(account_snapshot(info, ctx.now)), portfolio, switch
 
 
+def _gate_secret(ctx: JobContext, env: PipelineEnv) -> bytes | None:
+    """The token secret for a live paper run; ``None`` for dry runs (never mint).
+
+    E5.2b: a run that should mint but cannot raises before any proposal row is
+    written, so it alerts instead of storing token-less PASSes nobody can execute.
+    """
+    if not env.mint_tokens:
+        return None
+    from arc.gate.token import TokenError, gate_secret
+    from arc.pipeline.steps import GateSecretMissingError
+
+    try:
+        return gate_secret(ctx.settings)
+    except TokenError as exc:
+        msg = f"cannot mint a gate token: {exc} (set ARC_GATE_SECRET)"
+        raise GateSecretMissingError(msg) from exc
+
+
 def _theta_per_day(priced: PricedStructure, st: Structure, dte: int, r: float) -> float | None:
     """Position theta ($ per unit per calendar day) at current IVs; ``None`` without IVs."""
     from arc.structures import MarketInputs, net_greeks
@@ -270,6 +288,7 @@ def exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
     flagged = [r for r in reviews.values() if r.signal is not None]
     if not flagged:
         return JobResult(summary="no exit signals", metrics={"signals": 0, "proposed": 0})
+    secret = _gate_secret(ctx, env)
     info, account, portfolio, switch = _book(ctx, env)
     if switch.is_halted():
         return JobResult(
@@ -310,10 +329,10 @@ def exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
             account=account,
             portfolio=portfolio,
             switch=switch,
-            now=ctx.now,
+            now=ctx.clock(),  # E5.2b: quotes were just fetched
             run_id=ctx.run_id,
             write_context=ctx.write,
-            mint=env.mint_tokens,
+            secret=secret,
             payload={"review": rv.model_dump(mode="json", exclude={"structure"})},
         )
         proposed += 1
@@ -431,6 +450,7 @@ def _advance_swaps(
     ctx: JobContext,
     env: PipelineEnv,
     book: tuple[Any, AccountSnapshot, Portfolio, HaltSwitch],
+    secret: bytes | None,
 ) -> list[str]:
     """Move ``closing`` swaps on: close filled → propose the open; close dead → cancel."""
     from arc.store.swaps import SwapRepo
@@ -458,7 +478,7 @@ def _advance_swaps(
         elif ex is not None and ex["status"] in _CLOSE_DEAD:
             why = f"close {ex['status']}"
         elif ex is not None and ex["status"] == _CLOSE_FILLED:
-            lines.append(_open_leg(ctx, env, sw, book))
+            lines.append(_open_leg(ctx, env, sw, book, secret))
             continue
         elif sw["day"] != _today(ctx).isoformat():
             why = "close did not fill by the end of its day"
@@ -497,15 +517,16 @@ def _open_leg(
     env: PipelineEnv,
     sw: dict[str, Any],
     book: tuple[Any, AccountSnapshot, Portfolio, HaltSwitch],
+    secret: bytes | None,
 ) -> str:
     """The close filled: re-price, re-size (D18 + S-7), gate and card the swap's open."""
     from arc.gate.halt import evaluate_with_halt
     from arc.gate.rules import proposal_hash
+    from arc.gate.token import issue_token
     from arc.journal.store import JournalStore
     from arc.models import Proposal, QuantMetrics, Sizing
     from arc.pipeline.market import limit_price, market_snapshot, next_earnings, price_structure
     from arc.pipeline.steps import (
-        _mint,
         band_for,
         existing_max_loss,
         worst_loss_per_contract,
@@ -529,6 +550,7 @@ def _open_leg(
         _cancel(ctx, sw, f"open could not be re-priced ({exc})")
         return f"swap {sw['id']} cancelled: open could not be re-priced"
     st = priced.structure
+    now = ctx.clock()  # E5.2b: judge quote age against a clock read after the fetch
     earnings = next_earnings(ctx.conn, [t], _today(ctx))
     market = market_snapshot(priced.contracts, earnings)
     limit = limit_price(st.net_debit_credit, settings.limit_tick)
@@ -555,14 +577,14 @@ def _open_leg(
             notional=size.max_loss_total,
             pct_equity=min(size.pct_equity, 1.0),
         ),
-        expires_at=ctx.now + _dt.timedelta(seconds=settings.approval_ttl_seconds),
+        expires_at=now + _dt.timedelta(seconds=settings.approval_ttl_seconds),
         limit_price=limit,
     )
     decision = evaluate_with_halt(
-        switch, proposal, account, portfolio, settings, market=market, now=ctx.now, band=band
+        switch, proposal, account, portfolio, settings, market=market, now=now, band=band
     )
-    if env.mint_tokens:
-        decision = _mint(decision, proposal, settings, ctx.now, band=band)
+    if secret is not None and decision.passed:
+        decision = issue_token(decision, proposal, secret=secret, now=now, band=band)
     phash = proposal_hash(proposal)
     day = _today(ctx).isoformat()
     with ctx.conn:
@@ -575,7 +597,7 @@ def _open_leg(
             risk_narrative=proposal.risk_narrative,
             sizing_json=proposal.sizing.model_dump_json(),
             expires_at=proposal.expires_at.isoformat(),
-            created_at=ctx.now.isoformat(),
+            created_at=now.isoformat(),
             run_id=ctx.run_id,
             day=day,
             ticker=t,
@@ -589,7 +611,7 @@ def _open_leg(
             violations=decision.violations,
             token=decision.token,
             account_snapshot=decision.account_snapshot,
-            decided_at=ctx.now.isoformat(),
+            decided_at=now.isoformat(),
             run_id=ctx.run_id,
             commit=False,
         )
@@ -700,9 +722,10 @@ def reallocate(ctx: JobContext, env: PipelineEnv) -> JobResult:
             else "no position reviews to pair with",
             metrics={"candidates": len(cands), "suggested": 0, "swaps_started": 0},
         )
+    secret = _gate_secret(ctx, env)
     book = _book(ctx, env)
     info, account, portfolio, switch = book
-    lines = _advance_swaps(ctx, env, book) if pending else []
+    lines = _advance_swaps(ctx, env, book, secret) if pending else []
     if switch.is_halted():
         return JobResult(
             summary="; ".join([*lines, "halted: no new swaps"]),
@@ -812,10 +835,10 @@ def reallocate(ctx: JobContext, env: PipelineEnv) -> JobResult:
             account=account,
             portfolio=portfolio,
             switch=switch,
-            now=ctx.now,
+            now=ctx.clock(),
             run_id=ctx.run_id,
             write_context=ctx.write,
-            mint=env.mint_tokens,
+            secret=secret,
             payload={"swap": s.model_dump(mode="json")},
             swap_id=sid,
         )

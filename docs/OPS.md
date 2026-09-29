@@ -164,6 +164,7 @@ the plist with `--print`, and remove it with `--uninstall`.
 | routine_windows | A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
 | stuck_runs | A `routine_runs` row is still `running` after `stuck_after` (70m). | `stuck:<run_id>` |
 | gateway | `hermes gateway status` or `hermes cron status` shows a `✗`, exits non-zero, or times out. `⚠` warnings count as degraded: they are recorded but not alerted unless `gateway.alert_on_degraded: true`. | `gateway` |
+| remote_access (E8.6, off until enabled) | `GET <ts-ip>:4174/api/status` doesn't answer, or answers without `auth_required: true` and `basic` in `auth_providers`; `GET <ts-ip>:1994/_stcore/health` isn't 200; or either port accepts a connection on a LAN address. See §5.7. | `remote_hermes`, `remote_tower`, `remote_exposed` |
 
 Some skips are deliberate and are never counted as misses: halted personas and
 jobs with no handler yet. Job failures are already alerted in the #arc-investor
@@ -229,11 +230,11 @@ alike.
 ### 5.6 Control tower (E8.3)
 
 A read-only Streamlit dashboard over the audit store, served on the host's
-Tailscale address, port 8501. Code: `arc/tower/`.
+Tailscale address, port 1994. Code: `arc/tower/`.
 
 ```
-arc tower serve                   # http://<tailscale-ip>:8501, re-reads every 30s
-arc tower serve --local           # 127.0.0.1:8501, this machine only
+arc tower serve                   # http://<tailscale-ip>:1994, re-reads every 30s
+arc tower serve --local           # 127.0.0.1:1994, this machine only
 arc tower serve --print-command   # show the streamlit argv, don't start
 arc tower snapshot [--json]       # the same data as text/JSON, no server
 ```
@@ -261,6 +262,108 @@ data or an LLM. Streamlit runs headless, with XSRF protection on and usage stats
 The intraday `monitor` routine writes one `heartbeats` row per run
 (`component = monitor`: Greeks, equity and broker legs). Greeks older than 45 minutes
 are flagged as stale on the page. Outside the session they show the last in-session run.
+
+### 5.7 Remote access over Tailscale (E8.6, D29)
+
+Use Hermes (chat, sessions, cron, kanban, config) and the control tower from a
+laptop or phone on the **same Tailscale tailnet** as the Mac Mini. Nothing listens
+on the LAN or the internet.
+
+| Service | URL | LaunchAgent | Runs |
+|---|---|---|---|
+| Control tower (read-only, §5.6) | `http://<ts-ip>:1994` | `com.projectarc.tower` | `.venv/bin/arc tower serve` |
+| Hermes dashboard (web admin, Chat tab, Hermes Desktop backend) | `http://<ts-ip>:4174` | `com.projectarc.hermes-dashboard` | `hermes/remote/run_dashboard.sh` → `arc remote dashboard` → `hermes dashboard --host <ts-ip> --port 4174 --no-open --skip-build` |
+
+Both agents are `KeepAlive` + `RunAtLoad`, log to `data/logs/{hermes-dashboard,tower}.launchd.log`,
+and use the repo `.venv` (not `/usr/bin/python3`). Code: `arc/remote/`, `hermes/remote/`.
+
+**What the code enforces**
+
+1. **Bind.** Both services bind only what `arc.tower.net.resolve_bind_address` returns:
+   the Tailscale `100.64/10` IPv4 (or `127.0.0.1` with `--local`). `0.0.0.0`, LAN IPs and
+   hostnames are refused. No Tailscale address → exit 2 ("no Tailscale IPv4 address
+   found"), and launchd retries every 60s (`ThrottleInterval`). Nothing widens it.
+2. **Login.** `arc remote dashboard` refuses to start unless `HERMES_DASHBOARD_BASIC_AUTH_USERNAME`,
+   `..._PASSWORD_HASH` and `..._SECRET` are set, and refuses a plaintext `..._PASSWORD`.
+   Hermes itself also refuses a non-loopback bind without an auth provider. Only key
+   names are ever printed.
+3. **One copy.** Before starting it runs `hermes dashboard --status` and also probes
+   the port on loopback and the bind address. The port probe is needed: `--status`
+   matches process argv, and a dashboard started through the source launcher
+   (`python3 -I -c …`) is **not** listed by `--status` on this install (verified).
+4. **Isolation.** `hermes/remote/install.sh` only ever boots out its own two labels. It
+   never touches `ai.hermes.gateway` (Slack) or `com.projectarc.health-check`.
+
+**Verified on this host (2026-09-28, Hermes 0.21.5)**
+
+- *Dashboard extras: nothing to install.* The `hermes` launcher runs `hermes_bootstrap`,
+  which activates the Hermes-managed dependency venv (`~/.hermes/installs/<id>/environments/<env>/venv`).
+  That venv already has `fastapi 0.133.1`, `uvicorn 0.41.0`, `starlette 1.3.1` and
+  `ptyprocess 0.7.0`, and the built UI is in `hermes_cli/web_dist`. The bare runtime
+  interpreter (`~/.hermes/tools/python-3.14.7…/bin/python3 -I`) can't import them, which is
+  expected: never import them from it directly. Do **not** run `uv pip install -e ".[web,pty]"`:
+  it targets the wrong environment, and `pty` is now an empty back-compat extra.
+  `hermes dashboard --host 127.0.0.1 --port 4174 --no-open --skip-build` served
+  `/api/status` (`version 0.21.5`). If the imports ever break, Hermes' own message points to
+  `hermes pm install` / `hermes pm repair`. (`hermes pm status` currently crashes on this
+  install with a missing `pm/uv.lock`; that is a Hermes issue, unrelated to the dashboard.)
+- *Host header: use the IP.* The dashboard only accepts requests whose `Host` is the address
+  it bound to. With a `100.x` bind, `http://<ts-ip>:4174` works; `http://mac-mini:4174` and
+  `http://mac-mini.<tailnet>.ts.net:4174` return **400 "Invalid Host header"**. To use the
+  MagicDNS name instead, set `dashboard.public_url: http://<name>.<tailnet>.ts.net:4174` in
+  `~/.hermes/config.yaml` (exactly one hostname is trusted). Not needed for the runbook.
+- *Gate (loopback smoke test, basic provider):* `/api/status` →
+  `{"auth_required": true, "auth_providers": ["basic"], "auth_flows": ["cookie", "native_pkce"]}`;
+  `POST /auth/password-login` with a wrong password → `401 {"detail":"Invalid credentials"}`;
+  `GET /api/sessions` without a session → 401; WebSockets `/api/pty` (Chat tab), `/api/pty?token=…`
+  and `/api/ws` without a login ticket → handshake rejected (HTTP 403).
+
+**Owner runbook** (the owner runs these)
+
+1. **Tailscale on the Mac Mini.** Install the standalone macOS app from
+   https://tailscale.com/download/mac (Homebrew isn't installed here). Sign in and turn on
+   "Launch at login". In the menu-bar app: Settings → "Install CLI", so `tailscale` is on
+   PATH. Check: `tailscale status` and `tailscale ip -4` (a `100.x.y.z` address).
+2. **Tailscale on the laptop/phone** with the same account. In the admin console
+   (https://login.tailscale.com/admin/machines) **disable key expiry** for the Mac Mini so it
+   doesn't drop off the tailnet after 180 days. Do not enable Funnel.
+3. **Dashboard extras:** nothing to do (see above). Optional check:
+   `hermes dashboard --status` prints "No hermes dashboard or serve processes running."
+4. **Dashboard login:** `~/GitHub/Project-Arc/hermes/remote/set-password.sh`
+   Prompts for a username (default `$USER`) and a password twice (hidden, ≥ 12 chars).
+   It hashes the password with Hermes' `hash_password` (scrypt), writes
+   `HERMES_DASHBOARD_BASIC_AUTH_USERNAME` / `..._PASSWORD_HASH`, adds `..._SECRET` only if it is
+   unset, removes any plaintext `..._PASSWORD`, keeps `~/.hermes/.env` at `0600`, and prints
+   key names only. Re-run it to change the password.
+5. **Start both services:** `~/GitHub/Project-Arc/hermes/remote/install.sh`
+   (`--print` shows the plists, `--uninstall` removes both.) It prints each agent's
+   `state`/`last exit code`; `state = running` means it is up.
+6. **Turn on the health check:** set `monitoring.remote_access.enabled: true` in
+   `config/routines.yaml` (or via `!arc set` once E8.5 lands). The next 30-min health run
+   alerts `remote_hermes` / `remote_tower` / `remote_exposed` to #project-arc once each.
+7. **Use it** (`<ts-ip>` = output of `tailscale ip -4`):
+   - Tower: `http://<ts-ip>:1994`
+   - Hermes in a browser/phone: `http://<ts-ip>:4174` → sign in → Chat tab
+   - Hermes Desktop: Settings → Gateways → Add connection → Remote gateway → URL
+     `http://<ts-ip>:4174` → Sign in
+8. **Optional shell access:** System Settings → General → Sharing → Remote Login (limit it to
+   your user), then `ssh mohit.gulla@<ts-ip>` from a tailnet device. Hermes Desktop's "SSH"
+   connection kind can use that too.
+
+**Troubleshooting**
+
+| Symptom | Cause / fix |
+|---|---|
+| Login returns 401 / "Invalid username or password." | Wrong username or password. Re-run `set-password.sh`, then `launchctl kickstart -k gui/$(id -u)/com.projectarc.hermes-dashboard` (the running process only reads `.env` at start). |
+| No sign-in button / "no auth provider" | The basic provider didn't register: a key is missing or blank. `data/logs/hermes-dashboard.launchd.log` names the missing key. Run `set-password.sh` and kickstart. |
+| Signed out after every restart | `HERMES_DASHBOARD_BASIC_AUTH_SECRET` is missing, so Hermes signs sessions with a random per-process key. `set-password.sh` adds one if unset. Don't delete it. |
+| Connection refused | Check `tailscale ip -4` on the Mini and that the client device is on the tailnet. `launchctl print gui/$(id -u)/com.projectarc.hermes-dashboard` (or `.tower`): `last exit code = 2` → read the launchd log (no Tailscale address, login not configured, or port 4174 already in use by another dashboard). |
+| 400 "Invalid Host header" | You used the machine name. Use `http://<ts-ip>:4174`, or set `dashboard.public_url` (see above). |
+| Tower log: "audit store not found" | `data/arc.db` doesn't exist yet in the repo the agent runs from; the tower never creates it. |
+
+The live check from a second tailnet device (tower loads, dashboard login, Chat tab
+reply, Desktop "Remote gateway" connects, `remote_access` green) is owner-gated and
+runs after steps 1–6.
 
 ## 6. Local Models (E8.4)
 

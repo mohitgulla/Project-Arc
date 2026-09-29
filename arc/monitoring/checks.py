@@ -7,6 +7,7 @@
 - :func:`tick_staleness`  no ``tick`` heartbeat for ``tick_stale_after``.
 - :func:`stuck_runs`      a ``routine_runs`` row still ``running`` after ``stuck_after``.
 - :func:`gateway_health`  ``hermes gateway status`` and ``hermes cron status``.
+- :func:`remote_access`   E8.6: Hermes dashboard (gated) + tower on the tailnet, not the LAN.
 
 The watchdog only judges slots after the first tick heartbeat, so installing
 monitoring never back-fills alerts for the time before routines ran.
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Callable
 
-    from arc.monitoring.config import GatewayCheck, MonitoringSettings
+    from arc.monitoring.config import GatewayCheck, MonitoringSettings, RemoteAccessCheck
     from arc.routines.config import RoutinesConfig
 
 Severity = Literal["ok", "degraded", "failed"]
@@ -189,6 +190,135 @@ def stuck_runs(
     )
     return CheckResult(
         "stuck_runs", "failed" if findings else "ok", f"{len(findings)} stuck", findings
+    )
+
+
+# ---------------------------------------------------------------------------
+# Remote access (E8.6)
+# ---------------------------------------------------------------------------
+
+
+def http_get(url: str, timeout: float) -> tuple[int, str]:
+    """GET *url*: ``(status, body)``; status 0 + error text when unreachable. Never raises."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 - http to our own host
+            return int(resp.status), resp.read(65536).decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), ""
+    except (OSError, ValueError) as exc:
+        return 0, str(exc)
+
+
+def _port_open(host: str, port: int, timeout: float) -> bool:
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _dashboard_problem(status: int, body: str) -> str | None:
+    """Why ``/api/status`` is not an authenticated Hermes dashboard, or None when it is."""
+    import json
+
+    if status != 200:
+        return f"no answer ({body[:120] or f'HTTP {status}'})" if status == 0 else f"HTTP {status}"
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return "/api/status did not return JSON"
+    if not isinstance(data, dict):
+        return "/api/status did not return a JSON object"
+    if data.get("auth_required") is not True:
+        return "answers WITHOUT authentication (auth_required is not true)"
+    providers = data.get("auth_providers") or []
+    if "basic" not in providers:
+        return f"auth provider 'basic' not registered (providers: {providers})"
+    return None
+
+
+def remote_access(
+    ra: RemoteAccessCheck,
+    *,
+    resolve: Callable[[], str] | None = None,
+    get: Callable[[str, float], tuple[int, str]] = http_get,
+    lan: Callable[[], list[str]] | None = None,
+    probe: Callable[[str, int, float], bool] = _port_open,
+) -> CheckResult:
+    """Hermes dashboard + tower answer on the Tailscale IP, gated, and nowhere on the LAN.
+
+    - ``remote_hermes``  ``GET /api/status`` on :4174 must answer with
+      ``auth_required: true`` and ``basic`` in ``auth_providers``.
+    - ``remote_tower``   ``GET /_stcore/health`` on :1994 must answer 200.
+    - ``remote_exposed`` either port accepting a connection on a LAN address.
+    """
+    from arc.tower.net import NoTailscaleAddressError, host_lan_addresses, resolve_bind_address
+
+    timeout = ra.timeout.total_seconds()
+    findings: list[Finding] = []
+    try:
+        address = (resolve or resolve_bind_address)()
+    except NoTailscaleAddressError:
+        address = None
+    if address is None:
+        why = "no Tailscale address on this host (is Tailscale installed and up?)"
+        for key, what in (("remote_hermes", "Hermes dashboard"), ("remote_tower", "tower")):
+            findings.append(
+                Finding(key=key, kind=key, severity="failed", message=f"remote {what}: {why}")
+            )
+    else:
+        dash = f"http://{address}:{ra.dashboard_port}/api/status"
+        if problem := _dashboard_problem(*get(dash, timeout)):
+            findings.append(
+                Finding(
+                    key="remote_hermes",
+                    kind="remote_hermes",
+                    severity="failed",
+                    message=f"remote Hermes dashboard {address}:{ra.dashboard_port}: {problem}",
+                    detail={"url": dash},
+                )
+            )
+        tower = f"http://{address}:{ra.tower_port}/_stcore/health"
+        code, text = get(tower, timeout)
+        if code != 200:
+            why = f"HTTP {code}" if code else f"no answer ({text[:120]})"
+            findings.append(
+                Finding(
+                    key="remote_tower",
+                    kind="remote_tower",
+                    severity="failed",
+                    message=f"remote tower {address}:{ra.tower_port}: {why}",
+                    detail={"url": tower},
+                )
+            )
+    exposed = [
+        f"{host}:{port}"
+        for host in (lan or host_lan_addresses)()
+        for port in (ra.dashboard_port, ra.tower_port)
+        if probe(host, port, timeout)
+    ]
+    if exposed:
+        findings.append(
+            Finding(
+                key="remote_exposed",
+                kind="remote_exposed",
+                severity="failed",
+                message="remote access EXPOSED off the tailnet: answering on " + ", ".join(exposed),
+                detail={"exposed": exposed},
+            )
+        )
+    if findings:
+        summary = "; ".join(f.key for f in findings)
+        return CheckResult("remote_access", "failed", summary, tuple(findings))
+    return CheckResult(
+        "remote_access",
+        "ok",
+        f"dashboard :{ra.dashboard_port} gated (basic), tower :{ra.tower_port} up on {address}",
     )
 
 

@@ -91,6 +91,16 @@ class JobContext:
     outputs: list[str] = field(default_factory=list)
     external_inputs: list[ExternalInput] = field(default_factory=list)
     _settings: ArcSettings | None = None
+    # Wall clock for steps that judge data age (E5.2b). ``now`` is the tick/chain
+    # start time and stays the idempotency key; ``clock()`` is "now, really".
+    clock_fn: Callable[[], _dt.datetime] | None = None
+
+    @property
+    def clock(self) -> Callable[[], _dt.datetime]:
+        """Fresh time source; defaults to the frozen ``now`` (tests, replays, ``--now``)."""
+        if self.clock_fn is not None:
+            return self.clock_fn
+        return lambda: self.now
 
     @property
     def settings(self) -> ArcSettings:

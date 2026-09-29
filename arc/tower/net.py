@@ -29,6 +29,8 @@ __all__ = [
     "NoTailscaleAddressError",
     "allowed_bind",
     "cgnat_addresses",
+    "host_lan_addresses",
+    "lan_addresses",
     "resolve_bind_address",
 ]
 
@@ -65,6 +67,29 @@ def cgnat_addresses(text: str) -> list[str]:
     return found
 
 
+def lan_addresses(text: str) -> list[str]:
+    """IPv4 addresses in ``ifconfig`` / ``ip addr`` output that are neither loopback,
+    unspecified nor Tailscale: where a service must *not* answer (E8.6 exposure probe)."""
+    found: list[str] = []
+    for token in _INET.findall(text):
+        try:
+            ip = ipaddress.ip_address(token)
+        except ValueError:
+            continue
+        if ip.is_loopback or ip.is_unspecified or ip in TAILSCALE_NET or str(ip) in found:
+            continue
+        found.append(str(ip))
+    return found
+
+
+def host_lan_addresses() -> list[str]:
+    """This host's non-loopback, non-Tailscale IPv4 addresses (empty if none/unknown)."""
+    for argv in (["ifconfig"], ["ip", "-4", "addr"]):
+        if shutil.which(argv[0]):
+            return lan_addresses(_run(argv))
+    return []
+
+
 def _run(argv: list[str]) -> str:
     try:
         out = subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False)
@@ -85,8 +110,8 @@ def resolve_bind_address(address: str | None = None, *, local: bool = False) -> 
     if address:
         if not allowed_bind(address):
             msg = (
-                f"refusing to bind {address!r}: the control tower only listens on a "
-                f"Tailscale address ({TAILSCALE_NET}) or loopback"
+                f"refusing to bind {address!r}: Arc's remote services (tower, Hermes "
+                f"dashboard) only listen on a Tailscale address ({TAILSCALE_NET}) or loopback"
             )
             raise NoTailscaleAddressError(msg)
         return address
