@@ -299,6 +299,9 @@ class UnusualOptionsPayload(BaseModel):
     history_days: int = Field(0, ge=0)
     volume_ratio: float | None = Field(None, description="total_volume / avg_volume")
     put_call_volume: float | None = None
+    hot_volume_share: float = Field(
+        0.0, ge=0, le=1, description="Share of total volume in lines with vol/OI over threshold"
+    )
     flags: list[Literal["volume_spike", "vol_oi"]] = Field(default_factory=list)
     contracts: list[UnusualContract] = Field(default_factory=list, max_length=10)
 

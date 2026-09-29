@@ -619,6 +619,18 @@ class ArcSettings(BaseSettings):
         default=60,
         description="E4.5 UOA: expiries within this many days are scanned.",
     )
+    uoa_min_dte: Annotated[int, Field(ge=0, le=30)] = Field(
+        default=3,
+        description="E4.5 UOA: contracts expiring sooner (0DTE churn) are never flagged.",
+    )
+    uoa_min_open_interest: Annotated[int, Field(ge=1)] = Field(
+        default=100,
+        description="E4.5 UOA: vol/OI is only read on lines with at least this open interest.",
+    )
+    uoa_min_hot_share: Annotated[float, Field(ge=0, le=1)] = Field(
+        default=0.02,
+        description="E4.5 UOA: hot lines must carry this share of the ticker's option volume.",
+    )
     ex_dividend_horizon_days: Annotated[int, Field(ge=1, le=180)] = Field(
         default=45,
         description="E4.5: ex-dividend dates looked up this many days ahead.",

@@ -116,6 +116,14 @@
       "title": "History Days",
       "type": "integer"
     },
+    "hot_volume_share": {
+      "default": 0.0,
+      "description": "Share of total volume in lines with vol/OI over threshold",
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Hot Volume Share",
+      "type": "number"
+    },
     "put_call_volume": {
       "anyOf": [
         {

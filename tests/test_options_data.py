@@ -187,6 +187,18 @@ class TestMacroCalendar:
         ]
         assert all(TODAY.isoformat() <= d <= "2026-11-13" for d, _ in got)
 
+    def test_bls_gets_the_contact_user_agent(self) -> None:
+        """Live 2026-09-29: BLS 403s an agent without a contact email."""
+        seen: dict[str, str] = {}
+
+        def get(url: str, ua: str) -> bytes:
+            seen[url.split("/")[2]] = ua
+            return _fixture_get(url, BLS_UA if "bls" in url else ua)
+
+        fetch_macro_calendar(TODAY, 45, get=get, contact_ua="Owner arc@owner.example")
+        assert seen["www.bls.gov"] == "Owner arc@owner.example"
+        assert "@" in BLS_UA
+
     def test_one_calendar_down_still_returns_the_other(self) -> None:
         def get(url: str, ua: str) -> bytes:
             if "federalreserve" in url:
@@ -207,11 +219,18 @@ class TestMacroCalendar:
 # ---------------------------------------------------------------------------
 
 
-def _c(symbol: str, kind: str, vol: int, oi: int | None, strike: float = 100.0) -> OptionContract:
+def _c(
+    symbol: str,
+    kind: str,
+    vol: int,
+    oi: int | None,
+    strike: float = 100.0,
+    expiry: dt.date = dt.date(2026, 10, 16),
+) -> OptionContract:
     return OptionContract(
         symbol=symbol,
         underlying="NVDA",
-        expiration=dt.date(2026, 10, 16),
+        expiration=expiry,
         strike=strike,
         option_type=kind,
         volume=vol,
@@ -228,13 +247,37 @@ class TestUnusualOptions:
             _c("C1", "call", 5000, 1000),  # vol/oi 5 -> hot
             _c("C2", "call", 800, 1000),  # 0.8 -> not hot
             _c("P1", "put", 400, 10),  # below min volume
-            _c("P2", "put", 600, None),  # OI unknown -> listed
+            _c("P2", "put", 600, None),  # OI unknown -> can't judge, not listed
+            _c("P3", "put", 3000, 1500),  # vol/oi 2.0 -> hot (boundary)
         ]
         p = unusual_activity("NVDA", chain, [1500] * 20, TODAY, T)
-        assert (p.call_volume, p.put_volume, p.total_volume) == (5800, 1000, 6800)
-        assert p.avg_volume == 1500.0 and p.volume_ratio == pytest.approx(6800 / 1500, rel=1e-3)
+        assert (p.call_volume, p.put_volume, p.total_volume) == (5800, 4000, 9800)
+        assert p.avg_volume == 1500.0 and p.volume_ratio == pytest.approx(9800 / 1500, rel=1e-3)
         assert p.flags == ["volume_spike", "vol_oi"]
-        assert [u.symbol for u in p.contracts] == ["C1", "P2"]
+        assert [u.symbol for u in p.contracts] == ["C1", "P3"]
+
+    def test_live_noise_is_not_flagged(self) -> None:
+        """Live 2026-09-29: 18/20 tickers flagged, driven by 0-2 DTE lines and OI of 1."""
+        chain = [
+            _c("ZERO", "call", 16689, 16, expiry=TODAY + dt.timedelta(days=1)),  # 0DTE churn
+            _c("EMPTY", "put", 868, 1),  # 868x on a line with OI 1
+        ]
+        p = unusual_activity("SPY", chain, [], TODAY, T)
+        assert p.flags == [] and p.contracts == []
+        loose = UoaThresholds(min_dte=0, min_open_interest=1)
+        assert [u.symbol for u in unusual_activity("SPY", chain, [], TODAY, loose).contracts] == [
+            "ZERO",
+            "EMPTY",
+        ]
+
+    def test_hot_lines_must_be_a_real_share_of_volume(self) -> None:
+        """Live: SPY had 3k hot contracts out of 4M (0.08%); BAC 21k of 50k (42%)."""
+        deep = [_c("HOT", "put", 3263, 133), _c("BULK", "call", 4_000_000, 10_000_000)]
+        p = unusual_activity("SPY", deep, [], TODAY, T)
+        assert p.flags == [] and [u.symbol for u in p.contracts] == ["HOT"]
+        assert p.hot_volume_share == pytest.approx(3263 / 4_003_263, abs=1e-4)
+        thin = [_c("HOT", "put", 21470, 4144), _c("BULK", "call", 29000, 90000)]
+        assert unusual_activity("BAC", thin, [], TODAY, T).flags == ["vol_oi"]
 
     def test_spike_needs_history(self) -> None:
         p = unusual_activity("NVDA", [_c("C", "call", 10000, 100000)], [100, 100], TODAY, T)

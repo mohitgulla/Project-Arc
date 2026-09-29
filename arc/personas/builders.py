@@ -196,7 +196,11 @@ def market_data_from_context(snapshot: ContextSnapshot) -> dict[str, Any]:
             out[kind] = entry.payload
     unusual = sorted(
         (e.payload for e in snapshot.of_kind("unusual_options") if e.payload.get("flags")),
-        key=lambda p: (-(p.get("volume_ratio") or 0.0), p.get("ticker", "")),
+        key=lambda p: (
+            -(p.get("volume_ratio") or 0.0),
+            -(p.get("hot_volume_share") or 0.0),
+            p.get("ticker", ""),
+        ),
     )
     if unusual:
         out["unusual_options"] = unusual[:MAX_UNUSUAL_IN_PROMPT]

@@ -33,6 +33,7 @@ from arc.ingest.stories import (
     ClusterDoc,
     canonical_url,
     cluster_stories,
+    headline_of,
     jaccard,
     normalize_headline,
 )
@@ -303,6 +304,16 @@ class TestStories:
         a = normalize_headline("Nvidia Announces $50B Buyback - WSJ")
         b = normalize_headline("NVIDIA announces $50B buyback | Reuters")
         assert a == b
+
+    def test_headline_fallback_keeps_abbreviations(self) -> None:
+        """Live 2026-09-29: untitled legacy rows all clustered as the headline "U.S."."""
+        assert headline_of(None, "U.S. stocks dropped as yields jumped. More text.") == (
+            "U.S. stocks dropped as yields jumped."
+        )
+        assert headline_of(None, "Apple Inc. said revenue rose. Shares up 3%.") == (
+            "Apple Inc. said revenue rose."
+        )
+        assert headline_of("<b>Title</b> &amp; more", "x") == "Title  & more"
 
     def test_canonical_url_drops_tracking(self) -> None:
         assert canonical_url("https://x.com/a?utm_source=rss&id=3#frag") == "https://x.com/a?id=3"

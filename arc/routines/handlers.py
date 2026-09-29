@@ -287,7 +287,9 @@ def macro_calendar_source(ctx: JobContext) -> JobResult:
     from arc.ingest.options_data import fetch_macro_calendar
 
     horizon = int(ctx.options.get("horizon_days", ctx.settings.ingest_macro_horizon_days))
-    payload, counts = fetch_macro_calendar(ctx.now.astimezone(ET).date(), horizon)
+    payload, counts = fetch_macro_calendar(
+        ctx.now.astimezone(ET).date(), horizon, contact_ua=ctx.settings.edgar_user_agent
+    )
     if not any(counts.values()):
         msg = "FOMC and BLS calendars both unavailable"
         raise JobSkippedError(msg)
@@ -330,6 +332,9 @@ def unusual_options_source(ctx: JobContext, market: MarketDataProvider | None = 
         min_volume=s.uoa_min_volume,
         vol_oi_ratio=s.uoa_vol_oi_ratio,
         volume_spike_ratio=s.uoa_volume_spike_ratio,
+        min_dte=s.uoa_min_dte,
+        min_open_interest=s.uoa_min_open_interest,
+        min_hot_share=s.uoa_min_hot_share,
     )
     tickers = _data_tickers(ctx)
     payloads, errors = scan_unusual(

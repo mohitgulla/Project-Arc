@@ -94,7 +94,9 @@ _STOP = frozenset(
 _SUFFIX = re.compile(r"\s+[-–—|:]\s+[^-–—|:]{2,40}$")
 _TAGS = re.compile(r"<[^>]+>")
 _TOKEN = re.compile(r"[a-z0-9$][a-z0-9.$%]*")
-_SENTENCE = re.compile(r"(?<=[.!?])\s")
+# A sentence ends after [.!?] preceded by two word characters and followed by a
+# capital: "U.S. stocks", "Inc. said", "No. 2" and "Jan. 5" do not end one.
+_SENTENCE = re.compile(r"(?<=[a-z0-9%)\"'][a-z0-9%)\"'][.!?])\s+(?=[A-Z\"'(])")
 _TRACKING = re.compile(r"^(utm_|mc_|mod$|cmpid$|ref$|refsrc$|siteid$|yptr$|__source$|feedtype$)")
 _FORM = re.compile(r"\b(8-K|10-Q|10-K|FORM 4|S-1|6-K|20-F|13D|13G)\b", re.IGNORECASE)
 

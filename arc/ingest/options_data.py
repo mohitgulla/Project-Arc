@@ -65,9 +65,11 @@ __all__ = [
     "vol_term_from_closes",
 ]
 
-# Cboe and the Fed reset generic clients; BLS asks for a descriptive agent.
+# Cboe and the Fed reset generic clients. BLS 403s any agent without a contact
+# email (like SEC EDGAR), so callers pass ``settings.edgar_user_agent``; this is
+# the fallback with the same shape.
 BROWSER_UA = "Mozilla/5.0 (compatible; ProjectArc/0.1)"
-BLS_UA = "ProjectArc research (options data; contact via repo owner)"
+BLS_UA = "ProjectArc/0.1 (arc@example.com)"
 
 CBOE_HISTORY_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{index}_History.csv"
 CBOE_DAILY_URL = "https://cdn.cboe.com/data/us/options/market_statistics/daily/{day}_daily_options"
@@ -350,13 +352,17 @@ def fetch_macro_calendar(
     horizon_days: int,
     *,
     get: Callable[[str, str], bytes] | None = None,
+    contact_ua: str = BLS_UA,
 ) -> tuple[MacroCalendarPayload, dict[str, int]]:
-    """Merged FOMC + BLS calendar and per-source event counts (0 = fetch failed)."""
+    """Merged FOMC + BLS calendar and per-source event counts (0 = fetch failed).
+
+    *contact_ua*: a User-Agent with a contact email; BLS answers 403 without one.
+    """
     events: list[MacroEvent] = []
     counts: dict[str, int] = {}
     for name, url, ua, parse in (
         ("fomc", FOMC_URL, BROWSER_UA, parse_fomc_calendar),
-        ("bls", BLS_ICS_URL, BLS_UA, parse_bls_ics),
+        ("bls", BLS_ICS_URL, contact_ua, parse_bls_ics),
     ):
         try:
             got = parse((get or http_get)(url, ua).decode("utf-8", "replace"))
@@ -378,6 +384,9 @@ class UoaThresholds:
     min_volume: int = 500
     vol_oi_ratio: float = 2.0
     volume_spike_ratio: float = 2.0
+    min_dte: int = 3
+    min_open_interest: int = 100
+    min_hot_share: float = 0.02
     history_days: int = 20
     max_contracts: int = 5
 
@@ -425,9 +434,13 @@ def unusual_activity(
         vol = c.volume or 0
         if vol < t.min_volume:
             continue
+        if (c.expiration - day).days < t.min_dte:
+            continue  # 0-2 DTE churn is routine day-trading flow, not positioning
         oi = c.open_interest
-        voi = round(vol / oi, 3) if oi else None
-        if oi is None or oi == 0 or (voi is not None and voi >= t.vol_oi_ratio):
+        if oi is None or oi < t.min_open_interest:
+            continue  # vol/OI on a near-empty line (OI 1 -> "750x") is meaningless
+        voi = round(vol / oi, 3)
+        if voi >= t.vol_oi_ratio:
             hot.append(
                 UnusualContract(
                     symbol=c.symbol,
@@ -440,7 +453,10 @@ def unusual_activity(
                 )
             )
     hot.sort(key=lambda u: (u.vol_oi is None, -(u.vol_oi or 0.0), -u.volume, u.symbol))
-    if hot:
+    # Every deep chain has a few hot weekly lines; the flag needs them to be a real
+    # share of the underlying's option volume (SPY 0.08% = noise, BAC 42% = signal).
+    hot_share = round(sum(u.volume for u in hot) / total, 4) if total else 0.0
+    if hot and hot_share >= t.min_hot_share:
         flags.append("vol_oi")
     return UnusualOptionsPayload(
         ticker=ticker,
@@ -452,6 +468,7 @@ def unusual_activity(
         history_days=len(history),
         volume_ratio=ratio,
         put_call_volume=round(puts / calls, 3) if calls else None,
+        hot_volume_share=hot_share,
         flags=flags,  # type: ignore[arg-type]
         contracts=hot[: t.max_contracts],
     )
