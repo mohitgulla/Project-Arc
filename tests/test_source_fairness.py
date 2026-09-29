@@ -577,6 +577,9 @@ class TestTwoStage:
             for i in range(10)
         ] + [("w1", "wsj", "https://wsj.com/a", "Markets rally on jobs data.", [])]
         _seed(conn, rows)
+        # ingested_at is stamped with the wall clock; pin it to the test's NOW so the
+        # TTL arithmetic below doesn't depend on when the suite runs.
+        conn.execute("UPDATE raw_docs SET ingested_at = ?", (NOW.isoformat(),))
         s = settings.model_copy(update={"scout_doc_budget": 4})
         reg = SourceRegistry.from_routines(_shipped_like())
         res = run_scout(conn, s, llm=FixtureScoutLLM([]), now=NOW, run_id="r1", registry=reg)
