@@ -190,6 +190,39 @@ def test_stuck_runs(conn: sqlite3.Connection) -> None:
     assert checks.stuck_runs(conn, MS, t0 + dt.timedelta(minutes=90)).severity == "ok"
 
 
+def test_stuck_runs_per_job_override(conn: sqlite3.Connection) -> None:
+    """E5.3a: ``stuck_after_jobs.monitor: 10m`` flags a wedged 5-min monitor early."""
+    ms = MonitoringSettings.model_validate({"stuck_after_jobs": {"monitor": "10m"}})
+    assert ms.stuck_after_for("monitor") == dt.timedelta(minutes=10)
+    assert ms.stuck_after_for("director") == ms.stuck_after
+    repo = RoutineRunRepo(conn)
+    t0 = et(2026, 9, 28, 10, 0)
+    mon = repo.claim(job="monitor", scheduled_for=t0, reason="schedule", now=t0)
+    rss = repo.claim(job="rss", scheduled_for=t0, reason="schedule", now=t0)
+    assert mon is not None and rss is not None
+    assert checks.stuck_runs(conn, ms, t0 + dt.timedelta(minutes=9)).severity == "ok"
+    r = checks.stuck_runs(conn, ms, t0 + dt.timedelta(minutes=11))
+    assert [f.key for f in r.findings] == [f"stuck:{mon.run_id}"]  # rss keeps the 70m limit
+    r = checks.stuck_runs(conn, ms, t0 + dt.timedelta(minutes=71))
+    assert {f.key for f in r.findings} == {f"stuck:{mon.run_id}", f"stuck:{rss.run_id}"}
+
+
+def test_stuck_after_jobs_validation() -> None:
+    with pytest.raises(ValidationError):
+        MonitoringSettings.model_validate({"stuck_after_jobs": {"monitor": "0m"}})
+    assert MonitoringSettings.model_validate({"stuck_after_jobs": None}).stuck_after_jobs == {}
+    with pytest.raises(ValidationError, match="unknown job 'nope'"):
+        cfg(YAML + "    monitoring: {stuck_after_jobs: {nope: 10m}}\n")
+    ok = cfg(YAML + "    monitoring: {stuck_after_jobs: {quant: 10m, rss: 5m}}\n")  # step + job
+    assert ok.monitoring.stuck_after_for("quant") == dt.timedelta(minutes=10)
+
+
+def test_shipped_monitor_stuck_after_is_10m() -> None:
+    ms = load_routines().monitoring
+    assert ms.stuck_after_for("monitor") == dt.timedelta(minutes=10)
+    assert ms.stuck_after_for("director") == dt.timedelta(minutes=70)
+
+
 # ---------------------------------------------------------------------------
 # checks: missed routine windows
 # ---------------------------------------------------------------------------

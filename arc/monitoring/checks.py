@@ -170,11 +170,18 @@ def tick_staleness(
 def stuck_runs(
     conn: sqlite3.Connection, settings: MonitoringSettings, now: _dt.datetime
 ) -> CheckResult:
-    rows = conn.execute(
-        """SELECT run_id, job, chain_run_id, started_at FROM routine_runs
-           WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?""",
-        (to_db(now - settings.stuck_after),),
-    ).fetchall()
+    # Per-job overrides (``stuck_after_jobs``) can only shorten or lengthen the
+    # limit for their job: select with the shortest limit, then filter per job.
+    shortest = min([settings.stuck_after, *settings.stuck_after_jobs.values()])
+    rows = [
+        r
+        for r in conn.execute(
+            """SELECT run_id, job, chain_run_id, started_at FROM routine_runs
+               WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?""",
+            (to_db(now - shortest),),
+        ).fetchall()
+        if from_db(r["started_at"]) < now - settings.stuck_after_for(r["job"])
+    ]
     findings = tuple(
         Finding(
             key=f"stuck:{r['run_id']}",

@@ -17,7 +17,8 @@
 # A trading day at a glance (full simulated day: `arc routines tick --dry-run`):
 #   06:00           earnings calendar; rss (30m) / edgar (15m) polling until 20:00
 #   09:30           pre-market chain: director -> quant -> risk -> propose
-#   09:30-16:00     intraday monitor every 30 min (positions, Greeks, expiries, halts)
+#   09:30-16:00     intraday monitor every 5 min (D35: positions, Greeks, marks + account
+#                   fields for the tower, expiries, halts; 79 slots, 16:00 inclusive)
 #   09:45-16:00     position manager every 30 min: positions.evaluate -> investor.exits
 #                   -> risk.reallocate (early exits + close-to-reallocate swaps, E6.4)
 #   12:00           StockedUp + Scout (midday news); new candidates in-session -> director chain
@@ -49,6 +50,8 @@ monitoring:
   miss_grace: 10m          # judge a slot this long after its catch-up window closes
   miss_lookback: 1d
   stuck_after: 70m         # routine run still `running` (tick timeout is 55m)
+  stuck_after_jobs:        # per-job override of stuck_after (E5.3a; E5.8 reuses it for the loop)
+    monitor: 10m           # 5-min cadence: two slots without finishing means it is wedged
   alert_channel: project_arc
   gateway:
     enabled: true
@@ -118,7 +121,7 @@ personas:
     ttl: 2h
     notify: card
   monitor:                      # intraday: positions, net Greeks, expiries, daily-loss halt (read-only)
-    every: 30m
+    every: 5m                   # D35: the tower's mark source; 5m is the tick floor
     window: "09:30-16:00"
     days: trading
     llm: false                  # deterministic; never waits on the LLM lock
@@ -128,7 +131,7 @@ personas:
     writes: [proposal]          # E6.2 exit proposals (gate + approval)
     expiry_warn_days: 1
     exits: false                # E6.4: the positions.evaluate chain below owns exit proposals
-    eod_marks_from: "15:30"     # marks from here count as end of day (stops are EOD-only, D23)
+    eod_marks_from: "15:50"     # D35: marks from here count as end of day (stops EOD-only, D23)
   positions.evaluate:           # E6.4 (D19): review open positions -> exits -> close-to-reallocate
     every: 30m
     window: "09:45-16:00"       # offset from the monitor; never at the open's first quotes

@@ -84,6 +84,9 @@ class MonitoringSettings(BaseModel):
     miss_lookback: _dt.timedelta = _dt.timedelta(days=1)
     # A routine_runs row still `running` after this long is reported as stuck.
     stuck_after: _dt.timedelta = _dt.timedelta(minutes=70)
+    # Per-job override of ``stuck_after`` (E5.3a: ``monitor: 10m`` at a 5-min
+    # cadence). Keys are job or chain-step names, checked by RoutinesConfig.
+    stuck_after_jobs: dict[str, _dt.timedelta] = Field(default_factory=dict)
     alert_channel: AlertChannel = AlertChannel.PROJECT_ARC
     gateway: GatewayCheck = Field(default_factory=GatewayCheck)
     remote_access: RemoteAccessCheck = Field(default_factory=RemoteAccessCheck)
@@ -95,3 +98,25 @@ class MonitoringSettings(BaseModel):
     @classmethod
     def _durations(cls, v: Any) -> Any:
         return _dur(v)
+
+    @field_validator("stuck_after_jobs", mode="before")
+    @classmethod
+    def _job_durations(cls, v: Any) -> Any:
+        if v is None:
+            return {}
+        if isinstance(v, dict):
+            return {k: _dur(d) for k, d in v.items()}
+        return v
+
+    @field_validator("stuck_after_jobs")
+    @classmethod
+    def _positive(cls, v: dict[str, _dt.timedelta]) -> dict[str, _dt.timedelta]:
+        for job, d in v.items():
+            if d <= _dt.timedelta(0):
+                msg = f"stuck_after_jobs.{job} must be positive"
+                raise ValueError(msg)
+        return v
+
+    def stuck_after_for(self, job: str) -> _dt.timedelta:
+        """``stuck_after`` for *job*: its per-job override, else the global value."""
+        return self.stuck_after_jobs.get(job, self.stuck_after)

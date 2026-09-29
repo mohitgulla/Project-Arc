@@ -54,10 +54,35 @@ __all__ = [
     "TowerSnapshot",
     "connect_ro",
     "load_snapshot",
+    "monitor_stale_after",
     "parse_ts",
 ]
 
 _FROZEN = ConfigDict(extra="forbid", frozen=True)
+
+# Monitor marks are stale after this many monitor cadences (E5.3a, D35). The
+# cadence comes from ``personas.monitor.every`` (plus control-panel overrides),
+# so the Streamlit page and the E8.7 API share one rule.
+STALE_CADENCES = 3
+# Used only when routines.yaml cannot be read: 3 x the D35 5-min cadence.
+DEFAULT_STALE_AFTER = _dt.timedelta(minutes=15)
+
+
+def monitor_stale_after(conn: sqlite3.Connection | None = None) -> _dt.timedelta:
+    """How old the latest ``monitor`` heartbeat may be before the tower flags it stale.
+
+    ``STALE_CADENCES`` x the monitor's ``every`` from the effective routines config
+    (``config/routines.yaml`` + D26 overrides read from *conn*, SELECT only).
+    """
+    from arc.control.effective import effective_routines
+
+    try:
+        found = effective_routines(conn).job("monitor")
+    except (OSError, ValueError):  # unreadable/invalid YAML: never break the page
+        return DEFAULT_STALE_AFTER
+    if found is None or found[1].every is None:
+        return DEFAULT_STALE_AFTER
+    return STALE_CADENCES * found[1].every
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +187,10 @@ class GreeksView(BaseModel):
     )
     vega_usd: float | None = Field(default=None, description="ν in $ per vol point (ν/100)")
     vega_cap_usd: float | None = Field(default=None, description="|ν| cap, $ per vol point")
+    stale_after_s: int = Field(
+        default=int(DEFAULT_STALE_AFTER.total_seconds()),
+        description="Monitor marks older than this are stale: 3x the monitor cadence (E5.3a)",
+    )
 
 
 class LegView(BaseModel):
@@ -174,6 +203,9 @@ class LegView(BaseModel):
     avg_entry_price: Decimal | None = None
     market_value: Decimal | None = None
     unrealized_pl: Decimal | None = None
+    current_price: Decimal | None = None  # E5.3a: broker mark per share
+    lastday_price: Decimal | None = None
+    change_today: Decimal | None = None
 
 
 class StructureView(BaseModel):
@@ -315,9 +347,15 @@ def _pnl(conn: sqlite3.Connection, monitor: sqlite3.Row | None) -> PnlView:
     return PnlView(**fields)
 
 
-def _greeks(monitor: sqlite3.Row | None, delta_cap: float, vega_cap_pct: float) -> GreeksView:
+def _greeks(
+    monitor: sqlite3.Row | None,
+    delta_cap: float,
+    vega_cap_pct: float,
+    stale_after: _dt.timedelta,
+) -> GreeksView:
+    stale_s = int(stale_after.total_seconds())
     if monitor is None:
-        return GreeksView()
+        return GreeksView(stale_after_s=stale_s)
     m = _json(monitor["detail"], {})
     equity = m.get("equity")
     vega = m.get("vega")
@@ -334,6 +372,7 @@ def _greeks(monitor: sqlite3.Row | None, delta_cap: float, vega_cap_pct: float) 
         delta_cap=None if equity is None else delta_cap * float(equity) / 100.0,
         vega_usd=None if vega is None else float(vega) / 100.0,
         vega_cap_usd=None if equity is None else vega_cap_pct * float(equity),
+        stale_after_s=stale_s,
     )
 
 
@@ -351,6 +390,9 @@ def _legs(monitor: sqlite3.Row | None) -> list[LegView]:
                 avg_entry_price=_dec(leg.get("avg_entry_price")),
                 market_value=_dec(leg.get("market_value")),
                 unrealized_pl=_dec(leg.get("unrealized_pl")),
+                current_price=_dec(leg.get("current_price")),
+                lastday_price=_dec(leg.get("lastday_price")),
+                change_today=_dec(leg.get("change_today")),
             )
         )
     return out
@@ -574,19 +616,24 @@ def load_snapshot(
     delta_cap: float = 0.30,
     vega_cap_pct: float = 0.005,
     limit: int = 200,
+    stale_after: _dt.timedelta | None = None,
 ) -> TowerSnapshot:
-    """Read every dashboard section from *conn* (SELECT only) as of *now*."""
+    """Read every dashboard section from *conn* (SELECT only) as of *now*.
+
+    *stale_after* defaults to :func:`monitor_stale_after` (3x the monitor cadence).
+    """
     now_et = now.astimezone(ET)
     since = now_et - _dt.timedelta(days=lookback_days)
     since_day = since.date().isoformat()
     monitor = _latest_heartbeat(conn, "monitor")
     violations = _violations(conn, since, limit)
     legs = _legs(monitor)
+    stale = stale_after if stale_after is not None else monitor_stale_after(conn)
     return TowerSnapshot(
         as_of=now_et,
         db_path=db_path,
         pnl=_pnl(conn, monitor),
-        greeks=_greeks(monitor, delta_cap, vega_cap_pct),
+        greeks=_greeks(monitor, delta_cap, vega_cap_pct, stale),
         structures=_structures(conn, legs),
         legs=legs,
         proposals=_proposals(conn, since_day, limit),
