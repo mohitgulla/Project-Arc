@@ -48,6 +48,7 @@ Decisions confirmed with the owner on 2026-09-27. Anything not listed here is a 
 | D32 | Daily options order budget | At most 200 broker option-order submissions per ET day (hard code ceiling 200). Every ladder attempt counts: filled, cancelled or rejected, opens and closes, plus broker-side orders placed by hand. At ≥100 a restrictive tier applies (Director shortlist 1, ≤1 new open per loop, Net EV floor ×1.5, PoP +5pp, ≤2 improvement steps, dedupe cooldown ×2). Opens stop at 175 (a 25-order close reserve; owner 2026-09-28). Enforced by a pure gate rule and a ladder guard. Card E6.5. | Owner 2026-09-28. |
 | D33 | Portfolio-aware Director, idea dedupe, no forced trade | With an empty book, the Director is unchanged. Otherwise it gets a typed `portfolio_context` (P&L, allocation by underlying/sector/stance/expiry, Greeks vs caps, concentration flags, each holding's original thesis), checks each thesis, and prefers diversifying or hedging ideas; a deterministic filter drops concentration adds over threshold. Ideas are fingerprinted (ticker, stance, type, expiry week, strike bucket) and suppressed within cooldowns once proposed, executed or rejected, unless the market moved materially; this replaces the one-open-proposal-per-ticker-per-day index. An empty shortlist stops the chain; the VIX/regime guard blocks new opens when unclear (fails closed without VIX). Card E5.9. | Owner 2026-09-28. |
 | D34 | Auto-approve switch + in-chain Execute | `auto_approve` is a per-environment config switch (`{paper, live}`, both default off). It works for live accounts too (owner 2026-09-28); enabling live needs a one-time confirm code, and every flip is audited and announced. Gate, order budget, halts and the token+approval requirement are identical in live. When on, the chain's `execute` step publishes and auto-approves the proposals, then hands each to the Investor (its own subprocess and lock, not the LLM lock), so orders go out in the same tick rather than the next one. The gate token and ApprovalRecord are still required for every submit. When off, the approval-card flow is unchanged. Refines D10 (no longer paper-only). Card E6.6. | Owner 2026-09-28: "There should be a configuration to have auto approval on, we need this." Revised same day: "keep the ability for automated trade execution for non-paper accounts as well." |
+| D35 | Control tower v2 (React + FastAPI, Copilot-style) | The Streamlit tower (E8.3) is replaced by a **read-only FastAPI JSON API** (`arc/tower/api.py`, same `mode=ro` loaders, same Tailscale-only bind and `arc tower serve` command, port per E8.6b) serving a **Vite + React + TypeScript SPA** (`web/`, Tailwind, Recharts, TanStack Query/Table) built into `arc/tower/static/`. Design follows Copilot Money (owner screenshots 2026-09-28) as written in `docs/TOWER_DESIGN.md`: flat cards, one accent, change pills, axis-less trend charts, dark and light themes, **mobile-first** (bottom tab bar, card rows). Pages: Overview, Trades (filterable list + full drill-down per trade), Positions, Performance, Ops. Still no state-changing control; approve/halt/config stay in Slack. **Freshness:** the UI polls the DB every 60 s and shows the age of every number; the intraday `monitor` job moves from 30 min to **every 5 min** (the tick floor; owner asked for ~4 min) with `eod_marks_from` 15:50, so marks are at most ~6 min old in session. No 10 s feed and no quote poller in the tower: it still never calls the broker. Streamlit is removed at cutover (E8.7e). Cards E5.3a, E8.7, E8.7a–e. | Owner 2026-09-28: overhaul to Copilot Money quality, drill-down to single trades, near-real-time feed (settled on DB-only + 4–5 min monitor), React if Streamlit isn't right, light/dark, mobile. |
 
 Open items requiring a decision are listed in §9 — all five original items are now resolved (D8–D11 + keys stored).
 
@@ -57,7 +58,7 @@ Open items requiring a decision are listed in §9 — all five original items ar
 
 **Goal.** A self-hosted, closed-loop, agentic US-equity options trading system: ingest ideas → LLM personas propose structured trades → deterministic pricing/Greeks → deterministic risk gate → human Approve/Reject in Slack → broker order via an adapter → audit + reconcile → feed back. Paper trading first; live only after a written go-live review.
 
-**Non-goals for Phase 1.** Live capital. Undefined-risk structures. 0DTE. Index options. Local LLM inference. Streamlit control tower (Phase 3). Multi-venue routing.
+**Non-goals for Phase 1.** Live capital. Undefined-risk structures. 0DTE. Index options. Local LLM inference. Control tower (Phase 3). Multi-venue routing.
 
 ---
 
@@ -170,7 +171,7 @@ AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits a
 ### 2.6 Hermes orchestration
 
 - **Kanban**: board `project-arc`, project-bound → worktrees under `.worktrees/<id>/`, `--completion-contract mohitgulla/Project-Arc` → PR required; `review_dispatch: true` runs the review lane before `done`. `max_in_progress: 1`, `auto_decompose: false`.
-- **Routines** (E5.4 dispatcher, E5.3 defaults, D16): one Hermes cron → `arc routines tick` every 5 min; cadences/chains live in `config/routines.yaml`. Defaults: **Scout at 22:00 ET and 12:00 ET (D15; D31 moves it to every 30m in session plus 22:00, and the trading loop to every 5 min: E5.8)**, `06:30 PT` pre-market scan, `every 30m 06:30–13:00 PT` intraday monitor, `13:30 PT` post-market reconcile + journal, weekly scorecard Friday.
+- **Routines** (E5.4 dispatcher, E5.3 defaults, D16): one Hermes cron → `arc routines tick` every 5 min; cadences/chains live in `config/routines.yaml`. Defaults: **Scout at 22:00 ET and 12:00 ET (D15; D31 moves it to every 30m in session plus 22:00, and the trading loop to every 5 min: E5.8)**, `06:30 PT` pre-market scan, `every 5m 06:30–13:00 PT` intraday monitor (D35; was 30m), `13:30 PT` post-market reconcile + journal, weekly scorecard Friday.
   - **Tick algorithm.** Each tick:
     1. Expires context entries past their TTL.
     2. Plans the due slots in `(cursor, now]` for each job. Missed slots collapse into one catch-up run, which happens only while the slot's catch-up window (`ttl`, default 2h, or one `every` interval) is still open. Otherwise the slot is recorded as `skipped`.
@@ -242,6 +243,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E5.1 Persona skills — six `SKILL.md` + JSON output schemas + prompt builders ← E1.1
 - E5.2 Pipeline runner — candidate → structures → gate → proposal; idempotent, resumable, fully logged, dry-run mode ← E2.3, E3.1, E4.2, E5.1
 - E5.3 Cron routines — install `arc routines tick` cron + default routines.yaml (Scout 22:00/12:00 ET, pre-market, intraday, post-market, weekly) ← E5.2, E5.4
+- E5.3a Intraday monitor every 5 min — marks + account fields (cash, buying power) in the monitor heartbeat, `eod_marks_from` 15:50, tower stale threshold from cadence (D35) ← E6.4
 - E5.4 Routine dispatcher + context store — per-source/per-persona cadence, chains, event triggers, `context_entries` + snapshots (D16) ← E1.3, E4.2
 - E5.5 Persona digest cards — one Block Kit layout (`arc/slack/blocks.py`) for every persona post, `notify: card` knob (D22) ← E6.1
 - E5.6 Persona I/O contracts — declared reads/writes (fail-closed), `note` kind, run manifest (all run metadata), schema registry, `arc context trace` (D27) ← E2.4, E5.3, E5.5, E7.4
@@ -271,6 +273,12 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E8.3 Streamlit control tower over Tailscale ← E6.3
 - E8.5 Slack control panel — registry, bounded owner-only overrides, audit/revert, effective config everywhere (D26) ← E3.4, E2.4
 - E8.6 Remote access over Tailscale — Hermes dashboard/Desktop backend + tower as launchd agents on the tailnet only, basic auth, remote_access health check (D29) ← E8.3, E8.2
+- E8.7 Control tower v2 — read-only FastAPI API + Vite/React SPA, Copilot-style design system (`docs/TOWER_DESIGN.md`), light/dark, mobile-first, 60 s polling; replaces Streamlit (D35) ← E8.6b
+- E8.7a Tower v2 Overview — equity/P&L hero + range chart, status strip, positions, Greeks vs caps, today's proposals, movers ← E8.7, E5.3a
+- E8.7b Tower v2 Trades — filterable trade list (URL-synced filters) + full drill-down: legs, payoff, decision trail, gate, approval, execution ladder, fills, exits, outcome, reviews ← E8.7a, E6.4
+- E8.7c Tower v2 Performance — period vs prior period, diverging P&L bars, cumulative vs hold-to-expiry shadow (D19), win/loss stats, slippage, breakdowns, calibration, costs; consumes E7.3's scorecard module ← E8.7b, E7.3
+- E8.7d Tower v2 Ops & pipeline — session timeline, routine runs + run manifests (D27), heartbeats, alerts, halts, order budget (D32), context store, sources health, LLM usage, effective config (D26) ← E8.7c, E8.5
+- E8.7e Tower v2 cutover — remove Streamlit, `remote_tower` health check → `/api/health`, install.sh builds the SPA, OPS §5.6 ← E8.7d
 - E8.4 Local model path (Mac Studio) — blocked until hardware arrives (D3) ← E8.1
 
 ---
