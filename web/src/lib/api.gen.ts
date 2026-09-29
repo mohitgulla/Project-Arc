@@ -188,6 +188,12 @@ export interface components {
             max_loss?: number | null;
             /** Positions */
             positions?: number | null;
+            /**
+             * Stale After S
+             * @description Monitor marks older than this are stale: 3x the monitor cadence (E5.3a)
+             * @default 900
+             */
+            stale_after_s: number;
             /** Theta */
             theta?: number | null;
             /**
@@ -259,6 +265,12 @@ export interface components {
             asset_class: string;
             /** Avg Entry Price */
             avg_entry_price?: string | null;
+            /** Change Today */
+            change_today?: string | null;
+            /** Current Price */
+            current_price?: string | null;
+            /** Lastday Price */
+            lastday_price?: string | null;
             /** Market Value */
             market_value?: string | null;
             /** Qty */
@@ -324,10 +336,25 @@ export interface components {
             open_alerts?: {
                 [key: string]: string;
             }[];
+            order_budget?: components["schemas"]["OrderBudgetView"] | null;
             /** Tick At */
             tick_at?: string | null;
             /** Tick Status */
             tick_status?: string | null;
+        };
+        /**
+         * OrderBudgetView
+         * @description D32 daily order budget as the last monitor heartbeat saw it.
+         */
+        OrderBudgetView: {
+            /** As Of */
+            as_of?: string | null;
+            /** Limit */
+            limit: number;
+            /** Tier */
+            tier: string;
+            /** Used */
+            used: number;
         };
         /**
          * Performance

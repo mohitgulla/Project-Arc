@@ -276,6 +276,12 @@
             ],
             "title": "Positions"
           },
+          "stale_after_s": {
+            "default": 900,
+            "description": "Monitor marks older than this are stale: 3x the monitor cadence (E5.3a)",
+            "title": "Stale After S",
+            "type": "integer"
+          },
           "theta": {
             "anyOf": [
               {
@@ -463,6 +469,42 @@
             ],
             "title": "Avg Entry Price"
           },
+          "change_today": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Today"
+          },
+          "current_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Price"
+          },
+          "lastday_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastday Price"
+          },
           "market_value": {
             "anyOf": [
               {
@@ -622,6 +664,16 @@
             "title": "Open Alerts",
             "type": "array"
           },
+          "order_budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrderBudgetView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tick_at": {
             "anyOf": [
               {
@@ -647,6 +699,43 @@
           }
         },
         "title": "OpsView",
+        "type": "object"
+      },
+      "OrderBudgetView": {
+        "additionalProperties": false,
+        "description": "D32 daily order budget as the last monitor heartbeat saw it.",
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used",
+          "limit",
+          "tier"
+        ],
+        "title": "OrderBudgetView",
         "type": "object"
       },
       "Performance": {
