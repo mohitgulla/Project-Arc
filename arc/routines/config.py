@@ -388,6 +388,10 @@ class RoutinesConfig(BaseModel):
                 msg = f"persona {name!r}: a halt-exempt persona cannot run a chain"
                 raise ValueError(msg)
         known_jobs = set(names)
+        for job in self.monitoring.stuck_after_jobs:
+            if job not in known_jobs and not self._is_chain_step(job):
+                msg = f"monitoring.stuck_after_jobs: unknown job {job!r}"
+                raise ValueError(msg)
         for rule in self.all_triggers():
             if rule.run not in self.personas:
                 msg = f"trigger on {rule.on!r}: run target {rule.run!r} is not a persona"

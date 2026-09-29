@@ -44,6 +44,12 @@ class BrokerPosition(BaseModel):
     avg_entry_price: Decimal | None = None
     unrealized_pl: Decimal | None = None
     asset_class: str = "us_option"
+    # E5.3a: intraday marks the monitor heartbeat carries for the tower.
+    current_price: Decimal | None = Field(None, description="Broker's latest mark per share")
+    lastday_price: Decimal | None = Field(None, description="Previous session close per share")
+    change_today: Decimal | None = Field(
+        None, description="Fractional change vs lastday_price (0.05 = +5%)"
+    )
 
 
 class MlegLeg(BaseModel):
