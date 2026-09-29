@@ -50,6 +50,7 @@ from arc.models import (
     ExpectedImpact,
     Stance,
 )
+from arc.universe.ingest import IngestUniverse
 from arc.utils.calendar import ET, add_sessions, now_et, session_close
 
 if TYPE_CHECKING:
@@ -269,8 +270,10 @@ def brief_to_candidates(
       in the brief is ``earnings``; a call with a named level is
       ``technical``; otherwise ``news``. Catalysts map by kind.
     * ``sources = [video_url]``; ``created_at = published_at``.
-    * Tickers outside the universe are logged as proposed additions (D9)
-      and do not become candidates. One candidate per ticker (merged).
+    * Tickers outside the seed universe are logged as proposed additions (D9)
+      and do not become candidates here: this bridge bypasses the Scout's D28
+      liquidity screen, so open-universe names reach the Director only via the
+      Scout (which reads the same transcript). One candidate per ticker (merged).
     """
     reg = registry or default_registry()
     proc = reg.for_slug(brief.channel_slug) or reg.default
@@ -413,6 +416,7 @@ def process_new_videos(
     now = (now or now_et()).astimezone(ET)
     repo = ChannelBriefRepo(conn)
     run = BriefRunResult()
+    uni = IngestUniverse.from_settings(settings, now=now)
 
     rows = [
         dict(r)
@@ -439,7 +443,12 @@ def process_new_videos(
             run.skipped += 1
             continue
         try:
-            result = proc.process(video, llm, universe=settings.universe, price_lookup=price_lookup)
+            result = proc.process(
+                video,
+                llm,
+                universe=uni.mention_universe(video.transcript),
+                price_lookup=price_lookup,
+            )
         except (ScoutLLMError, BriefParseError) as exc:
             run.failed += 1
             log.warning("channel.brief.failed", channel=slug, video=video.video_id, error=str(exc))

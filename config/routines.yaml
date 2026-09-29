@@ -15,6 +15,7 @@
 # `reads` limits the recorded input snapshot. `arc context trace <run|chain>` shows both.
 #
 # A trading day at a glance (full simulated day: `arc routines tick --dry-run`):
+#   05:30 Mon       symbol master refresh (open universe, E5.7)
 #   06:00           earnings calendar; rss (30m) / edgar (15m) polling until 20:00
 #   09:30           pre-market chain: director -> quant -> risk -> propose
 #   09:30-16:00     intraday monitor every 5 min (D35: positions, Greeks, marks + account
@@ -103,6 +104,11 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
       - https://www.federalreserve.gov/feeds/press_all.xml                            # Federal Reserve press releases
   edgar:    {every: 15m, window: "06:00-20:00", days: trading, writes: [raw_doc_ref]}
   earnings: {schedule: ["06:00", "18:00"], days: trading, ttl: 6h, writes: [raw_doc_ref]}
+  symbols:                      # E5.7 / D28: weekly symbol master (SEC tickers + Alpaca optionable)
+    schedule: ["05:30"]         # before the 06:00 earnings calendar; `arc universe refresh` = by hand
+    days: [mon]
+    ttl: 24h                    # a missed Monday still runs that day
+    writes: []                  # writes data/symbol_master.json, never context
 
 personas:
   scout:                        # D15: 22:00 (after-close sources) + 12:00 (midday news), every day

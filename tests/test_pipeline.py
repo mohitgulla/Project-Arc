@@ -244,7 +244,7 @@ class TestFixtureRun:
 
         calls = {c["persona"]: c for c in PersonaCallRepo(conn).for_run(root or "")}
         assert calls["director"]["status"] == "ok"
-        assert json.loads(calls["director"]["dropped"]) == {"not_a_candidate": 2}
+        assert json.loads(calls["director"]["dropped"]) == {"not_a_candidate": 1}  # AAPL
 
         kinds = {
             r["kind"] for r in conn.execute("SELECT DISTINCT kind FROM context_entries").fetchall()
@@ -351,17 +351,17 @@ class TestDigestCards:
         texts = [t for _, t in notes.posts]
         headers = [b[0]["text"]["text"] if b else None for b in notes.blocks]
         assert headers == [
-            "[Scout] Scan: 10 Sources → 3 Candidates",
-            "[Director] Ranked: 1 / 3 • Market Risk ON",
+            "[Scout] Scan: 11 Sources → 4 Candidates",
+            "[Director] Ranked: 3 / 4 • Market Risk ON",
             "[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
             "[Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
             None,  # propose has no card (E6.1 posts the proposal card)
         ]
         # Fallback text = the pre-E5.5 one-liners.
-        assert texts[0] == "[Scout] scout ✓ 10 docs → 5 accepted, 3 candidates today"
+        assert texts[0] == "[Scout] scout ✓ 11 docs → 6 accepted, 4 candidates today"
         assert texts[1] == (
-            "[Director] director ✓ 3 candidates → shortlist: SPY (neutral); "
-            "dropped {'not_a_candidate': 2}"
+            "[Director] director ✓ 4 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
+            "XOM (bearish); excluded 1; dropped {'not_a_candidate': 1}"
         )
         assert texts[2].startswith("[Quant] quant ✓ SPY iron_condor 740/745/798/803 2026-10-30")
         assert (
@@ -375,16 +375,29 @@ class TestDigestCards:
         scout = "\n".join(
             b["text"]["text"] for b in notes.blocks[0] or [] if b["type"] == "section"
         )
-        assert "• not in universe (1): PLTR" in scout
+        # E5.7 open universe: PLTR is new and passes the screen, UFPT fails it, ZZZQ is
+        # not a listed symbol; the failed checks are shown for the illiquid name.
+        assert "*PLTR* bullish · news · 90% confidence · new, passed liquidity screen" in scout
+        assert "• failed liquidity screen (1): UFPT" in scout
+        assert "UFPT: ADV 118k &lt; 1.0M; no expiry in the DTE window" in scout
+        assert "• unknown symbol (1): ZZZQ" in scout
         assert "http" not in scout  # no source links
         assert "before sizing" not in json.dumps(notes.blocks[2])
         assert "Buyback plus raised data-center guidance." in scout  # Scout rationale line
         assert "Evidence: Scout neutral · macro catalyst Oct 28 · 62% confidence" in json.dumps(
             notes.blocks[1], ensure_ascii=False
         )
-        director = json.dumps(notes.blocks[1])
-        assert "not a Scout candidate (2): AAPL, PLTR" in director
-        assert "not picked by Director (2): NVDA, XOM" in director
+        director = json.dumps(notes.blocks[1], ensure_ascii=False)
+        # every ranked name is listed, with its Director evidence (≤3 items)
+        for t in ("*SPY*", "*NVDA*", "*XOM*"):
+            assert t in director
+        assert "Director evidence: 8-K: buyback $50B, Sep 24 · uptrend" in director
+        assert "a fourth item is cut" not in director
+        assert "*Excluded (1)*\\n• *PLTR*: Fixture: new open-universe name" in director
+        assert "not a Scout candidate (1): AAPL" in director
+        quant = json.dumps(notes.blocks[2], ensure_ascii=False)
+        assert "*Skipped (1)*\\n• *NVDA*: Fixture: bull put credit is thin" in quant
+        assert "no tradable chain (1): XOM" in quant
         risk = json.dumps(notes.blocks[3])
         assert "structure Quant did not propose (1): QQQ iron_condor" in risk
 
@@ -443,6 +456,113 @@ class TestFailures:
         assert not report.proposals
 
 
+def _decisions(conn, stage: str, code: str) -> dict[str, str]:  # noqa: ANN001
+    """subject -> reason_text of the *stage* decisions journalled with *code*."""
+    rows = conn.execute(
+        "SELECT subject, reason_text FROM decisions WHERE stage = ? AND reason_code = ?",
+        (stage, code),
+    ).fetchall()
+    return {r["subject"]: r["reason_text"] or "" for r in rows}
+
+
+class TestFunnel:
+    """E5.7: the Director ranks everything; pipeline_max_shortlist budgets Quant/Risk."""
+
+    _run = TestFailures._run
+    _env = TestFailures._env
+
+    def test_budget_cuts_quant_not_director(self, settings, routines) -> None:  # noqa: ANN001
+        settings = settings.model_copy(update={"pipeline_max_shortlist": 1})
+        env = self._env()
+        conn, report = self._run(settings, routines, env)
+        status = {o.job: o for o in report.outcomes}
+        assert status["quant"].status == "ok"
+        # the Director saw every candidate; no budget in its prompt, all three ranked
+        director_prompt = env.llms["director"].prompts[0]  # type: ignore[attr-defined]
+        assert "pipeline_max_shortlist" not in director_prompt
+        assert "do not cap" in director_prompt.lower()
+        sl = _latest_payload(conn, "shortlist")
+        assert [i["ticker"] for i in sl["shortlist"]] == ["SPY", "NVDA", "XOM"]
+        assert sl["budget"] == 1
+        # the Quant only saw SPY; NVDA and XOM are over budget, journalled with rank
+        quant_prompt = env.llms["quant"].prompts[0]  # type: ignore[attr-defined]
+        assert '"NVDA"' not in quant_prompt
+        st = _latest_payload(conn, "structures")
+        assert st["over_budget"] == ["NVDA", "XOM"]
+        rows = _decisions(conn, "structure", "over_budget")
+        assert set(rows) == {"NVDA", "XOM"}
+        assert "ranked #2, beyond the Quant/Risk budget" in rows["NVDA"]
+        assert status["quant"].metrics["over_budget"] == 2
+        assert [p["ticker"] for p in report.proposals] == ["SPY"]
+
+    def test_every_budgeted_ticker_is_accounted_for(self, settings, routines) -> None:  # noqa: ANN001
+        conn, report = self._run(settings, routines, self._env())
+        st = _latest_payload(conn, "structures")
+        structured = {s["ticker"] for s in st["structures"]}
+        skipped = {s["ticker"] for s in st["skipped"]}
+        accounted = structured | skipped | set(st["not_structured"]) | set(st["over_budget"])
+        sl = _latest_payload(conn, "shortlist")
+        assert {i["ticker"] for i in sl["shortlist"] if i["ticker"] != "AAPL"} <= accounted
+        assert structured == {"SPY"}
+        assert skipped == {"NVDA", "XOM"}  # NVDA by Quant (reason), XOM auto: no chain
+        assert "credit is thin" in _decisions(conn, "structure", "quant_skipped")["NVDA"]
+
+    def test_quant_silent_ticker_is_not_structured(self, settings, routines) -> None:  # noqa: ANN001
+        quant = json.loads((FIXTURES_DIR / "quant.json").read_text())
+        quant["skipped"] = []
+        conn, _ = self._run(
+            settings, routines, self._env(quant=FixtureScoutLLM([json.dumps(quant)]))
+        )
+        assert _latest_payload(conn, "structures")["not_structured"] == ["NVDA"]
+        assert set(_decisions(conn, "structure", "not_structured")) == {"NVDA"}
+
+    def test_director_exclusion_needs_reason_and_candidate(self, settings, routines) -> None:  # noqa: ANN001
+        d = json.loads((FIXTURES_DIR / "director.json").read_text())
+        d["excluded"] += [
+            {"ticker": "TSLA", "reason": "not a candidate today"},
+            {"ticker": "SPY", "reason": "ranked and excluded at once"},
+        ]
+        conn, _ = self._run(
+            settings, routines, self._env(director=FixtureScoutLLM([json.dumps(d)]))
+        )
+        sl = _latest_payload(conn, "shortlist")
+        assert [e["ticker"] for e in sl["excluded"]] == ["PLTR"]
+        assert "SPY" in {i["ticker"] for i in sl["shortlist"]}
+
+    def test_risk_repair_reask(self, settings, routines) -> None:  # noqa: ANN001
+        quant = json.loads((FIXTURES_DIR / "quant.json").read_text())
+        risk = json.loads((FIXTURES_DIR / "risk.json").read_text())
+        first = {**risk, "assessments": []}  # Risk forgets the SPY structure
+        risk_llm = FixtureScoutLLM([json.dumps(first), json.dumps(risk)])
+        conn, report = self._run(
+            settings,
+            routines,
+            self._env(quant=FixtureScoutLLM([json.dumps(quant)]), risk=risk_llm),
+        )
+        assert len(risk_llm.prompts) == 2
+        assert (
+            "REPAIR: your previous reply had no assessment for SPY iron_condor"
+            in (risk_llm.prompts[1])
+        )
+        outcome = next(o for o in report.outcomes if o.job == "risk")
+        assert outcome.metrics["repaired"] == 1 and outcome.metrics["not_assessed"] == 0
+        n = conn.execute("SELECT COUNT(*) FROM persona_calls WHERE persona='risk'").fetchone()[0]
+        assert n == 2
+        assert [p["ticker"] for p in report.proposals] == ["SPY"]
+
+    def test_risk_still_missing_after_repair(self, settings, routines) -> None:  # noqa: ANN001
+        risk = json.loads((FIXTURES_DIR / "risk.json").read_text())
+        empty = json.dumps({**risk, "assessments": []})
+        risk_llm = FixtureScoutLLM([empty, empty])
+        conn, report = self._run(settings, routines, self._env(risk=risk_llm))
+        assert len(risk_llm.prompts) == 2  # exactly one re-ask
+        outcome = next(o for o in report.outcomes if o.job == "risk")
+        assert outcome.metrics["not_assessed"] == 1
+        missing = _decisions(conn, "risk_review", "not_assessed")
+        assert "after one repair re-ask" in missing["SPY"]
+        assert not report.proposals
+
+
 def test_cli_propose_fixtures(capsys: pytest.CaptureFixture[str], monkeypatch) -> None:  # noqa: ANN001
     from arc.cli import main
 
@@ -488,10 +608,11 @@ def test_cli_dry_run_does_not_require_gate_secret(monkeypatch: pytest.MonkeyPatc
 # ---------------------------------------------------------------------------
 
 
-def _latest_payload(conn, kind: str) -> dict:  # noqa: ANN001
+def _latest_payload(conn, kind: str, subject: str | None = None) -> dict:  # noqa: ANN001
     row = conn.execute(
-        "SELECT payload FROM context_entries WHERE kind = ? ORDER BY created_at DESC LIMIT 1",
-        (kind,),
+        "SELECT payload FROM context_entries WHERE kind = ? AND (? IS NULL OR subject = ?) "
+        "ORDER BY created_at DESC LIMIT 1",
+        (kind, subject, subject),
     ).fetchone()
     return json.loads(row["payload"])
 
@@ -560,8 +681,13 @@ def test_rank_menu_by_flag(
     import arc.pipeline.steps as steps
     from arc.exits import load_exit_config
 
-    def menu_vals(prompt: str) -> list[float]:
-        return [float(x) for x in re.findall(rf'"{by}": (-?[0-9.e-]+)', prompt)]
+    def menus(prompt: str) -> dict[str, list[float]]:
+        # E5.7: several tickers get a menu; each menu is ordered on its own.
+        chains = prompt.split("### Option chains with Greeks\n", 1)[1].split("\n\n### ", 1)[0]
+        return {
+            t: [float(x) for x in re.findall(rf'"{by}": (-?[0-9.e-]+)', json.dumps(c["menu"]))]
+            for t, c in json.loads(chains).items()
+        }
 
     _, _, off = _recording_fixture_run(settings, routines)
     cfg = load_exit_config()
@@ -570,10 +696,12 @@ def test_rank_menu_by_flag(
     )
     monkeypatch.setattr(steps, "exit_config", lambda _settings=None: on_cfg)
     _, _, on = _recording_fixture_run(settings, routines)
-    vals = menu_vals(on["quant"])
-    assert len(vals) >= 2
-    assert vals == sorted(vals, reverse=True)
-    assert sorted(menu_vals(off["quant"])) == sorted(vals)  # same menu, reordered
+    on_menus, off_menus = menus(on["quant"]), menus(off["quant"])
+    assert set(on_menus) == set(off_menus) and len(on_menus) >= 2
+    for t, vals in on_menus.items():
+        assert vals == sorted(vals, reverse=True), t
+        assert sorted(off_menus[t]) == sorted(vals)  # same menu, reordered
+    assert len(on_menus["SPY"]) >= 2
 
 
 def test_menu_rank_key_unmodelled_last() -> None:
@@ -586,7 +714,7 @@ def test_realized_vol_from_regime_context(settings: ArcSettings, routines) -> No
     conn, _, prompts = _recording_fixture_run(settings, routines)
     (s,) = _latest_payload(conn, "structures")["structures"]
     em = _latest_payload(conn, "proposal")["exit_model"]
-    regime = _latest_payload(conn, "regime")["vol"]
+    regime = _latest_payload(conn, "regime", "SPY")["vol"]
     from arc.exits import realized_vol_forecast
 
     rv = realized_vol_forecast(regime["hv20"], regime["hv60"])  # fixture: HV20 only

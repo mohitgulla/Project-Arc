@@ -9,10 +9,17 @@ Flow per run::
 Filters (deterministic, applied after the LLM):
 
 * **schema** — each candidate must validate against ``ScoutCandidateOut``.
-* **universe** — ticker must be in ``settings.universe``.
+* **universe** (D28, :class:`~arc.universe.guard.UniverseGuard`) — ``strict``:
+  ticker must be in ``settings.universe``. ``seed`` (default): seed tickers
+  always pass; any other ticker must be in the symbol master
+  (``unknown_symbol``), optionable, under the per-run new-ticker cap
+  (``over_new_ticker_cap``) and pass the liquidity screen (``illiquid``).
 * **threshold** — confidence must be ``>= settings.scout_min_confidence``.
 * **sources** — only URLs of documents actually in the batch survive; a
   candidate with no grounded source is dropped (no hallucinated citations).
+
+The liquidity screen runs last (after threshold and sources), so market data is
+only fetched for candidates that would otherwise be accepted.
 
 Funnel discipline: the only thing downstream code (scanner, Director) may
 read is :func:`candidates_for_scanner`, which returns ``Candidate`` models
@@ -29,7 +36,7 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from pydantic import ValidationError
@@ -40,10 +47,18 @@ from arc.models import Candidate, CatalystType, Stance
 from arc.personas.builders import ScoutInput, build_scout_prompt
 from arc.personas.schemas import ScoutCandidateOut, ScoutOutput
 from arc.store.repos import CandidateRepo
+from arc.universe.guard import (
+    REJECT_ILLIQUID,
+    REJECT_NEW_TICKER_CAP,
+    REJECT_NOT_IN_UNIVERSE,
+    REJECT_UNKNOWN_SYMBOL,
+    UniverseGuard,
+)
 from arc.utils.calendar import ET, now_et
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Collection
 
     from arc.config import ArcSettings
     from arc.ingest.llm import ScoutLLM
@@ -54,9 +69,11 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "scout"
 
 # Rejection reasons (stable keys; stored in scout_batches.rejected).
 REJECT_SCHEMA = "schema"
-REJECT_UNIVERSE = "not_in_universe"
+REJECT_UNIVERSE = REJECT_NOT_IN_UNIVERSE  # strict mode (kept name for callers)
 REJECT_THRESHOLD = "below_threshold"
 REJECT_SOURCE = "no_grounded_source"
+# Re-exported for callers/tests (the universe keys live in arc.universe.guard).
+_UNIVERSE_REJECTS = (REJECT_ILLIQUID, REJECT_NEW_TICKER_CAP, REJECT_UNKNOWN_SYMBOL)
 
 _FEED_DELIMITER = "FEEDS>>>"
 _MAX_UNSCOUTED_PER_RUN = 200
@@ -88,6 +105,10 @@ class ScoutRunResult:
     # scout job as one ``note`` (topic=observation). Never copied onto ``Candidate``.
     summaries: list[str] = field(default_factory=list)
     summary_sources: list[str] = field(default_factory=list)
+    # D28: ticker -> why the universe guard rejected it (screen failures etc.), and the
+    # non-seed tickers admitted this run. Display + journal only.
+    reject_details: dict[str, str] = field(default_factory=dict)
+    new_tickers: list[str] = field(default_factory=list)
     _rationale_conf: dict[str, float] = field(default_factory=dict, repr=False)
 
 
@@ -190,19 +211,28 @@ def merge_candidates(a: Candidate, b: Candidate) -> Candidate:
 def validate_scout_candidate(
     item: Any,
     *,
-    universe: frozenset[str],
+    universe: Collection[str] | UniverseGuard,
     min_confidence: float,
     allowed_sources: frozenset[str],
     created_at: _dt.datetime,
 ) -> Candidate | str:
-    """Turn one raw LLM candidate into a ``Candidate`` or a rejection reason."""
+    """Turn one raw LLM candidate into a ``Candidate`` or a rejection reason.
+
+    *universe* is either a plain allow-list (strict behaviour) or a
+    :class:`UniverseGuard` (D28): the symbol check runs first, the new-ticker cap
+    and liquidity screen run last, only for otherwise-valid candidates.
+    """
     try:
         out = ScoutCandidateOut.model_validate(item)
     except ValidationError:
         return REJECT_SCHEMA
 
     ticker = normalize_ticker(out.ticker)
-    if ticker not in universe:
+    guard = universe if isinstance(universe, UniverseGuard) else None
+    if guard is not None:
+        if (why := guard.known(ticker)) is not None:
+            return why
+    elif ticker not in cast("Collection[str]", universe):
         return REJECT_UNIVERSE
     if out.confidence < min_confidence:
         return REJECT_THRESHOLD
@@ -213,7 +243,7 @@ def validate_scout_candidate(
         return REJECT_SOURCE
 
     try:
-        return Candidate(
+        cand = Candidate(
             ticker=ticker,
             stance=out.stance,
             catalyst_type=out.catalyst_type,
@@ -224,6 +254,9 @@ def validate_scout_candidate(
         )
     except ValidationError:
         return REJECT_SCHEMA
+    if guard is not None and (why := guard.admit(ticker)) is not None:
+        return why
+    return cand
 
 
 def render_doc(doc: _Doc, *, max_chars: int) -> str:
@@ -238,7 +271,11 @@ def render_doc(doc: _Doc, *, max_chars: int) -> str:
     )
 
 
-def build_prompt(docs: list[_Doc], settings: ArcSettings, day: str) -> str:
+def build_prompt(
+    docs: list[_Doc], settings: ArcSettings, day: str, *, open_universe: bool | None = None
+) -> str:
+    if open_universe is None:
+        open_universe = settings.universe_mode == "seed"
     return build_scout_prompt(
         ScoutInput(
             universe=list(settings.universe),
@@ -246,6 +283,7 @@ def build_prompt(docs: list[_Doc], settings: ArcSettings, day: str) -> str:
             scan_date=day,
             min_confidence=settings.scout_min_confidence,
             output_schema_json=json.dumps(ScoutOutput.model_json_schema(), sort_keys=True),
+            open_universe=open_universe,
         )
     )
 
@@ -346,12 +384,14 @@ def run_scout(
     dry_run: bool = False,
     now: _dt.datetime | None = None,
     run_id: str | None = None,
+    guard: UniverseGuard | None = None,
 ) -> ScoutRunResult:
     """Summarise all unscouted RawDocs into stored, merged ``Candidate`` rows.
 
     ``dry_run=True`` swaps the Hermes backend for canned fixture responses
     (``arc/ingest/fixtures/scout/responses``) unless *llm* is given; it never
-    makes a network call.
+    makes a network call. *guard* (D28) overrides the universe policy built from
+    *settings* (tests and ``arc propose --fixtures`` pass one with recorded data).
     """
     now = (now or now_et()).astimezone(ET)
     day = now.date().isoformat()
@@ -367,16 +407,17 @@ def run_scout(
     doc_repo = RawDocRepo(conn)
     batch_repo = ScoutBatchRepo(conn)
     cand_repo = CandidateRepo(conn)
-    universe = frozenset(normalize_ticker(t) for t in settings.universe)
-
     docs = _load_docs(doc_repo.list_unscouted(limit=_MAX_UNSCOUTED_PER_RUN))
+    if guard is None:
+        guard = UniverseGuard.from_settings(settings, now=now, load_master=bool(docs))
+    open_universe = guard.mode == "seed"
     size = settings.scout_batch_size
     log.info("scout.run.start", run_id=run_id, day=day, docs=len(docs), dry_run=dry_run)
 
     for i in range(0, len(docs), size):
         batch = docs[i : i + size]
         doc_ids = [d.id for d in batch]
-        prompt = build_prompt(batch, settings, day)
+        prompt = build_prompt(batch, settings, day, open_universe=open_universe)
         result.batches += 1
 
         try:
@@ -425,7 +466,7 @@ def run_scout(
         for item in items:
             outcome = validate_scout_candidate(
                 item,
-                universe=universe,
+                universe=guard,
                 min_confidence=settings.scout_min_confidence,
                 allowed_sources=allowed_sources,
                 created_at=now,
@@ -433,7 +474,10 @@ def run_scout(
             if isinstance(outcome, str):
                 rejected[outcome] += 1
                 raw = item.get("ticker") if isinstance(item, dict) else None
-                result.rejected_items.setdefault(outcome, []).append(str(raw or "?")[:12])
+                label = normalize_ticker(str(raw or "?"))[:12] or "?"
+                result.rejected_items.setdefault(outcome, []).append(label)
+                if label in guard.details:
+                    result.reject_details[label] = guard.details[label]
                 continue
             store_candidate(cand_repo, outcome, day=day, run_id=run_id)
             accepted += 1
@@ -465,6 +509,7 @@ def run_scout(
             rejected=dict(rejected),
         )
 
+    result.new_tickers = list(guard.admitted_new)
     result.candidates = candidates_for_scanner(
         conn, day, min_confidence=settings.scout_min_confidence
     )
@@ -475,5 +520,8 @@ def run_scout(
         failed=result.failed_batches,
         accepted=result.accepted,
         candidates=len(result.candidates),
+        universe_mode=str(guard.mode),
+        new_tickers=result.new_tickers,
+        rejected=dict(result.rejected),
     )
     return result

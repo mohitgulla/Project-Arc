@@ -296,9 +296,37 @@ class TestDirector:
         assert "Rank 2 · Bullish · 70% confidence · Vertical Spread" in text
         assert "[Director] SPY" not in text and "_Regime:_" not in text
         assert "• not a Scout candidate (1): AAPL" in text
-        assert "• not picked by Director (2): XOM, TSLA" in text
+        assert "• not ranked or excluded by Director (2): XOM, TSLA" in text
         assert "*[Director] Session notes*\nTwo setups." in text
         assert _footer(view) == "run `r` · chain `c`"
+        _assert_slack_limits(view)
+
+    def test_budget_splits_ranked_list(self) -> None:
+        """E5.7: every ranked name is shown; past the budget they are listed, not carded."""
+        out = DirectorOutput(
+            shortlist=[
+                ranked(evidence=["8-K buyback", "IV rank 18"]),
+                ranked("NVDA", rank=2, stance="bullish"),
+                ranked("PLTR", rank=3, stance="bullish", thesis="Contract win."),
+            ],
+            excluded=[{"ticker": "XOM", "reason": "Crude already priced."}],  # type: ignore[list-item]
+            market_regime="risk_on",
+            session_notes="",
+        )
+        view = D.director_card(
+            out,
+            candidates=4,
+            funnel=[("XOM", "excluded", "Crude already priced.")],
+            budget=2,
+        )
+        assert view.text == "[Director] Ranked: 3 / 4 • Market Risk ON"
+        text = _all(view)
+        assert "*SPY*\nRank 1" in text and "*NVDA*\nRank 2" in text
+        assert "*PLTR*\nRank 3" not in text
+        assert "Ranked, not structured (1, over the budget of 2)" in text
+        assert "#3 *PLTR* · Bullish · 70% · Contract win." in text
+        assert "Director evidence: 8-K buyback · IV rank 18" in text
+        assert "XOM" in text and "Crude already priced." in text
         _assert_slack_limits(view)
 
     def test_empty_shortlist_and_escaping(self) -> None:

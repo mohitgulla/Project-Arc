@@ -65,9 +65,12 @@ def conn():
 
 @pytest.fixture()
 def settings() -> ArcSettings:
+    # Strict mode keeps the pre-D28 allow-list semantics these tests pin; the open
+    # (seed) universe is covered by TestOpenUniverse / tests/test_universe.py.
     return ArcSettings(
         env="paper",
         universe=sorted(UNIVERSE),
+        universe_mode="strict",
         scout_min_confidence=0.6,
         scout_batch_size=8,
         scout_max_doc_chars=500,
@@ -474,14 +477,15 @@ class TestRunScout:
         assert res.day == "2026-09-28"
 
     def test_dry_run_fixtures_end_to_end(self, conn, settings) -> None:
-        assert load_fixture_docs(conn) == 10
+        # strict mode (fixture settings): PLTR / UFPT / ZZZQ are all not_in_universe
+        assert load_fixture_docs(conn) == 11
         assert load_fixture_docs(conn) == 0  # dedupe by content hash
         res = run_scout(conn, settings, dry_run=True, now=NOW)
         assert res.dry_run
         assert res.failed_batches == 0
-        assert res.docs_scouted == 10
+        assert res.docs_scouted == 11
         assert dict(res.rejected) == {
-            REJECT_UNIVERSE: 1,
+            REJECT_UNIVERSE: 3,
             REJECT_THRESHOLD: 1,
             REJECT_SOURCE: 1,
             REJECT_SCHEMA: 1,
@@ -674,6 +678,8 @@ def test_cli_scan_dry_run() -> None:
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report["dry_run"] is True
-    assert report["docs_scouted"] == 10
+    assert report["docs_scouted"] == 11
+    # seed mode (default): PLTR is a new, liquid name; with no symbol master cached
+    # (tests are hermetic) non-seed names fail closed as unknown_symbol.
     assert {c["ticker"] for c in report["candidates"]} == {"NVDA", "XOM", "SPY"}
     assert all("rationale" not in c for c in report["candidates"])

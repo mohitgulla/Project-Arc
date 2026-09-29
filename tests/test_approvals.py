@@ -185,7 +185,9 @@ class TestLayout:
         trail = load_trail(conn, _phash(conn), "SPY")
         assert trail.chain_run_id and trail.director and trail.quant and trail.risk
         text = _text(render_card(p, None, proposal_hash=ph, actionable=False, trail=trail).blocks)
-        assert "*[Director] Thesis (rank 1 of 1, neutral, confidence 70%)*" in text
+        assert (
+            "*[Director] Thesis (rank 1 of 3, neutral, confidence 70%)*" in text
+        )  # E5.7: SPY, NVDA, XOM
         assert "Regime: Fixture: low realised vol" in text
         assert "*[Quant] Structure choice (confidence 70%)*" in text
         assert "*[Risk] Review*" in text and "Rating *moderate*" in text

@@ -51,7 +51,7 @@ Here is the scan:
       "catalyst_date": null,
       "confidence": 0.9,
       "sources": ["https://example.com/news/pltr-contract"],
-      "rationale": "Not in the universe, so it is rejected."
+      "rationale": "Not in the seed list: rejected in strict mode; in seed mode it passes the liquidity screen (E5.7)."
     },
     {
       "ticker": "JPM",

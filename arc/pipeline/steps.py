@@ -87,11 +87,13 @@ from arc.personas.builders import (
     risk_swap_input_from_context,
 )
 from arc.personas.schemas import (
+    DirectorExclusion,
     DirectorOutput,
     DirectorRankedItem,
     QuantGreeks,
     QuantLeg,
     QuantOutput,
+    QuantSkip,
     QuantStructureOut,
     RiskAssessment,
     RiskOutput,
@@ -155,10 +157,15 @@ DIRECTOR_READS = ["candidate", "regime", "channel_brief", "note"]  # == routines
 DROP_NOT_CANDIDATE = "not_a_candidate"
 DROP_DUPLICATE = "duplicate"
 DROP_BAD_FIELD = "invalid_field"
-DROP_OVER_LIMIT = "over_limit"
 DROP_NOT_IN_MENU = "not_in_menu"
 DROP_NOT_SHORTLISTED = "not_shortlisted"
 DROP_UNKNOWN_STRUCTURE = "unknown_structure"
+# E5.7 funnel outcomes (card keys; journal codes in arc.journal.reasons)
+FUNNEL_EXCLUDED = "excluded"  # Director excluded it, with a reason
+FUNNEL_NOT_RANKED = "not_picked"  # neither ranked nor excluded (no reason given)
+FUNNEL_OVER_BUDGET = "over_budget"  # ranked beyond pipeline_max_shortlist
+FUNNEL_SKIPPED = "skipped"  # Quant skipped it, with a reason
+FUNNEL_NOT_STRUCTURED = "not_structured"  # no structure and no reason from Quant
 
 
 class PersonaError(RuntimeError):
@@ -436,9 +443,13 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
 
 
 def _filter_shortlist(
-    out: DirectorOutput, candidates: Mapping[str, Stance], limit: int
+    out: DirectorOutput, candidates: Mapping[str, Stance]
 ) -> tuple[list[DirectorRankedItem], Counter[str], list[tuple[DirectorRankedItem, str]]]:
-    """Kept items, drop counts, and each dropped item with its reason."""
+    """Kept items, drop counts, and each dropped item with its reason.
+
+    E5.7: no count cap here. The Director ranks every candidate it would trade;
+    ``pipeline_max_shortlist`` is the Quant/Risk budget, applied by :func:`quant`.
+    """
     dropped: Counter[str] = Counter()
     rejected: list[tuple[DirectorRankedItem, str]] = []
     kept: list[DirectorRankedItem] = []
@@ -461,9 +472,6 @@ def _filter_shortlist(
         if stype not in STRUCTURE_TYPES or stance not in {s.value for s in Stance}:
             drop(item, DROP_BAD_FIELD)
             continue
-        if len(kept) >= limit:
-            drop(item, DROP_OVER_LIMIT)
-            continue
         seen.add(t)
         kept.append(
             item.model_copy(
@@ -476,6 +484,18 @@ def _filter_shortlist(
             )
         )
     return kept, dropped, rejected
+
+
+def _filter_excluded(
+    out: DirectorOutput, candidates: Mapping[str, Stance], ranked: set[str]
+) -> list[DirectorExclusion]:
+    """The Director's exclusions that name a real, un-ranked candidate (first wins)."""
+    kept: dict[str, DirectorExclusion] = {}
+    for ex in out.excluded:
+        t = ex.ticker.strip().upper()
+        if t in candidates and t not in ranked and t not in kept and ex.reason.strip():
+            kept[t] = DirectorExclusion(ticker=t, reason=ex.reason.strip()[:300])
+    return list(kept.values())
 
 
 def _scout_evidence(snapshot: ContextSnapshot) -> dict[str, str]:
@@ -506,12 +526,17 @@ def _profile_rule(settings: ArcSettings) -> str:
     return line
 
 
-def _director_rules(
-    cands: Mapping[str, Stance], limit: int, settings: ArcSettings | None = None
-) -> list[str]:
+def _director_rules(cands: Mapping[str, Stance], settings: ArcSettings | None = None) -> list[str]:
+    """Director constraints (E5.7: rank, don't gatekeep; no count cap in the prompt)."""
     rules = [
         f"shortlist tickers MUST come from the candidates above: {', '.join(sorted(cands))}.",
-        f"At most {limit} tickers, one entry each, rank 1 = highest conviction.",
+        "Rank every candidate you would consider trading, best first (rank 1 = highest "
+        "conviction), each with thesis, regime context and the evidence behind it. "
+        "Do not cap the list yourself.",
+        "Exclude a candidate only with a one-line reason in `excluded` "
+        "({ticker, reason}); every candidate is either ranked or excluded.",
+        "evidence: up to 3 short, grounded facts per pick taken from the inputs above "
+        "(e.g. '8-K: buyback $50B, Sep 24', 'IV rank 18'); no invented numbers.",
         "stance: bullish | bearish | neutral. suggested_structure_type: vertical_spread | "
         "iron_condor | long_call | long_put.",
         "An empty shortlist is a valid answer when nothing is worth trading.",
@@ -548,15 +573,17 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     RoutineRunRepo(ctx.conn).set_inputs(ctx.run_id, [ctx.snapshot.id, snap.id])
 
     summary, _ = _portfolio_summary(ctx, env, settings)
-    limit = settings.pipeline_max_shortlist
+    budget = settings.pipeline_max_shortlist  # Quant/Risk budget; never shown to Director
     inputs = {
         "portfolio_summary": summary,
         "scan_date": _today(ctx).isoformat(),
         "max_notes": settings.pipeline_max_context_notes,
-        "rules": _director_rules(cands, limit, settings),
+        "rules": _director_rules(cands, settings),
     }
     reply, out = _ask(ctx, env, "director", snap, inputs, DirectorOutput)
-    kept, dropped, rejected = _filter_shortlist(out, cands, limit)
+    kept, dropped, rejected = _filter_shortlist(out, cands)
+    ranked = {i.ticker for i in kept}
+    excluded = _filter_excluded(out, cands, ranked)
     call_id = _record_ok(ctx, "director", reply, snap.id, dropped)
 
     j = _journal(ctx, snap.id)
@@ -604,19 +631,34 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             persona_call_id=call_id,
             payload=item.model_dump(mode="json"),
         )
-    ranked = {i.ticker for i in kept} | {i.ticker.strip().upper() for i, _ in rejected}
-    for t in sorted(set(cands) - ranked):
+    for ex in excluded:
+        j.add(
+            JournalPersona.DIRECTOR,
+            Stage.SHORTLIST,
+            ex.ticker,
+            Choice.REJECTED,
+            ReasonCode.DIRECTOR_EXCLUDED,
+            reason_text=ex.reason,
+            persona_call_id=call_id,
+        )
+    accounted = ranked | {e.ticker for e in excluded}
+    not_ranked = sorted(set(cands) - accounted)
+    for t in not_ranked:
         j.add(
             JournalPersona.DIRECTOR,
             Stage.SHORTLIST,
             t,
             Choice.REJECTED,
             ReasonCode.NOT_RANKED,
-            reason_text="candidate left out of the Director's shortlist",
+            reason_text="neither ranked nor excluded by the Director (no reason given)",
             persona_call_id=call_id,
         )
     payload = ShortlistPayload(
-        shortlist=kept, market_regime=out.market_regime, session_notes=out.session_notes
+        shortlist=kept,
+        excluded=excluded,
+        market_regime=out.market_regime,
+        session_notes=out.session_notes,
+        budget=budget,
     )
     entry = ctx.write("shortlist", SESSION_SUBJECT, payload)
     _note(
@@ -635,22 +677,48 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             persona="director",
             topic=NoteTopic.THESIS,
             title=f"{item.ticker} {item.stance} thesis",
-            body="\n\n".join(x for x in (item.thesis, item.regime_context) if x.strip()),
+            body="\n\n".join(
+                x
+                for x in (
+                    item.thesis,
+                    item.regime_context,
+                    "Evidence:\n" + "\n".join(f"- {e}" for e in item.evidence)
+                    if item.evidence
+                    else "",
+                )
+                if x.strip()
+            ),
             about=[entry.id],
             stance=_stance(item.stance),
             confidence=item.confidence,
         )
     names = ", ".join(f"{i.ticker} ({i.stance})" for i in kept) or "none"
     drop_items = [(i.ticker.strip().upper() or "?", reason) for i, reason in rejected]
-    not_picked = [(t, "not_picked") for t in sorted(set(cands) - ranked)]
+    funnel = [
+        *[(e.ticker, FUNNEL_EXCLUDED, e.reason) for e in excluded],
+        *[(t, FUNNEL_NOT_RANKED, "") for t in not_ranked],
+    ]
+    over = payload.over_budget()
     return JobResult(
-        summary=f"{len(cands)} candidates → shortlist: {names}"
+        summary=f"{len(cands)} candidates → ranked {len(kept)}: {names}"
+        + (f" (budget {budget}; {len(over)} not structured)" if over else "")
+        + (f"; excluded {len(excluded)}" if excluded else "")
         + (f"; dropped {dict(dropped)}" if dropped else ""),
-        metrics={"shortlist": len(kept), "regime_written": len(regimes), **dropped},
+        metrics={
+            "shortlist": len(kept),
+            "budgeted": len(payload.budgeted()),
+            "over_budget": len(over),
+            "excluded": len(excluded),
+            "not_ranked": len(not_ranked),
+            "regime_written": len(regimes),
+            **dropped,
+        },
         card=director_card(
             payload,
             candidates=len(cands),
-            dropped=[*drop_items, *not_picked],
+            dropped=drop_items,
+            funnel=funnel,
+            budget=budget,
             evidence=_scout_evidence(snap),
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
@@ -804,7 +872,9 @@ def _quant_rules(no_chain: list[str], settings: ArcSettings | None = None) -> li
         *extra,
         "Choose ONLY from the per-ticker `menu` above; copy each chosen structure's legs "
         "(occ_symbol, side, ratio) verbatim. Anything else is discarded.",
-        "At most one structure per ticker, best first. You may omit a ticker.",
+        "At most one structure per ticker, best first. For every ticker with a menu, "
+        "either choose one structure or list it in `skipped` ({ticker, reason}) with a "
+        "one-line reason.",
         "All analytics (price, max gain/loss, breakevens, Greeks, PoP, EV, cost, exits) "
         "are replaced by the pipeline's own numbers; your value-add is the choice, "
         "confidence and rationale.",
@@ -820,6 +890,20 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
     j = _journal(ctx, ctx.snapshot.id)
     shortlist = _latest(ctx.snapshot, "shortlist", ShortlistPayload)
+    # E5.7: the Director ranks everything; only the first `budget` get a structure.
+    over = shortlist.over_budget() if shortlist else []
+    over_budget = [i.ticker for i in over]
+    for item in over:
+        j.add(
+            JournalPersona.QUANT,
+            Stage.STRUCTURE,
+            item.ticker,
+            Choice.NO_TRADE,
+            ReasonCode.OVER_BUDGET,
+            reason_text=f"ranked #{item.rank}, beyond the Quant/Risk budget "
+            f"(pipeline_max_shortlist={shortlist.budget if shortlist else '?'})",
+            confidence=item.confidence,
+        )
     if shortlist is None or not shortlist.shortlist:
         j.add(
             JournalPersona.QUANT,
@@ -845,7 +929,7 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
     no_chain: list[str] = []
     no_chain_why: dict[str, str] = {}
     no_profile: list[tuple[str, str]] = []  # (ticker, stance) the profile cannot trade
-    for item in shortlist.shortlist:
+    for item in shortlist.budgeted():
         strategies = _strategies(item.stance, settings)
         if not strategies:
             no_profile.append((item.ticker, item.stance))
@@ -934,6 +1018,18 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
     profile_note = "; ".join(
         f"{t} ({s}): no structure under profile {settings.account_profile}" for t, s in no_profile
     )
+    # Deterministic skips (no persona involved): every budgeted ticker is accounted for.
+    auto_skips = [
+        *[QuantSkip(ticker=t, reason=no_chain_why.get(t) or "no tradable chain") for t in no_chain],
+        *[
+            QuantSkip(
+                ticker=t,
+                reason=f"account profile {settings.account_profile} has no structure "
+                f"for a {s} stance",
+            )
+            for t, s in no_profile
+        ],
+    ]
     if not menus:
         journal_no_chain()
         journal_no_profile()
@@ -945,7 +1041,12 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         ctx.write(
             "structures",
             SESSION_SUBJECT,
-            StructuresPayload(structures=[], analysis_notes="; ".join(notes)),
+            StructuresPayload(
+                structures=[],
+                skipped=auto_skips,
+                over_budget=over_budget,
+                analysis_notes="; ".join(notes),
+            ),
         )
         return JobResult(
             summary="; ".join(
@@ -1001,16 +1102,35 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
     call_id = _record_ok(ctx, "quant", reply, ctx.snapshot.id, dropped)
 
+    # E5.7: a budgeted ticker with a menu is either structured, skipped with the
+    # Quant's reason, or recorded as "not structured" (no structure, no reason).
+    quant_skips: dict[str, QuantSkip] = {}
+    for sk in out.skipped:
+        t = sk.ticker.strip().upper()
+        if t in menus and t not in chosen and t not in quant_skips and sk.reason.strip():
+            quant_skips[t] = QuantSkip(ticker=t, reason=sk.reason.strip()[:300])
+    not_structured = [t for t in menus if t not in chosen and t not in quant_skips]
+
     by_ticker = {q.ticker: q for q in kept}
     for t, menu in menus.items():
-        if t not in chosen:
+        if t in quant_skips:
             j.add(
                 JournalPersona.QUANT,
                 Stage.STRUCTURE,
                 t,
                 Choice.NO_TRADE,
-                ReasonCode.QUANT_OMITTED,
-                reason_text="Quant picked no structure from this ticker's menu",
+                ReasonCode.QUANT_SKIPPED,
+                reason_text=quant_skips[t].reason,
+                persona_call_id=call_id,
+            )
+        elif t not in chosen:
+            j.add(
+                JournalPersona.QUANT,
+                Stage.STRUCTURE,
+                t,
+                Choice.NO_TRADE,
+                ReasonCode.NOT_STRUCTURED,
+                reason_text="Quant picked no structure from this ticker's menu and gave no reason",
                 persona_call_id=call_id,
             )
         for key, c in menu.items():
@@ -1052,7 +1172,13 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
     journal_no_chain(call_id)
     journal_no_profile(call_id)
-    payload = StructuresPayload(structures=kept, analysis_notes=out.analysis_notes)
+    payload = StructuresPayload(
+        structures=kept,
+        skipped=[*quant_skips.values(), *auto_skips],
+        not_structured=not_structured,
+        over_budget=over_budget,
+        analysis_notes=out.analysis_notes,
+    )
     entry = ctx.write("structures", SESSION_SUBJECT, payload)
     for s in kept:
         _note(
@@ -1084,11 +1210,17 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         summary=(desc or "no structure chosen")
         + (f"; dropped {dict(dropped)}" if dropped else "")
         + (f"; no chain: {', '.join(no_chain)}" if no_chain else "")
+        + (f"; skipped: {', '.join(quant_skips)}" if quant_skips else "")
+        + (f"; not structured: {', '.join(not_structured)}" if not_structured else "")
+        + (f"; over budget: {len(over_budget)}" if over_budget else "")
         + (f"; {profile_note}" if profile_note else ""),
         metrics={
             "structures": len(kept),
             "no_chain": len(no_chain),
             "no_profile": len(no_profile),
+            "skipped": len(quant_skips),
+            "not_structured": len(not_structured),
+            "over_budget": len(over_budget),
             **dropped,
         },
         card=quant_card(
@@ -1096,6 +1228,8 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
             dropped=dropped,
             dropped_items=[(q.ticker.strip().upper() or "?", r) for q, r in rejected],
             no_chain=no_chain,
+            not_structured=not_structured,
+            over_budget=over_budget,
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
         ),
@@ -1192,19 +1326,48 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
     kept: list[RiskAssessment] = []
     rejected: list[tuple[RiskAssessment, str]] = []
     seen: set[tuple[str, str]] = set()
-    for a in out.assessments:
-        key = (a.ticker.strip().upper(), a.structure_type.strip().lower())
-        if key not in wanted:
-            dropped[DROP_UNKNOWN_STRUCTURE] += 1
-            rejected.append((a, DROP_UNKNOWN_STRUCTURE))
-            continue
-        if key in seen:
-            dropped[DROP_DUPLICATE] += 1
-            rejected.append((a, DROP_DUPLICATE))
-            continue
-        seen.add(key)
-        kept.append(a.model_copy(update={"ticker": key[0], "structure_type": key[1]}))
+
+    def accept(assessments: list[RiskAssessment]) -> None:
+        for a in assessments:
+            key = (a.ticker.strip().upper(), a.structure_type.strip().lower())
+            if key not in wanted:
+                dropped[DROP_UNKNOWN_STRUCTURE] += 1
+                rejected.append((a, DROP_UNKNOWN_STRUCTURE))
+                continue
+            if key in seen:
+                dropped[DROP_DUPLICATE] += 1
+                rejected.append((a, DROP_DUPLICATE))
+                continue
+            seen.add(key)
+            kept.append(a.model_copy(update={"ticker": key[0], "structure_type": key[1]}))
+
+    accept(out.assessments)
     call_id = _record_ok(ctx, "risk", reply, ctx.snapshot.id, dropped)
+    # E5.7: one repair re-ask for structures Risk left out; still missing → not_assessed.
+    repaired: list[str] = []
+    if wanted - seen:
+        first_missing = sorted(wanted - seen)
+        repair_inputs = inputs | {
+            "rules": [
+                *inputs["rules"],
+                "REPAIR: your previous reply had no assessment for "
+                + ", ".join(f"{t} {k}" for t, k in first_missing)
+                + ". Return assessments for exactly these structures (ticker and "
+                "structure_type verbatim).",
+            ]
+        }
+        try:
+            r_reply, r_out = _ask(ctx, env, "risk", ctx.snapshot, repair_inputs, RiskOutput)
+        except PersonaError as exc:
+            log.warning("pipeline.risk_repair_failed", missing=first_missing, error=str(exc))
+        else:
+            before = set(seen)
+            r_dropped_before = Counter(dropped)
+            accept(r_out.assessments)
+            repaired = [f"{t} {k}" for t, k in sorted(seen - before)]
+            r_id = _record_ok(ctx, "risk", r_reply, ctx.snapshot.id, dropped - r_dropped_before)
+            log.info("pipeline.risk_repair", missing=first_missing, repaired=repaired, call=r_id)
+            call_id = call_id or r_id
     for a in kept:
         declined = a.sizing_suggestion < 1
         j.add(
@@ -1237,7 +1400,7 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
             t,
             Choice.NO_TRADE,
             ReasonCode.NOT_ASSESSED,
-            reason_text=f"Risk returned no assessment for {t} {k}",
+            reason_text=f"Risk returned no assessment for {t} {k} (after one repair re-ask)",
             persona_call_id=call_id,
         )
     payload = RiskReviewPayload(
@@ -1275,8 +1438,14 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
     return JobResult(
         summary=(desc or "no assessments")
         + (f"; not assessed: {', '.join(missing_s)}" if missing_s else "")
+        + (f"; repaired: {', '.join(repaired)}" if repaired else "")
         + (f"; dropped {dict(dropped)}" if dropped else ""),
-        metrics={"assessments": len(kept), "not_assessed": len(missing_s), **dropped},
+        metrics={
+            "assessments": len(kept),
+            "not_assessed": len(missing_s),
+            "repaired": len(repaired),
+            **dropped,
+        },
         card=risk_card(
             payload,
             sized=sized,
@@ -1547,7 +1716,8 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
         with ctx.conn:  # no other output for this ticker: commit the decision alone
             j.add(JournalPersona.SYSTEM, Stage.PROPOSE, t, Choice.NO_TRADE, code, reason_text=text)
 
-    for item in shortlist.shortlist:
+    # Over-budget names were journalled OVER_BUDGET by the Quant step (E5.7).
+    for item in shortlist.budgeted():
         t = item.ticker
         qs = by_ticker.get(t)
         if qs is None:
@@ -1853,7 +2023,12 @@ def pipeline_handlers(env: PipelineEnv) -> dict[str, Handler]:
         return lambda ctx: fn(ctx, env)
 
     handlers: dict[str, Handler] = {name: bind(fn) for name, fn in _STEPS.items()}
-    if env.scout_llm is not None:
-        scout_llm = env.scout_llm
-        handlers["scout"] = lambda ctx: scout_persona(ctx, llm=scout_llm)
+    if env.scout_llm is not None or env.universe_guard is not None:
+        scout_llm, make_guard = env.scout_llm, env.universe_guard
+
+        def scout(ctx: JobContext) -> JobResult:
+            guard = make_guard(ctx.settings, ctx.now) if make_guard is not None else None
+            return scout_persona(ctx, llm=scout_llm, guard=guard)
+
+        handlers["scout"] = scout
     return handlers
