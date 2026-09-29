@@ -1161,7 +1161,76 @@ def _exit_tunables() -> tuple[Tunable, ...]:
     return tuple(out)
 
 
-REGISTRY: dict[str, Tunable] = {t.key: t for t in (*_STATIC, *_exit_tunables())}
+# D31 / D36: the trading loop's knobs live under `loop:` in routines.yaml (not per
+# job), so they get plain-path tunables. Durations are minutes in the registry and
+# `"<n>m"` strings in the file (write_raw / read_raw convert).
+_LOOP_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="loop.max_idle",
+        group=Group.ROUTINES,
+        type=_I,
+        description="D31: minutes of unchanged inputs after which the loop runs the LLM "
+        "steps again anyway (a higher value = fewer full runs).",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("loop", "max_idle"),
+        unit="m",
+        min=5,
+        max=240,
+        hard_ceiling=240,
+    ),
+    Tunable(
+        key="loop.max_runtime",
+        group=Group.ROUTINES,
+        type=_I,
+        description="D31: minutes a loop chain may run before later steps are skipped "
+        "(must stay under the 5-min slot).",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("loop", "max_runtime"),
+        unit="m",
+        min=1,
+        max=5,
+        hard_ceiling=5,
+    ),
+    Tunable(
+        key="loop.pnl_bucket_pct",
+        group=Group.ROUTINES,
+        type=_F,
+        description="D31: day P&L step (% of equity) that counts as a change for the "
+        "no-change digest.",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("loop", "pnl_bucket_pct"),
+        unit="%",
+        min=0.05,
+        max=10,
+        hard_ceiling=10,
+    ),
+    Tunable(
+        key="loop.post_hold_roots",
+        group=Group.ROUTINES,
+        type=_B,
+        description="D36: post a HOLD root line for skipped loop slots too.",
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("loop", "post_hold_roots"),
+    ),
+    Tunable(
+        key="loop.slack_layout",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="D36: one root line per loop slot in #arc-investor (root_per_loop) or "
+        "everything in the day thread (day_thread, the rollback).",
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("loop", "slack_layout"),
+        choices=("root_per_loop", "day_thread"),
+    ),
+)
+
+
+REGISTRY: dict[str, Tunable] = {t.key: t for t in (*_STATIC, *_exit_tunables(), *_LOOP_TUNABLES)}
 _ALIASES: dict[str, str] = {a: t.key for t in REGISTRY.values() for a in t.aliases}
 
 
@@ -1542,8 +1611,23 @@ def _cadence_text(spec: dict[str, Any]) -> str:
     return "at " + ",".join(str(s) for s in sched)
 
 
+def _minutes(text: str) -> int:
+    """``"30m"`` / ``"2h"`` / ``"90s"`` → whole minutes (the loop's duration strings)."""
+    t = text.strip().lower()
+    n, unit = float(t[:-1]), t[-1]
+    secs = n * {"s": 1, "m": 60, "h": 3600}[unit]
+    return int(round(secs / 60))
+
+
 def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
     """The value of YAML-targeted *t* in *raw* file data, in registry form."""
+    if t.target is Target.ROUTINES and t.path[:1] == ("loop",):
+        v = _get(raw, t.path)
+        if v is None:
+            return None
+        if t.unit == "m":
+            return _minutes(str(v))
+        return v
     if t.target is Target.ROUTINES:
         _, spec = _routine(t, raw)
         if t.type is ValueType.BOOL:
@@ -1571,6 +1655,10 @@ def write_raw(t: Tunable, value: Any, raw: dict[str, Any]) -> list[tuple[tuple[s
 
     Pure helper for :mod:`arc.control.effective`; the pairs are applied in order.
     """
+    if t.target is Target.ROUTINES and t.path[:1] == ("loop",):
+        if t.unit == "m":
+            return [(t.path, f"{int(value)}m")]
+        return [(t.path, value)]
     if t.target is Target.ROUTINES:
         section, spec = _routine(t, raw)
         base = (section, t.path[0])
