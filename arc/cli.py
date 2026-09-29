@@ -239,6 +239,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_positions_parser(sub)
 
+    from arc.budget.cli import add_budget_parser
+
+    add_budget_parser(sub)
+
     from arc.tower.cli import add_tower_parser
 
     add_tower_parser(sub)
@@ -730,6 +734,12 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_exits(args)
+
+    if args.command == "budget":
+        from arc.budget.cli import run_budget
+
+        _log_to_stderr()
+        return run_budget(args)
 
     if args.command == "positions":
         from arc.positions.cli import run_positions

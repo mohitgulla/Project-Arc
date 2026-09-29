@@ -117,6 +117,7 @@ def _eod(ctx: JobContext) -> bool:
 def _book(ctx: JobContext, env: PipelineEnv) -> tuple[Any, AccountSnapshot, Portfolio, HaltSwitch]:
     """Account, gate account snapshot (halt stamped), portfolio, halt switch."""
     from arc.gate.halt import HaltSwitch
+    from arc.pipeline.budget import read_budget
     from arc.pipeline.market import account_snapshot, build_portfolio
     from arc.pipeline.steps import _account_inputs
     from arc.store.repos import HaltRepo
@@ -132,7 +133,10 @@ def _book(ctx: JobContext, env: PipelineEnv) -> tuple[Any, AccountSnapshot, Port
         r=settings.scanner_risk_free_rate,
     )
     switch = HaltSwitch(HaltRepo(ctx.conn))
-    return info, switch.apply(account_snapshot(info, ctx.now)), portfolio, switch
+    # D32: closes are charged against the full daily cap (the gate's order_budget rule).
+    budget = read_budget(ctx, env, settings, now=ctx.clock())
+    account = account_snapshot(info, ctx.now, orders_used_today=budget.budget.used)
+    return info, switch.apply(account), portfolio, switch
 
 
 def _gate_secret(ctx: JobContext, env: PipelineEnv) -> bytes | None:

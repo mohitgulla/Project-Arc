@@ -684,3 +684,100 @@ def test_capacity_rejection_matches_real_gate_output() -> None:
     assert codes(d) == [RuleCode.PER_UNDERLYING.value]
     assert R.capacity_rejection(d.violations) is R.CapacityRejection.BUYING_POWER
     assert R.capacity_rejection(run().violations) is None  # passed: nothing to reallocate
+
+
+# ---------------------------------------------------------------------------
+# D32 daily options order budget (E6.5)
+# ---------------------------------------------------------------------------
+
+
+def _held_for_close() -> Portfolio:
+    """Legs the baseline proposal reduces, so a ``closing`` run passes check_closing."""
+    return Portfolio(legs={SP: -2, LP: 2})
+
+
+def test_order_budget_skipped_without_count() -> None:
+    """No count on the snapshot (fixtures, dry runs) = the rule does not fire."""
+    assert acct().orders_used_today is None
+    assert R.check_order_budget(acct(), cfg(), attempts=4, closing=False) == []
+    assert codes(run(account=acct(orders_used_today=None))) == []
+
+
+@pytest.mark.parametrize(
+    ("used", "attempts", "closing", "ok"),
+    [
+        # open: cap = 200 - 25 = 175
+        (171, 4, False, True),  # 175 <= 175
+        (172, 4, False, False),  # 176 > 175
+        (174, 1, False, True),
+        (175, 1, False, False),
+        (0, 4, False, True),
+        # close: cap = 200
+        (196, 4, True, True),
+        (197, 4, True, False),
+        (199, 1, True, True),
+        (200, 1, True, False),
+        (175, 4, True, True),  # closes may use the reserve
+    ],
+)
+def test_order_budget_boundaries(used: int, attempts: int, closing: bool, ok: bool) -> None:
+    out = R.check_order_budget(
+        acct(orders_used_today=used), cfg(), attempts=attempts, closing=closing
+    )
+    assert (out == []) is ok
+    if not ok:
+        assert out[0].code is RuleCode.ORDER_BUDGET
+        what = "close" if closing else "open"
+        assert out[0].detail.startswith(f"{what} needs {attempts} order(s) but {used} of ")
+        assert ("close reserve" in out[0].detail) is not closing
+
+
+def test_order_budget_is_config_driven() -> None:
+    """restrict/limits move with the settings; no code change (card acceptance)."""
+    c = cfg(order_budget_daily_max=50, order_budget_close_reserve=10, order_budget_restrict_at=20)
+    assert R.check_order_budget(acct(orders_used_today=36), c, attempts=4, closing=False) == []
+    assert R.check_order_budget(acct(orders_used_today=37), c, attempts=4, closing=False) != []
+    assert R.check_order_budget(acct(orders_used_today=46), c, attempts=4, closing=True) == []
+    assert R.check_order_budget(acct(orders_used_today=47), c, attempts=4, closing=True) != []
+
+
+def test_order_budget_in_evaluate_uses_band_attempts() -> None:
+    """The band's attempts are the worst case the gate charges; without a band it is
+    ``1 + execution_improvement_steps``."""
+    # baseline config: 3 steps -> 4 attempts. 172 + 4 = 176 > 175: rejected.
+    d = run(account=acct(orders_used_today=172))
+    assert codes(d) == [RuleCode.ORDER_BUDGET.value]
+    # a one-attempt band fits: 172 + 1 <= 175
+    one = R.PriceBand(lo=D("-0.85"), hi=D("-0.85"), max_steps=0)
+    d1 = evaluate(
+        make_proposal(), acct(orders_used_today=172), Portfolio(), cfg(), market=mkt(), now=NOW,
+        band=one,
+    )  # fmt: skip
+    assert codes(d1) == []
+    # a wide band (7 attempts) is charged in full: 169 + 7 = 176 > 175
+    wide = R.PriceBand(lo=D("-0.85"), hi=D("-0.75"), max_steps=6)
+    d7 = evaluate(
+        make_proposal(), acct(orders_used_today=169), Portfolio(), cfg(), market=mkt(), now=NOW,
+        band=wide,
+    )  # fmt: skip
+    assert RuleCode.ORDER_BUDGET.value in codes(d7)
+
+
+def test_order_budget_close_uses_full_cap() -> None:
+    held = _held_for_close()
+    p = make_proposal()
+    used_open_cap = 175  # opens are exhausted here
+    d = evaluate(
+        p, acct(orders_used_today=used_open_cap), held, cfg(), market=mkt(), now=NOW, closing=True
+    )
+    assert RuleCode.ORDER_BUDGET.value not in codes(d)
+    d2 = evaluate(p, acct(orders_used_today=200), held, cfg(), market=mkt(), now=NOW, closing=True)
+    assert RuleCode.ORDER_BUDGET.value in codes(d2)
+
+
+def test_order_budget_rejection_is_typed_but_never_reallocated() -> None:
+    d = run(account=acct(orders_used_today=175))
+    assert codes(d) == [RuleCode.ORDER_BUDGET.value]
+    assert R.capacity_rejection(d.violations) is R.CapacityRejection.ORDER_BUDGET
+    # mixed with a real capacity code it is not a pure capacity rejection either
+    assert R.capacity_rejection(["order_budget: x", "per_underlying_limit: y"]) is None

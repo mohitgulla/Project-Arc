@@ -32,6 +32,7 @@ from arc.utils.calendar import ET
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from arc.broker.base import BrokerAdapter
     from arc.config import ArcSettings
     from arc.data.base import MarketDataProvider
     from arc.ingest.llm import ScoutLLM
@@ -63,6 +64,8 @@ class PipelineEnv:
     mint_tokens: bool = False  # issue gate tokens on PASS (live paper runs only)
     iv_history_dir: Path | None = None
     notes: list[str] = field(default_factory=list)
+    # D32: the broker whose order list cross-checks the daily order budget (live only).
+    broker: BrokerAdapter | None = None
 
     def llm(self, persona: str) -> ScoutLLM:
         return self.llms[persona]
@@ -88,8 +91,9 @@ class PipelineEnv:
             paper = AlpacaPaperBroker()
             account: Callable[[], AccountInfo] = paper.account
             positions: Callable[[], list[BrokerPosition]] = paper.positions
+            adapter: BrokerAdapter | None = paper
         else:
-            account, positions = fixture_account, list
+            account, positions, adapter = fixture_account, list, None
         return cls(
             market=AlpacaMarketData(),
             account=account,
@@ -97,6 +101,7 @@ class PipelineEnv:
             llms=llms,
             iv_history_dir=settings.scanner_iv_history_dir,
             mint_tokens=broker,
+            broker=adapter,
         )
 
     @classmethod

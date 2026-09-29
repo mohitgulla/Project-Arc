@@ -159,6 +159,8 @@ def _snapshot(args: argparse.Namespace) -> int:
     _write(f"gate violations: {len(snap.violations)} {snap.violation_counts}")
     _write(f"ops: tick {snap.ops.tick_status} health {snap.ops.health_status}, "
            f"{len(snap.ops.open_alerts)} open alert(s)")  # fmt: skip
+    ob = snap.ops.order_budget
+    _write("orders today: " + (f"{ob.used}/{ob.limit} ({ob.tier})" if ob else "n/a"))
     return 0
 
 

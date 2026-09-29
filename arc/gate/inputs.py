@@ -42,6 +42,15 @@ class AccountSnapshot(_Frozen):
             "None = unknown, which fails the cash_settled profile check closed."
         ),
     )
+    orders_used_today: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "D32 daily options order budget: broker orders already used this ET day "
+            "(arc.budget.current_budget: max(local, broker) + reserved). None = not counted, "
+            "so the order_budget rule is skipped; live callers always count."
+        ),
+    )
     as_of: dt.datetime = Field(..., description="When the snapshot was taken (tz-aware)")
 
 

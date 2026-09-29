@@ -77,6 +77,17 @@ class BrokerOrderStatus(BaseModel):
     updated_at: dt.datetime | None = None
 
 
+class BrokerOrderRef(BaseModel):
+    """One broker order as listed for the day (D32 order-budget cross-check)."""
+
+    broker_order_id: str
+    client_order_id: str | None = None
+    status: str = ""
+    asset_class: str = ""  # us_option for single-leg option orders; "" on mleg parents
+    mleg: bool = False
+    submitted_at: dt.datetime | None = None
+
+
 class Fill(BaseModel):
     """A fill event from the broker."""
 
@@ -111,6 +122,13 @@ class BrokerAdapter(Protocol):
         Poll the current status of an order.
     fills(since)
         Return fills since *since*.
+
+    Optional (duck-typed, not part of the protocol so fakes stay small):
+
+    option_orders_since(since) -> list[BrokerOrderRef]
+        Every option order (single-leg ``us_option`` or mleg) the broker lists
+        since *since*, any status. The D32 order budget cross-checks the local
+        count against it; adapters without it are counted locally only.
     """
 
     def account(self) -> AccountInfo: ...

@@ -25,6 +25,7 @@ from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
 
 from arc.broker.base import (
     AccountInfo,
+    BrokerOrderRef,
     BrokerOrderStatus,
     BrokerPosition,
     Fill,
@@ -240,6 +241,47 @@ class AlpacaPaperBroker:
             created_at=order.created_at,
             updated_at=order.updated_at,
         )
+
+    # -- order list (D32 order budget cross-check) ----------------------------
+
+    def option_orders_since(self, since: dt.datetime) -> list[BrokerOrderRef]:
+        """Option orders (single-leg ``us_option`` or mleg) of any status since *since*.
+
+        ``GET /v2/orders?status=all&after=<since>`` in pages of 500 (Alpaca's
+        maximum); equity and crypto orders are dropped. Dashboard-placed orders
+        are included, which is the point.
+        """
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        out: list[BrokerOrderRef] = []
+        after = since
+        while True:
+            req = GetOrdersRequest(
+                status=QueryOrderStatus.ALL, after=after, limit=500, direction="asc"
+            )
+            page = [o for o in self._client.get_orders(req) if not isinstance(o, dict)]
+            for o in page:
+                mleg = bool(o.legs) or _enum_value(getattr(o, "order_class", "")) == "mleg"
+                asset_class = _enum_value(o.asset_class) if o.asset_class is not None else ""
+                if not mleg and asset_class != "us_option":
+                    continue
+                out.append(
+                    BrokerOrderRef(
+                        broker_order_id=str(o.id),
+                        client_order_id=o.client_order_id,
+                        status=_enum_value(o.status) if o.status is not None else "",
+                        asset_class=asset_class,
+                        mleg=mleg,
+                        submitted_at=o.submitted_at or o.created_at,
+                    )
+                )
+            if len(page) < 500:
+                return out
+            last = page[-1].submitted_at or page[-1].created_at
+            if last is None or last <= after:
+                return out
+            after = last
 
     # -- fills ---------------------------------------------------------------
 

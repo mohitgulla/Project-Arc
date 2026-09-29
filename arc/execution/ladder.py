@@ -14,6 +14,11 @@ Invariants
 - A partial fill that is then cancelled stops the ladder (the token is bound to
   the full quantity); the filled contracts are recorded.
 - Idempotent: one ``executions`` row per proposal; a second call is a no-op.
+- D32 order budget: before every attempt the day's order count is re-read
+  (:func:`arc.budget.count_orders`, this ladder's own reservation excluded). If
+  one more order would exceed the cap (opens: ``daily_max - close_reserve``,
+  closes: ``daily_max``) the ladder stops with status ``cancelled`` and detail
+  ``order budget exhausted``, even when the gate's view was stale.
 
 Every attempt is an ``orders`` row with its state events, fills go to ``fills``,
 and the outcome updates the local position model (``open_structures``,
@@ -32,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from arc.budget.orders import REFUSED_DETAIL_PREFIX, OrderBudgetConfig, can_submit, count_orders
 from arc.context.ttl import to_db
 from arc.execution.submission import SubmitRefused, attempt_order_id, submit
 from arc.gate.band import PriceBand
@@ -43,6 +49,7 @@ from arc.models import OrderState
 from arc.store.execution import ExecutionRepo, OpenStructureRepo
 from arc.store.repos import FillRepo, OrderRepo, TaxLotRepo
 from arc.structures import parse_occ
+from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -259,7 +266,7 @@ def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
             limit_price=price,
         )
     except SubmitRefused as exc:
-        c.move(order_id, OrderState.CANCELLED, f"refused before the broker: {exc}")
+        c.move(order_id, OrderState.CANCELLED, f"{REFUSED_DETAIL_PREFIX}: {exc}")
         a.status = "refused"
         c.journal(
             Choice.REJECTED,
@@ -340,6 +347,17 @@ def _settle(c: _Ctx, a: AttemptRecord, st: BrokerOrderStatus) -> str:
     return "next"
 
 
+def _budget_blocks(c: _Ctx, kind: str) -> str | None:
+    """D32: re-count the day's orders; the reason the next attempt may not be sent, or None."""
+    cfg = OrderBudgetConfig.from_settings(c.config)
+    day = c.clock().astimezone(ET).date()
+    count = count_orders(c.conn, c.broker, day, exclude_proposal_hash=c.phash)
+    if can_submit(count.used, cfg, kind=kind, attempts=1):
+        return None
+    cap = cfg.daily_max if kind == "close" else cfg.open_limit
+    return f"order budget exhausted ({count.used} of {cap} {kind} orders used today)"
+
+
 def execute(
     proposal: Proposal,
     decision: GateDecision,
@@ -385,6 +403,12 @@ def execute(
     out = ExecutionOutcome(phash, ExecStatus.CANCELLED, band, t)
     ladder = band.ladder(Decimal(str(config.limit_tick)))
     for step, price in enumerate(ladder):
+        blocked = _budget_blocks(c, kind)
+        if blocked is not None:
+            out.status, out.detail = ExecStatus.CANCELLED, blocked
+            c.journal(Choice.NO_TRADE, ReasonCode.ORDER_BUDGET_STOP, blocked, step=step, kind=kind)
+            log.warning("execution.order_budget_stop", proposal_hash=phash, step=step, kind=kind)
+            break
         a, verdict = _attempt(c, step, price)
         out.attempts.append(a)
         if verdict == "next":
