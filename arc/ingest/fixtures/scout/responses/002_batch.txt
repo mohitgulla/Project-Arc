@@ -8,7 +8,25 @@
       "confidence": 0.6,
       "sources": ["https://example.com/news/aapl-downgrade"],
       "rationale": "Tariff margin headwinds into the print."
+    },
+    {
+      "ticker": "UFPT",
+      "stance": "bullish",
+      "catalyst_type": "news",
+      "catalyst_date": null,
+      "confidence": 0.75,
+      "sources": ["https://example.com/news/small-caps-to-watch"],
+      "rationale": "Guidance raise. A real symbol with thin options: fails the liquidity screen in seed mode."
+    },
+    {
+      "ticker": "ZZZQ",
+      "stance": "bullish",
+      "catalyst_type": "news",
+      "catalyst_date": null,
+      "confidence": 0.7,
+      "sources": ["https://example.com/news/small-caps-to-watch"],
+      "rationale": "Not a listed symbol: rejected as an unknown symbol in seed mode."
     }
   ],
-  "scan_summary": "Fixture batch 2: AAPL downgrade; TSLA 10-Q not actionable."
+  "scan_summary": "Fixture batch 2: AAPL downgrade; TSLA 10-Q not actionable; UFPT/ZZZQ small caps."
 }

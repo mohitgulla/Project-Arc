@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "fetched_at": "2026-09-21T06:00:00Z",
+  "sources": {
+    "sec": 9,
+    "alpaca": 11
+  },
+  "symbols": {
+    "SPY": {
+      "symbol": "SPY",
+      "name": "SPDR S&P 500 ETF Trust",
+      "exchange": "NYSE Arca",
+      "cik": null,
+      "tradable": true,
+      "options": true,
+      "sources": [
+        "alpaca"
+      ]
+    },
+    "QQQ": {
+      "symbol": "QQQ",
+      "name": "Invesco QQQ Trust",
+      "exchange": "Nasdaq",
+      "cik": null,
+      "tradable": true,
+      "options": true,
+      "sources": [
+        "alpaca"
+      ]
+    },
+    "NVDA": {
+      "symbol": "NVDA",
+      "name": "NVIDIA Corp",
+      "exchange": "Nasdaq",
+      "cik": 1045810,
+      "tradable": true,
+      "options": true,
+      "sources": [
+        "sec",
+        "alpaca"
+      ]
+    },
+    "XOM": {
+      "symbol": "XOM",
+      "name": "Exxon Mobil Corp",
+      "exchange": "NYSE",
+      "cik": 34088,
+      "tradable": true,
+      "options": true,
+      "sources": [
+        "sec",
+        "alpaca"
+      ]
+    },
+    "AAPL": {
+      "symbol": "AAPL",
+      "name": "Apple Inc.",
+      "exchange": "Nasdaq",
+      "cik": 320193,
+      "tradable": true,
+      "options": true,
+      "sources": [
+        "sec",
+        "alpaca"
+      ]
+    },
+    "PLTR": {
+      "symbol": "PLTR",
+      "name": "Palantir Technologies Inc.",
+      "exchange": "Nasdaq",
+      "cik": 1321655,
+      "tradable": true,
+      "options": true,
+      "sources": [
+        "sec",
+        "alpaca"
+      ]
+    },
+    "UFPT": {
+      "symbol": "UFPT",
+      "name": "UFP Technologies Inc",
+      "exchange": "Nasdaq",
+      "cik": 914156,
+      "tradable": true,
+      "options": true,
+      "sources": [
+        "sec",
+        "alpaca"
+      ]
+    },
+    "JPM": {
+      "symbol": "JPM",
+      "name": "JPMorgan Chase & Co",
+      "exchange": "NYSE",
+      "cik": 19617,
+      "tradable": true,
+      "options": true,
+      "sources": [
+        "sec",
+        "alpaca"
+      ]
+    },
+    "META": {
+      "symbol": "META",
+      "name": "Meta Platforms, Inc.",
+      "exchange": "Nasdaq",
+      "cik": 1326801,
+      "tradable": true,
+      "options": true,
+      "sources": [
+        "sec",
+        "alpaca"
+      ]
+    },
+    "TSLA": {
+      "symbol": "TSLA",
+      "name": "Tesla, Inc.",
+      "exchange": "Nasdaq",
+      "cik": 1318605,
+      "tradable": true,
+      "options": true,
+      "sources": [
+        "sec",
+        "alpaca"
+      ]
+    },
+    "BRK.B": {
+      "symbol": "BRK.B",
+      "name": "Berkshire Hathaway Inc",
+      "exchange": "NYSE",
+      "cik": 1067983,
+      "tradable": true,
+      "options": true,
+      "sources": [
+        "sec",
+        "alpaca"
+      ]
+    }
+  }
+}

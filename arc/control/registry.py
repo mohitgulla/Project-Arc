@@ -160,6 +160,7 @@ NEVER_TUNABLE: frozenset[str] = frozenset(
         "account_profiles_file",
         "account_profile_spec",
         "llm_routing_file",
+        "universe_config_file",
         "owner_slack_user_id",
         "config_version",
         "yaml_overrides",
@@ -293,10 +294,30 @@ _STATIC: tuple[Tunable, ...] = (
         "universe",
         Group.UNIVERSE,
         ValueType.TICKERS,
-        "Underlyings the Scout/Director may trade. '+NVDA,-TSLA' edits the list; added "
-        "tickers must be optionable.",
+        "Seed/watch list (D28): always scanned and accepted; in strict mode the only "
+        "underlyings the Scout may pick. '+NVDA,-TSLA' edits the list; added tickers must "
+        "be optionable.",
         Risk.GROW,
         max_items=MAX_UNIVERSE,
+    ),
+    _s(
+        "universe_mode",
+        Group.UNIVERSE,
+        ValueType.CHOICE,
+        "D28: strict = only the universe list; seed = also any listed optionable ticker the "
+        "sources surface that passes the liquidity screen (config/universe.yaml).",
+        Risk.ORDER,
+        choices=("strict", "seed"),
+    ),
+    _s(
+        "scout_max_new_tickers",
+        Group.UNIVERSE,
+        _I,
+        "D28: max non-seed tickers the Scout may accept per run (seed mode).",
+        Risk.UP,
+        min=0,
+        max=25,
+        hard_ceiling=25,
     ),
     # -- risk --------------------------------------------------------------------
     _s(
@@ -535,7 +556,7 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         "max_shortlist",
         Group.ENTRIES,
         _I,
-        "Tickers the Director may shortlist per run.",
+        "Quant/Risk budget: the first N Director-ranked tickers get a structure (D28).",
         Risk.UP,
         field="pipeline_max_shortlist",
         min=1,

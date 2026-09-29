@@ -10,6 +10,7 @@ import pytest
 
 from arc.budget import Tier, current_budget
 from arc.config import ArcSettings
+from arc.context.store import ContextStore
 from arc.context.ttl import to_db
 from arc.ingest.scout import load_fixture_docs
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
@@ -125,14 +126,12 @@ def test_restrictive_tier_caps_the_run(settings: ArcSettings) -> None:
     assert not report.failed
     m = manifests(conn)
     assert m["propose"]["order_budget"] == {"used": 100, "limit": 200, "tier": "restrictive"}
-    # the Director saw the tier in its rules, with the lower shortlist cap
-    rules = json.loads(prompts["director"])["rules"] if "rules" in prompts["director"] else []
-    if rules:
-        assert any("order budget tier: restrictive (100/200)" in r for r in rules)
-        assert any("At most 1 tickers" in r for r in rules)
-    else:
-        assert "order budget tier: restrictive (100/200)" in prompts["director"]
-        assert "At most 1 tickers" in prompts["director"]
+    # the Director saw the tier in its rules (advisory); E5.7: no count cap in the prompt
+    assert "order budget tier: restrictive (100/200)" in prompts["director"]
+    assert "At most" not in prompts["director"]
+    # the deterministic cap: the Quant/Risk budget drops to 1 in the restrictive tier
+    sl = ContextStore(conn).snapshot(FIXTURE_NOW, kinds=("shortlist",)).of_kind("shortlist")
+    assert sl and sl[-1].payload["budget"] == 1
     # at most one new open; the neutral fixture only has one candidate anyway
     assert len(report.proposals) <= 1
     codes = {c for _, c in decisions(conn)}

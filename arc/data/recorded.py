@@ -26,9 +26,22 @@ from pydantic import BaseModel, Field
 from arc.data.base import HistoryBar, OptionContract, UnderlyingQuote
 from arc.utils.calendar import ET
 
-__all__ = ["SPY_CHAIN_FIXTURE", "ChainRecording", "DailyClose", "RecordedMarketData"]
+__all__ = [
+    "FIXTURES_DIR",
+    "MULTI_NAME_FIXTURES",
+    "SPY_CHAIN_FIXTURE",
+    "ChainRecording",
+    "DailyClose",
+    "RecordedMarketData",
+]
 
-SPY_CHAIN_FIXTURE = Path(__file__).parent / "fixtures" / "spy_chain.json"
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+SPY_CHAIN_FIXTURE = FIXTURES_DIR / "spy_chain.json"
+# E5.7 multi-name set (same offline clock as SPY): NVDA/XOM seed names, PLTR a
+# non-seed name that passes the D28 liquidity screen, UFPT one that fails it.
+MULTI_NAME_FIXTURES: tuple[Path, ...] = tuple(
+    FIXTURES_DIR / f"{t}_chain.json" for t in ("spy", "nvda", "xom", "pltr", "ufpt")
+)
 
 
 class DailyClose(BaseModel):
@@ -36,6 +49,7 @@ class DailyClose(BaseModel):
 
     date: dt.date
     close: float = Field(..., gt=0)
+    volume: float | None = Field(None, ge=0, description="Daily share volume (E5.7 recordings).")
 
 
 class ChainRecording(BaseModel):
@@ -111,7 +125,7 @@ class RecordedMarketData:
                 high=c.close,
                 low=c.close,
                 close=c.close,
-                volume=0.0,
+                volume=c.volume or 0.0,
             )
             for c in rec.closes
             if start <= c.date <= end

@@ -7,9 +7,9 @@ Two builders:
   Hermes for Director/Quant/Risk, each on the model its tier in
   ``config/llm_routing.yaml`` names (PLAN §2.4, E8.1). Only a
   live run with the broker (not --dry-run) mints gate tokens.
-* :meth:`PipelineEnv.fixtures`: fully offline. It uses the recorded SPY chain,
-  a fixed paper account and canned persona responses. ``arc propose --fixtures``
-  uses it, and so do the tests.
+* :meth:`PipelineEnv.fixtures`: fully offline. It uses the recorded SPY, NVDA, XOM,
+  PLTR and UFPT chains (E5.7), a fixture symbol master, a fixed paper account and
+  canned persona responses. ``arc propose --fixtures`` uses it, and so do the tests.
 
 Personas only ever see prompt text. The runner (deterministic code) is what
 reads the account and the chains, so AGENTS.md's "personas never call the
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from arc.config import ArcSettings
     from arc.data.base import MarketDataProvider
     from arc.ingest.llm import ScoutLLM
+    from arc.universe.guard import UniverseGuard
 
 __all__ = ["FIXTURES_DIR", "FIXTURE_NOW", "FIXTURE_SETS", "PERSONAS", "PipelineEnv"]
 
@@ -66,6 +67,9 @@ class PipelineEnv:
     notes: list[str] = field(default_factory=list)
     # D32: the broker whose order list cross-checks the daily order budget (live only).
     broker: BrokerAdapter | None = None
+    # D28: builds the Scout's universe guard (None = from settings, live Alpaca data).
+    # Fixtures pass one backed by the recordings and a fixture symbol master.
+    universe_guard: Callable[[ArcSettings, _dt.datetime], UniverseGuard] | None = None
 
     def llm(self, persona: str) -> ScoutLLM:
         return self.llms[persona]
@@ -106,22 +110,42 @@ class PipelineEnv:
 
     @classmethod
     def fixtures(cls, directory: Path | None = None) -> PipelineEnv:
-        """Offline: recorded chain, fixture account, canned Scout + persona replies."""
-        from arc.data.recorded import SPY_CHAIN_FIXTURE, RecordedMarketData
+        """Offline: recorded chains, fixture account, canned Scout + persona replies.
+
+        The market is the E5.7 multi-name recording set (SPY, NVDA, XOM, PLTR, UFPT);
+        the Scout's universe guard uses a fixture symbol master and that same market,
+        so the liquidity screen runs offline on recorded data.
+        """
+        from arc.data.recorded import MULTI_NAME_FIXTURES, RecordedMarketData
         from arc.ingest.scout import FIXTURES_DIR as SCOUT_FIXTURES
 
         directory = directory or FIXTURES_DIR
         llms: dict[str, ScoutLLM] = {
             p: FixtureScoutLLM([(directory / f"{p}.json").read_text()]) for p in PERSONAS
         }
+        market = RecordedMarketData.from_files(*MULTI_NAME_FIXTURES)
         return cls(
-            market=RecordedMarketData.from_files(SPY_CHAIN_FIXTURE),
+            market=market,
             account=fixture_account,
             positions=list,
             llms=llms,
             scout_llm=FixtureScoutLLM.from_dir(SCOUT_FIXTURES / "responses"),
             offline=True,
+            universe_guard=lambda s, now: fixture_universe_guard(s, now, market),
         )
+
+
+def fixture_universe_guard(
+    settings: ArcSettings, now: _dt.datetime, market: MarketDataProvider
+) -> UniverseGuard:
+    """Offline universe guard: fixture symbol master + recorded market data."""
+    from arc.universe.guard import UniverseGuard
+    from arc.universe.master import SymbolMaster
+
+    master = SymbolMaster.model_validate_json((FIXTURES_DIR / "symbol_master.json").read_text())
+    return UniverseGuard.from_settings(
+        settings, now=now, master=master, market_factory=lambda: market
+    )
 
 
 def fixture_account() -> AccountInfo:

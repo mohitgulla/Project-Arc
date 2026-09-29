@@ -1,0 +1,1467 @@
+{
+  "underlying": "PLTR",
+  "recorded_at": "2026-09-29T01:58:36.475473-04:00",
+  "source": "alpaca indicative options snapshot + trading contracts OI + snapshot dailyBar volume; SIP daily bars",
+  "note": "E5.7 fixture. Option quotes/OI recorded from Alpaca paper (indicative feed) after the close on 2026-09-29 (i.e. that session's closing quotes). Quote and contract timestamps are rebased to 2026-09-25 15:59:50 ET and the underlying quote is set to the 2026-09-25 close, so the set shares the SPY recording's offline clock (FIXTURE_NOW). Closes/volume are the real SIP daily bars through 2026-09-25. Strikes trimmed to +/-8% of spot, first two expiries in the recorded window; stale_timestamp flags stripped. Test data, not a live mark.",
+  "quote": {
+    "symbol": "PLTR",
+    "bid": 189.65,
+    "ask": 189.69,
+    "mid": 189.67,
+    "timestamp": "2026-09-25T19:59:50+00:00"
+  },
+  "closes": [
+    {
+      "date": "2026-07-17",
+      "close": 132.38,
+      "volume": 31911599.0
+    },
+    {
+      "date": "2026-07-20",
+      "close": 134.85,
+      "volume": 30610286.0
+    },
+    {
+      "date": "2026-07-21",
+      "close": 132.66,
+      "volume": 23196330.0
+    },
+    {
+      "date": "2026-07-22",
+      "close": 124.57,
+      "volume": 38635019.0
+    },
+    {
+      "date": "2026-07-23",
+      "close": 123.37,
+      "volume": 29786114.0
+    },
+    {
+      "date": "2026-07-24",
+      "close": 122.92,
+      "volume": 21206129.0
+    },
+    {
+      "date": "2026-07-27",
+      "close": 131.53,
+      "volume": 36746604.0
+    },
+    {
+      "date": "2026-07-28",
+      "close": 123.53,
+      "volume": 43630922.0
+    },
+    {
+      "date": "2026-07-29",
+      "close": 123.0,
+      "volume": 27235311.0
+    },
+    {
+      "date": "2026-07-30",
+      "close": 122.26,
+      "volume": 27841268.0
+    },
+    {
+      "date": "2026-07-31",
+      "close": 123.06,
+      "volume": 29119679.0
+    },
+    {
+      "date": "2026-08-03",
+      "close": 125.65,
+      "volume": 77251440.0
+    },
+    {
+      "date": "2026-08-04",
+      "close": 162.66,
+      "volume": 175083718.0
+    },
+    {
+      "date": "2026-08-05",
+      "close": 158.43,
+      "volume": 63538230.0
+    },
+    {
+      "date": "2026-08-06",
+      "close": 155.92,
+      "volume": 41775267.0
+    },
+    {
+      "date": "2026-08-07",
+      "close": 172.01,
+      "volume": 77524289.0
+    },
+    {
+      "date": "2026-08-10",
+      "close": 175.23,
+      "volume": 57425718.0
+    },
+    {
+      "date": "2026-08-11",
+      "close": 174.94,
+      "volume": 43188760.0
+    },
+    {
+      "date": "2026-08-12",
+      "close": 171.04,
+      "volume": 35242396.0
+    },
+    {
+      "date": "2026-08-13",
+      "close": 179.01,
+      "volume": 36533594.0
+    },
+    {
+      "date": "2026-08-14",
+      "close": 174.04,
+      "volume": 24098836.0
+    },
+    {
+      "date": "2026-08-17",
+      "close": 172.55,
+      "volume": 24624866.0
+    },
+    {
+      "date": "2026-08-18",
+      "close": 171.54,
+      "volume": 28099785.0
+    },
+    {
+      "date": "2026-08-19",
+      "close": 175.19,
+      "volume": 36164146.0
+    },
+    {
+      "date": "2026-08-20",
+      "close": 173.96,
+      "volume": 27048167.0
+    },
+    {
+      "date": "2026-08-21",
+      "close": 179.94,
+      "volume": 41103693.0
+    },
+    {
+      "date": "2026-08-24",
+      "close": 175.89,
+      "volume": 35172787.0
+    },
+    {
+      "date": "2026-08-25",
+      "close": 172.73,
+      "volume": 24584618.0
+    },
+    {
+      "date": "2026-08-26",
+      "close": 177.5,
+      "volume": 27952955.0
+    },
+    {
+      "date": "2026-08-27",
+      "close": 185.93,
+      "volume": 40765118.0
+    },
+    {
+      "date": "2026-08-28",
+      "close": 186.29,
+      "volume": 25094639.0
+    },
+    {
+      "date": "2026-08-31",
+      "close": 186.38,
+      "volume": 25979340.0
+    },
+    {
+      "date": "2026-09-01",
+      "close": 179.92,
+      "volume": 24596470.0
+    },
+    {
+      "date": "2026-09-02",
+      "close": 169.46,
+      "volume": 39908739.0
+    },
+    {
+      "date": "2026-09-03",
+      "close": 182.53,
+      "volume": 38132621.0
+    },
+    {
+      "date": "2026-09-04",
+      "close": 174.33,
+      "volume": 27989469.0
+    },
+    {
+      "date": "2026-09-08",
+      "close": 170.3,
+      "volume": 24624883.0
+    },
+    {
+      "date": "2026-09-09",
+      "close": 169.53,
+      "volume": 20382220.0
+    },
+    {
+      "date": "2026-09-10",
+      "close": 165.86,
+      "volume": 21354878.0
+    },
+    {
+      "date": "2026-09-11",
+      "close": 167.23,
+      "volume": 15444405.0
+    },
+    {
+      "date": "2026-09-14",
+      "close": 173.31,
+      "volume": 29177416.0
+    },
+    {
+      "date": "2026-09-15",
+      "close": 172.56,
+      "volume": 31273940.0
+    },
+    {
+      "date": "2026-09-16",
+      "close": 174.34,
+      "volume": 21003233.0
+    },
+    {
+      "date": "2026-09-17",
+      "close": 176.24,
+      "volume": 23798490.0
+    },
+    {
+      "date": "2026-09-18",
+      "close": 177.64,
+      "volume": 39316599.0
+    },
+    {
+      "date": "2026-09-21",
+      "close": 183.09,
+      "volume": 22030232.0
+    },
+    {
+      "date": "2026-09-22",
+      "close": 184.99,
+      "volume": 22009797.0
+    },
+    {
+      "date": "2026-09-23",
+      "close": 191.79,
+      "volume": 35137499.0
+    },
+    {
+      "date": "2026-09-24",
+      "close": 192.59,
+      "volume": 22696568.0
+    },
+    {
+      "date": "2026-09-25",
+      "close": 189.67,
+      "volume": 17823100.0
+    }
+  ],
+  "contracts": [
+    {
+      "symbol": "PLTR261106C00180000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 180.0,
+      "option_type": "call",
+      "bid": 18.75,
+      "ask": 20.24,
+      "mid": 19.494999999999997,
+      "bid_size": 14.0,
+      "ask_size": 37.0,
+      "last_trade_price": 19.63,
+      "open_interest": 9,
+      "volume": 10,
+      "implied_volatility": 0.6258,
+      "greeks": {
+        "delta": 0.631,
+        "gamma": 0.0099,
+        "theta": -0.199,
+        "vega": 0.2287,
+        "rho": 0.1032
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00202500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 202.5,
+      "option_type": "call",
+      "bid": 4.95,
+      "ask": 5.06,
+      "mid": 5.005,
+      "bid_size": 65.0,
+      "ask_size": 102.0,
+      "last_trade_price": 5.33,
+      "open_interest": 13,
+      "volume": 20,
+      "implied_volatility": 0.4652,
+      "greeks": {
+        "delta": 0.3233,
+        "gamma": 0.0141,
+        "theta": -0.1535,
+        "vega": 0.1967,
+        "rho": 0.0473
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00190000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 190.0,
+      "option_type": "put",
+      "bid": 15.22,
+      "ask": 15.76,
+      "mid": 15.49,
+      "bid_size": 15.0,
+      "ask_size": 60.0,
+      "last_trade_price": 15.0,
+      "open_interest": 23,
+      "volume": 14,
+      "implied_volatility": 0.612,
+      "greeks": {
+        "delta": -0.4745,
+        "gamma": 0.0107,
+        "theta": -0.1832,
+        "vega": 0.2414,
+        "rho": -0.109
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00192500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 192.5,
+      "option_type": "put",
+      "bid": 12.53,
+      "ask": 12.81,
+      "mid": 12.67,
+      "bid_size": 52.0,
+      "ask_size": 35.0,
+      "last_trade_price": 12.65,
+      "open_interest": 212,
+      "volume": 31,
+      "implied_volatility": 0.4799,
+      "greeks": {
+        "delta": -0.5312,
+        "gamma": 0.0151,
+        "theta": -0.1566,
+        "vega": 0.2178,
+        "rho": -0.0955
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106C00190000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 190.0,
+      "option_type": "call",
+      "bid": 13.65,
+      "ask": 13.75,
+      "mid": 13.7,
+      "bid_size": 15.0,
+      "ask_size": 65.0,
+      "last_trade_price": 13.75,
+      "open_interest": 48,
+      "volume": 115,
+      "implied_volatility": 0.5916,
+      "greeks": {
+        "delta": 0.5237,
+        "gamma": 0.0111,
+        "theta": -0.1971,
+        "vega": 0.2415,
+        "rho": 0.0882
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00202500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 202.5,
+      "option_type": "put",
+      "bid": 18.79,
+      "ask": 19.83,
+      "mid": 19.31,
+      "bid_size": 38.0,
+      "ask_size": 57.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.4856,
+      "greeks": {
+        "delta": -0.6677,
+        "gamma": 0.0137,
+        "theta": -0.1403,
+        "vega": 0.1989,
+        "rho": -0.123
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00197500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 197.5,
+      "option_type": "call",
+      "bid": 6.31,
+      "ask": 6.58,
+      "mid": 6.445,
+      "bid_size": 66.0,
+      "ask_size": 53.0,
+      "last_trade_price": 6.85,
+      "open_interest": 156,
+      "volume": 24,
+      "implied_volatility": 0.4607,
+      "greeks": {
+        "delta": 0.3904,
+        "gamma": 0.0152,
+        "theta": -0.1633,
+        "vega": 0.2102,
+        "rho": 0.0568
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00182500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 182.5,
+      "option_type": "put",
+      "bid": 7.68,
+      "ask": 7.95,
+      "mid": 7.8149999999999995,
+      "bid_size": 75.0,
+      "ask_size": 93.0,
+      "last_trade_price": 7.68,
+      "open_interest": 155,
+      "volume": 21,
+      "implied_volatility": 0.4916,
+      "greeks": {
+        "delta": -0.3823,
+        "gamma": 0.0142,
+        "theta": -0.1571,
+        "vega": 0.2089,
+        "rho": -0.0677
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00187500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 187.5,
+      "option_type": "call",
+      "bid": 10.44,
+      "ask": 10.69,
+      "mid": 10.565,
+      "bid_size": 63.0,
+      "ask_size": 36.0,
+      "last_trade_price": 10.69,
+      "open_interest": 402,
+      "volume": 49,
+      "implied_volatility": 0.4608,
+      "greeks": {
+        "delta": 0.5433,
+        "gamma": 0.0157,
+        "theta": -0.1712,
+        "vega": 0.2172,
+        "rho": 0.0777
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00175000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 175.0,
+      "option_type": "call",
+      "bid": 17.92,
+      "ask": 18.06,
+      "mid": 17.990000000000002,
+      "bid_size": 70.0,
+      "ask_size": 24.0,
+      "last_trade_price": 18.9,
+      "open_interest": 278,
+      "volume": 33,
+      "implied_volatility": 0.4653,
+      "greeks": {
+        "delta": 0.7317,
+        "gamma": 0.0129,
+        "theta": -0.1482,
+        "vega": 0.1805,
+        "rho": 0.1015
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106C00177500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 177.5,
+      "option_type": "call",
+      "bid": 19.92,
+      "ask": 20.28,
+      "mid": 20.1,
+      "bid_size": 11.0,
+      "ask_size": 30.0,
+      "last_trade_price": 21.15,
+      "open_interest": 15,
+      "volume": 1,
+      "implied_volatility": 0.5896,
+      "greeks": {
+        "delta": 0.6615,
+        "gamma": 0.0102,
+        "theta": -0.1832,
+        "vega": 0.2218,
+        "rho": 0.1085
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106C00197500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 197.5,
+      "option_type": "call",
+      "bid": 9.8,
+      "ask": 11.34,
+      "mid": 10.57,
+      "bid_size": 32.0,
+      "ask_size": 6.0,
+      "last_trade_price": 11.47,
+      "open_interest": 14,
+      "volume": 5,
+      "implied_volatility": 0.5881,
+      "greeks": {
+        "delta": 0.4422,
+        "gamma": 0.0111,
+        "theta": -0.193,
+        "vega": 0.2394,
+        "rho": 0.0755
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00180000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 180.0,
+      "option_type": "call",
+      "bid": 14.65,
+      "ask": 15.33,
+      "mid": 14.99,
+      "bid_size": 81.0,
+      "ask_size": 143.0,
+      "last_trade_price": 14.9,
+      "open_interest": 453,
+      "volume": 63,
+      "implied_volatility": 0.4765,
+      "greeks": {
+        "delta": 0.6568,
+        "gamma": 0.0141,
+        "theta": -0.1663,
+        "vega": 0.2014,
+        "rho": 0.0921
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00187500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 187.5,
+      "option_type": "put",
+      "bid": 13.7,
+      "ask": 14.22,
+      "mid": 13.96,
+      "bid_size": 31.0,
+      "ask_size": 21.0,
+      "last_trade_price": 13.83,
+      "open_interest": 2,
+      "volume": 4,
+      "implied_volatility": 0.6043,
+      "greeks": {
+        "delta": -0.4482,
+        "gamma": 0.0108,
+        "theta": -0.1802,
+        "vega": 0.2399,
+        "rho": -0.1022
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00195000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 195.0,
+      "option_type": "put",
+      "bid": 17.81,
+      "ask": 18.72,
+      "mid": 18.265,
+      "bid_size": 11.0,
+      "ask_size": 20.0,
+      "last_trade_price": 18.25,
+      "open_interest": 9,
+      "volume": 1,
+      "implied_volatility": 0.6075,
+      "greeks": {
+        "delta": -0.5278,
+        "gamma": 0.0108,
+        "theta": -0.1803,
+        "vega": 0.2413,
+        "rho": -0.1223
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00195000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 195.0,
+      "option_type": "call",
+      "bid": 7.32,
+      "ask": 7.48,
+      "mid": 7.4,
+      "bid_size": 65.0,
+      "ask_size": 25.0,
+      "last_trade_price": 7.8,
+      "open_interest": 666,
+      "volume": 93,
+      "implied_volatility": 0.4637,
+      "greeks": {
+        "delta": 0.4281,
+        "gamma": 0.0155,
+        "theta": -0.1685,
+        "vega": 0.2149,
+        "rho": 0.062
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106C00187500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 187.5,
+      "option_type": "call",
+      "bid": 14.51,
+      "ask": 15.09,
+      "mid": 14.8,
+      "bid_size": 13.0,
+      "ask_size": 63.0,
+      "last_trade_price": 15.64,
+      "open_interest": 22,
+      "volume": 29,
+      "implied_volatility": 0.5896,
+      "greeks": {
+        "delta": 0.5511,
+        "gamma": 0.0111,
+        "theta": -0.1956,
+        "vega": 0.2399,
+        "rho": 0.0924
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00202500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 202.5,
+      "option_type": "put",
+      "bid": 22.81,
+      "ask": 24.32,
+      "mid": 23.564999999999998,
+      "bid_size": 21.0,
+      "ask_size": 23.0,
+      "last_trade_price": null,
+      "open_interest": null,
+      "volume": null,
+      "implied_volatility": 0.6293,
+      "greeks": {
+        "delta": -0.5972,
+        "gamma": 0.0101,
+        "theta": -0.1798,
+        "vega": 0.2347,
+        "rho": -0.1414
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00180000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 180.0,
+      "option_type": "put",
+      "bid": 10.44,
+      "ask": 10.63,
+      "mid": 10.535,
+      "bid_size": 65.0,
+      "ask_size": 17.0,
+      "last_trade_price": 10.44,
+      "open_interest": 43,
+      "volume": 5,
+      "implied_volatility": 0.6127,
+      "greeks": {
+        "delta": -0.3679,
+        "gamma": 0.0101,
+        "theta": -0.1757,
+        "vega": 0.2285,
+        "rho": -0.0829
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106C00192500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 192.5,
+      "option_type": "call",
+      "bid": 12.62,
+      "ask": 13.61,
+      "mid": 13.114999999999998,
+      "bid_size": 7.0,
+      "ask_size": 44.0,
+      "last_trade_price": 13.14,
+      "open_interest": 49,
+      "volume": 12,
+      "implied_volatility": 0.6121,
+      "greeks": {
+        "delta": 0.4991,
+        "gamma": 0.0107,
+        "theta": -0.2035,
+        "vega": 0.2419,
+        "rho": 0.084
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00185000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 185.0,
+      "option_type": "put",
+      "bid": 12.75,
+      "ask": 12.78,
+      "mid": 12.765,
+      "bid_size": 25.0,
+      "ask_size": 24.0,
+      "last_trade_price": 12.38,
+      "open_interest": 16,
+      "volume": 12,
+      "implied_volatility": 0.6076,
+      "greeks": {
+        "delta": -0.4212,
+        "gamma": 0.0106,
+        "theta": -0.1798,
+        "vega": 0.2372,
+        "rho": -0.0957
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00177500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 177.5,
+      "option_type": "call",
+      "bid": 16.1,
+      "ask": 17.02,
+      "mid": 16.560000000000002,
+      "bid_size": 31.0,
+      "ask_size": 109.0,
+      "last_trade_price": 16.63,
+      "open_interest": 81,
+      "volume": 26,
+      "implied_volatility": 0.4773,
+      "greeks": {
+        "delta": 0.6928,
+        "gamma": 0.0134,
+        "theta": -0.1603,
+        "vega": 0.1925,
+        "rho": 0.0965
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00200000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 200.0,
+      "option_type": "put",
+      "bid": 17.33,
+      "ask": 17.68,
+      "mid": 17.505,
+      "bid_size": 96.0,
+      "ask_size": 41.0,
+      "last_trade_price": 17.1,
+      "open_interest": 57,
+      "volume": 6,
+      "implied_volatility": 0.4829,
+      "greeks": {
+        "delta": -0.6362,
+        "gamma": 0.0142,
+        "theta": -0.1455,
+        "vega": 0.2056,
+        "rho": -0.1164
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00187500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 187.5,
+      "option_type": "put",
+      "bid": 10.02,
+      "ask": 10.27,
+      "mid": 10.145,
+      "bid_size": 65.0,
+      "ask_size": 65.0,
+      "last_trade_price": 9.56,
+      "open_interest": 46,
+      "volume": 45,
+      "implied_volatility": 0.4897,
+      "greeks": {
+        "delta": -0.456,
+        "gamma": 0.0148,
+        "theta": -0.1613,
+        "vega": 0.2172,
+        "rho": -0.0814
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00182500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 182.5,
+      "option_type": "put",
+      "bid": 11.29,
+      "ask": 12.55,
+      "mid": 11.92,
+      "bid_size": 11.0,
+      "ask_size": 70.0,
+      "last_trade_price": 11.52,
+      "open_interest": 3,
+      "volume": 2,
+      "implied_volatility": 0.6232,
+      "greeks": {
+        "delta": -0.3949,
+        "gamma": 0.0102,
+        "theta": -0.1822,
+        "vega": 0.2335,
+        "rho": -0.0897
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00180000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 180.0,
+      "option_type": "put",
+      "bid": 6.53,
+      "ask": 6.77,
+      "mid": 6.65,
+      "bid_size": 67.0,
+      "ask_size": 65.0,
+      "last_trade_price": 6.65,
+      "open_interest": 271,
+      "volume": 1374,
+      "implied_volatility": 0.4856,
+      "greeks": {
+        "delta": -0.345,
+        "gamma": 0.0139,
+        "theta": -0.1504,
+        "vega": 0.2018,
+        "rho": -0.0607
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00177500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 177.5,
+      "option_type": "put",
+      "bid": 9.11,
+      "ask": 9.63,
+      "mid": 9.370000000000001,
+      "bid_size": 67.0,
+      "ask_size": 22.0,
+      "last_trade_price": 9.44,
+      "open_interest": 7,
+      "volume": 7,
+      "implied_volatility": 0.6085,
+      "greeks": {
+        "delta": -0.341,
+        "gamma": 0.0099,
+        "theta": -0.1702,
+        "vega": 0.2224,
+        "rho": -0.0765
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00200000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 200.0,
+      "option_type": "put",
+      "bid": 20.33,
+      "ask": 22.66,
+      "mid": 21.494999999999997,
+      "bid_size": 5.0,
+      "ask_size": 15.0,
+      "last_trade_price": 19.75,
+      "open_interest": 1,
+      "volume": 1,
+      "implied_volatility": 0.6115,
+      "greeks": {
+        "delta": -0.5778,
+        "gamma": 0.0106,
+        "theta": -0.177,
+        "vega": 0.2373,
+        "rho": -0.1354
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00177500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 177.5,
+      "option_type": "put",
+      "bid": 5.56,
+      "ask": 5.89,
+      "mid": 5.725,
+      "bid_size": 110.0,
+      "ask_size": 39.0,
+      "last_trade_price": 5.66,
+      "open_interest": 101,
+      "volume": 37,
+      "implied_volatility": 0.4867,
+      "greeks": {
+        "delta": -0.3097,
+        "gamma": 0.0132,
+        "theta": -0.1448,
+        "vega": 0.1931,
+        "rho": -0.0543
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00197500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 197.5,
+      "option_type": "put",
+      "bid": 15.79,
+      "ask": 15.98,
+      "mid": 15.885,
+      "bid_size": 62.0,
+      "ask_size": 28.0,
+      "last_trade_price": 15.9,
+      "open_interest": 3,
+      "volume": 1,
+      "implied_volatility": 0.4855,
+      "greeks": {
+        "delta": -0.6014,
+        "gamma": 0.0145,
+        "theta": -0.1518,
+        "vega": 0.2114,
+        "rho": -0.1095
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00192500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 192.5,
+      "option_type": "call",
+      "bid": 8.33,
+      "ask": 8.47,
+      "mid": 8.4,
+      "bid_size": 65.0,
+      "ask_size": 65.0,
+      "last_trade_price": 9.12,
+      "open_interest": 678,
+      "volume": 30,
+      "implied_volatility": 0.4645,
+      "greeks": {
+        "delta": 0.466,
+        "gamma": 0.0156,
+        "theta": -0.1715,
+        "vega": 0.2177,
+        "rho": 0.0672
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00192500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 192.5,
+      "option_type": "put",
+      "bid": 16.67,
+      "ask": 17.26,
+      "mid": 16.965000000000003,
+      "bid_size": 30.0,
+      "ask_size": 50.0,
+      "last_trade_price": 16.68,
+      "open_interest": 12,
+      "volume": 6,
+      "implied_volatility": 0.6147,
+      "greeks": {
+        "delta": -0.5006,
+        "gamma": 0.0107,
+        "theta": -0.1838,
+        "vega": 0.2419,
+        "rho": -0.1156
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00182500",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 182.5,
+      "option_type": "call",
+      "bid": 13.41,
+      "ask": 13.61,
+      "mid": 13.51,
+      "bid_size": 74.0,
+      "ask_size": 42.0,
+      "last_trade_price": 13.6,
+      "open_interest": 261,
+      "volume": 77,
+      "implied_volatility": 0.4754,
+      "greeks": {
+        "delta": 0.6197,
+        "gamma": 0.0146,
+        "theta": -0.1709,
+        "vega": 0.2086,
+        "rho": 0.0874
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00175000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 175.0,
+      "option_type": "put",
+      "bid": 7.76,
+      "ask": 8.83,
+      "mid": 8.295,
+      "bid_size": 99.0,
+      "ask_size": 48.0,
+      "last_trade_price": 8.45,
+      "open_interest": 33,
+      "volume": 14,
+      "implied_volatility": 0.605,
+      "greeks": {
+        "delta": -0.3143,
+        "gamma": 0.0097,
+        "theta": -0.1641,
+        "vega": 0.2152,
+        "rho": -0.0701
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00175000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 175.0,
+      "option_type": "put",
+      "bid": 4.92,
+      "ask": 5.0,
+      "mid": 4.96,
+      "bid_size": 93.0,
+      "ask_size": 65.0,
+      "last_trade_price": 4.95,
+      "open_interest": 278,
+      "volume": 179,
+      "implied_volatility": 0.4916,
+      "greeks": {
+        "delta": -0.2768,
+        "gamma": 0.0124,
+        "theta": -0.1393,
+        "vega": 0.1833,
+        "rho": -0.0484
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00185000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 185.0,
+      "option_type": "call",
+      "bid": 12.08,
+      "ask": 12.28,
+      "mid": 12.18,
+      "bid_size": 63.0,
+      "ask_size": 63.0,
+      "last_trade_price": 12.08,
+      "open_interest": 1187,
+      "volume": 44,
+      "implied_volatility": 0.4769,
+      "greeks": {
+        "delta": 0.5817,
+        "gamma": 0.015,
+        "theta": -0.1749,
+        "vega": 0.2139,
+        "rho": 0.0825
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106C00200000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 200.0,
+      "option_type": "call",
+      "bid": 9.44,
+      "ask": 9.84,
+      "mid": 9.64,
+      "bid_size": 54.0,
+      "ask_size": 54.0,
+      "last_trade_price": 9.83,
+      "open_interest": 125,
+      "volume": 31,
+      "implied_volatility": 0.5863,
+      "greeks": {
+        "delta": 0.4157,
+        "gamma": 0.011,
+        "theta": -0.1898,
+        "vega": 0.2365,
+        "rho": 0.0713
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00195000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 195.0,
+      "option_type": "put",
+      "bid": 13.79,
+      "ask": 14.08,
+      "mid": 13.934999999999999,
+      "bid_size": 63.0,
+      "ask_size": 65.0,
+      "last_trade_price": 13.9,
+      "open_interest": 34,
+      "volume": 10,
+      "implied_volatility": 0.4687,
+      "greeks": {
+        "delta": -0.5706,
+        "gamma": 0.0153,
+        "theta": -0.1497,
+        "vega": 0.2151,
+        "rho": -0.1029
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00190000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 190.0,
+      "option_type": "put",
+      "bid": 11.01,
+      "ask": 11.43,
+      "mid": 11.219999999999999,
+      "bid_size": 74.0,
+      "ask_size": 54.0,
+      "last_trade_price": 11.25,
+      "open_interest": 186,
+      "volume": 36,
+      "implied_volatility": 0.4783,
+      "greeks": {
+        "delta": -0.4941,
+        "gamma": 0.0152,
+        "theta": -0.1574,
+        "vega": 0.2185,
+        "rho": -0.0884
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00200000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 200.0,
+      "option_type": "call",
+      "bid": 5.57,
+      "ask": 5.78,
+      "mid": 5.675000000000001,
+      "bid_size": 84.0,
+      "ask_size": 73.0,
+      "last_trade_price": 5.67,
+      "open_interest": 1866,
+      "volume": 480,
+      "implied_volatility": 0.4624,
+      "greeks": {
+        "delta": 0.3557,
+        "gamma": 0.0147,
+        "theta": -0.1587,
+        "vega": 0.204,
+        "rho": 0.052
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030C00190000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 190.0,
+      "option_type": "call",
+      "bid": 9.18,
+      "ask": 9.62,
+      "mid": 9.399999999999999,
+      "bid_size": 65.0,
+      "ask_size": 63.0,
+      "last_trade_price": 9.43,
+      "open_interest": 776,
+      "volume": 230,
+      "implied_volatility": 0.4611,
+      "greeks": {
+        "delta": 0.5041,
+        "gamma": 0.0158,
+        "theta": -0.1716,
+        "vega": 0.2185,
+        "rho": 0.0725
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106P00197500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 197.5,
+      "option_type": "put",
+      "bid": 19.7,
+      "ask": 20.12,
+      "mid": 19.91,
+      "bid_size": 12.0,
+      "ask_size": 14.0,
+      "last_trade_price": 19.56,
+      "open_interest": null,
+      "volume": 4,
+      "implied_volatility": 0.612,
+      "greeks": {
+        "delta": -0.5526,
+        "gamma": 0.0107,
+        "theta": -0.1799,
+        "vega": 0.2398,
+        "rho": -0.1288
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261030P00185000",
+      "underlying": "PLTR",
+      "expiration": "2026-10-30",
+      "strike": 185.0,
+      "option_type": "put",
+      "bid": 8.72,
+      "ask": 8.92,
+      "mid": 8.82,
+      "bid_size": 65.0,
+      "ask_size": 132.0,
+      "last_trade_price": 8.92,
+      "open_interest": 209,
+      "volume": 435,
+      "implied_volatility": 0.4853,
+      "greeks": {
+        "delta": -0.4187,
+        "gamma": 0.0147,
+        "theta": -0.1581,
+        "vega": 0.2139,
+        "rho": -0.0743
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106C00195000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 195.0,
+      "option_type": "call",
+      "bid": 11.15,
+      "ask": 12.53,
+      "mid": 11.84,
+      "bid_size": 5.0,
+      "ask_size": 65.0,
+      "last_trade_price": 11.93,
+      "open_interest": 38,
+      "volume": 42,
+      "implied_volatility": 0.6014,
+      "greeks": {
+        "delta": 0.4712,
+        "gamma": 0.0109,
+        "theta": -0.1991,
+        "vega": 0.2413,
+        "rho": 0.0799
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106C00182500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 182.5,
+      "option_type": "call",
+      "bid": 17.32,
+      "ask": 17.72,
+      "mid": 17.52,
+      "bid_size": 45.0,
+      "ask_size": 52.0,
+      "last_trade_price": 17.45,
+      "open_interest": 10,
+      "volume": 12,
+      "implied_volatility": 0.5987,
+      "greeks": {
+        "delta": 0.6062,
+        "gamma": 0.0106,
+        "theta": -0.1941,
+        "vega": 0.2333,
+        "rho": 0.1004
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106C00185000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 185.0,
+      "option_type": "call",
+      "bid": 16.0,
+      "ask": 16.1,
+      "mid": 16.05,
+      "bid_size": 31.0,
+      "ask_size": 48.0,
+      "last_trade_price": 16.8,
+      "open_interest": 31,
+      "volume": 77,
+      "implied_volatility": 0.5909,
+      "greeks": {
+        "delta": 0.5789,
+        "gamma": 0.0109,
+        "theta": -0.1943,
+        "vega": 0.2372,
+        "rho": 0.0966
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106C00202500",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 202.5,
+      "option_type": "call",
+      "bid": 8.14,
+      "ask": 9.15,
+      "mid": 8.645,
+      "bid_size": 64.0,
+      "ask_size": 13.0,
+      "last_trade_price": 9.55,
+      "open_interest": 23,
+      "volume": 4,
+      "implied_volatility": 0.5791,
+      "greeks": {
+        "delta": 0.388,
+        "gamma": 0.0109,
+        "theta": -0.1839,
+        "vega": 0.2323,
+        "rho": 0.0669
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    },
+    {
+      "symbol": "PLTR261106C00175000",
+      "underlying": "PLTR",
+      "expiration": "2026-11-06",
+      "strike": 175.0,
+      "option_type": "call",
+      "bid": 21.96,
+      "ask": 22.41,
+      "mid": 22.185000000000002,
+      "bid_size": 12.0,
+      "ask_size": 16.0,
+      "last_trade_price": 22.27,
+      "open_interest": 25,
+      "volume": 9,
+      "implied_volatility": 0.6166,
+      "greeks": {
+        "delta": 0.6838,
+        "gamma": 0.0095,
+        "theta": -0.1864,
+        "vega": 0.2158,
+        "rho": 0.1107
+      },
+      "quote_timestamp": "2026-09-25T19:59:50+00:00",
+      "quality_flags": []
+    }
+  ]
+}

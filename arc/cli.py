@@ -251,6 +251,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_config_parser(sub)
 
+    from arc.universe.cli import add_universe_parser
+
+    add_universe_parser(sub)
+
     from arc.remote.cli import add_remote_parser
 
     add_remote_parser(sub)
@@ -699,6 +703,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_reconcile(args)
+    if args.command == "universe":
+        from arc.universe.cli import run_universe
+
+        _log_to_stderr()
+        return run_universe(args)
     if args.command == "journal":
         from arc.journal.cli import run_journal
 

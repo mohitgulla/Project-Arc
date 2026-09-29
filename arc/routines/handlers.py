@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from arc.routines.manifest import ExternalInput
     from arc.routines.runs import RoutineEvent
     from arc.slack.blocks import CardView
+    from arc.universe.guard import UniverseGuard
 
 log = structlog.get_logger(__name__)
 
@@ -251,6 +252,32 @@ def earnings_source(ctx: JobContext) -> JobResult:
     return _source_result(ctx, fetch_earnings(ctx.conn, ctx.settings))
 
 
+def symbols_source(ctx: JobContext) -> JobResult:
+    """Weekly symbol-master refresh (E5.7 / D28): SEC tickers ∪ Alpaca optionable.
+
+    The only scheduled writer of the cache that ingest and the Scout read (they
+    never fetch mid-run). Writes no context; the symbol list's digest is recorded.
+    """
+    from arc.universe import load_universe_config, refresh_symbol_master
+
+    cfg = load_universe_config(ctx.settings.universe_config_file)
+    master = refresh_symbol_master(
+        cfg.symbol_master, user_agent=ctx.settings.edgar_user_agent, now=ctx.now
+    )
+    ctx.record_input(
+        "symbol_master",
+        "sec+alpaca",
+        sorted(master.symbols),
+        as_of=master.fetched_at,
+        count=len(master.symbols),
+    )
+    optionable = sum(1 for s in master.symbols.values() if s.options)
+    return JobResult(
+        summary=f"{len(master.symbols)} symbols ({optionable} optionable)",
+        metrics={"symbols": len(master.symbols), "optionable": optionable, **master.sources},
+    )
+
+
 def youtube_url(channel: str) -> str:
     """Accept a full URL or a bare ``UC...`` channel id."""
     if channel.startswith(("http://", "https://")):
@@ -312,10 +339,43 @@ def _scout_note(ctx: JobContext, result: ScoutRunResult, about: list[str]) -> No
     ctx.write("note", "market", payload)
 
 
-def scout_persona(ctx: JobContext, llm: ScoutLLM | None = None) -> JobResult:
+def _journal_universe_rejects(ctx: JobContext, result: ScoutRunResult) -> int:
+    """E7.4: one ``candidate``-stage decision per universe reject (D28). Returns the count."""
+    from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
+    from arc.journal.store import JournalStore
+
+    codes = {
+        "not_in_universe": ReasonCode.UNIVERSE_NOT_IN_UNIVERSE,
+        "unknown_symbol": ReasonCode.UNIVERSE_UNKNOWN_SYMBOL,
+        "illiquid": ReasonCode.UNIVERSE_ILLIQUID,
+        "over_new_ticker_cap": ReasonCode.UNIVERSE_NEW_TICKER_CAP,
+    }
+    store = JournalStore(ctx.conn)
+    n = 0
+    for key, code in codes.items():
+        for ticker in dict.fromkeys(result.rejected_items.get(key, [])):
+            store.record(
+                persona=JournalPersona.SCOUT,
+                stage=Stage.CANDIDATE,
+                subject=ticker,
+                choice=Choice.REJECTED,
+                reason_code=code,
+                reason_text=result.reject_details.get(ticker, ""),
+                at=ctx.now,
+                chain_run_id=ctx.chain_run_id,
+                run_id=ctx.run_id,
+            )
+            n += 1
+    return n
+
+
+def scout_persona(
+    ctx: JobContext, llm: ScoutLLM | None = None, guard: UniverseGuard | None = None
+) -> JobResult:
     """Scout (E4.2): summarise unscouted docs; write each merged Candidate to context.
 
-    *llm* overrides the Hermes backend (``arc propose --fixtures``, tests).
+    *llm* overrides the Hermes backend and *guard* the D28 universe policy
+    (``arc propose --fixtures``, tests).
     """
     from arc.context.kinds import CandidatePayload
     from arc.ingest.scout import run_scout
@@ -323,7 +383,10 @@ def scout_persona(ctx: JobContext, llm: ScoutLLM | None = None) -> JobResult:
     kwargs: dict[str, Any] = {"now": ctx.now, "run_id": ctx.run_id}
     if llm is not None:
         kwargs["llm"] = llm
+    if guard is not None:
+        kwargs["guard"] = guard
     result = run_scout(ctx.conn, ctx.settings, **kwargs)
+    _journal_universe_rejects(ctx, result)
     written = [
         ctx.write("candidate", cand.ticker, CandidatePayload.model_validate(cand.model_dump())).id
         for cand in result.candidates
@@ -342,6 +405,7 @@ def scout_persona(ctx: JobContext, llm: ScoutLLM | None = None) -> JobResult:
             "candidates": len(result.candidates),
             "docs_scouted": result.docs_scouted,
             "failed_batches": result.failed_batches,
+            "new_tickers": len(result.new_tickers),
         },
         card=scout_card(
             docs=result.docs_scouted,
@@ -353,6 +417,8 @@ def scout_persona(ctx: JobContext, llm: ScoutLLM | None = None) -> JobResult:
             failed_batches=result.failed_batches,
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
+            reject_details=result.reject_details,
+            new_tickers=result.new_tickers,
         ),
     )
 
@@ -361,6 +427,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "rss": "arc.routines.handlers:rss_source",
     "edgar": "arc.routines.handlers:edgar_source",
     "earnings": "arc.routines.handlers:earnings_source",
+    "symbols": "arc.routines.handlers:symbols_source",  # E5.7 weekly symbol master
     "youtube": "arc.routines.handlers:youtube_source",
     "scout": "arc.routines.handlers:scout_persona",
     # E5.2 pipeline chain: director → quant → risk → propose (arc/pipeline/steps.py)

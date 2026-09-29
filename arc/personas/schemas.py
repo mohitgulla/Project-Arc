@@ -6,7 +6,7 @@ Schemas are referenced by the SKILL.md files and used in golden tests.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from arc.exits.model import ExitSummary
 from arc.models import CatalystType, Stance
@@ -45,6 +45,10 @@ class ScoutOutput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+_EVIDENCE_MAX_ITEMS = 3
+_EVIDENCE_MAX_CHARS = 160
+
+
 class DirectorRankedItem(BaseModel):
     """A single ticker ranked by the Director."""
 
@@ -58,12 +62,44 @@ class DirectorRankedItem(BaseModel):
     )
     stance: str = Field(..., description="bullish | bearish | neutral")
     confidence: float = Field(..., ge=0.0, le=1.0)
+    evidence: list[str] = Field(
+        default_factory=list,
+        description=(
+            f"Up to {_EVIDENCE_MAX_ITEMS} short, grounded facts behind the pick, e.g. "
+            "'8-K: buyback $50B, Sep 24', 'IV rank 18'. Extra items / characters are cut."
+        ),
+    )
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _trim_evidence(cls, v: object) -> object:
+        """Deterministic trim (E5.7): at most 3 non-empty items of ≤160 chars each."""
+        if not isinstance(v, list):
+            return v
+        items = [str(x).strip()[:_EVIDENCE_MAX_CHARS] for x in v if str(x).strip()]
+        return items[:_EVIDENCE_MAX_ITEMS]
+
+
+class DirectorExclusion(BaseModel):
+    """A candidate the Director will not trade, with its one-line reason (E5.7)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str
+    reason: str = Field(..., min_length=1, description="One line: why this candidate is excluded")
 
 
 class DirectorOutput(BaseModel):
-    """Director persona output: ranked shortlist with thesis."""
+    """Director persona output: every candidate ranked or excluded with a reason."""
 
-    shortlist: list[DirectorRankedItem] = Field(..., description="Ranked candidates, best first")
+    shortlist: list[DirectorRankedItem] = Field(
+        ...,
+        description="Every candidate you would consider trading, best first (no cap)",
+    )
+    excluded: list[DirectorExclusion] = Field(
+        default_factory=list,
+        description="Candidates not ranked, each with a one-line reason",
+    )
     market_regime: str = Field(
         ...,
         description="Overall market regime: risk_on | risk_off | transitional",
@@ -124,10 +160,23 @@ class QuantStructureOut(BaseModel):
     )
 
 
+class QuantSkip(BaseModel):
+    """A budgeted ticker the Quant does not structure, with its reason (E5.7)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str
+    reason: str = Field(..., min_length=1, description="One line: why no structure")
+
+
 class QuantOutput(BaseModel):
-    """Quant persona output: proposed structures with analytics."""
+    """Quant persona output: one structure or one skip per shortlisted ticker."""
 
     structures: list[QuantStructureOut] = Field(..., description="Proposed structures, best first")
+    skipped: list[QuantSkip] = Field(
+        default_factory=list,
+        description="Shortlisted tickers with no structure, each with a one-line reason",
+    )
     analysis_notes: str = Field(..., description="Quant's overall analysis summary")
 
 
