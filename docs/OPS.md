@@ -330,6 +330,18 @@ curl http://<addr>:<port>/api/health        # {status, db, as_of}
   equity + range series, day P&L, positions, Greeks vs caps, 24 h proposals, movers,
   last 20 activity lines) and `GET /api/positions?status=open|closed|all`. `1D`
   plots today's monitor marks; other ranges plot reconciled daily closes.
+- **Trades (E8.7b):** `/trades` lists every proposal (opens and closes). Filters,
+  sort and paging all live in the URL, so a filtered view can be shared, e.g.
+  `/trades?stage=gate_fail&date=7d&sort=net_ev`. The summary strip is computed over the
+  whole filter, not just the current page. `/trades/<proposal_hash>` is the drill-down:
+  header, payoff, quant, decision trail + persona calls, gate, approval, execution + order
+  events + fills, position & exits (close-to-reallocate links), outcome & review, market
+  context + regime snapshot + Scout candidate, and the run manifest. The API routes are
+  `GET /api/trades?<filters>&page&size&sort&dir`, `/api/trades/filters`,
+  `/api/trades/{hash}` and `GET /api/search?q=` (ticker, hash prefix, run id, chain id,
+  structure id; it backs the header search). Migration 017 adds only the indexes the
+  list query needs (<220 ms with filters on a 100k-proposal store). The gate token is
+  never served; only its version is.
 
 ### 5.7 Remote access over Tailscale (E8.6, D29)
 
