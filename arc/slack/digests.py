@@ -33,6 +33,7 @@ from arc.slack.personas import Persona
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from arc.context.store import ContextEntry
     from arc.models import Candidate
     from arc.personas.schemas import (
         AuditorOutput,
@@ -56,6 +57,7 @@ __all__ = [
     "regime_name",
     "risk_card",
     "scout_card",
+    "scout_context_card",
     "structure_name",
 ]
 
@@ -266,6 +268,60 @@ def scout_card(
         blocks.append(B.divider())
         blocks.append(rejected_block)
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
+
+
+def scout_context_card(
+    entries: Sequence[ContextEntry],
+    *,
+    chain_run_id: str | None = None,
+) -> CardView:
+    """D36 thread item 1: the Scout candidates the Director read this loop.
+
+    ``[Scout] Context: 3 Candidates • run 2026-09-28 09:30ET``: the run time is
+    the newest candidate entry's ``valid_from`` (the Scout run that wrote it),
+    one section per candidate (E5.5b layout), and the footer links the Scout
+    ``run`` that produced the newest entry plus the loop ``chain``. Built from
+    the stored context entries only: no LLM, no re-scan.
+    """
+    from arc.slack.loop import slot_stamp
+
+    cands = sorted(entries, key=lambda e: -float(e.payload.get("confidence") or 0.0))
+    newest = max(entries, key=lambda e: e.valid_from) if entries else None
+    when = f" • run {slot_stamp(newest.valid_from)}" if newest else ""
+    title = f"[Scout] Context: {_plural(len(cands), 'Candidate')}{when}"
+    runs = sorted({e.run_id for e in entries if e.run_id})
+    blocks = _head(
+        title,
+        "what the Director read this loop",
+        f"{_plural(len(runs), 'Scout run')}" if len(runs) > 1 else "",
+    )
+    for e in cands[:_MAX_SCOUT_ROWS]:
+        p = e.payload
+        facts = f"{p.get('stance', '?')} · {p.get('catalyst_type', '?')}"
+        raw_date = p.get("catalyst_date")
+        if raw_date:
+            facts += f" {str(raw_date)[:10]}"
+        conf = p.get("confidence")
+        if conf is not None:
+            facts += f" · {_pct(float(conf))} confidence"
+        corr = p.get("corroboration")
+        if corr is not None:
+            facts += f" · {_plural(int(corr), 'source')}"
+        facts += f" · as of {slot_stamp(e.valid_from)}"
+        blocks.append(B.divider())
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": B.clip(f"*{B.esc(e.subject)}*\n{B.esc(facts)}")},
+            }
+        )
+    if len(cands) > _MAX_SCOUT_ROWS:
+        rest = ", ".join(B.esc(e.subject) for e in cands[_MAX_SCOUT_ROWS:])
+        blocks.append(B.summary(B.clip(f"+{len(cands) - _MAX_SCOUT_ROWS} more: {rest}")))
+    if not cands:
+        blocks.append(B.divider())
+        blocks.append(_section("Candidates", ["none"]))
+    return _finish(title, blocks, run_id=newest.run_id if newest else None, chain=chain_run_id)
 
 
 # ---------------------------------------------------------------------------

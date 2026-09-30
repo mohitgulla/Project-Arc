@@ -14,19 +14,22 @@
 # of an undeclared kind fails the run (fail-closed); `writes: []` = writes nothing.
 # `reads` limits the recorded input snapshot. `arc context trace <run|chain>` shows both.
 #
-# A trading day at a glance (full simulated day: `arc routines tick --dry-run`):
+# A trading day at a glance (full simulated day: `arc routines tick --dry-run`), D31:
 #   05:30 Mon       symbol master refresh (open universe, E5.7)
-#   06:00           earnings calendar; rss (30m) / edgar (15m) polling until 20:00
-#   09:30           pre-market chain: director -> quant -> risk -> propose
+#   06:00           earnings calendar; rss (15m) / edgar (15m) polling until 20:00
+#   09:00-16:00     Scout every 30 min (15 in-session runs; after the fast sources)
 #   09:30-16:00     intraday monitor every 5 min (D35: positions, Greeks, marks + account
 #                   fields for the tower, expiries, halts; 79 slots, 16:00 inclusive)
+#   09:40-15:50     trading loop every 5 min (75 slots): director -> quant -> risk ->
+#                   propose -> execute. ttl 5m: a missed slot is skipped, never caught up.
+#                   One #arc-investor root line per slot, persona cards in its thread (D36).
 #   09:45-16:00     position manager every 30 min: positions.evaluate -> investor.exits
 #                   -> risk.reallocate (early exits + close-to-reallocate swaps, E6.4)
-#   12:00           StockedUp + Scout (midday news); new candidates in-session -> director chain
+#   12:00           StockedUp (midday video; the next 30-min Scout reads it)
 #   16:30           auditor (reconcile + journal)
 #   16:45 Fri       weekly scorecard
 #   18:00           earnings calendar
-#   22:00 daily     StockedUp + Scout (after-close sources; Sunday 22:00 feeds Monday)
+#   22:00 daily     StockedUp + overnight Scout (after-close sources; Sunday 22:00 feeds Monday)
 #
 # notify (E5.5): sources default `quiet` (folded into the next persona post);
 # personas and chain steps default `card` (Block Kit digest; the one-liner stays
@@ -53,6 +56,7 @@ monitoring:
   stuck_after: 70m         # routine run still `running` (tick timeout is 55m)
   stuck_after_jobs:        # per-job override of stuck_after (E5.3a; E5.8 reuses it for the loop)
     monitor: 10m           # 5-min cadence: two slots without finishing means it is wedged
+    director: 10m          # D31 trading loop: same rule (loop.max_runtime is 4m)
   alert_channel: project_arc
   gateway:
     enabled: true
@@ -68,6 +72,15 @@ monitoring:
     path: logs/arc.jsonl   # relative to the DB directory (data/)
     max_bytes: 5000000
     backups: 5
+
+# D31 / D36: the 5-min trading loop (the `director` persona and its chain).
+loop:
+  job: director
+  max_idle: 30m            # force one full LLM evaluation at least this often
+  max_runtime: 4m          # chain deadline: no new step starts after it (run -> `timeout`)
+  pnl_bucket_pct: 0.5      # P&L rounding (as % of equity) inside the no-change digest
+  post_hold_roots: true    # false = HOLD / no_change loops post no root line
+  slack_layout: root_per_loop   # root_per_loop (D36) | day_thread (pre-D36 rollback)
 
 # Default TTL / supersede policy per context kind (producers may override
 # per job with `context:`). TTLs: "<n>m|h|d" or "<n> session(s)".
@@ -109,7 +122,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     label: StockedUp
     writes: [raw_doc_ref]
   rss:                          # owner pick 2026-09-28: broad market, single names, macro
-    every: 30m
+    every: 15m                  # D31: at least as often as the 30-min Scout
     window: "06:00-20:00"
     days: trading
     writes: [raw_doc_ref]
@@ -157,20 +170,29 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     writes: []                  # writes data/symbol_master.json, never context
 
 personas:
-  scout:                        # D15: 22:00 (after-close sources) + 12:00 (midday news), every day
-    schedule: ["22:00", "12:00"]
+  scout:                        # D31: every 30 min in session (15 runs), after the fast sources
+    every: 30m
+    window: "09:00-16:00"
+    days: trading
+    after_sources: true
+    ttl: 20m                    # a slot missed by 20 min is skipped (the next one is closer)
+    notify: card
+    writes: [candidate, note, story]   # note: scan summary (D27); story: D30 stage-1 digests
+  scout.overnight:              # D15/D31: 22:00 after-close sources; Sunday 22:00 feeds Monday
+    schedule: ["22:00"]
     days: daily
     after_sources: true
     ttl: 3h
     notify: card
-    writes: [candidate, note, story]   # note: scan summary (D27); story: D30 stage-1 digests
-  director:                     # pre-market chain at the open (PLAN §2.6: 06:30 PT)
-    schedule: ["09:30"]
+    writes: [candidate, note, story]
+  director:                     # D31: the 5-min trading loop (see `loop:` above)
+    every: 5m
+    window: "09:40-15:50"       # owner 2026-09-28: 75 slots; skips the open's first 10 min
     days: trading
     chain: [quant, risk, propose, execute]   # D34: execute = publish + auto-approve + hand off ladders
     reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options, position_review]   # == DIRECTOR_READS (arc/pipeline/steps.py)
     writes: [shortlist, regime, note, portfolio_context]   # E5.9: portfolio_context + portfolio_view/thesis_check notes
-    ttl: 2h
+    ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card
   monitor:                      # intraday: positions, net Greeks, expiries, daily-loss halt (read-only)
     every: 5m                   # D35: the tower's mark source; 5m is the tick floor
@@ -228,9 +250,9 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   # D34: publishes this chain's proposal cards (auto-approved when `auto_approve` is on for
   # ARC_ENV) and hands each approved one to an Investor subprocess (own lock, ~6 min ladder).
   # With auto-approve off it reports "awaiting approval". The Investor run joins the chain.
-  execute: {reads: [proposal], writes: [], llm: false, notify: summary}
+  # D31: `on_no_change: run` = the only step a no_change loop still runs (carries pending
+  # approvals / ladders forward); every other chain step defaults to `skip`.
+  execute: {reads: [proposal], writes: [], llm: false, notify: summary, on_no_change: run}
 
-triggers:                       # a run finishing (or an external event) can start another run
-  - on: scout.completed         # only the 12:00 Scout can match: 22:00 is never in-session
-    if: "new_candidates > 0 and session == 'open'"
-    run: director               # which then runs its chain
+triggers: []                    # D31: no scout.completed -> director trigger any more; the 5-min
+                                # loop picks new candidates up within one slot
