@@ -357,6 +357,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.OWNER_APPROVE: "Owner approved",
     ReasonCode.OWNER_REJECT: "Owner rejected",
     ReasonCode.AUTO_APPROVE: "Auto-approved",
+    ReasonCode.AUTO_APPROVE_GATED: "Auto-approve held back by the scorecard gate",
     ReasonCode.TTL_EXPIRED: "Approval window expired",
     ReasonCode.NOT_ACTIONABLE_GATE_FAIL: "Not actionable: gate failed",
     ReasonCode.NOT_ACTIONABLE_NO_TOKEN: "Not actionable: no gate token",
