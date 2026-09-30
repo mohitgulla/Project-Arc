@@ -43,6 +43,17 @@ for (const vp of VIEWPORTS) {
       test.use({ viewport: { width: vp.width, height: vp.height } });
 
       test("list with two URL filters, then the SPY drill-down", async ({ page }) => {
+        const errors: string[] = [];
+        // The shell ships no favicon (pre-existing, not this card): ignore that one 404.
+        const noise = (s: string) => s.includes("/favicon.ico");
+        page.on("pageerror", (e) => errors.push(e.message));
+        page.on("console", (m) => {
+          const s = `${m.text()} ${m.location().url}`;
+          if (m.type() === "error" && !noise(s)) errors.push(s);
+        });
+        page.on("response", (r) => {
+          if (r.status() >= 400 && !noise(r.url())) errors.push(`${r.status()} ${r.url()}`);
+        });
         await open(page, "/trades?stage=open,closed&kind=open", theme);
         await expect(page.getByTestId("summary-count")).toContainText("4");
         await expect(page.getByTestId("summary-realized")).toContainText("+$300.00");
@@ -67,6 +78,10 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("sec-decisions")).toContainText("Risk reviewed it");
         await expect(page.getByTestId("sec-decisions")).not.toContainText("XLU");
         await page.screenshot({ path: `e2e/screenshots/trade-detail-${vp.name}-${theme}.png`, fullPage: true });
+        // Expand a decision's details (and its persona call) too: still no errors.
+        await page.getByTestId("sec-decisions").getByRole("button", { name: "▶ Details" }).nth(4).click();
+        await expect(page.getByTestId("persona-call").first()).toContainText("claude-");
+        expect(errors).toEqual([]);
         if (vp.name === "mobile") {
           await page.getByRole("button", { name: "Back" }).click();
           await expect(page).toHaveURL(/\/trades\?stage=/);
