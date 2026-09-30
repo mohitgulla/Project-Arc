@@ -127,6 +127,7 @@ from arc.pipeline.portfolio_context import (
 )
 from arc.pipeline.store import PersonaCallRepo
 from arc.routines.handlers import JobResult
+from arc.routines.loop import LoopInputs, LoopState, pnl_bucket
 from arc.routines.runs import RoutineRunRepo
 from arc.sizing import size_contracts
 from arc.slack.blocks import esc
@@ -856,6 +857,117 @@ def _portfolio_notes(
         )
 
 
+def _loop_inputs(
+    snap: ContextSnapshot,
+    pctx: PortfolioContext,
+    priors: list[RecentIdea],
+    budget: BudgetView,
+    *,
+    pending_orders: int,
+    bucket_pct: float,
+) -> LoopInputs:
+    """The deterministic, rounded inputs the D31 change-aware skip digests."""
+    return LoopInputs(
+        candidates=sorted(f"{e.id}@{e.schema_version}" for e in snap.of_kind("candidate")),
+        regimes=sorted(f"{e.subject}@{e.id}" for e in snap.of_kind("regime")),
+        positions=sorted(f"{p.structure_id}:{p.contracts}" for p in pctx.positions),
+        pnl_bucket=pnl_bucket(pctx.account.day_pnl, pctx.account.equity, bucket_pct),
+        pending_orders=pending_orders,
+        budget_tier=budget.tier.value,
+        suppressed=sorted(f"{r.fingerprint}:{r.kind.value}" for r in priors),
+    )
+
+
+def _pending_orders(conn: sqlite3.Connection) -> int:
+    """Approval requests still pending plus executions not yet resolved."""
+    n = conn.execute("SELECT COUNT(*) FROM approval_requests WHERE status = 'pending'").fetchone()
+    m = conn.execute(
+        "SELECT COUNT(*) FROM executions WHERE status IN ('working', 'unconfirmed')"
+    ).fetchone()
+    return int(n[0]) + int(m[0])
+
+
+def _loop_digest_of(ctx: JobContext) -> str | None:
+    for item in ctx.external_inputs:
+        if item.name == "loop_inputs":
+            return item.digest
+    return None
+
+
+def _loop_no_change(
+    ctx: JobContext,
+    snap: ContextSnapshot,
+    pctx: PortfolioContext,
+    priors: list[RecentIdea],
+    budget: BudgetView,
+) -> JobResult | None:
+    """D31 change-aware skip: same inputs as the last loop -> no LLM call.
+
+    Only the loop persona (``routines.loop.job``) skips; a manual or scheduled
+    Director outside the loop always runs in full. The digest is recorded as an
+    external input of the run (D27), so the manifest shows what was compared.
+    """
+    loop = ctx.routines.loop
+    inputs = _loop_inputs(
+        snap,
+        pctx,
+        priors,
+        budget,
+        pending_orders=_pending_orders(ctx.conn),
+        bucket_pct=loop.pnl_bucket_pct,
+    )
+    new_digest = inputs.digest()
+    log.debug("pipeline.loop_inputs", digest=new_digest[:12], **inputs.model_dump(mode="json"))
+    ctx.record_input("loop_inputs", "db", inputs.model_dump(mode="json"))
+    if not ctx.is_loop_run:
+        return None
+    state = LoopState(ctx.conn)
+    if not state.should_skip(new_digest, ctx.now, loop.max_idle):
+        # A full run: the digest and ``last_full_run`` are recorded only once the
+        # Director's evaluation has completed (see ``_loop_record_full_run``), so a
+        # failed LLM call never mutes the next ``max_idle`` of slots as ``no_change``.
+        return None
+    state.record_digest(new_digest, ctx.now, full_run=False)
+    last = state.last_full_run()
+    age = f"{int((ctx.now - last).total_seconds() // 60)}m" if last else "?"
+    why = f"no_change: inputs unchanged since the last full loop ({age} ago)"
+    j = _journal(ctx, snap.id)
+    j.add(
+        JournalPersona.DIRECTOR,
+        Stage.SHORTLIST,
+        SESSION_SUBJECT,
+        Choice.NO_TRADE,
+        ReasonCode.LOOP_NO_CHANGE,
+        reason_text=why,
+        payload={"digest": new_digest, "last_full_run": last.isoformat() if last else None},
+    )
+    log.info("pipeline.loop_no_change", digest=new_digest[:12], last_full_run=last)
+    return JobResult(
+        summary=why,
+        metrics={
+            "shortlist": 0,
+            "no_change": True,
+            "loop_digest": new_digest,
+            "open_positions": len(pctx.positions),
+            **budget.metrics(),
+        },
+    )
+
+
+def _loop_record_full_run(ctx: JobContext) -> None:
+    """D31: a completed Director evaluation is the loop's new ``last_full_run``.
+
+    Called only after the LLM reply was parsed and the shortlist written, so a
+    Director run that failed (LLM outage, schema error) leaves the previous
+    ``last_full_run`` in place and the next slot evaluates in full again.
+    """
+    if not ctx.is_loop_run:
+        return
+    digest = _loop_digest_of(ctx)
+    if digest:
+        LoopState(ctx.conn).record_digest(digest, ctx.now, full_run=True)
+
+
 def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
     cand_entries = ctx.snapshot.of_kind("candidate")
@@ -927,6 +1039,11 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "recent_ideas", "db", [r.model_dump(mode="json") for r in priors], count=len(priors)
     )
     held, recent_lines = _held_and_recent(cands, priors, pctx, ctx.now, dedupe_cfg)
+    # D31: change-aware skip. Same inputs as the previous loop and a full run not
+    # yet due (loop.max_idle) -> no LLM call; the chain runs its deterministic tail.
+    skip = _loop_no_change(ctx, snap, pctx, priors, budget)
+    if skip is not None:
+        return skip
     # Quant/Risk budget (never shown to the Director); D32 lowers it in the restrictive tier.
     qr_budget = _shortlist_limit(settings, budget)
     inputs = {
@@ -1038,6 +1155,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         suppressed=[ln.removeprefix("- ") for ln in recent_lines],
     )
     entry = ctx.write("shortlist", SESSION_SUBJECT, payload)
+    _loop_record_full_run(ctx)
     _portfolio_notes(ctx, payload, pctx, entry.id, call_id)
     _note(
         ctx,
@@ -1093,6 +1211,8 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "open_positions": len(pctx.positions),
             "suppressed": len(recent_lines),
             "thesis_checks": len(payload.thesis_checks),
+            "no_change": False,
+            "loop_digest": _loop_digest_of(ctx),
             **dropped,
             **budget.metrics(),
         },
