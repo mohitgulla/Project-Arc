@@ -141,15 +141,7 @@ _MC = {
 # outside an execution (reconcile expiry settlement) are the opened quantity minus the
 # executed closes, at the structure's ``close_net``. See :func:`realized_from_tranches`.
 _BASE = f"""
-WITH {{stubs}}closes AS (
-  SELECT structure_id,
-    SUM(filled_qty) AS qty,
-    SUM(CAST(fill_price AS REAL) * filled_qty) AS px_qty
-  FROM executions
-  WHERE kind = 'close' AND filled_qty > 0 AND fill_price IS NOT NULL
-    AND structure_id IS NOT NULL
-  GROUP BY structure_id
-), base AS (
+WITH {{stubs}}base AS (
   SELECT
     p.rowid AS rid,
     p.proposal_hash, p.ticker, p.kind, p.day, p.created_at, p.run_id, p.chain_run_id,
@@ -177,10 +169,25 @@ WITH {{stubs}}closes AS (
        WHERE proposal_hash = p.proposal_hash ORDER BY created_at DESC LIMIT 1) AS profile,
     s.id AS structure_id, s.status AS structure_status,
     s.entry_net AS s_entry, s.close_net AS s_close, s.contracts AS s_contracts,
-    cl.qty AS close_qty, cl.px_qty AS close_px_qty,
     s2.id AS closes_structure_id,
     COALESCE(o.exit_reason, s.exit_reason, s2.exit_reason) AS exit_reason,
-    o.realised_pnl AS outcome_pnl
+    o.realised_pnl AS outcome_pnl,
+    -- realized P&L per close tranche (the rule above), one indexed lookup per structure
+    CASE WHEN p.kind = 'open' AND s.id IS NOT NULL THEN (
+      SELECT CASE WHEN COUNT(*) > 0 OR (s.status = 'closed' AND s.close_net IS NOT NULL) THEN
+        COALESCE(-(CAST(s.entry_net AS REAL) * SUM(e.filled_qty)
+                   + SUM(CAST(e.fill_price AS REAL) * e.filled_qty)) * 100.0, 0.0)
+        + CASE WHEN s.status = 'closed' AND s.close_net IS NOT NULL THEN
+            -(CAST(s.entry_net AS REAL) + CAST(s.close_net AS REAL)) * 100.0 * (
+              CASE WHEN COALESCE(x.filled_qty, 0) > 0
+                     THEN MAX(x.filled_qty - COALESCE(SUM(e.filled_qty), 0), 0)
+                   WHEN COUNT(*) = 0 THEN s.contracts
+                   ELSE 0 END)
+          ELSE 0.0 END
+      END
+      FROM executions e
+      WHERE e.structure_id = s.id AND e.kind = 'close' AND e.filled_qty > 0
+        AND e.fill_price IS NOT NULL) END AS structure_pnl
   FROM proposals p
   LEFT JOIN gate_decisions g ON g.rowid = (
     SELECT rowid FROM gate_decisions WHERE proposal_hash = p.proposal_hash
@@ -188,14 +195,13 @@ WITH {{stubs}}closes AS (
   LEFT JOIN approval_requests a ON a.proposal_hash = p.proposal_hash
   LEFT JOIN executions x ON x.proposal_hash = p.proposal_hash
   LEFT JOIN open_structures s ON s.open_proposal_hash = p.proposal_hash
-  LEFT JOIN closes cl ON cl.structure_id = s.id
   LEFT JOIN open_structures s2 ON p.kind = 'close' AND s2.rowid = (
     SELECT rowid FROM open_structures WHERE exit_proposal_hash = p.proposal_hash LIMIT 1)
   LEFT JOIN outcomes o ON o.rowid = (
     SELECT rowid FROM outcomes WHERE proposal_hash = p.proposal_hash
     ORDER BY at DESC, rowid DESC LIMIT 1)
 ), trades AS (
-  SELECT b.*,
+  SELECT base.*,
     CASE
       WHEN kind = 'open' AND structure_status = 'closed' THEN 'closed'
       WHEN kind = 'open' AND structure_status = 'open' THEN 'open'
@@ -212,25 +218,9 @@ WITH {{stubs}}closes AS (
     net_ev_unit * COALESCE(contracts, 1) AS net_ev,
     CASE WHEN fill_price IS NOT NULL AND limit_px IS NOT NULL AND limit_px != 0
       THEN (CAST(fill_price AS REAL) - limit_px) / ABS(limit_px) * 10000.0 END AS slippage_bps,
-    COALESCE(CAST(outcome_pnl AS REAL),
-      CASE WHEN kind = 'open' AND structure_id IS NOT NULL
-        AND (COALESCE(close_qty, 0) > 0 OR settled_qty > 0)
-        THEN COALESCE(-(CAST(s_entry AS REAL) * close_qty + close_px_qty) * 100.0, 0.0)
-          + CASE WHEN settled_qty > 0
-              THEN -(CAST(s_entry AS REAL) + CAST(s_close AS REAL)) * 100.0 * settled_qty
-              ELSE 0.0 END
-      END
-    ) AS realized_pnl
-  FROM (
-    SELECT base.*,
-      -- contracts closed outside a close execution (reconcile expiry settlement)
-      CASE WHEN structure_status = 'closed' AND s_close IS NOT NULL
-        THEN CASE WHEN filled_qty > 0 THEN MAX(filled_qty - COALESCE(close_qty, 0), 0)
-                  WHEN COALESCE(close_qty, 0) = 0 THEN s_contracts
-                  ELSE 0 END
-        ELSE 0 END AS settled_qty
-    FROM base
-  ) AS b
+    COALESCE(CAST(outcome_pnl AS REAL), structure_pnl)
+      AS realized_pnl
+  FROM base
 )
 """
 
@@ -980,13 +970,17 @@ def load_trades(
     order = _SORT_SQL[sort]
     # Three lean passes instead of one wide window query: the filter-wide summary, the
     # page's row ids (sort keys only), then the full rows for that page (<= size rows).
+    # The summary reads a LIMIT -1 subquery so SQLite runs it as a co-routine and
+    # evaluates each derived column (realized P&L, net EV) once per row rather than once
+    # per aggregate that names it (~40% of the pass on 100k proposals).
     agg = conn.execute(
         f"""{_base(conn)}
         SELECT COUNT(*),
           SUM(CASE WHEN COALESCE(filled_qty, 0) > 0 THEN 1 ELSE 0 END),
           SUM(realized_pnl), COUNT(realized_pnl), AVG(slippage_bps), AVG(net_ev),
           SUM(CASE WHEN realized_pnl IS NOT NULL THEN net_ev END)
-        FROM trades{where}""",  # noqa: S608 - clauses built from a fixed whitelist
+        FROM (SELECT filled_qty, realized_pnl, slippage_bps, net_ev
+              FROM trades{where} LIMIT -1)""",  # noqa: S608 - clauses from a fixed whitelist
         params,
     ).fetchone()
     total = int(agg[0] or 0)

@@ -22,6 +22,7 @@ def build_synthetic(path: Path, n: int, *, seed: int = 7) -> None:
     migrate(conn)
     t0 = dt.datetime(2025, 1, 2, 14, tzinfo=dt.UTC)
     props, gates, apps, execs, mcs, structs, cands = [], [], [], [], [], [], []
+    closed_sids: list[str] = []  # like the ladder: fills carry their structure id
     for i in range(n):
         h = f"{i:064x}"
         at = t0 + dt.timedelta(minutes=7 * i)
@@ -63,6 +64,10 @@ def build_synthetic(path: Path, n: int, *, seed: int = 7) -> None:
             )
             if status == "approved":
                 filled = rng.random() > 0.3
+                if kind == "open":
+                    sid = f"s{i}" if filled else None
+                else:
+                    sid = rng.choice(closed_sids) if closed_sids else None
                 execs.append(
                     (
                         h,
@@ -77,10 +82,13 @@ def build_synthetic(path: Path, n: int, *, seed: int = 7) -> None:
                         2 if filled else 0,
                         str(round(net + 0.02, 2)) if filled else None,
                         at.isoformat(),
+                        sid,
                     )
                 )
                 if filled and kind == "open":
                     closed = rng.random() > 0.5
+                    if closed:
+                        closed_sids.append(f"s{i}")
                     structs.append(
                         (
                             f"s{i}",
@@ -136,10 +144,8 @@ def build_synthetic(path: Path, n: int, *, seed: int = 7) -> None:
         apps,
     )
     conn.executemany("INSERT INTO executions (proposal_hash, kind, status, token_version, band_lo, "
-                     "band_hi, max_steps, attempts, contracts, filled_qty, fill_price, started_at) "
-                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [
-                         (e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[9], e[10], e[11])
-                         for e in execs])  # fmt: skip
+                     "band_hi, max_steps, attempts, contracts, filled_qty, fill_price, started_at, "
+                     "structure_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", execs)  # fmt: skip
     conn.executemany(
         "INSERT INTO market_contexts (id, proposal_hash, payload, created_at) VALUES (?,?,?,?)", mcs
     )
