@@ -231,9 +231,10 @@ class ControlService:
             return self.base.account_profiles_file
         return None
 
-    def view(self, key: str) -> KeyView:
+    def view(self, key: str, settings: ArcSettings | None = None) -> KeyView:
+        """One key's value; ``settings`` reuses an effective config built once per list."""
         t = lookup(key)
-        s = self.settings()
+        s = settings if settings is not None else self.settings()
         last = self.changes.latest(t.key)
         return KeyView(
             tunable=t,
@@ -275,11 +276,13 @@ class ControlService:
                 keys = [k for k in self.keys() if lookup(k).group is g]
                 if g is Group.ROUTINES:
                     keys = sorted(set(keys) | set(self._routine_keys()))
-                return [self.view(k) for k in keys]
+                s = self.settings()  # once per list: rebuilding it per key costs ~85 ms
+                return [self.view(k, s) for k in keys]
             return [self.view(w)]
         keys = self.keys()
         keys += [k for k in self._routine_keys() if k not in keys]
-        return [self.view(k) for k in keys]
+        s = self.settings()
+        return [self.view(k, s) for k in keys]
 
     def _routine_keys(self) -> list[str]:
         raw = raw_yaml(Target.ROUTINES)

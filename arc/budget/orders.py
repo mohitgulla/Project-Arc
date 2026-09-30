@@ -39,8 +39,12 @@ from arc.utils.calendar import ET
 if TYPE_CHECKING:
     import sqlite3
 
-    from arc.broker.base import BrokerAdapter
     from arc.config import ArcSettings
+
+#: Any broker adapter. Only ``option_orders_since`` is used (looked up with
+#: ``getattr``), so the budget does not import :mod:`arc.broker`: that keeps it
+#: importable from the read-only tower (E8.7d, import-linter contract).
+AnyBroker = object
 
 log = structlog.get_logger(__name__)
 
@@ -376,7 +380,7 @@ def _reserved(conn: sqlite3.Connection, exclude_proposal_hash: str | None) -> in
     return total
 
 
-def _broker_count(broker: BrokerAdapter | None, day: _dt.date) -> int | None:
+def _broker_count(broker: AnyBroker | None, day: _dt.date) -> int | None:
     """Option orders the broker lists for *day*, or None when unavailable."""
     if broker is None:
         return None
@@ -394,7 +398,7 @@ def _broker_count(broker: BrokerAdapter | None, day: _dt.date) -> int | None:
 
 def count_orders(
     conn: sqlite3.Connection,
-    broker: BrokerAdapter | None,
+    broker: AnyBroker | None,
     day: _dt.date,
     *,
     exclude_proposal_hash: str | None = None,
@@ -414,7 +418,7 @@ def count_orders(
 
 def current_budget(
     conn: sqlite3.Connection,
-    broker: BrokerAdapter | None,
+    broker: AnyBroker | None,
     settings: ArcSettings,
     *,
     now: _dt.datetime,
