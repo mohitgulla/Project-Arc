@@ -8,6 +8,16 @@
   calibration, slippage, review root causes.
 - ``arc journal review <proposal-hash> --label ... --root-cause ... --cite <id>``
   append an owner review (decision quality separate from outcome).
+- ``arc journal explain <proposal-hash|run-id|chain-id> [--json]``  (E9.3) one
+  document per decision: persona calls, gate, approval, orders/fills, outcome,
+  reviews.
+- ``arc journal counterfactual --since YYYY-MM-DD [--json]``  (E9.3) closed
+  trades vs hold-to-expiry and no-trade; not-traded proposals EOD-shadowed.
+- ``arc scorecard attribution --since YYYY-MM-DD --by kind,regime,persona_model``
+  (E9.3) P&L attribution buckets with a ``low_sample`` flag.
+
+``explain``, ``counterfactual`` and ``arc scorecard attribution`` open the store
+read-only (``mode=ro``): they never create, migrate or write it.
 """
 
 from __future__ import annotations
@@ -15,7 +25,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from arc.journal.reasons import ReviewLabel, RootCause
 
@@ -25,11 +35,16 @@ if TYPE_CHECKING:
 
     from arc.config import ArcSettings
 
-__all__ = ["add_journal_parser", "run_journal"]
+__all__ = ["add_journal_parser", "add_scorecard_parser", "run_journal", "run_scorecard"]
+
+#: subcommands that open the store read-only and never migrate it (E9.3)
+READ_ONLY = ("explain", "counterfactual")
 
 
 def add_journal_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
-    p = sub.add_parser("journal", help="Decision journal: show, replay, gaps, review (E7.4)")
+    p = sub.add_parser(
+        "journal", help="Decision journal: show, explain, replay, gaps, counterfactual, review"
+    )
     jsub = p.add_subparsers(dest="journal_command", required=True)
 
     s = jsub.add_parser("show", help="Full decision tree for a proposal or chain run")
@@ -55,6 +70,22 @@ def add_journal_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
     v.add_argument("--notes", default="")
     v.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
 
+    e = jsub.add_parser(
+        "explain", help="Why a decision was made: the full audit document (read-only)"
+    )
+    e.add_argument("ref", help="Proposal hash (or unique prefix), run-… id or chain-… id")
+    e.add_argument("--json", action="store_true", help="Print the ExplainReport as JSON")
+    e.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+
+    cf = jsub.add_parser(
+        "counterfactual", help="Closed trades vs hold-to-expiry / no-trade (read-only)"
+    )
+    cf.add_argument("--since", default=None, help="YYYY-MM-DD (ET); default: all time")
+    cf.add_argument("--until", default=None, help="YYYY-MM-DD (ET, exclusive); default: now")
+    cf.add_argument("--data-dir", default="data", help="E7.1 history root (options_eod)")
+    cf.add_argument("--json", action="store_true", help="Print the report as JSON")
+    cf.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+
     sc = jsub.add_parser("scorecard", help="Weekly paper scorecard (E7.3), from the audit store")
     sc.add_argument(
         "--week", default=None, help="Any date (YYYY-MM-DD, ET) in the week; default: this week"
@@ -72,6 +103,95 @@ def add_journal_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
         help="Price D19 hold-to-expiry shadows from Alpaca daily bars (network, read-only)",
     )
     sc.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+
+
+def add_scorecard_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    """``arc scorecard attribution`` (E9.3). The weekly report stays ``arc journal scorecard``."""
+    from arc.journal.views import ATTRIBUTION_DIMENSIONS
+
+    p = sub.add_parser("scorecard", help="Scorecard views of the audit store (read-only)")
+    ssub = p.add_subparsers(dest="scorecard_command", required=True)
+    a = ssub.add_parser("attribution", help="Realised P&L attribution by bucket")
+    a.add_argument("--since", default=None, help="YYYY-MM-DD (ET); default: all time")
+    a.add_argument("--until", default=None, help="YYYY-MM-DD (ET, exclusive); default: now")
+    a.add_argument(
+        "--by",
+        default="kind,regime,persona_model",
+        help=f"Comma-separated dimensions: {', '.join(ATTRIBUTION_DIMENSIONS)}",
+    )
+    a.add_argument("--json", action="store_true", help="Print the report as JSON")
+    a.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+
+
+def _day(text: str | None) -> _dt.datetime | None:
+    from arc.utils.calendar import ET
+
+    if not text:
+        return None
+    return _dt.datetime.combine(_dt.date.fromisoformat(text), _dt.time(), tzinfo=ET)
+
+
+def _connect_ro(db: str | None, settings: ArcSettings) -> sqlite3.Connection:
+    from arc.store.db import DEFAULT_DB_PATH, connect_ro
+
+    return connect_ro(db or settings.db_path or DEFAULT_DB_PATH)
+
+
+def run_scorecard(args: argparse.Namespace) -> int:
+    from arc.config import get_settings
+    from arc.journal.views import attribution, attribution_lines
+    from arc.utils.calendar import now_et
+
+    try:
+        since, until = _day(args.since), _day(args.until) or now_et()
+        conn = _connect_ro(args.db, get_settings())
+    except (FileNotFoundError, ValueError) as exc:
+        sys.stderr.write(f"arc scorecard {args.scorecard_command}: {exc}\n")
+        return 2
+    try:
+        rep = attribution(conn, since=since, until=until, by=args.by)
+    except ValueError as exc:
+        sys.stderr.write(f"arc scorecard attribution: {exc}\n")
+        return 2
+    finally:
+        conn.close()
+    if args.json:
+        sys.stdout.write(rep.model_dump_json(indent=2) + "\n")
+    else:
+        _out(attribution_lines(rep))
+    return 0
+
+
+def _run_read_only(args: argparse.Namespace, settings: ArcSettings) -> int:
+    from arc.journal.report import ShadowPricer, counterfactual
+    from arc.journal.views import counterfactual_lines, explain, explain_lines
+    from arc.utils.calendar import now_et
+
+    cmd = args.journal_command
+    try:
+        since = _day(getattr(args, "since", None))
+        until = _day(getattr(args, "until", None)) or now_et()
+        conn = _connect_ro(args.db, settings)
+    except (FileNotFoundError, ValueError) as exc:
+        sys.stderr.write(f"arc journal {cmd}: {exc}\n")
+        return 2
+    try:
+        if cmd == "explain":
+            rep: Any = explain(conn, args.ref)
+            lines = explain_lines(rep)
+        else:
+            rep = counterfactual(conn, since=since, until=until, pricer=ShadowPricer(args.data_dir))
+            lines = counterfactual_lines(rep)
+    except (LookupError, ValueError) as exc:
+        sys.stderr.write(f"arc journal {cmd}: {exc}\n")
+        return 2
+    finally:
+        conn.close()
+    if args.json:
+        sys.stdout.write(rep.model_dump_json(indent=2) + "\n")
+    else:
+        _out(lines)
+    return 0
 
 
 def _out(lines: list[str]) -> None:
@@ -119,6 +239,8 @@ def run_journal(args: argparse.Namespace) -> int:
     from arc.utils.calendar import ET, now_et
 
     settings = get_settings()
+    if args.journal_command in READ_ONLY:
+        return _run_read_only(args, settings)
     conn = connect(args.db or settings.db_path)
     migrate(conn)
     cmd = args.journal_command

@@ -873,6 +873,70 @@ arc routines tick --dry-run --since 2026-10-01T00:00-04:00 --now 2026-10-01T23:5
 sqlite3 data/arc.db "select key, value from routine_state where key like 'loop%' order by key"
 ```
 
+### 5.15 Asking why: journal explain / attribution / counterfactual (E9.3)
+
+Three read-only views of the audit store answer "why was this decision made,
+was it good in hindsight, what would have been better". They open the DB with
+`mode=ro` + `PRAGMA query_only` (never create, migrate or write it; a missing
+`--db` path exits 2 instead of creating an empty store). Point `--db` at a copy
+(`sqlite3 data/arc.db ".backup /tmp/arc-copy.db"`) when you want to be sure.
+Every command prints a short text summary; `--json` prints the full typed,
+versioned document (what the Analyst's pre-run script E9.2 and the future D26
+`!arc explain` read).
+
+**Why was this decision made?** One document per proposal: the journal
+decisions, every persona call of its chain (prompt sha256 + raw reply, model,
+tokens), the gate verdict and violations (`token_present` only, the token is
+never printed), the approval request + `approvals` row, the order/fill timeline
+(`orders`, `order_events`, `fills`), the local position, the outcome row
+(`realised_pnl`, `pnl_vs_ev`, `slippage_bps`, `hold_to_expiry_shadow_pnl`,
+`exit_reason`) and any reviews. Proposals that never traded (open, rejected,
+expired, gate-failed) get the same document with `outcome: null`.
+
+```
+arc journal explain de7880f035d2 --json          # proposal hash or unique prefix
+arc journal explain run-5361867e7d304272 --json  # the propose run → its chain's proposals
+arc journal explain chain-1e583f91cdda           # + chain decisions with no proposal
+```
+
+`status` is derived, most advanced fact first: outcome status → position
+open/closed → `execution_<status>` → approval status → `gate_failed` → `proposed`.
+
+**Did it pay, and where?** Realised P&L attribution over closed trades
+(positions closed in the window, plus `outcomes` rows with no local position):
+
+```
+arc scorecard attribution --since 2026-09-01 --by kind,regime,persona_model --json
+#  buckets: [{key: {kind: iron_condor, regime: risk_on, persona_model: director=…,quant=…,risk=…},
+#             n, realised_pnl, win_rate, avg_pnl_vs_ev, slippage_realised_usd,
+#             slippage_modelled_usd, n_slippage, low_sample: true}]
+```
+
+Dimensions: `kind` (structure), `regime` (Director regime at proposal time),
+`persona_model` (the `persona=model` set of the chain's successful LLM calls),
+`ticker`. Buckets with `n < 30` carry `low_sample: true`; the Analyst's
+MIN-SAMPLE gate reads that flag rather than re-deriving it. Slippage is entry
+slippage (fill − mid) summed over trades that have a modelled value, next to
+the modelled `entry_slippage`. `arc journal scorecard` is still the weekly report.
+
+**What would have been better?**
+
+```
+arc journal counterfactual --since 2026-09-01 --json
+```
+
+- `closed`: each closed trade's realised P&L next to the D19 hold-to-expiry
+  shadow (`pending` until the legs expire and a settlement is known) and the
+  no-trade alternative ($0).
+- `not_traded`: every rejected / expired / not-actionable / gate-failed open
+  proposal, marked as if filled at its limit at the latest cached E7.1 EOD
+  session (`--data-dir`, default `data/`; `n/a` when the history isn't cached).
+- `alternatives`: Quant menu alternatives vs the chosen structure (per contract).
+
+The `not_traded` and `alternatives` rows come from the same code as
+`arc journal gaps` (which now prints a "proposals not traded" section too), so
+the two never disagree.
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.
