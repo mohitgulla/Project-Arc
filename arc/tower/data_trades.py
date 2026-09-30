@@ -132,8 +132,24 @@ _MC = {
 
 # Everything a list row shows, per proposal. Exactly one row per proposal: every join
 # is to a unique key or to the latest row by a correlated subquery.
+#
+# Realized P&L of an open trade (no ``outcomes`` row) is booked per close tranche, the
+# way the ladder books it (``arc/execution/ladder.py``): Σ -(entry + fill) x 100 x qty
+# over the structure's filled close executions. ``OpenStructureRepo.reduce`` lowers
+# ``contracts`` on a partial close and keeps only the final ``close_net``, so
+# ``contracts x close_net`` is wrong after more than one tranche. Contracts closed
+# outside an execution (reconcile expiry settlement) are the opened quantity minus the
+# executed closes, at the structure's ``close_net``. See :func:`realized_from_tranches`.
 _BASE = f"""
-WITH {{stubs}}base AS (
+WITH {{stubs}}closes AS (
+  SELECT structure_id,
+    SUM(filled_qty) AS qty,
+    SUM(CAST(fill_price AS REAL) * filled_qty) AS px_qty
+  FROM executions
+  WHERE kind = 'close' AND filled_qty > 0 AND fill_price IS NOT NULL
+    AND structure_id IS NOT NULL
+  GROUP BY structure_id
+), base AS (
   SELECT
     p.rowid AS rid,
     p.proposal_hash, p.ticker, p.kind, p.day, p.created_at, p.run_id, p.chain_run_id,
@@ -161,6 +177,7 @@ WITH {{stubs}}base AS (
        WHERE proposal_hash = p.proposal_hash ORDER BY created_at DESC LIMIT 1) AS profile,
     s.id AS structure_id, s.status AS structure_status,
     s.entry_net AS s_entry, s.close_net AS s_close, s.contracts AS s_contracts,
+    cl.qty AS close_qty, cl.px_qty AS close_px_qty,
     s2.id AS closes_structure_id,
     COALESCE(o.exit_reason, s.exit_reason, s2.exit_reason) AS exit_reason,
     o.realised_pnl AS outcome_pnl
@@ -171,13 +188,14 @@ WITH {{stubs}}base AS (
   LEFT JOIN approval_requests a ON a.proposal_hash = p.proposal_hash
   LEFT JOIN executions x ON x.proposal_hash = p.proposal_hash
   LEFT JOIN open_structures s ON s.open_proposal_hash = p.proposal_hash
+  LEFT JOIN closes cl ON cl.structure_id = s.id
   LEFT JOIN open_structures s2 ON p.kind = 'close' AND s2.rowid = (
     SELECT rowid FROM open_structures WHERE exit_proposal_hash = p.proposal_hash LIMIT 1)
   LEFT JOIN outcomes o ON o.rowid = (
     SELECT rowid FROM outcomes WHERE proposal_hash = p.proposal_hash
     ORDER BY at DESC, rowid DESC LIMIT 1)
 ), trades AS (
-  SELECT base.*,
+  SELECT b.*,
     CASE
       WHEN kind = 'open' AND structure_status = 'closed' THEN 'closed'
       WHEN kind = 'open' AND structure_status = 'open' THEN 'open'
@@ -195,10 +213,24 @@ WITH {{stubs}}base AS (
     CASE WHEN fill_price IS NOT NULL AND limit_px IS NOT NULL AND limit_px != 0
       THEN (CAST(fill_price AS REAL) - limit_px) / ABS(limit_px) * 10000.0 END AS slippage_bps,
     COALESCE(CAST(outcome_pnl AS REAL),
-      CASE WHEN kind = 'open' AND structure_status = 'closed' AND s_close IS NOT NULL
-        THEN -(CAST(s_entry AS REAL) + CAST(s_close AS REAL)) * 100.0 * s_contracts END
+      CASE WHEN kind = 'open' AND structure_id IS NOT NULL
+        AND (COALESCE(close_qty, 0) > 0 OR settled_qty > 0)
+        THEN COALESCE(-(CAST(s_entry AS REAL) * close_qty + close_px_qty) * 100.0, 0.0)
+          + CASE WHEN settled_qty > 0
+              THEN -(CAST(s_entry AS REAL) + CAST(s_close AS REAL)) * 100.0 * settled_qty
+              ELSE 0.0 END
+      END
     ) AS realized_pnl
-  FROM base
+  FROM (
+    SELECT base.*,
+      -- contracts closed outside a close execution (reconcile expiry settlement)
+      CASE WHEN structure_status = 'closed' AND s_close IS NOT NULL
+        THEN CASE WHEN filled_qty > 0 THEN MAX(filled_qty - COALESCE(close_qty, 0), 0)
+                  WHEN COALESCE(close_qty, 0) = 0 THEN s_contracts
+                  ELSE 0 END
+        ELSE 0 END AS settled_qty
+    FROM base
+  ) AS b
 )
 """
 
@@ -1603,6 +1635,49 @@ def _structure_for(conn: sqlite3.Connection, h: str, kind: str) -> sqlite3.Row |
     return conn.execute("SELECT * FROM open_structures WHERE id = ?", (x[0],)).fetchone()
 
 
+def realized_from_tranches(conn: sqlite3.Connection, s: sqlite3.Row) -> Decimal | None:
+    """Realized P&L of one open structure, booked per close tranche (the list's rule).
+
+    Σ -(entry + fill) x 100 x qty over its filled close executions (how the ladder
+    books each tranche), plus any contracts closed outside an execution (reconcile
+    expiry settlement: the opened quantity minus executed closes, at ``close_net``).
+    ``None`` when nothing has been closed yet; a partially closed, still-open
+    structure shows the realized part of its closed tranches only.
+    """
+    entry = _dec(s["entry_net"])
+    if entry is None:
+        return None
+    tranches = conn.execute(
+        """SELECT filled_qty, fill_price FROM executions
+           WHERE structure_id = ? AND kind = 'close' AND filled_qty > 0
+             AND fill_price IS NOT NULL""",
+        (s["id"],),
+    ).fetchall()
+    total, closed_qty, any_closed = Decimal(0), 0, False
+    for qty, px in tranches:
+        fill = _dec(px)
+        if fill is None:
+            continue
+        total += -(entry + fill) * 100 * int(qty)
+        closed_qty += int(qty)
+        any_closed = True
+    close = _dec(s["close_net"])
+    if s["status"] == "closed" and close is not None:
+        opened = conn.execute(
+            """SELECT filled_qty FROM executions
+               WHERE proposal_hash = ? AND kind = 'open' AND filled_qty > 0""",
+            (s["open_proposal_hash"],),
+        ).fetchone()
+        if opened is not None:
+            settled = max(int(opened[0]) - closed_qty, 0)
+        else:
+            settled = 0 if closed_qty else int(s["contracts"])
+        if settled:
+            total += -(entry + close) * 100 * settled
+            any_closed = True
+    return total if any_closed else None
+
+
 def _position(conn: sqlite3.Connection, h: str, kind: str) -> PositionSection | None:
     s = _structure_for(conn, h, kind)
     swaps: list[SwapView] = []
@@ -1664,7 +1739,7 @@ def _position(conn: sqlite3.Connection, h: str, kind: str) -> PositionSection | 
     entry, close = _dec(s["entry_net"]), _dec(s["close_net"])
     opened, closed = parse_ts(s["opened_at"]), parse_ts(s["closed_at"])
     n = int(s["contracts"])
-    realized = -(entry + close) * 100 * n if entry is not None and close is not None else None
+    realized = realized_from_tranches(conn, s) if entry is not None else None
     return PositionSection(
         structure_id=s["id"],
         status=s["status"],

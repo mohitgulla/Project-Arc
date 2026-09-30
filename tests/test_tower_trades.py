@@ -407,6 +407,118 @@ def test_detail_pending_exit(conn: sqlite3.Connection) -> None:
     assert [e.proposal_hash for e in qqq.position.exits] == [H("exit-qqq")]
 
 
+# -- realized P&L is booked per close tranche (review round 1) -------------------------
+
+
+def _tranche_db(fx_db: Path, tmp_path: Path, closes: list[tuple[int, str]]) -> Path:
+    """Copy the fixture; SPY (entry 4.15) opened 4, closed in *closes* (qty, fill) tranches.
+
+    Each close is an ``executions`` row + ``OpenStructureRepo.reduce`` like the ladder,
+    and AMD's ``outcomes`` row is dropped so every figure comes from the structures.
+    """
+    from arc.store.execution import OpenStructureRepo
+
+    db = tmp_path / "tranches.db"
+    src = sqlite3.connect(fx_db)
+    c = sqlite3.connect(db)  # foreign keys off: the close proposals are not needed here
+    src.backup(c)
+    src.close()
+    c.row_factory = sqlite3.Row
+    c.execute("DROP TRIGGER outcomes_no_delete")  # test copy only: outcomes is append-only
+    c.execute("DELETE FROM outcomes")
+    sid = c.execute(
+        "SELECT id FROM open_structures WHERE open_proposal_hash = ?", (H("pos-spy"),)
+    ).fetchone()[0]
+    c.execute("UPDATE open_structures SET contracts = 4 WHERE id = ?", (sid,))
+    c.execute(
+        "UPDATE executions SET contracts = 4, filled_qty = 4 WHERE proposal_hash = ?",
+        (H("pos-spy"),),
+    )
+    repo = OpenStructureRepo(c)
+    for i, (qty, fill) in enumerate(closes):
+        c.execute(
+            """INSERT INTO executions (proposal_hash, kind, structure_id, status, token_version,
+                 band_lo, band_hi, max_steps, contracts, filled_qty, fill_price, started_at)
+               VALUES (?, 'close', ?, 'filled', 'arc2', '-6', '-4', 3, ?, ?, ?, ?)""",
+            (f"close-tranche-{i}", sid, qty, qty, fill, NOW.isoformat()),
+        )
+        repo.reduce(sid, closed_qty=qty, close_net=D(fill), now=NOW, commit=False)
+    c.commit()
+    c.close()
+    return db
+
+
+def test_realized_pnl_sums_every_close_tranche(fx_db: Path, tmp_path: Path) -> None:
+    # ladder truth: 2 x 100 x 1.00 + 2 x 100 x 0.50 = +300 (not 100 x remaining contracts)
+    db = _tranche_db(fx_db, tmp_path, [(2, "-5.15"), (2, "-4.65")])
+    c = connect_ro(db)
+    try:
+        r = load_trades(c, TradeFilters(ticker=["SPY"]), now=NOW)
+        (spy,) = [i for i in r.items if i.proposal_hash == H("pos-spy")]
+        assert spy.stage == "closed" and spy.realized_pnl == pytest.approx(300.0)
+        assert r.summary.realized_pnl == pytest.approx(300.0) and r.summary.realized_count == 1
+        d = load_trade(c, H("pos-spy"), now=NOW)
+        assert d is not None and d.position is not None
+        assert d.position.realized_pnl == D("300.00")
+        # AMD (one close tranche, outcomes dropped) falls back to the same rule
+        amd = load_trade(c, H("pos-amd"), now=NOW)
+        assert amd is not None and amd.position is not None
+        assert amd.position.realized_pnl == D("300.00")
+        assert amd.header.row.realized_pnl == pytest.approx(300.0)
+    finally:
+        c.close()
+
+
+def test_realized_pnl_partial_close_still_open(fx_db: Path, tmp_path: Path) -> None:
+    db = _tranche_db(fx_db, tmp_path, [(1, "-5.15")])  # 1 of 4 closed at +1.00
+    c = connect_ro(db)
+    try:
+        (spy,) = [
+            i for i in load_trades(c, TradeFilters(ticker=["SPY"]), now=NOW).items
+            if i.proposal_hash == H("pos-spy")
+        ]  # fmt: skip
+        assert spy.stage == "open" and spy.realized_pnl == pytest.approx(100.0)
+        d = load_trade(c, H("pos-spy"), now=NOW)
+        assert d is not None and d.position is not None
+        assert d.position.status == "open" and d.position.contracts == 3
+        assert d.position.realized_pnl == D("100.00")
+    finally:
+        c.close()
+
+
+def test_realized_pnl_partial_close_then_expiry_settlement(fx_db: Path, tmp_path: Path) -> None:
+    """Reconcile settles the rest at expiry without an execution: its contracts count too."""
+    from arc.store.execution import OpenStructureRepo
+
+    db = _tranche_db(fx_db, tmp_path, [(1, "-5.15")])
+    w = sqlite3.connect(db)
+    w.row_factory = sqlite3.Row
+    sid = w.execute(
+        "SELECT id FROM open_structures WHERE open_proposal_hash = ?", (H("pos-spy"),)
+    ).fetchone()[0]
+    OpenStructureRepo(w).reduce(sid, closed_qty=3, close_net=D("-4.15"), now=NOW)  # flat
+    w.close()
+    c = connect_ro(db)
+    try:
+        (spy,) = [
+            i for i in load_trades(c, TradeFilters(ticker=["SPY"]), now=NOW).items
+            if i.proposal_hash == H("pos-spy")
+        ]  # fmt: skip
+        assert spy.stage == "closed" and spy.realized_pnl == pytest.approx(100.0)
+        d = load_trade(c, H("pos-spy"), now=NOW)
+        assert d is not None and d.position is not None
+        assert d.position.realized_pnl == D("100.00")
+    finally:
+        c.close()
+
+
+def test_realized_pnl_none_before_any_close(conn: sqlite3.Connection) -> None:
+    (spy,) = [i for i in _list(conn, ticker=["SPY"]).items if i.proposal_hash == H("pos-spy")]
+    assert spy.stage == "open" and spy.realized_pnl is None
+    pos = _detail(conn, "pos-spy").position
+    assert pos is not None and pos.realized_pnl is None
+
+
 def test_detail_outcome_and_review(conn: sqlite3.Connection) -> None:
     o = _detail(conn, "pos-amd").outcome
     assert o.outcome is not None and o.outcome.realised_pnl == D("300.00")
