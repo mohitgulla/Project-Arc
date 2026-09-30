@@ -67,9 +67,26 @@ def auto_status(svc: ControlService, base: ArcSettings) -> dict[str, Any]:
         v = svc.view(_key(env))
         out[env] = bool(v.value)
         out[f"{env}_overridden"] = v.overridden
-    out["effective"] = bool(svc.settings().auto_approve)
+    eff = svc.settings()
+    out["effective"] = bool(eff.auto_approve)
     out["config_version"] = svc.version()
+    out["scorecard_gate"] = bool(eff.auto_approve_scorecard_gate)
     return out
+
+
+def scorecard_readiness(
+    conn: sqlite3.Connection, settings: ArcSettings, now: _dt.datetime
+) -> dict[str, Any]:
+    """E7.5a: the scorecard gate's current verdict for ``arc approve auto status``."""
+    from arc.journal.scorecard import auto_approve_readiness
+
+    r = auto_approve_readiness(
+        conn,
+        now=now,
+        min_closed_trades=settings.auto_approve_min_closed_trades,
+        slippage_tolerance=settings.auto_approve_slippage_tolerance,
+    )
+    return {**r.model_dump(mode="json"), "summary": r.summary()}
 
 
 def notice_text(env: str, on: bool) -> str:
@@ -136,11 +153,17 @@ def run_auto(args: argparse.Namespace, *, base: ArcSettings, conn: sqlite3.Conne
     env = args.env or base.env.value
     if args.state == "status":
         st = auto_status(svc, base)
+        ready = scorecard_readiness(conn, svc.settings(), now_et())
+        st["scorecard"] = ready
         sys.stdout.write(json.dumps(st, indent=2) + "\n")
         sys.stdout.write(
             f"auto_approve: {'on' if st['effective'] else 'off'} ({st['env']}); "
             f"paper={'on' if st['paper'] else 'off'} live={'on' if st['live'] else 'off'}\n"
         )
+        gate = (
+            ("met" if ready["ok"] else "holding opens") if st["scorecard_gate"] else "OFF (opt-out)"
+        )
+        sys.stdout.write(f"scorecard gate: {gate}; {ready['summary']}\n")
         return 0
     on = args.state == "on"
     res = set_auto(svc, env=env, on=on, reason=args.reason, confirm_code=args.confirm_live)

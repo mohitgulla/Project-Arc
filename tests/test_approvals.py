@@ -609,6 +609,7 @@ class TestAutoApprove:
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ARC_AUTO_APPROVE", "true")
+        monkeypatch.setenv("ARC_AUTO_APPROVE_SCORECARD_GATE", "false")  # E7.5a opt-out
         s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
         rep = ApprovalService(conn, s, RecordingPoster()).publish_pending(NOW)
         ph = _phash(conn)
@@ -784,11 +785,13 @@ def test_routines_tick_runs_sweep(
     assert rcli._approval_sweep(argparse.Namespace(no_slack=False), conn, NOW) == {
         "published": ["a"],
         "auto_approved": [],
+        "auto_gated": [],
         "expired": [],
     }
     assert rcli._approval_sweep(argparse.Namespace(no_slack=True), conn, NOW) == {
         "published": [],
         "auto_approved": [],
+        "auto_gated": [],
         "expired": [],
     }
     assert calls == ["sweep", "expire"]

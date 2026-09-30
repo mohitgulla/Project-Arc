@@ -43,7 +43,7 @@ import datetime as dt
 import math
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -73,7 +73,7 @@ from arc.exits.model import model_exits, realized_vol_forecast
 from arc.exits.policy import ExitReason, check_rules, resolve_rules
 from arc.gate.inputs import AccountSnapshot, Portfolio, Position
 from arc.gate.rules import Derived, check_max_open_positions, check_per_underlying
-from arc.models import Leg, LegIntent
+from arc.models import Leg, LegIntent, StructureKind
 from arc.pricing.bs import OptionKind, price_vectorized
 from arc.scanner.rank import (
     Ranker,
@@ -109,8 +109,12 @@ __all__ = [
     "block_bootstrap_ci",
     "build_menu",
     "build_menus",
+    "build_menus_by_kind",
+    "challenge",
     "decide",
+    "kind_costs",
     "load_ranking_file",
+    "slippage_from_scorecard",
     "run_portfolio",
     "simulate_outcome",
     "summarize",
@@ -215,6 +219,28 @@ class BacktestSettings(BaseModel):
     bootstrap: BootstrapSpec = Field(default_factory=lambda: BootstrapSpec())
     decision: DecisionRule = Field(default_factory=lambda: DecisionRule())
     menus: dict[str, list[MenuSpec]]
+    # -- E7.5a experiment knobs (all default off: the E7.5 primary run is unchanged) --
+    dte_windows: dict[str, tuple[int, int]] = Field(
+        default_factory=dict,
+        description="profile -> (dte_min, dte_max) entry window override (else the "
+        "account profile's window). Experiment (b): shorter DTE with the D19 exits.",
+    )
+    stance_menus: dict[str, dict[str, list[StrategyKind]]] = Field(
+        default_factory=dict,
+        description="profile -> trend label (bull/bear/sideways) -> structures allowed "
+        "(replaces the account profile's stance_strategies for stance=trend; a label "
+        "missing here = no trade). Experiment (a): regime-conditional menu.",
+    )
+    slippage_by_kind: dict[StructureKind, float] = Field(
+        default_factory=dict,
+        description="structure kind -> measured slippage x (mid +/- x*spread), e.g. from "
+        "the E7.3 scorecard; replaces costs.yaml slippage_frac for that kind in the base "
+        "run (the slippage_grid sensitivity rows keep their x).",
+    )
+
+    def window_for(self, profile: str, default: tuple[int, int]) -> tuple[int, int]:
+        lo, hi = self.dte_windows.get(profile, default)
+        return int(lo), int(hi)
 
     def specs_for(self, profile: str, dte_min: int, dte_max: int) -> list[StrategySpec]:
         if profile not in self.menus:
@@ -230,9 +256,51 @@ class RankingFile(BaseModel):
     backtest: BacktestSettings
 
 
-def load_ranking_file(path: Path | str | None = None) -> RankingFile:
+def _deep_merge(base: dict[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def load_ranking_file(
+    path: Path | str | None = None, overlays: Sequence[Path | str] = ()
+) -> RankingFile:
+    """``config/ranking.yaml`` (or *path*) with each experiment overlay deep-merged on top.
+
+    An overlay is a partial ranking file (``config/experiments/*.yaml``): mappings merge
+    key by key, any other value (list, scalar) replaces the base value. Keys a
+    ranking file does not know fail validation (``extra="forbid"``).
+    """
     p = Path(path) if path is not None else DEFAULT_RANKING_PATH
-    return RankingFile.model_validate(yaml.safe_load(p.read_text()) or {})
+    data: dict[str, Any] = yaml.safe_load(p.read_text()) or {}
+    for o in overlays:
+        extra = yaml.safe_load(Path(o).read_text()) or {}
+        extra.pop("experiment", None)  # free-text header: what the overlay tests
+        data = _deep_merge(data, extra)
+    return RankingFile.model_validate(data)
+
+
+def slippage_from_scorecard(
+    by_kind: Mapping[str, Any], *, min_fills: int
+) -> dict[StructureKind, float]:
+    """E7.5a: measured slippage x per structure kind from the E7.3 scorecard.
+
+    *by_kind* is ``Scorecard.slippage.by_kind`` (structure kind → ``KindSlippage``).
+    Kinds with fewer than *min_fills* fills, an unknown kind or no spread keep the
+    cost model's x (not returned). Negative realised slippage (price improvement)
+    clamps to 0: the backtest fill model has no improvement branch.
+    """
+    out: dict[StructureKind, float] = {}
+    for k, v in by_kind.items():
+        frac = v.frac
+        if v.fills < min_fills or frac is None or k not in StructureKind.__members__.values():
+            continue
+        out[StructureKind(k)] = round(max(float(frac), 0.0), 4)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +583,9 @@ def build_menu(
                         managed_pop=res.managed.pop,
                         rorc_day=res.rorc_day,
                         vrp=res.vrp,
+                        est_cost=round(res.managed.costs.total, 4)
+                        if res.managed.costs is not None
+                        else None,
                     ),
                     static_pop=res.static.pop,
                     static_net_ev=res.static.net_ev,
@@ -524,6 +595,60 @@ def build_menu(
                     rv_forecast=rv,
                 )
             )
+    return out
+
+
+def kind_costs(
+    specs: Sequence[StrategySpec], cost: CostModel, by_kind: Mapping[StructureKind, float]
+) -> dict[str, CostModel]:
+    """StrategyKind value → *cost* with the measured slippage x of its structure kind."""
+    out: dict[str, CostModel] = {}
+    for s in specs:
+        x = by_kind.get(STRUCTURE_KIND[s.kind])
+        if x is not None:
+            out[str(s.kind)] = cost.model_copy(update={"slippage_frac": float(x)})
+    return out
+
+
+def build_menus_by_kind(
+    chains: Mapping[dt.date, pd.DataFrame],
+    closes: pd.Series,
+    *,
+    days: Sequence[dt.date],
+    underlying: str,
+    specs: Sequence[StrategySpec],
+    cost: CostModel,
+    cost_by_kind: Mapping[str, CostModel],
+    exits: ExitConfig,
+    mc: ExitModelConfig,
+    r: float,
+) -> dict[dt.date, list[Candidate]]:
+    """:func:`build_menus` with each structure priced at its own cost model.
+
+    Specs sharing a cost model are built together; menus merge per day in spec order.
+    """
+    groups: dict[str, list[StrategySpec]] = {}
+    for s in specs:
+        groups.setdefault(str(s.kind) if str(s.kind) in cost_by_kind else "", []).append(s)
+    parts = {
+        g: build_menus(
+            chains,
+            closes,
+            days=days,
+            underlying=underlying,
+            specs=ss,
+            cost=cost_by_kind.get(g, cost),
+            exits=exits,
+            mc=mc,
+            r=r,
+        )
+        for g, ss in groups.items()
+    }
+    order = {str(s.kind): i for i, s in enumerate(specs)}
+    out: dict[dt.date, list[Candidate]] = {}
+    for d in sorted({d for m in parts.values() for d in m}):
+        merged = [c for m in parts.values() for c in m.get(d, [])]
+        out[d] = sorted(merged, key=lambda c: order.get(c.kind, 0))
     return out
 
 
@@ -703,9 +828,14 @@ def picked_outcomes(
     closes: pd.Series,
     cost: CostModel,
     exits: ExitConfig,
+    cost_by_kind: Mapping[str, CostModel] | None = None,
 ) -> dict[tuple[str, dt.date, str], Outcome | None]:
     """Outcomes of every candidate some ranker would pick (top-1 does not depend on the
-    portfolio, so this is exactly the set :func:`run_portfolio` can ask for)."""
+    portfolio, so this is exactly the set :func:`run_portfolio` can ask for).
+
+    *cost_by_kind* (StrategyKind value → cost model) overrides *cost* per structure,
+    so a pick fills with the same slippage its menu entry was priced with.
+    """
     closes = closes.sort_index()
     days = sorted(chains)
     out: dict[tuple[str, dt.date, str], Outcome | None] = {}
@@ -720,8 +850,9 @@ def picked_outcomes(
                 keys.add(ranked[0].key)
         for c in menu:
             if c.inputs.key in keys:
+                ck = (cost_by_kind or {}).get(c.kind, cost)
                 out[(c.underlying, day, c.inputs.key)] = simulate_outcome(
-                    c, chains=chains, days=days, closes=closes, cost=cost, exits=exits
+                    c, chains=chains, days=days, closes=closes, cost=ck, exits=exits
                 )
     return out
 
@@ -977,6 +1108,38 @@ def subperiod_stats(run: RankRun, labels: Sequence[str]) -> dict[str, tuple[floa
     return out
 
 
+def challenge(
+    base: RankRun, run: RankRun, *, rule: DecisionRule, boot: BootstrapSpec
+) -> dict[str, object]:
+    """*run* vs *base* under the pre-registered D25 rule (one row of the decision table).
+
+    Sub-period win = more net P&L *and* no larger max DD in that trend label; P&L
+    diff CI = moving-block bootstrap of the daily equity-change difference.
+    """
+    base_sub = subperiod_stats(base, rule.subperiods)
+    sub = subperiod_stats(run, rule.subperiods)
+    wins = [
+        lab
+        for lab in rule.subperiods
+        if sub[lab][0] > base_sub[lab][0] and sub[lab][1] <= base_sub[lab][1]
+    ]
+    idx = base.equity.index.union(run.equity.index)
+    a = run.equity.reindex(idx).ffill().bfill()
+    b = base.equity.reindex(idx).ffill().bfill()
+    diff = (a.diff().fillna(0.0) - b.diff().fillna(0.0)).to_numpy()
+    point, lo, hi = block_bootstrap_ci(
+        diff, resamples=boot.resamples, block=boot.block_days, ci=boot.ci, seed=boot.seed
+    )
+    return {
+        "subperiods_won": len(wins),
+        "won": ",".join(wins) or "–",
+        "pnl_diff": point,
+        "ci_lo": lo,
+        "ci_hi": hi,
+        "switch": len(wins) >= rule.min_subperiod_wins and lo > 0,
+    }
+
+
 def decide(
     runs: Mapping[str, RankRun],
     *,
@@ -989,36 +1152,11 @@ def decide(
     if inc not in runs:
         return pd.DataFrame(), f"incumbent {inc} was not run; no decision"
     base = runs[inc]
-    base_sub = subperiod_stats(base, rule.subperiods)
-    rows = []
-    for name, run in runs.items():
-        if name == inc:
-            continue
-        sub = subperiod_stats(run, rule.subperiods)
-        wins = [
-            lab
-            for lab in rule.subperiods
-            if sub[lab][0] > base_sub[lab][0] and sub[lab][1] <= base_sub[lab][1]
-        ]
-        idx = base.equity.index.union(run.equity.index)
-        a = run.equity.reindex(idx).ffill().bfill()
-        b = base.equity.reindex(idx).ffill().bfill()
-        diff = (a.diff().fillna(0.0) - b.diff().fillna(0.0)).to_numpy()
-        point, lo, hi = block_bootstrap_ci(
-            diff, resamples=boot.resamples, block=boot.block_days, ci=boot.ci, seed=boot.seed
-        )
-        switch = len(wins) >= rule.min_subperiod_wins and lo > 0
-        rows.append(
-            {
-                "challenger": name,
-                "subperiods_won": len(wins),
-                "won": ",".join(wins) or "–",
-                "pnl_diff": point,
-                "ci_lo": lo,
-                "ci_hi": hi,
-                "switch": switch,
-            }
-        )
+    rows = [
+        {"challenger": name, **challenge(base, run, rule=rule, boot=boot)}
+        for name, run in runs.items()
+        if name != inc
+    ]
     table = pd.DataFrame(rows)
     if table.empty:
         return table, f"keep {inc}: no challengers"

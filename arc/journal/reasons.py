@@ -173,6 +173,7 @@ class ReasonCode(StrEnum):
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
     AUTO_APPROVE = "auto_approve"
+    AUTO_APPROVE_GATED = "auto_approve_gated"  # E7.5a: scorecard gate held D34 back
     TTL_EXPIRED = "ttl_expired"
     NOT_ACTIONABLE_GATE_FAIL = "not_actionable:gate_fail"
     NOT_ACTIONABLE_NO_TOKEN = "not_actionable:no_token"
