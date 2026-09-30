@@ -317,6 +317,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.MARKET_DATA_MISSING: "Market data missing: no new opens",
     ReasonCode.PORTFOLIO_VIEW: "Director's read of the open book",
     ReasonCode.THESIS_CHECK: "Director checked an open position's thesis",
+    ReasonCode.LOOP_NO_CHANGE: "Loop skipped: inputs unchanged",
     ReasonCode.SIZING_OK: "Sized at Risk's suggestion",
     ReasonCode.SIZING_CAPPED: "Size capped at 5% of equity",
     ReasonCode.SIZING_CAP_ZERO: "Cap allows zero contracts",
