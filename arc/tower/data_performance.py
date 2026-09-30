@@ -818,7 +818,12 @@ def _items(by: BreakdownBy, rows: list[BreakdownRow]) -> list[BreakdownItem]:
             label = r.key
         else:
             label = _humanise(r.key)
-        filt = {param: r.key, "stage": "closed"} if param and r.key else None
+        if not (param and r.key):
+            filt = None
+        elif by == "reason_code":  # exit codes sit on the close proposal, not the closed open
+            filt = {param: r.key}
+        else:
+            filt = {param: r.key, "stage": "closed"}
         out.append(BreakdownItem(label=label, filter=filt, **r.model_dump()))
     return out
 

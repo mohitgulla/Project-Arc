@@ -11,7 +11,8 @@ import { OverviewPage } from "./pages/Overview";
 import { PositionsPage } from "./pages/Positions";
 import { TradeDetailRoute } from "./pages/TradeDetail";
 import { TradesPage } from "./pages/Trades";
-import { NotFoundPage, OpsPage, PerformancePage } from "./routes/pages";
+import { NotFoundPage, OpsPage } from "./routes/pages";
+import { PerformancePage } from "./pages/Performance";
 
 function makeClient() {
   return new QueryClient({
