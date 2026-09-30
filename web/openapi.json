@@ -126,6 +126,173 @@
         "title": "AppInfo",
         "type": "object"
       },
+      "ApprovalView": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "limit_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The approved per-share limit",
+            "title": "Limit Price"
+          },
+          "message_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Ts"
+          },
+          "permalink": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Slack permalink, when stored",
+            "title": "Permalink"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted At"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "thread_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Ts"
+          },
+          "ttl_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttl S"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ApprovalView",
+        "type": "object"
+      },
+      "BreakevenStat": {
+        "additionalProperties": false,
+        "properties": {
+          "pct": {
+            "description": "(BE \u2212 S) / S",
+            "title": "Pct",
+            "type": "number"
+          },
+          "price": {
+            "title": "Price",
+            "type": "number"
+          },
+          "sigma": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ln(BE/S) / (ATM IV \u00b7 \u221at)",
+            "title": "Sigma"
+          }
+        },
+        "required": [
+          "price",
+          "pct"
+        ],
+        "title": "BreakevenStat",
+        "type": "object"
+      },
       "Cadence": {
         "additionalProperties": false,
         "description": "How often a producing job runs and when its output counts as stale.",
@@ -181,6 +348,164 @@
           "stale_after_s"
         ],
         "title": "Cadence",
+        "type": "object"
+      },
+      "CandidateView": {
+        "additionalProperties": false,
+        "properties": {
+          "catalyst_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalyst Date"
+          },
+          "catalyst_type": {
+            "title": "Catalyst Type",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "corroboration": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corroboration"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "stance": {
+            "title": "Stance",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ticker",
+          "stance",
+          "catalyst_type",
+          "confidence"
+        ],
+        "title": "CandidateView",
+        "type": "object"
+      },
+      "CostModel": {
+        "additionalProperties": false,
+        "description": "Slippage + commission + pass-through fee assumptions. Prices are per share.",
+        "properties": {
+          "cat_per_share": {
+            "default": 0.0,
+            "description": "FINRA CAT fee per executed equivalent share, both sides",
+            "minimum": 0.0,
+            "title": "Cat Per Share",
+            "type": "number"
+          },
+          "commission_per_contract": {
+            "default": 0.65,
+            "description": "$ per contract per side (opening and ITM closing trades)",
+            "minimum": 0.0,
+            "title": "Commission Per Contract",
+            "type": "number"
+          },
+          "occ_per_contract": {
+            "default": 0.0,
+            "description": "OCC clearing fee, both sides",
+            "minimum": 0.0,
+            "title": "Occ Per Contract",
+            "type": "number"
+          },
+          "orf_per_contract": {
+            "default": 0.0,
+            "description": "Options Regulatory Fee, both sides",
+            "minimum": 0.0,
+            "title": "Orf Per Contract",
+            "type": "number"
+          },
+          "sec_rate_sell": {
+            "default": 0.0,
+            "description": "SEC fee \u00d7 trade value, sells only",
+            "minimum": 0.0,
+            "title": "Sec Rate Sell",
+            "type": "number"
+          },
+          "slippage_frac": {
+            "default": 0.25,
+            "description": "x: fill at mid \u00b1 x\u00b7spread (0 = mid, 0.5 = touch)",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Slippage Frac",
+            "type": "number"
+          },
+          "spread_min": {
+            "default": 0.03,
+            "description": "Estimated spread floor ($/share) when no quote exists",
+            "minimum": 0.0,
+            "title": "Spread Min",
+            "type": "number"
+          },
+          "spread_pct": {
+            "default": 0.04,
+            "description": "Estimated spread as a fraction of mid when no quote exists",
+            "minimum": 0.0,
+            "title": "Spread Pct",
+            "type": "number"
+          },
+          "taf_per_contract_sell": {
+            "default": 0.0,
+            "description": "FINRA TAF, sells only",
+            "minimum": 0.0,
+            "title": "Taf Per Contract Sell",
+            "type": "number"
+          }
+        },
+        "title": "CostModel",
         "type": "object"
       },
       "DayPnlSection": {
@@ -324,6 +649,150 @@
           }
         },
         "title": "DayPnlSection",
+        "type": "object"
+      },
+      "DecisionItem": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "choice": {
+            "title": "Choice",
+            "type": "string"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "inputs_snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputs Snapshot Id"
+          },
+          "persona": {
+            "title": "Persona",
+            "type": "string"
+          },
+          "persona_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persona Call Id"
+          },
+          "reason_code": {
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "reason_label": {
+            "title": "Reason Label",
+            "type": "string"
+          },
+          "reason_text": {
+            "title": "Reason Text",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "this_trade": {
+            "description": "False = a chain row for the same ticker/session",
+            "title": "This Trade",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "persona",
+          "stage",
+          "subject",
+          "choice",
+          "reason_code",
+          "reason_label",
+          "reason_text",
+          "this_trade"
+        ],
+        "title": "DecisionItem",
+        "type": "object"
+      },
+      "DecisionTrail": {
+        "additionalProperties": false,
+        "properties": {
+          "chain_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chain Run Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DecisionItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "persona_calls": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PersonaCallView"
+            },
+            "title": "Persona Calls",
+            "type": "object"
+          }
+        },
+        "title": "DecisionTrail",
         "type": "object"
       },
       "EquityPoint": {
@@ -515,6 +984,664 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "EvCosts": {
+        "additionalProperties": false,
+        "description": "Expected costs between gross (mid) EV and net EV, $ per unit (path means).\n\n``entry_slippage`` / ``exit_slippage`` are the fills' distance from mid (the fill\nmodel's ``x`` \u00d7 the bid-ask spread, per leg). ``commission`` and\n``regulatory_fees`` (ORF, OCC, CAT, TAF, SEC) cover entry plus the expected exit.",
+        "properties": {
+          "commission": {
+            "title": "Commission",
+            "type": "number"
+          },
+          "entry_slippage": {
+            "title": "Entry Slippage",
+            "type": "number"
+          },
+          "exit_slippage": {
+            "title": "Exit Slippage",
+            "type": "number"
+          },
+          "regulatory_fees": {
+            "title": "Regulatory Fees",
+            "type": "number"
+          }
+        },
+        "required": [
+          "entry_slippage",
+          "exit_slippage",
+          "commission",
+          "regulatory_fees"
+        ],
+        "title": "EvCosts",
+        "type": "object"
+      },
+      "ExecutionSection": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempts"
+          },
+          "band_hi": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Band Hi"
+          },
+          "band_lo": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Band Lo"
+          },
+          "contracts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contracts"
+          },
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "fill_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Price"
+          },
+          "filled_qty": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filled Qty"
+          },
+          "fills": {
+            "items": {
+              "$ref": "#/components/schemas/FillView"
+            },
+            "title": "Fills",
+            "type": "array"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Approved limit, else the proposal net",
+            "title": "Limit"
+          },
+          "max_steps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Steps"
+          },
+          "mid": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Structure mid at proposal",
+            "title": "Mid"
+          },
+          "orders": {
+            "items": {
+              "$ref": "#/components/schemas/OrderView"
+            },
+            "title": "Orders",
+            "type": "array"
+          },
+          "slippage_vs_limit": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "$/share, + = worse",
+            "title": "Slippage Vs Limit"
+          },
+          "slippage_vs_mid": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slippage Vs Mid"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "steps_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps Used"
+          },
+          "token_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Version"
+          }
+        },
+        "title": "ExecutionSection",
+        "type": "object"
+      },
+      "ExitLink": {
+        "additionalProperties": false,
+        "properties": {
+          "close_net": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Net"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "exit_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Reason"
+          },
+          "proposal_hash": {
+            "title": "Proposal Hash",
+            "type": "string"
+          },
+          "stage": {
+            "enum": [
+              "proposed",
+              "gate_pass",
+              "gate_fail",
+              "approved",
+              "rejected",
+              "expired",
+              "filled",
+              "cancelled",
+              "open",
+              "closed"
+            ],
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_hash",
+          "created_at",
+          "stage"
+        ],
+        "title": "ExitLink",
+        "type": "object"
+      },
+      "ExitModelResult": {
+        "additionalProperties": false,
+        "description": "Static vs managed numbers for one structure under one policy.",
+        "properties": {
+          "buying_power": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "$ per unit",
+            "title": "Buying Power"
+          },
+          "dte": {
+            "title": "Dte",
+            "type": "integer"
+          },
+          "dte_exit_day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Days from today until the DTE exit",
+            "title": "Dte Exit Day"
+          },
+          "entry_costs": {
+            "description": "$ per unit: entry slippage + commissions",
+            "title": "Entry Costs",
+            "type": "number"
+          },
+          "entry_net": {
+            "description": "Per-share entry price at mid, + debit / \u2212 credit",
+            "title": "Entry Net",
+            "type": "number"
+          },
+          "iv_model": {
+            "$ref": "#/components/schemas/IvModel"
+          },
+          "iv_used": {
+            "description": "Vol the marks are priced at (ATM IV)",
+            "title": "Iv Used",
+            "type": "number"
+          },
+          "managed": {
+            "$ref": "#/components/schemas/ManagedStats"
+          },
+          "model": {
+            "const": "gbm_flat_iv",
+            "default": "gbm_flat_iv",
+            "title": "Model",
+            "type": "string"
+          },
+          "n_paths": {
+            "title": "N Paths",
+            "type": "integer"
+          },
+          "path_vol": {
+            "description": "Vol the underlying paths move at",
+            "title": "Path Vol",
+            "type": "number"
+          },
+          "path_vol_source": {
+            "default": "iv",
+            "enum": [
+              "iv",
+              "realized_forecast"
+            ],
+            "title": "Path Vol Source",
+            "type": "string"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/ExitPolicy"
+          },
+          "pop_std_error": {
+            "description": "MC standard error of a PoP estimate",
+            "title": "Pop Std Error",
+            "type": "number"
+          },
+          "r": {
+            "title": "R",
+            "type": "number"
+          },
+          "rorc_day": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "managed.net_ev / (max_loss \u00d7 expected_days_held): return on risk per day",
+            "title": "Rorc Day"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "spot": {
+            "title": "Spot",
+            "type": "number"
+          },
+          "static": {
+            "$ref": "#/components/schemas/StaticStats"
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TriggerLevels"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "structure_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StructureKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "take_profit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TriggerLevels"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vrp": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ATM IV \u2212 realised-vol forecast (None = no forecast)",
+            "title": "Vrp"
+          }
+        },
+        "required": [
+          "policy",
+          "structure_kind",
+          "spot",
+          "dte",
+          "r",
+          "iv_used",
+          "path_vol",
+          "iv_model",
+          "entry_net",
+          "entry_costs",
+          "static",
+          "managed",
+          "pop_std_error",
+          "n_paths",
+          "seed"
+        ],
+        "title": "ExitModelResult",
+        "type": "object"
+      },
+      "ExitPolicy": {
+        "additionalProperties": false,
+        "description": "Exit rules for one structure kind (see module doc for exact semantics).",
+        "properties": {
+          "close_at_dte": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 7,
+            "title": "Close At Dte"
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StopRule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stop_eod_only": {
+            "default": true,
+            "description": "Evaluate the stop on end-of-day marks only",
+            "title": "Stop Eod Only",
+            "type": "boolean"
+          },
+          "take_profit_pct_of_debit": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 1.0,
+            "description": "Debit structures: close when pnl reaches this \u00d7 debit",
+            "title": "Take Profit Pct Of Debit"
+          },
+          "take_profit_pct_of_max_gain": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 0.5,
+            "description": "Credit structures: close at this share of max gain",
+            "title": "Take Profit Pct Of Max Gain"
+          },
+          "time_adjusted_targets": {
+            "items": {
+              "$ref": "#/components/schemas/TimeAdjustedTarget"
+            },
+            "title": "Time Adjusted Targets",
+            "type": "array"
+          }
+        },
+        "title": "ExitPolicy",
+        "type": "object"
+      },
+      "FeeBreakdown": {
+        "additionalProperties": false,
+        "description": "Dollar fees of one or more trades, by type (all \u2265 0).",
+        "properties": {
+          "cat": {
+            "default": 0.0,
+            "title": "Cat",
+            "type": "number"
+          },
+          "commission": {
+            "default": 0.0,
+            "title": "Commission",
+            "type": "number"
+          },
+          "occ": {
+            "default": 0.0,
+            "title": "Occ",
+            "type": "number"
+          },
+          "orf": {
+            "default": 0.0,
+            "title": "Orf",
+            "type": "number"
+          },
+          "sec": {
+            "default": 0.0,
+            "title": "Sec",
+            "type": "number"
+          },
+          "taf": {
+            "default": 0.0,
+            "title": "Taf",
+            "type": "number"
+          }
+        },
+        "title": "FeeBreakdown",
+        "type": "object"
+      },
+      "FillView": {
+        "additionalProperties": false,
+        "properties": {
+          "filled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filled At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "order_id": {
+            "title": "Order Id",
+            "type": "string"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "qty": {
+            "title": "Qty",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "order_id",
+          "qty",
+          "price",
+          "filled_at"
+        ],
+        "title": "FillView",
+        "type": "object"
+      },
       "GateCaps": {
         "additionalProperties": false,
         "description": "The gate's portfolio caps (PLAN \u00a75), from the effective settings.",
@@ -535,6 +1662,74 @@
           "portfolio_vega_cap_pct"
         ],
         "title": "GateCaps",
+        "type": "object"
+      },
+      "GateView": {
+        "additionalProperties": false,
+        "properties": {
+          "account_snapshot": {
+            "additionalProperties": true,
+            "title": "Account Snapshot",
+            "type": "object"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "token_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "arc1 | arc2; the token is never shown",
+            "title": "Token Version"
+          },
+          "violations": {
+            "items": {
+              "$ref": "#/components/schemas/ViolationView"
+            },
+            "title": "Violations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "decided_at",
+          "passed",
+          "violations"
+        ],
+        "title": "GateView",
         "type": "object"
       },
       "GateViolation": {
@@ -886,6 +2081,401 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "IvModel": {
+        "additionalProperties": false,
+        "description": "IV path for the model. ``constant`` (default) or deterministic mean reversion.\n\n``mean_reverting``: ``iv_d = long_run + (iv_0 \u2212 long_run) \u00b7 0.5 ** (d / half_life_days)``.",
+        "properties": {
+          "half_life_days": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Half Life Days"
+          },
+          "kind": {
+            "default": "constant",
+            "enum": [
+              "constant",
+              "mean_reverting"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "long_run": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Run"
+          }
+        },
+        "title": "IvModel",
+        "type": "object"
+      },
+      "LegAnalytics": {
+        "additionalProperties": false,
+        "description": "One leg's quote, liquidity, moneyness and entry cost, frozen at proposal time.",
+        "properties": {
+          "ask": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ask"
+          },
+          "ask_size": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ask Size"
+          },
+          "bid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bid"
+          },
+          "bid_size": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Top of book; None when the feed omits it",
+            "title": "Bid Size"
+          },
+          "delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta"
+          },
+          "entry_fees": {
+            "$ref": "#/components/schemas/FeeBreakdown"
+          },
+          "entry_fill": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Modelled fill, $/share (mid \u00b1 x\u00b7spread)",
+            "title": "Entry Fill"
+          },
+          "entry_slippage": {
+            "default": 0.0,
+            "description": "$ per unit: |fill \u2212 mid| \u00d7 ratio \u00d7 100",
+            "minimum": 0.0,
+            "title": "Entry Slippage",
+            "type": "number"
+          },
+          "expiration": {
+            "format": "date",
+            "title": "Expiration",
+            "type": "string"
+          },
+          "iv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iv"
+          },
+          "kind": {
+            "enum": [
+              "call",
+              "put"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mid"
+          },
+          "moneyness_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "(K \u2212 S) / S",
+            "title": "Moneyness Pct"
+          },
+          "occ_symbol": {
+            "title": "Occ Symbol",
+            "type": "string"
+          },
+          "open_interest": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Interest"
+          },
+          "otm": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Otm"
+          },
+          "quote_ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Ts"
+          },
+          "ratio": {
+            "minimum": 1.0,
+            "title": "Ratio",
+            "type": "integer"
+          },
+          "side": {
+            "enum": [
+              "long",
+              "short"
+            ],
+            "title": "Side",
+            "type": "string"
+          },
+          "sigma_distance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ln(K/S) / (ATM IV \u00b7 \u221at)",
+            "title": "Sigma Distance"
+          },
+          "spread": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ask \u2212 bid, $/share",
+            "title": "Spread"
+          },
+          "spread_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "spread / mid",
+            "title": "Spread Pct"
+          },
+          "strike": {
+            "title": "Strike",
+            "type": "number"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume"
+          }
+        },
+        "required": [
+          "occ_symbol",
+          "side",
+          "ratio",
+          "kind",
+          "strike",
+          "expiration"
+        ],
+        "title": "LegAnalytics",
+        "type": "object"
+      },
+      "LegInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "intent": {
+            "default": "",
+            "title": "Intent",
+            "type": "string"
+          },
+          "occ_symbol": {
+            "title": "Occ Symbol",
+            "type": "string"
+          },
+          "premium": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Premium"
+          },
+          "ratio": {
+            "default": 1,
+            "title": "Ratio",
+            "type": "integer"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occ_symbol",
+          "side"
+        ],
+        "title": "LegInfo",
+        "type": "object"
+      },
+      "LegQuoteView": {
+        "additionalProperties": false,
+        "properties": {
+          "ask": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ask"
+          },
+          "bid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bid"
+          },
+          "iv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iv"
+          },
+          "mid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mid"
+          },
+          "occ_symbol": {
+            "title": "Occ Symbol",
+            "type": "string"
+          },
+          "quote_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Time"
+          }
+        },
+        "required": [
+          "occ_symbol"
+        ],
+        "title": "LegQuoteView",
+        "type": "object"
+      },
       "LegView": {
         "additionalProperties": false,
         "properties": {
@@ -986,6 +2576,377 @@
           "side"
         ],
         "title": "LegView",
+        "type": "object"
+      },
+      "ManagedStats": {
+        "additionalProperties": false,
+        "description": "Under the exit policy.",
+        "properties": {
+          "costs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvCosts"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "gross_ev \u2212 net_ev, itemised"
+          },
+          "ev_per_bp_day": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ev Per Bp Day"
+          },
+          "expected_days_held": {
+            "minimum": 0.0,
+            "title": "Expected Days Held",
+            "type": "number"
+          },
+          "gross_ev": {
+            "title": "Gross Ev",
+            "type": "number"
+          },
+          "net_ev": {
+            "title": "Net Ev",
+            "type": "number"
+          },
+          "p_dte_exit": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "P Dte Exit",
+            "type": "number"
+          },
+          "p_expiry": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "P Expiry",
+            "type": "number"
+          },
+          "p_stop": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "P Stop",
+            "type": "number"
+          },
+          "p_take_profit": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "P Take Profit",
+            "type": "number"
+          },
+          "pop": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Pop",
+            "type": "number"
+          },
+          "pop_gross": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Pop Gross",
+            "type": "number"
+          }
+        },
+        "required": [
+          "pop",
+          "pop_gross",
+          "gross_ev",
+          "net_ev",
+          "p_take_profit",
+          "p_stop",
+          "p_dte_exit",
+          "p_expiry",
+          "expected_days_held"
+        ],
+        "title": "ManagedStats",
+        "type": "object"
+      },
+      "ManifestView": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "chain_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chain Run Id"
+          },
+          "config_hashes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Config Hashes",
+            "type": "object"
+          },
+          "config_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Version"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "git_dirty": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Dirty"
+          },
+          "git_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Sha"
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
+          },
+          "job": {
+            "title": "Job",
+            "type": "string"
+          },
+          "models_requested": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Models Requested",
+            "type": "array"
+          },
+          "models_served": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Models Served",
+            "type": "array"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "attempt",
+          "job",
+          "status",
+          "route"
+        ],
+        "title": "ManifestView",
+        "type": "object"
+      },
+      "MarketSection": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "atm_iv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Atm Iv"
+          },
+          "candidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hv20": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hv20"
+          },
+          "ivr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ivr"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/LegQuoteView"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "quotes_as_of": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quotes As Of"
+          },
+          "regime": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegimeView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regime_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Regime stored with the context",
+            "title": "Regime Label"
+          },
+          "spot": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spot"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          }
+        },
+        "title": "MarketSection",
         "type": "object"
       },
       "MetaResponse": {
@@ -1254,6 +3215,330 @@
         "title": "OrderBudgetView",
         "type": "object"
       },
+      "OrderEventView": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "from_state": {
+            "title": "From State",
+            "type": "string"
+          },
+          "to_state": {
+            "title": "To State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_state",
+          "to_state",
+          "actor",
+          "detail",
+          "at"
+        ],
+        "title": "OrderEventView",
+        "type": "object"
+      },
+      "OrderView": {
+        "additionalProperties": false,
+        "properties": {
+          "broker_order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broker Order Id"
+          },
+          "client_order_id": {
+            "title": "Client Order Id",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/OrderEventView"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "client_order_id",
+          "broker_order_id",
+          "state",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "OrderView",
+        "type": "object"
+      },
+      "OutcomeSection": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OutcomeView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviews": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewView"
+            },
+            "title": "Reviews",
+            "type": "array"
+          }
+        },
+        "title": "OutcomeSection",
+        "type": "object"
+      },
+      "OutcomeView": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "contracts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contracts"
+          },
+          "cost_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Bps"
+          },
+          "days_held": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Held"
+          },
+          "entry_fill": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Fill"
+          },
+          "ev_total": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ev Total"
+          },
+          "exit_fill": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Fill"
+          },
+          "exit_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Reason"
+          },
+          "hold_to_expiry_shadow_pnl": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold To Expiry Shadow Pnl"
+          },
+          "limit_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit Price"
+          },
+          "max_adverse_excursion": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Adverse Excursion"
+          },
+          "pnl_vs_ev": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl Vs Ev"
+          },
+          "realised_pnl": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realised Pnl"
+          },
+          "slippage_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slippage Bps"
+          },
+          "slippage_usd": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slippage Usd"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "OutcomeView",
+        "type": "object"
+      },
       "OverviewResponse": {
         "additionalProperties": false,
         "description": "``GET /api/overview``: every Overview card in one read.",
@@ -1362,6 +3647,162 @@
         "title": "OverviewResponse",
         "type": "object"
       },
+      "PayoffPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "pnl": {
+            "title": "Pnl",
+            "type": "number"
+          },
+          "spot": {
+            "title": "Spot",
+            "type": "number"
+          }
+        },
+        "required": [
+          "spot",
+          "pnl"
+        ],
+        "title": "PayoffPoint",
+        "type": "object"
+      },
+      "PayoffSection": {
+        "additionalProperties": false,
+        "description": "Payoff at expiry for the whole position (\u00d7 contracts), from :mod:`arc.structures`.",
+        "properties": {
+          "breakevens": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Breakevens",
+            "type": "array"
+          },
+          "contracts": {
+            "title": "Contracts",
+            "type": "integer"
+          },
+          "entry_spot": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Underlying at proposal time",
+            "title": "Entry Spot"
+          },
+          "entry_spot_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Spot At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why no payoff could be computed",
+            "title": "Error"
+          },
+          "latest_spot": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latest close in the regime context",
+            "title": "Latest Spot"
+          },
+          "latest_spot_at": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Spot At"
+          },
+          "mark_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mark At"
+          },
+          "mark_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "P&L at the latest broker mark, $",
+            "title": "Mark Pnl"
+          },
+          "max_gain": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None = unbounded",
+            "title": "Max Gain"
+          },
+          "max_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Positive $; None = unbounded",
+            "title": "Max Loss"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/PayoffPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "contracts"
+        ],
+        "title": "PayoffSection",
+        "type": "object"
+      },
       "Performance": {
         "additionalProperties": false,
         "description": "Account Day/MTD/YTD performance from ``pnl_snapshots`` (E6.3, D28). $ and fractions.\n\nShared by the Auditor digest (:mod:`arc.slack.digests`) and the control tower.",
@@ -1441,6 +3882,123 @@
           "day_pnl"
         ],
         "title": "Performance",
+        "type": "object"
+      },
+      "PersonaCallView": {
+        "additionalProperties": false,
+        "properties": {
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
+          },
+          "persona": {
+            "title": "Persona",
+            "type": "string"
+          },
+          "prompt_sha256": {
+            "title": "Prompt Sha256",
+            "type": "string"
+          },
+          "prompt_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Text"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "persona",
+          "model",
+          "status",
+          "prompt_sha256"
+        ],
+        "title": "PersonaCallView",
         "type": "object"
       },
       "PnlView": {
@@ -1875,6 +4433,169 @@
         "title": "PositionRow",
         "type": "object"
       },
+      "PositionSection": {
+        "additionalProperties": false,
+        "properties": {
+          "close_net": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Net"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "contracts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contracts"
+          },
+          "days_held": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Held"
+          },
+          "entry_net": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Net"
+          },
+          "exit_pending": {
+            "default": false,
+            "title": "Exit Pending",
+            "type": "boolean"
+          },
+          "exit_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Reason"
+          },
+          "exits": {
+            "items": {
+              "$ref": "#/components/schemas/ExitLink"
+            },
+            "title": "Exits",
+            "type": "array"
+          },
+          "open_proposal_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Proposal Hash"
+          },
+          "opened_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened At"
+          },
+          "realized_pnl": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Pnl"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "structure_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structure Id"
+          },
+          "swaps": {
+            "items": {
+              "$ref": "#/components/schemas/SwapView"
+            },
+            "title": "Swaps",
+            "type": "array"
+          },
+          "ticker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticker"
+          }
+        },
+        "title": "PositionSection",
+        "type": "object"
+      },
       "PositionsResponse": {
         "additionalProperties": false,
         "description": "``GET /api/positions``: open and/or closed structures.",
@@ -1924,6 +4645,168 @@
           "items"
         ],
         "title": "PositionsResponse",
+        "type": "object"
+      },
+      "ProposalAnalytics": {
+        "additionalProperties": false,
+        "description": "Everything the v2 proposal card shows beyond the Proposal itself.",
+        "properties": {
+          "account_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D25 account profile, when configured",
+            "title": "Account Profile"
+          },
+          "breakevens": {
+            "items": {
+              "$ref": "#/components/schemas/BreakevenStat"
+            },
+            "title": "Breakevens",
+            "type": "array"
+          },
+          "cost_model": {
+            "$ref": "#/components/schemas/CostModel",
+            "description": "The costs.yaml values this was priced with"
+          },
+          "day_change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "spot / prev_close \u2212 1",
+            "title": "Day Change Pct"
+          },
+          "depth": {
+            "const": "top_of_book",
+            "default": "top_of_book",
+            "description": "Alpaca gives top-of-book only; no order-book depth",
+            "title": "Depth",
+            "type": "string"
+          },
+          "dte": {
+            "minimum": 0.0,
+            "title": "Dte",
+            "type": "integer"
+          },
+          "entry_fees": {
+            "$ref": "#/components/schemas/FeeBreakdown"
+          },
+          "entry_slippage": {
+            "description": "$ per unit, all legs",
+            "minimum": 0.0,
+            "title": "Entry Slippage",
+            "type": "number"
+          },
+          "exit_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitModelResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E2.4 managed vs static"
+          },
+          "expected_move": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u00b11\u03c3 to expiry, $",
+            "title": "Expected Move"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/LegAnalytics"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "prev_close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last close in the regime snapshot",
+            "title": "Prev Close"
+          },
+          "prev_close_as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Close As Of"
+          },
+          "sigma_t": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ATM IV \u00b7 \u221a(DTE/365)",
+            "title": "Sigma T"
+          },
+          "spot": {
+            "title": "Spot",
+            "type": "number"
+          },
+          "spot_as_of": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spot As Of"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          },
+          "vol": {
+            "$ref": "#/components/schemas/VolStats"
+          }
+        },
+        "required": [
+          "spot",
+          "dte",
+          "legs",
+          "cost_model",
+          "entry_slippage"
+        ],
+        "title": "ProposalAnalytics",
         "type": "object"
       },
       "ProposalRow": {
@@ -2292,6 +5175,485 @@
         "title": "ProposalView",
         "type": "object"
       },
+      "QuantSection": {
+        "additionalProperties": false,
+        "properties": {
+          "analytics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProposalAnalytics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "analytics_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analytics At"
+          },
+          "analytics_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analytics Error"
+          },
+          "buying_power": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buying Power"
+          },
+          "contracts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contracts"
+          },
+          "cost_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Bps"
+          },
+          "dte": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dte"
+          },
+          "ev": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Quant's EV per contract (model inputs)",
+            "title": "Ev"
+          },
+          "max_gain": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per unit, $",
+            "title": "Max Gain"
+          },
+          "max_loss": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Loss"
+          },
+          "notional": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notional"
+          },
+          "pct_equity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Equity"
+          },
+          "pop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pop"
+          }
+        },
+        "title": "QuantSection",
+        "type": "object"
+      },
+      "RegimeView": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "expected_duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Duration"
+          },
+          "hv20": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hv20"
+          },
+          "iv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iv"
+          },
+          "iv_rank": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iv Rank"
+          },
+          "last_close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Close"
+          },
+          "snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Id"
+          },
+          "stickiness": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stickiness"
+          },
+          "trailing_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trailing Return"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "title": "RegimeView",
+        "type": "object"
+      },
+      "ReviewView": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "cites": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cites",
+            "type": "array"
+          },
+          "decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string"
+          },
+          "reviewer": {
+            "title": "Reviewer",
+            "type": "string"
+          },
+          "root_cause": {
+            "title": "Root Cause",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "root_cause",
+          "notes",
+          "reviewer",
+          "at"
+        ],
+        "title": "ReviewView",
+        "type": "object"
+      },
+      "SearchMatch": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "ticker",
+              "trade",
+              "run",
+              "chain",
+              "structure"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "label",
+          "route"
+        ],
+        "title": "SearchMatch",
+        "type": "object"
+      },
+      "SearchResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/SearchMatch"
+            },
+            "title": "Matches",
+            "type": "array"
+          },
+          "q": {
+            "title": "Q",
+            "type": "string"
+          }
+        },
+        "required": [
+          "as_of",
+          "q",
+          "matches"
+        ],
+        "title": "SearchResponse",
+        "type": "object"
+      },
+      "StaticStats": {
+        "additionalProperties": false,
+        "description": "Hold to expiry.",
+        "properties": {
+          "costs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvCosts"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "gross_ev \u2212 net_ev, itemised"
+          },
+          "ev_per_bp_day": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "net_ev / (buying power \u00d7 days held)",
+            "title": "Ev Per Bp Day"
+          },
+          "gross_ev": {
+            "description": "$ per unit at mid, no costs",
+            "title": "Gross Ev",
+            "type": "number"
+          },
+          "net_ev": {
+            "description": "$ per unit after slippage and all fees",
+            "title": "Net Ev",
+            "type": "number"
+          },
+          "pop": {
+            "description": "P(net P&L > 0) after costs",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Pop",
+            "type": "number"
+          },
+          "pop_analytic": {
+            "description": "Lognormal PoP over breakevens",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Pop Analytic",
+            "type": "number"
+          },
+          "pop_gross": {
+            "description": "P(P&L > 0) at mid, no costs",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Pop Gross",
+            "type": "number"
+          }
+        },
+        "required": [
+          "pop",
+          "pop_gross",
+          "pop_analytic",
+          "gross_ev",
+          "net_ev"
+        ],
+        "title": "StaticStats",
+        "type": "object"
+      },
       "StatusSection": {
         "additionalProperties": false,
         "description": "Full-width strip: trading state, scheduler health, alerts, D32 budget.",
@@ -2386,6 +5748,48 @@
         ],
         "title": "StatusSection",
         "type": "object"
+      },
+      "StopBasis": {
+        "description": "What the stop's ``value`` multiplies (see module doc).",
+        "enum": [
+          "credit_multiple",
+          "pct_max_loss",
+          "pct_debit"
+        ],
+        "title": "StopBasis",
+        "type": "string"
+      },
+      "StopRule": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/components/schemas/StopBasis"
+          },
+          "value": {
+            "exclusiveMinimum": 0.0,
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "basis",
+          "value"
+        ],
+        "title": "StopRule",
+        "type": "object"
+      },
+      "StructureKind": {
+        "description": "Structure classification (Phase-1 whitelist per PLAN D4, plus OTHER).",
+        "enum": [
+          "long_call",
+          "long_put",
+          "vertical_debit",
+          "vertical_credit",
+          "iron_condor",
+          "other"
+        ],
+        "title": "StructureKind",
+        "type": "string"
       },
       "StructureView": {
         "additionalProperties": false,
@@ -2501,6 +5905,103 @@
         "title": "StructureView",
         "type": "object"
       },
+      "SwapView": {
+        "additionalProperties": false,
+        "properties": {
+          "close_proposal_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Proposal Hash"
+          },
+          "close_ticker": {
+            "title": "Close Ticker",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "open_proposal_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Proposal Hash"
+          },
+          "open_ticker": {
+            "title": "Open Ticker",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "suggestion": {
+            "additionalProperties": true,
+            "title": "Suggestion",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "detail",
+          "close_ticker",
+          "close_proposal_hash",
+          "open_ticker",
+          "open_proposal_hash"
+        ],
+        "title": "SwapView",
+        "type": "object"
+      },
+      "TimeAdjustedTarget": {
+        "additionalProperties": false,
+        "description": "Take-profit percentage that applies once remaining DTE \u2264 ``dte_lte`` (D19).",
+        "properties": {
+          "dte_lte": {
+            "minimum": 0.0,
+            "title": "Dte Lte",
+            "type": "integer"
+          },
+          "take_profit_pct": {
+            "exclusiveMinimum": 0.0,
+            "title": "Take Profit Pct",
+            "type": "number"
+          }
+        },
+        "required": [
+          "dte_lte",
+          "take_profit_pct"
+        ],
+        "title": "TimeAdjustedTarget",
+        "type": "object"
+      },
       "TowerSnapshot": {
         "additionalProperties": false,
         "description": "Everything the dashboard shows, read in one pass.",
@@ -2582,6 +6083,1038 @@
         "title": "TowerSnapshot",
         "type": "object"
       },
+      "TradeDetail": {
+        "additionalProperties": false,
+        "description": "Everything about one trade, in one round trip.",
+        "properties": {
+          "approval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "decisions": {
+            "$ref": "#/components/schemas/DecisionTrail"
+          },
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionSection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gate": {
+            "items": {
+              "$ref": "#/components/schemas/GateView"
+            },
+            "title": "Gate",
+            "type": "array"
+          },
+          "header": {
+            "$ref": "#/components/schemas/TradeHeader"
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManifestView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "market": {
+            "$ref": "#/components/schemas/MarketSection"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/OutcomeSection"
+          },
+          "payoff": {
+            "$ref": "#/components/schemas/PayoffSection"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PositionSection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quant": {
+            "$ref": "#/components/schemas/QuantSection"
+          }
+        },
+        "required": [
+          "as_of",
+          "header",
+          "payoff",
+          "quant",
+          "decisions",
+          "gate",
+          "approval",
+          "execution",
+          "position",
+          "outcome",
+          "market",
+          "manifest"
+        ],
+        "title": "TradeDetail",
+        "type": "object"
+      },
+      "TradeFilterOptions": {
+        "additionalProperties": false,
+        "description": "Distinct values for the filter dropdowns.",
+        "properties": {
+          "account_profiles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Account Profiles",
+            "type": "array"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "date_presets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Date Presets",
+            "type": "array"
+          },
+          "exit_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Exit Reasons",
+            "type": "array"
+          },
+          "kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "reason_codes": {
+            "description": "[{code, label}]",
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Reason Codes",
+            "type": "array"
+          },
+          "sort_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sort Keys",
+            "type": "array"
+          },
+          "stages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "structures": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Structures",
+            "type": "array"
+          },
+          "tickers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tickers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "tickers",
+          "kinds",
+          "structures",
+          "exit_reasons",
+          "reason_codes",
+          "account_profiles"
+        ],
+        "title": "TradeFilterOptions",
+        "type": "object"
+      },
+      "TradeFilters": {
+        "additionalProperties": false,
+        "description": "Every list filter; all optional. Multi-value filters match any of their values.",
+        "properties": {
+          "account_profile": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Account Profile",
+            "type": "array"
+          },
+          "date": {
+            "default": "all",
+            "enum": [
+              "today",
+              "7d",
+              "30d",
+              "mtd",
+              "ytd",
+              "all",
+              "custom"
+            ],
+            "title": "Date",
+            "type": "string"
+          },
+          "date_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "custom range start (ET day)",
+            "title": "Date From"
+          },
+          "date_to": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "custom range end, inclusive",
+            "title": "Date To"
+          },
+          "exit_reason": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Exit Reason",
+            "type": "array"
+          },
+          "kind": {
+            "items": {
+              "enum": [
+                "open",
+                "close"
+              ],
+              "type": "string"
+            },
+            "title": "Kind",
+            "type": "array"
+          },
+          "min_net_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "$ after costs, \u00d7 contracts",
+            "title": "Min Net Ev"
+          },
+          "min_pop": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "managed PoP, else Quant's",
+            "title": "Min Pop"
+          },
+          "q": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "hash prefix, ticker, run id, chain id, structure id",
+            "title": "Q"
+          },
+          "reason_code": {
+            "description": "any decision's code",
+            "items": {
+              "type": "string"
+            },
+            "title": "Reason Code",
+            "type": "array"
+          },
+          "stage": {
+            "items": {
+              "enum": [
+                "proposed",
+                "gate_pass",
+                "gate_fail",
+                "approved",
+                "rejected",
+                "expired",
+                "filled",
+                "cancelled",
+                "open",
+                "closed"
+              ],
+              "type": "string"
+            },
+            "title": "Stage",
+            "type": "array"
+          },
+          "structure": {
+            "description": "structure kinds",
+            "items": {
+              "type": "string"
+            },
+            "title": "Structure",
+            "type": "array"
+          },
+          "ticker": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ticker",
+            "type": "array"
+          }
+        },
+        "title": "TradeFilters",
+        "type": "object"
+      },
+      "TradeHeader": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "dte": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dte"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/LegInfo"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "lifecycle": {
+            "description": "StatusStepper stage reached",
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "lifecycle_failed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "StatusStepper stage that failed",
+            "title": "Lifecycle Failed"
+          },
+          "opened_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Structure opened (fill)",
+            "title": "Opened At"
+          },
+          "risk_narrative": {
+            "title": "Risk Narrative",
+            "type": "string"
+          },
+          "row": {
+            "$ref": "#/components/schemas/TradeRow"
+          },
+          "thesis": {
+            "title": "Thesis",
+            "type": "string"
+          }
+        },
+        "required": [
+          "row",
+          "legs",
+          "thesis",
+          "risk_narrative",
+          "candidate_id",
+          "expires_at",
+          "lifecycle"
+        ],
+        "title": "TradeHeader",
+        "type": "object"
+      },
+      "TradeListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "date_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resolved range start (ET)",
+            "title": "Date From"
+          },
+          "date_to": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date To"
+          },
+          "dir": {
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "title": "Dir",
+            "type": "string"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/TradeFilters"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TradeRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "sort": {
+            "enum": [
+              "time",
+              "ticker",
+              "contracts",
+              "limit",
+              "net_ev",
+              "pop",
+              "slippage_bps",
+              "realized_pnl"
+            ],
+            "title": "Sort",
+            "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/TradeSummary"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "as_of",
+          "filters",
+          "date_from",
+          "date_to",
+          "sort",
+          "dir",
+          "page",
+          "size",
+          "total",
+          "items",
+          "summary"
+        ],
+        "title": "TradeListResponse",
+        "type": "object"
+      },
+      "TradeRow": {
+        "additionalProperties": false,
+        "properties": {
+          "account_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Profile"
+          },
+          "approval": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval"
+          },
+          "chain_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chain Run Id"
+          },
+          "closes_structure_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The structure this close exits",
+            "title": "Closes Structure Id"
+          },
+          "contracts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contracts"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "execution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution"
+          },
+          "exit_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Reason"
+          },
+          "fill_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Price"
+          },
+          "first_violation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Violation"
+          },
+          "gate_passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gate Passed"
+          },
+          "kind": {
+            "enum": [
+              "open",
+              "close"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "legs": {
+            "description": "OCC symbols",
+            "items": {
+              "type": "string"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per-share net at proposal (+ debit / \u2212 credit)",
+            "title": "Limit"
+          },
+          "net_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Managed net EV after costs \u00d7 contracts, $",
+            "title": "Net Ev"
+          },
+          "pop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Quant's PoP",
+            "title": "Pop"
+          },
+          "pop_hold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Hold-to-expiry PoP after costs",
+            "title": "Pop Hold"
+          },
+          "pop_managed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pop Managed"
+          },
+          "proposal_hash": {
+            "title": "Proposal Hash",
+            "type": "string"
+          },
+          "realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Pnl"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "slippage_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fill vs the proposal net; + = worse",
+            "title": "Slippage Bps"
+          },
+          "stage": {
+            "enum": [
+              "proposed",
+              "gate_pass",
+              "gate_fail",
+              "approved",
+              "rejected",
+              "expired",
+              "filled",
+              "cancelled",
+              "open",
+              "closed"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "structure_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The structure this open created",
+            "title": "Structure Id"
+          },
+          "structure_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structure Kind"
+          },
+          "swap_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Swap Id"
+          },
+          "ticker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticker"
+          },
+          "violations": {
+            "default": 0,
+            "title": "Violations",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "proposal_hash",
+          "created_at",
+          "day",
+          "ticker",
+          "kind",
+          "structure_kind",
+          "legs",
+          "contracts",
+          "limit",
+          "net_ev",
+          "pop",
+          "gate_passed",
+          "approval",
+          "execution",
+          "fill_price",
+          "slippage_bps",
+          "realized_pnl",
+          "exit_reason",
+          "stage"
+        ],
+        "title": "TradeRow",
+        "type": "object"
+      },
+      "TradeSummary": {
+        "additionalProperties": false,
+        "description": "Aggregates over every row matching the filter (not just the page).",
+        "properties": {
+          "avg_net_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Net Ev"
+          },
+          "avg_slippage_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Slippage Bps"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "filled": {
+            "default": 0,
+            "title": "Filled",
+            "type": "integer"
+          },
+          "filled_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filled Pct"
+          },
+          "net_ev_realized": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u03a3 modelled net EV over the trades that have a realized P&L",
+            "title": "Net Ev Realized"
+          },
+          "realized_count": {
+            "default": 0,
+            "title": "Realized Count",
+            "type": "integer"
+          },
+          "realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u03a3 realized P&L",
+            "title": "Realized Pnl"
+          }
+        },
+        "title": "TradeSummary",
+        "type": "object"
+      },
+      "TriggerLevels": {
+        "additionalProperties": false,
+        "description": "Where a rule fires: the close price per share, and the underlying when it fired.\n\n``close_price`` is what the order pays (``close_side = \"debit\"``, e.g. $0.83 to buy\nback a $1.66 credit at 50%) or receives (``\"credit\"``). ``pnl`` is the P&L per\nshare at that price. The underlying levels are the medians of the simulated spot\non the paths where this rule fired, split below / above today's spot (``None``\nwhen no path fired on that side); ``median_day`` is the median day it fired.\n``pnl``/``close_price`` for take profit use the base target (before any\ntime-adjusted bucket).",
+        "properties": {
+          "close_price": {
+            "title": "Close Price",
+            "type": "number"
+          },
+          "close_side": {
+            "enum": [
+              "debit",
+              "credit"
+            ],
+            "title": "Close Side",
+            "type": "string"
+          },
+          "median_day": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Day"
+          },
+          "pnl": {
+            "title": "Pnl",
+            "type": "number"
+          },
+          "probability": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Probability",
+            "type": "number"
+          },
+          "reachable": {
+            "default": true,
+            "description": "False when the threshold lies beyond max gain / max loss, so the rule can never fire (e.g. a 3x-credit stop on a condor whose max loss is < 2x credit)",
+            "title": "Reachable",
+            "type": "boolean"
+          },
+          "underlying_down": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying Down"
+          },
+          "underlying_up": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying Up"
+          }
+        },
+        "required": [
+          "pnl",
+          "close_price",
+          "close_side",
+          "probability"
+        ],
+        "title": "TriggerLevels",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -2620,6 +7153,122 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "ViolationView": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "reason_code": {
+            "title": "Reason Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail",
+          "reason_code",
+          "label"
+        ],
+        "title": "ViolationView",
+        "type": "object"
+      },
+      "VolStats": {
+        "additionalProperties": false,
+        "description": "Vol context: scan-time ATM IV plus the regime FeatureSnapshot's rank/HV fields.",
+        "properties": {
+          "atm_iv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Atm Iv"
+          },
+          "features_as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Features As Of"
+          },
+          "hv20": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hv20"
+          },
+          "hv60": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hv60"
+          },
+          "iv_hv20": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ATM IV / HV20",
+            "title": "Iv Hv20"
+          },
+          "iv_percentile": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iv Percentile"
+          },
+          "iv_rank": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iv Rank"
+          }
+        },
+        "title": "VolStats",
         "type": "object"
       }
     }
@@ -2816,6 +7465,61 @@
         ]
       }
     },
+    "/api/search": {
+      "get": {
+        "description": "Resolve a ticker / hash prefix / run id / chain id / structure id to routes.",
+        "operationId": "global_search_api_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Global Search",
+        "tags": [
+          "trades"
+        ]
+      }
+    },
     "/api/snapshot": {
       "get": {
         "description": "Every dashboard section read in one pass (SELECT only), with the gate's caps.",
@@ -2875,6 +7579,441 @@
         "summary": "Snapshot",
         "tags": [
           "snapshot"
+        ]
+      }
+    },
+    "/api/trades": {
+      "get": {
+        "description": "Every proposal (opens and closes), filtered, sorted and paged server-side, with\nthe summary over the whole filter.",
+        "operationId": "trades_api_trades_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "today",
+                "7d",
+                "30d",
+                "mtd",
+                "ytd",
+                "all",
+                "custom"
+              ],
+              "title": "Date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ticker",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ticker"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "structure",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Structure"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stage",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stage"
+            }
+          },
+          {
+            "in": "query",
+            "name": "exit_reason",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Exit Reason"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reason_code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reason Code"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_net_ev",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Net Ev"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_pop",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Pop"
+            }
+          },
+          {
+            "in": "query",
+            "name": "account_profile",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Account Profile"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "time",
+              "enum": [
+                "time",
+                "ticker",
+                "contracts",
+                "limit",
+                "net_ev",
+                "pop",
+                "slippage_bps",
+                "realized_pnl"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dir",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "title": "Dir",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Trades",
+        "tags": [
+          "trades"
+        ]
+      }
+    },
+    "/api/trades/filters": {
+      "get": {
+        "description": "Distinct values for the Trades filter dropdowns.",
+        "operationId": "trade_filters_api_trades_filters_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeFilterOptions"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Trade Filters",
+        "tags": [
+          "trades"
+        ]
+      }
+    },
+    "/api/trades/{proposal_hash}": {
+      "get": {
+        "description": "The full drill-down for one proposal (every section in one round trip).",
+        "operationId": "trade_api_trades__proposal_hash__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_hash",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 4,
+              "title": "Proposal Hash",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Trade",
+        "tags": [
+          "trades"
         ]
       }
     }
