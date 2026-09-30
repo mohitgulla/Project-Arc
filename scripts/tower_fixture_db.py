@@ -198,6 +198,17 @@ def _mark(entry: Decimal, drift: float, i: int) -> Decimal:
     return Decimal(str(round(float(entry) + drift * x + wobble, 2)))
 
 
+def _load_script(name: str):  # noqa: ANN202 - a module loaded by path
+    """``scripts/<name>.py`` (loaded by path: ``scripts`` is no package)."""
+    here = Path(__file__).resolve().parent / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, here)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(name, mod)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _trades_module():  # noqa: ANN202 - a module loaded by path
     """``scripts/tower_fixture_trades.py`` (loaded by path: ``scripts`` is no package)."""
     here = Path(__file__).resolve().parent / "tower_fixture_trades.py"
@@ -208,8 +219,12 @@ def _trades_module():  # noqa: ANN202 - a module loaded by path
     return mod
 
 
-def build(path: Path, now: dt.datetime | None = None) -> Path:
-    """Create *path* (must not exist), migrate it and fill it with the fixture rows."""
+def build(path: Path, now: dt.datetime | None = None, *, history: bool = False) -> Path:
+    """Create *path* (must not exist), migrate it and fill it with the fixture rows.
+
+    *history* adds the E8.7c Performance history (``scripts/tower_fixture_performance.py``:
+    ~40 closed trades and daily equity over the 3+ months before the 10 recent days).
+    """
     if path.exists():
         msg = f"{path} exists; the fixture builder never overwrites a DB"
         raise FileExistsError(msg)
@@ -354,6 +369,10 @@ def build(path: Path, now: dt.datetime | None = None) -> Path:
 
     # -- monitor heartbeats: 30 marks at 5-min cadence ending 2 minutes ago ---------------
     days = _weekdays_before(today, N_DAYS)
+    if history:
+        _load_script("tower_fixture_performance").add_history(
+            conn, now=now, first_equity_day=days[0], base_equity=BASE_EQUITY
+        )
     equities: list[Decimal] = []
     eq = BASE_EQUITY
     for i, _ in enumerate(days):
@@ -459,12 +478,15 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n", 1)[0])
     ap.add_argument("out", type=Path, help="DB file to create (must not exist)")
     ap.add_argument("--now", help="anchor time, ISO 8601 (default: now, ET)")
+    ap.add_argument(
+        "--history", action="store_true", help="add the E8.7c Performance history (~40 trades)"
+    )
     args = ap.parse_args(argv)
     now = dt.datetime.fromisoformat(args.now) if args.now else None
     if now is not None and now.tzinfo is None:
         now = now.replace(tzinfo=ET)
     try:
-        build(args.out, now)
+        build(args.out, now, history=args.history)
     except FileExistsError as exc:
         log.error("tower_fixture.refused", error=str(exc))
         return 2

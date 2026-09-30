@@ -95,7 +95,7 @@ def create_app(
     DB are applied on each ``/api/meta`` / ``/api/snapshot`` read, so a Slack
     config change reaches the tower without a restart.
     """
-    from arc.tower.routes import meta, overview, snapshot, trades
+    from arc.tower.routes import meta, overview, performance, snapshot, trades
 
     cfg = TowerConfig(
         db_path=Path(db_path).expanduser().resolve(),
@@ -132,6 +132,7 @@ def create_app(
     app.include_router(snapshot.router, prefix=API_PREFIX)
     app.include_router(overview.router, prefix=API_PREFIX)
     app.include_router(trades.router, prefix=API_PREFIX)
+    app.include_router(performance.router, prefix=API_PREFIX)
 
     @app.get(f"{API_PREFIX}/{{rest:path}}", include_in_schema=False)
     def _api_not_found(rest: str) -> JSONResponse:

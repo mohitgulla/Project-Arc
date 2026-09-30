@@ -79,6 +79,10 @@ __all__ = [
     "SwapRow",
     "build_scorecard",
     "calibration_points",
+    "closed_positions",
+    "execution_costs",
+    "funnel",
+    "model_vs_realised",
     "render_markdown",
     "week_window",
 ]
@@ -240,6 +244,14 @@ class SlippageRow(BaseModel):
     realised_bps: float | None = Field(None, description="vs capital at risk")
     expected_usd: float | None = Field(None, description="Modelled entry slippage x contracts")
     cost_bps: float | None = Field(None, description="Quant's expected round-trip cost")
+    at: _dt.datetime | None = Field(None, description="Execution start")
+    structure_id: str | None = Field(None, description="open_structures.id, when known")
+    commission: float = Field(0.0, description="Cost-model commission x contracts, $")
+    fees: float = Field(0.0, description="Cost-model regulatory fees x contracts, $")
+    fees_from_open: bool = Field(
+        False,
+        description="A close with no analytics of its own: its open's fee model was used",
+    )
 
 
 class SlippageSummary(BaseModel):
@@ -513,6 +525,21 @@ def _budget(
     ]
 
 
+def _outcome_shadow(conn: sqlite3.Connection, phash: str) -> Decimal | None:
+    """The latest recorded ``outcomes.hold_to_expiry_shadow_pnl`` for *phash* (D19)."""
+    has = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'outcomes'"
+    ).fetchone()
+    if has is None:  # an older store without the journal tables
+        return None
+    row = conn.execute(
+        """SELECT hold_to_expiry_shadow_pnl FROM outcomes WHERE proposal_hash = ?
+           ORDER BY at DESC, rowid DESC LIMIT 1""",
+        (phash,),
+    ).fetchone()
+    return _dec(row[0]) if row else None
+
+
 def _closed_positions(
     conn: sqlite3.Connection,
     start: _dt.datetime,
@@ -566,6 +593,8 @@ def _closed_positions(
                 settle = settle_price(row["ticker"], exp)
             if settle is not None:
                 shadow = realised_pnl(entry=entry, exit_=expiry_value(st.legs, settle), contracts=n)
+        if shadow is None:  # not derivable here: the recorded D19 outcome, if any
+            shadow = _outcome_shadow(conn, row["open_proposal_hash"])
         prop = _structure(conn, row["open_proposal_hash"]) or {}
         model = (_analytics(conn, row["open_proposal_hash"]) or {}).get("exit_model") or {}
         managed, static = model.get("managed") or {}, model.get("static") or {}
@@ -649,13 +678,28 @@ def _swaps(
     return rows
 
 
+def _fees(analytics: dict[str, Any]) -> tuple[float, float] | None:
+    """(commission, regulatory) $ per unit from a stored ``ProposalAnalytics.entry_fees``."""
+    fees = analytics.get("entry_fees")
+    if not isinstance(fees, dict):
+        return None
+    commission = float(fees.get("commission") or 0.0)
+    regulatory = sum(float(fees.get(k) or 0.0) for k in ("orf", "occ", "cat", "taf", "sec"))
+    return commission, regulatory
+
+
 def _slippage(conn: sqlite3.Connection, start: _dt.datetime, end: _dt.datetime) -> SlippageSummary:
     rows: list[SlippageRow] = []
     for r in conn.execute(
-        """SELECT proposal_hash, kind, filled_qty, fill_price, started_at FROM executions
-           WHERE filled_qty > 0 AND fill_price IS NOT NULL"""
+        """SELECT e.proposal_hash, e.kind, e.filled_qty, e.fill_price, e.started_at,
+                  COALESCE(e.structure_id, s.id) AS structure_id, s2.open_proposal_hash
+           FROM executions e
+           LEFT JOIN open_structures s ON s.open_proposal_hash = e.proposal_hash
+           LEFT JOIN open_structures s2 ON s2.id = e.structure_id
+           WHERE e.filled_qty > 0 AND e.fill_price IS NOT NULL"""
     ):
-        if not _in(_ts(r["started_at"]), start, end):
+        started = _ts(r["started_at"])
+        if not _in(started, start, end):
             continue
         prop = _structure(conn, r["proposal_hash"])
         if prop is None:
@@ -671,6 +715,12 @@ def _slippage(conn: sqlite3.Connection, start: _dt.datetime, end: _dt.datetime) 
         analytics = _analytics(conn, r["proposal_hash"]) or {}
         exp_unit = analytics.get("entry_slippage")
         quant = json.loads(prop["quant_json"] or "{}")
+        fees = _fees(analytics)
+        from_open = False
+        if fees is None and r["kind"] == "close" and r["open_proposal_hash"]:
+            fees = _fees(_analytics(conn, r["open_proposal_hash"]) or {})
+            from_open = fees is not None
+        commission, regulatory = fees or (0.0, 0.0)
         rows.append(
             SlippageRow(
                 proposal_hash=r["proposal_hash"],
@@ -681,6 +731,11 @@ def _slippage(conn: sqlite3.Connection, start: _dt.datetime, end: _dt.datetime) 
                 realised_bps=bps,
                 expected_usd=None if exp_unit is None else float(exp_unit) * n,
                 cost_bps=quant.get("cost_bps"),
+                at=started,
+                structure_id=r["structure_id"],
+                commission=commission * n,
+                fees=regulatory * n,
+                fees_from_open=from_open,
             )
         )
     modelled = [x for x in rows if x.expected_usd is not None]
@@ -742,6 +797,44 @@ def _pnl(
         equity_start=eq_start,
         equity_end=inside[-1] if inside else None,
     )
+
+
+def closed_positions(
+    conn: sqlite3.Connection,
+    *,
+    start: _dt.datetime,
+    end: _dt.datetime,
+    now: _dt.datetime,
+    settle_price: Callable[[str, _dt.date], Decimal | None] | None = None,
+    all_time: bool = False,
+) -> list[ClosedPosition]:
+    """Every position fully closed in ``[start, end)`` (``all_time``: closed before *end*),
+    exactly as the scorecard counts them (public for the tower's Performance page, E8.7c)."""
+    today = now.astimezone(ET).date()
+    return _closed_positions(
+        conn, start, end, _realised_by_structure(conn), settle_price, today=today,
+        all_time=all_time,
+    )  # fmt: skip
+
+
+def funnel(
+    conn: sqlite3.Connection, start: _dt.datetime, end: _dt.datetime
+) -> tuple[Funnel, dict[str, int]]:
+    """The window's funnel and its gate violation histogram (rule code -> n)."""
+    return _funnel(conn, start, end)
+
+
+def execution_costs(
+    conn: sqlite3.Connection, start: _dt.datetime, end: _dt.datetime
+) -> SlippageSummary:
+    """Per filled execution started in ``[start, end)``: realised fill − mid, modelled
+    slippage, and the cost model's commission and fees (the scorecard's slippage section)."""
+    return _slippage(conn, start, end)
+
+
+def model_vs_realised(closed: Iterable[ClosedPosition]) -> ModelVsRealised:
+    """D23: managed and hold-to-expiry model vs realised over *closed*."""
+    return _model_vs_realised(closed)
 
 
 def build_scorecard(

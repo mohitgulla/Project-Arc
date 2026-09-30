@@ -261,6 +261,159 @@
         "title": "ApprovalView",
         "type": "object"
       },
+      "BreakdownItem": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "filter": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trades list query for the row",
+            "title": "Filter"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "pnl": {
+            "title": "Pnl",
+            "type": "number"
+          },
+          "share": {
+            "title": "Share",
+            "type": "number"
+          },
+          "win_rate": {
+            "title": "Win Rate",
+            "type": "number"
+          },
+          "wins": {
+            "title": "Wins",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count",
+          "wins",
+          "pnl",
+          "win_rate",
+          "share"
+        ],
+        "title": "BreakdownItem",
+        "type": "object"
+      },
+      "BreakdownResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "by": {
+            "enum": [
+              "ticker",
+              "structure",
+              "exit_reason",
+              "reason_code",
+              "profile",
+              "regime"
+            ],
+            "title": "By",
+            "type": "string"
+          },
+          "include_tests": {
+            "title": "Include Tests",
+            "type": "boolean"
+          },
+          "period": {
+            "$ref": "#/components/schemas/PeriodView"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItem"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "by",
+          "period",
+          "include_tests",
+          "rows"
+        ],
+        "title": "BreakdownResponse",
+        "type": "object"
+      },
+      "Breakdowns": {
+        "additionalProperties": false,
+        "properties": {
+          "exit_reason": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItem"
+            },
+            "title": "Exit Reason",
+            "type": "array"
+          },
+          "profile": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItem"
+            },
+            "title": "Profile",
+            "type": "array"
+          },
+          "reason_code": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItem"
+            },
+            "title": "Reason Code",
+            "type": "array"
+          },
+          "regime": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItem"
+            },
+            "title": "Regime",
+            "type": "array"
+          },
+          "structure": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItem"
+            },
+            "title": "Structure",
+            "type": "array"
+          },
+          "ticker": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItem"
+            },
+            "title": "Ticker",
+            "type": "array"
+          }
+        },
+        "title": "Breakdowns",
+        "type": "object"
+      },
       "BreakevenStat": {
         "additionalProperties": false,
         "properties": {
@@ -350,6 +503,78 @@
         "title": "Cadence",
         "type": "object"
       },
+      "CalibrationCard": {
+        "additionalProperties": false,
+        "properties": {
+          "empty": {
+            "title": "Empty",
+            "type": "boolean"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationItem"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "trades": {
+            "default": 0,
+            "description": "Closed trades to the period end (all time)",
+            "title": "Trades",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "empty"
+        ],
+        "title": "CalibrationCard",
+        "type": "object"
+      },
+      "CalibrationItem": {
+        "additionalProperties": false,
+        "properties": {
+          "gap": {
+            "description": "hit_rate \u2212 stated_mean (negative = over-confident)",
+            "title": "Gap",
+            "type": "number"
+          },
+          "hi": {
+            "title": "Hi",
+            "type": "number"
+          },
+          "hit_rate": {
+            "title": "Hit Rate",
+            "type": "number"
+          },
+          "lo": {
+            "title": "Lo",
+            "type": "number"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "persona": {
+            "title": "Persona",
+            "type": "string"
+          },
+          "stated_mean": {
+            "title": "Stated Mean",
+            "type": "number"
+          }
+        },
+        "required": [
+          "persona",
+          "lo",
+          "hi",
+          "n",
+          "stated_mean",
+          "hit_rate",
+          "gap"
+        ],
+        "title": "CalibrationItem",
+        "type": "object"
+      },
       "CandidateView": {
         "additionalProperties": false,
         "properties": {
@@ -436,6 +661,52 @@
         "title": "CandidateView",
         "type": "object"
       },
+      "CostBar": {
+        "additionalProperties": false,
+        "properties": {
+          "commission": {
+            "default": 0.0,
+            "title": "Commission",
+            "type": "number"
+          },
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          },
+          "fees": {
+            "default": 0.0,
+            "title": "Fees",
+            "type": "number"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "slippage": {
+            "default": 0.0,
+            "title": "Slippage",
+            "type": "number"
+          },
+          "spread": {
+            "default": 0.0,
+            "title": "Spread",
+            "type": "number"
+          },
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "label"
+        ],
+        "title": "CostBar",
+        "type": "object"
+      },
       "CostModel": {
         "additionalProperties": false,
         "description": "Slippage + commission + pass-through fee assumptions. Prices are per share.",
@@ -506,6 +777,117 @@
           }
         },
         "title": "CostModel",
+        "type": "object"
+      },
+      "CostsCard": {
+        "additionalProperties": false,
+        "properties": {
+          "bars": {
+            "items": {
+              "$ref": "#/components/schemas/CostBar"
+            },
+            "title": "Bars",
+            "type": "array"
+          },
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change"
+          },
+          "commission": {
+            "default": 0.0,
+            "title": "Commission",
+            "type": "number"
+          },
+          "compare_total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compare Total"
+          },
+          "cost_pct_of_gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "total / |gross_pnl|",
+            "title": "Cost Pct Of Gross"
+          },
+          "empty": {
+            "title": "Empty",
+            "type": "boolean"
+          },
+          "fees": {
+            "default": 0.0,
+            "title": "Fees",
+            "type": "number"
+          },
+          "fees_from_open": {
+            "default": 0,
+            "description": "Close fills priced with their open's fees",
+            "title": "Fees From Open",
+            "type": "integer"
+          },
+          "fills": {
+            "default": 0,
+            "title": "Fills",
+            "type": "integer"
+          },
+          "gross_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u03a3 realised of trades closed",
+            "title": "Gross Pnl"
+          },
+          "slippage": {
+            "default": 0.0,
+            "description": "Fill vs mid beyond the model (+ = worse)",
+            "title": "Slippage",
+            "type": "number"
+          },
+          "spread": {
+            "default": 0.0,
+            "description": "Modelled crossing cost, $",
+            "title": "Spread",
+            "type": "number"
+          },
+          "total": {
+            "default": 0.0,
+            "title": "Total",
+            "type": "number"
+          },
+          "unmodelled": {
+            "default": 0,
+            "description": "Fills with no stored cost model",
+            "title": "Unmodelled",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "empty"
+        ],
+        "title": "CostsCard",
         "type": "object"
       },
       "DayPnlSection": {
@@ -795,25 +1177,134 @@
         "title": "DecisionTrail",
         "type": "object"
       },
-      "EquityPoint": {
+      "EquityCard": {
         "additionalProperties": false,
         "properties": {
-          "t": {
-            "format": "date-time",
-            "title": "T",
-            "type": "string"
+          "drawdown_peak": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drawdown Peak"
           },
-          "v": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "V",
-            "type": "string"
+          "drawdown_recovered": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drawdown Recovered"
+          },
+          "drawdown_trough": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drawdown Trough"
+          },
+          "empty": {
+            "title": "Empty",
+            "type": "boolean"
+          },
+          "end_equity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Equity"
+          },
+          "max_drawdown": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "$ (\u2264 0)",
+            "title": "Max Drawdown"
+          },
+          "max_drawdown_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Drawdown Pct"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/arc__tower__data_performance__EquityPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Pct"
+          },
+          "returns": {
+            "default": 0,
+            "description": "Daily returns behind the Sharpe",
+            "title": "Returns",
+            "type": "integer"
+          },
+          "sharpe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sharpe"
+          },
+          "start_equity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Equity"
           }
         },
         "required": [
-          "t",
-          "v"
+          "empty"
         ],
-        "title": "EquityPoint",
+        "title": "EquityCard",
         "type": "object"
       },
       "EquitySection": {
@@ -858,7 +1349,7 @@
           },
           "series": {
             "items": {
-              "$ref": "#/components/schemas/EquityPoint"
+              "$ref": "#/components/schemas/arc__tower__data_overview__EquityPoint"
             },
             "title": "Series",
             "type": "array"
@@ -1640,6 +2131,64 @@
           "filled_at"
         ],
         "title": "FillView",
+        "type": "object"
+      },
+      "FunnelCard": {
+        "additionalProperties": false,
+        "properties": {
+          "empty": {
+            "title": "Empty",
+            "type": "boolean"
+          },
+          "gate_fail": {
+            "default": 0,
+            "title": "Gate Fail",
+            "type": "integer"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/FunnelStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "violations": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "rule code -> n",
+            "title": "Violations",
+            "type": "object"
+          }
+        },
+        "required": [
+          "empty"
+        ],
+        "title": "FunnelCard",
+        "type": "object"
+      },
+      "FunnelStep": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count"
+        ],
+        "title": "FunnelStep",
         "type": "object"
       },
       "GateCaps": {
@@ -3026,6 +3575,156 @@
         "title": "MetaResponse",
         "type": "object"
       },
+      "ModelCard": {
+        "additionalProperties": false,
+        "properties": {
+          "empty": {
+            "title": "Empty",
+            "type": "boolean"
+          },
+          "hold_win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Shadow > 0 share",
+            "title": "Hold Win Rate"
+          },
+          "mean_managed_pop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Managed Pop"
+          },
+          "mean_static_pop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Static Pop"
+          },
+          "n": {
+            "default": 0,
+            "title": "N",
+            "type": "integer"
+          },
+          "n_shadow": {
+            "default": 0,
+            "title": "N Shadow",
+            "type": "integer"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/ModelPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "sum_managed_ev": {
+            "default": 0.0,
+            "title": "Sum Managed Ev",
+            "type": "number"
+          },
+          "sum_realised": {
+            "default": 0.0,
+            "title": "Sum Realised",
+            "type": "number"
+          },
+          "sum_shadow": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sum Shadow"
+          },
+          "sum_static_ev": {
+            "default": 0.0,
+            "title": "Sum Static Ev",
+            "type": "number"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Realised win rate (managed exits)",
+            "title": "Win Rate"
+          }
+        },
+        "required": [
+          "empty"
+        ],
+        "title": "ModelCard",
+        "type": "object"
+      },
+      "ModelPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "closed_at": {
+            "format": "date-time",
+            "title": "Closed At",
+            "type": "string"
+          },
+          "net_ev": {
+            "description": "Managed net EV x contracts, $",
+            "title": "Net Ev",
+            "type": "number"
+          },
+          "open_proposal_hash": {
+            "title": "Open Proposal Hash",
+            "type": "string"
+          },
+          "realised": {
+            "title": "Realised",
+            "type": "number"
+          },
+          "shadow": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shadow"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "open_proposal_hash",
+          "ticker",
+          "closed_at",
+          "net_ev",
+          "realised"
+        ],
+        "title": "ModelPoint",
+        "type": "object"
+      },
       "MoverTile": {
         "additionalProperties": false,
         "properties": {
@@ -3103,6 +3802,136 @@
           "open_proposal_hash"
         ],
         "title": "MoverTile",
+        "type": "object"
+      },
+      "NetPnlCard": {
+        "additionalProperties": false,
+        "properties": {
+          "bars": {
+            "items": {
+              "$ref": "#/components/schemas/PnlBar"
+            },
+            "title": "Bars",
+            "type": "array"
+          },
+          "bucket": {
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Bucket",
+            "type": "string"
+          },
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "net \u2212 compare_net, $",
+            "title": "Change"
+          },
+          "compare_net": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compare Net"
+          },
+          "empty": {
+            "title": "Empty",
+            "type": "boolean"
+          },
+          "net": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net"
+          },
+          "now_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Label of the slot holding today",
+            "title": "Now Label"
+          },
+          "realised": {
+            "default": 0.0,
+            "description": "\u03a3 realised of trades closed in the period",
+            "title": "Realised",
+            "type": "number"
+          },
+          "shadow_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u03a3(shadow \u2212 realised) over them",
+            "title": "Shadow Delta"
+          },
+          "shadow_known": {
+            "default": 0,
+            "description": "Closed trades with a known D19 shadow",
+            "title": "Shadow Known",
+            "type": "integer"
+          },
+          "source": {
+            "description": "equity = daily closes (realised + unrealised); realised = no equity history, closed trades only",
+            "enum": [
+              "equity",
+              "realised",
+              "none"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "tests_excluded_pnl": {
+            "default": 0.0,
+            "description": "Test-leg realised taken out, $",
+            "title": "Tests Excluded Pnl",
+            "type": "number"
+          },
+          "unrealised_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "net \u2212 realised",
+            "title": "Unrealised Change"
+          }
+        },
+        "required": [
+          "empty",
+          "source",
+          "bucket"
+        ],
+        "title": "NetPnlCard",
         "type": "object"
       },
       "OpsView": {
@@ -3884,6 +4713,130 @@
         "title": "Performance",
         "type": "object"
       },
+      "PerformanceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "breakdowns": {
+            "$ref": "#/components/schemas/Breakdowns"
+          },
+          "calibration": {
+            "$ref": "#/components/schemas/CalibrationCard"
+          },
+          "compare": {
+            "enum": [
+              "prev",
+              "yoy",
+              "none"
+            ],
+            "title": "Compare",
+            "type": "string"
+          },
+          "compare_period": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PeriodView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "costs": {
+            "$ref": "#/components/schemas/CostsCard"
+          },
+          "equity": {
+            "$ref": "#/components/schemas/EquityCard"
+          },
+          "funnel": {
+            "$ref": "#/components/schemas/FunnelCard"
+          },
+          "include_tests": {
+            "title": "Include Tests",
+            "type": "boolean"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelCard"
+          },
+          "net_pnl": {
+            "$ref": "#/components/schemas/NetPnlCard"
+          },
+          "period": {
+            "$ref": "#/components/schemas/PeriodView"
+          },
+          "preset": {
+            "enum": [
+              "week",
+              "mtd",
+              "qtd",
+              "ytd",
+              "30d",
+              "90d",
+              "all",
+              "custom"
+            ],
+            "title": "Preset",
+            "type": "string"
+          },
+          "win_loss": {
+            "$ref": "#/components/schemas/WinLossCard"
+          }
+        },
+        "required": [
+          "as_of",
+          "preset",
+          "compare",
+          "include_tests",
+          "period",
+          "compare_period",
+          "net_pnl",
+          "equity",
+          "costs",
+          "win_loss",
+          "model",
+          "breakdowns",
+          "calibration",
+          "funnel"
+        ],
+        "title": "PerformanceResponse",
+        "type": "object"
+      },
+      "PeriodView": {
+        "additionalProperties": false,
+        "properties": {
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "first": {
+            "format": "date",
+            "title": "First",
+            "type": "string"
+          },
+          "last": {
+            "format": "date",
+            "title": "Last",
+            "type": "string"
+          },
+          "slot_end": {
+            "format": "date",
+            "title": "Slot End",
+            "type": "string"
+          }
+        },
+        "required": [
+          "first",
+          "last",
+          "slot_end",
+          "days"
+        ],
+        "title": "PeriodView",
+        "type": "object"
+      },
       "PersonaCallView": {
         "additionalProperties": false,
         "properties": {
@@ -3999,6 +4952,76 @@
           "prompt_sha256"
         ],
         "title": "PersonaCallView",
+        "type": "object"
+      },
+      "PnlBar": {
+        "additionalProperties": false,
+        "properties": {
+          "cumulative": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cumulative"
+          },
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          },
+          "future": {
+            "description": "Starts after today: an empty slot",
+            "title": "Future",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\u03a3 daily equity change; None = no close in the slot",
+            "title": "Pnl"
+          },
+          "shadow_cumulative": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "cumulative + \u03a3(D19 hold-to-expiry shadow \u2212 realised) of trades closed so far",
+            "title": "Shadow Cumulative"
+          },
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "label",
+          "future",
+          "pnl",
+          "cumulative",
+          "shadow_cumulative"
+        ],
+        "title": "PnlBar",
         "type": "object"
       },
       "PnlView": {
@@ -6662,6 +7685,36 @@
         "title": "TradeListResponse",
         "type": "object"
       },
+      "TradeRef": {
+        "additionalProperties": false,
+        "description": "A pointer to one closed trade (its open proposal is the Trades drill-down key).",
+        "properties": {
+          "open_proposal_hash": {
+            "title": "Open Proposal Hash",
+            "type": "string"
+          },
+          "realised_pnl": {
+            "title": "Realised Pnl",
+            "type": "number"
+          },
+          "structure_id": {
+            "title": "Structure Id",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "open_proposal_hash",
+          "structure_id",
+          "ticker",
+          "realised_pnl"
+        ],
+        "title": "TradeRef",
+        "type": "object"
+      },
       "TradeRow": {
         "additionalProperties": false,
         "properties": {
@@ -7005,6 +8058,132 @@
         "title": "TradeRow",
         "type": "object"
       },
+      "TradeStats": {
+        "additionalProperties": false,
+        "properties": {
+          "avg_days_held": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Days Held"
+          },
+          "avg_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Loss"
+          },
+          "avg_win": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Win"
+          },
+          "best": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TradeRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed": {
+            "default": 0,
+            "title": "Closed",
+            "type": "integer"
+          },
+          "expectancy": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean realised P&L per closed trade",
+            "title": "Expectancy"
+          },
+          "gross_losses": {
+            "default": 0.0,
+            "description": "\u03a3 of the losses (\u2264 0)",
+            "title": "Gross Losses",
+            "type": "number"
+          },
+          "gross_wins": {
+            "default": 0.0,
+            "title": "Gross Wins",
+            "type": "number"
+          },
+          "losses": {
+            "default": 0,
+            "title": "Losses",
+            "type": "integer"
+          },
+          "profit_factor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None: no losing dollars",
+            "title": "Profit Factor"
+          },
+          "realised": {
+            "default": 0.0,
+            "title": "Realised",
+            "type": "number"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "wins": {
+            "default": 0,
+            "title": "Wins",
+            "type": "integer"
+          },
+          "worst": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TradeRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "TradeStats",
+        "type": "object"
+      },
       "TradeSummary": {
         "additionalProperties": false,
         "description": "Aggregates over every row matching the filter (not just the page).",
@@ -7315,6 +8494,87 @@
         },
         "title": "VolStats",
         "type": "object"
+      },
+      "WinLossCard": {
+        "additionalProperties": false,
+        "properties": {
+          "compare_expectancy": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compare Expectancy"
+          },
+          "compare_win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compare Win Rate"
+          },
+          "empty": {
+            "title": "Empty",
+            "type": "boolean"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/TradeStats"
+          }
+        },
+        "required": [
+          "empty",
+          "stats"
+        ],
+        "title": "WinLossCard",
+        "type": "object"
+      },
+      "arc__tower__data_overview__EquityPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          },
+          "v": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "V",
+            "type": "string"
+          }
+        },
+        "required": [
+          "t",
+          "v"
+        ],
+        "title": "EquityPoint",
+        "type": "object"
+      },
+      "arc__tower__data_performance__EquityPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "equity": {
+            "title": "Equity",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "equity"
+        ],
+        "title": "EquityPoint",
+        "type": "object"
       }
     }
   },
@@ -7448,6 +8708,255 @@
         "summary": "Overview",
         "tags": [
           "overview"
+        ]
+      }
+    },
+    "/api/performance": {
+      "get": {
+        "description": "Every Performance card for the period, with the comparison computed server-side.",
+        "operationId": "performance_api_performance_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "preset",
+            "required": false,
+            "schema": {
+              "default": "90d",
+              "enum": [
+                "week",
+                "mtd",
+                "qtd",
+                "ytd",
+                "30d",
+                "90d",
+                "all",
+                "custom"
+              ],
+              "title": "Preset",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "compare",
+            "required": false,
+            "schema": {
+              "default": "prev",
+              "enum": [
+                "prev",
+                "yoy",
+                "none"
+              ],
+              "title": "Compare",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_tests",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Tests",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PerformanceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Performance",
+        "tags": [
+          "performance"
+        ]
+      }
+    },
+    "/api/performance/breakdown": {
+      "get": {
+        "description": "One breakdown tab: closed trades grouped by *by*, ranked by P&L.",
+        "operationId": "performance_breakdown_api_performance_breakdown_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "by",
+            "required": false,
+            "schema": {
+              "default": "ticker",
+              "enum": [
+                "ticker",
+                "structure",
+                "exit_reason",
+                "reason_code",
+                "profile",
+                "regime"
+              ],
+              "title": "By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "preset",
+            "required": false,
+            "schema": {
+              "default": "90d",
+              "enum": [
+                "week",
+                "mtd",
+                "qtd",
+                "ytd",
+                "30d",
+                "90d",
+                "all",
+                "custom"
+              ],
+              "title": "Preset",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_tests",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Tests",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BreakdownResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Performance Breakdown",
+        "tags": [
+          "performance"
         ]
       }
     },
