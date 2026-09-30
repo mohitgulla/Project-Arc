@@ -20,7 +20,9 @@ One Hermes cron job calls :meth:`Dispatcher.tick` every 5 minutes. Each tick:
    (``approval``, ``halt``, ... from ``arc routines emit``).
 
 A ``(job, scheduled_for)`` unique key in ``routine_runs`` means a duplicate
-tick never runs a job twice. File locks (per job + one global LLM lock) stop
+tick never runs a job twice; an event-triggered run is unique per
+``(job, event_id)`` instead (E6.2d), so events sharing a timestamp each run. File
+locks (per job + one global LLM lock) stop
 overlapping ticks from running the same job or two LLM jobs at once; a job whose
 lock is busy is deferred to the next tick without being recorded.
 """
@@ -72,6 +74,8 @@ log = structlog.get_logger(__name__)
 
 _CURSOR = "cursor:{job}"
 _LAST_TICK = "dispatcher:last_tick"
+# E6.2d: an approval event deferred by a halt (its lapse is then "under halt").
+_HALT_DEFERRED = "halt_deferred:{event}"
 
 
 # ---------------------------------------------------------------------------
@@ -428,6 +432,8 @@ class Dispatcher:
                     chain_run_id=chain_run_id,
                     step_index=index,
                     now=now,
+                    # E6.2d: an event-triggered run is unique per (job, event), not per slot.
+                    event_id=event.id if event is not None else None,
                 )
                 if claimed is None:
                     outcomes.append(
@@ -726,15 +732,120 @@ class Dispatcher:
         return out
 
     def _drain_events(self, now: _dt.datetime) -> list[Outcome]:
+        """Fire every pending external event once (E6.2d dispatch-once semantics).
+
+        - An event the D34 ``execute`` step dispatched is never pending here: its
+          Investor subprocess owns it.
+        - An ``approval`` that arrives (or is still waiting) while halted is
+          ``deferred`` until its proposal's ``expires_at``; after ``!resume`` inside
+          that TTL the Investor runs. Past it the event is consumed with a journal
+          row (``order:refused`` "approval lapsed under halt") and the card updated.
+        - Each event-triggered run is keyed by the event id, so two events with the
+          same ``created_at`` both run (never ``duplicate``).
+        """
         out: list[Outcome] = []
         for ev in self.events.pending(until=now):
+            held = self._halt_hold(ev, now)
+            if held is not None:
+                out.extend(held)
+                continue
             env = {**ev.payload, "session": session_phase(now), "event": ev.name}
             results = self._fire(ev.name, env, ev.created_at, now, 0, event=ev)
             if any(o.status == "deferred" for o in results):
                 out.extend(results)
                 continue  # retry next tick
             self.events.consume(ev.id, [o.run_id for o in results if o.run_id], now=now)
+            self.state.delete(_HALT_DEFERRED.format(event=ev.id))
             out.extend(results)
+        return out
+
+    def _halt_targets(self, ev: RoutineEvent) -> list[str]:
+        """Jobs *ev* would start that a halt stops (not ``halt_exempt``)."""
+        jobs = self.routines.jobs()
+        return [
+            r.run
+            for r in self.routines.triggers_for(ev.name)
+            if r.run in jobs and not jobs[r.run][1].halt_exempt
+        ]
+
+    def _halt_hold(self, ev: RoutineEvent, now: _dt.datetime) -> list[Outcome] | None:
+        """E6.2d: defer or lapse an ``approval`` event held by a halt; ``None`` = fire it.
+
+        Only approvals carry a deadline (the proposal TTL); other events keep the
+        old behaviour (the halted job is recorded ``skipped`` and the event consumed).
+        """
+        from arc.routines.investor import approval_deadline
+
+        if ev.name != "approval":
+            return None
+        targets = self._halt_targets(ev)
+        if not targets:
+            return None
+        phash = str(ev.payload.get("proposal_hash") or "")
+        deadline = approval_deadline(self.conn, phash) if phash else None
+        if deadline is None:
+            return None  # unknown proposal: let the Investor refuse it on the record
+        key = _HALT_DEFERRED.format(event=ev.id)
+        halted = self._is_halted()
+        was_held = self.state.get(key) is not None
+        if not halted and not (was_held and now >= deadline):
+            return None  # not halted (or resumed inside the TTL): run it now
+        if now < deadline:
+            self.state.set(key, now.isoformat(), now=now)
+            until = deadline.astimezone(ET)
+            log.info("routines.event_deferred", event_id=ev.id, why="halted", until=until)
+            return [
+                Outcome(
+                    job,
+                    ev.created_at,
+                    "deferred",
+                    f"halted; approval held until !resume or {until:%H:%M} ET (its TTL)",
+                )
+                for job in targets
+            ]
+        return self._lapse(ev, phash, targets, now)
+
+    def _lapse(
+        self, ev: RoutineEvent, phash: str, targets: list[str], now: _dt.datetime
+    ) -> list[Outcome]:
+        """The approval's TTL passed under a halt: journal, card, consume (no order)."""
+        from arc.routines.investor import LAPSED_UNDER_HALT, lapse_approval
+
+        out: list[Outcome] = []
+        run_ids: list[str] = []
+        for job in targets:
+            run = self.runs.claim(
+                job=job,
+                scheduled_for=ev.created_at,
+                reason=f"event:{ev.name}",
+                status=RunStatus.SKIPPED,
+                summary=LAPSED_UNDER_HALT,
+                now=now,
+                event_id=ev.id,
+            )
+            if run is None:
+                continue
+            run_ids.append(run.run_id)
+            self._write_manifest(
+                run, _RunTrace(event_id=ev.id), now=now, started=now, t0=time.monotonic()
+            )
+            out.append(Outcome(job, ev.created_at, "skipped", LAPSED_UNDER_HALT, run_id=run.run_id))
+        try:
+            settings: Any = self._settings_factory()
+        except Exception:  # noqa: BLE001 - the journal row matters, not the card's config
+            from arc.config import get_settings
+
+            settings = get_settings()
+        lapse_approval(
+            self.conn,
+            phash,
+            now=now,
+            run_id=run_ids[0] if run_ids else None,
+            settings=settings,
+            slack=self.run_env.slack,
+        )
+        self.events.consume(ev.id, run_ids, now=now)
+        self.state.delete(_HALT_DEFERRED.format(event=ev.id))
         return out
 
     # -- one event, out of band (D34) ------------------------------------------
@@ -754,36 +865,52 @@ class Dispatcher:
         an Investor subprocess. The run joins the chain (``chain_run_id``, next step
         index) so ``arc context trace <chain>`` shows it, holds a per-event lock
         (``<job>:<event id>``) rather than the job's lock, and never the LLM lock, so
-        ladders run in parallel with the next loop. The event is marked consumed by
-        this run whatever the outcome; the ``executions`` PK stops a second ladder.
+        ladders run in parallel with the next loop.
+
+        E6.2d: the event is normally already ``dispatched`` (claimed by ``execute``
+        before the spawn); that is accepted. The run is keyed by the event id, so a
+        second invocation for the same event is a ``duplicate`` and never a second
+        ladder. A consumed event is refused. While halted (and *job* is not
+        ``halt_exempt``) nothing runs: the event is released back to the tick's
+        drain, which defers it until ``!resume`` or its TTL. Otherwise the event is
+        consumed by this run whatever the outcome.
         """
         found = self.routines.job(job)
         if found is None:
             msg = f"unknown job {job!r}"
             raise KeyError(msg)
-        step_index = 0
-        if chain_run_id:
-            step_index = max((r.step_index for r in self.runs.chain(chain_run_id)), default=-1) + 1
-        run = self.runs.claim(
-            job=job,
-            scheduled_for=now,
-            reason=f"event:{event.name}",
-            chain_run_id=chain_run_id,
-            step_index=step_index,
-            now=now,
-        )
-        if run is None:
-            return [Outcome(job, now, "duplicate", "already ran for this slot")]
+        _, spec = found
+        current = self.events.get(event.id) or event
+        if current.consumed_at is not None:
+            return [Outcome(job, now, "duplicate", "event already consumed")]
+        if self._is_halted() and not spec.halt_exempt:
+            self.events.release(event.id)
+            log.info("routines.event_released", job=job, event_id=event.id, why="halted")
+            return [Outcome(job, now, "deferred", "halted; event handed back to the tick")]
         try:
             with self.locks.hold(f"{job}:{event.id}"):
+                step_index = 0
+                if chain_run_id:
+                    step_index = (
+                        max((r.step_index for r in self.runs.chain(chain_run_id)), default=-1) + 1
+                    )
+                run = self.runs.claim(
+                    job=job,
+                    scheduled_for=now,
+                    reason=f"event:{event.name}",
+                    chain_run_id=chain_run_id,
+                    step_index=step_index,
+                    now=now,
+                    event_id=event.id,
+                )
+                if run is None:
+                    return [Outcome(job, now, "duplicate", "already ran for this event")]
                 outcome = self._execute(
                     run, now=now, event=event, note="", parent_run_id=parent_run_id, job_lock=False
                 )
         except LockBusyError as exc:
-            self.runs.finish(
-                run.run_id, status=RunStatus.SKIPPED, summary=f"lock busy ({exc})", now=now
-            )
-            return [Outcome(job, now, "deferred", f"lock busy ({exc})", run_id=run.run_id)]
+            # Another process holds this very event's lock: it owns the run.
+            return [Outcome(job, now, "deferred", f"lock busy ({exc})")]
         self.events.consume(event.id, [run.run_id], now=now)
         return [outcome, *self._fire_completed([outcome], now, 0)]
 

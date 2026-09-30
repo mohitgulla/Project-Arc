@@ -532,6 +532,28 @@ first line repeats the current state. The same keys are Slack-tunable
 (`!arc config set auto_approve.paper true` → confirm code, owner only).
 `auto_exit_defined_risk` (D24) is per-env the same way.
 
+Approval event lifecycle (E6.2d): every `approval` routine event is started exactly once,
+by exactly one path. `created` (the approval service writes it with the decision) →
+`dispatched` (only on the D34 path: `execute` claims the event, `dispatched_at` /
+`dispatched_by` = its run id, *before* it spawns the Investor subprocess; the tick's event
+drain never fires a dispatched event, so no ladder runs inline and the tick never waits
+on one) → `consumed` (`consumed_at` / `consumed_by` = the one Investor run, keyed by the
+event id, so two approvals in the same second both execute). A click approval skips
+`dispatched`: the next tick's drain runs it. If the spawn fails the claim is released and
+the same tick's drain runs it instead.
+
+Halted: an approval that arrives (or is dispatched) while halted stays pending; the drain
+reports it `deferred` ("held until !resume or HH:MM ET") every tick. After `!resume`
+inside the proposal's TTL (`proposals.expires_at`) the Investor runs; past the TTL the
+event is consumed with a skipped investor run, a journal row (`order` / `order:refused`,
+"approval lapsed under halt") and the card edited to "not executed". Nothing is sent.
+
+Trace: `arc context trace <chain_run_id>` prints an `event` line on the `execute` step
+(role `dispatched`) and on the Investor step (role `ran_for`) with
+`created=… dispatched=… by=<execute run> consumed=… by=<investor run>`; `--json` has the
+same under `events`. `sqlite3 data/arc.db "select id, dispatched_by, consumed_by from
+routine_events where consumed_at is null"` lists what is still waiting.
+
 ### 5.11 Open universe (E5.7, D9/D28)
 
 `settings.universe` is a seed list (`ARC_UNIVERSE_MODE=seed`, the default). Other
