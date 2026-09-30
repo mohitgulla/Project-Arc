@@ -937,6 +937,56 @@ The `not_traded` and `alternatives` rows come from the same code as
 `arc journal gaps` (which now prints a "proposals not traded" section too), so
 the two never disagree.
 
+### 5.16 Arc Analyst: weekly strategy review (E9.2)
+
+An independent reviewer of the *strategy* (the Sentinel, D23, reviews the code).
+Boundary: does the fix change a decision the system makes → Analyst; does it
+change whether the system does what the spec says → Sentinel. Its artefacts are
+versioned in `hermes/analyst/` and copied into its own Hermes profile
+`arc-analyst` by `hermes/analyst/install.sh` (E9.4 does the profile and the start):
+
+| Repo file | Installed as |
+|---|---|
+| `hermes/analyst/skills/arc-analyst/SKILL.md` | `~/.hermes/profiles/arc-analyst/skills/arc-analyst/SKILL.md` |
+| `hermes/analyst/arc_analyst.py` | `~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py` (cron pre-run gate) |
+| `hermes/analyst/prompt.md` | the cron prompt |
+
+The cron `arc-analyst-weekly` runs Sunday 15:00 PT (after the weekly scorecard)
+on `anthropic/claude-fable-5.1` at `max` effort and delivers to #arc-analyst.
+`install.sh` creates it **paused**; `install.sh --dry-run` prints every step.
+
+The pre-run gate needs no secret (no Alpaca key, no `ARC_GATE_SECRET`, no Slack
+token; they are stripped from every command it runs). It:
+
+1. copies `data/arc.db` with the SQLite backup API (live file opened `mode=ro`,
+   only `backup()` is called on it) to `~/.hermes/profiles/arc-analyst/analyst/runs/<date>/arc-copy.db`;
+2. prints `{"wakeAgent": false}` (no LLM run, nothing posted) unless the journal
+   has ≥ 1 closed outcome **and** a closed outcome or a halt arrived since the
+   last run;
+3. otherwise runs the read-only views on the copy (`arc scorecard attribution`,
+   `arc journal scorecard|gaps|counterfactual|show`, `arc config diff|history|show`),
+   builds a realised-vs-model table (realised P&L vs EV, slippage bps vs the
+   Quant's cost bps) by structure kind × regime, lists halts, the newest
+   `docs/RESEARCH/*.md` and the A-id ledger, and prints it (≤ 30k chars).
+
+```
+python3 hermes/analyst/arc_analyst.py                         # the gate (ARC_ANALYST_DB / ARC_REPO to override)
+python3 …/arc_analyst.py record RUN_DIR                       # validate findings.json → ledger (A-ids)
+python3 …/arc_analyst.py check-report RUN_DIR/report.md       # ≤ 3,500 chars, all sections
+python3 …/arc_analyst.py mark RUN_DIR                         # advance the watermark
+python3 …/arc_analyst.py triage A-3 wontfix "why"             # owner: accepted|wontfix|fixed
+python3 …/arc_analyst.py reset                                # next run reviews unconditionally
+```
+
+`record` rejects findings that break the strategy gates: a recommendation from a
+bucket with fewer than 30 closed trades (MIN-SAMPLE), a recommendation that is
+not one experiment with variable / values / metric / effect size / status
+(ONE-VARIABLE), more than 3 recommendations, or a missing status line for any of
+the six standing themes (cost model, regime menu, ranker, exit policy, sizing,
+auto-approve). Obvious config flaws are allowed at any N. Owner commands in the
+report thread: `create A-<n>`, `comment A-<n>`, `wontfix A-<n> <why>`,
+`accept A-<n>`, `rerun`.
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.
