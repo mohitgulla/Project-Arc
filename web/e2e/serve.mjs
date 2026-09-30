@@ -4,6 +4,7 @@
 //   node e2e/serve.mjs            fresh, migrated, empty DB   (shell + kitchen sink)
 //   node e2e/serve.mjs --fixture  scripts/tower_fixture_db.py anchored at now (Overview)
 //   node e2e/serve.mjs --history  the fixture plus the E8.7c performance history (Performance)
+//   node e2e/serve.mjs --ops      the fixture plus the E8.7d Ops rows (runs, manifests, ...)
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,8 +13,11 @@ import { join, resolve } from "node:path";
 const repo = resolve(import.meta.dirname, "..", "..");
 const py = process.env.ARC_PYTHON ?? join(repo, ".venv", "bin", "python");
 const history = process.argv.includes("--history");
-const fixture = history || process.argv.includes("--fixture");
-const port = history
+const ops = process.argv.includes("--ops");
+const fixture = history || ops || process.argv.includes("--fixture");
+const port = ops
+  ? (process.env.ARC_E2E_OPS_PORT ?? "4184")
+  : history
   ? (process.env.ARC_E2E_HISTORY_PORT ?? "4183")
   : fixture
     ? (process.env.ARC_E2E_FIXTURE_PORT ?? "4182")
@@ -21,7 +25,12 @@ const port = history
 const db = join(mkdtempSync(join(tmpdir(), "arc-tower-e2e-")), "arc.db");
 
 if (fixture) {
-  const args = [join(repo, "scripts", "tower_fixture_db.py"), db, ...(history ? ["--history"] : [])];
+  const args = [
+    join(repo, "scripts", "tower_fixture_db.py"),
+    db,
+    ...(history ? ["--history"] : []),
+    ...(ops ? ["--ops"] : []),
+  ];
   execFileSync(py, args, { stdio: "inherit", cwd: repo });
 } else {
   execFileSync(

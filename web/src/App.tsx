@@ -11,7 +11,8 @@ import { OverviewPage } from "./pages/Overview";
 import { PositionsPage } from "./pages/Positions";
 import { TradeDetailRoute } from "./pages/TradeDetail";
 import { TradesPage } from "./pages/Trades";
-import { NotFoundPage, OpsPage } from "./routes/pages";
+import { ContextEntryPage, OpsPage, RunDetailPage } from "./pages/Ops";
+import { NotFoundPage } from "./routes/pages";
 import { PerformancePage } from "./pages/Performance";
 
 function makeClient() {
@@ -47,7 +48,9 @@ export function App() {
               </Route>
               <Route path="positions/*" element={<PositionsPage />} />
               <Route path="performance/*" element={<PerformancePage />} />
-              <Route path="ops/*" element={<OpsPage />} />
+              <Route path="ops" element={<OpsPage />} />
+              <Route path="ops/runs/:runId" element={<RunDetailPage />} />
+              <Route path="ops/context/:entryId" element={<ContextEntryPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="kitchen-sink" element={<KitchenSink />} />
               <Route path="*" element={<NotFoundPage />} />
