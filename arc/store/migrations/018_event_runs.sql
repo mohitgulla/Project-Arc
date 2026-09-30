@@ -1,4 +1,4 @@
--- 017_event_runs.sql — approval events: dispatch-once semantics (E6.2d).
+-- 018_event_runs.sql — approval events: dispatch-once semantics (E6.2d).
 --
 -- 1. routine_runs: an event-triggered run is unique per (job, event_id), not per
 --    (job, scheduled_for). Two approvals created in the same second used to share

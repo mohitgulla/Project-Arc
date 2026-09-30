@@ -293,7 +293,7 @@ def test_todays_proposals(conn: sqlite3.Connection) -> None:
     assert o.proposals_since == NOW - dt.timedelta(hours=24)
     assert all(p.created_at is not None and p.created_at >= o.proposals_since for p in o.proposals)
     aapl = by[("AAPL", "open")]
-    assert aapl.gate_passed is False and aapl.violations[0].startswith("max_alloc:")
+    assert aapl.gate_passed is False and aapl.violations[0].startswith("per_underlying_limit:")
     assert aapl.net_ev == pytest.approx(-3.2 * 4)  # managed net EV x contracts
     assert by[("GOOGL", "open")].gate_passed is None  # proposed only
     assert by[("MSFT", "open")].approval == "pending"

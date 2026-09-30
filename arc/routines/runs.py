@@ -88,7 +88,7 @@ class RoutineRunRepo:
 
         The unique key is what makes a duplicate tick a no-op. An event-triggered
         run (``event_id`` set) is unique per ``(job, event_id)`` instead (migration
-        017), so two events created in the same second each get their own run.
+        018), so two events created in the same second each get their own run.
         """
         now = now or now_et()
         run_id = f"run-{uuid.uuid4().hex[:16]}"
@@ -190,7 +190,7 @@ class RoutineRunRepo:
         return _row(row) if row else None
 
     def for_event(self, job: str, event_id: str) -> RoutineRun | None:
-        """The run of *job* for one event (unique since migration 017), if any."""
+        """The run of *job* for one event (unique since migration 018), if any."""
         row = self.conn.execute(
             "SELECT * FROM routine_runs WHERE job = ? AND event_id = ?", (job, event_id)
         ).fetchone()

@@ -220,7 +220,9 @@ def test_stuck_after_jobs_validation() -> None:
 def test_shipped_monitor_stuck_after_is_10m() -> None:
     ms = load_routines().monitoring
     assert ms.stuck_after_for("monitor") == dt.timedelta(minutes=10)
-    assert ms.stuck_after_for("director") == dt.timedelta(minutes=70)
+    # D31: the 5-min trading loop gets the same rule (loop.max_runtime is 4m)
+    assert ms.stuck_after_for("director") == dt.timedelta(minutes=10)
+    assert ms.stuck_after_for("scout") == dt.timedelta(minutes=70)
 
 
 # ---------------------------------------------------------------------------

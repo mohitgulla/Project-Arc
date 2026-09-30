@@ -382,6 +382,86 @@ def test_broker_error_fails_closed(conn: sqlite3.Connection) -> None:
     assert rep.halted and rep.day_pnl is None
 
 
+def _test_round_trip(coid: str | None) -> list[Fill]:
+    """An integration test's open + close of a QQQ vertical (no local record, flat after)."""
+    long, short = "QQQ261030C00500000", "QQQ261030C00505000"
+    out = []
+    for bid, (ls, ss) in (("brk-t-open", ("buy", "sell")), ("brk-t-close", ("sell", "buy"))):
+        suffix = bid.rsplit("-", 1)[1]
+        c = None if coid is None else f"{coid}arc2.tok.{suffix}.s0"
+        out += [
+            Fill(broker_order_id=bid, symbol=long, side=ls, qty=D(1), price=D("2.10"),
+                 filled_at=OPENED, client_order_id=c),
+            Fill(broker_order_id=bid, symbol=short, side=ss, qty=D(1), price=D("1.00"),
+                 filled_at=OPENED, client_order_id=c),
+        ]  # fmt: skip
+    return out
+
+
+def test_test_prefixed_fill_is_fill_test_and_does_not_halt(conn: sqlite3.Connection) -> None:
+    """E6.2c: an integration-test fill on the production account reconciles clean."""
+    pos = open_position(conn)
+    st = pos["st"]
+    broker = FakeBroker(
+        positions=held_positions(st), fills=[*open_fills(st), *_test_round_trip("test.")]
+    )
+    rep = run(conn, broker)
+    assert rep.clean, rep.mismatches
+    assert MismatchKind.FILL_UNKNOWN not in {m.kind for m in rep.mismatches}
+    assert [m.kind for m in rep.notices] == [MismatchKind.FILL_TEST] * 2
+    assert {m.refs[0] for m in rep.notices} == {"brk-t-open", "brk-t-close"}
+    assert all(m.refs[1].startswith("test.") for m in rep.notices)
+    assert not rep.halted and rep.halt_id is None
+    assert HaltSwitch(HaltRepo(conn)).state().active == []
+    assert "2 test fill(s) ignored" in rep.summary()
+    codes = reasons(conn)
+    assert ReasonCode.RECONCILE_CLEAN.value in codes
+    assert codes.count(ReasonCode.RECONCILE_TEST_FILL.value) == 2
+    assert ReasonCode.RECONCILE_MISMATCH.value not in codes
+    out = auditor_output(rep)
+    assert out.reconciliation_status == "clean"
+    assert [a.severity for a in out.anomalies] == ["info", "info"]
+
+
+def test_unprefixed_stray_fill_still_halts(conn: sqlite3.Connection) -> None:
+    """Only the ``test.`` prefix is exempt: an arc2/untagged stray is fill_unknown."""
+    for coid in (None, "arc2."):
+        c = connect(":memory:")
+        migrate(c)
+        rep = run(c, FakeBroker(fills=_test_round_trip(coid)))
+        assert [m.kind for m in rep.mismatches] == [MismatchKind.FILL_UNKNOWN] * 2
+        assert rep.halted and not rep.notices
+
+
+def test_test_fill_leaving_a_leg_open_still_halts(conn: sqlite3.Connection) -> None:
+    """A test order's leg still held is Arc's buying power at risk: position_unattributed."""
+    fills = _test_round_trip("test.")[:2]  # opened, never closed
+    held = [BrokerPosition(symbol="QQQ261030C00500000", qty=D(1), side="long"),
+            BrokerPosition(symbol="QQQ261030C00505000", qty=D(-1), side="short")]  # fmt: skip
+    rep = run(conn, FakeBroker(positions=held, fills=fills))
+    assert [m.kind for m in rep.notices] == [MismatchKind.FILL_TEST]
+    assert {m.kind for m in rep.mismatches} == {MismatchKind.POSITION_UNATTRIBUTED}
+    assert rep.halted
+
+
+def test_adapter_fills_carry_client_order_id() -> None:
+    """The Alpaca adapter passes the order's client_order_id onto every leg fill."""
+    import datetime as _d
+
+    at = _d.datetime(2026, 9, 28, 14, tzinfo=_d.UTC)
+    leg = MagicMock(symbol="QQQ261030C00500000", side="buy", filled_qty="1",
+                    filled_avg_price="2.1", filled_at=at)  # fmt: skip
+    order = MagicMock(id="brk-1", client_order_id="test.arc2.x.s0", legs=[leg],
+                      filled_at=leg.filled_at)  # fmt: skip
+    client = MagicMock()
+    client.get_orders.return_value = [order]
+    from arc.broker.alpaca_paper import AlpacaPaperBroker
+
+    with patch.dict("os.environ", {"ALPACA_API_KEY": "k", "ALPACA_SECRET_KEY": "s"}):
+        (f,) = AlpacaPaperBroker(client=client).fills(OPENED)
+    assert f.client_order_id == "test.arc2.x.s0" and f.broker_order_id == "brk-1"
+
+
 def test_open_order_resolved_when_broker_cancelled_without_fill(
     conn: sqlite3.Connection,
 ) -> None:

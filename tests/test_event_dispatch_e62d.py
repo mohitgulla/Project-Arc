@@ -344,7 +344,7 @@ class TestOneRunPerEvent:
         c = sqlite3.connect(":memory:")
         c.row_factory = sqlite3.Row
         for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
-            if int(path.stem.split("_", 1)[0]) >= 17:
+            if int(path.stem.split("_", 1)[0]) >= 18:
                 break
             c.executescript(path.read_text())
         c.execute(
@@ -353,7 +353,7 @@ class TestOneRunPerEvent:
                VALUES ('r1', 'scout', 'schedule', '2026-10-09T14:00:00Z', 'ok', 3)"""
         )
         c.commit()
-        c.executescript((MIGRATIONS_DIR / "017_event_runs.sql").read_text())
+        c.executescript((MIGRATIONS_DIR / "018_event_runs.sql").read_text())
         row = c.execute("SELECT * FROM routine_runs").fetchone()
         assert (row["run_id"], row["config_version"], row["event_id"]) == ("r1", 3, None)
         cols = {r[1] for r in c.execute("PRAGMA table_info(routine_events)")}
