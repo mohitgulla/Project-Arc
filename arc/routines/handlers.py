@@ -117,6 +117,13 @@ class JobContext:
     clock_fn: Callable[[], _dt.datetime] | None = None
     # D34: the process environment a handler needs to hand work to a subprocess.
     run_env: RunEnv = field(default_factory=RunEnv)
+    # Why this run started: schedule | manual | manual:<what> | event:<name> | chain:<root>.
+    reason: str = "schedule"
+
+    @property
+    def is_loop_run(self) -> bool:
+        """D31: a scheduled slot of the trading-loop persona (never a manual run)."""
+        return self.reason == "schedule" and self.routines.is_loop(self.job)
 
     @property
     def clock(self) -> Callable[[], _dt.datetime]:

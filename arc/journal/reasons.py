@@ -133,6 +133,8 @@ class ReasonCode(StrEnum):
     MARKET_DATA_MISSING = "market_data_missing"  # no VIX reading: fail closed for new opens
     PORTFOLIO_VIEW = "portfolio_view"  # the Director's read of the open book (noted)
     THESIS_CHECK = "thesis_check"  # the Director's check of an open position's thesis
+    # E5.8 (D31): the 5-min loop found the same inputs as the last full run
+    LOOP_NO_CHANGE = "loop_no_change"
     # sizing (D18)
     SIZING_OK = "sizing:ok"
     SIZING_CAPPED = "sizing:capped"
