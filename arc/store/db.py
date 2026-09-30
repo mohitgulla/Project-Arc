@@ -36,3 +36,20 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     log.debug("db.connected", path=path)
     return conn
+
+
+def connect_ro(db_path: Path | str | None = None) -> sqlite3.Connection:
+    """Open an existing store read-only (``mode=ro`` + ``query_only``); never creates it.
+
+    Raises ``FileNotFoundError`` when the file is missing, so a read-only view
+    pointed at a wrong path cannot leave an empty ``arc.db`` behind.
+    """
+    path = Path(db_path if db_path is not None else DEFAULT_DB_PATH).expanduser().resolve()
+    if not path.is_file():
+        msg = f"audit store not found: {path} (read-only views never create one)"
+        raise FileNotFoundError(msg)
+    conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only = ON")
+    log.debug("db.connected", path=str(path), mode="ro")
+    return conn
