@@ -822,6 +822,24 @@ class ApprovalService:
         self._update_card(req, RequestStatus.REJECTED, user, now, reason=text)
         return ReasonResult("recorded", proposal_hash, "Reason recorded.", dec_id)
 
+    # -- not executed (E6.2d) --------------------------------------------------
+
+    def mark_not_executed(self, proposal_hash: str, *, reason: str, now: _dt.datetime) -> bool:
+        """Re-render a decided card with why it was never executed (e.g. lapsed under halt).
+
+        The decision itself is unchanged; the card keeps its outcome line and gains
+        ``— _not executed: <reason>_``. ``False`` when there is no request.
+        """
+        req = self._request(proposal_hash)
+        if req is None:
+            return False
+        row = self.conn.execute(
+            "SELECT decided_by FROM approval_requests WHERE proposal_hash = ?", (proposal_hash,)
+        ).fetchone()
+        actor = str(row["decided_by"] or "") if row else ""
+        self._update_card(req, req.status, actor, now, reason=f"not executed: {reason}")
+        return True
+
     def _kind(self, proposal_hash: str) -> str:
         row = self.conn.execute(
             "SELECT kind FROM proposals WHERE proposal_hash = ?", (proposal_hash,)
