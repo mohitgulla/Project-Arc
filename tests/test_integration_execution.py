@@ -74,7 +74,7 @@ def _quote_check(conn: Any, priced: Any, settings: Any, *, fired: str, sid: str 
         row=_row(sid),
         priced=priced,
         settings=settings,
-        now=now_et(),
+        now=now_et(),  # wall-clock: live quotes are checked for staleness against real now
         persona=JournalPersona.INVESTOR,
         run_id=f"e62-integration-{fired}",
         fired=fired,
@@ -108,7 +108,7 @@ def _gate_approve_execute(
     from arc.pipeline.market import account_snapshot, limit_price, market_snapshot, price_structure
     from arc.store.repos import GateDecisionRepo, HaltRepo, ProposalRepo
 
-    today = now_et().date()
+    today = now_et().date()  # wall-clock: prices live quotes as of today
     priced = price_structure(data, legs, as_of=today, r=0.04, require_iv=not closing)
     _quote_check(conn, priced, settings, fired="close" if closing else "open", sid=structure_id)
     limit = limit_price(priced.structure.net_debit_credit, settings.limit_tick)
@@ -118,7 +118,8 @@ def _gate_approve_execute(
     cap = max_gain_cap(priced.structure.legs, tick)
     assert cap is not None and band.hi <= cap, (band, cap)  # max gain > 0 at every step
 
-    now = now_et()  # after the quotes were fetched (gate refuses future quotes)
+    # wall-clock: after the live quotes were fetched (gate refuses future quotes)
+    now = now_et()
     acct = account_snapshot(broker.account(), now)
     proposal = Proposal(
         candidate_id=candidate_id,
@@ -184,6 +185,7 @@ def _gate_approve_execute(
     svc = ApprovalService(conn, settings, LogCardPoster())
     sweep = svc.publish_pending(now)
     assert sweep.published == [phash], sweep
+    # wall-clock: approval must land inside the live proposal's TTL
     res = svc.decide(phash, user=settings.approver_slack_user_ids[0], approve=True, now=now_et())
     assert res.outcome.value == "approved", res
     record = approval_record(conn, phash)
@@ -224,6 +226,7 @@ def _close_with_retry(
     tries: list[str] = []
     for attempt in (1, 2):
         for _ in range(_READS - 1):  # re-read while only the quotes are unusable
+            # wall-clock: re-reads live quotes as of today
             pre = price_structure(data, legs, as_of=now_et().date(), r=0.04, require_iv=False)
             try:
                 _quote_check(conn, pre, settings, fired="close-preread", sid=structure_id)
@@ -274,7 +277,7 @@ def test_approve_then_work_band_on_paper() -> None:
     from arc.store.migrate import migrate
     from arc.store.repos import CandidateRepo
 
-    now = now_et()
+    now = now_et()  # wall-clock: live RTH check before trading paper orders
     if not is_open(now):
         pytest.skip("RTH closed: E6.2 paper integration must run during market hours")
 

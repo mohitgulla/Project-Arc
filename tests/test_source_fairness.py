@@ -569,26 +569,35 @@ class TestTwoStage:
         row = conn.execute("SELECT status FROM scout_batches WHERE stage='digest'").fetchone()
         assert row[0] == "llm_error"
 
+    @pytest.mark.parametrize(
+        "now",
+        [
+            NOW,
+            # Day boundary: midnight ET is 04:00Z, so ET and UTC dates differ around it.
+            dt.datetime(2026, 9, 29, 0, 0, tzinfo=ET),
+        ],
+        ids=["midday", "et-midnight"],
+    )
     def test_over_budget_docs_wait_then_close_as_skipped_budget(
-        self, conn, settings: ArcSettings
+        self, conn, settings: ArcSettings, now: dt.datetime
     ) -> None:
         rows = [
             (f"e{i}", "edgar", f"https://sec.gov/{i}", f"Form 8-K filing number {i} unique{i}.", [])
             for i in range(10)
         ] + [("w1", "wsj", "https://wsj.com/a", "Markets rally on jobs data.", [])]
         _seed(conn, rows)
-        # ingested_at is stamped with the wall clock; pin it to the test's NOW so the
-        # TTL arithmetic below doesn't depend on when the suite runs.
-        conn.execute("UPDATE raw_docs SET ingested_at = ?", (NOW.isoformat(),))
+        # ingested_at is stamped with the wall clock; pin it to the injected `now` so the
+        # TTL arithmetic below doesn't depend on when the suite runs (E4.5a, E1.1b).
+        conn.execute("UPDATE raw_docs SET ingested_at = ?", (now.isoformat(),))
         s = settings.model_copy(update={"scout_doc_budget": 4})
         reg = SourceRegistry.from_routines(_shipped_like())
-        res = run_scout(conn, s, llm=FixtureScoutLLM([]), now=NOW, run_id="r1", registry=reg)
+        res = run_scout(conn, s, llm=FixtureScoutLLM([]), now=now, run_id="r1", registry=reg)
         assert dict((lbl, (r, o)) for lbl, r, o in res.source_mix) == {
             "WSJ": (1, 0),
             "EDGAR": (3, 7),
         }
         assert res.over_budget == 7 and res.skipped_budget == 0  # still inside the TTL
-        later = NOW + dt.timedelta(days=6)  # past the 5d raw_doc_ref TTL
+        later = now + dt.timedelta(days=6)  # past the 5d raw_doc_ref TTL
         routines = load_routines(DEFAULT_ROUTINES_PATH)
         res2 = run_scout(
             conn,

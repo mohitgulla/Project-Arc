@@ -983,9 +983,17 @@ class TestFixtureDryRun:
         assert out["processed"] == 1
         assert out["briefs"][0]["dropped"] == {DROP_UNGROUNDED: 2}
 
-    def test_cli_brief_show(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_cli_brief_show(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         from arc.cli import main
 
+        now = dt.datetime(2026, 9, 28, 9, 0, tzinfo=ET)
+        # `arc brief show` reads the clock via briefs.now_et; pin it to the same instant.
+        monkeypatch.setattr("arc.ingest.channels.briefs.now_et", lambda: now)
         path = tmp_path / "arc.db"
         conn = connect(path)
         migrate(conn)
@@ -994,9 +1002,9 @@ class TestFixtureDryRun:
         res = _build(
             proc,
             _payload(),
-            video=_video(published=dt.datetime.now(tz=ET) - dt.timedelta(minutes=5)),
+            video=_video(published=now - dt.timedelta(minutes=5)),
         )
-        ChannelBriefRepo(conn).store(res, proc, now=dt.datetime.now(tz=ET))
+        ChannelBriefRepo(conn).store(res, proc, now=now)
         conn.close()
 
         assert main(["brief", "show", "--channel", "stockedup", "--db", str(path)]) == 0
