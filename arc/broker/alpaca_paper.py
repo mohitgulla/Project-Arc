@@ -1,8 +1,11 @@
 """Alpaca paper-trading BrokerAdapter implementation.
 
 Reads ``ALPACA_API_KEY`` and ``ALPACA_SECRET_KEY`` from the environment
-(loaded via ``~/.hermes/.env``).  The base URL is **hard-pinned** to
-``https://paper-api.alpaca.markets`` when ``ARC_ENV=paper`` (default).
+(loaded via ``~/.hermes/.env``) unless the caller passes explicit keys: the
+integration tests pass the dedicated *test* paper account's keys (E6.2c), so
+they never trade the production paper account. Production code never does.
+The base URL is **hard-pinned** to ``https://paper-api.alpaca.markets`` when
+``ARC_ENV=paper`` (default).
 
 See PLAN.md §4 (E1.4) and AGENTS.md.
 """
@@ -78,10 +81,17 @@ def _require_paper() -> None:
         raise RuntimeError(msg)
 
 
-def _make_client() -> TradingClient:
-    """Build a TradingClient pointed at the paper endpoint."""
-    api_key = os.environ.get("ALPACA_API_KEY", "")
-    secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
+def _make_client(api_key: str | None = None, secret_key: str | None = None) -> TradingClient:
+    """Build a TradingClient pointed at the paper endpoint.
+
+    Explicit keys (both or neither) win over ``ALPACA_API_KEY``/``ALPACA_SECRET_KEY``.
+    """
+    if (api_key is None) != (secret_key is None):
+        msg = "pass both api_key and secret_key, or neither"
+        raise ValueError(msg)
+    if api_key is None:
+        api_key = os.environ.get("ALPACA_API_KEY", "")
+        secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
     if not api_key or not secret_key:
         msg = (
             "ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in the "
@@ -147,9 +157,15 @@ class AlpacaPaperBroker:
     The base URL is unconditionally pinned to ``paper-api.alpaca.markets``.
     """
 
-    def __init__(self, client: TradingClient | None = None) -> None:
+    def __init__(
+        self,
+        client: TradingClient | None = None,
+        *,
+        api_key: str | None = None,
+        secret_key: str | None = None,
+    ) -> None:
         _require_paper()
-        self._client = client or _make_client()
+        self._client = client or _make_client(api_key, secret_key)
 
     # -- account -------------------------------------------------------------
 
@@ -314,6 +330,7 @@ class AlpacaPaperBroker:
                 continue
             if order.filled_at is None:
                 continue
+            coid = order.client_order_id if isinstance(order.client_order_id, str) else None
             # For mleg orders, report fills per leg
             if order.legs:
                 for leg in order.legs:
@@ -326,6 +343,7 @@ class AlpacaPaperBroker:
                                 qty=Decimal(str(leg.filled_qty)),
                                 price=Decimal(str(leg.filled_avg_price)),
                                 filled_at=leg.filled_at,
+                                client_order_id=coid,
                             )
                         )
             elif order.filled_avg_price and order.filled_qty:
@@ -337,6 +355,7 @@ class AlpacaPaperBroker:
                         qty=Decimal(str(order.filled_qty)),
                         price=Decimal(str(order.filled_avg_price)),
                         filled_at=order.filled_at,
+                        client_order_id=coid,
                     )
                 )
         return result

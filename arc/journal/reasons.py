@@ -224,6 +224,7 @@ class ReasonCode(StrEnum):
     RECONCILE_EXPIRED = "reconcile:expired"
     RECONCILE_WASH_SALE = "reconcile:wash_sale"
     RECONCILE_LOT_PRICE = "reconcile:lot_price"
+    RECONCILE_TEST_FILL = "reconcile:test_fill"
 
 
 def gate_reason(violation: str) -> ReasonCode:
@@ -397,6 +398,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.RECONCILE_EXPIRED: "Expired at reconcile",
     ReasonCode.RECONCILE_WASH_SALE: "Wash sale flagged at reconcile",
     ReasonCode.RECONCILE_LOT_PRICE: "Tax-lot price corrected at reconcile",
+    ReasonCode.RECONCILE_TEST_FILL: "Integration-test fill seen at reconcile",
 }
 
 
