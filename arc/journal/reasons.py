@@ -398,6 +398,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.RECONCILE_EXPIRED: "Expired at reconcile",
     ReasonCode.RECONCILE_WASH_SALE: "Wash sale flagged at reconcile",
     ReasonCode.RECONCILE_LOT_PRICE: "Tax-lot price corrected at reconcile",
+    ReasonCode.RECONCILE_TEST_FILL: "Integration-test fill seen at reconcile",
 }
 
 
