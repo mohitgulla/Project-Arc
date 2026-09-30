@@ -177,6 +177,7 @@ class ReasonCode(StrEnum):
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
     AUTO_APPROVE = "auto_approve"
+    AUTO_APPROVE_GATED = "auto_approve_gated"  # E7.5a: scorecard gate held D34 back
     TTL_EXPIRED = "ttl_expired"
     NOT_ACTIONABLE_GATE_FAIL = "not_actionable:gate_fail"
     NOT_ACTIONABLE_NO_TOKEN = "not_actionable:no_token"
@@ -224,6 +225,7 @@ class ReasonCode(StrEnum):
     RECONCILE_EXPIRED = "reconcile:expired"
     RECONCILE_WASH_SALE = "reconcile:wash_sale"
     RECONCILE_LOT_PRICE = "reconcile:lot_price"
+    RECONCILE_TEST_FILL = "reconcile:test_fill"
 
 
 def gate_reason(violation: str) -> ReasonCode:
@@ -355,6 +357,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.OWNER_APPROVE: "Owner approved",
     ReasonCode.OWNER_REJECT: "Owner rejected",
     ReasonCode.AUTO_APPROVE: "Auto-approved",
+    ReasonCode.AUTO_APPROVE_GATED: "Auto-approve held back by the scorecard gate",
     ReasonCode.TTL_EXPIRED: "Approval window expired",
     ReasonCode.NOT_ACTIONABLE_GATE_FAIL: "Not actionable: gate failed",
     ReasonCode.NOT_ACTIONABLE_NO_TOKEN: "Not actionable: no gate token",
@@ -397,6 +400,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.RECONCILE_EXPIRED: "Expired at reconcile",
     ReasonCode.RECONCILE_WASH_SALE: "Wash sale flagged at reconcile",
     ReasonCode.RECONCILE_LOT_PRICE: "Tax-lot price corrected at reconcile",
+    ReasonCode.RECONCILE_TEST_FILL: "Integration-test fill seen at reconcile",
 }
 
 

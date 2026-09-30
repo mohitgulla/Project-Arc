@@ -1,6 +1,10 @@
 """Integration tests for Alpaca paper adapter.
 
-These tests require real Alpaca paper API keys and are skipped without them.
+These tests run against the **dedicated test paper account** only
+(``ALPACA_TEST_API_KEY`` / ``ALPACA_TEST_SECRET_KEY``, E6.2c): they skip when
+those are unset and fail if the test key is the production ``ALPACA_API_KEY``.
+Orders go through :class:`tests.alpaca_test_account.PrefixedOrderBroker`, so
+their ``client_order_id`` starts with ``test.``.
 Mark: ``pytest -m integration`` to run.
 
 Tests:
@@ -12,18 +16,15 @@ Tests:
 from __future__ import annotations
 
 import datetime as dt
-import os
 import time
 from decimal import Decimal
 
 import pytest
 
+from arc.broker.base import TEST_CLIENT_ORDER_PREFIX
 from arc.utils.calendar import now_et
+from tests.alpaca_test_account import integration_broker, integration_market_data
 from tests.vertical_legs import select_bull_call_vertical
-
-# Skip the entire module if keys are absent
-_HAS_KEYS = bool(os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY"))
-pytestmark = pytest.mark.skipif(not _HAS_KEYS, reason="ALPACA_API_KEY/SECRET not set")
 
 _OPEN_STATES = {"new", "accepted", "pending_new", "held"}
 
@@ -40,18 +41,14 @@ def _wait_for(broker, broker_id: str, targets: set[str], timeout: float = 15.0):
 
 @pytest.fixture(scope="module")
 def broker():
-    """Shared broker instance for integration tests."""
-    from arc.broker.alpaca_paper import AlpacaPaperBroker
-
-    return AlpacaPaperBroker()
+    """The test account's broker (skips without TEST_ keys, fails on the production key)."""
+    return integration_broker()
 
 
 @pytest.fixture(scope="module")
 def data():
-    """Shared data provider instance for integration tests."""
-    from arc.data.alpaca import AlpacaMarketData
-
-    return AlpacaMarketData()
+    """Market data authenticated as the test account."""
+    return integration_market_data()
 
 
 @pytest.mark.integration
@@ -70,7 +67,7 @@ class TestAlpacaIntegration:
 
     def test_option_chain_spy(self, data) -> None:
         """Fetch SPY chain with 30-45 DTE window; validate contracts."""
-        today = now_et().date()
+        today = now_et().date()  # wall-clock: live Alpaca chain, DTE window from today
         exp_start = today + dt.timedelta(days=30)
         exp_end = today + dt.timedelta(days=45)
 
@@ -98,7 +95,7 @@ class TestAlpacaIntegration:
 
     def test_history_bars_spy(self, data) -> None:
         """Fetch SPY daily bars."""
-        today = now_et().date()
+        today = now_et().date()  # wall-clock: live Alpaca bars end at today
         start = today - dt.timedelta(days=30)
         bars = data.history_bars("SPY", start, today)
         assert len(bars) > 0
@@ -109,7 +106,7 @@ class TestAlpacaIntegration:
         Uses SPY options ~30 DTE.  Limit price is set absurdly low ($0.01)
         so the order will never fill.
         """
-        today = now_et().date()
+        today = now_et().date()  # wall-clock: live mleg order on today's listed expiries
         exp_start = today + dt.timedelta(days=30)
         exp_end = today + dt.timedelta(days=45)
 
@@ -147,6 +144,9 @@ class TestAlpacaIntegration:
             status = broker.order_status(broker_id)
             assert status.broker_order_id == broker_id
             assert status.status in _OPEN_STATES, status.status
+            assert (status.client_order_id or "").startswith(TEST_CLIENT_ORDER_PREFIX), (
+                status.client_order_id
+            )
         finally:
             # Always clean up the paper order, even if an assertion failed.
             broker.cancel(broker_id)

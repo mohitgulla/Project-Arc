@@ -11,6 +11,7 @@ Tests cover:
 from __future__ import annotations
 
 import datetime as dt
+from types import SimpleNamespace
 from unittest import mock
 from zoneinfo import ZoneInfo
 
@@ -26,18 +27,38 @@ ET = ZoneInfo("America/New_York")
 # ---------------------------------------------------------------------------
 
 
+class _FrozenDatetime(dt.datetime):
+    """``datetime`` whose ``now()`` returns a fixed instant (no wall-clock read)."""
+
+    frozen = dt.datetime(2026, 1, 15, 17, 30, tzinfo=dt.UTC)
+
+    @classmethod
+    def now(cls, tz: dt.tzinfo | None = None) -> _FrozenDatetime:  # type: ignore[override]
+        return cls.fromtimestamp(cls.frozen.timestamp(), tz=tz)
+
+
+@pytest.fixture
+def frozen_clock(monkeypatch: pytest.MonkeyPatch) -> type[_FrozenDatetime]:
+    """Swap the ``datetime`` module seen by ``arc.utils.calendar`` for a frozen one."""
+    public = {k: getattr(dt, k) for k in dir(dt) if not k.startswith("_")}
+    monkeypatch.setattr(cal, "_dt", SimpleNamespace(**{**public, "datetime": _FrozenDatetime}))
+    return _FrozenDatetime
+
+
 class TestNowEt:
-    def test_returns_et_timezone(self) -> None:
-        result = cal.now_et()
+    # now_et() is the clock under test; the frozen_clock fixture pins datetime.now(),
+    # so these calls read the fixed instant, not the wall clock.
+    def test_returns_et_timezone(self, frozen_clock: type[_FrozenDatetime]) -> None:
+        result = cal.now_et()  # wall-clock: unit test of now_et itself (datetime frozen)
         assert result.tzinfo is not None
         # Normalize: the tz name should be America/New_York (or ET/EST/EDT)
         assert str(result.tzinfo) == "America/New_York"
 
-    def test_returns_current_time(self) -> None:
-        before = dt.datetime.now(tz=ET)
-        result = cal.now_et()
-        after = dt.datetime.now(tz=ET)
-        assert before <= result <= after
+    def test_returns_current_time(self, frozen_clock: type[_FrozenDatetime]) -> None:
+        # now_et() returns the instant datetime.now() reports, converted to ET.
+        result = cal.now_et()  # wall-clock: unit test of now_et itself (datetime frozen)
+        assert result == frozen_clock.frozen
+        assert result.utcoffset() == dt.timedelta(hours=-5)  # EST in January
 
 
 # ---------------------------------------------------------------------------
@@ -147,12 +168,15 @@ class TestDST:
         t = dt.datetime(2026, 11, 2, 10, 0, tzinfo=ET)
         assert cal.is_open(t) is True
 
-    def test_now_et_during_dst(self) -> None:
-        # Freeze time to a DST date and verify timezone
+    def test_now_et_during_dst(
+        self, frozen_clock: type[_FrozenDatetime], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Freeze datetime.now() to a DST instant: now_et() reports EDT (UTC-4).
         frozen = dt.datetime(2026, 7, 15, 12, 0, tzinfo=ET)
-        with mock.patch("arc.utils.calendar.now_et", return_value=frozen):
-            result = cal.now_et()
+        monkeypatch.setattr(frozen_clock, "frozen", frozen)
+        result = cal.now_et()  # wall-clock: unit test of now_et itself (datetime frozen)
         assert result == frozen
+        assert result.utcoffset() == dt.timedelta(hours=-4)
 
 
 # ---------------------------------------------------------------------------

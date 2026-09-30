@@ -262,6 +262,7 @@ def _tick(
             _write(
                 f"approvals: {len(approvals['published'])} card(s) posted, "
                 f"{len(approvals['auto_approved'])} auto-approved, "
+                f"{len(approvals.get('auto_gated', []))} held by the scorecard gate, "
                 f"{len(approvals['expired'])} expired"
             )
         if correlation is not None:
@@ -544,6 +545,26 @@ def trace_runs(conn: sqlite3.Connection, ref: str) -> list[dict[str, Any]]:
             for e in (store.get(i) for i in run.outputs)
             if e is not None
         ]
+        # E6.2d: the approval-event lifecycle this run took part in: the event it ran
+        # for (created → dispatched → consumed), or the events it dispatched (execute).
+        ev_rows = conn.execute(
+            """SELECT * FROM routine_events WHERE id = ? OR dispatched_by = ?
+               ORDER BY created_at, rowid""",
+            (run.event_id or "", run.run_id),
+        ).fetchall()
+        events = [
+            {
+                "id": e["id"],
+                "name": e["name"],
+                "role": "ran_for" if e["id"] == run.event_id else "dispatched",
+                "created_at": e["created_at"],
+                "dispatched_at": e["dispatched_at"],
+                "dispatched_by": e["dispatched_by"],
+                "consumed_at": e["consumed_at"],
+                "consumed_by": json.loads(e["consumed_by"] or "[]"),
+            }
+            for e in ev_rows
+        ]
         out.append(
             {
                 "job": run.job,
@@ -557,6 +578,7 @@ def trace_runs(conn: sqlite3.Connection, ref: str) -> list[dict[str, Any]]:
                 },
                 "read": list(read.values()),
                 "wrote": wrote,
+                "events": events,
                 "persona_calls": [
                     {
                         "id": c["id"],
@@ -603,6 +625,12 @@ def _run_trace(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
             _write(f"   wrote {e['kind']:<13} {e['subject']:<10} {e['id']}")
         for c in st["persona_calls"]:
             _write(f"   call  {c['model']} {c['status']} sha={c['prompt_sha256'][:12]} {c['id']}")
+        for ev in st["events"]:
+            _write(
+                f"   event {ev['name']} {ev['role']:<10} {ev['id']} created={ev['created_at']}"
+                f" dispatched={ev['dispatched_at'] or '-'} by={ev['dispatched_by'] or '-'}"
+                f" consumed={ev['consumed_at'] or '-'} by={','.join(ev['consumed_by']) or '-'}"
+            )
         ext = ", ".join(x["name"] for x in m.get("external_inputs", [])) or "-"
         _write(f"   external: {ext}")
     return 0

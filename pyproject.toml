@@ -117,6 +117,7 @@ source_modules = [
     "arc.journal.store",
     "arc.journal.attribution",
     "arc.journal.scorecard",
+    "arc.journal.views",
 ]
 forbidden_modules = [
     "anthropic",

@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.backtest.costs import CostModel
 from arc.journal.attribution import MULTIPLIER, calibration, expiry_value, realised_pnl, slippage
 from arc.journal.reasons import Choice, ReasonCode, Stage
 from arc.journal.store import JournalStore
@@ -74,16 +75,21 @@ __all__ = [
     "OrderBudgetLimits",
     "PnlSummary",
     "Scorecard",
+    "AutoApproveReadiness",
+    "KindSlippage",
     "SlippageRow",
     "SlippageSummary",
     "SwapRow",
     "build_scorecard",
     "calibration_points",
+    "auto_approve_readiness",
     "closed_positions",
     "execution_costs",
     "funnel",
     "model_vs_realised",
     "render_markdown",
+    "slippage_by_kind",
+    "slippage_since",
     "week_window",
 ]
 
@@ -252,6 +258,27 @@ class SlippageRow(BaseModel):
         False,
         description="A close with no analytics of its own: its open's fee model was used",
     )
+    structure_kind: str | None = Field(None, description="vertical_credit, iron_condor, ...")
+    spread_usd: float | None = Field(
+        None,
+        description="Modelled bid-ask spread at proposal time (quote, else cost-model "
+        "estimate), all legs x ratio x 100 x contracts (None = no leg analytics)",
+    )
+
+
+class KindSlippage(BaseModel):
+    """Realised entry slippage of one structure kind as a fraction of the modelled spread."""
+
+    model_config = _FORBID
+
+    fills: int = Field(0, description="Fills with a known modelled spread")
+    realised_usd: float = 0.0
+    spread_usd: float = 0.0
+
+    @property
+    def frac(self) -> float | None:
+        """x in the backtest fill model ``mid ± x·spread`` (realised ÷ modelled spread)."""
+        return self.realised_usd / self.spread_usd if self.spread_usd > 0 else None
 
 
 class SlippageSummary(BaseModel):
@@ -264,6 +291,11 @@ class SlippageSummary(BaseModel):
         None, description="Realised over the same fills as expected_usd"
     )
     rows: list[SlippageRow] = Field(default_factory=list)
+
+    @property
+    def by_kind(self) -> dict[str, KindSlippage]:
+        """Realised entry slippage per structure kind (fills with a modelled spread only)."""
+        return slippage_by_kind(self.rows)
 
 
 class ModelVsRealised(BaseModel):
@@ -688,56 +720,110 @@ def _fees(analytics: dict[str, Any]) -> tuple[float, float] | None:
     return commission, regulatory
 
 
+def _spread_usd(analytics: dict[str, Any], contracts: int) -> float | None:
+    """Modelled bid-ask spread of every leg (x ratio x 100 x contracts) at proposal time.
+
+    Per leg: the quoted spread when the NBBO was valid, else the cost model's estimate
+    (``CostModel.spread``), i.e. the spread the proposal's Net EV was priced with.
+    ``None`` when there are no leg analytics or a leg had no mid.
+    """
+    legs = analytics.get("legs") or []
+    if not legs:
+        return None
+    try:
+        model = CostModel.model_validate(analytics.get("cost_model") or {})
+    except ValueError:
+        return None
+    total = 0.0
+    for leg in legs:
+        mid = leg.get("mid")
+        if mid is None:
+            return None
+        total += model.spread(float(mid), leg.get("bid"), leg.get("ask")) * int(
+            leg.get("ratio") or 1
+        )
+    return total * float(MULTIPLIER) * contracts
+
+
+def _slippage_row(conn: sqlite3.Connection, r: sqlite3.Row) -> SlippageRow | None:
+    """One filled execution → its slippage row (None when the proposal is unknown)."""
+    prop = _structure(conn, r["proposal_hash"])
+    if prop is None:
+        return None
+    st = Structure.model_validate_json(prop["structure_json"])
+    n = int(r["filled_qty"])
+    usd, bps = slippage(
+        limit=st.net_debit_credit,
+        fill=Decimal(r["fill_price"]),
+        contracts=n,
+        max_loss_per_contract=st.max_loss,
+    )
+    analytics = _analytics(conn, r["proposal_hash"]) or {}
+    exp_unit = analytics.get("entry_slippage")
+    quant = json.loads(prop["quant_json"] or "{}")
+    fees = _fees(analytics)
+    from_open = False
+    if fees is None and r["kind"] == "close" and r["open_proposal_hash"]:
+        fees = _fees(_analytics(conn, r["open_proposal_hash"]) or {})
+        from_open = fees is not None
+    commission, regulatory = fees or (0.0, 0.0)
+    return SlippageRow(
+        proposal_hash=r["proposal_hash"],
+        ticker=prop["ticker"] or "",
+        kind=r["kind"],
+        contracts=n,
+        realised_usd=float(usd),
+        realised_bps=bps,
+        expected_usd=None if exp_unit is None else float(exp_unit) * n,
+        cost_bps=quant.get("cost_bps"),
+        structure_kind=str(st.kind) if st.kind is not None else None,
+        spread_usd=_spread_usd(analytics, n),
+        at=_ts(r["started_at"]),
+        structure_id=r["structure_id"],
+        commission=commission * n,
+        fees=regulatory * n,
+        fees_from_open=from_open,
+    )
+
+
+def slippage_by_kind(rows: Iterable[SlippageRow]) -> dict[str, KindSlippage]:
+    """Entry fills grouped by structure kind; only fills with a modelled spread count."""
+    acc: dict[str, list[SlippageRow]] = defaultdict(list)
+    for r in rows:
+        if r.kind == "open" and r.structure_kind and r.spread_usd is not None:
+            acc[r.structure_kind].append(r)
+    return {
+        k: KindSlippage(
+            fills=len(v),
+            realised_usd=sum(x.realised_usd for x in v),
+            spread_usd=sum(x.spread_usd or 0.0 for x in v),
+        )
+        for k, v in sorted(acc.items())
+    }
+
+
+def _filled_executions(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return list(
+        conn.execute(
+            """SELECT e.proposal_hash, e.kind, e.filled_qty, e.fill_price, e.started_at,
+                      COALESCE(e.structure_id, s.id) AS structure_id, s2.open_proposal_hash
+               FROM executions e
+               LEFT JOIN open_structures s ON s.open_proposal_hash = e.proposal_hash
+               LEFT JOIN open_structures s2 ON s2.id = e.structure_id
+               WHERE e.filled_qty > 0 AND e.fill_price IS NOT NULL
+               ORDER BY e.started_at, e.rowid"""
+        )
+    )
+
+
 def _slippage(conn: sqlite3.Connection, start: _dt.datetime, end: _dt.datetime) -> SlippageSummary:
     rows: list[SlippageRow] = []
-    for r in conn.execute(
-        """SELECT e.proposal_hash, e.kind, e.filled_qty, e.fill_price, e.started_at,
-                  COALESCE(e.structure_id, s.id) AS structure_id, s2.open_proposal_hash
-           FROM executions e
-           LEFT JOIN open_structures s ON s.open_proposal_hash = e.proposal_hash
-           LEFT JOIN open_structures s2 ON s2.id = e.structure_id
-           WHERE e.filled_qty > 0 AND e.fill_price IS NOT NULL"""
-    ):
-        started = _ts(r["started_at"])
-        if not _in(started, start, end):
+    for r in _filled_executions(conn):
+        if not _in(_ts(r["started_at"]), start, end):
             continue
-        prop = _structure(conn, r["proposal_hash"])
-        if prop is None:
-            continue
-        st = Structure.model_validate_json(prop["structure_json"])
-        n = int(r["filled_qty"])
-        usd, bps = slippage(
-            limit=st.net_debit_credit,
-            fill=Decimal(r["fill_price"]),
-            contracts=n,
-            max_loss_per_contract=st.max_loss,
-        )
-        analytics = _analytics(conn, r["proposal_hash"]) or {}
-        exp_unit = analytics.get("entry_slippage")
-        quant = json.loads(prop["quant_json"] or "{}")
-        fees = _fees(analytics)
-        from_open = False
-        if fees is None and r["kind"] == "close" and r["open_proposal_hash"]:
-            fees = _fees(_analytics(conn, r["open_proposal_hash"]) or {})
-            from_open = fees is not None
-        commission, regulatory = fees or (0.0, 0.0)
-        rows.append(
-            SlippageRow(
-                proposal_hash=r["proposal_hash"],
-                ticker=prop["ticker"] or "",
-                kind=r["kind"],
-                contracts=n,
-                realised_usd=float(usd),
-                realised_bps=bps,
-                expected_usd=None if exp_unit is None else float(exp_unit) * n,
-                cost_bps=quant.get("cost_bps"),
-                at=started,
-                structure_id=r["structure_id"],
-                commission=commission * n,
-                fees=regulatory * n,
-                fees_from_open=from_open,
-            )
-        )
+        row = _slippage_row(conn, r)
+        if row is not None:
+            rows.append(row)
     modelled = [x for x in rows if x.expected_usd is not None]
     return SlippageSummary(
         fills=len(rows),
@@ -898,6 +984,143 @@ def build_scorecard(
         ],
         calibration_trades=len(history),
     )
+
+
+class AutoApproveReadiness(BaseModel):
+    """E7.5a: may D34 auto-approve open a new position right now? (fail closed)
+
+    Built by :func:`auto_approve_readiness` from the same closed positions and fills
+    the weekly scorecard reports. ``failing`` holds one code per unmet criterion:
+
+    - ``min_closed_trades``: fewer closed trades than the configured minimum;
+    - ``negative_realised_ev``: mean realised P&L per trade, net of fees, < 0 over
+      the window (the latest ``min_closed_trades`` closed trades);
+    - ``slippage_over_tolerance``: realised entry slippage over the window's fills
+      > their modelled half-spread x tolerance;
+    - ``slippage_unknown``: no fill in the window has a modelled spread to compare to.
+    """
+
+    model_config = _FORBID
+
+    ok: bool
+    failing: list[str] = Field(default_factory=list)
+    closed_trades: int = Field(..., description="Closed trades in the store, all time")
+    min_closed_trades: int
+    window_trades: int = Field(0, description="Latest closed trades the EV / slippage use")
+    realised_pnl: float = Field(0.0, description="$ over the window, fills only, before fees")
+    fees: float = Field(0.0, description="$ fees over the window (entry + close legs)")
+    realised_net_ev: float | None = Field(None, description="$ per trade, net of fees")
+    slippage_fills: int = Field(0, description="Window entry fills with a modelled spread")
+    realised_slippage: float | None = Field(None, description="$ fill - mid over those fills")
+    half_spread: float | None = Field(None, description="$ modelled half-spread, same fills")
+    slippage_tolerance: float
+
+    @property
+    def slippage_limit(self) -> float | None:
+        return None if self.half_spread is None else self.half_spread * self.slippage_tolerance
+
+    def summary(self) -> str:
+        """One line for the journal, the card and the log."""
+        if self.ok:
+            return (
+                f"scorecard gate met: {self.closed_trades} closed trades, net EV "
+                f"{_usd(self.realised_net_ev)}/trade, slippage {_usd(self.realised_slippage)} "
+                f"<= {_usd(self.slippage_limit, signed=False)}"
+            )
+        parts: list[str] = []
+        for code in self.failing:
+            if code == "min_closed_trades":
+                parts.append(
+                    f"{self.closed_trades} closed trades < {self.min_closed_trades} required"
+                )
+            elif code == "negative_realised_ev":
+                parts.append(
+                    f"realised net EV {_usd(self.realised_net_ev)}/trade over the last "
+                    f"{self.window_trades} trades < $0"
+                )
+            elif code == "slippage_over_tolerance":
+                parts.append(
+                    f"realised slippage {_usd(self.realised_slippage)} > half-spread "
+                    f"{_usd(self.half_spread, signed=False)} x {self.slippage_tolerance:g}"
+                )
+            else:
+                parts.append("no fill with a modelled spread to check slippage against")
+        return "; ".join(parts)
+
+
+def auto_approve_readiness(
+    conn: sqlite3.Connection,
+    *,
+    now: _dt.datetime,
+    min_closed_trades: int,
+    slippage_tolerance: float,
+) -> AutoApproveReadiness:
+    """E7.5a scorecard gate for D34 auto-approve, from the audit store (read-only).
+
+    The window is the latest ``min_closed_trades`` positions closed before *now*.
+    Net EV = mean over the window of realised P&L (journal fills) minus fees: the
+    entry fees frozen with the open proposal's analytics, charged again for a
+    position closed by an order (expiry settlements pay no close fees). Slippage
+    compares the window's entry fills (fill − mid, + = worse) with half the modelled
+    bid-ask spread of the same fills x *slippage_tolerance*. Every unknown fails
+    closed: no fills with a modelled spread → ``slippage_unknown``.
+    """
+    realised = _realised_by_structure(conn)
+    closed = _closed_positions(
+        conn,
+        _dt.datetime(1970, 1, 1, tzinfo=_dt.UTC),
+        now,
+        realised,
+        None,
+        today=now.astimezone(ET).date(),
+        all_time=True,
+    )
+    window = closed[-min_closed_trades:] if min_closed_trades > 0 else []
+    failing: list[str] = []
+    if len(closed) < min_closed_trades:
+        failing.append("min_closed_trades")
+    pnl = sum(c.realised_pnl for c in window)
+    fees = 0.0
+    fills: list[SlippageRow] = []
+    by_open = {r["proposal_hash"]: r for r in _filled_executions(conn) if r["kind"] == "open"}
+    for c in window:
+        per_unit = ((_analytics(conn, c.open_proposal_hash) or {}).get("entry_fees")) or {}
+        unit_fees = sum(float(v) for v in per_unit.values())
+        fees += unit_fees * c.contracts * (2 if c.early else 1)
+        ex = by_open.get(c.open_proposal_hash)
+        row = _slippage_row(conn, ex) if ex is not None else None
+        if row is not None and row.spread_usd is not None:
+            fills.append(row)
+    net_ev = (pnl - fees) / len(window) if window else None
+    if net_ev is not None and net_ev < 0:
+        failing.append("negative_realised_ev")
+    slip = sum(r.realised_usd for r in fills) if fills else None
+    half = sum((r.spread_usd or 0.0) for r in fills) / 2 if fills else None
+    if slip is not None and half is not None and slip > half * slippage_tolerance:
+        failing.append("slippage_over_tolerance")
+    elif (slip is None or half is None) and "min_closed_trades" not in failing:
+        failing.append("slippage_unknown")
+    return AutoApproveReadiness(
+        ok=not failing,
+        failing=failing,
+        closed_trades=len(closed),
+        min_closed_trades=min_closed_trades,
+        window_trades=len(window),
+        realised_pnl=pnl,
+        fees=fees,
+        realised_net_ev=net_ev,
+        slippage_fills=len(fills),
+        realised_slippage=slip,
+        half_spread=half,
+        slippage_tolerance=slippage_tolerance,
+    )
+
+
+def slippage_since(
+    conn: sqlite3.Connection, *, start: _dt.datetime, end: _dt.datetime
+) -> dict[str, KindSlippage]:
+    """Realised entry slippage per structure kind over ``[start, end)`` (all fills)."""
+    return _slippage(conn, start, end).by_kind
 
 
 def calibration_points(
@@ -1089,6 +1312,21 @@ def render_markdown(sc: Scorecard) -> str:
             f"{'n/a' if r.cost_bps is None else f'{r.cost_bps:.0f}'} |"
             for r in s.rows
         ]
+        kinds = s.by_kind
+        if kinds:
+            out += [
+                "",
+                "Entry slippage by structure kind (x of the modelled spread; feeds "
+                "`arc backtest rank --slippage-from-scorecard`):",
+                "",
+                "| Structure | Fills | Realised | Modelled spread | x |",
+                "|---|---|---|---|---|",
+            ]
+            out += [
+                f"| {k} | {v.fills} | {_usd(v.realised_usd)} | {_usd(v.spread_usd, signed=False)} "
+                f"| {'n/a' if v.frac is None else f'{v.frac:.2f}'} |"
+                for k, v in kinds.items()
+            ]
     else:
         out.append("No fills.")
     out += [

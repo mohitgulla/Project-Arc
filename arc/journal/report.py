@@ -17,8 +17,22 @@ from typing import TYPE_CHECKING, Any
 from arc.journal.attribution import MULTIPLIER, calibration
 from arc.journal.models import OutcomeStatus
 from arc.journal.reasons import STAGE_ORDER, Choice, ReasonCode, Stage
-from arc.journal.scorecard import calibration_points
+from arc.journal.scorecard import (
+    _closed_positions,
+    _realised_by_structure,
+    _ts,
+    calibration_points,
+)
 from arc.journal.store import JournalStore
+from arc.journal.views import (
+    _EPOCH,
+    UNKNOWN,
+    AlternativeCounterfactual,
+    ClosedCounterfactual,
+    CounterfactualReport,
+    NotTradedCounterfactual,
+    _f,
+)
 from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
@@ -31,8 +45,10 @@ if TYPE_CHECKING:
 
 __all__ = [
     "GapsReport",
+    "NotTradedShadow",
     "ReplayResult",
     "ShadowPricer",
+    "counterfactual",
     "gaps",
     "replay",
     "show_lines",
@@ -334,12 +350,85 @@ class AltComparison:
 
 
 @dataclass
+class NotTradedShadow:
+    """A proposal that never traded (owner reject, TTL expiry, gate fail, not actionable),
+    marked at the latest cached EOD session as if it had filled at its limit (E9.3)."""
+
+    proposal_hash: str
+    subject: str
+    status: str
+    structure: str
+    contracts: int
+    entry: Decimal
+    shadow_pnl: Decimal | None  # $ for the whole proposal; None = no history
+    as_of: _dt.date | None
+
+
+#: approval_requests / approvals statuses that mean the proposal was never sent
+NOT_TRADED_STATUSES = ("rejected", "expired", "not_actionable")
+
+
+def _not_traded(
+    conn: sqlite3.Connection, since: _dt.datetime | None, pricer: ShadowPricer | None
+) -> list[NotTradedShadow]:
+    usable = pricer is not None and pricer.available()
+    out: list[NotTradedShadow] = []
+    for r in conn.execute(
+        """SELECT p.proposal_hash, p.ticker, p.structure_json, p.sizing_json, p.created_at,
+                  COALESCE(p.kind, 'open') AS kind,
+                  q.status AS req_status, a.decision AS decision,
+                  (SELECT g.passed FROM gate_decisions g WHERE g.proposal_hash = p.proposal_hash
+                   ORDER BY g.decided_at DESC, g.rowid DESC LIMIT 1) AS gate_passed
+           FROM proposals p
+           LEFT JOIN approval_requests q ON q.proposal_hash = p.proposal_hash
+           LEFT JOIN approvals a ON a.proposal_hash = p.proposal_hash
+           ORDER BY p.created_at, p.rowid"""
+    ):
+        if r["kind"] != "open":
+            continue
+        status = next(
+            (s for s in (r["req_status"], r["decision"]) if s in NOT_TRADED_STATUSES), None
+        )
+        if status is None and r["gate_passed"] == 0:
+            status = "gate_failed"
+        if status is None:
+            continue
+        created = _ts(r["created_at"])
+        if since is not None and (created is None or created < since):
+            continue
+        st = json.loads(r["structure_json"] or "{}")
+        legs = st.get("legs") or []
+        n = int(json.loads(r["sizing_json"] or "{}").get("contracts") or 1)
+        entry = Decimal(str(st.get("net_debit_credit", 0)))
+        shadow: Decimal | None = None
+        as_of: _dt.date | None = None
+        if usable and pricer is not None and legs and created is not None:
+            mark = pricer.value(legs, created.astimezone(ET).date())
+            if mark is not None:
+                as_of, shadow = mark[0], _per_contract(entry, mark[1]) * n
+        out.append(
+            NotTradedShadow(
+                proposal_hash=r["proposal_hash"],
+                subject=r["ticker"] or "",
+                status=status,
+                structure=_strikes(legs),
+                contracts=n,
+                entry=entry,
+                shadow_pnl=shadow,
+                as_of=as_of,
+            )
+        )
+    return out
+
+
+@dataclass
 class GapsReport:
     since: _dt.datetime | None
     decisions: int = 0
     no_trade: Counter[str] = field(default_factory=Counter)
     rejected: Counter[str] = field(default_factory=Counter)
     alternatives: list[AltComparison] = field(default_factory=list)
+    not_traded: list[NotTradedShadow] = field(default_factory=list)
     shadow: str = "n/a"
     calibration: list[CalibrationBucket] = field(default_factory=list)
     realised: int = 0
@@ -370,6 +459,16 @@ class GapsReport:
                     f"  {a.subject} {a.alternative} ${a.alt_pnl:,.2f}/contract vs chosen "
                     f"{a.chosen} ${a.chosen_pnl:,.2f} (as of {a.as_of}){flag}"
                 )
+        out.append(f"── proposals not traded (shadow-priced: {self.shadow})")
+        if not self.not_traded:
+            out.append("  none")
+        for nt in self.not_traded:
+            px = (
+                f"${nt.shadow_pnl:,.2f} x{nt.contracts} (as of {nt.as_of})"
+                if nt.shadow_pnl is not None
+                else "n/a"
+            )
+            out.append(f"  {nt.subject} {nt.structure} {nt.status} {nt.proposal_hash[:12]}: {px}")
         out.append(f"── calibration (stated vs realised, {self.realised} realised trade(s))")
         if not self.calibration:
             out.append("  n/a: no closed trades yet")
@@ -451,6 +550,7 @@ def gaps(
                     comp.chosen_pnl = _per_contract(pick.payload["net_debit_credit"], ch[1])
                     comp.as_of = comp.as_of or ch[0]
         rep.alternatives.append(comp)
+    rep.not_traded = _not_traded(conn, since, pricer)
 
     realised = [
         o
@@ -473,6 +573,122 @@ def gaps(
         rep.root_causes[str(r.root_cause)] += 1
         rep.labels[str(r.label)] += 1
     return rep
+
+
+# ---------------------------------------------------------------------------
+# counterfactual (E9.3)
+# ---------------------------------------------------------------------------
+
+
+def counterfactual(
+    conn: sqlite3.Connection,
+    *,
+    since: _dt.datetime | None,
+    until: _dt.datetime,
+    pricer: ShadowPricer | None = None,
+) -> CounterfactualReport:
+    """Closed trades vs hold-to-expiry and no-trade; not-traded proposals EOD-shadowed.
+
+    The not-traded and menu-alternative sections are :func:`gaps` rows (one
+    implementation; ``arc journal gaps`` prints the same ones).
+    """
+    start = since or _EPOCH
+    closed: list[ClosedCounterfactual] = []
+    seen: set[str] = set()
+    for c in _closed_positions(
+        conn,
+        start,
+        until,
+        _realised_by_structure(conn),
+        None,
+        today=until.astimezone(ET).date(),
+    ):
+        seen.add(c.open_proposal_hash)
+        closed.append(
+            ClosedCounterfactual(
+                proposal_hash=c.open_proposal_hash,
+                ticker=c.ticker,
+                closed_at=c.closed_at,
+                exit_reason=c.exit_reason,
+                early=c.early,
+                realised_pnl=c.realised_pnl,
+                hold_to_expiry_shadow_pnl=c.shadow_hold_pnl,
+                hold_minus_realised=(
+                    None if c.shadow_hold_pnl is None else c.shadow_hold_pnl - c.realised_pnl
+                ),
+                no_trade_minus_realised=-c.realised_pnl,
+                source="position",
+            )
+        )
+    for o in JournalStore(conn).outcomes(since=since):
+        if (
+            o.proposal_hash in seen
+            or o.status not in (OutcomeStatus.CLOSED, OutcomeStatus.EXPIRED_WORTHLESS)
+            or o.realised_pnl is None
+            or o.at >= until
+        ):
+            continue
+        row = conn.execute(
+            "SELECT ticker FROM proposals WHERE proposal_hash = ?", (o.proposal_hash,)
+        ).fetchone()
+        pnl = float(o.realised_pnl)
+        shadow = _f(o.hold_to_expiry_shadow_pnl)
+        closed.append(
+            ClosedCounterfactual(
+                proposal_hash=o.proposal_hash,
+                ticker=str(row[0]) if row and row[0] else UNKNOWN,
+                closed_at=o.at,
+                exit_reason=o.exit_reason,
+                early=None if o.exit_reason is None else o.exit_reason != "expiry",
+                realised_pnl=pnl,
+                hold_to_expiry_shadow_pnl=shadow,
+                hold_minus_realised=None if shadow is None else shadow - pnl,
+                no_trade_minus_realised=-pnl,
+                source="outcome",
+            )
+        )
+    closed.sort(key=lambda c: (c.closed_at, c.proposal_hash))
+
+    g = gaps(conn, since=since, pricer=pricer)
+    not_traded = [
+        NotTradedCounterfactual(
+            proposal_hash=n.proposal_hash,
+            ticker=n.subject,
+            status=n.status,
+            structure=n.structure,
+            contracts=n.contracts,
+            entry=float(n.entry),
+            shadow_pnl=_f(n.shadow_pnl),
+            as_of=n.as_of,
+        )
+        for n in g.not_traded
+    ]
+    alternatives = [
+        AlternativeCounterfactual(
+            ticker=a.subject,
+            chosen=a.chosen,
+            alternative=a.alternative,
+            chosen_pnl=_f(a.chosen_pnl),
+            alternative_pnl=_f(a.alt_pnl),
+            better_by=_f(a.better_by),
+            as_of=a.as_of,
+        )
+        for a in g.alternatives
+    ]
+    known = [c for c in closed if c.hold_to_expiry_shadow_pnl is not None]
+    shadows = [n.shadow_pnl for n in not_traded if n.shadow_pnl is not None]
+    return CounterfactualReport(
+        since=since,
+        until=until,
+        shadow_source=g.shadow,
+        closed=closed,
+        not_traded=not_traded,
+        alternatives=alternatives,
+        realised_total=sum(c.realised_pnl for c in closed),
+        hold_total=sum(c.hold_to_expiry_shadow_pnl or 0.0 for c in known) if known else None,
+        realised_on_hold_known=sum(c.realised_pnl for c in known) if known else None,
+        not_traded_shadow_total=sum(shadows) if shadows else None,
+    )
 
 
 def default_pricer(data_dir: Path | str = Path("data")) -> ShadowPricer:

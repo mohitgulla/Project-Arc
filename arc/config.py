@@ -504,6 +504,29 @@ class ArcSettings(BaseSettings):
             "one-time confirm code."
         ),
     )
+    # -- E7.5a: scorecard gate in front of D34 auto-approve ---------------------
+    auto_approve_scorecard_gate: bool = Field(
+        default=True,
+        description=(
+            "E7.5a: D34 auto-approve opens a new position only when the E7.3 scorecard shows "
+            ">= auto_approve_min_closed_trades closed trades, realised net EV >= 0 over the "
+            "latest that many, and realised entry slippage <= modelled half-spread x "
+            "auto_approve_slippage_tolerance. Otherwise the card waits for a manual approval "
+            "(journal auto_approve_gated). Off = explicit opt-out (paper as pure "
+            "calibration), logged as a warning on every auto-approval. Closes are not gated."
+        ),
+    )
+    auto_approve_min_closed_trades: Annotated[int, Field(ge=1, le=1000)] = Field(
+        default=30,
+        description="E7.5a: closed trades the scorecard gate needs before auto-approving opens.",
+    )
+    auto_approve_slippage_tolerance: Annotated[float, Field(gt=0.0, le=10.0)] = Field(
+        default=1.5,
+        description=(
+            "E7.5a: realised entry slippage may be at most modelled half-spread x this "
+            "(over the gate's window of closed trades)."
+        ),
+    )
     owner_slack_user_id: str = Field(
         default="U0C5KUMH28G",
         min_length=1,

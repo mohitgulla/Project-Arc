@@ -14,6 +14,8 @@ from arc.data.history.store import ParquetHistoryStore
 if TYPE_CHECKING:
     import argparse
 
+    from arc.models import StructureKind
+
 
 def _date(s: str) -> dt.date:
     return dt.date.fromisoformat(s)
@@ -75,11 +77,70 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     rk.add_argument("--data-dir", type=Path, default=Path("data"))
     rk.add_argument("--out", type=Path, default=Path("data/backtest/rank"))
     rk.add_argument("--config", type=Path, default=None, help="Ranking config file")
+    rk.add_argument(
+        "--experiment",
+        type=Path,
+        action="append",
+        default=[],
+        help="E7.5a: partial ranking file deep-merged over --config (repeatable), "
+        "e.g. config/experiments/e75a_regime_menu.yaml",
+    )
+    rk.add_argument(
+        "--slippage-from-scorecard",
+        type=Path,
+        default=None,
+        metavar="DB",
+        help="E7.5a: use the realised entry slippage per structure kind measured by the "
+        "E7.3 scorecard in this audit DB (opened read-only) for the base run",
+    )
+    rk.add_argument(
+        "--scorecard-days",
+        type=int,
+        default=90,
+        help="Scorecard window for --slippage-from-scorecard, days back from now",
+    )
+    rk.add_argument(
+        "--scorecard-min-fills",
+        type=int,
+        default=5,
+        help="Fills a structure kind needs before its measured slippage is used",
+    )
     rk.add_argument("--workers", type=int, default=1, help="Parallel ticker processes")
     rk.add_argument("--no-charts", action="store_true")
     rk.add_argument(
         "--offline", action="store_true", help="Use cached underlying closes only (no Alpaca)"
     )
+    cmp_ = bs.add_parser(
+        "rank-compare",
+        help="E7.5a: experiment vs baseline `backtest rank` output, same ranker, D25 rule",
+    )
+    cmp_.add_argument("--baseline", type=Path, required=True, help="Baseline --out dir")
+    cmp_.add_argument(
+        "--experiment", type=Path, action="append", required=True, help="Experiment --out dir"
+    )
+    cmp_.add_argument("--config", type=Path, default=None, help="Ranking config (rule, seed)")
+    cmp_.add_argument("--out", type=Path, default=None, help="Write compare.csv + compare.md here")
+
+
+def measured_slippage(db: Path, *, days: int, min_fills: int) -> dict[StructureKind, float]:
+    """Realised entry slippage x per structure kind from the E7.3 scorecard (read-only)."""
+    import sqlite3
+
+    from arc.backtest.ranking import slippage_from_scorecard
+    from arc.journal.scorecard import slippage_since
+    from arc.utils.calendar import now_et
+
+    if not db.exists():
+        msg = f"audit store not found: {db}"
+        raise FileNotFoundError(msg)
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        now = now_et()
+        by_kind = slippage_since(conn, start=now - dt.timedelta(days=days), end=now)
+    finally:
+        conn.close()
+    return slippage_from_scorecard(by_kind, min_fills=min_fills)
 
 
 def run_rank_cli(args: argparse.Namespace) -> int:
@@ -88,7 +149,23 @@ def run_rank_cli(args: argparse.Namespace) -> int:
     from arc.config import ArcSettings
     from arc.scanner.rank import Ranker
 
-    cfg = load_ranking_file(args.config)
+    cfg = load_ranking_file(args.config, args.experiment)
+    if args.slippage_from_scorecard is not None:
+        measured = measured_slippage(
+            args.slippage_from_scorecard,
+            days=args.scorecard_days,
+            min_fills=args.scorecard_min_fills,
+        )
+        sys.stdout.write(
+            "measured slippage x: "
+            + (", ".join(f"{k} {v:g}" for k, v in measured.items()) or "none (too few fills)")
+            + "\n"
+        )
+        bt = cfg.backtest
+        merged = {**bt.slippage_by_kind, **measured}
+        cfg = cfg.model_copy(
+            update={"backtest": bt.model_copy(update={"slippage_by_kind": merged})}
+        )
     tickers = (
         [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
         if args.tickers
@@ -127,9 +204,32 @@ def run_rank_cli(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_rank_compare_cli(args: argparse.Namespace) -> int:
+    import pandas as pd
+
+    from arc.backtest.experiments import compare_dirs
+    from arc.backtest.ranking import load_ranking_file
+    from arc.backtest.report import format_table
+
+    cfg = load_ranking_file(args.config)
+    df = pd.concat(
+        [compare_dirs(args.baseline, e, cfg, name=e.name) for e in args.experiment],
+        ignore_index=True,
+    )
+    md = format_table(df) if len(df) else "_no common (profile, ranker) runs_\n"
+    if args.out is not None:
+        args.out.mkdir(parents=True, exist_ok=True)
+        df.to_csv(args.out / "compare.csv", index=False)
+        (args.out / "compare.md").write_text(md)
+    sys.stdout.write(md)
+    return 0
+
+
 def run_backtest_cli(args: argparse.Namespace) -> int:
     if getattr(args, "backtest_command", None) == "rank":
         return run_rank_cli(args)
+    if getattr(args, "backtest_command", None) == "rank-compare":
+        return run_rank_compare_cli(args)
     if args.start is None or args.end is None:
         sys.stderr.write("arc backtest: --start and --end are required\n")
         return 2

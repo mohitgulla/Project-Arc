@@ -42,6 +42,7 @@ class RoutineRun(BaseModel):
     outputs: list[str] = Field(default_factory=list)
     summary: str | None = None
     error: str | None = None
+    event_id: str | None = None  # E6.2d: the routine_events.id an event-triggered run is for
 
 
 def _row(row: sqlite3.Row) -> RoutineRun:
@@ -60,11 +61,12 @@ def _row(row: sqlite3.Row) -> RoutineRun:
         outputs=json.loads(row["outputs"] or "[]"),
         summary=row["summary"],
         error=row["error"],
+        event_id=row["event_id"],
     )
 
 
 class RoutineRunRepo:
-    """``routine_runs``: one row per (job, scheduled slot)."""
+    """``routine_runs``: one row per (job, scheduled slot), or per (job, event) (E6.2d)."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
@@ -80,10 +82,13 @@ class RoutineRunRepo:
         status: RunStatus = RunStatus.RUNNING,
         summary: str | None = None,
         now: _dt.datetime | None = None,
+        event_id: str | None = None,
     ) -> RoutineRun | None:
         """Insert the row for ``(job, scheduled_for)``; ``None`` if it already exists.
 
-        The unique key is what makes a duplicate tick a no-op.
+        The unique key is what makes a duplicate tick a no-op. An event-triggered
+        run (``event_id`` set) is unique per ``(job, event_id)`` instead (migration
+        018), so two events created in the same second each get their own run.
         """
         now = now or now_et()
         run_id = f"run-{uuid.uuid4().hex[:16]}"
@@ -93,8 +98,8 @@ class RoutineRunRepo:
                 self.conn.execute(
                     """INSERT INTO routine_runs
                        (run_id, job, chain_run_id, step_index, reason, scheduled_for,
-                        started_at, finished_at, status, summary)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        started_at, finished_at, status, summary, event_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         run_id,
                         job,
@@ -106,6 +111,7 @@ class RoutineRunRepo:
                         finished,
                         status.value,
                         summary,
+                        event_id,
                     ),
                 )
         except sqlite3.IntegrityError:
@@ -176,9 +182,17 @@ class RoutineRunRepo:
         return _row(row) if row else None
 
     def find(self, job: str, scheduled_for: _dt.datetime) -> RoutineRun | None:
+        """The scheduled/manual run of *job* for one slot (event-triggered runs excluded)."""
         row = self.conn.execute(
-            "SELECT * FROM routine_runs WHERE job = ? AND scheduled_for = ?",
+            "SELECT * FROM routine_runs WHERE job = ? AND scheduled_for = ? AND event_id IS NULL",
             (job, to_db(scheduled_for)),
+        ).fetchone()
+        return _row(row) if row else None
+
+    def for_event(self, job: str, event_id: str) -> RoutineRun | None:
+        """The run of *job* for one event (unique since migration 018), if any."""
+        row = self.conn.execute(
+            "SELECT * FROM routine_runs WHERE job = ? AND event_id = ?", (job, event_id)
         ).fetchone()
         return _row(row) if row else None
 
@@ -220,12 +234,36 @@ class RoutineRunRepo:
 
 
 class RoutineEvent(BaseModel):
+    """One ``routine_events`` row.
+
+    Lifecycle (E6.2d): ``created`` → optionally ``dispatched`` (the D34 ``execute``
+    step claimed it for an Investor subprocess, so the tick's drain never fires
+    it) → ``consumed`` (by exactly one run, or by a journaled refusal).
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     id: str
     name: str
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: _dt.datetime
+    dispatched_at: _dt.datetime | None = None
+    dispatched_by: str | None = None
+    consumed_at: _dt.datetime | None = None
+    consumed_by: list[str] = Field(default_factory=list)
+
+
+def _event(r: sqlite3.Row) -> RoutineEvent:
+    return RoutineEvent(
+        id=r["id"],
+        name=r["name"],
+        payload=json.loads(r["payload"]),
+        created_at=from_db(r["created_at"]),
+        dispatched_at=from_db(r["dispatched_at"]) if r["dispatched_at"] else None,
+        dispatched_by=r["dispatched_by"],
+        consumed_at=from_db(r["consumed_at"]) if r["consumed_at"] else None,
+        consumed_by=json.loads(r["consumed_by"] or "[]"),
+    )
 
 
 class RoutineEventRepo:
@@ -257,37 +295,50 @@ class RoutineEventRepo:
     def get(self, event_id: str) -> RoutineEvent | None:
         """One event by id, consumed or not (D34: a spawned Investor reads its own)."""
         r = self.conn.execute("SELECT * FROM routine_events WHERE id = ?", (event_id,)).fetchone()
-        if r is None:
-            return None
-        return RoutineEvent(
-            id=r["id"],
-            name=r["name"],
-            payload=json.loads(r["payload"]),
-            created_at=from_db(r["created_at"]),
-        )
+        return _event(r) if r is not None else None
 
     def pending(self, *, until: _dt.datetime) -> list[RoutineEvent]:
+        """Unconsumed events the tick's drain may fire; never a dispatched one (E6.2d)."""
         rows = self.conn.execute(
-            """SELECT * FROM routine_events WHERE consumed_at IS NULL AND created_at <= ?
+            """SELECT * FROM routine_events
+               WHERE consumed_at IS NULL AND dispatched_at IS NULL AND created_at <= ?
                ORDER BY created_at, rowid""",
             (to_db(until),),
         ).fetchall()
-        return [
-            RoutineEvent(
-                id=r["id"],
-                name=r["name"],
-                payload=json.loads(r["payload"]),
-                created_at=from_db(r["created_at"]),
-            )
-            for r in rows
-        ]
+        return [_event(r) for r in rows]
 
-    def consume(self, event_id: str, run_ids: Iterable[str], *, now: _dt.datetime) -> None:
+    def dispatch(self, event_id: str, *, by: str, now: _dt.datetime) -> bool:
+        """Claim a pending event for one out-of-band run (D34 ``execute``).
+
+        Atomic: ``True`` only for the caller that moved it from pending to
+        dispatched. A dispatched event is invisible to :meth:`pending`.
+        """
+        with self.conn:
+            cur = self.conn.execute(
+                """UPDATE routine_events SET dispatched_at = ?, dispatched_by = ?
+                   WHERE id = ? AND dispatched_at IS NULL AND consumed_at IS NULL""",
+                (to_db(now), by, event_id),
+            )
+        return cur.rowcount == 1
+
+    def release(self, event_id: str) -> None:
+        """Undo :meth:`dispatch` (the spawn failed): back to the tick's drain."""
         with self.conn:
             self.conn.execute(
-                "UPDATE routine_events SET consumed_at = ?, consumed_by = ? WHERE id = ?",
+                """UPDATE routine_events SET dispatched_at = NULL, dispatched_by = NULL
+                   WHERE id = ? AND consumed_at IS NULL""",
+                (event_id,),
+            )
+
+    def consume(self, event_id: str, run_ids: Iterable[str], *, now: _dt.datetime) -> bool:
+        """Mark consumed once; ``False`` if it already was (the first consumer wins)."""
+        with self.conn:
+            cur = self.conn.execute(
+                """UPDATE routine_events SET consumed_at = ?, consumed_by = ?
+                   WHERE id = ? AND consumed_at IS NULL""",
                 (to_db(now), json.dumps(list(run_ids)), event_id),
             )
+        return cur.rowcount == 1
 
 
 class RoutineStateRepo:

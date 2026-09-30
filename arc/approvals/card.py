@@ -673,9 +673,12 @@ def render_card(
     """The card as first posted.
 
     ``actionable`` adds the Approve / Reject buttons and the TTL line; an
-    informational card (gate failed, no token) gets ``note`` instead.
+    informational card (gate failed, no token) gets ``note`` instead. An actionable
+    card with a ``note`` (E7.5a: auto-approve held back by the scorecard gate) shows
+    it under the buttons.
     """
-    blocks = _cap(_body(proposal, decision, proposal_hash, trail, kind), 2)
+    tail = 3 if actionable and note else 2
+    blocks = _cap(_body(proposal, decision, proposal_hash, trail, kind), tail)
     if actionable:
         expires = proposal.expires_at.astimezone(ET)
         blocks.append(
@@ -712,7 +715,7 @@ def render_card(
                 ],
             }
         )
-    elif note:
+    if note:
         blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": B.esc(note)}]})
     return CardView(text=_fallback(proposal, decision, kind), blocks=blocks)
 
