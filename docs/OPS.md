@@ -702,6 +702,9 @@ up within one slot.
   skipped (no LLM call), `execute` still runs (`on_no_change: run` in `steps:`)
   so pending approvals and ladders carry on. Journal row `loop_no_change`; the
   run manifest carries `loop_inputs` (digest). A manual `arc propose` never skips.
+  Only a Director run that *completed* its evaluation advances the loop's
+  `last_full_run`: a failed LLM call leaves the previous one in place, so the
+  next slot evaluates in full again instead of being muted as `no_change`.
 
 **Slack (D36).** Every loop slot posts one root line in #arc-investor:
 
@@ -711,8 +714,11 @@ up within one slot.
 ✖ … • HOLD | HOLD (no change) | HOLD (timeout) | HOLD (skipped: previous loop running)
 ```
 
-The persona cards, the proposal card and a `[Routines] <chain> director=12ms …
-digest=…` reply live in that root's thread. The root is re-rendered from the DB
+The thread under it, in order: `[Scout] Context: N Candidates • run <stamp>`
+(the candidate entries the Director read, with the Scout run that wrote them),
+`[Director]`, `[Quant]`, `[Risk]`, the proposal card, `[Investor]` when a ladder
+ran, and last a `[Routines] <chain> director=12ms … digest=…` code block. A
+`no_change` loop gets only the `[Routines]` reply. The root is re-rendered from the DB
 on approve / reject / expire and after the Investor's fill. `loop.post_hold_roots`
 off drops the roots of skipped slots; `loop.slack_layout = day_thread` is the
 rollback to the single day thread (cards and heartbeats as before D36).
