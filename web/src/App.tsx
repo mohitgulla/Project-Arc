@@ -9,7 +9,9 @@ import { SettingsProvider } from "./lib/settings";
 import { KitchenSink } from "./pages/KitchenSink";
 import { OverviewPage } from "./pages/Overview";
 import { PositionsPage } from "./pages/Positions";
-import { NotFoundPage, OpsPage, PerformancePage, TradesPage } from "./routes/pages";
+import { TradeDetailRoute } from "./pages/TradeDetail";
+import { TradesPage } from "./pages/Trades";
+import { NotFoundPage, OpsPage, PerformancePage } from "./routes/pages";
 
 function makeClient() {
   return new QueryClient({
@@ -39,7 +41,9 @@ export function App() {
           <Routes>
             <Route element={<Shell />}>
               <Route index element={<OverviewPage />} />
-              <Route path="trades/*" element={<TradesPage />} />
+              <Route path="trades" element={<TradesPage />}>
+                <Route path=":hash" element={<TradeDetailRoute />} />
+              </Route>
               <Route path="positions/*" element={<PositionsPage />} />
               <Route path="performance/*" element={<PerformancePage />} />
               <Route path="ops/*" element={<OpsPage />} />

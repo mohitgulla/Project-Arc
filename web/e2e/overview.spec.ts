@@ -44,7 +44,7 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByText("Debit vertical").first()).toBeVisible();
         await expect(page.getByText("NO", { exact: true }).or(page.getByText("not held")).first()).toBeVisible();
         await expect(page.getByTestId("proposals").locator(":scope > li")).toHaveCount(9);
-        await expect(page.getByTestId("proposals")).toContainText("max_alloc");
+        await expect(page.getByTestId("proposals")).toContainText("per_underlying_limit");
         await expect(page.getByTestId("activity").locator(":scope > li")).toHaveCount(20);
         await expect(page.getByTestId("max-loss-caps")).toContainText("SPY");
         // Fresh marks: no stale badge.

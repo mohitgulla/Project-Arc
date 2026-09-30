@@ -3,6 +3,14 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { apiGet, type Meta, type Positions, type Snapshot } from "./api";
 import type { Overview, OverviewRange } from "./overview";
 import { useSettings } from "./settings";
+import {
+  apiQuery,
+  type SearchResponse,
+  type TradeDetail,
+  type TradeFilterOptions,
+  type TradeList,
+  type TradeQuery,
+} from "./trades";
 
 /**
  * Polling queries (TOWER_DESIGN §7): refetch at the Settings interval (30/60/120 s),
@@ -43,6 +51,46 @@ export function useOverview(range: OverviewRange) {
     queryFn: ({ signal }) => apiGet("/api/overview", { query: { range }, signal }),
     placeholderData: keepPreviousData,
     ...poll,
+  });
+}
+
+export function useTrades(q: TradeQuery) {
+  const poll = usePoll();
+  return useQuery<TradeList>({
+    queryKey: ["trades", apiQuery(q)],
+    queryFn: ({ signal }) => apiGet("/api/trades", { query: apiQuery(q), signal }),
+    placeholderData: keepPreviousData,
+    ...poll,
+  });
+}
+
+export function useTradeFilters() {
+  return useQuery<TradeFilterOptions>({
+    queryKey: ["trade-filters"],
+    queryFn: ({ signal }) => apiGet("/api/trades/filters", { signal }),
+    staleTime: 60_000,
+  });
+}
+
+export function useTrade(hash: string | undefined) {
+  const poll = usePoll();
+  return useQuery<TradeDetail>({
+    queryKey: ["trade", hash],
+    // The path template is typed; the hash is URL-safe hex.
+    queryFn: ({ signal }) =>
+      apiGet(`/api/trades/${hash}` as "/api/trades/{proposal_hash}", { signal }),
+    enabled: Boolean(hash),
+    ...poll,
+  });
+}
+
+export function useSearch(q: string) {
+  return useQuery<SearchResponse>({
+    queryKey: ["search", q],
+    queryFn: ({ signal }) => apiGet("/api/search", { query: { q }, signal }),
+    enabled: q.trim().length > 0,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 }
 

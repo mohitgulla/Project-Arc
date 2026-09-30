@@ -15,7 +15,11 @@ monitor's stale threshold (3 x 5 min) to see the stale state. The DB holds:
   approval pending, approved + working, rejected, expired, execution cancelled,
   filled (with orders + fills), a close (exit) proposal;
 - one active halt, one open and one resolved ops alert, a reconcile ``held`` flag
-  (NVDA not held at the broker).
+  (NVDA not held at the broker);
+- E8.7b Trades drill-down rows (``scripts/tower_fixture_trades.py``): the SPY open has
+  every detail section (chain, persona calls, decision trail, full market context,
+  regime snapshot, run manifest, order events) and AMD has a close-to-reallocate pair
+  (AMD close -> XLE open), an outcome and an owner review.
 
 Never point this at ``data/arc.db``: it refuses to overwrite an existing file.
 """
@@ -25,6 +29,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import math
 import sys
@@ -193,6 +198,16 @@ def _mark(entry: Decimal, drift: float, i: int) -> Decimal:
     return Decimal(str(round(float(entry) + drift * x + wobble, 2)))
 
 
+def _trades_module():  # noqa: ANN202 - a module loaded by path
+    """``scripts/tower_fixture_trades.py`` (loaded by path: ``scripts`` is no package)."""
+    here = Path(__file__).resolve().parent / "tower_fixture_trades.py"
+    spec = importlib.util.spec_from_file_location("tower_fixture_trades", here)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def build(path: Path, now: dt.datetime | None = None) -> Path:
     """Create *path* (must not exist), migrate it and fill it with the fixture rows."""
     if path.exists():
@@ -285,8 +300,8 @@ def build(path: Path, now: dt.datetime | None = None) -> Path:
     )
     # gate FAIL with two violations
     h = _proposal(conn, "p-aapl", "AAPL", vert("AAPL", 250), at=at, contracts=4, net_ev=-3.2)
-    _gate(conn, h, at, ["max_alloc: max loss $5,400 on AAPL > $5,000 (5.00% of equity)",
-                        "spread: leg AAPL 250C spread 14% > 10%"])  # fmt: skip
+    _gate(conn, h, at, ["per_underlying_limit: max loss $5,400 on AAPL > $5,000 (5.00% of equity)",
+                        "spread_too_wide: leg AAPL 250C spread 14% > 10%"])  # fmt: skip
     _approval(conn, h, "AAPL", at, "not_actionable")
     # approval pending
     at += step
@@ -322,6 +337,20 @@ def build(path: Path, now: dt.datetime | None = None) -> Path:
     old = now - dt.timedelta(days=4)
     h = _proposal(conn, "p-dia-old", "DIA", vert("DIA", 460), at=old, contracts=1)
     _gate(conn, h, old, ["halted: trading halted"])
+
+    # -- E8.7b Trades drill-down rows ----------------------------------------------------
+    by_tag = {p.tag: p for p in positions}
+    _trades_module().add_trade_rows(
+        conn, now=now, spy_hash=phash("pos-spy"), spy_structure=by_tag["pos-spy"].structure,
+        spy_opened=by_tag["pos-spy"].opened, amd_hash=h_amd, amd_structure_id=sid_amd,
+        amd_opened=amd_at,
+        filled_hashes={**{phash(p.tag): p.opened for p in positions}, h_amd: amd_at},
+        make_proposal=lambda tag, ticker, st, **kw: _proposal(conn, tag, ticker, st, **kw),
+        make_gate=lambda h, at: _gate(conn, h, at),
+        make_approval=lambda h, t, at, status: _approval(conn, h, t, at, status),
+        make_execute=lambda h, **kw: _execute(conn, h, **kw),
+        vert=lambda root, k: vert(root, k),
+    )  # fmt: skip
 
     # -- monitor heartbeats: 30 marks at 5-min cadence ending 2 minutes ago ---------------
     days = _weekdays_before(today, N_DAYS)
