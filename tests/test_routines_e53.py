@@ -78,25 +78,29 @@ def _day_plan(cfg: RoutinesConfig, start: dt.datetime, end: dt.datetime) -> dict
 class TestShippedDefaults:
     def test_sources(self, shipped: RoutinesConfig) -> None:
         yt = shipped.sources["youtube.stockedup"]
-        assert yt.cadence == "at 12:00, 22:00 ET (daily)"
-        assert shipped.sources["rss"].cadence == "every 30m 06:00-20:00 ET (trading)"
+        assert yt.cadence == "at 12:00, 22:00 ET (daily)"  # D31: YouTube stays twice a day
+        assert shipped.sources["rss"].cadence == "every 15m 06:00-20:00 ET (trading)"  # D31
         assert shipped.sources["edgar"].cadence == "every 15m 06:00-20:00 ET (trading)"
         assert shipped.sources["earnings"].cadence == "at 06:00, 18:00 ET (trading)"
 
     def test_personas(self, shipped: RoutinesConfig) -> None:
         p = shipped.personas
-        assert p["scout"].cadence == "at 12:00, 22:00 ET (daily)" and p["scout"].after_sources
-        assert p["director"].cadence == "at 09:30 ET (trading)"
+        # D31: 30-min Scout in session + the 22:00 overnight run; 5-min trading loop.
+        assert p["scout"].cadence == "every 30m 09:00-16:00 ET (trading)"
+        assert p["scout"].after_sources and p["scout.overnight"].after_sources
+        assert p["scout.overnight"].cadence == "at 22:00 ET (daily)"
+        assert p["director"].cadence == "every 5m 09:40-15:50 ET (trading)"
         assert p["director"].chain == ["quant", "risk", "propose", "execute"]
+        assert p["director"].ttl is not None
+        assert p["director"].ttl.duration == dt.timedelta(minutes=5)
         assert p["monitor"].cadence == "every 5m 09:30-16:00 ET (trading)"  # D35 (E5.3a)
         assert p["monitor"].options["eod_marks_from"] == "15:50"
         assert p["monitor"].llm is False and p["monitor"].halt_exempt
         assert p["auditor"].cadence == "at 16:30 ET (trading)" and p["auditor"].halt_exempt
         assert p["scorecard"].cadence == "at 16:45 ET (fri)"
         assert p["investor"].trigger == "approval"
-        (rule,) = shipped.triggers_for("scout.completed")
-        assert rule.run == "director"
-        assert rule.condition == "new_candidates > 0 and session == 'open'"
+        assert shipped.triggers_for("scout.completed") == []  # D31: the loop polls instead
+        assert shipped.loop.job == "director" and shipped.is_loop("director")
 
     def test_monitor_handler_registered(self, shipped: RoutinesConfig) -> None:
         assert BUILTIN_HANDLERS["monitor"] == "arc.routines.monitor:monitor_step"
@@ -104,15 +108,21 @@ class TestShippedDefaults:
     def test_full_trading_day(self, shipped: RoutinesConfig) -> None:
         plan = _day_plan(shipped, et(2026, 9, 28, 0, 0), et(2026, 9, 29, 0, 0))  # Monday
         assert plan["youtube.stockedup"] == ["Mon 12:00", "Mon 22:00"]
-        assert plan["scout"] == ["Mon 12:00", "Mon 22:00"]
+        # D31: Scout 09:00..16:00 every 30 min = 15 runs, plus the 22:00 overnight run.
+        assert len(plan["scout"]) == 15
+        assert (plan["scout"][0], plan["scout"][-1]) == ("Mon 09:00", "Mon 16:00")
+        assert plan["scout.overnight"] == ["Mon 22:00"]
         assert plan["earnings"] == ["Mon 06:00", "Mon 18:00"]
-        assert len(plan["rss"]) == 29 and plan["rss"][0] == "Mon 06:00"  # 06:00..20:00 / 30m
+        assert len(plan["rss"]) == 57 and plan["rss"][0] == "Mon 06:00"  # 06:00..20:00 / 15m
         assert len(plan["edgar"]) == 57 and plan["edgar"][-1] == "Mon 20:00"
-        assert plan["director"] == ["Mon 09:30"]
+        # D31: the loop, 09:40..15:50 inclusive every 5 min = 75 slots.
+        assert len(plan["director"]) == 75 and len(set(plan["director"])) == 75
+        assert (plan["director"][0], plan["director"][-1]) == ("Mon 09:40", "Mon 15:50")
         # D35: every 5 min, 09:30..16:00 inclusive = 6.5 h x 12 + 1 = 79 slots
         assert len(plan["monitor"]) == 79
         assert len(set(plan["monitor"])) == 79  # no slot planned twice
         assert (plan["monitor"][0], plan["monitor"][-1]) == ("Mon 09:30", "Mon 16:00")
+        assert len(plan["positions.evaluate"]) == 13  # 09:45..15:45 every 30 min
         assert plan["auditor"] == ["Mon 16:30"]
         assert "scorecard" not in plan and "investor" not in plan
 
@@ -121,19 +131,24 @@ class TestShippedDefaults:
         assert fri["scorecard"] == ["Fri 16:45"]
         weekend = _day_plan(shipped, et(2026, 10, 3, 0, 0), et(2026, 10, 5, 0, 0))
         # Only the daily jobs; Sunday 22:00 matters (StockedUp posts Sunday for Monday).
-        assert set(weekend) == {"youtube.stockedup", "scout"}
-        assert weekend["scout"] == ["Sat 12:00", "Sat 22:00", "Sun 12:00", "Sun 22:00"]
+        assert set(weekend) == {"youtube.stockedup", "scout.overnight"}
+        assert weekend["scout.overnight"] == ["Sat 22:00", "Sun 22:00"]
 
     def test_sources_run_before_scout_in_the_same_tick(self, shipped: RoutinesConfig) -> None:
         d = Dispatcher(connect(":memory:"), shipped, is_halted=lambda: False)
         order = [x.job for x in d.plan(et(2026, 9, 27, 22, 0), since=et(2026, 9, 27, 21, 55))]
-        assert order == ["youtube.stockedup", "scout"]
+        assert order == ["youtube.stockedup", "scout.overnight"]
+        # In session: the 15-min sources land before the personas of the same slot.
+        # The loop runs before the Scout (name order), so a 30-min Scout holding the
+        # LLM lock never makes the same tick's loop slot skip; the next slot reads it.
+        order = [x.job for x in d.plan(et(2026, 9, 28, 10, 0), since=et(2026, 9, 28, 9, 55))]
+        assert order == ["edgar", "rss", "director", "monitor", "scout"]
 
     def test_halt_skips_chain_but_not_monitor_auditor(self, shipped: RoutinesConfig) -> None:
         d = Dispatcher(connect(":memory:"), shipped, is_halted=lambda: True)
         at_open = {
             x.job: x.action
-            for x in d.plan(et(2026, 9, 28, 9, 30), since=et(2026, 9, 28, 9, 25), halted=True)
+            for x in d.plan(et(2026, 9, 28, 9, 40), since=et(2026, 9, 28, 9, 35), halted=True)
         }
         assert at_open["director"] == "skip-halted"
         assert at_open["monitor"] == "run"
@@ -646,13 +661,14 @@ class TestSimulateCli:
     def test_step_simulates_ticks(self, capsys: pytest.CaptureFixture[str]) -> None:
         rc = main(
             ["routines", "tick", "--dry-run", "--step", "5m",
-             "--since", "2026-09-27T21:55", "--now", "2026-09-28T09:30"]
+             "--since", "2026-09-27T21:55", "--now", "2026-09-28T09:40"]
         )  # fmt: skip
         out = capsys.readouterr().out
         assert rc == 0
         assert "tick Sun 2026-09-27 22:00 EDT" in out
-        assert "tick Mon 2026-09-28 09:30 EDT" in out
-        assert "↳ Mon 09:30 propose" in out
+        assert "tick Mon 2026-09-28 09:40 EDT" in out
+        assert "↳ Mon 09:40 propose" in out  # D31: first loop slot
+        assert "Mon 09:30 director" not in out
         assert out.rstrip().endswith("had work")
 
     def test_step_json(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -663,7 +679,9 @@ class TestSimulateCli:
         data = json.loads(capsys.readouterr().out)
         assert rc == 0
         jobs = [o["job"] for t in data["ticks"] for o in t["outcomes"]]
-        assert jobs.count("scout") == 2 and "rss" not in jobs
+        # Saturday: only the overnight Scout + StockedUp; no in-session jobs.
+        assert jobs.count("scout.overnight") == 1 and "scout" not in jobs
+        assert "rss" not in jobs and "director" not in jobs
 
     @pytest.mark.parametrize("extra", [[], ["--dry-run", "--step", "0m"]])
     def test_step_errors(self, extra: list[str], capsys: pytest.CaptureFixture[str]) -> None:
@@ -824,6 +842,14 @@ def test_yaml_comment_overview_matches_config() -> None:
     raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
     assert raw["tick"]["interval"] == "5m"
     assert set(raw["personas"]) == {
-        "scout", "director", "monitor", "auditor", "scorecard", "investor",
+        "scout", "scout.overnight", "director", "monitor", "auditor", "scorecard", "investor",
         "positions.evaluate",
     }  # fmt: skip
+    # D31: the loop's cadence and window are config; the loop knobs are one block.
+    assert raw["personas"]["director"] == {
+        **raw["personas"]["director"],
+        "every": "5m", "window": "09:40-15:50", "days": "trading", "ttl": "5m",
+    }  # fmt: skip
+    assert raw["loop"]["job"] == "director" and raw["loop"]["max_runtime"] == "4m"
+    assert raw["monitoring"]["stuck_after_jobs"]["director"] == "10m"
+    assert raw["triggers"] == []

@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ComponentType, ReactNode, SVGProps } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
-import { num } from "../lib/api";
+import { apiGet, num } from "../lib/api";
 import { useLayout } from "../lib/layout";
 import { REFRESH_CHOICES, useSettings } from "../lib/settings";
-import { useMeta, useSnapshot } from "../lib/useApi";
+import { useMeta, useSearch, useSnapshot } from "../lib/useApi";
 import { AsOfBadge } from "./AsOfBadge";
 import {
   IconClose,
@@ -68,19 +68,84 @@ export function ThemeToggle() {
   );
 }
 
-/** Global search: ticker / hash / run id -> detail. Input only here; wired in E8.7b. */
-export function SearchInput({ autoFocus = false }: { autoFocus?: boolean }) {
+/**
+ * Global search (E8.7b): ticker / hash prefix / run id / chain id / structure id. Enter
+ * opens the first match; the dropdown lists every match (`GET /api/search`).
+ */
+export function SearchInput({ autoFocus = false, onDone }: { autoFocus?: boolean; onDone?: () => void }) {
+  const [text, setText] = useState("");
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const res = useSearch(q);
+  // Debounce: query 200 ms after the last keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => setQ(text.trim()), 200);
+    return () => clearTimeout(id);
+  }, [text]);
+  const matches = q && res.data?.q === q ? res.data.matches : [];
+  const go = (route: string) => {
+    setOpen(false);
+    setText("");
+    onDone?.();
+    navigate(route);
+  };
   return (
-    <label className="relative flex w-full items-center">
-      <IconSearch className="pointer-events-none absolute left-2.5 text-muted" width={16} height={16} />
-      <input
-        type="search"
-        autoFocus={autoFocus}
-        placeholder="Search ticker, hash, run id"
-        aria-label="Search"
-        className="h-8 w-full rounded-control border border-line-input bg-control pl-8 pr-2 text-caption text-primary placeholder:text-muted max-tablet:h-11"
-      />
-    </label>
+    <div className="relative w-full" data-testid="global-search">
+      <label className="relative flex w-full items-center">
+        <IconSearch className="pointer-events-none absolute left-2.5 text-muted" width={16} height={16} />
+        <input
+          type="search"
+          autoFocus={autoFocus}
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          onKeyDown={async (e) => {
+            if (e.key === "Escape") setOpen(false);
+            if (e.key !== "Enter" || !text.trim()) return;
+            const term = text.trim();
+            const hit =
+              res.data?.q === term
+                ? res.data.matches[0]
+                : (await apiGet("/api/search", { query: { q: term } }).catch(() => null))?.matches[0];
+            if (hit) go(hit.route);
+          }}
+          placeholder="Search ticker, hash, run id"
+          aria-label="Search"
+          aria-expanded={open && matches.length > 0}
+          className="h-8 w-full rounded-control border border-line-input bg-control pl-8 pr-2 text-caption text-primary placeholder:text-muted max-tablet:h-11"
+        />
+      </label>
+      {open && q && (
+        <ul
+          role="listbox"
+          aria-label="Search results"
+          className="absolute left-0 right-0 top-full z-50 mt-1 max-h-80 overflow-auto rounded-control border border-line bg-card py-1"
+        >
+          {matches.length === 0 ? (
+            <li className="px-3 py-2 text-caption text-muted">{res.isFetching ? "Searching…" : "No matches"}</li>
+          ) : (
+            matches.map((m) => (
+              <li key={`${m.kind}:${m.id}`} role="option" aria-selected={false}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => go(m.route)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-caption hover:bg-hover max-tablet:min-h-[44px]"
+                >
+                  <span className="rounded-label bg-control px-1.5 text-micro uppercase text-muted">{m.kind}</span>
+                  <span className="truncate text-primary">{m.label}</span>
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -375,7 +440,7 @@ export function Shell({ children }: { children?: ReactNode }) {
         </header>
         {layout === "mobile" && search && (
           <div className="border-b border-line bg-header px-4 py-2">
-            <SearchInput autoFocus />
+            <SearchInput autoFocus onDone={() => setSearch(false)} />
           </div>
         )}
         <main
