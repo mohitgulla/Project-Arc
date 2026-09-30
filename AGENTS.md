@@ -13,6 +13,7 @@ You are working a Kanban card for Project Arc, an agentic **options** trading sy
 - Python 3.12 via uv: `uv sync`, `uv run pytest`, `uv run ruff check --fix`, `uv run ruff format`.
 - Tests are required for every card. Property tests (hypothesis) for pricing and gate math.
 - `make check` must pass before you mark a card complete.
+- **Green main.** Never merge on a red main; the PR head's `check` job must be green. Tests inject `now`; they never read the wall clock.
 
 ## Git / PR
 - Work in the worktree Hermes gave you. Branch name is preset. Commit small, message format: `E1.2: <what changed>`.

@@ -46,6 +46,9 @@ from arc.scanner import (
 from arc.structures import assert_defined_risk, format_occ, parse_occ
 from arc.utils.calendar import ET
 
+# Fixed clock for the mocked Alpaca adapter (E1.1b): never the wall clock.
+FROZEN_NOW = dt.datetime(2026, 10, 1, 12, 0, 0, tzinfo=ET)
+
 RULES = LiquidityRules()  # PLAN §5 defaults: 10% / $0.10 spread, OI 100, vol 10
 
 
@@ -689,6 +692,7 @@ class TestCli:
 
 class TestAlpacaEnrichment:
     @patch.dict("os.environ", {"ALPACA_API_KEY": "k", "ALPACA_SECRET_KEY": "s"})
+    @patch("arc.data.alpaca.now_et", lambda: FROZEN_NOW)
     def test_open_interest_and_volume_filled(self) -> None:
         from arc.data.alpaca import AlpacaMarketData
 
@@ -696,7 +700,7 @@ class TestAlpacaEnrichment:
         snap = MagicMock()
         snap.latest_quote.bid_price = 4.44
         snap.latest_quote.ask_price = 4.47
-        snap.latest_quote.timestamp = dt.datetime.now(tz=ET)
+        snap.latest_quote.timestamp = FROZEN_NOW
         snap.latest_trade = None
         snap.greeks.delta = -0.2
         snap.implied_volatility = 0.16

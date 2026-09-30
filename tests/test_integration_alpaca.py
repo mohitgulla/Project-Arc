@@ -67,7 +67,7 @@ class TestAlpacaIntegration:
 
     def test_option_chain_spy(self, data) -> None:
         """Fetch SPY chain with 30-45 DTE window; validate contracts."""
-        today = now_et().date()
+        today = now_et().date()  # wall-clock: live Alpaca chain, DTE window from today
         exp_start = today + dt.timedelta(days=30)
         exp_end = today + dt.timedelta(days=45)
 
@@ -95,7 +95,7 @@ class TestAlpacaIntegration:
 
     def test_history_bars_spy(self, data) -> None:
         """Fetch SPY daily bars."""
-        today = now_et().date()
+        today = now_et().date()  # wall-clock: live Alpaca bars end at today
         start = today - dt.timedelta(days=30)
         bars = data.history_bars("SPY", start, today)
         assert len(bars) > 0
@@ -106,7 +106,7 @@ class TestAlpacaIntegration:
         Uses SPY options ~30 DTE.  Limit price is set absurdly low ($0.01)
         so the order will never fill.
         """
-        today = now_et().date()
+        today = now_et().date()  # wall-clock: live mleg order on today's listed expiries
         exp_start = today + dt.timedelta(days=30)
         exp_end = today + dt.timedelta(days=45)
 

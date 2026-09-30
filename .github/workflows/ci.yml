@@ -11,7 +11,10 @@ permissions:
   contents: read
 
 jobs:
+  # Required status check on main (docs/OPS.md §7). Keep the job id and name `check`
+  # stable: branch protection matches it by name, and renaming it silently drops the rule.
   check:
+    name: check
     runs-on: ubuntu-latest
     steps:
       # Actions are pinned to full-length commit SHAs (release tag in the trailing comment).

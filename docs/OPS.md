@@ -841,3 +841,47 @@ Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.
 See PLAN.md §2.4 for target: Scout/Investor/Auditor (cheap tier) routed
 locally via llama.cpp or omlx server; that is a `tiers.cheap.model` edit in
 `config/llm_routing.yaml` once Hermes has a local provider.
+
+---
+
+## 7. Green main (E1.1b)
+
+Main must stay green. On 2026-09-29 it was red from 17:34 to 18:49Z while three PRs
+(#59, #60, #61) merged on top of it, because a test stamped rows with the wall clock
+and nothing stopped a merge onto a red main.
+
+### 7.1 Required status check: `check`
+
+`.github/workflows/ci.yml` job `check` (job id and `name:` both `check`) runs
+`uv sync --locked` + `make check` (lock-check, lint, format, pip-audit, full suite,
+gate at 100% branch coverage). It is **the** required status check on `main`. Keep the
+name stable: branch protection matches checks by name, so renaming the job quietly
+removes the requirement.
+
+Merge rules:
+
+- Never merge a PR whose head `check` job is not green.
+- Never merge onto a red main. If main is red, the next PR to merge is the fix.
+- A worker never merges its own PR (AGENTS.md).
+
+**Owner-only step (one time).** Worker tokens cannot set branch protection
+(`gh api repos/mohitgulla/Project-Arc/branches/main/protection` returns 403). In
+GitHub: Settings → Rules → Rulesets → New branch ruleset → target `main` →
+enable "Require status checks to pass" → add `check` (and "Require branches to be up
+to date before merging") → Save. Check it with
+`gh api repos/mohitgulla/Project-Arc/rules/branches/main`, which should list a
+`required_status_checks` rule containing `check`.
+
+### 7.2 Tests never read the wall clock
+
+Tests inject a fixed `now` (a module-level `NOW`, a `now=` argument, or
+`monkeypatch.setattr("<module>.now_et", lambda: NOW)` for code that reads the clock
+itself). `tests/test_no_wall_clock_in_tests.py::test_no_wall_clock_reads_in_tests`
+parses every file under `tests/` and fails on any `now_et()`, `datetime.now()`,
+`datetime.utcnow()`, `datetime.today()` or `date.today()` call. It runs in `make test`,
+so in `make check` and CI.
+
+A live integration test that genuinely needs real time (live quotes, RTH checks, a
+hook subprocess verifying real token expiry) marks the call with
+`# wall-clock: <reason>` on the same line or in the comment block directly above it.
+Everything else pins the clock.
