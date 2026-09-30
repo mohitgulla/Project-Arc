@@ -344,6 +344,51 @@ curl http://<addr>:<port>/api/health        # {status, db, as_of}
   structure id; it backs the header search). Migration 017 adds only the indexes the
   list query needs (<220 ms with filters on a 100k-proposal store). The gate token is
   never served; only its version is.
+- **Performance (E8.7c):** `/performance?preset=week|mtd|qtd|ytd|30d|90d|all|custom&from&to&compare=prev|yoy|none&include_tests=true`
+  (URL-synced; `by=` picks the breakdown tab, `shadow=true` the D19 overlay). API:
+  `GET /api/performance` (every card, the comparison computed server-side over the same
+  length before the period, or the same dates a year back) and
+  `GET /api/performance/breakdown?by=ticker|structure|exit_reason|reason_code|profile|regime`.
+  Responses are cached in memory for 60 s per (query, DB file mtime/size), so a poll
+  doesn't re-scan the journal and any write to the store misses the cache. Every number comes
+  from the weekly scorecard's functions (`arc.journal.scorecard.closed_positions`,
+  `execution_costs`, `funnel`, `model_vs_realised`, `calibration_points` +
+  `arc.journal.attribution.calibration`), trade stats from `arc.journal.tradestats`, and
+  equity stats from `arc.reconcile.performance` (`daily_equity`, `drawdown`, `sharpe`,
+  `period_return`). The tower and the Friday scorecard agree by construction. **Paper
+  test legs:** a trade whose open or close has an `arc-<hex>` client id (the broker
+  smoke test, not an `arc2.` ladder attempt) is left out of every trade card, and its
+  realised P&L is taken out of the equity-based Net P&L, unless *Include paper test legs*
+  is on. `scripts/tower_fixture_db.py <new.db> --history` adds ~40 closed trades over
+  3+ months (shadows, reviews, fees, a smoke-test trade) for the page's tests and e2e.
+  Definitions (the page shows the same text as captions):
+  - **Net P&L**: change in daily closing equity over the period (realised + unrealised),
+    minus test-leg realised P&L; when there are no equity closes, the realised P&L of
+    trades closed in it. Bars by day up to 45 days, else by week (≤ 400 days) or month.
+    The shadow overlay adds Σ(D19 hold-to-expiry shadow − realised) of closed trades.
+  - **Sharpe**: mean ÷ sample standard deviation of daily close-to-close equity
+    returns × √252. Risk-free rate 0; deposits/withdrawals are not netted out; needs ≥ 2
+    returns with non-zero dispersion, else "—". The window includes the close before
+    the period's first day.
+  - **Max drawdown**: largest fall of a daily closing equity from any earlier peak in the
+    window, in $ and as a fraction of that peak; *recovered* = first later close at or
+    above the peak.
+  - **Return**: last close in the period ÷ the close before its first day − 1 (the first
+    close in the period when there is none before).
+  - **Win / loss**: a win is realised P&L > 0; a $0 scratch counts as a loss (as in
+    `PnlSummary`). Win rate = wins ÷ closed; profit factor = Σ wins ÷ |Σ losses| ("—"
+    with no losing dollars); **expectancy** = Σ realised ÷ trades closed
+    (= win rate × avg win + loss rate × avg loss). Fills only: commissions and fees are
+    not deducted (they're on the Costs card). Days held = closed − opened.
+  - **Costs**: commission and regulatory fees (ORF, OCC, CAT, TAF, SEC) from the fee
+    model stored with each fill's proposal (a close without its own uses its open's);
+    spread = the cost model's expected crossing cost; slippage = fill vs mid beyond it.
+    Cost % of gross = total ÷ |Σ realised|.
+  - **Modelled vs realised (D23)**: managed-exit net EV × contracts per closed trade vs
+    its realised P&L; PoP hit rate = realised win rate vs mean managed PoP, and the
+    hold-to-expiry variant = share of known D19 shadows > 0 vs mean static PoP.
+  - **Calibration (E7.4)**: persona confidence (Director) and the Quant's PoP bucketed
+    against the realised win rate over every closed trade to the period end.
 
 ### 5.7 Remote access over Tailscale (E8.6, D29)
 

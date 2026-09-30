@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { apiGet, type Meta, type Positions, type Snapshot } from "./api";
 import type { Overview, OverviewRange } from "./overview";
+import type { Performance } from "./performance";
 import { useSettings } from "./settings";
 import {
   apiQuery,
@@ -78,7 +79,9 @@ export function useTrade(hash: string | undefined) {
     queryKey: ["trade", hash],
     // The path template is typed; the hash is URL-safe hex.
     queryFn: ({ signal }) =>
-      apiGet(`/api/trades/${hash}` as "/api/trades/{proposal_hash}", { signal }),
+      apiGet(`/api/trades/${hash}` as "/api/trades/{proposal_hash}", {
+        signal,
+      }),
     enabled: Boolean(hash),
     ...poll,
   });
@@ -99,6 +102,17 @@ export function usePositions(status: "open" | "closed" | "all") {
   return useQuery<Positions>({
     queryKey: ["positions", status],
     queryFn: ({ signal }) => apiGet("/api/positions", { query: { status }, signal }),
+    placeholderData: keepPreviousData,
+    ...poll,
+  });
+}
+
+/** Performance (E8.7c): the server caches each response for 60 s per DB state. */
+export function usePerformance(q: Record<string, string>) {
+  const poll = usePoll();
+  return useQuery<Performance>({
+    queryKey: ["performance", q],
+    queryFn: ({ signal }) => apiGet("/api/performance", { query: q, signal }),
     placeholderData: keepPreviousData,
     ...poll,
   });

@@ -31,7 +31,18 @@ from arc.store.repos import PnlSnapshotRepo
 if TYPE_CHECKING:
     import sqlite3
 
-__all__ = ["DailyEquity", "daily_equity", "performance", "performance_from"]
+__all__ = [
+    "Drawdown",
+    "DailyEquity",
+    "TRADING_DAYS",
+    "daily_equity",
+    "daily_returns",
+    "drawdown",
+    "performance",
+    "performance_from",
+    "period_return",
+    "sharpe",
+]
 
 
 @dataclass(frozen=True)
@@ -93,3 +104,88 @@ def performance_from(series: list[DailyEquity], day: _dt.date) -> Performance | 
 def performance(conn: sqlite3.Connection, day: _dt.date) -> Performance | None:
     """Day / MTD / YTD P&L and % of starting equity as of ET *day* (``None``: no history)."""
     return performance_from(daily_equity(conn), day)
+
+
+# ---------------------------------------------------------------------------
+# Equity-curve statistics (E8.7c Performance page; pure over a DailyEquity series)
+# ---------------------------------------------------------------------------
+
+TRADING_DAYS = 252
+"""Annualisation factor for daily Sharpe: sessions per year."""
+
+
+@dataclass(frozen=True)
+class Drawdown:
+    """The deepest peak-to-trough fall of daily closing equity.
+
+    ``amount`` is ≤ 0 ($, trough − peak); ``pct`` is ``amount / peak`` (≤ 0).
+    ``recovered`` is the first day equity closed back at or above the peak (``None``
+    while still under water).
+    """
+
+    amount: Decimal
+    pct: float | None
+    peak_day: _dt.date | None
+    trough_day: _dt.date | None
+    recovered: _dt.date | None
+
+
+def drawdown(series: list[DailyEquity]) -> Drawdown:
+    """Maximum drawdown of *series* (oldest first): running peak vs each later close."""
+    best = Drawdown(Decimal(0), None, None, None, None)
+    peak: DailyEquity | None = None
+    for s in series:
+        if peak is None or s.equity >= peak.equity:
+            peak = s
+            continue
+        amount = s.equity - peak.equity
+        if amount < best.amount:
+            pct = float(amount / peak.equity) if peak.equity > 0 else None
+            best = Drawdown(amount, pct, peak.day, s.day, None)
+    if best.peak_day is None:
+        return best
+    level = next(s.equity for s in series if s.day == best.peak_day)
+    rec = next((s.day for s in series if s.day > best.trough_day and s.equity >= level), None)  # type: ignore[operator]
+    return Drawdown(best.amount, best.pct, best.peak_day, best.trough_day, rec)
+
+
+def daily_returns(series: list[DailyEquity]) -> list[float]:
+    """Close-to-close returns ``e[i] / e[i-1] − 1`` (a non-positive prior close is skipped)."""
+    return [
+        float(b.equity / a.equity - 1)
+        for a, b in zip(series, series[1:], strict=False)
+        if a.equity > 0
+    ]
+
+
+def sharpe(returns: list[float], *, periods: int = TRADING_DAYS) -> float | None:
+    """Annualised Sharpe of daily *returns*: ``mean / sample stdev × √periods``.
+
+    Risk-free rate 0, daily closes of account equity (so deposits and withdrawals count
+    as returns). ``None`` with fewer than two returns or zero dispersion.
+    """
+    n = len(returns)
+    if n < 2:
+        return None
+    mean = sum(returns) / n
+    var = sum((r - mean) ** 2 for r in returns) / (n - 1)
+    if var <= 0:
+        return None
+    return mean / var**0.5 * periods**0.5
+
+
+def period_return(
+    series: list[DailyEquity], first: _dt.date, last: _dt.date
+) -> tuple[Decimal | None, Decimal | None, float | None]:
+    """(start equity, end equity, return) over ET days ``[first, last]``.
+
+    Same start rule as :func:`performance_from`: the last close *before* ``first``,
+    else the first close inside (P&L since inception); ``None`` without closes inside.
+    """
+    before = [s for s in series if s.day < first]
+    inside = [s for s in series if first <= s.day <= last]
+    if not inside:
+        return None, None, None
+    start = before[-1].equity if before else inside[0].equity
+    end = inside[-1].equity
+    return start, end, (float(end / start - 1) if start > 0 else None)

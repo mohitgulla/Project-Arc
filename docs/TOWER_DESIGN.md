@@ -89,8 +89,10 @@ semibold top-left; action link top-right 12 px uppercase, 0.06 em tracking, `tex
 | `ChangePill` | see §3 |
 | `RangeControl` | segmented `1D 1W 1M 3M YTD 1Y ALL`; active = `range-active` pill, white bold text; URL-synced (`?range=`) |
 | `TrendChart` | axis-less line, `line-w`, series colour by sign of the change, gradient fill to transparent (~30 % → 0), hollow-ring endpoint, hover tooltip (time + value), optional dotted reference line (prev close / start of range) |
-| `DivergingBars` | monthly/daily bars, green above 0 red below, dotted gridlines, 2 Y ticks, "Now" marker (white 4 px-radius label + thin vertical line), future slots rendered empty so the axis is always full |
+| `DivergingBars` | monthly/daily bars, green above 0 red below, dotted gridlines, 2 Y ticks, "Now" marker (white 4 px-radius label + thin vertical line), future slots rendered empty so the axis is always full; optional dashed overlay lines (cumulative series) on their own hidden axis |
 | `StackedBars` | category-stacked, 1 px gaps, negative segments allowed, no legend (tooltip) |
+| `EquityDrawdownChart` | equity line (TrendChart styling) with the drawdown (distance below the running peak) shaded red in a lower strip (Performance) |
+| `ModelScatter` | one dot per trade, x = modelled, y = realised, dotted y = x diagonal; dots on/above it `pos`, below `neg`; click → trade detail (Performance) |
 | `ProportionBar` | dual/multi-segment 4 px bar + legend row (dot · label · value) |
 | `ProgressRow` | dot · label · value · 4 px bar · right value (used for Greeks vs caps, allocation, budgets) |
 | `Sparkline` | ~80×28, gradient fill, dotted reference line |

@@ -404,8 +404,10 @@ def test_counterfactual_closed_trade_vs_hold_and_no_trade(conn: sqlite3.Connecti
     assert c.proposal_hash == t["hash"] and c.source == "position" and c.early
     assert c.realised_pnl == pytest.approx(float(t["pnl"]))
     assert c.no_trade_pnl == 0.0 and c.no_trade_minus_realised == pytest.approx(-float(t["pnl"]))
-    # no settlement known offline and no reconcile row: the shadow stays pending
-    assert c.hold_to_expiry_shadow_pnl is None and cf.hold_total is None
+    # no settlement known offline: the recorded D19 outcome shadow is used (E8.7c)
+    assert c.hold_to_expiry_shadow_pnl == pytest.approx(330.0)
+    assert c.hold_minus_realised == pytest.approx(330.0 - float(t["pnl"]))
+    assert cf.hold_total == pytest.approx(330.0)
     assert cf.not_traded == [] and cf.shadow_source.startswith("n/a")
 
 

@@ -65,6 +65,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/performance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Performance
+         * @description Every Performance card for the period, with the comparison computed server-side.
+         */
+        get: operations["performance_api_performance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/performance/breakdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Performance Breakdown
+         * @description One breakdown tab: closed trades grouped by *by*, ranked by P&L.
+         */
+        get: operations["performance_breakdown_api_performance_breakdown_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/positions": {
         parameters: {
             query?: never;
@@ -276,6 +316,63 @@ export interface components {
             /** Ttl S */
             ttl_s?: number | null;
         };
+        /** BreakdownItem */
+        BreakdownItem: {
+            /** Count */
+            count: number;
+            /**
+             * Filter
+             * @description Trades list query for the row
+             */
+            filter?: {
+                [key: string]: string;
+            } | null;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Pnl */
+            pnl: number;
+            /** Share */
+            share: number;
+            /** Win Rate */
+            win_rate: number;
+            /** Wins */
+            wins: number;
+        };
+        /** BreakdownResponse */
+        BreakdownResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * By
+             * @enum {string}
+             */
+            by: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime";
+            /** Include Tests */
+            include_tests: boolean;
+            period: components["schemas"]["PeriodView"];
+            /** Rows */
+            rows: components["schemas"]["BreakdownItem"][];
+        };
+        /** Breakdowns */
+        Breakdowns: {
+            /** Exit Reason */
+            exit_reason?: components["schemas"]["BreakdownItem"][];
+            /** Profile */
+            profile?: components["schemas"]["BreakdownItem"][];
+            /** Reason Code */
+            reason_code?: components["schemas"]["BreakdownItem"][];
+            /** Regime */
+            regime?: components["schemas"]["BreakdownItem"][];
+            /** Structure */
+            structure?: components["schemas"]["BreakdownItem"][];
+            /** Ticker */
+            ticker?: components["schemas"]["BreakdownItem"][];
+        };
         /** BreakevenStat */
         BreakevenStat: {
             /**
@@ -324,6 +421,39 @@ export interface components {
              */
             window?: string | null;
         };
+        /** CalibrationCard */
+        CalibrationCard: {
+            /** Empty */
+            empty: boolean;
+            /** Rows */
+            rows?: components["schemas"]["CalibrationItem"][];
+            /**
+             * Trades
+             * @description Closed trades to the period end (all time)
+             * @default 0
+             */
+            trades: number;
+        };
+        /** CalibrationItem */
+        CalibrationItem: {
+            /**
+             * Gap
+             * @description hit_rate − stated_mean (negative = over-confident)
+             */
+            gap: number;
+            /** Hi */
+            hi: number;
+            /** Hit Rate */
+            hit_rate: number;
+            /** Lo */
+            lo: number;
+            /** N */
+            n: number;
+            /** Persona */
+            persona: string;
+            /** Stated Mean */
+            stated_mean: number;
+        };
         /** CandidateView */
         CandidateView: {
             /** Catalyst Date */
@@ -346,6 +476,41 @@ export interface components {
             stance: string;
             /** Ticker */
             ticker: string;
+        };
+        /** CostBar */
+        CostBar: {
+            /**
+             * Commission
+             * @default 0
+             */
+            commission: number;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /**
+             * Fees
+             * @default 0
+             */
+            fees: number;
+            /** Label */
+            label: string;
+            /**
+             * Slippage
+             * @default 0
+             */
+            slippage: number;
+            /**
+             * Spread
+             * @default 0
+             */
+            spread: number;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
         };
         /**
          * CostModel
@@ -406,6 +571,71 @@ export interface components {
              * @default 0
              */
             taf_per_contract_sell: number;
+        };
+        /** CostsCard */
+        CostsCard: {
+            /** Bars */
+            bars?: components["schemas"]["CostBar"][];
+            /** Change */
+            change?: number | null;
+            /**
+             * Commission
+             * @default 0
+             */
+            commission: number;
+            /** Compare Total */
+            compare_total?: number | null;
+            /**
+             * Cost Pct Of Gross
+             * @description total / |gross_pnl|
+             */
+            cost_pct_of_gross?: number | null;
+            /** Empty */
+            empty: boolean;
+            /**
+             * Fees
+             * @default 0
+             */
+            fees: number;
+            /**
+             * Fees From Open
+             * @description Close fills priced with their open's fees
+             * @default 0
+             */
+            fees_from_open: number;
+            /**
+             * Fills
+             * @default 0
+             */
+            fills: number;
+            /**
+             * Gross Pnl
+             * @description Σ realised of trades closed
+             */
+            gross_pnl?: number | null;
+            /**
+             * Slippage
+             * @description Fill vs mid beyond the model (+ = worse)
+             * @default 0
+             */
+            slippage: number;
+            /**
+             * Spread
+             * @description Modelled crossing cost, $
+             * @default 0
+             */
+            spread: number;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Unmodelled
+             * @description Fills with no stored cost model
+             * @default 0
+             */
+            unmodelled: number;
         };
         /**
          * DayPnlSection
@@ -488,15 +718,39 @@ export interface components {
                 [key: string]: components["schemas"]["PersonaCallView"];
             };
         };
-        /** EquityPoint */
-        EquityPoint: {
+        /** EquityCard */
+        EquityCard: {
+            /** Drawdown Peak */
+            drawdown_peak?: string | null;
+            /** Drawdown Recovered */
+            drawdown_recovered?: string | null;
+            /** Drawdown Trough */
+            drawdown_trough?: string | null;
+            /** Empty */
+            empty: boolean;
+            /** End Equity */
+            end_equity?: number | null;
             /**
-             * T
-             * Format: date-time
+             * Max Drawdown
+             * @description $ (≤ 0)
              */
-            t: string;
-            /** V */
-            v: string;
+            max_drawdown?: number | null;
+            /** Max Drawdown Pct */
+            max_drawdown_pct?: number | null;
+            /** Points */
+            points?: components["schemas"]["arc__tower__data_performance__EquityPoint"][];
+            /** Return Pct */
+            return_pct?: number | null;
+            /**
+             * Returns
+             * @description Daily returns behind the Sharpe
+             * @default 0
+             */
+            returns: number;
+            /** Sharpe */
+            sharpe?: number | null;
+            /** Start Equity */
+            start_equity?: number | null;
         };
         /**
          * EquitySection
@@ -516,7 +770,7 @@ export interface components {
              */
             range: "1D" | "1W" | "1M" | "3M" | "YTD" | "ALL";
             /** Series */
-            series?: components["schemas"]["EquityPoint"][];
+            series?: components["schemas"]["arc__tower__data_overview__EquityPoint"][];
             /**
              * Series Source
              * @default daily
@@ -815,6 +1069,34 @@ export interface components {
             price: string | null;
             /** Qty */
             qty: number;
+        };
+        /** FunnelCard */
+        FunnelCard: {
+            /** Empty */
+            empty: boolean;
+            /**
+             * Gate Fail
+             * @default 0
+             */
+            gate_fail: number;
+            /** Steps */
+            steps?: components["schemas"]["FunnelStep"][];
+            /**
+             * Violations
+             * @description rule code -> n
+             */
+            violations?: {
+                [key: string]: number;
+            };
+        };
+        /** FunnelStep */
+        FunnelStep: {
+            /** Count */
+            count: number;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
         };
         /**
          * GateCaps
@@ -1273,6 +1555,75 @@ export interface components {
              */
             theme_default: "system" | "light" | "dark";
         };
+        /** ModelCard */
+        ModelCard: {
+            /** Empty */
+            empty: boolean;
+            /**
+             * Hold Win Rate
+             * @description Shadow > 0 share
+             */
+            hold_win_rate?: number | null;
+            /** Mean Managed Pop */
+            mean_managed_pop?: number | null;
+            /** Mean Static Pop */
+            mean_static_pop?: number | null;
+            /**
+             * N
+             * @default 0
+             */
+            n: number;
+            /**
+             * N Shadow
+             * @default 0
+             */
+            n_shadow: number;
+            /** Points */
+            points?: components["schemas"]["ModelPoint"][];
+            /**
+             * Sum Managed Ev
+             * @default 0
+             */
+            sum_managed_ev: number;
+            /**
+             * Sum Realised
+             * @default 0
+             */
+            sum_realised: number;
+            /** Sum Shadow */
+            sum_shadow?: number | null;
+            /**
+             * Sum Static Ev
+             * @default 0
+             */
+            sum_static_ev: number;
+            /**
+             * Win Rate
+             * @description Realised win rate (managed exits)
+             */
+            win_rate?: number | null;
+        };
+        /** ModelPoint */
+        ModelPoint: {
+            /**
+             * Closed At
+             * Format: date-time
+             */
+            closed_at: string;
+            /**
+             * Net Ev
+             * @description Managed net EV x contracts, $
+             */
+            net_ev: number;
+            /** Open Proposal Hash */
+            open_proposal_hash: string;
+            /** Realised */
+            realised: number;
+            /** Shadow */
+            shadow?: number | null;
+            /** Ticker */
+            ticker: string;
+        };
         /** MoverTile */
         MoverTile: {
             /** At */
@@ -1297,6 +1648,66 @@ export interface components {
             ticker: string;
             /** Unrealized Pct */
             unrealized_pct?: number | null;
+        };
+        /** NetPnlCard */
+        NetPnlCard: {
+            /** Bars */
+            bars?: components["schemas"]["PnlBar"][];
+            /**
+             * Bucket
+             * @enum {string}
+             */
+            bucket: "day" | "week" | "month";
+            /**
+             * Change
+             * @description net − compare_net, $
+             */
+            change?: number | null;
+            /** Compare Net */
+            compare_net?: number | null;
+            /** Empty */
+            empty: boolean;
+            /** Net */
+            net?: number | null;
+            /**
+             * Now Label
+             * @description Label of the slot holding today
+             */
+            now_label?: string | null;
+            /**
+             * Realised
+             * @description Σ realised of trades closed in the period
+             * @default 0
+             */
+            realised: number;
+            /**
+             * Shadow Delta
+             * @description Σ(shadow − realised) over them
+             */
+            shadow_delta?: number | null;
+            /**
+             * Shadow Known
+             * @description Closed trades with a known D19 shadow
+             * @default 0
+             */
+            shadow_known: number;
+            /**
+             * Source
+             * @description equity = daily closes (realised + unrealised); realised = no equity history, closed trades only
+             * @enum {string}
+             */
+            source: "equity" | "realised" | "none";
+            /**
+             * Tests Excluded Pnl
+             * @description Test-leg realised taken out, $
+             * @default 0
+             */
+            tests_excluded_pnl: number;
+            /**
+             * Unrealised Change
+             * @description net − realised
+             */
+            unrealised_change?: number | null;
         };
         /** OpsView */
         OpsView: {
@@ -1524,6 +1935,56 @@ export interface components {
             /** Ytd Pnl */
             ytd_pnl?: number | null;
         };
+        /** PerformanceResponse */
+        PerformanceResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            breakdowns: components["schemas"]["Breakdowns"];
+            calibration: components["schemas"]["CalibrationCard"];
+            /**
+             * Compare
+             * @enum {string}
+             */
+            compare: "prev" | "yoy" | "none";
+            compare_period: components["schemas"]["PeriodView"] | null;
+            costs: components["schemas"]["CostsCard"];
+            equity: components["schemas"]["EquityCard"];
+            funnel: components["schemas"]["FunnelCard"];
+            /** Include Tests */
+            include_tests: boolean;
+            model: components["schemas"]["ModelCard"];
+            net_pnl: components["schemas"]["NetPnlCard"];
+            period: components["schemas"]["PeriodView"];
+            /**
+             * Preset
+             * @enum {string}
+             */
+            preset: "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+            win_loss: components["schemas"]["WinLossCard"];
+        };
+        /** PeriodView */
+        PeriodView: {
+            /** Days */
+            days: number;
+            /**
+             * First
+             * Format: date
+             */
+            first: string;
+            /**
+             * Last
+             * Format: date
+             */
+            last: string;
+            /**
+             * Slot End
+             * Format: date
+             */
+            slot_end: string;
+        };
         /** PersonaCallView */
         PersonaCallView: {
             /** Cost Usd */
@@ -1552,6 +2013,38 @@ export interface components {
             run_id: string;
             /** Status */
             status: string;
+        };
+        /** PnlBar */
+        PnlBar: {
+            /** Cumulative */
+            cumulative: number | null;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /**
+             * Future
+             * @description Starts after today: an empty slot
+             */
+            future: boolean;
+            /** Label */
+            label: string;
+            /**
+             * Pnl
+             * @description Σ daily equity change; None = no close in the slot
+             */
+            pnl: number | null;
+            /**
+             * Shadow Cumulative
+             * @description cumulative + Σ(D19 hold-to-expiry shadow − realised) of trades closed so far
+             */
+            shadow_cumulative: number | null;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
         };
         /**
          * PnlView
@@ -2350,6 +2843,20 @@ export interface components {
             /** Total */
             total: number;
         };
+        /**
+         * TradeRef
+         * @description A pointer to one closed trade (its open proposal is the Trades drill-down key).
+         */
+        TradeRef: {
+            /** Open Proposal Hash */
+            open_proposal_hash: string;
+            /** Realised Pnl */
+            realised_pnl: number;
+            /** Structure Id */
+            structure_id: string;
+            /** Ticker */
+            ticker: string;
+        };
         /** TradeRow */
         TradeRow: {
             /** Account Profile */
@@ -2443,6 +2950,60 @@ export interface components {
              * @default 0
              */
             violations: number;
+        };
+        /** TradeStats */
+        TradeStats: {
+            /** Avg Days Held */
+            avg_days_held?: number | null;
+            /** Avg Loss */
+            avg_loss?: number | null;
+            /** Avg Win */
+            avg_win?: number | null;
+            best?: components["schemas"]["TradeRef"] | null;
+            /**
+             * Closed
+             * @default 0
+             */
+            closed: number;
+            /**
+             * Expectancy
+             * @description Mean realised P&L per closed trade
+             */
+            expectancy?: number | null;
+            /**
+             * Gross Losses
+             * @description Σ of the losses (≤ 0)
+             * @default 0
+             */
+            gross_losses: number;
+            /**
+             * Gross Wins
+             * @default 0
+             */
+            gross_wins: number;
+            /**
+             * Losses
+             * @default 0
+             */
+            losses: number;
+            /**
+             * Profit Factor
+             * @description None: no losing dollars
+             */
+            profit_factor?: number | null;
+            /**
+             * Realised
+             * @default 0
+             */
+            realised: number;
+            /** Win Rate */
+            win_rate?: number | null;
+            /**
+             * Wins
+             * @default 0
+             */
+            wins: number;
+            worst?: components["schemas"]["TradeRef"] | null;
         };
         /**
          * TradeSummary
@@ -2565,6 +3126,36 @@ export interface components {
             /** Iv Rank */
             iv_rank?: number | null;
         };
+        /** WinLossCard */
+        WinLossCard: {
+            /** Compare Expectancy */
+            compare_expectancy?: number | null;
+            /** Compare Win Rate */
+            compare_win_rate?: number | null;
+            /** Empty */
+            empty: boolean;
+            stats: components["schemas"]["TradeStats"];
+        };
+        /** EquityPoint */
+        arc__tower__data_overview__EquityPoint: {
+            /**
+             * T
+             * Format: date-time
+             */
+            t: string;
+            /** V */
+            v: string;
+        };
+        /** EquityPoint */
+        arc__tower__data_performance__EquityPoint: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Equity */
+            equity: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -2659,6 +3250,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    performance_api_performance_get: {
+        parameters: {
+            query?: {
+                preset?: "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+                compare?: "prev" | "yoy" | "none";
+                include_tests?: boolean;
+                from?: string | null;
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PerformanceResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    performance_breakdown_api_performance_breakdown_get: {
+        parameters: {
+            query?: {
+                by?: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime";
+                preset?: "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+                include_tests?: boolean;
+                from?: string | null;
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BreakdownResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Service Unavailable */
