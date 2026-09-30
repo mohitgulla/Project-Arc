@@ -60,12 +60,14 @@ def proposal() -> Proposal:
         thesis="t",
         quant=QuantMetrics(pop=0.7, ev=D("1"), cost_bps=0.0),
         sizing=Sizing(contracts=1, notional=D("415"), pct_equity=0.01),
+        # wall-clock: the hook subprocess checks expiry against the real clock (now_et)
         expires_at=now_et() + dt.timedelta(minutes=10),
     )
 
 
 def signed_token(p: Proposal) -> str:
     d = GateDecision(proposal_hash=proposal_hash(p), passed=True)
+    # wall-clock: the token must be unexpired when the hook subprocess verifies it
     tok = issue_token(d, p, secret=SECRET.encode(), now=now_et()).token
     assert tok is not None
     return tok

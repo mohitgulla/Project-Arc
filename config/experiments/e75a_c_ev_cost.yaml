@@ -1,0 +1,7 @@
+experiment: >
+  E7.5a (c) Net EV / estimated cost filter at the Quant step. One variable: keep a
+  candidate only when its managed Net EV is at least its E2.4 expected round-trip
+  cost (entry + exit spread/slippage and fees). Threshold fixed before the run.
+ranking:
+  filters:
+    min_net_ev_to_cost: 1.0

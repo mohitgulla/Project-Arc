@@ -54,6 +54,7 @@ __all__ = [
     "applicable",
     "incumbent_for",
     "load_ranking_config",
+    "passes_cost_filter",
     "passes_filters",
     "rank",
 ]
@@ -91,6 +92,12 @@ class RankInputs(BaseModel):
     managed_pop: float | None = Field(None, ge=0.0, le=1.0, description="Managed PoP after costs")
     rorc_day: float | None = Field(None, description="managed Net EV ÷ (max loss × days held)")
     vrp: float | None = Field(None, description="ATM IV − realised-vol forecast")
+    est_cost: float | None = Field(
+        None,
+        ge=0.0,
+        description="E2.4 expected round-trip cost under the managed exit policy, $ per unit "
+        "(entry + exit spread/slippage, commissions, regulatory fees)",
+    )
 
 
 class RankFilters(BaseModel):
@@ -101,6 +108,12 @@ class RankFilters(BaseModel):
     enabled: bool = True
     min_managed_net_ev: float = Field(0.0, description="Keep only managed Net EV > this ($)")
     min_managed_pop: float = Field(0.0, ge=0.0, le=1.0, description="Keep managed PoP ≥ this")
+    min_net_ev_to_cost: float | None = Field(
+        None,
+        ge=0.0,
+        description="E7.5a: keep managed Net EV ÷ estimated cost ≥ this (None = off). A "
+        "candidate without a cost estimate fails it when set.",
+    )
 
 
 class RankingConfig(BaseModel):
@@ -140,7 +153,24 @@ def passes_filters(c: RankInputs, f: RankFilters) -> bool:
         return True
     if c.managed_net_ev is None or c.managed_pop is None:
         return False
-    return c.managed_net_ev > f.min_managed_net_ev and c.managed_pop >= f.min_managed_pop
+    if not (c.managed_net_ev > f.min_managed_net_ev and c.managed_pop >= f.min_managed_pop):
+        return False
+    return passes_cost_filter(c, f.min_net_ev_to_cost)
+
+
+def passes_cost_filter(c: RankInputs, min_ratio: float | None) -> bool:
+    """E7.5a: managed Net EV ÷ estimated cost ≥ *min_ratio* (``None`` = no filter).
+
+    A candidate with no cost estimate or no managed EV fails when the filter is set
+    (fail closed); a zero cost passes whenever Net EV is positive.
+    """
+    if min_ratio is None:
+        return True
+    if c.managed_net_ev is None or c.est_cost is None:
+        return False
+    if c.est_cost <= 0.0:
+        return c.managed_net_ev > 0.0
+    return c.managed_net_ev / c.est_cost >= min_ratio
 
 
 def _num(x: float | None) -> float:

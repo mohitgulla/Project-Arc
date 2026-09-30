@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.broker.base import TEST_CLIENT_ORDER_PREFIX
 from arc.context.ttl import to_db
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.journal.store import JournalStore
@@ -83,6 +84,9 @@ class MismatchKind(StrEnum):
     FILL_MISSING = "fill_missing"  # local fill the broker does not report
     FILL_QTY = "fill_qty"  # both sides have it, legs disagree
     BROKER_ERROR = "broker_error"  # could not read the broker: books unproven
+    # E6.2c: an unrecorded broker fill whose client_order_id is ``test.``-prefixed
+    # (an integration-test order). Reported as a notice, not a mismatch: no halt.
+    FILL_TEST = "fill_test"
 
 
 # Auditor anomaly categories (AnomalyReport.category)
@@ -95,6 +99,7 @@ CATEGORY: dict[MismatchKind, str] = {
     MismatchKind.FILL_MISSING: "fill_discrepancy",
     MismatchKind.FILL_QTY: "fill_discrepancy",
     MismatchKind.BROKER_ERROR: "other",
+    MismatchKind.FILL_TEST: "fill_discrepancy",
 }
 
 
@@ -115,6 +120,10 @@ class ReconcileReport(BaseModel):
     day: _dt.date
     at: _dt.datetime
     mismatches: list[Mismatch] = Field(default_factory=list)
+    notices: list[Mismatch] = Field(
+        default_factory=list,
+        description="Non-halting findings (fill_test: integration-test fills, E6.2c)",
+    )
     structures_open: int = 0
     structures_attributed: int = 0
     closed_today: int = 0
@@ -148,6 +157,8 @@ class ReconcileReport(BaseModel):
         )
         if self.wash_sales:
             text += f", {len(self.wash_sales)} wash sale(s)"
+        if self.notices:
+            text += f", {len(self.notices)} test fill(s) ignored"
         return text + ("; HALTED" if self.halted else "")
 
 
@@ -404,10 +415,13 @@ def _check_fills(
     local: list[dict[str, Any]], broker_fills: list[Fill], report: ReconcileReport
 ) -> None:
     got: dict[str, dict[str, list[Any]]] = defaultdict(lambda: defaultdict(lambda: ["", 0]))
+    coids: dict[str, str] = {}
     for f in broker_fills:
         leg = got[f.broker_order_id][parse_occ(f.symbol).format()]
         leg[0] = f.side
         leg[1] += int(f.qty)
+        if f.client_order_id:
+            coids[f.broker_order_id] = f.client_order_id
     want: dict[str, dict[str, tuple[str, int]]] = {}
     who: dict[str, dict[str, Any]] = {}
     for f in local:
@@ -423,6 +437,17 @@ def _check_fills(
     for bid in sorted(set(got) - set(want)):
         legs = ", ".join(f"{s} {sd} {q}" for s, (sd, q) in sorted(got[bid].items()))
         root = parse_occ(next(iter(got[bid]))).root
+        coid = coids.get(bid, "")
+        if coid.startswith(TEST_CLIENT_ORDER_PREFIX):
+            # E6.2c: an integration-test order hit this account. Not Arc's trade and
+            # not an unexplained one: report it, don't halt. Any leg it left open is
+            # still a position_unattributed mismatch (a human must close it).
+            report.notices.append(
+                Mismatch(kind=MismatchKind.FILL_TEST, subject=root, refs=[bid, coid],
+                         detail=f"integration-test order {coid} ({bid}) filled [{legs}] "
+                         "on this account; tests must use the dedicated test account")
+            )  # fmt: skip
+            continue
         report.mismatches.append(
             Mismatch(kind=MismatchKind.FILL_UNKNOWN, subject=root, refs=[bid],
                      detail=f"broker order {bid} filled [{legs}] with no local record")
@@ -759,6 +784,13 @@ def reconcile(
             store.record(
                 persona=JournalPersona.AUDITOR, stage=Stage.RECONCILE, subject=m.subject,
                 choice=Choice.FAILED, reason_code=ReasonCode.RECONCILE_MISMATCH,
+                reason_text=m.detail[:2000], at=now, run_id=run_id,
+                payload={"kind": str(m.kind), "refs": m.refs},
+            )  # fmt: skip
+        for m in report.notices:
+            store.record(
+                persona=JournalPersona.AUDITOR, stage=Stage.RECONCILE, subject=m.subject,
+                choice=Choice.NOTED, reason_code=ReasonCode.RECONCILE_TEST_FILL,
                 reason_text=m.detail[:2000], at=now, run_id=run_id,
                 payload={"kind": str(m.kind), "refs": m.refs},
             )  # fmt: skip

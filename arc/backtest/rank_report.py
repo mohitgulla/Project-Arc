@@ -32,8 +32,10 @@ from arc.backtest.ranking import (
     RankRun,
     apply_stance,
     build_menus,
+    build_menus_by_kind,
     clean_chains,
     decide,
+    kind_costs,
     labels_for,
     picked_outcomes,
     profile_allows_credit,
@@ -115,17 +117,37 @@ def ticker_job(
         specs = bt.specs_for(profile, lo, hi)
         for x in slippages:
             c = cost.model_copy(update={"slippage_frac": x})
-            m = build_menus(
-                chains,
-                closes,
-                days=days,
-                underlying=ticker,
-                specs=specs,
-                cost=c,
-                exits=exits,
-                mc=mc,
-                r=bt.risk_free_rate,
+            # E7.5a: the base run (x = costs.yaml) uses the measured per-kind slippage.
+            ck = (
+                kind_costs(specs, c, bt.slippage_by_kind)
+                if bt.slippage_by_kind and x == cost.slippage_frac
+                else {}
             )
+            if ck:
+                m = build_menus_by_kind(
+                    chains,
+                    closes,
+                    days=days,
+                    underlying=ticker,
+                    specs=specs,
+                    cost=c,
+                    cost_by_kind=ck,
+                    exits=exits,
+                    mc=mc,
+                    r=bt.risk_free_rate,
+                )
+            else:
+                m = build_menus(
+                    chains,
+                    closes,
+                    days=days,
+                    underlying=ticker,
+                    specs=specs,
+                    cost=c,
+                    exits=exits,
+                    mc=mc,
+                    r=bt.risk_free_rate,
+                )
             if stances is not None:
                 m = apply_stance(m, trend, stances[profile])
             menus[(profile, x)] = m
@@ -138,6 +160,7 @@ def ticker_job(
                 closes=closes,
                 cost=c,
                 exits=exits,
+                cost_by_kind=ck,
             )
     log.info("backtest.rank_ticker", ticker=ticker, sessions=len(days))
     return TickerResult(ticker, menus, outcomes, trend, vol)
@@ -179,6 +202,14 @@ def root_cause(row: Mapping[str, object]) -> tuple[str, float]:
 # ---------------------------------------------------------------------------
 
 
+def _stances(p: str, cfg: RankingFile, settings: ArcSettings) -> dict[str, frozenset[str]]:
+    """Trend label → allowed structures: ``backtest.stance_menus`` override, else profile."""
+    override = cfg.backtest.stance_menus.get(p)
+    if override is None:
+        return stance_kinds(p, settings.account_profiles_file)
+    return {lab: frozenset(str(k) for k in kinds) for lab, kinds in override.items()}
+
+
 def _sessions(closes: Mapping[str, pd.Series], start: dt.date) -> list[dt.date]:
     days: set[dt.date] = set()
     for s in closes.values():
@@ -210,7 +241,7 @@ def run_rank_report(
     bt = cfg.backtest
     slippages = sorted({*bt.slippage_grid, cost.slippage_frac})
     per_profile = {p: settings.with_profile(p) for p in profiles}
-    windows = {p: s.entry_dte_window for p, s in per_profile.items()}
+    windows = {p: bt.window_for(p, s.entry_dte_window) for p, s in per_profile.items()}
     allows = {p: profile_allows_credit(p, settings.account_profiles_file) for p in profiles}
     rk = {p: rankers_for(rankers, allows_credit=allows[p]) for p in profiles}
 
@@ -227,7 +258,7 @@ def run_rank_report(
         "windows": windows,
         "rankers": rk,
         "slippages": slippages,
-        "stances": {p: stance_kinds(p, settings.account_profiles_file) for p in profiles}
+        "stances": {p: _stances(p, cfg, settings) for p in profiles}
         if bt.stance == "trend"
         else None,
     }
@@ -281,6 +312,7 @@ def run_rank_report(
         )
         for p in profiles
     }
+    frames["equity"] = _equity_frame(runs, profiles=profiles, rk=rk, x=cost.slippage_frac)
     for name, df in frames.items():
         if isinstance(df, pd.DataFrame):
             df.to_csv(out_dir / f"{name}.csv", index=False)
@@ -407,6 +439,31 @@ def _tables(
     }
 
 
+def _equity_frame(
+    runs: Mapping[tuple[str, float, str], RankRun],
+    *,
+    profiles: Sequence[str],
+    rk: Mapping[str, Sequence[Ranker]],
+    x: float,
+) -> pd.DataFrame:
+    """Daily equity per (profile, ranker) at the base cost (feeds ``rank-compare``)."""
+    parts: list[pd.DataFrame] = []
+    for p in profiles:
+        for r in rk[p]:
+            eq = runs[(p, x, r.value)].equity
+            parts.append(
+                pd.DataFrame(
+                    {
+                        "profile": p,
+                        "ranker": r.value,
+                        "date": list(eq.index),
+                        "equity": eq.to_numpy(dtype=float),
+                    }
+                )
+            )
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
 def _charts(
     runs: Mapping[tuple[str, float, str], RankRun],
     *,
@@ -442,6 +499,31 @@ def _charts(
     return out
 
 
+def _knobs(cfg: RankingFile) -> list[str]:
+    """E7.5a experiment settings that differ from the E7.5 primary run (report header)."""
+    bt, f = cfg.backtest, cfg.ranking.filters
+    out: list[str] = []
+    if bt.stance_menus:
+        out.append(
+            "Regime-conditional menu (backtest.stance_menus): "
+            + "; ".join(
+                f"{p}: "
+                + ", ".join(f"{lab} → {'/'.join(map(str, k)) or 'none'}" for lab, k in m.items())
+                for p, m in bt.stance_menus.items()
+            )
+            + "\n"
+        )
+    if f.min_net_ev_to_cost is not None:
+        out.append(f"Net EV ÷ est. cost filter: ≥ {f.min_net_ev_to_cost:g}\n")
+    if bt.slippage_by_kind:
+        out.append(
+            "Measured slippage x by structure (base run): "
+            + ", ".join(f"{k} {v:g}" for k, v in bt.slippage_by_kind.items())
+            + "\n"
+        )
+    return out
+
+
 def _render(
     f: Mapping[str, pd.DataFrame],
     *,
@@ -471,6 +553,7 @@ def _render(
         "Entry DTE windows: "
         + ", ".join(f"{p} {lo}–{hi}" for p, (lo, hi) in windows.items())
         + "\n",
+        *_knobs(cfg),
         f"## Decision rule (fixed before the run)\n\n{rule}\n",
         "## Data caveats\n",
         "- Alpaca options history has **no historical quotes**: `mid` is the session's last "

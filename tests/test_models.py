@@ -21,9 +21,12 @@ from arc.models import (
     Structure,
 )
 
+_NOW = datetime(2026, 9, 28, 16, 0, tzinfo=UTC)
+
 
 def _now() -> datetime:
-    return datetime.now(tz=UTC)
+    """Fixed instant: tests inject ``now``, they never read the wall clock (E1.1b)."""
+    return _NOW
 
 
 def test_candidate_roundtrip() -> None:

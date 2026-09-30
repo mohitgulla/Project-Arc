@@ -3,7 +3,9 @@
 Uses ``alpaca-py`` data clients for option chains (via snapshots endpoint),
 underlying quotes, and history bars.
 
-Reads ``ALPACA_API_KEY`` / ``ALPACA_SECRET_KEY`` from environment.
+Reads ``ALPACA_API_KEY`` / ``ALPACA_SECRET_KEY`` from environment unless the
+caller passes explicit keys (the integration tests pass the dedicated test
+account's keys, E6.2c; production code never does).
 Data-quality checks: stale timestamps, missing greeks, zero bid are flagged.
 """
 
@@ -129,7 +131,16 @@ def _check_quality(
 # ---------------------------------------------------------------------------
 
 
-def _get_keys() -> tuple[str, str]:
+def _get_keys(api_key: str | None = None, secret_key: str | None = None) -> tuple[str, str]:
+    """Explicit keys when given (both or neither), else ``ALPACA_API_KEY``/``_SECRET_KEY``."""
+    if (api_key is None) != (secret_key is None):
+        msg = "pass both api_key and secret_key, or neither"
+        raise ValueError(msg)
+    if api_key is not None and secret_key is not None:
+        if not api_key or not secret_key:
+            msg = "explicit Alpaca api_key/secret_key must be non-empty"
+            raise ValueError(msg)
+        return api_key, secret_key
     api_key = os.environ.get("ALPACA_API_KEY", "")
     secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
     if not api_key or not secret_key:
@@ -195,8 +206,11 @@ class AlpacaMarketData:
         options_feed: AlpacaOptionsFeed | str | None = None,
         contracts_client: TradingClient | None = None,
         raw_option_client: OptionHistoricalDataClient | None = None,
+        *,
+        api_key: str | None = None,
+        secret_key: str | None = None,
     ) -> None:
-        api_key, secret_key = _get_keys()
+        api_key, secret_key = _get_keys(api_key, secret_key)
         if data_feed is None or options_feed is None:
             settings = get_settings()
             data_feed = data_feed or settings.alpaca_data_feed
