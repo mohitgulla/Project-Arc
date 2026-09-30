@@ -221,16 +221,17 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
         ),
     )  # fmt: skip
     # regime context entry + the input snapshot the personas read
+    prev_day = (at.date() - dt.timedelta(days=1)).isoformat()
     regime_payload = {
-        "schema_version": 1, "ticker": "SPY", "as_of": (at.date() - dt.timedelta(days=1)).isoformat(),
+        "schema_version": 1, "ticker": "SPY", "as_of": prev_day,
         "last_close": 661.30,
         "regime": {
-            "as_of": (at.date() - dt.timedelta(days=1)).isoformat(), "current": "bull",
+            "as_of": prev_day, "current": "bull",
             "trailing_return": 0.034, "lookback_days": 20, "step": 5, "n_transitions": 240,
             "transition_matrix": {}, "stickiness": 0.82, "stickiness_by_state": {},
             "expected_duration": 5.6,
         },
-        "vol": {"as_of": (at.date() - dt.timedelta(days=1)).isoformat(), "hv20": 0.13,
+        "vol": {"as_of": prev_day, "hv20": 0.13,
                 "iv": 0.16, "iv_rank": 0.34, "iv_percentile": 0.41},
         "warnings": [],
     }  # fmt: skip
@@ -254,7 +255,9 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
         ("risk", "claude-sonnet-5", 7200, 900, 8300, 0.0351),
     ]):  # fmt: skip
         pid = f"pc-fx-{persona}"
-        prompt = f"You are the Arc {persona.capitalize()}. Context snapshot snap-fx-spy: SPY bull ..."
+        prompt = (
+            f"You are the Arc {persona.capitalize()}. Context snapshot snap-fx-spy: SPY bull ..."
+        )
         _ins(conn, "persona_calls", {
             "id": pid, "run_id": runs[persona], "persona": persona, "model": model,
             "snapshot_id": "snap-fx-spy",
@@ -359,7 +362,8 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
     amd_structure = Structure.model_validate_json(amd_st)
     swap_id = "swap-fx-amd-xle"
     h_close = make_proposal(
-        "exit-amd", "AMD", _closing(amd_structure, close_net=Decimal("-5.10")), at=close_at, contracts=2, kind="close", ev="0",
+        "exit-amd", "AMD", _closing(amd_structure, close_net=Decimal("-5.10")), at=close_at,
+        contracts=2, kind="close", ev="0",
         pop=0.5, net_ev=None,
     )  # fmt: skip
     h_open = make_proposal("p-xle-swap", "XLE", vert("XLE", 95), at=close_at + dt.timedelta(
@@ -372,7 +376,8 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
     make_execute(h_close, at=close_at, kind="close", contracts=2, status="filled",
                  fill=Decimal("-5.10"))  # fmt: skip
     conn.execute(
-        "UPDATE executions SET structure_id = ? WHERE proposal_hash = ?", (amd_structure_id, h_close)
+        "UPDATE executions SET structure_id = ? WHERE proposal_hash = ?",
+        (amd_structure_id, h_close),
     )
     _order_events(conn, h_close, close_at, "filled")
     conn.execute(

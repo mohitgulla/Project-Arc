@@ -133,7 +133,7 @@ _MC = {
 # Everything a list row shows, per proposal. Exactly one row per proposal: every join
 # is to a unique key or to the latest row by a correlated subquery.
 _BASE = f"""
-WITH base AS (
+WITH {{stubs}}base AS (
   SELECT
     p.rowid AS rid,
     p.proposal_hash, p.ticker, p.kind, p.day, p.created_at, p.run_id, p.chain_run_id,
@@ -201,6 +201,27 @@ WITH base AS (
   FROM base
 )
 """
+
+# Optional tables the list query joins: when one is missing (an older store), an empty
+# CTE of the same name shadows it, so the page renders with empty columns, never a 500.
+_STUBS: dict[str, str] = {
+    "market_contexts": "SELECT NULL AS rowid, NULL AS proposal_hash, NULL AS created_at, "
+    "NULL AS payload WHERE 0",
+    "outcomes": "SELECT NULL AS rowid, NULL AS proposal_hash, NULL AS at, NULL AS exit_reason, "
+    "NULL AS realised_pnl WHERE 0",
+    "decisions": "SELECT NULL AS proposal_hash, NULL AS reason_code WHERE 0",
+    "routine_runs": "SELECT NULL AS run_id, NULL AS chain_run_id WHERE 0",
+}
+# The list needs these (migrations 001-011); without them it is empty.
+_REQUIRED = ("proposals", "gate_decisions", "approval_requests", "executions", "open_structures")
+
+
+def _base(conn: sqlite3.Connection) -> str:
+    stubs = "".join(
+        f"{name} AS ({sql}), " for name, sql in _STUBS.items() if not _has_table(conn, name)
+    )
+    return _BASE.replace("{stubs}", stubs)
+
 
 _SORT_SQL: dict[str, str] = {
     "time": "jd",
@@ -420,6 +441,12 @@ class QuantSection(BaseModel):
     max_loss: Decimal | None = None
     buying_power: Decimal | None = None
     dte: int | None = None
+    # Managed-exit vs hold-to-expiry headline, read straight from the stored payload so it
+    # shows even when the full analytics block does not validate (older/partial rows).
+    net_ev_managed: float | None = Field(default=None, description="$ per unit after costs")
+    net_ev_hold: float | None = None
+    pop_managed: float | None = None
+    pop_hold: float | None = None
     analytics: ProposalAnalytics | None = None
     analytics_at: _dt.datetime | None = None
     analytics_error: str | None = None
@@ -883,10 +910,7 @@ def _row(r: sqlite3.Row) -> TradeRow:
 
 def _ready(conn: sqlite3.Connection) -> bool:
     """The list query needs the execution-era tables (migration 011+)."""
-    return all(
-        _has_table(conn, t)
-        for t in ("proposals", "approval_requests", "executions", "open_structures", "outcomes")
-    )
+    return all(_has_table(conn, t) for t in _REQUIRED)
 
 
 def load_trades(
@@ -922,49 +946,57 @@ def load_trades(
         return empty
     where, params = _where(filters, today)
     order = _SORT_SQL[sort]
-    sql = f"""{_BASE}
-        SELECT trades.*,
-          COUNT(*) OVER () AS _total,
-          SUM(CASE WHEN COALESCE(filled_qty, 0) > 0 THEN 1 ELSE 0 END) OVER () AS _filled,
-          SUM(realized_pnl) OVER () AS _pnl,
-          COUNT(realized_pnl) OVER () AS _pnl_n,
-          AVG(slippage_bps) OVER () AS _slip,
-          AVG(net_ev) OVER () AS _ev,
-          SUM(CASE WHEN realized_pnl IS NOT NULL THEN net_ev END) OVER () AS _ev_real
-        FROM trades{where}
-        ORDER BY {order} IS NULL, {order} {direction.upper()}, jd DESC, rid DESC
-        LIMIT ? OFFSET ?"""  # noqa: S608 - column names from a fixed whitelist
-    rows = conn.execute(sql, [*params, size, (page - 1) * size]).fetchall()
-    if not rows:
-        if page > 1:  # past the end: report the total from page 1
-            first = load_trades(
-                conn, filters, now=now, page=1, size=size, sort=sort, direction=direction
-            )
-            return first.model_copy(update={"page": page, "items": []})
+    # Three lean passes instead of one wide window query: the filter-wide summary, the
+    # page's row ids (sort keys only), then the full rows for that page (<= size rows).
+    agg = conn.execute(
+        f"""{_base(conn)}
+        SELECT COUNT(*),
+          SUM(CASE WHEN COALESCE(filled_qty, 0) > 0 THEN 1 ELSE 0 END),
+          SUM(realized_pnl), COUNT(realized_pnl), AVG(slippage_bps), AVG(net_ev),
+          SUM(CASE WHEN realized_pnl IS NOT NULL THEN net_ev END)
+        FROM trades{where}""",  # noqa: S608 - clauses built from a fixed whitelist
+        params,
+    ).fetchone()
+    total = int(agg[0] or 0)
+    if total == 0:
         return empty
-    top = rows[0]
-    total = int(top["_total"])
-    filled = int(top["_filled"] or 0)
+    filled = int(agg[1] or 0)
     summary = TradeSummary(
         count=total,
         filled=filled,
-        filled_pct=filled / total if total else None,
-        realized_pnl=_f(top["_pnl"]),
-        realized_count=int(top["_pnl_n"] or 0),
-        avg_slippage_bps=_f(top["_slip"]),
-        avg_net_ev=_f(top["_ev"]),
-        net_ev_realized=_f(top["_ev_real"]),
+        filled_pct=filled / total,
+        realized_pnl=_f(agg[2]),
+        realized_count=int(agg[3] or 0),
+        avg_slippage_bps=_f(agg[4]),
+        avg_net_ev=_f(agg[5]),
+        net_ev_realized=_f(agg[6]),
     )
-    return empty.model_copy(
-        update={"total": total, "items": [_row(r) for r in rows], "summary": summary}
-    )
+    ids = [
+        r[0]
+        for r in conn.execute(
+            f"""{_base(conn)} SELECT rid FROM trades{where}
+            ORDER BY {order} IS NULL, {order} {direction.upper()}, jd DESC, rid DESC
+            LIMIT ? OFFSET ?""",  # noqa: S608 - column names from a fixed whitelist
+            [*params, size, (page - 1) * size],
+        )
+    ]
+    by_rid: dict[int, sqlite3.Row] = {}
+    if ids:
+        marks = ",".join("?" * len(ids))
+        for r in conn.execute(
+            f"{_base(conn)} SELECT * FROM trades WHERE rid IN ({marks})",  # noqa: S608
+            ids,
+        ):
+            by_rid[r["rid"]] = r
+    items = [_row(by_rid[i]) for i in ids if i in by_rid]
+    return empty.model_copy(update={"total": total, "items": items, "summary": summary})
 
 
 def _trade_row(conn: sqlite3.Connection, proposal_hash: str) -> TradeRow | None:
     if not _ready(conn):
         return None
     row = conn.execute(
-        f"{_BASE} SELECT * FROM trades WHERE proposal_hash = ?", (proposal_hash,)
+        f"{_base(conn)} SELECT * FROM trades WHERE proposal_hash = ?", (proposal_hash,)
     ).fetchone()
     return _row(row) if row is not None else None
 
@@ -976,6 +1008,7 @@ def load_filter_options(conn: sqlite3.Connection, *, now: _dt.datetime) -> Trade
         return [str(r[0]) for r in conn.execute(sql).fetchall() if r[0] not in (None, "")]
 
     now_et = now.astimezone(ET)
+    has_outcomes = _has_table(conn, "outcomes")
     if not _ready(conn):
         return TradeFilterOptions(
             as_of=now_et,
@@ -986,8 +1019,10 @@ def load_filter_options(conn: sqlite3.Connection, *, now: _dt.datetime) -> Trade
             reason_codes=[],
             account_profiles=[],
         )
-    codes = col(
-        "SELECT DISTINCT reason_code FROM decisions WHERE proposal_hash IS NOT NULL ORDER BY 1"
+    codes = (
+        col("SELECT DISTINCT reason_code FROM decisions WHERE proposal_hash IS NOT NULL ORDER BY 1")
+        if _has_table(conn, "decisions")
+        else []
     )
     return TradeFilterOptions(
         as_of=now_et,
@@ -998,12 +1033,14 @@ def load_filter_options(conn: sqlite3.Connection, *, now: _dt.datetime) -> Trade
         ),
         exit_reasons=sorted(
             set(col("SELECT DISTINCT exit_reason FROM open_structures"))
-            | set(col("SELECT DISTINCT exit_reason FROM outcomes"))
+            | (set(col("SELECT DISTINCT exit_reason FROM outcomes")) if has_outcomes else set())
         ),
         reason_codes=[{"code": c, "label": reason_label(c)} for c in codes],
         account_profiles=col(
             f"SELECT DISTINCT {_MC['profile']} FROM market_contexts ORDER BY 1"  # noqa: S608
-        ),
+        )
+        if _has_table(conn, "market_contexts")
+        else [],
     )
 
 
@@ -1281,6 +1318,8 @@ def _quant(p: sqlite3.Row, mc: sqlite3.Row | None) -> QuantSection:
     analytics: ProposalAnalytics | None = None
     error: str | None = None
     raw = _json(mc["payload"], {}).get("analytics") if mc is not None else None
+    em = (raw or {}).get("exit_model") or {}
+    managed, static = em.get("managed") or {}, em.get("static") or {}
     if raw:
         try:
             analytics = ProposalAnalytics.model_validate(raw)
@@ -1297,6 +1336,10 @@ def _quant(p: sqlite3.Row, mc: sqlite3.Row | None) -> QuantSection:
         max_loss=_dec(st.get("max_loss")),
         buying_power=_dec(st.get("buying_power")),
         dte=st.get("dte"),
+        net_ev_managed=_f(managed.get("net_ev")),
+        net_ev_hold=_f(static.get("net_ev")),
+        pop_managed=_f(managed.get("pop")),
+        pop_hold=_f(static.get("pop")),
         analytics=analytics,
         analytics_at=parse_ts(mc["created_at"]) if mc is not None else None,
         analytics_error=error,
@@ -1447,9 +1490,16 @@ def _execution(
     x = conn.execute("SELECT * FROM executions WHERE proposal_hash = ?", (h,)).fetchone()
     orders: list[OrderView] = []
     fills: list[FillView] = []
-    for o in conn.execute(
-        "SELECT * FROM orders WHERE proposal_hash = ? ORDER BY created_at, rowid", (h,)
-    ).fetchall():
+    has_events = _has_table(conn, "order_events")
+    has_fills = _has_table(conn, "fills")
+    order_rows = (
+        conn.execute(
+            "SELECT * FROM orders WHERE proposal_hash = ? ORDER BY created_at, rowid", (h,)
+        ).fetchall()
+        if _has_table(conn, "orders")
+        else []
+    )
+    for o in order_rows:
         events = [
             OrderEventView(
                 from_state=e["from_state"],
@@ -1458,8 +1508,13 @@ def _execution(
                 detail=e["detail"],
                 at=parse_ts(e["event_at"]),
             )
-            for e in conn.execute(
-                "SELECT * FROM order_events WHERE order_id = ? ORDER BY event_at, id", (o["id"],)
+            for e in (
+                conn.execute(
+                    "SELECT * FROM order_events WHERE order_id = ? ORDER BY event_at, id",
+                    (o["id"],),
+                )
+                if has_events
+                else []
             )
         ]
         orders.append(
@@ -1481,8 +1536,12 @@ def _execution(
                 price=_dec(f["price"]),
                 filled_at=parse_ts(f["filled_at"]),
             )
-            for f in conn.execute(
-                "SELECT * FROM fills WHERE order_id = ? ORDER BY filled_at, rowid", (o["id"],)
+            for f in (
+                conn.execute(
+                    "SELECT * FROM fills WHERE order_id = ? ORDER BY filled_at, rowid", (o["id"],)
+                )
+                if has_fills
+                else []
             )
         ]
     if x is None and not orders:

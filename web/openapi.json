@@ -5294,6 +5294,29 @@
             ],
             "title": "Max Loss"
           },
+          "net_ev_hold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Ev Hold"
+          },
+          "net_ev_managed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "$ per unit after costs",
+            "title": "Net Ev Managed"
+          },
           "notional": {
             "anyOf": [
               {
@@ -5327,6 +5350,28 @@
               }
             ],
             "title": "Pop"
+          },
+          "pop_hold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pop Hold"
+          },
+          "pop_managed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pop Managed"
           }
         },
         "title": "QuantSection",
