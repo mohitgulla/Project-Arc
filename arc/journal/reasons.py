@@ -220,6 +220,7 @@ class ReasonCode(StrEnum):
     RECONCILE_EXPIRED = "reconcile:expired"
     RECONCILE_WASH_SALE = "reconcile:wash_sale"
     RECONCILE_LOT_PRICE = "reconcile:lot_price"
+    RECONCILE_TEST_FILL = "reconcile:test_fill"
 
 
 def gate_reason(violation: str) -> ReasonCode:

@@ -21,8 +21,10 @@ jobs:
     timeout-minutes: 20
     env:
       ARC_ENV: paper
-      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
-      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      # E6.2c: the dedicated *test* paper account, never the production one.
+      # The tests fail (not skip) if the test key equals ALPACA_API_KEY.
+      ALPACA_TEST_API_KEY: ${{ secrets.ALPACA_TEST_API_KEY }}
+      ALPACA_TEST_SECRET_KEY: ${{ secrets.ALPACA_TEST_SECRET_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -38,10 +40,10 @@ jobs:
         run: uv sync --locked
 
       # The tests skip without keys; a skip must not look like a pass here.
-      - name: Require paper secrets
+      - name: Require test-account paper secrets
         run: |
-          if [ -z "$ALPACA_API_KEY" ] || [ -z "$ALPACA_SECRET_KEY" ]; then
-            echo "::error::ALPACA_API_KEY / ALPACA_SECRET_KEY repo secrets are not set"
+          if [ -z "$ALPACA_TEST_API_KEY" ] || [ -z "$ALPACA_TEST_SECRET_KEY" ]; then
+            echo "::error::ALPACA_TEST_API_KEY / ALPACA_TEST_SECRET_KEY repo secrets are not set"
             exit 1
           fi
 

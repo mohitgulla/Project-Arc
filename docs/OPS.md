@@ -106,9 +106,11 @@ personas off the frontier model.
 | `CLAUDE_CODE_OAUTH_TOKEN` | Anthropic subscription auth | Yes |
 | `SLACK_BOT_TOKEN` | Hermes Slack bot | Yes |
 | `SLACK_APP_TOKEN` | Slack Socket Mode | Yes |
-| `ALPACA_API_KEY` | Alpaca paper trading | Yes |
-| `ALPACA_SECRET_KEY` | Alpaca paper trading | Yes |
+| `ALPACA_API_KEY` | Alpaca paper trading (production paper account) | Yes |
+| `ALPACA_SECRET_KEY` | Alpaca paper trading (production paper account) | Yes |
 | `ALPACA_BASE_URL` | Alpaca API endpoint | Yes |
+| `ALPACA_TEST_API_KEY` | Dedicated test paper account, integration tests only (§5.12, E6.2c) | Owner |
+| `ALPACA_TEST_SECRET_KEY` | Dedicated test paper account, integration tests only (§5.12, E6.2c) | Owner |
 
 ### 3.2 Environment switch
 
@@ -615,21 +617,74 @@ entirely outside the market (the 2026-09-29 cleanup miss). The neighbouring
 strikes smooth that out; a read that disagrees with them is skipped.
 
 **Live execution test.** `tests/test_integration_execution.py` opens and closes a
-real 1-lot SPY paper vertical. It is opt-in, so `make check` and ordinary full
-suites never trade:
+real 1-lot SPY paper vertical **on the dedicated test account** (below). It is
+opt-in, so `make check` and ordinary full suites never trade:
 
 ```
 set -a; source ~/.hermes/.env; set +a
 ARC_LIVE_EXEC_TESTS=1 .venv/bin/pytest tests/test_integration_execution.py -rA
-.venv/bin/python ~/.hermes/skills/software-development/project-arc-development/scripts/paper_account_audit.py
 ```
 
-It needs paper keys, `ARC_GATE_SECRET` and RTH (off-hours it skips; a skip is
+It needs the test account's keys, `ARC_GATE_SECRET` and RTH (off-hours it skips; a skip is
 not a pass). It skips without trading if the close's quotes are unusable before
 the open. Cleanup retries the close once from fresh quotes; if that also fails
 the test fails and names the legs to close by hand. Each run sends up to ~12
-orders against the D32 daily budget. Run one at a time: two concurrent runs
+orders. Run one at a time: two concurrent runs
 trade against each other (wash-trade rejects) and leave spreads open.
+
+**Two paper accounts (E6.2c).** Integration tests never trade the production
+paper account. On 2026-09-28/29 RTH test runs left 8 and 21 fills there with no
+local record; the 16:30 reconcile halted production (`fill_unknown`) and the
+next 09:30 chain was skipped both days.
+
+| Account | Keys (`~/.hermes/.env`) | Used by |
+|---|---|---|
+| production paper | `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | every `arc` command, the tick, the tower |
+| test paper | `ALPACA_TEST_API_KEY` / `ALPACA_TEST_SECRET_KEY` | `tests/test_integration_alpaca.py`, `tests/test_integration_execution.py`, `.github/workflows/integration.yml` only |
+
+- Nothing under `arc/` reads the `TEST_` keys (a unit test enforces it). The tests
+  build the adapters with explicit keys (`AlpacaPaperBroker(api_key=…, secret_key=…)`).
+- Without the `TEST_` keys the integration tests **skip**. If `ALPACA_TEST_API_KEY`
+  equals `ALPACA_API_KEY` they **fail**: that is the accident this rule prevents.
+- Every test order's `client_order_id` starts with `test.` (the tests' broker
+  wrapper adds it; `arc.execution.submit()` never does). If one still lands on
+  the production account, reconcile reports it as a `fill_test` notice (journal
+  `reconcile:test_fill`, info line on the Auditor card) and does **not** halt. A
+  leg such an order left open is still `position_unattributed` and halts.
+- The D32 order budget counts orders per account, so test runs no longer use
+  the production account's daily budget.
+
+Owner setup (once):
+
+1. In the Alpaca dashboard (paper), open the account menu → *Open new paper
+   account* (or use a second Alpaca login). Enable options trading (level 3) on it.
+2. On that account, *API Keys* → *Generate*. Copy the key id and secret.
+3. Add to `~/.hermes/.env` (never commit it):
+   `ALPACA_TEST_API_KEY=<key id>` and `ALPACA_TEST_SECRET_KEY=<secret>`.
+4. Add the same pair as repo secrets for the weekly workflow:
+   `gh secret set ALPACA_TEST_API_KEY -R mohitgulla/Project-Arc` and
+   `gh secret set ALPACA_TEST_SECRET_KEY -R mohitgulla/Project-Arc`. The old
+   `ALPACA_API_KEY`/`ALPACA_SECRET_KEY` repo secrets are no longer read and can be deleted.
+5. Check: `set -a; source ~/.hermes/.env; set +a; .venv/bin/pytest tests/test_integration_alpaca.py -rA`
+   passes (not skipped), and the `account_id` the test sees is not the production one.
+
+Close strays and resume after a reconcile halt:
+
+1. See what reconcile found without raising another halt:
+   `.venv/bin/arc reconcile --no-halt` (JSON: `mismatches`, `notices`).
+2. List the day's orders with their client ids:
+   `.venv/bin/python ~/.hermes/skills/software-development/project-arc-development/scripts/paper_account_audit.py --after <YYYY-MM-DD>T13:30:00Z`.
+   `test.`/`arc2.` ids without a local record and legs no structure accounts
+   for are the strays.
+3. Close stray legs in the Alpaca dashboard (paper → Positions → Close), or
+   cancel stray open orders there. Don't trade them closed through Arc.
+4. Re-run `.venv/bin/arc reconcile --no-halt`. `position_*` mismatches must be
+   gone. Today's untagged stray fills keep showing as `fill_unknown` for the
+   rest of the ET day even after you close them (the fills happened); that is
+   expected once every one is accounted for in step 2. `test.` fills appear only
+   under `notices` and never block.
+5. Resume: `!resume` in Slack, or `.venv/bin/arc resume --actor <owner Slack id>`.
+   Check with `.venv/bin/arc halt-status` (exit 0 = not halted).
 
 ### 5.13 Portfolio-aware Director, idea dedupe, no-trade (E5.9, D33)
 
