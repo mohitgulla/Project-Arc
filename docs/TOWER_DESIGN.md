@@ -150,3 +150,21 @@ Charts: Recharts, wrapped so no page imports Recharts directly. Tooltips share o
   the Overview. Legs appear in the drill-down.
 - Gate FAIL, halt ACTIVE, reconcile MISMATCH, stale marks, and open ops alerts are the only
   things that may use `--neg`/`--warn` outside P&L.
+
+## 9. Ops & pipeline (`/ops`, E8.7d)
+
+- Loaders in `arc/tower/data_ops.py`, routes `GET /api/ops/{session,health,alerts,halts,
+  runs,runs/{run_id},budget,context,context/{entry_id},sources,llm,config}`.
+- Session timeline slots are `config/routines.yaml` slots (`arc.routines.schedule
+  .slots_between`, 06:00–22:00 ET) joined to root `routine_runs` on `(job, scheduled_for)`.
+  Colours: done `--accent`, running pulsing `--accent`, failed `--neg`, skipped / no_change
+  muted, missed `--warn`, future `--track`. The D31 trading loop (`loop.job`) is its own row.
+- Run detail renders the stored D27 manifest (`run_manifests.payload`) and the trace from
+  `arc.context.trace.trace_runs`, the same serializer `arc context trace` prints. A read or
+  write of a kind outside the job's declared contract is highlighted `--neg`.
+- Order budget counts local orders only (`arc.budget.orders.count_orders(conn, None, …)`);
+  the tower never asks the broker. Hidden when the execution tables are missing.
+- Effective config goes through `arc.control.service.ControlService` reads (`show`,
+  `history`, `version`); a store without the D26 tables shows yaml values with a note.
+- Health thresholds: tick stale after `monitoring.tick_stale_after`; the health check
+  (LaunchAgent every 30 min) stale after 3×; the log judged against `monitoring.log.max_bytes`.
