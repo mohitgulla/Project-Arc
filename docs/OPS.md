@@ -568,6 +568,44 @@ Trace: `arc context trace <chain_run_id>` prints an `event` line on the `execute
 same under `events`. `sqlite3 data/arc.db "select id, dispatched_by, consumed_by from
 routine_events where consumed_at is null"` lists what is still waiting.
 
+#### Scorecard gate in front of auto-approve (E7.5a)
+
+With `auto_approve` on, an **open** is only auto-approved when the E7.3 scorecard
+(`arc/journal/scorecard.py`, `auto_approve_readiness`) shows, at approval time:
+
+| Key (`!arc config set …` / `arc config set …`) | Default | Bounds | Meaning |
+|---|---|---|---|
+| `auto_approve.scorecard_gate` | `on` | on/off; off needs a confirm | off = explicit opt-out (paper as pure calibration) |
+| `auto_approve.min_closed_trades` | 30 | 10–500 (never below 10) | closed trades required; also the window for the next two |
+| `auto_approve.slippage_tolerance` | 1.5 | 0.5–3.0 (never above 3.0) | realised entry slippage ≤ modelled half-spread × this |
+
+and realised net EV ≥ 0: mean realised P&L of the latest `min_closed_trades` closed
+positions after entry fees (and close fees when closed by an order). Slippage is fill −
+mid at entry over the same window's fills; the half-spread is the spread the proposal was
+priced with (quote when valid, else the cost-model estimate). No fill with a spread →
+`slippage_unknown` (fails closed). Env vars: `ARC_AUTO_APPROVE_SCORECARD_GATE`,
+`ARC_AUTO_APPROVE_MIN_CLOSED_TRADES`, `ARC_AUTO_APPROVE_SLIPPAGE_TOLERANCE`.
+
+When a criterion fails, the card is posted **with** Approve/Reject buttons and a line
+`Auto-approve held back (scorecard gate): <reason>. Approve manually.`, the request stays
+pending (click or `!approve` as usual; it expires on the normal TTL), and the journal gets a
+`system` / `approval` / `noted` row with `reason_code=auto_approve_gated`; its payload has
+`failing` (`min_closed_trades`, `negative_realised_ev`, `slippage_over_tolerance`,
+`slippage_unknown`) and every number. The chain's `execute` step reports
+`scorecard gate held N back` and the tick summary counts them. Closes (exits) are never
+gated: they reduce risk.
+
+With `auto_approve.scorecard_gate` off, every auto-approval logs a
+`approvals.auto_approve_scorecard_gate_off` **warning** and the journal reason says
+`scorecard gate off`. `arc approve auto status` prints the gate's current verdict:
+
+    auto_approve: on (paper); paper=on live=off
+    scorecard gate: holding opens; 12 closed trades < 30 required
+
+A new paper account therefore runs click-to-approve until 30 trades have closed. To
+calibrate on paper anyway: `.venv/bin/arc config set auto_approve.scorecard_gate off
+--reason "paper calibration"` (then `arc config confirm <code>` with the printed code).
+
 ### 5.11 Open universe (E5.7, D9/D28)
 
 `settings.universe` is a seed list (`ARC_UNIVERSE_MODE=seed`, the default). Other

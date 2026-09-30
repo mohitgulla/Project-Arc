@@ -495,6 +495,8 @@ def execute_step(
         return JobResult(summary="no proposals to execute", metrics=metrics)
     if not auto_on or not report.auto_approved:
         why = "auto-approve off" if not auto_on else "nothing auto-approved"
+        if report.auto_gated:  # E7.5a
+            why = f"scorecard gate held {len(report.auto_gated)} back"
         return JobResult(
             summary=f"awaiting approval ({len(hashes)} card(s); {why}, {env})", metrics=metrics
         )

@@ -41,6 +41,9 @@ def _no_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def margin(**kw: object) -> ArcSettings:
+    # E7.5a scorecard gate would hold every open on this empty journal; these tests
+    # cover D34 dispatch, not the gate (tests/test_auto_approve_d34.py covers that).
+    kw.setdefault("auto_approve_scorecard_gate", False)
     return ArcSettings(_env_file=None, account_profile="margin", **kw)  # type: ignore[call-arg]
 
 

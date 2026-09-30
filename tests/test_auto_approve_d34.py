@@ -58,7 +58,12 @@ def live_settings(**kw: object) -> ArcSettings:
 
 
 def live_on(**kw: object) -> ArcSettings:
-    """Live settings with auto_approve on the way the store turns it on (post-validation)."""
+    """Live settings with auto_approve on the way the store turns it on (post-validation).
+
+    The E7.5a scorecard gate is off here: these tests cover the D34 mechanics on a
+    store with no closed trades (the gate has its own tests).
+    """
+    kw.setdefault("auto_approve_scorecard_gate", False)
     return live_settings(**kw).model_copy(update={"auto_approve": True})
 
 
@@ -267,6 +272,7 @@ class TestAutoCli:
             "live_overridden": False,
             "effective": True,
             "config_version": st_["config_version"],
+            "scorecard_gate": True,  # E7.5a default
         }
         hist = svc.history("auto_approve.paper")
         assert hist and hist[0].reason == "paper loop" and hist[0].actor.startswith(LOCAL_ACTOR)
@@ -330,7 +336,9 @@ class TestAutoCli:
 
         db = str(tmp_path / "a.db")
         assert main(["approve", "auto", "status", "--db", db]) == 0
-        assert "auto_approve: off (paper)" in capsys.readouterr().out
+        status = capsys.readouterr().out
+        assert "auto_approve: off (paper)" in status
+        assert "scorecard gate: holding opens; 0 closed trades < 30 required" in status
         assert main(["approve", "auto", "on", "--db", db, "--no-slack", "--reason", "t"]) == 0
         out = json.loads(capsys.readouterr().out.split("\n}")[0] + "\n}")
         assert out["outcome"] == "applied" and out["env"] == "paper"
@@ -429,6 +437,7 @@ class TestServicePerEnv:
         self, pconn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ARC_AUTO_APPROVE", "true")
+        monkeypatch.setenv("ARC_AUTO_APPROVE_SCORECARD_GATE", "false")  # E7.5a opt-out
         s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
         poster = LogCardPoster()
         rep = ApprovalService(pconn, s, poster).publish_pending(FIXTURE_NOW)
@@ -554,6 +563,7 @@ class TestExecuteStep:
         self, pconn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ARC_AUTO_APPROVE", "true")
+        monkeypatch.setenv("ARC_AUTO_APPROVE_SCORECARD_GATE", "false")  # E7.5a opt-out
         _join_chain(pconn)
         s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
         svc = ApprovalService(pconn, s, LogCardPoster())
@@ -604,6 +614,7 @@ class TestExecuteStep:
         from arc.store.repos import HaltRepo
 
         monkeypatch.setenv("ARC_AUTO_APPROVE", "true")
+        monkeypatch.setenv("ARC_AUTO_APPROVE_SCORECARD_GATE", "false")  # E7.5a opt-out
         _join_chain(pconn)
         s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
         HaltSwitch(HaltRepo(pconn)).halt(reason="test", actor="t", now=FIXTURE_NOW)

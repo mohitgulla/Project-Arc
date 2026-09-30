@@ -23,6 +23,13 @@ Rules enforced here, in code:
 - ``auto_approve`` (D34, one switch per environment, default off) approves an
   actionable request at publish time, as ``arc:auto-approve``. The card is still
   posted, marked ``Auto-approved (paper|LIVE)`` and not actionable.
+- E7.5a scorecard gate (``auto_approve_scorecard_gate``, default on): D34 only
+  auto-approves an *open* when the E7.3 scorecard shows enough closed trades,
+  realised net EV >= 0 and entry slippage within tolerance
+  (:func:`arc.journal.scorecard.auto_approve_readiness`). Otherwise the request
+  stays pending with its buttons (manual approval) and an ``auto_approve_gated``
+  journal row names the failing criteria. Closes are never gated (reducing risk).
+  Turning the gate off is an explicit opt-out, logged as a warning each time.
 - Every rejection and expiry is logged (``approvals.rejected`` /
   ``approvals.expired``) with its reason.
 - Every resolution (and every not-actionable card) is written to the decision
@@ -41,7 +48,7 @@ import datetime as _dt
 import json
 import sqlite3
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -52,6 +59,7 @@ from arc.approvals.trail import load_trail
 from arc.context.ttl import from_db, require_aware, to_db
 from arc.gate.rules import proposal_hash as hash_proposal
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
+from arc.journal.scorecard import AutoApproveReadiness, auto_approve_readiness
 from arc.journal.store import JournalStore
 from arc.models import ApprovalDecision, ApprovalRecord, GateDecision, Proposal
 from arc.structures import is_defined_risk
@@ -184,11 +192,13 @@ class SweepReport:
     published: list[str]
     auto_approved: list[str]
     expired: list[str]
+    auto_gated: list[str] = field(default_factory=list)  # E7.5a: left for a manual click
 
     def as_json(self) -> dict[str, list[str]]:
         return {
             "published": self.published,
             "auto_approved": self.auto_approved,
+            "auto_gated": self.auto_gated,
             "expired": self.expired,
         }
 
@@ -364,6 +374,7 @@ class ApprovalService:
         """
         now = require_aware(now, "now").astimezone(ET)
         report = SweepReport(published=[], auto_approved=[], expired=[])
+        self._readiness = None  # E7.5a: computed once per sweep, on first need
         for row in self._unpublished(day, only):
             phash = row["proposal_hash"]
             try:
@@ -377,13 +388,18 @@ class ApprovalService:
                 continue  # a concurrent sweep won
             actionable = status is RequestStatus.PENDING
             auto = self._auto_reason(proposal, row["kind"]) if actionable else None
+            gated: AutoApproveReadiness | None = None
+            if auto is not None and auto.startswith("auto-approve"):
+                auto, gated = self._scorecard_gate(phash, row, auto, now)
             # D34: an auto-approved card posts without buttons, marked as such.
             view = render_card(
                 proposal,
                 decision,
                 proposal_hash=phash,
                 actionable=actionable and auto is None,
-                note=self._auto_label() if auto is not None else reason,
+                note=self._auto_label()
+                if auto is not None
+                else (_gated_note(gated) if gated is not None else reason),
                 trail=load_trail(self.conn, phash, row["ticker"]),
                 kind=row["kind"],
             )
@@ -409,11 +425,73 @@ class ApprovalService:
                 log.info(
                     "approvals.rejected", proposal_hash=phash, ticker=row["ticker"], reason=reason
                 )
+            if gated is not None:
+                report.auto_gated.append(phash)
             if auto is not None:
                 res = self._resolve(phash, RequestStatus.APPROVED, AUTO_APPROVER, auto, now)
                 if res.outcome is Outcome.APPROVED:
                     report.auto_approved.append(phash)
         return report
+
+    # -- E7.5a scorecard gate ------------------------------------------------
+
+    _readiness: AutoApproveReadiness | None = None
+
+    def readiness(self, now: _dt.datetime) -> AutoApproveReadiness:
+        """The scorecard gate's verdict at *now* (cached for one sweep)."""
+        if self._readiness is None:
+            self._readiness = auto_approve_readiness(
+                self.conn,
+                now=now,
+                min_closed_trades=self.settings.auto_approve_min_closed_trades,
+                slippage_tolerance=self.settings.auto_approve_slippage_tolerance,
+            )
+        return self._readiness
+
+    def _scorecard_gate(
+        self, phash: str, row: sqlite3.Row, auto: str, now: _dt.datetime
+    ) -> tuple[str | None, AutoApproveReadiness | None]:
+        """E7.5a: keep the D34 auto reason, or drop it (and journal why) for an open.
+
+        Returns ``(auto reason or None, readiness when gated)``. Closes pass through.
+        """
+        if row["kind"] == "close":
+            return auto, None
+        env = self.settings.env.value
+        if not self.settings.auto_approve_scorecard_gate:
+            log.warning(
+                "approvals.auto_approve_scorecard_gate_off",
+                proposal_hash=phash,
+                env=env,
+                note="auto_approve.scorecard_gate is off: auto-approving with no realised-"
+                "performance check (explicit opt-out)",
+            )
+            return f"{auto[:-1]}, scorecard gate off)", None
+        ready = self.readiness(now)
+        if ready.ok:
+            return f"{auto[:-1]}, scorecard gate met)", None
+        text = f"auto-approve gated ({env}): {ready.summary()}"
+        with self.conn:
+            self._journal(
+                phash,
+                persona=JournalPersona.SYSTEM,
+                choice=Choice.NOTED,
+                code=ReasonCode.AUTO_APPROVE_GATED,
+                text=text,
+                now=now,
+                subject=row["ticker"],
+                run_id=row["run_id"],
+                payload={"env": env, **ready.model_dump(mode="json")},
+            )
+        log.info(
+            "approvals.auto_approve_gated",
+            proposal_hash=phash,
+            ticker=row["ticker"],
+            env=env,
+            failing=ready.failing,
+            detail=ready.summary(),
+        )
+        return None, ready
 
     def _auto_label(self) -> str:
         """``Auto-approved (paper)`` / ``Auto-approved (LIVE)`` (D34 card marker)."""
@@ -887,6 +965,11 @@ def _journal_actor(status: RequestStatus, actor: str) -> tuple[JournalPersona, R
     if status is RequestStatus.APPROVED:
         return JournalPersona.OWNER, ReasonCode.OWNER_APPROVE
     return JournalPersona.OWNER, ReasonCode.OWNER_REJECT
+
+
+def _gated_note(ready: AutoApproveReadiness) -> str:
+    """Card line under the buttons when the scorecard gate held auto-approve back."""
+    return f"Auto-approve held back (scorecard gate): {ready.summary()}. Approve manually."
 
 
 def _not_actionable_code(reason: str) -> ReasonCode:

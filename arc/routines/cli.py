@@ -262,6 +262,7 @@ def _tick(
             _write(
                 f"approvals: {len(approvals['published'])} card(s) posted, "
                 f"{len(approvals['auto_approved'])} auto-approved, "
+                f"{len(approvals.get('auto_gated', []))} held by the scorecard gate, "
                 f"{len(approvals['expired'])} expired"
             )
         if correlation is not None:

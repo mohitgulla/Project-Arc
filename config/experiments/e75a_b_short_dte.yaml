@@ -1,0 +1,8 @@
+experiment: >
+  E7.5a (b) shorter entry DTE with the D19 early exits. One variable: the entry
+  window. margin 30-45 -> 21-30 DTE, cash_debit 30-60 -> 21-35 DTE. Exits stay
+  config/exits.yaml (D19 take profit, D23 relaxed EOD stop, close at 7 DTE).
+backtest:
+  dte_windows:
+    margin: [21, 30]
+    cash_debit: [21, 35]
