@@ -77,6 +77,15 @@ def auditor_output(report: ReconcileReport) -> AuditorOutput:
         )
         for lot in report.wash_sales
     ]
+    anomalies += [
+        AnomalyReport(
+            category=CATEGORY[m.kind],
+            severity="info",
+            description=m.detail,
+            affected_orders=m.refs,
+        )
+        for m in report.notices
+    ]
     lines = [f"Reconciliation {report.day}: {report.summary()}."]
     if report.expired:
         lines.append(f"Settled {len(report.expired)} expired structure(s) at intrinsic value.")

@@ -580,7 +580,12 @@ class TestExecuteStep:
         assert "1 ladder(s) dispatched" in res.summary and "started (paper)" in res.notice
         (argv,) = sp.argv
         evt = pconn.execute("SELECT id FROM routine_events WHERE name='approval'").fetchone()[0]
-        assert approval_events(pconn, [ph]) == {ph: evt}  # consumed by the Investor run, not here
+        # E6.2d: claimed by this execute run before the spawn; consumed later by the
+        # Investor run, and never pending for the tick's drain in between.
+        assert approval_events(pconn, [ph]) == {}
+        ev = RoutineEventRepo(pconn).get(evt)
+        assert ev is not None and ev.dispatched_by == "run-exec" and ev.consumed_at is None
+        assert RoutineEventRepo(pconn).pending(until=FIXTURE_NOW) == []
         assert argv[3:] == [
             "routines",
             "run",

@@ -20,7 +20,9 @@ One Hermes cron job calls :meth:`Dispatcher.tick` every 5 minutes. Each tick:
    (``approval``, ``halt``, ... from ``arc routines emit``).
 
 A ``(job, scheduled_for)`` unique key in ``routine_runs`` means a duplicate
-tick never runs a job twice. File locks (per job + one global LLM lock) stop
+tick never runs a job twice; an event-triggered run is unique per
+``(job, event_id)`` instead (E6.2d), so events sharing a timestamp each run. File
+locks (per job + one global LLM lock) stop
 overlapping ticks from running the same job or two LLM jobs at once; a job whose
 lock is busy is deferred to the next tick without being recorded.
 """
@@ -72,6 +74,8 @@ log = structlog.get_logger(__name__)
 
 _CURSOR = "cursor:{job}"
 _LAST_TICK = "dispatcher:last_tick"
+# E6.2d: an approval event deferred by a halt (its lapse is then "under halt").
+_HALT_DEFERRED = "halt_deferred:{event}"
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +177,10 @@ class Dispatcher:
         # E5.2b: fresh wall clock handed to steps (None = the tick's frozen ``now``).
         self._clock = clock
         self._manifest_alerted = False
+        self._loop_root_ts: str | None = None  # D36: set while a loop chain's root is open
+        self._loop_no_change = (
+            False  # D36: this loop skipped its LLM steps (thread = [Routines] only)
+        )
 
     def _effective_settings(self) -> ArcSettings:
         from arc.control.effective import effective_settings
@@ -355,9 +363,53 @@ class Dispatcher:
                     parent_run_id=parent_run_id,
                 )
         except LockBusyError as exc:
+            if self.routines.is_loop(job) and reason == "schedule":
+                # D31 non-overlap: a loop slot never queues behind the previous loop
+                # (or a Scout holding the LLM lock); it is recorded as skipped and
+                # the next slot gets a fresh look. No catch-up, no deferral counter.
+                return [self._skip_loop_slot(job, scheduled_for, exc, now)]
             log.info("routines.deferred", job=job, why=str(exc))
             return [Outcome(job, scheduled_for, "deferred", f"lock busy ({exc})")]
         return outcomes + self._fire_completed(outcomes, now, depth)
+
+    def _skip_loop_slot(
+        self, job: str, scheduled_for: _dt.datetime, exc: LockBusyError, now: _dt.datetime
+    ) -> Outcome:
+        held = str(exc)
+        why = (
+            "previous loop running"
+            if f"lock {job!r}" in held
+            else f"{LLM_LOCK} lock busy (another persona running)"
+        )
+        summary = f"skipped: {why}"
+        claimed = self.runs.claim(
+            job=job,
+            scheduled_for=scheduled_for,
+            reason="schedule",
+            status=RunStatus.SKIPPED,
+            summary=summary,
+            now=now,
+        )
+        log.info("routines.loop_skipped", job=job, slot=scheduled_for.isoformat(), why=why)
+        if claimed is None:
+            return Outcome(job, scheduled_for, "duplicate", "already recorded for this slot")
+        trace = _RunTrace(metrics={"loop_skipped": why})
+        self._write_manifest(claimed, trace, now=now, started=now, t0=time.monotonic())
+        self._post_skipped_root(claimed.run_id, scheduled_for, why)
+        return Outcome(job, scheduled_for, "skipped", summary, run_id=claimed.run_id)
+
+    def _post_skipped_root(self, run_id: str, slot: _dt.datetime, why: str) -> None:
+        """D36: a skipped slot still gets its one-line root (``HOLD (skipped: …)``)
+        when ``loop.post_hold_roots`` is on, so the channel shows every slot."""
+        from arc.routines.config import LoopLayout
+        from arc.slack.loop import LoopRoot
+
+        loop = self.routines.loop
+        if loop.slack_layout is not LoopLayout.ROOT_PER_LOOP or not loop.post_hold_roots:
+            return
+        ts = self.heartbeats.open_loop_root(LoopRoot(slot=slot, skipped=why).text())
+        self.heartbeats.close_loop_root()
+        log.info("routines.loop_root", run_id=run_id, ts=ts, skipped=why)
 
     def resume_chain(self, chain_run_id: str, *, now: _dt.datetime) -> list[Outcome]:
         """Re-run a chain from its first failed/skipped step; ok steps are not re-run."""
@@ -402,68 +454,284 @@ class Dispatcher:
         outcomes: list[Outcome] = []
         prev_run_id = parent_run_id
         existing = existing or {}
-        for index, step in enumerate(steps):
-            prior = existing.get(step)
-            if prior is not None and prior.status is RunStatus.OK:
-                outcomes.append(
-                    Outcome(
-                        step,
-                        scheduled_for,
-                        "ok",
-                        "already done (resume)",
-                        run_id=prior.run_id,
-                        chain_run_id=chain_run_id,
-                        step_index=index,
-                        summary=prior.summary or "",
-                    )
-                )
-                continue
-            if prior is not None:
-                run = self.runs.restart(prior.run_id, now=now)
-            else:
-                claimed = self.runs.claim(
-                    job=step,
-                    scheduled_for=scheduled_for,
-                    reason=reason if index == 0 else f"chain:{steps[0]}",
-                    chain_run_id=chain_run_id,
-                    step_index=index,
-                    now=now,
-                )
-                if claimed is None:
+        # D31: the loop chain has a deadline. A step that is running when it passes
+        # may finish; no later step starts. `no_change` (the Director found the same
+        # inputs as last time) skips the LLM steps and runs the deterministic tail.
+        is_loop = bool(chain_run_id) and reason == "schedule" and self.routines.is_loop(steps[0])
+        deadline = time.monotonic() + self.routines.loop.max_runtime.total_seconds()
+        durations: dict[str, int] = {}
+        no_change = False
+        timed_out = False
+        root_ts: str | None = None
+        if is_loop and chain_run_id:
+            root_ts = self._open_loop_root(chain_run_id, scheduled_for)
+        self._loop_root_ts = root_ts
+        try:
+            for index, step in enumerate(steps):
+                prior = existing.get(step)
+                if prior is not None and prior.status is RunStatus.OK:
                     outcomes.append(
                         Outcome(
                             step,
                             scheduled_for,
-                            "duplicate",
-                            "already ran for this slot",
+                            "ok",
+                            "already done (resume)",
+                            run_id=prior.run_id,
                             chain_run_id=chain_run_id,
                             step_index=index,
+                            summary=prior.summary or "",
                         )
                     )
-                    break
-                run = claimed
-            outcome = self._execute(
-                run,
-                now=now,
-                event=event,
-                note=note if index == 0 else "",
-                parent_run_id=prev_run_id,
-            )
-            prev_run_id = run.run_id
-            outcomes.append(outcome)
-            stop = outcome.status != "ok" or bool(outcome.metrics.get("stop_chain"))
-            if stop:
-                if chain_run_id and index + 1 < len(steps):
-                    log.warning(
-                        "routines.chain_stopped",
-                        chain_run_id=chain_run_id,
-                        at=step,
-                        status=outcome.status,
-                        reason="stop_chain" if outcome.status == "ok" else outcome.status,
-                        remaining=steps[index + 1 :],
+                    continue
+                _, step_spec = self.routines.step(step)
+                if is_loop and index and time.monotonic() > deadline:
+                    timed_out = True
+                    outcomes.append(
+                        self._record_skipped_step(
+                            step,
+                            scheduled_for,
+                            reason=f"chain:{steps[0]}",
+                            chain_run_id=chain_run_id,
+                            step_index=index,
+                            summary=f"timeout: loop exceeded {self._max_runtime_label()}",
+                            now=now,
+                        )
                     )
-                break
+                    continue
+                if is_loop and no_change and index and step_spec.on_no_change == "skip":
+                    outcomes.append(
+                        self._record_skipped_step(
+                            step,
+                            scheduled_for,
+                            reason=f"chain:{steps[0]}",
+                            chain_run_id=chain_run_id,
+                            step_index=index,
+                            summary="no_change: inputs unchanged since the last full loop",
+                            now=now,
+                        )
+                    )
+                    continue
+                if prior is not None:
+                    run = self.runs.restart(prior.run_id, now=now)
+                else:
+                    claimed = self.runs.claim(
+                        job=step,
+                        scheduled_for=scheduled_for,
+                        reason=reason if index == 0 else f"chain:{steps[0]}",
+                        chain_run_id=chain_run_id,
+                        step_index=index,
+                        now=now,
+                        # E6.2d: an event-triggered run is unique per (job, event), not per slot.
+                        event_id=event.id if event is not None else None,
+                    )
+                    if claimed is None:
+                        outcomes.append(
+                            Outcome(
+                                step,
+                                scheduled_for,
+                                "duplicate",
+                                "already ran for this slot",
+                                chain_run_id=chain_run_id,
+                                step_index=index,
+                            )
+                        )
+                        break
+                    run = claimed
+                t_step = time.monotonic()
+                outcome = self._execute(
+                    run,
+                    now=now,
+                    event=event,
+                    note=note if index == 0 else "",
+                    parent_run_id=prev_run_id,
+                )
+                durations[step] = int((time.monotonic() - t_step) * 1000)
+                prev_run_id = run.run_id
+                outcomes.append(outcome)
+                if index == 0 and outcome.metrics.get("no_change"):
+                    no_change = True
+                    self._loop_no_change = True
+                stop = outcome.status != "ok" or bool(outcome.metrics.get("stop_chain"))
+                if stop:
+                    if chain_run_id and index + 1 < len(steps):
+                        log.warning(
+                            "routines.chain_stopped",
+                            chain_run_id=chain_run_id,
+                            at=step,
+                            status=outcome.status,
+                            reason="stop_chain" if outcome.status == "ok" else outcome.status,
+                            remaining=steps[index + 1 :],
+                        )
+                    break
+            if is_loop and chain_run_id:
+                self._finish_loop(
+                    chain_run_id,
+                    outcomes,
+                    durations,
+                    now=now,
+                    timed_out=timed_out,
+                    no_change=no_change,
+                    scheduled_for=scheduled_for,
+                    root_ts=root_ts,
+                )
+        finally:
+            self._loop_root_ts = None
+            self._loop_no_change = False
+            if root_ts:
+                self.heartbeats.close_loop_root()
         return outcomes
+
+    def _open_loop_root(self, chain_run_id: str, slot: _dt.datetime) -> str | None:
+        """D36: post the loop's root line first, so every persona card threads under it.
+
+        The line starts as ``HOLD`` and is re-rendered from the DB when the chain
+        ends (and again on approval / fill / expiry). ``slack_layout: day_thread``
+        keeps everything in the day thread (the rollback).
+        """
+        from arc.routines.config import LoopLayout
+        from arc.routines.loop import LoopState, loop_root_from_db
+
+        if self.routines.loop.slack_layout is not LoopLayout.ROOT_PER_LOOP:
+            return None
+        root = loop_root_from_db(self.conn, chain_run_id, slot)
+        ts = self.heartbeats.open_loop_root(root.text())
+        if ts:
+            state = LoopState(self.conn)
+            state.set_thread_ts(chain_run_id, ts)
+            state.set_root(chain_run_id, root.model_dump(mode="json"))
+        return ts
+
+    def _post_scout_context(self, now: _dt.datetime, ctx: JobContext) -> str | None:
+        """D36 thread item 1: the ``[Scout]`` card of the candidates the Director read.
+
+        Rendered from the Director run's recorded context snapshot (the same
+        ``candidate`` entries it was given), so the card names the Scout run
+        and its time without re-posting the Scout's own 30-min card.
+        """
+        from arc.slack.digests import scout_context_card
+
+        entries = ctx.snapshot.of_kind("candidate")
+        card = scout_context_card(entries, chain_run_id=ctx.chain_run_id)
+        return self.heartbeats.summary(now, "scout", card.text, blocks=card.blocks)
+
+    def _max_runtime_label(self) -> str:
+        secs = int(self.routines.loop.max_runtime.total_seconds())
+        return f"{secs // 60}m" if secs % 60 == 0 else f"{secs}s"
+
+    def _record_skipped_step(
+        self,
+        step: str,
+        scheduled_for: _dt.datetime,
+        *,
+        reason: str,
+        chain_run_id: str | None,
+        step_index: int,
+        summary: str,
+        now: _dt.datetime,
+    ) -> Outcome:
+        """A chain step the loop decided not to run (timeout / no_change), on the record."""
+        claimed = self.runs.claim(
+            job=step,
+            scheduled_for=scheduled_for,
+            reason=reason,
+            chain_run_id=chain_run_id,
+            step_index=step_index,
+            status=RunStatus.SKIPPED,
+            summary=summary,
+            now=now,
+        )
+        log.info("routines.step_skipped", job=step, why=summary, chain_run_id=chain_run_id)
+        if claimed is None:
+            return Outcome(
+                step,
+                scheduled_for,
+                "duplicate",
+                "already ran for this slot",
+                chain_run_id=chain_run_id,
+                step_index=step_index,
+            )
+        self._write_manifest(
+            claimed,
+            _RunTrace(metrics={"loop_skipped": summary.split(":", 1)[0]}),
+            now=now,
+            started=now,
+            t0=time.monotonic(),
+        )
+        return Outcome(
+            step,
+            scheduled_for,
+            "skipped",
+            summary,
+            run_id=claimed.run_id,
+            chain_run_id=chain_run_id,
+            step_index=step_index,
+        )
+
+    def _finish_loop(
+        self,
+        chain_run_id: str,
+        outcomes: list[Outcome],
+        durations: dict[str, int],
+        *,
+        now: _dt.datetime,
+        timed_out: bool,
+        no_change: bool,
+        scheduled_for: _dt.datetime,
+        root_ts: str | None,
+    ) -> None:
+        """Record the loop's step durations / flags (D27), alert a timeout once a day,
+        and (D36) re-render the root line plus post the ``[Routines]`` metadata reply."""
+        from arc.routines.loop import LoopState, loop_root_from_db
+
+        state = LoopState(self.conn)
+        state.set_chain_summary(
+            chain_run_id,
+            {
+                "durations_ms": durations,
+                "timeout": timed_out,
+                "no_change": no_change,
+                "steps": [(o.job, o.status) for o in outcomes],
+            },
+        )
+        if timed_out:
+            root = outcomes[0]
+            log.warning(
+                "routines.loop_timeout",
+                chain_run_id=chain_run_id,
+                durations_ms=durations,
+                max_runtime=self._max_runtime_label(),
+            )
+            day = self.heartbeats.day(now)
+            if state.first_timeout_today(day):
+                self.heartbeats.alert(
+                    now,
+                    root.job,
+                    f"loop exceeded {self._max_runtime_label()} (steps after the deadline "
+                    f"skipped; once-a-day notice)",
+                    run_id=root.run_id,
+                )
+        if not root_ts:
+            return
+        # The metadata reply, then the root re-rendered from what the chain wrote.
+        steps = " ".join(
+            f"{o.job}={durations[o.job]}ms" if o.job in durations else f"{o.job}={o.status}"
+            for o in outcomes
+        )
+        digest = str(outcomes[0].metrics.get("loop_digest") or "")[:12]
+        flags = " ".join(f for f, on in (("no_change", no_change), ("timeout", timed_out)) if on)
+        meta = f"{chain_run_id} {steps} digest={digest or 'n/a'}"
+        if flags:
+            meta += f" {flags}"
+        self.heartbeats.loop_metadata(now, meta)
+        line = loop_root_from_db(
+            self.conn, chain_run_id, scheduled_for, no_change=no_change, timeout=timed_out
+        )
+        state.set_root(chain_run_id, line.model_dump(mode="json"))
+        try:
+            self.heartbeats.update_loop_root(root_ts, line.text())
+        except Exception as exc:  # noqa: BLE001 - the loop's work is committed; the edit is best-effort
+            log.warning("routines.loop_root_update_failed", chain_run_id=chain_run_id, err=str(exc))
+        log.info("routines.loop_root", chain_run_id=chain_run_id, ts=root_ts, text=line.text())
 
     def _execute(
         self,
@@ -528,6 +796,7 @@ class Dispatcher:
                 settings_factory=self._settings_factory,
                 clock_fn=self._clock,
                 run_env=self.run_env,
+                reason=run.reason,
             )
             trace.ctx = ctx
             hold = run.step_index and job_lock  # a chain step; run_event holds its own lock
@@ -570,6 +839,15 @@ class Dispatcher:
         posts = trace.notifications
         if result.notice:
             posts.append(self.heartbeats.notice(now, run.job, result.notice))
+        in_loop_thread = bool(self._loop_root_ts)
+        if in_loop_thread and (self._loop_no_change or result.metrics.get("no_change")):
+            # D36: a no_change loop gets only the [Routines] metadata reply in its thread;
+            # the step's own summary is folded into that reply (``execute=…ms``).
+            log.info("routines.ok", job=run.job, run_id=run.run_id, outputs=len(ctx.outputs))
+            return self._outcome(run, "ok", summary, metrics=result.metrics)
+        if in_loop_thread and run.step_index == 0:
+            # D36 thread item 1: the Scout context the Director read, before its own card.
+            posts.append(self._post_scout_context(now, ctx))
         if notify is Notify.QUIET:
             new_docs = result.metrics.get("new_docs")
             self.heartbeats.queue_source(
@@ -726,15 +1004,120 @@ class Dispatcher:
         return out
 
     def _drain_events(self, now: _dt.datetime) -> list[Outcome]:
+        """Fire every pending external event once (E6.2d dispatch-once semantics).
+
+        - An event the D34 ``execute`` step dispatched is never pending here: its
+          Investor subprocess owns it.
+        - An ``approval`` that arrives (or is still waiting) while halted is
+          ``deferred`` until its proposal's ``expires_at``; after ``!resume`` inside
+          that TTL the Investor runs. Past it the event is consumed with a journal
+          row (``order:refused`` "approval lapsed under halt") and the card updated.
+        - Each event-triggered run is keyed by the event id, so two events with the
+          same ``created_at`` both run (never ``duplicate``).
+        """
         out: list[Outcome] = []
         for ev in self.events.pending(until=now):
+            held = self._halt_hold(ev, now)
+            if held is not None:
+                out.extend(held)
+                continue
             env = {**ev.payload, "session": session_phase(now), "event": ev.name}
             results = self._fire(ev.name, env, ev.created_at, now, 0, event=ev)
             if any(o.status == "deferred" for o in results):
                 out.extend(results)
                 continue  # retry next tick
             self.events.consume(ev.id, [o.run_id for o in results if o.run_id], now=now)
+            self.state.delete(_HALT_DEFERRED.format(event=ev.id))
             out.extend(results)
+        return out
+
+    def _halt_targets(self, ev: RoutineEvent) -> list[str]:
+        """Jobs *ev* would start that a halt stops (not ``halt_exempt``)."""
+        jobs = self.routines.jobs()
+        return [
+            r.run
+            for r in self.routines.triggers_for(ev.name)
+            if r.run in jobs and not jobs[r.run][1].halt_exempt
+        ]
+
+    def _halt_hold(self, ev: RoutineEvent, now: _dt.datetime) -> list[Outcome] | None:
+        """E6.2d: defer or lapse an ``approval`` event held by a halt; ``None`` = fire it.
+
+        Only approvals carry a deadline (the proposal TTL); other events keep the
+        old behaviour (the halted job is recorded ``skipped`` and the event consumed).
+        """
+        from arc.routines.investor import approval_deadline
+
+        if ev.name != "approval":
+            return None
+        targets = self._halt_targets(ev)
+        if not targets:
+            return None
+        phash = str(ev.payload.get("proposal_hash") or "")
+        deadline = approval_deadline(self.conn, phash) if phash else None
+        if deadline is None:
+            return None  # unknown proposal: let the Investor refuse it on the record
+        key = _HALT_DEFERRED.format(event=ev.id)
+        halted = self._is_halted()
+        was_held = self.state.get(key) is not None
+        if not halted and not (was_held and now >= deadline):
+            return None  # not halted (or resumed inside the TTL): run it now
+        if now < deadline:
+            self.state.set(key, now.isoformat(), now=now)
+            until = deadline.astimezone(ET)
+            log.info("routines.event_deferred", event_id=ev.id, why="halted", until=until)
+            return [
+                Outcome(
+                    job,
+                    ev.created_at,
+                    "deferred",
+                    f"halted; approval held until !resume or {until:%H:%M} ET (its TTL)",
+                )
+                for job in targets
+            ]
+        return self._lapse(ev, phash, targets, now)
+
+    def _lapse(
+        self, ev: RoutineEvent, phash: str, targets: list[str], now: _dt.datetime
+    ) -> list[Outcome]:
+        """The approval's TTL passed under a halt: journal, card, consume (no order)."""
+        from arc.routines.investor import LAPSED_UNDER_HALT, lapse_approval
+
+        out: list[Outcome] = []
+        run_ids: list[str] = []
+        for job in targets:
+            run = self.runs.claim(
+                job=job,
+                scheduled_for=ev.created_at,
+                reason=f"event:{ev.name}",
+                status=RunStatus.SKIPPED,
+                summary=LAPSED_UNDER_HALT,
+                now=now,
+                event_id=ev.id,
+            )
+            if run is None:
+                continue
+            run_ids.append(run.run_id)
+            self._write_manifest(
+                run, _RunTrace(event_id=ev.id), now=now, started=now, t0=time.monotonic()
+            )
+            out.append(Outcome(job, ev.created_at, "skipped", LAPSED_UNDER_HALT, run_id=run.run_id))
+        try:
+            settings: Any = self._settings_factory()
+        except Exception:  # noqa: BLE001 - the journal row matters, not the card's config
+            from arc.config import get_settings
+
+            settings = get_settings()
+        lapse_approval(
+            self.conn,
+            phash,
+            now=now,
+            run_id=run_ids[0] if run_ids else None,
+            settings=settings,
+            slack=self.run_env.slack,
+        )
+        self.events.consume(ev.id, run_ids, now=now)
+        self.state.delete(_HALT_DEFERRED.format(event=ev.id))
         return out
 
     # -- one event, out of band (D34) ------------------------------------------
@@ -754,36 +1137,52 @@ class Dispatcher:
         an Investor subprocess. The run joins the chain (``chain_run_id``, next step
         index) so ``arc context trace <chain>`` shows it, holds a per-event lock
         (``<job>:<event id>``) rather than the job's lock, and never the LLM lock, so
-        ladders run in parallel with the next loop. The event is marked consumed by
-        this run whatever the outcome; the ``executions`` PK stops a second ladder.
+        ladders run in parallel with the next loop.
+
+        E6.2d: the event is normally already ``dispatched`` (claimed by ``execute``
+        before the spawn); that is accepted. The run is keyed by the event id, so a
+        second invocation for the same event is a ``duplicate`` and never a second
+        ladder. A consumed event is refused. While halted (and *job* is not
+        ``halt_exempt``) nothing runs: the event is released back to the tick's
+        drain, which defers it until ``!resume`` or its TTL. Otherwise the event is
+        consumed by this run whatever the outcome.
         """
         found = self.routines.job(job)
         if found is None:
             msg = f"unknown job {job!r}"
             raise KeyError(msg)
-        step_index = 0
-        if chain_run_id:
-            step_index = max((r.step_index for r in self.runs.chain(chain_run_id)), default=-1) + 1
-        run = self.runs.claim(
-            job=job,
-            scheduled_for=now,
-            reason=f"event:{event.name}",
-            chain_run_id=chain_run_id,
-            step_index=step_index,
-            now=now,
-        )
-        if run is None:
-            return [Outcome(job, now, "duplicate", "already ran for this slot")]
+        _, spec = found
+        current = self.events.get(event.id) or event
+        if current.consumed_at is not None:
+            return [Outcome(job, now, "duplicate", "event already consumed")]
+        if self._is_halted() and not spec.halt_exempt:
+            self.events.release(event.id)
+            log.info("routines.event_released", job=job, event_id=event.id, why="halted")
+            return [Outcome(job, now, "deferred", "halted; event handed back to the tick")]
         try:
             with self.locks.hold(f"{job}:{event.id}"):
+                step_index = 0
+                if chain_run_id:
+                    step_index = (
+                        max((r.step_index for r in self.runs.chain(chain_run_id)), default=-1) + 1
+                    )
+                run = self.runs.claim(
+                    job=job,
+                    scheduled_for=now,
+                    reason=f"event:{event.name}",
+                    chain_run_id=chain_run_id,
+                    step_index=step_index,
+                    now=now,
+                    event_id=event.id,
+                )
+                if run is None:
+                    return [Outcome(job, now, "duplicate", "already ran for this event")]
                 outcome = self._execute(
                     run, now=now, event=event, note="", parent_run_id=parent_run_id, job_lock=False
                 )
         except LockBusyError as exc:
-            self.runs.finish(
-                run.run_id, status=RunStatus.SKIPPED, summary=f"lock busy ({exc})", now=now
-            )
-            return [Outcome(job, now, "deferred", f"lock busy ({exc})", run_id=run.run_id)]
+            # Another process holds this very event's lock: it owns the run.
+            return [Outcome(job, now, "deferred", f"lock busy ({exc})")]
         self.events.consume(event.id, [run.run_id], now=now)
         return [outcome, *self._fire_completed([outcome], now, 0)]
 

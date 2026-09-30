@@ -103,6 +103,16 @@ class Fill(BaseModel):
     qty: Decimal
     price: Decimal
     filled_at: dt.datetime
+    client_order_id: str | None = Field(
+        None, description="The order's client_order_id (``test.`` = an integration-test order)"
+    )
+
+
+# Integration-test orders carry this client_order_id prefix (E6.2c). Only the
+# tests' broker wrapper adds it; ``arc.execution.submit()`` never does (its ids
+# are gate tokens, ``arc1.``/``arc2.``). Reconcile reports a stray fill with it
+# as ``fill_test`` instead of ``fill_unknown``.
+TEST_CLIENT_ORDER_PREFIX = "test."
 
 
 # ---------------------------------------------------------------------------

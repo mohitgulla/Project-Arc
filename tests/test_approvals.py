@@ -82,8 +82,8 @@ def conn(_pipeline_db: bytes) -> sqlite3.Connection:
 class RecordingPoster(LogCardPoster):
     """Like Slack: returns a channel + ts so cards can be updated."""
 
-    def post(self, day: _dt.date, view: Any) -> PostedCard:
-        super().post(day, view)
+    def post(self, day: _dt.date, view: Any, *, chain_run_id: str | None = None) -> PostedCard:
+        super().post(day, view, chain_run_id=chain_run_id)
         return PostedCard(channel="C_INV", thread_ts="100.1", message_ts=f"200.{len(self.posted)}")
 
 

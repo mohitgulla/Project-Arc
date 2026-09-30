@@ -19,6 +19,16 @@ from arc.data.alpaca import (
 from arc.data.base import OptionGreeks
 from arc.utils.calendar import ET
 
+# Fixed clock (E1.1b): quote timestamps and the adapter's ``now_et`` both read this.
+NOW = dt.datetime(2026, 10, 1, 12, 0, 0, tzinfo=ET)
+
+
+@pytest.fixture(autouse=True)
+def _frozen_adapter_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The adapter stamps quote age with ``now_et()``; pin it so staleness is deterministic."""
+    monkeypatch.setattr("arc.data.alpaca.now_et", lambda: NOW)
+
+
 # ---------------------------------------------------------------------------
 # OCC symbol parser
 # ---------------------------------------------------------------------------
@@ -76,8 +86,8 @@ class TestCheckQuality:
             symbol="TEST",
             bid=0.0,
             greeks=OptionGreeks(delta=0.5),
-            quote_ts=dt.datetime.now(tz=ET),
-            now=dt.datetime.now(tz=ET),
+            quote_ts=NOW,
+            now=NOW,
         )
         issues = [f.issue for f in flags]
         assert "zero_bid" in issues
@@ -87,8 +97,8 @@ class TestCheckQuality:
             symbol="TEST",
             bid=1.0,
             greeks=None,
-            quote_ts=dt.datetime.now(tz=ET),
-            now=dt.datetime.now(tz=ET),
+            quote_ts=NOW,
+            now=NOW,
         )
         issues = [f.issue for f in flags]
         assert "missing_greeks" in issues
@@ -98,8 +108,8 @@ class TestCheckQuality:
             symbol="TEST",
             bid=1.0,
             greeks=OptionGreeks(delta=None),
-            quote_ts=dt.datetime.now(tz=ET),
-            now=dt.datetime.now(tz=ET),
+            quote_ts=NOW,
+            now=NOW,
         )
         issues = [f.issue for f in flags]
         assert "missing_greeks" in issues
@@ -220,7 +230,7 @@ class TestAlpacaMarketDataMocked:
         mock_snap.latest_quote = MagicMock()
         mock_snap.latest_quote.bid_price = 0.0
         mock_snap.latest_quote.ask_price = 0.05
-        mock_snap.latest_quote.timestamp = dt.datetime.now(tz=ET)
+        mock_snap.latest_quote.timestamp = NOW
         mock_snap.latest_trade = None
         mock_snap.greeks = None
         mock_snap.implied_volatility = None
@@ -252,7 +262,7 @@ class TestAlpacaMarketDataMocked:
         mock_snap.latest_quote = MagicMock()
         mock_snap.latest_quote.bid_price = 3.50
         mock_snap.latest_quote.ask_price = 3.80
-        mock_snap.latest_quote.timestamp = dt.datetime.now(tz=ET)
+        mock_snap.latest_quote.timestamp = NOW
         mock_snap.latest_trade = MagicMock()
         mock_snap.latest_trade.price = 3.65
         mock_snap.greeks = mock_greeks

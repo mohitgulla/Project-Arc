@@ -99,6 +99,73 @@ def load_approved(
     return proposal, decision, str(req["kind"]), req["ticker"], sid
 
 
+LAPSED_UNDER_HALT = "approval lapsed under halt"
+
+
+def approval_deadline(conn: sqlite3.Connection, proposal_hash: str) -> _dt.datetime | None:
+    """Until when an approved proposal may still execute: its ``proposals.expires_at``.
+
+    E6.2d: an approval event that arrives while halted waits (deferred) until this
+    instant; ``None`` when the proposal is unknown or the time is unreadable.
+    """
+    row = conn.execute(
+        "SELECT expires_at FROM proposals WHERE proposal_hash = ?", (proposal_hash,)
+    ).fetchone()
+    if row is None or not row["expires_at"]:
+        return None
+    try:
+        dt = _dt.datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=_dt.UTC)
+
+
+def lapse_approval(
+    conn: sqlite3.Connection,
+    proposal_hash: str,
+    *,
+    now: _dt.datetime,
+    run_id: str | None,
+    settings: Any,
+    slack: bool,
+    chain_run_id: str | None = None,
+) -> None:
+    """E6.2d: an approval that stayed halted past its TTL: journal the refusal, update the card.
+
+    The journal row is ``Stage.ORDER`` / ``order:refused`` with the text
+    :data:`LAPSED_UNDER_HALT`; nothing is ever sent to the broker. The card edit
+    is best-effort (the journal row is the record).
+    """
+    from arc.approvals.cli import make_service
+    from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
+    from arc.journal.store import JournalStore
+
+    row = conn.execute(
+        "SELECT ticker FROM approval_requests WHERE proposal_hash = ?", (proposal_hash,)
+    ).fetchone()
+    ticker = row["ticker"] if row else None
+    with conn:
+        JournalStore(conn).record(
+            persona=JournalPersona.INVESTOR,
+            stage=Stage.ORDER,
+            subject=ticker or "session",
+            choice=Choice.REJECTED,
+            reason_code=ReasonCode.ORDER_REFUSED,
+            reason_text=LAPSED_UNDER_HALT,
+            proposal_hash=proposal_hash,
+            at=now,
+            run_id=run_id,
+            chain_run_id=chain_run_id,
+        )
+    try:
+        make_service(conn, settings, slack=slack).mark_not_executed(
+            proposal_hash, reason=LAPSED_UNDER_HALT, now=now
+        )
+    except Exception as exc:  # noqa: BLE001 - the refusal is journaled; the card edit is cosmetic
+        log.warning("investor.lapse_card_failed", proposal_hash=proposal_hash, error=str(exc))
+    log.info("investor.approval_lapsed", proposal_hash=proposal_hash, run_id=run_id)
+
+
 def _refuse_closed(ctx: JobContext, phash: str, ticker: str | None, why: str) -> JobResult:
     from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
     from arc.journal.store import JournalStore
@@ -205,6 +272,21 @@ def fresh_mid_of(
     return _mid
 
 
+def _refresh_root(ctx: JobContext, phash: str) -> None:
+    """D36: after a fill (or a failed ladder) re-render the loop's root line.
+
+    The Investor runs in its own process with no card poster of its own; with
+    Slack on it edits through a :class:`SlackCardPoster`, otherwise the update
+    goes to the log (nothing to edit).
+    """
+    from arc.approvals.cli import make_service
+
+    try:
+        make_service(ctx.conn, ctx.settings, slack=ctx.run_env.slack).refresh_loop_root(phash)
+    except Exception as exc:  # noqa: BLE001 - the fill is recorded; the root edit is best-effort
+        log.warning("investor.loop_root_refresh_failed", proposal_hash=phash, error=str(exc))
+
+
 def investor(
     ctx: JobContext,
     *,
@@ -266,6 +348,7 @@ def investor(
             step_seconds=ctx.settings.execution_step_seconds,
             run_id=ctx.run_id,
         )
+        _refresh_root(ctx, phash)
     return JobResult(
         card=card,
         summary=f"{ticker} {what}: {out.summary()}",
@@ -314,10 +397,15 @@ def chain_proposals(conn: sqlite3.Connection, chain_run_id: str) -> list[str]:
 
 
 def approval_events(conn: sqlite3.Connection, proposal_hashes: Sequence[str]) -> dict[str, str]:
-    """``{proposal_hash: routine_events.id}`` of the unconsumed ``approval`` events."""
+    """``{proposal_hash: routine_events.id}`` of the pending ``approval`` events.
+
+    Pending = neither consumed nor already dispatched (E6.2d).
+    """
     out: dict[str, str] = {}
     rows = conn.execute(
-        "SELECT id, payload FROM routine_events WHERE name = 'approval' AND consumed_at IS NULL"
+        """SELECT id, payload FROM routine_events
+           WHERE name = 'approval' AND consumed_at IS NULL AND dispatched_at IS NULL
+           ORDER BY created_at, rowid"""
     ).fetchall()
     import json
 
@@ -413,20 +501,39 @@ def execute_step(
             summary=f"awaiting approval ({len(hashes)} card(s); {why}, {env})", metrics=metrics
         )
     if HaltSwitch(HaltRepo(ctx.conn)).is_halted():
+        # E6.2d: the approval events stay pending (not dispatched). The tick's drain
+        # defers them while halted and runs the Investor after `!resume` if the
+        # proposal is still inside its TTL; past it they lapse with a journal row.
         return JobResult(
-            summary=f"halted: {len(report.auto_approved)} auto-approved proposal(s) not dispatched",
+            summary=(
+                f"halted: {len(report.auto_approved)} auto-approved proposal(s) held "
+                "until !resume (or their TTL)"
+            ),
             metrics=metrics,
         )
+    from arc.routines.runs import RoutineEventRepo
+
+    repo = RoutineEventRepo(ctx.conn)
     events = approval_events(ctx.conn, report.auto_approved)
     pids: list[int] = []
     for ph in hashes:  # ranked order
         ev = events.get(ph)
         if ev is None:
             continue
+        # E6.2d: claim the event before the spawn, so this tick's drain (and any
+        # other dispatcher) never runs the same ladder inline. Lost claim: skip.
+        if not repo.dispatch(ev, by=ctx.run_id, now=ctx.now):
+            continue
         argv = investor_command(
             ctx.run_env, ev, chain_run_id=ctx.chain_run_id, parent_run_id=ctx.run_id
         )
-        pid = spawn(argv)
+        try:
+            pid = spawn(argv)
+        except Exception as exc:  # noqa: BLE001 - hand the event back to the tick's drain
+            repo.release(ev)
+            metrics["spawn_failed"] = int(metrics.get("spawn_failed", 0)) + 1
+            log.error("execute.spawn_failed", proposal_hash=ph, event_id=ev, error=str(exc))
+            continue
         pids.append(pid)
         log.info(
             "execute.dispatched",

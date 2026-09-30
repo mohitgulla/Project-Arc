@@ -85,6 +85,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Global Search
+         * @description Resolve a ticker / hash prefix / run id / chain id / structure id to routes.
+         */
+        get: operations["global_search_api_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/snapshot": {
         parameters: {
             query?: never;
@@ -97,6 +117,67 @@ export interface paths {
          * @description Every dashboard section read in one pass (SELECT only), with the gate's caps.
          */
         get: operations["snapshot_api_snapshot_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/trades": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Trades
+         * @description Every proposal (opens and closes), filtered, sorted and paged server-side, with
+         *     the summary over the whole filter.
+         */
+        get: operations["trades_api_trades_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/trades/filters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Trade Filters
+         * @description Distinct values for the Trades filter dropdowns.
+         */
+        get: operations["trade_filters_api_trades_filters_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/trades/{proposal_hash}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Trade
+         * @description The full drill-down for one proposal (every section in one round trip).
+         */
+        get: operations["trade_api_trades__proposal_hash__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -159,6 +240,57 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** ApprovalView */
+        ApprovalView: {
+            /** Channel */
+            channel?: string | null;
+            /** Decided At */
+            decided_at?: string | null;
+            /** Decided By */
+            decided_by?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /**
+             * Limit Price
+             * @description The approved per-share limit
+             */
+            limit_price?: string | null;
+            /** Message Ts */
+            message_ts?: string | null;
+            /**
+             * Permalink
+             * @description Slack permalink, when stored
+             */
+            permalink?: string | null;
+            /** Posted At */
+            posted_at?: string | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /** Status */
+            status: string;
+            /** Thread Ts */
+            thread_ts?: string | null;
+            /** Ttl S */
+            ttl_s?: number | null;
+        };
+        /** BreakevenStat */
+        BreakevenStat: {
+            /**
+             * Pct
+             * @description (BE − S) / S
+             */
+            pct: number;
+            /** Price */
+            price: number;
+            /**
+             * Sigma
+             * @description ln(BE/S) / (ATM IV · √t)
+             */
+            sigma?: number | null;
+        };
         /**
          * Cadence
          * @description How often a producing job runs and when its output counts as stale.
@@ -191,6 +323,89 @@ export interface components {
              * @description Intraday window (ET), if any
              */
             window?: string | null;
+        };
+        /** CandidateView */
+        CandidateView: {
+            /** Catalyst Date */
+            catalyst_date?: string | null;
+            /** Catalyst Type */
+            catalyst_type: string;
+            /** Confidence */
+            confidence: number;
+            /** Corroboration */
+            corroboration?: number | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Id */
+            id: string;
+            /** Run Id */
+            run_id?: string | null;
+            /** Sources */
+            sources?: string[];
+            /** Stance */
+            stance: string;
+            /** Ticker */
+            ticker: string;
+        };
+        /**
+         * CostModel
+         * @description Slippage + commission + pass-through fee assumptions. Prices are per share.
+         */
+        CostModel: {
+            /**
+             * Cat Per Share
+             * @description FINRA CAT fee per executed equivalent share, both sides
+             * @default 0
+             */
+            cat_per_share: number;
+            /**
+             * Commission Per Contract
+             * @description $ per contract per side (opening and ITM closing trades)
+             * @default 0.65
+             */
+            commission_per_contract: number;
+            /**
+             * Occ Per Contract
+             * @description OCC clearing fee, both sides
+             * @default 0
+             */
+            occ_per_contract: number;
+            /**
+             * Orf Per Contract
+             * @description Options Regulatory Fee, both sides
+             * @default 0
+             */
+            orf_per_contract: number;
+            /**
+             * Sec Rate Sell
+             * @description SEC fee × trade value, sells only
+             * @default 0
+             */
+            sec_rate_sell: number;
+            /**
+             * Slippage Frac
+             * @description x: fill at mid ± x·spread (0 = mid, 0.5 = touch)
+             * @default 0.25
+             */
+            slippage_frac: number;
+            /**
+             * Spread Min
+             * @description Estimated spread floor ($/share) when no quote exists
+             * @default 0.03
+             */
+            spread_min: number;
+            /**
+             * Spread Pct
+             * @description Estimated spread as a fraction of mid when no quote exists
+             * @default 0.04
+             */
+            spread_pct: number;
+            /**
+             * Taf Per Contract Sell
+             * @description FINRA TAF, sells only
+             * @default 0
+             */
+            taf_per_contract_sell: number;
         };
         /**
          * DayPnlSection
@@ -227,6 +442,51 @@ export interface components {
             unrealized?: string | null;
             /** Unrealized At */
             unrealized_at?: string | null;
+        };
+        /** DecisionItem */
+        DecisionItem: {
+            /** At */
+            at: string | null;
+            /** Choice */
+            choice: string;
+            /** Confidence */
+            confidence?: number | null;
+            /** Id */
+            id: string;
+            /** Inputs Snapshot Id */
+            inputs_snapshot_id?: string | null;
+            /** Persona */
+            persona: string;
+            /** Persona Call Id */
+            persona_call_id?: string | null;
+            /** Reason Code */
+            reason_code: string;
+            /** Reason Label */
+            reason_label: string;
+            /** Reason Text */
+            reason_text: string;
+            /** Run Id */
+            run_id?: string | null;
+            /** Stage */
+            stage: string;
+            /** Subject */
+            subject: string;
+            /**
+             * This Trade
+             * @description False = a chain row for the same ticker/session
+             */
+            this_trade: boolean;
+        };
+        /** DecisionTrail */
+        DecisionTrail: {
+            /** Chain Run Id */
+            chain_run_id?: string | null;
+            /** Items */
+            items?: components["schemas"]["DecisionItem"][];
+            /** Persona Calls */
+            persona_calls?: {
+                [key: string]: components["schemas"]["PersonaCallView"];
+            };
         };
         /** EquityPoint */
         EquityPoint: {
@@ -307,6 +567,256 @@ export interface components {
             error: string;
         };
         /**
+         * EvCosts
+         * @description Expected costs between gross (mid) EV and net EV, $ per unit (path means).
+         *
+         *     ``entry_slippage`` / ``exit_slippage`` are the fills' distance from mid (the fill
+         *     model's ``x`` × the bid-ask spread, per leg). ``commission`` and
+         *     ``regulatory_fees`` (ORF, OCC, CAT, TAF, SEC) cover entry plus the expected exit.
+         */
+        EvCosts: {
+            /** Commission */
+            commission: number;
+            /** Entry Slippage */
+            entry_slippage: number;
+            /** Exit Slippage */
+            exit_slippage: number;
+            /** Regulatory Fees */
+            regulatory_fees: number;
+        };
+        /** ExecutionSection */
+        ExecutionSection: {
+            /** Attempts */
+            attempts?: number | null;
+            /** Band Hi */
+            band_hi?: string | null;
+            /** Band Lo */
+            band_lo?: string | null;
+            /** Contracts */
+            contracts?: number | null;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Fill Price */
+            fill_price?: string | null;
+            /** Filled Qty */
+            filled_qty?: number | null;
+            /** Fills */
+            fills?: components["schemas"]["FillView"][];
+            /** Finished At */
+            finished_at?: string | null;
+            /** Kind */
+            kind?: string | null;
+            /**
+             * Limit
+             * @description Approved limit, else the proposal net
+             */
+            limit?: string | null;
+            /** Max Steps */
+            max_steps?: number | null;
+            /**
+             * Mid
+             * @description Structure mid at proposal
+             */
+            mid?: string | null;
+            /** Orders */
+            orders?: components["schemas"]["OrderView"][];
+            /**
+             * Slippage Vs Limit
+             * @description $/share, + = worse
+             */
+            slippage_vs_limit?: string | null;
+            /** Slippage Vs Mid */
+            slippage_vs_mid?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Steps Used */
+            steps_used?: number | null;
+            /** Token Version */
+            token_version?: string | null;
+        };
+        /** ExitLink */
+        ExitLink: {
+            /** Close Net */
+            close_net?: string | null;
+            /** Created At */
+            created_at: string | null;
+            /** Exit Reason */
+            exit_reason?: string | null;
+            /** Proposal Hash */
+            proposal_hash: string;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "proposed" | "gate_pass" | "gate_fail" | "approved" | "rejected" | "expired" | "filled" | "cancelled" | "open" | "closed";
+        };
+        /**
+         * ExitModelResult
+         * @description Static vs managed numbers for one structure under one policy.
+         */
+        ExitModelResult: {
+            /**
+             * Buying Power
+             * @description $ per unit
+             */
+            buying_power?: number | null;
+            /** Dte */
+            dte: number;
+            /**
+             * Dte Exit Day
+             * @description Days from today until the DTE exit
+             */
+            dte_exit_day?: number | null;
+            /**
+             * Entry Costs
+             * @description $ per unit: entry slippage + commissions
+             */
+            entry_costs: number;
+            /**
+             * Entry Net
+             * @description Per-share entry price at mid, + debit / − credit
+             */
+            entry_net: number;
+            iv_model: components["schemas"]["IvModel"];
+            /**
+             * Iv Used
+             * @description Vol the marks are priced at (ATM IV)
+             */
+            iv_used: number;
+            managed: components["schemas"]["ManagedStats"];
+            /**
+             * Model
+             * @default gbm_flat_iv
+             * @constant
+             */
+            model: "gbm_flat_iv";
+            /** N Paths */
+            n_paths: number;
+            /**
+             * Path Vol
+             * @description Vol the underlying paths move at
+             */
+            path_vol: number;
+            /**
+             * Path Vol Source
+             * @default iv
+             * @enum {string}
+             */
+            path_vol_source: "iv" | "realized_forecast";
+            policy: components["schemas"]["ExitPolicy"];
+            /**
+             * Pop Std Error
+             * @description MC standard error of a PoP estimate
+             */
+            pop_std_error: number;
+            /** R */
+            r: number;
+            /**
+             * Rorc Day
+             * @description managed.net_ev / (max_loss × expected_days_held): return on risk per day
+             */
+            rorc_day?: number | null;
+            /** Seed */
+            seed: number;
+            /** Spot */
+            spot: number;
+            static: components["schemas"]["StaticStats"];
+            stop?: components["schemas"]["TriggerLevels"] | null;
+            structure_kind: components["schemas"]["StructureKind"] | null;
+            take_profit?: components["schemas"]["TriggerLevels"] | null;
+            /**
+             * Vrp
+             * @description ATM IV − realised-vol forecast (None = no forecast)
+             */
+            vrp?: number | null;
+        };
+        /**
+         * ExitPolicy
+         * @description Exit rules for one structure kind (see module doc for exact semantics).
+         */
+        ExitPolicy: {
+            /**
+             * Close At Dte
+             * @default 7
+             */
+            close_at_dte: number | null;
+            stop?: components["schemas"]["StopRule"] | null;
+            /**
+             * Stop Eod Only
+             * @description Evaluate the stop on end-of-day marks only
+             * @default true
+             */
+            stop_eod_only: boolean;
+            /**
+             * Take Profit Pct Of Debit
+             * @description Debit structures: close when pnl reaches this × debit
+             * @default 1
+             */
+            take_profit_pct_of_debit: number | null;
+            /**
+             * Take Profit Pct Of Max Gain
+             * @description Credit structures: close at this share of max gain
+             * @default 0.5
+             */
+            take_profit_pct_of_max_gain: number | null;
+            /** Time Adjusted Targets */
+            time_adjusted_targets?: components["schemas"]["TimeAdjustedTarget"][];
+        };
+        /**
+         * FeeBreakdown
+         * @description Dollar fees of one or more trades, by type (all ≥ 0).
+         */
+        FeeBreakdown: {
+            /**
+             * Cat
+             * @default 0
+             */
+            cat: number;
+            /**
+             * Commission
+             * @default 0
+             */
+            commission: number;
+            /**
+             * Occ
+             * @default 0
+             */
+            occ: number;
+            /**
+             * Orf
+             * @default 0
+             */
+            orf: number;
+            /**
+             * Sec
+             * @default 0
+             */
+            sec: number;
+            /**
+             * Taf
+             * @default 0
+             */
+            taf: number;
+        };
+        /** FillView */
+        FillView: {
+            /** Filled At */
+            filled_at: string | null;
+            /** Id */
+            id: string;
+            /** Order Id */
+            order_id: string;
+            /** Price */
+            price: string | null;
+            /** Qty */
+            qty: number;
+        };
+        /**
          * GateCaps
          * @description The gate's portfolio caps (PLAN §5), from the effective settings.
          */
@@ -321,6 +831,28 @@ export interface components {
              * @description |ν| cap as a fraction of equity
              */
             portfolio_vega_cap_pct: number;
+        };
+        /** GateView */
+        GateView: {
+            /** Account Snapshot */
+            account_snapshot?: {
+                [key: string]: unknown;
+            };
+            /** Decided At */
+            decided_at: string | null;
+            /** Id */
+            id: string;
+            /** Passed */
+            passed: boolean;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Token Version
+             * @description arc1 | arc2; the token is never shown
+             */
+            token_version?: string | null;
+            /** Violations */
+            violations: components["schemas"]["ViolationView"][];
         };
         /** GateViolation */
         GateViolation: {
@@ -442,6 +974,142 @@ export interface components {
              */
             status: "ok";
         };
+        /**
+         * IvModel
+         * @description IV path for the model. ``constant`` (default) or deterministic mean reversion.
+         *
+         *     ``mean_reverting``: ``iv_d = long_run + (iv_0 − long_run) · 0.5 ** (d / half_life_days)``.
+         */
+        IvModel: {
+            /** Half Life Days */
+            half_life_days?: number | null;
+            /**
+             * Kind
+             * @default constant
+             * @enum {string}
+             */
+            kind: "constant" | "mean_reverting";
+            /** Long Run */
+            long_run?: number | null;
+        };
+        /**
+         * LegAnalytics
+         * @description One leg's quote, liquidity, moneyness and entry cost, frozen at proposal time.
+         */
+        LegAnalytics: {
+            /** Ask */
+            ask?: number | null;
+            /** Ask Size */
+            ask_size?: number | null;
+            /** Bid */
+            bid?: number | null;
+            /**
+             * Bid Size
+             * @description Top of book; None when the feed omits it
+             */
+            bid_size?: number | null;
+            /** Delta */
+            delta?: number | null;
+            entry_fees?: components["schemas"]["FeeBreakdown"];
+            /**
+             * Entry Fill
+             * @description Modelled fill, $/share (mid ± x·spread)
+             */
+            entry_fill?: number | null;
+            /**
+             * Entry Slippage
+             * @description $ per unit: |fill − mid| × ratio × 100
+             * @default 0
+             */
+            entry_slippage: number;
+            /**
+             * Expiration
+             * Format: date
+             */
+            expiration: string;
+            /** Iv */
+            iv?: number | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "call" | "put";
+            /** Mid */
+            mid?: number | null;
+            /**
+             * Moneyness Pct
+             * @description (K − S) / S
+             */
+            moneyness_pct?: number | null;
+            /** Occ Symbol */
+            occ_symbol: string;
+            /** Open Interest */
+            open_interest?: number | null;
+            /** Otm */
+            otm?: boolean | null;
+            /** Quote Ts */
+            quote_ts?: string | null;
+            /** Ratio */
+            ratio: number;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "long" | "short";
+            /**
+             * Sigma Distance
+             * @description ln(K/S) / (ATM IV · √t)
+             */
+            sigma_distance?: number | null;
+            /**
+             * Spread
+             * @description ask − bid, $/share
+             */
+            spread?: number | null;
+            /**
+             * Spread Pct
+             * @description spread / mid
+             */
+            spread_pct?: number | null;
+            /** Strike */
+            strike: number;
+            /** Volume */
+            volume?: number | null;
+        };
+        /** LegInfo */
+        LegInfo: {
+            /**
+             * Intent
+             * @default
+             */
+            intent: string;
+            /** Occ Symbol */
+            occ_symbol: string;
+            /** Premium */
+            premium?: string | null;
+            /**
+             * Ratio
+             * @default 1
+             */
+            ratio: number;
+            /** Side */
+            side: string;
+        };
+        /** LegQuoteView */
+        LegQuoteView: {
+            /** Ask */
+            ask?: number | null;
+            /** Bid */
+            bid?: number | null;
+            /** Iv */
+            iv?: number | null;
+            /** Mid */
+            mid?: number | null;
+            /** Occ Symbol */
+            occ_symbol: string;
+            /** Quote Time */
+            quote_time?: string | null;
+        };
         /** LegView */
         LegView: {
             /**
@@ -467,6 +1135,99 @@ export interface components {
             symbol: string;
             /** Unrealized Pl */
             unrealized_pl?: string | null;
+        };
+        /**
+         * ManagedStats
+         * @description Under the exit policy.
+         */
+        ManagedStats: {
+            /** @description gross_ev − net_ev, itemised */
+            costs?: components["schemas"]["EvCosts"] | null;
+            /** Ev Per Bp Day */
+            ev_per_bp_day?: number | null;
+            /** Expected Days Held */
+            expected_days_held: number;
+            /** Gross Ev */
+            gross_ev: number;
+            /** Net Ev */
+            net_ev: number;
+            /** P Dte Exit */
+            p_dte_exit: number;
+            /** P Expiry */
+            p_expiry: number;
+            /** P Stop */
+            p_stop: number;
+            /** P Take Profit */
+            p_take_profit: number;
+            /** Pop */
+            pop: number;
+            /** Pop Gross */
+            pop_gross: number;
+        };
+        /** ManifestView */
+        ManifestView: {
+            /** Attempt */
+            attempt: number;
+            /** Chain Run Id */
+            chain_run_id?: string | null;
+            /** Config Hashes */
+            config_hashes?: {
+                [key: string]: string;
+            };
+            /** Config Version */
+            config_version?: string | null;
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Git Dirty */
+            git_dirty?: boolean | null;
+            /** Git Sha */
+            git_sha?: string | null;
+            /** Input Tokens */
+            input_tokens?: number | null;
+            /** Job */
+            job: string;
+            /** Models Requested */
+            models_requested?: string[];
+            /** Models Served */
+            models_served?: string[];
+            /** Output Tokens */
+            output_tokens?: number | null;
+            /** Route */
+            route: string;
+            /** Run Id */
+            run_id: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Status */
+            status: string;
+        };
+        /** MarketSection */
+        MarketSection: {
+            /** At */
+            at?: string | null;
+            /** Atm Iv */
+            atm_iv?: number | null;
+            candidate?: components["schemas"]["CandidateView"] | null;
+            /** Hv20 */
+            hv20?: number | null;
+            /** Ivr */
+            ivr?: number | null;
+            /** Legs */
+            legs?: components["schemas"]["LegQuoteView"][];
+            /** Quotes As Of */
+            quotes_as_of?: string | null;
+            regime?: components["schemas"]["RegimeView"] | null;
+            /**
+             * Regime Label
+             * @description Regime stored with the context
+             */
+            regime_label?: string | null;
+            /** Spot */
+            spot?: number | null;
+            /** Subject */
+            subject?: string | null;
         };
         /** MetaResponse */
         MetaResponse: {
@@ -567,6 +1328,77 @@ export interface components {
             /** Used */
             used: number;
         };
+        /** OrderEventView */
+        OrderEventView: {
+            /** Actor */
+            actor: string;
+            /** At */
+            at: string | null;
+            /** Detail */
+            detail: string;
+            /** From State */
+            from_state: string;
+            /** To State */
+            to_state: string;
+        };
+        /** OrderView */
+        OrderView: {
+            /** Broker Order Id */
+            broker_order_id: string | null;
+            /** Client Order Id */
+            client_order_id: string;
+            /** Created At */
+            created_at: string | null;
+            /** Events */
+            events?: components["schemas"]["OrderEventView"][];
+            /** Id */
+            id: string;
+            /** State */
+            state: string;
+            /** Updated At */
+            updated_at: string | null;
+        };
+        /** OutcomeSection */
+        OutcomeSection: {
+            outcome?: components["schemas"]["OutcomeView"] | null;
+            /** Reviews */
+            reviews?: components["schemas"]["ReviewView"][];
+        };
+        /** OutcomeView */
+        OutcomeView: {
+            /** At */
+            at?: string | null;
+            /** Contracts */
+            contracts?: number | null;
+            /** Cost Bps */
+            cost_bps?: number | null;
+            /** Days Held */
+            days_held?: number | null;
+            /** Entry Fill */
+            entry_fill?: string | null;
+            /** Ev Total */
+            ev_total?: string | null;
+            /** Exit Fill */
+            exit_fill?: string | null;
+            /** Exit Reason */
+            exit_reason?: string | null;
+            /** Hold To Expiry Shadow Pnl */
+            hold_to_expiry_shadow_pnl?: string | null;
+            /** Limit Price */
+            limit_price?: string | null;
+            /** Max Adverse Excursion */
+            max_adverse_excursion?: string | null;
+            /** Pnl Vs Ev */
+            pnl_vs_ev?: string | null;
+            /** Realised Pnl */
+            realised_pnl?: string | null;
+            /** Slippage Bps */
+            slippage_bps?: number | null;
+            /** Slippage Usd */
+            slippage_usd?: string | null;
+            /** Status */
+            status: string;
+        };
         /**
          * OverviewResponse
          * @description ``GET /api/overview``: every Overview card in one read.
@@ -615,6 +1447,61 @@ export interface components {
             stale_after_s: number;
             status: components["schemas"]["StatusSection"];
         };
+        /** PayoffPoint */
+        PayoffPoint: {
+            /** Pnl */
+            pnl: number;
+            /** Spot */
+            spot: number;
+        };
+        /**
+         * PayoffSection
+         * @description Payoff at expiry for the whole position (× contracts), from :mod:`arc.structures`.
+         */
+        PayoffSection: {
+            /** Breakevens */
+            breakevens?: number[];
+            /** Contracts */
+            contracts: number;
+            /**
+             * Entry Spot
+             * @description Underlying at proposal time
+             */
+            entry_spot?: number | null;
+            /** Entry Spot At */
+            entry_spot_at?: string | null;
+            /**
+             * Error
+             * @description Why no payoff could be computed
+             */
+            error?: string | null;
+            /**
+             * Latest Spot
+             * @description Latest close in the regime context
+             */
+            latest_spot?: number | null;
+            /** Latest Spot At */
+            latest_spot_at?: string | null;
+            /** Mark At */
+            mark_at?: string | null;
+            /**
+             * Mark Pnl
+             * @description P&L at the latest broker mark, $
+             */
+            mark_pnl?: number | null;
+            /**
+             * Max Gain
+             * @description None = unbounded
+             */
+            max_gain?: number | null;
+            /**
+             * Max Loss
+             * @description Positive $; None = unbounded
+             */
+            max_loss?: number | null;
+            /** Points */
+            points?: components["schemas"]["PayoffPoint"][];
+        };
         /**
          * Performance
          * @description Account Day/MTD/YTD performance from ``pnl_snapshots`` (E6.3, D28). $ and fractions.
@@ -636,6 +1523,35 @@ export interface components {
             ytd_pct?: number | null;
             /** Ytd Pnl */
             ytd_pnl?: number | null;
+        };
+        /** PersonaCallView */
+        PersonaCallView: {
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Id */
+            id: string;
+            /** Input Tokens */
+            input_tokens?: number | null;
+            /** Latency Ms */
+            latency_ms?: number | null;
+            /** Model */
+            model: string;
+            /** Output Tokens */
+            output_tokens?: number | null;
+            /** Persona */
+            persona: string;
+            /** Prompt Sha256 */
+            prompt_sha256: string;
+            /** Prompt Text */
+            prompt_text?: string | null;
+            /** Run Id */
+            run_id: string;
+            /** Status */
+            status: string;
         };
         /**
          * PnlView
@@ -754,6 +1670,42 @@ export interface components {
             /** Unrealized Pl */
             unrealized_pl?: string | null;
         };
+        /** PositionSection */
+        PositionSection: {
+            /** Close Net */
+            close_net?: string | null;
+            /** Closed At */
+            closed_at?: string | null;
+            /** Contracts */
+            contracts?: number | null;
+            /** Days Held */
+            days_held?: number | null;
+            /** Entry Net */
+            entry_net?: string | null;
+            /**
+             * Exit Pending
+             * @default false
+             */
+            exit_pending: boolean;
+            /** Exit Reason */
+            exit_reason?: string | null;
+            /** Exits */
+            exits?: components["schemas"]["ExitLink"][];
+            /** Open Proposal Hash */
+            open_proposal_hash?: string | null;
+            /** Opened At */
+            opened_at?: string | null;
+            /** Realized Pnl */
+            realized_pnl?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Structure Id */
+            structure_id?: string | null;
+            /** Swaps */
+            swaps?: components["schemas"]["SwapView"][];
+            /** Ticker */
+            ticker?: string | null;
+        };
         /**
          * PositionsResponse
          * @description ``GET /api/positions``: open and/or closed structures.
@@ -775,6 +1727,73 @@ export interface components {
              * @enum {string}
              */
             status: "open" | "closed" | "all";
+        };
+        /**
+         * ProposalAnalytics
+         * @description Everything the v2 proposal card shows beyond the Proposal itself.
+         */
+        ProposalAnalytics: {
+            /**
+             * Account Profile
+             * @description D25 account profile, when configured
+             */
+            account_profile?: string | null;
+            /** Breakevens */
+            breakevens?: components["schemas"]["BreakevenStat"][];
+            /** @description The costs.yaml values this was priced with */
+            cost_model: components["schemas"]["CostModel"];
+            /**
+             * Day Change Pct
+             * @description spot / prev_close − 1
+             */
+            day_change_pct?: number | null;
+            /**
+             * Depth
+             * @description Alpaca gives top-of-book only; no order-book depth
+             * @default top_of_book
+             * @constant
+             */
+            depth: "top_of_book";
+            /** Dte */
+            dte: number;
+            entry_fees?: components["schemas"]["FeeBreakdown"];
+            /**
+             * Entry Slippage
+             * @description $ per unit, all legs
+             */
+            entry_slippage: number;
+            /** @description E2.4 managed vs static */
+            exit_model?: components["schemas"]["ExitModelResult"] | null;
+            /**
+             * Expected Move
+             * @description ±1σ to expiry, $
+             */
+            expected_move?: number | null;
+            /** Legs */
+            legs: components["schemas"]["LegAnalytics"][];
+            /**
+             * Prev Close
+             * @description Last close in the regime snapshot
+             */
+            prev_close?: number | null;
+            /** Prev Close As Of */
+            prev_close_as_of?: string | null;
+            /**
+             * Sigma T
+             * @description ATM IV · √(DTE/365)
+             */
+            sigma_t?: number | null;
+            /** Spot */
+            spot: number;
+            /** Spot As Of */
+            spot_as_of?: string | null;
+            /**
+             * Version
+             * @default 1
+             * @constant
+             */
+            version: 1;
+            vol?: components["schemas"]["VolStats"];
         };
         /**
          * ProposalRow
@@ -852,6 +1871,159 @@ export interface components {
             /** Violations */
             violations?: string[];
         };
+        /** QuantSection */
+        QuantSection: {
+            analytics?: components["schemas"]["ProposalAnalytics"] | null;
+            /** Analytics At */
+            analytics_at?: string | null;
+            /** Analytics Error */
+            analytics_error?: string | null;
+            /** Buying Power */
+            buying_power?: string | null;
+            /** Contracts */
+            contracts?: number | null;
+            /** Cost Bps */
+            cost_bps?: number | null;
+            /** Dte */
+            dte?: number | null;
+            /**
+             * Ev
+             * @description Quant's EV per contract (model inputs)
+             */
+            ev?: string | null;
+            /**
+             * Max Gain
+             * @description Per unit, $
+             */
+            max_gain?: string | null;
+            /** Max Loss */
+            max_loss?: string | null;
+            /** Net Ev Hold */
+            net_ev_hold?: number | null;
+            /**
+             * Net Ev Managed
+             * @description $ per unit after costs
+             */
+            net_ev_managed?: number | null;
+            /** Notional */
+            notional?: string | null;
+            /** Pct Equity */
+            pct_equity?: number | null;
+            /** Pop */
+            pop?: number | null;
+            /** Pop Hold */
+            pop_hold?: number | null;
+            /** Pop Managed */
+            pop_managed?: number | null;
+        };
+        /** RegimeView */
+        RegimeView: {
+            /** As Of */
+            as_of?: string | null;
+            /** Current */
+            current?: string | null;
+            /** Entry Id */
+            entry_id: string;
+            /** Expected Duration */
+            expected_duration?: number | null;
+            /** Hv20 */
+            hv20?: number | null;
+            /** Iv */
+            iv?: number | null;
+            /** Iv Rank */
+            iv_rank?: number | null;
+            /** Last Close */
+            last_close?: number | null;
+            /** Snapshot Id */
+            snapshot_id?: string | null;
+            /** Stickiness */
+            stickiness?: number | null;
+            /** Trailing Return */
+            trailing_return?: number | null;
+        };
+        /** ReviewView */
+        ReviewView: {
+            /** At */
+            at: string | null;
+            /** Cites */
+            cites?: string[];
+            /** Decision Id */
+            decision_id?: string | null;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Notes */
+            notes: string;
+            /** Reviewer */
+            reviewer: string;
+            /** Root Cause */
+            root_cause: string;
+        };
+        /** SearchMatch */
+        SearchMatch: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "ticker" | "trade" | "run" | "chain" | "structure";
+            /** Label */
+            label: string;
+            /** Route */
+            route: string;
+        };
+        /** SearchResponse */
+        SearchResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Matches */
+            matches: components["schemas"]["SearchMatch"][];
+            /** Q */
+            q: string;
+        };
+        /**
+         * StaticStats
+         * @description Hold to expiry.
+         */
+        StaticStats: {
+            /** @description gross_ev − net_ev, itemised */
+            costs?: components["schemas"]["EvCosts"] | null;
+            /**
+             * Ev Per Bp Day
+             * @description net_ev / (buying power × days held)
+             */
+            ev_per_bp_day?: number | null;
+            /**
+             * Gross Ev
+             * @description $ per unit at mid, no costs
+             */
+            gross_ev: number;
+            /**
+             * Net Ev
+             * @description $ per unit after slippage and all fees
+             */
+            net_ev: number;
+            /**
+             * Pop
+             * @description P(net P&L > 0) after costs
+             */
+            pop: number;
+            /**
+             * Pop Analytic
+             * @description Lognormal PoP over breakevens
+             */
+            pop_analytic: number;
+            /**
+             * Pop Gross
+             * @description P(P&L > 0) at mid, no costs
+             */
+            pop_gross: number;
+        };
         /**
          * StatusSection
          * @description Full-width strip: trading state, scheduler health, alerts, D32 budget.
@@ -879,6 +2051,24 @@ export interface components {
             /** Tick Status */
             tick_status?: string | null;
         };
+        /**
+         * StopBasis
+         * @description What the stop's ``value`` multiplies (see module doc).
+         * @enum {string}
+         */
+        StopBasis: "credit_multiple" | "pct_max_loss" | "pct_debit";
+        /** StopRule */
+        StopRule: {
+            basis: components["schemas"]["StopBasis"];
+            /** Value */
+            value: number;
+        };
+        /**
+         * StructureKind
+         * @description Structure classification (Phase-1 whitelist per PLAN D4, plus OTHER).
+         * @enum {string}
+         */
+        StructureKind: "long_call" | "long_put" | "vertical_debit" | "vertical_credit" | "iron_condor" | "other";
         /** StructureView */
         StructureView: {
             /** Contracts */
@@ -915,6 +2105,39 @@ export interface components {
              */
             unrealized_pl?: string | null;
         };
+        /** SwapView */
+        SwapView: {
+            /** Close Proposal Hash */
+            close_proposal_hash: string | null;
+            /** Close Ticker */
+            close_ticker: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Detail */
+            detail: string;
+            /** Id */
+            id: string;
+            /** Open Proposal Hash */
+            open_proposal_hash: string | null;
+            /** Open Ticker */
+            open_ticker: string;
+            /** Status */
+            status: string;
+            /** Suggestion */
+            suggestion?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * TimeAdjustedTarget
+         * @description Take-profit percentage that applies once remaining DTE ≤ ``dte_lte`` (D19).
+         */
+        TimeAdjustedTarget: {
+            /** Dte Lte */
+            dte_lte: number;
+            /** Take Profit Pct */
+            take_profit_pct: number;
+        };
         /**
          * TowerSnapshot
          * @description Everything the dashboard shows, read in one pass.
@@ -945,6 +2168,356 @@ export interface components {
             /** Violations */
             violations: components["schemas"]["GateViolation"][];
         };
+        /**
+         * TradeDetail
+         * @description Everything about one trade, in one round trip.
+         */
+        TradeDetail: {
+            approval: components["schemas"]["ApprovalView"] | null;
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            decisions: components["schemas"]["DecisionTrail"];
+            execution: components["schemas"]["ExecutionSection"] | null;
+            /** Gate */
+            gate: components["schemas"]["GateView"][];
+            header: components["schemas"]["TradeHeader"];
+            manifest: components["schemas"]["ManifestView"] | null;
+            market: components["schemas"]["MarketSection"];
+            outcome: components["schemas"]["OutcomeSection"];
+            payoff: components["schemas"]["PayoffSection"];
+            position: components["schemas"]["PositionSection"] | null;
+            quant: components["schemas"]["QuantSection"];
+        };
+        /**
+         * TradeFilterOptions
+         * @description Distinct values for the filter dropdowns.
+         */
+        TradeFilterOptions: {
+            /** Account Profiles */
+            account_profiles: string[];
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Date Presets */
+            date_presets?: string[];
+            /** Exit Reasons */
+            exit_reasons: string[];
+            /** Kinds */
+            kinds: string[];
+            /**
+             * Reason Codes
+             * @description [{code, label}]
+             */
+            reason_codes: {
+                [key: string]: string;
+            }[];
+            /** Sort Keys */
+            sort_keys?: string[];
+            /** Stages */
+            stages?: string[];
+            /** Structures */
+            structures: string[];
+            /** Tickers */
+            tickers: string[];
+        };
+        /**
+         * TradeFilters
+         * @description Every list filter; all optional. Multi-value filters match any of their values.
+         */
+        TradeFilters: {
+            /** Account Profile */
+            account_profile?: string[];
+            /**
+             * Date
+             * @default all
+             * @enum {string}
+             */
+            date: "today" | "7d" | "30d" | "mtd" | "ytd" | "all" | "custom";
+            /**
+             * Date From
+             * @description custom range start (ET day)
+             */
+            date_from?: string | null;
+            /**
+             * Date To
+             * @description custom range end, inclusive
+             */
+            date_to?: string | null;
+            /** Exit Reason */
+            exit_reason?: string[];
+            /** Kind */
+            kind?: ("open" | "close")[];
+            /**
+             * Min Net Ev
+             * @description $ after costs, × contracts
+             */
+            min_net_ev?: number | null;
+            /**
+             * Min Pop
+             * @description managed PoP, else Quant's
+             */
+            min_pop?: number | null;
+            /**
+             * Q
+             * @description hash prefix, ticker, run id, chain id, structure id
+             */
+            q?: string | null;
+            /**
+             * Reason Code
+             * @description any decision's code
+             */
+            reason_code?: string[];
+            /** Stage */
+            stage?: ("proposed" | "gate_pass" | "gate_fail" | "approved" | "rejected" | "expired" | "filled" | "cancelled" | "open" | "closed")[];
+            /**
+             * Structure
+             * @description structure kinds
+             */
+            structure?: string[];
+            /** Ticker */
+            ticker?: string[];
+        };
+        /** TradeHeader */
+        TradeHeader: {
+            /** Candidate Id */
+            candidate_id: string;
+            /** Closed At */
+            closed_at?: string | null;
+            /** Dte */
+            dte?: number | null;
+            /** Expires At */
+            expires_at: string | null;
+            /** Legs */
+            legs: components["schemas"]["LegInfo"][];
+            /**
+             * Lifecycle
+             * @description StatusStepper stage reached
+             */
+            lifecycle: string;
+            /**
+             * Lifecycle Failed
+             * @description StatusStepper stage that failed
+             */
+            lifecycle_failed?: string | null;
+            /**
+             * Opened At
+             * @description Structure opened (fill)
+             */
+            opened_at?: string | null;
+            /** Risk Narrative */
+            risk_narrative: string;
+            row: components["schemas"]["TradeRow"];
+            /** Thesis */
+            thesis: string;
+        };
+        /** TradeListResponse */
+        TradeListResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Date From
+             * @description Resolved range start (ET)
+             */
+            date_from: string | null;
+            /** Date To */
+            date_to: string | null;
+            /**
+             * Dir
+             * @enum {string}
+             */
+            dir: "asc" | "desc";
+            filters: components["schemas"]["TradeFilters"];
+            /** Items */
+            items: components["schemas"]["TradeRow"][];
+            /** Page */
+            page: number;
+            /** Size */
+            size: number;
+            /**
+             * Sort
+             * @enum {string}
+             */
+            sort: "time" | "ticker" | "contracts" | "limit" | "net_ev" | "pop" | "slippage_bps" | "realized_pnl";
+            summary: components["schemas"]["TradeSummary"];
+            /** Total */
+            total: number;
+        };
+        /** TradeRow */
+        TradeRow: {
+            /** Account Profile */
+            account_profile?: string | null;
+            /** Approval */
+            approval: string | null;
+            /** Chain Run Id */
+            chain_run_id?: string | null;
+            /**
+             * Closes Structure Id
+             * @description The structure this close exits
+             */
+            closes_structure_id?: string | null;
+            /** Contracts */
+            contracts: number | null;
+            /** Created At */
+            created_at: string | null;
+            /** Day */
+            day: string | null;
+            /** Execution */
+            execution: string | null;
+            /** Exit Reason */
+            exit_reason: string | null;
+            /** Fill Price */
+            fill_price: string | null;
+            /** First Violation */
+            first_violation?: string | null;
+            /** Gate Passed */
+            gate_passed: boolean | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "open" | "close";
+            /**
+             * Legs
+             * @description OCC symbols
+             */
+            legs: string[];
+            /**
+             * Limit
+             * @description Per-share net at proposal (+ debit / − credit)
+             */
+            limit: string | null;
+            /**
+             * Net Ev
+             * @description Managed net EV after costs × contracts, $
+             */
+            net_ev: number | null;
+            /**
+             * Pop
+             * @description Quant's PoP
+             */
+            pop: number | null;
+            /**
+             * Pop Hold
+             * @description Hold-to-expiry PoP after costs
+             */
+            pop_hold?: number | null;
+            /** Pop Managed */
+            pop_managed?: number | null;
+            /** Proposal Hash */
+            proposal_hash: string;
+            /** Realized Pnl */
+            realized_pnl: number | null;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Slippage Bps
+             * @description Fill vs the proposal net; + = worse
+             */
+            slippage_bps: number | null;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "proposed" | "gate_pass" | "gate_fail" | "approved" | "rejected" | "expired" | "filled" | "cancelled" | "open" | "closed";
+            /**
+             * Structure Id
+             * @description The structure this open created
+             */
+            structure_id?: string | null;
+            /** Structure Kind */
+            structure_kind: string | null;
+            /** Swap Id */
+            swap_id?: string | null;
+            /** Ticker */
+            ticker: string | null;
+            /**
+             * Violations
+             * @default 0
+             */
+            violations: number;
+        };
+        /**
+         * TradeSummary
+         * @description Aggregates over every row matching the filter (not just the page).
+         */
+        TradeSummary: {
+            /** Avg Net Ev */
+            avg_net_ev?: number | null;
+            /** Avg Slippage Bps */
+            avg_slippage_bps?: number | null;
+            /**
+             * Count
+             * @default 0
+             */
+            count: number;
+            /**
+             * Filled
+             * @default 0
+             */
+            filled: number;
+            /** Filled Pct */
+            filled_pct?: number | null;
+            /**
+             * Net Ev Realized
+             * @description Σ modelled net EV over the trades that have a realized P&L
+             */
+            net_ev_realized?: number | null;
+            /**
+             * Realized Count
+             * @default 0
+             */
+            realized_count: number;
+            /**
+             * Realized Pnl
+             * @description Σ realized P&L
+             */
+            realized_pnl?: number | null;
+        };
+        /**
+         * TriggerLevels
+         * @description Where a rule fires: the close price per share, and the underlying when it fired.
+         *
+         *     ``close_price`` is what the order pays (``close_side = "debit"``, e.g. $0.83 to buy
+         *     back a $1.66 credit at 50%) or receives (``"credit"``). ``pnl`` is the P&L per
+         *     share at that price. The underlying levels are the medians of the simulated spot
+         *     on the paths where this rule fired, split below / above today's spot (``None``
+         *     when no path fired on that side); ``median_day`` is the median day it fired.
+         *     ``pnl``/``close_price`` for take profit use the base target (before any
+         *     time-adjusted bucket).
+         */
+        TriggerLevels: {
+            /** Close Price */
+            close_price: number;
+            /**
+             * Close Side
+             * @enum {string}
+             */
+            close_side: "debit" | "credit";
+            /** Median Day */
+            median_day?: number | null;
+            /** Pnl */
+            pnl: number;
+            /** Probability */
+            probability: number;
+            /**
+             * Reachable
+             * @description False when the threshold lies beyond max gain / max loss, so the rule can never fire (e.g. a 3x-credit stop on a condor whose max loss is < 2x credit)
+             * @default true
+             */
+            reachable: boolean;
+            /** Underlying Down */
+            underlying_down?: number | null;
+            /** Underlying Up */
+            underlying_up?: number | null;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -957,6 +2530,40 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** ViolationView */
+        ViolationView: {
+            /** Code */
+            code: string;
+            /** Detail */
+            detail: string;
+            /** Label */
+            label: string;
+            /** Reason Code */
+            reason_code: string;
+        };
+        /**
+         * VolStats
+         * @description Vol context: scan-time ATM IV plus the regime FeatureSnapshot's rank/HV fields.
+         */
+        VolStats: {
+            /** Atm Iv */
+            atm_iv?: number | null;
+            /** Features As Of */
+            features_as_of?: string | null;
+            /** Hv20 */
+            hv20?: number | null;
+            /** Hv60 */
+            hv60?: number | null;
+            /**
+             * Iv Hv20
+             * @description ATM IV / HV20
+             */
+            iv_hv20?: number | null;
+            /** Iv Percentile */
+            iv_percentile?: number | null;
+            /** Iv Rank */
+            iv_rank?: number | null;
         };
     };
     responses: never;
@@ -1105,6 +2712,46 @@ export interface operations {
             };
         };
     };
+    global_search_api_search_get: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     snapshot_api_snapshot_get: {
         parameters: {
             query?: {
@@ -1123,6 +2770,140 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TowerSnapshot"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    trades_api_trades_get: {
+        parameters: {
+            query?: {
+                date?: "today" | "7d" | "30d" | "mtd" | "ytd" | "all" | "custom";
+                date_from?: string | null;
+                date_to?: string | null;
+                ticker?: string[] | null;
+                kind?: string[] | null;
+                structure?: string[] | null;
+                stage?: string[] | null;
+                exit_reason?: string[] | null;
+                reason_code?: string[] | null;
+                min_net_ev?: number | null;
+                min_pop?: number | null;
+                account_profile?: string[] | null;
+                q?: string | null;
+                page?: number;
+                size?: number;
+                sort?: "time" | "ticker" | "contracts" | "limit" | "net_ev" | "pop" | "slippage_bps" | "realized_pnl";
+                dir?: "asc" | "desc";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    trade_filters_api_trades_filters_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeFilterOptions"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    trade_api_trades__proposal_hash__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeDetail"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */

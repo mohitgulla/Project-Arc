@@ -145,11 +145,15 @@ class PostedCard:
 
 
 class CardPoster(Protocol):
-    """Where cards go: the #arc-investor day thread, or the log (dry runs)."""
+    """Where cards go: the loop / day thread in #arc-investor, or the log (dry runs)."""
 
-    def post(self, day: _dt.date, view: CardView) -> PostedCard: ...
+    def post(
+        self, day: _dt.date, view: CardView, *, chain_run_id: str | None = None
+    ) -> PostedCard: ...
 
     def update(self, channel: str, message_ts: str, view: CardView) -> None: ...
+
+    def update_root(self, ts: str, text: str) -> None: ...
 
     def notify_user(self, channel: str, user: str, text: str, thread_ts: str | None) -> None: ...
 
@@ -161,15 +165,22 @@ class LogCardPoster:
         self.posted: list[tuple[_dt.date, CardView]] = []
         self.updated: list[tuple[str, str, CardView]] = []
         self.notices: list[tuple[str, str]] = []
+        self.chains: list[str | None] = []  # D36: chain_run_id per posted card
+        self.root_edits: list[tuple[str, str]] = []
 
-    def post(self, day: _dt.date, view: CardView) -> PostedCard:
+    def post(self, day: _dt.date, view: CardView, *, chain_run_id: str | None = None) -> PostedCard:
         self.posted.append((day, view))
-        log.info("approvals.card", day=day.isoformat(), text=view.text)
+        self.chains.append(chain_run_id)
+        log.info("approvals.card", day=day.isoformat(), text=view.text, chain_run_id=chain_run_id)
         return PostedCard(channel="log", thread_ts=None, message_ts=None)
 
     def update(self, channel: str, message_ts: str, view: CardView) -> None:
         self.updated.append((channel, message_ts, view))
         log.info("approvals.card_update", text=view.text)
+
+    def update_root(self, ts: str, text: str) -> None:
+        self.root_edits.append((ts, text))
+        log.info("approvals.loop_root_update", ts=ts, text=text)
 
     def notify_user(self, channel: str, user: str, text: str, thread_ts: str | None) -> None:
         self.notices.append((user, text))
@@ -616,10 +627,22 @@ class ApprovalService:
 
     def _post(self, day: _dt.date, view: CardView, phash: str) -> PostedCard | None:
         try:
-            return self.poster.post(day, view)
+            chain = JournalStore(self.conn).chain_for_proposal(phash)
+            return self.poster.post(day, view, chain_run_id=chain)
         except Exception as exc:  # noqa: BLE001 - state is committed; posting is best-effort
             log.error("approvals.post_failed", proposal_hash=phash, error=str(exc))
             return None
+
+    def refresh_loop_root(self, proposal_hash: str) -> None:
+        """D36: re-render the root line of the loop that proposed *proposal_hash*.
+
+        Called after a decision (approve / reject / expire) and by the Investor
+        after a fill; a no-op for proposals outside a loop with a root.
+        """
+        from arc.routines.loop import refresh_loop_root
+
+        chain = JournalStore(self.conn).chain_for_proposal(proposal_hash)
+        refresh_loop_root(self.conn, self.poster, chain)
 
     # -- decide --------------------------------------------------------------
 
@@ -815,6 +838,7 @@ class ApprovalService:
             approval_id=approval_id,
         )
         self._update_card(req, status, actor, now)
+        self.refresh_loop_root(proposal_hash)  # D36
         outcome = {
             RequestStatus.APPROVED: Outcome.APPROVED,
             RequestStatus.REJECTED: Outcome.REJECTED,
@@ -875,6 +899,24 @@ class ApprovalService:
         log.info("approvals.reject_reason", proposal_hash=proposal_hash, by=user, reason=text)
         self._update_card(req, RequestStatus.REJECTED, user, now, reason=text)
         return ReasonResult("recorded", proposal_hash, "Reason recorded.", dec_id)
+
+    # -- not executed (E6.2d) --------------------------------------------------
+
+    def mark_not_executed(self, proposal_hash: str, *, reason: str, now: _dt.datetime) -> bool:
+        """Re-render a decided card with why it was never executed (e.g. lapsed under halt).
+
+        The decision itself is unchanged; the card keeps its outcome line and gains
+        ``— _not executed: <reason>_``. ``False`` when there is no request.
+        """
+        req = self._request(proposal_hash)
+        if req is None:
+            return False
+        row = self.conn.execute(
+            "SELECT decided_by FROM approval_requests WHERE proposal_hash = ?", (proposal_hash,)
+        ).fetchone()
+        actor = str(row["decided_by"] or "") if row else ""
+        self._update_card(req, req.status, actor, now, reason=f"not executed: {reason}")
+        return True
 
     def _kind(self, proposal_hash: str) -> str:
         row = self.conn.execute(

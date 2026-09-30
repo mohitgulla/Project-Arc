@@ -20,7 +20,9 @@ __all__ = [
     "Reviewer",
     "RootCause",
     "Stage",
+    "REASON_LABELS",
     "gate_reason",
+    "reason_label",
 ]
 
 
@@ -133,6 +135,8 @@ class ReasonCode(StrEnum):
     MARKET_DATA_MISSING = "market_data_missing"  # no VIX reading: fail closed for new opens
     PORTFOLIO_VIEW = "portfolio_view"  # the Director's read of the open book (noted)
     THESIS_CHECK = "thesis_check"  # the Director's check of an open position's thesis
+    # E5.8 (D31): the 5-min loop found the same inputs as the last full run
+    LOOP_NO_CHANGE = "loop_no_change"
     # sizing (D18)
     SIZING_OK = "sizing:ok"
     SIZING_CAPPED = "sizing:capped"
@@ -221,6 +225,7 @@ class ReasonCode(StrEnum):
     RECONCILE_EXPIRED = "reconcile:expired"
     RECONCILE_WASH_SALE = "reconcile:wash_sale"
     RECONCILE_LOT_PRICE = "reconcile:lot_price"
+    RECONCILE_TEST_FILL = "reconcile:test_fill"
 
 
 def gate_reason(violation: str) -> ReasonCode:
@@ -261,3 +266,147 @@ class RootCause(StrEnum):
 class Reviewer(StrEnum):
     AUDITOR = "auditor"
     OWNER = "owner"
+
+
+# Plain-language label per reason code, for owner-facing views (the tower's decision
+# trail, E8.7b). One entry per ReasonCode; a test pins full coverage.
+REASON_LABELS: dict[ReasonCode, str] = {
+    ReasonCode.SCOUT_CANDIDATE: "Scout raised this idea",
+    ReasonCode.UNIVERSE_NOT_IN_UNIVERSE: "Not in the tradable universe",
+    ReasonCode.UNIVERSE_UNKNOWN_SYMBOL: "Unknown symbol",
+    ReasonCode.UNIVERSE_ILLIQUID: "Options too illiquid",
+    ReasonCode.UNIVERSE_NEW_TICKER_CAP: "Over the new-ticker cap",
+    ReasonCode.SHORTLISTED: "Shortlisted by the Director",
+    ReasonCode.NOT_RANKED: "Not ranked by the Director",
+    ReasonCode.NOT_A_CANDIDATE: "Not one of the Scout's candidates",
+    ReasonCode.DUPLICATE: "Duplicate entry",
+    ReasonCode.INVALID_FIELD: "Invalid field in the persona output",
+    ReasonCode.OVER_LIMIT: "Over the shortlist limit",
+    ReasonCode.DIRECTOR_EXCLUDED: "Excluded by the Director",
+    ReasonCode.MARKET_READ: "Director's market read",
+    ReasonCode.NO_CANDIDATES: "No candidates to review",
+    ReasonCode.CHOSEN_FROM_MENU: "Quant picked this structure from the menu",
+    ReasonCode.MENU_NOT_CHOSEN: "Menu option not chosen",
+    ReasonCode.NOT_IN_MENU: "Structure not in the scanner's menu",
+    ReasonCode.NOT_SHORTLISTED: "Not on the shortlist",
+    ReasonCode.NO_CHAIN: "No option chain available",
+    ReasonCode.QUANT_OMITTED: "Quant left it out",
+    ReasonCode.QUANT_SKIPPED: "Quant skipped it, with a reason",
+    ReasonCode.NOT_STRUCTURED: "No structure from Quant",
+    ReasonCode.OVER_BUDGET: "Ranked beyond the structuring budget",
+    ReasonCode.PROFILE_NO_NEUTRAL: "Account profile has no neutral structure",
+    ReasonCode.PROFILE_NO_STRUCTURE: "Account profile allows no structure for this view",
+    ReasonCode.RISK_ASSESSED: "Risk reviewed it",
+    ReasonCode.RISK_DECLINED: "Risk declined it",
+    ReasonCode.UNKNOWN_STRUCTURE: "Risk reviewed an unknown structure",
+    ReasonCode.NOT_ASSESSED: "Risk did not review it",
+    ReasonCode.PROPOSED: "Proposed",
+    ReasonCode.ALREADY_PROPOSED: "Already proposed this run",
+    ReasonCode.NO_STRUCTURE: "No structure to propose",
+    ReasonCode.NO_RISK_REVIEW: "No risk review to propose on",
+    ReasonCode.NO_CANDIDATE_ID: "No candidate record",
+    ReasonCode.REPRICE_FAILED: "Could not re-price at fresh quotes",
+    ReasonCode.BUDGET_RESTRICTIVE: "Daily order budget is in its restrictive tier",
+    ReasonCode.ORDER_BUDGET_EXHAUSTED: "Daily order budget used up",
+    ReasonCode.DROP_CONCENTRATION: "Dropped: adds concentration",
+    ReasonCode.DROP_AT_CAP: "Dropped: underlying already at its max-loss cap",
+    ReasonCode.DEDUPE_EXECUTED: "Same idea already traded recently",
+    ReasonCode.DEDUPE_PROPOSED: "Same idea already proposed recently",
+    ReasonCode.DEDUPE_REJECTED: "Same idea rejected by the owner recently",
+    ReasonCode.DEDUPE_OVERRIDE: "Re-admitted: spot or regime moved",
+    ReasonCode.DIRECTOR_NO_TRADE: "Director chose no trade",
+    ReasonCode.MARKET_UNCLEAR: "Market unclear: no new opens",
+    ReasonCode.MARKET_DATA_MISSING: "Market data missing: no new opens",
+    ReasonCode.PORTFOLIO_VIEW: "Director's read of the open book",
+    ReasonCode.THESIS_CHECK: "Director checked an open position's thesis",
+    ReasonCode.LOOP_NO_CHANGE: "Loop skipped: inputs unchanged",
+    ReasonCode.SIZING_OK: "Sized at Risk's suggestion",
+    ReasonCode.SIZING_CAPPED: "Size capped at 5% of equity",
+    ReasonCode.SIZING_CAP_ZERO: "Cap allows zero contracts",
+    ReasonCode.SIZING_BUDGET_EXHAUSTED: "No risk budget left",
+    ReasonCode.SIZING_RISK_ZERO: "Risk suggested zero contracts",
+    ReasonCode.SIZING_UNBOUNDED: "Unbounded loss: cannot size",
+    ReasonCode.SIZING_INVALID_INPUT: "Invalid sizing input",
+    ReasonCode.GATE_PASS: "Gate passed",
+    ReasonCode.GATE_STRUCTURE_INVALID: "Gate: invalid structure",
+    ReasonCode.GATE_PER_UNDERLYING: "Gate: over the per-underlying limit",
+    ReasonCode.GATE_DAILY_LOSS: "Gate: daily loss halt",
+    ReasonCode.GATE_HALTED: "Gate: trading halted",
+    ReasonCode.GATE_SPREAD: "Gate: bid-ask spread too wide",
+    ReasonCode.GATE_LIMIT_OUTSIDE_NBBO: "Gate: limit outside the market",
+    ReasonCode.GATE_TICK: "Gate: limit not on a valid tick",
+    ReasonCode.GATE_WASH_SALE: "Gate: wash-sale risk",
+    ReasonCode.GATE_DELTA_CAP: "Gate: over the portfolio delta cap",
+    ReasonCode.GATE_VEGA_CAP: "Gate: over the portfolio vega cap",
+    ReasonCode.GATE_STRUCTURE_NOT_ALLOWED: "Gate: structure not allowed",
+    ReasonCode.GATE_DTE_WINDOW: "Gate: expiry outside the DTE window",
+    ReasonCode.GATE_EARNINGS_BLACKOUT: "Gate: earnings blackout",
+    ReasonCode.GATE_MAX_POSITIONS: "Gate: too many open positions",
+    ReasonCode.GATE_APPROVAL_TTL: "Gate: approval window expired",
+    ReasonCode.GATE_STALE_DATA: "Gate: stale market data",
+    ReasonCode.GATE_NO_MAX_GAIN: "Gate: limit leaves no max gain",
+    ReasonCode.GATE_RULE_ERROR: "Gate: rule error",
+    ReasonCode.GATE_PRICE_BAND: "Gate: price band invalid",
+    ReasonCode.GATE_CLOSE_MISMATCH: "Gate: close does not match the open position",
+    ReasonCode.GATE_MISSING_GREEKS: "Gate: Greeks missing",
+    ReasonCode.GATE_ACCOUNT_KIND: "Gate: structure not allowed by the account profile",
+    ReasonCode.GATE_ACCOUNT_NET_DEBIT: "Gate: account profile needs a net debit",
+    ReasonCode.GATE_ACCOUNT_SHORT_LEG: "Gate: account profile forbids this short leg",
+    ReasonCode.GATE_ACCOUNT_CASH: "Gate: not enough settled cash",
+    ReasonCode.GATE_ORDER_BUDGET: "Gate: daily order budget",
+    ReasonCode.OWNER_APPROVE: "Owner approved",
+    ReasonCode.OWNER_REJECT: "Owner rejected",
+    ReasonCode.AUTO_APPROVE: "Auto-approved",
+    ReasonCode.TTL_EXPIRED: "Approval window expired",
+    ReasonCode.NOT_ACTIONABLE_GATE_FAIL: "Not actionable: gate failed",
+    ReasonCode.NOT_ACTIONABLE_NO_TOKEN: "Not actionable: no gate token",
+    ReasonCode.NOT_ACTIONABLE_NO_GATE: "Not actionable: no gate decision",
+    ReasonCode.NOT_ACTIONABLE_EXPIRED: "Not actionable: expired before posting",
+    ReasonCode.ORDER_STEP: "Order placed at the next price step",
+    ReasonCode.ORDER_FILLED: "Order filled",
+    ReasonCode.ORDER_PARTIAL: "Order partially filled",
+    ReasonCode.ORDER_TIMEOUT: "Order cancelled after the ladder timed out",
+    ReasonCode.ORDER_REFUSED: "Order refused before sending",
+    ReasonCode.ORDER_REJECTED: "Broker rejected the order",
+    ReasonCode.ORDER_UNCONFIRMED: "Cancel not confirmed by the broker",
+    ReasonCode.ORDER_BUDGET_STOP: "Order stopped: daily budget used up",
+    ReasonCode.ORDER_STALE_BAND: "Order stopped: price left the approved band",
+    ReasonCode.EXIT_TAKE_PROFIT: "Exit: profit target hit",
+    ReasonCode.EXIT_STOP: "Exit: stop hit",
+    ReasonCode.EXIT_DTE: "Exit: days-to-expiry limit",
+    ReasonCode.EXIT_EXPIRY: "Exit: expiry",
+    ReasonCode.EXIT_NOT_PROPOSED: "Exit not proposed",
+    ReasonCode.EXIT_QUOTE_UNUSABLE: "Exit held: close quotes unusable",
+    ReasonCode.EXIT_CLOSED: "Position closed",
+    ReasonCode.EXIT_TIME_ADJUSTED: "Exit: time-adjusted profit target",
+    ReasonCode.EXIT_EV_FLOOR: "Exit: remaining EV below the floor",
+    ReasonCode.EXIT_REALLOCATE: "Exit: close to reallocate",
+    ReasonCode.REALLOC_SUGGESTED: "Swap suggested",
+    ReasonCode.REALLOC_EDGE_BELOW_MIN: "Swap edge below the minimum",
+    ReasonCode.REALLOC_POP_BELOW_OPEN: "Swap PoP below the open position's",
+    ReasonCode.REALLOC_FREES_NOTHING: "Swap frees no buying power",
+    ReasonCode.REALLOC_NO_OPEN_NUMBERS: "Swap: no numbers for the new trade",
+    ReasonCode.REALLOC_CHURN_TICKER: "Swap blocked: ticker churn",
+    ReasonCode.REALLOC_CHURN_DAY: "Swap blocked: daily churn limit",
+    ReasonCode.REALLOC_ALREADY_PAIRED: "Swap: already paired",
+    ReasonCode.REALLOC_APPROVED: "Risk approved the swap",
+    ReasonCode.REALLOC_VETOED: "Risk vetoed the swap",
+    ReasonCode.REALLOC_OPEN_PROPOSED: "Swap's new trade proposed",
+    ReasonCode.REALLOC_CANCELLED: "Swap cancelled",
+    ReasonCode.RECONCILE_CLEAN: "Reconcile clean",
+    ReasonCode.RECONCILE_MISMATCH: "Reconcile mismatch",
+    ReasonCode.RECONCILE_RESOLVED: "Reconcile mismatch resolved",
+    ReasonCode.RECONCILE_EXPIRED: "Expired at reconcile",
+    ReasonCode.RECONCILE_WASH_SALE: "Wash sale flagged at reconcile",
+    ReasonCode.RECONCILE_LOT_PRICE: "Tax-lot price corrected at reconcile",
+    ReasonCode.RECONCILE_TEST_FILL: "Integration-test fill seen at reconcile",
+}
+
+
+def reason_label(code: str) -> str:
+    """Plain-language label for a stored ``reason_code`` (unknown codes: humanised)."""
+    try:
+        return REASON_LABELS[ReasonCode(code)]
+    except (ValueError, KeyError):
+        text = code.replace("_", " ").replace(":", ": ")
+        return text[:1].upper() + text[1:]
