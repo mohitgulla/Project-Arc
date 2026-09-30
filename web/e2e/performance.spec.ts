@@ -70,7 +70,7 @@ test.describe("performance behaviour", () => {
     await page.getByLabel("Compare").selectOption("none");
     await expect(page).toHaveURL(/compare=none/);
     await expect(page.getByText(/^vs .* in /)).toHaveCount(0);
-    await page.getByLabel("Include paper test legs").check();
+    await page.getByLabel("Include paper test legs").click();
     await expect(page).toHaveURL(/include_tests=true/);
     await page.getByRole("tab", { name: "Regime at entry" }).click();
     await expect(page).toHaveURL(/by=regime/);
@@ -84,8 +84,9 @@ test.describe("performance behaviour", () => {
   test("the shadow overlay toggles and a breakdown row opens the filtered Trades list", async ({ page }) => {
     await open(page, "/performance?preset=90d");
     const toggle = page.getByLabel(/Hold-to-expiry shadow/);
-    await toggle.check();
+    await toggle.click(); // controlled by the URL: react-router applies it in a transition
     await expect(page).toHaveURL(/shadow=true/);
+    await expect(toggle).toBeChecked();
     await page.getByTestId("breakdown-rows").locator("a").first().click();
     await expect(page).toHaveURL(/\/trades\?ticker=[A-Z]+&stage=closed&date=custom&date_from=/);
   });
