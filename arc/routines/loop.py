@@ -150,8 +150,12 @@ def loop_root_from_db(
     no_change: bool = False,
     timeout: bool = False,
     skipped: str | None = None,
+    fallback: LoopRoot | None = None,
 ) -> LoopRoot:
     """Build the :class:`LoopRoot` for *chain_run_id* from what the chain wrote.
+
+    *fallback* fills equity / day P&L / the order budget when the chain recorded
+    none (D38: the position manager writes no ``portfolio_context``).
 
     Deterministic and re-runnable: an approval, a fill or an expiry later just
     recomputes it. Equity / day P&L come from the chain's ``portfolio_context``
@@ -202,6 +206,11 @@ def loop_root_from_db(
             pending.append(ticker)
         elif approval == "approved" and execution in (None, "working", "unconfirmed"):
             working.append(ticker)
+    if fallback is not None:
+        if equity is None:
+            equity, day_pnl = fallback.equity, fallback.day_pnl
+        if used is None:
+            used, limit = fallback.orders_used, fallback.orders_limit
     return LoopRoot(
         slot=slot,
         equity=equity,
@@ -216,6 +225,32 @@ def loop_root_from_db(
         timeout=timeout,
         skipped=skipped,
     )
+
+
+def latest_account_facts(conn: sqlite3.Connection, slot: _dt.datetime) -> LoopRoot:
+    """Equity, day P&L and order budget as last recorded (any chain / run).
+
+    D38: the position manager's root shows the same facts as the trading loop's,
+    taken from the newest ``portfolio_context`` entry and run manifest.
+    """
+    equity = day_pnl = None
+    row = conn.execute(
+        """SELECT payload FROM context_entries WHERE kind = 'portfolio_context'
+           ORDER BY rowid DESC LIMIT 1"""
+    ).fetchone()
+    if row is not None:
+        acct = json.loads(row["payload"]).get("account") or {}
+        equity, day_pnl = acct.get("equity"), acct.get("day_pnl")
+    used = limit = None
+    row = conn.execute(
+        """SELECT json_extract(payload, '$.order_budget') AS ob FROM run_manifests
+           WHERE json_extract(payload, '$.order_budget') IS NOT NULL
+           ORDER BY rowid DESC LIMIT 1"""
+    ).fetchone()
+    if row is not None and row["ob"]:
+        budget = json.loads(row["ob"])
+        used, limit = budget.get("used"), budget.get("limit")
+    return LoopRoot(slot=slot, equity=equity, day_pnl=day_pnl, orders_used=used, orders_limit=limit)
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -253,6 +288,7 @@ def refresh_loop_root(
         no_change=prev.no_change,
         timeout=prev.timeout,
         skipped=prev.skipped,
+        fallback=prev,  # D38: an action chain keeps the facts its root opened with
     )
     text = root.text()
     if text == prev.text():
@@ -269,8 +305,10 @@ def refresh_loop_root(
 
 __all__ = [
     "LoopInputs",
+    "LoopRoot",
     "LoopState",
     "RootEditor",
+    "latest_account_facts",
     "loop_root_from_db",
     "pnl_bucket",
     "refresh_loop_root",

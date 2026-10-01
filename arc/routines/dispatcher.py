@@ -471,8 +471,19 @@ class Dispatcher:
         if is_loop and chain_run_id:
             root_ts = self._open_loop_root(chain_run_id, scheduled_for)
         self._loop_root_ts = root_ts
+        # D38: an action chain (the position manager) opens the same root line, but
+        # only once it has a proposal, so a close shows as SELL and quiet runs post nothing.
+        is_action = (
+            bool(chain_run_id)
+            and reason == "schedule"
+            and steps[0] in self.routines.loop.action_roots
+            and not is_loop
+        )
         try:
             for index, step in enumerate(steps):
+                if is_action and index and root_ts is None and chain_run_id:
+                    root_ts = self._open_action_root(chain_run_id, scheduled_for)
+                    self._loop_root_ts = root_ts
                 prior = existing.get(step)
                 if prior is not None and prior.status is RunStatus.OK:
                     outcomes.append(
@@ -579,12 +590,59 @@ class Dispatcher:
                     scheduled_for=scheduled_for,
                     root_ts=root_ts,
                 )
+            elif is_action and chain_run_id:
+                if root_ts is None:  # the chain stopped right after proposing
+                    root_ts = self._open_action_root(chain_run_id, scheduled_for)
+                if root_ts:
+                    self._finish_action_root(chain_run_id, scheduled_for, root_ts)
         finally:
             self._loop_root_ts = None
             self._loop_no_change = False
             if root_ts:
                 self.heartbeats.close_loop_root()
         return outcomes
+
+    def _open_action_root(self, chain_run_id: str, slot: _dt.datetime) -> str | None:
+        """D38: the position manager's root line, opened once its chain proposed something.
+
+        Same one-line format as the trading loop (``SELL: IWM`` once the close
+        fills); the proposal cards and later step posts thread under it. Equity,
+        day P&L and the order budget come from the latest loop / manifest data,
+        because this chain writes no ``portfolio_context`` of its own.
+        """
+        from arc.journal.store import JournalStore
+        from arc.routines.config import LoopLayout
+        from arc.routines.loop import LoopState, latest_account_facts, loop_root_from_db
+
+        if self.routines.loop.slack_layout is not LoopLayout.ROOT_PER_LOOP:
+            return None
+        if not JournalStore(self.conn).proposals_in_chain(chain_run_id):
+            return None
+        root = loop_root_from_db(
+            self.conn, chain_run_id, slot, fallback=latest_account_facts(self.conn, slot)
+        )
+        ts = self.heartbeats.open_loop_root(root.text())
+        if ts:
+            state = LoopState(self.conn)
+            state.set_thread_ts(chain_run_id, ts)
+            state.set_root(chain_run_id, root.model_dump(mode="json"))
+        log.info("routines.action_root", chain_run_id=chain_run_id, ts=ts, text=root.text())
+        return ts
+
+    def _finish_action_root(self, chain_run_id: str, slot: _dt.datetime, root_ts: str) -> None:
+        """D38: re-render the action root from what the chain wrote (WORKING / SELL)."""
+        from arc.routines.loop import LoopRoot, LoopState, loop_root_from_db
+
+        state = LoopState(self.conn)
+        prev = LoopRoot.model_validate(state.root(chain_run_id) or {"slot": slot})
+        line = loop_root_from_db(self.conn, chain_run_id, slot, fallback=prev)
+        state.set_root(chain_run_id, line.model_dump(mode="json"))
+        if line.text() == prev.text():
+            return
+        try:
+            self.heartbeats.update_loop_root(root_ts, line.text())
+        except Exception as exc:  # noqa: BLE001 - the chain's work is committed; the edit is best-effort
+            log.warning("routines.loop_root_update_failed", chain_run_id=chain_run_id, err=str(exc))
 
     def _open_loop_root(self, chain_run_id: str, slot: _dt.datetime) -> str | None:
         """D36: post the loop's root line first, so every persona card threads under it.
