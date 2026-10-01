@@ -520,11 +520,17 @@ def test_live_tick_spawns_a_real_child(tmp_path: Path) -> None:
     assert o["status"] == "spawned"
     tick_id = out["correlation"]["tick_id"]
     conn = connect(db)
+    run_id = o["run_id"]
+    has_manifest = "SELECT 1 FROM run_manifests WHERE run_id = ?"
     deadline = time.monotonic() + 60
-    while status(conn, o["run_id"]) == "running" and time.monotonic() < deadline:
+    # the child finishes the run, then writes its manifest: wait for both
+    while time.monotonic() < deadline and (
+        status(conn, run_id) == "running"
+        or conn.execute(has_manifest, (run_id,)).fetchone() is None
+    ):
         time.sleep(0.2)
-    assert status(conn, o["run_id"]) == "skipped"  # not_implemented -> skipped, by the child
-    m = manifest(conn, o["run_id"])
+    assert status(conn, run_id) == "skipped"  # not_implemented -> skipped, by the child
+    m = manifest(conn, run_id)
     assert m["metrics"]["lane"] == "background"
     assert m["correlation"]["tick_id"] == tick_id
 
