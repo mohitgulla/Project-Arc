@@ -44,6 +44,24 @@ def _arc_bin() -> Path:
     return REPO_DIR / ".venv" / "bin" / "arc"
 
 
+# The gateway runs on Hermes's own Python and exports PYTHONPATH/PYTHONHOME for it.
+# Inherited by `arc`, they put Hermes's site-packages ahead of Arc's venv and the CLI
+# dies importing a foreign pydantic_core (exit 1). Arc gets a clean env (as arc-status).
+_PY_ENV_PREFIXES = ("PYTHON", "VIRTUAL_ENV", "CONDA_", "UV_", "PIP_", "__PYVENV")
+
+
+def _arc_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """``os.environ`` minus Python/venv variables, with Arc's venv first on PATH."""
+    env = {
+        k: v
+        for k, v in (os.environ if base is None else base).items()
+        if not k.startswith(_PY_ENV_PREFIXES)
+    }
+    venv_bin = str(REPO_DIR / ".venv" / "bin")
+    env["PATH"] = os.pathsep.join([venv_bin, env.get("PATH", "")]).rstrip(os.pathsep)
+    return env
+
+
 def run_arc(verb: str, rest: str, user: str) -> str:
     """Apply the command through the Arc CLI; return the reply text."""
     text = f"!{verb} {rest}".strip()
@@ -51,6 +69,7 @@ def run_arc(verb: str, rest: str, user: str) -> str:
         out = subprocess.run(
             [str(_arc_bin()), "slack-command", "--user", user, "--text", text],
             cwd=REPO_DIR,
+            env=_arc_env(),
             capture_output=True,
             text=True,
             timeout=TIMEOUT_S,

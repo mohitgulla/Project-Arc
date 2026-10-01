@@ -948,3 +948,23 @@ def test_plugin_on_action_acks_and_dispatches(monkeypatch: pytest.MonkeyPatch) -
     asyncio.run(plugin.on_action(ack, _body(), {"action_id": "arc_approve", "value": "x"}))
     assert acks == [1, 1]
     assert runs == [(H, True, OWNER, "5.5")]
+
+
+def test_approvals_plugin_gets_a_clean_python_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gateway's PYTHONPATH must not reach the `arc approve` subprocess."""
+    import subprocess as sp
+
+    monkeypatch.setenv("PYTHONPATH", "/hermes/venv/lib/python3.14/site-packages")
+    monkeypatch.setenv("PYTHONHOME", "/hermes/python")
+    monkeypatch.setenv("VIRTUAL_ENV", "/hermes/venv")
+    seen: dict[str, Any] = {}
+
+    def fake_run(cmd, **kw):  # noqa: ANN001, ANN003, ANN202
+        seen["env"] = kw["env"]
+        return sp.CompletedProcess(cmd, 0, stdout='{"outcome": "approved"}', stderr="")
+
+    monkeypatch.setattr(plugin.subprocess, "run", fake_run)
+    assert plugin.run_decide("a" * 64, True, "U0OWNER001", "1.2")["outcome"] == "approved"
+    env = seen["env"]
+    assert not {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"} & set(env)
+    assert env["PATH"].split(":")[0].endswith(".venv/bin")
