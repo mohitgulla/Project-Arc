@@ -682,3 +682,229 @@ class TestReconcileCli:
         rc = run_reconcile(self._args(str(tmp_path / "r.db"), no_halt=False), broker=FakeBroker())
         out = _json_out(capsys.readouterr().out)
         assert rc == 0 and out["clean"] is True
+
+
+# ---------------------------------------------------------------------------
+# E6.2e: a dispatched event whose Investor never ran is reclaimed after the grace
+# ---------------------------------------------------------------------------
+
+
+GRACE = dt.timedelta(minutes=10)
+
+
+def _dispatch_via_execute(
+    pconn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, calls: list[str]
+) -> tuple[Dispatcher, str, str]:
+    """Run the loop chain: execute claims the event and "spawns" a child that never runs."""
+    monkeypatch.setenv("ARC_AUTO_APPROVE", "true")
+    sp = Spawner()  # returns a pid, never runs the child
+    d = _chain_dispatcher(pconn, sp, calls)
+    report = d.tick(FIXTURE_NOW, since=FIXTURE_NOW - dt.timedelta(minutes=10))
+    assert report.reclaimed == 0
+    (argv,) = sp.argv
+    evt_id = argv[argv.index("--event") + 1]
+    exec_run = next(o for o in report.outcomes if o.job == "execute")
+    ev = RoutineEventRepo(pconn).get(evt_id)
+    assert ev is not None and ev.dispatched_at == FIXTURE_NOW and ev.consumed_at is None
+    assert ev.dispatched_by == exec_run.run_id
+    return d, evt_id, str(exec_run.run_id)
+
+
+class TestReclaimStranded:
+    def test_dispatch_grace_config(self) -> None:
+        assert load_routines().tick.dispatch_grace == GRACE
+        cfg = RoutinesConfig.model_validate({"tick": {"dispatch_grace": "3m"}})
+        assert cfg.tick.dispatch_grace == dt.timedelta(minutes=3)
+        with pytest.raises(ValueError, match="dispatch_grace"):
+            RoutinesConfig.model_validate({"tick": {"dispatch_grace": "0m"}})
+
+    def test_dispatched_event_with_no_run_is_reclaimed_after_grace(
+        self, pconn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from structlog.testing import capture_logs
+
+        calls: list[str] = []
+        d, evt_id, exec_run = _dispatch_via_execute(pconn, monkeypatch, calls)
+        # Inside the grace: the child may still be starting, nothing happens.
+        early = d.tick(FIXTURE_NOW + GRACE - dt.timedelta(minutes=1))
+        assert early.reclaimed == 0 and calls == []
+        assert all(o.job != "investor" for o in early.outcomes)
+        ev = RoutineEventRepo(pconn).get(evt_id)
+        assert ev is not None and ev.dispatched_at is not None and ev.consumed_at is None
+        # At the grace: released and run on the normal path, exactly once.
+        with capture_logs() as logs:
+            at = d.tick(FIXTURE_NOW + GRACE)
+        (rec,) = [e for e in logs if e["event"] == "routines.event_reclaimed"]
+        assert rec["event_id"] == evt_id and rec["dispatched_by"] == exec_run
+        assert rec["age_s"] == GRACE.total_seconds()
+        assert at.reclaimed == 1 and "reclaimed 1 stranded event(s)" in at.lines()[0]
+        inv = [o for o in at.outcomes if o.job == "investor"]
+        assert [o.status for o in inv] == ["ok"] and calls == [_phash(pconn)]
+        ev = RoutineEventRepo(pconn).get(evt_id)
+        assert ev is not None and ev.consumed_by == [inv[0].run_id]
+        assert RoutineRunRepo(pconn).get(inv[0].run_id).event_id == evt_id  # type: ignore[arg-type,union-attr]
+        # Later ticks never run it again.
+        later = d.tick(FIXTURE_NOW + GRACE + dt.timedelta(minutes=5))
+        assert later.reclaimed == 0 and calls == [_phash(pconn)]
+
+    def test_event_whose_run_started_is_not_reclaimed(self, conn: sqlite3.Connection) -> None:
+        p = _seed(conn, "a")
+        repo = RoutineEventRepo(conn)
+        ev = repo.emit("approval", {"proposal_hash": proposal_hash(p)}, now=NOW)
+        assert repo.dispatch(ev.id, by="run-exec", now=NOW)
+        # The child claimed its run (a long ladder still running): leave it alone.
+        RoutineRunRepo(conn).claim(
+            job="investor", scheduled_for=NOW, reason="event:approval", now=NOW, event_id=ev.id
+        )
+        calls: list[str] = []
+        d = _investor_dispatcher(conn, calls)
+        r = d.tick(NOW + GRACE + dt.timedelta(minutes=5), since=NOW)
+        assert r.reclaimed == 0 and calls == []
+        got = repo.get(ev.id)
+        assert got is not None and got.dispatched_at == NOW and got.consumed_at is None
+        assert repo.stranded(dispatched_before=NOW + dt.timedelta(hours=1)) == []
+        assert not repo.reclaim(ev.id, dispatched_at=NOW)
+
+    def test_reclaim_requires_the_same_dispatch(self, conn: sqlite3.Connection) -> None:
+        repo = RoutineEventRepo(conn)
+        ev = repo.emit("approval", {"proposal_hash": "x"}, now=NOW)
+        assert repo.dispatch(ev.id, by="run-a", now=NOW)
+        # A stale view (another dispatch since) never undoes the newer claim.
+        assert not repo.reclaim(ev.id, dispatched_at=NOW - dt.timedelta(seconds=1))
+        assert repo.reclaim(ev.id, dispatched_at=NOW)
+        assert [e.id for e in repo.pending(until=NOW)] == [ev.id]
+
+    def test_reclaimed_event_past_ttl_lapses_with_journal(
+        self, pconn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arc.approvals.slack as slack_mod
+        from arc.routines.investor import LAPSED_NOT_STARTED
+
+        monkeypatch.setattr(slack_mod, "SlackCardPoster", RecordingSlackPoster)
+        RecordingSlackPoster.updated = []
+        calls: list[str] = []
+        d, evt_id, _ = _dispatch_via_execute(pconn, monkeypatch, calls)
+        pconn.execute("UPDATE approval_requests SET channel = 'C1', message_ts = '1.1'")
+        pconn.commit()
+        ph = _phash(pconn)
+        d.run_env = RunEnv(slack=True)
+        late = FIXTURE_NOW + dt.timedelta(minutes=25)  # past the 16:20 TTL (and the grace)
+        report = d.tick(late)
+        assert report.reclaimed == 1
+        (o,) = [o for o in report.outcomes if o.job == "investor"]
+        assert o.status == "skipped" and o.reason == LAPSED_NOT_STARTED and calls == []
+        row = pconn.execute(
+            """SELECT persona, stage, choice, reason_code, reason_text, run_id FROM decisions
+               WHERE proposal_hash = ? AND stage = 'order'""",
+            (ph,),
+        ).fetchone()
+        assert dict(row) == {
+            "persona": "investor",
+            "stage": "order",
+            "choice": "rejected",
+            "reason_code": "order:refused",
+            "reason_text": LAPSED_NOT_STARTED,
+            "run_id": o.run_id,
+        }
+        ev = RoutineEventRepo(pconn).get(evt_id)
+        assert ev is not None and ev.consumed_by == [o.run_id]
+        ((channel, ts, view),) = RecordingSlackPoster.updated
+        assert (channel, ts) == ("C1", "1.1")
+        assert f"not executed: {LAPSED_NOT_STARTED}" in json.dumps(view.blocks)
+        d.tick(late + dt.timedelta(minutes=5))
+        assert calls == []
+
+    def test_reclaimed_while_halted_is_deferred(
+        self, pconn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+        d, evt_id, _ = _dispatch_via_execute(pconn, monkeypatch, calls)
+        halted = [True]
+        d._is_halted = lambda: halted[0]
+        r = d.tick(FIXTURE_NOW + GRACE)
+        assert r.reclaimed == 1
+        assert [o.status for o in r.outcomes if o.job == "investor"] == ["deferred"]
+        halted[0] = False  # !resume inside the TTL
+        d.tick(FIXTURE_NOW + GRACE + dt.timedelta(minutes=5))
+        assert calls == [_phash(pconn)]
+
+
+class TestStrandedEventsCheck:
+    def test_stranded_events_check_fires_once(self, conn: sqlite3.Connection) -> None:
+        from arc.monitoring import alerts, checks
+
+        routines = RoutinesConfig.model_validate({})
+        repo = RoutineEventRepo(conn)
+        ev = repo.emit("approval", {"proposal_hash": "abcdef0123456789"}, now=NOW)
+        assert repo.dispatch(ev.id, by="run-exec", now=NOW)
+        ok = checks.stranded_events(conn, routines, NOW + GRACE - dt.timedelta(minutes=1))
+        assert ok.severity == "ok" and ok.findings == ()
+        r = checks.stranded_events(conn, routines, NOW + GRACE)
+        (f,) = r.findings
+        assert r.severity == "failed" and f.severity == "failed"
+        assert f.key == f"stranded:{ev.id}" and f.mode == checks.ONE_OFF
+        assert "abcdef012345" in f.message and "run-exec" in f.message
+        n = alerts.RecordingOpsNotifier()
+        alerts.apply(conn, [r], now=NOW + GRACE, correlation={}, notifier=n)
+        later = NOW + GRACE + dt.timedelta(minutes=30)
+        alerts.apply(
+            conn, [checks.stranded_events(conn, routines, later)], now=later,
+            correlation={}, notifier=n,
+        )  # fmt: skip
+        assert len(n.posts) == 1 and ev.id in n.posts[0]
+        # Once a run claims it (or the tick reclaims it), it is no longer stranded.
+        RoutineRunRepo(conn).claim(
+            job="investor", scheduled_for=NOW, reason="event:approval", now=NOW, event_id=ev.id
+        )
+        assert checks.stranded_events(conn, routines, later).severity == "ok"
+
+    def test_health_check_includes_stranded_events(self, tmp_path: Path) -> None:
+        import argparse
+
+        from arc.monitoring.cli import run_checks
+
+        c = connect(str(tmp_path / "h.db"))
+        migrate(c)
+        args = argparse.Namespace(config=None, no_gateway=True, no_remote=True)
+        names = [r.name for r in run_checks(c, args, NOW)]
+        assert "stranded_events" in names
+
+
+class TestEventsCli:
+    def test_events_lists_dispatched_unconsumed_with_age(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import argparse
+
+        from arc.routines.cli import run_routines
+
+        db = str(tmp_path / "ev.db")
+        c = connect(db)
+        migrate(c)
+        repo = RoutineEventRepo(c)
+        stranded = repo.emit("approval", {"proposal_hash": "aaaa1111bbbb2222"}, now=NOW)
+        running = repo.emit("approval", {"proposal_hash": "cccc"}, now=NOW)
+        fresh = repo.emit("approval", {"proposal_hash": "dddd"}, now=NOW)
+        repo.emit("approval", {"proposal_hash": "pending-only"}, now=NOW)  # not dispatched
+        done = repo.emit("approval", {"proposal_hash": "eeee"}, now=NOW)
+        repo.dispatch(stranded.id, by="run-x", now=NOW)
+        repo.dispatch(running.id, by="run-x", now=NOW)
+        repo.dispatch(fresh.id, by="run-y", now=NOW + dt.timedelta(minutes=10))
+        repo.dispatch(done.id, by="run-x", now=NOW)
+        repo.consume(done.id, ["r"], now=NOW)
+        RoutineRunRepo(c).claim(
+            job="investor", scheduled_for=NOW, reason="e", now=NOW, event_id=running.id
+        )
+        c.close()
+        now = (NOW + dt.timedelta(minutes=12)).isoformat()
+        base = {"routines_command": "events", "db": db, "config": None, "now": now}
+        assert run_routines(argparse.Namespace(**base, json=True)) == 0
+        out = _json_out(capsys.readouterr().out)
+        by_id = {e["id"]: e for e in out["events"]}
+        assert set(by_id) == {stranded.id, running.id, fresh.id}
+        assert by_id[stranded.id]["stranded"] is True and by_id[stranded.id]["age_s"] == 720
+        assert by_id[running.id]["stranded"] is False and by_id[running.id]["run_id"]
+        assert by_id[fresh.id]["stranded"] is False and by_id[fresh.id]["age_s"] == 120
+        assert run_routines(argparse.Namespace(**base, json=False)) == 0
+        text = capsys.readouterr().out
+        assert "STRANDED" in text and "age 12m00s" in text and "aaaa1111bbbb" in text

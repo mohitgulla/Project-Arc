@@ -632,6 +632,18 @@ event id, so two approvals in the same second both execute). A click approval sk
 `dispatched`: the next tick's drain runs it. If the spawn fails the claim is released and
 the same tick's drain runs it instead.
 
+Stranded dispatch (E6.2e): if the spawned Investor dies before it claims its run (no
+`routine_runs.event_id` row), the tick reclaims the event once `dispatched_at` is older
+than `tick.dispatch_grace` (`config/routines.yaml`, default 10m): log
+`routines.event_reclaimed`, `reclaimed N stranded event(s)` in the tick report (and
+`reclaimed` in `--json` / the tick heartbeat). The drain then handles it normally: runs the
+Investor, defers it while halted, or, past the proposal TTL, consumes it with a skipped
+run, an `order:refused` journal row "approval lapsed: the Investor never started" and the
+card edited to "not executed". `arc health check` also reports each such event once
+(`stranded_events`, key `stranded:<event id>`), which matters when the tick itself is not
+running. `arc routines events [--json]` lists every dispatched, unconsumed event with its
+age, its run (if one started) and `STRANDED` when it is past the grace with no run.
+
 Halted: an approval that arrives (or is dispatched) while halted stays pending; the drain
 reports it `deferred` ("held until !resume or HH:MM ET") every tick. After `!resume`
 inside the proposal's TTL (`proposals.expires_at`) the Investor runs; past the TTL the

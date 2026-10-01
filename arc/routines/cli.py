@@ -89,6 +89,13 @@ def add_routines_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     h.add_argument("--job", default=None)
     h.add_argument("--limit", type=int, default=30)
 
+    ev = rsub.add_parser(
+        "events", help="E6.2e: dispatched-but-unconsumed events with their age (stranded?)"
+    )
+    _common(ev)
+    ev.add_argument("--now", default=None, help="ISO time (default: now ET)")
+    ev.add_argument("--json", action="store_true")
+
     e = rsub.add_parser("emit", help="Queue an event (approval, halt, ...) for the next tick")
     _common(e)
     e.add_argument("event")
@@ -250,6 +257,7 @@ def _tick(
             "dry_run": report.dry_run,
             "halted": report.halted,
             "expired": report.expired,
+            "reclaimed": report.reclaimed,
             "outcomes": [_outcome_json(o) for o in report.outcomes],
             "approvals": approvals,
         }
@@ -286,6 +294,7 @@ def _record_tick(conn: sqlite3.Connection, report: TickReport, correlation: dict
             "counts": dict(counts),
             "halted": report.halted,
             "expired": report.expired,
+            "reclaimed": report.reclaimed,
             "outcomes": [
                 {"job": o.job, "status": o.status, "run_id": o.run_id}
                 for o in report.outcomes
@@ -456,6 +465,9 @@ def run_routines(args: argparse.Namespace) -> int:
             )
         return 0
 
+    if cmd == "events":
+        return _events(args)
+
     if cmd == "emit":
         from arc.routines.runs import RoutineEventRepo
 
@@ -468,6 +480,54 @@ def run_routines(args: argparse.Namespace) -> int:
         return 0
 
     return 2  # pragma: no cover - argparse enforces the choices
+
+
+def _events(args: argparse.Namespace) -> int:
+    """``arc routines events``: dispatched, unconsumed events (E6.2e).
+
+    ``stranded`` = past ``tick.dispatch_grace`` with no run row: the next tick
+    reclaims it (and ``arc health check`` reports it once).
+    """
+    from arc.routines.runs import RoutineEventRepo
+
+    conn = _conn(args)
+    now = _parse_now(args.now)
+    grace = _effective_load(args, conn).tick.dispatch_grace
+    rows: list[dict[str, object]] = []
+    for ev in RoutineEventRepo(conn).dispatched_unconsumed():
+        at = ev.dispatched_at or ev.created_at
+        run = conn.execute(
+            "SELECT run_id FROM routine_runs WHERE event_id = ? LIMIT 1", (ev.id,)
+        ).fetchone()
+        age = now - at
+        rows.append(
+            {
+                "id": ev.id,
+                "name": ev.name,
+                "proposal_hash": ev.payload.get("proposal_hash"),
+                "dispatched_at": at.isoformat(),
+                "dispatched_by": ev.dispatched_by,
+                "age_s": int(age.total_seconds()),
+                "run_id": run["run_id"] if run else None,
+                "stranded": run is None and age >= grace,
+            }
+        )
+    if args.json:
+        _write(json.dumps({"now": now.isoformat(), "grace_s": int(grace.total_seconds()),
+                           "events": rows}, indent=2))  # fmt: skip
+        return 0
+    _write(f"dispatched, unconsumed events @ {now:%Y-%m-%d %H:%M %Z} (grace {grace})")
+    if not rows:
+        _write("  (none)")
+    for r in rows:
+        age_s = int(str(r["age_s"]))
+        state = "STRANDED" if r["stranded"] else ("running" if r["run_id"] else "waiting")
+        _write(
+            f"  {r['id']} {r['name']:<10} age {age_s // 60}m{age_s % 60:02d}s {state:<9}"
+            f" by={r['dispatched_by'] or '-'} run={r['run_id'] or '-'}"
+            f" proposal={str(r['proposal_hash'] or '-')[:12]}"
+        )
+    return 0
 
 
 def run_context(args: argparse.Namespace) -> int:
