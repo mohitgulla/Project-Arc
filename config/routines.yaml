@@ -40,6 +40,7 @@ timezone: America/New_York
 tick:
   interval: 5m          # how often the Hermes cron calls `arc routines tick`
   max_lookback: 7d      # never look further back than this for missed slots
+  dispatch_grace: 10m   # E6.2e: release a dispatched approval whose Investor never started
 
 heartbeat:
   # Posts before this time on a trading day go to that day's #arc-investor thread;

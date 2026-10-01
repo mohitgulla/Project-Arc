@@ -303,11 +303,22 @@ class TickSettings(BaseModel):
     interval: _dt.timedelta = _dt.timedelta(minutes=5)
     max_lookback: _dt.timedelta = _dt.timedelta(days=7)
     max_trigger_depth: Annotated[int, Field(ge=1, le=20)] = 5
+    # E6.2e: a dispatched event whose Investor never claimed its run is released
+    # back to the drain this long after its dispatch (and flagged by monitoring).
+    dispatch_grace: _dt.timedelta = _dt.timedelta(minutes=10)
 
-    @field_validator("interval", "max_lookback", mode="before")
+    @field_validator("interval", "max_lookback", "dispatch_grace", mode="before")
     @classmethod
     def _dur(cls, v: Any) -> Any:
         return parse_duration(v) if isinstance(v, str) else v
+
+    @field_validator("dispatch_grace")
+    @classmethod
+    def _positive_grace(cls, v: _dt.timedelta) -> _dt.timedelta:
+        if v <= _dt.timedelta(0):
+            msg = "tick.dispatch_grace must be positive"
+            raise ValueError(msg)
+        return v
 
 
 class HeartbeatSettings(BaseModel):

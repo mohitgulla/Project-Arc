@@ -100,6 +100,8 @@ def load_approved(
 
 
 LAPSED_UNDER_HALT = "approval lapsed under halt"
+# E6.2e: a dispatched approval whose Investor never started, reclaimed past its TTL.
+LAPSED_NOT_STARTED = "approval lapsed: the Investor never started"
 
 
 def approval_deadline(conn: sqlite3.Connection, proposal_hash: str) -> _dt.datetime | None:
@@ -129,12 +131,14 @@ def lapse_approval(
     settings: Any,
     slack: bool,
     chain_run_id: str | None = None,
+    reason: str = LAPSED_UNDER_HALT,
 ) -> None:
     """E6.2d: an approval that stayed halted past its TTL: journal the refusal, update the card.
 
-    The journal row is ``Stage.ORDER`` / ``order:refused`` with the text
-    :data:`LAPSED_UNDER_HALT`; nothing is ever sent to the broker. The card edit
-    is best-effort (the journal row is the record).
+    The journal row is ``Stage.ORDER`` / ``order:refused`` with the text *reason*
+    (:data:`LAPSED_UNDER_HALT`, or E6.2e :data:`LAPSED_NOT_STARTED` for a reclaimed
+    dispatch); nothing is ever sent to the broker. The card edit is best-effort
+    (the journal row is the record).
     """
     from arc.approvals.cli import make_service
     from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
@@ -151,7 +155,7 @@ def lapse_approval(
             subject=ticker or "session",
             choice=Choice.REJECTED,
             reason_code=ReasonCode.ORDER_REFUSED,
-            reason_text=LAPSED_UNDER_HALT,
+            reason_text=reason,
             proposal_hash=proposal_hash,
             at=now,
             run_id=run_id,
@@ -159,11 +163,11 @@ def lapse_approval(
         )
     try:
         make_service(conn, settings, slack=slack).mark_not_executed(
-            proposal_hash, reason=LAPSED_UNDER_HALT, now=now
+            proposal_hash, reason=reason, now=now
         )
     except Exception as exc:  # noqa: BLE001 - the refusal is journaled; the card edit is cosmetic
         log.warning("investor.lapse_card_failed", proposal_hash=proposal_hash, error=str(exc))
-    log.info("investor.approval_lapsed", proposal_hash=proposal_hash, run_id=run_id)
+    log.info("investor.approval_lapsed", proposal_hash=proposal_hash, run_id=run_id, why=reason)
 
 
 def _refuse_closed(ctx: JobContext, phash: str, ticker: str | None, why: str) -> JobResult:

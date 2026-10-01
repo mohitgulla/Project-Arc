@@ -6,6 +6,7 @@
   failures are already alerted by the dispatcher.
 - :func:`tick_staleness`  no ``tick`` heartbeat for ``tick_stale_after``.
 - :func:`stuck_runs`      a ``routine_runs`` row still ``running`` after ``stuck_after``.
+- :func:`stranded_events` E6.2e: a dispatched event with no run after ``tick.dispatch_grace``.
 - :func:`gateway_health`  ``hermes gateway status`` and ``hermes cron status``.
 - :func:`remote_access`   E8.6: Hermes dashboard (gated) + tower on the tailnet, not the LAN.
 
@@ -197,6 +198,49 @@ def stuck_runs(
     )
     return CheckResult(
         "stuck_runs", "failed" if findings else "ok", f"{len(findings)} stuck", findings
+    )
+
+
+def stranded_events(
+    conn: sqlite3.Connection, routines: RoutinesConfig, now: _dt.datetime
+) -> CheckResult:
+    """E6.2e: dispatched events whose run never started within ``tick.dispatch_grace``.
+
+    The tick reclaims these itself; a finding here means the tick did not (it is
+    not running, or the event keeps getting stranded). Posted once per event.
+    """
+    from arc.routines.runs import RoutineEventRepo
+
+    grace = routines.tick.dispatch_grace
+    findings: list[Finding] = []
+    for ev in RoutineEventRepo(conn).stranded(dispatched_before=now - grace):
+        at = ev.dispatched_at or ev.created_at  # always set: selected on dispatched_at
+        minutes = int((now - at).total_seconds() // 60)
+        phash = str(ev.payload.get("proposal_hash") or "")
+        what = f" (proposal {phash[:12]})" if phash else ""
+        findings.append(
+            Finding(
+                key=f"stranded:{ev.id}",
+                kind="stranded_event",
+                severity="failed",
+                mode=ONE_OFF,
+                message=(
+                    f"{ev.name} event {ev.id}{what} dispatched {minutes} min ago by "
+                    f"{ev.dispatched_by or '?'} but no run started "
+                    f"(grace {int(grace.total_seconds() // 60)} min)"
+                ),
+                detail={
+                    "event_id": ev.id,
+                    "dispatched_at": at.isoformat(),
+                    "dispatched_by": ev.dispatched_by,
+                },
+            )
+        )
+    return CheckResult(
+        "stranded_events",
+        "failed" if findings else "ok",
+        f"{len(findings)} stranded",
+        tuple(findings),
     )
 
 

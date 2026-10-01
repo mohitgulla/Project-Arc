@@ -118,6 +118,7 @@ class TickReport:
     dry_run: bool
     halted: bool
     expired: int = 0
+    reclaimed: int = 0  # E6.2e: stranded dispatched events released to the drain
     outcomes: list[Outcome] = field(default_factory=list)
 
     def lines(self) -> list[str]:
@@ -126,6 +127,8 @@ class TickReport:
             head += f" · window ({self.since:%Y-%m-%d %H:%M} → {self.now:%H:%M}]"
         if self.halted:
             head += " · HALTED"
+        if self.reclaimed:
+            head += f" · reclaimed {self.reclaimed} stranded event(s)"
         out = [head]
         if not self.outcomes:
             out.append("  (nothing due)")
@@ -282,7 +285,9 @@ class Dispatcher:
         report.expired = self.store.expire_due(now)
         for d in plan:
             report.outcomes.extend(self._handle_due(d, now))
-        report.outcomes.extend(self._drain_events(now))
+        reclaimed = self._reclaim_stranded(now)
+        report.reclaimed = len(reclaimed)
+        report.outcomes.extend(self._drain_events(now, reclaimed=reclaimed))
         self.state.set_time(_LAST_TICK, now)
         return report
 
@@ -1003,11 +1008,42 @@ class Dispatcher:
             )
         return out
 
-    def _drain_events(self, now: _dt.datetime) -> list[Outcome]:
+    def _reclaim_stranded(self, now: _dt.datetime) -> set[str]:
+        """E6.2e: release dispatched events whose Investor never claimed a run.
+
+        ``execute`` claims an approval event, then spawns the Investor; a child that
+        dies before :meth:`run_event` claims its run would strand the event forever
+        (invisible to the drain, never consumed). After ``tick.dispatch_grace`` with
+        no ``routine_runs.event_id`` row the claim is undone, so this tick's drain
+        handles the event on the normal path. Returns the released event ids.
+        """
+        cutoff = now - self.routines.tick.dispatch_grace
+        released: set[str] = set()
+        for ev in self.events.stranded(dispatched_before=cutoff):
+            if ev.dispatched_at is None or not self.events.reclaim(
+                ev.id, dispatched_at=ev.dispatched_at
+            ):
+                continue  # the run started (or it was consumed) in the meantime
+            released.add(ev.id)
+            log.warning(
+                "routines.event_reclaimed",
+                event_id=ev.id,
+                event_name=ev.name,
+                dispatched_at=ev.dispatched_at.isoformat(),
+                dispatched_by=ev.dispatched_by,
+                age_s=int((now - ev.dispatched_at).total_seconds()),
+            )
+        return released
+
+    def _drain_events(
+        self, now: _dt.datetime, *, reclaimed: set[str] | frozenset[str] = frozenset()
+    ) -> list[Outcome]:
         """Fire every pending external event once (E6.2d dispatch-once semantics).
 
         - An event the D34 ``execute`` step dispatched is never pending here: its
-          Investor subprocess owns it.
+          Investor subprocess owns it, until E6.2e reclaims it (*reclaimed*: its
+          Investor never started within ``tick.dispatch_grace``). A reclaimed
+          approval past its proposal's TTL lapses on the record instead of running.
         - An ``approval`` that arrives (or is still waiting) while halted is
           ``deferred`` until its proposal's ``expires_at``; after ``!resume`` inside
           that TTL the Investor runs. Past it the event is consumed with a journal
@@ -1017,6 +1053,9 @@ class Dispatcher:
         """
         out: list[Outcome] = []
         for ev in self.events.pending(until=now):
+            if ev.id in reclaimed and (late := self._reclaimed_lapse(ev, now)) is not None:
+                out.extend(late)
+                continue
             held = self._halt_hold(ev, now)
             if held is not None:
                 out.extend(held)
@@ -1077,12 +1116,35 @@ class Dispatcher:
             ]
         return self._lapse(ev, phash, targets, now)
 
+    def _reclaimed_lapse(self, ev: RoutineEvent, now: _dt.datetime) -> list[Outcome] | None:
+        """E6.2e: a reclaimed approval past its proposal TTL lapses; ``None`` = handle normally."""
+        from arc.routines.investor import LAPSED_NOT_STARTED, approval_deadline
+
+        if ev.name != "approval":
+            return None
+        targets = self._halt_targets(ev)
+        phash = str(ev.payload.get("proposal_hash") or "")
+        deadline = approval_deadline(self.conn, phash) if phash else None
+        if not targets or deadline is None or now < deadline:
+            return None
+        return self._lapse(ev, phash, targets, now, reason=LAPSED_NOT_STARTED)
+
     def _lapse(
-        self, ev: RoutineEvent, phash: str, targets: list[str], now: _dt.datetime
+        self,
+        ev: RoutineEvent,
+        phash: str,
+        targets: list[str],
+        now: _dt.datetime,
+        *,
+        reason: str | None = None,
     ) -> list[Outcome]:
-        """The approval's TTL passed under a halt: journal, card, consume (no order)."""
+        """The approval's TTL passed (under a halt, or E6.2e never started): no order.
+
+        Journal row, card update, event consumed.
+        """
         from arc.routines.investor import LAPSED_UNDER_HALT, lapse_approval
 
+        why = reason or LAPSED_UNDER_HALT
         out: list[Outcome] = []
         run_ids: list[str] = []
         for job in targets:
@@ -1091,7 +1153,7 @@ class Dispatcher:
                 scheduled_for=ev.created_at,
                 reason=f"event:{ev.name}",
                 status=RunStatus.SKIPPED,
-                summary=LAPSED_UNDER_HALT,
+                summary=why,
                 now=now,
                 event_id=ev.id,
             )
@@ -1101,7 +1163,7 @@ class Dispatcher:
             self._write_manifest(
                 run, _RunTrace(event_id=ev.id), now=now, started=now, t0=time.monotonic()
             )
-            out.append(Outcome(job, ev.created_at, "skipped", LAPSED_UNDER_HALT, run_id=run.run_id))
+            out.append(Outcome(job, ev.created_at, "skipped", why, run_id=run.run_id))
         try:
             settings: Any = self._settings_factory()
         except Exception:  # noqa: BLE001 - the journal row matters, not the card's config
@@ -1115,6 +1177,7 @@ class Dispatcher:
             run_id=run_ids[0] if run_ids else None,
             settings=settings,
             slack=self.run_env.slack,
+            reason=why,
         )
         self.events.consume(ev.id, run_ids, now=now)
         self.state.delete(_HALT_DEFERRED.format(event=ev.id))

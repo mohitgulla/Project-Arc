@@ -330,6 +330,48 @@ class RoutineEventRepo:
                 (event_id,),
             )
 
+    def dispatched_unconsumed(self) -> list[RoutineEvent]:
+        """Every dispatched, not yet consumed event, oldest dispatch first (E6.2e)."""
+        rows = self.conn.execute(
+            """SELECT * FROM routine_events
+               WHERE consumed_at IS NULL AND dispatched_at IS NOT NULL
+               ORDER BY dispatched_at, rowid"""
+        ).fetchall()
+        return [_event(r) for r in rows]
+
+    def stranded(self, *, dispatched_before: _dt.datetime) -> list[RoutineEvent]:
+        """Dispatched events whose run never started (E6.2e).
+
+        Stranded = dispatched at or before *dispatched_before*, not consumed, and no
+        ``routine_runs`` row carries its id: the spawned Investor died (or never
+        started) before it could claim its run.
+        """
+        rows = self.conn.execute(
+            """SELECT * FROM routine_events e
+               WHERE e.consumed_at IS NULL AND e.dispatched_at IS NOT NULL
+                 AND e.dispatched_at <= ?
+                 AND NOT EXISTS (SELECT 1 FROM routine_runs r WHERE r.event_id = e.id)
+               ORDER BY e.dispatched_at, e.rowid""",
+            (to_db(dispatched_before),),
+        ).fetchall()
+        return [_event(r) for r in rows]
+
+    def reclaim(self, event_id: str, *, dispatched_at: _dt.datetime) -> bool:
+        """Release a stranded dispatch back to the tick's drain (E6.2e).
+
+        Atomic: only while the event is still unconsumed, still carries the same
+        dispatch, and no run claimed it in the meantime. ``True`` if released.
+        """
+        with self.conn:
+            cur = self.conn.execute(
+                """UPDATE routine_events SET dispatched_at = NULL, dispatched_by = NULL
+                   WHERE id = ? AND consumed_at IS NULL AND dispatched_at = ?
+                     AND NOT EXISTS (SELECT 1 FROM routine_runs r
+                                     WHERE r.event_id = routine_events.id)""",
+                (event_id, to_db(dispatched_at)),
+            )
+        return cur.rowcount == 1
+
     def consume(self, event_id: str, run_ids: Iterable[str], *, now: _dt.datetime) -> bool:
         """Mark consumed once; ``False`` if it already was (the first consumer wins)."""
         with self.conn:
