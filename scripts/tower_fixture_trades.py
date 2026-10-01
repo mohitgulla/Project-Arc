@@ -314,11 +314,10 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
         "payload": _full_market_context(spy_hash, spy_structure, spot=663.40, at=mc_at),
         "quotes_as_of": to_db(mc_at), "created_at": to_db(mc_at),
     })  # fmt: skip
-    # gate account snapshot + token version on the SPY gate row
+    # gate account snapshot on the SPY gate row (its real arc2 token is minted by _execute)
     conn.execute(
-        "UPDATE gate_decisions SET token = ?, account_snapshot = ?, run_id = ? "
-        "WHERE proposal_hash = ?",
-        ("arc2.fixture-token-never-shown", json.dumps({"equity": 100000, "open_positions": 2,
+        "UPDATE gate_decisions SET account_snapshot = ?, run_id = ? WHERE proposal_hash = ?",
+        (json.dumps({"equity": 100000, "open_positions": 2,
          "options_buying_power": 88000, "halted": False}), runs["risk"], spy_hash),
     )  # fmt: skip
     conn.execute(

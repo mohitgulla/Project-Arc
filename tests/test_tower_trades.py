@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import importlib.util
+import re
 import sqlite3
 import sys
 import time
@@ -25,6 +26,7 @@ from arc.tower.data_trades import (
     TradeFilterOptions,
     TradeFilters,
     TradeListResponse,
+    client_order_ref,
     date_range,
     load_filter_options,
     load_trade,
@@ -346,7 +348,95 @@ def test_detail_gate_two_violations_and_token_hidden(conn: sqlite3.Connection) -
     spy = _detail(conn, "pos-spy")
     (sg,) = spy.gate
     assert sg.passed and sg.token_version == "arc2" and sg.account_snapshot["equity"] == 100000
-    assert "fixture-token" not in spy.model_dump_json()  # the token itself is never served
+    token = conn.execute(
+        "SELECT token FROM gate_decisions WHERE proposal_hash = ?", (H("pos-spy"),)
+    ).fetchone()[0]
+    assert token.startswith("arc2.") and token not in spy.model_dump_json()  # never served
+
+
+def _fixture_tokens(conn: sqlite3.Connection) -> list[str]:
+    """Every gate token (and its signature, the secret-bearing part) in the fixture."""
+    toks = [r[0] for r in conn.execute("SELECT token FROM gate_decisions WHERE token IS NOT NULL")]
+    return toks + [t.rsplit(".", 1)[-1] for t in toks]
+
+
+def test_fixture_writes_real_minted_tokens(conn: sqlite3.Connection) -> None:
+    from arc.gate.token import BandToken, client_order_id, verify_band
+
+    rows = conn.execute(
+        """SELECT g.proposal_hash, g.token, o.client_order_id FROM gate_decisions g
+           JOIN orders o ON o.proposal_hash = g.proposal_hash WHERE g.token IS NOT NULL"""
+    ).fetchall()
+    assert len(rows) >= 5
+    for h, token, coid in rows:
+        exp = dt.datetime.fromtimestamp(BandToken.parse(token).expires_epoch - 1, tz=ET)
+        # a real, signature-valid arc2 token for this proposal, not a placeholder
+        parsed = verify_band(token, secret=fixture.FIXTURE_GATE_SECRET, now=exp, proposal_hash=h)
+        assert parsed.lo_cents == 100 and parsed.hi_cents == 300 and parsed.max_steps == 3
+        assert coid == client_order_id(token, 1)
+
+
+def test_detail_never_serves_token(conn: sqlite3.Connection, client: TestClient) -> None:
+    secrets = _fixture_tokens(conn)
+    assert secrets
+    hashes = [r[0] for r in conn.execute("SELECT proposal_hash FROM proposals")]
+    served: list[str] = []
+    for h in hashes:
+        d = load_trade(conn, h, now=NOW)
+        assert d is not None
+        served.append(d.model_dump_json())
+        served.append(client.get(f"/api/trades/{h}").text)
+        served.append(search(conn, h, now=NOW).model_dump_json())
+        served.append(search(conn, h[:12], now=NOW).model_dump_json())
+    served.append(_list(conn, size=200).model_dump_json())
+    served.append(client.get("/api/trades", params={"size": 200}).text)
+    for q in ("SPY", "AMD", "arc2", "s1"):
+        served.append(search(conn, q, now=NOW).model_dump_json())
+        served.append(client.get("/api/search", params={"q": q}).text)
+    blob = "\n".join(served)
+    for secret in secrets:
+        assert secret not in blob
+    assert "client_order_id" not in blob
+    (o,) = _detail(conn, "pos-spy").execution.orders  # type: ignore[union-attr]
+    assert re.fullmatch(r"arc2\.s1·[0-9a-f]{12}", o.client_order_ref)
+
+
+def test_openapi_has_no_client_order_id() -> None:
+    from arc.tower.openapi import spec
+
+    def keys(node: object) -> set[str]:
+        if isinstance(node, dict):
+            out = set(node)
+            for v in node.values():
+                out |= keys(v)
+            return out
+        if isinstance(node, list):
+            return set().union(*(keys(v) for v in node)) if node else set()
+        return set()
+
+    s = spec()
+    props = keys(s)
+    assert "client_order_id" not in props
+    assert "client_order_ref" in s["components"]["schemas"]["OrderView"]["properties"]
+
+
+@pytest.mark.parametrize(
+    ("coid", "expect"),
+    [
+        ("arc2.AAAA.BBBB.s3", r"arc2\.s3·[0-9a-f]{12}"),
+        ("arc1.AAAA.BBBB", r"arc1·[0-9a-f]{12}"),
+        ("arc-0123abcd", r"ext·[0-9a-f]{12}"),
+        ("manual.s2", r"ext\.s2·[0-9a-f]{12}"),
+        ("", r"none"),
+        (None, r"none"),
+    ],
+)
+def test_client_order_ref_shapes(coid: str | None, expect: str) -> None:
+    ref = client_order_ref(coid)
+    assert re.fullmatch(expect, ref)
+    if coid:
+        assert coid not in ref and "AAAA" not in ref and "BBBB" not in ref
+    assert client_order_ref(coid) == ref  # deterministic: matches a broker export
 
 
 def test_detail_approval(conn: sqlite3.Connection) -> None:

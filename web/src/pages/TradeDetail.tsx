@@ -376,6 +376,16 @@ function Execution({ d }: { d: TradeDetail }) {
           { label: "Started / finished", value: <>{t(x.started_at)} / {t(x.finished_at)}</> },
         ]}
       />
+      {(x.orders ?? []).length > 0 && (
+        <ul className="mt-3 text-caption" data-testid="order-refs">
+          {(x.orders ?? []).map((o) => (
+            <li key={o.id}>
+              Order <code>{o.client_order_ref}</code>
+              <span className="text-muted"> · {o.state}{o.broker_order_id ? ` · broker ${o.broker_order_id}` : ""} (gate token never shown)</span>
+            </li>
+          ))}
+        </ul>
+      )}
       {events.length > 0 && (
         <div className="mt-3" data-testid="order-events">
           <p className="mb-1 text-caption text-secondary">Order state machine</p>

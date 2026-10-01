@@ -5544,8 +5544,9 @@
             ],
             "title": "Broker Order Id"
           },
-          "client_order_id": {
-            "title": "Client Order Id",
+          "client_order_ref": {
+            "description": "Redacted broker client id: ``<version>.s<step>\u00b7<sha256[:12]>``. The raw id embeds the gate token and is never served.",
+            "title": "Client Order Ref",
             "type": "string"
           },
           "created_at": {
@@ -5590,7 +5591,7 @@
         },
         "required": [
           "id",
-          "client_order_id",
+          "client_order_ref",
           "broker_order_id",
           "state",
           "created_at",

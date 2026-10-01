@@ -20,7 +20,11 @@ monitor's stale threshold (3 x 5 min) to see the stale state. The DB holds:
   every detail section (chain, persona calls, decision trail, full market context,
   regime snapshot, run manifest, order events) and AMD has a close-to-reallocate pair
   (AMD close -> XLE open), an outcome and an owner review;
-- with ``--ops``, the E8.7d Ops page rows (``scripts/tower_fixture_ops.py``).
+- with ``--ops``, the E8.7d Ops page rows (``scripts/tower_fixture_ops.py``);
+- a real ``arc2`` gate token (minted with :data:`FIXTURE_GATE_SECRET`, a test-only
+  secret) on every executed proposal's ``gate_decisions.token`` and the matching
+  ``<token>.s1`` as its ``orders.client_order_id``, exactly as the ladder writes them, so
+  the tower's never-serve-the-token rule (E8.7b1) is tested against the real shape.
 
 Never point this at ``data/arc.db``: it refuses to overwrite an existing file.
 """
@@ -42,7 +46,9 @@ from typing import TYPE_CHECKING
 import structlog
 
 from arc.context.ttl import to_db
-from arc.models import Structure  # noqa: TC001 - runtime use
+from arc.gate.band import PriceBand
+from arc.gate.token import OrderPayload, client_order_id, mint_band
+from arc.models import GateDecision, LegIntent, Structure
 from arc.monitoring.store import AlertRepo, HeartbeatRepo
 from arc.store.db import connect
 from arc.store.execution import ExecutionRepo, OpenStructureRepo
@@ -69,6 +75,8 @@ N_MARKS = 30
 CADENCE = dt.timedelta(minutes=5)
 N_DAYS = 10
 BASE_EQUITY = Decimal("100000")
+#: Test-only HMAC secret for the fixture's gate tokens (never a real ``ARC_GATE_SECRET``).
+FIXTURE_GATE_SECRET = b"tower-fixture-test-secret-not-for-trading-0001"
 
 
 def phash(tag: str) -> str:
@@ -158,6 +166,31 @@ def _approval(conn: sqlite3.Connection, h: str, ticker: str, at: dt.datetime, st
     )  # fmt: skip
 
 
+def _mint(conn: sqlite3.Connection, h: str, at: dt.datetime, contracts: int) -> str:
+    """Mint a real ``arc2`` band token for *h* (band 1.00-3.00, 3 steps, like
+    :func:`_execute`'s execution row) and store it on its gate decision."""
+    st = Structure.model_validate_json(
+        conn.execute(
+            "SELECT structure_json FROM proposals WHERE proposal_hash = ?", (h,)
+        ).fetchone()[0]
+    )
+    band = PriceBand(lo=Decimal("1.00"), hi=Decimal("3.00"), max_steps=3)
+    order = OrderPayload.from_values(
+        [
+            (leg.occ_symbol, "buy" if leg.side is LegIntent.LONG else "sell", leg.ratio)
+            for leg in st.legs
+        ],
+        qty=contracts,
+        limit_price=band.lo,
+    )
+    token = mint_band(
+        h, GateDecision(proposal_hash=h, passed=True), order=order, band=band,
+        secret=FIXTURE_GATE_SECRET, expires_at=at + dt.timedelta(minutes=30), now=at,
+    )  # fmt: skip
+    conn.execute("UPDATE gate_decisions SET token = ? WHERE proposal_hash = ?", (token, h))
+    return token
+
+
 def _execute(
     conn: sqlite3.Connection,
     h: str,
@@ -173,6 +206,7 @@ def _execute(
         proposal_hash=h, kind=kind, token_version="arc2", band_lo=Decimal("1.00"),
         band_hi=Decimal("3.00"), max_steps=3, contracts=contracts, now=at + dt.timedelta(minutes=3),
     )  # fmt: skip
+    token = _mint(conn, h, at + dt.timedelta(minutes=3), contracts)
     if status == "working":
         return
     ex.attempt(h)
@@ -183,7 +217,7 @@ def _execute(
     )  # fmt: skip
     oid = OrderRepo(conn).create(
         proposal_hash=h,
-        client_order_id=f"{h[:16]}.s1",
+        client_order_id=client_order_id(token, 1),
         created_at=to_db(at + dt.timedelta(minutes=3)),
     )
     if filled and fill is not None:
