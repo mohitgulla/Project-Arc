@@ -1,7 +1,7 @@
 """Database connection manager for the Arc audit store.
 
 Provides a thin wrapper around sqlite3 that:
-- Enforces WAL mode and foreign keys on every connection.
+- Enforces WAL mode, foreign keys and a busy timeout on every connection.
 - Centralises the default path (data/arc.db relative to project root).
 """
 
@@ -16,6 +16,7 @@ log = structlog.get_logger()
 
 DEFAULT_DB_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 DEFAULT_DB_PATH = DEFAULT_DB_DIR / "arc.db"
+BUSY_TIMEOUT_MS = 30_000  # E5.10: tick + background children share the store
 
 
 def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
@@ -30,10 +31,13 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     if path != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
+    # E5.10: the tick and its background children write concurrently; a writer
+    # waits for the other's commit instead of failing with "database is locked".
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     log.debug("db.connected", path=path)
     return conn
 

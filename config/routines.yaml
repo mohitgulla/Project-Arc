@@ -7,7 +7,7 @@
 # Job keys: schedule | every (+window) | trigger, days (daily|trading|weekdays or a
 # weekday list like [fri]), chain, after_sources, ttl (catch-up window),
 # context {ttl, supersede}, reads [kinds], writes [kinds], handler "module:function",
-# halt_exempt, notify (quiet|summary), llm. Any other key is passed to the
+# halt_exempt, notify (quiet|summary), llm, lane (inline|background, D39). Any other key is passed to the
 # handler as an option (e.g. only_for).
 #
 # I/O contract (D27): every job and chain step declares `writes: [kinds]`. A write
@@ -31,6 +31,12 @@
 #   18:00           earnings calendar
 #   22:00 daily     StockedUp + overnight Scout (after-close sources; Sunday 22:00 feeds Monday)
 #
+# lane (D39 / E5.10): `background` = the tick claims the slot, spawns a detached
+# `arc routines run-claimed <run_id>` and moves on, so a slow job never delays the
+# 5-min loop. Chosen by measured p90 > 30 s (run_manifests, 3 days). A background
+# Scout (after_sources) waits up to tick.after_sources_wait for the background
+# sources claimed in the same tick, then reads what is committed.
+#
 # notify (E5.5): sources default `quiet` (folded into the next persona post);
 # personas and chain steps default `card` (Block Kit digest; the one-liner stays
 # the notification text). `summary` = one-liner only. Failures always alert.
@@ -41,6 +47,7 @@ tick:
   interval: 5m          # how often the Hermes cron calls `arc routines tick`
   max_lookback: 7d      # never look further back than this for missed slots
   dispatch_grace: 10m   # E6.2e: release a dispatched approval whose Investor never started
+  after_sources_wait: 5m   # D39: a background Scout waits at most this for same-tick background sources
 
 heartbeat:
   # Posts before this time on a trading day go to that day's #arc-investor thread;
@@ -124,6 +131,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: video
     label: StockedUp
     writes: [raw_doc_ref]
+    lane: background            # D39: p90 34 s (caption fetch)
   rss:                          # owner pick 2026-09-28: broad market, single names, macro
     every: 15m                  # D31: at least as often as the 30-min Scout
     window: "06:00-20:00"
@@ -135,7 +143,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
       - {name: seekingalpha, label: SA, url: "https://seekingalpha.com/market_currents.xml", category: company_news}
       - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets"}
       - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro}
-  edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: filings, label: EDGAR, writes: [raw_doc_ref]}
+  edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: filings, label: EDGAR, writes: [raw_doc_ref], lane: background}   # D39: p90 75 s (377 s max on new filings)
   earnings: {schedule: ["06:00", "18:00"], days: trading, ttl: 6h, category: calendar, label: Earnings, writes: [raw_doc_ref]}
   # D30 options-trading data (free, no key; typed context kinds, never raw docs).
   vol_term:                     # Cboe VIX9D/VIX/VIX3M/VVIX closes -> contango/backwardation
@@ -160,6 +168,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: trading
     ttl: 2h
     writes: [unusual_options]
+    lane: background            # D39: p90 61 s (chain snapshots)
   ex_dividend:                  # Alpaca corporate actions: early-assignment risk on short calls
     schedule: ["06:15"]
     days: trading
@@ -181,6 +190,7 @@ personas:
     ttl: 20m                    # a slot missed by 20 min is skipped (the next one is closer)
     notify: card
     writes: [candidate, note, story]   # note: scan summary (D27); story: D30 stage-1 digests
+    lane: background            # D39: p90 441 s; the tick never waits on the Scout
   scout.overnight:              # D15/D31: 22:00 after-close sources; Sunday 22:00 feeds Monday
     schedule: ["22:00"]
     days: daily
@@ -188,6 +198,7 @@ personas:
     ttl: 3h
     notify: card
     writes: [candidate, note, story]
+    lane: background            # D39: same Scout handler as above
   director:                     # D31: the 5-min trading loop (see `loop:` above)
     every: 5m
     window: "09:40-15:50"       # owner 2026-09-28: 75 slots; skips the open's first 10 min

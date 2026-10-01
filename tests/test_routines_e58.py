@@ -25,6 +25,7 @@ from arc.approvals.service import ApprovalService, LogCardPoster, PostedCard
 from arc.context.store import ContextStore
 from arc.ingest.llm import LLMResult, ScoutLLMError
 from arc.ingest.scout import load_fixture_docs
+from arc.llm_routing import LLMRouting, Persona, TierSpec
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
 from arc.pipeline.runner import open_db, pipeline_handlers
 from arc.routines.config import RoutinesConfig, load_routines
@@ -68,6 +69,7 @@ def _disp(
     *,
     notifier: RecordingNotifier | None = None,
     locks: LockManager | None = None,
+    routing: LLMRouting | None = None,
 ) -> Dispatcher:
     settings = _settings()
     return Dispatcher(
@@ -77,6 +79,7 @@ def _disp(
         locks=locks,
         notifier=notifier or RecordingNotifier(),
         settings_factory=lambda: settings,
+        routing=routing,
     )
 
 
@@ -368,7 +371,12 @@ class TestOverlapAndDeadline:
         conn = _conn()
         _seed_scout(conn, routines)
         locks = LockManager(tmp_path)
-        disp = _disp(conn, routines, locks=locks)
+        # D39: the LLM lock only matters for local models; route every persona locally.
+        local = LLMRouting(
+            tiers={"local": TierSpec(model="ollama/qwen3", local=True)},
+            personas={p: "local" for p in Persona},
+        )
+        disp = _disp(conn, routines, locks=locks, routing=local)
         with locks.hold("director"):
             (out,) = disp.run_job("director", SLOT0, reason="schedule", now=SLOT0, chain=True)
         assert out.status == "skipped" and "previous loop running" in out.reason

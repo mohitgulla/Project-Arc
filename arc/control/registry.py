@@ -238,6 +238,8 @@ STOP_BASES: tuple[str, ...] = ("pct_max_loss", "pct_debit", "credit_multiple")
 MAX_UNIVERSE = 60  # hard ceiling on the number of underlyings
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.]{0,9}$")
 _USER_RE = re.compile(r"^[UW][A-Z0-9]{6,20}$")
+# Only `enabled` and `cadence` of a routine are tunable at runtime. `lane` (D39) and
+# `tick.after_sources_wait` are process topology, edited in routines.yaml only.
 _ROUTINE_KEY_RE = re.compile(r"^routines\.(?P<job>[a-z0-9_.]+)\.(?P<attr>enabled|cadence)$")
 _PROFILE_KEY_RE = re.compile(r"^profiles\.(?P<name>[a-z0-9_]+)\.(?P<attr>dte_min|dte_max)$")
 

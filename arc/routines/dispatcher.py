@@ -22,15 +22,20 @@ One Hermes cron job calls :meth:`Dispatcher.tick` every 5 minutes. Each tick:
 A ``(job, scheduled_for)`` unique key in ``routine_runs`` means a duplicate
 tick never runs a job twice; an event-triggered run is unique per
 ``(job, event_id)`` instead (E6.2d), so events sharing a timestamp each run. File
-locks (per job + one global LLM lock) stop
-overlapping ticks from running the same job or two LLM jobs at once; a job whose
-lock is busy is deferred to the next tick without being recorded.
+locks stop overlapping ticks from running the same job twice; a job whose lock is
+busy is deferred to the next tick without being recorded. The global LLM lock is
+only taken by jobs whose persona routes to a local model (D39; none today).
+
+D39 / E5.10 background lane: a job with ``lane: background`` is planned and claimed
+by the tick as above, then run by a detached ``arc routines run-claimed <run_id>``
+child (same ``_execute`` path), so the tick never waits on it.
 """
 
 from __future__ import annotations
 
 import contextlib
 import datetime as _dt
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -41,7 +46,7 @@ import structlog
 from arc.context.store import ContextSnapshot, ContextStore
 from arc.monitoring.correlation import bind as bind_ids
 from arc.routines.conditions import evaluate_condition
-from arc.routines.config import JobKind, Notify
+from arc.routines.config import JobKind, Lane, Notify
 from arc.routines.handlers import (
     Handler,
     JobContext,
@@ -65,10 +70,14 @@ from arc.utils.calendar import ET, now_et, session_phase
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
 
     from arc.config import ArcSettings
+    from arc.llm_routing import LLMRouting
     from arc.routines.config import JobSpec, RoutinesConfig, StepSpec
+
+    # D39: (argv, env) -> pid of a detached child (arc.routines.investor.spawn_detached).
+    Spawner = Callable[[Sequence[str], Mapping[str, str] | None], int]
 
 log = structlog.get_logger(__name__)
 
@@ -76,6 +85,10 @@ _CURSOR = "cursor:{job}"
 _LAST_TICK = "dispatcher:last_tick"
 # E6.2d: an approval event deferred by a halt (its lapse is then "under halt").
 _HALT_DEFERRED = "halt_deferred:{event}"
+# D39: the background child that owns a claimed run (one owner per run).
+_BG_OWNER = "bg_owner:{run}"
+# Chain steps whose name is not a persona, mapped to the persona whose model they use.
+_STEP_PERSONA = {"quant": "quant", "risk": "risk", "propose": "director", "execute": "investor"}
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +115,7 @@ class Outcome:
 
     job: str
     scheduled_for: _dt.datetime
-    status: str  # ok | failed | skipped | duplicate | deferred | planned
+    status: str  # ok | failed | skipped | duplicate | deferred | planned | spawned (D39)
     reason: str
     run_id: str | None = None
     chain_run_id: str | None = None
@@ -120,6 +133,13 @@ class TickReport:
     expired: int = 0
     reclaimed: int = 0  # E6.2e: stranded dispatched events released to the drain
     outcomes: list[Outcome] = field(default_factory=list)
+    # E5.10: wall time the tick spent on each due job (inline work; a spawn is ~0 ms).
+    durations_ms: dict[str, int] = field(default_factory=dict)
+
+    def slowest(self, n: int = 3) -> list[dict[str, Any]]:
+        """The *n* due jobs the tick spent longest on, slowest first."""
+        ranked = sorted(self.durations_ms.items(), key=lambda kv: (-kv[1], kv[0]))
+        return [{"job": job, "ms": ms} for job, ms in ranked[:n]]
 
     def lines(self) -> list[str]:
         head = f"tick @ {self.now:%Y-%m-%d %H:%M %Z}" + (" (dry-run)" if self.dry_run else "")
@@ -159,11 +179,21 @@ class Dispatcher:
         settings_factory: Callable[[], ArcSettings] | None = None,
         clock: Callable[[], _dt.datetime] | None = None,
         run_env: RunEnv | None = None,
+        spawner: Spawner | None = None,
+        routing: LLMRouting | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.conn = conn
         self.routines = routines
         # D34: what a step hands to a subprocess it spawns (db, config, locks, slack).
         self.run_env = run_env or RunEnv()
+        # D39: with a spawner, `lane: background` slots run in a detached child. Without
+        # one (tests, dry runs, `arc routines run`) every job runs inline as before.
+        self._spawner = spawner
+        # D39: which personas run on a local model (and so take the LLM lock).
+        self._routing = routing
+        self._sleep = sleep
+        self._lane: str | None = None  # "background" while running a claimed child run
         self.handlers = dict(handlers or {})
         self.locks = locks or NullLocks()
         self.heartbeats = Heartbeats(
@@ -284,7 +314,10 @@ class Dispatcher:
 
         report.expired = self.store.expire_due(now)
         for d in plan:
+            t_job = time.monotonic()
             report.outcomes.extend(self._handle_due(d, now))
+            ms = int((time.monotonic() - t_job) * 1000)
+            report.durations_ms[d.job] = report.durations_ms.get(d.job, 0) + ms
         reclaimed = self._reclaim_stranded(now)
         report.reclaimed = len(reclaimed)
         report.outcomes.extend(self._drain_events(now, reclaimed=reclaimed))
@@ -319,7 +352,10 @@ class Dispatcher:
                 return [Outcome(d.job, d.slot, "duplicate", "already recorded for this slot")]
             self._write_manifest(claimed, _RunTrace(), now=now, started=now, t0=time.monotonic())
             return [Outcome(d.job, d.slot, "skipped", reason, run_id=claimed.run_id)]
-        outcomes = self.run_job(d.job, d.slot, reason="schedule", now=now, note=reason)
+        if self._background(d.job):
+            outcomes = [self._spawn_background(d, now, reason)]
+        else:
+            outcomes = self.run_job(d.job, d.slot, reason="schedule", now=now, note=reason)
         if outcomes[0].status == "deferred":
             # Keep the slot inside the next tick's window so it retries (within
             # its catch-up deadline); earlier collapsed slots stay collapsed.
@@ -328,10 +364,204 @@ class Dispatcher:
             self.state.set_time(cursor_key, now)
         return outcomes
 
+    # -- background lane (D39) -------------------------------------------------
+
+    def _background(self, job: str) -> bool:
+        """True when *job*'s scheduled slots run in a detached child (D39)."""
+        found = self.routines.job(job)
+        return (
+            self._spawner is not None
+            and found is not None
+            and found[1].lane is Lane.BACKGROUND
+            and not found[1].chain
+        )
+
+    def _spawn_background(self, d: DueJob, now: _dt.datetime, note: str) -> Outcome:
+        """Claim *d*'s slot here, then hand the run to ``arc routines run-claimed``.
+
+        Planning (slot choice, collapse, halt skip, missed recording) and the claim
+        stay in the tick, so ``routine_runs`` uniqueness still makes a doubled tick a
+        no-op. A job whose lock is held (its previous run is still going) is deferred
+        exactly like an inline job: nothing recorded, retried next tick, never queued.
+        """
+        try:
+            with self.locks.hold(d.job):
+                pass
+        except LockBusyError as exc:
+            log.info("routines.deferred", job=d.job, why=str(exc), lane="background")
+            return Outcome(d.job, d.slot, "deferred", f"lock busy ({exc})")
+        claimed = self.runs.claim(
+            job=d.job, scheduled_for=d.slot, reason="schedule", summary=note, now=now
+        )
+        if claimed is None:
+            return Outcome(d.job, d.slot, "duplicate", "already ran for this slot")
+        from arc.routines.investor import arc_command
+
+        argv = arc_command(self.run_env, ["routines", "run-claimed", claimed.run_id])
+        assert self._spawner is not None  # _background() checked it
+        try:
+            pid = self._spawner(argv, _child_env())
+        except Exception as exc:  # noqa: BLE001 - recorded + alerted; the next slot retries
+            error = f"spawn failed: {type(exc).__name__}: {exc}"
+            self.runs.finish(claimed.run_id, status=RunStatus.FAILED, error=error, now=now)
+            self._write_manifest(
+                claimed, _RunTrace(exc=exc), now=now, started=now, t0=time.monotonic()
+            )
+            self.heartbeats.alert(now, d.job, error, run_id=claimed.run_id)
+            log.error("routines.spawn_failed", job=d.job, run_id=claimed.run_id, error=error)
+            return Outcome(d.job, d.slot, "failed", error, run_id=claimed.run_id)
+        log.info("routines.spawned", job=d.job, run_id=claimed.run_id, pid=pid)
+        return Outcome(
+            d.job,
+            d.slot,
+            "spawned",
+            f"{note}; background pid {pid}",
+            run_id=claimed.run_id,
+            metrics={"pid": pid},
+        )
+
+    def run_claimed(self, run_id: str) -> list[Outcome]:
+        """``arc routines run-claimed <run_id>``: run a slot the tick claimed (D39).
+
+        Same :meth:`_execute` path as inline (manifest, heartbeats, notifications, gate,
+        approvals); only the process differs. In order:
+
+        1. Own the run once: a second invocation for the same run is a ``duplicate``.
+        2. Halt check (a persona that is not ``halt_exempt`` is recorded ``skipped``).
+        3. ``after_sources``: wait (up to ``tick.after_sources_wait``) for the background
+           sources claimed in the same tick, then read whatever is committed.
+        4. Take the job's flock (+ the LLM lock for a local model). Busy means a previous
+           run is still going: the slot is recorded ``skipped``, never queued.
+        """
+        run = self.runs.get(run_id)
+        if run is None:
+            msg = f"unknown run {run_id!r}"
+            raise KeyError(msg)
+        if run.status is not RunStatus.RUNNING or not self._own_claim(run_id):
+            return [Outcome(run.job, run.scheduled_for, "duplicate", "run already handled")]
+        self._lane = Lane.BACKGROUND.value
+        try:
+            return self._run_claimed(run)
+        finally:
+            self._lane = None
+            self.state.delete(_BG_OWNER.format(run=run_id))
+
+    def _own_claim(self, run_id: str) -> bool:
+        from arc.context.ttl import to_db
+
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT OR IGNORE INTO routine_state (key, value, updated_at) VALUES (?, ?, ?)",
+                (_BG_OWNER.format(run=run_id), str(os.getpid()), to_db(now_et())),
+            )
+        return cur.rowcount == 1
+
+    def _run_claimed(self, run: RoutineRun) -> list[Outcome]:
+        kind, spec = self.routines.step(run.job)
+        now = (run.started_at or run.scheduled_for).astimezone(ET)  # the tick's `now`
+        note = run.summary or "schedule"
+        exempt = getattr(spec, "halt_exempt", False)
+        if kind is JobKind.PERSONA and not exempt and self._is_halted():
+            return [self._finish_unrun(run, now, "halted (persona)")]
+        if getattr(spec, "after_sources", False):
+            self._await_sources(run, now)
+        try:
+            with self.locks.hold(*self._lock_names([run.job])):
+                outcome = self._execute(run, now=now, event=None, note=note)
+        except LockBusyError as exc:
+            return [self._finish_unrun(run, now, f"lock busy ({exc}): previous run still going")]
+        return [outcome, *self._fire_completed([outcome], now, 0)]
+
+    def _finish_unrun(self, run: RoutineRun, now: _dt.datetime, why: str) -> Outcome:
+        self.runs.finish(run.run_id, status=RunStatus.SKIPPED, summary=why, now=now)
+        trace = _RunTrace(metrics={"background_skipped": why})
+        self._write_manifest(run, trace, now=now, started=now_et(), t0=time.monotonic())
+        log.info("routines.skipped", job=run.job, run_id=run.run_id, why=why, lane="background")
+        return Outcome(run.job, run.scheduled_for, "skipped", why, run_id=run.run_id)
+
+    def _await_sources(self, run: RoutineRun, now: _dt.datetime) -> None:
+        """D39 ``after_sources`` for a background persona.
+
+        Inline sources already finished (the tick runs sources first). Background
+        sources claimed by the same tick (same ``started_at``) may still be running:
+        wait for them, bounded by ``tick.after_sources_wait``, then go on with what is
+        committed. A slow source never holds the Scout past that bound.
+        """
+        wait_s = self.routines.tick.after_sources_wait.total_seconds()
+        deadline = time.monotonic() + wait_s
+        while True:
+            pending = self._running_sources(now)
+            if not pending:
+                return
+            if time.monotonic() >= deadline:
+                log.warning("routines.after_sources_timeout", job=run.job, pending=pending)
+                return
+            self._sleep(min(2.0, max(0.0, deadline - time.monotonic())) or 0.01)
+
+    def _running_sources(self, now: _dt.datetime) -> list[str]:
+        from arc.context.ttl import to_db
+
+        names = [n for n, spec in self.routines.sources.items() if spec.lane is Lane.BACKGROUND]
+        if not names:
+            return []
+        marks = ",".join("?" for _ in names)
+        rows = self.conn.execute(
+            f"SELECT job FROM routine_runs WHERE status = 'running' AND started_at = ?"  # noqa: S608
+            f" AND job IN ({marks})",
+            (to_db(now), *names),
+        ).fetchall()
+        return sorted(r["job"] for r in rows)
+
     # -- running -------------------------------------------------------------
 
     def _llm(self, kind: JobKind, spec: StepSpec) -> bool:
         return spec.llm if spec.llm is not None else kind is JobKind.PERSONA
+
+    def _routing_config(self) -> LLMRouting | None:
+        if self._routing is None:
+            from arc.llm_routing import DEFAULT_ROUTING_PATH, load_routing
+
+            try:
+                factory = self._settings_factory
+                path = (factory().llm_routing_file if factory else None) or DEFAULT_ROUTING_PATH
+                self._routing = load_routing(path)
+            except Exception as exc:  # noqa: BLE001 - unknown routing: serialise (fail-safe)
+                log.warning("routines.llm_routing_unavailable", error=str(exc))
+                return None
+        return self._routing
+
+    def _local_llm(self, name: str) -> bool:
+        """D39: does *name* (a job or chain step) call a local, on-device model?
+
+        The persona is the step's name (``scout.overnight`` -> ``scout``,
+        ``risk.reallocate`` -> ``risk``) or its chain-step owner (``quant``,
+        ``propose`` ...). Fail-safe: an unreadable routing file, or a step with no
+        persona while any tier is local, counts as local (takes the lock).
+        """
+        routing = self._routing_config()
+        if routing is None:
+            return True
+        from arc.llm_routing import Persona
+
+        base = name.split(".", 1)[0]
+        persona = _STEP_PERSONA.get(name) or (base if base in {p.value for p in Persona} else None)
+        if persona is None:
+            return any(t.local for t in routing.tiers.values())
+        return routing.is_local(persona)
+
+    def _lock_names(self, steps: Sequence[str]) -> list[str]:
+        """The job's own flock, plus the global LLM lock iff a step runs a local model.
+
+        D39: remote API routes (every tier today) run concurrently; the LLM lock only
+        serialises on-device models (``local: true`` in ``config/llm_routing.yaml``).
+        """
+        needs_llm = False
+        for step in steps:
+            kind, spec = self.routines.step(step)
+            if self._llm(kind, spec) and self._local_llm(step):
+                needs_llm = True
+                break
+        return [steps[0], *([LLM_LOCK] if needs_llm else [])]
 
     def run_job(
         self,
@@ -354,7 +584,7 @@ class Dispatcher:
         kind, spec = found
         steps = [job, *(spec.chain if chain else [])]
         chain_run_id = f"chain-{uuid.uuid4().hex[:12]}" if len(steps) > 1 else None
-        lock_names = [job, *([LLM_LOCK] if self._llm(kind, spec) or len(steps) > 1 else [])]
+        lock_names = self._lock_names(steps)
         try:
             with self.locks.hold(*lock_names):
                 outcomes = self._run_steps(
@@ -430,7 +660,7 @@ class Dispatcher:
         kind, spec = found
         steps = [root.job, *spec.chain]
         try:
-            with self.locks.hold(root.job, LLM_LOCK):
+            with self.locks.hold(*self._lock_names(steps)):
                 outcomes = self._run_steps(
                     steps,
                     root.scheduled_for,
@@ -971,7 +1201,7 @@ class Dispatcher:
                 finished_at=now_et(),
                 duration_ms=int((time.monotonic() - t0) * 1000),
                 exc=trace.exc,
-                metrics=trace.metrics,
+                metrics={**trace.metrics, **({"lane": self._lane} if self._lane else {})},
                 external_inputs=ctx.external_inputs if ctx is not None else (),
                 event_id=trace.event_id,
                 parent_run_id=trace.parent_run_id,
@@ -1330,6 +1560,23 @@ class Dispatcher:
 
 
 _CORRELATION_KEYS = frozenset({"tick_id", "cron_job", "kanban_task", "hermes_session"})
+
+
+def _child_env() -> dict[str, str]:
+    """Environment of a D39 background child: this process's plus its correlation ids.
+
+    A tick run by hand mints its ``tick_id`` in-process (no ``ARC_TICK_ID`` in the
+    environment), so the bound ids are exported, and the child's log lines and run
+    manifest join the tick's (``arc health trace <tick_id>``).
+    """
+    from arc.monitoring.correlation import ENV_KEYS
+
+    env = dict(os.environ)
+    bound = structlog.contextvars.get_contextvars()
+    for var, key in ENV_KEYS.items():
+        if bound.get(key):
+            env[var] = str(bound[key])
+    return env
 
 
 @dataclass

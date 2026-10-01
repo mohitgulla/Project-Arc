@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from arc.cli import main
 from arc.context import ContextStore
+from arc.llm_routing import LLMRouting, Persona, TierSpec
 from arc.routines.conditions import ConditionError, evaluate_condition, parse_condition
 from arc.routines.config import (
     DEFAULT_ROUTINES_PATH,
@@ -120,6 +121,12 @@ def _shortlist() -> dict[str, object]:
         "session_notes": "quiet",
     }
 
+
+# D39: every persona on an on-device model, so persona jobs take the global LLM lock.
+LOCAL_ROUTING = LLMRouting(
+    tiers={"local": TierSpec(model="ollama/qwen3", local=True)},
+    personas={p: "local" for p in Persona},
+)
 
 ALL = ["rss", "scout", "director", "quant", "risk", "propose", "auditor", "investor"]
 
@@ -1005,6 +1012,7 @@ class TestLocks:
             locks=LockManager(tmp_path),
             notifier=RecordingNotifier(),
             is_halted=lambda: False,
+            routing=LOCAL_ROUTING,  # D39: only a local model takes the LLM lock
         )
         with LockManager(tmp_path).hold(LLM_LOCK):
             report = d.tick(et(2026, 9, 28, 12, 0))
