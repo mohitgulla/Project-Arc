@@ -66,7 +66,7 @@ monitoring:
   remote_access:           # E8.6 / D29: Hermes dashboard :1994 (basic auth) + tower :4174,
     enabled: false         # tailnet only. Turn on after OPS §5.7 steps 1-5 (Tailscale + install.sh).
     dashboard_port: 1994
-    tower_port: 4174
+    tower_port: 4174       # probed at GET /api/health (200 + status ok; tower v2, D35)
     timeout: 5s
   log:
     path: logs/arc.jsonl   # relative to the DB directory (data/)

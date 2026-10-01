@@ -166,7 +166,7 @@ the plist with `--print`, and remove it with `--uninstall`.
 | routine_windows | A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
 | stuck_runs | A `routine_runs` row is still `running` after `stuck_after` (70m), or after its job's `stuck_after_jobs` override (`monitor: 10m`, E5.3a). | `stuck:<run_id>` |
 | gateway | `hermes gateway status` or `hermes cron status` shows a `✗`, exits non-zero, or times out. `⚠` warnings count as degraded: they are recorded but not alerted unless `gateway.alert_on_degraded: true`. | `gateway` |
-| remote_access (E8.6, off until enabled) | `GET <ts-ip>:1994/api/status` doesn't answer, or answers without `auth_required: true` and `basic` in `auth_providers`; `GET <ts-ip>:4174/_stcore/health` isn't 200; or either port accepts a connection on a LAN address. See §5.7. | `remote_hermes`, `remote_tower`, `remote_exposed` |
+| remote_access (E8.6, off until enabled) | `GET <ts-ip>:1994/api/status` doesn't answer, or answers without `auth_required: true` and `basic` in `auth_providers`; `GET <ts-ip>:4174/api/health` isn't 200 with `status: ok`; or either port accepts a connection on a LAN address. See §5.7. | `remote_hermes`, `remote_tower`, `remote_exposed` |
 
 Some skips are deliberate and are never counted as misses: halted personas and
 jobs with no handler yet. Job failures are already alerted in the #arc-investor
@@ -229,37 +229,97 @@ arc health trace <id>             # tick_id | run_id | chain_run_id | alert id |
 a traced tick), the alerts, and the JSON log lines, current and rotated files
 alike.
 
-### 5.6 Control tower (E8.3)
+### 5.6 Control tower (E8.3 → v2 E8.7, D35)
 
-A read-only Streamlit dashboard over the audit store, served on the host's
-Tailscale address, port 4174. Code: `arc/tower/`.
+A read-only web app over the audit store: a FastAPI JSON API plus a React SPA
+(design spec: `docs/TOWER_DESIGN.md`), served by uvicorn on the host's Tailscale
+address, port 4174. It replaced the E8.3 dashboard at the E8.7e cutover (D35).
+Code: `arc/tower/` (`api.py`, `routes/`, `data*.py`), `web/` (SPA source).
+
+**Build and serve.** The SPA is built once per deploy; Node is a build-time tool only,
+not needed at runtime (uvicorn serves the built files from `arc/tower/static/`, which is
+gitignored). CI's `web` job builds the same files and uploads them as the `tower-static`
+artifact.
 
 ```
-arc tower serve                   # http://<tailscale-ip>:4174, re-reads every 30s
-arc tower serve --local           # 127.0.0.1:4174, this machine only
-arc tower serve --print-command   # show the streamlit argv, don't start
-arc tower snapshot [--json]       # the same data as text/JSON, no server
+make web                               # build the SPA into arc/tower/static/ (needs Node >= 22.12)
+arc tower serve                        # http://<tailscale-ip>:4174, uvicorn
+arc tower serve --local --port 4180    # 127.0.0.1 only, this machine
+arc tower serve --refresh 30           # client poll interval: 30 | 60 (default) | 120 s
+arc tower serve --print-command        # show the uvicorn argv, don't start
+arc tower snapshot [--json]            # the /api/snapshot payload as text/JSON, no server
+curl http://<addr>:4174/api/health     # {status: "ok", db, as_of}
 ```
 
-**Bind rules.** The address is `tailscale ip -4` (CLI on PATH or the macOS
+**Deploy (this Mac):** `git pull && uv sync --locked && make web &&
+hermes/remote/install.sh` (§5.7). `install.sh` refuses to install the tower agent until
+`arc/tower/static/index.html` exists ("run `make web` first"). After a later `make web`
+the running agent serves the new files on the next page load; no restart is needed.
+After a Python change, `launchctl kickstart -k gui/$(id -u)/com.projectarc.tower`.
+
+**Pages** (bottom tab bar on mobile, sidebar on desktop):
+
+| Page | Route | API |
+|---|---|---|
+| Overview (E8.7a) | `/` | `/api/overview?range=1D\|1W\|1M\|3M\|YTD\|ALL`, `/api/snapshot` |
+| Trades (E8.7b) | `/trades`, `/trades/<proposal_hash>` | `/api/trades`, `/api/trades/filters`, `/api/trades/{hash}`, `/api/search?q=` |
+| Positions (E8.7a) | `/positions` | `/api/positions?status=open\|closed\|all` |
+| Performance (E8.7c) | `/performance` | `/api/performance`, `/api/performance/breakdown?by=…` |
+| Ops & pipeline (E8.7d) | `/ops`, `/ops/runs/<run_id>`, `/ops/context/<entry_id>` | `/api/ops/{session,health,alerts,halts,runs,runs/{id},budget,context,context/{id},sources,llm,config}` |
+
+Plus `/settings` (theme, density, refresh; client-side only) and `/kitchen-sink` (every
+design-system component in both themes). Shell data for every page: `/api/health`,
+`/api/meta` (version, git sha, `ARC_ENV`, account profile, `config_version`,
+`monitor`/`auditor`/`tick` cadences with stale thresholds, gate caps). `/api/docs` is the
+OpenAPI browser. Every response carries `as_of` (ET); errors are `{error, detail, as_of}`
+(e.g. 503 `db_unavailable`, 503 `config_unavailable`).
+
+**Bind rules (D29).** The address is `tailscale ip -4` (CLI on PATH or the macOS
 app bundle), otherwise the first `100.64.0.0/10` address on any interface.
 `--address` accepts only a Tailscale or loopback IP. With no Tailscale address,
-`serve` exits 2 rather than fall back to `0.0.0.0` or the LAN.
+`serve` exits 2 rather than fall back to `0.0.0.0` or the LAN. It also exits 2 when the
+DB is missing.
 
-**Read-only.** The DB is opened with `mode=ro` + `PRAGMA query_only`, and a
-missing DB is an error, not created. The page has no buttons or inputs. Approve,
-halt, resume and config stay in Slack. The tower never calls the broker, market
-data or an LLM. Streamlit runs headless, with XSRF protection on and usage stats off.
+**Read-only.** Each request opens the DB `mode=ro` + `PRAGMA query_only`, and a missing
+DB is an error, never created. The app has no POST/PUT/DELETE route (a test checks the
+OpenAPI spec; a `POST` gets 405), and the import-linter contract `arc.tower is read-only`
+forbids the broker, market data, personas, LLM routing, Alpaca and Slack. Approve, halt,
+resume and config stay in Slack. D26 config overrides are read from the store on every
+request, so a Slack `!arc config` change shows without a restart.
+
+**No auth, no CORS.** The tailnet-only bind is the boundary. Don't bind it anywhere else.
+**Offline:** Inter is bundled (`@fontsource/inter`); the page fetches nothing outside the tower.
+
+**Freshness rule (D35).** No number is shown without its age: every response carries
+`as_of`, and each section carries the timestamp of the row it came from. The SPA polls
+every 60 s (30/60/120 in Settings), paused while the tab is hidden. There is no faster
+feed: the data moves only when a routine writes, and the tick floor is 5 minutes.
+
+**Stale thresholds** come from the effective routines config (`routines.yaml` plus
+`!arc set` overrides, via `/api/meta`), never constants, so a cadence change moves them
+with no code change:
+
+| Data | Stale after |
+|---|---|
+| Monitor marks (Greeks, intraday equity, broker legs) | 3 × `personas.monitor.every` (15 min at 5m); `greeks.stale_after_s` in the snapshot |
+| Auditor and other cadenced jobs in `/api/meta` | 3 × the job's cadence |
+| Tick | 3 × the tick interval (15 min at 5m); the Ops health strip uses `monitoring.tick_stale_after` |
+| Health check heartbeat | 3 × the LaunchAgent's 30 min |
+
+Outside the session the pages show the last in-session monitor run, marked stale.
+
+**Where the numbers come from:**
 
 | Section | Source |
 |---|---|
-| Status banner | active `halts`, latest `tick`/`health` heartbeats, open `ops_alerts` |
-| P&L | latest `monitor` heartbeat (intraday equity, day P&L); `pnl_snapshots` (reconciled realized/unrealized, Day/MTD/YTD via `arc.reconcile.performance`) |
+| Status strip | active `halts`, latest `tick`/`health` heartbeats, open `ops_alerts` |
+| P&L / equity | latest `monitor` heartbeat (intraday equity, day P&L); `pnl_snapshots` (reconciled realized/unrealized, Day/MTD/YTD via `arc.reconcile.performance`) |
 | Greeks | latest `monitor` heartbeat: net Δ Γ ν Θ and max loss, against the gate's `portfolio_delta_cap` / `portfolio_vega_cap_pct` |
 | Positions | `open_structures` + broker legs from the `monitor` heartbeat; "held at broker" from the last `positions_snapshots` |
-| Proposals | `proposals` + latest `gate_decisions` + `approval_requests` + `executions` (last 7 days) |
+| Proposals / Trades | `proposals` + latest `gate_decisions` + `approval_requests` + `executions` |
 | Halts | `halts`, active first |
-| Gate violations | failed `gate_decisions`, split by rule code (last 7 days) |
+| Gate violations | failed `gate_decisions`, split by rule code |
+| Ops | `routine_runs`, `run_manifests`, `heartbeats`, `ops_alerts`, `context_entries`, the D32 local order count, D26 control tables |
 
 The intraday `monitor` routine runs every 5 minutes in session (D35; `personas.monitor`
 in `config/routines.yaml`) and writes one `heartbeats` row per run (`component = monitor`):
@@ -267,13 +327,6 @@ Greeks, `equity`, `last_equity`, `cash`, `buying_power`, `options_buying_power`,
 `non_marginable_bp`, `broker_requests` (the run's request estimate), and the broker legs
 with `current_price`, `lastday_price` and `change_today` when Alpaca reports them. The
 tower reads only this row, so marks are at most ~6 minutes old in session.
-
-**Stale rule (E5.3a).** Greeks are flagged stale once the latest monitor row is older than
-3 × the monitor's `every` (15 minutes at 5m). The cadence is read from the effective routines
-config (`routines.yaml` plus any `!arc set routines.monitor.cadence` override), so changing the
-cadence moves the threshold with no code change. The snapshot exposes it as
-`greeks.stale_after_s` (`arc tower snapshot --json`), which the Streamlit page and the E8.7 API
-share. Outside the session the page shows the last in-session run.
 
 Broker load: each run makes 2 + 4 × (open underlyings) Alpaca requests (account, positions,
 then quote, chain snapshot, contracts page and volume snapshot per underlying): 34 at the
@@ -285,49 +338,19 @@ Quick check of the fields on a DB:
 sqlite3 data/arc.db "select at, json_extract(detail,'$.equity'), json_extract(detail,'$.buying_power') from heartbeats where component='monitor' order by at desc limit 3"
 ```
 
-#### v2 (preview, E8.7 / D35)
+**Dev:** `make web-check` (eslint, tsc, vitest), `make web-api` after changing a route or
+response model (regenerates `web/openapi.json` and the typed client; a pytest fails if they
+drift), `make web-e2e` (Playwright screenshots at 390×844, 768×1024 and 1440×900 in both
+themes, against a scratch DB; set `PLAYWRIGHT_BROWSERS_PATH` to a dir with Chromium, e.g.
+`~/.hermes/tools`). `.venv/bin/python scripts/tower_fixture_db.py <new.db> [--now ISO]
+[--history] [--ops]` builds a populated fixture store anchored at *now* (3 open + 1 closed
+structure, 10 reconciled days, 30 monitor marks, proposals in every status, a halt, alerts;
+`--history` adds ~40 closed trades over 3+ months, `--ops` the Ops page's runs and
+manifests); it refuses to overwrite an existing file. Serve it with
+`arc tower serve --local --db <new.db>` to look at a full tower by hand.
 
-A FastAPI JSON API plus a React SPA (design spec: `docs/TOWER_DESIGN.md`). It runs
-alongside Streamlit until the E8.7e cutover: `arc tower serve` is still Streamlit and
-`--v2` starts the new tower. Code: `arc/tower/api.py`, `arc/tower/routes/`, `web/`.
+**Page notes:**
 
-```
-make web                                    # build the SPA into arc/tower/static/ (needs Node >= 22.12)
-arc tower serve --v2                        # http://<tailscale-ip>:4174, uvicorn
-arc tower serve --v2 --local --port 4180    # 127.0.0.1 only (Streamlit can keep :4174)
-arc tower serve --v2 --refresh 30           # client poll interval: 30 | 60 (default) | 120 s
-arc tower serve --v2 --print-command        # show the uvicorn argv, don't start
-curl http://<addr>:<port>/api/health        # {status, db, as_of}
-```
-
-- **Endpoints (GET only):** `/api/health`, `/api/meta` (version, git sha, `ARC_ENV`,
-  account profile, `config_version`, `monitor`/`auditor`/`tick` cadences with stale =
-  3 × cadence, gate caps), `/api/snapshot` (the `arc tower snapshot --json` payload).
-  Every response carries `as_of` (ET); errors are `{error, detail, as_of}` (e.g. 503
-  `db_unavailable`). `/api/docs` is the OpenAPI browser. `/kitchen-sink` shows every
-  design-system component in both themes.
-- **Bind rules** are the Streamlit ones above: Tailscale or loopback only, exit 2
-  without a Tailscale address, on `0.0.0.0`/a LAN IP, or when the DB is missing.
-- **Read-only.** Each request opens the DB `mode=ro` + `query_only`; the app has no
-  POST/PUT/DELETE route (a test checks the OpenAPI spec), and the import-linter
-  contract `arc.tower is read-only` forbids the broker, market data, personas, LLM
-  routing, Alpaca and Slack. D26 config overrides are read from the store on every
-  request, so a Slack `!arc config` change shows without a restart.
-- **No auth, no CORS.** Same as Streamlit: the tailnet-only bind is the boundary.
-  Don't bind it anywhere else.
-- **Offline.** Inter is bundled (`@fontsource/inter`); the page fetches nothing
-  outside the tower.
-- **Dev:** `make web-check` (eslint, tsc, vitest for `web/src/lib/format.ts`),
-  `make web-api` after changing a route or response model (regenerates
-  `web/openapi.json` and the typed client; a pytest fails if they drift),
-  `make web-e2e` (Playwright screenshots at 390×844, 768×1024 and 1440×900 in both
-  themes, against a scratch DB; set `PLAYWRIGHT_BROWSERS_PATH` to a dir with
-  Chromium, e.g. `~/.hermes/tools`). The Overview specs run against a populated
-  fixture store: `.venv/bin/python scripts/tower_fixture_db.py <new.db> [--now ISO]`
-  builds one (3 open + 1 closed structure, 10 reconciled days, 30 monitor marks,
-  proposals in every status, a halt, alerts), anchored at *now* so it reads as live;
-  it refuses to overwrite an existing file. Serve it with
-  `arc tower serve --v2 --local --db <new.db>` to look at a full tower by hand.
 - **Overview (E8.7a):** `GET /api/overview?range=1D|1W|1M|3M|YTD|ALL` (status strip,
   equity + range series, day P&L, positions, Greeks vs caps, 24 h proposals, movers,
   last 20 activity lines) and `GET /api/positions?status=open|closed|all`. `1D`
@@ -389,6 +412,11 @@ curl http://<addr>:<port>/api/health        # {status, db, as_of}
     hold-to-expiry variant = share of known D19 shadows > 0 vs mean static PoP.
   - **Calibration (E7.4)**: persona confidence (Director) and the Quant's PoP bucketed
     against the realised win rate over every closed trade to the period end.
+- **Ops & pipeline (E8.7d):** the session timeline is `config/routines.yaml` slots
+  (06:00–22:00 ET) joined to root `routine_runs`; missed slots are `--warn`. Run detail shows
+  the stored D27 manifest and the `arc context trace` view (`arc.context.trace.trace_runs`),
+  with undeclared reads/writes highlighted. The order budget is the local D32 count only (the
+  tower never asks the broker). Config goes through `ControlService` reads.
 
 ### 5.7 Remote access over Tailscale (E8.6, D29)
 
@@ -398,7 +426,7 @@ on the LAN or the internet.
 
 | Service | URL | LaunchAgent | Runs |
 |---|---|---|---|
-| Control tower (read-only, §5.6) | `http://<ts-ip>:4174` | `com.projectarc.tower` | `.venv/bin/arc tower serve` |
+| Control tower v2 (read-only, FastAPI + React, §5.6) | `http://<ts-ip>:4174` (health: `/api/health`) | `com.projectarc.tower` | `.venv/bin/arc tower serve` → uvicorn `arc.tower.serve:app_from_env` on `<ts-ip>:4174`; serves the SPA built by `make web` |
 | Hermes dashboard (web admin, Chat tab, Hermes Desktop backend) | `http://<ts-ip>:1994` | `com.projectarc.hermes-dashboard` | `hermes/remote/run_dashboard.sh` → `arc remote dashboard` → `hermes dashboard --host <ts-ip> --port 1994 --no-open --skip-build` |
 
 Both agents are `KeepAlive` + `RunAtLoad`, log to `data/logs/{hermes-dashboard,tower}.launchd.log`,
@@ -462,7 +490,8 @@ and use the repo `.venv` (not `/usr/bin/python3`). Code: `arc/remote/`, `hermes/
    `HERMES_DASHBOARD_BASIC_AUTH_USERNAME` / `..._PASSWORD_HASH`, adds `..._SECRET` only if it is
    unset, removes any plaintext `..._PASSWORD`, keeps `~/.hermes/.env` at `0600`, and prints
    key names only. Re-run it to change the password.
-5. **Start both services:** `~/GitHub/Project-Arc/hermes/remote/install.sh`
+5. **Start both services:** `cd ~/GitHub/Project-Arc && make web && hermes/remote/install.sh`
+   (`make web` builds the tower's web app; install refuses without it.)
    (`--print` shows the plists, `--uninstall` removes both.) It prints each agent's
    `state`/`last exit code`; `state = running` means it is up.
 6. **Turn on the health check:** set `monitoring.remote_access.enabled: true` in
@@ -487,6 +516,8 @@ and use the repo `.venv` (not `/usr/bin/python3`). Code: `arc/remote/`, `hermes/
 | Connection refused | Check `tailscale ip -4` on the Mini and that the client device is on the tailnet. `launchctl print gui/$(id -u)/com.projectarc.hermes-dashboard` (or `.tower`): `last exit code = 2` → read the launchd log (no Tailscale address, login not configured, or port 1994 already in use by another dashboard). |
 | 400 "Invalid Host header" | You used the machine name. Use `http://<ts-ip>:1994`, or set `dashboard.public_url` (see above). |
 | Tower log: "audit store not found" | `data/arc.db` doesn't exist yet in the repo the agent runs from; the tower never creates it. |
+| `install.sh`: "arc/tower/static/index.html missing", or the tower page says "the web app is not built" (503) | The SPA isn't built in that checkout (`arc/tower/static/` is gitignored). Run `make web` (Node >= 22.12), then re-run `install.sh` or just reload the page. The API (`/api/*`) works without it. |
+| `/api/health` 503 (`remote_tower` alert) | The tower is up but can't read the store: `db_unavailable` = `data/arc.db` missing or unreadable (permissions, a half-restored backup); the body's `detail` names the path. Other `/api/*` 503s with `config_unavailable` mean `config/routines.yaml` or the D26 tables can't be read. Fix the file, no restart needed. A connection error instead of 503 means the agent isn't running (`launchctl print gui/$(id -u)/com.projectarc.tower`). |
 
 The live check from a second tailnet device (tower loads, dashboard login, Chat tab
 reply, Desktop "Remote gateway" connects, `remote_access` green) is owner-gated and

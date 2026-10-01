@@ -1,11 +1,11 @@
-"""``arc tower serve|snapshot`` (E8.3, E8.7): the read-only control tower.
+"""``arc tower serve|snapshot`` (E8.3, E8.7, D35): the read-only control tower.
 
-- ``serve``     start Streamlit on the Tailscale address, port 4174 (see
-                :mod:`arc.tower.net`). Refuses to start without a Tailscale
-                address unless ``--local`` (127.0.0.1) is given.
-                ``--v2`` serves the FastAPI + React tower (D35, :mod:`arc.tower.api`)
-                with uvicorn under the same bind rules.
-- ``snapshot``  print what the dashboard would show, as JSON or text (no server).
+- ``serve``     start the FastAPI + React tower (:mod:`arc.tower.api`) with uvicorn
+                on the Tailscale address, port 4174 (see :mod:`arc.tower.net`).
+                Refuses to start without a Tailscale address unless ``--local``
+                (127.0.0.1) is given. The SPA is built by ``make web``.
+- ``snapshot``  print what ``GET /api/snapshot`` would return, as JSON or text (no
+                server; same loader, :func:`arc.tower.routes.snapshot.read_snapshot`).
 
 Neither command creates, migrates or writes the DB: it is opened ``mode=ro``.
 """
@@ -27,15 +27,14 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 DEFAULT_PORT = 4174
-APP_PATH = Path(__file__).resolve().parent / "app.py"
+DEFAULT_REFRESH = 60
 
 
 def add_tower_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    p = sub.add_parser("tower", help="Read-only Streamlit control tower over Tailscale (E8.3)")
+    p = sub.add_parser("tower", help="Read-only control tower over Tailscale (E8.7, D35)")
     tsub = p.add_subparsers(dest="tower_command", required=True)
 
-    s = tsub.add_parser("serve", help="Serve the dashboard on the Tailscale interface, :4174")
-    s.add_argument("--v2", action="store_true", help="FastAPI + React tower (D35 preview)")
+    s = tsub.add_parser("serve", help="Serve the tower on the Tailscale interface, :4174")
     _common(s)
     s.add_argument("--port", type=int, default=DEFAULT_PORT)
     s.add_argument("--address", default=None, help="Tailscale (100.64/10) or loopback IP")
@@ -43,12 +42,12 @@ def add_tower_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     s.add_argument(
         "--refresh",
         type=int,
-        default=None,
-        help="Seconds between re-reads (Streamlit: default 30, 0 = off; v2: 30|60|120, default 60)",
+        default=DEFAULT_REFRESH,
+        help="Seconds between client re-reads: 30 | 60 (default) | 120",
     )
     s.add_argument("--print-command", action="store_true", help="Print the command, don't run")
 
-    n = tsub.add_parser("snapshot", help="Print the dashboard's data (no server)")
+    n = tsub.add_parser("snapshot", help="Print /api/snapshot's data (no server)")
     _common(n)
     n.add_argument("--json", action="store_true")
 
@@ -71,46 +70,14 @@ def _write(text: str) -> None:
     sys.stdout.write(text + "\n")
 
 
-def streamlit_command(address: str, port: int) -> list[str]:
-    """The ``streamlit run`` argv: headless, no telemetry, no file watcher, XSRF on."""
-    return [
-        sys.executable,
-        "-m",
-        "streamlit",
-        "run",
-        str(APP_PATH),
-        "--server.address",
-        address,
-        "--server.port",
-        str(port),
-        "--server.headless",
-        "true",
-        "--server.fileWatcherType",
-        "none",
-        "--server.runOnSave",
-        "false",
-        "--server.enableXsrfProtection",
-        "true",
-        "--browser.gatherUsageStats",
-        "false",
-        "--client.toolbarMode",
-        "viewer",
-    ]
-
-
 def _serve(args: argparse.Namespace) -> int:
     from arc.tower.net import NoTailscaleAddressError, resolve_bind_address
     from arc.tower.schemas import REFRESH_CHOICES
     from arc.tower.serve import ENV_DB, ENV_LOOKBACK, ENV_REFRESH, uvicorn_command
 
-    if args.v2:
-        refresh = 60 if args.refresh is None else args.refresh
-        if refresh not in REFRESH_CHOICES:
-            _write(f"error: --refresh for --v2 must be one of {list(REFRESH_CHOICES)}")
-            return 2
-    else:
-        refresh = 30 if args.refresh is None else max(args.refresh, 0)
-
+    if args.refresh not in REFRESH_CHOICES:
+        _write(f"error: --refresh must be one of {list(REFRESH_CHOICES)}")
+        return 2
     db = _db(args)
     if not db.is_file():
         _write(f"error: audit store not found: {db} (the tower never creates one)")
@@ -120,26 +87,26 @@ def _serve(args: argparse.Namespace) -> int:
     except NoTailscaleAddressError as exc:
         _write(f"error: {exc}")
         return 2
-    argv = uvicorn_command(address, args.port) if args.v2 else streamlit_command(address, args.port)
+    argv = uvicorn_command(address, args.port)
     env = {
         **os.environ,
         ENV_DB: str(db),
-        ENV_REFRESH: str(refresh),
+        ENV_REFRESH: str(args.refresh),
         ENV_LOOKBACK: str(args.lookback_days),
     }
     if args.print_command:
         _write(" ".join(argv))
         return 0
-    label = "arc tower v2" if args.v2 else "arc tower"
-    _write(f"{label}: http://{address}:{args.port} (read-only, db {db})")
-    log.info("tower.serve", address=address, port=args.port, db=str(db), v2=args.v2)
+    _write(f"arc tower: http://{address}:{args.port} (read-only, db {db})")
+    log.info("tower.serve", address=address, port=args.port, db=str(db))
     return subprocess.call(argv, env=env)  # noqa: S603 - fixed argv, no shell
 
 
 def _snapshot(args: argparse.Namespace) -> int:
     from arc.config import get_settings
-    from arc.tower.data import connect_ro, load_snapshot
-    from arc.utils.calendar import now_et
+    from arc.tower.api import TowerConfig, TowerError
+    from arc.tower.data import connect_ro
+    from arc.tower.routes.snapshot import read_snapshot
 
     db = _db(args)
     try:
@@ -147,16 +114,12 @@ def _snapshot(args: argparse.Namespace) -> int:
     except FileNotFoundError as exc:
         _write(f"error: {exc}")
         return 2
-    s = get_settings()
+    cfg = TowerConfig(db_path=db, settings=get_settings(), lookback_days=args.lookback_days)
     try:
-        snap = load_snapshot(
-            conn,
-            now=now_et(),
-            db_path=str(db),
-            lookback_days=args.lookback_days,
-            delta_cap=s.portfolio_delta_cap,
-            vega_cap_pct=s.portfolio_vega_cap_pct,
-        )
+        snap = read_snapshot(cfg, conn)
+    except TowerError as exc:
+        _write(f"error: {exc.error}: {exc.detail}")
+        return 2
     finally:
         conn.close()
     if args.json:

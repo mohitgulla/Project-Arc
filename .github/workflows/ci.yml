@@ -54,6 +54,9 @@ jobs:
         run: make audit
 
   # Control tower v2 web app (E8.7): lint, typecheck, unit tests, production build.
+  # Independent of `check` (no `needs:`): the Python suite never needs the built SPA.
+  # The build (arc/tower/static/) is uploaded as an artifact; deploy builds it locally
+  # with `make web` (docs/OPS.md §5.6).
   web:
     runs-on: ubuntu-latest
     defaults:
@@ -79,3 +82,11 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Upload built SPA (arc/tower/static/)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tower-static
+          path: arc/tower/static/
+          if-no-files-found: error
+          retention-days: 14

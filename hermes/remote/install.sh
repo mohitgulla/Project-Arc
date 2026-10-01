@@ -8,7 +8,12 @@
 #   com.projectarc.hermes-dashboard  hermes/remote/run_dashboard.sh
 #                                    -> hermes dashboard on <tailscale-ip>:1994 (basic auth)
 #   com.projectarc.tower             .venv/bin/arc tower serve
-#                                    -> read-only control tower on <tailscale-ip>:4174
+#                                    -> read-only control tower v2 (FastAPI + React,
+#                                       D35) on <tailscale-ip>:4174
+#
+# Deploy = `make web` (builds the SPA into arc/tower/static/, needs Node >= 22.12)
+# then this script. Install refuses to run until arc/tower/static/index.html exists.
+# Node is a build-time tool only: the agent runs uvicorn and serves the built files.
 #
 # Both are KeepAlive + RunAtLoad and bind only the Tailscale address
 # (arc.tower.net.resolve_bind_address). Without one they exit 2 and launchd retries
@@ -89,6 +94,10 @@ if [[ "$mode" == "print" ]]; then
 fi
 
 [[ -x "$REPO/.venv/bin/arc" ]] || { echo "error: $REPO/.venv/bin/arc missing (run: uv sync)" >&2; exit 1; }
+[[ -f "$REPO/arc/tower/static/index.html" ]] || {
+  echo "error: $REPO/arc/tower/static/index.html missing: the tower web app is not built (run \`make web\` first)" >&2
+  exit 1
+}
 mkdir -p "$LOGS" "$AGENTS"
 chmod 0755 "$HERE/run_dashboard.sh" "$HERE/set-password.sh"
 dash_plist > "$AGENTS/$DASH_LABEL.plist"

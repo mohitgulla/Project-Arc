@@ -44,6 +44,9 @@ class GatewayCheck(BaseModel):
 class RemoteAccessCheck(BaseModel):
     """E8.6: Hermes dashboard (:1994, basic auth) and tower (:4174) on the tailnet only.
 
+    Probes: dashboard ``GET /api/status`` (auth required, ``basic``); tower v2
+    ``GET /api/health`` (200 + ``status: ok``, D35); neither port open on a LAN IP.
+
     Off until the owner has installed Tailscale and the two LaunchAgents
     (``hermes/remote/install.sh``); then set ``enabled: true``.
     """
