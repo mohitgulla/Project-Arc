@@ -50,6 +50,7 @@ from arc.execution.submission import SubmitRefused, attempt_order_id, submit
 from arc.gate.band import PriceBand
 from arc.gate.rules import proposal_hash as hash_proposal
 from arc.gate.token import BandToken, TokenError, parse_any
+from arc.journal.outcomes import record_close_outcome
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.journal.store import JournalStore
 from arc.models import OrderState
@@ -558,7 +559,12 @@ def _apply_fill(c: _Ctx, out: ExecutionOutcome, *, kind: str, structure_id: str 
         raise ValueError(msg)
     repo = OpenStructureRepo(c.conn)
     row = repo.get(structure_id)
-    closed = repo.reduce(structure_id, closed_qty=out.filled_qty, close_net=out.fill_price, now=now)
+    closed = repo.reduce(
+        structure_id, closed_qty=out.filled_qty, close_net=out.fill_price, now=now, commit=False
+    )
+    if closed:  # the outcome commits with the close (E7.4b)
+        record_close_outcome(c.conn, structure_id, expired=False)
+    c.conn.commit()
     if row is not None:
         pnl = -(Decimal(row["entry_net"]) + out.fill_price) * _HUNDRED * out.filled_qty
         text = f"closed {out.filled_qty} @ {out.fill_price:+}; realized {pnl:+.2f}"
