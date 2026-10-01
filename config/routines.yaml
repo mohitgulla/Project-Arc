@@ -44,8 +44,9 @@ tick:
 
 heartbeat:
   # Posts before this time on a trading day go to that day's #arc-investor thread;
-  # later posts (the 22:00 Scout) and weekend/holiday posts go to the NEXT session's.
-  day_rollover: "20:00"
+  # "24:00" = the whole calendar day (the 22:00 Scout stays in that day). Weekend/holiday
+  # posts go to the NEXT session's.
+  day_rollover: "24:00"
 
 # Ops monitoring (E8.2): `arc health check`, run every 30 min by the launchd agent
 # from hermes/monitoring/install.sh (outside the gateway it watches). Alerts go to

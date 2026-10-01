@@ -132,11 +132,34 @@ def set_auto(
     return res
 
 
-def _post_notice(conn: sqlite3.Connection, text: str, now: _dt.datetime) -> None:
-    try:
-        from arc.routines.heartbeat import Heartbeats, SlackDayThreadNotifier
+def _post_notice(
+    conn: sqlite3.Connection, text: str, now: _dt.datetime, client: object | None = None
+) -> None:
+    """Post the flip in the day thread, unless the thread already shows that state.
 
-        Heartbeats(conn, SlackDayThreadNotifier(conn)).notice(now, "approve", text)
+    The thread's first reply is the day banner (the current state). A flip that
+    creates the thread, or repeats the state last shown there, would only print
+    the same line twice (owner 2026-09-30), so it is skipped.
+    """
+    try:
+        from arc.routines.heartbeat import (
+            Heartbeats,
+            RoutineStateRepo,
+            SlackDayThreadNotifier,
+            banner_key,
+            day_thread_ts,
+        )
+
+        notifier = SlackDayThreadNotifier(conn, client)
+        hb = Heartbeats(conn, notifier)
+        day = hb.day(now)
+        day_thread_ts(conn, notifier._client, day)  # creates root + banner on first use
+        state = RoutineStateRepo(conn)
+        if state.get(banner_key(day)) == text:
+            log.info("approve.auto_notice_skipped", day=day.isoformat(), text=text)
+            return
+        hb.notice(now, "approve", text)
+        state.set(banner_key(day), text)
     except Exception as exc:  # noqa: BLE001 - best-effort; the flip is already recorded
         log.warning("approve.auto_notice_failed", error=str(exc))
 

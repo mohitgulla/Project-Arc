@@ -325,18 +325,21 @@ class HeartbeatSettings(BaseModel):
     """Which #arc-investor day thread a heartbeat goes to.
 
     A post belongs to today's session thread while today is a trading session
-    and the ET time is before ``day_rollover``. Later posts (e.g. the 22:00
-    Scout) and posts on weekends/holidays go to the **next** session's thread,
+    and the ET time is before ``day_rollover`` (default ``"24:00"``, i.e. the whole
+    calendar day). Posts after an earlier rollover and posts on weekends/holidays
+    go to the **next** session's thread,
     so a Sunday-night StockedUp run lands in Monday's thread (D14/D15).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    day_rollover: _dt.time = _dt.time(20, 0)
+    day_rollover: _dt.time = _dt.time.max  # "24:00": a trading day's posts stay in its thread
 
     @field_validator("day_rollover", mode="before")
     @classmethod
     def _hhmm(cls, v: Any) -> Any:
+        if isinstance(v, str) and v.strip() == "24:00":
+            return _dt.time.max  # end of day: never roll over before midnight ET
         return _parse_hhmm(v) if isinstance(v, str) else v
 
 

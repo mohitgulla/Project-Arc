@@ -14,9 +14,9 @@ Policy (E5.4 §3, tuned in E5.3, cards in E5.5):
 - Failures always alert (one-line format), whatever ``notify`` says. A handler
   can also raise an immediate notice (e.g. the intraday monitor tripping the daily-loss halt).
 - Day thread: a post goes to today's session thread while today is a trading
-  session and it is before ``heartbeat.day_rollover`` (default 20:00 ET).
-  Later posts (the 22:00 Scout) and weekend/holiday posts go to the **next**
-  session's thread, so Sunday night's StockedUp run lands in Monday's thread.
+  session and it is before ``heartbeat.day_rollover`` (default 24:00 ET, so the
+  22:00 Scout stays in that day's thread). Weekend/holiday posts go to the
+  **next** session's thread, so Sunday night's StockedUp run lands in Monday's.
 
 Posting is best-effort: a Slack error is logged and never fails the run.
 """
@@ -59,11 +59,15 @@ def label_for(job: str) -> str:
     return _PERSONA_LABELS.get(job.split(".", 1)[0], "[Routines]")
 
 
-def thread_day(now: _dt.datetime, rollover: _dt.time = _dt.time(20, 0)) -> _dt.date:
-    """The trading session whose #arc-investor day thread a post at *now* belongs to."""
+def thread_day(now: _dt.datetime, rollover: _dt.time = _dt.time.max) -> _dt.date:
+    """The trading session whose #arc-investor day thread a post at *now* belongs to.
+
+    ``rollover = time.max`` ("24:00") keeps a trading day's posts in its own thread
+    until midnight ET.
+    """
     now = now.astimezone(ET)
     d = now.date()
-    if is_session(d) and now.time() < rollover:
+    if is_session(d) and (rollover == _dt.time.max or now.time() < rollover):
         return d
     return next_session(d)
 
@@ -156,7 +160,7 @@ class RecordingNotifier:
 
 
 def day_thread_ts(conn: sqlite3.Connection, client: object, day: _dt.date) -> str:
-    """``ts`` of the ``📅 <date> · session`` root in #arc-investor, created on first use.
+    """``ts`` of the ``💡 <Ddd Mmm D> · Session Notes`` root in #arc-investor, created on first use.
 
     Shared by heartbeats and proposal cards (E6.1) so both land in one thread.
     """
@@ -171,8 +175,13 @@ def day_thread_ts(conn: sqlite3.Connection, client: object, day: _dt.date) -> st
     resp = client.post_daily_session(day)
     ts = str(resp["ts"])
     state.set(key, ts)
-    _post_day_banner(conn, client, ts)
+    _post_day_banner(conn, client, ts, day)
     return ts
+
+
+def banner_key(day: _dt.date) -> str:
+    """``routine_state`` key of the auto-approve state last shown in *day*'s thread."""
+    return f"day_banner:{day.isoformat()}"
 
 
 def day_banner(conn: sqlite3.Connection) -> str:
@@ -188,18 +197,23 @@ def day_banner(conn: sqlite3.Connection) -> str:
     return notice_text(s.env.value, bool(s.auto_approve))
 
 
-def _post_day_banner(conn: sqlite3.Connection, client: object, thread_ts: str) -> None:
+def _post_day_banner(
+    conn: sqlite3.Connection, client: object, thread_ts: str, day: _dt.date
+) -> None:
     from arc.slack.client import CHANNEL_ARC_INVESTOR, ArcSlackClient
 
     try:
         assert isinstance(client, ArcSlackClient)
-        client.reply(channel=CHANNEL_ARC_INVESTOR, thread_ts=thread_ts, text=day_banner(conn))
+        text = day_banner(conn)
+        client.reply(channel=CHANNEL_ARC_INVESTOR, thread_ts=thread_ts, text=text)
+        # The auto-approve notice skips a flip that only repeats this line.
+        RoutineStateRepo(conn).set(banner_key(day), text)
     except Exception as exc:  # noqa: BLE001 - a banner must never block the thread
         log.warning("routines.day_banner_failed", error=str(exc))
 
 
 class SlackDayThreadNotifier:
-    """Posts into the ``📅 <date> · session`` thread in #arc-investor.
+    """Posts into the ``💡 <Ddd Mmm D> · Session Notes`` thread in #arc-investor.
 
     The thread root is created on first use per day and its ``ts`` is kept in
     ``routine_state`` (``day_thread:<date>``) so later ticks reply in place.
@@ -265,7 +279,7 @@ class Heartbeats:
         conn: sqlite3.Connection,
         notifier: Notifier,
         *,
-        day_rollover: _dt.time = _dt.time(20, 0),
+        day_rollover: _dt.time = _dt.time.max,
     ) -> None:
         self._state = RoutineStateRepo(conn)
         self._notifier = notifier
@@ -342,16 +356,15 @@ class Heartbeats:
 
     def notice(self, now: _dt.datetime, job: str, text: str) -> str | None:
         """An immediate, non-failure alert raised by a handler (always posted)."""
-        return self._notifier.post(self.day(now), f":warning: {_detail(job, text)}")
+        return self._notifier.post(self.day(now), f":warning: {_detail(job, text, inline=True)}")
 
     def alert(
         self, now: _dt.datetime, job: str, text: str, *, run_id: str | None = None
     ) -> str | None:
         # E8.2: the run id lets a Slack alert be traced (`arc health trace <run_id>`).
         ref = f" `{run_id}`" if run_id else ""
-        return self._notifier.post(
-            self.day(now), f":rotating_light: {_detail(job, f'FAILED: {text}{ref}', sep=' ')}"
-        )
+        detail = _detail(job, f"FAILED: {text}", sep=" ", inline=True)
+        return self._notifier.post(self.day(now), f":rotating_light: {detail}{ref}")
 
     # -- D36: one root per loop slot ---------------------------------------
 
@@ -384,13 +397,19 @@ class Heartbeats:
         return self._notifier.post(self.day(now), B.code_block(f"{_ROUTINES_LABEL} {text}"))
 
 
-def _detail(job: str, text: str, *, sep: str = ": ") -> str:
-    """``[Label] job<sep>text``; for ``[Routines]`` jobs the whole detail is fenced.
+def _detail(job: str, text: str, *, sep: str = ": ", inline: bool = False) -> str:
+    """``[Label] job<sep>text``; for ``[Routines]`` jobs the whole detail is code.
 
-    Alerts keep their emoji outside the fence (the notification stays readable).
+    Alerts keep their emoji outside the code. With *inline* (notices and alerts)
+    a one-line detail is inline code, so it stays on the emoji's line (owner
+    2026-09-30); a multi-line detail is still fenced.
     """
     body = f"{label_for(job)} {job}{sep}{text}"
-    return B.code_block(body) if label_for(job) == _ROUTINES_LABEL else body
+    if label_for(job) != _ROUTINES_LABEL:
+        return body
+    if inline and "\n" not in body:
+        return "`" + body.replace("`", "'") + "`"
+    return B.code_block(body)
 
 
 def _fold_sources_into_card(blocks: Blocks, folded: str) -> Blocks:

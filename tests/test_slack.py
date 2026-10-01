@@ -140,9 +140,8 @@ class TestCardThreadRoot:
 class TestDailySessionRoot:
     def test_format(self) -> None:
         text = daily_session_root(date(2026, 9, 28))
-        assert "2026-09-28" in text
-        assert "Monday" in text
-        assert "session" in text
+        assert text == "💡 Mon Sep 28 · Session Notes"
+        assert daily_session_root(date(2026, 10, 1)) == "💡 Thu Oct 1 · Session Notes"
 
 
 class TestProposalCard:
@@ -255,7 +254,7 @@ class TestArcSlackClient:
         arc.post_daily_session(date(2026, 10, 1))
         call_kwargs = fake.chat_postMessage.call_args.kwargs
         assert call_kwargs["channel"] == CHANNEL_ARC_INVESTOR
-        assert "2026-10-01" in call_kwargs["text"]
+        assert call_kwargs["text"] == "💡 Thu Oct 1 · Session Notes"
 
     def test_post_halt(self) -> None:
         arc, fake = self._make()

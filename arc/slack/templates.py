@@ -60,8 +60,8 @@ def daily_session_root(session_date: date) -> str:
     session_date:
         The trading date (``datetime.date``).
     """
-    formatted = session_date.strftime("%Y-%m-%d · %A")
-    return f"📅 {formatted} · session"
+    # Owner 2026-09-30: ``💡 Thu Oct 1 · Session Notes`` (no zero-padded day).
+    return f"💡 {session_date:%a %b} {session_date.day} · Session Notes"
 
 
 # ---------------------------------------------------------------------------

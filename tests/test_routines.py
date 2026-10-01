@@ -973,7 +973,7 @@ class TestHeartbeats:
         n.post(dt.date(2026, 9, 28), "two", [{"type": "divider"}])
         calls = web.chat_postMessage.call_args_list
         assert len(calls) == 4  # root, D34 auto-approve banner, one, two
-        assert "2026-09-28" in calls[0].kwargs["text"]
+        assert calls[0].kwargs["text"] == "💡 Mon Sep 28 · Session Notes"
         assert calls[1].kwargs["text"].startswith("Auto-approve: ")
         assert calls[2].kwargs["thread_ts"] == "111.1" == calls[3].kwargs["thread_ts"]
         assert "blocks" not in calls[2].kwargs
