@@ -4,7 +4,8 @@ import { defineConfig } from "@playwright/test";
 // against an empty scratch DB; the Overview (E8.7a) against the populated fixture DB
 // (scripts/tower_fixture_db.py, see e2e/overview.spec.ts); the Performance page (E8.7c)
 // against the fixture plus its performance history (--history, e2e/performance.spec.ts);
-// the Ops page (E8.7d) against the fixture plus its ops rows (--ops, e2e/ops.spec.ts).
+// the Ops page (E8.7d) against the fixture plus its ops rows (--ops, e2e/ops.spec.ts);
+// the E8.7e cutover smoke over all five pages on the same --ops store (e2e/cutover.spec.ts).
 // `make web-e2e` builds the SPA,
 // then Playwright starts `arc tower serve --local` on each (e2e/serve.mjs).
 // Screenshots land in e2e/screenshots/ for the PR.
