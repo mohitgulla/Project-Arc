@@ -30,7 +30,7 @@ test-gate:
 # Control tower v2 web app (E8.7, D35). Needs Node >= 22.12; `make check` does not.
 # ---------------------------------------------------------------------------
 
-# Build the SPA into arc/tower/static/ (served by `arc tower serve --v2`).
+# Build the SPA into arc/tower/static/ (served by `arc tower serve`).
 web:
 	cd web && npm ci && npm run build
 
@@ -44,6 +44,6 @@ web-api:
 	cd web && npm run gen:api
 
 # Playwright: shell + /kitchen-sink at 390x844, 768x1024, 1440x900 in both themes, against
-# `arc tower serve --v2 --local` on a scratch DB. Screenshots in web/e2e/screenshots/.
+# `arc tower serve --local` on a scratch DB. Screenshots in web/e2e/screenshots/.
 web-e2e: web
 	cd web && npx playwright test

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
 // `npm run build` writes the SPA into arc/tower/static/, which FastAPI serves at `/`
-// (arc/tower/api.py). `npm run dev` proxies /api to a local `arc tower serve --v2 --local`.
+// (arc/tower/api.py). `npm run dev` proxies /api to a local `arc tower serve --local`.
 const outDir = fileURLToPath(new URL("../arc/tower/static", import.meta.url));
 
 export default defineConfig({

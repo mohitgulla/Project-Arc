@@ -62,7 +62,7 @@ _FROZEN = ConfigDict(extra="forbid", frozen=True)
 
 # Monitor marks are stale after this many monitor cadences (E5.3a, D35). The
 # cadence comes from ``personas.monitor.every`` (plus control-panel overrides),
-# so the Streamlit page and the E8.7 API share one rule.
+# so the CLI snapshot and the E8.7 API share one rule.
 STALE_CADENCES = 3
 # Used only when routines.yaml cannot be read: 3 x the D35 5-min cadence.
 DEFAULT_STALE_AFTER = _dt.timedelta(minutes=15)

@@ -1,8 +1,8 @@
-"""Response models for the v2 control tower API (E8.7, D35).
+"""Response models for the control tower API (E8.7, D35).
 
 Every response is a pydantic model with ``extra="forbid"`` and carries ``as_of``
 (ET, ISO 8601). The snapshot endpoint returns :class:`arc.tower.data.TowerSnapshot`
-as-is, so the page cards in E8.7a–d start from the same views as the Streamlit page.
+as-is, so ``arc tower snapshot`` and the pages read the same views.
 """
 
 from __future__ import annotations

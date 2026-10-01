@@ -1,4 +1,4 @@
-// Start `arc tower serve --v2` for the Playwright run against a scratch DB (never
+// Start `arc tower serve` for the Playwright run against a scratch DB (never
 // data/arc.db). Needs `make web` first (the built SPA) and the repo venv.
 //
 //   node e2e/serve.mjs            fresh, migrated, empty DB   (shell + kitchen sink)
@@ -47,7 +47,7 @@ if (fixture) {
 
 const child = spawn(
   py,
-  ["-m", "arc.cli", "tower", "serve", "--v2", "--local", "--port", port, "--db", db],
+  ["-m", "arc.cli", "tower", "serve", "--local", "--port", port, "--db", db],
   { stdio: "inherit", cwd: repo },
 );
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => child.kill(sig));

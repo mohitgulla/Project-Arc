@@ -6,7 +6,7 @@ import { defineConfig } from "@playwright/test";
 // against the fixture plus its performance history (--history, e2e/performance.spec.ts);
 // the Ops page (E8.7d) against the fixture plus its ops rows (--ops, e2e/ops.spec.ts).
 // `make web-e2e` builds the SPA,
-// then Playwright starts `arc tower serve --v2 --local` on each (e2e/serve.mjs).
+// then Playwright starts `arc tower serve --local` on each (e2e/serve.mjs).
 // Screenshots land in e2e/screenshots/ for the PR.
 const port = process.env.ARC_E2E_PORT ?? "4181";
 const fixturePort = process.env.ARC_E2E_FIXTURE_PORT ?? "4182";

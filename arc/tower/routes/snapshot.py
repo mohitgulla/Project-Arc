@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Query
 
@@ -10,7 +10,12 @@ from arc.tower.data import TowerSnapshot, load_snapshot
 from arc.tower.routes.deps import Conn, Tower, effective
 from arc.tower.schemas import ErrorResponse
 
-__all__ = ["router"]
+if TYPE_CHECKING:
+    import sqlite3
+
+    from arc.tower.api import TowerConfig
+
+__all__ = ["read_snapshot", "router"]
 
 router = APIRouter(tags=["snapshot"], responses={503: {"model": ErrorResponse}})
 
@@ -22,6 +27,17 @@ def snapshot(
     lookback_days: Annotated[int | None, Query(ge=1, le=366)] = None,
 ) -> TowerSnapshot:
     """Every dashboard section read in one pass (SELECT only), with the gate's caps."""
+    return read_snapshot(cfg, conn, lookback_days)
+
+
+def read_snapshot(
+    cfg: TowerConfig, conn: sqlite3.Connection, lookback_days: int | None = None
+) -> TowerSnapshot:
+    """The snapshot ``/api/snapshot`` serves; ``arc tower snapshot`` calls this too.
+
+    Gate caps come from the effective config (D26 overrides in the store applied),
+    so the CLI and the API can't disagree on scale.
+    """
     settings, _ = effective(cfg)
     return load_snapshot(
         conn,

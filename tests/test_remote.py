@@ -377,6 +377,8 @@ def test_install_and_uninstall_touch_only_own_labels(tmp_path: Path) -> None:
     (repo / ".venv" / "bin").mkdir(parents=True)
     (repo / ".venv" / "bin" / "arc").write_text("#!/bin/sh\n")
     (repo / ".venv" / "bin" / "arc").chmod(0o755)
+    (repo / "arc" / "tower" / "static").mkdir(parents=True)
+    (repo / "arc" / "tower" / "static" / "index.html").write_text("<!doctype html>")
     env = {**os.environ, "HOME": str(home), "PATH": f"{_fake_bin(tmp_path, log)}:/usr/bin:/bin"}
     for argv in (["install.sh", str(repo)], ["install.sh", "--uninstall"]):
         subprocess.run(  # noqa: S603
@@ -390,6 +392,24 @@ def test_install_and_uninstall_touch_only_own_labels(tmp_path: Path) -> None:
         assert "com.projectarc.hermes-dashboard" in c or "com.projectarc.tower" in c, c
     assert not any("ai.hermes.gateway" in c or "health-check" in c for c in calls)
     assert not list((home / "Library" / "LaunchAgents").glob("*.plist"))
+
+
+def test_install_refuses_without_built_spa(tmp_path: Path) -> None:
+    log = tmp_path / "calls.log"
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    (repo / ".venv" / "bin").mkdir(parents=True)
+    (repo / ".venv" / "bin" / "arc").write_text("#!/bin/sh\n")
+    (repo / ".venv" / "bin" / "arc").chmod(0o755)
+    env = {**os.environ, "HOME": str(home), "PATH": f"{_fake_bin(tmp_path, log)}:/usr/bin:/bin"}
+    r = subprocess.run(  # noqa: S603
+        ["bash", str(REMOTE / "install.sh"), str(repo)], env=env,
+        capture_output=True, text=True, timeout=60,
+    )  # fmt: skip
+    assert r.returncode == 1
+    assert "arc/tower/static/index.html missing" in r.stderr and "make web" in r.stderr
+    assert not log.exists()  # nothing loaded, no plist written
+    assert not (home / "Library" / "LaunchAgents").exists()
 
 
 def test_run_dashboard_script_execs_arc_remote(tmp_path: Path) -> None:
@@ -420,7 +440,10 @@ def _get(dash: tuple[int, str], tower: tuple[int, str]) -> Any:
     return get
 
 
-def _run(dash: tuple[int, str] = (200, GATED), tower: tuple[int, str] = (200, "ok"),
+TOWER_OK = json.dumps({"status": "ok", "db": "/x/arc.db", "as_of": "2026-09-30T12:00:00-04:00"})
+
+
+def _run(dash: tuple[int, str] = (200, GATED), tower: tuple[int, str] = (200, TOWER_OK),
          lan: list[str] | None = None, open_: set[str] | None = None) -> CheckResult:  # fmt: skip
     return checks.remote_access(
         RA,
@@ -463,6 +486,35 @@ def test_remote_down() -> None:
     assert "no answer (Connection refused)" in msgs and "HTTP 503" in msgs
     r = _run(dash=(401, ""), tower=(0, "timed out"))
     assert "HTTP 401" in r.findings[0].message and "no answer (timed out)" in r.findings[1].message
+
+
+def test_remote_tower_probes_api_health() -> None:
+    urls: list[str] = []
+
+    def get(url: str, timeout: float) -> tuple[int, str]:
+        urls.append(url)
+        return (200, GATED) if ":1994/" in url else (200, TOWER_OK)
+
+    r = checks.remote_access(
+        RA, resolve=lambda: "100.77.0.5", get=get, lan=lambda: [], probe=lambda h, p, t: False
+    )
+    assert r.severity == "ok"
+    assert "http://100.77.0.5:4174/api/health" in urls
+    assert not any("_stcore" in u for u in urls)
+
+
+@pytest.mark.parametrize(
+    ("body", "why"),
+    [
+        ("ok", "did not return JSON"),
+        (json.dumps({"status": "degraded"}), "status is not ok"),
+        ("[]", "status is not ok"),
+    ],
+)
+def test_remote_tower_unhealthy_body_is_an_alert(body: str, why: str) -> None:
+    r = _run(tower=(200, body))
+    assert r.severity == "failed" and _keys(r) == {"remote_tower"}
+    assert why in r.findings[0].message
 
 
 def test_remote_exposed_on_lan() -> None:

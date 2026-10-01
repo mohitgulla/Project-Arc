@@ -1,4 +1,4 @@
-"""E8.3 control tower: read-only data layer, Tailscale-only bind, Streamlit page, CLI."""
+"""E8.3/E8.7 control tower: read-only data layer, Tailscale-only bind, uvicorn serve, CLI."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ from arc.store.repos import (
 )
 from arc.structures import credit_vertical
 from arc.tower import net
-from arc.tower.cli import streamlit_command
 from arc.tower.data import connect_ro, load_snapshot, parse_ts
 from arc.utils.calendar import ET
 
@@ -377,16 +376,6 @@ def test_run_swallows_missing_binary() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_streamlit_command_is_hardened() -> None:
-    argv = streamlit_command("100.77.0.5", 4174)
-    pairs = dict(zip(argv[5::2], argv[6::2], strict=False))
-    assert argv[1:4] == ["-m", "streamlit", "run"] and argv[4].endswith("arc/tower/app.py")
-    assert pairs["--server.address"] == "100.77.0.5" and pairs["--server.port"] == "4174"
-    assert pairs["--server.headless"] == "true"
-    assert pairs["--server.enableXsrfProtection"] == "true"
-    assert pairs["--browser.gatherUsageStats"] == "false"
-
-
 def test_cli_serve_binds_tailscale_on_4174(db: Path, capsys: pytest.CaptureFixture[str]) -> None:
     with (
         mock.patch("arc.tower.net.resolve_bind_address", return_value="100.77.0.5"),
@@ -395,9 +384,10 @@ def test_cli_serve_binds_tailscale_on_4174(db: Path, capsys: pytest.CaptureFixtu
         assert main(["tower", "serve", "--db", str(db)]) == 0
     argv = call.call_args.args[0]
     env = call.call_args.kwargs["env"]
-    assert argv[argv.index("--server.address") + 1] == "100.77.0.5"
-    assert argv[argv.index("--server.port") + 1] == "4174"
-    assert env["ARC_TOWER_DB"] == str(db.resolve()) and env["ARC_TOWER_REFRESH"] == "30"
+    assert argv[1:4] == ["-m", "uvicorn", "arc.tower.serve:app_from_env"]
+    assert argv[argv.index("--host") + 1] == "100.77.0.5"
+    assert argv[argv.index("--port") + 1] == "4174"
+    assert env["ARC_TOWER_DB"] == str(db.resolve()) and env["ARC_TOWER_REFRESH"] == "60"
     assert "http://100.77.0.5:4174" in capsys.readouterr().out
 
 
@@ -419,7 +409,8 @@ def test_cli_serve_print_command_and_missing_db(
     db: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert main(["tower", "serve", "--db", str(db), "--local", "--print-command"]) == 0
-    assert "--server.address 127.0.0.1" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "uvicorn arc.tower.serve:app_from_env --factory --host 127.0.0.1 --port 4174" in out
     missing = tmp_path / "missing.db"
     assert main(["tower", "serve", "--db", str(missing), "--local"]) == 2
     assert not missing.exists()
@@ -436,58 +427,32 @@ def test_cli_snapshot(db: Path, tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert not (tmp_path / "x.db").exists()
 
 
+def test_cli_snapshot_matches_api_snapshot(db: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """``arc tower snapshot --json`` and ``GET /api/snapshot`` use one loader."""
+    from fastapi.testclient import TestClient
+
+    from arc.tower.api import create_app
+
+    assert main(["tower", "snapshot", "--db", str(db), "--json"]) == 0
+    cli_payload = json.loads(capsys.readouterr().out)
+    with TestClient(create_app(db)) as c:
+        api_payload = c.get("/api/snapshot").json()
+    for k in ("as_of", "ops"):  # wall-clock read time / age fields
+        cli_payload.pop(k), api_payload.pop(k)
+    assert cli_payload == api_payload
+
+
+def test_cli_serve_has_no_v2_flag(db: Path) -> None:
+    with pytest.raises(SystemExit):
+        main(["tower", "serve", "--v2", "--local", "--db", str(db), "--print-command"])
+
+
+def test_v1_page_module_is_gone() -> None:
+    """D35 cutover: the tower is the FastAPI + React app only."""
+    assert not (REPO / "arc" / "tower" / "app.py").exists()
+
+
 def test_cli_does_not_modify_db(db: Path) -> None:
     before = db.read_bytes()
     main(["tower", "snapshot", "--db", str(db), "--json"])
     assert db.read_bytes() == before
-
-
-# ---------------------------------------------------------------------------
-# Streamlit page (AppTest: renders headless, no server)
-# ---------------------------------------------------------------------------
-
-
-def _app(db: Path, monkeypatch: pytest.MonkeyPatch):
-    from streamlit.testing.v1 import AppTest
-
-    monkeypatch.setenv("ARC_TOWER_DB", str(db))
-    monkeypatch.setenv("ARC_TOWER_REFRESH", "0")
-    at = AppTest.from_file(str(REPO / "arc" / "tower" / "app.py"), default_timeout=30)
-    return at.run()
-
-
-def test_app_renders_every_section(db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    at = _app(db, monkeypatch)
-    assert not at.exception
-    subheaders = [s.value for s in at.subheader]
-    assert subheaders == [
-        "P&L",
-        "Greeks (net portfolio)",
-        "Positions",
-        "Proposals",
-        "Halts",
-        "Gate violations",
-    ]
-    assert any("HALTED" in e.value for e in at.error)
-    labels = {m.label for m in at.metric}
-    assert {"Equity", "Day P&L", "Δ (share-eq)", "ν ($/vol-pt)", "Max loss"} <= labels
-    assert len(at.dataframe) >= 4
-    # read-only: no widgets that could change state
-    assert not at.button and not at.text_input and not at.selectbox and not at.checkbox
-
-
-def test_app_missing_db_shows_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    at = _app(tmp_path / "missing.db", monkeypatch)
-    assert not at.exception
-    assert any("audit store not found" in e.value for e in at.error)
-    assert not (tmp_path / "missing.db").exists()
-
-
-def test_app_empty_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    path = tmp_path / "empty.db"
-    conn = connect(path)
-    migrate(conn)
-    conn.close()
-    at = _app(path, monkeypatch)
-    assert not at.exception
-    assert any("Trading enabled" in s.value for s in at.success)

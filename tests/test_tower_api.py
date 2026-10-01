@@ -236,7 +236,7 @@ def test_cadences_skip_missing_jobs() -> None:
 
 
 # ---------------------------------------------------------------------------
-# serve --v2: same bind rules as Streamlit
+# serve: Tailscale or loopback bind only (D29)
 # ---------------------------------------------------------------------------
 
 
@@ -249,32 +249,32 @@ def test_uvicorn_command_is_hardened() -> None:
     assert argv[argv.index("--workers") + 1] == "1" and "--reload" not in argv
 
 
-def test_cli_serve_v2_binds_tailscale(db: Path, capsys: pytest.CaptureFixture[str]) -> None:  # noqa: F811
+def test_cli_serve_binds_tailscale(db: Path, capsys: pytest.CaptureFixture[str]) -> None:  # noqa: F811
     with (
         mock.patch("arc.tower.net.resolve_bind_address", return_value="100.77.0.5"),
         mock.patch("arc.tower.cli.subprocess.call", return_value=0) as call,
     ):
-        assert main(["tower", "serve", "--v2", "--db", str(db)]) == 0
+        assert main(["tower", "serve", "--db", str(db)]) == 0
     argv = call.call_args.args[0]
     env = call.call_args.kwargs["env"]
     assert "uvicorn" in argv and argv[argv.index("--host") + 1] == "100.77.0.5"
     assert env["ARC_TOWER_DB"] == str(db.resolve()) and env["ARC_TOWER_REFRESH"] == "60"
-    assert "arc tower v2: http://100.77.0.5:4174" in capsys.readouterr().out
+    assert "arc tower: http://100.77.0.5:4174" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("address", ["0.0.0.0", "192.168.1.5", "10.0.0.10", "::"])
-def test_cli_serve_v2_refuses_public_or_lan(
+def test_cli_serve_refuses_public_or_lan(
     db: Path,  # noqa: F811
     address: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with mock.patch("arc.tower.cli.subprocess.call") as call:
-        assert main(["tower", "serve", "--v2", "--db", str(db), "--address", address]) == 2
+        assert main(["tower", "serve", "--db", str(db), "--address", address]) == 2
     call.assert_not_called()
     assert "refusing to bind" in capsys.readouterr().out
 
 
-def test_cli_serve_v2_refuses_without_tailscale(
+def test_cli_serve_refuses_without_tailscale(
     db: Path,  # noqa: F811
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -283,40 +283,33 @@ def test_cli_serve_v2_refuses_without_tailscale(
         mock.patch("arc.tower.net.resolve_bind_address", side_effect=err),
         mock.patch("arc.tower.cli.subprocess.call") as call,
     ):
-        assert main(["tower", "serve", "--v2", "--db", str(db)]) == 2
+        assert main(["tower", "serve", "--db", str(db)]) == 2
     call.assert_not_called()
     assert "no Tailscale" in capsys.readouterr().out
 
 
-def test_cli_serve_v2_missing_db_and_print_command(
+def test_cli_serve_missing_db_and_print_command(
     db: Path,  # noqa: F811
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     missing = tmp_path / "missing.db"
     with mock.patch("arc.tower.cli.subprocess.call") as call:
-        assert main(["tower", "serve", "--v2", "--db", str(missing), "--local"]) == 2
+        assert main(["tower", "serve", "--db", str(missing), "--local"]) == 2
     call.assert_not_called()
     assert not missing.exists()
     capsys.readouterr()
-    assert main(["tower", "serve", "--v2", "--local", "--db", str(db), "--print-command"]) == 0
+    assert main(["tower", "serve", "--local", "--db", str(db), "--print-command"]) == 0
     out = capsys.readouterr().out
     assert "uvicorn arc.tower.serve:app_from_env --factory --host 127.0.0.1 --port 4174" in out
 
 
-def test_cli_serve_v2_refresh_choices(db: Path, capsys: pytest.CaptureFixture[str]) -> None:  # noqa: F811
-    base = ["tower", "serve", "--v2", "--local", "--db", str(db), "--print-command"]
+def test_cli_serve_refresh_choices(db: Path, capsys: pytest.CaptureFixture[str]) -> None:  # noqa: F811
+    base = ["tower", "serve", "--local", "--db", str(db), "--print-command"]
     assert main([*base, "--refresh", "45"]) == 2
     assert "must be one of [30, 60, 120]" in capsys.readouterr().out
     with mock.patch("arc.tower.cli.subprocess.call", return_value=0) as call:
-        assert main(["tower", "serve", "--v2", "--local", "--db", str(db), "--refresh", "30"]) == 0
-    assert call.call_args.kwargs["env"]["ARC_TOWER_REFRESH"] == "30"
-
-
-def test_cli_serve_streamlit_default_refresh_unchanged(db: Path) -> None:  # noqa: F811
-    with mock.patch("arc.tower.cli.subprocess.call", return_value=0) as call:
-        assert main(["tower", "serve", "--local", "--db", str(db)]) == 0
-    assert "streamlit" in call.call_args.args[0]
+        assert main(["tower", "serve", "--local", "--db", str(db), "--refresh", "30"]) == 0
     assert call.call_args.kwargs["env"]["ARC_TOWER_REFRESH"] == "30"
 
 

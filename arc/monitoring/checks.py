@@ -249,6 +249,21 @@ def _dashboard_problem(status: int, body: str) -> str | None:
     return None
 
 
+def _tower_problem(status: int, body: str) -> str | None:
+    """Why ``/api/health`` is not a healthy tower, or None when it is."""
+    import json
+
+    if status != 200:
+        return f"no answer ({body[:120]})" if status == 0 else f"HTTP {status}"
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return "/api/health did not return JSON (not the Arc tower?)"
+    if not isinstance(data, dict) or data.get("status") != "ok":
+        return "/api/health status is not ok"
+    return None
+
+
 def remote_access(
     ra: RemoteAccessCheck,
     *,
@@ -261,7 +276,8 @@ def remote_access(
 
     - ``remote_hermes``  ``GET /api/status`` on :1994 must answer with
       ``auth_required: true`` and ``basic`` in ``auth_providers``.
-    - ``remote_tower``   ``GET /_stcore/health`` on :4174 must answer 200.
+    - ``remote_tower``   ``GET /api/health`` on :4174 must answer 200 with
+      ``status: ok`` (the tower opened the audit store read-only, D35).
     - ``remote_exposed`` either port accepting a connection on a LAN address.
     """
     from arc.tower.net import NoTailscaleAddressError, host_lan_addresses, resolve_bind_address
@@ -290,10 +306,8 @@ def remote_access(
                     detail={"url": dash},
                 )
             )
-        tower = f"http://{address}:{ra.tower_port}/_stcore/health"
-        code, text = get(tower, timeout)
-        if code != 200:
-            why = f"HTTP {code}" if code else f"no answer ({text[:120]})"
+        tower = f"http://{address}:{ra.tower_port}/api/health"
+        if why := _tower_problem(*get(tower, timeout)):
             findings.append(
                 Finding(
                     key="remote_tower",

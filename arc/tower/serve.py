@@ -1,10 +1,10 @@
-"""``arc tower serve --v2`` (E8.7, D35): uvicorn on the Tailscale address.
+"""``arc tower serve`` (E8.7, D35): uvicorn on the Tailscale address.
 
-Bind rules are the Streamlit tower's (:func:`arc.tower.net.resolve_bind_address`,
-D29): a Tailscale ``100.64.0.0/10`` address or loopback, never ``0.0.0.0`` or a LAN
-IP, and no start at all without one. uvicorn runs in a child process with the app
-factory ``arc.tower.serve:app_from_env``; its settings travel in ``ARC_TOWER_*``
-environment variables, the same ones the Streamlit page reads.
+Bind rules (:func:`arc.tower.net.resolve_bind_address`, D29): a Tailscale
+``100.64.0.0/10`` address or loopback, never ``0.0.0.0`` or a LAN IP, and no start
+at all without one. uvicorn runs in a child process with the app factory
+``arc.tower.serve:app_from_env``; its settings travel in ``ARC_TOWER_*``
+environment variables.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def uvicorn_command(address: str, port: int) -> list[str]:
 
 
 def app_from_env() -> FastAPI:
-    """uvicorn factory: build the app from ``ARC_TOWER_*`` (set by ``arc tower serve --v2``)."""
+    """uvicorn factory: build the app from ``ARC_TOWER_*`` (set by ``arc tower serve``)."""
     from arc.config import get_settings
     from arc.store.db import DEFAULT_DB_PATH
     from arc.tower.api import create_app

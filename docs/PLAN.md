@@ -126,12 +126,17 @@ Project-Arc/
 │   ├── broker/               # BrokerAdapter protocol; alpaca_paper.py
 │   ├── reconcile/            # broker vs local, PnL snapshots, alerts
 │   ├── backtest/             # cost-aware engine, walk-forward, reports
+│   ├── tower/                # read-only control tower v2 (D35): FastAPI + uvicorn, mode=ro
+│   │   ├── api.py            # create_app: GET-only /api/* + the built SPA at /
+│   │   ├── routes/           # /api/{health,meta,snapshot,overview,positions,trades,performance,ops/*}
+│   │   └── static/           # SPA build output of `make web` (gitignored)
 │   └── cli.py                # `arc scan|chains|propose|gate|approve|execute|reconcile|report`
 ├── hermes/
 │   ├── skills/arc-*/SKILL.md # persona skills (Scout, Director, Quant, Risk, Investor, Auditor)
 │   ├── hooks/arc-gate/       # pre_tool_call fail-closed hook
 │   └── routines/             # cron job definitions (pre-market, intraday, post-market)
 ├── schemas/context/          # committed JSON Schema per context kind, <kind>.v<N>.json (D27)
+├── web/                      # tower SPA source: Vite + React + TS (D35, docs/TOWER_DESIGN.md)
 └── tests/                    # unit, property (hypothesis), integration (paper account)
 ```
 
@@ -272,7 +277,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 **E8 Ops**
 - E8.1 Per-persona model routing (fallback provider: later, note only) ← P0
 - E8.2 Monitoring — heartbeat, gateway health, log rotation, alerts ← E5.3
-- E8.3 Streamlit control tower over Tailscale ← E6.3
+- E8.3 Streamlit control tower over Tailscale (replaced by E8.7, D35) ← E6.3
 - E8.5 Slack control panel — registry, bounded owner-only overrides, audit/revert, effective config everywhere (D26) ← E3.4, E2.4
 - E8.6 Remote access over Tailscale — Hermes dashboard/Desktop backend + tower as launchd agents on the tailnet only, basic auth, remote_access health check (D29) ← E8.3, E8.2
 - E8.7 Control tower v2 — read-only FastAPI API + Vite/React SPA, Copilot-style design system (`docs/TOWER_DESIGN.md`), light/dark, mobile-first, 60 s polling; replaces Streamlit (D35) ← E8.6b

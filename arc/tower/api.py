@@ -10,7 +10,7 @@
   ``index.html`` fallback for client-side routes. ``/api/*`` never falls back.
 
 No CORS middleware (same origin only), no auth: the bind (Tailscale or loopback,
-:mod:`arc.tower.net`) is the boundary, as with the Streamlit tower (OPS §5.6).
+:mod:`arc.tower.net`) is the boundary (D29, OPS §5.6).
 The tower never imports the broker, market data, personas, an LLM or Slack
 (import-linter contract in ``pyproject.toml``).
 """
