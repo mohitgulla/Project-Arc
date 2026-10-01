@@ -20,6 +20,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -103,13 +104,40 @@ def hook_env(secret: str | None) -> dict[str, str]:
     return env
 
 
-def run_hook(stdin: str, secret: str | None = SECRET) -> tuple[int, dict]:
+def shipped_command_template() -> str:
+    """HOOK.yaml's command, ``{ARC_REPO}`` still unexpanded."""
+    meta = yaml.safe_load((HOOK_DIR / "HOOK.yaml").read_text())
+    (entry,) = meta["hermes_hooks"]["pre_tool_call"]
+    return str(entry["command"])
+
+
+def hook_argv() -> list[str]:
+    """The shipped HOOK.yaml command for this checkout, as argv.
+
+    ``{ARC_REPO}`` expands to this repo; the interpreter is the one running the
+    tests (the Arc venv's Python here, in CI and in a worktree without a
+    ``.venv``). Every flag and argument after it is HOOK.yaml's, verbatim.
+    """
+    argv = shlex.split(shipped_command_template().replace("{ARC_REPO}", str(REPO)))
+    assert argv[0] == f"{REPO}/.venv/bin/python", argv
+    return [sys.executable, *argv[1:]]
+
+
+def run_hook(
+    stdin: str,
+    secret: str | None = SECRET,
+    *,
+    argv: list[str] | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[int, dict]:
+    env = hook_env(secret)
+    env.update(extra_env or {})
     r = subprocess.run(
-        [sys.executable, str(HOOK)],
+        argv or hook_argv(),
         input=stdin,
         capture_output=True,
         text=True,
-        env=hook_env(secret),
+        env=env,
         timeout=60,
     )
     return r.returncode, json.loads(r.stdout)
@@ -150,8 +178,8 @@ def test_hook_yaml_declares_fail_closed_pre_tool_call() -> None:
     assert entry["fail_closed"] is True
     assert 1 <= entry["timeout"] <= 30
     assert entry["command"].endswith("hermes/hooks/arc-gate/hook.py")
-    import re
-
+    # E3.2b: the interpreter must ignore inherited PYTHON* env (Hermes leaks PYTHONPATH).
+    assert shlex.split(entry["command"])[:2] == ["{ARC_REPO}/.venv/bin/python", "-E"]
     m = re.compile(entry["matcher"])
     for tool in (
         "terminal",
@@ -206,6 +234,69 @@ def test_garbage_stdin_blocked(stdin: str) -> None:
     code, out = run_hook(stdin)
     assert code == 2
     assert out["action"] == "block"
+
+
+# ---------------------------------------------------------------------------
+# Inherited PYTHON* env (E3.2b): the Hermes source-checkout launcher exports
+# PYTHONPATH=<hermes-agent>:<its py3.14 site-packages> into every hook subprocess
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def poisoned_pythonpath(tmp_path: Path) -> dict[str, str]:
+    """A PYTHONPATH whose ``pydantic_core`` raises on import, like Hermes's 3.14 one."""
+    pkg = tmp_path / "poison" / "pydantic_core"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text(
+        "raise ModuleNotFoundError(\"No module named 'pydantic_core._pydantic_core'\")\n"
+    )
+    return {"PYTHONPATH": str(pkg.parent)}
+
+
+def test_poisoned_pythonpath_breaks_a_hook_run_without_E(
+    poisoned_pythonpath: dict[str, str],
+) -> None:
+    """Control: the poison is real; without -E a signed order fails closed."""
+    code, out = run_hook(
+        payload(TOOL, order_args(signed_token(proposal()))),
+        argv=[sys.executable, str(HOOK)],
+        extra_env=poisoned_pythonpath,
+    )
+    assert code == 2
+    assert "failing closed: ModuleNotFoundError" in out["message"]
+    assert "pydantic_core" in out["message"]
+
+
+def test_shipped_command_ignores_poisoned_pythonpath_unsigned_blocked(
+    poisoned_pythonpath: dict[str, str],
+) -> None:
+    code, out = run_hook(payload(TOOL, order_args()), extra_env=poisoned_pythonpath)
+    assert code == 2
+    assert out["action"] == "block"
+    assert "no valid gate token" in out["message"]
+
+
+def test_shipped_command_ignores_poisoned_pythonpath_signed_allowed(
+    poisoned_pythonpath: dict[str, str],
+) -> None:
+    code, out = run_hook(
+        payload(TOOL, order_args(signed_token(proposal()))), extra_env=poisoned_pythonpath
+    )
+    assert (code, out) == (0, {})
+
+
+def test_shipped_command_reads_secret_from_hermes_env_file(
+    tmp_path: Path, poisoned_pythonpath: dict[str, str]
+) -> None:
+    """-E leaves the ~/.hermes/.env secret lookup working (no ARC_GATE_SECRET in env)."""
+    home = tmp_path / "home"
+    (home / ".hermes").mkdir(parents=True)
+    (home / ".hermes" / ".env").write_text(f"ARC_GATE_SECRET={SECRET}\n")
+    env = {**poisoned_pythonpath, "HOME": str(home), "HERMES_HOME": str(home / ".hermes")}
+    code, out = run_hook(
+        payload(TOOL, order_args(signed_token(proposal()))), secret=None, extra_env=env
+    )
+    assert (code, out) == (0, {})
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +519,8 @@ def _hermes_hooks_test(home: Path, tool: str, args: dict, secret: str | None) ->
 
 
 def _real_command() -> str:
-    return f"{sys.executable} {HOOK}"
+    """HOOK.yaml's shipped command (E3.2b), so the live tests run exactly it."""
+    return shlex.join(hook_argv())
 
 
 @pytest.mark.integration

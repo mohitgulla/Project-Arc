@@ -14,6 +14,13 @@
 # Arc venv's Python (it imports `arc`). `fail_closed: true` makes Hermes block the
 # tool if the hook crashes, times out, or prints non-JSON.
 #
+# `-E` (E3.2b): the interpreter ignores every inherited PYTHON* variable. The Hermes
+# source-checkout launcher exports PYTHONPATH=<hermes-agent>:<its py3.14
+# site-packages>, which every hook subprocess inherits; without -E the Arc py3.12
+# venv imports Hermes's pydantic_core and the hook fails closed on every order,
+# signed ones included. The secret lookup is unaffected (-E does not touch
+# os.environ; ARC_GATE_SECRET is read from it or from ~/.hermes/.env).
+#
 # The secret is ARC_GATE_SECRET (>= 32 bytes) in ~/.hermes/.env. Without it every
 # gated call is blocked.
 
@@ -22,6 +29,6 @@ description: Fail-closed gate on broker order tools; requires an Arc HMAC gate t
 hermes_hooks:
   pre_tool_call:
     - matcher: "terminal|mcp__.+__(place_option_order|place_stock_order|place_crypto_order|replace_order_by_id|close_position|close_all_positions|exercise_options_position)"
-      command: "{ARC_REPO}/.venv/bin/python {ARC_REPO}/hermes/hooks/arc-gate/hook.py"
+      command: "{ARC_REPO}/.venv/bin/python -E {ARC_REPO}/hermes/hooks/arc-gate/hook.py"
       timeout: 10
       fail_closed: true
