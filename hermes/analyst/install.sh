@@ -4,7 +4,11 @@
 #   hermes/analyst/install.sh [--dry-run]
 #
 # Prerequisite (owner, E9.4 step 1): the `arc-analyst` profile exists
-#   hermes profile create arc-analyst --no-skills   (+ model/memory settings, Anthropic key only)
+#   hermes profile create arc-analyst --no-skills
+#   then mirror ~/.hermes/profiles/arc-sentinel/config.yaml (model/memory settings). Auth is the
+#   Claude subscription route, same as arc-sentinel: the profile .env carries only
+#   CLAUDE_CODE_OAUTH_TOKEN (no ANTHROPIC_API_KEY, no Alpaca keys, no ARC_GATE_SECRET).
+#   Verify with: hermes -p arc-analyst auth status anthropic
 #
 # - Copies the skill, the pre-run gate script and SOUL.md from this directory into the profile:
 #     <profile>/skills/arc-analyst/SKILL.md, <profile>/scripts/arc_analyst.py, <profile>/SOUL.md
