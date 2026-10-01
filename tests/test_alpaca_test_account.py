@@ -28,6 +28,13 @@ def acct(**kw: str) -> IntegrationAccountSettings:
     return IntegrationAccountSettings(_env_file=None, **kw)  # type: ignore[call-arg]
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_alpaca_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hermetic: a shell that sourced ~/.hermes/.env must not leak real keys in."""
+    for var in ("ALPACA_API_KEY", "ALPACA_TEST_API_KEY", "ALPACA_TEST_SECRET_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+
 # -- key resolution -----------------------------------------------------------
 
 
