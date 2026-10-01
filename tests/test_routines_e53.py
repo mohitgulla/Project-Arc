@@ -199,9 +199,13 @@ class TestDayThread:
         [
             (et(2026, 9, 28, 12, 0), dt.date(2026, 9, 28)),  # Mon midday -> Mon
             (et(2026, 9, 28, 19, 59), dt.date(2026, 9, 28)),
-            (et(2026, 9, 28, 22, 0), dt.date(2026, 9, 29)),  # Mon 22:00 Scout -> Tue
+            # Owner 2026-09-30: the day thread switches at 24:00 ET, not 20:00.
+            (et(2026, 9, 28, 22, 0), dt.date(2026, 9, 28)),  # Mon 22:00 Scout -> Mon
+            (et(2026, 9, 28, 23, 59, 59), dt.date(2026, 9, 28)),
+            (et(2026, 9, 29, 0, 0), dt.date(2026, 9, 29)),  # midnight -> Tue
             (et(2026, 9, 27, 22, 0), dt.date(2026, 9, 28)),  # Sun 22:00 -> Mon
-            (et(2026, 10, 2, 22, 0), dt.date(2026, 10, 5)),  # Fri night -> Mon
+            (et(2026, 10, 2, 22, 0), dt.date(2026, 10, 2)),  # Fri night -> Fri
+            (et(2026, 10, 3, 0, 30), dt.date(2026, 10, 5)),  # Sat early -> Mon
             (et(2026, 10, 3, 12, 0), dt.date(2026, 10, 5)),  # Sat -> Mon
             (et(2026, 11, 26, 12, 0), dt.date(2026, 11, 27)),  # Thanksgiving -> Fri
         ],
@@ -217,6 +221,16 @@ class TestDayThread:
         )
         with pytest.raises(ValidationError):
             RoutinesConfig.model_validate({"heartbeat": {"day_rollover": "25:00"}})
+
+    def test_default_and_shipped_rollover_is_midnight(self) -> None:
+        from arc.routines.config import load_routines
+
+        assert RoutinesConfig().heartbeat.day_rollover == dt.time.max
+        assert load_routines().heartbeat.day_rollover == dt.time.max
+        cfg = RoutinesConfig.model_validate({"heartbeat": {"day_rollover": "24:00"}})
+        assert thread_day(et(2026, 9, 28, 23, 59), cfg.heartbeat.day_rollover) == dt.date(
+            2026, 9, 28
+        )
 
 
 class TestHeartbeatPolicy:
@@ -246,11 +260,11 @@ class TestHeartbeatPolicy:
         notes = RecordingNotifier()
         hb = Heartbeats(conn, notes)
         hb.notice(et(2026, 9, 28, 10, 0), "monitor", "halt")
-        hb.alert(et(2026, 9, 28, 22, 0), "scout", "boom")
-        # E5.5b: a [Routines] notice is fenced; the emoji stays outside the fence.
+        hb.alert(et(2026, 9, 29, 0, 30), "scout", "boom")  # after midnight -> Tue
+        # A one-line [Routines] notice is inline code on the emoji's line (owner 2026-09-30).
         assert notes.posts[0] == (
             dt.date(2026, 9, 28),
-            ":warning: ```\n[Routines] monitor: halt\n```",
+            ":warning: `[Routines] monitor: halt`",
         )
         assert notes.posts[1] == (
             dt.date(2026, 9, 29),
@@ -270,9 +284,7 @@ class TestHeartbeatPolicy:
         assert text.endswith("\n```")
         assert "> sources since last update: rss: 3 new docs\n```" in text  # folded inside
         hb.alert(et(2026, 9, 28, 10, 5), "monitor", "boom", run_id="r-1")
-        assert notes.posts[1][1] == (
-            ":rotating_light: ```\n[Routines] monitor FAILED: boom `r-1`\n```"
-        )
+        assert notes.posts[1][1] == (":rotating_light: `[Routines] monitor FAILED: boom` `r-1`")
         hb.summary(et(2026, 9, 28, 12, 0), "director", "ranked 2")
         assert notes.posts[2][1] == "[Director] director ✓ ranked 2"
         hb.alert(et(2026, 9, 28, 12, 5), "quant", "boom")
@@ -359,11 +371,12 @@ class TestHeartbeatPolicy:
         }
         d = Dispatcher(conn, cfg, handlers=handlers, notifier=notes, is_halted=lambda: False)
         d.tick(et(2026, 9, 28, 22, 0), since=et(2026, 9, 28, 21, 55))
+        # 24:00 rollover (owner 2026-09-30): Monday's 22:00 posts stay in Monday's thread.
         assert notes.posts[0] == (
-            dt.date(2026, 9, 29),
-            ":warning: ```\n[Routines] monitor: HALT\n```",
+            dt.date(2026, 9, 28),
+            ":warning: `[Routines] monitor: HALT`",
         )
-        assert notes.posts[1][0] == dt.date(2026, 9, 29)
+        assert notes.posts[1][0] == dt.date(2026, 9, 28)
         assert notes.posts[1][1].startswith("[Scout] scout ✓ 3 candidates")
         assert "monitor: ok" in notes.posts[1][1]
 

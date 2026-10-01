@@ -132,12 +132,14 @@ Shipped defaults in `config/routines.yaml`, all times ET:
 - One Hermes cron job, `arc-routines-tick`, runs every 5m with `--no-agent`. It runs
   `hermes/routines/arc_routines_tick.py`; install it with `hermes/routines/install.sh`.
   Success prints nothing. If the tick crashes or times out, Hermes alerts #project-arc.
-- Heartbeats post to the #arc-investor thread for the next session. Posts go to today's
-  thread only on a trading day before `heartbeat.day_rollover` (20:00). Later posts go to
-  the next session's thread: a 22:00 Scout run posts in tomorrow's thread, and a Sunday
-  22:00 run posts in Monday's. Quiet jobs, sources and `monitor`, fold into the next
-  persona line, one entry per job. `JobResult.notice` posts immediately (halt, expiring
-  positions).
+- Heartbeats post to the session's `💡 Thu Oct 1 · Session Notes` thread in #arc-investor.
+  On a trading day every post until `heartbeat.day_rollover` (24:00 ET, i.e. midnight) goes
+  to that day's thread, so the 22:00 Scout run stays in the same day. Weekend/holiday posts
+  go to the next session's thread: a Sunday 22:00 run posts in Monday's. Quiet jobs, sources
+  and `monitor`, fold into the next persona line, one entry per job. `JobResult.notice`
+  posts immediately (halt, expiring positions) as one line, `:warning: `[Routines] …``.
+  The thread's first reply is the auto-approve banner; a flip notice that only repeats the
+  state already shown in the thread is not posted.
 - YouTube summaries show the run's caption outcome (ok, rate_limited, empty, error,
   skipped by breaker/cooldown), audio fallbacks with wall time, and the current
   captions cooldown.

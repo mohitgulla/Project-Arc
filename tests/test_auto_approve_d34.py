@@ -371,6 +371,27 @@ class TestDayBanner:
         assert client.reply.call_args.kwargs["text"] == "Auto-approve: OFF (paper)"
         assert client.reply.call_args.kwargs["thread_ts"] == "1.0"
 
+    def test_flip_that_repeats_the_banner_is_not_posted(self, conn: sqlite3.Connection) -> None:
+        """Owner 2026-09-30: a flip that opens the thread posted the banner and then
+        the same state again as a notice. Only a real change posts a notice."""
+        from arc.approvals.auto import _post_notice
+        from arc.slack.client import ArcSlackClient
+
+        client = mock.create_autospec(ArcSlackClient, instance=True)
+        client.post_daily_session.return_value = {"ts": "1.0"}
+        client.reply.return_value = {"ts": "r"}
+        set_auto(_svc(conn, Clock()), env="paper", on=True, reason=None)
+        _post_notice(conn, notice_text("paper", True), NOW, client)
+        texts = [c.kwargs["text"] for c in client.reply.call_args_list]
+        assert texts == ["Auto-approve: ON (paper)"]  # the banner only, no repeat
+        _post_notice(conn, notice_text("paper", True), NOW, client)  # same state again
+        assert client.reply.call_count == 1
+        _post_notice(conn, notice_text("paper", False), NOW, client)  # a real change
+        texts = [c.kwargs["text"] for c in client.reply.call_args_list]
+        assert texts[-1] == ":warning: `[Routines] approve: Auto-approve: OFF (paper)`"
+        _post_notice(conn, notice_text("paper", True), NOW, client)  # and back
+        assert client.reply.call_count == 3
+
 
 # ---------------------------------------------------------------------------
 # Approval service: per-env auto-approve
