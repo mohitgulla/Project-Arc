@@ -40,7 +40,7 @@ from arc.routines.handlers import JobResult, JobSkippedError
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from arc.approvals.service import ApprovalService
     from arc.broker.base import BrokerAdapter
@@ -421,14 +421,14 @@ def approval_events(conn: sqlite3.Connection, proposal_hashes: Sequence[str]) ->
     return out
 
 
-def investor_command(
-    env: RunEnv, event_id: str, *, chain_run_id: str, parent_run_id: str
-) -> list[str]:
-    """The ``arc routines run investor --event`` argv a spawned ladder runs with."""
+def arc_command(env: RunEnv, args: Sequence[str]) -> list[str]:
+    """``arc <args…>`` with this process's interpreter plus the run env's db/config/locks/slack.
+
+    Shared by every detached child: the D34 Investor ladder and the D39 background lane.
+    """
     # Same interpreter as this process; `arc.cli:main` is the `arc` console script.
     argv = [sys.executable, "-c", "from arc.cli import main; raise SystemExit(main())"]
-    argv += ["routines", "run", "investor", "--event", event_id]
-    argv += ["--chain-run-id", chain_run_id, "--parent-run-id", parent_run_id]
+    argv += list(args)
     if env.db_path:
         argv += ["--db", env.db_path]
     if env.config_path:
@@ -440,16 +440,37 @@ def investor_command(
     return argv
 
 
-def spawn_investor(argv: Sequence[str]) -> int:
-    """Start the Investor subprocess detached (its own session); returns the pid."""
+def investor_command(
+    env: RunEnv, event_id: str, *, chain_run_id: str, parent_run_id: str
+) -> list[str]:
+    """The ``arc routines run investor --event`` argv a spawned ladder runs with."""
+    return arc_command(
+        env,
+        [
+            "routines", "run", "investor", "--event", event_id,
+            "--chain-run-id", chain_run_id, "--parent-run-id", parent_run_id,
+        ],
+    )  # fmt: skip
+
+
+def spawn_detached(argv: Sequence[str], env: Mapping[str, str] | None = None) -> int:
+    """Start an ``arc`` child detached (its own session); returns the pid.
+
+    D34 (Investor ladders) and D39 (the tick's background lane) both use this one
+    spawner. *env* defaults to this process's environment.
+    """
     proc = subprocess.Popen(  # noqa: S603 - argv is built from our own constants
         list(argv),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
+        env=dict(env) if env is not None else None,
     )
     return proc.pid
+
+
+spawn_investor = spawn_detached  # D34 name, kept for callers and tests
 
 
 def execute_step(

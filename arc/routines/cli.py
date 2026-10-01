@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -84,6 +85,15 @@ def add_routines_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     r.add_argument("--chain-run-id", default=None, help="with --event: join this chain run")
     r.add_argument("--parent-run-id", default=None, help="with --event: the dispatching run")
 
+    rc = rsub.add_parser(
+        "run-claimed",
+        help="D39: run a slot the tick already claimed (spawned by the tick's background lane)",
+    )
+    _common(rc)
+    rc.add_argument("run_id")
+    rc.add_argument("--no-slack", action="store_true")
+    rc.add_argument("--lock-dir", default=str(DEFAULT_LOCK_DIR))
+
     h = rsub.add_parser("history", help="Recent routine runs")
     _common(h)
     h.add_argument("--job", default=None)
@@ -146,7 +156,11 @@ def _conn(args: argparse.Namespace, *, memory: bool = False) -> sqlite3.Connecti
 
 
 def _dispatcher(
-    args: argparse.Namespace, conn: sqlite3.Connection, *, dry: bool = False
+    args: argparse.Namespace,
+    conn: sqlite3.Connection,
+    *,
+    dry: bool = False,
+    background: bool = False,
 ) -> Dispatcher:
     from arc.routines.dispatcher import Dispatcher as _Dispatcher
     from arc.routines.handlers import RunEnv
@@ -171,7 +185,21 @@ def _dispatcher(
         lock_dir=None if dry else str(getattr(args, "lock_dir", "") or "") or None,
         slack=not (dry or getattr(args, "no_slack", False)),
     )
-    return _Dispatcher(conn, routines, locks=locks, notifier=notifier, clock=clock, run_env=run_env)
+    # D39: only a live tick hands `lane: background` slots to detached children.
+    spawner = None
+    if background and not dry:
+        from arc.routines.investor import spawn_detached
+
+        spawner = spawn_detached
+    return _Dispatcher(
+        conn,
+        routines,
+        locks=locks,
+        notifier=notifier,
+        clock=clock,
+        run_env=run_env,
+        spawner=spawner,
+    )
 
 
 def _effective_load(args: argparse.Namespace, conn: sqlite3.Connection) -> RoutinesConfig:
@@ -244,13 +272,14 @@ def _tick(
     conn: sqlite3.Connection | None = None,
     correlation: dict[str, str] | None = None,
 ) -> int:
+    t0 = time.monotonic()
     if conn is None:
         conn = _conn(args, memory=args.dry_run and args.db is None)
-    disp = _dispatcher(args, conn, dry=args.dry_run)
+    disp = _dispatcher(args, conn, dry=args.dry_run, background=correlation is not None)
     report = disp.tick(now, dry_run=args.dry_run, since=since)
     approvals = None if args.dry_run else _approval_sweep(args, conn, report.now)
     if correlation is not None:
-        _record_tick(conn, report, correlation)
+        _record_tick(conn, report, correlation, duration_ms=int((time.monotonic() - t0) * 1000))
     if args.json:
         payload: dict[str, object] = {
             "now": report.now.isoformat(),
@@ -278,8 +307,18 @@ def _tick(
     return 1 if any(o.status == "failed" for o in report.outcomes) else 0
 
 
-def _record_tick(conn: sqlite3.Connection, report: TickReport, correlation: dict[str, str]) -> None:
-    """E8.2 liveness: one ``tick`` heartbeat per live tick (read by ``arc health check``)."""
+def _record_tick(
+    conn: sqlite3.Connection,
+    report: TickReport,
+    correlation: dict[str, str],
+    *,
+    duration_ms: int | None = None,
+) -> None:
+    """E8.2 liveness: one ``tick`` heartbeat per live tick (read by ``arc health check``).
+
+    E5.10: the detail also carries the tick's own wall time (``tick_duration_ms``) and
+    its three slowest due jobs, for the slow-tick alert (E8.2a).
+    """
     from collections import Counter
 
     from arc.monitoring.store import HeartbeatRepo
@@ -295,6 +334,8 @@ def _record_tick(conn: sqlite3.Connection, report: TickReport, correlation: dict
             "halted": report.halted,
             "expired": report.expired,
             "reclaimed": report.reclaimed,
+            "tick_duration_ms": duration_ms,
+            "slowest_jobs": report.slowest(3),
             "outcomes": [
                 {"job": o.job, "status": o.status, "run_id": o.run_id}
                 for o in report.outcomes
@@ -330,6 +371,25 @@ def _live_tick(args: argparse.Namespace, now: _dt.datetime, since: _dt.datetime 
                 detail={"error": f"{type(exc).__name__}: {exc}"},
             )
             raise
+
+
+def _run_claimed(args: argparse.Namespace) -> int:
+    """D39 background child: run one slot the tick claimed, under the tick's ids."""
+    from arc.monitoring import correlation
+    from arc.monitoring.logs import configure
+
+    configure(_load(args).monitoring.log, base_dir=_db_dir(args))
+    conn = _conn(args)
+    disp = _dispatcher(args, conn)
+    try:
+        with correlation.bind(**correlation.from_env()):
+            outcomes = disp.run_claimed(args.run_id)
+    except KeyError as exc:
+        _write(f"error: {exc.args[0]}")
+        return 2
+    for o in outcomes:
+        _write(json.dumps(_outcome_json(o)))
+    return 1 if any(o.status == "failed" for o in outcomes) else 0
 
 
 def _simulate(args: argparse.Namespace, now: _dt.datetime, since: _dt.datetime | None) -> int:
@@ -449,6 +509,9 @@ def run_routines(args: argparse.Namespace) -> int:
         for o in outcomes:
             _write(json.dumps(_outcome_json(o)))
         return 1 if any(o.status == "failed" for o in outcomes) else 0
+
+    if cmd == "run-claimed":
+        return _run_claimed(args)
 
     if cmd == "history":
         from arc.routines.runs import RoutineRunRepo

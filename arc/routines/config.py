@@ -27,8 +27,13 @@ Job keys (``sources.<name>`` / ``personas.<name>``):
 - ``notify: quiet | summary | card`` — heartbeat policy: sources default
   ``quiet`` (folded into the next persona post), personas and chain steps
   default ``card`` (E5.5 digest card; the one-liner when a job has no card).
-- ``llm: true|false`` — whether the job takes the global LLM lock (default:
-  personas and chain steps yes, sources no).
+- ``llm: true|false`` — whether the job calls an LLM (default: personas and
+  chain steps yes, sources no). D39: an LLM job takes the global LLM lock only
+  when its persona's route is a local model (``local: true`` in
+  ``config/llm_routing.yaml``); remote API routes run concurrently.
+- ``lane: inline | background`` (D39, default ``inline``) — a ``background`` job's
+  scheduled slot is planned and claimed by the tick, then run by a detached
+  ``arc routines run-claimed <run_id>`` process, so the tick never waits on it.
 - Any other key (e.g. ``only_for: open_positions``, ``channel: <url>``) is kept
   as a handler option in :attr:`JobSpec.options`, so new filters never break
   validation.
@@ -111,6 +116,13 @@ class Notify(enum.StrEnum):
 class JobKind(enum.StrEnum):
     SOURCE = "source"
     PERSONA = "persona"
+
+
+class Lane(enum.StrEnum):
+    """Where a scheduled slot runs (D39)."""
+
+    INLINE = "inline"  # inside the tick process; the tick waits for it
+    BACKGROUND = "background"  # detached `arc routines run-claimed` child; the tick doesn't wait
 
 
 class ContextPolicy(BaseModel):
@@ -210,6 +222,7 @@ class JobSpec(StepSpec):
     ttl: Ttl | None = None
     halt_exempt: bool = False
     enabled: bool = True
+    lane: Lane = Lane.INLINE  # D39: background = the tick claims the slot and spawns it
 
     @field_validator("schedule", mode="before")
     @classmethod
@@ -306,8 +319,14 @@ class TickSettings(BaseModel):
     # E6.2e: a dispatched event whose Investor never claimed its run is released
     # back to the drain this long after its dispatch (and flagged by monitoring).
     dispatch_grace: _dt.timedelta = _dt.timedelta(minutes=10)
+    # D39: a background persona with `after_sources: true` waits at most this long for
+    # the background sources spawned in the same tick to finish, then reads whatever
+    # is committed (it never blocks the tick: it runs in its own process).
+    after_sources_wait: _dt.timedelta = _dt.timedelta(minutes=5)
 
-    @field_validator("interval", "max_lookback", "dispatch_grace", mode="before")
+    @field_validator(
+        "interval", "max_lookback", "dispatch_grace", "after_sources_wait", mode="before"
+    )
     @classmethod
     def _dur(cls, v: Any) -> Any:
         return parse_duration(v) if isinstance(v, str) else v
@@ -450,6 +469,14 @@ class RoutinesConfig(BaseModel):
                     raise ValueError(msg)
             if spec.halt_exempt and spec.chain:
                 msg = f"persona {name!r}: a halt-exempt persona cannot run a chain"
+                raise ValueError(msg)
+        for name, spec in [*self.sources.items(), *self.personas.items()]:
+            # D39: a background slot is one detached run; chains and the D31 loop
+            # (deadline, Slack root, non-overlap) stay in the tick process.
+            if spec.lane is Lane.BACKGROUND and (
+                spec.chain or spec.trigger or name == self.loop.job
+            ):
+                msg = f"job {name!r}: lane background is only for scheduled jobs without a chain"
                 raise ValueError(msg)
         known_jobs = set(names)
         if "loop" in self.model_fields_set and self.loop.job not in self.personas:

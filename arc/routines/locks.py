@@ -1,8 +1,9 @@
 """File locks for the dispatcher (POSIX ``flock``; released when the process dies).
 
 - One lock per job, so an overlapping tick can't run the same job twice at once.
-- One global ``llm`` lock for persona jobs, so LLM runs happen one at a time on
-  this 16 GB Mac.
+- One global ``llm`` lock, taken only by jobs whose persona routes to a local,
+  on-device model (``local: true`` in ``config/llm_routing.yaml``, D39), so local
+  runs happen one at a time. Remote API routes run concurrently.
 
 Locks are non-blocking: a job whose lock is held is *deferred* (not recorded),
 and the next tick picks it up while it is still inside its catch-up window.

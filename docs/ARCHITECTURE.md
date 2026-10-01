@@ -53,7 +53,8 @@
                              v
    expire TTLs -> plan due slots (cursor..now, catch-up once within TTL, skip if halted)
      -> sources (fetch-only)  --append-->  context_entries (raw_doc_ref, channel_brief)
-     -> personas [global llm lock]
+     -> lane: background jobs (D39: scout, edgar, ...) -> claim slot, spawn `arc routines run-claimed`
+     -> personas [llm lock only for local models, D39]
           snapshot(as_of, kinds) --id--> routine_runs.inputs_snapshot
           handler(ctx) --append--> context_entries (candidate, shortlist, ...)
           chain: director -> quant -> risk -> propose  (one chain_run_id)

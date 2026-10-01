@@ -44,36 +44,42 @@ def _user_agent(settings: ArcSettings) -> str:
     return settings.edgar_user_agent
 
 
-def _ticker_to_cik(ticker: str, settings: ArcSettings) -> str | None:
-    """Look up CIK for a ticker via EDGAR company tickers JSON.
+def _company_tickers(settings: ArcSettings) -> dict[str, str]:
+    """``{TICKER: zero-padded CIK}`` from EDGAR's company tickers JSON (one download).
 
-    Uses a simple HTTP GET with rate limiting.
+    E5.10: fetched at most once per run (it is ~0.8 MB); an empty map on failure.
     """
+    import json
     import urllib.request
 
     url = "https://www.sec.gov/files/company_tickers.json"
     req = urllib.request.Request(url, headers={"User-Agent": _user_agent(settings)})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            import json
-
             data = json.loads(resp.read())
-            for _key, entry in data.items():
-                if entry.get("ticker", "").upper() == ticker.upper():
-                    return str(entry["cik_str"]).zfill(10)
     except Exception:  # noqa: BLE001
+        log.warning("edgar.company_tickers_failed")
+        return {}
+    return {
+        str(entry.get("ticker", "")).upper(): str(entry["cik_str"]).zfill(10)
+        for entry in data.values()
+        if entry.get("ticker") and entry.get("cik_str") is not None
+    }
+
+
+def _ticker_to_cik(ticker: str, settings: ArcSettings) -> str | None:
+    """Look up CIK for a ticker via EDGAR company tickers JSON.
+
+    Uses a simple HTTP GET with rate limiting.
+    """
+    cik = _company_tickers(settings).get(ticker.upper())
+    if cik is None:
         log.warning("edgar.cik_lookup_failed", ticker=ticker)
-    return None
+    return cik
 
 
-def _fetch_recent_filings(
-    cik: str,
-    form_type: str,
-    settings: ArcSettings,
-    *,
-    count: int = 10,
-) -> list[dict]:
-    """Fetch recent filings for a CIK from EDGAR submissions API."""
+def _fetch_submissions(cik: str, settings: ArcSettings) -> dict | None:
+    """One ``submissions/CIK##########.json`` document (``None`` on failure)."""
     import json
     import urllib.request
 
@@ -85,11 +91,16 @@ def _fetch_recent_filings(
 
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read())
+            return json.loads(resp.read())
     except Exception:  # noqa: BLE001
         log.warning("edgar.submissions_failed", cik=cik)
-        return []
+        return None
 
+
+def _filings_of_form(data: dict | None, cik: str, form_type: str, *, count: int) -> list[dict]:
+    """The *count* most recent filings of *form_type* in a submissions document."""
+    if not data:
+        return []
     recent = data.get("filings", {}).get("recent", {})
     forms = recent.get("form", [])
     accessions = recent.get("accessionNumber", [])
@@ -113,6 +124,17 @@ def _fetch_recent_filings(
         )
 
     return results
+
+
+def _fetch_recent_filings(
+    cik: str,
+    form_type: str,
+    settings: ArcSettings,
+    *,
+    count: int = 10,
+) -> list[dict]:
+    """Fetch recent filings for a CIK from EDGAR submissions API."""
+    return _filings_of_form(_fetch_submissions(cik, settings), cik, form_type, count=count)
 
 
 def _filing_url(cik: str, accession: str, primary_doc: str) -> str:
@@ -160,17 +182,32 @@ def fetch_edgar(
     uni = IngestUniverse.from_settings(settings)
 
     results: list[RawDoc] = []
+    # E5.10: tickers missing from the symbol master share ONE company_tickers.json
+    # download per run (it was one ~0.8 MB download per such ticker per run).
+    fallback_ciks: dict[str, str] | None = None
+    requests = 0
 
     for ticker in tickers:
-        cik = uni.cik(ticker) or _ticker_to_cik(ticker, settings)
+        cik = uni.cik(ticker)
         if not cik:
+            if fallback_ciks is None:
+                fallback_ciks = _company_tickers(settings)
+                requests += 1
+            cik = fallback_ciks.get(ticker.upper())
+        if not cik:
+            log.warning("edgar.cik_lookup_failed", ticker=ticker)
             continue
+
+        # E5.10: one submissions request per company covers every form type (it was
+        # one identical request per form type, i.e. 3x the requests and bytes).
+        submissions = _fetch_submissions(cik, settings)
+        requests += 1
 
         for form_type in FORM_TYPES:
             cursor_key = f"{CONNECTOR}:{ticker}:{form_type}"
             last_accession = cursor_repo.get(cursor_key)
 
-            filings = _fetch_recent_filings(cik, form_type, settings, count=5)
+            filings = _filings_of_form(submissions, cik, form_type, count=5)
 
             newest_accession: str | None = None
 
@@ -186,6 +223,7 @@ def fetch_edgar(
                 )
 
                 text = _fetch_filing_text(url, settings)
+                requests += 1
                 if not text:
                     continue
 
@@ -225,5 +263,5 @@ def fetch_edgar(
             if newest_accession:
                 cursor_repo.set(cursor_key, newest_accession)
 
-    log.info("edgar.done", new_docs=len(results))
+    log.info("edgar.done", new_docs=len(results), requests=requests, tickers=len(tickers))
     return results

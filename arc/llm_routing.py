@@ -47,11 +47,17 @@ class Persona(StrEnum):
 
 
 class TierSpec(BaseModel):
-    """One model tier: a ``<provider>/<model>`` id."""
+    """One model tier: a ``<provider>/<model>`` id.
+
+    ``local: true`` marks an on-device model (E8.4, Mac Studio). D39: only jobs whose
+    persona resolves to a local tier take the dispatcher's global LLM lock, so local
+    runs happen one at a time while remote API routes run concurrently.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     model: str = Field(description="Qualified model id, e.g. 'anthropic/claude-opus-5.5'.")
+    local: bool = Field(default=False, description="On-device model: serialise via the LLM lock.")
 
     @field_validator("model")
     @classmethod
@@ -71,6 +77,7 @@ class ModelRoute(BaseModel):
     persona: Persona
     tier: str
     model: str  # qualified '<provider>/<model>'
+    local: bool = False  # D39: an on-device model; its jobs take the global LLM lock
 
     @property
     def provider(self) -> str:
@@ -101,7 +108,12 @@ class LLMRouting(BaseModel):
         """The model route for *persona* (raises ``ValueError`` if unknown)."""
         p = Persona(persona)
         tier = self.personas[p]
-        return ModelRoute(persona=p, tier=tier, model=self.tiers[tier].model)
+        spec = self.tiers[tier]
+        return ModelRoute(persona=p, tier=tier, model=spec.model, local=spec.local)
+
+    def is_local(self, persona: Persona | str) -> bool:
+        """D39: True when *persona* runs on a local model (its jobs take the LLM lock)."""
+        return self.route(persona).local
 
 
 def load_routing(path: Path | str | None = None) -> LLMRouting:
