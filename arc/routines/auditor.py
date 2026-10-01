@@ -139,11 +139,13 @@ def auditor(
     )
     out = auditor_output(report)
     ctx.write("journal", report.day.isoformat(), out)
+    ops_line = _slots_line(ctx)
     card = auditor_card(
         out,
         performance=performance(ctx.conn, report.day),
         run_id=ctx.run_id,
         chain_run_id=ctx.chain_run_id,
+        ops_line=ops_line,
     )
     return JobResult(
         summary=report.summary(),
@@ -159,8 +161,20 @@ def auditor(
             "wash_sales": len(report.wash_sales),
             "expired": len(report.expired),
             "day_pnl": float(report.day_pnl) if report.day_pnl is not None else None,
+            "slots": ops_line,
         },
     )
+
+
+def _slots_line(ctx: JobContext) -> str | None:
+    """E8.2a: today's slot coverage for the card's Ops section (never fails the job)."""
+    from arc.monitoring.checks import rollup_line, slot_rollup
+
+    try:
+        return rollup_line(slot_rollup(ctx.conn, ctx.routines, ctx.now), ctx.routines)
+    except Exception as exc:  # noqa: BLE001 - ops detail must not block the reconcile card
+        log.warning("auditor.slots_unavailable", error=str(exc))
+        return None
 
 
 def auditor_step(ctx: JobContext) -> JobResult:

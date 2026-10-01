@@ -69,7 +69,9 @@ def cfg(text: str = YAML) -> RoutinesConfig:
     return RoutinesConfig.model_validate(yaml.safe_load(textwrap.dedent(text)))
 
 
-MS = MonitoringSettings()
+# The per-slot tests below use a 30-min `rss`; E8.2a's default (60m) would judge it
+# by coverage instead, so they pin the per-slot threshold to keep testing that path.
+MS = MonitoringSettings(per_slot_min_interval=dt.timedelta(minutes=30))
 
 
 # ---------------------------------------------------------------------------

@@ -702,6 +702,13 @@ class TestAuditor:
         assert "*Anomalies (5)*" in _all(view)
         _assert_slack_limits(view)
 
+    def test_ops_slots_line(self) -> None:
+        """E8.2a: the day's slot coverage is one line in an Ops section (no new post)."""
+        line = "Slots: director 71/75, monitor 77/78 · missed 6 (list in tower Ops)"
+        text = _all(D.auditor_card(journal(), ops_line=line))
+        assert f"*Ops*\n{line}" in text
+        assert "*Ops*" not in _all(D.auditor_card(journal()))
+
 
 def test_regime_names() -> None:
     assert D.regime_name("risk_on") == "Risk ON"

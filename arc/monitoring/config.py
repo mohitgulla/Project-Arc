@@ -90,13 +90,30 @@ class MonitoringSettings(BaseModel):
     # Per-job override of ``stuck_after`` (E5.3a: ``monitor: 10m`` at a 5-min
     # cadence). Keys are job or chain-step names, checked by RoutinesConfig.
     stuck_after_jobs: dict[str, _dt.timedelta] = Field(default_factory=dict)
+    # E8.2a: a job whose slots are at least this far apart gets one `missed_window`
+    # alert per missed slot; faster jobs get the `coverage:<job>` condition instead.
+    per_slot_min_interval: _dt.timedelta = _dt.timedelta(minutes=60)
+    # E8.2a: rolling window for `coverage:<job>` (slots judged in it) and `tick_slow`.
+    coverage_window: _dt.timedelta = _dt.timedelta(minutes=60)
+    # E8.2a: `coverage:<job>` fails below this share of judged slots that ran.
+    coverage_min: Annotated[float, Field(gt=0, le=1)] = 0.8
+    # E8.2a: `tick_slow` fails when this many ticks in the window took > tick_slow_after.
+    tick_slow_count: Annotated[int, Field(ge=1, le=100)] = 2
+    tick_slow_after: _dt.timedelta = _dt.timedelta(minutes=4)
     alert_channel: AlertChannel = AlertChannel.PROJECT_ARC
     gateway: GatewayCheck = Field(default_factory=GatewayCheck)
     remote_access: RemoteAccessCheck = Field(default_factory=RemoteAccessCheck)
     log: LogSettings = Field(default_factory=LogSettings)
 
     @field_validator(
-        "tick_stale_after", "miss_grace", "miss_lookback", "stuck_after", mode="before"
+        "tick_stale_after",
+        "miss_grace",
+        "miss_lookback",
+        "stuck_after",
+        "per_slot_min_interval",
+        "coverage_window",
+        "tick_slow_after",
+        mode="before",
     )
     @classmethod
     def _durations(cls, v: Any) -> Any:

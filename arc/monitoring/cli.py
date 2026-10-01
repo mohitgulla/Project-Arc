@@ -91,14 +91,18 @@ def run_checks(
     *,
     gateway_runner: Any = None,
 ) -> list[CheckResult]:
+    from arc.control.effective import effective_routines
     from arc.monitoring import checks
-    from arc.routines.config import load_routines
 
-    routines = load_routines(args.config)
+    # D26: the effective config (YAML + owner overrides), so `monitoring.*` changes
+    # made through the control panel reach the next check.
+    routines = effective_routines(conn, args.config)
     ms = routines.monitoring
     results = [
         checks.tick_staleness(conn, ms, now),
+        checks.tick_slow(conn, routines, ms, now),
         checks.missed_windows(conn, routines, ms, now),
+        checks.slot_coverage(conn, routines, ms, now),
         checks.stuck_runs(conn, ms, now),
         checks.stranded_events(conn, routines, now),
     ]

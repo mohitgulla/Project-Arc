@@ -115,6 +115,15 @@ class HeartbeatRepo:
         ).fetchone()
         return _hb(row) if row else None
 
+    def between(self, component: str, start: _dt.datetime, end: _dt.datetime) -> list[Heartbeat]:
+        """Heartbeats of *component* with ``start < at <= end``, oldest first."""
+        rows = self.conn.execute(
+            """SELECT * FROM heartbeats WHERE component = ? AND at > ? AND at <= ?
+               ORDER BY at, rowid""",
+            (component, to_db(start), to_db(end)),
+        ).fetchall()
+        return [_hb(r) for r in rows]
+
     def recent(self, *, component: str | None = None, limit: int = 20) -> list[Heartbeat]:
         if component:
             rows = self.conn.execute(
@@ -211,6 +220,18 @@ class AlertRepo:
             self.conn.executemany(
                 "UPDATE ops_alerts SET posted_ts = ? WHERE id = ?", [(ts, i) for i in alert_ids]
             )
+
+    def unfold(self, alert_id: str, *, message: str, correlation: dict[str, Any]) -> None:
+        """E8.2a: a folded condition that outlived its incident becomes its own alert."""
+        with self.conn:
+            self.conn.execute(
+                "UPDATE ops_alerts SET message = ?, correlation = ? WHERE id = ?",
+                (message, json.dumps(correlation, sort_keys=True, default=str), alert_id),
+            )
+
+    def get(self, alert_id: str) -> OpsAlert | None:
+        row = self.conn.execute("SELECT * FROM ops_alerts WHERE id = ?", (alert_id,)).fetchone()
+        return _alert(row) if row else None
 
     def incidents(self, keys: tuple[str, ...], *, since: _dt.datetime) -> list[OpsAlert]:
         """Alerts for *keys* that are open or resolved after *since*, newest first."""
