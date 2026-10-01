@@ -19,7 +19,8 @@ monitor's stale threshold (3 x 5 min) to see the stale state. The DB holds:
 - E8.7b Trades drill-down rows (``scripts/tower_fixture_trades.py``): the SPY open has
   every detail section (chain, persona calls, decision trail, full market context,
   regime snapshot, run manifest, order events) and AMD has a close-to-reallocate pair
-  (AMD close -> XLE open), an outcome and an owner review.
+  (AMD close -> XLE open), an outcome and an owner review;
+- with ``--ops``, the E8.7d Ops page rows (``scripts/tower_fixture_ops.py``).
 
 Never point this at ``data/arc.db``: it refuses to overwrite an existing file.
 """
@@ -219,11 +220,15 @@ def _trades_module():  # noqa: ANN202 - a module loaded by path
     return mod
 
 
-def build(path: Path, now: dt.datetime | None = None, *, history: bool = False) -> Path:
+def build(
+    path: Path, now: dt.datetime | None = None, *, history: bool = False, ops: bool = False
+) -> Path:
     """Create *path* (must not exist), migrate it and fill it with the fixture rows.
 
     *history* adds the E8.7c Performance history (``scripts/tower_fixture_performance.py``:
     ~40 closed trades and daily equity over the 3+ months before the 10 recent days).
+    *ops* adds the E8.7d Ops page rows (``scripts/tower_fixture_ops.py``: a full
+    simulated schedule with run manifests, alerts, context, LLM usage, config changes).
     """
     if path.exists():
         msg = f"{path} exists; the fixture builder never overwrites a DB"
@@ -468,6 +473,12 @@ def build(path: Path, now: dt.datetime | None = None, *, history: bool = False) 
     HeartbeatRepo(conn).record(
         "health", "ok", at=now - dt.timedelta(minutes=11), detail={"checks": {}}
     )
+    if ops:
+        ops_mod = _load_script("tower_fixture_ops")
+        ops_mod.add_ops(conn, now)
+        run = ops_mod.undeclared_run_id(conn)
+        if run:
+            ops_mod.write_log(path, run, now)
     conn.commit()
     conn.close()
     log.info("tower_fixture.built", path=str(path), now=now.isoformat())
@@ -481,12 +492,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--history", action="store_true", help="add the E8.7c Performance history (~40 trades)"
     )
+    ap.add_argument(
+        "--ops", action="store_true", help="add the E8.7d Ops page rows (runs, manifests, ...)"
+    )
     args = ap.parse_args(argv)
     now = dt.datetime.fromisoformat(args.now) if args.now else None
     if now is not None and now.tzinfo is None:
         now = now.replace(tzinfo=ET)
     try:
-        build(args.out, now, history=args.history)
+        build(args.out, now, history=args.history, ops=args.ops)
     except FileExistsError as exc:
         log.error("tower_fixture.refused", error=str(exc))
         return 2

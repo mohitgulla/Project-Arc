@@ -503,95 +503,14 @@ def run_context(args: argparse.Namespace) -> int:
 
 def trace_runs(conn: sqlite3.Connection, ref: str) -> list[dict[str, Any]]:
     """One element per run (a chain in step order): contract, entries read and written,
-    persona calls and the full run manifest (latest attempt). Raises LookupError."""
-    from arc.context.store import ContextStore
-    from arc.pipeline.store import PersonaCallRepo
-    from arc.routines.manifest import ManifestRepo
-    from arc.routines.runs import RoutineRunRepo
+    persona calls and the full run manifest (latest attempt). Raises LookupError.
 
-    rows = conn.execute(
-        "SELECT run_id FROM routine_runs WHERE run_id = ? OR chain_run_id = ?"
-        " ORDER BY step_index, scheduled_for, rowid",
-        (ref, ref),
-    ).fetchall()
-    if not rows:
-        msg = f"no routine run or chain {ref!r}"
-        raise LookupError(msg)
-    store, calls, manifests = ContextStore(conn), PersonaCallRepo(conn), ManifestRepo(conn)
-    runs = RoutineRunRepo(conn)
-    out: list[dict[str, Any]] = []
-    for r in rows:
-        run = runs.get(r["run_id"])
-        assert run is not None
-        m = manifests.latest(run.run_id)
-        read: dict[str, dict[str, Any]] = {}
-        for sid in run.inputs_snapshot:
-            try:
-                snap = store.load_snapshot(sid)
-            except KeyError:
-                continue
-            for e in snap.entries:
-                read.setdefault(
-                    e.id,
-                    {
-                        "id": e.id,
-                        "kind": e.kind,
-                        "subject": e.subject,
-                        "produced_by": e.produced_by,
-                    },
-                )
-        wrote = [
-            {"id": e.id, "kind": e.kind, "subject": e.subject}
-            for e in (store.get(i) for i in run.outputs)
-            if e is not None
-        ]
-        # E6.2d: the approval-event lifecycle this run took part in: the event it ran
-        # for (created → dispatched → consumed), or the events it dispatched (execute).
-        ev_rows = conn.execute(
-            """SELECT * FROM routine_events WHERE id = ? OR dispatched_by = ?
-               ORDER BY created_at, rowid""",
-            (run.event_id or "", run.run_id),
-        ).fetchall()
-        events = [
-            {
-                "id": e["id"],
-                "name": e["name"],
-                "role": "ran_for" if e["id"] == run.event_id else "dispatched",
-                "created_at": e["created_at"],
-                "dispatched_at": e["dispatched_at"],
-                "dispatched_by": e["dispatched_by"],
-                "consumed_at": e["consumed_at"],
-                "consumed_by": json.loads(e["consumed_by"] or "[]"),
-            }
-            for e in ev_rows
-        ]
-        out.append(
-            {
-                "job": run.job,
-                "run_id": run.run_id,
-                "chain_run_id": run.chain_run_id,
-                "step_index": run.step_index,
-                "status": run.status.value,
-                "declared": {
-                    "reads": m.declared_reads if m else None,
-                    "writes": m.declared_writes if m else None,
-                },
-                "read": list(read.values()),
-                "wrote": wrote,
-                "events": events,
-                "persona_calls": [
-                    {
-                        "id": c["id"],
-                        "model": c["model"],
-                        "status": c["status"],
-                        "prompt_sha256": c["prompt_sha256"],
-                    }
-                    for c in calls.for_run(run.run_id)
-                ],
-                "manifest": m.model_dump(mode="json") if m else None,
-            }
-        )
-    return out
+    The serializer lives in :mod:`arc.context.trace` so the tower's run detail
+    (``GET /api/ops/runs/{run_id}``) shows exactly what this command prints.
+    """
+    from arc.context.trace import trace_runs as _trace
+
+    return _trace(conn, ref)
 
 
 def _run_trace(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
@@ -617,6 +536,9 @@ def _run_trace(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
         if m.get("error_class"):
             _write(f"   error: {m['error_class']}: {m.get('error')}")
         _write(f"   declared reads={st['declared']['reads']} writes={st['declared']['writes']}")
+        bad = st["contract"]["undeclared_reads"] + st["contract"]["undeclared_writes"]
+        if bad:
+            _write(f"   CONTRACT undeclared: {','.join(bad)}")
         for e in st["read"]:
             _write(
                 f"   read  {e['kind']:<13} {e['subject']:<10} by={e['produced_by']:<9} {e['id']}"

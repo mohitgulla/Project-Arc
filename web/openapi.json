@@ -58,6 +58,90 @@
         "title": "ActivityItem",
         "type": "object"
       },
+      "AlertRow": {
+        "additionalProperties": false,
+        "properties": {
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Open \u2192 resolved (or \u2192 now while open)",
+            "title": "Duration S"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "open": {
+            "title": "Open",
+            "type": "boolean"
+          },
+          "opened_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened At"
+          },
+          "posted_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted Ts"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "key",
+          "message",
+          "opened_at",
+          "resolved_at",
+          "duration_s",
+          "open"
+        ],
+        "title": "AlertRow",
+        "type": "object"
+      },
       "AlertView": {
         "additionalProperties": false,
         "properties": {
@@ -93,6 +177,34 @@
           "opened_at"
         ],
         "title": "AlertView",
+        "type": "object"
+      },
+      "AlertsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/AlertRow"
+            },
+            "title": "Alerts",
+            "type": "array"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "open": {
+            "title": "Open",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "as_of",
+          "open",
+          "alerts"
+        ],
+        "title": "AlertsResponse",
         "type": "object"
       },
       "AppInfo": {
@@ -446,6 +558,94 @@
         "title": "BreakevenStat",
         "type": "object"
       },
+      "BudgetResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "broker_checked": {
+            "default": false,
+            "description": "Always false: the tower never calls the broker (local count only)",
+            "title": "Broker Checked",
+            "type": "boolean"
+          },
+          "by_state": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By State",
+            "type": "object"
+          },
+          "close_reserve": {
+            "title": "Close Reserve",
+            "type": "integer"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "local": {
+            "title": "Local",
+            "type": "integer"
+          },
+          "open_limit": {
+            "title": "Open Limit",
+            "type": "integer"
+          },
+          "orders": {
+            "items": {
+              "$ref": "#/components/schemas/OrderRow"
+            },
+            "title": "Orders",
+            "type": "array"
+          },
+          "remaining_opens": {
+            "title": "Remaining Opens",
+            "type": "integer"
+          },
+          "reserved": {
+            "title": "Reserved",
+            "type": "integer"
+          },
+          "restrict_at": {
+            "title": "Restrict At",
+            "type": "integer"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "as_of",
+          "day",
+          "used",
+          "local",
+          "reserved",
+          "limit",
+          "restrict_at",
+          "open_limit",
+          "close_reserve",
+          "tier",
+          "remaining_opens",
+          "by_state",
+          "orders"
+        ],
+        "title": "BudgetResponse",
+        "type": "object"
+      },
       "Cadence": {
         "additionalProperties": false,
         "description": "How often a producing job runs and when its output counts as stale.",
@@ -659,6 +859,604 @@
           "confidence"
         ],
         "title": "CandidateView",
+        "type": "object"
+      },
+      "ConfigChangeRow": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "halted": {
+            "title": "Halted",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_default": {
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "new": {
+            "title": "New"
+          },
+          "old": {
+            "title": "Old"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "description": "applied | reverted",
+            "title": "Status",
+            "type": "string"
+          },
+          "supersedes_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Revert marker: the change this one undid",
+            "title": "Supersedes Id"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "is_default",
+          "actor",
+          "reason",
+          "at",
+          "source",
+          "status",
+          "supersedes_id",
+          "direction",
+          "halted"
+        ],
+        "title": "ConfigChangeRow",
+        "type": "object"
+      },
+      "ConfigKeyRow": {
+        "additionalProperties": false,
+        "properties": {
+          "bounds": {
+            "title": "Bounds",
+            "type": "string"
+          },
+          "default": {
+            "title": "Default"
+          },
+          "default_text": {
+            "title": "Default Text",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "env": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "hard_ceiling": {
+            "title": "Hard Ceiling"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "last_change_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Change At"
+          },
+          "last_change_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Change By"
+          },
+          "last_change_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Change Id"
+          },
+          "risk": {
+            "title": "Risk",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "yaml",
+              "override"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value"
+          },
+          "value_text": {
+            "title": "Value Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "group",
+          "value",
+          "value_text",
+          "default",
+          "default_text",
+          "source",
+          "bounds",
+          "risk",
+          "description"
+        ],
+        "title": "ConfigKeyRow",
+        "type": "object"
+      },
+      "ConfigResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "account_profile": {
+            "title": "Account Profile",
+            "type": "string"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigChangeRow"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "config_version": {
+            "title": "Config Version",
+            "type": "integer"
+          },
+          "env": {
+            "title": "Env",
+            "type": "string"
+          },
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigKeyRow"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "as_of",
+          "config_version",
+          "env",
+          "account_profile",
+          "keys",
+          "changes"
+        ],
+        "title": "ConfigResponse",
+        "type": "object"
+      },
+      "ContextEntryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "chain_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chain Run Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "payload": {
+            "title": "Payload"
+          },
+          "produced_by": {
+            "title": "Produced By",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "supersedes_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Id"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          }
+        },
+        "required": [
+          "as_of",
+          "id",
+          "kind",
+          "subject",
+          "status",
+          "produced_by",
+          "run_id",
+          "chain_run_id",
+          "created_at",
+          "valid_from",
+          "expires_at",
+          "supersedes_id",
+          "schema_version",
+          "payload"
+        ],
+        "title": "ContextEntryResponse",
+        "type": "object"
+      },
+      "ContextKindRow": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "expired_24h": {
+            "title": "Expired 24H",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "latest_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest At"
+          },
+          "latest_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest By"
+          },
+          "latest_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Id"
+          },
+          "latest_subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Subject"
+          },
+          "next_expiry": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Expiry"
+          },
+          "remaining_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latest entry's TTL left (0..1); None when it never expires",
+            "title": "Remaining Fraction"
+          },
+          "ttl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Configured TTL (context_ttl in routines.yaml)",
+            "title": "Ttl"
+          }
+        },
+        "required": [
+          "kind",
+          "active",
+          "ttl",
+          "next_expiry",
+          "remaining_fraction",
+          "latest_id",
+          "latest_subject",
+          "latest_at",
+          "latest_by",
+          "expired_24h"
+        ],
+        "title": "ContextKindRow",
+        "type": "object"
+      },
+      "ContextResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "expired_24h": {
+            "title": "Expired 24H",
+            "type": "integer"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/ContextKindRow"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "total_active": {
+            "title": "Total Active",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "as_of",
+          "total_active",
+          "expired_24h",
+          "kinds"
+        ],
+        "title": "ContextResponse",
+        "type": "object"
+      },
+      "ContractView": {
+        "additionalProperties": false,
+        "properties": {
+          "actual_reads": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Actual Reads",
+            "type": "array"
+          },
+          "actual_writes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Actual Writes",
+            "type": "array"
+          },
+          "declared_reads": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declared Reads"
+          },
+          "declared_writes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declared Writes"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "undeclared_reads": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Undeclared Reads",
+            "type": "array"
+          },
+          "undeclared_writes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Undeclared Writes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "declared_reads",
+          "declared_writes",
+          "actual_reads",
+          "actual_writes",
+          "undeclared_reads",
+          "undeclared_writes",
+          "ok"
+        ],
+        "title": "ContractView",
         "type": "object"
       },
       "CostBar": {
@@ -1177,6 +1975,47 @@
         "title": "DecisionTrail",
         "type": "object"
       },
+      "EntryRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "produced_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produced By"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "undeclared": {
+            "default": false,
+            "description": "Kind outside the declared contract",
+            "title": "Undeclared",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "subject"
+        ],
+        "title": "EntryRef",
+        "type": "object"
+      },
       "EquityCard": {
         "additionalProperties": false,
         "properties": {
@@ -1503,6 +2342,85 @@
           "regulatory_fees"
         ],
         "title": "EvCosts",
+        "type": "object"
+      },
+      "EventRow": {
+        "additionalProperties": false,
+        "properties": {
+          "consumed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consumed At"
+          },
+          "consumed_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Consumed By",
+            "type": "array"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "dispatched_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatched At"
+          },
+          "dispatched_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatched By"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "created_at"
+        ],
+        "title": "EventRow",
         "type": "object"
       },
       "ExecutionSection": {
@@ -2531,6 +3449,101 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HaltRow": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "cleared_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleared At"
+          },
+          "cleared_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleared By"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "trades": {
+            "description": "Proposals created while the halt was in force",
+            "title": "Trades",
+            "type": "integer"
+          },
+          "trades_route": {
+            "description": "Trades page filtered to the halt window",
+            "title": "Trades Route",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "actor",
+          "reason",
+          "at",
+          "cleared_at",
+          "cleared_by",
+          "active",
+          "trades",
+          "trades_route"
+        ],
+        "title": "HaltRow",
+        "type": "object"
+      },
       "HaltView": {
         "additionalProperties": false,
         "properties": {
@@ -2603,6 +3616,98 @@
         "title": "HaltView",
         "type": "object"
       },
+      "HaltsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "halts": {
+            "items": {
+              "$ref": "#/components/schemas/HaltRow"
+            },
+            "title": "Halts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "active",
+          "halts"
+        ],
+        "title": "HaltsResponse",
+        "type": "object"
+      },
+      "HealthItem": {
+        "additionalProperties": false,
+        "properties": {
+          "age_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age S"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "degraded",
+              "failed",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "threshold": {
+            "description": "What the status is judged against",
+            "title": "Threshold",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "status",
+          "value",
+          "threshold"
+        ],
+        "title": "HealthItem",
+        "type": "object"
+      },
       "HealthResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2628,6 +3733,40 @@
           "as_of"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "HealthStripResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "checks": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "description": "The latest health heartbeat's checks: severity, summary",
+            "title": "Checks",
+            "type": "object"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HealthItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "items"
+        ],
+        "title": "HealthStripResponse",
         "type": "object"
       },
       "IvModel": {
@@ -3125,6 +4264,245 @@
           "side"
         ],
         "title": "LegView",
+        "type": "object"
+      },
+      "LinkRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "route": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Route"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "LinkRef",
+        "type": "object"
+      },
+      "LlmDay": {
+        "additionalProperties": false,
+        "properties": {
+          "by_model": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Cost by model (USD)",
+            "title": "By Model",
+            "type": "object"
+          },
+          "by_persona": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Cost by persona (USD)",
+            "title": "By Persona",
+            "type": "object"
+          },
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "title": "Cost Usd",
+            "type": "number"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "calls",
+          "input_tokens",
+          "output_tokens",
+          "cost_usd",
+          "by_persona",
+          "by_model"
+        ],
+        "title": "LlmDay",
+        "type": "object"
+      },
+      "LlmGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "title": "Cost Usd",
+            "type": "number"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "persona": {
+            "title": "Persona",
+            "type": "string"
+          }
+        },
+        "required": [
+          "persona",
+          "model",
+          "calls",
+          "input_tokens",
+          "output_tokens",
+          "cost_usd",
+          "failed"
+        ],
+        "title": "LlmGroup",
+        "type": "object"
+      },
+      "LlmResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "period": {
+            "items": {
+              "$ref": "#/components/schemas/LlmGroup"
+            },
+            "title": "Period",
+            "type": "array"
+          },
+          "personas": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Personas",
+            "type": "array"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/LlmDay"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "today": {
+            "items": {
+              "$ref": "#/components/schemas/LlmGroup"
+            },
+            "title": "Today",
+            "type": "array"
+          },
+          "today_cost": {
+            "title": "Today Cost",
+            "type": "number"
+          },
+          "total_cost": {
+            "title": "Total Cost",
+            "type": "number"
+          },
+          "yesterday_cost": {
+            "title": "Yesterday Cost",
+            "type": "number"
+          }
+        },
+        "required": [
+          "as_of",
+          "days",
+          "today_cost",
+          "yesterday_cost",
+          "total_cost",
+          "series",
+          "today",
+          "period",
+          "personas",
+          "models"
+        ],
+        "title": "LlmResponse",
+        "type": "object"
+      },
+      "LogLine": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": true,
+            "title": "Fields",
+            "type": "object"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          }
+        },
+        "required": [
+          "ts",
+          "level",
+          "event",
+          "fields"
+        ],
+        "title": "LogLine",
         "type": "object"
       },
       "ManagedStats": {
@@ -4086,6 +5464,72 @@
         "title": "OrderEventView",
         "type": "object"
       },
+      "OrderRow": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "proposal_hash": {
+            "title": "Proposal Hash",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "ticker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticker"
+          }
+        },
+        "required": [
+          "id",
+          "proposal_hash",
+          "ticker",
+          "kind",
+          "state",
+          "created_at",
+          "route"
+        ],
+        "title": "OrderRow",
+        "type": "object"
+      },
       "OrderView": {
         "additionalProperties": false,
         "properties": {
@@ -4835,6 +6279,97 @@
           "days"
         ],
         "title": "PeriodView",
+        "type": "object"
+      },
+      "PersonaCallRow": {
+        "additionalProperties": false,
+        "properties": {
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
+          },
+          "persona": {
+            "title": "Persona",
+            "type": "string"
+          },
+          "prompt_sha256": {
+            "title": "Prompt Sha256",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "persona",
+          "model",
+          "status",
+          "prompt_sha256",
+          "created_at"
+        ],
+        "title": "PersonaCallRow",
         "type": "object"
       },
       "PersonaCallView": {
@@ -6589,6 +8124,270 @@
         "title": "ReviewView",
         "type": "object"
       },
+      "RunDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "chain": {
+            "description": "Every step of its chain (step order)",
+            "items": {
+              "$ref": "#/components/schemas/StepView"
+            },
+            "title": "Chain",
+            "type": "array"
+          },
+          "chain_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chain Run Id"
+          },
+          "log": {
+            "description": "JSON log lines mentioning the run (tail)",
+            "items": {
+              "$ref": "#/components/schemas/LogLine"
+            },
+            "title": "Log",
+            "type": "array"
+          },
+          "log_available": {
+            "title": "Log Available",
+            "type": "boolean"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "step": {
+            "$ref": "#/components/schemas/StepView",
+            "description": "The requested run"
+          }
+        },
+        "required": [
+          "as_of",
+          "run_id",
+          "chain_run_id",
+          "step",
+          "chain",
+          "log",
+          "log_available"
+        ],
+        "title": "RunDetailResponse",
+        "type": "object"
+      },
+      "RunFilterOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "jobs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "statuses": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Statuses",
+            "type": "array"
+          }
+        },
+        "required": [
+          "jobs"
+        ],
+        "title": "RunFilterOptions",
+        "type": "object"
+      },
+      "RunListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "options": {
+            "$ref": "#/components/schemas/RunFilterOptions"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/RunRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "as_of",
+          "total",
+          "page",
+          "size",
+          "rows",
+          "options"
+        ],
+        "title": "RunListResponse",
+        "type": "object"
+      },
+      "RunRow": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "chain_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chain Run Id"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "job": {
+            "title": "Job",
+            "type": "string"
+          },
+          "no_change": {
+            "description": "D31 loop run that skipped the LLM (inputs unchanged)",
+            "title": "No Change",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "scheduled_for": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled For"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "description": "ok | failed | skipped | running",
+            "title": "Status",
+            "type": "string"
+          },
+          "step_index": {
+            "title": "Step Index",
+            "type": "integer"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          }
+        },
+        "required": [
+          "run_id",
+          "job",
+          "status",
+          "no_change",
+          "reason",
+          "scheduled_for",
+          "started_at",
+          "finished_at",
+          "duration_ms",
+          "summary",
+          "error",
+          "chain_run_id",
+          "step_index",
+          "attempts",
+          "route"
+        ],
+        "title": "RunRow",
+        "type": "object"
+      },
       "SearchMatch": {
         "additionalProperties": false,
         "properties": {
@@ -6651,6 +8450,284 @@
           "matches"
         ],
         "title": "SearchResponse",
+        "type": "object"
+      },
+      "SessionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Slots by status",
+            "title": "Counts",
+            "type": "object"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "loop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimelineRow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "loop_job": {
+            "description": "The D31 trading loop's job (second row)",
+            "title": "Loop Job",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          },
+          "unscheduled": {
+            "description": "Root runs on the day with no slot (manual / event)",
+            "items": {
+              "$ref": "#/components/schemas/RunRow"
+            },
+            "title": "Unscheduled",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "day",
+          "start",
+          "end",
+          "loop_job",
+          "loop",
+          "rows",
+          "counts"
+        ],
+        "title": "SessionResponse",
+        "type": "object"
+      },
+      "Slot": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "description": "Scheduled slot (ET)",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "chain_steps": {
+            "default": 0,
+            "description": "Chain step runs recorded under this root run",
+            "title": "Chain Steps",
+            "type": "integer"
+          },
+          "job": {
+            "title": "Job",
+            "type": "string"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunRow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "done",
+              "running",
+              "failed",
+              "skipped",
+              "no_change",
+              "missed",
+              "future"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job",
+          "at",
+          "status"
+        ],
+        "title": "Slot",
+        "type": "object"
+      },
+      "SourceRow": {
+        "additionalProperties": false,
+        "properties": {
+          "backoff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cooldown / backoff state, when any",
+            "title": "Backoff"
+          },
+          "cadence": {
+            "title": "Cadence",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "docs_today": {
+            "title": "Docs Today",
+            "type": "integer"
+          },
+          "error_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Rate"
+          },
+          "every_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Every S"
+          },
+          "failed_24h": {
+            "title": "Failed 24H",
+            "type": "integer"
+          },
+          "job": {
+            "title": "Job",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_doc_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Doc At"
+          },
+          "last_fetch": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latest ok run of the source job",
+            "title": "Last Fetch"
+          },
+          "late": {
+            "description": "No fetch within 2 x cadence",
+            "title": "Late",
+            "type": "boolean"
+          },
+          "runs_24h": {
+            "title": "Runs 24H",
+            "type": "integer"
+          },
+          "skipped_budget_today": {
+            "title": "Skipped Budget Today",
+            "type": "integer"
+          },
+          "weight": {
+            "description": "Effective fairness weight (category \u00d7 source share)",
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "job",
+          "category",
+          "weight",
+          "cadence",
+          "every_s",
+          "last_fetch",
+          "last_doc_at",
+          "docs_today",
+          "skipped_budget_today",
+          "runs_24h",
+          "failed_24h",
+          "error_rate",
+          "late"
+        ],
+        "title": "SourceRow",
+        "type": "object"
+      },
+      "SourcesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceRow"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "sources"
+        ],
+        "title": "SourcesResponse",
         "type": "object"
       },
       "StaticStats": {
@@ -6815,6 +8892,114 @@
           "halted"
         ],
         "title": "StatusSection",
+        "type": "object"
+      },
+      "StepView": {
+        "additionalProperties": false,
+        "description": "One run of a trace: the ``arc context trace`` element, typed.",
+        "properties": {
+          "contract": {
+            "$ref": "#/components/schemas/ContractView"
+          },
+          "decisions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Decisions",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventRow"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "gate_decisions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Gate Decisions",
+            "type": "array"
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The stored D27 RunManifest (JSON)",
+            "title": "Manifest"
+          },
+          "outputs": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/LinkRef"
+              },
+              "type": "array"
+            },
+            "description": "Manifest output ids by kind, with links (context entries / proposals)",
+            "title": "Outputs",
+            "type": "object"
+          },
+          "persona_calls": {
+            "items": {
+              "$ref": "#/components/schemas/PersonaCallRow"
+            },
+            "title": "Persona Calls",
+            "type": "array"
+          },
+          "proposals": {
+            "items": {
+              "$ref": "#/components/schemas/LinkRef"
+            },
+            "title": "Proposals",
+            "type": "array"
+          },
+          "read": {
+            "items": {
+              "$ref": "#/components/schemas/EntryRef"
+            },
+            "title": "Read",
+            "type": "array"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunRow"
+          },
+          "slack_posts": {
+            "items": {
+              "$ref": "#/components/schemas/LinkRef"
+            },
+            "title": "Slack Posts",
+            "type": "array"
+          },
+          "wrote": {
+            "items": {
+              "$ref": "#/components/schemas/EntryRef"
+            },
+            "title": "Wrote",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run",
+          "contract",
+          "read",
+          "wrote",
+          "outputs",
+          "events",
+          "persona_calls",
+          "proposals",
+          "decisions",
+          "gate_decisions",
+          "slack_posts",
+          "manifest"
+        ],
+        "title": "StepView",
         "type": "object"
       },
       "StopBasis": {
@@ -7068,6 +9253,48 @@
           "take_profit_pct"
         ],
         "title": "TimeAdjustedTarget",
+        "type": "object"
+      },
+      "TimelineRow": {
+        "additionalProperties": false,
+        "properties": {
+          "cadence": {
+            "title": "Cadence",
+            "type": "string"
+          },
+          "job": {
+            "title": "Job",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "source",
+              "persona",
+              "loop"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/Slot"
+            },
+            "title": "Slots",
+            "type": "array"
+          }
+        },
+        "required": [
+          "job",
+          "label",
+          "kind",
+          "cadence",
+          "slots"
+        ],
+        "title": "TimelineRow",
         "type": "object"
       },
       "TowerSnapshot": {
@@ -8646,6 +10873,619 @@
         "summary": "Meta",
         "tags": [
           "meta"
+        ]
+      }
+    },
+    "/api/ops/alerts": {
+      "get": {
+        "description": "``ops_alerts``: open first, then resolved in the last 7 days.",
+        "operationId": "alerts_api_ops_alerts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Alerts",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/budget": {
+      "get": {
+        "description": "Today's D32 options-order budget from the local store (``null`` without E6.5).",
+        "operationId": "budget_api_ops_budget_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/BudgetResponse"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Budget Api Ops Budget Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Budget",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/config": {
+      "get": {
+        "description": "The D26 effective config and override log (read-only).",
+        "operationId": "config_api_ops_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Config",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/context": {
+      "get": {
+        "description": "Active ``context_entries`` per kind, TTL left, latest entry, expired in 24 h.",
+        "operationId": "context_api_ops_context_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Context",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/context/{entry_id}": {
+      "get": {
+        "description": "One context entry with its payload.",
+        "operationId": "context_entry_api_ops_context__entry_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextEntryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Context Entry",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/halts": {
+      "get": {
+        "description": "Halts, active first, with the trades raised in each halt's window.",
+        "operationId": "halts_api_ops_halts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HaltsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Halts",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/health": {
+      "get": {
+        "description": "Tick / health heartbeat ages, gateway and remote access, log size, with thresholds.",
+        "operationId": "health_api_ops_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStripResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/llm": {
+      "get": {
+        "description": "LLM calls, tokens and cost per day / persona / model.",
+        "operationId": "llm_api_ops_llm_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Llm",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/runs": {
+      "get": {
+        "description": "``routine_runs``, newest first, filtered and paged.",
+        "operationId": "runs_api_ops_runs_get",
+        "parameters": [
+          {
+            "description": "Comma list of jobs",
+            "in": "query",
+            "name": "job",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma list of jobs",
+              "title": "Job"
+            }
+          },
+          {
+            "description": "Comma list: ok, failed, skipped, running, no_change",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma list: ok, failed, skipped, running, no_change",
+              "title": "Status"
+            }
+          },
+          {
+            "description": "today | yesterday | YYYY-MM-DD",
+            "in": "query",
+            "name": "day",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "today | yesterday | YYYY-MM-DD",
+              "title": "Day"
+            }
+          },
+          {
+            "description": "Chain id (or its root run id)",
+            "in": "query",
+            "name": "chain",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Chain id (or its root run id)",
+              "title": "Chain"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Runs",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/runs/{run_id}": {
+      "get": {
+        "description": "The run's D27 manifest and trace (``arc context trace``), its chain and log tail.",
+        "operationId": "run_detail_api_ops_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Run Detail",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/session": {
+      "get": {
+        "description": "The ET day's scheduled slots (06:00-22:00) with each one's run, plus the loop row.",
+        "operationId": "session_api_ops_session_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "day",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Day"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Session",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/sources": {
+      "get": {
+        "description": "Per registry source: last fetch, docs today, budget skips, backoff, error rate.",
+        "operationId": "sources_api_ops_sources_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Sources",
+        "tags": [
+          "ops"
         ]
       }
     },

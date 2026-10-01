@@ -1,6 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
-import { apiGet, type Meta, type Positions, type Snapshot } from "./api";
+import { apiGet, type ApiPath, type Meta, type Positions, type Snapshot } from "./api";
+import type { ContextEntry, RunDetail } from "./ops";
 import type { Overview, OverviewRange } from "./overview";
 import type { Performance } from "./performance";
 import { useSettings } from "./settings";
@@ -115,5 +116,50 @@ export function usePerformance(q: Record<string, string>) {
     queryFn: ({ signal }) => apiGet("/api/performance", { query: q, signal }),
     placeholderData: keepPreviousData,
     ...poll,
+  });
+}
+
+type OpsPath = Extract<
+  ApiPath,
+  | "/api/ops/session"
+  | "/api/ops/health"
+  | "/api/ops/alerts"
+  | "/api/ops/halts"
+  | "/api/ops/runs"
+  | "/api/ops/budget"
+  | "/api/ops/context"
+  | "/api/ops/sources"
+  | "/api/ops/llm"
+  | "/api/ops/config"
+>;
+
+/** Ops & pipeline (E8.7d): one polled query per card. */
+export function useOps<P extends OpsPath>(path: P, query?: Record<string, string | number>) {
+  const poll = usePoll();
+  return useQuery({
+    queryKey: ["ops", path, query ?? {}],
+    queryFn: ({ signal }) => apiGet(path, { query, signal }),
+    placeholderData: keepPreviousData,
+    ...poll,
+  });
+}
+
+export function useRun(runId: string | undefined) {
+  const poll = usePoll();
+  return useQuery<RunDetail>({
+    queryKey: ["ops-run", runId],
+    queryFn: ({ signal }) => apiGet(`/api/ops/runs/${runId}` as "/api/ops/runs/{run_id}", { signal }),
+    enabled: Boolean(runId),
+    ...poll,
+  });
+}
+
+export function useContextEntry(id: string | undefined) {
+  return useQuery<ContextEntry>({
+    queryKey: ["ops-context", id],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/ops/context/${id}` as "/api/ops/context/{entry_id}", { signal }),
+    enabled: Boolean(id),
+    staleTime: 60_000,
   });
 }

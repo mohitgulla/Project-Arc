@@ -44,6 +44,246 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ops/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Alerts
+         * @description ``ops_alerts``: open first, then resolved in the last 7 days.
+         */
+        get: operations["alerts_api_ops_alerts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ops/budget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Budget
+         * @description Today's D32 options-order budget from the local store (``null`` without E6.5).
+         */
+        get: operations["budget_api_ops_budget_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ops/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Config
+         * @description The D26 effective config and override log (read-only).
+         */
+        get: operations["config_api_ops_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ops/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Context
+         * @description Active ``context_entries`` per kind, TTL left, latest entry, expired in 24 h.
+         */
+        get: operations["context_api_ops_context_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ops/context/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Context Entry
+         * @description One context entry with its payload.
+         */
+        get: operations["context_entry_api_ops_context__entry_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ops/halts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Halts
+         * @description Halts, active first, with the trades raised in each halt's window.
+         */
+        get: operations["halts_api_ops_halts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ops/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Health
+         * @description Tick / health heartbeat ages, gateway and remote access, log size, with thresholds.
+         */
+        get: operations["health_api_ops_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ops/llm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Llm
+         * @description LLM calls, tokens and cost per day / persona / model.
+         */
+        get: operations["llm_api_ops_llm_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ops/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Runs
+         * @description ``routine_runs``, newest first, filtered and paged.
+         */
+        get: operations["runs_api_ops_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ops/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Detail
+         * @description The run's D27 manifest and trace (``arc context trace``), its chain and log tail.
+         */
+        get: operations["run_detail_api_ops_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ops/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Session
+         * @description The ET day's scheduled slots (06:00-22:00) with each one's run, plus the loop row.
+         */
+        get: operations["session_api_ops_session_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ops/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sources
+         * @description Per registry source: last fetch, docs today, budget skips, backoff, error rate.
+         */
+        get: operations["sources_api_ops_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/overview": {
         parameters: {
             query?: never;
@@ -256,6 +496,30 @@ export interface components {
              */
             tone: "neutral" | "neg" | "warn" | "pos";
         };
+        /** AlertRow */
+        AlertRow: {
+            /**
+             * Duration S
+             * @description Open → resolved (or → now while open)
+             */
+            duration_s: number | null;
+            /** Id */
+            id: string;
+            /** Key */
+            key: string;
+            /** Kind */
+            kind: string;
+            /** Message */
+            message: string;
+            /** Open */
+            open: boolean;
+            /** Opened At */
+            opened_at: string | null;
+            /** Posted Ts */
+            posted_ts?: string | null;
+            /** Resolved At */
+            resolved_at: string | null;
+        };
         /** AlertView */
         AlertView: {
             /** Key */
@@ -266,6 +530,18 @@ export interface components {
             message: string;
             /** Opened At */
             opened_at: string | null;
+        };
+        /** AlertsResponse */
+        AlertsResponse: {
+            /** Alerts */
+            alerts: components["schemas"]["AlertRow"][];
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Open */
+            open: number;
         };
         /** AppInfo */
         AppInfo: {
@@ -388,6 +664,49 @@ export interface components {
              */
             sigma?: number | null;
         };
+        /** BudgetResponse */
+        BudgetResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Broker Checked
+             * @description Always false: the tower never calls the broker (local count only)
+             * @default false
+             */
+            broker_checked: boolean;
+            /** By State */
+            by_state: {
+                [key: string]: number;
+            };
+            /** Close Reserve */
+            close_reserve: number;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Limit */
+            limit: number;
+            /** Local */
+            local: number;
+            /** Open Limit */
+            open_limit: number;
+            /** Orders */
+            orders: components["schemas"]["OrderRow"][];
+            /** Remaining Opens */
+            remaining_opens: number;
+            /** Reserved */
+            reserved: number;
+            /** Restrict At */
+            restrict_at: number;
+            /** Tier */
+            tier: string;
+            /** Used */
+            used: number;
+        };
         /**
          * Cadence
          * @description How often a producing job runs and when its output counts as stale.
@@ -476,6 +795,194 @@ export interface components {
             stance: string;
             /** Ticker */
             ticker: string;
+        };
+        /** ConfigChangeRow */
+        ConfigChangeRow: {
+            /** Actor */
+            actor: string;
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Direction */
+            direction: string;
+            /** Halted */
+            halted: boolean;
+            /** Id */
+            id: number;
+            /** Is Default */
+            is_default: boolean;
+            /** Key */
+            key: string;
+            /** New */
+            new?: unknown;
+            /** Old */
+            old?: unknown;
+            /** Reason */
+            reason: string | null;
+            /** Source */
+            source: string;
+            /**
+             * Status
+             * @description applied | reverted
+             */
+            status: string;
+            /**
+             * Supersedes Id
+             * @description Revert marker: the change this one undid
+             */
+            supersedes_id: number | null;
+        };
+        /** ConfigKeyRow */
+        ConfigKeyRow: {
+            /** Bounds */
+            bounds: string;
+            /** Default */
+            default: unknown;
+            /** Default Text */
+            default_text: string;
+            /** Description */
+            description: string;
+            /** Env */
+            env?: string | null;
+            /** Group */
+            group: string;
+            /** Hard Ceiling */
+            hard_ceiling?: unknown;
+            /** Key */
+            key: string;
+            /** Last Change At */
+            last_change_at?: string | null;
+            /** Last Change By */
+            last_change_by?: string | null;
+            /** Last Change Id */
+            last_change_id?: number | null;
+            /** Risk */
+            risk: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "yaml" | "override";
+            /** Value */
+            value: unknown;
+            /** Value Text */
+            value_text: string;
+        };
+        /** ConfigResponse */
+        ConfigResponse: {
+            /** Account Profile */
+            account_profile: string;
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Changes */
+            changes: components["schemas"]["ConfigChangeRow"][];
+            /** Config Version */
+            config_version: number;
+            /** Env */
+            env: string;
+            /** Keys */
+            keys: components["schemas"]["ConfigKeyRow"][];
+            /** Note */
+            note?: string | null;
+        };
+        /** ContextEntryResponse */
+        ContextEntryResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Chain Run Id */
+            chain_run_id: string | null;
+            /** Created At */
+            created_at: string | null;
+            /** Expires At */
+            expires_at: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Payload */
+            payload: unknown;
+            /** Produced By */
+            produced_by: string;
+            /** Run Id */
+            run_id: string | null;
+            /** Schema Version */
+            schema_version: number;
+            /** Status */
+            status: string;
+            /** Subject */
+            subject: string;
+            /** Supersedes Id */
+            supersedes_id: string | null;
+            /** Valid From */
+            valid_from: string | null;
+        };
+        /** ContextKindRow */
+        ContextKindRow: {
+            /** Active */
+            active: number;
+            /** Expired 24H */
+            expired_24h: number;
+            /** Kind */
+            kind: string;
+            /** Latest At */
+            latest_at: string | null;
+            /** Latest By */
+            latest_by: string | null;
+            /** Latest Id */
+            latest_id: string | null;
+            /** Latest Subject */
+            latest_subject: string | null;
+            /** Next Expiry */
+            next_expiry: string | null;
+            /**
+             * Remaining Fraction
+             * @description Latest entry's TTL left (0..1); None when it never expires
+             */
+            remaining_fraction: number | null;
+            /**
+             * Ttl
+             * @description Configured TTL (context_ttl in routines.yaml)
+             */
+            ttl: string | null;
+        };
+        /** ContextResponse */
+        ContextResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Expired 24H */
+            expired_24h: number;
+            /** Kinds */
+            kinds: components["schemas"]["ContextKindRow"][];
+            /** Total Active */
+            total_active: number;
+        };
+        /** ContractView */
+        ContractView: {
+            /** Actual Reads */
+            actual_reads: string[];
+            /** Actual Writes */
+            actual_writes: string[];
+            /** Declared Reads */
+            declared_reads: string[] | null;
+            /** Declared Writes */
+            declared_writes: string[] | null;
+            /** Ok */
+            ok: boolean;
+            /** Undeclared Reads */
+            undeclared_reads: string[];
+            /** Undeclared Writes */
+            undeclared_writes: string[];
         };
         /** CostBar */
         CostBar: {
@@ -718,6 +1225,23 @@ export interface components {
                 [key: string]: components["schemas"]["PersonaCallView"];
             };
         };
+        /** EntryRef */
+        EntryRef: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Produced By */
+            produced_by?: string | null;
+            /** Subject */
+            subject: string;
+            /**
+             * Undeclared
+             * @description Kind outside the declared contract
+             * @default false
+             */
+            undeclared: boolean;
+        };
         /** EquityCard */
         EquityCard: {
             /** Drawdown Peak */
@@ -837,6 +1361,25 @@ export interface components {
             exit_slippage: number;
             /** Regulatory Fees */
             regulatory_fees: number;
+        };
+        /** EventRow */
+        EventRow: {
+            /** Consumed At */
+            consumed_at?: string | null;
+            /** Consumed By */
+            consumed_by?: string[];
+            /** Created At */
+            created_at: string | null;
+            /** Dispatched At */
+            dispatched_at?: string | null;
+            /** Dispatched By */
+            dispatched_by?: string | null;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
         };
         /** ExecutionSection */
         ExecutionSection: {
@@ -1219,6 +1762,37 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HaltRow */
+        HaltRow: {
+            /** Active */
+            active: boolean;
+            /** Actor */
+            actor: string;
+            /** At */
+            at: string | null;
+            /** Cleared At */
+            cleared_at: string | null;
+            /** Cleared By */
+            cleared_by: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Reason */
+            reason: string;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Trades
+             * @description Proposals created while the halt was in force
+             */
+            trades: number;
+            /**
+             * Trades Route
+             * @description Trades page filtered to the halt window
+             */
+            trades_route: string;
+        };
         /** HaltView */
         HaltView: {
             /** Active */
@@ -1238,6 +1812,41 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** HaltsResponse */
+        HaltsResponse: {
+            /** Active */
+            active: number;
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Halts */
+            halts: components["schemas"]["HaltRow"][];
+        };
+        /** HealthItem */
+        HealthItem: {
+            /** Age S */
+            age_s?: number | null;
+            /** At */
+            at?: string | null;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "degraded" | "failed" | "unknown";
+            /**
+             * Threshold
+             * @description What the status is judged against
+             */
+            threshold: string;
+            /** Value */
+            value: string;
+        };
         /** HealthResponse */
         HealthResponse: {
             /**
@@ -1255,6 +1864,25 @@ export interface components {
              * @constant
              */
             status: "ok";
+        };
+        /** HealthStripResponse */
+        HealthStripResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Checks
+             * @description The latest health heartbeat's checks: severity, summary
+             */
+            checks?: {
+                [key: string]: {
+                    [key: string]: string;
+                };
+            };
+            /** Items */
+            items: components["schemas"]["HealthItem"][];
         };
         /**
          * IvModel
@@ -1417,6 +2045,101 @@ export interface components {
             symbol: string;
             /** Unrealized Pl */
             unrealized_pl?: string | null;
+        };
+        /** LinkRef */
+        LinkRef: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Route */
+            route?: string | null;
+        };
+        /** LlmDay */
+        LlmDay: {
+            /**
+             * By Model
+             * @description Cost by model (USD)
+             */
+            by_model: {
+                [key: string]: number;
+            };
+            /**
+             * By Persona
+             * @description Cost by persona (USD)
+             */
+            by_persona: {
+                [key: string]: number;
+            };
+            /** Calls */
+            calls: number;
+            /** Cost Usd */
+            cost_usd: number;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+        };
+        /** LlmGroup */
+        LlmGroup: {
+            /** Calls */
+            calls: number;
+            /** Cost Usd */
+            cost_usd: number;
+            /** Failed */
+            failed: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Model */
+            model: string;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Persona */
+            persona: string;
+        };
+        /** LlmResponse */
+        LlmResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Days */
+            days: number;
+            /** Models */
+            models: string[];
+            /** Period */
+            period: components["schemas"]["LlmGroup"][];
+            /** Personas */
+            personas: string[];
+            /** Series */
+            series: components["schemas"]["LlmDay"][];
+            /** Today */
+            today: components["schemas"]["LlmGroup"][];
+            /** Today Cost */
+            today_cost: number;
+            /** Total Cost */
+            total_cost: number;
+            /** Yesterday Cost */
+            yesterday_cost: number;
+        };
+        /** LogLine */
+        LogLine: {
+            /** Event */
+            event: string;
+            /** Fields */
+            fields: {
+                [key: string]: unknown;
+            };
+            /** Level */
+            level: string;
+            /** Ts */
+            ts: string | null;
         };
         /**
          * ManagedStats
@@ -1752,6 +2475,23 @@ export interface components {
             /** To State */
             to_state: string;
         };
+        /** OrderRow */
+        OrderRow: {
+            /** Created At */
+            created_at: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string | null;
+            /** Proposal Hash */
+            proposal_hash: string;
+            /** Route */
+            route: string;
+            /** State */
+            state: string;
+            /** Ticker */
+            ticker: string | null;
+        };
         /** OrderView */
         OrderView: {
             /** Broker Order Id */
@@ -1984,6 +2724,29 @@ export interface components {
              * Format: date
              */
             slot_end: string;
+        };
+        /** PersonaCallRow */
+        PersonaCallRow: {
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /** Created At */
+            created_at: string | null;
+            /** Id */
+            id: string;
+            /** Input Tokens */
+            input_tokens?: number | null;
+            /** Latency Ms */
+            latency_ms?: number | null;
+            /** Model */
+            model: string;
+            /** Output Tokens */
+            output_tokens?: number | null;
+            /** Persona */
+            persona: string;
+            /** Prompt Sha256 */
+            prompt_sha256: string;
+            /** Status */
+            status: string;
         };
         /** PersonaCallView */
         PersonaCallView: {
@@ -2453,6 +3216,95 @@ export interface components {
             /** Root Cause */
             root_cause: string;
         };
+        /** RunDetailResponse */
+        RunDetailResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Chain
+             * @description Every step of its chain (step order)
+             */
+            chain: components["schemas"]["StepView"][];
+            /** Chain Run Id */
+            chain_run_id: string | null;
+            /**
+             * Log
+             * @description JSON log lines mentioning the run (tail)
+             */
+            log: components["schemas"]["LogLine"][];
+            /** Log Available */
+            log_available: boolean;
+            /** Run Id */
+            run_id: string;
+            /** @description The requested run */
+            step: components["schemas"]["StepView"];
+        };
+        /** RunFilterOptions */
+        RunFilterOptions: {
+            /** Jobs */
+            jobs: string[];
+            /** Statuses */
+            statuses?: string[];
+        };
+        /** RunListResponse */
+        RunListResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            options: components["schemas"]["RunFilterOptions"];
+            /** Page */
+            page: number;
+            /** Rows */
+            rows: components["schemas"]["RunRow"][];
+            /** Size */
+            size: number;
+            /** Total */
+            total: number;
+        };
+        /** RunRow */
+        RunRow: {
+            /** Attempts */
+            attempts: number;
+            /** Chain Run Id */
+            chain_run_id: string | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Job */
+            job: string;
+            /**
+             * No Change
+             * @description D31 loop run that skipped the LLM (inputs unchanged)
+             */
+            no_change: boolean;
+            /** Reason */
+            reason: string;
+            /** Route */
+            route: string;
+            /** Run Id */
+            run_id: string;
+            /** Scheduled For */
+            scheduled_for: string | null;
+            /** Started At */
+            started_at: string | null;
+            /**
+             * Status
+             * @description ok | failed | skipped | running
+             */
+            status: string;
+            /** Step Index */
+            step_index: number;
+            /** Summary */
+            summary: string | null;
+        };
         /** SearchMatch */
         SearchMatch: {
             /** Id */
@@ -2478,6 +3330,129 @@ export interface components {
             matches: components["schemas"]["SearchMatch"][];
             /** Q */
             q: string;
+        };
+        /** SessionResponse */
+        SessionResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Counts
+             * @description Slots by status
+             */
+            counts: {
+                [key: string]: number;
+            };
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /**
+             * End
+             * Format: date-time
+             */
+            end: string;
+            loop: components["schemas"]["TimelineRow"] | null;
+            /**
+             * Loop Job
+             * @description The D31 trading loop's job (second row)
+             */
+            loop_job: string;
+            /** Rows */
+            rows: components["schemas"]["TimelineRow"][];
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
+            /**
+             * Unscheduled
+             * @description Root runs on the day with no slot (manual / event)
+             */
+            unscheduled?: components["schemas"]["RunRow"][];
+        };
+        /** Slot */
+        Slot: {
+            /**
+             * At
+             * Format: date-time
+             * @description Scheduled slot (ET)
+             */
+            at: string;
+            /**
+             * Chain Steps
+             * @description Chain step runs recorded under this root run
+             * @default 0
+             */
+            chain_steps: number;
+            /** Job */
+            job: string;
+            run?: components["schemas"]["RunRow"] | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "done" | "running" | "failed" | "skipped" | "no_change" | "missed" | "future";
+        };
+        /** SourceRow */
+        SourceRow: {
+            /**
+             * Backoff
+             * @description Cooldown / backoff state, when any
+             */
+            backoff?: string | null;
+            /** Cadence */
+            cadence: string;
+            /** Category */
+            category: string;
+            /** Docs Today */
+            docs_today: number;
+            /** Error Rate */
+            error_rate: number | null;
+            /** Every S */
+            every_s: number | null;
+            /** Failed 24H */
+            failed_24h: number;
+            /** Job */
+            job: string;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Last Doc At */
+            last_doc_at: string | null;
+            /**
+             * Last Fetch
+             * @description Latest ok run of the source job
+             */
+            last_fetch: string | null;
+            /**
+             * Late
+             * @description No fetch within 2 x cadence
+             */
+            late: boolean;
+            /** Runs 24H */
+            runs_24h: number;
+            /** Skipped Budget Today */
+            skipped_budget_today: number;
+            /**
+             * Weight
+             * @description Effective fairness weight (category × source share)
+             */
+            weight: number;
+        };
+        /** SourcesResponse */
+        SourcesResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Sources */
+            sources: components["schemas"]["SourceRow"][];
         };
         /**
          * StaticStats
@@ -2543,6 +3518,44 @@ export interface components {
             tick_at?: string | null;
             /** Tick Status */
             tick_status?: string | null;
+        };
+        /**
+         * StepView
+         * @description One run of a trace: the ``arc context trace`` element, typed.
+         */
+        StepView: {
+            contract: components["schemas"]["ContractView"];
+            /** Decisions */
+            decisions: string[];
+            /** Events */
+            events: components["schemas"]["EventRow"][];
+            /** Gate Decisions */
+            gate_decisions: string[];
+            /**
+             * Manifest
+             * @description The stored D27 RunManifest (JSON)
+             */
+            manifest: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Outputs
+             * @description Manifest output ids by kind, with links (context entries / proposals)
+             */
+            outputs: {
+                [key: string]: components["schemas"]["LinkRef"][];
+            };
+            /** Persona Calls */
+            persona_calls: components["schemas"]["PersonaCallRow"][];
+            /** Proposals */
+            proposals: components["schemas"]["LinkRef"][];
+            /** Read */
+            read: components["schemas"]["EntryRef"][];
+            run: components["schemas"]["RunRow"];
+            /** Slack Posts */
+            slack_posts: components["schemas"]["LinkRef"][];
+            /** Wrote */
+            wrote: components["schemas"]["EntryRef"][];
         };
         /**
          * StopBasis
@@ -2630,6 +3643,22 @@ export interface components {
             dte_lte: number;
             /** Take Profit Pct */
             take_profit_pct: number;
+        };
+        /** TimelineRow */
+        TimelineRow: {
+            /** Cadence */
+            cadence: string;
+            /** Job */
+            job: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "source" | "persona" | "loop";
+            /** Label */
+            label: string;
+            /** Slots */
+            slots: components["schemas"]["Slot"][];
         };
         /**
          * TowerSnapshot
@@ -3210,6 +4239,436 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MetaResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    alerts_api_ops_alerts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertsResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    budget_api_ops_budget_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetResponse"] | null;
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    config_api_ops_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    context_api_ops_context_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    context_entry_api_ops_context__entry_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextEntryResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    halts_api_ops_halts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HaltsResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    health_api_ops_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthStripResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    llm_api_ops_llm_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    runs_api_ops_runs_get: {
+        parameters: {
+            query?: {
+                /** @description Comma list of jobs */
+                job?: string | null;
+                /** @description Comma list: ok, failed, skipped, running, no_change */
+                status?: string | null;
+                /** @description today | yesterday | YYYY-MM-DD */
+                day?: string | null;
+                /** @description Chain id (or its root run id) */
+                chain?: string | null;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunListResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    run_detail_api_ops_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDetailResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    session_api_ops_session_get: {
+        parameters: {
+            query?: {
+                day?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    sources_api_ops_sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcesResponse"];
                 };
             };
             /** @description Service Unavailable */
