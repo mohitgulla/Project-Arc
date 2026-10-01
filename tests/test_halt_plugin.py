@@ -121,3 +121,26 @@ def test_register() -> None:
     ctx = SimpleNamespace(register_hook=lambda name, cb: hooks.__setitem__(name, cb))
     plugin.register(ctx)
     assert hooks == {"pre_gateway_dispatch": plugin.on_pre_gateway_dispatch}
+
+
+def test_arc_subprocess_gets_a_clean_python_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gateway's PYTHONPATH (Hermes's site-packages) must not reach Arc's venv.
+
+    Regression: `!halt` from Slack exited 1 on a foreign pydantic_core import.
+    """
+    monkeypatch.setenv("PYTHONPATH", "/hermes/venv/lib/python3.14/site-packages")
+    monkeypatch.setenv("PYTHONHOME", "/hermes/python")
+    monkeypatch.setenv("VIRTUAL_ENV", "/hermes/venv")
+    monkeypatch.setenv("ARC_ENV", "paper")
+    seen: dict[str, Any] = {}
+
+    def fake_run(cmd, **kw):  # noqa: ANN001, ANN003, ANN202
+        seen["env"] = kw["env"]
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(plugin.subprocess, "run", fake_run)
+    assert plugin.run_arc("halt", "test", "U0OWNER001") == "ok"
+    env = seen["env"]
+    assert not {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"} & set(env)
+    assert env["ARC_ENV"] == "paper"
+    assert env["PATH"].split(":")[0].endswith(".venv/bin")
