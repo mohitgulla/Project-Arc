@@ -83,6 +83,7 @@ loop:
   pnl_bucket_pct: 0.5      # P&L rounding (as % of equity) inside the no-change digest
   post_hold_roots: true    # false = HOLD / no_change loops post no root line
   slack_layout: root_per_loop   # root_per_loop (D36) | day_thread (pre-D36 rollback)
+  action_roots: [positions.evaluate]   # D38: these chains get the same root line, only when they propose (SELL: …)
 
 # Default TTL / supersede policy per context kind (producers may override
 # per job with `context:`). TTLs: "<n>m|h|d" or "<n> session(s)".

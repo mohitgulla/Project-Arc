@@ -351,6 +351,10 @@ class LoopLayout(enum.StrEnum):
 class LoopSettings(BaseModel):
     """The 5-min trading loop (D31 / D36): cost, overlap and Slack-shape knobs.
 
+    ``action_roots`` lists other chained jobs (D38: the position manager) whose
+    run gets the same root line in #arc-investor, opened only once the chain has
+    a proposal (so closes show as ``SELL: …``) and never for a quiet run.
+
     ``job`` names the persona whose chain is the loop. ``max_idle`` bounds the
     change-aware skip: a loop whose input digest equals the previous one skips the
     LLM chain as ``no_change`` unless that long has passed since the last full
@@ -367,6 +371,9 @@ class LoopSettings(BaseModel):
     pnl_bucket_pct: Annotated[float, Field(gt=0, le=10)] = 0.5
     post_hold_roots: bool = True
     slack_layout: LoopLayout = LoopLayout.ROOT_PER_LOOP
+    # D38: other chains that get the same one-line root, but only when they act
+    # (a proposal published: close / swap). Quiet runs post no root at all.
+    action_roots: tuple[str, ...] = ("positions.evaluate",)
 
     @field_validator("max_idle", "max_runtime", mode="before")
     @classmethod
