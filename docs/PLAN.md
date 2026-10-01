@@ -258,6 +258,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E5.9 Portfolio-aware Director + idea dedupe + explicit no-trade (D33) ← E5.7, E6.4, E6.5
 - E5.5b Card presentation — Scout one section per candidate, Scout session notes, Quant spacing, [Routines] code blocks (D36) ← E5.5
 - E5.8 Two-speed routines — 30-min Scout, 5-min trading loop, no-change digest, ✅/✖️ status line per loop with persona cards in its thread (D31, D36) ← E6.5, E5.9, E6.6, E4.5, E6.4
+- E5.10 Tick never waits on slow jobs — background lane for Scout/slow sources, `_llm` lock only for local models, tick duration in the heartbeat, EDGAR 0-doc slowness ← E5.3
 
 **E6 Approval & execution**
 - E6.1 Slack proposal card — `#arc-investor` daily thread, Approve/Reject, TTL; D22 layout + per-persona decision trail ← E1.5, E5.2
@@ -278,6 +279,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 **E8 Ops**
 - E8.1 Per-persona model routing (fallback provider: later, note only) ← P0
 - E8.2 Monitoring — heartbeat, gateway health, log rotation, alerts ← E5.3
+- E8.2a Ops alerts v2 — per-job slot-coverage + slow-tick conditions (with cause) replace one alert per missed 5-min slot; daily slot rollup ← E8.2, E5.10
 - E8.3 Streamlit control tower over Tailscale (replaced by E8.7, D35) ← E6.3
 - E8.5 Slack control panel — registry, bounded owner-only overrides, audit/revert, effective config everywhere (D26) ← E3.4, E2.4
 - E8.6 Remote access over Tailscale — Hermes dashboard/Desktop backend + tower as launchd agents on the tailnet only, basic auth, remote_access health check (D29) ← E8.3, E8.2
