@@ -2496,8 +2496,11 @@ export interface components {
         OrderView: {
             /** Broker Order Id */
             broker_order_id: string | null;
-            /** Client Order Id */
-            client_order_id: string;
+            /**
+             * Client Order Ref
+             * @description Redacted broker client id: ``<version>.s<step>·<sha256[:12]>``. The raw id embeds the gate token and is never served.
+             */
+            client_order_ref: string;
             /** Created At */
             created_at: string | null;
             /** Events */

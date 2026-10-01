@@ -25,6 +25,7 @@ Detail (``GET /api/trades/{hash}``)
     gate                    ``gate_decisions`` (the token itself is never returned)
     approval                ``approval_requests`` + ``approvals``
     execution               ``executions``, ``orders`` + ``order_events``, ``fills``
+                            (``client_order_id`` embeds the token: served as a ref)
     position & exits        ``open_structures``, close proposals for it, ``swaps``
     outcome & review        ``outcomes`` (latest), ``decision_reviews`` + citations
     market context          ``market_contexts``, the ``regime`` context entry of the
@@ -38,6 +39,8 @@ Optional tables or rows that are missing render as empty sections, never errors.
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
+import re
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -67,6 +70,7 @@ __all__ = [
     "TradeListResponse",
     "TradeRow",
     "TradeSummary",
+    "client_order_ref",
     "date_range",
     "load_filter_options",
     "load_trade",
@@ -573,7 +577,13 @@ class OrderView(BaseModel):
     model_config = _STRICT
 
     id: str
-    client_order_id: str
+    client_order_ref: str = Field(
+        ...,
+        description=(
+            "Redacted broker client id: ``<version>.s<step>·<sha256[:12]>``. The raw"
+            " id embeds the gate token and is never served."
+        ),
+    )
     broker_order_id: str | None
     state: str
     created_at: _dt.datetime | None
@@ -1198,6 +1208,28 @@ def _lifecycle(row: TradeRow, exit_pending: bool) -> tuple[str, str | None]:
     return _LIFECYCLE[row.stage], None
 
 
+_COID_STEP = re.compile(r"\.s(\d+)$")
+_COID_VERSION = re.compile(r"arc\d")
+
+
+def client_order_ref(coid: str | None) -> str:
+    """A display/correlation ref for a broker ``client_order_id`` that never carries the token.
+
+    Arc ladder ids are ``<arc2 token>.s<k>`` (an arc1 id is the bare token), so the raw
+    value is a live authorisation and stays in the store. The ref keeps only the token
+    version, the ladder step and a short SHA-256 of the full id (enough to match it
+    against a broker export): ``arc2.s1·3f9a0c1b2d4e``. Any other id (a broker smoke
+    test, a manual order) is reduced the same way with version ``ext``.
+    """
+    if not coid:
+        return "none"
+    head = coid.split(".", 1)[0]
+    version = head if _COID_VERSION.fullmatch(head) else "ext"
+    step = _COID_STEP.search(coid)
+    digest = hashlib.sha256(coid.encode()).hexdigest()[:12]
+    return f"{version}.s{step.group(1)}·{digest}" if step else f"{version}·{digest}"
+
+
 def _token_version(token: str | None) -> str | None:
     if not token:
         return None
@@ -1546,7 +1578,7 @@ def _execution(
         orders.append(
             OrderView(
                 id=o["id"],
-                client_order_id=o["client_order_id"],
+                client_order_ref=client_order_ref(o["client_order_id"]),
                 broker_order_id=o["broker_order_id"],
                 state=o["state"],
                 created_at=parse_ts(o["created_at"]),
