@@ -481,3 +481,25 @@ def test_cli_scorecard(conn: sqlite3.Connection, tmp_path: Path, capsys: Any) ->
     assert (tmp_path / "w" / "2026-09-21.md").exists()
     assert main(["journal", "scorecard", "--db", str(db), "--week", "2026-09-25", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["funnel"]["proposals"] == 1
+
+
+def test_same_day_exits_are_their_own_bucket(conn: sqlite3.Connection) -> None:
+    """E6.4a: an early exit closed the day it opened (days_held 0) is reported apart."""
+    sid, _ = open_filled(conn, contracts=1)
+    close_early(conn, sid, Decimal("-0.80"), qty=1, at=_at(23, 14), reason="remaining_ev_floor")
+    sc = build_scorecard(conn, start=START, end=END, now=FRI)
+    (c,) = sc.closed
+    assert c.days_held == 0 and c.early and sc.same_day_closed == [c]
+    md = render_markdown(sc)
+    assert "### Same-day exits (days held 0)" in md and "remaining_ev_floor" in md
+    assert "1 of 1 early exit(s) closed the day they opened" in md
+    card = json.dumps(scorecard_card(sc).blocks)
+    assert "Same-day exits (days held 0)" in card
+
+
+def test_next_day_exit_is_not_same_day(conn: sqlite3.Connection) -> None:
+    sid, _ = open_filled(conn, contracts=1)
+    close_early(conn, sid, Decimal("-0.80"), qty=1, at=_at(24, 14))
+    sc = build_scorecard(conn, start=START, end=END, now=FRI)
+    assert sc.closed[0].days_held == 1 and sc.same_day_closed == []
+    assert "### Same-day exits (days held 0)\n\nNone." in render_markdown(sc)

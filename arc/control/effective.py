@@ -31,11 +31,13 @@ from arc.control.registry import Target, TunableError, lookup, write_raw
 from arc.control.store import ConfigChange, ConfigChangeRepo
 from arc.exits.policy import DEFAULT_EXITS_PATH, load_exit_config
 from arc.routines.config import DEFAULT_ROUTINES_PATH, load_routines
+from arc.scanner.rank import DEFAULT_RANKING_PATH, load_ranking_config
 
 if TYPE_CHECKING:
     from arc.backtest.costs import CostModel
     from arc.exits.policy import ExitConfig
     from arc.routines.config import RoutinesConfig
+    from arc.scanner.rank import RankingConfig
 
 __all__ = [
     "YAML_PATHS",
@@ -44,6 +46,7 @@ __all__ = [
     "effective_settings",
     "exit_config",
     "open_store",
+    "ranking_config",
     "raw_yaml",
     "yaml_overrides",
 ]
@@ -55,6 +58,7 @@ YAML_PATHS: dict[Target, Path] = {
     Target.COSTS: DEFAULT_COSTS_PATH,
     Target.PROFILES: DEFAULT_PROFILES_PATH,
     Target.ROUTINES: DEFAULT_ROUTINES_PATH,
+    Target.RANKING: DEFAULT_RANKING_PATH,
 }
 
 
@@ -227,6 +231,14 @@ def cost_model(settings: ArcSettings | None = None, path: Path | str | None = No
     """``config/costs.yaml`` with the D26 overrides carried by *settings*."""
     ov = settings.yaml_overrides(Target.COSTS.value) if settings is not None else None
     return load_cost_model(path, overrides=ov)
+
+
+def ranking_config(
+    settings: ArcSettings | None = None, path: Path | str | None = None
+) -> RankingConfig:
+    """``config/ranking.yaml`` (``ranking:``) with the D26 overrides carried by *settings*."""
+    ov = settings.yaml_overrides(Target.RANKING.value) if settings is not None else None
+    return load_ranking_config(path, overrides=ov)
 
 
 def effective_routines(

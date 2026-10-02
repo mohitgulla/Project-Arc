@@ -1618,6 +1618,49 @@ export interface components {
             /** Qty */
             qty: number;
         };
+        /**
+         * FloorExitFacts
+         * @description Why a position was closed on the remaining-EV floor (all money $ per unit).
+         */
+        FloorExitFacts: {
+            /** Buying Power */
+            buying_power?: number | null;
+            /**
+             * Days Held
+             * @description ET calendar days fill -> decision
+             */
+            days_held?: number | null;
+            /** Decided At */
+            decided_at?: string | null;
+            /** Entry Managed Net Ev */
+            entry_managed_net_ev?: number | null;
+            /** Entry Managed Net Ev Per Bp */
+            entry_managed_net_ev_per_bp?: number | null;
+            /** Exit Proposal Hash */
+            exit_proposal_hash: string;
+            /** Floor */
+            floor?: number | null;
+            /**
+             * Floor Mode
+             * @description Floor config when it fired: 'eod' (EOD only) or 'intraday'
+             */
+            floor_mode?: string | null;
+            /** Minutes Since Fill */
+            minutes_since_fill?: number | null;
+            /** Open Proposal Hash */
+            open_proposal_hash?: string | null;
+            /** Remaining Ev */
+            remaining_ev?: number | null;
+            /** Remaining Ev Per Bp */
+            remaining_ev_per_bp?: number | null;
+            /** Structure Id */
+            structure_id?: string | null;
+            /**
+             * Window
+             * @description 'end_of_day' or 'intraday' marks fired it; None = not recorded
+             */
+            window?: string | null;
+        };
         /** FunnelCard */
         FunnelCard: {
             /** Empty */
@@ -2955,6 +2998,8 @@ export interface components {
             exit_reason?: string | null;
             /** Exits */
             exits?: components["schemas"]["ExitLink"][];
+            /** @description E6.4a: remaining-EV floor exit facts (None = not a floor exit) */
+            floor_exit?: components["schemas"]["FloorExitFacts"] | null;
             /** Open Proposal Hash */
             open_proposal_hash?: string | null;
             /** Opened At */

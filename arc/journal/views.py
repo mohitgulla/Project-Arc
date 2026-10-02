@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.journal.floor_exit import FloorExitFacts, floor_exit_facts, floor_exit_line
 from arc.journal.models import (
     DecisionRecord,
     DecisionReview,
@@ -177,6 +178,9 @@ class ExplainDoc(BaseModel):
     position: dict[str, Any] | None = None
     outcome: OutcomeRecord | None = None
     reviews: list[DecisionReview] = Field(default_factory=list)
+    floor_exit: FloorExitFacts | None = Field(
+        None, description="E6.4a: why the remaining-EV floor closed this position"
+    )
 
 
 class ExplainReport(BaseModel):
@@ -416,6 +420,7 @@ def _doc(conn: sqlite3.Connection, phash: str, calls: list[PersonaCallView]) -> 
         market_context=j.market_context(phash),
         timeline=_timeline(conn, phash),
         reviews=j.reviews(proposal_hash=phash),
+        floor_exit=floor_exit_facts(conn, phash),
         **parts,
     )
 
@@ -503,6 +508,8 @@ def explain_lines(rep: ExplainReport) -> list[str]:
                 f"slippage {o.slippage_bps} bps · hold-to-expiry {o.hold_to_expiry_shadow_pnl}"
                 f" · exit {o.exit_reason}"
             )
+        if d.floor_exit is not None:
+            out.append(f"  {floor_exit_line(d.floor_exit)}")
         out.extend(f"  review {r.label} · {r.root_cause}" for r in d.reviews)
     if rep.chain_decisions:
         out.append(f"── decisions without a proposal ({len(rep.chain_decisions)})")

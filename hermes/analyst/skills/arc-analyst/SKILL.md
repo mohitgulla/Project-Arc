@@ -152,7 +152,10 @@ Only the owner (`U0C5KUMH28G`) may trigger actions. Resolve an A-id from the new
   Plan ref, "drafted by Analyst at create time") to a temp file, then
   `hermes -p default kanban --board project-arc create "<title>" --body-file <file> --assignee default --workspace worktree --project project-arc --completion-contract local-only --skill project-arc-development --created-by arc-analyst --json`
   plus `--parent <card id>` per parent key (keys → ids via
-  `~/.hermes/cache/scratch/project-arc-research/kanban-ids.json` or the board). Then
+  `~/.hermes/cache/scratch/project-arc-research/kanban-ids.json` or the board) and
+  `--idempotency-key analyst-A-<n>-<finding key>`. Before creating, check the board for an
+  existing card whose title ends in `(Analyst A-<n>)`; if one exists, triage `accepted`
+  with its id and do not create a second one. Then
   `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py triage A-<n> accepted "card <id>"`.
   Reply with the card id and status.
 - `comment A-<n>`: `hermes -p default kanban --board project-arc comment <card id> "ANALYST A-<n>: <finding + acceptance delta>"`,
@@ -161,7 +164,7 @@ Only the owner (`U0C5KUMH28G`) may trigger actions. Resolve an A-id from the new
   `references/lessons.md`.
 - `accept A-<n>`: `triage A-<n> accepted`. `fixed A-<n>`: `triage A-<n> fixed` (next run
   re-verifies).
-- `rerun`: `arc_analyst.py reset`, then `hermes -p arc-analyst cron run <arc-analyst-weekly id from hermes -p arc-analyst cron list>`.
+- `rerun`: `arc_analyst.py reset`, then `hermes -p arc-analyst cron run <arc-analyst-weekly-audit id from hermes -p arc-analyst cron list>`.
 - Questions: answer from RUN_DIR artefacts and the DB copy. Never change config or code.
 
 ## Pitfalls

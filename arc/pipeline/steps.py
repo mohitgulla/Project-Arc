@@ -68,7 +68,7 @@ from arc.context.kinds import (
 )
 from arc.context.store import ContextStore
 from arc.control.effective import cost_model as cost_config
-from arc.control.effective import exit_config
+from arc.control.effective import exit_config, ranking_config
 from arc.exits import ExitSummary, model_exits, realized_vol_forecast
 from arc.ingest.llm import ScoutLLMError
 from arc.ingest.scout import extract_json_object
@@ -129,6 +129,7 @@ from arc.pipeline.store import PersonaCallRepo
 from arc.routines.handlers import JobResult
 from arc.routines.loop import LoopInputs, LoopState, pnl_bucket
 from arc.routines.runs import RoutineRunRepo
+from arc.scanner.rank import live_net_ev_check
 from arc.sizing import size_contracts
 from arc.slack.blocks import esc
 from arc.slack.digests import director_card, quant_card, risk_card
@@ -2258,6 +2259,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     switch = HaltSwitch(HaltRepo(ctx.conn))
     exits = exit_config(settings)  # D26: exits/costs yaml + control-panel overrides
     cost_model = cost_config(settings)
+    ranking = ranking_config(settings)  # E6.4a: live Net EV floor (ranking.yaml filters)
 
     skipped: Counter[str] = Counter()
     lines: list[str] = []
@@ -2379,6 +2381,30 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
                     reason_text=verdict.detail,
                     payload={"fingerprint": fp.key(), "override": verdict.override},
                 )
+        exit_model = _proposal_exit_model(
+            priced,
+            exits,
+            settings.scanner_risk_free_rate,
+            _realized_vol(ctx.snapshot, t),
+            cost_model,
+        )
+        # E6.4a (D41): live Net EV floor. A structure whose managed Net EV after all
+        # costs is <= ranking.filters.min_managed_net_ev never becomes a proposal.
+        ev_ok, ev_why = live_net_ev_check(
+            None if exit_model is None else exit_model.managed.net_ev, ranking.filters
+        )
+        if not ev_ok:
+            skip(
+                t,
+                "net_ev_floor",
+                ReasonCode.NET_EV_FLOOR,
+                ev_why,
+                managed_net_ev=None if exit_model is None else exit_model.managed.net_ev,
+                floor=ranking.filters.min_managed_net_ev,
+                structure_type=qs.structure_type,
+            )
+            lines.append(f"{t}: dropped (net EV floor: {ev_why})")
+            continue
         if budget.tier.restricted:
             # D32 restrictive tier: stricter managed Net EV / PoP floors, deterministic.
             ok, why = _restrictive_check(
@@ -2555,13 +2581,6 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 reason_text=v,
                 proposal_hash=phash,
             )
-        exit_model = _proposal_exit_model(
-            priced,
-            exits,
-            settings.scanner_risk_free_rate,
-            _realized_vol(ctx.snapshot, t),
-            cost_model,
-        )
         regime_entry = ctx.snapshot.latest("regime", t)
         try:
             analytics = build_analytics(

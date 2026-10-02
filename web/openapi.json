@@ -3063,6 +3063,170 @@
         "title": "FillView",
         "type": "object"
       },
+      "FloorExitFacts": {
+        "additionalProperties": false,
+        "description": "Why a position was closed on the remaining-EV floor (all money $ per unit).",
+        "properties": {
+          "buying_power": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buying Power"
+          },
+          "days_held": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ET calendar days fill -> decision",
+            "title": "Days Held"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "entry_managed_net_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Managed Net Ev"
+          },
+          "entry_managed_net_ev_per_bp": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Managed Net Ev Per Bp"
+          },
+          "exit_proposal_hash": {
+            "title": "Exit Proposal Hash",
+            "type": "string"
+          },
+          "floor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor"
+          },
+          "floor_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Floor config when it fired: 'eod' (EOD only) or 'intraday'",
+            "title": "Floor Mode"
+          },
+          "minutes_since_fill": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minutes Since Fill"
+          },
+          "open_proposal_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Proposal Hash"
+          },
+          "remaining_ev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Ev"
+          },
+          "remaining_ev_per_bp": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Ev Per Bp"
+          },
+          "structure_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structure Id"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "'end_of_day' or 'intraday' marks fired it; None = not recorded",
+            "title": "Window"
+          }
+        },
+        "required": [
+          "exit_proposal_hash"
+        ],
+        "title": "FloorExitFacts",
+        "type": "object"
+      },
       "FunnelCard": {
         "additionalProperties": false,
         "properties": {
@@ -7087,6 +7251,17 @@
             },
             "title": "Exits",
             "type": "array"
+          },
+          "floor_exit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FloorExitFacts"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E6.4a: remaining-EV floor exit facts (None = not a floor exit)"
           },
           "open_proposal_hash": {
             "anyOf": [

@@ -460,8 +460,26 @@ function Position({ d }: { d: TradeDetail }) {
           ))}
         </div>
       )}
+      {p.floor_exit && (
+        <div className="mt-3" data-testid="floor-exit">
+          <p className="mb-1 text-caption text-secondary">Remaining-EV floor exit</p>
+          <KeyValueList
+            items={[
+              { label: "Remaining EV per $ BP", value: n4(p.floor_exit.remaining_ev_per_bp) },
+              { label: "Floor", value: n4(p.floor_exit.floor) },
+              { label: "Entry managed Net EV per $ BP", value: <>{n4(p.floor_exit.entry_managed_net_ev_per_bp)} (<M v={p.floor_exit.entry_managed_net_ev} sign /> per unit)</> },
+              { label: "Minutes since fill", value: n0(p.floor_exit.minutes_since_fill) },
+              { label: "Fired on", value: p.floor_exit.window ? humanize(p.floor_exit.window) + " marks" : "Not recorded (before E6.4a)" },
+            ]}
+          />
+        </div>
+      )}
     </>
   );
+}
+
+function n4(v: number | null | undefined): ReactNode {
+  return v == null ? DASH : (v > 0 ? "+" : "") + v.toFixed(4);
 }
 
 function Outcome({ d }: { d: TradeDetail }) {

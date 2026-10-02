@@ -184,6 +184,14 @@ class ClosedPosition(BaseModel):
     swap_id: str | None = None
 
     @property
+    def days_held(self) -> int | None:
+        """ET calendar days from the fill to the close (0 = closed the day it opened)."""
+        if self.opened_at is None:
+            return None
+        days = (self.closed_at.astimezone(ET).date() - self.opened_at.astimezone(ET).date()).days
+        return max(days, 0)
+
+    @property
     def early_exit_edge(self) -> float | None:
         """Realised − shadow hold: positive = closing early helped."""
         if self.shadow_hold_pnl is None:
@@ -358,6 +366,11 @@ class Scorecard(BaseModel):
     @property
     def early_closed(self) -> list[ClosedPosition]:
         return [c for c in self.closed if c.early]
+
+    @property
+    def same_day_closed(self) -> list[ClosedPosition]:
+        """E6.4a: early exits closed the day they opened (``days_held == 0``), own bucket."""
+        return [c for c in self.early_closed if c.days_held == 0]
 
     @property
     def label(self) -> str:
@@ -1261,6 +1274,10 @@ def _md_cell(text: str) -> str:
     return text.replace("|", "/")
 
 
+def _hm(ts: _dt.datetime | None) -> str:
+    return "n/a" if ts is None else f"{ts.astimezone(ET):%b %d %H:%M}"
+
+
 def render_markdown(sc: Scorecard) -> str:
     """The committed weekly report. Plain Markdown tables, one section per metric group."""
     f, a, p = sc.funnel, sc.funnel.approvals, sc.pnl
@@ -1347,6 +1364,25 @@ def render_markdown(sc: Scorecard) -> str:
         ]
     else:
         out.append("No positions closed early.")
+    same_day = sc.same_day_closed
+    out += ["", "### Same-day exits (days held 0)", ""]
+    if same_day:
+        out += [
+            "| Ticker | Opened | Closed | Reason | Realised |",
+            "|---|---|---|---|---|",
+        ]
+        out += [
+            f"| {c.ticker} | {_hm(c.opened_at)} | {_hm(c.closed_at)} | {c.exit_reason} | "
+            f"{_usd(c.realised_pnl)} |"
+            for c in same_day
+        ]
+        out += [
+            "",
+            f"{len(same_day)} of {len(early)} early exit(s) closed the day they opened; "
+            f"realised {_usd(sum(c.realised_pnl for c in same_day))}.",
+        ]
+    else:
+        out.append("None.")
     out += ["", "### Close-to-reallocate swaps", ""]
     if sc.swaps:
         out += [
