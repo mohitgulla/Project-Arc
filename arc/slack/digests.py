@@ -854,8 +854,13 @@ def auditor_card(
     performance: Performance | None = None,
     run_id: str | None = None,
     chain_run_id: str | None = None,
+    ops_line: str | None = None,
 ) -> CardView:
-    """``[Auditor] Journal: Sep 28 • P&L +$312 (+0.3%)``; anomalies live in the body."""
+    """``[Auditor] Journal: Sep 28 • P&L +$312 (+0.3%)``; anomalies live in the body.
+
+    E8.2a: *ops_line* (``Slots: director 71/75, … · missed 6 (list in tower Ops)``)
+    is the day's routine slot coverage, shown in an ``Ops`` section.
+    """
     perf = performance or Performance(day_pnl=out.daily_pnl)
     title = f"[Auditor] Journal: {_day(out.journal_date)} • P&L {_pnl(perf.day_pnl, perf.day_pct)}"
     recon = out.reconciliation_status.strip() or "pending"
@@ -895,5 +900,7 @@ def auditor_card(
         for x in out.lessons
     ]
     blocks.append(_section("Lessons", lessons))
+    if ops_line:
+        blocks.append(_section("Ops", [B.esc(ops_line)]))
     blocks.append(B.persona_section(Persona.AUDITOR, "Journal", out.journal_narrative))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)

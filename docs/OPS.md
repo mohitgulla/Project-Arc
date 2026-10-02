@@ -163,7 +163,9 @@ the plist with `--print`, and remove it with `--uninstall`.
 | Check | Fails when | Alert key |
 |---|---|---|
 | tick | There is no `tick` heartbeat for `tick_stale_after` (15m), or none ever. | `tick_stale` |
-| routine_windows | A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
+| tick_slow (E8.2a) | In the last `coverage_window` (60m), at least `tick_slow_count` (2) ticks took longer than `tick_slow_after` (4m, from E5.10's `tick_duration_ms`), or the p90 gap between ticks is above 1.5 × `tick.interval` (7m30s). The message names the slowest job. | `tick_slow` |
+| routine_windows | Only for **slow-cadence** jobs (slots at least `per_slot_min_interval`, 60m, apart: Scout overnight, auditor, earnings, the daily sources). A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
+| slot_coverage (E8.2a) | For **fast** jobs (the 5-min loop, monitor, the 30-min Scout, rss/edgar): the job ran fewer than `coverage_min` (80 %) of its slots judged in the last `coverage_window` (60m). Slots are judged the same way as routine_windows (collapse aware), and halted slots count in neither number. One alert per job, which names the likely cause from the tick heartbeats (slow ticks with the top job, or tick gaps). | `coverage:<job>` |
 | stuck_runs | A `routine_runs` row is still `running` after `stuck_after` (70m), or after its job's `stuck_after_jobs` override (`monitor: 10m`, E5.3a). | `stuck:<run_id>` |
 | gateway | `hermes gateway status` or `hermes cron status` shows a `✗`, exits non-zero, or times out. `⚠` warnings count as degraded: they are recorded but not alerted unless `gateway.alert_on_degraded: true`. | `gateway` |
 | remote_access (E8.6, off until enabled) | `GET <ts-ip>:1994/api/status` doesn't answer, or answers without `auth_required: true` and `basic` in `auth_providers`; `GET <ts-ip>:4174/api/health` isn't 200 with `status: ok`; or either port accepts a connection on a LAN address. See §5.7. | `remote_hermes`, `remote_tower`, `remote_exposed` |
@@ -177,14 +179,20 @@ day thread, and those alerts now end with the run id.
 Alerts are posted to `#project-arc` (`monitoring.alert_channel`) as one message
 per check run:
 
-- A condition alert (tick, stuck run, gateway) is posted once when it opens.
+- A condition alert (tick, slow ticks, slot coverage, stuck run, gateway) is
+  posted once when it opens.
 - While the condition persists, it is not posted again.
 - When the check passes again, a `resolved` line is posted. It describes the
   current state (e.g. "routines tick heartbeat is fresh again (last tick 2 min
   ago, tick-…)"), not the text the alert opened with.
-- A missed routine window is posted exactly once. Several missed slots of the
-  same job in one post collapse into one line per job.
-- Outages don't flood the channel. While a `tick_stale` or `gateway` incident is
+- A missed routine window of a slow-cadence job is posted exactly once. Several
+  missed slots of the same job in one post collapse into one line per job.
+- A fast job never gets one alert per slot (E8.2a). A degraded 5-min loop shows
+  up as one `coverage:director` alert, e.g. "director ran 7/12 slots in the last
+  60 min (58%) · likely cause: slow ticks (max 8m03s, scout 5m40s)". It
+  resolves with the recovered ratio: "director slot coverage recovered: ran
+  12/12 slots in the last 60 min (100%)".
+- Outages don't flood the channel. While a `tick_stale`, `gateway` or `tick_slow` incident is
   open, or opens in the same run, any missed slot whose window closed during
   it (from the last good tick onward) is recorded with
   `correlation.folded_into = <incident alert id>` and is not posted on its own.
@@ -193,6 +201,19 @@ per check run:
   incident resolved goes out as one thread reply under the incident post. A
   full outage therefore produces two root posts: one when it opens and one
   when it resolves.
+- Coverage alerts fold the same way. A `coverage:<job>` that opens while one of
+  those incidents is open is recorded but not posted, and its own resolve is
+  silent. The incident's resolve line lists it ("low slot coverage: director,
+  monitor"). If the incident clears but the job still misses slots, the
+  coverage alert is posted then, on its own.
+- Per-slot detail for the fast jobs is in the tower's Ops page and in one
+  line in the Auditor's 16:30 journal card (`Ops` section): `Slots: director
+  71/75, monitor 77/78, scout 15/15 · missed 6 (list in tower Ops)`.
+- Every threshold above lives under `monitoring:` in `config/routines.yaml` and
+  can be changed from Slack (`!arc config set monitoring.coverage_min 70%`, §5.8).
+  Setting `monitoring.per_slot_min_interval` to 5 gives back the old
+  one-alert-per-slot behaviour for every job. `arc health trace <alert id>`
+  works for both `missed:` and `coverage:` alerts.
 
 Each post carries the alert id and the correlation ids. If Slack is
 unreachable, the alert is still recorded in the DB with `posted_ts` NULL.

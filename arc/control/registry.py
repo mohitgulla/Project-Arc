@@ -1264,8 +1264,81 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
+# E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
+# #project-arc alerts (never trading), so most apply immediately; making an alert
+# quieter (lower coverage bar, more slow ticks tolerated) needs a confirm.
+_MONITORING_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="monitoring.per_slot_min_interval",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E8.2a: jobs whose slots are at least this many minutes apart get one "
+        "missed-window alert per slot; faster jobs get one slot-coverage alert per job "
+        "(5 = every job per slot, the pre-E8.2a behaviour).",
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("monitoring", "per_slot_min_interval"),
+        unit="m",
+        min=5,
+        max=1440,
+    ),
+    Tunable(
+        key="monitoring.coverage_window",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E8.2a: rolling window (minutes) for slot coverage and slow ticks.",
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("monitoring", "coverage_window"),
+        unit="m",
+        min=15,
+        max=240,
+    ),
+    Tunable(
+        key="monitoring.coverage_min",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E8.2a: a fast job alerts when it ran fewer than this share of its "
+        "slots in the coverage window.",
+        target=Target.ROUTINES,
+        risk=Risk.DOWN,
+        path=("monitoring", "coverage_min"),
+        unit="pct",
+        min=0.1,
+        max=1.0,
+        hard_ceiling=0.1,
+    ),
+    Tunable(
+        key="monitoring.tick_slow_count",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E8.2a: slow ticks in the coverage window that open a tick_slow alert.",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("monitoring", "tick_slow_count"),
+        min=1,
+        max=20,
+        hard_ceiling=20,
+    ),
+    Tunable(
+        key="monitoring.tick_slow_after",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E8.2a: a tick taking longer than this many minutes counts as slow.",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("monitoring", "tick_slow_after"),
+        unit="m",
+        min=1,
+        max=30,
+        hard_ceiling=30,
+    ),
+)
 
-REGISTRY: dict[str, Tunable] = {t.key: t for t in (*_STATIC, *_exit_tunables(), *_LOOP_TUNABLES)}
+
+REGISTRY: dict[str, Tunable] = {
+    t.key: t for t in (*_STATIC, *_exit_tunables(), *_LOOP_TUNABLES, *_MONITORING_TUNABLES)
+}
 _ALIASES: dict[str, str] = {a: t.key for t in REGISTRY.values() for a in t.aliases}
 
 
@@ -1614,6 +1687,8 @@ def format_value(t: Tunable, v: Any) -> str:
 
 DEFAULT_STOP_VALUE = 0.75  # D23 relaxed stop, used when a stop is created from 'none'
 _SECTIONS = ("sources", "personas")
+# Top-level routines.yaml sections whose tunables are plain paths (not per job).
+_PLAIN_ROUTINE_SECTIONS = (("loop",), ("monitoring",))
 
 
 def _get(data: Any, path: tuple[str, ...]) -> Any:
@@ -1656,7 +1731,7 @@ def _minutes(text: str) -> int:
 
 def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
     """The value of YAML-targeted *t* in *raw* file data, in registry form."""
-    if t.target is Target.ROUTINES and t.path[:1] == ("loop",):
+    if t.target is Target.ROUTINES and t.path[:1] in _PLAIN_ROUTINE_SECTIONS:
         v = _get(raw, t.path)
         if v is None:
             return None
@@ -1690,7 +1765,7 @@ def write_raw(t: Tunable, value: Any, raw: dict[str, Any]) -> list[tuple[tuple[s
 
     Pure helper for :mod:`arc.control.effective`; the pairs are applied in order.
     """
-    if t.target is Target.ROUTINES and t.path[:1] == ("loop",):
+    if t.target is Target.ROUTINES and t.path[:1] in _PLAIN_ROUTINE_SECTIONS:
         if t.unit == "m":
             return [(t.path, f"{int(value)}m")]
         return [(t.path, value)]

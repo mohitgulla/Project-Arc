@@ -3,7 +3,13 @@
 - :func:`missed_windows`  a scheduled routine slot whose catch-up window closed
   without the slot running (no attempt, or recorded as ``skipped`` because it
   was missed). Halt skips and "no handler yet" skips are intended, not misses;
-  failures are already alerted by the dispatcher.
+  failures are already alerted by the dispatcher. E8.2a: only for jobs whose
+  slots are at least ``monitoring.per_slot_min_interval`` apart.
+- :func:`slot_coverage`   E8.2a: a fast job (5-min loop, monitor, ...) that ran
+  fewer than ``coverage_min`` of its slots judged in ``coverage_window``: one
+  ``coverage:<job>`` condition naming the likely cause from the tick heartbeats.
+- :func:`tick_slow`       E8.2a: ticks taking > ``tick_slow_after`` (E5.10
+  ``tick_duration_ms``) or p90 spacing > 1.5 x ``tick.interval``.
 - :func:`tick_staleness`  no ``tick`` heartbeat for ``tick_stale_after``.
 - :func:`stuck_runs`      a ``routine_runs`` row still ``running`` after ``stuck_after``.
 - :func:`stranded_events` E6.2e: a dispatched event with no run after ``tick.dispatch_grace``.
@@ -16,6 +22,8 @@ monitoring never back-fills alerts for the time before routines ran.
 
 from __future__ import annotations
 
+import datetime as _dt
+import math
 import os
 import shutil
 import subprocess
@@ -28,12 +36,12 @@ from arc.monitoring.store import HeartbeatRepo
 from arc.routines.schedule import catchup_deadline, slots_between
 
 if TYPE_CHECKING:
-    import datetime as _dt
     import sqlite3
     from collections.abc import Callable
 
     from arc.monitoring.config import GatewayCheck, MonitoringSettings, RemoteAccessCheck
-    from arc.routines.config import RoutinesConfig
+    from arc.monitoring.store import Heartbeat
+    from arc.routines.config import JobSpec, RoutinesConfig
 
 Severity = Literal["ok", "degraded", "failed"]
 
@@ -45,7 +53,7 @@ CONDITION = "condition"
 @dataclass(frozen=True)
 class Finding:
     key: str  # dedupe key, e.g. missed:director:2026-09-28T13:30:00.000000Z
-    kind: str  # missed_window | tick_stale | stuck_run | gateway_down | gateway_degraded
+    kind: str  # missed_window | coverage | tick_slow | tick_stale | stuck_run | gateway_*
     severity: Severity
     message: str
     mode: str = CONDITION
@@ -59,6 +67,8 @@ class CheckResult:
     severity: Severity
     summary: str
     findings: tuple[Finding, ...] = ()
+    # Check-wide facts (E8.2a: per-job coverage), used for resolve lines.
+    detail: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +80,13 @@ def _is_missed_row(row: sqlite3.Row) -> bool:
     return row["status"] == "skipped" and str(row["summary"] or "").startswith("missed")
 
 
+HALTED = "halted"
+
+
+def _is_halted_row(row: sqlite3.Row) -> bool:
+    return row["status"] == "skipped" and str(row["summary"] or "").startswith(HALTED)
+
+
 def _slot_attempted(
     conn: sqlite3.Connection, job: str, slot: _dt.datetime, deadline: _dt.datetime
 ) -> str | None:
@@ -77,7 +94,9 @@ def _slot_attempted(
 
     The dispatcher collapses several due slots into the latest one, so a slot
     with no row of its own counts as covered when a later slot of the same job
-    was attempted inside this slot's catch-up window.
+    was attempted inside this slot's catch-up window. A slot skipped because the
+    persona was halted is ``"halted"``: intended, never a miss, and not counted
+    by the coverage check (E8.2a).
     """
     rows = conn.execute(
         """SELECT scheduled_for, status, summary FROM routine_runs
@@ -87,10 +106,28 @@ def _slot_attempted(
     ).fetchall()
     own = [r for r in rows if r["scheduled_for"] == to_db(slot)]
     if own and not _is_missed_row(own[0]):
-        return str(own[0]["status"])
-    if any(not _is_missed_row(r) for r in rows):
-        return "collapsed"
+        return HALTED if _is_halted_row(own[0]) else str(own[0]["status"])
+    live = [r for r in rows if not _is_missed_row(r)]
+    if live:
+        return HALTED if all(_is_halted_row(r) for r in live) else "collapsed"
     return "missed" if own or rows else None
+
+
+def slot_interval(spec: JobSpec) -> _dt.timedelta:
+    """How far apart a job's slots are: ``every``, the closest two ``schedule`` times, or 1 day."""
+    if spec.every is not None:
+        return spec.every
+    times = sorted(spec.schedule)
+    gaps = [
+        _dt.datetime.combine(_dt.date.min, b) - _dt.datetime.combine(_dt.date.min, a)
+        for a, b in zip(times, times[1:], strict=False)
+    ]
+    return min(gaps) if gaps else _dt.timedelta(days=1)
+
+
+def per_slot(spec: JobSpec, settings: MonitoringSettings) -> bool:
+    """E8.2a: True when a missed slot of this job is alerted on its own (slow cadence)."""
+    return slot_interval(spec) >= settings.per_slot_min_interval
 
 
 def missed_windows(
@@ -99,6 +136,11 @@ def missed_windows(
     settings: MonitoringSettings,
     now: _dt.datetime,
 ) -> CheckResult:
+    """One ``missed_window`` finding per missed slot of a slow-cadence job.
+
+    E8.2a: jobs faster than ``monitoring.per_slot_min_interval`` are judged by
+    :func:`slot_coverage` instead (one condition per job, not one alert per slot).
+    """
     first = HeartbeatRepo(conn).first("tick")
     if first is None:
         return CheckResult("routine_windows", "ok", "not judged: no tick heartbeat yet")
@@ -106,6 +148,8 @@ def missed_windows(
     findings: list[Finding] = []
     judged = 0
     for name, (_kind, spec) in routines.jobs().items():
+        if not per_slot(spec, settings):
+            continue
         for slot in slots_between(spec, start, now):
             deadline = catchup_deadline(spec, slot)
             if now <= deadline + settings.miss_grace:
@@ -134,6 +178,307 @@ def missed_windows(
             )
     summary = f"{judged} slot(s) judged since {start:%m-%d %H:%M}, {len(findings)} missed"
     return CheckResult("routine_windows", "failed" if findings else "ok", summary, tuple(findings))
+
+
+# ---------------------------------------------------------------------------
+# Slot coverage + slow ticks (E8.2a)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Coverage:
+    """How many of a job's judged slots ran. Halted slots count in neither number."""
+
+    job: str
+    ran: int = 0
+    judged: int = 0
+    halted: int = 0
+    missed: tuple[_dt.datetime, ...] = ()
+
+    @property
+    def ratio(self) -> float:
+        return self.ran / self.judged if self.judged else 1.0
+
+    @property
+    def text(self) -> str:
+        return f"{self.ran}/{self.judged}"
+
+
+def job_coverage(
+    conn: sqlite3.Connection, job: str, spec: JobSpec, slots: list[_dt.datetime]
+) -> Coverage:
+    """Judge *slots* of *job* the way :func:`missed_windows` does (collapse aware)."""
+    ran = halted = 0
+    missed: list[_dt.datetime] = []
+    for slot in slots:
+        status = _slot_attempted(conn, job, slot, catchup_deadline(spec, slot))
+        if status == HALTED:
+            halted += 1
+        elif status in (None, "missed"):
+            missed.append(slot)
+        else:
+            ran += 1
+    return Coverage(job, ran, ran + len(missed), halted, tuple(missed))
+
+
+def fmt_duration(td: _dt.timedelta) -> str:
+    """``8m03s`` (whole seconds)."""
+    secs = max(0, int(td.total_seconds()))
+    return f"{secs // 60}m{secs % 60:02d}s"
+
+
+@dataclass(frozen=True)
+class TickStats:
+    """``tick`` heartbeats in a window: wall times (E5.10), slowest job, spacing."""
+
+    ticks: int
+    durations: tuple[_dt.timedelta, ...]
+    top_job: tuple[str, _dt.timedelta] | None
+    spacings: tuple[_dt.timedelta, ...]
+
+    @property
+    def max_duration(self) -> _dt.timedelta | None:
+        return max(self.durations) if self.durations else None
+
+    @property
+    def max_spacing(self) -> _dt.timedelta | None:
+        return max(self.spacings) if self.spacings else None
+
+    @property
+    def p90_spacing(self) -> _dt.timedelta | None:
+        if not self.spacings:
+            return None
+        ranked = sorted(self.spacings)
+        return ranked[math.ceil(0.9 * len(ranked)) - 1]  # nearest rank
+
+    def slow(self, after: _dt.timedelta) -> int:
+        return sum(1 for d in self.durations if d > after)
+
+
+def tick_stats(beats: list[Heartbeat]) -> TickStats:
+    durations: list[_dt.timedelta] = []
+    top: tuple[str, _dt.timedelta] | None = None
+    for b in beats:
+        ms = b.detail.get("tick_duration_ms")
+        if isinstance(ms, int | float):
+            durations.append(_dt.timedelta(milliseconds=ms))
+        for item in b.detail.get("slowest_jobs") or []:
+            job, jms = item.get("job"), item.get("ms")
+            if isinstance(job, str) and isinstance(jms, int | float):
+                d = _dt.timedelta(milliseconds=jms)
+                if top is None or d > top[1]:
+                    top = (job, d)
+    ats = [b.at for b in beats]
+    spacings = tuple(b - a for a, b in zip(ats, ats[1:], strict=False))
+    return TickStats(len(beats), tuple(durations), top, spacings)
+
+
+def _spacing_limit(routines: RoutinesConfig) -> _dt.timedelta:
+    return routines.tick.interval * 1.5
+
+
+def likely_cause(stats: TickStats, routines: RoutinesConfig, settings: MonitoringSettings) -> str:
+    """Why slots were missed, from the window's tick heartbeats (deterministic).
+
+    Slow ticks (E5.10 ``tick_duration_ms``) first; else a tick gap longer than
+    1.5 x ``tick.interval`` (also the fallback when durations were not recorded).
+    """
+    if stats.ticks == 0:
+        return "no tick ran in the window"
+    longest = stats.max_duration
+    if longest is not None and longest > settings.tick_slow_after:
+        parts = [f"max {fmt_duration(longest)}"]
+        if stats.top_job is not None:
+            parts.append(f"{stats.top_job[0]} {fmt_duration(stats.top_job[1])}")
+        return f"slow ticks ({', '.join(parts)})"
+    gap = stats.max_spacing
+    if gap is not None and gap > _spacing_limit(routines):
+        return f"tick gaps up to {round(gap.total_seconds() / 60)} min"
+    if longest is None:  # pre-E5.10 heartbeats: spacing is all there is
+        mins = round(gap.total_seconds() / 60) if gap is not None else None
+        ran = f"gaps up to {mins} min" if mins is not None else "1 tick"
+    else:
+        ran = f"max {fmt_duration(longest)}"
+    return f"ticks on time ({ran}); check the job's runs (`arc health trace <run_id>`)"
+
+
+def _window_slots(
+    spec: JobSpec,
+    settings: MonitoringSettings,
+    *,
+    first_tick: _dt.datetime,
+    lo: _dt.datetime,
+    hi: _dt.datetime,
+) -> list[_dt.datetime]:
+    """Slots after the first tick whose judge time (deadline + grace) is in ``(lo, hi]``."""
+    start = max(first_tick, lo - settings.miss_lookback)
+    return [
+        s
+        for s in slots_between(spec, start, hi)
+        if lo < catchup_deadline(spec, s) + settings.miss_grace <= hi
+    ]
+
+
+def slot_coverage(
+    conn: sqlite3.Connection,
+    routines: RoutinesConfig,
+    settings: MonitoringSettings,
+    now: _dt.datetime,
+) -> CheckResult:
+    """E8.2a: one ``coverage:<job>`` condition per fast job below ``coverage_min``.
+
+    Slots judged in the last ``coverage_window`` (by judge time, so a 5-min job
+    has 12 per hour); halted slots are excluded from both counts.
+    """
+    hb = HeartbeatRepo(conn)
+    first = hb.first("tick")
+    if first is None:
+        return CheckResult("slot_coverage", "ok", "not judged: no tick heartbeat yet")
+    lo = now - settings.coverage_window
+    stats = tick_stats(hb.between("tick", lo, now))
+    mins = round(settings.coverage_window.total_seconds() / 60)
+    findings: list[Finding] = []
+    per_job: dict[str, dict[str, Any]] = {}
+    for name, (_kind, spec) in routines.jobs().items():
+        if per_slot(spec, settings):
+            continue
+        cov = job_coverage(
+            conn, name, spec, _window_slots(spec, settings, first_tick=first.at, lo=lo, hi=now)
+        )
+        if not cov.judged:
+            continue
+        per_job[name] = {"ran": cov.ran, "judged": cov.judged, "halted": cov.halted}
+        if cov.ratio >= settings.coverage_min:
+            continue
+        findings.append(
+            Finding(
+                key=f"coverage:{name}",
+                kind="coverage",
+                severity="failed",
+                message=(
+                    f"{name} ran {cov.text} slots in the last {mins} min "
+                    f"({cov.ratio:.0%}) · likely cause: "
+                    f"{likely_cause(stats, routines, settings)}"
+                ),
+                detail={
+                    "job": name,
+                    "ran": cov.ran,
+                    "judged": cov.judged,
+                    "missed": [s.isoformat() for s in cov.missed],
+                },
+            )
+        )
+    summary = (
+        ", ".join(f"{j} {d['ran']}/{d['judged']}" for j, d in per_job.items())
+        or "no fast-cadence slots judged"
+    ) + f" (last {mins} min)"
+    return CheckResult(
+        "slot_coverage",
+        "failed" if findings else "ok",
+        summary,
+        tuple(findings),
+        detail={"window_min": mins, "jobs": per_job},
+    )
+
+
+def tick_slow(
+    conn: sqlite3.Connection,
+    routines: RoutinesConfig,
+    settings: MonitoringSettings,
+    now: _dt.datetime,
+) -> CheckResult:
+    """E8.2a: ``tick_slow`` when >= ``tick_slow_count`` ticks in the window took longer
+    than ``tick_slow_after``, or the p90 tick spacing exceeds 1.5 x ``tick.interval``.
+
+    A tick that stopped altogether is ``tick_stale``'s job, not this one.
+    """
+    stats = tick_stats(HeartbeatRepo(conn).between("tick", now - settings.coverage_window, now))
+    mins = round(settings.coverage_window.total_seconds() / 60)
+    slow = stats.slow(settings.tick_slow_after)
+    p90, limit = stats.p90_spacing, _spacing_limit(routines)
+    too_slow = slow >= settings.tick_slow_count
+    too_sparse = p90 is not None and p90 > limit
+    facts: list[str] = []
+    if stats.max_duration is not None:
+        facts.append(f"max {fmt_duration(stats.max_duration)}")
+    if stats.top_job is not None:
+        facts.append(f"top job {stats.top_job[0]} {fmt_duration(stats.top_job[1])}")
+    if p90 is not None:
+        facts.append(f"spacing p90 {fmt_duration(p90)}")
+    summary = f"{stats.ticks} tick(s) in the last {mins} min" + (
+        f": {', '.join(facts)}" if facts else ""
+    )
+    if not (too_slow or too_sparse):
+        return CheckResult("tick_slow", "ok", summary)
+    why: list[str] = []
+    if too_slow:
+        why.append(
+            f"{slow} of {stats.ticks} ticks in the last {mins} min took > "
+            f"{fmt_duration(settings.tick_slow_after)}"
+        )
+    if too_sparse and p90 is not None:
+        why.append(f"tick spacing p90 {fmt_duration(p90)} > {fmt_duration(limit)}")
+    f = Finding(
+        key="tick_slow",
+        kind="tick_slow",
+        severity="failed",
+        message=f"routines ticks are slow: {'; '.join(why)} ({', '.join(facts)})",
+        detail={
+            "slow_ticks": slow,
+            "ticks": stats.ticks,
+            "max_ms": int(stats.max_duration.total_seconds() * 1000)
+            if stats.max_duration is not None
+            else None,
+            "top_job": stats.top_job[0] if stats.top_job else None,
+        },
+    )
+    return CheckResult("tick_slow", "failed", summary, (f,))
+
+
+# ---------------------------------------------------------------------------
+# Daily slot rollup (E8.2a: the Auditor journal card's Ops line)
+# ---------------------------------------------------------------------------
+
+
+def slot_rollup(
+    conn: sqlite3.Connection,
+    routines: RoutinesConfig,
+    now: _dt.datetime,
+) -> list[Coverage]:
+    """Coverage of every job's slots today (ET) whose catch-up window closed by *now*."""
+    from arc.utils.calendar import ET
+
+    day_start = _dt.datetime.combine(now.astimezone(ET).date(), _dt.time.min, tzinfo=ET)
+    out: list[Coverage] = []
+    for name, (_kind, spec) in routines.jobs().items():
+        slots = [
+            s
+            for s in slots_between(spec, day_start - _dt.timedelta(microseconds=1), now)
+            if catchup_deadline(spec, s) <= now
+        ]
+        cov = job_coverage(conn, name, spec, slots)
+        if cov.judged:
+            out.append(cov)
+    return out
+
+
+def rollup_line(covs: list[Coverage], routines: RoutinesConfig, *, max_jobs: int = 6) -> str | None:
+    """``Slots: director 71/75, monitor 77/78, scout 15/15 · missed 6 (list in tower Ops)``.
+
+    Personas first (most slots first), then any source that missed a slot; the
+    missed total covers every job.
+    """
+    if not covs:
+        return None
+    personas = [c for c in covs if c.job in routines.personas]
+    sources = [c for c in covs if c.job not in routines.personas and c.missed]
+    shown = sorted(personas, key=lambda c: (-c.judged, c.job))
+    shown += sorted(sources, key=lambda c: (-len(c.missed), c.job))
+    shown = shown[:max_jobs]
+    missed = sum(len(c.missed) for c in covs)
+    jobs = ", ".join(f"{c.job} {c.text}" for c in shown)
+    tail = f"missed {missed} (list in tower Ops)" if missed else "missed 0"
+    return f"Slots: {jobs} · {tail}" if jobs else f"Slots: {tail}"
 
 
 def tick_staleness(

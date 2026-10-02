@@ -66,6 +66,13 @@ monitoring:
   stuck_after_jobs:        # per-job override of stuck_after (E5.3a; E5.8 reuses it for the loop)
     monitor: 10m           # 5-min cadence: two slots without finishing means it is wedged
     director: 10m          # D31 trading loop: same rule (loop.max_runtime is 4m)
+  # E8.2a: one alert per missed slot only for slow jobs; fast jobs (5-min loop,
+  # monitor, scout, rss) get one `coverage:<job>` condition per job instead.
+  per_slot_min_interval: 60m   # slots >= this far apart: one `missed_window` alert per slot
+  coverage_window: 60m         # rolling window for `coverage:<job>` and `tick_slow`
+  coverage_min: 0.8            # coverage:<job> fails below this share of slots run
+  tick_slow_count: 2           # tick_slow fails at >= this many ticks in the window ...
+  tick_slow_after: 4m          # ... that took longer than this (or p90 spacing > 1.5 x tick.interval)
   alert_channel: project_arc
   gateway:
     enabled: true

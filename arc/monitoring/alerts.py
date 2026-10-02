@@ -8,11 +8,18 @@ Policy:
   rendered from the alert kind and the current check (not the opening text).
 - A *one-off* finding (a routine slot missed its window) is recorded once per
   slot. Several missed slots of one job in one post collapse to one line.
-- **Incidents absorb misses.** While a ``tick_stale`` or ``gateway`` alert is
-  open (or opens in the same run), missed slots whose window closed during it
-  are recorded with ``correlation.folded_into = <incident alert id>`` and are
-  not posted on their own: the root cause is already reported. The incident's
-  resolve line summarises them ("N slot(s) missed: rss ×12, edgar ×3"). Misses
+  E8.2a: only slow-cadence jobs (slots >= ``monitoring.per_slot_min_interval``
+  apart) produce these; a fast job (the 5-min loop, monitor) instead opens one
+  ``coverage:<job>`` *condition* while it ran < ``coverage_min`` of its slots in
+  the last ``coverage_window``, naming the likely cause (slow ticks / tick gaps).
+- **Incidents absorb misses.** While a ``tick_stale``, ``gateway`` or (E8.2a)
+  ``tick_slow`` alert is open (or opens in the same run), missed slots whose
+  window closed during it are recorded with ``correlation.folded_into = <incident
+  alert id>`` and are not posted on their own: the root cause is already
+  reported. ``coverage:<job>`` alerts that open during an incident are folded the
+  same way (recorded, open, not posted; their resolve is silent while the
+  incident is open). The incident's resolve line summarises them ("N slot(s)
+  missed: rss ×12, edgar ×3; low coverage: director, monitor"). Misses
   judged after the incident resolved (window closed during it, grace ran out
   later) go as one thread reply under the incident's post.
 - Findings with ``alert=False`` (gateway warnings by default) are only kept in
@@ -46,9 +53,20 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 # Condition kinds this module may auto-resolve (keys of findings from the checks).
-CONDITION_PREFIXES = ("tick_stale", "gateway", "stuck:", "remote_")
-# Conditions that make routine slots miss: while open they absorb missed-window alerts.
-INCIDENT_KEYS = ("tick_stale", "gateway")
+CONDITION_PREFIXES = ("tick_stale", "tick_slow", "gateway", "stuck:", "remote_", "coverage:")
+# Conditions that make routine slots miss: while open they absorb missed-window
+# alerts and (E8.2a) newly opened coverage alerts.
+INCIDENT_KEYS = ("tick_stale", "gateway", "tick_slow")
+COVERAGE_PREFIX = "coverage:"
+# Which check must have run for an open alert of this key prefix to be resolved.
+_RESOLVED_BY = (
+    ("gateway", "gateway"),
+    ("tick_stale", "tick"),
+    ("tick_slow", "tick_slow"),
+    ("stuck:", "stuck_runs"),
+    ("remote_", "remote_access"),
+    (COVERAGE_PREFIX, "slot_coverage"),
+)
 # A slot whose window closed this long before an incident opened is still blamed on it
 # (``tick_stale`` opens ``tick_stale_after`` after the last tick; its ``since`` is exact).
 DEFAULT_FOLD_LEAD = _dt.timedelta(minutes=25)
@@ -134,11 +152,23 @@ def missed_job(alert: OpsAlert) -> str:
 
 
 def summarize_missed(missed: list[OpsAlert]) -> str:
-    """``N slot(s) missed: rss ×12, edgar ×3`` (most-missed job first)."""
-    counts = Counter(missed_job(a) for a in missed)
-    ranked = sorted(counts.items(), key=lambda x: (-x[1], x[0]))
-    jobs = ", ".join(f"{job} ×{n}" for job, n in ranked)
-    return f"{len(missed)} routine slot(s) missed: {jobs}"
+    """``N slot(s) missed: rss ×12, edgar ×3; low coverage: director`` (most-missed first).
+
+    E8.2a: folded ``coverage:<job>`` conditions are listed by job after the misses.
+    """
+    slots = [a for a in missed if not a.key.startswith(COVERAGE_PREFIX)]
+    low = sorted(
+        a.key.removeprefix(COVERAGE_PREFIX) for a in missed if a.key.startswith(COVERAGE_PREFIX)
+    )
+    parts: list[str] = []
+    if slots:
+        counts = Counter(missed_job(a) for a in slots)
+        ranked = sorted(counts.items(), key=lambda x: (-x[1], x[0]))
+        jobs = ", ".join(f"{job} ×{n}" for job, n in ranked)
+        parts.append(f"{len(slots)} routine slot(s) missed: {jobs}")
+    if low:
+        parts.append(f"low slot coverage: {', '.join(low)}")
+    return "; ".join(parts)
 
 
 def _missed_lines(missed: list[OpsAlert]) -> list[str]:
@@ -166,6 +196,22 @@ def _resolve_line(alert: OpsAlert, results: dict[str, CheckResult]) -> str:
         tick = results.get("tick")
         now = f" ({tick.summary})" if tick else ""
         return f"routines tick heartbeat is fresh again{now}"
+    if alert.key == "tick_slow":
+        ts = results.get("tick_slow")
+        now = f" ({ts.summary})" if ts else ""
+        return f"routines ticks back within limits{now}"
+    if alert.key.startswith(COVERAGE_PREFIX):
+        job = alert.key.removeprefix(COVERAGE_PREFIX)
+        sc = results.get("slot_coverage")
+        cov = (sc.detail.get("jobs") or {}).get(job) if sc else None
+        if cov and cov.get("judged"):
+            ratio = cov["ran"] / cov["judged"]
+            mins = sc.detail.get("window_min") if sc else None
+            return (
+                f"{job} slot coverage recovered: ran {cov['ran']}/{cov['judged']} slots "
+                f"in the last {mins} min ({ratio:.0%})"
+            )
+        return f"{job} slot coverage recovered (no slots judged in the window)"
     if alert.key == "gateway":
         gw = results.get("gateway")
         now = f" ({gw.summary})" if gw else ""
@@ -256,10 +302,13 @@ def apply(
     by_name = {r.name: r for r in results}
 
     # 1) Conditions first, so an incident opened in this run can absorb this run's misses.
+    #    Coverage conditions wait until step 2 has settled which incidents are open.
     for f in findings:
         if f.mode == ONE_OFF:
             continue
         active.add(f.key)
+        if f.key.startswith(COVERAGE_PREFIX):
+            continue
         existing = repo.open_for(f.key)
         if existing is None:
             corr: dict[str, str] = dict(correlation)
@@ -275,19 +324,43 @@ def apply(
         if a.key in active or not a.key.startswith(CONDITION_PREFIXES):
             continue
         # Only resolve what this run actually re-checked (e.g. --no-gateway leaves it alone).
-        if a.key.startswith("gateway") and "gateway" not in checked:
-            continue
-        if a.key == "tick_stale" and "tick" not in checked:
-            continue
-        if a.key.startswith("stuck:") and "stuck_runs" not in checked:
-            continue
-        if a.key.startswith("remote_") and "remote_access" not in checked:
+        if any(a.key.startswith(p) and check not in checked for p, check in _RESOLVED_BY):
             continue
         resolved = repo.resolve(a.key, at=now)
-        if resolved is not None:
-            done = resolved.model_copy(update={"resolved_at": now})
-            out.resolved.append(done)
-            out.resolve_lines[done.id] = _resolve_line(done, by_name)
+        if resolved is None:  # pragma: no cover - open_alerts() just listed it
+            continue
+        if resolved.correlation.get(FOLDED_INTO):
+            continue  # a folded coverage alert closes silently: its incident reports it
+        done = resolved.model_copy(update={"resolved_at": now})
+        out.resolved.append(done)
+        out.resolve_lines[done.id] = _resolve_line(done, by_name)
+
+    # 2b) E8.2a coverage: fold into an open incident (tick_slow, tick_stale, gateway),
+    #     else alert; a folded one whose incident closed while it still fails is posted.
+    open_incident = next((i for k in INCIDENT_KEYS if (i := repo.open_for(k))), None)
+    for f in findings:
+        if f.mode == ONE_OFF or not f.key.startswith(COVERAGE_PREFIX):
+            continue
+        existing = repo.open_for(f.key)
+        if existing is None:
+            if open_incident is not None:
+                corr = {**correlation, FOLDED_INTO: open_incident.id}
+                out.folded.append(repo.open(f.key, f.kind, f.message, at=now, correlation=corr))
+            else:
+                out.opened.append(
+                    repo.open(f.key, f.kind, f.message, at=now, correlation=dict(correlation))
+                )
+            continue
+        inc_id = existing.correlation.get(FOLDED_INTO)
+        inc = repo.get(str(inc_id)) if inc_id else None
+        if inc_id and (inc is None or inc.resolved_at is not None):
+            corr = {k: v for k, v in existing.correlation.items() if k != FOLDED_INTO}
+            corr["unfolded_from"] = str(inc_id)
+            repo.unfold(existing.id, message=f.message, correlation=corr)
+            out.opened.append(existing.model_copy(update={"message": f.message,
+                                                          "correlation": corr}))  # fmt: skip
+        else:
+            out.still_open.append(existing)
 
     # 3) Missed slots: fold into a covering incident, else post (collapsed per job).
     incidents = repo.incidents(INCIDENT_KEYS, since=now - _dt.timedelta(days=2))
