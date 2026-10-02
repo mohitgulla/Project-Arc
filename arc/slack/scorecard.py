@@ -42,6 +42,11 @@ def _section(title: str, lines: list[str]) -> Block | None:
     }
 
 
+def _gate_fact(line: str) -> str:
+    """E6.6a: the scorecard gate line, sentence case (``Scorecard gate: OFF …``)."""
+    return line[:1].upper() + line[1:]
+
+
 def _more(lines: list[str]) -> list[str]:
     if len(lines) <= _MAX_ROWS:
         return lines
@@ -80,7 +85,8 @@ def scorecard_card(
             (
                 "Approvals",
                 f"Click-approved {a.click_approved}\nAuto-approved {a.auto_approved}\n"
-                f"Rejected {a.rejected} · expired {a.expired}",
+                f"Rejected {a.rejected} · expired {a.expired}"
+                + (f"\n{_gate_fact(sc.auto_approve.line)}" if sc.auto_approve else ""),
             ),
             (
                 "P&L",

@@ -66,7 +66,12 @@ def scorecard(
     *,
     settle_price: Callable[[str, _dt.date], Decimal | None] | None = None,
 ) -> JobResult:
-    from arc.journal.scorecard import build_scorecard, render_markdown, week_window
+    from arc.journal.scorecard import (
+        auto_approve_gate,
+        build_scorecard,
+        render_markdown,
+        week_window,
+    )
     from arc.slack.scorecard import scorecard_card
 
     start, end = week_window(ctx.now)
@@ -77,6 +82,7 @@ def scorecard(
         now=ctx.now,
         limits=budget_limits(ctx.settings),
         settle_price=settle_price,
+        auto_approve=auto_approve_gate(ctx.conn, ctx.settings, now=ctx.now),
     )
     ctx.record_input(
         "scorecard",

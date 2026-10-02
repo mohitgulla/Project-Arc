@@ -784,10 +784,18 @@ export function OpsPage() {
     setParams(next, { replace: true });
   };
   const b = budget.data as Budget | null | undefined;
+  const gateLine = (config.data as OpsConfig | undefined)?.scorecard_gate;
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="ops">
       <SessionCard s={session.data as Session | undefined} day={day} setDay={setDay} />
       <HealthStripCard h={health.data as HealthStrip | undefined} />
+      {gateLine && (
+        <Card title="Auto-approve">
+          <p data-testid="scorecard-gate" className={`text-caption ${gateLine.includes("OFF") ? "text-warn" : "text-secondary"}`}>
+            {gateLine}
+          </p>
+        </Card>
+      )}
       <AlertsSection a={alerts.data as Alerts | undefined} />
       <HaltsSection h={halts.data as Halts | undefined} />
       <RunsSection />

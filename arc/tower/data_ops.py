@@ -1514,6 +1514,22 @@ class ConfigResponse(BaseModel):
     keys: list[ConfigKeyRow]
     changes: list[ConfigChangeRow]
     note: str | None = None
+    scorecard_gate: str | None = Field(
+        None,
+        description="E6.6a: scorecard gate line, e.g. 'scorecard gate: OFF (opt-out) — 3 closed "
+        "trades < 30 required; …' (null when the store has no trade tables)",
+    )
+
+
+def _scorecard_gate_line(
+    conn: sqlite3.Connection, settings: ArcSettings, now: _dt.datetime
+) -> str | None:
+    """E6.6a: the same line the weekly scorecard and ``arc approve auto status`` show."""
+    if not (_has_table(conn, "open_structures") and _has_table(conn, "executions")):
+        return None
+    from arc.journal.scorecard import auto_approve_gate
+
+    return auto_approve_gate(conn, settings, now=now).line
 
 
 def load_config(
@@ -1570,6 +1586,7 @@ def load_config(
         keys=keys,
         changes=changes,
         note=note,
+        scorecard_gate=_scorecard_gate_line(conn, settings, now),
     )
 
 

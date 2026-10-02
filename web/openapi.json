@@ -1101,6 +1101,18 @@
               }
             ],
             "title": "Note"
+          },
+          "scorecard_gate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E6.6a: scorecard gate line, e.g. 'scorecard gate: OFF (opt-out) \u2014 3 closed trades < 30 required; \u2026' (null when the store has no trade tables)",
+            "title": "Scorecard Gate"
           }
         },
         "required": [

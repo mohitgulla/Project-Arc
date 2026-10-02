@@ -227,8 +227,18 @@ def _scorecard(conn: sqlite3.Connection, args: argparse.Namespace, settings: Arc
 
         settle = settle_from_market(AlpacaMarketData())
     start, end = week_window(at)
+    from arc.control import effective_settings
+    from arc.journal.scorecard import auto_approve_gate
+
+    eff = effective_settings(conn, base=settings)  # D26: the gate switch as the sweep sees it
     sc = build_scorecard(
-        conn, start=start, end=end, now=now, limits=budget_limits(settings), settle_price=settle
+        conn,
+        start=start,
+        end=end,
+        now=now,
+        limits=budget_limits(settings),
+        settle_price=settle,
+        auto_approve=auto_approve_gate(conn, eff, now=now),
     )
     text = render_markdown(sc)
     if args.write:

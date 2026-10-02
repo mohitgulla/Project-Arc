@@ -34,7 +34,14 @@ if TYPE_CHECKING:
     from arc.config import ArcSettings
     from arc.control.service import ControlService, Result
 
-__all__ = ["add_auto_parser", "auto_status", "notice_text", "run_auto", "set_auto"]
+__all__ = [
+    "add_auto_parser",
+    "auto_status",
+    "notice_text",
+    "post_day_notice",
+    "run_auto",
+    "set_auto",
+]
 
 log = structlog.get_logger(__name__)
 
@@ -77,16 +84,16 @@ def auto_status(svc: ControlService, base: ArcSettings) -> dict[str, Any]:
 def scorecard_readiness(
     conn: sqlite3.Connection, settings: ArcSettings, now: _dt.datetime
 ) -> dict[str, Any]:
-    """E7.5a: the scorecard gate's current verdict for ``arc approve auto status``."""
-    from arc.journal.scorecard import auto_approve_readiness
+    """E7.5a: the scorecard gate's current verdict for ``arc approve auto status``.
 
-    r = auto_approve_readiness(
-        conn,
-        now=now,
-        min_closed_trades=settings.auto_approve_min_closed_trades,
-        slippage_tolerance=settings.auto_approve_slippage_tolerance,
-    )
-    return {**r.model_dump(mode="json"), "summary": r.summary()}
+    Built by :func:`arc.journal.scorecard.auto_approve_gate`, the same call the
+    weekly scorecard and the tower use (E6.6a), so the numbers match for one *now*.
+    """
+    from arc.journal.scorecard import auto_approve_gate
+
+    g = auto_approve_gate(conn, settings, now=now)
+    r = g.readiness
+    return {**r.model_dump(mode="json"), "summary": r.summary(), "gate_line": g.line}
 
 
 def notice_text(env: str, on: bool) -> str:
@@ -130,6 +137,18 @@ def set_auto(
         # Paper: the shell is the owner; confirm in the same call.
         return svc.confirm(res.pending.code, actor=LOCAL_ACTOR, source="cli")
     return res
+
+
+def post_day_notice(
+    conn: sqlite3.Connection, text: str, now: _dt.datetime, client: object | None = None
+) -> None:
+    """E6.6a: one line in the day thread (best-effort; never raises)."""
+    try:
+        from arc.routines.heartbeat import Heartbeats, SlackDayThreadNotifier
+
+        Heartbeats(conn, SlackDayThreadNotifier(conn, client)).notice(now, "approve", text)
+    except Exception as exc:  # noqa: BLE001 - the change is already recorded
+        log.warning("approve.day_notice_failed", error=str(exc))
 
 
 def _post_notice(
@@ -183,10 +202,7 @@ def run_auto(args: argparse.Namespace, *, base: ArcSettings, conn: sqlite3.Conne
             f"auto_approve: {'on' if st['effective'] else 'off'} ({st['env']}); "
             f"paper={'on' if st['paper'] else 'off'} live={'on' if st['live'] else 'off'}\n"
         )
-        gate = (
-            ("met" if ready["ok"] else "holding opens") if st["scorecard_gate"] else "OFF (opt-out)"
-        )
-        sys.stdout.write(f"scorecard gate: {gate}; {ready['summary']}\n")
+        sys.stdout.write(f"{ready['gate_line']}\n")
         return 0
     on = args.state == "on"
     res = set_auto(svc, env=env, on=on, reason=args.reason, confirm_code=args.confirm_live)
