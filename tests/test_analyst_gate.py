@@ -543,7 +543,8 @@ def test_install_dry_run_creates_paused_cron(tmp_path: Path) -> None:
     cron = next(line for line in out.splitlines() if "cron create" in line)
     for part in (
         "-p arc-analyst",
-        "0\\ 15\\ \\*\\ \\*\\ 0",
+        "0\\ 14\\ \\*\\ \\*\\ 0",
+        "--name arc-analyst-weekly-audit",
         "--skill arc-analyst",
         "--script arc_analyst.py",
         "--model anthropic/claude-fable-5.1",
