@@ -161,7 +161,7 @@ Only the owner (`U0C5KUMH28G`) may trigger actions. Resolve an A-id from the new
   `references/lessons.md`.
 - `accept A-<n>`: `triage A-<n> accepted`. `fixed A-<n>`: `triage A-<n> fixed` (next run
   re-verifies).
-- `rerun`: `arc_analyst.py reset`, then `hermes -p arc-analyst cron run <arc-analyst-weekly id from hermes -p arc-analyst cron list>`.
+- `rerun`: `arc_analyst.py reset`, then `hermes -p arc-analyst cron run <arc-analyst-weekly-audit id from hermes -p arc-analyst cron list>`.
 - Questions: answer from RUN_DIR artefacts and the DB copy. Never change config or code.
 
 ## Pitfalls
