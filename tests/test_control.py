@@ -782,3 +782,32 @@ def test_yaml_files_still_load_without_overrides() -> None:
     data = yaml.safe_load(Path("config/exits.yaml").read_text())
     assert "kinds" in data
     _ = D  # decimal import kept for gate helpers parity
+
+
+def test_e64a_keys_reach_exits_and_ranking(svc: ControlService) -> None:
+    """E6.4a: the floor window and the live Net EV floor are tunable and reach the
+    effective configs the position manager and the propose step read."""
+    from arc.control.effective import exit_config, ranking_config
+
+    assert exit_config(svc.settings()).positions.remaining_ev_floor_eod_only is True
+    r = svc.set("positions.remaining_ev_floor_eval", "intraday", actor=OWNER, source="slack")
+    assert r.outcome == "applied"  # floor on every review is the stricter side
+    assert exit_config(svc.settings()).positions.remaining_ev_floor_eod_only is False
+    r = svc.set("positions.remaining_ev_floor_eval", "eod", actor=OWNER, source="slack")
+    assert r.pending is not None
+    svc.confirm(r.pending.code, actor=OWNER, source="slack")
+    assert exit_config(svc.settings()).positions.remaining_ev_floor_eod_only is True
+
+    f = ranking_config(svc.settings()).filters
+    assert (f.live, f.min_managed_net_ev) == (True, 0.0)
+    assert svc.set("entries.min_managed_net_ev", "5", actor=OWNER, source="slack").outcome == (
+        "applied"
+    )  # a higher floor is safer
+    assert ranking_config(svc.settings()).filters.min_managed_net_ev == 5.0
+    r = svc.set("entries.net_ev_floor_live", "off", actor=OWNER, source="slack")
+    assert r.pending is not None  # switching the floor off needs a confirm
+    svc.confirm(r.pending.code, actor=OWNER, source="slack")
+    assert ranking_config(svc.settings()).filters.live is False
+    assert svc.set("entries.min_managed_net_ev", "-60", actor=OWNER, source="slack").outcome == (
+        "refused"
+    )  # below the hard ceiling

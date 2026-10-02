@@ -358,7 +358,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("structures", StructuresPayload, schema_version=2),  # E5.7: skipped/not_structured
     KindSpec("risk_review", RiskReviewPayload),
     KindSpec("proposal", ProposalPayload),
-    KindSpec("position_review", PositionReviewPayload),
+    KindSpec("position_review", PositionReviewPayload, schema_version=2),  # E6.4a: floor window
     KindSpec("portfolio_context", PortfolioContextPayload),  # E5.9 (D33)
     KindSpec("journal", JournalPayload),
     KindSpec("note", NotePayload),

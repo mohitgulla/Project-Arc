@@ -925,6 +925,9 @@ class TestAccountProfilePipeline:
     def _run(self, profile: str, fixture_set: str, monkeypatch: pytest.MonkeyPatch, routines):  # noqa: ANN001, ANN202
         monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
         s = ArcSettings(_env_file=None, account_profile=profile)  # type: ignore[call-arg]
+        # The fixture debit spreads model at negative managed Net EV; these tests are
+        # about the account profile, so the E6.4a live Net EV floor is switched off.
+        _net_ev_floor_off(s)
         return fixture_run(s, routines, fixture_set=fixture_set)
 
     def test_cash_debit_bullish_proposes_a_debit_spread(
@@ -1017,6 +1020,7 @@ def test_propose_sizes_against_existing_exposure_and_keeps_realloc_source(
 
     monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
     s = ArcSettings(_env_file=None, account_profile="cash_debit")  # type: ignore[call-arg]
+    _net_ev_floor_off(s)  # sizing under test, not the E6.4a Net EV floor
     conn = open_db(":memory:", copy=False)
     load_fixture_docs(conn)
     env = PipelineEnv.fixtures(FIXTURE_SETS["bullish"])
@@ -1040,3 +1044,25 @@ def test_propose_sizes_against_existing_exposure_and_keeps_realloc_source(
     src = payload["realloc_source"]
     assert src["legs"][0][0] == "SPY261030C00770000" and src["suggestion"] >= 1
     assert src["net_ev"] is not None and src["buying_power"] > 0
+
+
+def _net_ev_floor_off(s: ArcSettings) -> None:
+    """D26 override: ranking.filters.live = false (the E6.4a live Net EV floor off)."""
+    s._yaml_overrides = {"ranking": {("ranking", "filters", "live"): False}}  # noqa: SLF001
+
+
+def test_live_net_ev_floor_drops_negative_ev_structure(
+    monkeypatch: pytest.MonkeyPatch,
+    routines,  # noqa: ANN001
+) -> None:
+    """E6.4a: the fixture debit spread's managed Net EV is negative after costs, so the
+    live propose step rejects it with the typed `net_ev_floor` reason (no proposal)."""
+    monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
+    s = ArcSettings(_env_file=None, account_profile="cash_debit")  # type: ignore[call-arg]
+    conn, report = fixture_run(s, routines, fixture_set="bullish")
+    assert report.proposals == []
+    (row,) = conn.execute(
+        "SELECT choice, reason_code, payload FROM decisions WHERE reason_code = 'net_ev_floor'"
+    ).fetchall()
+    payload = json.loads(row["payload"])
+    assert payload["managed_net_ev"] < 0 and payload["floor"] == 0.0

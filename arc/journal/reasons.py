@@ -120,6 +120,7 @@ class ReasonCode(StrEnum):
     NO_RISK_REVIEW = "no_risk_review"
     NO_CANDIDATE_ID = "no_candidate_id"
     REPRICE_FAILED = "reprice_failed"
+    NET_EV_FLOOR = "net_ev_floor"  # E6.4a: managed Net EV <= ranking.filters floor
     # daily options order budget (E6.5, D32)
     BUDGET_RESTRICTIVE = "budget_restrictive"
     ORDER_BUDGET_EXHAUSTED = "order_budget_exhausted"
@@ -306,6 +307,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.NO_RISK_REVIEW: "No risk review to propose on",
     ReasonCode.NO_CANDIDATE_ID: "No candidate record",
     ReasonCode.REPRICE_FAILED: "Could not re-price at fresh quotes",
+    ReasonCode.NET_EV_FLOOR: "Managed Net EV after costs at or below the floor",
     ReasonCode.BUDGET_RESTRICTIVE: "Daily order budget is in its restrictive tier",
     ReasonCode.ORDER_BUDGET_EXHAUSTED: "Daily order budget used up",
     ReasonCode.DROP_CONCENTRATION: "Dropped: adds concentration",
