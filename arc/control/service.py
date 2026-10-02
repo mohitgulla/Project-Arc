@@ -421,6 +421,44 @@ class ControlService:
             reason=reason,
         )
 
+    def set_system(self, key: str, raw: str, *, actor: str, reason: str) -> Result:
+        """E6.6a: a change made by Arc itself (``arc:*`` actor), safer direction only.
+
+        Used for pre-registered automatic transitions (e.g. turning the E7.5a
+        scorecard gate back on when the collection phase ends). A riskier or
+        unchanged value is refused / a no-op; nothing is staged for confirm. Logged
+        like any other change (``config_changes``, source ``cli``).
+        """
+        if not actor.startswith("arc:"):
+            return Result("refused", key=key, message=f"{actor!r} is not a system actor")
+        try:
+            t = lookup(key)
+            view = self.view(t.key)
+            new = parse_value(t, raw, current=view.value, base_list=[])
+            self._validate_effective(t, new)
+        except TunableError as exc:
+            return Result("refused", key=key, message=str(exc))
+        d = direction(t, view.value, new)
+        if d is Direction.RISKIER:
+            return Result(
+                "refused",
+                key=t.key,
+                old=view.value,
+                new=new,
+                direction=d.value,
+                message=f"{t.key}: a system actor may only make safer changes",
+            )
+        return self._stage_or_apply(
+            t,
+            old=view.value,
+            new=new,
+            is_default=False,
+            kind="set",
+            actor=actor,
+            source="cli",
+            reason=reason,
+        )
+
     def revert(
         self,
         ref: str,

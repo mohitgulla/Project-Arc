@@ -11,6 +11,9 @@ re-run for this card reproduced it exactly: same trades, same P&L, same verdicts
 - **No experiment meets the pre-registered D25 rule for either incumbent.** Recommendation:
   **change no default**. The scorecard gate (below) keeps D34 auto-approve from opening
   positions until paper shows ≥ 30 closed trades, net EV ≥ 0 and slippage within tolerance.
+  **Note (E6.6a):** paper currently opts out of that gate for a 30-trade collection phase
+  (PLAN D34 paper exception); each auto-approval journals what the gate would have said,
+  and the gate turns itself back on at 30 closed trades.
 - **margin (`credit_width`)**: every variant still loses after costs (−16.7k to −22.0k on
   $100k over 29 months, against −24.4k). Each variant is profitable at zero slippage
   (+46.7k for (a), +58.1k for (b)), so the edge on credit structures is smaller than the

@@ -338,7 +338,7 @@ class TestAutoCli:
         assert main(["approve", "auto", "status", "--db", db]) == 0
         status = capsys.readouterr().out
         assert "auto_approve: off (paper)" in status
-        assert "scorecard gate: holding opens; 0 closed trades < 30 required" in status
+        assert "scorecard gate: holding opens — 0 closed trades < 30 required" in status
         assert main(["approve", "auto", "on", "--db", db, "--no-slack", "--reason", "t"]) == 0
         out = json.loads(capsys.readouterr().out.split("\n}")[0] + "\n}")
         assert out["outcome"] == "applied" and out["env"] == "paper"
@@ -448,7 +448,8 @@ class TestServicePerEnv:
         assert rec is not None and rec.slack_user == AUTO_APPROVER
         assert rec.decision is ApprovalDecision.APPROVED
         text = json.dumps(poster.posted[0][1].blocks)
-        assert "Auto-approved (LIVE)" in text and "Approve" not in text.replace("Auto-approved", "")
+        assert "Auto-approved (LIVE, gate off)" in text
+        assert "Approve" not in text.replace("Auto-approved", "")
         row = pconn.execute(
             "SELECT payload FROM decisions WHERE stage='approval' AND proposal_hash=?", (ph,)
         ).fetchone()
@@ -463,7 +464,7 @@ class TestServicePerEnv:
         poster = LogCardPoster()
         rep = ApprovalService(pconn, s, poster).publish_pending(FIXTURE_NOW)
         assert rep.auto_approved == [_phash(pconn)]
-        assert "Auto-approved (paper)" in json.dumps(poster.posted[0][1].blocks)
+        assert "Auto-approved (paper, gate off)" in json.dumps(poster.posted[0][1].blocks)
 
     def test_publish_only_restricts_and_is_idempotent(self, pconn: sqlite3.Connection) -> None:
         s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]

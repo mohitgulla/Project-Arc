@@ -47,7 +47,7 @@ from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
 __all__ = [
     "ATTRIBUTION_DIMENSIONS",
@@ -453,6 +453,24 @@ def explain(conn: sqlite3.Connection, ref: str) -> ExplainReport:
     return ExplainReport(ref=ref, chain_run_id=chain, proposals=docs, chain_decisions=loose)
 
 
+def _gate_snapshot_lines(decisions: Sequence[Any]) -> list[str]:
+    """E6.6a: what the E7.5a scorecard gate said at an auto-approval (gate on or off)."""
+    out: list[str] = []
+    for dec in decisions:
+        p = dec.payload or {}
+        if str(dec.reason_code) != "auto_approve" or "scorecard_gate" not in p:
+            continue
+        ev = p.get("realised_net_ev")
+        out.append(
+            f"  scorecard gate {p['scorecard_gate']}"
+            + ("" if p.get("scorecard_gate_applies", True) else " (close: not gated)")
+            + f" · closed {p.get('closed_trades')}/{p.get('min_closed_trades')}"
+            + (f" · net EV ${ev:,.2f}/trade" if isinstance(ev, int | float) else "")
+            + (f" · failing {', '.join(p['failing'])}" if p.get("failing") else "")
+        )
+    return out
+
+
 def explain_lines(rep: ExplainReport) -> list[str]:
     """A short human summary; ``--json`` prints the full document."""
     out = [f"explain {rep.ref} · chain {rep.chain_run_id or 'n/a'}"]
@@ -472,6 +490,7 @@ def explain_lines(rep: ExplainReport) -> list[str]:
                 f"  approval {a.request_status or a.decision} by {a.decided_by or 'n/a'}"
                 + (f" · {a.reason}" if a.reason else "")
             )
+        out.extend(_gate_snapshot_lines(d.decisions))
         for e in d.timeline:
             at = f"{e.at.astimezone(ET):%Y-%m-%d %H:%M:%S}" if e.at else "n/a"
             what = (

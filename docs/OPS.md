@@ -706,14 +706,23 @@ gated: they reduce risk.
 
 With `auto_approve.scorecard_gate` off, every auto-approval logs a
 `approvals.auto_approve_scorecard_gate_off` **warning** and the journal reason says
-`scorecard gate off`. `arc approve auto status` prints the gate's current verdict:
+`scorecard gate off`. The AUTO_APPROVE journal row (gate on or off, E6.6a) carries what
+the gate said: `scorecard_gate` (`off` / `met`), `failing`, `closed_trades`,
+`realised_net_ev`, `realised_slippage`, `half_spread` (`arc journal explain <hash>`), and
+the card reads `Auto-approved (paper, gate off)`. `arc approve auto status`, the weekly
+scorecard header and the tower Ops page print the same line:
 
     auto_approve: on (paper); paper=on live=off
-    scorecard gate: holding opens; 12 closed trades < 30 required
+    scorecard gate: OFF (opt-out) — 12 closed trades < 30 required; realised net EV -$8.10/trade over 12 trades
 
 A new paper account therefore runs click-to-approve until 30 trades have closed. To
 calibrate on paper anyway: `.venv/bin/arc config set auto_approve.scorecard_gate off
 --reason "paper calibration"` (then `arc config confirm <code>` with the printed code).
+The opt-out ends by itself (PLAN D34 paper exception): the first approvals sweep that
+finds ≥ `auto_approve.min_closed_trades` closed trades sets the gate back on (change
+log actor `arc:scorecard-gate`, reason `E7.5a: collection phase complete (n=30)`) and
+posts `Scorecard gate: ON (auto, …)` to the day thread. It does this once; turning the
+gate off again afterwards is respected.
 
 ### 5.11 Open universe (E5.7, D9/D28)
 

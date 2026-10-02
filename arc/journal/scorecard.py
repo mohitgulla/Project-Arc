@@ -64,6 +64,8 @@ if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Callable, Iterable
 
+    from arc.config import ArcSettings
+
 __all__ = [
     "SCORECARD_VERSION",
     "ApprovalCounts",
@@ -75,6 +77,7 @@ __all__ = [
     "OrderBudgetLimits",
     "PnlSummary",
     "Scorecard",
+    "AutoApproveGate",
     "AutoApproveReadiness",
     "KindSlippage",
     "SlippageRow",
@@ -82,6 +85,7 @@ __all__ = [
     "SwapRow",
     "build_scorecard",
     "calibration_points",
+    "auto_approve_gate",
     "auto_approve_readiness",
     "closed_positions",
     "execution_costs",
@@ -354,6 +358,9 @@ class Scorecard(BaseModel):
     calibration: list[CalibrationRow] = Field(default_factory=list)
     calibration_trades: int = Field(
         0, description="Closed trades behind the calibration (all time)"
+    )
+    auto_approve: AutoApproveGate | None = Field(
+        None, description="E6.6a: scorecard gate state + verdict at generated_at"
     )
 
     @property
@@ -944,8 +951,12 @@ def build_scorecard(
     now: _dt.datetime,
     limits: OrderBudgetLimits | None = None,
     settle_price: Callable[[str, _dt.date], Decimal | None] | None = None,
+    auto_approve: AutoApproveGate | None = None,
 ) -> Scorecard:
     """The scorecard for ``[start, end)`` from the audit store (read-only).
+
+    *auto_approve* (E6.6a, from :func:`auto_approve_gate`) puts the scorecard gate
+    state in the header and the funnel's approval row.
 
     *settle_price* ``(root, expiration) -> close`` prices the D19 hold-to-expiry
     shadow of early-closed positions whose legs have expired; ``None`` (or an
@@ -996,6 +1007,7 @@ def build_scorecard(
             for b in buckets
         ],
         calibration_trades=len(history),
+        auto_approve=auto_approve,
     )
 
 
@@ -1059,6 +1071,81 @@ class AutoApproveReadiness(BaseModel):
             else:
                 parts.append("no fill with a modelled spread to check slippage against")
         return "; ".join(parts)
+
+    def gate_state(self, gate_on: bool) -> str:
+        """E6.6a: ``off`` (opt-out), ``met`` or ``unmet`` (holding opens)."""
+        if not gate_on:
+            return "off"
+        return "met" if self.ok else "unmet"
+
+    def gate_line(self, gate_on: bool) -> str:
+        """E6.6a: one line naming the gate state and what it would say.
+
+        ``scorecard gate: OFF (opt-out) — 3 closed trades < 30 required; realised net
+        EV -$154.95/trade``. Shown in the scorecard header and funnel, the tower Ops
+        page and ``arc approve auto status``.
+        """
+        state = {"off": "OFF (opt-out)", "met": "met", "unmet": "holding opens"}[
+            self.gate_state(gate_on)
+        ]
+        text = self.summary()
+        if self.ok:
+            text = text.removeprefix("scorecard gate met: ")
+        elif "negative_realised_ev" not in self.failing and self.realised_net_ev is not None:
+            text += (
+                f"; realised net EV {_usd(self.realised_net_ev)}/trade over "
+                f"{self.window_trades} trade{'s' if self.window_trades != 1 else ''}"
+            )
+        return f"scorecard gate: {state} — {text}"
+
+    def snapshot(self, gate_on: bool) -> dict[str, Any]:
+        """E6.6a: what the gate said at this approval, for the AUTO_APPROVE journal row."""
+        return {
+            "scorecard_gate": self.gate_state(gate_on),
+            "failing": list(self.failing),
+            "closed_trades": self.closed_trades,
+            "min_closed_trades": self.min_closed_trades,
+            "window_trades": self.window_trades,
+            "realised_net_ev": self.realised_net_ev,
+            "realised_slippage": self.realised_slippage,
+            "half_spread": self.half_spread,
+            "slippage_tolerance": self.slippage_tolerance,
+        }
+
+
+class AutoApproveGate(BaseModel):
+    """E6.6a: the scorecard gate switch and its verdict, as the weekly scorecard shows it."""
+
+    model_config = _FORBID
+
+    scorecard_gate: bool = Field(..., description="auto_approve.scorecard_gate (effective)")
+    readiness: AutoApproveReadiness
+
+    @property
+    def line(self) -> str:
+        return self.readiness.gate_line(self.scorecard_gate)
+
+
+Scorecard.model_rebuild()  # resolves the forward reference to AutoApproveGate
+
+
+def auto_approve_gate(
+    conn: sqlite3.Connection, settings: ArcSettings, *, now: _dt.datetime
+) -> AutoApproveGate:
+    """E6.6a: the gate switch and its verdict at *now* under *settings* (effective).
+
+    The one place the scorecard, the tower and ``arc approve auto status`` build it,
+    so all three report the same numbers for the same *now*.
+    """
+    return AutoApproveGate(
+        scorecard_gate=bool(settings.auto_approve_scorecard_gate),
+        readiness=auto_approve_readiness(
+            conn,
+            now=now,
+            min_closed_trades=settings.auto_approve_min_closed_trades,
+            slippage_tolerance=settings.auto_approve_slippage_tolerance,
+        ),
+    )
 
 
 def auto_approve_readiness(
@@ -1183,6 +1270,10 @@ def _pct(v: float | None) -> str:
     return "n/a" if v is None else f"{v:.0%}"
 
 
+def _md_cell(text: str) -> str:
+    return text.replace("|", "/")
+
+
 def _hm(ts: _dt.datetime | None) -> str:
     return "n/a" if ts is None else f"{ts.astimezone(ET):%b %d %H:%M}"
 
@@ -1198,13 +1289,16 @@ def render_markdown(sc: Scorecard) -> str:
         f"Generated {sc.generated_at.astimezone(ET):%Y-%m-%d %H:%M %Z} from the audit store "
         f"(scorecard v{sc.version}). Paper account.",
         "",
+        *([f"**{_md_cell(sc.auto_approve.line)}**", ""] if sc.auto_approve else []),
         "## Funnel",
         "",
         "| Stage | Count |",
         "|---|---|",
         f"| Proposals (open / close) | {f.proposals} ({f.proposals_open} / {f.proposals_close}) |",
         f"| Gate pass / fail | {f.gate_pass} / {f.gate_fail} |",
-        f"| Approved: click / auto (D34) | {a.click_approved} / {a.auto_approved} |",
+        f"| Approved: click / auto (D34) | {a.click_approved} / {a.auto_approved}"
+        + (f" ({_md_cell(sc.auto_approve.line)})" if sc.auto_approve else "")
+        + " |",
         f"| Rejected / expired / not actionable | {a.rejected} / {a.expired} / "
         f"{a.not_actionable} |",
         f"| Executions | {', '.join(f'{k} {v}' for k, v in f.executions.items()) or 'none'} |",

@@ -30,6 +30,10 @@ Rules enforced here, in code:
   stays pending with its buttons (manual approval) and an ``auto_approve_gated``
   journal row names the failing criteria. Closes are never gated (reducing risk).
   Turning the gate off is an explicit opt-out, logged as a warning each time.
+- E6.6a: every auto-approval journals the gate's readiness snapshot (gate on or
+  off), the card reads ``Auto-approved (paper, gate off)`` for an open approved
+  with the gate off, and each sweep first turns the gate back on (once, via the
+  control service) when the collection phase reaches ``min_closed_trades``.
 - Every rejection and expiry is logged (``approvals.rejected`` /
   ``approvals.expired``) with its reason.
 - Every resolution (and every not-actionable card) is written to the decision
@@ -74,6 +78,7 @@ log = structlog.get_logger(__name__)
 
 __all__ = [
     "AUTO_APPROVER",
+    "GATE_REENABLE_ACTOR",
     "TTL_ACTOR",
     "ApprovalService",
     "CardPoster",
@@ -89,6 +94,7 @@ __all__ = [
 
 TTL_ACTOR = "arc:ttl"
 AUTO_APPROVER = "arc:auto-approve"
+GATE_REENABLE_ACTOR = "arc:scorecard-gate"  # E6.6a: ends the D34 paper collection phase
 
 
 class RequestStatus(StrEnum):
@@ -375,6 +381,7 @@ class ApprovalService:
         now = require_aware(now, "now").astimezone(ET)
         report = SweepReport(published=[], auto_approved=[], expired=[])
         self._readiness = None  # E7.5a: computed once per sweep, on first need
+        self.reenable_scorecard_gate(now)  # E6.6a: before any open is decided
         for row in self._unpublished(day, only):
             phash = row["proposal_hash"]
             try:
@@ -397,7 +404,7 @@ class ApprovalService:
                 decision,
                 proposal_hash=phash,
                 actionable=actionable and auto is None,
-                note=self._auto_label()
+                note=self._auto_label(gate_off=auto is not None and "scorecard gate off" in auto)
                 if auto is not None
                 else (_gated_note(gated) if gated is not None else reason),
                 trail=load_trail(self.conn, phash, row["ticker"]),
@@ -428,10 +435,82 @@ class ApprovalService:
             if gated is not None:
                 report.auto_gated.append(phash)
             if auto is not None:
-                res = self._resolve(phash, RequestStatus.APPROVED, AUTO_APPROVER, auto, now)
+                res = self._resolve(
+                    phash,
+                    RequestStatus.APPROVED,
+                    AUTO_APPROVER,
+                    auto,
+                    now,
+                    extra=self._auto_snapshot(row["kind"], now),
+                )
                 if res.outcome is Outcome.APPROVED:
                     report.auto_approved.append(phash)
         return report
+
+    # -- E6.6a: readiness on every auto-approval; gate re-enable at n ---------
+
+    def _auto_snapshot(self, kind: str, now: _dt.datetime) -> dict[str, Any]:
+        """What the scorecard gate says at this auto-approval, gate on or off.
+
+        Stored in the AUTO_APPROVE journal payload so ``arc journal explain`` shows
+        it. ``scorecard_gate_applies`` is false for closes (never gated).
+        """
+        gate_on = bool(self.settings.auto_approve_scorecard_gate)
+        return {
+            **self.readiness(now).snapshot(gate_on),
+            "scorecard_gate_applies": kind != "close",
+        }
+
+    def reenable_scorecard_gate(self, now: _dt.datetime) -> bool:
+        """E6.6a (PLAN D34 paper exception): end the collection phase once.
+
+        When ``auto_approve.scorecard_gate`` is off and the store holds at least
+        ``auto_approve.min_closed_trades`` closed trades, turn the gate back on
+        through the control service (actor ``arc:scorecard-gate``, D26 change log)
+        and post the flip to the day thread. Deterministic and idempotent: a no-op
+        when the gate is on, below n, or when this actor already flipped it once
+        (an owner who turns it off again afterwards keeps it off). It never turns
+        the gate off and never touches ``auto_approve.paper|live``. Returns True
+        when it flipped.
+        """
+        if self.settings.auto_approve_scorecard_gate:
+            return False
+        ready = self.readiness(now)
+        if "min_closed_trades" in ready.failing:
+            return False
+        from arc.control.service import ControlService
+
+        svc = ControlService(self.conn, base=self.settings, now=lambda: now)
+        key = "auto_approve.scorecard_gate"
+        if any(c.actor == GATE_REENABLE_ACTOR for c in svc.history(key, limit=1000)):
+            return False
+        n = ready.min_closed_trades
+        res = svc.set_system(
+            key,
+            "on",
+            actor=GATE_REENABLE_ACTOR,
+            reason=f"E7.5a: collection phase complete (n={n})",
+        )
+        if res.outcome != "applied":
+            log.error("approvals.scorecard_gate_reenable_failed", message=res.message)
+            return False
+        self.settings = self.settings.model_copy(update={"auto_approve_scorecard_gate": True})
+        text = (
+            f"Scorecard gate: ON (auto, collection phase complete: {ready.closed_trades} "
+            f"closed trades >= {n}); {ready.gate_line(True)}"
+        )
+        log.warning(
+            "approvals.scorecard_gate_reenabled",
+            change_id=res.change_id,
+            closed_trades=ready.closed_trades,
+            failing=ready.failing,
+            detail=text,
+        )
+        if self.live:
+            from arc.approvals.auto import post_day_notice
+
+            post_day_notice(self.conn, text, now)
+        return True
 
     # -- E7.5a scorecard gate ------------------------------------------------
 
@@ -459,12 +538,14 @@ class ApprovalService:
             return auto, None
         env = self.settings.env.value
         if not self.settings.auto_approve_scorecard_gate:
+            ready = self.readiness(now)  # E6.6a: what the gate would have said (journaled)
             log.warning(
                 "approvals.auto_approve_scorecard_gate_off",
                 proposal_hash=phash,
                 env=env,
+                would_fail=ready.failing,
                 note="auto_approve.scorecard_gate is off: auto-approving with no realised-"
-                "performance check (explicit opt-out)",
+                "performance check (explicit opt-out, PLAN D34 paper exception)",
             )
             return f"{auto[:-1]}, scorecard gate off)", None
         ready = self.readiness(now)
@@ -493,10 +574,13 @@ class ApprovalService:
         )
         return None, ready
 
-    def _auto_label(self) -> str:
-        """``Auto-approved (paper)`` / ``Auto-approved (LIVE)`` (D34 card marker)."""
+    def _auto_label(self, *, gate_off: bool = False) -> str:
+        """``Auto-approved (paper)`` / ``Auto-approved (LIVE)`` (D34 card marker);
+        ``Auto-approved (paper, gate off)`` for an open approved with the E7.5a
+        scorecard gate off (E6.6a)."""
         env = self.settings.env.value
-        return f"Auto-approved ({'LIVE' if env == 'live' else env})"
+        label = "LIVE" if env == "live" else env
+        return f"Auto-approved ({label}{', gate off' if gate_off else ''})"
 
     def _auto_approve_enabled(self) -> bool:
         """D34: the per-env switch. ``settings.auto_approve`` already *is* the value
@@ -751,6 +835,7 @@ class ApprovalService:
         now: _dt.datetime,
         *,
         slack_ts: str = "",
+        extra: dict[str, Any] | None = None,
     ) -> DecideResult:
         decision = {
             RequestStatus.APPROVED: ApprovalDecision.APPROVED,
@@ -799,6 +884,7 @@ class ApprovalService:
                         "approval_id": approval_id,
                         "by": actor,
                         **({"env": self.settings.env.value} if actor == AUTO_APPROVER else {}),
+                        **(extra or {}),
                     },
                 )
                 if status is RequestStatus.APPROVED:
@@ -935,7 +1021,12 @@ class ApprovalService:
     ) -> None:
         if req.channel == "log" or not req.message_ts:
             return
-        outcome = _outcome_text(status, actor, self.settings.env.value)
+        outcome = _outcome_text(
+            status,
+            actor,
+            self.settings.env.value,
+            gate_off="scorecard gate off" in (req.reason or ""),
+        )
         if reason:
             outcome += f" — _{reason}_"
         view = render_resolved(
@@ -994,9 +1085,12 @@ def _who(actor: str) -> str:
     return actor if actor.startswith("arc:") else f"<@{actor}>"
 
 
-def _outcome_text(status: RequestStatus, actor: str, env: str | None = None) -> str:
+def _outcome_text(
+    status: RequestStatus, actor: str, env: str | None = None, *, gate_off: bool = False
+) -> str:
     if status is RequestStatus.APPROVED and actor == AUTO_APPROVER and env:
-        return f":white_check_mark: *Auto-approved ({'LIVE' if env == 'live' else env})*"
+        label = "LIVE" if env == "live" else env
+        return f":white_check_mark: *Auto-approved ({label}{', gate off' if gate_off else ''})*"
     if status is RequestStatus.APPROVED:
         return f":white_check_mark: *Approved* by {_who(actor)}"
     if status is RequestStatus.REJECTED:

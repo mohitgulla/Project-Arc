@@ -889,6 +889,11 @@ export interface components {
             keys: components["schemas"]["ConfigKeyRow"][];
             /** Note */
             note?: string | null;
+            /**
+             * Scorecard Gate
+             * @description E6.6a: scorecard gate line, e.g. 'scorecard gate: OFF (opt-out) — 3 closed trades < 30 required; …' (null when the store has no trade tables)
+             */
+            scorecard_gate?: string | null;
         };
         /** ContextEntryResponse */
         ContextEntryResponse: {
