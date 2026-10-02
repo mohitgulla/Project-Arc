@@ -555,3 +555,18 @@ def test_install_dry_run_creates_paused_cron(tmp_path: Path) -> None:
     assert "arc_analyst.py" in out and "skills/arc-analyst/SKILL.md" in out
     for secret in ("ALPACA", "ARC_GATE_SECRET", ".env"):
         assert secret not in (ANALYST / "install.sh").read_text().split("set -euo")[1]
+
+
+def test_gate_parses_under_python39() -> None:
+    """The cron runs the gate with the host's system ``python3`` (macOS: 3.9), not the venv.
+
+    ``datetime.UTC`` (3.11) broke ``reset`` there; ``zip(strict=)`` (3.10) would too.
+    """
+    import ast
+
+    tree = ast.parse((ANALYST / "arc_analyst.py").read_text(), feature_version=(3, 9))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "UTC":
+            raise AssertionError(f"datetime.UTC needs 3.11 (line {node.lineno})")
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "zip":
+            assert not node.keywords, f"zip(strict=) needs 3.10 (line {node.lineno})"

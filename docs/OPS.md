@@ -1050,7 +1050,10 @@ the two never disagree.
 
 An independent reviewer of the *strategy* (the Sentinel, D23, reviews the code).
 Boundary: does the fix change a decision the system makes → Analyst; does it
-change whether the system does what the spec says → Sentinel. Its artefacts are
+change whether the system does what the spec says → Sentinel. The Sentinel's
+lens 7 (strategy) is info-only: it cross-references the Analyst and never files
+strategy cards (skill versioned in `hermes/sentinel/`, installed by
+`hermes/sentinel/install.sh`; E9.4). The Analyst's artefacts are
 versioned in `hermes/analyst/` and copied into its own Hermes profile
 `arc-analyst` by `hermes/analyst/install.sh` (E9.4 does the profile and the start):
 
