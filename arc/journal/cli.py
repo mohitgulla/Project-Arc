@@ -15,6 +15,8 @@
   trades vs hold-to-expiry and no-trade; not-traded proposals EOD-shadowed.
 - ``arc scorecard attribution --since YYYY-MM-DD --by kind,regime,persona_model``
   (E9.3) P&L attribution buckets with a ``low_sample`` flag.
+- ``arc journal backfill-outcomes [--dry-run]``  (E7.4b) write the missing
+  ``outcomes`` row of every closed structure; idempotent.
 
 ``explain``, ``counterfactual`` and ``arc scorecard attribution`` open the store
 read-only (``mode=ro``): they never create, migrate or write it.
@@ -103,6 +105,14 @@ def add_journal_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
         help="Price D19 hold-to-expiry shadows from Alpaca daily bars (network, read-only)",
     )
     sc.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+
+    b = jsub.add_parser(
+        "backfill-outcomes",
+        help="Write the missing outcome of every closed structure (idempotent, E7.4b)",
+    )
+    b.add_argument("--dry-run", action="store_true", help="Build the records, write nothing")
+    b.add_argument("--json", action="store_true", help="Print the per-structure results as JSON")
+    b.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
 
 
 def add_scorecard_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
@@ -230,6 +240,30 @@ def _scorecard(conn: sqlite3.Connection, args: argparse.Namespace, settings: Arc
     return 0
 
 
+def _backfill(conn: sqlite3.Connection, *, dry_run: bool, as_json: bool) -> int:
+    """``arc journal backfill-outcomes``: one closed outcome per closed structure (E7.4b)."""
+    from collections import Counter
+    from dataclasses import asdict
+
+    from arc.journal.outcomes import backfill_outcomes
+
+    results = backfill_outcomes(conn, dry_run=dry_run)
+    if as_json:
+        sys.stdout.write(json.dumps([asdict(r) for r in results], indent=2) + "\n")
+        return 0
+    lines = [
+        f"{r.action:<11} {r.ticker:<6} {r.structure_id} {r.proposal_hash[:12]}"
+        + (f" {r.status} exit {r.exit_fill} P&L {r.realised_pnl}" if r.exit_fill else "")
+        + (f" {r.status}" if r.action == "exists" else "")
+        + (f" ({r.detail})" if r.detail else "")
+        for r in results
+    ]
+    counts = Counter(r.action for r in results)
+    summary = ", ".join(f"{k}={v}" for k, v in counts.items()) or "no closed structures"
+    _out([*lines, f"{'dry run: ' if dry_run else ''}{summary}"])
+    return 0
+
+
 def run_journal(args: argparse.Namespace) -> int:
     from arc.config import get_settings
     from arc.journal.report import ShadowPricer, gaps, replay, show_lines
@@ -290,6 +324,8 @@ def run_journal(args: argparse.Namespace) -> int:
             return 0
         if cmd == "scorecard":
             return _scorecard(conn, args, settings)
+        if cmd == "backfill-outcomes":
+            return _backfill(conn, dry_run=args.dry_run, as_json=args.json)
     except (LookupError, ReviewCitationError, ValueError) as exc:
         sys.stderr.write(f"arc journal {cmd}: {exc}\n")
         return 2

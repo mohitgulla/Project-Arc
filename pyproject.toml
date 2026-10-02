@@ -115,6 +115,7 @@ source_modules = [
     "arc.journal.models",
     "arc.journal.store",
     "arc.journal.attribution",
+    "arc.journal.outcomes",
     "arc.journal.scorecard",
     "arc.journal.views",
 ]

@@ -113,8 +113,13 @@ def attribute(
     exit_reason: str | None = None,
     settlement: Decimal | None = None,
     expired: bool = False,
+    contracts: int | None = None,
+    supersedes_id: str | None = None,
 ) -> OutcomeRecord:
     """Build the :class:`OutcomeRecord` for *proposal* from fills and marks.
+
+    *contracts* overrides the proposal's sized quantity (a partly filled open
+    holds fewer contracts than were sized); *supersedes_id* marks a correction.
 
     - ``traded=False`` → ``not_traded`` (rejected, expired card, gate FAIL).
     - traded without an entry fill → ``never_filled``.
@@ -124,7 +129,7 @@ def attribute(
     - ``settlement`` also gives the D19 hold-to-expiry shadow P&L for any
       position closed early.
     """
-    n = proposal.sizing.contracts
+    n = proposal.sizing.contracts if contracts is None else contracts
     limit = (
         proposal.limit_price
         if proposal.limit_price is not None
@@ -135,6 +140,7 @@ def attribute(
         "contracts": n,
         "limit_price": limit,
         "cost_bps": proposal.quant.cost_bps,
+        "supersedes_id": supersedes_id,
         "at": at,
     }
     if not traded:

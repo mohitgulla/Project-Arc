@@ -271,6 +271,15 @@ class JournalStore:
         ).fetchone()
         return self._outcome(row) if row else None
 
+    def latest_outcome_row(self, proposal_hash: str) -> tuple[str, str] | None:
+        """``(id, status)`` of the latest outcome row for *proposal_hash*, if any."""
+        row = self.conn.execute(
+            """SELECT id, status FROM outcomes WHERE proposal_hash = ?
+               ORDER BY at DESC, rowid DESC LIMIT 1""",
+            (proposal_hash,),
+        ).fetchone()
+        return (str(row[0]), str(row[1])) if row else None
+
     def outcomes(self, *, since: _dt.datetime | None = None) -> list[OutcomeRecord]:
         """Latest outcome per proposal."""
         sql = """SELECT o.* FROM outcomes o

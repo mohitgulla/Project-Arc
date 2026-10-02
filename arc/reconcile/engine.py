@@ -43,6 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arc.broker.base import TEST_CLIENT_ORDER_PREFIX
 from arc.context.ttl import to_db
+from arc.journal.outcomes import record_close_outcome
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.journal.store import JournalStore
 from arc.models import LegIntent, Structure
@@ -620,6 +621,7 @@ def _close_expired(
         n = int(row["contracts"])
         pnl = -(Decimal(row["entry_net"]) + close_net) * 100 * n
         repo.reduce(row["id"], closed_qty=n, close_net=close_net, now=now, commit=False)
+        record_close_outcome(conn, row["id"], expired=True, settlement=spot)  # E7.4b
         open_lots = conn.execute(
             """SELECT l.id FROM tax_lots l JOIN orders o ON o.id = l.order_id
                WHERE o.proposal_hash = ? AND l.closed_at IS NULL ORDER BY l.rowid""",
