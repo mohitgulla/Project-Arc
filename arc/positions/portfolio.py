@@ -9,6 +9,7 @@ The builders live in :mod:`arc.pipeline.portfolio_context` and
 from __future__ import annotations
 
 import datetime as _dt  # noqa: TC003 - pydantic field
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,6 +18,7 @@ from arc.journal.reasons import ReasonCode
 from arc.models import Greeks, Stance
 
 __all__ = [
+    "BUCKET_DISPLAY",
     "ExpiryBucket",
     "GreekUsage",
     "MarketGuard",
@@ -27,7 +29,9 @@ __all__ = [
     "PortfolioFlag",
     "PortfolioPosition",
     "PortfolioThesis",
+    "bucket_display",
     "expiry_bucket",
+    "relabel_buckets",
 ]
 
 _FORBID = ConfigDict(extra="forbid")
@@ -41,6 +45,27 @@ PortfolioFlag = Literal[
 ]
 ExpiryBucket = Literal["0-7", "8-21", "22-45", "46+"]
 _BUCKETS: tuple[tuple[int, ExpiryBucket], ...] = ((7, "0-7"), (21, "8-21"), (45, "22-45"))
+
+# E3.4a (Analyst A-4): prompts show the expiry concentration buckets in weeks, never
+# as day ranges next to "DTE", so a bucket label ("22-45") cannot be read back as an
+# entry window. The stored ``ExpiryBucket`` values (context payloads) are unchanged.
+BUCKET_DISPLAY: dict[str, str] = {"0-7": "0-1w", "8-21": "1-3w", "22-45": "3-6w", "46+": "6w+"}
+_LEGACY_BUCKET = re.compile(r"(?<![\d.])(0-7|8-21|22-45|46\+)(?![\d])")
+
+
+def bucket_display(label: str) -> str:
+    """The week-based prompt label of an expiry bucket."""
+    return BUCKET_DISPLAY.get(label, label)
+
+
+def relabel_buckets(block: str) -> str:
+    """Rewrite day-range bucket labels in a rendered portfolio block to week labels.
+
+    The renderer already writes week labels; this covers blocks recorded before
+    E3.4a (``persona_calls.prompt_inputs.portfolio_block``) so a replay or a carried
+    block never shows ``22-45`` / ``46+`` to a persona.
+    """
+    return _LEGACY_BUCKET.sub(lambda m: BUCKET_DISPLAY[m.group(1)], block)
 
 
 def expiry_bucket(dte: int) -> ExpiryBucket:

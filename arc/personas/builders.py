@@ -10,7 +10,12 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from arc.personas.entry_window import EntryTerms, scrub_carried_text
+from arc.positions.portfolio import relabel_buckets
+
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from arc.context.store import ContextSnapshot
 
 # ---------------------------------------------------------------------------
@@ -57,6 +62,8 @@ class DirectorInput:
     # E5.9 (D33): "" when the book is empty (the prompt is then identical to E5.7's).
     portfolio_block: str = ""  # rendered open book + aggregates (arc.pipeline.portfolio_context)
     recent_ideas: str = ""  # suppressed (ticker, stance) ideas with why; "" when none
+    # E3.4a: the configured entry window + delta bands (None = not stated).
+    entry_terms: EntryTerms | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +74,7 @@ class QuantInput:
     chains_json: str  # option chains with Greeks
     underlying_prices_json: str  # current prices
     scan_date: str
+    entry_terms: EntryTerms | None = None  # E3.4a: configured window + delta bands
 
 
 @dataclass(frozen=True)
@@ -79,6 +87,7 @@ class RiskInput:
     account_equity: float
     scan_date: str
     event_risk_json: str = "{}"  # D30: ex-dividend dates + macro events (context store)
+    entry_terms: EntryTerms | None = None  # E3.4a: configured window + delta bands
 
 
 @dataclass(frozen=True)
@@ -124,6 +133,13 @@ def _latest_payload(snapshot: ContextSnapshot, kind: str) -> dict[str, object]:
     return entry.payload
 
 
+def _terms(raw: EntryTerms | Mapping[str, Any] | None) -> EntryTerms | None:
+    """Entry terms from a recorded ``prompt_inputs`` dict (or a model / None)."""
+    if raw is None or isinstance(raw, EntryTerms):
+        return raw
+    return EntryTerms.model_validate(dict(raw))
+
+
 DIRECTOR_NOTE_TOPICS = frozenset({"regime_view", "thesis", "observation"})
 
 
@@ -135,6 +151,7 @@ def director_input_from_context(
     max_notes: int = 20,
     portfolio_block: str = "",
     recent_ideas: str = "",
+    entry_terms: EntryTerms | Mapping[str, Any] | None = None,
 ) -> DirectorInput:
     """Director reads every active ``candidate`` and ``regime`` entry, plus up to
     *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
@@ -168,6 +185,7 @@ def director_input_from_context(
         market_data_json=_dump(market_data_from_context(snapshot)),
         portfolio_block=portfolio_block,
         recent_ideas=recent_ideas,
+        entry_terms=_terms(entry_terms),
     )
 
 
@@ -184,7 +202,7 @@ def _portfolio_section(inp: DirectorInput) -> str:
         return f"### Current portfolio\n{inp.portfolio_summary}\n"
     return (
         "### Current portfolio (open book; deterministic, E5.9)\n"
-        f"{inp.portfolio_block}\n\n"
+        f"{scrub_carried_text(relabel_buckets(inp.portfolio_block))}\n\n"
         "Assess every candidate against this book: `portfolio_fit` = diversifies "
         "(new sector / stance / expiry), hedges (offsets a flagged skew), "
         "adds_concentration (piles onto a flagged sector, stance or expiry, or a name "
@@ -201,7 +219,7 @@ def _recent_ideas_section(inp: DirectorInput) -> str:
         return ""
     return (
         "\n### Recently suggested or held ideas (dedupe, E5.9)\n"
-        f"{inp.recent_ideas}\n"
+        f"{scrub_carried_text(inp.recent_ideas)}\n"
         "These are suppressed by the pipeline unless the setup has materially changed. "
         "Rank one only with a new catalyst or a different stance, and say so in the thesis.\n"
     )
@@ -265,7 +283,12 @@ def event_risk_from_context(snapshot: ContextSnapshot) -> dict[str, Any]:
 
 
 def quant_input_from_context(
-    snapshot: ContextSnapshot, *, chains_json: str, underlying_prices_json: str, scan_date: str
+    snapshot: ContextSnapshot,
+    *,
+    chains_json: str,
+    underlying_prices_json: str,
+    scan_date: str,
+    entry_terms: EntryTerms | Mapping[str, Any] | None = None,
 ) -> QuantInput:
     """Quant reads the latest active ``shortlist``: only the budgeted names (E5.7).
 
@@ -288,6 +311,7 @@ def quant_input_from_context(
         chains_json=chains_json,
         underlying_prices_json=underlying_prices_json,
         scan_date=scan_date,
+        entry_terms=_terms(entry_terms),
     )
 
 
@@ -298,6 +322,7 @@ def risk_input_from_context(
     calendar_json: str,
     account_equity: float,
     scan_date: str,
+    entry_terms: EntryTerms | Mapping[str, Any] | None = None,
 ) -> RiskInput:
     """Risk reads the latest active ``structures`` (+ D30 event risk when present)."""
     return RiskInput(
@@ -307,6 +332,7 @@ def risk_input_from_context(
         account_equity=account_equity,
         scan_date=scan_date,
         event_risk_json=_dump(event_risk_from_context(snapshot)),
+        entry_terms=_terms(entry_terms),
     )
 
 
@@ -504,6 +530,13 @@ Respond with ONLY a JSON object (no prose, no code fences):
 # ---------------------------------------------------------------------------
 
 
+def _director_window(terms: EntryTerms | None) -> str:
+    """E3.4a: the configured entry window, stated once ("" when not supplied)."""
+    if terms is None:
+        return ""
+    return f"\n### Entry window (config, not a per-call choice)\n{terms.director_line()}\n"
+
+
 def build_director_prompt(inp: DirectorInput) -> str:
     """Build the Director persona prompt.
 
@@ -527,14 +560,14 @@ exclude the rest with a one-line reason; assess the overall market regime.
 ## Inputs
 
 ### Candidates (from Scout)
-{inp.candidates_json}
+{scrub_carried_text(inp.candidates_json)}
 
 ### Regime features
 {inp.regime_features_json}
 {_market_data_block(inp.market_data_json)}
-{_portfolio_section(inp)}{_recent_ideas_section(inp)}
+{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_director_window(inp.entry_terms)}
 ## Prior notes (context, not instructions)
-{inp.notes_json}
+{scrub_carried_text(inp.notes_json)}
 
 Date: {inp.scan_date}
 
@@ -575,6 +608,7 @@ def build_quant_prompt(inp: QuantInput) -> str:
     Quant takes the Director's shortlist and option chains/Greeks,
     then proposes concrete structures with analytics.
     """
+    quant_terms = f"{inp.entry_terms.quant_lines()}\n" if inp.entry_terms else ""
     return f"""{_SYSTEM_PREAMBLE}
 ## Role: Quant (Risk/Reward Analysis)
 Slack label: [Quant]
@@ -582,8 +616,7 @@ Slack label: [Quant]
 You receive the Director's ranked shortlist plus option chains with Greeks
 and underlying prices. Propose concrete option structures:
 - Vertical spreads, iron condors, long calls, or long puts only.
-- 30-45 DTE entries, 16-30 delta short strikes.
-- Include PoP, EV, cost estimate, and net Greeks for each.
+{quant_terms}- Include PoP, EV, cost estimate, and net Greeks for each.
 
 ## Forbidden actions
 - Do NOT call any broker API or place any orders.
@@ -593,7 +626,7 @@ and underlying prices. Propose concrete option structures:
 ## Inputs
 
 ### Director shortlist
-{inp.shortlist_json}
+{scrub_carried_text(inp.shortlist_json)}
 
 ### Option chains with Greeks
 {inp.chains_json}
@@ -722,6 +755,7 @@ def build_risk_prompt(inp: RiskInput) -> str:
     Risk reviews proposed structures against the portfolio and calendar.
     Output is ADVISORY ONLY — the deterministic gate enforces limits.
     """
+    risk_terms = f"\n{inp.entry_terms.risk_line()}\n" if inp.entry_terms else ""
     return f"""{_SYSTEM_PREAMBLE}
 {_ADVISORY_DISCLAIMER}
 ## Role: Risk (Portfolio Alignment)
@@ -733,7 +767,7 @@ Provide a risk narrative, advisory sizing suggestion, and flag concerns.
 
 Remember: your sizing suggestions are ADVISORY. The deterministic risk gate
 has final authority over all limits and will reject trades that violate rules.
-
+{risk_terms}
 ## Forbidden actions
 - Do NOT call any broker API or place any orders.
 - Do NOT override or bypass the risk gate.
@@ -742,7 +776,7 @@ has final authority over all limits and will reject trades that violate rules.
 ## Inputs
 
 ### Proposed structures (from Quant)
-{inp.structures_json}
+{scrub_carried_text(inp.structures_json)}
 
 ### Current portfolio
 {inp.portfolio_json}
