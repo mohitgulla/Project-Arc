@@ -153,11 +153,11 @@ def save_json(path: Path, data) -> None:
 
 
 def to_db(when: dt.datetime) -> str:
-    return when.astimezone(dt.UTC).strftime(DB_FMT)
+    return when.astimezone(dt.timezone.utc).strftime(DB_FMT)
 
 
 def iso(when: dt.datetime) -> str:
-    return when.astimezone(dt.UTC).isoformat(timespec="seconds")
+    return when.astimezone(dt.timezone.utc).isoformat(timespec="seconds")
 
 
 def clip(text: str, n: int) -> str:
@@ -205,7 +205,7 @@ def wake_decision(conn: sqlite3.Connection, state: dict, now: dt.datetime) -> di
         f"SELECT COUNT(*) FROM outcomes WHERE {closed_filter()} AND rowid > ?", (watermark,)
     ).fetchone()[0]
     halts = [
-        dict(zip(("at", "kind", "reason"), r, strict=True))
+        dict(zip(("at", "kind", "reason"), r))
         for r in conn.execute(
             "SELECT at, kind, reason FROM halts WHERE at > ? ORDER BY at", (to_db(since),)
         )
@@ -256,7 +256,7 @@ def realised_vs_model(conn: sqlite3.Connection, since: dt.datetime | None) -> li
         args,
     ).fetchall()
     cols = ("kind", "regime", "n", "pnl", "ev", "avg_vs_ev", "slip_bps", "cost_bps", "wins")
-    return [dict(zip(cols, r, strict=True)) for r in rows]
+    return [dict(zip(cols, r)) for r in rows]
 
 
 def _num(v, fmt: str) -> str:
@@ -807,7 +807,7 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
 
 def main(argv: list[str], p: Paths | None = None, now: dt.datetime | None = None) -> int:
     p = p or Paths.from_env()
-    now = now or dt.datetime.now(dt.UTC)
+    now = now or dt.datetime.now(dt.timezone.utc)
     if not argv:
         return cmd_gate(p, now)
     cmd, *rest = argv

@@ -64,6 +64,8 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
 # pydantic resolves field annotations at runtime; imports must stay real.
 "arc/personas/schemas.py" = ["TC001"]
 "arc/journal/models.py" = ["TC001", "TC003"]
+# Runs under the host's system python3 (macOS: 3.9) from the arc-analyst profile, not the venv.
+"hermes/analyst/arc_analyst.py" = ["UP017", "B905"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
