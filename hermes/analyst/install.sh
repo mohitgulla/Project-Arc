@@ -14,7 +14,7 @@
 #     <profile>/skills/arc-analyst/SKILL.md, <profile>/scripts/arc_analyst.py, <profile>/SOUL.md
 #   (references/lessons.md is created empty once and never overwritten: it is the Analyst's
 #   own calibration log).
-# - Creates the cron `arc-analyst-weekly` in that profile: Sunday 15:00 PT (after the E7.3 weekly
+# - Creates the cron `arc-analyst-weekly-audit` in that profile: Sunday 14:00 PT (after the E7.3 weekly
 #   scorecard), Fable 5.1 at max reasoning, delivery to #arc-analyst. It is created PAUSED:
 #   E9.4 decides when it starts (>= 1 closed outcome in the journal).
 # - Idempotent: an existing job with the same name is removed first; re-running re-pauses it.
@@ -25,8 +25,8 @@
 set -euo pipefail
 
 PROFILE="arc-analyst"
-NAME="arc-analyst-weekly"
-SCHEDULE="0 15 * * 0"          # Sunday 15:00, host local time (PT)
+NAME="arc-analyst-weekly-audit"
+SCHEDULE="0 14 * * 0"          # Sunday 14:00, host local time (PT)
 MODEL="anthropic/claude-fable-5.1"
 PROVIDER="anthropic"
 EFFORT="max"

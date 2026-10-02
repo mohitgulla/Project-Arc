@@ -1063,7 +1063,7 @@ versioned in `hermes/analyst/` and copied into its own Hermes profile
 | `hermes/analyst/arc_analyst.py` | `~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py` (cron pre-run gate) |
 | `hermes/analyst/prompt.md` | the cron prompt |
 
-The cron `arc-analyst-weekly` runs Sunday 15:00 PT (after the weekly scorecard)
+The cron `arc-analyst-weekly-audit` runs Sunday 14:00 PT (after the weekly scorecard)
 on `anthropic/claude-fable-5.1` at `max` effort and delivers to #arc-analyst.
 `install.sh` creates it **paused**; `install.sh --dry-run` prints every step.
 
