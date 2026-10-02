@@ -42,7 +42,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
 __all__ = [
     "DEFAULT_RANKING_PATH",
@@ -55,6 +55,7 @@ __all__ = [
     "incumbent_for",
     "load_ranking_config",
     "passes_cost_filter",
+    "live_net_ev_check",
     "passes_filters",
     "rank",
 ]
@@ -114,6 +115,11 @@ class RankFilters(BaseModel):
         description="E7.5a: keep managed Net EV ÷ estimated cost ≥ this (None = off). A "
         "candidate without a cost estimate fails it when set.",
     )
+    live: bool = Field(
+        True,
+        description="E6.4a: the live propose step rejects a structure whose managed Net EV "
+        "is <= min_managed_net_ev (only that floor; the PoP / cost filters stay backtest-only)",
+    )
 
 
 class RankingConfig(BaseModel):
@@ -126,11 +132,39 @@ class RankingConfig(BaseModel):
     filters: RankFilters = Field(default_factory=RankFilters)
 
 
-def load_ranking_config(path: Path | str | None = None) -> RankingConfig:
-    """Load and validate the ranking config (default: ``config/ranking.yaml``)."""
+def load_ranking_config(
+    path: Path | str | None = None, *, overrides: Mapping[tuple[str, ...], object] | None = None
+) -> RankingConfig:
+    """Load and validate the ranking config (default: ``config/ranking.yaml``).
+
+    *overrides* (D26 control panel, ``path -> value`` from the file root, e.g.
+    ``("ranking", "filters", "min_managed_net_ev")``) patch the YAML first;
+    :func:`arc.control.effective.ranking_config` returns the effective config.
+    """
+    from arc.utils.yamlpatch import apply_overrides
+
     p = Path(path) if path is not None else DEFAULT_RANKING_PATH
-    data = yaml.safe_load(p.read_text()) or {}
+    data = apply_overrides(yaml.safe_load(p.read_text()) or {}, overrides)
     return RankingConfig.model_validate(data.get("ranking", data))
+
+
+def live_net_ev_check(managed_net_ev: float | None, f: RankFilters) -> tuple[bool, str]:
+    """E6.4a live Net EV floor: ``(ok, why)`` for one re-priced proposal structure.
+
+    Applies ``min_managed_net_ev`` (strict ``>``, $ per unit, E2.4 managed exits
+    after all costs) when ``filters.enabled`` and ``filters.live``. A structure
+    without a managed model fails closed: the floor cannot be shown to hold.
+    """
+    if not (f.enabled and f.live):
+        return True, "live Net EV floor off"
+    if managed_net_ev is None:
+        return False, "no managed Net EV (exit model unavailable); floor fails closed"
+    if managed_net_ev > f.min_managed_net_ev:
+        return True, f"managed Net EV ${managed_net_ev:+,.2f} > floor ${f.min_managed_net_ev:+,.2f}"
+    return False, (
+        f"managed Net EV ${managed_net_ev:+,.2f}/unit after costs <= floor "
+        f"${f.min_managed_net_ev:+,.2f}"
+    )
 
 
 def applicable(ranker: Ranker, *, allows_credit: bool) -> bool:

@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arc.journal.analytics import ProposalAnalytics  # noqa: TC001 - pydantic field
+from arc.journal.floor_exit import FloorExitFacts, floor_exit_facts
 from arc.journal.reasons import gate_reason, reason_label
 from arc.tower.data import _dec, _has_table, _json, parse_ts
 from arc.utils.calendar import ET
@@ -668,6 +669,9 @@ class PositionSection(BaseModel):
     open_proposal_hash: str | None = None
     exits: list[ExitLink] = Field(default_factory=list)
     swaps: list[SwapView] = Field(default_factory=list)
+    floor_exit: FloorExitFacts | None = Field(
+        None, description="E6.4a: remaining-EV floor exit facts (None = not a floor exit)"
+    )
 
 
 class OutcomeView(BaseModel):
@@ -1782,6 +1786,11 @@ def _position(conn: sqlite3.Connection, h: str, kind: str) -> PositionSection | 
         open_proposal_hash=s["open_proposal_hash"],
         exits=exits,
         swaps=swaps,
+        floor_exit=(
+            floor_exit_facts(conn, s["open_proposal_hash"])
+            if s["exit_reason"] == "remaining_ev_floor"
+            else None
+        ),
     )
 
 

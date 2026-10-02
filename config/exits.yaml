@@ -38,12 +38,19 @@ pipeline:
 #                              policy vs close now, after spread + fees) per $ of
 #                              buying power held is below this. null = off.
 #                              -0.01 = holding is expected to lose > 1% of the BP it
-#                              ties up vs closing now. 0.0 is too tight: at IV paths a
-#                              fresh position's remaining EV is ~0 minus costs, so it
-#                              would flag nearly every position.
+#                              ties up vs closing now. Not 0.0: a fresh position at
+#                              IV paths (no edge) sits near 0, so noise would flag it.
+#   remaining_ev_floor_eod_only  E6.4a (D41): the floor is evaluated on end-of-day marks
+#                              only (eod_marks_from in routines.yaml), like the D23
+#                              stop; never on the fill day's intraday evaluations.
+#                              Reason: on 2026-10-01 the floor closed 3/3 fresh debit
+#                              spreads 16-42 min after the fill (Analyst A-1).
+# Remaining EV is on the entry model's basis (E6.4a parity): at unchanged marks it
+# equals the proposal's managed Net EV + entry costs + the cost of closing now.
 # Stated default, owner's call (ask in the E6.4 PR).
 positions:
   remaining_ev_floor_per_bp: -0.01
+  remaining_ev_floor_eod_only: true
   kinds: {}
 
 default:
