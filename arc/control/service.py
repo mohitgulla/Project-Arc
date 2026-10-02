@@ -341,6 +341,10 @@ class ControlService:
                 from arc.backtest.costs import load_cost_model
 
                 load_cost_model(overrides=ov.get("costs"))
+            elif t.target is Target.RANKING:
+                from arc.scanner.rank import load_ranking_config
+
+                load_ranking_config(overrides=ov.get("ranking"))
             elif t.target is Target.ROUTINES:
                 from arc.routines.config import load_routines
 

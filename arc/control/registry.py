@@ -73,6 +73,7 @@ class Target(StrEnum):
     COSTS = "costs"  # config/costs.yaml
     PROFILES = "account_profiles"  # config/account_profiles.yaml
     ROUTINES = "routines"  # config/routines.yaml
+    RANKING = "ranking"  # config/ranking.yaml (E6.4a: live Net EV floor)
 
 
 class ValueType(StrEnum):
@@ -645,6 +646,41 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         unit="pct",
         min=-0.10,
         max=0.05,
+    ),
+    Tunable(
+        key="positions.remaining_ev_floor_eval",
+        group=Group.POSITIONS,
+        type=ValueType.CHOICE,
+        description="E6.4a: evaluate the remaining-EV floor on end-of-day marks only (eod, "
+        "never on the fill day's intraday reviews) or on every review (intraday).",
+        target=Target.EXITS,
+        risk=Risk.ORDER,
+        path=("positions", "remaining_ev_floor_eod_only"),
+        choices=("intraday", "eod"),  # eod (relaxed, like the D23 stop) is the riskier side
+    ),
+    Tunable(
+        key="entries.min_managed_net_ev",
+        group=Group.ENTRIES,
+        type=ValueType.FLOAT,
+        description="E6.4a: the live propose step rejects a structure whose managed Net EV "
+        "(E2.4 managed exits, after all costs, $ per unit) is <= this (lower = more trades).",
+        target=Target.RANKING,
+        risk=Risk.DOWN,
+        path=("ranking", "filters", "min_managed_net_ev"),
+        unit="$",
+        min=-50.0,
+        max=500.0,
+        hard_ceiling=-50.0,
+    ),
+    Tunable(
+        key="entries.net_ev_floor_live",
+        group=Group.ENTRIES,
+        type=ValueType.BOOL,
+        description="E6.4a: apply entries.min_managed_net_ev in the live propose step. Off = "
+        "the floor is backtest-only and a negative-EV structure can be proposed.",
+        target=Target.RANKING,
+        risk=Risk.FALSE,
+        path=("ranking", "filters", "live"),
     ),
     _s(
         "realloc_min_edge",
@@ -1743,6 +1779,9 @@ def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
         if t.type is ValueType.BOOL:
             return bool(spec.get("enabled", True))
         return _cadence_text(spec)
+    if t.path == ("positions", "remaining_ev_floor_eod_only"):
+        v = _get(raw, t.path)
+        return "eod" if (True if v is None else bool(v)) else "intraday"
     if t.target is Target.EXITS and t.path[:1] == ("kinds",):
         kind_data = _get(raw, t.path[:2])
         rel = t.path[2:]
@@ -1788,6 +1827,8 @@ def write_raw(t: Tunable, value: Any, raw: dict[str, Any]) -> list[tuple[tuple[s
             ]
         times = text[len("at ") :].split(",")
         return [((*base, "schedule"), times), ((*base, "every"), None), ((*base, "window"), None)]
+    if t.path == ("positions", "remaining_ev_floor_eod_only"):
+        return [(t.path, value == "eod")]
     if t.target is Target.EXITS and t.path[:1] == ("kinds",):
         rel = t.path[2:]
         kind_path = t.path[:2]

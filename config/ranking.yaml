@@ -10,9 +10,15 @@
 # Hard filters run before every ranker (same for all): managed Net EV > floor and
 # managed PoP >= floor.
 #
-# NOTE: this file does NOT change the live default. The scanner still ranks by
+# NOTE: this file does NOT change the live ranking. The scanner still ranks by
 # ScanParams.rank_by (credit_width) and the pipeline by exits.yaml
 # pipeline.rank_menu_by. The E7.5 report recommends; the owner flips the switch.
+#
+# E6.4a (D41): ONE exception, `filters.live: true` - the live propose step rejects a
+# structure whose managed Net EV (E2.4, managed exits, after all costs) is
+# <= min_managed_net_ev, journalled `net_ev_floor`. Only that floor goes live; the
+# PoP and cost-ratio filters stay backtest-only. Reason: NFLX was proposed at
+# -$0.94/unit on 2026-10-01 and Director prose did not bind (Analyst A-1).
 #
 # `backtest` configures `arc backtest rank` (arc/backtest/ranking.py).
 
@@ -23,6 +29,7 @@ ranking:
     enabled: true
     min_managed_net_ev: 0.0   # $ per unit, strict >
     min_managed_pop: 0.0      # no PoP floor by default (owner has not set one)
+    live: true                # E6.4a: min_managed_net_ev also gates the live propose step
 
 backtest:
   starting_equity: 100000

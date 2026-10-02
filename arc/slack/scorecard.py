@@ -112,6 +112,24 @@ def scorecard_card(
             f"({len(known)} of {len(sc.early_closed)} known)"
         )
     blocks.append(_section("Early exits vs hold to expiry (D19)", _more(early)))
+    same_day = sc.same_day_closed
+    if same_day:
+        blocks.append(
+            _section(
+                "Same-day exits (days held 0)",
+                _more(
+                    [
+                        f"• {B.esc(c.ticker)} {B.esc(c.exit_reason.replace('_', ' '))}: "
+                        f"realised {_usd(c.realised_pnl)}"
+                        for c in same_day
+                    ]
+                    + [
+                        f"{len(same_day)} of {len(sc.early_closed)} early exit(s) closed the "
+                        "day they opened"
+                    ]
+                ),
+            )
+        )
     swaps = [
         f"• {B.esc(s.close_ticker)} → {B.esc(s.open_ticker)} ({B.esc(s.status)}): net "
         f"{_usd(s.net)} vs hold {_usd(s.closed_hold_shadow)} (swap edge {_usd(s.vs_hold)})"

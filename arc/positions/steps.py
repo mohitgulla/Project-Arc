@@ -174,6 +174,31 @@ def _theta_per_day(priced: PricedStructure, st: Structure, dte: int, r: float) -
     return float(g.theta)
 
 
+def _entry_managed_net_ev(conn: sqlite3.Connection, phash: str | None) -> float | None:
+    """The open proposal's E2.4 managed Net EV ($ per unit), frozen in its market context."""
+    if not phash:
+        return None
+    row = conn.execute(
+        """SELECT json_extract(payload, '$.analytics.exit_model.managed.net_ev')
+           FROM market_contexts WHERE proposal_hash = ?
+           ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+        (phash,),
+    ).fetchone()
+    return None if row is None or row[0] is None else float(row[0])
+
+
+def _minutes_since(opened_at: str | None, now: _dt.datetime) -> float | None:
+    """Minutes from the open fill (``open_structures.opened_at``) to *now*."""
+    if not opened_at:
+        return None
+    try:
+        ts = _dt.datetime.fromisoformat(str(opened_at))
+    except ValueError:
+        return None
+    ts = ts.replace(tzinfo=_dt.UTC) if ts.tzinfo is None else ts
+    return max((now - ts).total_seconds() / 60.0, 0.0)
+
+
 def _reviews(ctx: JobContext) -> dict[str, PositionReview]:
     """This chain's ``position_review`` entries by structure id (latest wins)."""
     out: dict[str, PositionReview] = {}
@@ -231,6 +256,8 @@ def evaluate(ctx: JobContext, env: PipelineEnv, *, exit_cfg: ExitConfig | None =
                 cost=cost,
                 theta_per_day=_theta(priced, st, today, settings.scanner_risk_free_rate),
                 exit_pending=exit_pending(ctx.conn, row),
+                entry_managed_net_ev=_entry_managed_net_ev(ctx.conn, row["open_proposal_hash"]),
+                minutes_since_fill=_minutes_since(row.get("opened_at"), ctx.now),
             )
         except (LookupError, ValueError) as exc:
             errors.append(f"{t}: cannot review ({exc})")

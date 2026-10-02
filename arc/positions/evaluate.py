@@ -86,6 +86,20 @@ class PositionReview(BaseModel):
     remaining_days_held: float | None = None
     signals: list[ExitSignal] = Field(default_factory=list)
     exit_pending: bool = Field(False, description="An exit proposal is already pending/working")
+    # E6.4a observability: what the remaining-EV floor saw and why it did (not) fire.
+    end_of_day: bool | None = Field(None, description="Marks were end-of-day marks")
+    ev_floor: float | None = Field(None, description="Remaining-EV floor per $ BP in force")
+    ev_floor_window: str | None = Field(
+        None, description="'eod' (floor on EOD marks only) or 'intraday'; None = floor off"
+    )
+    ev_floor_live: bool | None = Field(
+        None, description="The floor was evaluated on this review (window open)"
+    )
+    entry_managed_net_ev: float | None = Field(
+        None, description="Proposal-time E2.4 managed Net EV, $ per unit"
+    )
+    entry_managed_net_ev_per_bp: float | None = None
+    minutes_since_fill: float | None = Field(None, ge=0.0)
     structure: Structure
 
     @property
@@ -116,8 +130,16 @@ def review_position(
     theta_per_day: float | None = None,
     exit_pending: bool = False,
     cost: CostModel | None = None,
+    entry_managed_net_ev: float | None = None,
+    minutes_since_fill: float | None = None,
 ) -> PositionReview:
-    """Review one open position (see module doc). Raises ``LookupError`` on a missing mark."""
+    """Review one open position (see module doc). Raises ``LookupError`` on a missing mark.
+
+    E6.4a: with ``positions.remaining_ev_floor_eod_only`` (default) the floor is only
+    evaluated on end-of-day marks (``marks.end_of_day``), never intraday.
+    *entry_managed_net_ev* (the open proposal's managed Net EV) and
+    *minutes_since_fill* are recorded for the audit only; they never change a signal.
+    """
     st = position.structure
     policy = exits.policy_for(st.kind)
     state = evaluate_position(position, marks, policy, cost=cost, cfg=exits.model)
@@ -165,13 +187,22 @@ def review_position(
         }[kind]
         signals.append(ExitSignal(kind=kind, detail=detail))
     floor = exits.positions.floor_for(st.kind)
-    if floor is not None and rem_bp is not None and rem_bp < floor:
+    eod_only = exits.positions.remaining_ev_floor_eod_only
+    window = None if floor is None else ("eod" if eod_only else "intraday")
+    floor_live = floor is not None and (marks.end_of_day or not eod_only)
+    if floor_live and floor is not None and rem_bp is not None and rem_bp < floor:
+        when = "end-of-day marks" if marks.end_of_day else "intraday marks"
         signals.append(
             ExitSignal(
                 kind=SignalKind.REMAINING_EV_FLOOR,
-                detail=f"remaining EV per $ BP {rem_bp:+.4f} < floor {floor:+.4f}: {head}",
+                detail=(
+                    f"remaining EV per $ BP {rem_bp:+.4f} < floor {floor:+.4f} ({when}): {head}"
+                ),
             )
         )
+    entry_bp = (
+        None if entry_managed_net_ev is None or bp is None else round(entry_managed_net_ev / bp, 6)
+    )
 
     return PositionReview(
         structure_id=structure_id,
@@ -198,5 +229,14 @@ def review_position(
         remaining_days_held=state.remaining_days_held,
         signals=signals,
         exit_pending=exit_pending,
+        end_of_day=marks.end_of_day,
+        ev_floor=floor,
+        ev_floor_window=window,
+        ev_floor_live=None if floor is None else floor_live,
+        entry_managed_net_ev=entry_managed_net_ev,
+        entry_managed_net_ev_per_bp=entry_bp,
+        minutes_since_fill=(
+            None if minutes_since_fill is None else round(max(minutes_since_fill, 0.0), 1)
+        ),
         structure=st,
     )

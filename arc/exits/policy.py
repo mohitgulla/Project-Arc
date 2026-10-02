@@ -262,11 +262,18 @@ class PositionsConfig(BaseModel):
     net EV (hold under the policy vs close now, after costs) per $ of buying power
     it holds falls below this (``-0.01`` = expected to lose > 1% of that BP vs
     closing now); ``null`` = off. ``kinds`` overrides per structure kind.
+
+    ``remaining_ev_floor_eod_only`` (E6.4a, default on): the floor is only evaluated
+    on end-of-day marks (the chain's ``eod_marks_from`` window), like the D23 stop,
+    so it never fires on the fill day's intraday evaluations.
     """
 
     model_config = _FORBID
 
     remaining_ev_floor_per_bp: float | None = Field(-0.01, ge=-1.0, le=1.0)
+    remaining_ev_floor_eod_only: bool = Field(
+        True, description="Evaluate the remaining-EV floor on end-of-day marks only"
+    )
     kinds: dict[StructureKind, float | None] = Field(default_factory=dict)
 
     def floor_for(self, kind: StructureKind | None) -> float | None:

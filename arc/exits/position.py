@@ -5,8 +5,10 @@
 
 1. Which rule fires **now** (stop → take profit → DTE exit), given current mid marks.
 2. What is the **remaining** managed EV if held under the policy, versus closing now
-   (``remaining_net_ev``, $ per unit, after exit costs on both sides). E6.4's
-   close-to-reallocate compares this with a new candidate's managed net EV.
+   at the market marks (``remaining_net_ev``, $ per unit, after exit costs on both
+   sides). E6.4's close-to-reallocate compares this with a new candidate's managed
+   net EV. E6.4a: it is on the same basis as the entry model, so at unchanged marks
+   ``remaining_net_ev = managed.net_ev + entry_costs - close_now_net``.
 
 Pure and deterministic; the caller supplies marks (no broker or network access here).
 """
@@ -20,7 +22,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arc.backtest.costs import CostModel, load_cost_model
-from arc.exits.model import MULT, close_values, sim_legs, simulate
+from arc.exits.model import MULT, sim_legs, simulate
 from arc.exits.policy import (
     ExitModelConfig,
     ExitPolicy,
@@ -171,14 +173,18 @@ def evaluate_position(
             cfg=cfg,
             path_vol=marks.realized_vol if cfg.path_vol == "realized_forecast" else None,
         )
-        # Model-consistent "now" value so the EV compares like with like.
-        v0, p0, f0 = close_values(
-            legs, np.array([marks.spot]), dte / 365.0, marks.r, marks.iv, cost
-        )
-        gross_ev = round(float(np.mean(out.exit_value_mid) - v0[0]) * MULT, 2)
+        # E6.4a parity: "now" is the close at the MARKET marks (the fill closing now
+        # would get), the same basis the entry model charges the open against
+        # (``model_exits``: model paths vs the market entry fill). Comparing the
+        # paths with the flat-IV model value instead dropped the model-vs-market
+        # mark gap from the remaining EV but not from the entry EV, so a fresh
+        # position read as -EV minutes after a +EV open (Analyst A-1). Exact
+        # identity at unchanged marks (same paths):
+        #   remaining_net_ev = managed.net_ev + entry_costs - close_now_net
+        gross_ev = round(float(np.mean(out.exit_value_mid) - value) * MULT, 2)
         held_paths = out.exit_proceeds * MULT - out.exit_fees
         held_net = float(np.mean(held_paths))
-        now_net = float(p0[0] * MULT - f0[0])
+        now_net = proceeds * MULT - close_fees
         net_ev = round(held_net - now_net, 2)
         rem_pop = round(float(np.mean(held_paths > now_net)), 4)
         days = round(float(np.mean(out.exit_day)), 2)

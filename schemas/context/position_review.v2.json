@@ -332,10 +332,87 @@
       "title": "Dte",
       "type": "integer"
     },
+    "end_of_day": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Marks were end-of-day marks",
+      "title": "End Of Day"
+    },
+    "entry_managed_net_ev": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Proposal-time E2.4 managed Net EV, $ per unit",
+      "title": "Entry Managed Net Ev"
+    },
+    "entry_managed_net_ev_per_bp": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Entry Managed Net Ev Per Bp"
+    },
     "entry_net": {
       "description": "Per share, + debit / \u2212 credit",
       "title": "Entry Net",
       "type": "number"
+    },
+    "ev_floor": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Remaining-EV floor per $ BP in force",
+      "title": "Ev Floor"
+    },
+    "ev_floor_live": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The floor was evaluated on this review (window open)",
+      "title": "Ev Floor Live"
+    },
+    "ev_floor_window": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "'eod' (floor on EOD marks only) or 'intraday'; None = floor off",
+      "title": "Ev Floor Window"
     },
     "exit_pending": {
       "default": false,
@@ -353,6 +430,19 @@
         }
       ],
       "title": "Kind"
+    },
+    "minutes_since_fill": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Minutes Since Fill"
     },
     "pct_of_debit": {
       "anyOf": [
