@@ -103,6 +103,19 @@ trigger actions. Resolve an S-id's full finding from the newest `~/.hermes/profi
 5. **CI / build / release**: `.github/workflows/ci.yml`, `Makefile`, `pyproject.toml`, `uv.lock`
    freshness, pip-audit results, caching, pinning of actions, missing jobs (e.g. lock check,
    security audit, scheduled integration run), absence of a release/tag workflow.
+   - **Vendored skills (D42):** the context section `Vendored skills vs upstream (D42)` is the
+     read-only output of `~/.hermes/scripts/skills_upstream_sync.py --check`. When it reports
+     `UPDATE` or `REVIEW` lines, file ONE finding, key `deps:skills-upstream`, category `deps`,
+     severity `low`, quoting the lines as evidence. If an open card already owns it, use
+     `comment-on-card`. Otherwise use `new-card`; the draft title is `E9.x · Sync vendored skills to upstream`,
+     no parents, and the body is: run
+     `~/.hermes/scripts/skills_upstream_sync.py --apply --repo-dir <card worktree>` (refreshes
+     `~/.hermes/skills`, writes `hermes/shared-skills/` and the pins in its README), fold any `REVIEW`
+     change into `~/.hermes/skills/software-development/test-driven-development` by hand and say what
+     was taken, run both reviewer tests, and open the PR (reviewers change only after merge +
+     both `install.sh`). A `HOLD` line is a new security-scan finding: `owner-decision`, severity
+     `medium`, never auto-applied. When the section says everything matches, resolve an active
+     `deps:skills-upstream` item. Never run `--apply` yourself.
 6. **Workflow**: plan-vs-code drift (PLAN claims a thing exists that does not, or vice versa),
    card DAG gaps (work in code no card owns; card scope contradicting D# decisions), anything
    that makes parallel cards collide.
