@@ -56,3 +56,47 @@ def test_install_dry_run_copies_only_the_skill(tmp_path: Path) -> None:
     assert "lessons.md" not in out
     assert "cron" not in out
     assert not (tmp_path / "p").exists()
+
+
+SHARED = ROOT / "hermes" / "shared-skills"
+SENTINEL_HELPERS = (
+    "defuddle",
+    "agent-reach",
+    "code-review-and-quality",
+    "security-and-hardening",
+    "performance-optimization",
+)
+
+
+def test_install_dry_run_copies_pinned_helper_skills(tmp_path: Path) -> None:
+    out = subprocess.run(
+        ["bash", str(SENTINEL / "install.sh"), "--dry-run"],
+        env={"ARC_SENTINEL_PROFILE_HOME": str(tmp_path / "p"), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    for h in SENTINEL_HELPERS:
+        assert (SHARED / h / "SKILL.md").is_file(), h
+        assert f"{tmp_path / 'p'}/skills/{h}" in out, h
+        assert h in SKILL.read_text(), h  # the skill names every helper it may load
+    assert not (tmp_path / "p").exists()
+
+
+def test_shared_helpers_have_no_dangling_relative_links() -> None:
+    for md in SHARED.rglob("*.md"):
+        text = md.read_text()
+        assert "../references/" not in text, md
+        for link in re.findall(r"\]\(((?:references/)?[a-z0-9-]+\.md)", text):
+            assert (md.parent / link).is_file(), (md, link)
+
+
+def test_owner_directive_is_one_shot_and_cannot_widen_permissions() -> None:
+    text = SKILL.read_text()
+    m = re.search(r"^## Owner directive.*?(?=^## )", text, flags=re.S | re.M)
+    assert m, "owner-directive section missing"
+    section = m.group(0)
+    assert "this run only" in section
+    assert "never widens" in section
+    assert "`mark` consumes the directive" in section
+    assert text.index("## Owner directive") < text.index("## Procedure")

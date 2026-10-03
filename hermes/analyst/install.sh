@@ -12,6 +12,8 @@
 #
 # - Copies the skill, the pre-run gate script and SOUL.md from this directory into the profile:
 #     <profile>/skills/arc-analyst/SKILL.md, <profile>/scripts/arc_analyst.py, <profile>/SOUL.md
+#   plus the shared helper skills (D42) hermes/shared-skills/{defuddle,agent-reach} to
+#   <profile>/skills/<name>/
 #   (references/lessons.md is created empty once and never overwritten: it is the Analyst's
 #   own calibration log).
 # - Creates the cron `arc-analyst-weekly-audit` in that profile: Sunday 14:00 PT (after the E7.3 weekly
@@ -60,6 +62,14 @@ if [[ -f "$HERE/SOUL.md" ]]; then
 else
   echo "warning: $HERE/SOUL.md not in the repo; the profile keeps its current SOUL.md" >&2
 fi
+# Shared helper skills (PLAN D42): web-fetch how-tos only; the Analyst skill's caps win.
+HELPERS=(defuddle agent-reach)
+for h in "${HELPERS[@]}"; do
+  hs="$HERE/../shared-skills/$h"
+  [[ -f "$hs/SKILL.md" ]] || { echo "error: $hs/SKILL.md missing" >&2; exit 1; }
+  run rm -rf "$PROFILE_HOME/skills/$h"
+  run cp -R "$hs" "$PROFILE_HOME/skills/$h"
+done
 lessons="$PROFILE_HOME/skills/arc-analyst/references/lessons.md"
 if (( dry )) || [[ ! -f "$lessons" ]]; then
   run touch "$lessons"
