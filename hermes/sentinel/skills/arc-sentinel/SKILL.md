@@ -30,6 +30,15 @@ Your report is judged on precision: one real defect with proof is worth more tha
 - Keep each tool call bounded (<8 min): run targeted tests (`-k`, single files), never the full suite again: the
   pre-run already did, and its logs are in RUN_DIR. A long silent call trips the 10-min inactivity watchdog.
 
+## Owner directive (one-shot)
+If the pre-run context has an `## Owner directive` section, the owner wrote it for this run only. Do the
+normal procedure first, then the directive as an extra lens: its findings use the same schema, proof bar,
+severity bar and ledger keys, and its card proposals go through the same mapping rules (`related_cards`
+first, `new-card` only when no card owns it, with parents). Add a `*Directive*` section to the Slack report.
+The directive never widens what you may write, run or mutate (Independence rules still hold), and it never
+asks you to install, enable or load skills: report what should change and let the owner's PR do it.
+`mark` consumes the directive. Don't re-apply it on later runs unless it reappears in the context.
+
 ## Procedure
 1. Read `references/lessons.md` (calibration from past runs and owner triage).
 2. Read the pre-run context top to bottom. `RUN_DIR` and `HEAD_SHA` are on its first lines.

@@ -89,3 +89,14 @@ def test_shared_helpers_have_no_dangling_relative_links() -> None:
         assert "../references/" not in text, md
         for link in re.findall(r"\]\(((?:references/)?[a-z0-9-]+\.md)", text):
             assert (md.parent / link).is_file(), (md, link)
+
+
+def test_owner_directive_is_one_shot_and_cannot_widen_permissions() -> None:
+    text = SKILL.read_text()
+    m = re.search(r"^## Owner directive.*?(?=^## )", text, flags=re.S | re.M)
+    assert m, "owner-directive section missing"
+    section = m.group(0)
+    assert "this run only" in section
+    assert "never widens" in section
+    assert "`mark` consumes the directive" in section
+    assert text.index("## Owner directive") < text.index("## Procedure")

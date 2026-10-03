@@ -3,7 +3,7 @@ name: agent-reach
 description: "Use when Hermes web tools can't reach a source: Exa search, Reddit, X, YouTube subtitles, RSS, GitHub."
 metadata:
   homepage: https://github.com/Panniantong/Agent-Reach
-  local_note: "Vendored from Panniantong/agent-reach a19a171 (SKILL_en.md). Description narrowed so it complements web_search/web_extract instead of overriding them."
+  local_note: "Vendored from Panniantong/agent-reach (SKILL_en.md). Description narrowed so it complements web_search/web_extract instead of overriding them."
 ---
 
 # Agent Reach — internet capability router
