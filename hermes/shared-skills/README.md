@@ -15,4 +15,9 @@ always wins: its fetch caps, primary-source rule and read-only limits apply to e
 
 Host tools they call (installed once per machine, outside the repo): `defuddle` (npm -g),
 `agent-reach` + `yt-dlp` (uv tool), `mcporter` with the `exa` server (npm -g, `~/.mcporter`).
-To refresh a copy: re-vendor from the pinned upstream, update this table, re-run both install.sh.
+Updates: the weekly Sentinel run checks every pin against upstream
+(`~/.hermes/scripts/skills_upstream_sync.py --check`, manifest
+`~/.hermes/scripts/state/skills_upstream.json`) and files a `deps:skills-upstream` card when one
+moved. That card's worker runs `--apply --repo-dir <worktree>`, which rebuilds the copies, rescans them
+with Hermes skills_guard and rewrites the pins in this table. Its PR goes through normal review. A
+scan finding that hasn't been reviewed yet is held for the owner. After merge, re-run both install.sh.

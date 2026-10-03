@@ -100,3 +100,13 @@ def test_owner_directive_is_one_shot_and_cannot_widen_permissions() -> None:
     assert "never widens" in section
     assert "`mark` consumes the directive" in section
     assert text.index("## Owner directive") < text.index("## Procedure")
+
+
+def test_skills_upstream_sync_is_a_sentinel_lens_not_a_separate_job() -> None:
+    text = SKILL.read_text()
+    assert "Vendored skills vs upstream (D42)" in text
+    assert "`deps:skills-upstream`" in text
+    assert "Never run `--apply` yourself" in text
+    assert "HOLD" in text and "owner-decision" in text
+    readme = (SHARED / "README.md").read_text()
+    assert "--apply --repo-dir" in readme and "cron" not in readme
