@@ -163,6 +163,7 @@ function EquityCard({ o, range, cad }: { o: Overview; range: OverviewRange; cad:
         v.reference !== undefined ? (
           <>
             vs {formatMoney(v.reference, "equity")} at {e.start_label ?? "range start"}
+            {e.start_source === "broker_last_equity" && <span className="text-muted"> · prev close: broker</span>}
           </>
         ) : undefined
       }
@@ -204,7 +205,12 @@ function PnlCard({ o, cad }: { o: Overview; cad: ReturnType<typeof useCadences> 
       value={day === null ? "—" : <Money value={day} kind="pnl" explicitSign />}
       change={d.day_pct != null ? <ChangePill value={d.day_pct} metric="pnl" /> : undefined}
       comparison={
-        d.prev_equity != null ? <>vs prior close {formatMoney(num(d.prev_equity) ?? 0, "equity")}</> : undefined
+        d.prev_equity != null ? (
+          <span title={d.prev_close_source === "broker_last_equity" ? "No Arc close for the prior session: baseline is the broker's last_equity" : "Arc's own prior-session close mark"}>
+            vs prior close {formatMoney(num(d.prev_equity) ?? 0, "equity")}
+            {d.prev_close_source === "broker_last_equity" && <span className="text-muted"> · prev close: broker</span>}
+          </span>
+        ) : undefined
       }
       asOf={
         <AsOfBadge

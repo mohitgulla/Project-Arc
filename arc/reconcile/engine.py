@@ -49,6 +49,8 @@ from arc.journal.store import JournalStore
 from arc.models import LegIntent, Structure
 from arc.pricing.bs import OptionKind
 from arc.reconcile.attribution import attribute, broker_legs, holdings_from_rows
+from arc.reconcile.baseline import Baseline, start_of_day_equity
+from arc.reconcile.baseline import day_pnl as baseline_day_pnl
 from arc.store.execution import OpenStructureRepo
 from arc.store.repos import PnlSnapshotRepo, PositionsSnapshotRepo, TaxLotRepo
 from arc.structures import parse_occ
@@ -133,7 +135,12 @@ class ReconcileReport(BaseModel):
     fills_local: int = 0
     fills_broker: int = 0
     equity: Decimal | None = None
-    last_equity: Decimal | None = None
+    last_equity: Decimal | None = Field(
+        default=None, description="Broker's raw last_equity (audit only; not the P&L basis)"
+    )
+    baseline: Baseline | None = Field(
+        default=None, description="Start-of-day equity day_pnl is measured from (E5.9b, D43)"
+    )
     day_pnl: Decimal | None = None
     realized: Decimal = Decimal(0)
     unrealized: Decimal = Decimal(0)
@@ -673,6 +680,8 @@ def _pnl_details(report: ReconcileReport, info: AccountInfo | None) -> dict[str,
         "day": report.day.isoformat(),
         "equity": None if info is None else str(info.equity),
         "last_equity": None if info is None or info.last_equity is None else str(info.last_equity),
+        "prev_close": None if report.baseline is None else str(report.baseline.value),
+        "prev_close_source": None if report.baseline is None else report.baseline.source,
         "day_pnl": None if report.day_pnl is None else str(report.day_pnl),
         "cash": None if info is None else str(info.cash),
         "open_structures": report.structures_open,
@@ -713,8 +722,10 @@ def reconcile(
     try:
         info = broker.account()
         report.equity, report.last_equity = info.equity, info.last_equity
-        if info.last_equity is not None:
-            report.day_pnl = info.equity - info.last_equity
+        # E5.9b (D43): day P&L against Arc's prior-session close (read before this
+        # run writes today's snapshot), the broker's last_equity only as fallback.
+        report.baseline = start_of_day_equity(conn, day, broker_last_equity=info.last_equity)
+        report.day_pnl = baseline_day_pnl(info.equity, report.baseline)
     except Exception as exc:  # noqa: BLE001 - reported as a mismatch (fail closed)
         report.mismatches.append(Mismatch(kind=MismatchKind.BROKER_ERROR, subject="account",
                                           detail=f"{type(exc).__name__}: {exc}"))  # fmt: skip

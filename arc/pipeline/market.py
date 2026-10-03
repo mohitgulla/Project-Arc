@@ -7,7 +7,9 @@ account. No persona text is read. Wherever a fact is unknown, it fails closed:
   :class:`PortfolioError`;
 * an unknown earnings date is left out of ``next_earnings``, so the gate
   rejects short premium on it;
-* a missing ``last_equity`` becomes 0, so the gate's daily-loss rule fails.
+* an unknown start-of-day equity (no Arc prior close and no broker
+  ``last_equity``, :mod:`arc.reconcile.baseline`) becomes 0, so the gate's
+  daily-loss rule fails.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
     from arc.config import ArcSettings
     from arc.data.base import MarketDataProvider, OptionContract
     from arc.models import Structure
+    from arc.reconcile.baseline import Baseline
 
 log = structlog.get_logger(__name__)
 
@@ -43,6 +46,7 @@ __all__ = [
     "LegQuote",
     "PortfolioError",
     "PricedStructure",
+    "account_baseline",
     "account_snapshot",
     "build_portfolio",
     "close_quote_sanity",
@@ -83,10 +87,32 @@ def settled_cash(info: AccountInfo) -> Decimal:
     return max(min(v for v in fields if v is not None), Decimal(0))
 
 
+def account_baseline(
+    conn: sqlite3.Connection, info: AccountInfo, now: _dt.datetime
+) -> Baseline | None:
+    """Start-of-day equity for the ET day of *now* (E5.9b, D43).
+
+    Arc's prior-session close from ``pnl_snapshots``; the broker's ``last_equity``
+    only when no Arc close exists (:func:`arc.reconcile.baseline.start_of_day_equity`).
+    """
+    from arc.reconcile.baseline import start_of_day_equity
+
+    return start_of_day_equity(conn, now.astimezone(ET).date(), broker_last_equity=info.last_equity)
+
+
 def account_snapshot(
-    info: AccountInfo, now: _dt.datetime, *, orders_used_today: int | None = None
+    info: AccountInfo,
+    now: _dt.datetime,
+    *,
+    baseline: Baseline | None,
+    orders_used_today: int | None = None,
 ) -> AccountSnapshot:
     """Gate view of the account. The halt flag is stamped later by ``HaltSwitch.apply``.
+
+    *baseline* (E5.9b, D43) is :func:`account_baseline`: the start-of-day equity the
+    loop root, monitor and tower also use. It becomes ``AccountSnapshot.last_equity``
+    (the gate's daily-loss basis); ``None`` (unknown) becomes 0, so the rule fails
+    closed. The broker's raw ``last_equity`` never reaches the gate directly.
 
     ``orders_used_today`` (D32) is the day's order count from
     :func:`arc.budget.current_budget`; live callers pass it so the gate's
@@ -94,7 +120,7 @@ def account_snapshot(
     """
     return AccountSnapshot(
         equity=info.equity,
-        last_equity=info.last_equity if info.last_equity is not None else Decimal(0),
+        last_equity=baseline.value if baseline is not None else Decimal(0),
         settled_cash=settled_cash(info),
         orders_used_today=orders_used_today,
         as_of=now,

@@ -155,7 +155,8 @@ def _record_heartbeat(
         "buying_power": float(info.buying_power),
         "options_buying_power": _f(info.options_buying_power),
         "non_marginable_bp": _f(info.non_marginable_buying_power),
-        "last_equity": _f(info.last_equity),
+        "last_equity": _f(info.last_equity),  # raw broker value, audit only (E5.9b)
+        # metrics carries day_pnl / prev_close / prev_close_source (the D43 baseline)
         "legs": legs,
     }
     HeartbeatRepo(ctx.conn).record(
@@ -169,7 +170,13 @@ def _record_heartbeat(
 
 def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
     from arc.gate.halt import HaltSwitch
-    from arc.pipeline.market import PortfolioError, account_snapshot, build_portfolio
+    from arc.pipeline.market import (
+        PortfolioError,
+        account_baseline,
+        account_snapshot,
+        build_portfolio,
+    )
+    from arc.reconcile.baseline import day_pnl
     from arc.store.repos import HaltRepo
 
     settings = ctx.settings
@@ -179,15 +186,23 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
     info = env.account()
     switch = HaltSwitch(HaltRepo(ctx.conn))
-    new_halt = switch.check_daily_loss(account_snapshot(info, now), settings, now=now)
+    # E5.9b (D43): one start-of-day equity for the halt check, the summary, the
+    # exits' gate snapshot and the heartbeat the tower reads.
+    baseline = account_baseline(ctx.conn, info, now)
+    new_halt = switch.check_daily_loss(
+        account_snapshot(info, now, baseline=baseline), settings, now=now
+    )
     if new_halt is not None:
         notices.append(f"daily-loss halt raised: {new_halt.reason}")
     halted = switch.is_halted()
 
-    pnl = info.equity - info.last_equity if info.last_equity is not None else None
+    pnl = day_pnl(info.equity, baseline)
     pnl_text = f", day P&L ${pnl:+,.2f}" if pnl is not None else ""
     metrics: dict[str, Any] = {
         "equity": float(info.equity),
+        "day_pnl": _f(pnl),
+        "prev_close": _f(baseline.value) if baseline is not None else None,
+        "prev_close_source": baseline.source if baseline is not None else None,
         "halted": halted,
         "halt_raised": new_halt is not None,
     }
@@ -237,7 +252,7 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
             ctx.conn,
             market=env.market,
             settings=settings,
-            account=switch.apply(account_snapshot(info, now)),
+            account=switch.apply(account_snapshot(info, now, baseline=baseline)),
             portfolio=portfolio,
             switch=switch,
             now=now,

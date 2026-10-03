@@ -127,7 +127,7 @@ class TestMarketHelpers:
         info = AccountInfo(
             account_id="a", equity=Decimal(100), buying_power=Decimal(0), cash=Decimal(0)
         )
-        snap = account_snapshot(info, FIXTURE_NOW)
+        snap = account_snapshot(info, FIXTURE_NOW, baseline=None)
         assert snap.last_equity == 0
 
     def test_next_earnings(self) -> None:
@@ -996,7 +996,7 @@ class TestAccountProfilePipeline:
             non_marginable_buying_power=Decimal(70),
         )  # type: ignore[arg-type]
         assert settled_cash(info) == Decimal(60)
-        assert account_snapshot(info, FIXTURE_NOW).settled_cash == Decimal(60)
+        assert account_snapshot(info, FIXTURE_NOW, baseline=None).settled_cash == Decimal(60)
         neg = AccountInfo(**base, cash=Decimal(-5))  # type: ignore[arg-type]
         assert settled_cash(neg) == Decimal(0)
 

@@ -111,7 +111,13 @@ def _gate_approve_execute(
     from arc.gate.rules import max_gain_cap, price_band
     from arc.gate.token import gate_secret, issue_token
     from arc.models import Proposal, QuantMetrics, Sizing
-    from arc.pipeline.market import account_snapshot, limit_price, market_snapshot, price_structure
+    from arc.pipeline.market import (
+        account_baseline,
+        account_snapshot,
+        limit_price,
+        market_snapshot,
+        price_structure,
+    )
     from arc.store.repos import GateDecisionRepo, HaltRepo, ProposalRepo
 
     today = now_et().date()  # wall-clock: prices live quotes as of today
@@ -126,7 +132,8 @@ def _gate_approve_execute(
 
     # wall-clock: after the live quotes were fetched (gate refuses future quotes)
     now = now_et()
-    acct = account_snapshot(broker.account(), now)
+    info = broker.account()
+    acct = account_snapshot(info, now, baseline=account_baseline(conn, info, now))
     proposal = Proposal(
         candidate_id=candidate_id,
         structure=priced.structure,

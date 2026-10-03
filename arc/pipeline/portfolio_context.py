@@ -227,15 +227,23 @@ def build_portfolio_context(
     when the caller could value the book; its net Greeks are used. Otherwise Greeks
     are the sum of each structure's as-opened Greeks (``greeks_source=as_opened``).
     """
+    from arc.pipeline.market import account_baseline
+    from arc.reconcile.baseline import day_pnl
     from arc.store.execution import OpenStructureRepo
 
     sectors = sectors if sectors is not None else load_sectors()
     today = now.astimezone(ET).date()
     equity = _f(info.equity)
     rows = OpenStructureRepo(conn).list_open()
+    # E5.9b (D43): one start-of-day equity (Arc's prior close) for the loop root,
+    # the digest bucket, the gate and the tower.
+    baseline = account_baseline(conn, info, now)
+    pnl = day_pnl(info.equity, baseline)
     account = PortfolioAccount(
         equity=equity,
-        day_pnl=(equity - _f(info.last_equity)) if info.last_equity is not None else None,
+        day_pnl=float(pnl) if pnl is not None else None,
+        prev_close=float(baseline.value) if baseline is not None else None,
+        prev_close_source=baseline.source if baseline is not None else None,
         cash=_f(info.cash),
         buying_power=_f(info.buying_power),
         halted=halted,

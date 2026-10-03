@@ -15,7 +15,7 @@ Status strip              active ``halts`` row, ``tick`` / ``health`` heartbeats
 Equity                    ``1D``: today's ``monitor`` heartbeats (:func:`equity_intraday`);
                           other ranges: ``pnl_snapshots`` daily equity
                           (:func:`arc.reconcile.performance.daily_equity`)
-P&L today                 latest ``monitor`` heartbeat (``equity − last_equity``), else
+P&L today                 latest ``monitor`` heartbeat (``equity − prev_close``, D43), else
                           the reconciled ``pnl_snapshots`` row; MTD / YTD from
                           :func:`arc.reconcile.performance.performance_from`
 Positions                 ``open_structures`` + broker legs of the latest ``monitor``
@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arc.context.ttl import to_db
 from arc.models import Performance  # noqa: TC001 - pydantic field
+from arc.reconcile.baseline import BaselineSource  # noqa: TC001 - pydantic field
 from arc.reconcile.performance import DailyEquity, daily_equity, performance_from
 from arc.tower.data import (
     GreeksView,
@@ -56,6 +57,7 @@ from arc.tower.data import (
     _order_budget,
     _proposals,
     parse_ts,
+    prev_close_of,
 )
 from arc.utils.calendar import ET
 
@@ -152,6 +154,10 @@ class EquitySection(BaseModel):
     start_value: Decimal | None = Field(default=None, description="Equity at the range start")
     start_at: _dt.datetime | None = None
     start_label: str | None = Field(default=None, description="'prev close' or the start day")
+    start_source: BaselineSource | None = Field(
+        default=None,
+        description="For 'prev close': arc_close (Arc's prior EOD mark) or broker_last_equity",
+    )
     change: Decimal | None = None
     change_pct: float | None = Field(default=None, description="change / start_value (fraction)")
     series_source: Literal["intraday", "daily"] = "daily"
@@ -159,7 +165,7 @@ class EquitySection(BaseModel):
 
 
 class DayPnlSection(BaseModel):
-    """Day P&L (equity − broker's prior close), realized vs unrealized, MTD / YTD."""
+    """Day P&L (equity − start-of-day equity, D43), realized vs unrealized, MTD / YTD."""
 
     model_config = _STRICT
 
@@ -167,7 +173,14 @@ class DayPnlSection(BaseModel):
     source: Literal["intraday", "reconciled"] | None = None
     day_pnl: Decimal | None = None
     day_pct: float | None = None
-    prev_equity: Decimal | None = None
+    prev_equity: Decimal | None = Field(
+        default=None,
+        description="Start-of-day equity: Arc's prior-session close (E5.9b, D43)",
+    )
+    prev_close_source: BaselineSource | None = Field(
+        default=None,
+        description="arc_close, or broker_last_equity when no Arc close exists (fallback)",
+    )
     realized: Decimal | None = Field(default=None, description="Realized today (reconciled)")
     unrealized: Decimal | None = Field(default=None, description="Open legs' broker P&L")
     unrealized_at: _dt.datetime | None = None
@@ -299,8 +312,23 @@ class IntradayMark(BaseModel):
 
     at: _dt.datetime
     equity: Decimal
-    last_equity: Decimal | None = None
+    prev_close: Decimal | None = Field(
+        default=None, description="Start-of-day equity for this mark (E5.9b, D43)"
+    )
+    prev_close_source: BaselineSource | None = None
     legs: list[LegView] = Field(default_factory=list)
+
+
+def _mark(conn: sqlite3.Connection, row: sqlite3.Row) -> IntradayMark | None:
+    at = parse_ts(row["at"])
+    d = _json(row["detail"], {})
+    eq = _dec(d.get("equity"))
+    if at is None or eq is None:
+        return None
+    prev, source = prev_close_of(conn, d, at.date())
+    return IntradayMark(
+        at=at, equity=eq, prev_close=prev, prev_close_source=source, legs=_legs(row)
+    )
 
 
 def _day_bounds(day: _dt.date) -> tuple[str, str]:
@@ -324,14 +352,9 @@ def equity_intraday(conn: sqlite3.Connection, day: _dt.date) -> list[IntradayMar
     ).fetchall()
     out: list[IntradayMark] = []
     for r in rows:
-        at = parse_ts(r["at"])
-        d = _json(r["detail"], {})
-        eq = _dec(d.get("equity"))
-        if at is None or eq is None:
-            continue
-        out.append(
-            IntradayMark(at=at, equity=eq, last_equity=_dec(d.get("last_equity")), legs=_legs(r))
-        )
+        mark = _mark(conn, r)
+        if mark is not None:
+            out.append(mark)
     return out
 
 
@@ -377,14 +400,16 @@ def _equity(
     start_value: Decimal | None = None
     start_at: _dt.datetime | None = None
     start_label: str | None = None
+    start_source: BaselineSource | None = None
     series_source: Literal["intraday", "daily"] = "daily"
 
     if rng == "1D" and marks:
         series_source = "intraday"
         series = [EquityPoint(t=m.at, v=m.equity) for m in marks]
-        prev = marks[-1].last_equity
+        prev = marks[-1].prev_close
         if prev is not None:
             start_value, start_label = prev, "prev close"
+            start_source = marks[-1].prev_close_source
             before = [d for d in daily if d.day < marks[-1].at.date()]
             start_at = _close_at(before[-1].day) if before else None
         else:
@@ -404,6 +429,8 @@ def _equity(
         if base is not None:
             start_value, start_at = base.equity, _close_at(base.day)
             start_label = "prev close" if rng == "1D" else f"{base.day:%m-%d}"
+            if rng == "1D":
+                start_source = "arc_close"
         # Today's live mark extends the daily line past the last reconciled close.
         if latest is not None and source == "intraday" and (not pts or latest.at > series[-1].t):
             series.append(EquityPoint(t=latest.at, v=latest.equity))
@@ -417,6 +444,7 @@ def _equity(
         start_value=start_value,
         start_at=start_at,
         start_label=start_label,
+        start_source=start_source,
         change=change,
         change_pct=_pct(change, start_value),
         series_source=series_source,
@@ -466,28 +494,32 @@ def _day_pnl(
         fields["unrealized"] = _dec(snap["unrealized"])
     if (
         latest is not None
-        and latest.last_equity is not None
+        and latest.prev_close is not None
         and (rec_at is None or latest.at >= rec_at)
     ):
-        day = latest.equity - latest.last_equity
+        day = latest.equity - latest.prev_close
         fields.update(
             as_of=latest.at,
             source="intraday",
             day_pnl=day,
-            prev_equity=latest.last_equity,
-            day_pct=_pct(day, latest.last_equity),
+            prev_equity=latest.prev_close,
+            prev_close_source=latest.prev_close_source,
+            day_pct=_pct(day, latest.prev_close),
         )
     elif snap is not None:
-        day_pnl = _dec(details.get("day_pnl"))
-        prev = _dec(details.get("last_equity"))
         eq = _dec(details.get("equity"))
-        if prev is None and eq is not None and day_pnl is not None:
-            prev = eq - day_pnl
+        prev, prev_source = (None, None)
+        snap_day = details.get("day")
+        on = _dt.date.fromisoformat(snap_day) if snap_day else (rec_at.date() if rec_at else None)
+        if on is not None:
+            prev, prev_source = prev_close_of(conn, details, on)
+        day_pnl = eq - prev if eq is not None and prev is not None else None
         fields.update(
             as_of=rec_at,
             source="reconciled",
             day_pnl=day_pnl,
             prev_equity=prev,
+            prev_close_source=prev_source,
             day_pct=_pct(day_pnl, prev),
         )
     return DayPnlSection(**fields)
@@ -880,17 +912,8 @@ def _greeks_section(
     )
 
 
-def _latest_mark(monitor: sqlite3.Row | None) -> IntradayMark | None:
-    if monitor is None:
-        return None
-    at = parse_ts(monitor["at"])
-    d = _json(monitor["detail"], {})
-    eq = _dec(d.get("equity"))
-    if at is None or eq is None:
-        return None
-    return IntradayMark(
-        at=at, equity=eq, last_equity=_dec(d.get("last_equity")), legs=_legs(monitor)
-    )
+def _latest_mark(conn: sqlite3.Connection, monitor: sqlite3.Row | None) -> IntradayMark | None:
+    return None if monitor is None else _mark(conn, monitor)
 
 
 # ---------------------------------------------------------------------------
@@ -907,7 +930,7 @@ def load_positions(
 ) -> PositionsResponse:
     """Structures by *status* with the latest monitor marks (SELECT only)."""
     now_et = now.astimezone(ET)
-    latest = _latest_mark(_latest_heartbeat(conn, "monitor"))
+    latest = _latest_mark(conn, _latest_heartbeat(conn, "monitor"))
     return PositionsResponse(
         as_of=now_et,
         status=status,
@@ -931,7 +954,7 @@ def load_overview(
     now_et = now.astimezone(ET)
     today = now_et.date()
     monitor = _latest_heartbeat(conn, "monitor")
-    latest = _latest_mark(monitor)
+    latest = _latest_mark(conn, monitor)
     marks = equity_intraday(conn, latest.at.date()) if latest is not None else []
     daily = daily_equity(conn)
     rec = conn.execute(

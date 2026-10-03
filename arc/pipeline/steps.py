@@ -113,6 +113,7 @@ from arc.pipeline.dedupe import (
 )
 from arc.pipeline.market import (
     PortfolioError,
+    account_baseline,
     account_snapshot,
     build_portfolio,
     limit_price,
@@ -2281,7 +2282,12 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     budget = read_budget(ctx, env, settings, now=fetched_at)
     notice = budget_notice(ctx, budget.budget)
     settings = budget.settings  # tier-adjusted improvement steps (band, gate, token agree)
-    account = account_snapshot(info, fetched_at, orders_used_today=budget.budget.used)
+    account = account_snapshot(
+        info,
+        fetched_at,
+        baseline=account_baseline(ctx.conn, info, fetched_at),
+        orders_used_today=budget.budget.used,
+    )
     portfolio = build_portfolio(
         ctx.conn,
         positions,
