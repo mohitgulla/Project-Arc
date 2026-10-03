@@ -565,10 +565,10 @@ def test_http_get_status_codes() -> None:
     assert not checks._port_open("127.0.0.1", port, 0.5)
 
 
-def test_shipped_config_remote_access_off_by_default() -> None:
+def test_shipped_config_remote_access_on_and_model_default_off() -> None:
     ra = load_routines(REPO / "config" / "routines.yaml").monitoring.remote_access
-    assert ra.enabled is False and ra.dashboard_port == 1994 and ra.tower_port == 4174
-    assert MonitoringSettings().remote_access.enabled is False
+    assert ra.enabled is True and ra.dashboard_port == 1994 and ra.tower_port == 4174
+    assert MonitoringSettings().remote_access.enabled is False  # opt-in per deployment
     assert RemoteAccessCheck.model_validate({"timeout": "7s"}).timeout.total_seconds() == 7
     with pytest.raises(ValueError):
         RemoteAccessCheck.model_validate({"bind": "0.0.0.0"})
