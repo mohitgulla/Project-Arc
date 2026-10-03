@@ -168,7 +168,7 @@ the plist with `--print`, and remove it with `--uninstall`.
 | slot_coverage (E8.2a) | For **fast** jobs (the 5-min loop, monitor, the 30-min Scout, rss/edgar): the job ran fewer than `coverage_min` (80 %) of its slots judged in the last `coverage_window` (60m). Slots are judged the same way as routine_windows (collapse aware), and halted slots count in neither number. One alert per job, which names the likely cause from the tick heartbeats (slow ticks with the top job, or tick gaps). | `coverage:<job>` |
 | stuck_runs | A `routine_runs` row is still `running` after `stuck_after` (70m), or after its job's `stuck_after_jobs` override (`monitor: 10m`, E5.3a). | `stuck:<run_id>` |
 | gateway | `hermes gateway status` or `hermes cron status` shows a `✗`, exits non-zero, or times out. `⚠` warnings count as degraded: they are recorded but not alerted unless `gateway.alert_on_degraded: true`. | `gateway` |
-| remote_access (E8.6, off until enabled) | `GET <ts-ip>:1994/api/status` doesn't answer, or answers without `auth_required: true` and `basic` in `auth_providers`; `GET <ts-ip>:4174/api/health` isn't 200 with `status: ok`; or either port accepts a connection on a LAN address. See §5.7. | `remote_hermes`, `remote_tower`, `remote_exposed` |
+| remote_access (E8.6, on since 2026-10-03) | `GET <ts-ip>:1994/api/status` doesn't answer, or answers without `auth_required: true` and `basic` in `auth_providers`; `GET <ts-ip>:4174/api/health` isn't 200 with `status: ok`; or either port accepts a connection on a LAN address. See §5.7. | `remote_hermes`, `remote_tower`, `remote_exposed` |
 
 Some skips are deliberate and are never counted as misses: halted personas and
 jobs with no handler yet. Job failures are already alerted in the #arc-investor
@@ -483,11 +483,11 @@ and use the repo `.venv` (not `/usr/bin/python3`). Code: `arc/remote/`, `hermes/
   `/api/status` (`version 0.21.5`). If the imports ever break, Hermes' own message points to
   `hermes pm install` / `hermes pm repair`. (`hermes pm status` currently crashes on this
   install with a missing `pm/uv.lock`; that is a Hermes issue, unrelated to the dashboard.)
-- *Host header: use the IP.* The dashboard only accepts requests whose `Host` is the address
-  it bound to. With a `100.x` bind, `http://<ts-ip>:1994` works; `http://mac-mini:1994` and
-  `http://mac-mini.<tailnet>.ts.net:1994` return **400 "Invalid Host header"**. To use the
-  MagicDNS name instead, set `dashboard.public_url: http://<name>.<tailnet>.ts.net:1994` in
-  `~/.hermes/config.yaml` (exactly one hostname is trusted). Not needed for the runbook.
+- *Host header.* The dashboard accepts the address it bound to (`http://<ts-ip>:1994`) plus
+  exactly one name from `dashboard.public_url` in `~/.hermes/config.yaml`. This host trusts
+  `http://mac-mini:1994` (set 2026-10-03); `http://mac-mini.<tailnet>.ts.net:1994` still returns
+  **400 "Invalid Host header"** unless `public_url` is switched to that name. Restart the
+  dashboard after changing it (`kill` the pid; launchd respawns within ~60 s).
 - *Gate (loopback smoke test, basic provider):* `/api/status` →
   `{"auth_required": true, "auth_providers": ["basic"], "auth_flows": ["cookie", "native_pkce"]}`;
   `POST /auth/password-login` with a wrong password → `401 {"detail":"Invalid credentials"}`;

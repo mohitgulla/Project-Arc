@@ -279,7 +279,6 @@ function Sidebar({ onSettings }: { onSettings: () => void }) {
       <div className="mb-5 flex items-center gap-2 px-3">
         <span className="h-3 w-3 rounded-full bg-accent" />
         <span className="text-title font-bold text-title">Arc</span>
-        <span className="text-caption text-muted">control tower</span>
       </div>
       <ul className="flex flex-col gap-0.5">
         {NAV.map((n) => (

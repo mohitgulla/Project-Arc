@@ -10995,7 +10995,7 @@
   },
   "info": {
     "description": "Read-only view of the Arc audit store (D35). GET only.",
-    "title": "Arc control tower",
+    "title": "Arc Tower",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",

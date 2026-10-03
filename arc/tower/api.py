@@ -107,7 +107,7 @@ def create_app(
         clock=clock,
     )
     app = FastAPI(
-        title="Arc control tower",
+        title="Arc Tower",
         description="Read-only view of the Arc audit store (D35). GET only.",
         openapi_url=f"{API_PREFIX}/openapi.json",
         docs_url=f"{API_PREFIX}/docs",
