@@ -3,7 +3,12 @@
 The config loaders (``config/exits.yaml``, ``costs.yaml``, ``account_profiles.yaml``,
 ``routines.yaml``) take an optional ``overrides`` mapping of ``path -> value`` and
 patch the raw YAML data *before* validation, so an override is validated by the
-same pydantic model as the file itself. Pure: returns a new mapping.
+same pydantic model as the file itself.
+
+E7.5a / D44 experiment overlays: :func:`deep_merge` lays a partial config file
+over its base. ``arc backtest rank --experiment`` and the forward-experiment arms
+in ``config/experiments/live/*.yaml`` share it, so both read the same format.
+Pure: every function returns a new mapping.
 """
 
 from __future__ import annotations
@@ -14,7 +19,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-__all__ = ["Overrides", "apply_overrides"]
+__all__ = ["OVERLAY_HEADER", "Overrides", "apply_overrides", "deep_merge", "overlay_body"]
+
+# Free-text header of an overlay file (what it tests); never part of the config.
+OVERLAY_HEADER = "experiment"
 
 # ("kinds", "long_call", "close_at_dte") -> 5
 Overrides = dict[tuple[str, ...], Any]
@@ -47,4 +55,26 @@ def apply_overrides(
             msg = f"override path {'.'.join(path)} does not address a mapping"
             raise ValueError(msg)
         node[path[-1]] = copy.deepcopy(value)
+    return out
+
+
+def deep_merge(base: Mapping[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:
+    """*over* laid on *base*: mappings merge key by key, any other value replaces.
+
+    Lists and scalars in *over* replace the base value whole. Neither input is
+    modified.
+    """
+    out = copy.deepcopy(dict(base))
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+def overlay_body(data: Mapping[str, Any] | None) -> dict[str, Any]:
+    """An overlay file's config part: *data* without its free-text ``experiment`` header."""
+    out = dict(data or {})
+    out.pop(OVERLAY_HEADER, None)
     return out

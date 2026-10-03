@@ -87,6 +87,7 @@ from arc.scanner.rank import (
 from arc.sizing import size_contracts
 from arc.structures import analyze, format_occ
 from arc.utils.calendar import ET
+from arc.utils.yamlpatch import deep_merge, overlay_body
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -256,16 +257,6 @@ class RankingFile(BaseModel):
     backtest: BacktestSettings
 
 
-def _deep_merge(base: dict[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:
-    out = dict(base)
-    for k, v in over.items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _deep_merge(out[k], v)
-        else:
-            out[k] = v
-    return out
-
-
 def load_ranking_file(
     path: Path | str | None = None, overlays: Sequence[Path | str] = ()
 ) -> RankingFile:
@@ -278,9 +269,8 @@ def load_ranking_file(
     p = Path(path) if path is not None else DEFAULT_RANKING_PATH
     data: dict[str, Any] = yaml.safe_load(p.read_text()) or {}
     for o in overlays:
-        extra = yaml.safe_load(Path(o).read_text()) or {}
-        extra.pop("experiment", None)  # free-text header: what the overlay tests
-        data = _deep_merge(data, extra)
+        # The free-text `experiment:` header says what the overlay tests; not config.
+        data = deep_merge(data, overlay_body(yaml.safe_load(Path(o).read_text())))
     return RankingFile.model_validate(data)
 
 

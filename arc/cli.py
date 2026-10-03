@@ -259,6 +259,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_config_parser(sub)
 
+    from arc.experiments.cli import add_experiment_parser
+
+    add_experiment_parser(sub)
+
     from arc.universe.cli import add_universe_parser
 
     add_universe_parser(sub)
@@ -794,6 +798,12 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_config(args)
+
+    if args.command == "experiment":
+        from arc.experiments.cli import run_experiment
+
+        _log_to_stderr()
+        return run_experiment(args)
 
     logger.info("command.stub", command=args.command)
     print(f"arc {args.command}: not yet implemented")

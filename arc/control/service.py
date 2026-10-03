@@ -345,6 +345,10 @@ class ControlService:
                 from arc.scanner.rank import load_ranking_config
 
                 load_ranking_config(overrides=ov.get("ranking"))
+            elif t.target is Target.EXPERIMENTS:
+                from arc.experiments.config import load_experiments_config
+
+                load_experiments_config(overrides=ov.get("experiments"))
             elif t.target is Target.ROUTINES:
                 from arc.routines.config import load_routines
 

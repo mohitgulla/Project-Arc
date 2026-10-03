@@ -63,6 +63,7 @@ class Group(StrEnum):
     COSTS = "costs"
     APPROVALS = "approvals"
     ROUTINES = "routines"
+    EXPERIMENTS = "experiments"
 
 
 class Target(StrEnum):
@@ -74,6 +75,7 @@ class Target(StrEnum):
     PROFILES = "account_profiles"  # config/account_profiles.yaml
     ROUTINES = "routines"  # config/routines.yaml
     RANKING = "ranking"  # config/ranking.yaml (E6.4a: live Net EV floor)
+    EXPERIMENTS = "experiments"  # config/experiments.yaml (E10.1: forward A/B defaults)
 
 
 class ValueType(StrEnum):
@@ -1372,8 +1374,120 @@ _MONITORING_TUNABLES: tuple[Tunable, ...] = (
 )
 
 
+def _exp(key: str, desc: str, risk: Risk, path: tuple[str, ...], **kw: Any) -> Tunable:
+    """A ``config/experiments.yaml`` default (E10.1, D44): copied into new specs only."""
+    return Tunable(
+        key=f"experiments.{key}",
+        group=Group.EXPERIMENTS,
+        type=kw.pop("type", _F),
+        description=f"D44 forward experiments: {desc} Default for new specs; a registered "
+        "(hash-locked) experiment keeps the value it was registered with.",
+        target=Target.EXPERIMENTS,
+        risk=risk,
+        path=("experiments", "defaults", *path),
+        **kw,
+    )
+
+
+# E10.1 (D44): forward A/B experiment defaults. Riskier = a verdict on less evidence
+# (higher alpha, lower power, fewer sessions) or looser harm guardrails.
+_EXPERIMENT_TUNABLES: tuple[Tunable, ...] = (
+    _exp(
+        "alpha",
+        "two-sided significance level of the always-valid (mSPRT) CI.",
+        Risk.UP,
+        ("alpha",),
+        min=0.001,
+        max=0.2,
+        hard_ceiling=0.2,
+    ),
+    _exp(
+        "power",
+        "power the MDE is sized for.",
+        Risk.DOWN,
+        ("power",),
+        min=0.5,
+        max=0.99,
+        hard_ceiling=0.5,
+    ),
+    _exp(
+        "min_sessions",
+        "no win/futility verdict before this many paired sessions.",
+        Risk.DOWN,
+        ("min_sessions",),
+        type=_I,
+        min=5,
+        max=250,
+        hard_ceiling=5,
+    ),
+    _exp(
+        "max_sessions",
+        "futility stop after this many paired sessions.",
+        Risk.ANY,
+        ("max_sessions",),
+        type=_I,
+        min=5,
+        max=250,
+    ),
+    _exp(
+        "aa_sessions",
+        "length of an A/A run (sessions) that measures sigma and the MDE.",
+        Risk.DOWN,
+        ("aa_sessions",),
+        type=_I,
+        min=5,
+        max=60,
+        hard_ceiling=5,
+    ),
+    _exp(
+        "guardrails.max_dd_worse",
+        "harm stop when the treatment's max drawdown is worse than control's by more than "
+        "this share of equity.",
+        Risk.UP,
+        ("guardrails", "max_dd_worse"),
+        unit="pct",
+        min=0.005,
+        max=0.10,
+        hard_ceiling=0.10,
+    ),
+    _exp(
+        "guardrails.worst_day",
+        "harm stop on any treatment day below this share of equity.",
+        Risk.DOWN,
+        ("guardrails", "worst_day"),
+        unit="pct",
+        min=-0.10,
+        max=-0.005,
+        hard_ceiling=-0.10,
+    ),
+    _exp(
+        "guardrails.order_rate_ratio",
+        "harm stop when the treatment sends more than this multiple of control's orders.",
+        Risk.UP,
+        ("guardrails", "order_rate_ratio"),
+        min=1.0,
+        max=5.0,
+        hard_ceiling=5.0,
+    ),
+    _exp(
+        "guardrails.stop_on_halt",
+        "harm stop on any halt or reconcile fill_unknown on the experiment account.",
+        Risk.FALSE,
+        ("guardrails", "stop_on_halt"),
+        type=_B,
+    ),
+)
+
+
 REGISTRY: dict[str, Tunable] = {
-    t.key: t for t in (*_STATIC, *_exit_tunables(), *_LOOP_TUNABLES, *_MONITORING_TUNABLES)
+    t.key: t
+    for t in (
+        *_STATIC,
+        *_exit_tunables(),
+        *_LOOP_TUNABLES,
+        *_MONITORING_TUNABLES,
+        *_EXPERIMENT_TUNABLES,
+    )
 }
 _ALIASES: dict[str, str] = {a: t.key for t in REGISTRY.values() for a in t.aliases}
 

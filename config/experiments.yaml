@@ -1,0 +1,31 @@
+# Forward A/B experiment defaults (PLAN D44; card E10.1). Validated by
+# arc.experiments.config.ExperimentsConfig; every key is in the D26 control registry
+# (`experiments.*`), so `!arc set experiments.alpha 0.05` changes it at the next run.
+#
+# These are DEFAULTS: `arc experiment create` copies them into a spec that does not
+# set the field, and the filled spec is what gets hash-locked at registration. A
+# change here never alters an experiment that is already registered.
+#
+# Specs for forward experiments live in config/experiments/live/*.yaml (the
+# backtest overlays in config/experiments/*.yaml are a different thing; both use
+# the same deep-merge overlay format).
+#
+# Owner decisions 2026-10-03 (#project-arc): alpha 0.05 two-sided, power 0.8, min
+# 20 / max 60 sessions (futility stop at max), an A/A run of ~10 sessions first;
+# guardrails stop for harm, never as a win: treatment max drawdown worse than
+# control by > 3 pp of equity, worst day < -2% of equity, any halt or reconcile
+# fill_unknown on the experiment account, order rate > 1.5x control. Re-set from
+# the A/A (E10.4).
+
+experiments:
+  defaults:
+    alpha: 0.05              # two-sided; mSPRT always-valid CI (E10.3)
+    power: 0.8
+    min_sessions: 20         # no win/futility verdict before this many paired sessions
+    max_sessions: 60         # futility stop
+    aa_sessions: 10          # A/A experiments: min = max = this unless the spec sets them
+    guardrails:
+      max_dd_worse: 0.03       # treatment max drawdown worse than control by > 3 pp equity
+      worst_day: -0.02         # any treatment day below -2% of equity
+      order_rate_ratio: 1.5    # treatment orders > 1.5x control's
+      stop_on_halt: true       # any halt / reconcile fill_unknown on the experiment account
