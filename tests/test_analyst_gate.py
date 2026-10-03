@@ -554,6 +554,12 @@ def test_install_dry_run_creates_paused_cron(tmp_path: Path) -> None:
     ):
         assert part in cron, part
     assert "arc_analyst.py" in out and "skills/arc-analyst/SKILL.md" in out
+    skill = (ANALYST / "skills" / "arc-analyst" / "SKILL.md").read_text()
+    for helper in ("defuddle", "agent-reach"):  # D42: pinned web helpers only
+        assert (REPO / "hermes" / "shared-skills" / helper / "SKILL.md").is_file(), helper
+        assert f"{tmp_path / 'prof'}/skills/{helper}" in out, helper
+        assert helper in skill, helper
+    assert "code-review-and-quality" not in out
     for secret in ("ALPACA", "ARC_GATE_SECRET", ".env"):
         assert secret not in (ANALYST / "install.sh").read_text().split("set -euo")[1]
 
