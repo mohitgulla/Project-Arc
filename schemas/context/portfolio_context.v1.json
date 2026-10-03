@@ -95,7 +95,7 @@
             }
           ],
           "default": null,
-          "description": "equity \u2212 last_equity",
+          "description": "equity \u2212 prev_close (E5.9b, D43: Arc's prior-session close)",
           "title": "Day Pnl"
         },
         "equity": {
@@ -115,6 +115,36 @@
         "order_budget_tier": {
           "title": "Order Budget Tier",
           "type": "string"
+        },
+        "prev_close": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Start-of-day equity day P&L is measured from (arc.reconcile.baseline)",
+          "title": "Prev Close"
+        },
+        "prev_close_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "arc_close",
+                "broker_last_equity"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "arc_close = Arc's prior EOD mark; broker_last_equity = fallback",
+          "title": "Prev Close Source"
         }
       },
       "required": [

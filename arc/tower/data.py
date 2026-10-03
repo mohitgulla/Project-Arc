@@ -39,6 +39,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.models import Performance  # noqa: TC001 - pydantic field
+from arc.reconcile.baseline import BaselineSource, start_of_day_equity
 from arc.reconcile.performance import daily_equity, performance_from
 from arc.utils.calendar import ET
 
@@ -127,6 +128,24 @@ def _dec(value: Any) -> Decimal | None:
         return None
 
 
+def prev_close_of(
+    conn: sqlite3.Connection, detail: dict[str, Any], day: _dt.date
+) -> tuple[Decimal | None, BaselineSource | None]:
+    """Start-of-day equity (E5.9b, D43) for a monitor heartbeat or snapshot *detail*.
+
+    The baseline the writer recorded (``prev_close`` / ``prev_close_source``) wins, so
+    the tower shows the same number as the loop root for the same tick. Rows written
+    before E5.9b carry only the broker's raw ``last_equity``; for those the baseline
+    is recomputed with :func:`arc.reconcile.baseline.start_of_day_equity` (pure read).
+    """
+    recorded = _dec(detail.get("prev_close"))
+    source = detail.get("prev_close_source")
+    if recorded is not None and source in ("arc_close", "broker_last_equity"):
+        return recorded, source
+    base = start_of_day_equity(conn, day, broker_last_equity=_dec(detail.get("last_equity")))
+    return (base.value, base.source) if base is not None else (None, None)
+
+
 def _json(text: str | None, default: Any) -> Any:
     if not text:
         return default
@@ -164,7 +183,15 @@ class PnlView(BaseModel):
     performance: Performance | None = None
     intraday_at: _dt.datetime | None = None
     intraday_equity: Decimal | None = None
-    intraday_day_pnl: Decimal | None = None
+    intraday_day_pnl: Decimal | None = Field(
+        default=None, description="intraday_equity − intraday_prev_close (E5.9b, D43)"
+    )
+    intraday_prev_close: Decimal | None = Field(
+        default=None, description="Start-of-day equity: Arc's prior-session close (D43)"
+    )
+    intraday_prev_close_source: BaselineSource | None = Field(
+        default=None, description="arc_close, or broker_last_equity when no Arc close exists"
+    )
     equity_series: list[tuple[_dt.date, Decimal]] = Field(default_factory=list)
 
 
@@ -336,25 +363,32 @@ def _pnl(conn: sqlite3.Connection, monitor: sqlite3.Row | None) -> PnlView:
     if row is not None:
         d = _json(row["details_json"], {})
         day = d.get("day")
+        snap_eq = _dec(d.get("equity"))
+        prev, _src = prev_close_of(conn, d, _dt.date.fromisoformat(day)) if day else (None, None)
         fields.update(
             reconciled_at=parse_ts(row["snapshot_at"]),
             reconciled_day=_dt.date.fromisoformat(day) if day else None,
             realized=_dec(row["realized"]),
             unrealized=_dec(row["unrealized"]),
             total=_dec(row["total"]),
-            equity=_dec(d.get("equity")),
-            day_pnl=_dec(d.get("day_pnl")),
+            equity=snap_eq,
+            # E5.9b (D43): equity − Arc's prior close (legacy rows recomputed the same way)
+            day_pnl=snap_eq - prev if snap_eq is not None and prev is not None else None,
             reconcile_clean=d.get("clean"),
         )
         if series:
             fields["performance"] = performance_from(series, series[-1].day)
     if monitor is not None:
         m = _json(monitor["detail"], {})
-        eq, last = _dec(m.get("equity")), _dec(m.get("last_equity"))
+        at = parse_ts(monitor["at"])
+        eq = _dec(m.get("equity"))
+        prev, source = prev_close_of(conn, m, at.date()) if at is not None else (None, None)
         fields.update(
-            intraday_at=parse_ts(monitor["at"]),
+            intraday_at=at,
             intraday_equity=eq,
-            intraday_day_pnl=eq - last if eq is not None and last is not None else None,
+            intraday_prev_close=prev,
+            intraday_prev_close_source=source,
+            intraday_day_pnl=eq - prev if eq is not None and prev is not None else None,
         )
     return PnlView(**fields)
 

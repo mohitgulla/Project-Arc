@@ -1151,7 +1151,7 @@ export interface components {
         };
         /**
          * DayPnlSection
-         * @description Day P&L (equity − broker's prior close), realized vs unrealized, MTD / YTD.
+         * @description Day P&L (equity − start-of-day equity, D43), realized vs unrealized, MTD / YTD.
          */
         DayPnlSection: {
             /** As Of */
@@ -1166,7 +1166,15 @@ export interface components {
              * @description Day MTD/YTD refer to
              */
             performance_day?: string | null;
-            /** Prev Equity */
+            /**
+             * Prev Close Source
+             * @description arc_close, or broker_last_equity when no Arc close exists (fallback)
+             */
+            prev_close_source?: ("arc_close" | "broker_last_equity") | null;
+            /**
+             * Prev Equity
+             * @description Start-of-day equity: Arc's prior-session close (E5.9b, D43)
+             */
             prev_equity?: string | null;
             /**
              * Realized
@@ -1318,6 +1326,11 @@ export interface components {
              * @description 'prev close' or the start day
              */
             start_label?: string | null;
+            /**
+             * Start Source
+             * @description For 'prev close': arc_close (Arc's prior EOD mark) or broker_last_equity
+             */
+            start_source?: ("arc_close" | "broker_last_equity") | null;
             /**
              * Start Value
              * @description Equity at the range start
@@ -2876,10 +2889,23 @@ export interface components {
             ][];
             /** Intraday At */
             intraday_at?: string | null;
-            /** Intraday Day Pnl */
+            /**
+             * Intraday Day Pnl
+             * @description intraday_equity − intraday_prev_close (E5.9b, D43)
+             */
             intraday_day_pnl?: string | null;
             /** Intraday Equity */
             intraday_equity?: string | null;
+            /**
+             * Intraday Prev Close
+             * @description Start-of-day equity: Arc's prior-session close (D43)
+             */
+            intraday_prev_close?: string | null;
+            /**
+             * Intraday Prev Close Source
+             * @description arc_close, or broker_last_equity when no Arc close exists
+             */
+            intraday_prev_close_source?: ("arc_close" | "broker_last_equity") | null;
             performance?: components["schemas"]["Performance"] | null;
             /** Realized */
             realized?: string | null;

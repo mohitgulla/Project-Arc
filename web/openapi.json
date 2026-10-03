@@ -1702,7 +1702,7 @@
       },
       "DayPnlSection": {
         "additionalProperties": false,
-        "description": "Day P&L (equity \u2212 broker's prior close), realized vs unrealized, MTD / YTD.",
+        "description": "Day P&L (equity \u2212 start-of-day equity, D43), realized vs unrealized, MTD / YTD.",
         "properties": {
           "as_of": {
             "anyOf": [
@@ -1762,6 +1762,22 @@
             "description": "Day MTD/YTD refer to",
             "title": "Performance Day"
           },
+          "prev_close_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "arc_close",
+                  "broker_last_equity"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "arc_close, or broker_last_equity when no Arc close exists (fallback)",
+            "title": "Prev Close Source"
+          },
           "prev_equity": {
             "anyOf": [
               {
@@ -1772,6 +1788,7 @@
                 "type": "null"
               }
             ],
+            "description": "Start-of-day equity: Arc's prior-session close (E5.9b, D43)",
             "title": "Prev Equity"
           },
           "realized": {
@@ -2253,6 +2270,22 @@
             ],
             "description": "'prev close' or the start day",
             "title": "Start Label"
+          },
+          "start_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "arc_close",
+                  "broker_last_equity"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For 'prev close': arc_close (Arc's prior EOD mark) or broker_last_equity",
+            "title": "Start Source"
           },
           "start_value": {
             "anyOf": [
@@ -6805,6 +6838,7 @@
                 "type": "null"
               }
             ],
+            "description": "intraday_equity \u2212 intraday_prev_close (E5.9b, D43)",
             "title": "Intraday Day Pnl"
           },
           "intraday_equity": {
@@ -6818,6 +6852,35 @@
               }
             ],
             "title": "Intraday Equity"
+          },
+          "intraday_prev_close": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Start-of-day equity: Arc's prior-session close (D43)",
+            "title": "Intraday Prev Close"
+          },
+          "intraday_prev_close_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "arc_close",
+                  "broker_last_equity"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "arc_close, or broker_last_equity when no Arc close exists",
+            "title": "Intraday Prev Close Source"
           },
           "performance": {
             "anyOf": [

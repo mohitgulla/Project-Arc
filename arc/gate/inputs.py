@@ -30,7 +30,12 @@ class AccountSnapshot(_Frozen):
 
     equity: Decimal = Field(..., description="Current equity (realized + unrealized), dollars")
     last_equity: Decimal = Field(
-        ..., description="Equity at the previous session close (start-of-day basis), dollars"
+        ...,
+        description=(
+            "Start-of-day equity (prev close), dollars: Arc's prior-session close mark; "
+            "the broker's last_equity only as fallback (E5.9b, D43). Computed outside "
+            "the gate by arc.reconcile.baseline and passed in."
+        ),
     )
     halted: bool = Field(False, description="Kill switch / daily halt is active (E3.3)")
     settled_cash: Decimal | None = Field(

@@ -85,7 +85,15 @@ class PortfolioAccount(BaseModel):
     model_config = _FORBID
 
     equity: float
-    day_pnl: float | None = Field(None, description="equity − last_equity")
+    day_pnl: float | None = Field(
+        None, description="equity − prev_close (E5.9b, D43: Arc's prior-session close)"
+    )
+    prev_close: float | None = Field(
+        None, description="Start-of-day equity day P&L is measured from (arc.reconcile.baseline)"
+    )
+    prev_close_source: Literal["arc_close", "broker_last_equity"] | None = Field(
+        None, description="arc_close = Arc's prior EOD mark; broker_last_equity = fallback"
+    )
     open_pnl_total: float = Field(0.0, description="Sum of open positions' mark P&L ($)")
     cash: float
     buying_power: float

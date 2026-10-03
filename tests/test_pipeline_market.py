@@ -156,7 +156,7 @@ def test_limit_price_and_account_snapshot() -> None:
     info = AccountInfo(
         account_id="x", equity=D("1000"), buying_power=D("1000"), cash=D("1000"), last_equity=None
     )
-    assert account_snapshot(info, NOW).last_equity == D(0)
+    assert account_snapshot(info, NOW, baseline=None).last_equity == D(0)
 
 
 def test_next_earnings_skips_bad_urls() -> None:

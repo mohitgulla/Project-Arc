@@ -75,6 +75,9 @@ N_MARKS = 30
 CADENCE = dt.timedelta(minutes=5)
 N_DAYS = 10
 BASE_EQUITY = Decimal("100000")
+# E5.9b (D43): broker last_equity (official closing prices) vs Arc's live-quote close,
+# the Fri 2026-10-02 offset (102,239.29 - 101,241.15). Never the day P&L basis.
+BROKER_CLOSE_SKEW = Decimal("998.14")
 #: Test-only HMAC secret for the fixture's gate tokens (never a real ``ARC_GATE_SECRET``).
 FIXTURE_GATE_SECRET = b"tower-fixture-test-secret-not-for-trading-0001"
 
@@ -451,7 +454,11 @@ def build(
             "monitor", "ok", at=first_mark + CADENCE * i,
             detail={
                 "valued": True, "positions": len(positions),
-                "equity": float(equity), "last_equity": float(last_equity), "cash": 88000.0,
+                # E5.9b (D43): the broker's raw last_equity (closing-price valuation) is
+                # off Arc's own close; the day P&L baseline is prev_close (Arc's close).
+                "equity": float(equity), "last_equity": float(last_equity + BROKER_CLOSE_SKEW),
+                "prev_close": float(last_equity), "prev_close_source": "arc_close",
+                "day_pnl": float(equity - last_equity), "cash": 88000.0,
                 "buying_power": 88000.0, "options_buying_power": 88000.0,
                 "delta": 42.5 + i * 0.4, "gamma": 0.8, "vega": 21000.0 + 150 * i,
                 "theta": -34.2, "max_loss": 3910.0, "halted": True,
@@ -469,6 +476,7 @@ def build(
             unrealized=str(Decimal("-40") + i * 12), total=str(eq_day - BASE_EQUITY),
             details_json=json.dumps({
                 "day": day.isoformat(), "equity": str(eq_day), "last_equity": str(prev),
+                "prev_close": str(prev), "prev_close_source": "arc_close",
                 "day_pnl": str(eq_day - prev), "open_structures": 2, "closed_today": 0,
                 "clean": clean,
             }),

@@ -131,7 +131,8 @@ def test_equity_intraday_is_one_et_day(conn: sqlite3.Connection) -> None:
     assert len(marks) == 30
     assert [m.at for m in marks] == sorted(m.at for m in marks)
     assert marks[-1].at == NOW - dt.timedelta(minutes=2)
-    assert all(m.last_equity is not None for m in marks) and marks[-1].legs
+    assert all(m.prev_close is not None for m in marks) and marks[-1].legs
+    assert {m.prev_close_source for m in marks} == {"arc_close"}
     assert equity_intraday(conn, NOW.date() - dt.timedelta(days=1)) == []
 
 
