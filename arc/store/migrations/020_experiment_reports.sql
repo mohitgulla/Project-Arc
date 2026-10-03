@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS experiment_reports (
     as_of_day      TEXT,                    -- ET day of the last paired session (NULL: none yet)
     sessions       INTEGER NOT NULL,        -- paired sessions in the primary series
     verdict        TEXT NOT NULL CHECK (verdict IN
-                       ('continue', 'win', 'harm', 'futility', 'invalid')),
+                       ('continue', 'win', 'futility', 'invalid')),
     spec_hash      TEXT NOT NULL,
     config_hash    TEXT NOT NULL,           -- sha256 of the effective experiments config
     control_sha    TEXT,                    -- git sha recorded at t0 (control arm)
@@ -40,9 +40,7 @@ BEGIN
     SELECT RAISE(ABORT, 'experiment_reports is append-only');
 END;
 
--- Per-arm inputs the evaluation reads that E10.1 did not tag: halts (the
--- "any halt on the experiment account" guardrail) and positions_snapshots (the
--- control arm's legacy-book marks). NULL = control, as for the E10.1 columns;
--- the treatment runner (E10.2) writes '<experiment id>:treatment'.
-ALTER TABLE halts ADD COLUMN arm_id TEXT;
+-- Per-arm input the evaluation reads that E10.1 did not tag: positions_snapshots
+-- (the control arm's legacy-book marks). NULL = control, as for the E10.1
+-- columns; the treatment runner (E10.2) writes '<experiment id>:treatment'.
 ALTER TABLE positions_snapshots ADD COLUMN arm_id TEXT;

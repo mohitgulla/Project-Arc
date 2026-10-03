@@ -161,8 +161,7 @@ def test_ab_spec_needs_overlay_backtest_and_margin(missing: str) -> None:
 def test_fill_defaults_from_config_and_aa_length() -> None:
     d = load_experiments_config().defaults
     assert (d.alpha, d.power, d.min_sessions, d.max_sessions) == (0.05, 0.8, 20, 60)
-    assert d.guardrails.max_dd_worse == 0.03 and d.guardrails.worst_day == -0.02
-    assert d.guardrails.order_rate_ratio == 1.5 and d.guardrails.stop_on_halt
+    assert not hasattr(d, "guardrails")  # owner 2026-10-03: no guardrail stops
     aa = _spec()
     assert (aa.min_sessions, aa.max_sessions) == (10, 10)  # A/A runs aa_sessions
     ab = _spec("X-2", area="exits", kind="ab")
@@ -450,21 +449,18 @@ def test_experiment_defaults_are_tunable_and_reach_effective_config(
         "experiments.min_sessions",
         "experiments.max_sessions",
         "experiments.aa_sessions",
-        "experiments.guardrails.max_dd_worse",
-        "experiments.guardrails.worst_day",
-        "experiments.guardrails.order_rate_ratio",
-        "experiments.guardrails.stop_on_halt",
     }
+    assert not any("guardrails" in k for k in keys)
     svc = ControlService(conn, base=ArcSettings(), now=lambda: NOW, is_halted=lambda: False)
     # stricter alpha is safer: applies immediately
     assert svc.set("experiments.alpha", "0.01", actor=OWNER, source="cli").outcome == "applied"
-    # looser guardrail is riskier: needs a confirm
-    r = svc.set("experiments.guardrails.max_dd_worse", "5%", actor=OWNER, source="cli")
+    # fewer sessions is riskier: needs a confirm
+    r = svc.set("experiments.min_sessions", "15", actor=OWNER, source="cli")
     assert r.pending is not None
     svc.confirm(r.pending.code, actor=OWNER, source="cli")
     assert svc.set("experiments.alpha", "0.5", actor=OWNER, source="cli").outcome == "refused"
     cfg = experiments_config(effective_settings(conn)).defaults
-    assert cfg.alpha == 0.01 and cfg.guardrails.max_dd_worse == pytest.approx(0.05)
+    assert cfg.alpha == 0.01 and cfg.min_sessions == 15
     assert experiments_config(svc.settings()).defaults.alpha == 0.01
 
 

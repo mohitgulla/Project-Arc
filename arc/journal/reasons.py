@@ -238,7 +238,6 @@ class ReasonCode(StrEnum):
     EXPERIMENT_PROMOTED = "experiment:promoted"
     EXPERIMENT_REJECTED = "experiment:rejected"
     EXPERIMENT_EVALUATED = "experiment:evaluated"  # E10.3 daily evaluation (report stored)
-    EXPERIMENT_GUARDRAIL = "experiment:guardrail"  # E10.3 harm stop: which rule, which values
     EXPERIMENT_INVALID = "experiment:invalid"  # E10.3 an A/A "won": the harness is broken
 
 
@@ -425,7 +424,6 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.EXPERIMENT_PROMOTED: "Experiment's treatment promoted",
     ReasonCode.EXPERIMENT_REJECTED: "Experiment's treatment rejected",
     ReasonCode.EXPERIMENT_EVALUATED: "Experiment evaluated",
-    ReasonCode.EXPERIMENT_GUARDRAIL: "Experiment guardrail breached (harm stop)",
     ReasonCode.EXPERIMENT_INVALID: "A/A experiment invalid (arms differ)",
 }
 

@@ -256,13 +256,13 @@ personas:
     notify: card                # [Auditor] Scorecard card
     report_dir: docs/RESEARCH/weekly   # <monday>.md, relative to the repo root
     writes: []                  # reads the audit store; writes the Markdown report, no context
-  experiments.evaluate:         # E10.3 (D44): mSPRT CI, Sortino non-inferiority, guardrails, auto-stop
+  experiments.evaluate:         # E10.3 (D44): mSPRT CI, Sortino non-inferiority, auto-stop
     schedule: ["16:40"]         # after the 16:30 auditor reconcile writes each arm's EOD pnl_snapshots
     days: trading
     llm: false                  # deterministic: audit store only (no broker, no LLM)
-    halt_exempt: true           # a halt must not stop the harm check
+    halt_exempt: true           # read-only evaluation; a halt must not skip it
     ttl: 6h
-    notify: summary             # harm / invalid stops post an immediate notice; E10.5 adds the cards
+    notify: summary             # invalid stops post an immediate notice; E10.5 adds the cards
     writes: []                  # experiment_reports + experiment_events, no context
   investor:                     # E6.2: works an approved proposal through its D24 price band
     trigger: approval           # event-driven, never scheduled

@@ -15,6 +15,6 @@ Lifecycle:
     arc experiment show X-1 --db <db>
     arc experiment verify X-1 --db <db>
 
-Unset `alpha`, `power`, `min_sessions`, `max_sessions` and `guardrails` are
+Unset `alpha`, `power`, `min_sessions` and `max_sessions` are
 filled from `config/experiments.yaml` at `create`; the filled spec is what gets
 hash-locked. After `register`, any edit needs a new experiment id.

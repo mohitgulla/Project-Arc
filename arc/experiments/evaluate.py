@@ -21,16 +21,19 @@ mark) is left out and listed in ``missing_sessions``.
 
 **Verdict** (first that applies):
 
-1. ``harm``: a guardrail breached (journaled ``experiment:guardrail`` with the
-   rule and its values) -> stop(harm).
-2. ``invalid``: an A/A whose always-valid CI excludes 0 (the arms differ when
+Owner decision (2026-10-03, PR #102): the evaluation keeps the primary and
+secondary metrics only; there are no guardrail (harm) stops. Harm is watched by
+the owner through the report's per-arm drawdown / worst day / orders, which are
+reported but never decide. The owner can still stop an experiment by hand.
+
+1. ``invalid``: an A/A whose always-valid CI excludes 0 (the arms differ when
    they should not: the harness is broken) -> stop(invalid), alert.
-3. ``win`` (ab only): ``n >= min_sessions``, CI lower bound > 0 *and* Sortino
+2. ``win`` (ab only): ``n >= min_sessions``, CI lower bound > 0 *and* Sortino
    non-inferior within the spec's margin -> stop(win).
-4. ``futility``: ``n >= max_sessions`` without a win -> stop(futility). For an
+3. ``futility``: ``n >= max_sessions`` without a win -> stop(futility). For an
    A/A that is the normal end; its sigma is recorded on the stop event, which
    unlocks ab starts (:meth:`ExperimentStore.aa_sigma`).
-5. ``continue``.
+4. ``continue``.
 
 Every evaluation appends one :class:`ExperimentReport` to ``experiment_reports``
 (canonical JSON + sha256 + spec/config hashes + shas) and journals
@@ -87,7 +90,6 @@ __all__ = [
     "BreakdownRow",
     "Calibration",
     "ExperimentReport",
-    "GuardrailCheck",
     "Primary",
     "Secondary",
     "SessionRow",
@@ -107,10 +109,9 @@ TREATMENT_ARM = "treatment"
 MULTIPLIER = Decimal(100)
 _FORBID = ConfigDict(extra="forbid", frozen=True)
 
-Verdict = Literal["continue", "win", "harm", "futility", "invalid"]
+Verdict = Literal["continue", "win", "futility", "invalid"]
 _STOP: dict[str, StopReason] = {
     "win": StopReason.WIN,
-    "harm": StopReason.HARM,
     "futility": StopReason.FUTILITY,
     "invalid": StopReason.INVALID,
 }
@@ -161,17 +162,9 @@ class Secondary(BaseModel):
     non_inferior: bool | None = Field(None, description="None for aa (no margin)")
 
 
-class GuardrailCheck(BaseModel):
-    model_config = _FORBID
-
-    rule: Literal["max_dd_worse", "worst_day", "order_rate", "halt", "fill_unknown"]
-    breached: bool
-    value: float | None
-    threshold: float | None
-    detail: str = ""
-
-
 class ArmSummary(BaseModel):
+    """Per-arm numbers from t0 (reported for the owner; no verdict reads them)."""
+
     model_config = _FORBID
 
     arm: str
@@ -241,7 +234,6 @@ class ExperimentReport(BaseModel):
     missing_sessions: list[_dt.date]
     primary: Primary
     secondary: Secondary
-    guardrails: list[GuardrailCheck]
     arms: list[ArmSummary]
     calibration: Calibration
     breakdowns: list[BreakdownRow]
@@ -487,30 +479,6 @@ def _legacy_hashes(conn: sqlite3.Connection, legacy: set[str]) -> set[str]:
     }
 
 
-def _harm_events(
-    conn: sqlite3.Connection, t_arm: str, t0: _dt.datetime
-) -> tuple[list[str], list[str]]:
-    """Halts and reconcile ``fill_unknown`` mismatches on the experiment arm since t0."""
-    halts = [
-        f"{r['id']} ({r['reason']})"
-        for r in conn.execute(
-            "SELECT id, reason FROM halts WHERE arm_id = ? AND at >= ? ORDER BY at",
-            (t_arm, to_db(t0)),
-        )
-    ]
-    unknown = [
-        r["subject"]
-        for r in conn.execute(
-            """SELECT subject FROM decisions
-               WHERE arm_id = ? AND at >= ? AND reason_code = ?
-                 AND json_extract(payload, '$.kind') = 'fill_unknown'
-               ORDER BY at""",
-            (t_arm, to_db(t0), ReasonCode.RECONCILE_MISMATCH.value),
-        )
-    ]
-    return halts, unknown
-
-
 def _divergence(conn: sqlite3.Connection, t_arm: str, t0: _dt.datetime) -> tuple[int, int]:
     """(paired chains, chains whose decisions differ) from the arm's manifests.
 
@@ -599,72 +567,6 @@ def _arm_summary(
         executions=orders[2],
         mean_slippage_bps=float(sum(slips) / len(slips)) if slips else None,
     )
-
-
-def _guardrails(
-    st: ExperimentState,
-    ctrl: ArmSummary,
-    treat: ArmSummary,
-    halts: list[str],
-    unknown: list[str],
-    *,
-    min_orders: int,
-) -> list[GuardrailCheck]:
-    g = st.spec.guardrails
-    assert g is not None  # noqa: S101 - registered specs are complete
-    dd_gap = treat.max_drawdown - ctrl.max_drawdown
-    checks = [
-        GuardrailCheck(
-            rule="max_dd_worse",
-            breached=dd_gap > g.max_dd_worse,
-            value=dd_gap,
-            threshold=g.max_dd_worse,
-            detail=f"treatment max DD {treat.max_drawdown:.2%} vs control {ctrl.max_drawdown:.2%}",
-        ),
-        GuardrailCheck(
-            rule="worst_day",
-            breached=treat.worst_day is not None and treat.worst_day < g.worst_day,
-            value=treat.worst_day,
-            threshold=g.worst_day,
-            detail="treatment's worst daily return",
-        ),
-    ]
-    if treat.orders < min_orders:
-        ratio: float | None = None
-        breached = False
-        detail = f"not judged: treatment sent {treat.orders} < {min_orders} orders"
-    else:
-        ratio = treat.orders / ctrl.orders if ctrl.orders else float("inf")
-        breached = ratio > g.order_rate_ratio
-        detail = f"treatment {treat.orders} orders vs control {ctrl.orders}"
-    checks.append(
-        GuardrailCheck(
-            rule="order_rate",
-            breached=breached,
-            value=None if ratio is None or ratio == float("inf") else ratio,
-            threshold=g.order_rate_ratio,
-            detail=detail + (" (control sent none)" if ratio == float("inf") else ""),
-        )
-    )
-    checks.append(
-        GuardrailCheck(
-            rule="halt",
-            breached=g.stop_on_halt and bool(halts),
-            value=float(len(halts)),
-            threshold=0.0 if g.stop_on_halt else None,
-            detail="; ".join(halts[:5]) or "no halt on the experiment arm",
-        )
-    )
-    checks.append(
-        GuardrailCheck(
-            rule="fill_unknown",
-            breached=g.stop_on_halt and bool(unknown),
-            value=float(len(unknown)),
-            threshold=0.0 if g.stop_on_halt else None,
-            detail=", ".join(unknown[:5]) or "no fill_unknown on the experiment arm",
-        )
-    )
-    return checks
 
 
 def _breakdowns(arms: dict[str, list[dict[str, Any]]]) -> list[BreakdownRow]:
@@ -767,12 +669,6 @@ def build_report(
         non_inferior=None if margin is None else stats.non_inferior(diff_ci, margin),
     )
 
-    # -- guardrails ----------------------------------------------------------
-    halts, unknown = _harm_events(conn, t_arm, run.t0)
-    guards = _guardrails(
-        st, ctrl, treat, halts, unknown, min_orders=cfg.stats.order_rate_min_orders
-    )
-
     # -- calibration ---------------------------------------------------------
     sd = stats.sample_sd(d) if n >= 2 else None
     horizons = sorted(
@@ -816,7 +712,6 @@ def build_report(
         max_sessions=sp.max_sessions,
         primary=primary,
         secondary=secondary,
-        guards=guards,
     )
     return ExperimentReport(
         experiment_id=st.experiment_id,
@@ -837,7 +732,6 @@ def build_report(
         missing_sessions=missing,
         primary=primary,
         secondary=secondary,
-        guardrails=guards,
         arms=[ctrl, treat],
         calibration=cal,
         breakdowns=_breakdowns({CONTROL_ARM: c_out, TREATMENT_ARM: t_out}),
@@ -861,13 +755,7 @@ def _verdict(
     max_sessions: int,
     primary: Primary,
     secondary: Secondary,
-    guards: list[GuardrailCheck],
 ) -> tuple[Verdict, str]:
-    breached = [g for g in guards if g.breached]
-    if breached:
-        return "harm", "guardrail breached: " + ", ".join(
-            f"{g.rule} ({g.detail})" for g in breached
-        )
     ci = primary.ci
     if is_aa and ci is not None and ci.excludes_zero:
         return "invalid", (
@@ -974,20 +862,6 @@ def evaluate(
                 "config_hash": report.config_hash,
             },
         )
-        for g in report.guardrails:
-            if g.breached:
-                journal.record(
-                    persona=JournalPersona.SYSTEM,
-                    stage=Stage.EXPERIMENT,
-                    subject=experiment_id,
-                    choice=Choice.FAILED,
-                    reason_code=ReasonCode.EXPERIMENT_GUARDRAIL,
-                    reason_text=f"{g.rule}: {g.detail}"[:2000],
-                    at=now,
-                    run_id=run_id,
-                    payload={"experiment_id": experiment_id, "report_id": rid,
-                             **g.model_dump(mode="json")},
-                )  # fmt: skip
         if report.verdict == "invalid":
             journal.record(
                 persona=JournalPersona.SYSTEM,

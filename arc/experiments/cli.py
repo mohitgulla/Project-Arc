@@ -97,7 +97,6 @@ def _summary(s: ExperimentState) -> str:
 
 def _detail(s: ExperimentState) -> list[str]:
     sp = s.spec
-    g = sp.guardrails
     margin = sp.non_inferiority_margin if sp.non_inferiority_margin else "-"
     lines = [
         _summary(s),
@@ -108,11 +107,6 @@ def _detail(s: ExperimentState) -> list[str]:
         f"  alpha {sp.alpha}, power {sp.power}, mde {sp.mde if sp.mde else 'unset (A/A)'}, "
         f"sessions {sp.min_sessions}-{sp.max_sessions}",
     ]
-    if g is not None:
-        lines.append(
-            f"  guardrails: max DD worse {g.max_dd_worse:.1%}, worst day {g.worst_day:.1%}, "
-            f"order rate {g.order_rate_ratio:g}x, stop on halt {'on' if g.stop_on_halt else 'off'}"
-        )
     over = sp.arms.treatment.overlay
     lines.append(
         "  treatment overlay: " + (json.dumps(over, sort_keys=True) if over else "none (= control)")
@@ -169,13 +163,7 @@ def report_lines(r: ExperimentReport) -> list[str]:
             if s.margin is not None
             else "  (aa: no margin)"
         ),
-        "  guardrails:",
     ]
-    for g in r.guardrails:
-        flag = "BREACH" if g.breached else "ok"
-        val = "-" if g.value is None else f"{g.value:.4g}"
-        thr = "-" if g.threshold is None else f"{g.threshold:.4g}"
-        lines.append(f"    {flag:6} {g.rule:13} value {val} threshold {thr}  {g.detail}")
     lines.append("  arms:")
     for a in r.arms:
         lines.append(

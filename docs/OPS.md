@@ -1112,7 +1112,7 @@ report thread: `create A-<n>`, `comment A-<n>`, `wontfix A-<n> <why>`,
 
 Pre-registration only: nothing here trades (the treatment runner is E10.2).
 Specs live in `config/experiments/live/<id>.yaml`; defaults (alpha 0.05, power
-0.8, 20/60 sessions, A/A 10 sessions, D44 guardrails) in `config/experiments.yaml`,
+0.8, 20/60 sessions, A/A 10 sessions) in `config/experiments.yaml`,
 tunable as `experiments.*` (`!arc config experiments`). The treatment overlay uses
 the same deep-merge format as the backtest overlays in `config/experiments/*.yaml`.
 
@@ -1132,7 +1132,7 @@ the same deep-merge format as the backtest overlays in `config/experiments/*.yam
   `run_manifests`, `proposals`, `decisions`, `outcomes`, `pnl_snapshots` and
   `executions` is NULL for control (all rows today).
 
-### 5.18 Daily evaluation, guardrails and verdict (E10.3, D44)
+### 5.18 Daily evaluation and verdict (E10.3, D44)
 
 The `experiments.evaluate` routine (trading days 16:40 ET, after the 16:30 auditor
 reconcile; deterministic, halt-exempt) evaluates every running experiment and
@@ -1149,9 +1149,10 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
   A/A's when recorded, else the running sd inflated to its chi² upper bound
   (`experiments.stats.sigma_upper_q`). Win = lower bound > 0 after
   `min_sessions` **and** Sortino non-inferior (paired bootstrap CI vs margin).
-- Guardrails → stop(harm), journaled `experiment:guardrail`: max-DD gap,
-  worst day, order rate (judged once treatment sent `order_rate_min_orders`),
-  any halt / `fill_unknown` on the experiment arm (`halts.arm_id`, new).
+- No guardrail (harm) auto-stops (owner, 2026-10-03): only the primary and
+  secondary metrics decide. Each arm's drawdown, worst day and order count are
+  in the report for the owner, who stops an experiment by hand
+  (`arc experiment stop X-2 --reason harm --actor local`).
 - `max_sessions` without a win → stop(futility); for an A/A that is the normal
   end and records σ (unlocks ab starts). An A/A whose CI excludes 0 → stop(invalid).
 - Breakdowns by regime / structure kind are reported, never decision inputs.

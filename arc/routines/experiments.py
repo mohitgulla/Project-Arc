@@ -4,8 +4,8 @@
 the Auditor's EOD reconcile (which writes the per-arm ``pnl_snapshots`` it reads).
 Deterministic, no LLM, no broker. For every running experiment it stores an
 :class:`~arc.experiments.evaluate.ExperimentReport` and applies the verdict
-(stop on harm / win / futility / invalid). A harm or invalid stop is posted as an
-immediate notice; the per-experiment Slack line and stop card are E10.5.
+(stop on win / futility / invalid). An invalid stop is posted as an immediate
+notice; the per-experiment Slack line and stop card are E10.5.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def experiments_evaluate_step(ctx: JobContext) -> JobResult:
     alerts = [
         f"[Experiments] {r.experiment_id} stopped ({r.verdict}): {r.verdict_reason}"
         for r in reports
-        if r.verdict in ("harm", "invalid")
+        if r.verdict == "invalid"
     ]
     parts = [
         f"{r.experiment_id} {r.verdict} n={r.sessions}"

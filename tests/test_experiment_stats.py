@@ -1,4 +1,4 @@
-"""E10.3 (D44): experiment stats, guardrails, verdicts, reports, routine and CLI.
+"""E10.3 (D44): experiment stats, verdicts, reports, routine and CLI.
 
 Every test injects ``now``; nothing reads the wall clock. The stats properties
 are checked by simulation: type-I error with daily peeking over 60 sessions
@@ -459,69 +459,25 @@ def test_ab_uses_aa_sigma_when_recorded(conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
-# guardrails: one test per rule
+# no guardrails (owner 2026-10-03): losses are reported, never a stop
 # ---------------------------------------------------------------------------
 
 
-def _guard(r: object, rule: str) -> object:
-    return next(g for g in r.guardrails if g.rule == rule)  # type: ignore[attr-defined]
-
-
-def test_guardrail_max_dd_worse(conn: sqlite3.Connection) -> None:
-    # treatment falls 3.5% over a week (each day > -2%), control flat
-    store, days = _ab_with(conn, [0.0] * 4, [-900.0, -900.0, -900.0, -800.0])
-    r = evaluate(store, "X-2", CFG, now=_after(days))
-    g = _guard(r, "max_dd_worse")
-    assert g.breached and g.value == pytest.approx(0.035, abs=1e-3)  # type: ignore[attr-defined]
-    assert not _guard(r, "worst_day").breached  # type: ignore[attr-defined]
-    assert r.verdict == "harm" and store.require("X-2").reason is StopReason.HARM
-    rows = conn.execute(
-        "SELECT reason_text, payload FROM decisions WHERE reason_code = ?",
-        (ReasonCode.EXPERIMENT_GUARDRAIL.value,),
-    ).fetchall()
-    assert len(rows) == 1 and rows[0][0].startswith("max_dd_worse")
-    assert json.loads(rows[0][1])["threshold"] == 0.03
-
-
-def test_guardrail_max_dd_not_breached_at_threshold(conn: sqlite3.Connection) -> None:
-    store, days = _ab_with(conn, [0.0] * 2, [-1500.0, -1400.0])  # 2.9% DD
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
-    assert not _guard(r, "max_dd_worse").breached  # type: ignore[attr-defined]
-
-
-def test_guardrail_worst_day(conn: sqlite3.Connection) -> None:
-    store, days = _ab_with(conn, [0.0, 0.0], [500.0, -2_200.0])
-    r = evaluate(store, "X-2", CFG, now=_after(days))
-    g = _guard(r, "worst_day")
-    assert g.breached and g.value < -0.02  # type: ignore[attr-defined]
-    assert r.verdict == "harm"
-
-
-def test_guardrail_order_rate(conn: sqlite3.Connection) -> None:
-    store, days = _ab_with(conn, [0.0, 0.0], [0.0, 0.0])
+def test_large_losses_are_reported_not_stopped(conn: sqlite3.Connection) -> None:
+    """A 3.5% drawdown and a -2.2% day would have tripped the old D44 guardrails."""
+    store, days = _ab_with(conn, [0.0] * 5, [-900.0, -900.0, -900.0, -800.0, -2_200.0])
+    t_arm = arm_id("X-2", "treatment")
     fx.executions(conn, None, 8, day=days[0])
-    fx.executions(conn, arm_id("X-2", "treatment"), 7, attempts=2, day=days[0])  # 14 orders
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
-    g = _guard(r, "order_rate")
-    assert g.breached and g.value == pytest.approx(14 / 8)  # type: ignore[attr-defined]
-    assert r.verdict == "harm"
-
-
-def test_guardrail_order_rate_waits_for_min_orders(conn: sqlite3.Connection) -> None:
-    store, days = _ab_with(conn, [0.0], [0.0])
-    fx.executions(conn, None, 1, day=days[0])
-    fx.executions(conn, arm_id("X-2", "treatment"), 5, day=days[0])  # 5x but only 5 orders
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
-    g = _guard(r, "order_rate")
-    assert not g.breached and g.value is None and "not judged" in g.detail  # type: ignore[attr-defined]
-
-
-def test_guardrail_order_rate_control_sent_none(conn: sqlite3.Connection) -> None:
-    store, days = _ab_with(conn, [0.0], [0.0])
-    fx.executions(conn, arm_id("X-2", "treatment"), 10, day=days[0])
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
-    g = _guard(r, "order_rate")
-    assert g.breached and g.value is None and "control sent none" in g.detail  # type: ignore[attr-defined]
+    fx.executions(conn, t_arm, 10, attempts=2, day=days[0])  # 2.5x control's orders
+    r = evaluate(store, "X-2", CFG, now=_after(days))
+    assert r.verdict == "continue"
+    assert store.require("X-2").status is ExperimentStatus.RUNNING
+    treat = r.arms[1]
+    assert treat.max_drawdown == pytest.approx(0.057, abs=1e-3)
+    assert treat.worst_day is not None and treat.worst_day < -0.02
+    assert (r.arms[0].orders, treat.orders) == (8, 20)
+    assert "guardrails" not in r.model_dump()
+    assert "experiment:guardrail" not in _codes(conn)
 
 
 def test_legacy_executions_not_counted_as_control_orders(conn: sqlite3.Connection) -> None:
@@ -531,66 +487,6 @@ def test_legacy_executions_not_counted_as_control_orders(conn: sqlite3.Connectio
     _close_legacy(conn, sid, days[0], cash=100)
     r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
     assert r.arms[0].orders == 0
-
-
-def test_guardrail_halt_on_experiment_arm_only(conn: sqlite3.Connection) -> None:
-    store, days = _ab_with(conn, [0.0], [0.0])
-    at = to_db(fx.eod(days[0]))
-    conn.execute(  # a control halt does not stop the experiment
-        "INSERT INTO halts (id, at, reason, actor) VALUES ('h0', ?, 'manual', 'owner')", (at,)
-    )
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
-    assert not _guard(r, "halt").breached  # type: ignore[attr-defined]
-    conn.execute(
-        """INSERT INTO halts (id, at, reason, actor, arm_id)
-           VALUES ('h1', ?, 'daily loss', 'arc:monitor', 'X-2:treatment')""",
-        (at,),
-    )
-    r = evaluate(store, "X-2", CFG, now=_after(days))
-    g = _guard(r, "halt")
-    assert g.breached and "daily loss" in g.detail  # type: ignore[attr-defined]
-    assert r.verdict == "harm"
-
-
-def test_guardrail_fill_unknown_on_experiment_arm(conn: sqlite3.Connection) -> None:
-    store, days = _ab_with(conn, [0.0], [0.0])
-    conn.execute(
-        """INSERT INTO decisions (id, persona, stage, subject, choice, reason_code, payload,
-               at, arm_id)
-           VALUES ('d1', 'auditor', 'reconcile', 'SPY261120C00600000', 'failed', ?, ?, ?,
-                   'X-2:treatment')""",
-        (
-            ReasonCode.RECONCILE_MISMATCH.value,
-            json.dumps({"kind": "fill_unknown", "refs": []}),
-            to_db(fx.eod(days[0])),
-        ),
-    )
-    r = evaluate(store, "X-2", CFG, now=_after(days))
-    assert _guard(r, "fill_unknown").breached  # type: ignore[attr-defined]
-    assert r.verdict == "harm"
-
-
-def test_guardrail_halt_rules_off_when_stop_on_halt_false(conn: sqlite3.Connection) -> None:
-    from arc.experiments.config import Guardrails
-
-    store, days = _ab_with(conn, [0.0], [0.0], guardrails=Guardrails(stop_on_halt=False))
-    conn.execute(
-        """INSERT INTO halts (id, at, reason, actor, arm_id)
-           VALUES ('h1', ?, 'x', 'y', 'X-2:treatment')""",
-        (to_db(fx.eod(days[0])),),
-    )
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
-    assert not _guard(r, "halt").breached and _guard(r, "halt").threshold is None  # type: ignore[attr-defined]
-
-
-def test_harm_beats_win(conn: sqlite3.Connection) -> None:
-    rng = np.random.default_rng(5)
-    ctrl = list(rng.normal(20, 300, 25))
-    treat = [c + 400 + e for c, e in zip(ctrl, rng.normal(0, 100, 25), strict=True)]
-    treat[-1] = -2500.0
-    store, days = _ab_with(conn, ctrl, treat)
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
-    assert r.verdict == "harm"
 
 
 # ---------------------------------------------------------------------------
@@ -754,16 +650,26 @@ def test_routine_declared_after_auditor_and_resolves() -> None:
     assert resolve_handler("experiments.evaluate", spec).__name__ == "experiments_evaluate_step"
 
 
-def test_routine_step_stops_on_harm_with_notice(conn: sqlite3.Connection) -> None:
+def test_routine_step_stops_invalid_aa_with_notice(conn: sqlite3.Connection) -> None:
+    from arc.routines.experiments import experiments_evaluate_step
+
+    store = fx.start(conn, fx.spec("X-1", kind="aa"))
+    days = fx.equity_curves(conn, "X-1", [0.0] * 10, [300.0 + (i % 3) * 10 for i in range(10)])
+    ctx = _ctx(conn, _after(days))
+    res = experiments_evaluate_step(ctx)  # type: ignore[arg-type]
+    assert "X-1 invalid n=10" in res.summary
+    assert "[Experiments] X-1 stopped (invalid)" in res.notice
+    assert res.metrics["stopped"] == 1 and ctx.inputs == ["experiment:X-1"]
+    assert store.require("X-1").reason is StopReason.INVALID
+
+
+def test_routine_step_no_notice_while_running(conn: sqlite3.Connection) -> None:
     from arc.routines.experiments import experiments_evaluate_step
 
     store, days = _ab_with(conn, [0.0, 0.0], [500.0, -2_200.0])
-    ctx = _ctx(conn, _after(days))
-    res = experiments_evaluate_step(ctx)  # type: ignore[arg-type]
-    assert "X-2 harm n=2" in res.summary
-    assert "[Experiments] X-2 stopped (harm)" in res.notice
-    assert res.metrics["stopped"] == 1 and ctx.inputs == ["experiment:X-2"]
-    assert store.require("X-2").reason is StopReason.HARM
+    res = experiments_evaluate_step(_ctx(conn, _after(days)))  # type: ignore[arg-type]
+    assert "X-2 continue n=2" in res.summary and res.notice == ""
+    assert store.require("X-2").status is ExperimentStatus.RUNNING
 
 
 class _Ctx:
@@ -799,7 +705,7 @@ def test_cli_report_and_evaluate(tmp_path, capsys: pytest.CaptureFixture[str]) -
     assert run_experiment(_cli("report", "X-2", "--db", str(db), "--now", now)) == 0
     out = capsys.readouterr().out
     assert "verdict CONTINUE" in out and "always-valid 95% CI" in out
-    assert "guardrails:" in out and "max_dd_worse" in out
+    assert "guardrails" not in out and "arms:" in out
     assert run_experiment(_cli("report", "X-2", "--db", str(db), "--stored")) == 2  # none yet
     capsys.readouterr()
     assert run_experiment(_cli("evaluate", "--db", str(db), "--now", now, "--json")) == 0
