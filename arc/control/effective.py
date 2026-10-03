@@ -30,12 +30,14 @@ from arc.config import ArcSettings
 from arc.control.registry import Target, TunableError, lookup, write_raw
 from arc.control.store import ConfigChange, ConfigChangeRepo
 from arc.exits.policy import DEFAULT_EXITS_PATH, load_exit_config
+from arc.experiments.config import DEFAULT_EXPERIMENTS_PATH, load_experiments_config
 from arc.routines.config import DEFAULT_ROUTINES_PATH, load_routines
 from arc.scanner.rank import DEFAULT_RANKING_PATH, load_ranking_config
 
 if TYPE_CHECKING:
     from arc.backtest.costs import CostModel
     from arc.exits.policy import ExitConfig
+    from arc.experiments.config import ExperimentsConfig
     from arc.routines.config import RoutinesConfig
     from arc.scanner.rank import RankingConfig
 
@@ -45,6 +47,7 @@ __all__ = [
     "effective_routines",
     "effective_settings",
     "exit_config",
+    "experiments_config",
     "open_store",
     "ranking_config",
     "raw_yaml",
@@ -59,6 +62,7 @@ YAML_PATHS: dict[Target, Path] = {
     Target.PROFILES: DEFAULT_PROFILES_PATH,
     Target.ROUTINES: DEFAULT_ROUTINES_PATH,
     Target.RANKING: DEFAULT_RANKING_PATH,
+    Target.EXPERIMENTS: DEFAULT_EXPERIMENTS_PATH,
 }
 
 
@@ -239,6 +243,14 @@ def ranking_config(
     """``config/ranking.yaml`` (``ranking:``) with the D26 overrides carried by *settings*."""
     ov = settings.yaml_overrides(Target.RANKING.value) if settings is not None else None
     return load_ranking_config(path, overrides=ov)
+
+
+def experiments_config(
+    settings: ArcSettings | None = None, path: Path | str | None = None
+) -> ExperimentsConfig:
+    """``config/experiments.yaml`` (E10.1 defaults) with the D26 overrides carried by *settings*."""
+    ov = settings.yaml_overrides(Target.EXPERIMENTS.value) if settings is not None else None
+    return load_experiments_config(path, overrides=ov)
 
 
 def effective_routines(

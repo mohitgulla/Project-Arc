@@ -1,0 +1,197 @@
+"""``arc experiment``: the forward A/B experiment registry CLI (PLAN D44, E10.1).
+
+- ``arc experiment create --spec <yaml>``    store a draft (defaults filled from
+  ``config/experiments.yaml`` + D26 overrides); a draft may be re-created
+- ``arc experiment register <id>``           hash-lock the spec; queues if its area is busy
+- ``arc experiment list [--status S]``
+- ``arc experiment show <id> [--json]``
+- ``arc experiment verify <id>``             recompute the spec hash (exit 1 on mismatch)
+- ``arc experiment stop <id> --reason R --actor A``  owner stop
+
+Every subcommand takes ``--db`` (default ``data/arc.db``). Exit 0 on success,
+1 on a failed verify, 2 on a refusal (locked spec, bad transition, bad spec).
+No trading behaviour changes here: the treatment runner is E10.2.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import argparse
+    import sqlite3
+
+    from arc.experiments.models import ExperimentState
+
+__all__ = ["add_experiment_parser", "run_experiment"]
+
+LOCAL_ACTOR = "local"
+
+
+def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    from arc.experiments.models import ExperimentStatus, StopReason
+
+    p = sub.add_parser("experiment", help="Forward A/B experiment registry (E10.1, D44)")
+    esub = p.add_subparsers(dest="experiment_command", required=True)
+
+    def common(sp: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        sp.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+        sp.add_argument("--json", action="store_true", help="Print JSON")
+        return sp
+
+    c = common(esub.add_parser("create", help="Store a spec as a draft"))
+    c.add_argument("--spec", required=True, help="config/experiments/live/<x>.yaml")
+    c.add_argument("--actor", default=LOCAL_ACTOR, help="owner Slack id, arc-analyst, or local")
+    r = common(esub.add_parser("register", help="Pre-register: hash-lock the spec"))
+    r.add_argument("experiment_id")
+    r.add_argument("--actor", default=LOCAL_ACTOR)
+    ls = common(esub.add_parser("list", help="All experiments and their status"))
+    ls.add_argument("--status", choices=[s.value for s in ExperimentStatus], default=None)
+    s = common(esub.add_parser("show", help="One experiment: spec, hash, status, events"))
+    s.add_argument("experiment_id")
+    v = common(esub.add_parser("verify", help="Recompute the spec hash against the lock"))
+    v.add_argument("experiment_id")
+    st = common(esub.add_parser("stop", help="Stop an experiment (owner)"))
+    st.add_argument("experiment_id")
+    st.add_argument("--reason", required=True, choices=[x.value for x in StopReason])
+    st.add_argument("--actor", required=True, help="owner Slack id, or local (shell owner)")
+    st.add_argument("--note", default=None)
+
+
+def _out(text: str) -> None:
+    sys.stdout.write(text + "\n")
+
+
+def _err(text: str) -> None:
+    sys.stderr.write(text + "\n")
+
+
+def _open(db: str | None) -> sqlite3.Connection:
+    from arc.control.effective import open_store
+
+    return open_store(db)
+
+
+def _summary(s: ExperimentState) -> str:
+    reason = f" ({s.reason.value})" if s.reason else ""
+    return (
+        f"{s.experiment_id}  {s.status.value}{reason}  {s.spec.area.value}/{s.spec.kind.value}  "
+        f"r{s.revision}  sha256 {s.spec_hash[:12]}  {s.spec.title}"
+    )
+
+
+def _detail(s: ExperimentState) -> list[str]:
+    sp = s.spec
+    g = sp.guardrails
+    margin = sp.non_inferiority_margin if sp.non_inferiority_margin else "-"
+    lines = [
+        _summary(s),
+        f"  hypothesis: {sp.hypothesis.strip()}",
+        f"  proposed by {sp.proposed_by}; backtest ref {sp.backtest_ref or '-'}",
+        f"  primary {sp.primary_metric}; secondary {sp.secondary_metric} "
+        f"(non-inferiority margin {margin})",
+        f"  alpha {sp.alpha}, power {sp.power}, mde {sp.mde if sp.mde else 'unset (A/A)'}, "
+        f"sessions {sp.min_sessions}-{sp.max_sessions}",
+    ]
+    if g is not None:
+        lines.append(
+            f"  guardrails: max DD worse {g.max_dd_worse:.1%}, worst day {g.worst_day:.1%}, "
+            f"order rate {g.order_rate_ratio:g}x, stop on halt {'on' if g.stop_on_halt else 'off'}"
+        )
+    over = sp.arms.treatment.overlay
+    lines.append(
+        "  treatment overlay: " + (json.dumps(over, sort_keys=True) if over else "none (= control)")
+    )
+    lines.append(f"  spec sha256 {s.spec_hash}")
+    lines.append(f"  registered sha256 {s.registered_hash or '- (draft: not locked yet)'}")
+    lines.append("  events:")
+    for e in s.events:
+        reason = f" ({e.reason.value})" if e.reason else ""
+        lines.append(f"    #{e.id} {e.at:%Y-%m-%d %H:%M %Z} {e.status.value}{reason} by {e.actor}")
+    return lines
+
+
+def _state_json(s: ExperimentState) -> dict[str, Any]:
+    return s.model_dump(mode="json")
+
+
+def _owner(actor: str) -> bool:
+    from arc.config import ArcSettings
+
+    if actor == LOCAL_ACTOR:
+        return True
+    return actor.upper() in {u.upper() for u in ArcSettings().approver_slack_user_ids}
+
+
+def run_experiment(args: argparse.Namespace) -> int:
+    from pydantic import ValidationError
+
+    from arc.experiments.models import ExperimentStatus, StopDetail, StopReason
+    from arc.experiments.store import ExperimentError, ExperimentStore
+
+    cmd = args.experiment_command
+    conn = _open(args.db)
+    try:
+        store = ExperimentStore(conn)
+        if cmd == "create":
+            from arc.control.effective import effective_settings, experiments_config
+            from arc.experiments.overlay import fill_defaults, load_spec
+
+            try:
+                spec = load_spec(args.spec)
+            except (ValidationError, ValueError, OSError) as exc:
+                _err(f"arc experiment create: invalid spec {args.spec}: {exc}")
+                return 2
+            spec = fill_defaults(spec, experiments_config(effective_settings(conn)).defaults)
+            st = store.create(spec, actor=args.actor)
+        elif cmd == "register":
+            st = store.register(args.experiment_id, actor=args.actor)
+        elif cmd == "list":
+            states = store.all(status=ExperimentStatus(args.status) if args.status else None)
+            if args.json:
+                _out(json.dumps([_state_json(s) for s in states], indent=2))
+            else:
+                for s in states:
+                    _out(_summary(s))
+                if not states:
+                    _out("no experiments")
+            return 0
+        elif cmd == "show":
+            st = store.require(args.experiment_id)
+        elif cmd == "verify":
+            v = store.verify(args.experiment_id)
+            if args.json:
+                _out(json.dumps(v, indent=2))
+            else:
+                verdict = "OK" if v["ok"] else "MISMATCH"
+                _out(
+                    f"{v['experiment_id']} ({v['status']}, r{v['revision']}): {verdict}\n"
+                    f"  registered {v['registered_hash'] or '- (draft)'}\n"
+                    f"  stored     {v['stored_hash']}\n"
+                    f"  recomputed {v['recomputed_hash']}"
+                )
+            return 0 if v["ok"] else 1
+        elif cmd == "stop":
+            if not _owner(args.actor):
+                _err(f"arc experiment stop: {args.actor} is not the owner")
+                return 2
+            st = store.stop(
+                args.experiment_id,
+                StopReason(args.reason),
+                actor=args.actor,
+                detail=StopDetail(note=args.note),
+            )
+        else:  # pragma: no cover - argparse enforces the choice
+            return 2
+    except ExperimentError as exc:
+        _err(f"arc experiment {cmd}: {exc}")
+        return 2
+    finally:
+        conn.close()
+    if args.json:
+        _out(json.dumps(_state_json(st), indent=2))
+    else:
+        _out("\n".join(_detail(st)) if cmd == "show" else _summary(st))
+    return 0

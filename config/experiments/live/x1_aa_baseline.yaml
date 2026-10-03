@@ -1,0 +1,18 @@
+# D44 A/A calibration (E10.4): both arms run the production config on two paper
+# accounts, so any difference is noise. Measures sigma of the paired daily net P&L
+# difference, the achievable MDE and the fill gap before the first real A/B.
+spec_version: 1
+id: X-1
+title: A/A baseline, production config on both accounts
+hypothesis: >
+  Identical configs on the production and experiment paper accounts produce a paired
+  daily net P&L difference with mean 0; its standard deviation sets the MDE that
+  later A/B experiments are sized for.
+area: other
+kind: aa
+arms:
+  control:
+    overlay: {}
+  treatment:
+    overlay: {}
+proposed_by: owner

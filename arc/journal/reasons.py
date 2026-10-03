@@ -56,6 +56,7 @@ class Stage(StrEnum):
     EXIT = "exit"
     REALLOCATE = "reallocate"
     RECONCILE = "reconcile"
+    EXPERIMENT = "experiment"  # E10.1 (D44): forward A/B experiment lifecycle
 
 
 STAGE_ORDER: tuple[Stage, ...] = tuple(Stage)
@@ -227,6 +228,15 @@ class ReasonCode(StrEnum):
     RECONCILE_WASH_SALE = "reconcile:wash_sale"
     RECONCILE_LOT_PRICE = "reconcile:lot_price"
     RECONCILE_TEST_FILL = "reconcile:test_fill"
+    # experiments (E10.1, D44): pre-registration and lifecycle of a forward A/B test
+    EXPERIMENT_DRAFTED = "experiment:drafted"
+    EXPERIMENT_REGISTERED = "experiment:registered"
+    EXPERIMENT_QUEUED = "experiment:queued"  # its area already has a registered/running one
+    EXPERIMENT_STARTED = "experiment:started"
+    EXPERIMENT_AA_OVERRIDE = "experiment:aa_override"  # owner started an ab with no A/A sigma
+    EXPERIMENT_STOPPED = "experiment:stopped"
+    EXPERIMENT_PROMOTED = "experiment:promoted"
+    EXPERIMENT_REJECTED = "experiment:rejected"
 
 
 def gate_reason(violation: str) -> ReasonCode:
@@ -403,6 +413,14 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.RECONCILE_WASH_SALE: "Wash sale flagged at reconcile",
     ReasonCode.RECONCILE_LOT_PRICE: "Tax-lot price corrected at reconcile",
     ReasonCode.RECONCILE_TEST_FILL: "Integration-test fill seen at reconcile",
+    ReasonCode.EXPERIMENT_DRAFTED: "Experiment drafted",
+    ReasonCode.EXPERIMENT_REGISTERED: "Experiment pre-registered (spec locked)",
+    ReasonCode.EXPERIMENT_QUEUED: "Experiment queued behind another in its area",
+    ReasonCode.EXPERIMENT_STARTED: "Experiment started",
+    ReasonCode.EXPERIMENT_AA_OVERRIDE: "A/B started without an A/A (owner override)",
+    ReasonCode.EXPERIMENT_STOPPED: "Experiment stopped",
+    ReasonCode.EXPERIMENT_PROMOTED: "Experiment's treatment promoted",
+    ReasonCode.EXPERIMENT_REJECTED: "Experiment's treatment rejected",
 }
 
 

@@ -1108,6 +1108,30 @@ auto-approve). Obvious config flaws are allowed at any N. Owner commands in the
 report thread: `create A-<n>`, `comment A-<n>`, `wontfix A-<n> <why>`,
 `accept A-<n>`, `rerun`.
 
+### 5.17 Forward A/B experiment registry (E10.1, D44)
+
+Pre-registration only: nothing here trades (the treatment runner is E10.2).
+Specs live in `config/experiments/live/<id>.yaml`; defaults (alpha 0.05, power
+0.8, 20/60 sessions, A/A 10 sessions, D44 guardrails) in `config/experiments.yaml`,
+tunable as `experiments.*` (`!arc config experiments`). The treatment overlay uses
+the same deep-merge format as the backtest overlays in `config/experiments/*.yaml`.
+
+    arc experiment create --spec config/experiments/live/x1_aa_baseline.yaml   # draft
+    arc experiment register X-1        # locks sha256(canonical spec); queued if the area is busy
+    arc experiment show X-1 [--json]
+    arc experiment verify X-1          # exit 1 when the stored spec no longer matches the lock
+    arc experiment list [--status running]
+    arc experiment stop X-1 --reason owner --actor local
+
+- After `register` the spec is locked (store check plus a DB trigger): a change
+  needs a new id. One `registered`/`running` experiment per area; the next
+  queued one is registered when it stops.
+- An `ab` experiment cannot start before an `aa` stopped with sigma recorded
+  (E10.4), unless the owner overrides it (journaled `experiment:aa_override`).
+- Every step writes a `decisions` row (stage `experiment`). `arm_id` on
+  `run_manifests`, `proposals`, `decisions`, `outcomes`, `pnl_snapshots` and
+  `executions` is NULL for control (all rows today).
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.
