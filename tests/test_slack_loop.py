@@ -24,7 +24,7 @@ def _root(**kw: object) -> LoopRoot:
     return LoopRoot(**base)  # type: ignore[arg-type]
 
 
-FACTS = "2026-09-28 09:40ET • Portfolio: $101,234 • P&L: +$312 • Trades: 3/200"
+FACTS = "2026-09-28 09:40ET • Portfolio: $101,234 • P&L: +$312 • Orders: 3/200"
 
 
 class TestRootLine:
@@ -66,7 +66,7 @@ class TestRootLine:
         r = _root(day_pnl=-1_250.7, equity=None, orders_used=None)
         assert loop_status_line(r) == (
             ":heavy_multiplication_x: 2026-09-28 09:40ET • Portfolio: n/a • P&L: -$1,251"
-            " • Trades: n/a • HOLD"
+            " • Orders: n/a • HOLD"
         )
 
     def test_slot_stamp_is_et(self) -> None:

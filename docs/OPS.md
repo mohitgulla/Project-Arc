@@ -963,7 +963,7 @@ up within one slot.
 **Slack (D36).** Every loop slot posts one root line in #arc-investor:
 
 ```
-✅ 2026-09-28 09:40ET • Portfolio: $101,234 • P&L: +$312 • Trades: 3/200 • BUY: SPY
+✅ 2026-09-28 09:40ET • Portfolio: $101,234 • P&L: +$312 • Orders: 3/200 • BUY: SPY
 ⏳ … • PENDING: SPY          (card awaiting the owner)  /  WORKING: SPY (ladder running)
 ✖ … • HOLD | HOLD (no change) | HOLD (timeout) | HOLD (skipped: previous loop running)
 ```
