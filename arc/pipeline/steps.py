@@ -86,6 +86,7 @@ from arc.personas.builders import (
     risk_input_from_context,
     risk_swap_input_from_context,
 )
+from arc.personas.entry_window import entry_terms, mentions_dte
 from arc.personas.schemas import (
     DirectorExclusion,
     DirectorOutput,
@@ -285,16 +286,34 @@ PROMPT_BUILDERS: dict[str, tuple[Callable[..., Any], Callable[..., str], type[Ba
 LLM_PERSONA = {"risk_swap": "risk"}
 
 
-def build_prompt(persona: str, snapshot: ContextSnapshot, inputs: Mapping[str, Any]) -> str:
+# E3.4a: personas whose prompt states the configured entry window + delta bands.
+ENTRY_TERMS_PERSONAS = frozenset({"director", "quant", "risk"})
+
+
+def build_prompt(
+    persona: str,
+    snapshot: ContextSnapshot,
+    inputs: Mapping[str, Any],
+    *,
+    settings: ArcSettings | None = None,
+) -> str:
     """The exact prompt a persona step sends, from its snapshot plus recorded inputs.
 
     ``inputs`` holds everything that is not in the context snapshot (portfolio,
-    chains, scan date, the hard-constraint lines). The steps call this, and so
-    does ``arc journal replay``, so a replay rebuilds the prompt through the
-    same code path and its sha256 must match ``persona_calls.prompt_sha256``.
+    chains, scan date, the hard-constraint lines, the E3.4a ``entry_terms``). The
+    steps call this, and so does ``arc journal replay``, so a replay rebuilds the
+    prompt through the same code path and its sha256 must match
+    ``persona_calls.prompt_sha256``. Inputs recorded before E3.4a carry no
+    ``entry_terms``; pass *settings* to rebuild them under today's configured window.
     """
     from_context, builder, schema = PROMPT_BUILDERS[persona]
     kwargs = {k: v for k, v in inputs.items() if k != "rules"}
+    if (
+        settings is not None
+        and persona in ENTRY_TERMS_PERSONAS
+        and kwargs.get("entry_terms") is None
+    ):
+        kwargs["entry_terms"] = entry_terms(settings).model_dump(mode="json")
     return _with_constraints(
         builder(from_context(snapshot, **kwargs)), list(inputs["rules"]), schema
     )
@@ -1053,6 +1072,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "max_notes": settings.pipeline_max_context_notes,
         "portfolio_block": "" if pctx.empty else render_portfolio_context(pctx, settings),
         "recent_ideas": "\n".join(recent_lines),
+        "entry_terms": entry_terms(settings).model_dump(mode="json"),
         "rules": _director_rules(cands, settings, budget, pctx),
     }
     reply, out = _ask(ctx, env, "director", snap, inputs, DirectorOutput)
@@ -1568,6 +1588,7 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "chains_json": json.dumps(chains, indent=2, sort_keys=True),
         "underlying_prices_json": json.dumps(spots, sort_keys=True),
         "scan_date": today.isoformat(),
+        "entry_terms": entry_terms(settings).model_dump(mode="json"),
         "rules": _quant_rules(no_chain, settings),
     }
     reply, out = _ask(ctx, env, "quant", ctx.snapshot, inputs, QuantOutput)
@@ -1615,6 +1636,19 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         t = sk.ticker.strip().upper()
         if t in menus and t not in chosen and t not in quant_skips and sk.reason.strip():
             quant_skips[t] = QuantSkip(ticker=t, reason=sk.reason.strip()[:300])
+    # E3.4a: every menu item is inside the configured entry window, so a skip that
+    # cites DTE applies a window the config never set. Observability only.
+    window = settings.entry_dte_window
+    for t, sk in quant_skips.items():
+        if mentions_dte(sk.reason):
+            log.warning(
+                "quant.dte_rule_outside_config",
+                ticker=t,
+                reason=sk.reason,
+                dte_window=f"{window[0]}-{window[1]}",
+                menu_dtes=sorted({c.dte for c in menus[t].values()}),
+                account_profile=settings.account_profile,
+            )
     not_structured = [t for t in menus if t not in chosen and t not in quant_skips]
 
     by_ticker = {q.ticker: q for q in kept}
@@ -1824,6 +1858,7 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "calendar_json": json.dumps(calendar, indent=2),
         "account_equity": float(info.equity),
         "scan_date": today.isoformat(),
+        "entry_terms": entry_terms(settings).model_dump(mode="json"),
         "rules": _risk_rules(settings, caps),
     }
     reply, out = _ask(ctx, env, "risk", ctx.snapshot, inputs, RiskOutput)

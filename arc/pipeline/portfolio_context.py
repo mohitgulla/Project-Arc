@@ -34,6 +34,7 @@ from arc.positions.portfolio import (
     PortfolioFlag,
     PortfolioPosition,
     PortfolioThesis,
+    bucket_display,
     expiry_bucket,
 )
 from arc.structures import parse_occ
@@ -415,6 +416,29 @@ def _mix(shares: Mapping[str, float]) -> str:
     return ", ".join(f"{k} {v:.0%}" for k, v in shares.items()) or "-"
 
 
+# E3.4a: week-based bucket labels in the prompt (arc.positions.portfolio.BUCKET_DISPLAY).
+_bucket = bucket_display
+
+
+def expiry_cluster_text(ag: PortfolioAggregates) -> str:
+    """The ``expiry_cluster`` flag line: the concentration, never a DTE range.
+
+    The configured window itself is stated once, in the prompt's entry-window
+    section (:meth:`arc.personas.entry_window.EntryTerms.director_line`).
+    """
+    parts = [
+        f"{ag.by_expiry_bucket.get(b, 0.0):.0%} of open max loss expires in one bucket "
+        f"({_bucket(b)})"
+        for b in ag.flagged_expiry_buckets
+    ]
+    return (
+        "expiry_cluster: "
+        + "; ".join(parts)
+        + ". Spread expiries within the configured entry window; the buckets measure "
+        "concentration and are not an entry rule."
+    )
+
+
 def render_portfolio_context(
     pc: PortfolioContext, settings: ArcSettings, *, max_positions: int | None = None
 ) -> str:
@@ -450,7 +474,8 @@ def render_portfolio_context(
         )
         lines.append(
             f"- {p.structure_id} {p.ticker} {p.kind or 'structure'} {p.stance.value} "
-            f"x{p.contracts} {p.dte} DTE ({p.expiry_bucket}); sector {p.sector}; "
+            f"x{p.contracts} {p.dte} DTE (expiry bucket {_bucket(p.expiry_bucket)}); "
+            f"sector {p.sector}; "
             f"entry {p.entry_net:+.2f}; mark P&L {_money(p.mark_pnl_total)} "
             f"({_pct(p.pct_of_max_gain)} of max gain, {_pct(p.pct_of_max_loss)} of max loss); "
             f"max loss ${p.max_loss_total:,.0f} ({p.max_loss_pct_equity:.1%} of equity); "
@@ -474,7 +499,8 @@ def render_portfolio_context(
         "",
         f"Allocation of open max loss (${ag.total_max_loss:,.0f}): by underlying "
         f"{_mix(ag.by_underlying)}; by sector {_mix(ag.by_sector)}; by stance "
-        f"{_mix(ag.by_stance)}; by expiry {_mix(ag.by_expiry_bucket)}. "
+        f"{_mix(ag.by_stance)}; by expiry bucket "
+        f"{_mix({_bucket(k): v for k, v in ag.by_expiry_bucket.items()})}. "
         f"HHI {ag.hhi_underlying:.2f}.",
         f"Net Greeks ({ag.greeks_source}): Δ {d.net:+.1f} of cap {d.cap:.1f} "
         f"({_pct(d.pct_used)} used); ν ${v.net:+,.0f}/vol-pt of cap ${v.cap:,.0f} "
@@ -483,7 +509,6 @@ def render_portfolio_context(
         + (", ".join(ag.flags) if ag.flags else "none")
         + (f" (sectors {', '.join(ag.flagged_sectors)})" if ag.flagged_sectors else "")
         + (f" (stances {', '.join(ag.flagged_stances)})" if ag.flagged_stances else "")
-        + (f" (expiry {', '.join(ag.flagged_expiry_buckets)})" if ag.flagged_expiry_buckets else "")
         + (
             f". At per-underlying cap: {', '.join(ag.at_cap_underlyings)}"
             if ag.at_cap_underlyings
@@ -491,6 +516,8 @@ def render_portfolio_context(
         )
         + ".",
     ]
+    if ag.flagged_expiry_buckets:
+        lines.append(expiry_cluster_text(ag))
     if pc.warnings:
         lines.append("Warnings: " + "; ".join(pc.warnings))
     return "\n".join(lines)
