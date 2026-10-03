@@ -3,7 +3,7 @@
 Pure rendering. One of three states, then the same facts every time:
 
     :white_check_mark: 2026-09-28 09:40ET • Portfolio: $101,234 • P&L: +$312
-        • Trades: 3/200 • BUY: SPY
+        • Orders: 3/200 • BUY: SPY
     :hourglass_flowing_sand: … • PENDING: SPY
     :heavy_multiplication_x: … • HOLD
 
@@ -84,7 +84,7 @@ def loop_status_line(root: LoopRoot) -> str:
         slot_stamp(root.slot),
         f"Portfolio: {_money(root.equity)}",
         f"P&L: {_money(root.day_pnl, signed=True)}",
-        "Trades: "
+        "Orders: "
         + (
             f"{root.orders_used}/{root.orders_limit}"
             if root.orders_used is not None and root.orders_limit is not None

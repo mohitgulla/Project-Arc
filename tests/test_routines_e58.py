@@ -545,7 +545,7 @@ class TestRootPerLoop:
         root = notes.roots[ts]
         assert root == (
             f":heavy_multiplication_x: {slot_stamp(SLOT0)} • Portfolio: $100,000 • P&L: +$0"
-            " • Trades: 0/200 • HOLD"
+            " • Orders: 0/200 • HOLD"
         )
         assert LoopRoot.model_validate(LoopState(conn).root(chain) or {}).outcome.value == "hold"
         # the notifier is unbound again after the loop
@@ -619,7 +619,7 @@ class TestRootPerLoop:
             disp.run_job("director", SLOT0, reason="schedule", now=SLOT0, chain=True)
         assert list(notes.roots.values()) == [
             f":heavy_multiplication_x: {slot_stamp(SLOT0)} • Portfolio: n/a • P&L: n/a"
-            " • Trades: n/a • HOLD (skipped: previous loop running)"
+            " • Orders: n/a • HOLD (skipped: previous loop running)"
         ]
         # …unless post_hold_roots is off
         quiet = load_routines(overrides=_loop_overrides(post_hold_roots=False))

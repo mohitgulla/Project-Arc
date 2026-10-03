@@ -127,7 +127,7 @@ def test_filled_closes_post_a_sell_root() -> None:
     ((ts, text),) = notes.roots.items()
     assert text == (
         f":white_check_mark: {slot_stamp(SLOT)} • Portfolio: $100,250 • P&L: +$250"
-        " • Trades: n/a • SELL: IWM, SPY"
+        " • Orders: n/a • SELL: IWM, SPY"
     )
     chain = outs[0].chain_run_id
     assert chain is not None and LoopState(conn).thread_ts(chain) == ts
