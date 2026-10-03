@@ -29,3 +29,9 @@ experiments:
       worst_day: -0.02         # any treatment day below -2% of equity
       order_rate_ratio: 1.5    # treatment orders > 1.5x control's
       stop_on_halt: true       # any halt / reconcile fill_unknown on the experiment account
+  # E10.3 evaluation (arc/experiments/evaluate.py). Not copied into specs (not
+  # hash-locked): how the numbers are computed, not what the experiment tests.
+  stats:
+    sigma_upper_q: 0.05      # no A/A sigma: running sd inflated to its 95% upper chi2 bound
+    bootstrap_resamples: 2000   # paired bootstrap of the Sortino difference (seeded)
+    order_rate_min_orders: 10   # order-rate guardrail judged once the treatment sent this many

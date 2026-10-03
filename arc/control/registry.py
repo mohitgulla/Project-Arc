@@ -1476,6 +1476,46 @@ _EXPERIMENT_TUNABLES: tuple[Tunable, ...] = (
         ("guardrails", "stop_on_halt"),
         type=_B,
     ),
+    # E10.3: how the daily evaluation computes its numbers (not copied into specs).
+    Tunable(
+        key="experiments.stats.sigma_upper_q",
+        group=Group.EXPERIMENTS,
+        type=_F,
+        description="D44 evaluation: with no A/A sigma on record, the running sd of the daily "
+        "difference is inflated to its (1 - q) upper chi-square bound (larger q = narrower CI).",
+        target=Target.EXPERIMENTS,
+        risk=Risk.UP,
+        path=("experiments", "stats", "sigma_upper_q"),
+        min=0.01,
+        max=0.25,
+        hard_ceiling=0.25,
+    ),
+    Tunable(
+        key="experiments.stats.bootstrap_resamples",
+        group=Group.EXPERIMENTS,
+        type=_I,
+        description="D44 evaluation: paired bootstrap resamples for the Sortino "
+        "non-inferiority CI (seeded, deterministic).",
+        target=Target.EXPERIMENTS,
+        risk=Risk.DOWN,
+        path=("experiments", "stats", "bootstrap_resamples"),
+        min=200,
+        max=20000,
+        hard_ceiling=200,
+    ),
+    Tunable(
+        key="experiments.stats.order_rate_min_orders",
+        group=Group.EXPERIMENTS,
+        type=_I,
+        description="D44 evaluation: the order-rate guardrail is judged only once the "
+        "treatment has sent at least this many orders.",
+        target=Target.EXPERIMENTS,
+        risk=Risk.UP,
+        path=("experiments", "stats", "order_rate_min_orders"),
+        min=1,
+        max=100,
+        hard_ceiling=100,
+    ),
 )
 
 

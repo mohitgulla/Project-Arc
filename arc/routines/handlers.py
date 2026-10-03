@@ -642,6 +642,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "risk.reallocate": "arc.positions.steps:reallocate_step",
     # E7.3 weekly paper scorecard (deterministic, from the audit store)
     "scorecard": "arc.routines.scorecard:scorecard_step",
+    # E10.3 (D44): daily experiment evaluation after the EOD reconcile
+    "experiments.evaluate": "arc.routines.experiments:experiments_evaluate_step",
 }
 
 

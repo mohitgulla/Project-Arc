@@ -7,6 +7,10 @@
 - ``arc experiment show <id> [--json]``
 - ``arc experiment verify <id>``             recompute the spec hash (exit 1 on mismatch)
 - ``arc experiment stop <id> --reason R --actor A``  owner stop
+- ``arc experiment report <id> [--stored] [--now ISO]``  the E10.3 evaluation (read-only:
+  computed as of now, or the latest stored report)
+- ``arc experiment evaluate [<id>] [--now ISO]``  run the daily evaluation now: stores
+  the report and applies its verdict (the ``experiments.evaluate`` routine does this)
 
 Every subcommand takes ``--db`` (default ``data/arc.db``). Exit 0 on success,
 1 on a failed verify, 2 on a refusal (locked spec, bad transition, bad spec).
@@ -15,6 +19,7 @@ No trading behaviour changes here: the treatment runner is E10.2.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import sys
 from typing import TYPE_CHECKING, Any
@@ -23,6 +28,7 @@ if TYPE_CHECKING:
     import argparse
     import sqlite3
 
+    from arc.experiments.evaluate import ExperimentReport
     from arc.experiments.models import ExperimentState
 
 __all__ = ["add_experiment_parser", "run_experiment"]
@@ -58,6 +64,13 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
     st.add_argument("--reason", required=True, choices=[x.value for x in StopReason])
     st.add_argument("--actor", required=True, help="owner Slack id, or local (shell owner)")
     st.add_argument("--note", default=None)
+    rp = common(esub.add_parser("report", help="E10.3 evaluation report (read-only)"))
+    rp.add_argument("experiment_id")
+    rp.add_argument("--stored", action="store_true", help="Latest stored report, no recompute")
+    rp.add_argument("--now", default=None, help="Evaluate as of this ISO time (default: now)")
+    ev = common(esub.add_parser("evaluate", help="Evaluate running experiments; apply verdicts"))
+    ev.add_argument("experiment_id", nargs="?", default=None)
+    ev.add_argument("--now", default=None, help="Evaluate as of this ISO time (default: now)")
 
 
 def _out(text: str) -> None:
@@ -117,12 +130,141 @@ def _state_json(s: ExperimentState) -> dict[str, Any]:
     return s.model_dump(mode="json")
 
 
+def _parse_now(text: str | None) -> _dt.datetime:
+    from arc.utils.calendar import ET, now_et
+
+    if text is None:
+        return now_et()
+    t = _dt.datetime.fromisoformat(text)
+    return t.replace(tzinfo=ET) if t.tzinfo is None else t.astimezone(ET)
+
+
+def _pct(v: float | None, digits: int = 3) -> str:
+    return "-" if v is None else f"{v:+.{digits}%}"
+
+
+def _num(v: float | None) -> str:
+    return "-" if v is None else f"{v:.2f}"
+
+
+def report_lines(r: ExperimentReport) -> list[str]:
+    """Plain-text rendering of an :class:`ExperimentReport` (``arc experiment report``)."""
+    p, s = r.primary, r.secondary
+    ci = f"[{_pct(p.ci.lo)}, {_pct(p.ci.hi)}]" if p.ci else "- (too few sessions)"
+    lines = [
+        f"{r.experiment_id}  {r.kind.value}/{r.area}  {r.status.value}  "
+        f"verdict {r.verdict.upper()}: {r.verdict_reason}",
+        f"  evaluated {r.evaluated_at:%Y-%m-%d %H:%M %Z}; t0 {r.t0:%Y-%m-%d %H:%M %Z} "
+        f"equity {r.t0_equity:,.2f}; legacy book {len(r.legacy_book)}",
+        f"  sessions {r.sessions} (min {r.min_sessions}, max {r.max_sessions}); "
+        f"as of {r.as_of_day or '-'}"
+        + (f"; missing {', '.join(map(str, r.missing_sessions))}" if r.missing_sessions else ""),
+        f"  primary  mean d {_pct(p.mean)}/day  always-valid {1 - r.alpha:.0%} CI {ci}  "
+        f"sigma {_pct(p.sigma)} ({p.sigma_source or '-'})  tau {_pct(p.tau)}",
+        f"  secondary Sortino control {_num(s.sortino_control)}"
+        f" treatment {_num(s.sortino_treatment)}"
+        + (f"  diff CI [{s.diff_ci.lo:+.2f}, {s.diff_ci.hi:+.2f}]" if s.diff_ci else "  diff CI -")
+        + (
+            f"  margin {s.margin}: {'non-inferior' if s.non_inferior else 'not shown'}"
+            if s.margin is not None
+            else "  (aa: no margin)"
+        ),
+        "  guardrails:",
+    ]
+    for g in r.guardrails:
+        flag = "BREACH" if g.breached else "ok"
+        val = "-" if g.value is None else f"{g.value:.4g}"
+        thr = "-" if g.threshold is None else f"{g.threshold:.4g}"
+        lines.append(f"    {flag:6} {g.rule:13} value {val} threshold {thr}  {g.detail}")
+    lines.append("  arms:")
+    for a in r.arms:
+        lines.append(
+            f"    {a.arm:9} pnl {a.total_pnl:+,.2f}  max DD {a.max_drawdown:.2%}  "
+            f"worst day {_pct(a.worst_day, 2)}  orders {a.orders}  "
+            f"fills {a.filled_executions}/{a.executions}  "
+            f"slippage {'-' if a.mean_slippage_bps is None else f'{a.mean_slippage_bps:.1f} bps'}"
+        )
+    c = r.calibration
+    lines.append(
+        f"  calibration: sigma {_pct(c.sigma)}  MDE "
+        + ", ".join(f"{n}:{_pct(v)}" for n, v in c.mde_fixed.items())
+        + "  always-valid MDE "
+        + ", ".join(f"{n}:{_pct(v)}" for n, v in c.mde_always_valid.items())
+    )
+    slip = "-" if c.slippage_gap_bps is None else f"{c.slippage_gap_bps:+.1f} bps"
+    lines.append(
+        f"    slippage gap {slip}"
+        f"  fill-rate gap {_pct(c.fill_rate_gap, 1)}  LLM divergence "
+        f"{'-' if c.llm_divergence_rate is None else f'{c.llm_divergence_rate:.0%}'} "
+        f"({c.divergent_chains}/{c.paired_chains} paired chains)"
+    )
+    if r.breakdowns:
+        lines.append("  breakdowns (reported only, never decision inputs):")
+        for b in r.breakdowns:
+            lines.append(
+                f"    {b.by:14} {b.key:16} {b.arm:9} trades {b.trades:3}  "
+                f"realised {b.realised_pnl:+,.2f}"
+            )
+    if r.series:
+        lines.append("  series (day: control pnl, legacy pnl, treatment pnl, d):")
+        for row in r.series:
+            lines.append(
+                f"    {row.day}  {row.control_pnl:+10,.2f}  {row.legacy_pnl:+9,.2f}  "
+                f"{row.treatment_pnl:+10,.2f}  {_pct(row.d)}"
+            )
+    lines.append(
+        f"  spec sha256 {r.spec_hash}  config sha256 {r.config_hash[:16]}  "
+        f"shas control {r.control_sha[:12]} treatment {(r.treatment_sha or '-')[:12]} "
+        f"evaluator {(r.evaluator_sha or '-')[:12]}"
+    )
+    return lines
+
+
 def _owner(actor: str) -> bool:
     from arc.config import ArcSettings
 
     if actor == LOCAL_ACTOR:
         return True
     return actor.upper() in {u.upper() for u in ArcSettings().approver_slack_user_ids}
+
+
+def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) -> int:
+    from arc.control.effective import effective_settings, experiments_config
+    from arc.experiments.evaluate import build_report, evaluate, evaluate_running, latest_report
+    from arc.experiments.models import ExperimentStatus
+
+    now = _parse_now(args.now)
+    cfg = experiments_config(effective_settings(conn))
+    if args.experiment_command == "report":
+        if args.stored:
+            rep = latest_report(conn, args.experiment_id)
+            if rep is None:
+                _err(f"arc experiment report: no stored report for {args.experiment_id}")
+                return 2
+        else:
+            rep = build_report(
+                conn, store.require(args.experiment_id), cfg, now=now, aa_sigma=store.aa_sigma()
+            )
+        reports = [rep]
+    else:
+        store._now = lambda: now  # noqa: SLF001 - stop events carry the evaluation time
+        if args.experiment_id is not None:
+            st = store.require(args.experiment_id)
+            if st.status is not ExperimentStatus.RUNNING:
+                _err(f"arc experiment evaluate: {args.experiment_id} is {st.status.value}")
+                return 2
+            reports = [evaluate(store, args.experiment_id, cfg, now=now)]
+        else:
+            reports = evaluate_running(store, cfg, now=now)
+    if args.json:
+        payload = [r.model_dump(mode="json") for r in reports]
+        _out(json.dumps(payload[0] if args.experiment_command == "report" else payload, indent=2))
+    else:
+        for r in reports:
+            _out("\n".join(report_lines(r)))
+        if not reports:
+            _out("no running experiments")
+    return 0
 
 
 def run_experiment(args: argparse.Namespace) -> int:
@@ -173,6 +315,8 @@ def run_experiment(args: argparse.Namespace) -> int:
                     f"  recomputed {v['recomputed_hash']}"
                 )
             return 0 if v["ok"] else 1
+        elif cmd in ("report", "evaluate"):
+            return _run_eval(args, store, conn)
         elif cmd == "stop":
             if not _owner(args.actor):
                 _err(f"arc experiment stop: {args.actor} is not the owner")

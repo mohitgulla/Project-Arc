@@ -1132,6 +1132,30 @@ the same deep-merge format as the backtest overlays in `config/experiments/*.yam
   `run_manifests`, `proposals`, `decisions`, `outcomes`, `pnl_snapshots` and
   `executions` is NULL for control (all rows today).
 
+### 5.18 Daily evaluation, guardrails and verdict (E10.3, D44)
+
+The `experiments.evaluate` routine (trading days 16:40 ET, after the 16:30 auditor
+reconcile; deterministic, halt-exempt) evaluates every running experiment and
+stores one `ExperimentReport` in the append-only `experiment_reports` table:
+
+    arc experiment report X-2 --db <db> [--json]      # computed now, read-only
+    arc experiment report X-2 --db <db> --stored      # latest stored report
+    arc experiment evaluate [X-2] --db <db> [--now ISO]   # what the routine does
+
+- Series: `d_t = (treat_pnl_t − ctrl_pnl_t) / t0_equity` per session from each
+  arm's EOD `pnl_snapshots`; control's legacy-book P&L (marks in control's
+  `positions_snapshots` + close cash) is removed. Missing sessions are listed.
+- Primary: always-valid mSPRT confidence sequence (normal mixture). σ is the
+  A/A's when recorded, else the running sd inflated to its chi² upper bound
+  (`experiments.stats.sigma_upper_q`). Win = lower bound > 0 after
+  `min_sessions` **and** Sortino non-inferior (paired bootstrap CI vs margin).
+- Guardrails → stop(harm), journaled `experiment:guardrail`: max-DD gap,
+  worst day, order rate (judged once treatment sent `order_rate_min_orders`),
+  any halt / `fill_unknown` on the experiment arm (`halts.arm_id`, new).
+- `max_sessions` without a win → stop(futility); for an A/A that is the normal
+  end and records σ (unlocks ab starts). An A/A whose CI excludes 0 → stop(invalid).
+- Breakdowns by regime / structure kind are reported, never decision inputs.
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.

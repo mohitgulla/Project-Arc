@@ -21,6 +21,7 @@ __all__ = [
     "ExperimentDefaults",
     "ExperimentsConfig",
     "Guardrails",
+    "StatsConfig",
     "load_experiments_config",
 ]
 
@@ -52,6 +53,25 @@ class Guardrails(BaseModel):
     )
 
 
+class StatsConfig(BaseModel):
+    """How E10.3 computes the numbers (not hash-locked into specs)."""
+
+    model_config = _FORBID
+
+    sigma_upper_q: float = Field(
+        default=0.05,
+        gt=0.0,
+        lt=0.5,
+        description="No A/A sigma: inflate the running sd to its (1 - q) upper chi2 bound",
+    )
+    bootstrap_resamples: int = Field(default=2000, ge=200, le=20000)
+    order_rate_min_orders: int = Field(
+        default=10,
+        ge=1,
+        description="The order-rate guardrail is judged only once the treatment sent this many",
+    )
+
+
 class ExperimentDefaults(BaseModel):
     model_config = _FORBID
 
@@ -74,6 +94,7 @@ class ExperimentsConfig(BaseModel):
     model_config = _FORBID
 
     defaults: ExperimentDefaults = Field(default_factory=lambda: ExperimentDefaults())
+    stats: StatsConfig = Field(default_factory=lambda: StatsConfig())
 
 
 def load_experiments_config(
