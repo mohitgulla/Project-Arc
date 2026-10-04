@@ -18,3 +18,9 @@ Lifecycle:
 Unset `alpha`, `power`, `min_sessions` and `max_sessions` are
 filled from `config/experiments.yaml` at `create`; the filled spec is what gets
 hash-locked. After `register`, any edit needs a new experiment id.
+
+Promotion (E10.7 strategy-lane CI check, docs/OPS.md 5.20): a PR that flips a
+strategy default cites `Experiment: XP-<n>` and commits
+`verdicts/XP-<n>.yaml` with `experiment_id`, `verdict: win` and the stored report's
+`report_hash` (from `arc experiment show XP-<n> --json`). The check only lets the PR
+change the values that experiment's treatment overlay tested.
