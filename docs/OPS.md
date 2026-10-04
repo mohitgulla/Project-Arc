@@ -1229,6 +1229,79 @@ its body:
 - Local dry run: `.venv/bin/python scripts/strategy_lane_check.py --base origin/main
   --head HEAD --body-file <body.md>` (exit 0 pass, 1 fail, 2 config error).
 
+### 5.21 A/A calibration run XP-1: runbook for E10.8 (E10.4, D44)
+
+XP-1 (`config/experiments/live/xp1_aa_baseline.yaml`) runs the production config on
+both paper accounts (empty overlay on both arms) for `experiments.aa_sessions` (10)
+sessions. It measures sigma of the paired daily difference d_t, the achievable MDE at
+20/40/60 sessions, the slippage and fill-rate gap between the two accounts and the
+LLM-divergence rate. alpha 0.05 and min 20 / max 60 sessions are owner policy (D44)
+and are not changed by the A/A. The report template is
+`docs/RESEARCH/experiments/XP-1-aa.md` (header "pending live run (E10.8)").
+
+Dry run (scratch stores, fixtures, no broker, no orders), any time:
+
+    .venv/bin/python scripts/xp1_aa_dry_run.py --dir <empty scratch dir> [--inject-usd 150]
+
+`--inject-usd` gives the treatment a fake daily edge: the run must end `invalid`.
+
+**Pre-checks (all must hold; E10.2a's RTH evidence must be done first):**
+
+1. Experiment account flat. `arc experiment start` refuses otherwise
+   (`live_flat_check`: no positions and no open orders on `ALPACA_EXP_*`). Close or
+   cancel anything in the Alpaca dashboard; there is no auto-flatten.
+2. Control's legacy book holds at most 2 structures:
+
+       sqlite3 -readonly data/arc.db "select count(*) from open_structures where status='open'"
+
+   Every open structure becomes legacy at t0: excluded from both arms, with its
+   max loss reserved in the arm until it closes on control. More than 2 means
+   waiting for closes.
+3. Halts clear: `.venv/bin/arc halt-status` prints `trading allowed` (exit 0).
+4. No experiment running in area `other`: `arc experiment list --db data/arc.db`.
+5. `experiments.runner.enabled` is `true` (`!arc config experiments`) and the
+   routines tick cron is installed (`hermes cron list`).
+
+**Start (before the 09:30 ET open, so the first session is the same day):**
+
+    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --db data/arc.db
+    arc experiment register XP-1 --db data/arc.db
+    arc experiment start XP-1 --db data/arc.db
+
+`start` reads control's broker equity as t0 equity, creates
+`data/arc-exp-XP-1.db` and opens the arm's virtual account. From the next tick on,
+the tick spawns `arc experiment arms-tick` after every control loop chain.
+
+**Reading the daily line.** After the 16:40 ET `experiments.evaluate` routine, the
+#arc-investor day thread gets one line per running experiment:
+
+    [XP-1] A/A Day 4 • P&L ∆ −0.02%/day (p 1.00) • Sortino ∆ −0.35 (p 0.62)
+
+- `Day N`: paired sessions so far (both arms have an EOD snapshot). A session one
+  arm missed is skipped and listed under `missing` in the report.
+- `P&L ∆`: mean of d_t, % of t0 equity per day, with its always-valid p. On an A/A
+  it should hover around 0 with a large p.
+- A stop card posts when the verdict changes: `Futility` after 10 sessions is the
+  normal end and records sigma (it unlocks A/B starts); `Invalid` (CI excludes 0)
+  means the harness is broken: the arms differ when they should not. Investigate
+  the pairing (`arm_pairs`, manifests) before any A/B.
+- The full report: `arc experiment report XP-1 --db data/arc.db` (computed now) or
+  `--stored` (the 16:40 one). Tower: Experiments page.
+
+**Stop by hand** (any time, e.g. arm trouble):
+
+    arc experiment stop XP-1 --reason owner --actor local --db data/arc.db --note "<why>"
+
+The tick stops spawning arms-tick once no experiment is running. To pause the arms
+without stopping the experiment: `!arc set experiments.runner.enabled false`.
+
+**Write the report** after the stop (futility or invalid):
+
+    arc experiment report XP-1 --db data/arc.db --stored --format md \
+      --out docs/RESEARCH/experiments/XP-1-aa.md
+
+and commit it (replaces the template's dry-run example).
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.
