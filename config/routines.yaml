@@ -281,7 +281,22 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     ttl: 24h                    # a missed Monday still runs that day
     writes: []                  # writes data/symbol_master.json, never context
 
+# E4.8a (D46/D44): Finnhub per-ticker facts in the Scout/Director prompts. The switch
+# is `personas.finnhub_context` below (default off = prompts unchanged); these are its
+# knobs. Experiment XP-2 (config/experiments/live/xp2_finnhub_context.yaml) tests `on`.
+finnhub_context:
+  max_chars_per_ticker: 300     # rendered facts line per ticker (hard budget)
+  scout_max_tickers: 8          # Scout: tickers its story digests name, first N
+  director_max_tickers: 10      # Director: the candidates it ranks, first N
+  max_age_days:                 # a part fetched longer ago than this is omitted
+    earnings_history: 8
+    insider_activity: 2
+    analyst_recs: 8
+    fundamentals: 8
+  cap_buckets_musd: {mega: 200000, large: 10000, mid: 2000, small: 300}   # below small = micro
+
 personas:
+  finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   scout:                        # D31: every 30 min in session (15 runs), after the fast sources
     every: 30m
     window: "09:00-16:00"
@@ -304,7 +319,8 @@ personas:
     window: "09:40-15:50"       # owner 2026-09-28: 75 slots; skips the open's first 10 min
     days: trading
     chain: [quant, risk, propose, execute]   # D34: execute = publish + auto-approve + hand off ladders
-    reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options, position_review, story]   # == DIRECTOR_READS (arc/pipeline/steps.py)
+    reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options, position_review, story,
+            earnings_history, insider_activity, analyst_recs, fundamentals]   # == DIRECTOR_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on
     writes: [shortlist, regime, note, portfolio_context]   # E5.9: portfolio_context + portfolio_view/thesis_check notes
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card

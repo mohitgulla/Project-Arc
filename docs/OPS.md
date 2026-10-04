@@ -1447,6 +1447,39 @@ sqlite3 ~/.hermes/cache/scratch/fh.db \
   "select kind, subject, payload from context_entries where status='active'"
 ```
 
+### 5.24 Finnhub facts in the persona prompts (E4.8a, D46, D44)
+
+The four kinds above reach the Scout and the Director only when the switch is on:
+
+    personas.finnhub_context: "off"     # config/routines.yaml; off | on
+
+Off (the shipped default), both prompts are byte-identical to the pre-E4.8a prompts
+(golden hashes in `tests/test_finnhub_persona_context.py`) and the D31 no-change
+digest is unchanged. It is strategy lane: the default flips only on an XP-2 `win`
+verdict (`config/experiments/live/xp2_finnhub_context.yaml`, a draft A/B whose
+treatment overlay is just this switch; `arc experiment create/register` it after the
+A/A). `!arc set personas.finnhub_context on` turns it on for paper without a PR (a
+riskier change, so it asks for a confirm).
+
+On, the prompt gets a `Ticker facts (Finnhub, code-built)` block: one line per ticker,
+at most `finnhub_context.max_chars_per_ticker` (300) characters, whole parts dropped
+in order to fit:
+
+    AAPL: EPS surprise -0.9/+1.1/+4.2/+4.5% (3 beat/1 miss) [1d] | insider 90d net +$2.4M, cluster buy [1d] | analysts net -4 m/m, 64% bullish of 53 [1d] | beta 1.21, 5% off 52w high, …
+
+- **Which tickers:** the Scout gets the tickers its story digests in each batch name
+  (first `scout_max_tickers`, 8); the Director gets its candidates, highest confidence
+  first (first `director_max_tickers`, 10).
+- **Missing or stale parts are omitted**, never zero-filled: an expired context entry
+  is not in the snapshot, and a part whose fetch date (`as_of`) is older than
+  `finnhub_context.max_age_days.<kind>` is dropped. `[Nd]` is the data's age.
+- 52-week distances need the ticker's `regime` entry (`last_close`); without one they
+  are left out. The market-cap bucket uses `finnhub_context.cap_buckets_musd`.
+- **D31 digest:** with the switch on, the loop digest adds `<kind>:<ticker>@<as_of>`
+  for the Director's tickers, so a re-fetch of the same day's data is no change and
+  a weekly refresh is one.
+- The gate never sees any of it, and `Candidate` gains no field.
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.

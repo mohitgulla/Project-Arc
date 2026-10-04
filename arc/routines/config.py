@@ -431,6 +431,81 @@ class TowerSettings(BaseModel):
     overview: TowerOverviewSettings = Field(default_factory=TowerOverviewSettings)
 
 
+# E4.8a (D46/D44): the Finnhub per-ticker kinds a persona may see as compact facts.
+FINNHUB_FACT_KINDS: tuple[str, ...] = (
+    "earnings_history",
+    "insider_activity",
+    "analyst_recs",
+    "fundamentals",
+)
+# Persona-level switches that live under ``personas:`` next to the jobs (a scalar,
+# not a job mapping). Each maps to the settings block whose ``enabled`` it sets.
+PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context",)
+
+
+def parse_on_off(v: Any, *, where: str) -> bool:
+    """``on``/``off`` (YAML 1.1 also reads bare ``on``/``off`` as booleans)."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str) and v.strip().lower() in {"on", "off"}:
+        return v.strip().lower() == "on"
+    msg = f"{where}: expected on | off, got {v!r}"
+    raise ValueError(msg)
+
+
+class FinnhubContextSettings(BaseModel):
+    """E4.8a: Finnhub facts in the Scout/Director prompts (default off, D44 experiment).
+
+    ``enabled`` comes from ``personas.finnhub_context: off | on``; the other knobs
+    are the ``finnhub_context:`` block. Off = the prompts are byte-identical to the
+    pre-E4.8a prompts and the D31 digest is unchanged.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    max_chars_per_ticker: Annotated[int, Field(ge=80, le=1000)] = 300
+    scout_max_tickers: Annotated[int, Field(ge=1, le=50)] = 8
+    director_max_tickers: Annotated[int, Field(ge=1, le=50)] = 10
+    # A part whose payload ``as_of`` is older than this many days is omitted (the
+    # context TTL already expires the entry; this guards a stale fetch date).
+    max_age_days: dict[str, Annotated[int, Field(ge=1, le=60)]] = Field(
+        default_factory=lambda: {
+            "earnings_history": 8,
+            "insider_activity": 2,
+            "analyst_recs": 8,
+            "fundamentals": 8,
+        }
+    )
+    # Market-cap bucket floors in USD millions, checked largest first; below all = micro.
+    cap_buckets_musd: dict[str, Annotated[float, Field(gt=0)]] = Field(
+        default_factory=lambda: {
+            "mega": 200_000.0,
+            "large": 10_000.0,
+            "mid": 2_000.0,
+            "small": 300.0,
+        }
+    )
+
+    @field_validator("max_age_days")
+    @classmethod
+    def _known(cls, v: dict[str, int]) -> dict[str, int]:
+        unknown = sorted(set(v) - set(FINNHUB_FACT_KINDS))
+        if unknown:
+            msg = f"finnhub_context.max_age_days: unknown kinds {unknown}"
+            raise ValueError(msg)
+        return {**{k: 8 for k in FINNHUB_FACT_KINDS}, **v}
+
+    def prompt_options(self, tickers: list[str], max_tickers: int) -> dict[str, Any]:
+        """The JSON-able ``ticker_facts`` prompt input (recorded for journal replay)."""
+        return {
+            "tickers": tickers[:max_tickers],
+            "max_chars": self.max_chars_per_ticker,
+            "max_age_days": dict(self.max_age_days),
+            "cap_buckets_musd": dict(self.cap_buckets_musd),
+        }
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -452,6 +527,29 @@ class RoutinesConfig(BaseModel):
     personas: dict[str, JobSpec] = Field(default_factory=dict)
     steps: dict[str, StepSpec] = Field(default_factory=dict)
     triggers: list[TriggerRule] = Field(default_factory=list)
+    # E4.8a: knobs + the ``personas.finnhub_context`` flag (as ``enabled``).
+    finnhub_context: FinnhubContextSettings = Field(default_factory=FinnhubContextSettings)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _persona_flags(cls, data: Any) -> Any:
+        """Lift scalar ``personas.<flag>`` switches out of the job map (input not mutated)."""
+        if not isinstance(data, dict) or not isinstance(data.get("personas"), dict):
+            return data
+        personas = dict(data["personas"])
+        out = dict(data)
+        for flag in PERSONA_FLAGS:
+            if flag not in personas:
+                continue
+            raw = personas.pop(flag)
+            block = dict(out.get(flag) or {})
+            if "enabled" in block:
+                msg = f"{flag}.enabled: set the switch as personas.{flag}: on | off"
+                raise ValueError(msg)
+            block["enabled"] = parse_on_off(raw, where=f"personas.{flag}")
+            out[flag] = block
+        out["personas"] = personas
+        return out
 
     @field_validator("sources", "personas", "steps", mode="before")
     @classmethod
