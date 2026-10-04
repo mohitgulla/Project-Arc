@@ -202,7 +202,10 @@ def test_equity_falls_back_to_reconciled_without_marks(tmp_path: Path) -> None:
         assert d.source == "reconciled" and d.day_pnl == D("250") and d.prev_equity == D("100000")
         assert d.day_pct == pytest.approx(0.0025)
         assert o.marks_stale and o.marks_at is None and o.positions == []
-        assert any(a.kind == "reconcile" and a.tone == "neg" for a in o.activity)
+        # reconciles 3+ days ago are outside the default 24 h window; a week shows them
+        assert not any(a.kind == "reconcile" for a in o.activity)
+        week = load_overview(ro, now=NOW, stale_after=STALE, activity_hours=168)
+        assert any(a.kind == "reconcile" and a.tone == "neg" for a in week.activity)
     finally:
         ro.close()
 
@@ -318,15 +321,63 @@ def test_movers(conn: sqlite3.Connection) -> None:
 
 
 def test_recent_activity(conn: sqlite3.Connection) -> None:
-    act = _overview(conn).activity
-    assert len(act) == 20
+    o = _overview(conn)
+    act = o.activity
+    assert o.activity_hours == 24 and o.activity_since == NOW - dt.timedelta(hours=24)
+    assert all(a.at >= o.activity_since for a in act)
     assert [a.at for a in act] == sorted((a.at for a in act), reverse=True)
     kinds = {a.kind for a in act}
-    assert {"fill", "execution", "exit", "halt", "reconcile", "alert"} <= kinds
+    assert {"fill", "execution", "exit", "halt", "alert"} <= kinds
     halt = next(a for a in act if a.kind == "halt")
     assert halt.tone == "neg" and "arc:reconcile" in halt.text
     assert any(a.kind == "alert" and "resolved" in a.text for a in act)
     assert next(a for a in act if a.kind == "exit").ref == fixture.phash("exit-qqq")
+    # the base fixture's reconciles are days old: outside 24 h, inside a week
+    assert "reconcile" not in kinds
+    week = load_overview(conn, now=NOW, stale_after=STALE, activity_hours=168)
+    assert "reconcile" in {a.kind for a in week.activity}
+
+
+def test_recent_activity_groups_alert_repeats(conn: sqlite3.Connection) -> None:
+    """E8.8b: 12 `missed_window` rows in the window collapse into one row with count 12."""
+    act = _overview(conn).activity
+    missed = [a for a in act if a.group == "missed_window"]
+    assert len(missed) == 1
+    g = missed[0]
+    assert g.count == 12 and len(g.entries) == 12 and g.text == "missed_window ×12"
+    assert g.at == max(e.at for e in g.entries) == g.entries[0].at
+    assert g.tone == "warn"  # the open scout alert is the worst tone in the group
+    assert [e.at for e in g.entries] == sorted((e.at for e in g.entries), reverse=True)
+    assert not any(a.text.startswith("Alert missed_window") for a in act)  # no loose repeats
+    # single alerts of other kinds stay plain rows
+    single = next(a for a in act if a.text.startswith("Alert coverage"))
+    assert single.count == 1 and single.entries == [] and single.group is None
+    # the 30 h-old repeat is outside the window, inside a week
+    week = load_overview(conn, now=NOW, stale_after=STALE, activity_hours=168)
+    assert next(a for a in week.activity if a.group == "missed_window").count == 13
+
+
+def test_recent_activity_window_boundary(tmp_path: Path) -> None:
+    """E8.8b acceptance: a 25 h-old alert is dropped, a 23 h-old one is returned."""
+    from arc.monitoring.store import AlertRepo
+
+    path = tmp_path / "act.db"
+    c = connect(path)
+    migrate(c)
+    repo = AlertRepo(c)
+    repo.open("old", "tick_stale", "25 h old", at=NOW - dt.timedelta(hours=25), resolved=True)
+    repo.open("new", "gateway_down", "23 h old", at=NOW - dt.timedelta(hours=23), resolved=True)
+    c.close()
+    ro = connect_ro(path)
+    try:
+        texts = [a.text for a in _overview(ro).activity]
+        assert texts == ["Alert gateway_down: 23 h old"]
+        both = load_overview(ro, now=NOW, stale_after=STALE, activity_hours=26).activity
+        assert len(both) == 2
+        with pytest.raises(ValueError, match="activity_hours"):
+            load_overview(ro, now=NOW, stale_after=STALE, activity_hours=0)
+    finally:
+        ro.close()
 
 
 def test_status_strip(conn: sqlite3.Connection) -> None:
@@ -400,6 +451,38 @@ def test_api_overview_default_range_and_bad_input(client: TestClient) -> None:
     bad = client.get("/api/overview", params={"range": "1Y"})
     assert bad.status_code == 422 and bad.json()["error"] == "invalid_request"
     assert client.get("/api/positions", params={"status": "x"}).status_code == 422
+
+
+def test_api_overview_activity_hours(client: TestClient, fx_db: Path, tmp_path: Path) -> None:
+    """E8.8b: `activity_hours` (1–168) overrides the config default; the default is
+    `tower.overview.activity_hours` from routines.yaml, D26 overrides included."""
+    body = client.get("/api/overview").json()
+    assert body["activity_hours"] == 24
+    wide = client.get("/api/overview", params={"activity_hours": 168}).json()
+    assert wide["activity_hours"] == 168 and len(wide["activity"]) > len(body["activity"])
+    for bad in (0, 169, "x"):
+        r = client.get("/api/overview", params={"activity_hours": bad})
+        assert r.status_code == 422 and r.json()["error"] == "invalid_request"
+    routines = tmp_path / "routines.yaml"
+    raw = (REPO / "config" / "routines.yaml").read_text()
+    routines.write_text(raw.replace("activity_hours: 24", "activity_hours: 6"))
+    c = TestClient(create_app(fx_db, static_dir=tmp_path, routines_path=routines, clock=lambda: NOW))
+    six = c.get("/api/overview").json()
+    assert six["activity_hours"] == 6
+    since = dt.datetime.fromisoformat(six["activity_since"])
+    assert all(dt.datetime.fromisoformat(a["at"]) >= since for a in six["activity"])
+
+
+def test_activity_hours_is_a_registered_tunable() -> None:
+    from arc.control.effective import raw_yaml
+    from arc.control.registry import REGISTRY, Target, parse_value, read_raw
+
+    t = REGISTRY["tower.overview.activity_hours"]
+    assert t.target is Target.ROUTINES and (t.min, t.max) == (1, 168)
+    assert read_raw(t, raw_yaml(t.target)) == 24
+    assert parse_value(t, "48h") == 48
+    with pytest.raises(ValueError, match="activity_hours"):
+        parse_value(t, "200")
 
 
 def test_api_positions(client: TestClient) -> None:
