@@ -12,7 +12,8 @@
 #
 # Owner decisions 2026-10-03 (#project-arc): alpha 0.05 two-sided, power 0.8, min
 # 20 / max 60 sessions (futility stop at max), an A/A run of ~10 sessions first.
-# Re-set from the A/A (E10.4). Primary + secondary metrics only: no guardrail
+# alpha/min/max are fixed policy, NOT re-set from the A/A: XP-1 (E10.4/E10.8) measures
+# sigma, the MDE and the fill gap only. Primary + secondary metrics only: no guardrail
 # (harm) auto-stops (owner, 2026-10-03, PR #102).
 
 experiments:
