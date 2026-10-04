@@ -200,7 +200,7 @@ class DbRateLimiter:
                     """INSERT INTO routine_state (key, value, updated_at) VALUES (?, ?, ?)
                        ON CONFLICT(key) DO UPDATE SET value = excluded.value,
                                                       updated_at = excluded.updated_at""",
-                    (self.key, json.dumps([round(t, 3) for t in kept]), updated),
+                    (self.key, json.dumps(kept), updated),
                 )
         except BaseException:
             if own_txn:

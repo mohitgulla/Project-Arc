@@ -415,11 +415,20 @@ class TestRateLimiter:
 def _worker(db: str, out: str) -> None:
     import time as _t
 
-    lim = DbRateLimiter(connect(db), calls_per_minute=6, window_s=2.0)
+    # Record the stamp the limiter admitted (its last wall() read), not time.time()
+    # after acquire() returns: a descheduled process would stamp late and make two
+    # admissions look like they share a window (seen on CI).
+    last = {"t": 0.0}
+
+    def wall() -> float:
+        last["t"] = _t.time()
+        return last["t"]
+
+    lim = DbRateLimiter(connect(db), calls_per_minute=6, window_s=2.0, wall=wall)
     got = []
     for _ in range(8):
         lim.acquire()
-        got.append(_t.time())
+        got.append(last["t"])
     Path(out).write_text(json.dumps(got))
 
 
