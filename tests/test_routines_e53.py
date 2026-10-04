@@ -856,7 +856,7 @@ def test_yaml_comment_overview_matches_config() -> None:
     assert raw["tick"]["interval"] == "5m"
     assert set(raw["personas"]) == {
         "scout", "scout.overnight", "director", "monitor", "auditor", "scorecard", "investor",
-        "positions.evaluate",
+        "positions.evaluate", "experiments.evaluate",
     }  # fmt: skip
     # D31: the loop's cadence and window are config; the loop knobs are one block.
     assert raw["personas"]["director"] == {

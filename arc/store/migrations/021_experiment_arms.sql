@@ -1,4 +1,4 @@
--- 020_experiment_arms.sql — experiment arm stores (E10.2, D44).
+-- 021_experiment_arms.sql — experiment arm stores (E10.2, D44).
 --
 -- Every experiment arm except production control runs against its OWN store
 -- (``config/experiments.yaml`` runner.arms.<arm>.db). Its D32 order budget, halts,

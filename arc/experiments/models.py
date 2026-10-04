@@ -30,8 +30,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from arc.experiments.config import Guardrails  # noqa: TC001 - pydantic field type
-
 __all__ = [
     "ACTIVE_STATUSES",
     "CONTROL_ARM",
@@ -152,7 +150,7 @@ class Arms(BaseModel):
 class ExperimentSpec(BaseModel):
     """A pre-registrable experiment (``config/experiments/live/*.yaml``).
 
-    Fields left ``None`` (alpha, power, sessions, guardrails) are filled from
+    Fields left ``None`` (alpha, power, sessions) are filled from
     ``config/experiments.yaml`` by ``arc experiment create``; the filled spec is
     what gets hash-locked.
     """
@@ -173,7 +171,6 @@ class ExperimentSpec(BaseModel):
         gt=0.0,
         description="Sortino may be worse than control by at most this (required for ab)",
     )
-    guardrails: Guardrails | None = None
     alpha: float | None = Field(default=None, gt=0.0, lt=0.5)
     power: float | None = Field(default=None, gt=0.0, lt=1.0)
     mde: float | None = Field(
@@ -233,7 +230,6 @@ class ExperimentSpec(BaseModel):
     def complete(self) -> bool:
         """Every default-able field is set (what registration requires)."""
         return None not in (
-            self.guardrails,
             self.alpha,
             self.power,
             self.min_sessions,

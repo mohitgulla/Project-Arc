@@ -112,7 +112,6 @@ def fill_defaults(spec: ExperimentSpec, d: ExperimentDefaults) -> ExperimentSpec
     update: dict[str, Any] = {
         "alpha": spec.alpha if spec.alpha is not None else d.alpha,
         "power": spec.power if spec.power is not None else d.power,
-        "guardrails": spec.guardrails if spec.guardrails is not None else d.guardrails,
         "min_sessions": min_s,
         "max_sessions": max_s,
     }

@@ -1390,7 +1390,7 @@ def _exp(key: str, desc: str, risk: Risk, path: tuple[str, ...], **kw: Any) -> T
 
 
 # E10.1 (D44): forward A/B experiment defaults. Riskier = a verdict on less evidence
-# (higher alpha, lower power, fewer sessions) or looser harm guardrails.
+# (higher alpha, lower power, fewer sessions).
 _EXPERIMENT_TUNABLES: tuple[Tunable, ...] = (
     _exp(
         "alpha",
@@ -1439,42 +1439,32 @@ _EXPERIMENT_TUNABLES: tuple[Tunable, ...] = (
         max=60,
         hard_ceiling=5,
     ),
-    _exp(
-        "guardrails.max_dd_worse",
-        "harm stop when the treatment's max drawdown is worse than control's by more than "
-        "this share of equity.",
-        Risk.UP,
-        ("guardrails", "max_dd_worse"),
-        unit="pct",
-        min=0.005,
-        max=0.10,
-        hard_ceiling=0.10,
+    # E10.3: how the daily evaluation computes its numbers (not copied into specs).
+    Tunable(
+        key="experiments.stats.sigma_upper_q",
+        group=Group.EXPERIMENTS,
+        type=_F,
+        description="D44 evaluation: with no A/A sigma on record, the running sd of the daily "
+        "difference is inflated to its (1 - q) upper chi-square bound (larger q = narrower CI).",
+        target=Target.EXPERIMENTS,
+        risk=Risk.UP,
+        path=("experiments", "stats", "sigma_upper_q"),
+        min=0.01,
+        max=0.25,
+        hard_ceiling=0.25,
     ),
-    _exp(
-        "guardrails.worst_day",
-        "harm stop on any treatment day below this share of equity.",
-        Risk.DOWN,
-        ("guardrails", "worst_day"),
-        unit="pct",
-        min=-0.10,
-        max=-0.005,
-        hard_ceiling=-0.10,
-    ),
-    _exp(
-        "guardrails.order_rate_ratio",
-        "harm stop when the treatment sends more than this multiple of control's orders.",
-        Risk.UP,
-        ("guardrails", "order_rate_ratio"),
-        min=1.0,
-        max=5.0,
-        hard_ceiling=5.0,
-    ),
-    _exp(
-        "guardrails.stop_on_halt",
-        "harm stop on any halt or reconcile fill_unknown on the experiment account.",
-        Risk.FALSE,
-        ("guardrails", "stop_on_halt"),
-        type=_B,
+    Tunable(
+        key="experiments.stats.bootstrap_resamples",
+        group=Group.EXPERIMENTS,
+        type=_I,
+        description="D44 evaluation: paired bootstrap resamples for the Sortino "
+        "non-inferiority CI (seeded, deterministic).",
+        target=Target.EXPERIMENTS,
+        risk=Risk.DOWN,
+        path=("experiments", "stats", "bootstrap_resamples"),
+        min=200,
+        max=20000,
+        hard_ceiling=200,
     ),
 )
 
