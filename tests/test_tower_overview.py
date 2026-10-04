@@ -466,8 +466,8 @@ def test_api_overview_activity_hours(client: TestClient, fx_db: Path, tmp_path: 
     routines = tmp_path / "routines.yaml"
     raw = (REPO / "config" / "routines.yaml").read_text()
     routines.write_text(raw.replace("activity_hours: 24", "activity_hours: 6"))
-    c = TestClient(create_app(fx_db, static_dir=tmp_path, routines_path=routines, clock=lambda: NOW))
-    six = c.get("/api/overview").json()
+    app = create_app(fx_db, static_dir=tmp_path, routines_path=routines, clock=lambda: NOW)
+    six = TestClient(app).get("/api/overview").json()
     assert six["activity_hours"] == 6
     since = dt.datetime.fromisoformat(six["activity_since"])
     assert all(dt.datetime.fromisoformat(a["at"]) >= since for a in six["activity"])
