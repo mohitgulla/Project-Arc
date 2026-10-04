@@ -74,6 +74,7 @@ monitoring:
   coverage_min: 0.8            # coverage:<job> fails below this share of slots run
   tick_slow_count: 2           # tick_slow fails at >= this many ticks in the window ...
   tick_slow_after: 4m          # ... that took longer than this (or p90 spacing > 1.5 x tick.interval)
+  earnings_stale_after: 7d     # E4.1d: coverage:earnings when no earnings doc is newer than this
   alert_channel: project_arc
   gateway:
     enabled: true
@@ -152,7 +153,22 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
       - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets"}
       - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro}
   edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: filings, label: EDGAR, writes: [raw_doc_ref], lane: background}   # D39: p90 75 s (377 s max on new filings)
-  earnings: {schedule: ["06:00", "18:00"], days: trading, ttl: 6h, category: calendar, label: Earnings, writes: [raw_doc_ref]}
+  earnings:                     # Finnhub /calendar/earnings (ARC_FINNHUB_API_KEY; no key = skipped run)
+    schedule: ["06:00", "18:00"]
+    days: trading
+    ttl: 6h
+    category: calendar
+    label: Earnings
+    writes: [raw_doc_ref]
+    # E4.1d: the free tier silently caps a call at row_cap rows (keeping the latest dates),
+    # so the window (today - lookback_days .. today + horizon_days) is fetched in
+    # chunk_days chunks; a capped chunk is re-fetched per day, a capped day fails the run
+    # (`truncated`). HTTP 429: one retry after Retry-After (else 60 s), then `rate_limited`.
+    row_cap: 1500
+    chunk_days: 7
+    rate_limit_per_min: 60
+    lookback_days: 7
+    horizon_days: 30
   # D30 options-trading data (free, no key; typed context kinds, never raw docs).
   vol_term:                     # Cboe VIX9D/VIX/VIX3M/VVIX closes -> contango/backwardation
     schedule: ["09:00", "16:45"]

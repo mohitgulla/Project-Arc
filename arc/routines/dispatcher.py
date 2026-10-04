@@ -1135,6 +1135,8 @@ class Dispatcher:
                 run.run_id, status=RunStatus.SKIPPED, outputs=outputs, summary=str(exc), now=now
             )
             log.info("routines.step_skipped", job=run.job, why=str(exc))
+            if exc.notice:
+                trace.notifications.append(self.heartbeats.notice(now, run.job, exc.notice))
             return self._outcome(run, "skipped", str(exc))
         except Exception as exc:  # noqa: BLE001 - a job failure is recorded, never raised
             trace.exc = exc
