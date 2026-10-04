@@ -85,6 +85,7 @@ from arc.personas.builders import (
     quant_input_from_context,
     risk_input_from_context,
     risk_swap_input_from_context,
+    ticker_facts_digest,
 )
 from arc.personas.entry_window import entry_terms, mentions_dte
 from arc.personas.schemas import (
@@ -182,6 +183,11 @@ DIRECTOR_READS = [
     "unusual_options",
     "position_review",  # E5.9: fresh E6.4 reviews feed the portfolio context
     "story",  # E4.7 (D47): per-category freshness lines (counts + headlines, by code)
+    # E4.8a (D46): Finnhub per-ticker facts; rendered only with personas.finnhub_context on
+    "earnings_history",
+    "insider_activity",
+    "analyst_recs",
+    "fundamentals",
 ]  # == routines.yaml director.reads (D30 adds the options-data kinds)
 # E5.9 drop reasons (Director stage; deterministic). Values == ReasonCode values.
 DROP_CONCENTRATION = ReasonCode.DROP_CONCENTRATION.value
@@ -887,9 +893,15 @@ def _loop_inputs(
     *,
     pending_orders: int,
     bucket_pct: float,
+    facts_tickers: list[str] | None = None,
 ) -> LoopInputs:
-    """The deterministic, rounded inputs the D31 change-aware skip digests."""
+    """The deterministic, rounded inputs the D31 change-aware skip digests.
+
+    E4.8a: with ``personas.finnhub_context`` on, the Finnhub facts in scope enter as
+    ``<kind>:<ticker>@<as_of>`` only, so a re-fetch of the same data is no change.
+    """
     return LoopInputs(
+        facts=ticker_facts_digest(snap, facts_tickers or []),
         candidates=sorted(f"{e.id}@{e.schema_version}" for e in snap.of_kind("candidate")),
         regimes=sorted(f"{e.subject}@{e.id}" for e in snap.of_kind("regime")),
         briefs=sorted(f"{e.subject}@{e.id}" for e in snap.of_kind("channel_brief")),
@@ -923,6 +935,8 @@ def _loop_no_change(
     pctx: PortfolioContext,
     priors: list[RecentIdea],
     budget: BudgetView,
+    *,
+    facts_tickers: list[str] | None = None,
 ) -> JobResult | None:
     """D31 change-aware skip: same inputs as the last loop -> no LLM call.
 
@@ -938,6 +952,7 @@ def _loop_no_change(
         budget,
         pending_orders=_pending_orders(ctx.conn),
         bucket_pct=loop.pnl_bucket_pct,
+        facts_tickers=facts_tickers or [],
     )
     new_digest = inputs.digest()
     log.debug("pipeline.loop_inputs", digest=new_digest[:12], **inputs.model_dump(mode="json"))
@@ -989,6 +1004,27 @@ def _loop_record_full_run(ctx: JobContext) -> None:
     digest = _loop_digest_of(ctx)
     if digest:
         LoopState(ctx.conn).record_digest(digest, ctx.now, full_run=True)
+
+
+def _director_facts_tickers(ctx: JobContext, cand_entries: list[Any]) -> list[str]:
+    """E4.8a: the candidate tickers (highest confidence first) the Director gets facts
+    for; ``[]`` when ``personas.finnhub_context`` is off."""
+    cfg = ctx.routines.finnhub_context
+    if not cfg.enabled:
+        return []
+    ranked = sorted(
+        cand_entries, key=lambda e: (-float(e.payload.get("confidence") or 0.0), e.subject)
+    )
+    return list(dict.fromkeys(e.subject for e in ranked))[: cfg.director_max_tickers]
+
+
+def _director_ticker_facts(ctx: JobContext, cand_entries: list[Any]) -> dict[str, Any] | None:
+    """E4.8a: the recorded ``ticker_facts`` prompt input, or None with the flag off."""
+    cfg = ctx.routines.finnhub_context
+    if not cfg.enabled:
+        return None
+    tickers = _director_facts_tickers(ctx, cand_entries)
+    return cfg.prompt_options(tickers, cfg.director_max_tickers)
 
 
 def _youtube_channels(ctx: JobContext) -> list[dict[str, str]]:
@@ -1072,7 +1108,9 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     held, recent_lines = _held_and_recent(cands, priors, pctx, ctx.now, dedupe_cfg)
     # D31: change-aware skip. Same inputs as the previous loop and a full run not
     # yet due (loop.max_idle) -> no LLM call; the chain runs its deterministic tail.
-    skip = _loop_no_change(ctx, snap, pctx, priors, budget)
+    skip = _loop_no_change(
+        ctx, snap, pctx, priors, budget, facts_tickers=_director_facts_tickers(ctx, cand_entries)
+    )
     if skip is not None:
         return skip
     # Quant/Risk budget (never shown to the Director); D32 lowers it in the restrictive tier.
@@ -1088,6 +1126,9 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         # E4.6 (D45): [{slug, label}] of the youtube.briefs job, for the n/N line.
         "youtube_channels": _youtube_channels(ctx),
     }
+    facts = _director_ticker_facts(ctx, cand_entries)
+    if facts is not None:  # E4.8a: absent when the flag is off (prompt unchanged)
+        inputs["ticker_facts"] = facts
     reply, out = _ask(ctx, env, "director", snap, inputs, DirectorOutput)
     kept, dropped, rejected = _filter_shortlist(out, cands)
     kept, pdropped, prejected = _portfolio_filter(kept, pctx, held, settings)

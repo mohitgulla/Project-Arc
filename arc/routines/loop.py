@@ -54,9 +54,14 @@ class LoopInputs(BaseModel):
     budget_tier: str
     suppressed: list[str]  # dedupe-suppressed idea keys, sorted
     briefs: list[str] = []  # E4.6: active channel_brief "<subject>@<entry id>", sorted
+    # E4.8a: Finnhub facts "<kind>:<ticker>@<as_of>", sorted; [] with the flag off.
+    facts: list[str] = []
 
     def digest(self) -> str:
-        return _digest(self.model_dump(mode="json"))
+        data = self.model_dump(mode="json")
+        if not data["facts"]:  # flag off: the digest is the pre-E4.8a digest
+            data.pop("facts")
+        return _digest(data)
 
 
 def pnl_bucket(day_pnl: float | None, equity: float | None, bucket_pct: float) -> int:
