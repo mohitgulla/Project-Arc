@@ -156,6 +156,8 @@ categories:              # D47: equal weight per category; sources split their c
 
 sources:                        # fetch-only jobs (no LLM), each with its own cadence; quiet heartbeats
   youtube.briefs:               # D45/E4.6: one pre-market brief run, newest video per channel
+    label: YouTube briefs
+    about: "Newest video per channel (last 24 h) -> transcript -> one channel brief each, fresh for the day"
     schedule: ["05:00"]         # 02:00 PT; every channel's previous-day upload is captioned by now
     days: trading
     ttl: 3h                     # catch-up window; a missed morning is skipped after 08:00
@@ -172,6 +174,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
       - {slug: tradebrigade, channel: UCYKtr6GfycBqQJf32tbQSbQ, label: TradeBrigade, max_audio_minutes: 90}
       - {slug: arete, channel: UCTeFsS-bP0XEt3NBMjfW2cA, label: Arete, title_exclude: ['^PREMARKET LIVE'], max_videos: 10}
   rss:                          # owner pick 2026-09-28: broad market, single names, macro
+    label: RSS news
+    about: "Polls the news feeds (WSJ, CNBC, Nasdaq, Seeking Alpha, Fed) and stores new articles for the Scout"
     every: 15m                  # D31: at least as often as the 30-min Scout
     window: "06:00-20:00"
     days: trading
@@ -182,13 +186,15 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
       - {name: seekingalpha, label: SA, url: "https://seekingalpha.com/market_currents.xml", category: company}
       - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets", category: market_news}
       - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro}
-  edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: company, label: EDGAR, writes: [raw_doc_ref], lane: background}   # D39: p90 75 s (377 s max on new filings)
+  edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: company, label: EDGAR, writes: [raw_doc_ref], lane: background,
+             about: "SEC filings (8-K, 10-Q, 10-K, Form 4) for the universe; stale filings are skipped"}   # D39: p90 75 s (377 s max on new filings)
   earnings:                     # Finnhub /calendar/earnings (ARC_FINNHUB_API_KEY; no key = skipped run)
     schedule: ["06:00", "18:00"]
     days: trading
     ttl: 6h
     category: company
     label: Earnings
+    about: "Finnhub earnings calendar (7 days back, 30 ahead) for event risk"
     age_basis: ingested         # D47: calendar rows are always "the latest pull", never stale by date
     writes: [raw_doc_ref]
     # E4.1d: the free tier silently caps a call at row_cap rows (keeping the latest dates),
@@ -202,6 +208,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     horizon_days: 30
   # D30 options-trading data (free, no key; typed context kinds, never raw docs).
   vol_term:                     # Cboe VIX9D/VIX/VIX3M/VVIX closes -> contango/backwardation
+    label: VIX term structure
+    about: "Cboe VIX9D / VIX / VIX3M / VVIX closes -> contango or backwardation"
     schedule: ["09:00", "16:45"]
     days: trading
     ttl: 6h
@@ -209,12 +217,16 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: options_data
     writes: [vol_term]
   put_call:                     # Cboe daily market statistics (previous session's ratios)
+    label: Put/call ratio
+    about: "Cboe daily put/call ratios from the previous session"
     schedule: ["09:00"]
     days: trading
     ttl: 6h
     category: options_data
     writes: [put_call]
   macro_calendar:               # FOMC decisions (federalreserve.gov) + BLS CPI/PPI/NFP/JOLTS/ECI
+    label: Macro calendar
+    about: "FOMC decisions and BLS release dates (CPI, PPI, NFP, JOLTS, ECI)"
     schedule: ["05:45"]
     days: weekdays
     ttl: 24h
@@ -222,6 +234,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: macro
     writes: [macro_calendar]
   unusual_options:              # self-computed from Alpaca chain snapshots: seed + today's candidates
+    label: Unusual options
+    about: "Unusual options volume computed from Alpaca chain snapshots"
     schedule: ["12:30", "15:45"]
     days: trading
     ttl: 2h
@@ -229,6 +243,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     writes: [unusual_options]
     lane: background            # D39: p90 61 s (chain snapshots)
   ex_dividend:                  # Alpaca corporate actions: early-assignment risk on short calls
+    label: Ex-dividend
+    about: "Upcoming ex-dividend dates: early-assignment risk on short calls"
     schedule: ["06:15"]
     days: trading
     ttl: 12h
@@ -240,6 +256,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   # earnings calendar included. Scope: seed ∪ live candidates ∪ open underlyings, ETFs
   # skipped, capped at finnhub_max_tickers (seed first). Options: tickers, max_tickers.
   finnhub.insider:              # /stock/insider-transactions: open-market P/S only
+    label: Finnhub insider
+    about: "Open-market insider buys and sells per ticker"
     schedule: ["06:30"]
     days: trading
     ttl: 3h
@@ -247,6 +265,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: company           # D47: Finnhub per-ticker kinds
     writes: [insider_activity]
   finnhub.recs:                 # /stock/recommendation: monthly data, weekly fetch
+    label: Finnhub analyst recs
+    about: "Analyst recommendation trend per ticker (weekly fetch)"
     schedule: ["06:40"]
     days: [mon]
     ttl: 24h                    # a missed Monday still runs that day
@@ -254,6 +274,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: company           # D47: Finnhub per-ticker kinds
     writes: [analyst_recs]
   finnhub.fundamentals:         # /stock/metric?metric=all, trimmed to the D46 field set
+    label: Finnhub fundamentals
+    about: "Trimmed fundamentals per ticker (weekly fetch)"
     schedule: ["06:50"]
     days: [mon]
     ttl: 24h
@@ -261,6 +283,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: company           # D47: Finnhub per-ticker kinds
     writes: [fundamentals]
   finnhub.earnings_history:     # /stock/earnings: EPS surprises
+    label: Finnhub EPS surprises
+    about: "Past EPS surprises for tickers that just reported"
     schedule: ["07:00"]
     days: trading
     ttl: 3h
@@ -271,6 +295,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     full_every_days: 7
     recent_report_days: [1, 3]  # other days: only tickers that reported 1-3 days ago (earnings calendar docs)
   symbols:                      # E5.7 / D28: weekly symbol master (SEC tickers + Alpaca optionable)
+    label: Symbol master
+    about: "Weekly SEC tickers + Alpaca optionable list (the open universe)"
+    group: other
     schedule: ["05:30"]         # before the 06:00 earnings calendar; `arc universe refresh` = by hand
     days: [mon]
     ttl: 24h                    # a missed Monday still runs that day
@@ -293,6 +320,10 @@ finnhub_context:
 personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   scout:                        # D31: every 30 min in session (15 runs), after the fast sources
+    label: Scout
+    about: "Reads fresh news, filings and earnings; writes candidate ideas and story digests"
+    group: scout
+    persona: scout
     every: 30m
     window: "09:00-16:00"
     days: trading
@@ -302,6 +333,10 @@ personas:
     writes: [candidate, note, story]   # note: scan summary (D27); story: D30 stage-1 digests
     lane: background            # D39: p90 441 s; the tick never waits on the Scout
   scout.overnight:              # D15/D31: 22:00 after-close fast sources (no YouTube, D45)
+    label: Overnight Scout
+    about: "After-close Scout run over the evening news; feeds the next session"
+    group: scout
+    persona: scout
     schedule: ["22:00"]
     days: daily
     after_sources: true
@@ -310,6 +345,10 @@ personas:
     writes: [candidate, note, story]
     lane: background            # D39: same Scout handler as above
   director:                     # D31: the 5-min trading loop (see `loop:` above)
+    label: "Director → Quant → Risk → Propose → Execute"
+    about: "5-min trading loop: pick ideas, price structures, risk review, propose, auto-approve, execute"
+    group: trading_loop
+    persona: director
     every: 5m
     window: "09:40-15:50"       # owner 2026-09-28: 75 slots; skips the open's first 10 min
     days: trading
@@ -320,6 +359,10 @@ personas:
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card
   monitor:                      # intraday: positions, net Greeks, expiries, daily-loss halt (read-only)
+    label: Intraday monitor
+    about: "Positions, Greeks, marks, expiries and the daily-loss halt (no LLM)"
+    group: position_management
+    persona: monitor
     every: 5m                   # D35: the tower's mark source; 5m is the tick floor
     window: "09:30-16:00"
     days: trading
@@ -332,6 +375,10 @@ personas:
     exits: false                # E6.4: the positions.evaluate chain below owns exit proposals
     eod_marks_from: "15:50"     # D35: marks from here count as end of day (stops EOD-only, D23)
   positions.evaluate:           # E6.4 (D19): review open positions -> exits -> close-to-reallocate
+    label: Investor exits
+    about: "Reviews open positions: take-profit and stop exits, then close-to-reallocate swaps"
+    group: position_management
+    persona: investor
     every: 30m
     window: "09:45-16:00"       # offset from the monitor; never at the open's first quotes
     days: trading
@@ -342,6 +389,10 @@ personas:
     writes: [position_review]
     eod_marks_from: "15:30"     # marks from here count as end of day (stops are EOD-only, D23)
   auditor:                      # E6.3: post-market reconcile + snapshots + tax lots; mismatch -> halt + alert
+    label: Auditor reconcile
+    about: "Post-market broker vs store reconcile, snapshots and tax lots; a mismatch halts"
+    group: post_market
+    persona: auditor
     schedule: ["16:30"]
     days: trading
     halt_exempt: true           # keeps running under !halt
@@ -351,6 +402,10 @@ personas:
     halt_on_mismatch: true      # any mismatch raises an arc:reconcile halt until the owner !resume
     writes: [journal, note]     # note: lessons (E7.x); override TTL with context: when emitted
   scorecard:                    # E7.3 weekly paper scorecard -> #arc-investor + docs/RESEARCH/weekly/
+    label: Weekly scorecard
+    about: "Weekly paper scorecard to #arc-investor and docs/RESEARCH/weekly"
+    group: post_market
+    persona: auditor
     schedule: ["16:45"]
     days: [fri]
     llm: false                  # deterministic: audit store (read-only) + Alpaca bars for D19 settles
@@ -360,6 +415,9 @@ personas:
     report_dir: docs/RESEARCH/weekly   # <monday>.md, relative to the repo root
     writes: []                  # reads the audit store; writes the Markdown report, no context
   experiments.evaluate:         # E10.3 (D44): mSPRT CI, Sortino non-inferiority, auto-stop
+    label: Experiments
+    about: "Daily A/B evaluation of running experiments (mSPRT CI, auto-stop)"
+    group: post_market
     schedule: ["16:40"]         # after the 16:30 auditor reconcile writes each arm's EOD pnl_snapshots
     days: trading
     llm: false                  # deterministic: audit store only (no broker, no LLM)
@@ -369,6 +427,10 @@ personas:
                                 #   and a stop card per stopped one (arc/slack/experiments.py)
     writes: []                  # experiment_reports + experiment_events, no context
   investor:                     # E6.2: works an approved proposal through its D24 price band
+    label: Investor orders
+    about: "Works an approved proposal through its price band (event-driven)"
+    group: trading_loop
+    persona: investor
     trigger: approval           # event-driven, never scheduled
     llm: false                  # deterministic: gate token + approval -> arc.execution.submit()
     notify: card                # [Investor] Order card with the ExecutionResult (E5.5)
