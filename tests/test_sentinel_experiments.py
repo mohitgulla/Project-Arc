@@ -44,7 +44,7 @@ def _load() -> Any:
 se = _load()
 
 
-def _registry(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+def _registry(tmp_path: Path, *, wal: bool = False) -> tuple[Path, dict[str, str]]:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     migrate(conn)
@@ -52,6 +52,8 @@ def _registry(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     path = tmp_path / "arc-copy.db"
     disk = sqlite3.connect(path)
     conn.backup(disk)
+    if wal:  # the live data/arc.db is WAL; the gate's backup keeps that header
+        disk.execute("PRAGMA journal_mode=wal")
     disk.close()
     return path, times
 
@@ -339,8 +341,10 @@ def test_aa_before_ab(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cli_writes_experiments_md(tmp_path: Path) -> None:
-    db, _ = _registry(tmp_path)
+@pytest.mark.parametrize("wal", [False, True])
+def test_cli_writes_experiments_md(tmp_path: Path, wal: bool) -> None:
+    # wal=True: only the main file is copied into RUN_DIR (no -shm/-wal), as with the live DB.
+    db, _ = _registry(tmp_path, wal=wal)
     root = tmp_path / "sentinel"
     repo = Repo(root / "repo")
     head = repo.commit({"config/exits.yaml": "a: 1\n"}, "E6.9: x", NOW - _dt.timedelta(days=1))
@@ -348,11 +352,19 @@ def test_cli_writes_experiments_md(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     (run_dir / "arc-copy.db").write_bytes(db.read_bytes())
+    if wal:
+        # No -shm can be created beside the copy: python3.9's SQLite hits exactly this on the
+        # gate's real copy, so the open must not need one (mode=ro&immutable=1).
+        (run_dir / "experiments.md").write_text("")
+        (run_dir / "arc-copy.db").chmod(0o444)
+        run_dir.chmod(0o555)
+        (run_dir / "experiments.md").chmod(0o666)
     r = subprocess.run(
         [sys.executable, str(SCRIPT), str(run_dir)],
         capture_output=True, text=True, timeout=120,
         env={**os.environ, "ARC_SENTINEL_ROOT": str(root)},
     )  # fmt: skip
+    run_dir.chmod(0o755)
     assert r.returncode == 0, r.stderr
     text = (run_dir / "experiments.md").read_text()
     assert text.startswith("## Experiments integrity")

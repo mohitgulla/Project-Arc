@@ -485,7 +485,9 @@ def run(
         if db is None or not db.is_file():
             note = "(no copy of data/arc.db: registry checks skipped)"
         else:
-            conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
+            # immutable=1: the gate copies the live WAL-mode DB without its -shm/-wal, and
+            # mode=ro alone cannot create the -shm, so older SQLite (python3.9) fails CANTOPEN.
+            conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
         try:
             if conn is not None and not has_tables(conn, "experiments", "experiment_events"):
                 note = "(data/arc.db has no experiment tables yet: pre-E10 store)"
