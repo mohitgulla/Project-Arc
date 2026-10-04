@@ -1374,6 +1374,53 @@ The run's manifest metrics carry one record per channel (`outcome`, excluded
 videos with reasons, video id/title/published, transcript source, items kept and
 dropped by reason, model, tokens, wall time, error).
 
+### 5.23 Finnhub per-ticker context (E4.8, D46)
+
+**What runs.** Four background-lane jobs on the free key `ARC_FINNHUB_API_KEY`
+(`~/.hermes/.env`). Each writes one typed context kind per ticker. They are never raw docs, so
+they never use the Scout's D30 budget, and the gate never reads them (import-linter contract):
+
+| Job | Endpoint | Kind (TTL) | When (ET) |
+|---|---|---|---|
+| `finnhub.insider` | `/stock/insider-transactions` | `insider_activity` (2d) | 06:30 trading days |
+| `finnhub.recs` | `/stock/recommendation` | `analyst_recs` (8d) | Mon 06:40 |
+| `finnhub.fundamentals` | `/stock/metric?metric=all` (trimmed) | `fundamentals` (8d) | Mon 06:50 |
+| `finnhub.earnings_history` | `/stock/earnings` | `earnings_history` (8d) | 07:00 trading days |
+
+`finnhub.earnings_history` fetches the whole scope on Mondays, and on any run once the
+last full run is 7 or more days old (`full_every_days`). On other days it fetches only
+tickers whose earnings date in the calendar docs was 1–3 days ago.
+
+**One budget for the key.** Every Finnhub caller shares `finnhub_calls_per_minute`
+(55 of the key's 60/min), the earnings calendar included. A sliding window kept in
+`routine_state[finnhub:calls]` enforces it across processes. A job that has to wait
+logs `finnhub.rate_wait wait_s=…`.
+
+**Scope.** Seed universe ∪ live `candidate` subjects ∪ open-structure underlyings,
+with ETFs skipped. It is capped at `finnhub_max_tickers` (40), seed first, and the
+cap logs `finnhub.scope_capped dropped=…`. The job options `tickers` / `max_tickers`
+override the scope per job in YAML.
+
+**Outcomes** follow the E4.1d earnings rules:
+
+- no key → `skipped no_api_key`, with one notice per day
+- HTTP 403 → `failed forbidden`, meaning a free endpoint went paid, so it fails loudly
+- HTTP 429 after one retry → `failed rate_limited`
+- more than half the tickers failed → `failed`
+- fewer than half failed → `ok`, with `metrics.failed_tickers`
+
+The paid endpoints are never called: economic calendar, dividends, chains, candles,
+price target, up/downgrades and social sentiment.
+
+**Run one by hand** (scratch DB):
+
+```
+.venv/bin/arc routines run finnhub.insider --db ~/.hermes/cache/scratch/fh.db \
+  --no-slack --lock-dir ~/.hermes/cache/scratch/fh-lock
+sqlite3 ~/.hermes/cache/scratch/fh.db \
+  "select kind, subject, payload from context_entries where status='active'"
+```
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.

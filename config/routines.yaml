@@ -123,6 +123,11 @@ context_ttl:
   macro_calendar: {ttl: 7d, supersede: latest}             # long-lived: FOMC/BLS dates move rarely
   unusual_options: {ttl: 1 session, supersede: latest}     # subject = ticker
   ex_dividend:   {ttl: 7d, supersede: latest}              # subject = ticker
+  # E4.8 (D46): Finnhub per-ticker context; subject = ticker. Context only, never a gate input.
+  earnings_history: {ttl: 8d, supersede: latest}
+  insider_activity: {ttl: 2d, supersede: latest}
+  analyst_recs:  {ttl: 8d, supersede: latest}
+  fundamentals:  {ttl: 8d, supersede: latest}
 
 # D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Scout
 # source; each RSS feed is its own source. Per-source knobs (no code change to add or
@@ -207,6 +212,37 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     ttl: 12h
     horizon_days: 45
     writes: [ex_dividend]
+  # E4.8 (D46): Finnhub per-ticker context (free key, typed kinds, never raw docs). One
+  # shared budget of finnhub_calls_per_minute (55 of the key's 60/min) across processes,
+  # earnings calendar included. Scope: seed ∪ live candidates ∪ open underlyings, ETFs
+  # skipped, capped at finnhub_max_tickers (seed first). Options: tickers, max_tickers.
+  finnhub.insider:              # /stock/insider-transactions: open-market P/S only
+    schedule: ["06:30"]
+    days: trading
+    ttl: 3h
+    lane: background
+    writes: [insider_activity]
+  finnhub.recs:                 # /stock/recommendation: monthly data, weekly fetch
+    schedule: ["06:40"]
+    days: [mon]
+    ttl: 24h                    # a missed Monday still runs that day
+    lane: background
+    writes: [analyst_recs]
+  finnhub.fundamentals:         # /stock/metric?metric=all, trimmed to the D46 field set
+    schedule: ["06:50"]
+    days: [mon]
+    ttl: 24h
+    lane: background
+    writes: [fundamentals]
+  finnhub.earnings_history:     # /stock/earnings: EPS surprises
+    schedule: ["07:00"]
+    days: trading
+    ttl: 3h
+    lane: background
+    writes: [earnings_history]
+    full_days: [mon]            # whole scope on these days (or when the last full run is >= full_every_days old)
+    full_every_days: 7
+    recent_report_days: [1, 3]  # other days: only tickers that reported 1-3 days ago (earnings calendar docs)
   symbols:                      # E5.7 / D28: weekly symbol master (SEC tickers + Alpaca optionable)
     schedule: ["05:30"]         # before the 06:00 earnings calendar; `arc universe refresh` = by hand
     days: [mon]

@@ -1,0 +1,38 @@
+[
+ {
+  "buy": 22,
+  "hold": 15,
+  "period": "2026-09-01",
+  "sell": 3,
+  "strongBuy": 12,
+  "strongSell": 1,
+  "symbol": "AAPL"
+ },
+ {
+  "buy": 24,
+  "hold": 14,
+  "period": "2026-08-01",
+  "sell": 3,
+  "strongBuy": 13,
+  "strongSell": 0,
+  "symbol": "AAPL"
+ },
+ {
+  "buy": 23,
+  "hold": 16,
+  "period": "2026-07-01",
+  "sell": 2,
+  "strongBuy": 13,
+  "strongSell": 0,
+  "symbol": "AAPL"
+ },
+ {
+  "buy": 24,
+  "hold": 15,
+  "period": "2026-06-01",
+  "sell": 2,
+  "strongBuy": 14,
+  "strongSell": 0,
+  "symbol": "AAPL"
+ }
+]

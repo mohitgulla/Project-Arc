@@ -224,6 +224,9 @@ NOT_EXPOSED: dict[str, str] = {
     "uoa_min_open_interest": "UOA detector internals (data, not a trading limit)",
     "uoa_min_hot_share": "UOA detector internals (data, not a trading limit)",
     "ex_dividend_horizon_days": "ingestion plumbing",
+    "finnhub_insider_window_days": "D46 insider detector internals (context data only)",
+    "finnhub_cluster_buyers": "D46 insider detector internals (context data only)",
+    "finnhub_cluster_days": "D46 insider detector internals (context data only)",
     "persona_timeout_seconds": "LLM plumbing",
     "pipeline_max_context_notes": "LLM context size",
 }
@@ -383,6 +386,29 @@ _STATIC: tuple[Tunable, ...] = (
         min=20,
         max=400,
         hard_ceiling=400,
+    ),
+    # E4.8 / D46: Finnhub per-ticker context (data only; the gate never reads it).
+    _s(
+        "finnhub_calls_per_minute",
+        Group.UNIVERSE,
+        _I,
+        "D46: Finnhub calls per minute shared by every Finnhub job across processes "
+        "(earnings calendar included). The free key allows 60; above that Finnhub 429s.",
+        Risk.UP,
+        min=1,
+        max=60,
+        hard_ceiling=60,
+    ),
+    _s(
+        "finnhub_max_tickers",
+        Group.UNIVERSE,
+        _I,
+        "D46: tickers per Finnhub context run (seed first, then candidates, then open "
+        "underlyings). Each ticker is one call per job, against the per-minute budget.",
+        Risk.NONE,
+        min=1,
+        max=200,
+        hard_ceiling=200,
     ),
     # -- risk --------------------------------------------------------------------
     _s(

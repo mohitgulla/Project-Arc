@@ -648,6 +648,33 @@ class ArcSettings(BaseSettings):
         default="",
         description="Finnhub API key for earnings calendar (free tier).",
     )
+    # -- Finnhub per-ticker context (E4.8 / D46) --------------------------------
+    finnhub_calls_per_minute: Annotated[int, Field(ge=1, le=60)] = Field(
+        default=55,
+        description=(
+            "D46: Finnhub calls per minute for the whole key, shared across processes by "
+            "every Finnhub caller (earnings calendar included). The free key allows 60."
+        ),
+    )
+    finnhub_max_tickers: Annotated[int, Field(ge=1, le=200)] = Field(
+        default=40,
+        description=(
+            "D46: per-ticker Finnhub jobs fetch at most this many tickers per run "
+            "(seed universe first, then live candidates, then open underlyings)."
+        ),
+    )
+    finnhub_insider_window_days: Annotated[int, Field(ge=7, le=365)] = Field(
+        default=90,
+        description="D46: insider_activity looks back this many days.",
+    )
+    finnhub_cluster_buyers: Annotated[int, Field(ge=2, le=20)] = Field(
+        default=3,
+        description="D46: cluster_buy = at least this many distinct insiders buying ...",
+    )
+    finnhub_cluster_days: Annotated[int, Field(ge=1, le=180)] = Field(
+        default=30,
+        description="D46: ... within this many days.",
+    )
     ingest_youtube_channels: list[str] = Field(
         default_factory=lambda: list(DEFAULT_YOUTUBE_CHANNELS),
         description=(

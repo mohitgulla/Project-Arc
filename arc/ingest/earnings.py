@@ -16,6 +16,10 @@ E4.1d: the connector fails loudly instead of returning ``[]``:
   ``Retry-After`` (default 60 s), then ``rate_limited``. A client-side throttle keeps
   the call rate under ``rate_limit_per_min``.
 
+E4.8 (D46): the HTTP call goes through the shared :mod:`arc.ingest.finnhub` client,
+so the calendar and the per-ticker Finnhub jobs share one cross-process budget
+(``finnhub_calls_per_minute``, default 55 of the key's 60/min).
+
 Nothing is stored unless the whole window was fetched, so a failed run never leaves
 a silent partial calendar. Incremental: the cursor is the day of the last full fetch.
 """
@@ -24,16 +28,20 @@ from __future__ import annotations
 
 import contextlib
 import datetime as _dt
-import json
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import TYPE_CHECKING, Annotated, Any
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.ingest.finnhub import (
+    DbRateLimiter,
+    FinnhubClient,
+    FinnhubForbidden,
+    FinnhubRateLimited,
+    redact,
+)
+from arc.ingest.finnhub import _get_json as _get_json  # patched by tests (E4.1d)
 from arc.ingest.store import IngestCursorRepo, RawDocRepo, content_hash
 from arc.models import RawDoc
 from arc.universe.ingest import IngestUniverse
@@ -44,11 +52,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from arc.config import ArcSettings
+    from arc.ingest.finnhub import RateLimiter
 
 log = structlog.get_logger()
 
 CONNECTOR = "earnings"
-FINNHUB_URL = "https://finnhub.io/api/v1/calendar/earnings"
+CALENDAR_PATH = "/calendar/earnings"
 
 __all__ = [
     "CONNECTOR",
@@ -68,7 +77,10 @@ class EarningsNoKeyError(RuntimeError):
 
 
 class EarningsFetchError(RuntimeError):
-    """The calendar could not be fetched completely (``reason``: truncated | rate_limited)."""
+    """The calendar could not be fetched completely.
+
+    ``reason``: truncated | rate_limited | forbidden (403: the endpoint left the plan).
+    """
 
     def __init__(self, reason: str, detail: str) -> None:
         super().__init__(f"{reason}: {detail}")
@@ -110,26 +122,18 @@ class FetchStats(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# HTTP
+# HTTP (E4.8: the shared Finnhub client and its cross-process budget)
 # ---------------------------------------------------------------------------
 
 
-def _get_json(url: str, timeout: float) -> Any:
-    req = urllib.request.Request(url)  # noqa: S310 - fixed https host
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-        return json.loads(resp.read())
-
-
-def _retry_after(exc: urllib.error.HTTPError, default: float) -> float:
-    raw = exc.headers.get("Retry-After") if exc.headers is not None else None
-    try:
-        return max(0.0, float(raw)) if raw is not None else default
-    except ValueError:
-        return default
-
-
 class _Client:
-    """Throttled Finnhub calls with one 429 retry. ``sleep``/``clock`` are injectable."""
+    """``/calendar/earnings`` on the shared :class:`FinnhubClient` (E4.8 / D46).
+
+    The shared client paces at ``rate_limit_per_min``, holds the key-wide budget
+    (``limiter``) and retries a 429 once. Errors keep their E4.1d shape: a second
+    429 is :class:`EarningsFetchError` ``rate_limited``, a 403 is ``forbidden``,
+    any other HTTP / network / JSON error propagates as its original type.
+    """
 
     def __init__(
         self,
@@ -139,57 +143,44 @@ class _Client:
         get_json: Callable[[str, float], Any],
         sleep: Callable[[float], None],
         clock: Callable[[], float],
+        limiter: RateLimiter | None = None,
     ) -> None:
-        self._key = api_key
-        self._cfg = cfg
-        self._get = get_json
-        self._sleep = sleep
-        self._clock = clock
-        self._interval = 60.0 / cfg.rate_limit_per_min
-        self._last: float | None = None
-        self.calls = 0
+        self._http = FinnhubClient(
+            api_key,
+            limiter=limiter,
+            min_interval_s=60.0 / cfg.rate_limit_per_min,
+            timeout_s=cfg.timeout_s,
+            retry_after_default_s=cfg.retry_after_default_s,
+            get_json=get_json,
+            sleep=sleep,
+            clock=clock,
+            raw_errors=True,
+        )
 
-    def _throttle(self) -> None:
-        if self._last is not None:
-            wait = self._interval - (self._clock() - self._last)
-            if wait > 0:
-                self._sleep(wait)
-        self._last = self._clock()
+    @property
+    def calls(self) -> int:
+        return self._http.calls
 
     def calendar(self, start: _dt.date, end: _dt.date) -> list[dict[str, Any]]:
-        query = urllib.parse.urlencode(
-            {"from": start.isoformat(), "to": end.isoformat(), "token": self._key}
-        )
-        url = f"{FINNHUB_URL}?{query}"
-        retried = False
-        while True:
-            self._throttle()
-            self.calls += 1
-            try:
-                data = self._get(url, self._cfg.timeout_s)
-            except urllib.error.HTTPError as exc:
-                if exc.code == 429 and not retried:
-                    retried = True
-                    delay = _retry_after(exc, self._cfg.retry_after_default_s)
-                    log.warning(
-                        "earnings.rate_limited", from_date=start.isoformat(), retry_in_s=delay
-                    )
-                    self._sleep(delay)
-                    continue
-                self._failed(start, end, exc)
-                if exc.code == 429:
-                    detail = f"HTTP 429 twice for {start}..{end}"
-                    raise EarningsFetchError("rate_limited", detail) from exc
-                raise
-            except Exception as exc:
-                self._failed(start, end, exc)
-                raise
-            return self._rows(start, end, data)
+        params = {"from": start.isoformat(), "to": end.isoformat()}
+        try:
+            data = self._http.get(CALENDAR_PATH, params)
+        except FinnhubRateLimited as exc:
+            self._failed(start, end, exc)
+            detail = f"HTTP 429 twice for {start}..{end}"
+            raise EarningsFetchError("rate_limited", detail) from None
+        except FinnhubForbidden as exc:
+            self._failed(start, end, exc)
+            raise EarningsFetchError("forbidden", str(exc)) from None
+        except Exception as exc:
+            self._failed(start, end, exc)
+            raise
+        return self._rows(start, end, data)
 
     def _rows(self, start: _dt.date, end: _dt.date, data: Any) -> list[dict[str, Any]]:
         rows = data.get("earningsCalendar") if isinstance(data, dict) else None
         if not isinstance(rows, list):
-            exc = ValueError(f"unexpected Finnhub payload: {str(data)[:120]}")
+            exc = ValueError(f"unexpected Finnhub payload: {redact(str(data))[:120]}")
             self._failed(start, end, exc)
             raise exc
         return [r for r in rows if isinstance(r, dict)]
@@ -200,7 +191,7 @@ class _Client:
             "earnings.finnhub_failed",
             from_date=start.isoformat(),
             to_date=end.isoformat(),
-            error=str(exc),
+            error=redact(str(exc)),
             error_class=type(exc).__name__,
         )
 
@@ -229,13 +220,14 @@ def fetch_calendar(
     get_json: Callable[[str, float], Any] = _get_json,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    limiter: RateLimiter | None = None,
 ) -> tuple[list[dict[str, Any]], FetchStats]:
     """Every event in ``[start, end]``, deduped on (symbol, date), or raise.
 
     A chunk returning ``>= row_cap`` rows may be truncated, so it is re-fetched
     one day at a time; a single day still at the cap raises ``truncated``.
     """
-    client = _Client(api_key, cfg, get_json=get_json, sleep=sleep, clock=clock)
+    client = _Client(api_key, cfg, get_json=get_json, sleep=sleep, clock=clock, limiter=limiter)
     stats = FetchStats()
     events: dict[tuple[str, str], dict[str, Any]] = {}
 
@@ -322,6 +314,10 @@ def fetch_earnings(
         get_json=get_json or _get_json,
         sleep=sleep or time.sleep,
         clock=clock or time.monotonic,
+        # D46: one key-wide budget shared with the per-ticker Finnhub jobs (cross-process).
+        limiter=DbRateLimiter(
+            conn, calls_per_minute=settings.finnhub_calls_per_minute, sleep=sleep or time.sleep
+        ),
     )
 
     # D28: keep events for every symbol-master ticker (next_earnings and the gate's
