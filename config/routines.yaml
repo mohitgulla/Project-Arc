@@ -15,6 +15,8 @@
 # `reads` limits the recorded input snapshot. `arc context trace <run|chain>` shows both.
 #
 # A trading day at a glance (full simulated day: `arc routines tick --dry-run`), D31:
+#   05:00           youtube.briefs (D45/E4.6): newest video per channel (last 24 h) ->
+#                   one channel_brief each, fresh for the day; the Director reads them
 #   05:30 Mon       symbol master refresh (open universe, E5.7)
 #   06:00           earnings calendar; rss (15m) / edgar (15m) polling until 20:00
 #   09:00-16:00     Scout every 30 min (15 in-session runs; after the fast sources)
@@ -25,12 +27,12 @@
 #                   One #arc-investor root line per slot, persona cards in its thread (D36).
 #   09:45-16:00     position manager every 30 min: positions.evaluate -> investor.exits
 #                   -> risk.reallocate (early exits + close-to-reallocate swaps, E6.4)
-#   12:00           StockedUp (midday video; the next 30-min Scout reads it)
 #   16:30           auditor (reconcile + journal)
 #   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop; E10.5 posts)
 #   16:45 Fri       weekly scorecard
 #   18:00           earnings calendar
-#   22:00 daily     StockedUp + overnight Scout (after-close sources; Sunday 22:00 feeds Monday)
+#   22:00 daily     overnight Scout (after-close fast sources; Sunday 22:00 feeds Monday).
+#                   YouTube never reaches the Scout (D45): briefs only, at 05:00.
 #
 # lane (D39 / E5.10): `background` = the tick claims the slot, spawns a detached
 # `arc routines run-claimed <run_id>` and moves on, so a slow job never delays the
@@ -130,16 +132,22 @@ context_ttl:
 # older than the raw_doc_ref TTL above.
 
 sources:                        # fetch-only jobs (no LLM), each with its own cadence; quiet heartbeats
-  youtube.stockedup:            # D13/D14: StockedUp next-session outlook (posts Sunday for Monday)
-    schedule: ["22:00", "12:00"]
-    days: daily
-    channel: UC-m6zNItyoDk5lSykDlhE4Q
-    ttl: 3h                     # catch-up window, same as the Scout it feeds
-    context: {ttl: 1 session, supersede: latest}     # D14: next video supersedes
-    category: video
-    label: StockedUp
-    writes: [raw_doc_ref]
-    lane: background            # D39: p90 34 s (caption fetch)
+  youtube.briefs:               # D45/E4.6: one pre-market brief run, newest video per channel
+    schedule: ["05:00"]         # 02:00 PT; every channel's previous-day upload is captioned by now
+    days: trading
+    ttl: 3h                     # catch-up window; a missed morning is skipped after 08:00
+    lane: background            # captions + 4 LLM extractions; never delays the tick
+    llm: true                   # holds the global LLM lock (brief extraction)
+    notify: quiet               # folded into the first persona post; a channel error posts a notice
+    context: {ttl: 24h, supersede: latest}   # briefs live for the trading day (hard expiry)
+    writes: [raw_doc_ref, channel_brief]
+    lookback: 24h               # newest qualifying video published in the last 24 h
+    category: video             # YouTube never reaches the 30-min Scout (D45): briefs only
+    channels:                   # adding a channel = one entry here + arc/ingest/channels/<slug>/
+      - {slug: stockedup, channel: UC-m6zNItyoDk5lSykDlhE4Q, label: StockedUp, skip_shorts: true}
+      - {slug: fxevolution, channel: UCvJZEG5x-DVYZKTz--pS39w, label: FX, title_exclude: ['Live Stream']}
+      - {slug: tradebrigade, channel: UCYKtr6GfycBqQJf32tbQSbQ, label: TradeBrigade, max_audio_minutes: 90}
+      - {slug: arete, channel: UCTeFsS-bP0XEt3NBMjfW2cA, label: Arete, title_exclude: ['^PREMARKET LIVE'], max_videos: 10}
   rss:                          # owner pick 2026-09-28: broad market, single names, macro
     every: 15m                  # D31: at least as often as the 30-min Scout
     window: "06:00-20:00"
@@ -199,7 +207,7 @@ personas:
     notify: card
     writes: [candidate, note, story]   # note: scan summary (D27); story: D30 stage-1 digests
     lane: background            # D39: p90 441 s; the tick never waits on the Scout
-  scout.overnight:              # D15/D31: 22:00 after-close sources; Sunday 22:00 feeds Monday
+  scout.overnight:              # D15/D31: 22:00 after-close fast sources (no YouTube, D45)
     schedule: ["22:00"]
     days: daily
     after_sources: true

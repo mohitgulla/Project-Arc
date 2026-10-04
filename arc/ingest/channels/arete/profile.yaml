@@ -1,0 +1,33 @@
+# Arete Trading (@AreteTrading): index -> sector -> stock analysis video around
+# 17:00-18:00 ET, plus PREMARKET LIVE clip bursts (excluded in routines.yaml).
+slug: arete
+channel_id: UCTeFsS-bP0XEt3NBMjfW2cA
+display_name: Arete Trading
+url: https://www.youtube.com/channel/UCTeFsS-bP0XEt3NBMjfW2cA
+cadence: trading_daily
+horizon: multi_day
+publish_window_et: "11:00-19:00"
+focus:
+  - market_bias
+  - levels
+  - calls
+  - catalysts
+  - risk_flags
+trust_weight: 0.5          # D45: four channels, equal weight
+guidelines_version: "arete-2026-10-04.1"
+max_active_sessions: 1     # one trading day; the daily job caps it at run + 24 h
+# Trading Floor / community membership plugs.
+sponsor_patterns:
+  - '\btrading floor\b'
+  - '\bwait ?list\b'
+  - '\bin the community\b'
+  - '\bthe community\b.*\bopens?\b'
+  - '\blinks? in (?:the )?description\b'
+  - '\bmembership\b'
+hedge_words:
+  - could
+  - might
+  - maybe
+  - watch
+  - I don't know
+  - if I get

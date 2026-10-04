@@ -43,7 +43,7 @@ from pydantic import ValidationError
 
 from arc.context.kinds import StoryEvidence, StoryPayload
 from arc.ingest.llm import FixtureScoutLLM, HermesScoutLLM, LLMResult, ScoutLLMError
-from arc.ingest.sources import SourceRegistry, format_source_mix, select_fair
+from arc.ingest.sources import SCOUT_EXCLUDED, SourceRegistry, format_source_mix, select_fair
 from arc.ingest.store import RawDocRepo, ScoutBatchRepo
 from arc.ingest.stories import ClusterDoc, Story, cluster_stories, form_type_of, headline_of
 from arc.models import Candidate, CatalystType, Stance
@@ -591,10 +591,20 @@ def _raw_doc_ttl(routines: RoutinesConfig | None) -> _dt.timedelta:
     return _dt.timedelta(days=5)
 
 
+def scout_excluded(doc: _Doc) -> bool:
+    """D45: the Scout never reads this doc (video: daily briefs only)."""
+    return doc.category in {c.value for c in SCOUT_EXCLUDED}
+
+
 def select_docs(
     docs: list[_Doc], registry: SourceRegistry, budget: int
 ) -> tuple[list[_Doc], list[_Doc], list[tuple[str, int, int]]]:
-    """D30 fair pick: ``(selected, unselected, source_mix)``; newest first per source."""
+    """D30 fair pick: ``(selected, unselected, source_mix)``; newest first per source.
+
+    D45: docs in a :data:`SCOUT_EXCLUDED` category (video) are never selected and
+    are not counted as unselected either (the caller closes them as brief-only).
+    """
+    docs = [d for d in docs if not scout_excluded(d)]
     by_source: dict[str, list[_Doc]] = {}
     for d in sorted(docs, key=lambda d: (_parse_ts(d.published_at), d.id), reverse=True):
         by_source.setdefault(d.source_key, []).append(d)
@@ -775,6 +785,10 @@ def run_scout(
 
     # 1. fair selection
     all_docs = _load_docs(doc_repo.list_unscouted(limit=None), registry)
+    brief_only = [d.id for d in all_docs if scout_excluded(d)]
+    if brief_only:  # D45: video docs wait for nobody; close them out of the queue
+        doc_repo.mark_brief_only(brief_only, run_id=run_id)
+        all_docs = [d for d in all_docs if not scout_excluded(d)]
     selected, unselected, result.source_mix = select_docs(
         all_docs, registry, settings.scout_doc_budget
     )

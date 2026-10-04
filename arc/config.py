@@ -89,10 +89,14 @@ class AlpacaOptionsFeed(enum.StrEnum):
 # Default YouTube sources (D13)
 # ---------------------------------------------------------------------------
 
-# StockedUp (@StockedUp) posts a next-session market outlook almost every trading
-# day. The channel id is used rather than the handle so a rename can't break it.
+# D13/D45 (E4.6): the four channels behind the daily 05:00 ET ``youtube.briefs`` job
+# (config/routines.yaml is the source of truth; this list is the CLI default).
+# Channel ids, never @handles, so a rename can't break them.
 DEFAULT_YOUTUBE_CHANNELS: list[str] = [
-    "https://www.youtube.com/channel/UC-m6zNItyoDk5lSykDlhE4Q/videos",
+    "https://www.youtube.com/channel/UC-m6zNItyoDk5lSykDlhE4Q/videos",  # StockedUp
+    "https://www.youtube.com/channel/UCvJZEG5x-DVYZKTz--pS39w/videos",  # FX Evolution
+    "https://www.youtube.com/channel/UCYKtr6GfycBqQJf32tbQSbQ/videos",  # Trade Brigade
+    "https://www.youtube.com/channel/UCTeFsS-bP0XEt3NBMjfW2cA/videos",  # Arete Trading
 ]
 
 
@@ -647,8 +651,8 @@ class ArcSettings(BaseSettings):
     ingest_youtube_channels: list[str] = Field(
         default_factory=lambda: list(DEFAULT_YOUTUBE_CHANNELS),
         description=(
-            "YouTube channel/playlist URLs for transcript ingestion. "
-            "Default: StockedUp (daily next-session market outlook)."
+            "YouTube channel/playlist URLs for transcript ingestion (`arc ingest`). "
+            "Default: the four D45 channels (StockedUp, FX Evolution, Trade Brigade, Arete)."
         ),
     )
 
@@ -667,6 +671,13 @@ class ArcSettings(BaseSettings):
     yt_max_audio_per_run: Annotated[int, Field(ge=0)] = Field(
         default=3,
         description="Max audio transcriptions per ingest run (ARC_YT_MAX_AUDIO_PER_RUN).",
+    )
+    yt_max_audio_per_slot: Annotated[int, Field(ge=0)] = Field(
+        default=4,
+        description=(
+            "Max audio transcriptions across all channels of one daily youtube.briefs "
+            "run (E4.6; ARC_YT_MAX_AUDIO_PER_SLOT)."
+        ),
     )
     # -- YouTube caption rate-limit backoff (E4.1c, D15) ----------------------
     yt_caption_sleep_seconds: Annotated[float, Field(ge=0)] = Field(

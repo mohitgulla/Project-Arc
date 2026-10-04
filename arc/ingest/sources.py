@@ -67,6 +67,10 @@ DEFAULT_CATEGORY: Mapping[str, SourceCategory] = {
     "youtube": SourceCategory.VIDEO,
 }
 UNKNOWN_CATEGORY = SourceCategory.MARKET_NEWS
+# D45 (E4.6): categories the 30-min Scout never reads. Video reaches the trading
+# loop only through the daily ``youtube.briefs`` job; the registry still lists the
+# channels (labels, the Tower's sources page).
+SCOUT_EXCLUDED: frozenset[SourceCategory] = frozenset({SourceCategory.VIDEO})
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_.]*$")
 
 
@@ -181,6 +185,22 @@ class SourceRegistry:
                         hosts=feed.match_hosts,
                     )
                 continue
+            channels = opts.get("channels")
+            if channels:  # E4.6: one registry source per YouTube channel (youtube.<slug>)
+                for raw in channels:
+                    slug = str(raw.get("slug") or "")
+                    key = f"youtube.{slug}"
+                    if not slug or key in out:
+                        msg = f"duplicate or empty channel source key {key!r}"
+                        raise ValueError(msg)
+                    out[key] = SourceSpec(
+                        key=key,
+                        job=job,
+                        category=category,
+                        label=str(raw.get("label") or slug),
+                        channel=str(raw.get("channel") or "") or None,
+                    )
+                continue
             if job in out:
                 msg = f"duplicate source key {job!r}"
                 raise ValueError(msg)
@@ -212,9 +232,15 @@ class SourceRegistry:
         return [s for s in self.sources.values() if s.job == job and s.url]
 
     def effective_weights(self) -> dict[str, float]:
-        """Category share × source share within the category (sums to 1)."""
+        """Category share × source share within the category (sums to 1).
+
+        Only Scout-readable sources get a weight: :data:`SCOUT_EXCLUDED` categories
+        (video, D45) are left out, so they never take a share of the doc budget.
+        """
         by_cat: dict[SourceCategory, list[SourceSpec]] = {}
         for s in self.sources.values():
+            if s.category in SCOUT_EXCLUDED:
+                continue
             by_cat.setdefault(s.category, []).append(s)
         if not by_cat:
             return {}

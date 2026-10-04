@@ -58,12 +58,17 @@ log = structlog.get_logger()
 CONNECTOR = "youtube"
 
 
-def _get_recent_videos(
-    channel_url: str,
-    *,
-    max_videos: int = 5,
-) -> list[dict]:
-    """Use yt-dlp to list recent videos from a channel/playlist."""
+class YoutubeListError(RuntimeError):
+    """The channel listing failed (yt-dlp missing, timed out or exited non-zero)."""
+
+
+def list_channel_videos(channel_url: str, *, max_videos: int = 5) -> list[dict]:
+    """Flat listing of a channel's newest *max_videos* uploads, newest first.
+
+    Unlike :func:`_get_recent_videos` a failure raises :class:`YoutubeListError`,
+    so a caller can tell "the channel posted nothing" from "we could not look"
+    (E4.6: the first is no info, the second alerts).
+    """
     cmd = [
         sys.executable,
         "-m",
@@ -76,26 +81,33 @@ def _get_recent_videos(
         channel_url,
     ]
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if result.returncode != 0:
-            log.warning("youtube.list_failed", channel=channel_url, stderr=result.stderr[:200])
-            return []
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        msg = f"yt-dlp unavailable: {type(exc).__name__}"
+        raise YoutubeListError(msg) from exc
+    if result.returncode != 0:
+        msg = f"yt-dlp exit {result.returncode}: {result.stderr.strip()[:200]}"
+        raise YoutubeListError(msg)
+    videos: list[dict] = []
+    for line in result.stdout.strip().splitlines():
+        if line.strip():
+            try:
+                videos.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return videos
 
-        videos = []
-        for line in result.stdout.strip().splitlines():
-            if line.strip():
-                try:
-                    videos.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-        return videos
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        log.warning("youtube.yt_dlp_unavailable")
+
+def _get_recent_videos(
+    channel_url: str,
+    *,
+    max_videos: int = 5,
+) -> list[dict]:
+    """Use yt-dlp to list recent videos from a channel/playlist ([] on failure)."""
+    try:
+        return list_channel_videos(channel_url, max_videos=max_videos)
+    except YoutubeListError as exc:
+        log.warning("youtube.list_failed", channel=channel_url, error=str(exc))
         return []
 
 
@@ -480,6 +492,143 @@ class _CaptionGuard:
 
 def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
+
+
+# ---------------------------------------------------------------------------
+# E4.6 (D45): one video at a time for the daily brief job
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TranscriptSession:
+    """Caption pacing/breaker + audio budget shared by every channel of one run.
+
+    The daily ``youtube.briefs`` job fetches channels one after another under one
+    session, so a 429 on one channel sends the remaining channels to the audio
+    fallback (one ``youtube:captions_backoff`` cooldown, one per-run breaker), and
+    ``yt_max_audio_per_slot`` caps audio transcriptions across the whole run.
+    """
+
+    conn: sqlite3.Connection
+    settings: ArcSettings
+    now: datetime
+    stats: YoutubeRunStats
+    captions: _CaptionGuard
+    budget: _AudioBudget
+    transcriber: Transcriber
+
+    @classmethod
+    def start(
+        cls,
+        conn: sqlite3.Connection,
+        settings: ArcSettings,
+        *,
+        now: datetime,
+        transcriber: Transcriber | None = None,
+        rng: random.Random | None = None,
+        sleep: Callable[[float], None] | None = None,
+    ) -> TranscriptSession:
+        stats = YoutubeRunStats()
+        guard = _CaptionGuard.start(
+            conn,
+            settings,
+            rng=rng or random.Random(),  # noqa: S311 - jitter, not crypto
+            sleep=sleep or time.sleep,
+            now=now,
+            stats=stats,
+        )
+        budget = _AudioBudget(
+            remaining=settings.yt_max_audio_per_slot,
+            grace_minutes=settings.yt_caption_grace_minutes,
+            max_minutes=settings.yt_max_audio_minutes,
+            force=False,
+            now=now,
+        )
+        stt = transcriber or MlxWhisperTranscriber(model=settings.whisper_model)
+        return cls(conn, settings, now, stats, guard, budget, stt)
+
+    def transcript(
+        self, info: dict, video_id: str, *, max_audio_minutes: int | None = None
+    ) -> tuple[str, TranscriptSource | None, str | None]:
+        """``(text, source, pending_reason)`` for one video.
+
+        Captions first, then audio under the grace / length / per-run caps. When
+        neither yields text, *pending_reason* says why (``within_caption_grace``,
+        ``too_long``, ``run_cap_reached``, ``audio_failed``, ...).
+        """
+        text = self.captions.transcript(info, video_id)
+        if text:
+            return text, TranscriptSource.CAPTIONS, None
+        self.budget.max_minutes = max_audio_minutes or self.settings.yt_max_audio_minutes
+        reason = self.budget.skip_reason(info)
+        failed_before = self.stats.audio_failed
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        text = _audio_transcript(
+            url, info, self.budget, self.transcriber, self.settings.ffmpeg_bin, self.stats
+        )
+        if text:
+            return text, TranscriptSource.AUDIO, None
+        self.stats.no_transcript += 1
+        if reason is None:
+            reason = "audio_failed" if self.stats.audio_failed > failed_before else "no_transcript"
+        return "", None, reason
+
+    def finish(self) -> YoutubeRunStats:
+        backoff = self.captions.state
+        if backoff.active(self.now):
+            self.stats.cooldown_until = backoff.cooldown_until
+        self.stats.consecutive_rate_limits = backoff.consecutive_rate_limits
+        return self.stats
+
+
+def store_transcript(
+    conn: sqlite3.Connection,
+    *,
+    info: dict,
+    video_id: str,
+    transcript: str,
+    source: TranscriptSource,
+    source_key: str,
+    universe: IngestUniverse | list[str],
+) -> tuple[str, RawDoc]:
+    """Store one video transcript as a ``raw_doc`` (same text shape as :func:`fetch_youtube`).
+
+    Returns ``(raw_doc id, doc)``; an already-stored video returns the existing id.
+    """
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
+    h = content_hash(CONNECTOR, video_url)
+    title = info.get("title") or ""
+    channel = info.get("channel") or info.get("uploader") or ""
+    header = f"[{channel}] [{title}]" if channel else f"[{title}]"
+    text = f"{TRANSCRIPT_PREFIX[source]} {header} {transcript}"
+    channel_id = info.get("channel_id") or None
+    doc = RawDoc(
+        source=CONNECTOR,
+        url=video_url,
+        published_at=_published_at(info, ""),
+        text=text,
+        tickers_hint=_extract_tickers(text, universe),
+        content_hash=h,
+        transcript_source=source,
+        channel_id=channel_id,
+        title=title,
+    )
+    repo = RawDocRepo(conn)
+    doc_id = repo.insert(
+        source=doc.source,
+        url=doc.url,
+        published_at=doc.published_at.isoformat(),
+        text=doc.text,
+        tickers_hint=doc.tickers_hint,
+        hash_val=h,
+        channel_id=channel_id,
+        title=title,
+        source_key=source_key,
+    )
+    if doc_id is None:
+        row = conn.execute("SELECT id FROM raw_docs WHERE content_hash = ?", (h,)).fetchone()
+        doc_id = str(row["id"])
+    return doc_id, doc
 
 
 def fetch_youtube(

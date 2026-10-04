@@ -1,0 +1,29 @@
+# Trade Brigade (@TradeBrigade): SPY/QQQ technical game plan (weekly expected move,
+# anchored VWAPs, hourly structure). Wednesday and Sat/Sun evenings, 50-77 min.
+slug: tradebrigade
+channel_id: UCYKtr6GfycBqQJf32tbQSbQ
+display_name: Trade Brigade
+url: https://www.youtube.com/channel/UCYKtr6GfycBqQJf32tbQSbQ
+cadence: irregular
+horizon: next_session
+publish_window_et: "17:00-24:00"
+focus:
+  - market_bias
+  - levels
+  - calls
+  - catalysts
+  - risk_flags
+trust_weight: 0.5          # D45: four channels, equal weight
+guidelines_version: "tradebrigade-2026-10-04.1"
+max_active_sessions: 1     # D45: no carry-over; the daily job caps it at run + 24 h
+sponsor_patterns:
+  - '\bvideo tutorial\b'
+  - '\badditional resources\b'
+  - '\blinks? listed down below\b'
+hedge_words:
+  - could
+  - might
+  - maybe
+  - ideally
+  - potentially
+  - if we could

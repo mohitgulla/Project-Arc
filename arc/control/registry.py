@@ -200,6 +200,7 @@ NOT_EXPOSED: dict[str, str] = {
     "yt_caption_grace_minutes": "ingestion plumbing",
     "yt_max_audio_minutes": "ingestion plumbing",
     "yt_max_audio_per_run": "ingestion plumbing",
+    "yt_max_audio_per_slot": "ingestion plumbing",
     "yt_caption_sleep_seconds": "ingestion plumbing",
     "yt_caption_cooldown_base_minutes": "ingestion plumbing",
     "yt_caption_cooldown_max_minutes": "ingestion plumbing",

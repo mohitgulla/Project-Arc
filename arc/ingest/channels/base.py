@@ -337,6 +337,10 @@ class ProcessResult:
     prompt: str = ""
     raw_response: str = ""
     sponsor_sentences_removed: int = 0
+    # LLM usage of the extraction call (None when unknown, e.g. fixtures).
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
 
     @property
     def dropped_by_reason(self) -> dict[str, int]:
@@ -461,6 +465,9 @@ class ChannelProcessor:
         result.prompt = prompt
         result.raw_response = reply.text
         result.sponsor_sentences_removed = removed
+        result.input_tokens = reply.input_tokens
+        result.output_tokens = reply.output_tokens
+        result.cost_usd = reply.cost_usd
         log.info(
             "channel.brief.built",
             channel=self.profile.slug,

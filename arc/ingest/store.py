@@ -130,6 +130,10 @@ class RawDocRepo:
         """
         self._close(doc_ids, run_id=run_id, status="skipped_budget")
 
+    def mark_brief_only(self, doc_ids: list[str], *, run_id: str) -> None:
+        """D45 (E4.6): a video doc; it reaches trading only through the daily briefs."""
+        self._close(doc_ids, run_id=run_id, status="brief_only")
+
     def _close(self, doc_ids: list[str], *, run_id: str, status: str) -> None:
         now = _now_iso()
         self.conn.executemany(
