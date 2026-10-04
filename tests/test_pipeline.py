@@ -392,7 +392,11 @@ class TestDigestCards:
         assert (
             "*PLTR*\nbullish · news · 90% confidence · 1 source · new, passed liquidity screen"
         ) in scout
-        assert "*Source mix*\nEDGAR 2 · Earnings 1 · rss 8" in scout  # D30
+        # D47: grouped by category, equal shares, sources inside each
+        assert (
+            "*Source mix*\n*Market news* 50% · 8 read: rss 8\n"
+            "*Company* 50% · 3 read: EDGAR 2 · Earnings 1" in scout
+        )
         assert "• failed liquidity screen (1): UFPT" in scout
         assert "UFPT: ADV 118k &lt; 1.0M; no expiry in the DTE window" in scout
         assert "• unknown symbol (1): ZZZQ" in scout

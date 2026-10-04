@@ -44,6 +44,7 @@ from arc.ingest.scout import (
 )
 from arc.ingest.store import RawDocRepo, ScoutBatchRepo
 from arc.models import Candidate, CatalystType, Stance
+from arc.pipeline.env import FIXTURE_NOW
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.store.repos import CandidateRepo
@@ -123,7 +124,8 @@ def _seed(conn, n: int, *, ticker: str = "AAPL") -> list[str]:
             repo.insert(
                 source="rss",
                 url=f"https://example.com/{ticker.lower()}/{i}",
-                published_at=f"2026-09-27T1{i % 10}:00:00+00:00",
+                # D47: inside the 6h market_news window at NOW (newest = highest i)
+                published_at=(NOW - dt.timedelta(hours=5) + dt.timedelta(minutes=i)).isoformat(),
                 # distinct words per doc, so each seeded doc is its own story (D30)
                 text=f"{ticker} news item {i}: topic{i} detail{i} angle{i}",
                 tickers_hint=[ticker],
@@ -481,7 +483,7 @@ class TestRunScout:
         # strict mode (fixture settings): PLTR / UFPT / ZZZQ are all not_in_universe
         assert load_fixture_docs(conn) == 11
         assert load_fixture_docs(conn) == 0  # dedupe by content hash
-        res = run_scout(conn, settings, dry_run=True, now=NOW)
+        res = run_scout(conn, settings, dry_run=True, now=FIXTURE_NOW)  # D47: fixture clock
         assert res.dry_run
         assert res.failed_batches == 0
         assert res.docs_scouted == 11
@@ -507,7 +509,7 @@ class TestRunScout:
 
         monkeypatch.setattr(subprocess, "run", boom)
         load_fixture_docs(conn)
-        run_scout(conn, settings, dry_run=True, now=NOW)
+        run_scout(conn, settings, dry_run=True, now=FIXTURE_NOW)
 
     def test_live_default_backend_is_hermes(self, conn, settings, monkeypatch) -> None:
         seen: list[Any] = []

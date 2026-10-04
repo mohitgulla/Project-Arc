@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from arc.context.store import ContextEntry
+    from arc.ingest.sources import CategoryMix
     from arc.models import Candidate
     from arc.personas.schemas import (
         AuditorOutput,
@@ -192,6 +193,25 @@ def source_mix_line(mix: Sequence[tuple[str, int, int]]) -> str:
     return " · ".join(parts)
 
 
+def category_mix_lines(mix: Sequence[CategoryMix]) -> list[str]:
+    """D47: one line per category, its share first, then its sources.
+
+    ``*Market news* 33% · 12 read: WSJ 4 · CNBC 4 (3 over budget) · Nasdaq 4 (2 stale)``
+    """
+    out: list[str] = []
+    for c in mix:
+        parts = []
+        for label, read, over, stale in c.sources:
+            notes = [f"{over} over budget"] if over else []
+            if stale:
+                notes.append(f"{stale} stale")
+            parts.append(f"{B.esc(label)} {read}" + (f" ({', '.join(notes)})" if notes else ""))
+        out.append(
+            f"*{B.esc(c.label)}* {round(c.share * 100)}% · {c.picked} read: " + " · ".join(parts)
+        )
+    return out
+
+
 def scout_card(
     *,
     docs: int,
@@ -207,6 +227,7 @@ def scout_card(
     new_tickers: Sequence[str] = (),
     source_mix: Sequence[tuple[str, int, int]] = (),
     stories: int | None = None,
+    category_mix: Sequence[CategoryMix] = (),
 ) -> CardView:
     """``[Scout] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
@@ -231,7 +252,10 @@ def scout_card(
         else "",
     )
     # D30: which sources this run read (and what waited), before the candidate rows.
-    if source_mix:
+    # D47: grouped by category (share, then sources with read / over budget / stale).
+    if category_mix:
+        blocks.append(_section("Source mix", category_mix_lines(category_mix)))
+    elif source_mix:
         blocks.append(_section("Source mix", [source_mix_line(source_mix)]))
     # E5.5b: one section per candidate with dividers (like the Director's ranked
     # list), so each row folds on its own. Lines start at column 0: no indent.

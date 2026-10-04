@@ -134,6 +134,10 @@ class RawDocRepo:
         """D45 (E4.6): a video doc; it reaches trading only through the daily briefs."""
         self._close(doc_ids, run_id=run_id, status="brief_only")
 
+    def mark_skipped_stale(self, doc_ids: list[str], *, run_id: str) -> None:
+        """D47 (E4.7): older than its category's ``max_age`` at run time; never read."""
+        self._close(doc_ids, run_id=run_id, status="skipped_stale")
+
     def _close(self, doc_ids: list[str], *, run_id: str, status: str) -> None:
         now = _now_iso()
         self.conn.executemany(

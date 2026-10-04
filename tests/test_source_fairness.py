@@ -13,6 +13,7 @@ from hypothesis import strategies as st
 
 from arc.config import ArcSettings
 from arc.context.kinds import KINDS, StoryPayload
+from arc.context.ttl import Ttl
 from arc.ingest.llm import FixtureScoutLLM, LLMResult, ScoutLLMError
 from arc.ingest.scout import (
     _Doc,
@@ -85,11 +86,27 @@ FEEDS = [
         "label": "WSJ",
         "url": "https://feeds.content.dowjones.io/x",
         "hosts": ["wsj.com"],
+        "category": "market_news",
     },
-    {"name": "cnbc", "label": "CNBC", "url": "https://www.cnbc.com/rss.html"},
-    {"name": "sa", "label": "SA", "url": "https://seekingalpha.com/mc.xml"},
-    {"name": "nasdaq", "label": "Nasdaq", "url": "https://www.nasdaq.com/feed"},
-    {"name": "fed", "label": "Fed", "url": "https://www.federalreserve.gov/feeds/press_all.xml"},
+    {
+        "name": "cnbc",
+        "label": "CNBC",
+        "url": "https://www.cnbc.com/rss.html",
+        "category": "market_news",
+    },
+    {"name": "sa", "label": "SA", "url": "https://seekingalpha.com/mc.xml", "category": "company"},
+    {
+        "name": "nasdaq",
+        "label": "Nasdaq",
+        "url": "https://www.nasdaq.com/feed",
+        "category": "market_news",
+    },
+    {
+        "name": "fed",
+        "label": "Fed",
+        "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+        "category": "macro",
+    },
 ]
 
 
@@ -97,7 +114,12 @@ def _shipped_like() -> RoutinesConfig:
     return _routines(
         {
             "rss": {"every": "30m", "writes": ["raw_doc_ref"], "feeds": FEEDS},
-            "edgar": {"every": "15m", "writes": ["raw_doc_ref"], "label": "EDGAR"},
+            "edgar": {
+                "every": "15m",
+                "writes": ["raw_doc_ref"],
+                "label": "EDGAR",
+                "category": "company",
+            },
         }
     )
 
@@ -109,24 +131,60 @@ def _shipped_like() -> RoutinesConfig:
 
 class TestRegistry:
     def test_shipped_config_has_named_feeds_and_categories(self) -> None:
-        reg = SourceRegistry.from_routines(load_routines(DEFAULT_ROUTINES_PATH))
+        routines = load_routines(DEFAULT_ROUTINES_PATH)
+        reg = SourceRegistry.from_routines(routines)
         assert {"wsj", "cnbc", "seekingalpha", "nasdaq", "fed", "edgar", "earnings"} <= set(
             reg.sources
         )
-        assert reg.sources["edgar"].category is SourceCategory.FILINGS
+        assert reg.sources["edgar"].category is SourceCategory.COMPANY
+        assert reg.sources["earnings"].category is SourceCategory.COMPANY
         assert reg.sources["fed"].category is SourceCategory.MACRO
+        assert reg.sources["wsj"].category is SourceCategory.MARKET_NEWS
         # data jobs write typed kinds, never raw docs: not Scout sources
         assert "vol_term" not in reg.sources and "unusual_options" not in reg.sources
         assert abs(sum(reg.effective_weights().values()) - 1.0) < 1e-9
+        # D47: five categories, weighted equally, each with a freshness window
+        assert set(routines.categories) == set(SourceCategory)
+        assert {c.weight for c in routines.categories.values()} == {1.0}
+        assert routines.categories[SourceCategory.MARKET_NEWS].max_age.duration == dt.timedelta(
+            hours=6
+        )
+
+    def test_every_context_source_declares_a_category(self) -> None:
+        """D47: a source job that writes context without a category fails config load."""
+        with pytest.raises(ValueError, match="category"):
+            _routines({"edgar": {"every": "15m", "writes": ["raw_doc_ref"]}})
+        with pytest.raises(ValueError, match="unknown source category"):
+            _routines({"edgar": {"every": "15m", "writes": ["raw_doc_ref"], "category": "x"}})
+
+    def test_legacy_category_names_alias_to_d47(self) -> None:
+        reg = SourceRegistry.from_routines(
+            _routines(
+                {
+                    "edgar": {"every": "15m", "writes": ["raw_doc_ref"], "category": "filings"},
+                    "earnings": {"every": "1h", "writes": ["raw_doc_ref"], "category": "calendar"},
+                }
+            )
+        )
+        assert reg.sources["edgar"].category is SourceCategory.COMPANY
+        assert reg.sources["earnings"].category is SourceCategory.COMPANY
+
+    def test_categories_block_is_strict_and_partial(self) -> None:
+        r = RoutinesConfig.model_validate({"categories": {"macro": {"weight": 2, "max_age": "3d"}}})
+        assert r.categories[SourceCategory.MACRO].weight == 2
+        assert r.categories[SourceCategory.MARKET_NEWS].weight == 1  # unset: default kept
+        with pytest.raises(ValueError, match="unknown category"):
+            RoutinesConfig.model_validate({"categories": {"filings": {"weight": 1}}})
 
     def test_plain_url_feed_still_loads(self) -> None:
-        """PR #40 shape: a bare URL string is a market_news source named by its domain."""
+        """PR #40 shape: a bare URL string is a source named by its domain (job category)."""
         reg = SourceRegistry.from_routines(
             _routines(
                 {
                     "rss": {
                         "every": "30m",
                         "writes": ["raw_doc_ref"],
+                        "category": "market_news",
                         "feeds": [
                             "https://www.cnbc.com/id/20910258/device/rss/rss.html",
                             "https://seekingalpha.com/market_currents.xml",
@@ -138,14 +196,21 @@ class TestRegistry:
         assert set(reg.sources) == {"cnbc", "seekingalpha"}
         assert reg.sources["cnbc"].category is SourceCategory.MARKET_NEWS
 
-    def test_default_weights_equal_per_source(self) -> None:
-        w = SourceRegistry.from_routines(_shipped_like()).effective_weights()
-        # 5 market_news feeds + 1 filings source, all weight 1 -> 1/6 each
-        assert all(abs(v - 1 / 6) < 1e-9 for v in w.values())
+    def test_categories_are_weighted_equally_not_sources(self) -> None:
+        """D47: 3 market_news feeds, 2 company sources, 1 macro feed -> 1/3 per category."""
+        reg = SourceRegistry.from_routines(_shipped_like())
+        w = reg.effective_weights()
+        assert abs(w["fed"] - 1 / 3) < 1e-9  # alone in macro: the whole category share
+        assert abs(w["sa"] - 1 / 6) < 1e-9 and abs(w["edgar"] - 1 / 6) < 1e-9
+        assert all(abs(w[k] - 1 / 9) < 1e-9 for k in ("wsj", "cnbc", "nasdaq"))
+        assert abs(sum(w.values()) - 1.0) < 1e-9
 
     def test_adding_or_reweighting_a_source_is_config_only(self) -> None:
-        """No code change: a new feed and a weight edit in YAML change the split."""
-        feeds = [*FEEDS, {"name": "reuters", "url": "https://www.reuters.com/rss"}]
+        """No code change: a new feed splits its category's share; a weight edit in YAML."""
+        feeds = [
+            *FEEDS,
+            {"name": "reuters", "url": "https://www.reuters.com/rss", "category": "market_news"},
+        ]
         feeds[0] = {**feeds[0], "weight": 2}
         reg = SourceRegistry.from_routines(
             _routines({"rss": {"every": "30m", "writes": ["raw_doc_ref"], "feeds": feeds}})
@@ -153,18 +218,29 @@ class TestRegistry:
         w = reg.effective_weights()
         assert "reuters" in w
         assert abs(w["wsj"] - 2 * w["cnbc"]) < 1e-9
+        market = sum(v for k, v in w.items() if k in {"wsj", "cnbc", "nasdaq", "reuters"})
+        assert abs(market - 1 / 3) < 1e-9  # the category did not grow
 
-    def test_category_weights_split_budget_first_by_category(self) -> None:
-        feeds = [*FEEDS[:4], {**FEEDS[4], "category": "macro"}]
+    def test_category_weight_is_config_driven(self) -> None:
+        r = RoutinesConfig.model_validate(
+            {
+                "sources": {"rss": {"every": "30m", "writes": ["raw_doc_ref"], "feeds": FEEDS}},
+                "categories": {"macro": {"weight": 2}},
+            }
+        )
+        w = SourceRegistry.from_routines(r).effective_weights()
+        assert abs(w["fed"] - 0.5) < 1e-9  # macro 2 of (1 + 1 + 2)
+
+    def test_legacy_category_weights_knob_still_applies(self) -> None:
         reg = SourceRegistry.from_routines(
             _routines(
-                {"rss": {"every": "30m", "writes": ["raw_doc_ref"], "feeds": feeds}},
-                {"category_weights": {"market_news": 1, "macro": 1}},
+                {"rss": {"every": "30m", "writes": ["raw_doc_ref"], "feeds": FEEDS}},
+                {"category_weights": {"market_news": 1, "macro": 1, "company": 0}},
             )
         )
         w = reg.effective_weights()
-        assert abs(w["fed"] - 0.5) < 1e-9  # the lone macro feed gets its category's half
-        assert abs(w["wsj"] - 0.125) < 1e-9
+        assert abs(w["fed"] - 0.5) < 1e-9
+        assert "sa" not in w  # weight 0: no share
 
     def test_duplicate_feed_name_rejected(self) -> None:
         with pytest.raises(ValueError, match="duplicate source key"):
@@ -245,13 +321,49 @@ class TestFairSelection:
         """2026-09-28: EDGAR stored 181 filings in one tick; WSJ returned 58 items."""
         reg = SourceRegistry.from_routines(_shipped_like())
         counts = {"edgar": 181, "wsj": 58, "cnbc": 30, "sa": 12, "nasdaq": 25, "fed": 3}
-        sel = select_fair(_docs(counts), reg.effective_weights(), 120)
+        cats = {k: reg.spec_for(k).category.value for k in counts}
+        sel = select_fair(
+            _docs(counts),
+            {k: reg.spec_for(k).weight for k in counts},
+            120,
+            categories=cats,
+            category_weights={c.value: w for c, w in reg.category_weights().items()},
+        )
         assert all(sel.picked.get(k, 0) >= 1 for k in counts)
         assert sel.picked["fed"] == 3
-        assert sel.picked["edgar"] <= 120 // 6 + 12  # its share + what `fed`/`sa` left over
+        # company (edgar + sa) gets its 1/3 plus what macro left over, split by source
+        assert sel.picked["edgar"] <= 120 // 3 + 37 - 12 + 1
         assert sel.over_budget()["edgar"] == 181 - sel.picked["edgar"]
         # the old oldest-first pick would have been 120 EDGAR filings
         assert sel.picked["edgar"] < 60
+
+    @hsettings(max_examples=300, deadline=None)
+    @given(
+        counts=st.dictionaries(
+            st.sampled_from(["a", "b", "c", "d", "e", "f"]), st.integers(0, 40), min_size=1
+        ),
+        budget=st.integers(0, 150),
+    )
+    def test_no_category_over_share_while_another_waits(
+        self, counts: dict[str, int], budget: int
+    ) -> None:
+        """D47 invariant: categories (a,b | c,d | e,f) stay within one pick of each other."""
+        cat = {"a": "x", "b": "x", "c": "y", "d": "y", "e": "z", "f": "z"}
+        sel = select_fair(
+            _docs(counts),
+            {k: 1.0 for k in cat},
+            budget,
+            categories={k: cat[k] for k in counts},
+            category_weights={"x": 1, "y": 1, "z": 1},
+        )
+        assert len(sel.selected) == min(budget, sum(counts.values()))
+        cp = sel.category_picked()
+        avail = {c: sum(n for k, n in counts.items() if cat[k] == c) for c in set(cat.values())}
+        waiting = [c for c in avail if cp.get(c, 0) < avail[c]]
+        for c, n in cp.items():
+            for other in waiting:
+                if other != c:
+                    assert n <= cp.get(other, 0) + 1
 
     def test_newest_first_within_a_source(self) -> None:
         reg = SourceRegistry.from_routines(_shipped_like())
@@ -263,6 +375,182 @@ class TestFairSelection:
         assert [d.id for d in selected] == ["w4", "w5"]
         assert {d.id for d in rest} == {"w1", "w2", "w3"}
         assert mix == [("WSJ", 2, 3)]
+
+
+class TestFreshness:
+    """D47: per-category max_age; stale docs never read, connectors never store them."""
+
+    def test_is_stale_uses_category_window_and_override(self) -> None:
+        feeds = [*FEEDS[:4], {**FEEDS[4], "max_age": "1h"}]
+        reg = SourceRegistry.from_routines(
+            _routines({"rss": {"every": "30m", "writes": ["raw_doc_ref"], "feeds": feeds}})
+        )
+        pub = NOW - dt.timedelta(hours=5)
+        assert not reg.is_stale("wsj", published=pub, ingested=NOW, now=NOW)  # 6h window
+        assert reg.is_stale("wsj", published=NOW - dt.timedelta(hours=7), ingested=NOW, now=NOW)
+        assert reg.is_stale("fed", published=pub, ingested=NOW, now=NOW)  # its own 1h override
+        assert not reg.is_stale("sa", published=pub, ingested=NOW, now=NOW)  # company 24h
+
+    def test_ingested_age_basis(self) -> None:
+        reg = SourceRegistry.from_routines(
+            _routines(
+                {
+                    "earnings": {
+                        "every": "1h",
+                        "writes": ["raw_doc_ref"],
+                        "category": "company",
+                        "age_basis": "ingested",
+                    }
+                }
+            )
+        )
+        old = NOW - dt.timedelta(days=30)
+        assert not reg.is_stale("earnings", published=old, ingested=NOW, now=NOW)
+
+    def test_freshness_ttl_is_shortest_window_plus_grace_capped(self) -> None:
+        reg = SourceRegistry.from_routines(_shipped_like())
+        ttl = reg.freshness_ttl(["wsj", "edgar"], None, NOW)
+        assert ttl is not None and ttl.duration == dt.timedelta(hours=8)  # 6h + 2h
+        capped = reg.freshness_ttl(["edgar"], Ttl(duration=dt.timedelta(hours=4)), NOW)
+        assert capped is not None and capped.duration == dt.timedelta(hours=4)
+
+    def test_scout_closes_stale_docs_and_never_reads_them(self, conn, settings) -> None:
+        repo = RawDocRepo(conn)
+        repo.insert(
+            source="rss",
+            url="https://wsj.com/old",
+            published_at=(NOW - dt.timedelta(hours=9)).isoformat(),
+            text="Stocks slid last night on rate fears. More.",
+            tickers_hint=["SPY"],
+            id="old",
+            source_key="wsj",
+        )
+        repo.insert(
+            source="rss",
+            url="https://wsj.com/new",
+            published_at=(NOW - dt.timedelta(hours=1)).isoformat(),
+            text="Nvidia rallies on new chip orders. More.",
+            tickers_hint=["NVDA"],
+            id="new",
+            source_key="wsj",
+        )
+        llm = FixtureScoutLLM([_scout_reply()])
+        res = run_scout(
+            conn,
+            settings,
+            llm=llm,
+            now=NOW,
+            run_id="r1",
+            registry=SourceRegistry.from_routines(_shipped_like()),
+        )
+        status = {r[0]: r[1] for r in conn.execute("SELECT id, scout_status FROM raw_docs")}
+        assert status == {"old": "skipped_stale", "new": "scouted"}
+        assert res.skipped_stale == 1 and res.stale_by_source == {"wsj": 1}
+        assert all("rate fears" not in p for p in llm.prompts)
+        [mix] = res.category_mix
+        assert (mix.label, mix.picked, mix.sources) == ("Market news", 1, [("WSJ", 1, 0, 1)])
+        # the story built from the fresh doc expires at its window + 2h, not 1 session
+        assert all(t.duration == dt.timedelta(hours=8) for t in res.story_ttls.values())
+
+    def test_rss_connector_never_stores_stale_entries(self, conn, monkeypatch) -> None:
+        import arc.ingest.rss as rss
+
+        class _Entry(dict):
+            __getattr__ = dict.get
+
+        url = "https://www.cnbc.com/rss.html"
+        entries = [
+            _Entry(
+                link="https://cnbc.com/old",
+                title="Old",
+                summary="old",
+                published=(NOW - dt.timedelta(hours=9)).strftime("%a, %d %b %Y %H:%M:%S %z"),
+            ),
+            _Entry(
+                link="https://cnbc.com/new",
+                title="New",
+                summary="new",
+                published=(NOW - dt.timedelta(hours=1)).strftime("%a, %d %b %Y %H:%M:%S %z"),
+            ),
+        ]
+
+        class _Parsed:
+            bozo = False
+            entries: list[Any] = []
+
+        parsed = _Parsed()
+        parsed.entries = entries
+        monkeypatch.setattr(rss, "_download", lambda *_a, **_k: b"<rss/>")
+        monkeypatch.setattr(rss.feedparser, "parse", lambda *_a, **_k: parsed)
+        s = ArcSettings(env="paper", ingest_rss_feeds=[url])  # type: ignore[call-arg]
+        docs = rss.fetch_rss(
+            conn,
+            s,
+            source_keys={url: "cnbc"},
+            max_ages={url: Ttl(duration=dt.timedelta(hours=6))},
+            now=NOW,
+        )
+        assert [d.url for d in docs] == ["https://cnbc.com/new"]
+        assert conn.execute("SELECT count(*) FROM raw_docs").fetchone()[0] == 1
+
+
+class TestEdgarFreshness:
+    """D47 root cause: EDGAR stamped filings with the filing *date* and stored every
+    re-listed filing; old 10-Qs of new tickers flooded the queue. Now: accepted time,
+    and filings older than the company window are skipped before download."""
+
+    def _subs(self) -> dict[str, Any]:
+        return {
+            "filings": {
+                "recent": {
+                    "form": ["8-K", "10-Q", "8-K"],
+                    "accessionNumber": ["0001-26-000003", "0001-26-000002", "0001-26-000001"],
+                    "filingDate": ["2026-09-28", "2026-08-01", "2026-07-15"],
+                    "acceptanceDateTime": [
+                        "2026-09-28T14:05:11.000Z",
+                        "2026-08-01T20:00:00.000Z",
+                        "2026-07-15T12:00:00.000Z",
+                    ],
+                    "primaryDocument": ["a.htm", "b.htm", "c.htm"],
+                }
+            }
+        }
+
+    def test_published_at_is_acceptance_time(self) -> None:
+        from arc.ingest.edgar import _filings_of_form, filing_published_at
+
+        [f] = _filings_of_form(self._subs(), "1", "10-Q", count=5)
+        assert filing_published_at(f) == dt.datetime(2026, 8, 1, 20, tzinfo=dt.UTC)
+        assert filing_published_at({"filingDate": "2026-08-01"}) == dt.datetime(
+            2026, 8, 1, tzinfo=dt.UTC
+        )
+        assert filing_published_at({}) is None
+
+    def test_stale_filings_are_never_downloaded_or_stored(self, conn, monkeypatch) -> None:
+        import arc.ingest.edgar as edgar
+
+        fetched: list[str] = []
+        monkeypatch.setattr(edgar, "_fetch_submissions", lambda *_a, **_k: self._subs())
+        monkeypatch.setattr(
+            edgar, "_fetch_filing_text", lambda url, *_a: fetched.append(url) or f"text {url}"
+        )
+        monkeypatch.setattr(
+            edgar.IngestUniverse,
+            "from_settings",
+            classmethod(
+                lambda cls, s: type(
+                    "U", (), {"cik": lambda self, t: "1", "tickers_in": lambda self, x: []}
+                )()
+            ),
+        )
+        s = ArcSettings(env="paper", universe=["AAPL"])  # type: ignore[call-arg]
+        now = dt.datetime(2026, 9, 28, 12, tzinfo=ET)
+        docs = edgar.fetch_edgar(conn, s, now=now, max_age=Ttl(duration=dt.timedelta(hours=24)))
+        assert [d.url.rsplit("/", 1)[-1] for d in docs] == ["a.htm"]
+        assert len(fetched) == 1  # old 10-Q / 8-K never downloaded
+        # the cursor still advanced past the skipped filings: the next run does nothing
+        docs2 = edgar.fetch_edgar(conn, s, now=now, max_age=Ttl(duration=dt.timedelta(hours=24)))
+        assert docs2 == [] and len(fetched) == 1
 
 
 def _mkdoc(doc_id: str, key: str, published: str, text: str, **kw: Any) -> _Doc:
@@ -346,7 +634,7 @@ class TestStories:
                 f"8-K item {i}",
                 i * 0.1,
                 source="edgar",
-                category="filings",
+                category="company",
                 tickers=["TSLA"],
                 form_type="8-K",
             )
@@ -358,7 +646,7 @@ class TestStories:
                 "10-Q",
                 0.2,
                 source="edgar",
-                category="filings",
+                category="company",
                 tickers=["TSLA"],
                 form_type="10-Q",
             )
@@ -400,14 +688,14 @@ class TestCorroboration:
         assert count_corroboration(urls, key.__getitem__) == len(set(srcs))
 
 
-def _seed(conn, rows: list[tuple[str, str, str, str, list[str]]]) -> None:
-    """rows: (id, source_key, url, text, tickers)."""
+def _seed(conn, rows: list[tuple[str, str, str, str, list[str]]], now: dt.datetime = NOW) -> None:
+    """rows: (id, source_key, url, text, tickers); published inside every D47 window."""
     repo = RawDocRepo(conn)
     for i, (doc_id, key, url, text, tickers) in enumerate(rows):
         repo.insert(
             source="edgar" if key == "edgar" else "rss",
             url=url,
-            published_at=f"2026-09-28T1{i % 6}:00:00+00:00",
+            published_at=(now - dt.timedelta(minutes=10 * (i + 1))).isoformat(),
             text=text,
             tickers_hint=tickers,
             id=doc_id,
@@ -578,26 +866,29 @@ class TestTwoStage:
         ],
         ids=["midday", "et-midnight"],
     )
-    def test_over_budget_docs_wait_then_close_as_skipped_budget(
+    def test_over_budget_docs_wait_then_close_as_stale(
         self, conn, settings: ArcSettings, now: dt.datetime
     ) -> None:
         rows = [
             (f"e{i}", "edgar", f"https://sec.gov/{i}", f"Form 8-K filing number {i} unique{i}.", [])
             for i in range(10)
         ] + [("w1", "wsj", "https://wsj.com/a", "Markets rally on jobs data.", [])]
-        _seed(conn, rows)
+        _seed(conn, rows, now)
         # ingested_at is stamped with the wall clock; pin it to the injected `now` so the
         # TTL arithmetic below doesn't depend on when the suite runs (E4.5a, E1.1b).
         conn.execute("UPDATE raw_docs SET ingested_at = ?", (now.isoformat(),))
         s = settings.model_copy(update={"scout_doc_budget": 4})
         reg = SourceRegistry.from_routines(_shipped_like())
         res = run_scout(conn, s, llm=FixtureScoutLLM([]), now=now, run_id="r1", registry=reg)
+        # D47: market_news (WSJ, 1 doc) and company (EDGAR) split the 4 equally; WSJ's
+        # unused share flows to EDGAR
         assert dict((lbl, (r, o)) for lbl, r, o in res.source_mix) == {
             "WSJ": (1, 0),
             "EDGAR": (3, 7),
         }
-        assert res.over_budget == 7 and res.skipped_budget == 0  # still inside the TTL
-        later = now + dt.timedelta(days=6)  # past the 5d raw_doc_ref TTL
+        assert res.over_budget == 7 and res.skipped_budget == 0 and res.skipped_stale == 0
+        # past EDGAR's 24h company window: the waiting filings close skipped_stale
+        later = now + dt.timedelta(days=2)
         routines = load_routines(DEFAULT_ROUTINES_PATH)
         res2 = run_scout(
             conn,
@@ -608,13 +899,48 @@ class TestTwoStage:
             registry=reg,
             routines=routines,
         )
-        # r2 reads 4 of the 7 waiting filings, closes the 3 left over as skipped_budget
-        assert res2.skipped_budget == 3
+        assert res2.skipped_stale == 7 and res2.docs_scouted == 0
         closed = conn.execute(
-            "SELECT count(*) FROM raw_docs"
-            " WHERE scout_status='skipped_budget' AND scout_run_id='r2'"
+            "SELECT count(*) FROM raw_docs WHERE scout_status='skipped_stale' AND scout_run_id='r2'"
         ).fetchone()[0]
-        assert closed == 3
+        assert closed == 7
+
+    def test_budget_skip_still_closes_docs_past_the_raw_doc_ttl(
+        self, conn, settings: ArcSettings
+    ) -> None:
+        """A source with a window longer than the raw_doc_ref TTL still gets skipped_budget."""
+        rows = [
+            (f"e{i}", "edgar", f"https://sec.gov/{i}", f"Form 8-K filing number {i} unique{i}.", [])
+            for i in range(6)
+        ]
+        _seed(conn, rows)
+        conn.execute("UPDATE raw_docs SET ingested_at = ?", (NOW.isoformat(),))
+        s = settings.model_copy(update={"scout_doc_budget": 2})
+        r = RoutinesConfig.model_validate(
+            {
+                "sources": {
+                    "edgar": {
+                        "every": "15m",
+                        "writes": ["raw_doc_ref"],
+                        "category": "company",
+                        "max_age": "30d",
+                    }
+                },
+                "personas": {"scout": {"schedule": ["12:00"], "writes": ["candidate", "note"]}},
+            }
+        )
+        reg = SourceRegistry.from_routines(r)
+        run_scout(conn, s, llm=FixtureScoutLLM([]), now=NOW, run_id="r1", registry=reg)
+        res2 = run_scout(
+            conn,
+            s,
+            llm=FixtureScoutLLM([]),
+            now=NOW + dt.timedelta(days=6),
+            run_id="r2",
+            registry=reg,
+            routines=load_routines(DEFAULT_ROUTINES_PATH),
+        )
+        assert res2.skipped_stale == 0 and res2.skipped_budget == 2
 
     def test_story_payload_is_a_registered_kind(self) -> None:
         assert KINDS["story"].model is StoryPayload
@@ -658,3 +984,33 @@ def test_story_payload_keeps_code_fields_over_llm(conn) -> None:
 def test_registry_spec_default_for_unknown_key() -> None:
     reg = SourceRegistry(sources={"x": SourceSpec(key="x", job="x", category=SourceCategory.MACRO)})
     assert reg.spec_for("youtube.other").category is SourceCategory.VIDEO
+
+
+def test_category_tunables_reach_the_registry(conn, tmp_path) -> None:
+    """D47: `!arc config set categories.<c>.weight|max_age` changes the next Scout run."""
+    from arc.control.effective import effective_routines
+    from arc.control.registry import REGISTRY
+    from arc.control.service import ControlService
+
+    owner = "U0OWNER001"
+    assert REGISTRY["categories.macro.weight"].max == 5
+    assert REGISTRY["categories.market_news.max_age"].min == 30
+    assert "categories.options_data.max_age" not in REGISTRY  # session-based: weight only
+    p = tmp_path / "routines.yaml"
+    p.write_text(DEFAULT_ROUTINES_PATH.read_text())
+    svc = ControlService(
+        conn,
+        base=ArcSettings(_env_file=None, approver_slack_user_ids=[owner]),  # type: ignore[call-arg]
+        now=lambda: NOW,
+        optionable=lambda s: True,
+        is_halted=lambda: False,
+    )
+    for key, value in (("categories.macro.weight", "2"), ("categories.market_news.max_age", "90")):
+        r = svc.set(key, value, actor=owner, source="slack")
+        if r.pending is not None:
+            r = svc.confirm(r.pending.code, actor=owner, source="slack")
+        assert r.outcome == "applied", r
+    reg = SourceRegistry.from_routines(effective_routines(conn, p))
+    assert reg.category_weights()[SourceCategory.MACRO] == pytest.approx(0.5)
+    assert reg.max_age_for("wsj").duration == dt.timedelta(minutes=90)
+    assert reg.is_stale("wsj", published=NOW - dt.timedelta(hours=2), ingested=NOW, now=NOW)

@@ -618,7 +618,15 @@ def _earnings_ctx(conn: sqlite3.Connection, settings: ArcSettings, now: datetime
 
     now = now or datetime(2026, 10, 5, 6, 0, tzinfo=ET)
     routines = RoutinesConfig.model_validate(
-        {"sources": {"earnings": {"schedule": ["06:00"], "writes": ["raw_doc_ref"]}}}
+        {
+            "sources": {
+                "earnings": {
+                    "schedule": ["06:00"],
+                    "category": "company",
+                    "writes": ["raw_doc_ref"],
+                }
+            }
+        }
     )
     kind, spec = routines.step("earnings")
     return JobContext(
@@ -640,7 +648,15 @@ def _dispatch(settings: ArcSettings, tmp: Path, days: int = 1) -> tuple[list, li
     conn = connect(":memory:")
     migrate(conn)
     routines = RoutinesConfig.model_validate(
-        {"sources": {"earnings": {"schedule": ["06:00"], "writes": ["raw_doc_ref"]}}}
+        {
+            "sources": {
+                "earnings": {
+                    "schedule": ["06:00"],
+                    "category": "company",
+                    "writes": ["raw_doc_ref"],
+                }
+            }
+        }
     )
     notifier = RecordingNotifier()
     d = Dispatcher(
