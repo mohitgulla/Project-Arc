@@ -188,3 +188,50 @@ def executions(
             (h, attempts, to_db(eod(day) - dt.timedelta(hours=5)), to_db(eod(day)), aid),
         )
     conn.commit()
+
+
+def reviewer_registry(conn: sqlite3.Connection) -> dict[str, str]:
+    """E10.6 reviewer fixture: XP-1 A/A stopped with sigma and a stored report, XP-2 ab
+    running in ``exits`` (started after the A/A, no override), XP-3 ab queued behind it.
+
+    Returns the ISO time of the XP-2 running event (``x2_running_at``) for git-window tests.
+    """
+    import numpy as np
+
+    from arc.experiments.config import ExperimentsConfig
+    from arc.experiments.evaluate import evaluate
+    from arc.experiments.models import StopDetail, StopReason
+
+    rng = np.random.default_rng(4)
+    ctrl = list(rng.normal(0, 300, 10))
+    treat = [x + e for x, e in zip(ctrl, rng.normal(0, 150, 10), strict=True)]
+    store = start(conn, spec("XP-1", kind="aa"))
+    days = equity_curves(conn, "XP-1", ctrl, treat)
+    evaluate(store, "XP-1", ExperimentsConfig(), now=eod(days[-1]) + dt.timedelta(minutes=15))
+    if store.require("XP-1").status.value == "running":
+        store.stop(
+            "XP-1",
+            StopReason.FUTILITY,
+            actor="arc.experiments",
+            detail=StopDetail(sigma=0.002, sessions=10, note="A/A calibration done"),
+        )
+    clock = [eod(days[-1]) + dt.timedelta(days=1)]
+
+    def now() -> dt.datetime:
+        clock[0] += dt.timedelta(seconds=1)
+        return clock[0]
+
+    later = ExperimentStore(conn, now=now)
+    later.create(spec("XP-2"), actor="local")
+    later.register("XP-2", actor="local")
+    t0 = clock[0] + dt.timedelta(hours=1)
+    later.start(
+        "XP-2",
+        RunningDetail(t0=t0, t0_equity=T0_EQUITY, legacy_book=[], control_sha=CONTROL_SHA),
+        actor="local",
+    )
+    running_at = clock[0]
+    later.create(spec("XP-3", hypothesis="stop at 2x credit beats 3x"), actor="local")
+    later.register("XP-3", actor="local")
+    conn.commit()
+    return {"x2_running_at": running_at.isoformat()}

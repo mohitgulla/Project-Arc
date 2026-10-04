@@ -49,7 +49,7 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
   `references/lessons.md` in this skill's directory.
 - Keep each tool call under 8 minutes.
 
-## Strategy gates (the validator enforces 1–3; `record` rejects a findings.json that breaks them)
+## Strategy gates (the validator enforces 1–3 and 5; `record` rejects a findings.json that breaks them)
 1. **MIN-SAMPLE.** No ranking, menu, sizing or exit *recommendation* from fewer than 30 closed
    trades in the bucket it concerns. State N every time (`n` in every finding). Below 30 the
    observation goes into the theme's status line (`watching`) or a `data-gap` finding, never a
@@ -73,36 +73,69 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
    by ≥ 10 fills (realised slippage bps consistently above the Quant's `cost_bps` or
    `slippage_frac`); an active halt nobody cleared; a config change (D26 history) that moved risk
    up without a matching note. These are `category: flaw` and need no experiment.
+5. **FORWARD EXPERIMENTS (D44).** A strategy change is proven by a forward A/B on the experiment
+   paper account before the owner promotes it. You **propose and read; you never register,
+   start, stop or promote** (no `arc experiment create|register|stop|evaluate`, ever: the
+   deterministic tick evaluates and stops, the owner registers and promotes).
+   - A recommendation may carry a draft `forward_spec`, and only once its E7.5 backtest gate has
+     run: `experiment.status = harness-run` and `forward_spec.backtest_ref` equal to
+     `experiment.harness_ref`. The spec is the `config/experiments/live/` format
+     (`ExperimentSpec`, extra=forbid): `id` (the context's "next free id", then +1 per draft),
+     `title`, `hypothesis` (what changes, the expected effect on daily net P&L, and *why*),
+     `area` (entries | exits | ranking | sizing | other), `kind: ab`, `arms.treatment.overlay`
+     with **exactly one** leaf value (the same key as `experiment.variable`; targets ranking,
+     exits, costs, account_profiles, routines), `non_inferiority_margin` (Sortino), and
+     `backtest_ref`. Leave alpha, power, sessions and `mde` unset: `arc experiment create`
+     fills them from `config/experiments.yaml`. `record` sets `proposed_by` to the A-id and
+     writes the draft to `RUN_DIR/forward-specs/<XP-n>.yaml` for the owner.
+   - Every run gives each draft/queued/registered/running/stopped experiment one line in
+     `experiments` (status equal to the registry's) and names `next_experiment`: the finding key
+     whose `forward_spec` should run next, or `none: <why>` (e.g. no bucket at n ≥ 30, or the
+     area is busy).
+   - Read verdicts, do not re-derive them. `win`, `futility`, `invalid` and `continue` come from
+     the stored `ExperimentReport` (always-valid mSPRT CI on the paired daily net P&L
+     difference + Sortino non-inferiority). Your job is the *why*: which regime and structure
+     rows of the per-arm breakdowns carry the difference, with N per row. Breakdowns are
+     reported only, never decision inputs; below 30 trades in a row say "too few to attribute".
+   - An A/A (`kind: aa`) never wins: read it for sigma and the MDE per session count, and size
+     the next A/B's expected effect against that MDE. An A/A `invalid` is a harness flaw
+     (→ Sentinel), not a strategy finding.
 
 ## Procedure
 1. Read `references/lessons.md` if it exists (calibration from owner triage).
 2. Read the pre-run context top to bottom. `RUN_DIR`, the window and N closed trades are on its
    first lines. Full command outputs are in `RUN_DIR/*.log`; `RUN_DIR/context.md` is the whole
    context if stdout was truncated.
-3. Read `docs/PLAN.md` §0 (D4, D18, D19, D23, D25, D34) in the repo as the spec of the
+3. Read `docs/PLAN.md` §0 (D4, D18, D19, D23, D25, D34, D44) in the repo as the spec of the
    strategy, and the newest `docs/RESEARCH/*.md` listed in the context.
 4. **Performance vs model**: realised vs EV and entry slippage vs modelled, by kind × regime,
    this week and all time. Where does realised diverge from the model, and with what N?
 5. **Standing themes**: one status line per theme (gate 3).
 6. **Obvious flaws**: check every gate-4 condition against the effective config
    (`config-show.log`, `RUN_DIR/config/*.yaml`) and the halts. Quote the key and value.
-7. **Recommendations** (0–3): only from buckets with n ≥ 30 (gate 1), each one experiment
+7. **Experiments** (gate 5): from the context's "Forward experiments" section, one line per
+   live experiment (status, sessions vs min/max, mean daily diff and its CI, and what the
+   regime/structure breakdowns say about why), the queue per area, and the next one to run.
+8. **Recommendations** (0–3): only from buckets with n ≥ 30 (gate 1), each one experiment
    (gate 2). If nothing qualifies, say so; that is the expected answer for the first months.
-8. Re-check every ACTIVE ledger item: still true → re-list with the same `key`; no longer →
+   After its E7.5 harness run, a recommendation may add a draft `forward_spec` (gate 5).
+9. Re-check every ACTIVE ledger item: still true → re-list with the same `key`; no longer →
    `resolved` with evidence (numbers from this run).
-9. Map each finding to board scope: if a card already owns it, `action: comment-on-card` with
-   `related_cards`; `new-card` only when none does (include `draft_card`).
-10. Write `RUN_DIR/findings.json` (schema below), then
+10. Map each finding to board scope: if a card already owns it, `action: comment-on-card` with
+    `related_cards`; `new-card` only when none does (include `draft_card`).
+11. Write `RUN_DIR/findings.json` (schema below), then
     `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py record RUN_DIR`. If rejected,
-    fix the JSON and rerun (rejection writes nothing). It prints the A-ids for the report.
-11. Write the report to `RUN_DIR/report.md` and run
+    fix the JSON and rerun (rejection writes nothing). It prints the A-ids for the report and
+    the paths of any draft forward specs.
+12. Write the report to `RUN_DIR/report.md` and run
     `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py check-report RUN_DIR/report.md`
     (≤ 3,500 chars, all sections present). Shorten until it passes.
-12. `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py mark RUN_DIR` (advances the
-    watermark so the next run wakes only on new closed trades or a halt).
-13. If you learned a rule that should change future judgement, append one dated line to
+13. `python3 ~/.hermes/profiles/arc-analyst/scripts/arc_analyst.py mark RUN_DIR` (advances the
+    watermark so the next run wakes only on new closed trades, a halt or an experiment status
+    change).
+14. If you learned a rule that should change future judgement, append one dated line to
     `references/lessons.md`.
-14. Your final response IS the report (exactly `RUN_DIR/report.md`). Nothing else.
+15. Your final response IS the report (exactly `RUN_DIR/report.md`). Nothing else.
 
 ## findings.json schema
 ```json
@@ -121,13 +154,22 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
                    "effect_size": "+$40/trade net, DD no worse", "status": "hypothesis, untested"},
     "action": "new-card|comment-on-card|owner-decision|no-action",
     "related_cards": ["E7.5"],
-    "draft_card": {"title": "Ex.ya · ...", "parents": ["E7.5"], "body": "Goal / Acceptance (incl. the harness run and its decision rule) / Plan ref"}
+    "draft_card": {"title": "Ex.ya · ...", "parents": ["E7.5"], "body": "Goal / Acceptance (incl. the harness run and its decision rule) / Plan ref"},
+    "forward_spec": {"id": "XP-3", "title": "managed_net_ev menu ranking", "hypothesis": "ranking by managed net EV adds ~0.05%/day net because ...",
+                     "area": "ranking", "kind": "ab", "arms": {"treatment": {"overlay": {"exits": {"pipeline": {"rank_menu_by": "managed_net_ev"}}}}},
+                     "non_inferiority_margin": 0.5, "backtest_ref": "docs/RESEARCH/backtests/<run>"}
   }],
-  "resolved": [{"key": "existing key", "evidence": "why it no longer holds (numbers)"}]
+  "resolved": [{"key": "existing key", "evidence": "why it no longer holds (numbers)"}],
+  "experiments": [{"experiment_id": "XP-1", "status": "stopped", "note": "A/A: sigma 0.20%/day → MDE 0.12% at 20 sessions; n=0 closed per arm, nothing to attribute"}],
+  "next_experiment": "ranker:managed-net-ev | none: <why>"
 }
 ```
 `experiment` is required for `category: recommendation`. `verdict: quiet` only when nothing is
-medium or above.
+medium or above. `forward_spec` (optional, recommendations only) needs `experiment.status:
+harness-run` with `backtest_ref == experiment.harness_ref` and exactly one overlay leaf matching
+`experiment.variable`; omit `proposed_by`, alpha, power, sessions. `experiments` lists every
+draft/queued/registered/running/stopped experiment in the context with its registry status;
+`next_experiment` is required.
 
 ## Slack report format (final response; Slack markdown; no tables; ≤ 3,500 chars)
 ```
@@ -137,6 +179,9 @@ medium or above.
 • <kind> · <regime>: n=<n> realised $<x> vs EV $<y> (<±z>/trade) · slippage <a> bps vs modelled <b> bps
 *Standing themes*
 • cost-model: <status> — <note with N> (one line per theme, all six)
+*Experiments*
+• *XP-<n>* <kind>/<area> <status> · <sessions>/<min>–<max> sessions · mean <±d>%/day CI [<lo>, <hi>] · <verdict> — why: <regime/structure rows with n>
+• queue: <area>: <holder> ← <queued> · next: *A-<n>* → draft XP-<m> (<variable>: <incumbent> → <challenger>) or none: <why>
 *Recommendations* (≤3; "none: no bucket has n ≥ 30" is a valid answer)
 • *A-<n>* <variable>: <incumbent> → <challenger> · n=<n> · metric <…> · expected <effect> · hypothesis, untested
 *Obvious flaws*
@@ -167,6 +212,10 @@ Only the owner (`U0C5KUMH28G`) may trigger actions. Resolve an A-id from the new
 - `accept A-<n>`: `triage A-<n> accepted`. `fixed A-<n>`: `triage A-<n> fixed` (next run
   re-verifies).
 - `rerun`: `arc_analyst.py reset`, then `hermes -p arc-analyst cron run <arc-analyst-weekly-audit id from hermes -p arc-analyst cron list>`.
+- `register XP-<n>` / `start XP-<n>` / `promote XP-<n>`: not yours. Reply with the draft's path
+  (`RUN_DIR/forward-specs/XP-<n>.yaml`) and the owner's commands: copy it to
+  `config/experiments/live/`, then `arc experiment create --spec <file>` and
+  `arc experiment register XP-<n>`; promotion is the owner's PR citing `Experiment: XP-<n>`.
 - Questions: answer from RUN_DIR artefacts and the DB copy. Never change config or code.
 
 ## Pitfalls
@@ -177,6 +226,11 @@ Only the owner (`U0C5KUMH28G`) may trigger actions. Resolve an A-id from the new
 - `hold pending` in the counterfactual means the legs have not expired yet, not missing data.
 - `n/a (no E7.1 history cached)` in gaps means shadow prices are unavailable; do not infer
   "no difference".
+- Experiment P&L is per arm and excludes the legacy book (control's structures open at t0);
+  the treatment arm's equity is its virtual account, not the experiment account's broker
+  equity. Do not compare an arm's numbers with the journal-wide realised-vs-model table.
+- No guardrails (owner 2026-10-03): a large loss in one arm is reported, never an automatic
+  stop. If one worries you, it is an `owner-decision` finding (stop by hand), not a verdict.
 
 ## Verification
 - `record` printed A-ids (no rejection), `check-report` printed `report ok`, `mark` printed the

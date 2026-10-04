@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Arc Sentinel lens experiments-integrity (PLAN D44, card E10.6): which repo paths carry",
+    "control behaviour for each experiment area (arc.experiments.models.Area). A commit to main",
+    "that touches one of an area's paths while an experiment in that area is running changes",
+    "control mid-run unless it ships behind a flag defaulting to control. Globs use fnmatch",
+    "('*' also crosses '/'). 'other' (A/A calibrations and cross-cutting tests) is every path",
+    "below. Installed next to sentinel_experiments.py by hermes/sentinel/install.sh; edit here",
+    "(repo copy) and re-run install.sh, never in the profile."
+  ],
+  "areas": {
+    "entries": [
+      "arc/scanner/scan.py",
+      "arc/scanner/filters.py",
+      "arc/scanner/iv.py",
+      "arc/structures/*",
+      "arc/pipeline/steps.py",
+      "arc/pipeline/dedupe.py",
+      "arc/pipeline/portfolio_context.py",
+      "arc/personas/*",
+      "hermes/skills/arc-*/SKILL.md",
+      "config/universe.yaml",
+      "config/account_profiles.yaml"
+    ],
+    "exits": [
+      "arc/exits/*",
+      "arc/positions/*",
+      "hermes/skills/arc-investor/SKILL.md",
+      "config/exits.yaml"
+    ],
+    "ranking": [
+      "arc/scanner/rank.py",
+      "arc/pipeline/steps.py",
+      "config/ranking.yaml"
+    ],
+    "sizing": [
+      "arc/sizing.py",
+      "hermes/skills/arc-risk/SKILL.md",
+      "config/account_profiles.yaml"
+    ],
+    "other": "*"
+  },
+  "always": [
+    "config/costs.yaml"
+  ],
+  "exclude": [
+    "*/__pycache__/*"
+  ]
+}
