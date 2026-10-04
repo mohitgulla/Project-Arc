@@ -1167,8 +1167,8 @@ The treatment arm is the same trading loop on its own paper account
 (`ALPACA_EXP_*`) and its own store (`experiments.runner.arms` in
 `config/experiments.yaml`; N arms is configuration, e.g. a paper shadow control).
 
-    arc experiment start X-1 --db data/arc.db           # t0 (live: arm account must be flat)
-    arc experiment start X-1 --fixtures --arm-dir <scratch> --db <scratch>.db
+    arc experiment start XP-1 --db data/arc.db           # t0 (live: arm account must be flat)
+    arc experiment start XP-1 --fixtures --arm-dir <scratch> --db <scratch>.db
     arc experiment pair <control chain id> --db <db> [--fixtures --fixture-set bullish]
     arc experiment arms-tick --db data/arc.db           # what the live tick spawns
 
