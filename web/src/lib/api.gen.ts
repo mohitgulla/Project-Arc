@@ -4,6 +4,46 @@
  */
 
 export interface paths {
+    "/api/experiments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Experiments
+         * @description Every forward experiment with the latest stored evaluation's numbers.
+         */
+        get: operations["experiments_api_experiments_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/experiments/{experiment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Experiment
+         * @description One experiment: spec + hashes, latest report, equity curves and cumulative d_t band.
+         */
+        get: operations["experiment_api_experiments__experiment_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -592,6 +632,61 @@ export interface components {
             /** Ttl S */
             ttl_s?: number | null;
         };
+        /**
+         * Area
+         * @description What part of the strategy the experiment changes; one running per area.
+         * @enum {string}
+         */
+        Area: "entries" | "exits" | "ranking" | "sizing" | "other";
+        /**
+         * Arm
+         * @description One arm: a config overlay per target file (empty = production config).
+         */
+        Arm: {
+            /**
+             * Overlay
+             * @description config file stem -> partial file, deep-merged over config/<stem>.yaml
+             */
+            overlay?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /**
+         * ArmSummary
+         * @description Per-arm numbers from t0 (reported for the owner; no verdict reads them).
+         */
+        ArmSummary: {
+            /** Arm */
+            arm: string;
+            /** Arm Id */
+            arm_id: string | null;
+            /** Executions */
+            executions: number;
+            /** Filled Executions */
+            filled_executions: number;
+            /** Max Drawdown */
+            max_drawdown: number;
+            /** Mean Slippage Bps */
+            mean_slippage_bps: number | null;
+            /** Orders */
+            orders: number;
+            /** Sessions */
+            sessions: number;
+            /** Total Pnl */
+            total_pnl: number;
+            /**
+             * Worst Day
+             * @description Worst daily return (fraction)
+             */
+            worst_day?: number | null;
+        };
+        /** Arms */
+        Arms: {
+            control?: components["schemas"]["Arm"];
+            treatment?: components["schemas"]["Arm"];
+        };
         /** BreakdownItem */
         BreakdownItem: {
             /** Count */
@@ -633,6 +728,22 @@ export interface components {
             period: components["schemas"]["PeriodView"];
             /** Rows */
             rows: components["schemas"]["BreakdownItem"][];
+        };
+        /** BreakdownRow */
+        BreakdownRow: {
+            /** Arm */
+            arm: string;
+            /**
+             * By
+             * @enum {string}
+             */
+            by: "regime" | "structure_kind";
+            /** Key */
+            key: string;
+            /** Realised Pnl */
+            realised_pnl: number;
+            /** Trades */
+            trades: number;
         };
         /** Breakdowns */
         Breakdowns: {
@@ -739,6 +850,56 @@ export interface components {
              * @description Intraday window (ET), if any
              */
             window?: string | null;
+        };
+        /**
+         * Calibration
+         * @description What an A/A measures (reported for every experiment; decisive for none).
+         */
+        Calibration: {
+            /**
+             * Divergent Chains
+             * @default 0
+             */
+            divergent_chains: number;
+            /**
+             * Fill Rate Gap
+             * @description treatment - control fill rate
+             */
+            fill_rate_gap?: number | null;
+            /**
+             * Llm Divergence Rate
+             * @description Share of paired chains whose arm decisions differ
+             */
+            llm_divergence_rate?: number | null;
+            /**
+             * Mde Always Valid
+             * @description sessions -> effect detected with `power` (peeking)
+             */
+            mde_always_valid?: {
+                [key: string]: number;
+            };
+            /**
+             * Mde Fixed
+             * @description sessions -> 2.8 sigma / sqrt(n)
+             */
+            mde_fixed?: {
+                [key: string]: number;
+            };
+            /**
+             * Paired Chains
+             * @default 0
+             */
+            paired_chains: number;
+            /**
+             * Sigma
+             * @description Sample sd of d_t (fraction of t0 equity)
+             */
+            sigma?: number | null;
+            /**
+             * Slippage Gap Bps
+             * @description treatment - control mean slippage
+             */
+            slippage_gap_bps?: number | null;
         };
         /** CalibrationCard */
         CalibrationCard: {
@@ -1148,6 +1309,50 @@ export interface components {
              * @default 0
              */
             unmodelled: number;
+        };
+        /**
+         * CumulativePoint
+         * @description Cumulative paired difference after *n* sessions, with its always-valid band.
+         *
+         *     ``cum_d`` = sum of d_t so far; ``lo``/``hi`` = n x the always-valid CI on the
+         *     mean after n sessions (the same :func:`stats.confidence_sequence` the
+         *     evaluator runs), so the last point is the report's CI x sessions.
+         */
+        CumulativePoint: {
+            /** Cum D */
+            cum_d: number;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Hi */
+            hi: number | null;
+            /** Lo */
+            lo: number | null;
+            /** N */
+            n: number;
+        };
+        /**
+         * CurvePoint
+         * @description One point of both arms' equity curves from t0 (legacy book excluded).
+         */
+        CurvePoint: {
+            /**
+             * Control
+             * @description t0 equity + control's cumulative P&L ($)
+             */
+            control: number;
+            /**
+             * Day
+             * @description Session; None = t0 (both arms at t0 equity)
+             */
+            day: string | null;
+            /**
+             * Treatment
+             * @description t0 equity + treatment's cumulative P&L ($)
+             */
+            treatment: number;
         };
         /**
          * DayPnlSection
@@ -1583,6 +1788,310 @@ export interface components {
             time_adjusted_targets?: components["schemas"]["TimeAdjustedTarget"][];
         };
         /**
+         * ExperimentDetailResponse
+         * @description Everything on the detail page: the list row, spec + hashes, report and chart series.
+         */
+        ExperimentDetailResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Cumulative */
+            cumulative?: components["schemas"]["CumulativePoint"][];
+            /** Curves */
+            curves?: components["schemas"]["CurvePoint"][];
+            /** Events */
+            events: components["schemas"]["ExperimentEvent"][];
+            experiment: components["schemas"]["ExperimentListItem"];
+            /** Registered Hash */
+            registered_hash: string | null;
+            /** @description Latest stored E10.3 report */
+            report?: components["schemas"]["ExperimentReport"] | null;
+            /**
+             * Report Hash
+             * @description sha256 of the report's canonical JSON
+             */
+            report_hash?: string | null;
+            /** Revision */
+            revision: number;
+            running: components["schemas"]["RunningDetail"] | null;
+            spec: components["schemas"]["ExperimentSpec"];
+            /** Spec Hash */
+            spec_hash: string;
+            stop: components["schemas"]["StopDetail"] | null;
+        };
+        /** ExperimentEvent */
+        ExperimentEvent: {
+            /** Actor */
+            actor: string;
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Detail */
+            detail?: {
+                [key: string]: unknown;
+            };
+            /** Experiment Id */
+            experiment_id: string;
+            /** Id */
+            id: number;
+            reason?: components["schemas"]["StopReason"] | null;
+            /** Spec Hash */
+            spec_hash: string;
+            status: components["schemas"]["ExperimentStatus"];
+        };
+        /**
+         * ExperimentKind
+         * @enum {string}
+         */
+        ExperimentKind: "aa" | "ab";
+        /**
+         * ExperimentListItem
+         * @description One row of the list: status, area, sessions n/min/max, primary diff + CI, secondary.
+         */
+        ExperimentListItem: {
+            /** Area */
+            area: string;
+            /** As Of Day */
+            as_of_day?: string | null;
+            /**
+             * Ci Level
+             * @description Always-valid CI coverage, e.g. 0.95
+             */
+            ci_level?: number | null;
+            /** Evaluated At */
+            evaluated_at?: string | null;
+            /** Experiment Id */
+            experiment_id: string;
+            kind: components["schemas"]["ExperimentKind"];
+            /**
+             * Line
+             * @description The daily [XP-n] Slack line, verbatim
+             */
+            line?: string | null;
+            /** Max Sessions */
+            max_sessions: number | null;
+            /** Min Sessions */
+            min_sessions: number | null;
+            /** Primary Ci Hi */
+            primary_ci_hi?: number | null;
+            /** Primary Ci Lo */
+            primary_ci_lo?: number | null;
+            /**
+             * Primary Mean
+             * @description Mean paired daily P&L difference (fraction of t0 equity)
+             */
+            primary_mean?: number | null;
+            /**
+             * Primary P
+             * @description Always-valid mSPRT p of no difference
+             */
+            primary_p?: number | null;
+            reason?: components["schemas"]["StopReason"] | null;
+            /**
+             * Secondary
+             * @description Sortino non-inferiority: ok | not_shown | aa | pending
+             */
+            secondary?: ("ok" | "not_shown" | "aa" | "pending") | null;
+            /**
+             * Sessions
+             * @description Paired sessions in the latest report
+             */
+            sessions?: number | null;
+            /** Sortino Control */
+            sortino_control?: number | null;
+            /**
+             * Sortino Delta
+             * @description Treatment − control Sortino
+             */
+            sortino_delta?: number | null;
+            /**
+             * Sortino P
+             * @description Paired-bootstrap p (one-sided vs the margin; two-sided for aa)
+             */
+            sortino_p?: number | null;
+            /** Sortino Treatment */
+            sortino_treatment?: number | null;
+            status: components["schemas"]["ExperimentStatus"];
+            /** Title */
+            title: string;
+            /**
+             * Verdict
+             * @description Latest verdict: continue|win|futility|invalid
+             */
+            verdict?: string | null;
+            /** Verdict Reason */
+            verdict_reason?: string | null;
+        };
+        /**
+         * ExperimentReport
+         * @description One evaluation of one experiment (stored append-only in ``experiment_reports``).
+         */
+        ExperimentReport: {
+            /** Alpha */
+            alpha: number;
+            /** Area */
+            area: string;
+            /** Arms */
+            arms: components["schemas"]["ArmSummary"][];
+            /** As Of Day */
+            as_of_day: string | null;
+            /** Breakdowns */
+            breakdowns: components["schemas"]["BreakdownRow"][];
+            calibration: components["schemas"]["Calibration"];
+            /**
+             * Config
+             * @description Effective experiments config used
+             */
+            config: {
+                [key: string]: unknown;
+            };
+            /** Config Hash */
+            config_hash: string;
+            /** Control Sha */
+            control_sha: string;
+            /**
+             * Evaluated At
+             * Format: date-time
+             */
+            evaluated_at: string;
+            /** Evaluator Sha */
+            evaluator_sha: string | null;
+            /** Experiment Id */
+            experiment_id: string;
+            kind: components["schemas"]["ExperimentKind"];
+            /** Legacy Book */
+            legacy_book: string[];
+            /** Max Sessions */
+            max_sessions: number;
+            /** Min Sessions */
+            min_sessions: number;
+            /** Missing Sessions */
+            missing_sessions: string[];
+            /** Power */
+            power: number;
+            primary: components["schemas"]["Primary"];
+            /** Registered Hash */
+            registered_hash: string | null;
+            /**
+             * Report Version
+             * @default 1
+             * @constant
+             */
+            report_version: 1;
+            secondary: components["schemas"]["Secondary"];
+            /** Series */
+            series: components["schemas"]["SessionRow"][];
+            /** Sessions */
+            sessions: number;
+            /** Spec Hash */
+            spec_hash: string;
+            /** @description Status when evaluated */
+            status: components["schemas"]["ExperimentStatus"];
+            /**
+             * T0
+             * Format: date-time
+             */
+            t0: string;
+            /** T0 Equity */
+            t0_equity: number;
+            /** Treatment Sha */
+            treatment_sha: string | null;
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "continue" | "win" | "futility" | "invalid";
+            /** Verdict Reason */
+            verdict_reason: string;
+        };
+        /**
+         * ExperimentSpec
+         * @description A pre-registrable experiment (``config/experiments/live/*.yaml``).
+         *
+         *     Fields left ``None`` (alpha, power, sessions) are filled from
+         *     ``config/experiments.yaml`` by ``arc experiment create``; the filled spec is
+         *     what gets hash-locked.
+         */
+        ExperimentSpec: {
+            /** Alpha */
+            alpha?: number | null;
+            area: components["schemas"]["Area"];
+            arms?: components["schemas"]["Arms"];
+            /**
+             * Backtest Ref
+             * @description E7.5 run dir / compare verdict (required for ab)
+             */
+            backtest_ref?: string | null;
+            /** Hypothesis */
+            hypothesis: string;
+            /**
+             * Id
+             * @description XP-<n>
+             */
+            id: string;
+            kind: components["schemas"]["ExperimentKind"];
+            /** Max Sessions */
+            max_sessions?: number | null;
+            /**
+             * Mde
+             * @description Daily P&L diff (% equity); None until the A/A
+             */
+            mde?: number | null;
+            /** Min Sessions */
+            min_sessions?: number | null;
+            /**
+             * Non Inferiority Margin
+             * @description Sortino may be worse than control by at most this (required for ab)
+             */
+            non_inferiority_margin?: number | null;
+            /** Power */
+            power?: number | null;
+            /**
+             * Primary Metric
+             * @default paired_daily_net_pnl_pct
+             * @constant
+             */
+            primary_metric: "paired_daily_net_pnl_pct";
+            /**
+             * Proposed By
+             * @description owner | A-<n> (an arc-analyst finding)
+             */
+            proposed_by: string;
+            /**
+             * Secondary Metric
+             * @default sortino
+             * @constant
+             */
+            secondary_metric: "sortino";
+            /**
+             * Spec Version
+             * @default 1
+             * @constant
+             */
+            spec_version: 1;
+            /** Title */
+            title: string;
+        };
+        /**
+         * ExperimentStatus
+         * @enum {string}
+         */
+        ExperimentStatus: "draft" | "queued" | "registered" | "running" | "stopped" | "promoted" | "rejected";
+        /** ExperimentsResponse */
+        ExperimentsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Items */
+            items: components["schemas"]["ExperimentListItem"][];
+        };
+        /**
          * FeeBreakdown
          * @description Dollar fees of one or more trades, by type (all ≥ 0).
          */
@@ -1944,6 +2453,23 @@ export interface components {
             };
             /** Items */
             items: components["schemas"]["HealthItem"][];
+        };
+        /**
+         * Interval
+         * @description A confidence interval ``[lo, hi]`` around ``estimate`` (fractions).
+         */
+        Interval: {
+            /** Estimate */
+            estimate: number;
+            /** Hi */
+            hi: number;
+            /**
+             * Level
+             * @description Coverage, e.g. 0.95
+             */
+            level: number;
+            /** Lo */
+            lo: number;
         };
         /**
          * IvModel
@@ -3064,6 +3590,43 @@ export interface components {
             status: "open" | "closed" | "all";
         };
         /**
+         * Primary
+         * @description Paired daily net P&L difference (fraction of t0 equity) and its always-valid CI.
+         */
+        Primary: {
+            /** @description Always-valid (mSPRT) two-sided CI */
+            ci?: components["schemas"]["Interval"] | null;
+            /**
+             * Lower Bound Positive
+             * @default false
+             */
+            lower_bound_positive: boolean;
+            /** Mean */
+            mean: number | null;
+            /**
+             * Metric
+             * @default paired_daily_net_pnl_pct
+             * @constant
+             */
+            metric: "paired_daily_net_pnl_pct";
+            /** N */
+            n: number;
+            /**
+             * P Value
+             * @description Always-valid mSPRT p of no difference (dual of ci: p < alpha iff ci excludes 0)
+             */
+            p_value?: number | null;
+            /** Sigma */
+            sigma: number | null;
+            /** Sigma Source */
+            sigma_source: ("aa" | "running_corrected") | null;
+            /**
+             * Tau
+             * @description Normal-mixture scale (spec mde or MDE@min)
+             */
+            tau?: number | null;
+        };
+        /**
          * ProposalAnalytics
          * @description Everything the v2 proposal card shows beyond the Proposal itself.
          */
@@ -3384,6 +3947,35 @@ export interface components {
             /** Summary */
             summary: string | null;
         };
+        /**
+         * RunningDetail
+         * @description What ``running`` records at t0 (E10.2 fills it).
+         */
+        RunningDetail: {
+            /**
+             * Aa Override
+             * @default false
+             */
+            aa_override: boolean;
+            /** Config Hashes */
+            config_hashes?: {
+                [key: string]: string;
+            };
+            /** Control Sha */
+            control_sha: string;
+            /**
+             * Legacy Book
+             * @description open_structures ids open at t0 (excluded from metrics)
+             */
+            legacy_book?: string[];
+            /**
+             * T0
+             * Format: date-time
+             */
+            t0: string;
+            /** T0 Equity */
+            t0_equity: number;
+        };
         /** SearchMatch */
         SearchMatch: {
             /** Id */
@@ -3409,6 +4001,36 @@ export interface components {
             matches: components["schemas"]["SearchMatch"][];
             /** Q */
             q: string;
+        };
+        /** Secondary */
+        Secondary: {
+            /** @description Paired bootstrap CI of treatment - control (level 1 - 2 alpha) */
+            diff_ci?: components["schemas"]["Interval"] | null;
+            /**
+             * Margin
+             * @description Non-inferiority margin (spec)
+             */
+            margin?: number | null;
+            /**
+             * Metric
+             * @default sortino
+             * @constant
+             */
+            metric: "sortino";
+            /**
+             * Non Inferior
+             * @description None for aa (no margin)
+             */
+            non_inferior?: boolean | null;
+            /**
+             * P Value
+             * @description Bootstrap p (same resamples as diff_ci): one-sided H0 diff <= -margin; two-sided vs 0 when there is no margin (aa)
+             */
+            p_value?: number | null;
+            /** Sortino Control */
+            sortino_control: number | null;
+            /** Sortino Treatment */
+            sortino_treatment: number | null;
         };
         /** SessionResponse */
         SessionResponse: {
@@ -3452,6 +4074,38 @@ export interface components {
              * @description Root runs on the day with no slot (manual / event)
              */
             unscheduled?: components["schemas"]["RunRow"][];
+        };
+        /** SessionRow */
+        SessionRow: {
+            /** Control Equity */
+            control_equity: number;
+            /**
+             * Control Pnl
+             * @description Day P&L, legacy book excluded ($)
+             */
+            control_pnl: number;
+            /**
+             * D
+             * @description (treatment_pnl - control_pnl) / t0_equity
+             */
+            d: number;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /**
+             * Legacy Pnl
+             * @description Legacy book's day P&L removed from control ($)
+             */
+            legacy_pnl: number;
+            /**
+             * Treatment Equity
+             * @description Treatment arm's virtual equity ($)
+             */
+            treatment_equity: number;
+            /** Treatment Pnl */
+            treatment_pnl: number;
         };
         /** Slot */
         Slot: {
@@ -3642,6 +4296,23 @@ export interface components {
          * @enum {string}
          */
         StopBasis: "credit_multiple" | "pct_max_loss" | "pct_debit";
+        /** StopDetail */
+        StopDetail: {
+            /** Note */
+            note?: string | null;
+            /** Sessions */
+            sessions?: number | null;
+            /**
+             * Sigma
+             * @description Daily P&L-diff stdev (% equity); A/A records it
+             */
+            sigma?: number | null;
+        };
+        /**
+         * StopReason
+         * @enum {string}
+         */
+        StopReason: "win" | "harm" | "futility" | "owner" | "invalid";
         /** StopRule */
         StopRule: {
             basis: components["schemas"]["StopBasis"];
@@ -4273,6 +4944,84 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    experiments_api_experiments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExperimentsResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    experiment_api_experiments__experiment_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                experiment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExperimentDetailResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;

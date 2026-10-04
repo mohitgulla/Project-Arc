@@ -4,8 +4,14 @@
 the Auditor's EOD reconcile (which writes the per-arm ``pnl_snapshots`` it reads).
 Deterministic, no LLM, no broker. For every running experiment it stores an
 :class:`~arc.experiments.evaluate.ExperimentReport` and applies the verdict
-(stop on win / futility / invalid). An invalid stop is posted as an immediate
-notice; the per-experiment Slack line and stop card are E10.5.
+(stop on win / futility / invalid).
+
+E10.5: the day thread gets one ``[XP-n] Day …`` line per experiment still running
+after the evaluation, and one stop card per experiment the
+evaluation stopped (:mod:`arc.slack.experiments`), each its own post. The stop
+card is the alert for an ``invalid`` A/A too (no separate notice: the same state
+is never posted twice in one thread). The routine's own ``[Routines]`` summary is
+folded (``notify: quiet``).
 """
 
 from __future__ import annotations
@@ -17,11 +23,22 @@ import structlog
 from arc.routines.handlers import JobResult
 
 if TYPE_CHECKING:
+    from arc.experiments.evaluate import ExperimentReport
     from arc.routines.handlers import JobContext
+    from arc.slack.blocks import CardView
 
-__all__ = ["experiments_evaluate_step"]
+__all__ = ["experiment_posts", "experiments_evaluate_step"]
 
 log = structlog.get_logger(__name__)
+
+
+def experiment_posts(reports: list[ExperimentReport]) -> list[CardView]:
+    """A line per still-running experiment, then a card per stopped one (report order)."""
+    from arc.slack.experiments import experiment_line, experiment_stop_card
+
+    lines = [experiment_line(r) for r in reports if r.verdict == "continue"]
+    stops = [experiment_stop_card(r) for r in reports if r.verdict != "continue"]
+    return [*lines, *stops]
 
 
 def experiments_evaluate_step(ctx: JobContext) -> JobResult:
@@ -40,11 +57,7 @@ def experiments_evaluate_step(ctx: JobContext) -> JobResult:
             as_of=ctx.now,
             count=r.sessions,
         )
-    alerts = [
-        f"[Experiments] {r.experiment_id} stopped ({r.verdict}): {r.verdict_reason}"
-        for r in reports
-        if r.verdict == "invalid"
-    ]
+    posts = experiment_posts(reports)
     parts = [
         f"{r.experiment_id} {r.verdict} n={r.sessions}"
         + (
@@ -56,7 +69,7 @@ def experiments_evaluate_step(ctx: JobContext) -> JobResult:
     ]
     return JobResult(
         summary="; ".join(parts) if parts else "no running experiments",
-        notice="\n".join(alerts),
+        extra_cards=posts,
         metrics={
             "experiments": len(reports),
             "stopped": sum(r.verdict != "continue" for r in reports),

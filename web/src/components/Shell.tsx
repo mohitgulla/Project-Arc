@@ -10,6 +10,7 @@ import { AsOfBadge } from "./AsOfBadge";
 import {
   IconClose,
   IconDocs,
+  IconExperiments,
   IconMoon,
   IconOps,
   IconOverview,
@@ -29,6 +30,7 @@ export const NAV: Array<{ to: string; label: string; icon: Icon }> = [
   { to: "/trades", label: "Trades", icon: IconTrades },
   { to: "/positions", label: "Positions", icon: IconPositions },
   { to: "/performance", label: "Performance", icon: IconPerformance },
+  { to: "/experiments", label: "Experiments", icon: IconExperiments },
   { to: "/ops", label: "Ops", icon: IconOps },
 ];
 
@@ -37,6 +39,7 @@ const TITLES: Record<string, string> = {
   "/trades": "Trades",
   "/positions": "Positions",
   "/performance": "Performance",
+  "/experiments": "Experiments",
   "/ops": "Ops",
   "/kitchen-sink": "Kitchen sink",
   "/settings": "Settings",
@@ -360,7 +363,7 @@ function TabBar() {
       aria-label="Main"
       className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-sidebar pb-[env(safe-area-inset-bottom)]"
     >
-      <ul className="grid h-tabbar grid-cols-5">
+      <ul className="grid h-tabbar grid-cols-6">
         {NAV.map((n) => (
           <li key={n.to}>
             <NavLink

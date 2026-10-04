@@ -159,6 +159,11 @@ class Primary(BaseModel):
     sigma: float | None
     sigma_source: Literal["aa", "running_corrected"] | None
     tau: float | None = Field(None, description="Normal-mixture scale (spec mde or MDE@min)")
+    p_value: float | None = Field(
+        None,
+        description="Always-valid mSPRT p of no difference "
+        "(dual of ci: p < alpha iff ci excludes 0)",
+    )
     lower_bound_positive: bool = False
 
 
@@ -172,6 +177,11 @@ class Secondary(BaseModel):
         None, description="Paired bootstrap CI of treatment - control (level 1 - 2 alpha)"
     )
     margin: float | None = Field(None, description="Non-inferiority margin (spec)")
+    p_value: float | None = Field(
+        None,
+        description="Bootstrap p (same resamples as diff_ci): one-sided H0 diff <= -margin; "
+        "two-sided vs 0 when there is no margin (aa)",
+    )
     non_inferior: bool | None = Field(None, description="None for aa (no margin)")
 
 
@@ -653,6 +663,11 @@ def build_report(
             None if sigma is None else ("aa" if known is not None else "running_corrected")
         ),
         tau=tau,
+        p_value=(
+            None
+            if ci is None or sigma is None or tau is None
+            else stats.msprt_p_value(n, ci.estimate, sigma, tau)
+        ),
         lower_bound_positive=ci is not None and ci.lo > 0.0,
     )
 
@@ -685,6 +700,13 @@ def build_report(
         sortino_treatment=stats.sortino(t_r),
         diff_ci=diff_ci,
         margin=margin,
+        p_value=stats.sortino_diff_p(
+            t_r,
+            c_r,
+            margin=margin,
+            resamples=cfg.stats.bootstrap_resamples,
+            seed=stats.seed_for(st.experiment_id, n),
+        ),
         non_inferior=None if margin is None else stats.non_inferior(diff_ci, margin),
     )
 

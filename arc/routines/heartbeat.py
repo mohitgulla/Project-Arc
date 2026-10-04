@@ -358,6 +358,14 @@ class Heartbeats:
         """An immediate, non-failure alert raised by a handler (always posted)."""
         return self._notifier.post(self.day(now), f":warning: {_detail(job, text, inline=True)}")
 
+    def card(self, now: _dt.datetime, text: str, blocks: Blocks | None = None) -> str | None:
+        """A handler-rendered post (E10.5: ``[XP-n] Day …`` line / stop card), as-is.
+
+        The handler owns the label and layout (:mod:`arc.slack.blocks`); nothing is
+        folded in and no code fence is added.
+        """
+        return self._notifier.post(self.day(now), text, blocks or None)
+
     def alert(
         self, now: _dt.datetime, job: str, text: str, *, run_id: str | None = None
     ) -> str | None:

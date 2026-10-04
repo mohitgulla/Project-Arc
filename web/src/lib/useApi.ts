@@ -1,6 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { apiGet, type ApiPath, type Meta, type Positions, type Snapshot } from "./api";
+import type { ExperimentDetail, ExperimentsList } from "./experiments";
 import type { ContextEntry, RunDetail } from "./ops";
 import type { Overview, OverviewRange } from "./overview";
 import type { Performance } from "./performance";
@@ -150,6 +151,28 @@ export function useRun(runId: string | undefined) {
     queryKey: ["ops-run", runId],
     queryFn: ({ signal }) => apiGet(`/api/ops/runs/${runId}` as "/api/ops/runs/{run_id}", { signal }),
     enabled: Boolean(runId),
+    ...poll,
+  });
+}
+
+/** Experiments (E10.5): the latest stored evaluation per experiment. */
+export function useExperiments() {
+  const poll = usePoll();
+  return useQuery<ExperimentsList>({
+    queryKey: ["experiments"],
+    queryFn: ({ signal }) => apiGet("/api/experiments", { signal }),
+    placeholderData: keepPreviousData,
+    ...poll,
+  });
+}
+
+export function useExperiment(id: string | undefined) {
+  const poll = usePoll();
+  return useQuery<ExperimentDetail>({
+    queryKey: ["experiment", id],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/experiments/${id}` as "/api/experiments/{experiment_id}", { signal }),
+    enabled: Boolean(id),
     ...poll,
   });
 }

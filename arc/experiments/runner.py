@@ -35,7 +35,13 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from arc.context.ttl import from_db, to_db
-from arc.experiments.arms import ArmIdentity, arm_keys, read_identity, write_identity
+from arc.experiments.arms import (
+    ArmIdentity,
+    arm_keys,
+    arm_stores,
+    read_identity,
+    write_identity,
+)
 
 if TYPE_CHECKING:
     import sqlite3
@@ -132,14 +138,6 @@ def runner_config(conn: sqlite3.Connection) -> RunnerConfig:
     from arc.control.effective import effective_settings, experiments_config
 
     return experiments_config(effective_settings(conn)).runner
-
-
-def arm_stores(conn: sqlite3.Connection) -> dict[str, Path]:
-    """Arm name -> store path recorded in the control store at t0."""
-    rows = conn.execute(
-        "SELECT key, value FROM routine_state WHERE key LIKE 'experiment_arm:%' ORDER BY key"
-    ).fetchall()
-    return {r[0].split(":", 1)[1]: Path(r[1]) for r in rows}
 
 
 def fork_step(chain: list[str], overlay: Mapping[str, Any]) -> str:

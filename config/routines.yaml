@@ -27,7 +27,7 @@
 #                   -> risk.reallocate (early exits + close-to-reallocate swaps, E6.4)
 #   12:00           StockedUp (midday video; the next 30-min Scout reads it)
 #   16:30           auditor (reconcile + journal)
-#   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop)
+#   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop; E10.5 posts)
 #   16:45 Fri       weekly scorecard
 #   18:00           earnings calendar
 #   22:00 daily     StockedUp + overnight Scout (after-close sources; Sunday 22:00 feeds Monday)
@@ -262,7 +262,8 @@ personas:
     llm: false                  # deterministic: audit store only (no broker, no LLM)
     halt_exempt: true           # read-only evaluation; a halt must not skip it
     ttl: 6h
-    notify: summary             # invalid stops post an immediate notice; E10.5 adds the cards
+    notify: quiet               # E10.5: posts its own [XP-n] line per running experiment
+                                #   and a stop card per stopped one (arc/slack/experiments.py)
     writes: []                  # experiment_reports + experiment_events, no context
   investor:                     # E6.2: works an approved proposal through its D24 price band
     trigger: approval           # event-driven, never scheduled

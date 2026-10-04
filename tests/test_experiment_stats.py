@@ -754,7 +754,10 @@ def test_routine_step_stops_invalid_aa_with_notice(conn: sqlite3.Connection) -> 
     ctx = _ctx(conn, _after(days))
     res = experiments_evaluate_step(ctx)  # type: ignore[arg-type]
     assert "XP-1 invalid n=10" in res.summary
-    assert "[Experiments] XP-1 stopped (invalid)" in res.notice
+    # E10.5: the stop card is the alert (no duplicate notice in the same thread)
+    assert res.notice == ""
+    assert [c.text.split(" • ")[0] for c in res.extra_cards] == ["[XP-1] A/A Day 10"]
+    assert "Invalid" in res.extra_cards[0].text
     assert res.metrics["stopped"] == 1 and ctx.inputs == ["experiment:XP-1"]
     assert store.require("XP-1").reason is StopReason.INVALID
 
@@ -765,16 +768,23 @@ def test_routine_step_no_notice_while_running(conn: sqlite3.Connection) -> None:
     store, days = _ab_with(conn, [0.0, 0.0], [500.0, -2_200.0])
     res = experiments_evaluate_step(_ctx(conn, _after(days)))  # type: ignore[arg-type]
     assert "XP-2 continue n=2" in res.summary and res.notice == ""
+    assert [c.text for c in res.extra_cards] == [
+        "[XP-2] Day 2 • " + res.extra_cards[0].text.split(" • ", 1)[1]
+    ]
+    assert res.extra_cards[0].blocks == []
     assert store.require("XP-2").status is ExperimentStatus.RUNNING
 
 
 class _Ctx:
     def __init__(self, conn: sqlite3.Connection, now: dt.datetime) -> None:
         from arc.config import ArcSettings
+        from arc.routines.config import load_routines
 
         self.conn, self.now, self.run_id = conn, now, "run-1"
         self.settings = ArcSettings(_env_file=None)  # type: ignore[call-arg]
         self.inputs: list[str] = []
+        self.options: dict[str, object] = {}
+        self.routines = load_routines()
 
     def record_input(self, name: str, *_: object, **__: object) -> None:
         self.inputs.append(name)
