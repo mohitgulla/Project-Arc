@@ -389,10 +389,13 @@ manifests); it refuses to overwrite an existing file. Serve it with
   structure id; it backs the header search). Migration 017 adds only the indexes the
   list query needs (<220 ms with filters on a 100k-proposal store). The gate token is
   never served; only its version is.
-- **Performance (E8.7c):** `/performance?preset=week|mtd|qtd|ytd|30d|90d|all|custom&from&to&compare=prev|yoy|none&include_tests=true`
-  (URL-synced; `by=` picks the breakdown tab, `shadow=true` the D19 overlay). API:
-  `GET /api/performance` (every card, the comparison computed server-side over the same
-  length before the period, or the same dates a year back) and
+- **Performance (E8.7c, E8.8c):** `/performance?range=1D|1W|1M|3M|YTD|ALL` (default 3M,
+  URL-synced; `by=` picks the breakdown tab, `shadow=true` the D19 overlay). The range maps to
+  the API preset 1D→`1d`, 1W→`7d`, 1M→`30d`, 3M→`90d`, YTD→`ytd`, ALL→`all`; the page sends
+  only `preset` (no period comparison, paper test legs always left out). API:
+  `GET /api/performance?preset=1d|7d|week|mtd|qtd|ytd|30d|90d|all|custom&from&to&compare=prev|yoy|none&include_tests=true`
+  (every card; `compare` defaults to `none` and is kept for back-compat only, TODO: drop it in
+  a cleanup PR) and
   `GET /api/performance/breakdown?by=ticker|structure|exit_reason|reason_code|profile|regime`.
   Responses are cached in memory for 60 s per (query, DB file mtime/size), so a poll
   doesn't re-scan the journal and any write to the store misses the cache. Every number comes
@@ -403,10 +406,10 @@ manifests); it refuses to overwrite an existing file. Serve it with
   `period_return`). The tower and the Friday scorecard agree by construction. **Paper
   test legs:** a trade whose open or close has an `arc-<hex>` client id (the broker
   smoke test, not an `arc2.` ladder attempt) is left out of every trade card, and its
-  realised P&L is taken out of the equity-based Net P&L, unless *Include paper test legs*
-  is on. `scripts/tower_fixture_db.py <new.db> --history` adds ~40 closed trades over
+  realised P&L is taken out of the equity-based Net P&L (the API's `include_tests=true` puts
+  them back; the page no longer offers it). `scripts/tower_fixture_db.py <new.db> --history` adds ~40 closed trades over
   3+ months (shadows, reviews, fees, a smoke-test trade) for the page's tests and e2e.
-  Definitions (the page shows the same text as captions):
+  Definitions (the page shows a one-line summary of each and the short form in an ⓘ tip):
   - **Net P&L**: change in daily closing equity over the period (realised + unrealised),
     minus test-leg realised P&L; when there are no equity closes, the realised P&L of
     trades closed in it. Bars by day up to 45 days, else by week (≤ 400 days) or month.
