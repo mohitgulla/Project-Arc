@@ -96,6 +96,15 @@ def cadences(routines: RoutinesConfig) -> dict[str, Cadence]:
         every_s=tick,
         stale_after_s=STALE_FACTOR * tick,
     )
+    # E8.8b: the Overview status row judges the health heartbeat like Ops does.
+    from arc.tower.routes.ops import HEALTH_INTERVAL_S
+
+    out["health"] = Cadence(
+        job="health",
+        label=f"every {HEALTH_INTERVAL_S // 60}m (LaunchAgent)",
+        every_s=HEALTH_INTERVAL_S,
+        stale_after_s=STALE_FACTOR * HEALTH_INTERVAL_S,
+    )
     return out
 
 

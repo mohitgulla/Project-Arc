@@ -1,7 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { useNow } from "../components/AsOfBadge";
 import { CappedList } from "../components/CappedList";
@@ -1074,6 +1074,12 @@ export function OpsPage() {
   const sources = useOps("/api/ops/sources");
   const llm = useOps("/api/ops/llm", { days: 30 });
   const config = useOps("/api/ops/config");
+  // `/ops#alerts` (Overview Recent Activity VIEW ALL, E8.8b): scroll once the alerts have loaded.
+  const { hash } = useLocation();
+  const alertsLoaded = alerts.data !== undefined;
+  useEffect(() => {
+    if (hash === "#alerts" && alertsLoaded) document.getElementById("alerts")?.scrollIntoView({ block: "start" });
+  }, [hash, alertsLoaded]);
   const setDay = (d: string) => {
     const next = new URLSearchParams(params);
     if (d === "today") next.delete("day");
@@ -1090,7 +1096,9 @@ export function OpsPage() {
       <LlmCard l={llm.data as Llm | undefined} />
       <ContextCard c={context.data as ContextStore | undefined} now={now} />
       <AutoApproveCard a={cfg?.auto_approve} line={cfg?.scorecard_gate} />
-      <AlertsSection a={alerts.data as Alerts | undefined} />
+      <div id="alerts" className="min-w-0 scroll-mt-20">
+        <AlertsSection a={alerts.data as Alerts | undefined} />
+      </div>
       <HaltsSection h={halts.data as Halts | undefined} />
       <RunsSection />
       <ConfigLink c={cfg} />

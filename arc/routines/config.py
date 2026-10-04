@@ -456,6 +456,24 @@ class LoopSettings(BaseModel):
         return self
 
 
+class TowerOverviewSettings(BaseModel):
+    """Arc Tower Overview knobs (E8.8b, D48). Display only: never read by trading code."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Recent Activity is a rolling window of this many hours (the API's `activity_hours`
+    # query parameter overrides it per request, same bounds).
+    activity_hours: Annotated[int, Field(ge=1, le=168)] = 24
+
+
+class TowerSettings(BaseModel):
+    """``tower:`` in ``config/routines.yaml``: read per request by the Arc Tower."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    overview: TowerOverviewSettings = Field(default_factory=TowerOverviewSettings)
+
+
 # E4.8a (D46/D44): the Finnhub per-ticker kinds a persona may see as compact facts.
 FINNHUB_FACT_KINDS: tuple[str, ...] = (
     "earnings_history",
@@ -541,6 +559,7 @@ class RoutinesConfig(BaseModel):
     heartbeat: HeartbeatSettings = Field(default_factory=HeartbeatSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)  # E8.2
     loop: LoopSettings = Field(default_factory=LoopSettings)  # D31/D36 trading loop
+    tower: TowerSettings = Field(default_factory=TowerSettings)  # E8.8b Arc Tower display knobs
     # D47: five equal-weight source categories with a freshness window each. A
     # missing block (or a category missing from it) uses DEFAULT_CATEGORIES.
     categories: dict[SourceCategory, CategorySpec] = Field(

@@ -334,7 +334,7 @@ export interface paths {
         /**
          * Overview
          * @description Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,
-         *     movers and recent activity, read in one pass (SELECT only).
+         *     movers and recent activity (rolling window), read in one pass (SELECT only).
          */
         get: operations["overview_api_overview_get"];
         put?: never;
@@ -510,13 +510,52 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** ActivityItem */
+        /**
+         * ActivityEntry
+         * @description One event inside a grouped activity row.
+         */
+        ActivityEntry: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Text */
+            text: string;
+            /**
+             * Tone
+             * @default neutral
+             * @enum {string}
+             */
+            tone: "neutral" | "neg" | "warn" | "pos";
+        };
+        /**
+         * ActivityItem
+         * @description One Recent Activity row. Repeats of one alert kind in the window collapse into a
+         *     single row (``count`` > 1, newest ``at``, worst tone) with every event in ``entries``.
+         */
         ActivityItem: {
             /**
              * At
              * Format: date-time
              */
             at: string;
+            /**
+             * Count
+             * @description events in this row (> 1 when grouped)
+             * @default 1
+             */
+            count: number;
+            /**
+             * Entries
+             * @description each grouped event, newest first (empty if count 1)
+             */
+            entries?: components["schemas"]["ActivityEntry"][];
+            /**
+             * Group
+             * @description alert kind the row groups (`missed_window`), if grouped
+             */
+            group?: string | null;
             /**
              * Kind
              * @enum {string}
@@ -3212,6 +3251,17 @@ export interface components {
             /** Activity */
             activity: components["schemas"]["ActivityItem"][];
             /**
+             * Activity Hours
+             * @description Recent Activity window (rolling hours)
+             */
+            activity_hours: number;
+            /**
+             * Activity Since
+             * Format: date-time
+             * @description as_of − activity_hours
+             */
+            activity_since: string;
+            /**
              * As Of
              * Format: date-time
              */
@@ -3356,7 +3406,7 @@ export interface components {
              * Preset
              * @enum {string}
              */
-            preset: "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+            preset: "1d" | "7d" | "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
             win_loss: components["schemas"]["WinLossCard"];
         };
         /** PeriodView */
@@ -5721,6 +5771,8 @@ export interface operations {
         parameters: {
             query?: {
                 range?: "1D" | "1W" | "1M" | "3M" | "YTD" | "ALL";
+                /** @description Recent Activity window in hours (default: config `tower.overview.activity_hours`, 24) */
+                activity_hours?: number | null;
             };
             header?: never;
             path?: never;
@@ -5760,7 +5812,7 @@ export interface operations {
     performance_api_performance_get: {
         parameters: {
             query?: {
-                preset?: "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+                preset?: "1d" | "7d" | "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
                 compare?: "prev" | "yoy" | "none";
                 include_tests?: boolean;
                 from?: string | null;
@@ -5805,7 +5857,7 @@ export interface operations {
         parameters: {
             query?: {
                 by?: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime";
-                preset?: "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+                preset?: "1d" | "7d" | "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
                 include_tests?: boolean;
                 from?: string | null;
                 to?: string | null;

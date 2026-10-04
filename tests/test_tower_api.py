@@ -60,8 +60,9 @@ def test_meta_has_cadences_caps_and_env(client: TestClient) -> None:
     r = client.get("/api/meta")
     assert r.status_code == 200
     m = MetaResponse.model_validate(r.json())
-    assert set(m.cadences) == {"monitor", "auditor", "tick"}
+    assert set(m.cadences) == {"monitor", "auditor", "tick", "health"}
     assert m.cadences["tick"].every_s == 300 and m.cadences["tick"].stale_after_s == 900
+    assert m.cadences["health"].every_s == 1800  # E8.8b status row: the LaunchAgent cadence
     mon = m.cadences["monitor"]
     assert mon.stale_after_s == 3 * mon.every_s and mon.window and mon.days == "trading"
     assert m.cadences["auditor"].every_s == 86_400  # one run a day
@@ -232,7 +233,7 @@ def test_cadences_skip_missing_jobs() -> None:
     from arc.routines.config import RoutinesConfig
 
     out = cadences(RoutinesConfig())
-    assert set(out) == {"tick"} and out["tick"].stale_after_s == 900
+    assert set(out) == {"tick", "health"} and out["tick"].stale_after_s == 900
 
 
 # ---------------------------------------------------------------------------

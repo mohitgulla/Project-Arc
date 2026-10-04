@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_RANGE,
+  EXPLAIN,
+  PERF_RANGES,
+  RANGE_PRESET,
   apiQuery,
-  comparisonLine,
   equityView,
   formatRange,
   perfQuery,
@@ -13,50 +16,39 @@ import {
 const P = (s: string) => perfQuery(new URLSearchParams(s));
 
 describe("perfQuery", () => {
-  it("defaults to 90d vs previous period, tests excluded", () => {
-    expect(P("")).toEqual({
-      preset: "90d",
-      compare: "prev",
-      include_tests: false,
-      by: "ticker",
-      shadow: false,
-    });
-    expect(apiQuery(P(""))).toEqual({ preset: "90d", compare: "prev" });
+  it("defaults to 3M (the 90d preset), ticker tab, no shadow", () => {
+    expect(DEFAULT_RANGE).toBe("3M");
+    expect(P("")).toEqual({ range: "3M", by: "ticker", shadow: false });
+    expect(apiQuery(P(""))).toEqual({ preset: "90d" });
   });
 
-  it("reads every control from the URL", () => {
-    const q = P("preset=ytd&compare=yoy&include_tests=true&by=regime&shadow=true");
-    expect(q).toMatchObject({
-      preset: "ytd",
-      compare: "yoy",
-      include_tests: true,
-      by: "regime",
-      shadow: true,
-    });
-    expect(apiQuery(q)).toEqual({
-      preset: "ytd",
-      compare: "yoy",
-      include_tests: "true",
-    });
+  it("maps every range to an API preset and sends only the preset", () => {
+    expect(PERF_RANGES).toEqual(["1D", "1W", "1M", "3M", "YTD", "ALL"]);
+    expect(RANGE_PRESET).toEqual({ "1D": "1d", "1W": "7d", "1M": "30d", "3M": "90d", YTD: "ytd", ALL: "all" });
+    for (const r of PERF_RANGES) expect(apiQuery(P(`range=${r}`))).toEqual({ preset: RANGE_PRESET[r] });
   });
 
-  it("falls back on junk and on a custom range without a start", () => {
-    expect(P("preset=nope&compare=x&by=y")).toMatchObject({
-      preset: "90d",
-      compare: "prev",
-      by: "ticker",
-    });
-    expect(P("preset=custom").preset).toBe("90d");
-    expect(P("preset=custom&from=2026-08-01&to=bad")).toMatchObject({
-      preset: "custom",
-      from: "2026-08-01",
-    });
-    expect(apiQuery(P("preset=custom&from=2026-08-01&to=2026-08-31"))).toEqual({
-      preset: "custom",
-      compare: "prev",
-      from: "2026-08-01",
-      to: "2026-08-31",
-    });
+  it("reads the breakdown tab and shadow from the URL; ignores the removed params", () => {
+    const q = P("range=YTD&by=regime&shadow=true&include_tests=true&preset=week");
+    expect(q).toEqual({ range: "YTD", by: "regime", shadow: true });
+    expect(apiQuery(q)).toEqual({ preset: "ytd" });
+  });
+
+  it("falls back on junk", () => {
+    expect(P("range=2Y&by=y")).toEqual({ range: "3M", by: "ticker", shadow: false });
+  });
+});
+
+describe("explanations", () => {
+  it("every on-card sub-text is one short line (≤ 60 chars, TOWER_DESIGN §10)", () => {
+    for (const [k, v] of Object.entries(EXPLAIN)) if ("sub" in v) expect(v.sub.length, k).toBeLessThanOrEqual(60);
+  });
+
+  it("every InfoTip is at most two short sentences", () => {
+    for (const [k, v] of Object.entries(EXPLAIN)) {
+      expect(v.tip.length, k).toBeLessThanOrEqual(140);
+      expect(v.tip.split(/[.!?](?:\s|$)/).filter((s) => s.trim().length > 1).length, k).toBeLessThanOrEqual(2);
+    }
   });
 });
 
@@ -66,18 +58,6 @@ describe("labels", () => {
     expect(formatRange("2026-08-03", "2026-08-09")).toBe("Aug 3 – 9, 2026");
     expect(formatRange("2025-12-29", "2026-01-02")).toBe("Dec 29, 2025 – Jan 2, 2026");
     expect(formatRange("2026-09-28", "2026-09-28")).toBe("Sep 28, 2026");
-  });
-
-  it("writes the comparison line only with a value and a period", () => {
-    const period = {
-      first: "2026-04-02",
-      last: "2026-06-30",
-      slot_end: "2026-06-30",
-      days: 90,
-    };
-    expect(comparisonLine(-570.53, period)).toBe("vs -$570.53 in Apr 2 – Jun 30, 2026");
-    expect(comparisonLine(null, period)).toBeNull();
-    expect(comparisonLine(12, null)).toBeNull();
   });
 });
 

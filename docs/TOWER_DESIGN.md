@@ -210,8 +210,40 @@ they are never dropped.
   themes. `web/e2e/mobile.ts` holds the shared asserts later cards call per page:
   `expectNoOverflow` (page and every `.arc-card`, except `data-scroll-x` containers),
   `expectTouchTargets` (≥ 44 px) and `expectMinFontSize` (≥ `--fs-micro`, 11 px).
+- **Page range selector** (E8.8c, Performance): a page-level `SegmentedControl`
+  `1D 1W 1M 3M YTD ALL` (default 3M, `?range=`) replaces per-page period / compare
+  dropdowns. On mobile it is sticky under the header (`top: --header-h`, page background, a
+  hairline under it). No period-over-period deltas on the cards.
+- **Sub-text marker:** every one-line explanation (`Card subtitle`, `KeyValueList` `sub`)
+  carries `data-subtext` and truncates; e2e asserts each is one line at 520 px. A metric's
+  long explanation goes in an `InfoTip` beside its label (`KeyValueList` `info`).
+- **Compact key-values:** `KeyValueList columns={2}` splits rows into two lists side by side
+  from 400 px up (one column below), e.g. Win / Loss.
 
-### E8.8d Ops pass
+### 10.1 Overview (E8.8b)
+
+- **Status row:** fixed slots `● Trading enabled` · `Tick 3m` · `Health ok 7m` · `Alerts n`
+  (button; expands the open alerts inline, capped) · `Orders 8/200` (+ tier when not normal;
+  never "Orders today") · `paper · cash_debit` chip. Each slot is `label value` with a status
+  dot, no nested pills. A stale or non-ok heartbeat turns the value `--warn` (stale = 3× the
+  cadence from `/api/meta` `cadences.tick|health`). A halt replaces slot 1 with the red
+  `HALTED` pill + reason + actor · age. ≤ 768 px: a 3×2 grid of equal cells (≥ 44 px); wider:
+  one row, env chip right-aligned. Model: `statusRow()` in `lib/overview.ts`.
+- **Equity:** the `1D 1W 1M 3M YTD ALL` control is a compact SegmentedControl in the card
+  header, right of the title (wraps under the title at 520 px, never below the hero). The
+  series caption is an InfoTip on the title.
+- **P&L Today:** hero + pill; Realized / Unrealized as a 2-column stat pair (inline freshness
+  dot each) above the proportion bar (no legend); MTD / YTD as two KeyValue rows.
+- **Recent Activity · 24 h:** rolling window (`activity_hours`, default
+  `tower.overview.activity_hours`, 1–168), repeats of one alert kind grouped into one row
+  (`missed_window ×12`, tap to expand), severity dot · message (2-line clamp, full on tap) ·
+  age, capped at 8, `VIEW ALL ↗` → `/ops#alerts`, empty state `Nothing in the last 24 h`.
+- **Rows:** Greeks read `used / cap`; position card rows show legs as chips with the P&L pill
+  right-aligned and vertically centred (`CardRow aside`); Movers tiles scroll-snap.
+- **Order** at ≤ 1279 px (one column): status → Equity → P&L Today → Positions → Greeks vs
+  Caps → Today's Proposals → Movers → Recent Activity. Desktop keeps two columns.
+
+### 10.2 Ops (E8.8d)
 
 - **Widget order** (`OPS_WIDGETS` in `lib/ops.ts`, same on phone and desktop): Session
   Timeline · Sources · Health · LLM Usage · Context Store · Auto-Approve · Alerts · Halts ·
