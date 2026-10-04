@@ -1,8 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { expectNoOverflow, expectTouchTargets, isPhoneWidth, PHONE_75, PHONE_75_TAG } from "./mobile";
+
 // TOWER_DESIGN §6: verified at 390x844, 768x1024 and 1440x900 in both themes.
 const VIEWPORTS = [
   { name: "mobile", width: 390, height: 844, layout: "mobile" },
+  PHONE_75, // E8.8a: the owner's iPhone at 75 % zoom (520x1125); phone-75 project only
   { name: "tablet", width: 768, height: 1024, layout: "mobile" }, // 768 is the §6 mobile upper bound
   { name: "desktop", width: 1440, height: 900, layout: "desktop" },
 ] as const;
@@ -12,6 +15,8 @@ const COMPONENTS = [
   "Shell", "StatCard", "ChangePill", "RangeControl", "TrendChart", "DivergingBars",
   "StackedBars", "ProportionBar", "ProgressRow", "Sparkline", "DataTable", "KeyValueList",
   "Timeline", "StatusStepper", "Section", "FilterBar", "EmptyState", "Tile", "DetailPanel",
+  // E8.8a (TOWER_DESIGN §10).
+  "Freshness", "InfoTip", "SegmentedControl", "CappedList",
 ];
 
 async function open(page: Page, path: string, theme: (typeof THEMES)[number]) {
@@ -22,7 +27,7 @@ async function open(page: Page, path: string, theme: (typeof THEMES)[number]) {
 
 for (const vp of VIEWPORTS) {
   for (const theme of THEMES) {
-    test.describe(`${vp.name} ${vp.width}x${vp.height} ${theme}`, () => {
+    test.describe(`${vp.name} ${vp.width}x${vp.height} ${theme}`, { tag: vp.name === PHONE_75.name ? PHONE_75_TAG : [] }, () => {
       test.use({ viewport: { width: vp.width, height: vp.height } });
 
       test("shell renders", async ({ page }) => {
@@ -36,9 +41,9 @@ for (const vp of VIEWPORTS) {
           await expect(nav.getByRole("link", { name: label })).toBeVisible();
         // Header as-of badge reads /api/snapshot: the scratch DB has no tick, so it is stale.
         await expect(page.locator("header [data-stale]")).toBeVisible();
-        // No horizontal overflow at this width.
-        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-        expect(overflow).toBeLessThanOrEqual(0);
+        // No horizontal overflow at this width (page and every card; E8.8a helper).
+        await expectNoOverflow(page);
+        if (isPhoneWidth(page)) await expectTouchTargets(page, "header");
         await page.screenshot({ path: `e2e/screenshots/shell-${vp.name}-${theme}.png` });
       });
 
@@ -52,8 +57,7 @@ for (const vp of VIEWPORTS) {
         ).join(" | ");
         for (const c of COMPONENTS) expect(names, `story for ${c}`).toContain(c);
         await expect(page.getByTestId("trend-chart").first().locator("svg path").first()).toBeVisible();
-        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-        expect(overflow).toBeLessThanOrEqual(0);
+        await expectNoOverflow(page);
         await page.screenshot({ path: `e2e/screenshots/kitchen-sink-${vp.name}-${theme}.png`, fullPage: true });
       });
     });

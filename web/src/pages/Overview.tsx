@@ -22,6 +22,7 @@ import {
   formatNumber,
   formatPercent,
   isStale,
+  olderSource,
 } from "../lib/format";
 import {
   OVERVIEW_RANGES,
@@ -167,13 +168,11 @@ function EquityCard({ o, range, cad }: { o: Overview; range: OverviewRange; cad:
           </>
         ) : undefined
       }
-      asOf={
-        <AsOfBadge
-          at={e.value_at}
-          cadenceS={e.source === "intraday" ? cad.monitor : cad.auditor}
-          label={e.source === "intraday" ? "monitor mark" : "reconcile"}
-        />
-      }
+      freshness={{
+        at: e.value_at,
+        cadenceS: e.source === "intraday" ? cad.monitor : cad.auditor,
+        label: e.source === "intraday" ? "monitor mark" : "reconcile",
+      }}
     >
       <div className="grid gap-3">
         <RangeControl fallback="1D" ranges={OVERVIEW_RANGES} />
@@ -199,9 +198,19 @@ function PnlCard({ o, cad }: { o: Overview; cad: ReturnType<typeof useCadences> 
   const perf = d.performance;
   const pct = (v: number | null | undefined) => (v == null ? "—" : formatPercent(v, { explicitSign: true }));
   const money = (v: number | null | undefined) => (v == null ? "—" : formatMoney(v, "pnl", { explicitSign: true }));
+  // Mixed sources (D48): the header badges the older of realized (reconcile) and unrealized
+  // (monitor mark); the per-value dots below stay inline.
+  const pnlFreshness = olderSource([
+    { at: d.realized_at, cadenceS: cad.auditor, label: "realized · reconcile" },
+    { at: d.unrealized_at, cadenceS: cad.monitor, label: "unrealized · monitor mark" },
+  ]) ?? {
+    at: d.as_of,
+    cadenceS: d.source === "intraday" ? cad.monitor : cad.auditor,
+    label: d.source === "intraday" ? "monitor mark" : "reconcile",
+  };
   return (
     <StatCard
-      title="P&L today"
+      title="P&L Today"
       value={day === null ? "—" : <Money value={day} kind="pnl" explicitSign />}
       change={d.day_pct != null ? <ChangePill value={d.day_pct} metric="pnl" /> : undefined}
       comparison={
@@ -212,13 +221,7 @@ function PnlCard({ o, cad }: { o: Overview; cad: ReturnType<typeof useCadences> 
           </span>
         ) : undefined
       }
-      asOf={
-        <AsOfBadge
-          at={d.as_of}
-          cadenceS={d.source === "intraday" ? cad.monitor : cad.auditor}
-          label={d.source === "intraday" ? "monitor mark" : "reconcile"}
-        />
-      }
+      freshness={pnlFreshness}
     >
       <ProportionBar
         segments={[
@@ -266,17 +269,8 @@ function GreeksCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
   const cap = num(o.greeks.per_underlying_cap);
   return (
     <Card
-      title={
-        <span className="flex items-center gap-2">
-          Greeks vs caps
-          {stale && (
-            <span data-testid="greeks-stale" className="rounded-pill border border-warn px-2 py-0.5 text-micro font-semibold text-warn">
-              stale
-            </span>
-          )}
-        </span>
-      }
-      asOf={<AsOfBadge at={g.at} cadenceS={cadence} label="monitor mark" />}
+      title="Greeks vs Caps"
+      freshness={{ at: g.at, cadenceS: cadence, label: "monitor mark", stale, testid: "greeks-freshness" }}
     >
       {!g.valued && g.at == null ? (
         <EmptyState caption="No monitor run yet." />
@@ -338,7 +332,11 @@ function GreeksCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
 function ProposalsCard({ o }: { o: Overview }) {
   const rows = o.proposals ?? [];
   return (
-    <Card title="Today's proposals" action={{ label: "VIEW ALL", to: "/trades?since=today" }} asOf={<>last 24 h · since {formatEt(o.proposals_since)}</>}>
+    <Card
+      title="Today's Proposals"
+      action={{ label: "VIEW ALL", to: "/trades?since=today" }}
+      subtitle={<>last 24 h · since {formatEt(o.proposals_since)}</>}
+    >
       {rows.length === 0 ? (
         <EmptyState caption="No proposals in the last 24 hours." />
       ) : (
@@ -383,7 +381,7 @@ function ProposalsCard({ o }: { o: Overview }) {
 function MoversCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
   const movers = sortMovers(o.movers ?? []);
   return (
-    <Card title="Movers" asOf={<AsOfBadge at={o.marks_at} cadenceS={monitorS} label="monitor mark" />}>
+    <Card title="Movers" freshness={{ at: o.marks_at, cadenceS: monitorS, label: "monitor mark" }}>
       {movers.length === 0 ? (
         <EmptyState caption="No open structures." />
       ) : (
@@ -414,7 +412,7 @@ const ACTIVITY_TONE: Record<ActivityItem["tone"], string> = {
 function ActivityCard({ o }: { o: Overview }) {
   const items = o.activity ?? [];
   return (
-    <Card title="Recent activity">
+    <Card title="Recent Activity">
       {items.length === 0 ? (
         <EmptyState caption="Nothing yet." />
       ) : (
@@ -475,7 +473,7 @@ export function OverviewPage() {
           <Card
             title="Positions"
             action={{ label: "VIEW ALL", to: "/positions" }}
-            asOf={<AsOfBadge at={o.marks_at} cadenceS={cad.monitor} label="monitor mark" />}
+            freshness={{ at: o.marks_at, cadenceS: cad.monitor, label: "monitor mark" }}
           >
             {positions.length === 0 ? (
               <EmptyState caption="No open structures." />

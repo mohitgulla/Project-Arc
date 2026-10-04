@@ -194,7 +194,7 @@ function text(v: unknown): string {
 
 const GROUPS: Array<{ title: string; keys: Array<[string, string]> }> = [
   {
-    title: "Identity & trigger",
+    title: "Identity & Trigger",
     keys: [
       ["run_id", "Run id"],
       ["job", "Job"],
@@ -208,7 +208,7 @@ const GROUPS: Array<{ title: string; keys: Array<[string, string]> }> = [
     ],
   },
   {
-    title: "Timing & session",
+    title: "Timing & Session",
     keys: [
       ["scheduled_for", "Scheduled"],
       ["tick_now", "Tick"],
@@ -241,7 +241,7 @@ const GROUPS: Array<{ title: string; keys: Array<[string, string]> }> = [
     ],
   },
   {
-    title: "Code & config",
+    title: "Code & Config",
     keys: [
       ["git_sha", "Git sha"],
       ["git_dirty", "Dirty tree"],
