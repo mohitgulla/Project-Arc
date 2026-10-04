@@ -793,6 +793,39 @@ class ManifestView(BaseModel):
     started_at: _dt.datetime | None = None
     finished_at: _dt.datetime | None = None
     route: str
+    # E8.8f: what the proposing run declared and read (D27), for the Audit tab.
+    declared_reads: list[str] | None = None
+    snapshot_ids: list[str] = Field(default_factory=list)
+    input_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class ContextEntryRef(BaseModel):
+    model_config = _STRICT
+
+    id: str
+    subject: str | None = None
+    produced_by: str | None = None
+    valid_from: _dt.datetime | None = None
+
+
+class ContextKindRead(BaseModel):
+    model_config = _STRICT
+
+    kind: str
+    count: int
+    entries: list[ContextEntryRef] = Field(
+        default_factory=list, description="First 200 by subject; `count` is the full total"
+    )
+
+
+class ContextReads(BaseModel):
+    """Context entries in the input snapshots this trade's runs read (E8.8f Context tab)."""
+
+    model_config = _STRICT
+
+    snapshot_ids: list[str] = Field(default_factory=list)
+    total: int = 0
+    kinds: list[ContextKindRead] = Field(default_factory=list)
 
 
 class TradeDetail(BaseModel):
@@ -812,6 +845,7 @@ class TradeDetail(BaseModel):
     outcome: OutcomeSection
     market: MarketSection
     manifest: ManifestView | None
+    context: ContextReads = Field(default_factory=ContextReads)
 
 
 # ---------------------------------------------------------------------------
@@ -1975,7 +2009,64 @@ def _manifest(conn: sqlite3.Connection, run_id: str | None) -> ManifestView | No
         started_at=parse_ts(m.get("started_at")),
         finished_at=parse_ts(m.get("finished_at")),
         route=f"/ops/runs/{run_id}",
+        declared_reads=None
+        if m.get("declared_reads") is None
+        else [str(x) for x in m["declared_reads"]],
+        snapshot_ids=[str(x) for x in m.get("snapshot_ids") or []],
+        input_counts={
+            str(k): int(v) for k, v in (m.get("input_counts") or {}).items() if _is_int(v)
+        },
     )
+
+
+def _is_int(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+_CONTEXT_ENTRY_CAP = 200
+
+
+def _context_reads(
+    conn: sqlite3.Connection, trail: DecisionTrail, manifest: ManifestView | None
+) -> ContextReads:
+    """Entries of every input snapshot this trade's own steps (and its run) read, per kind."""
+    if not _has_table(conn, "context_snapshots") or not _has_table(conn, "context_entries"):
+        return ContextReads()
+    sids = [i.inputs_snapshot_id for i in trail.items if i.this_trade and i.inputs_snapshot_id]
+    sids += manifest.snapshot_ids if manifest else []
+    sids = list(dict.fromkeys(sids))
+    ids: list[str] = []
+    for sid in sids:
+        snap = conn.execute(
+            "SELECT entry_ids FROM context_snapshots WHERE id = ?", (sid,)
+        ).fetchone()
+        ids += [str(i) for i in (_json(snap["entry_ids"], []) if snap else [])]
+    ids = list(dict.fromkeys(ids))
+    by_kind: dict[str, list[ContextEntryRef]] = {}
+    for i in range(0, len(ids), 500):
+        chunk = ids[i : i + 500]
+        for r in conn.execute(
+            f"""SELECT id, kind, subject, produced_by, valid_from FROM context_entries
+                WHERE id IN ({",".join("?" * len(chunk))})""",  # noqa: S608
+            chunk,
+        ):
+            by_kind.setdefault(str(r["kind"]), []).append(
+                ContextEntryRef(
+                    id=r["id"],
+                    subject=r["subject"],
+                    produced_by=r["produced_by"],
+                    valid_from=parse_ts(r["valid_from"]),
+                )
+            )
+    kinds = [
+        ContextKindRead(
+            kind=k,
+            count=len(v),
+            entries=sorted(v, key=lambda e: (e.subject or "", e.id))[:_CONTEXT_ENTRY_CAP],
+        )
+        for k, v in sorted(by_kind.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    ]
+    return ContextReads(snapshot_ids=sids, total=sum(k.count for k in kinds), kinds=kinds)
 
 
 def load_trade(
@@ -1993,6 +2084,7 @@ def load_trade(
     mc = _latest_mc(conn, proposal_hash)
     market = _market(conn, p, mc, trail)
     approval = _approval(conn, proposal_hash)
+    manifest = _manifest(conn, p["run_id"])
     return TradeDetail(
         as_of=now.astimezone(ET),
         header=header,
@@ -2005,5 +2097,6 @@ def load_trade(
         position=pos,
         outcome=_outcome(conn, proposal_hash),
         market=market,
-        manifest=_manifest(conn, p["run_id"]),
+        manifest=manifest,
+        context=_context_reads(conn, trail, manifest),
     )

@@ -46,7 +46,7 @@ export function Timeline({ items }: { items: TimelineItem[] }) {
                 <>
                   <button
                     type="button"
-                    className="mt-1 text-caption text-secondary hover:text-accent"
+                    className="arc-hit mt-1 text-caption text-secondary hover:text-accent"
                     aria-expanded={expanded}
                     onClick={() => setOpen((o) => ({ ...o, [it.id]: !expanded }))}
                   >

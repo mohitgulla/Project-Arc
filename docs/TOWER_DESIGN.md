@@ -267,3 +267,34 @@ they are never dropped.
   ⓘ, and a degraded or failed chip expands inline with its message.
 - **Auto-Approve** is a key/value list (paper, live, scorecard gate, last flip) plus the gate
   line; **Alerts / Halts** collapse repeats like the Overview (`missed_window ×12`).
+
+### 10.5 Trade detail (E8.8f)
+
+- **Sticky summary** (inside the DetailPanel scroller, `data-detail-scroll`): ticker ·
+  structure · kind · qty · status pill; leg chips; StatusStepper (compact on mobile: dots +
+  the current stage label); a stat strip of Net EV (managed) · PoP (managed) · Max gain / loss
+  · Cost (bps) · DTE · P&L now (Realized P&L once closed), 3×2 ≤ 768 px, one row wider. Values
+  are the same API fields the Numbers tab shows (`statStrip()` in `lib/tradeDetail.ts`,
+  parity-tested). On mobile, scrolling past 160 px collapses it to one line, ticker · EV ·
+  status (back at < 40 px, hysteresis so it never flickers). The tabs stay in the sticky area.
+- **Tabs** (SegmentedControl, `?tab=` URL-synced, horizontally scrollable): **Why** (thesis
+  with its persona, Risk view, decision trail) · **Numbers** (payoff, then Quant as Value ·
+  Odds · Costs & Liquidity · Vol & Sizing; the leg table is one card per leg on mobile) ·
+  **Lifecycle** (Gate → Approval → Execution → Position & Exits → Outcome & Review as one
+  vertical timeline; each reached stage shows a one-line result and expands; not-reached stages
+  are muted; the first failure, else the latest reached stage, opens expanded) · **Context**
+  (market context, Regime Read, Scout Candidate, and the context entries the trade's own steps
+  read, counted per kind, expandable) · **Audit** (identity with the shortened proposal hash +
+  copy, run manifest incl. declared reads / inputs read, and the `source: <tables>` lines that
+  used to sit under every section header). Default tab: Why while live, Lifecycle once
+  finished (closed, gate fail, rejected, expired, cancelled). Links to another trade drop
+  `tab` so it opens on its own default.
+- **Risk view:** presentation-only parse of Risk's narrative (`parseRiskNarrative()`): the
+  sizing facts it states unambiguously (formula, structure cap, suggested size) as a KeyValue
+  box, the enumerated `Label: (1)…(n)` / `(a)…(c)` list as an ordered list, the trailing
+  advisory sentences as a callout; everything else stays verbatim. When no list and no sizing
+  fact is found it renders the original paragraph. No prompt or stored-text change.
+- **Decision trail:** this trade's own steps only; chain context (other tickers, the session
+  read) behind `Show chain context (n)`. Timelines cap at 8 with `Show n more`.
+- **Desktop** keeps the right-side DetailPanel, widened to 600 px (`wide`) so the stat strip
+  is one row.
