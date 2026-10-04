@@ -280,6 +280,7 @@ def _tick(
     approvals = None if args.dry_run else _approval_sweep(args, conn, report.now)
     if correlation is not None:
         _record_tick(conn, report, correlation, duration_ms=int((time.monotonic() - t0) * 1000))
+        _spawn_arms(args, conn)
     if args.json:
         payload: dict[str, object] = {
             "now": report.now.isoformat(),
@@ -305,6 +306,35 @@ def _tick(
         if correlation is not None:
             _write(f"tick_id: {correlation['tick_id']}")
     return 1 if any(o.status == "failed" for o in report.outcomes) else 0
+
+
+def _spawn_arms(args: argparse.Namespace, conn: sqlite3.Connection) -> None:
+    """E10.2 (D44): after control's live tick, the experiment arms run detached.
+
+    ``arc experiment arms-tick`` holds its own lock and the arms' own lock dirs, so
+    it never lengthens this tick nor holds control's ``llm`` lock. Never fails the tick.
+    """
+    if args.dry_run:
+        return
+    from arc.routines.handlers import RunEnv
+
+    try:
+        from arc.experiments.cli_arms import spawn_arms_tick
+
+        pid = spawn_arms_tick(
+            conn,
+            RunEnv(
+                db_path=getattr(args, "db", None),
+                config_path=getattr(args, "config", None),
+                lock_dir=str(getattr(args, "lock_dir", "") or "") or None,
+                slack=False,
+            ),
+        )
+    except Exception:  # noqa: BLE001 - logged; the control tick is unaffected
+        structlog.get_logger(__name__).exception("routines.arms_spawn_failed")
+        return
+    if pid is not None:
+        structlog.get_logger(__name__).info("routines.arms_spawned", pid=pid)
 
 
 def _record_tick(

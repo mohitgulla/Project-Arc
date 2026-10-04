@@ -10,17 +10,17 @@ deep-merged over it with `arc.utils.yamlpatch.deep_merge` (the function
 
 Lifecycle:
 
-    arc experiment create --spec config/experiments/live/x1_aa_baseline.yaml --db <db>
-    arc experiment register X-1 --db <db>     # locks sha256(canonical spec)
-    arc experiment show X-1 --db <db>
-    arc experiment verify X-1 --db <db>
+    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --db <db>
+    arc experiment register XP-1 --db <db>     # locks sha256(canonical spec)
+    arc experiment show XP-1 --db <db>
+    arc experiment verify XP-1 --db <db>
 
-Unset `alpha`, `power`, `min_sessions`, `max_sessions` and `guardrails` are
+Unset `alpha`, `power`, `min_sessions` and `max_sessions` are
 filled from `config/experiments.yaml` at `create`; the filled spec is what gets
 hash-locked. After `register`, any edit needs a new experiment id.
 
-Promotion (E10.7 strategy-lane CI check, docs/OPS.md 5.19): a PR that flips a
-strategy default cites `Experiment: X-<n>` and commits
-`verdicts/X-<n>.yaml` with `experiment_id`, `verdict: win` and the stored report's
-`report_hash` (from `arc experiment show X-<n> --json`). The check only lets the PR
+Promotion (E10.7 strategy-lane CI check, docs/OPS.md 5.20): a PR that flips a
+strategy default cites `Experiment: XP-<n>` and commits
+`verdicts/XP-<n>.yaml` with `experiment_id`, `verdict: win` and the stored report's
+`report_hash` (from `arc experiment show XP-<n> --json`). The check only lets the PR
 change the values that experiment's treatment overlay tested.

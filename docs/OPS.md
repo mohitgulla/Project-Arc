@@ -1112,16 +1112,16 @@ report thread: `create A-<n>`, `comment A-<n>`, `wontfix A-<n> <why>`,
 
 Pre-registration only: nothing here trades (the treatment runner is E10.2).
 Specs live in `config/experiments/live/<id>.yaml`; defaults (alpha 0.05, power
-0.8, 20/60 sessions, A/A 10 sessions, D44 guardrails) in `config/experiments.yaml`,
+0.8, 20/60 sessions, A/A 10 sessions) in `config/experiments.yaml`,
 tunable as `experiments.*` (`!arc config experiments`). The treatment overlay uses
 the same deep-merge format as the backtest overlays in `config/experiments/*.yaml`.
 
-    arc experiment create --spec config/experiments/live/x1_aa_baseline.yaml   # draft
-    arc experiment register X-1        # locks sha256(canonical spec); queued if the area is busy
-    arc experiment show X-1 [--json]
-    arc experiment verify X-1          # exit 1 when the stored spec no longer matches the lock
+    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml   # draft
+    arc experiment register XP-1        # locks sha256(canonical spec); queued if the area is busy
+    arc experiment show XP-1 [--json]
+    arc experiment verify XP-1          # exit 1 when the stored spec no longer matches the lock
     arc experiment list [--status running]
-    arc experiment stop X-1 --reason owner --actor local
+    arc experiment stop XP-1 --reason owner --actor local
 
 - After `register` the spec is locked (store check plus a DB trigger): a change
   needs a new id. One `registered`/`running` experiment per area; the next
@@ -1132,9 +1132,68 @@ the same deep-merge format as the backtest overlays in `config/experiments/*.yam
   `run_manifests`, `proposals`, `decisions`, `outcomes`, `pnl_snapshots` and
   `executions` is NULL for control (all rows today).
 
-### 5.19 Strategy-lane CI check: two PR lanes (E10.7, D44)
+### 5.18 Daily evaluation and verdict (E10.3, D44)
 
-(5.18 is the E10.3 evaluation section.) Every pull request runs the `strategy-lane`
+The `experiments.evaluate` routine (trading days 16:40 ET, after the 16:30 auditor
+reconcile; deterministic, halt-exempt) evaluates every running experiment and
+stores one `ExperimentReport` in the append-only `experiment_reports` table:
+
+    arc experiment report XP-2 --db <db> [--json]      # computed now, read-only
+    arc experiment report XP-2 --db <db> --stored      # latest stored report
+    arc experiment evaluate [XP-2] --db <db> [--now ISO]   # what the routine does
+
+- Series: `d_t = (treat_pnl_t − ctrl_pnl_t) / t0_equity` per session from each
+  arm's EOD `pnl_snapshots`; control's legacy-book P&L (marks in control's
+  `positions_snapshots` + close cash) is removed. Missing sessions are listed.
+  The treatment arm is read on its **virtual** equity only
+  (`details_json.virtual_equity`, = t0 equity at t0, written by the E10.2 arm
+  reconcile); the experiment account's broker `equity` is never used, so a
+  treatment row without `virtual_equity` counts as a missing session.
+- Primary: always-valid mSPRT confidence sequence (normal mixture). σ is the
+  A/A's when recorded, else the running sd inflated to its chi² upper bound
+  (`experiments.stats.sigma_upper_q`). Win = lower bound > 0 after
+  `min_sessions` **and** Sortino non-inferior (paired bootstrap CI vs margin).
+- No guardrail (harm) auto-stops (owner, 2026-10-03): only the primary and
+  secondary metrics decide. Each arm's drawdown, worst day and order count are
+  in the report for the owner, who stops an experiment by hand
+  (`arc experiment stop XP-2 --reason harm --actor local`).
+- `max_sessions` without a win → stop(futility); for an A/A that is the normal
+  end and records σ (unlocks ab starts). An A/A whose CI excludes 0 → stop(invalid).
+- Breakdowns by regime / structure kind are reported, never decision inputs.
+
+### 5.19 Arm runner (E10.2, D44)
+
+The treatment arm is the same trading loop on its own paper account
+(`ALPACA_EXP_*`) and its own store (`experiments.runner.arms` in
+`config/experiments.yaml`; N arms is configuration, e.g. a paper shadow control).
+
+    arc experiment start XP-1 --db data/arc.db           # t0 (live: arm account must be flat)
+    arc experiment start XP-1 --fixtures --arm-dir <scratch> --db <scratch>.db
+    arc experiment pair <control chain id> --db <db> [--fixtures --fixture-set bullish]
+    arc experiment arms-tick --db data/arc.db           # what the live tick spawns
+
+- t0: each arm store gets a one-row `arm_identity` and a virtual account opened
+  at control's equity (broker equity for live, the fixture account offline);
+  control's open structures are the legacy book, their max loss is reserved in
+  the arm until each closes on control. The arm account must have no positions
+  or open orders: close them in the Alpaca dashboard (no auto-flatten).
+- The arm sizes and gates from its virtual account (`VirtualBroker`): equity
+  moves only with its own fills/marks, buying power = min(broker, virtual −
+  legacy), and under a cash profile only settled cash (T+1) counts. Control's
+  account profile (debit-only, day-trade limit, D32 budget) applies unchanged.
+- Shared inputs: Scout/sources run once, in control. The arm reuses control's
+  steps before the fork step (the first step its overlay changes; never later
+  than `propose`) and replays control's market tape (`market_tape`). Every arm
+  manifest carries `paired_chain_run_id`, `fork_step`, `arm_id`, `git_sha`.
+- After each live control tick, `arc routines tick` spawns `arc experiment
+  arms-tick` detached (own lock, own lock dirs), only while an experiment runs.
+- Evaluation reads arm rows through `arc.experiments.paired.paired_view`: arm
+  stores ATTACHed read-only, `arm_id` projected per store. Nothing is copied
+  into the control store (D32 counts and Tower stay control-only).
+
+### 5.20 Strategy-lane CI check: two PR lanes (E10.7, D44)
+
+Every pull request runs the `strategy-lane`
 CI job (`scripts/strategy_lane_check.py`; paths and knobs in
 `config/strategy_lane.yaml`). It is deterministic: `git diff` between the merge base
 and the PR head plus a YAML leaf diff, no network beyond reading the PR body, no LLM.
@@ -1148,7 +1207,7 @@ itself. Gate and safety code (`arc/gate/`, `arc/budget/`, `market_guard.py`,
 execution, reconcile, halts) is not. Such a PR passes only with one of these lines in
 its body:
 
-    Experiment: X-<n>            # this change is what X-<n> tests (spec in config/experiments/live/)
+    Experiment: XP-<n>            # this change is what XP-<n> tests (spec in config/experiments/live/)
     Flag: <stem>.<key.path>      # a NEW key in config/<stem>.yaml, default off (false/off/none/null/control)
     Lane: fast — <reason>        # bug / safety / infra fix (>= 10 chars); arc-sentinel audits these
 
@@ -1157,13 +1216,13 @@ its body:
   turns it on. Example: `Flag: exits.pipeline.skip_iv_crush`.
 - **Promotion** (flipping a default): any change or removal of an existing value in
   `exits`, `ranking`, `costs` or `account_profiles` YAML (the files an experiment
-  overlay can patch). It needs `Experiment: X-<n>` with a committed verdict file
-  `config/experiments/live/verdicts/X-<n>.yaml` (`experiment_id`, `verdict: win`,
-  `report_hash` copied from `arc experiment show X-<n> --json`), and every changed
+  overlay can patch). It needs `Experiment: XP-<n>` with a committed verdict file
+  `config/experiments/live/verdicts/XP-<n>.yaml` (`experiment_id`, `verdict: win`,
+  `report_hash` copied from `arc experiment show XP-<n> --json`), and every changed
   value must equal that experiment's treatment overlay. `Flag:` and `Lane: fast` never
   cover a promotion. Comment-only YAML edits are not promotions.
 - A value change in `universe.yaml` (no overlay can test it) needs any one lane line.
-- A wrong extra line (an unknown `X-<n>`, a flag that is not new) fails even if
+- A wrong extra line (an unknown `XP-<n>`, a flag that is not new) fails even if
   another lane line passes, so the audit trail never cites something false.
 - The job reads the PR body at run time: after fixing the body, re-run the
   `strategy-lane` job (`gh run rerun <id> --failed`); no new push is needed.

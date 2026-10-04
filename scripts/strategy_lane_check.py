@@ -5,8 +5,8 @@
 A pull request that touches a *strategy path* (``config/strategy_lane.yaml``) must say
 which lane it is in, with one line in its body:
 
-``Experiment: X-<n>``
-    The change is what experiment X-<n> tests. The id must have a spec in
+``Experiment: XP-<n>``
+    The change is what experiment XP-<n> tests. The id must have a spec in
     ``config/experiments/live/``.
 ``Flag: <stem>.<path>``
     The change ships behind a NEW key in ``config/<stem>.yaml`` whose default is off
@@ -15,8 +15,8 @@ which lane it is in, with one line in its body:
     A bug, safety or infra fix. arc-sentinel audits these.
 
 A *promotion* (a PR that changes or removes a value that already exists in one of the
-strategy YAMLs, i.e. flips a default) passes only with ``Experiment: X-<n>`` whose
-committed verdict file (``config/experiments/live/verdicts/X-<n>.yaml``) says ``win``,
+strategy YAMLs, i.e. flips a default) passes only with ``Experiment: XP-<n>`` whose
+committed verdict file (``config/experiments/live/verdicts/XP-<n>.yaml``) says ``win``,
 and every changed value must equal that experiment's treatment overlay. ``Flag:`` and
 ``Lane: fast`` never cover a promotion.
 
@@ -42,14 +42,14 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 LANE_CONFIG = REPO / "config" / "strategy_lane.yaml"
 
-_EXPERIMENT_RE = re.compile(r"^\s*(?:[-*>]\s*)?experiment\s*:\s*(X-[1-9]\d*)\b", re.I | re.M)
+_EXPERIMENT_RE = re.compile(r"^\s*(?:[-*>]\s*)?experiment\s*:\s*(XP-[1-9]\d*)\b", re.I | re.M)
 _FLAG_RE = re.compile(r"^\s*(?:[-*>]\s*)?flag\s*:\s*`?([A-Za-z0-9_.\-]+)`?", re.I | re.M)
 _FAST_RE = re.compile(r"^\s*(?:[-*>]\s*)?lane\s*:\s*fast\b(.*)$", re.I | re.M)
 _FAST_SEP = " \t—–-:`*"
 _CONFIG_YAML_RE = re.compile(r"^config/([A-Za-z0-9_\-]+)\.yaml$")
 
-# A committed verdict (config/experiments/live/verdicts/X-<n>.yaml) is copied from the
-# stored E10.3 report (`arc experiment show X-<n> --json`); report_hash lets arc-sentinel
+# A committed verdict (config/experiments/live/verdicts/XP-<n>.yaml) is copied from the
+# stored E10.3 report (`arc experiment show XP-<n> --json`); report_hash lets arc-sentinel
 # match it to the `experiment_reports` row, which CI cannot read.
 VERDICT_KEYS = frozenset({"experiment_id", "verdict", "report_hash"})
 
@@ -130,8 +130,8 @@ class Result:
         lines += [f"error: {e}" for e in self.errors]
         if not self.ok:
             lines.append(
-                "fix: add one of `Experiment: X-<n>`, `Flag: <stem>.<key>` or "
-                "`Lane: fast — <reason>` to the PR body (docs/OPS.md 5.19), then re-run "
+                "fix: add one of `Experiment: XP-<n>`, `Flag: <stem>.<key>` or "
+                "`Lane: fast — <reason>` to the PR body (docs/OPS.md 5.20), then re-run "
                 "the strategy-lane job"
             )
         return "\n".join(lines)
@@ -286,8 +286,8 @@ def evaluate(
             listed = ", ".join(_dotted(k) for k in sorted({*changed_leaves, *removed_leaves}))
             errors.append(
                 f"promotion: this PR changes existing strategy values ({listed}); it needs "
-                "`Experiment: X-<n>` with a committed `win` verdict "
-                f"({cfg.verdicts_dir}/X-<n>.yaml). Flag: and Lane: fast do not cover a promotion"
+                "`Experiment: XP-<n>` with a committed `win` verdict "
+                f"({cfg.verdicts_dir}/XP-<n>.yaml). Flag: and Lane: fast do not cover a promotion"
             )
             return Result(files, ok=False, lane="promotion", errors=errors, notes=notes)
         for leaf, (old, new) in sorted(changed_leaves.items()):

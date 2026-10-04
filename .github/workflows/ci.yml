@@ -35,7 +35,7 @@ jobs:
         run: make check
 
   # D44 two lanes (E10.7): a PR touching a strategy path (config/strategy_lane.yaml)
-  # must carry `Experiment: X-<n>`, `Flag: <stem>.<key>` or `Lane: fast — <reason>` in
+  # must carry `Experiment: XP-<n>`, `Flag: <stem>.<key>` or `Lane: fast — <reason>` in
   # its body; flipping an existing strategy default needs an experiment with a `win`
   # verdict (docs/OPS.md 5.19). Deterministic: git diff + YAML, no LLM. The body is read
   # at run time (not from the event payload), so after editing the PR body you re-run

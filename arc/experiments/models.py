@@ -30,8 +30,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from arc.experiments.config import Guardrails  # noqa: TC001 - pydantic field type
-
 __all__ = [
     "ACTIVE_STATUSES",
     "CONTROL_ARM",
@@ -57,7 +55,7 @@ __all__ = [
 SPEC_VERSION = 1
 CONTROL_ARM = "control"  # arm_id NULL on a row means this arm
 _FORBID = ConfigDict(extra="forbid", frozen=True)
-_ID_RE = re.compile(r"^X-[1-9]\d*$")
+_ID_RE = re.compile(r"^XP-[1-9]\d*$")
 _PROPOSER_RE = re.compile(r"^(owner|A-[1-9]\d*)$")
 
 # Config files a forward overlay may patch (key = file stem under config/).
@@ -115,7 +113,7 @@ TRANSITIONS: dict[ExperimentStatus, frozenset[ExperimentStatus]] = {
 
 
 def arm_id(experiment_id: str, arm: str) -> str | None:
-    """The ``arm_id`` a row of *arm* carries: NULL for control, ``X-<n>:<arm>`` otherwise."""
+    """The ``arm_id`` a row of *arm* carries: NULL for control, ``XP-<n>:<arm>`` otherwise."""
     return None if arm == CONTROL_ARM else f"{experiment_id}:{arm}"
 
 
@@ -152,7 +150,7 @@ class Arms(BaseModel):
 class ExperimentSpec(BaseModel):
     """A pre-registrable experiment (``config/experiments/live/*.yaml``).
 
-    Fields left ``None`` (alpha, power, sessions, guardrails) are filled from
+    Fields left ``None`` (alpha, power, sessions) are filled from
     ``config/experiments.yaml`` by ``arc experiment create``; the filled spec is
     what gets hash-locked.
     """
@@ -160,7 +158,7 @@ class ExperimentSpec(BaseModel):
     model_config = _FORBID
 
     spec_version: Literal[1] = SPEC_VERSION
-    id: str = Field(..., description="X-<n>")
+    id: str = Field(..., description="XP-<n>")
     title: str = Field(..., min_length=1)
     hypothesis: str = Field(..., min_length=1)
     area: Area
@@ -173,7 +171,6 @@ class ExperimentSpec(BaseModel):
         gt=0.0,
         description="Sortino may be worse than control by at most this (required for ab)",
     )
-    guardrails: Guardrails | None = None
     alpha: float | None = Field(default=None, gt=0.0, lt=0.5)
     power: float | None = Field(default=None, gt=0.0, lt=1.0)
     mde: float | None = Field(
@@ -190,7 +187,7 @@ class ExperimentSpec(BaseModel):
     @classmethod
     def _id(cls, v: str) -> str:
         if not _ID_RE.match(v):
-            msg = f"experiment id {v!r} must look like X-<n>"
+            msg = f"experiment id {v!r} must look like XP-<n>"
             raise ValueError(msg)
         return v
 
@@ -233,7 +230,6 @@ class ExperimentSpec(BaseModel):
     def complete(self) -> bool:
         """Every default-able field is set (what registration requires)."""
         return None not in (
-            self.guardrails,
             self.alpha,
             self.power,
             self.min_sessions,

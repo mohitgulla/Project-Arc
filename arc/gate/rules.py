@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from pydantic import BaseModel, ConfigDict
 
-from arc.account_profiles import BuyingPower, ShortLegPolicy
+from arc.account_profiles import BuyingPower, DayTradeRule, ShortLegPolicy
 from arc.config import ArcSettings, StructureKind
 from arc.gate.band import PriceBand, band_from_nbbo
 from arc.models import GateDecision, Leg, LegIntent, Proposal
@@ -53,6 +53,7 @@ __all__ = [
     "check_closing",
     "check_daily_loss",
     "check_data_freshness",
+    "check_day_trades",
     "check_dte_window",
     "check_earnings_blackout",
     "check_greek_caps",
@@ -108,6 +109,8 @@ class RuleCode(StrEnum):
     ACCOUNT_CASH = "account_profile_settled_cash"
     # D32 daily options order budget (E6.5)
     ORDER_BUDGET = "order_budget"
+    # E10.2 day-trade limit of the account profile (PDT / good-faith parity)
+    DAY_TRADES = "account_profile_day_trades"
     RULE_ERROR = "rule_error"
 
 
@@ -281,6 +284,34 @@ def check_order_budget(
             f"(daily max {config.order_budget_daily_max}"
             + ("" if closing else f", close reserve {config.order_budget_close_reserve}")
             + ")",
+        )
+    return []
+
+
+def check_day_trades(
+    proposal: Proposal, account: AccountSnapshot, portfolio: Portfolio, config: ArcSettings
+) -> list[Violation]:
+    """E10.2: a same-day close must fit the profile's day-trade limit.
+
+    Applies only to closes (the caller runs it with ``closing=True``) under a
+    ``pattern_day_trader`` profile while equity is below ``min_equity``. A close
+    is a day trade when any of its legs was opened this ET day
+    (``portfolio.opened_today``); it fails when ``day_trades_used + 1`` exceeds
+    ``max_day_trades``. Skipped when the count is unknown (``None``).
+    """
+    rule = config.profile.day_trades
+    if rule.rule is not DayTradeRule.PATTERN_DAY_TRADER or account.day_trades_used is None:
+        return []
+    if account.equity >= rule.min_equity:
+        return []
+    if not any(leg.occ_symbol in portfolio.opened_today for leg in proposal.structure.legs):
+        return []
+    if account.day_trades_used + 1 > rule.max_day_trades:
+        return _v(
+            RuleCode.DAY_TRADES,
+            f"same-day close would be day trade {account.day_trades_used + 1} in "
+            f"{rule.window_sessions} sessions (max {rule.max_day_trades} below equity "
+            f"${rule.min_equity})",
         )
     return []
 
@@ -801,6 +832,7 @@ def evaluate(
     violations += _run("halt", lambda: check_halt(a))
     if closing:
         violations += _run("closing", lambda: check_closing(p, pf))
+        violations += _run("day_trades", lambda: check_day_trades(p, a, pf, c))
     else:
         violations += _run("daily_loss", lambda: check_daily_loss(a, c))
         violations += _run("max_open_positions", lambda: check_max_open_positions(pf, c))

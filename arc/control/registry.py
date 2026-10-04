@@ -1390,7 +1390,7 @@ def _exp(key: str, desc: str, risk: Risk, path: tuple[str, ...], **kw: Any) -> T
 
 
 # E10.1 (D44): forward A/B experiment defaults. Riskier = a verdict on less evidence
-# (higher alpha, lower power, fewer sessions) or looser harm guardrails.
+# (higher alpha, lower power, fewer sessions).
 _EXPERIMENT_TUNABLES: tuple[Tunable, ...] = (
     _exp(
         "alpha",
@@ -1439,42 +1439,77 @@ _EXPERIMENT_TUNABLES: tuple[Tunable, ...] = (
         max=60,
         hard_ceiling=5,
     ),
-    _exp(
-        "guardrails.max_dd_worse",
-        "harm stop when the treatment's max drawdown is worse than control's by more than "
-        "this share of equity.",
-        Risk.UP,
-        ("guardrails", "max_dd_worse"),
-        unit="pct",
-        min=0.005,
-        max=0.10,
-        hard_ceiling=0.10,
+    # E10.3: how the daily evaluation computes its numbers (not copied into specs).
+    Tunable(
+        key="experiments.stats.sigma_upper_q",
+        group=Group.EXPERIMENTS,
+        type=_F,
+        description="D44 evaluation: with no A/A sigma on record, the running sd of the daily "
+        "difference is inflated to its (1 - q) upper chi-square bound (larger q = narrower CI).",
+        target=Target.EXPERIMENTS,
+        risk=Risk.UP,
+        path=("experiments", "stats", "sigma_upper_q"),
+        min=0.01,
+        max=0.25,
+        hard_ceiling=0.25,
     ),
-    _exp(
-        "guardrails.worst_day",
-        "harm stop on any treatment day below this share of equity.",
-        Risk.DOWN,
-        ("guardrails", "worst_day"),
-        unit="pct",
-        min=-0.10,
-        max=-0.005,
-        hard_ceiling=-0.10,
+    Tunable(
+        key="experiments.stats.bootstrap_resamples",
+        group=Group.EXPERIMENTS,
+        type=_I,
+        description="D44 evaluation: paired bootstrap resamples for the Sortino "
+        "non-inferiority CI (seeded, deterministic).",
+        target=Target.EXPERIMENTS,
+        risk=Risk.DOWN,
+        path=("experiments", "stats", "bootstrap_resamples"),
+        min=200,
+        max=20000,
+        hard_ceiling=200,
     ),
-    _exp(
-        "guardrails.order_rate_ratio",
-        "harm stop when the treatment sends more than this multiple of control's orders.",
-        Risk.UP,
-        ("guardrails", "order_rate_ratio"),
-        min=1.0,
-        max=5.0,
-        hard_ceiling=5.0,
-    ),
-    _exp(
-        "guardrails.stop_on_halt",
-        "harm stop on any halt or reconcile fill_unknown on the experiment account.",
-        Risk.FALSE,
-        ("guardrails", "stop_on_halt"),
+)
+
+
+def _runner(key: str, desc: str, risk: Risk, **kw: Any) -> Tunable:
+    """``experiments.runner.*`` (E10.2, D44): how arms pair with control's loop.
+
+    The arm list itself (keys, store, spec arm) is structural, never tunable: an
+    arm's broker keys or store must not change from Slack.
+    """
+    return Tunable(
+        key=f"experiments.runner.{key}",
+        group=Group.EXPERIMENTS,
+        type=kw.pop("type", _I),
+        description=f"D44 experiment arm runner: {desc}",
+        target=Target.EXPERIMENTS,
+        risk=risk,
+        path=("experiments", "runner", key),
+        **kw,
+    )
+
+
+_EXPERIMENT_TUNABLES += (
+    _runner(
+        "enabled",
+        "run the configured arms paired with control's trading loop while an experiment "
+        "is running (off = the arms stop trading; control is unaffected).",
+        Risk.TRUE,
         type=_B,
+    ),
+    _runner(
+        "max_lag_seconds",
+        "skip pairing a control loop chain older than this (its market inputs are stale).",
+        Risk.UP,
+        unit="s",
+        min=30,
+        max=1800,
+        hard_ceiling=1800,
+    ),
+    _runner(
+        "tape_keep_days",
+        "days of the control loop's recorded market reads kept for pairing and audit.",
+        Risk.NONE,
+        min=1,
+        max=30,
     ),
 )
 

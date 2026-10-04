@@ -32,9 +32,9 @@ CFG = lane.load_lane_config(REPO / "config" / "strategy_lane.yaml")
 
 X2_OVERLAY = {"exits": {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.75}}}}
 EXPERIMENTS = {
-    "X-1": lane.Experiment(id="X-1", overlay={}, verdict="futility"),
-    "X-2": lane.Experiment(id="X-2", overlay=X2_OVERLAY, verdict="win"),
-    "X-3": lane.Experiment(id="X-3", overlay=X2_OVERLAY, verdict=None),
+    "XP-1": lane.Experiment(id="XP-1", overlay={}, verdict="futility"),
+    "XP-2": lane.Experiment(id="XP-2", overlay=X2_OVERLAY, verdict="win"),
+    "XP-3": lane.Experiment(id="XP-3", overlay=X2_OVERLAY, verdict=None),
 }
 
 
@@ -96,25 +96,30 @@ def test_non_strategy_pr_passes_without_a_lane_line() -> None:
 def test_strategy_pr_without_lane_line_fails() -> None:
     r = _eval(["arc/scanner/rank.py"], "Refactor the ranker.")
     assert not r.ok and "no lane line" in r.errors[0]
-    assert "Experiment: X-<n>" in r.render() and "FAIL" in r.render()
+    assert "Experiment: XP-<n>" in r.render() and "FAIL" in r.render()
 
 
-# -- Experiment: X-<n> --------------------------------------------------------
+# -- Experiment: XP-<n> --------------------------------------------------------
 
 
 def test_registered_experiment_passes() -> None:
-    r = _eval(["arc/scanner/rank.py"], "Adds a ranker.\n\nExperiment: X-1\n")
+    r = _eval(["arc/scanner/rank.py"], "Adds a ranker.\n\nExperiment: XP-1\n")
     assert r.ok and r.lane == "experiment"
 
 
 def test_unknown_experiment_fails() -> None:
-    r = _eval(["arc/scanner/rank.py"], "Experiment: X-99")
-    assert not r.ok and "X-99 has no spec" in r.errors[0]
+    r = _eval(["arc/scanner/rank.py"], "Experiment: XP-99")
+    assert not r.ok and "XP-99 has no spec" in r.errors[0]
 
 
 def test_experiment_line_is_case_and_bullet_tolerant() -> None:
-    assert _eval(["arc/sizing.py"], "- **Experiment:** X-1").ok
-    assert _eval(["arc/sizing.py"], "- experiment: x-1").ok
+    assert _eval(["arc/sizing.py"], "- **Experiment:** XP-1").ok
+    assert _eval(["arc/sizing.py"], "- experiment: xp-1").ok
+
+
+@pytest.mark.parametrize("xid", ["X-1", "XP-0", "XP-01", "XP1", "XP-"])
+def test_experiment_line_rejects_old_or_malformed_ids(xid: str) -> None:
+    assert not _eval(["arc/sizing.py"], f"Experiment: {xid}").ok
 
 
 # -- Lane: fast — <reason> ----------------------------------------------------
@@ -140,8 +145,8 @@ def test_fast_lane_without_a_real_reason_fails(line: str) -> None:
 
 
 def test_a_broken_extra_line_fails_even_when_another_lane_passes() -> None:
-    r = _eval(["arc/scanner/iv.py"], "Lane: fast — fix NaN in IV filter\nExperiment: X-42")
-    assert not r.ok and r.lane == "fast" and "X-42" in r.errors[0]
+    r = _eval(["arc/scanner/iv.py"], "Lane: fast — fix NaN in IV filter\nExperiment: XP-42")
+    assert not r.ok and r.lane == "fast" and "XP-42" in r.errors[0]
 
 
 # -- Flag: <stem>.<key> -------------------------------------------------------
@@ -202,16 +207,16 @@ NEW = {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.75, "close_at_dte":
 
 
 def test_promotion_with_winning_experiment_passes() -> None:
-    r = _eval(["config/exits.yaml"], "Experiment: X-2", _exits_delta(OLD, NEW))
-    assert r.ok and r.lane == "promotion" and "promotes X-2" in r.notes
+    r = _eval(["config/exits.yaml"], "Experiment: XP-2", _exits_delta(OLD, NEW))
+    assert r.ok and r.lane == "promotion" and "promotes XP-2" in r.notes
 
 
 @pytest.mark.parametrize(
     ("body", "why"),
     [
         ("Lane: fast — the old take profit was a typo", "promotion"),
-        ("Experiment: X-1", "promotion"),  # verdict futility
-        ("Experiment: X-3", "promotion"),  # no verdict committed
+        ("Experiment: XP-1", "promotion"),  # verdict futility
+        ("Experiment: XP-3", "promotion"),  # no verdict committed
         ("", "promotion"),
     ],
 )
@@ -222,13 +227,13 @@ def test_promotion_without_a_win_fails(body: str, why: str) -> None:
 
 def test_promotion_must_match_the_tested_overlay() -> None:
     other = {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.5, "close_at_dte": 7}}}
-    r = _eval(["config/exits.yaml"], "Experiment: X-2", _exits_delta(OLD, other))
-    assert not r.ok and "not the treatment overlay value of X-2" in r.errors[0]
+    r = _eval(["config/exits.yaml"], "Experiment: XP-2", _exits_delta(OLD, other))
+    assert not r.ok and "not the treatment overlay value of XP-2" in r.errors[0]
 
 
 def test_promotion_cannot_piggyback_an_untested_change() -> None:
     both = {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.75, "close_at_dte": 3}}}
-    r = _eval(["config/exits.yaml"], "Experiment: X-2", _exits_delta(OLD, both))
+    r = _eval(["config/exits.yaml"], "Experiment: XP-2", _exits_delta(OLD, both))
     assert not r.ok and "close_at_dte" in r.errors[0]
 
 
@@ -292,7 +297,7 @@ def test_every_strategy_path_glob_matches_a_real_file() -> None:
 
 def test_repo_experiments_load() -> None:
     xs = lane.load_experiments(REPO, CFG)
-    assert "X-1" in xs and xs["X-1"].overlay == {}
+    assert "XP-1" in xs and xs["XP-1"].overlay == {}
 
 
 # -- end to end on a scratch git repo -----------------------------------------
@@ -323,7 +328,7 @@ def repo(tmp_path: Path) -> Path:
     _write(
         root,
         "config/experiments/live/x2.yaml",
-        {"id": "X-2", "kind": "ab", "arms": {"treatment": {"overlay": X2_OVERLAY}}},
+        {"id": "XP-2", "kind": "ab", "arms": {"treatment": {"overlay": X2_OVERLAY}}},
     )
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "base")
@@ -350,14 +355,14 @@ def test_e2e_code_change_needs_a_lane(repo: Path, tmp_path: Path, capsys: Any) -
 
 def test_e2e_promotion_needs_committed_win(repo: Path, tmp_path: Path, capsys: Any) -> None:
     _write(repo, "config/exits.yaml", NEW)
-    rc, out = _run(repo, "Experiment: X-2", tmp_path, capsys)
+    rc, out = _run(repo, "Experiment: XP-2", tmp_path, capsys)
     assert rc == 1 and "committed `win` verdict" in out
     _write(
         repo,
-        "config/experiments/live/verdicts/X-2.yaml",
-        {"experiment_id": "X-2", "verdict": "win", "report_hash": "ab" * 32},
+        "config/experiments/live/verdicts/XP-2.yaml",
+        {"experiment_id": "XP-2", "verdict": "win", "report_hash": "ab" * 32},
     )
-    rc, out = _run(repo, "Experiment: X-2", tmp_path, capsys)
+    rc, out = _run(repo, "Experiment: XP-2", tmp_path, capsys)
     assert rc == 0 and "lane: promotion" in out
 
 
@@ -375,7 +380,7 @@ def test_e2e_non_strategy(repo: Path, tmp_path: Path, capsys: Any) -> None:
 
 
 def test_e2e_bad_verdict_file_is_a_config_error(repo: Path, tmp_path: Path, capsys: Any) -> None:
-    _write(repo, "config/experiments/live/verdicts/X-2.yaml", {"verdict": "win"})
+    _write(repo, "config/experiments/live/verdicts/XP-2.yaml", {"verdict": "win"})
     bf = tmp_path / "b.md"
     bf.write_text("")
     rc = lane.main(

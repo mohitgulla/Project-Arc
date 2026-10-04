@@ -33,10 +33,15 @@ Profile fields:
 ``stance_strategies``
     Scanner strategies per Director stance (bullish / bearish / neutral). An empty
     list means the profile has no structure for that stance: no trade, journaled.
+``day_trades``
+    E10.2: the day-trade limit (``rule: none | pattern_day_trader``, ``min_equity``,
+    ``max_day_trades``, ``window_sessions``). The gate rejects a same-day close that
+    would exceed it while equity is below ``min_equity``.
 """
 
 from __future__ import annotations
 
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -56,6 +61,8 @@ __all__ = [
     "AccountProfile",
     "AccountProfiles",
     "BuyingPower",
+    "DayTradeRule",
+    "DayTrades",
     "ShortLegPolicy",
     "load_account_profiles",
 ]
@@ -89,6 +96,21 @@ class ShortLegPolicy(StrEnum):
     ANY = "any"
 
 
+class DayTradeRule(StrEnum):
+    """E10.2 (D44): which day-trade limit the account faces.
+
+    ``none``: no limit. ``pattern_day_trader``: below ``min_equity`` an account
+    may make at most ``max_day_trades`` day trades (an option opened and closed
+    the same ET day) in a rolling ``window_sessions`` window; a close that would
+    be one more is rejected (FINRA PDT; also how a cash account's good-faith
+    rule is approximated). The paper account does not enforce it, so an
+    experiment arm mirroring a small control account gets it from here.
+    """
+
+    NONE = "none"
+    PATTERN_DAY_TRADER = "pattern_day_trader"
+
+
 _FORBID = ConfigDict(extra="forbid", frozen=True)
 
 
@@ -101,6 +123,17 @@ class StanceStrategies(BaseModel):
 
     def for_stance(self, stance: str) -> list[str]:
         return list(getattr(self, stance.strip().lower(), []))
+
+
+class DayTrades(BaseModel):
+    """Day-trade limit of a profile (E10.2): see :class:`DayTradeRule`."""
+
+    model_config = _FORBID
+
+    rule: DayTradeRule = DayTradeRule.NONE
+    min_equity: Decimal = Field(Decimal(25000), ge=0, description="limit applies below this")
+    max_day_trades: int = Field(3, ge=0, description="allowed in the rolling window")
+    window_sessions: int = Field(5, ge=1, le=20)
 
 
 class AccountProfile(BaseModel):
@@ -117,6 +150,7 @@ class AccountProfile(BaseModel):
     dte_min: int | None = Field(None, ge=1)
     dte_max: int | None = Field(None, ge=1)
     stance_strategies: StanceStrategies
+    day_trades: DayTrades = Field(default_factory=lambda: DayTrades())
 
     @model_validator(mode="after")
     def _check(self) -> AccountProfile:

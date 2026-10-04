@@ -49,9 +49,9 @@ def run_reconcile(args: argparse.Namespace, *, broker: BrokerAdapter | None = No
     settings = effective_settings(conn, base=settings)  # D26 overrides
     settle = None
     if broker is None:
-        from arc.broker.alpaca_paper import AlpacaPaperBroker
+        from arc.experiments.broker import trading_broker
 
-        broker = AlpacaPaperBroker()
+        broker = trading_broker(conn, settings)  # E10.2: an arm store's own account
         if not args.no_settle:
             from arc.data.alpaca import AlpacaMarketData
             from arc.routines.auditor import settle_from_market

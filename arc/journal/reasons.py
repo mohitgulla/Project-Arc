@@ -175,6 +175,7 @@ class ReasonCode(StrEnum):
     GATE_ACCOUNT_SHORT_LEG = "gate:account_profile_short_leg"
     GATE_ACCOUNT_CASH = "gate:account_profile_settled_cash"
     GATE_ORDER_BUDGET = "gate:order_budget"
+    GATE_DAY_TRADES = "gate:account_profile_day_trades"
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
@@ -237,6 +238,8 @@ class ReasonCode(StrEnum):
     EXPERIMENT_STOPPED = "experiment:stopped"
     EXPERIMENT_PROMOTED = "experiment:promoted"
     EXPERIMENT_REJECTED = "experiment:rejected"
+    EXPERIMENT_EVALUATED = "experiment:evaluated"  # E10.3 daily evaluation (report stored)
+    EXPERIMENT_INVALID = "experiment:invalid"  # E10.3 an A/A "won": the harness is broken
 
 
 def gate_reason(violation: str) -> ReasonCode:
@@ -366,6 +369,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_ACCOUNT_SHORT_LEG: "Gate: account profile forbids this short leg",
     ReasonCode.GATE_ACCOUNT_CASH: "Gate: not enough settled cash",
     ReasonCode.GATE_ORDER_BUDGET: "Gate: daily order budget",
+    ReasonCode.GATE_DAY_TRADES: "Gate: day-trade limit of the account profile",
     ReasonCode.OWNER_APPROVE: "Owner approved",
     ReasonCode.OWNER_REJECT: "Owner rejected",
     ReasonCode.AUTO_APPROVE: "Auto-approved",
@@ -421,6 +425,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.EXPERIMENT_STOPPED: "Experiment stopped",
     ReasonCode.EXPERIMENT_PROMOTED: "Experiment's treatment promoted",
     ReasonCode.EXPERIMENT_REJECTED: "Experiment's treatment rejected",
+    ReasonCode.EXPERIMENT_EVALUATED: "Experiment evaluated",
+    ReasonCode.EXPERIMENT_INVALID: "A/A experiment invalid (arms differ)",
 }
 
 
