@@ -12,8 +12,8 @@ Deterministic, no LLM:
    ``threshold``; otherwise it opens a new story. Ties break on story id, so the
    result is a pure function of the input.
 4. **Filings** never cluster by headline: an EDGAR filing joins the story for its
-   filer (first ticker hint) and form type (``filings`` are summarised per filer
-   and form, not one by one).
+   filer (first ticker hint) and form type (filings are summarised per filer
+   and form, not one by one; D47 files them under the ``company`` category).
 
 A story's ``distinct_sources`` is the number of distinct registry source keys
 among its docs. Only this count may raise corroboration (the Scout rule in
@@ -223,7 +223,7 @@ def cluster_stories(
     stories: list[Story] = []
     by_group: dict[str, Story] = {}
     for doc in ordered:
-        if doc.category == "filings":
+        if doc.form_type is not None or doc.source == "edgar":  # D47: filings live in `company`
             filer = doc.tickers[0] if doc.tickers else doc.source_key
             key = f"{filer}|{doc.form_type or 'filing'}"
             story = by_group.get(key)

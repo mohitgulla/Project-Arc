@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from arc.config import ArcSettings
+    from arc.context.ttl import Ttl
     from arc.data.base import MarketDataProvider
     from arc.ingest.llm import ScoutLLM
     from arc.ingest.scout import ScoutRunResult
@@ -186,8 +187,12 @@ class JobContext:
         payload: BaseModel | Mapping[str, object],
         *,
         valid_from: _dt.datetime | None = None,
+        ttl: Ttl | None = None,
     ) -> ContextEntry:
         """Append a context entry using this job's TTL/supersede policy.
+
+        *ttl* (D47) shortens the policy TTL for this one entry (e.g. a story built
+        from 6h-fresh news); it can never lengthen it: the earlier expiry wins.
 
         Raises :class:`ContractViolationError` (nothing is written) when *kind*
         is not in the job's declared ``writes`` (D27, fail-closed).
@@ -198,12 +203,18 @@ class JobContext:
             msg = f"job {self.job!r} wrote kind {kind!r} not in its declared writes {declared}"
             raise ContractViolationError(msg)
         policy = self.routines.context_policy(kind, self.job)
+        eff = policy.ttl
+        if ttl is not None:
+            from arc.context.categories import earliest_ttl
+
+            at = valid_from or self.now
+            eff = earliest_ttl([t for t in (policy.ttl, ttl) if t is not None], at)
         entry = ContextStore(self.conn).write(
             kind=kind,
             subject=subject,
             payload=payload,
             produced_by=self.job,
-            ttl=policy.ttl,
+            ttl=eff,
             supersede=policy.supersede,
             run_id=self.run_id,
             chain_run_id=self.chain_run_id,
@@ -267,17 +278,24 @@ def _source_result(ctx: JobContext, docs: list[RawDoc]) -> JobResult:
 
 
 def rss_source(ctx: JobContext) -> JobResult:
-    """RSS feeds; each feed is its own D30 source (``source_key`` on every doc)."""
+    """RSS feeds; each feed is its own D30 source (``source_key`` on every doc).
+
+    D47: entries older than their feed's category ``max_age`` are never stored.
+    """
     from arc.ingest.rss import fetch_rss
-    from arc.ingest.sources import FeedSpec
+    from arc.ingest.sources import FeedSpec, SourceRegistry
 
     settings = ctx.settings
     feeds = [FeedSpec.parse(f) for f in ctx.options.get("feeds") or []]
     keys: dict[str, str] = {}
+    ages: dict[str, Ttl] = {}
     if feeds:
         settings = settings.model_copy(update={"ingest_rss_feeds": [f.url for f in feeds]})
         keys = {f.url: f.key for f in feeds}
-    return _source_result(ctx, fetch_rss(ctx.conn, settings, source_keys=keys))
+        reg = SourceRegistry.from_routines(ctx.routines)
+        ages = {f.url: reg.max_age_for(f.key) for f in feeds if f.key in reg.sources}
+    docs = fetch_rss(ctx.conn, settings, source_keys=keys, max_ages=ages, now=ctx.now)
+    return _source_result(ctx, docs)
 
 
 def _data_result(ctx: JobContext, name: str, source: str, payload: object, n: int) -> None:
@@ -423,13 +441,17 @@ def ex_dividend_source(ctx: JobContext) -> JobResult:
 
 
 def edgar_source(ctx: JobContext) -> JobResult:
+    """SEC filings (D47: published = accepted time; older than ``max_age`` never stored)."""
     from arc.ingest.edgar import fetch_edgar
+    from arc.ingest.sources import SourceRegistry
 
     settings = ctx.settings
     tickers = ctx.options.get("tickers")
     if tickers:
         settings = settings.model_copy(update={"universe": list(tickers)})
-    return _source_result(ctx, fetch_edgar(ctx.conn, settings))
+    reg = SourceRegistry.from_routines(ctx.routines)
+    max_age = reg.max_age_for(ctx.job) if ctx.job in reg.sources else None
+    return _source_result(ctx, fetch_edgar(ctx.conn, settings, now=ctx.now, max_age=max_age))
 
 
 EARNINGS_NO_KEY_DAY = "earnings:no_api_key_notice"
@@ -909,12 +931,19 @@ def scout_persona(
         kwargs["llm"] = llm
     if guard is not None:
         kwargs["guard"] = guard
-    if "story" in (ctx.spec.writes or []):  # D30 stage-1 digests, readable by other personas
-        kwargs["on_story"] = lambda p: ctx.write("story", p.story_id, p)
+    write_stories = "story" in (ctx.spec.writes or [])  # D30 stage-1 digests
     result = run_scout(ctx.conn, ctx.settings, **kwargs)
+    if write_stories:  # D47: each story expires at min(policy, freshest source max_age + 2h)
+        for p in result.stories:
+            ctx.write("story", p.story_id, p, ttl=result.story_ttls.get(p.story_id))
     _journal_universe_rejects(ctx, result)
     written = [
-        ctx.write("candidate", cand.ticker, CandidatePayload.model_validate(cand.model_dump())).id
+        ctx.write(
+            "candidate",
+            cand.ticker,
+            CandidatePayload.model_validate(cand.model_dump()),
+            ttl=result.candidate_ttls.get(cand.ticker),
+        ).id
         for cand in result.candidates
     ]
     _scout_note(ctx, result, written)
@@ -934,6 +963,7 @@ def scout_persona(
             "stories": len(result.stories),
             "over_budget": result.over_budget,
             "skipped_budget": result.skipped_budget,
+            "skipped_stale": result.skipped_stale,
             "digest_batches": result.digest_batches,
             "failed_digest_batches": result.failed_digest_batches,
             "failed_batches": result.failed_batches,
@@ -954,6 +984,7 @@ def scout_persona(
             new_tickers=result.new_tickers,
             source_mix=result.source_mix,
             stories=len(result.stories),
+            category_mix=result.category_mix,
         ),
     )
 

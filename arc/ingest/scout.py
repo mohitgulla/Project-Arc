@@ -43,7 +43,15 @@ from pydantic import ValidationError
 
 from arc.context.kinds import StoryEvidence, StoryPayload
 from arc.ingest.llm import FixtureScoutLLM, HermesScoutLLM, LLMResult, ScoutLLMError
-from arc.ingest.sources import SCOUT_EXCLUDED, SourceRegistry, format_source_mix, select_fair
+from arc.ingest.sources import (
+    SCOUT_EXCLUDED,
+    CategoryMix,
+    Selection,
+    SourceRegistry,
+    category_mix,
+    format_source_mix,
+    select_fair,
+)
 from arc.ingest.store import RawDocRepo, ScoutBatchRepo
 from arc.ingest.stories import ClusterDoc, Story, cluster_stories, form_type_of, headline_of
 from arc.models import Candidate, CatalystType, Stance
@@ -69,6 +77,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection
 
     from arc.config import ArcSettings
+    from arc.context.ttl import Ttl
     from arc.ingest.llm import ScoutLLM
     from arc.routines.config import RoutinesConfig
 
@@ -122,6 +131,14 @@ class ScoutRunResult:
     source_mix: list[tuple[str, int, int]] = field(default_factory=list)  # label, read, over
     over_budget: int = 0
     skipped_budget: int = 0
+    # D47 (E4.7): per-category freshness + grouped mix for the Scout card.
+    skipped_stale: int = 0
+    stale_by_source: dict[str, int] = field(default_factory=dict)
+    category_mix: list[CategoryMix] = field(default_factory=list)
+    # D47: context TTL per story id / candidate ticker (min(max_age of its sources) + 2h);
+    # the job writes each entry with min(policy TTL, this).
+    story_ttls: dict[str, Ttl] = field(default_factory=dict)
+    candidate_ttls: dict[str, Ttl] = field(default_factory=dict)
     stories: list[StoryPayload] = field(default_factory=list)
     digest_batches: int = 0
     failed_digest_batches: int = 0
@@ -592,30 +609,82 @@ def _raw_doc_ttl(routines: RoutinesConfig | None) -> _dt.timedelta:
 
 
 def scout_excluded(doc: _Doc) -> bool:
-    """D45: the Scout never reads this doc (video: daily briefs only)."""
+    """D45/D47: the Scout never reads this doc (video, options data: typed context only)."""
     return doc.category in {c.value for c in SCOUT_EXCLUDED}
+
+
+def _doc_ts(raw: str) -> _dt.datetime | None:
+    return _parse_ts(raw) if raw else None
+
+
+def stale_docs(docs: list[_Doc], registry: SourceRegistry, now: _dt.datetime) -> list[_Doc]:
+    """D47: docs older than their source's ``max_age`` (default: the category's) at *now*.
+
+    Age is from ``published_at`` (EDGAR: the filing's accepted time), except sources
+    with ``age_basis: ingested`` (earnings calendar rows: always the latest pull).
+    """
+    return [
+        d
+        for d in docs
+        if registry.is_stale(
+            d.source_key,
+            published=_doc_ts(d.published_at),
+            ingested=_doc_ts(d.ingested_at),
+            now=now,
+        )
+    ]
+
+
+def _select(
+    docs: list[_Doc], registry: SourceRegistry, budget: int
+) -> tuple[list[_Doc], list[_Doc], Selection]:
+    docs = [d for d in docs if not scout_excluded(d)]
+    by_source: dict[str, list[_Doc]] = {}
+    for d in sorted(docs, key=lambda d: (_parse_ts(d.published_at), d.id), reverse=True):
+        by_source.setdefault(d.source_key, []).append(d)
+    cat_of = {k: registry.spec_for(k).category for k in by_source}
+    # D47: only categories that have docs this run share the budget; inside each,
+    # the registry's per-source weights (normalised per category by select_fair).
+    present = set(cat_of.values())
+    cat_w = registry.category_weights(present)
+    weights = registry.effective_weights(present)
+    caps = {k: registry.spec_for(k).max_docs_per_run for k in by_source}
+    # A category weighted 0 never reads (its docs wait, then close skipped_budget).
+    readable = {k: [d.id for d in v] for k, v in by_source.items() if cat_of[k] in cat_w}
+    sel = select_fair(
+        readable,
+        weights,
+        budget,
+        caps=caps,
+        categories={k: cat_of[k].value for k in readable},
+        category_weights={c.value: w for c, w in cat_w.items()},
+    )
+    if len(readable) != len(by_source):  # zero-weight categories: available, never picked
+        sel = Selection(
+            selected=sel.selected,
+            picked=sel.picked,
+            available={k: len(v) for k, v in by_source.items()},
+            weights=sel.weights,
+            category_of={**sel.category_of, **{k: cat_of[k].value for k in by_source}},
+            category_weights=sel.category_weights,
+        )
+    chosen = set(sel.selected)
+    selected = [d for d in docs if d.id in chosen]
+    unselected = [d for d in docs if d.id not in chosen]
+    return selected, unselected, sel
 
 
 def select_docs(
     docs: list[_Doc], registry: SourceRegistry, budget: int
 ) -> tuple[list[_Doc], list[_Doc], list[tuple[str, int, int]]]:
-    """D30 fair pick: ``(selected, unselected, source_mix)``; newest first per source.
+    """D30/D47 fair pick: ``(selected, unselected, source_mix)``; newest first per source.
 
-    D45: docs in a :data:`SCOUT_EXCLUDED` category (video) are never selected and
-    are not counted as unselected either (the caller closes them as brief-only).
+    The budget is split equally across categories that have docs (D47), then across
+    the sources inside each category. Docs in a :data:`SCOUT_EXCLUDED` category are
+    never selected and are not counted as unselected either (the caller closes them
+    as brief-only). Callers drop stale docs first (:func:`stale_docs`).
     """
-    docs = [d for d in docs if not scout_excluded(d)]
-    by_source: dict[str, list[_Doc]] = {}
-    for d in sorted(docs, key=lambda d: (_parse_ts(d.published_at), d.id), reverse=True):
-        by_source.setdefault(d.source_key, []).append(d)
-    weights = registry.effective_weights()
-    caps = {k: registry.spec_for(k).max_docs_per_run for k in by_source}
-    sel = select_fair(
-        {k: [d.id for d in v] for k, v in by_source.items()}, weights, budget, caps=caps
-    )
-    chosen = set(sel.selected)
-    selected = [d for d in docs if d.id in chosen]
-    unselected = [d for d in docs if d.id not in chosen]
+    selected, unselected, sel = _select(docs, registry, budget)
     return selected, unselected, format_source_mix(sel, registry)
 
 
@@ -630,7 +699,7 @@ def _cluster(docs: list[_Doc], settings: ArcSettings) -> list[Story]:
             headline=headline_of(d.title, d.text),
             tickers=tuple(d.tickers_hint),
             category=d.category,
-            form_type=form_type_of(d.title, d.url, d.text) if d.category == "filings" else None,
+            form_type=form_type_of(d.title, d.url, d.text) if d.source == "edgar" else None,
         )
         for d in docs
     ]
@@ -748,10 +817,12 @@ def run_scout(
 ) -> ScoutRunResult:
     """Fair-select unscouted docs, cluster them into stories, digest, then scout (D30).
 
-    1. **Select** (:func:`select_docs`): ``scout_doc_budget`` docs shared across the
-       registry's sources by weighted round-robin, newest first per source. Docs
-       left over wait for the next run; once older than the ``raw_doc_ref`` context
-       TTL they are closed as ``skipped_budget`` with this run id.
+    1. **Select** (:func:`select_docs`): docs older than their category's ``max_age``
+       are closed ``skipped_stale`` (D47). ``scout_doc_budget`` docs are then split
+       equally across categories that have fresh docs, then by weighted round-robin
+       across the sources inside each, newest first per source. Docs left over wait
+       for the next run; once older than the ``raw_doc_ref`` context TTL they are
+       closed as ``skipped_budget`` with this run id.
     2. **Cluster** (:mod:`arc.ingest.stories`) near-duplicates into stories.
     3. **Stage 1** (*digest_llm*, cheap tier): one short digest per story, batched by
        category. Default: the Scout backend when live; extractive (no LLM) in
@@ -789,9 +860,17 @@ def run_scout(
     if brief_only:  # D45: video docs wait for nobody; close them out of the queue
         doc_repo.mark_brief_only(brief_only, run_id=run_id)
         all_docs = [d for d in all_docs if not scout_excluded(d)]
-    selected, unselected, result.source_mix = select_docs(
-        all_docs, registry, settings.scout_doc_budget
-    )
+    # D47: a doc past its category's max_age is never read; close it skipped_stale.
+    stale = stale_docs(all_docs, registry, now)
+    if stale:
+        doc_repo.mark_skipped_stale([d.id for d in stale], run_id=run_id)
+        result.skipped_stale = len(stale)
+        result.stale_by_source = dict(Counter(d.source_key for d in stale))
+        stale_ids = {d.id for d in stale}
+        all_docs = [d for d in all_docs if d.id not in stale_ids]
+    selected, unselected, selection = _select(all_docs, registry, settings.scout_doc_budget)
+    result.source_mix = format_source_mix(selection, registry)
+    result.category_mix = category_mix(selection, registry, stale=result.stale_by_source)
     result.over_budget = len(unselected)
     ttl = _raw_doc_ttl(routines)
     expired = [d.id for d in unselected if _parse_ts(d.ingested_at or d.published_at) + ttl <= now]
@@ -818,6 +897,7 @@ def run_scout(
         selected=len(selected),
         over_budget=result.over_budget,
         skipped_budget=result.skipped_budget,
+        skipped_stale=result.skipped_stale,
         dry_run=dry_run,
     )
 
@@ -835,6 +915,9 @@ def run_scout(
     )
     result.stories = digests
     for p in digests:
+        ttl = registry.freshness_ttl(p.source_keys, None, now)
+        if ttl is not None:
+            result.story_ttls[p.story_id] = ttl
         if on_story is not None:
             on_story(p)
 
@@ -948,6 +1031,11 @@ def run_scout(
     result.candidates = candidates_for_scanner(
         conn, day, min_confidence=settings.scout_min_confidence
     )
+    for cand in result.candidates:
+        keys = [source_key_of(u) for u in cand.sources]
+        ttl = registry.freshness_ttl(keys, None, now)
+        if ttl is not None:
+            result.candidate_ttls[cand.ticker] = ttl
     log.info(
         "scout.run.done",
         run_id=run_id,

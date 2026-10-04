@@ -758,20 +758,46 @@ screen in `config/universe.yaml`. `ARC_UNIVERSE_MODE=strict` restores the allow-
 4. Knobs: `scout_max_new_tickers` (Slack-tunable, ceiling 25), `universe_mode`,
    `pipeline_max_shortlist` (the Quant/Risk budget, not a Director cap).
 
-### 5.11 Source fairness + options data (E4.5, D30)
+### 5.11 Source fairness + options data (E4.5, D30; categories + freshness E4.7, D47)
 
 Every Scout source is a named entry in `config/routines.yaml`: each RSS feed under
 `sources.rss.feeds` (`name`, `url`, optional `label`, `category`, `weight`,
-`max_docs_per_run`, `hosts`), and `edgar` / `earnings` with a
-`category` and `label`. Adding or re-weighting a source is a YAML edit only. YouTube
-(category `video`) has no Scout share since D45; see §5.22.
+`max_age`, `max_docs_per_run`, `hosts`), and `edgar` / `earnings` with a
+`category` and `label`. Every context-writing source **must** declare one of the 5
+D47 categories (`market_news`, `company`, `macro`, `options_data`, `video`); a
+missing or unknown category fails config load. The old names `company_news`,
+`filings`, `calendar` load as `company` for one release (logged
+`sources.category_alias`). Adding or re-weighting a source is a YAML edit only.
+YouTube (category `video`) has no Scout share since D45; see §5.22.
 
+- **Categories.** The top-level `categories:` block sets each category's `weight`
+  (all 1 = equal) and freshness `max_age` (6h / 24h / 24h / 1 session / 24h).
+  Both are Slack-tunable: `!arc config set categories.<c>.weight 0-5` and
+  `categories.<c>.max_age <minutes>` (30-10080; `options_data` keeps its session
+  window). A source's `weight` is its share *inside* its category, so a 4th
+  market_news feed takes a quarter of market_news, and other categories don't move.
 - **Budget.** Each Scout run reads `scout_doc_budget` docs (default 120, Slack-tunable
-  20-400), shared by weighted round-robin (equal weights by default; per-category
-  split via `personas.scout.category_weights`). Newest first within a source. Docs
-  over budget wait for the next run; once older than the `raw_doc_ref` TTL (5d)
-  they are closed `raw_docs.scout_status='skipped_budget'` with the run id. Never
-  deleted. The Scout card's *Source mix* fact shows `read (N over budget)` per source.
+  20-400), split equally across the categories that have fresh docs this run, then
+  by source weight inside each category (weighted round-robin; a category or source
+  with nothing left gives its share to the others). Newest first within a source.
+  Docs over budget wait for the next run.
+- **Freshness.** A doc older than its category's `max_age` (published time;
+  `earnings` uses ingested time, `age_basis: ingested`) is never read: the Scout
+  closes it `raw_docs.scout_status='skipped_stale'` with the run id, and the `rss` /
+  `edgar` connectors don't store it at all (`ingest.skipped_stale count= source=`).
+  Docs still inside their window but past the `raw_doc_ref` TTL (5d) are closed
+  `skipped_budget`. Never deleted. `story` and `candidate` entries expire at
+  min(1 session, freshest source's `max_age` + 2h).
+- **Source mix.** The Scout card groups it by category: `*Market news* 50% · 6
+  read: WSJ 1 · Nasdaq 5 (10 over budget)`, with `(N stale)` per source.
+- **Director.** Its prompt carries a code-built *Context by category* block: the 5
+  headers in fixed order, each with a freshness line (`Market news: 14 stories,
+  newest 22m`, `Options data: vol_term 5h, put_call 8h`, `YouTube: 3/4 channels
+  (missing: …)`); an empty category reads `no fresh info`.
+- **EDGAR.** `published_at` is the filing's `acceptanceDateTime` (filing date if
+  absent). Filings older than the company window are skipped before download, and
+  the cursor is the newest accession seen, so a filing re-listed on the feed (or the
+  backlog of a newly added ticker) is never ingested.
 - **Stories.** Near-duplicate headlines (Jaccard ≥ `scout_story_threshold` within
   `scout_story_window_hours`) are one story; EDGAR filings group by filer + form.
   Corroboration on a candidate = distinct *sources* behind its URLs, computed in code

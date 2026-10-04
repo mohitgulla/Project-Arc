@@ -1417,6 +1417,52 @@ _MONITORING_TUNABLES: tuple[Tunable, ...] = (
 )
 
 
+def _category_tunables() -> tuple[Tunable, ...]:
+    """D47 (E4.7): each source category's weight and freshness window.
+
+    ``options_data`` keeps its session-based window (the per-kind TTLs are the real
+    limit there), so only its weight is tunable.
+    """
+    from arc.context.categories import SourceCategory
+
+    out: list[Tunable] = []
+    for c in SourceCategory:
+        out.append(
+            Tunable(
+                key=f"categories.{c.value}.weight",
+                group=Group.ROUTINES,
+                type=_F,
+                description=f"D47: {c.value} share of the Scout doc budget relative to the "
+                "other categories (all 1 = equal; 0 = never read). Sources split it.",
+                target=Target.ROUTINES,
+                risk=Risk.ANY,
+                path=("categories", c.value, "weight"),
+                min=0,
+                max=5,
+                hard_ceiling=5,
+            )
+        )
+        if c is SourceCategory.OPTIONS_DATA:
+            continue
+        out.append(
+            Tunable(
+                key=f"categories.{c.value}.max_age",
+                group=Group.ROUTINES,
+                type=_I,
+                description=f"D47: {c.value} freshness window (minutes). Older docs are "
+                "never stored or read (skipped_stale); stories expire at window + 2h.",
+                target=Target.ROUTINES,
+                risk=Risk.UP,
+                path=("categories", c.value, "max_age"),
+                unit="m",
+                min=30,
+                max=10_080,
+                hard_ceiling=10_080,
+            )
+        )
+    return tuple(out)
+
+
 def _exp(key: str, desc: str, risk: Risk, path: tuple[str, ...], **kw: Any) -> Tunable:
     """A ``config/experiments.yaml`` default (E10.1, D44): copied into new specs only."""
     return Tunable(
@@ -1564,6 +1610,7 @@ REGISTRY: dict[str, Tunable] = {
         *_exit_tunables(),
         *_LOOP_TUNABLES,
         *_MONITORING_TUNABLES,
+        *_category_tunables(),
         *_EXPERIMENT_TUNABLES,
     )
 }
@@ -1916,7 +1963,7 @@ def format_value(t: Tunable, v: Any) -> str:
 DEFAULT_STOP_VALUE = 0.75  # D23 relaxed stop, used when a stop is created from 'none'
 _SECTIONS = ("sources", "personas")
 # Top-level routines.yaml sections whose tunables are plain paths (not per job).
-_PLAIN_ROUTINE_SECTIONS = (("loop",), ("monitoring",))
+_PLAIN_ROUTINE_SECTIONS = (("loop",), ("monitoring",), ("categories",))
 
 
 def _get(data: Any, path: tuple[str, ...]) -> Any:
@@ -1964,6 +2011,11 @@ def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
         if v is None:
             return None
         if t.unit == "m":
+            if t.path[:1] == ("categories",):  # D47 Ttl text ("6h", "1 session")
+                from arc.context.ttl import Ttl
+
+                d = Ttl.model_validate(v).duration
+                return None if d is None else int(round(d.total_seconds() / 60))
             return _minutes(str(v))
         if t.unit == "d" and isinstance(v, str):  # a monitoring duration ("7d")
             return int(round(parse_duration(v).total_seconds() / 86_400))

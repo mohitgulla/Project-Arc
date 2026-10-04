@@ -129,12 +129,29 @@ context_ttl:
   analyst_recs:  {ttl: 8d, supersede: latest}
   fundamentals:  {ttl: 8d, supersede: latest}
 
+# D47 (E4.7): five source categories, weighted EQUALLY (not per source). A source's
+# `weight:` is its share INSIDE its category, so a new feed splits its category's share
+# instead of growing it. `max_age` is the category's freshness window: the Scout never
+# reads an older doc (closed `skipped_stale`), the rss/edgar connectors never store one,
+# and Scout story/candidate entries expire at min(1 session, max_age + 2h). A source may
+# set its own `max_age:` (none does). Weight 0-5 and max_age 30m-7d are tunable from
+# Slack (`!arc config set categories.<c>.weight|max_age`). Categories market_news,
+# company and macro share the Scout's `scout_doc_budget`; options_data and video reach
+# the Director as typed context only.
+categories:              # D47: equal weight per category; sources split their category's share
+  market_news:  {weight: 1, max_age: 6h,  label: Market news}
+  company:      {weight: 1, max_age: 24h, label: Company}
+  macro:        {weight: 1, max_age: 24h, label: Macro}
+  options_data: {weight: 1, max_age: 1 session, label: Options data}
+  video:        {weight: 1, max_age: 24h, label: YouTube}
+
 # D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Scout
-# source; each RSS feed is its own source. Per-source knobs (no code change to add or
-# re-weight one): category (market_news | company_news | macro | filings | options_data
-# | calendar | video), weight (default 1 = equal share), max_docs_per_run, label (shown
-# in the Scout card's source mix). The Scout reads `scout_doc_budget` docs per run,
-# shared by weighted round-robin; the rest wait, and are closed `skipped_budget` once
+# source; each RSS feed is its own source. Every source job that writes context (or
+# every one of its feeds) declares `category:` (one of the five above; a missing or
+# unknown one fails config load). Other knobs: weight (default 1), max_docs_per_run,
+# label (shown in the Scout card's source mix). The Scout reads `scout_doc_budget` docs
+# per run, split equally across categories with fresh docs, then by weighted
+# round-robin inside a category; the rest wait, and are closed `skipped_budget` once
 # older than the raw_doc_ref TTL above.
 
 sources:                        # fetch-only jobs (no LLM), each with its own cadence; quiet heartbeats
@@ -159,19 +176,20 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     window: "06:00-20:00"
     days: trading
     writes: [raw_doc_ref]
-    feeds:                      # a plain URL still works (name = its domain, category market_news)
-      - {name: wsj, label: WSJ, url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", hosts: [wsj.com]}
-      - {name: cnbc, label: CNBC, url: "https://www.cnbc.com/id/20910258/device/rss/rss.html"}
-      - {name: seekingalpha, label: SA, url: "https://seekingalpha.com/market_currents.xml", category: company_news}
-      - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets"}
+    feeds:                      # every feed declares its D47 category
+      - {name: wsj, label: WSJ, url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", hosts: [wsj.com], category: market_news}
+      - {name: cnbc, label: CNBC, url: "https://www.cnbc.com/id/20910258/device/rss/rss.html", category: market_news}
+      - {name: seekingalpha, label: SA, url: "https://seekingalpha.com/market_currents.xml", category: company}
+      - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets", category: market_news}
       - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro}
-  edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: filings, label: EDGAR, writes: [raw_doc_ref], lane: background}   # D39: p90 75 s (377 s max on new filings)
+  edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: company, label: EDGAR, writes: [raw_doc_ref], lane: background}   # D39: p90 75 s (377 s max on new filings)
   earnings:                     # Finnhub /calendar/earnings (ARC_FINNHUB_API_KEY; no key = skipped run)
     schedule: ["06:00", "18:00"]
     days: trading
     ttl: 6h
-    category: calendar
+    category: company
     label: Earnings
+    age_basis: ingested         # D47: calendar rows are always "the latest pull", never stale by date
     writes: [raw_doc_ref]
     # E4.1d: the free tier silently caps a call at row_cap rows (keeping the latest dates),
     # so the window (today - lookback_days .. today + horizon_days) is fetched in
@@ -188,22 +206,26 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: trading
     ttl: 6h
     flat_band: 0.02             # |VIX3M/VIX - 1| below this = flat
+    category: options_data
     writes: [vol_term]
   put_call:                     # Cboe daily market statistics (previous session's ratios)
     schedule: ["09:00"]
     days: trading
     ttl: 6h
+    category: options_data
     writes: [put_call]
   macro_calendar:               # FOMC decisions (federalreserve.gov) + BLS CPI/PPI/NFP/JOLTS/ECI
     schedule: ["05:45"]
     days: weekdays
     ttl: 24h
     horizon_days: 45
+    category: macro
     writes: [macro_calendar]
   unusual_options:              # self-computed from Alpaca chain snapshots: seed + today's candidates
     schedule: ["12:30", "15:45"]
     days: trading
     ttl: 2h
+    category: options_data
     writes: [unusual_options]
     lane: background            # D39: p90 61 s (chain snapshots)
   ex_dividend:                  # Alpaca corporate actions: early-assignment risk on short calls
@@ -211,6 +233,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: trading
     ttl: 12h
     horizon_days: 45
+    category: options_data
     writes: [ex_dividend]
   # E4.8 (D46): Finnhub per-ticker context (free key, typed kinds, never raw docs). One
   # shared budget of finnhub_calls_per_minute (55 of the key's 60/min) across processes,
@@ -272,7 +295,7 @@ personas:
     window: "09:40-15:50"       # owner 2026-09-28: 75 slots; skips the open's first 10 min
     days: trading
     chain: [quant, risk, propose, execute]   # D34: execute = publish + auto-approve + hand off ladders
-    reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options, position_review]   # == DIRECTOR_READS (arc/pipeline/steps.py)
+    reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options, position_review, story]   # == DIRECTOR_READS (arc/pipeline/steps.py)
     writes: [shortlist, regime, note, portfolio_context]   # E5.9: portfolio_context + portfolio_view/thesis_check notes
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card

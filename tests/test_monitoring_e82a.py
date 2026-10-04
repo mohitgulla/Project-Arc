@@ -527,7 +527,11 @@ def test_control_override_changes_the_check(
 
 EARNINGS_YAML = """
     sources:
-      earnings: {schedule: ["06:00", "18:00"], days: trading, writes: [raw_doc_ref]}
+      earnings:
+        schedule: ["06:00", "18:00"]
+        days: trading
+        category: company
+        writes: [raw_doc_ref]
     monitoring:
       gateway: {enabled: false}
 """

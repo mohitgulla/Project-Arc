@@ -1,45 +1,70 @@
-"""Source registry + fair Scout selection (E4.5, D30). Deterministic, no LLM.
+"""Source registry + fair Scout selection (E4.5 / D30, categories D47). Deterministic.
 
 Every ingest source is a named entry built from ``config/routines.yaml``:
 
-* each ``sources.<job>`` that writes ``raw_doc_ref`` is one source, with
-  ``category`` / ``weight`` / ``max_docs_per_run`` / ``label`` job options;
-* the ``rss`` job's ``feeds`` expand to one source **per feed**. A feed is either
-  a plain URL string (PR #40 shape; name derived from the host) or a mapping
-  ``{name, url, category, weight, max_docs_per_run, label, hosts}``.
+* each ``sources.<job>`` that writes context is one source, with ``category`` /
+  ``weight`` / ``max_docs_per_run`` / ``label`` / ``max_age`` / ``age_basis`` options;
+* the ``rss`` job's ``feeds`` expand to one source **per feed**. A feed is a mapping
+  ``{name, url, category, weight, max_docs_per_run, label, hosts, max_age}`` (a plain
+  URL string still loads, but then the job itself must declare ``category``).
 
-Budget: ``scout_doc_budget`` docs per Scout run are shared across sources by
-**weighted deficit round-robin**. Each source's effective weight is
-``category_share × weight / Σ weights in its category``, where the category share
-is ``category_weights[category]`` (``personas.scout.category_weights``) or, by
-default, the sum of its sources' weights, so default weights are equal per
-source. Picks go one doc at a time to the source furthest below its share
-(``picked / weight`` smallest; ties by name), newest doc first within a source.
-A source that runs out of docs (or hits ``max_docs_per_run``) simply stops
-competing, so its unused share flows to the others.
+Categories (D47): every source belongs to one of five
+:class:`~arc.context.categories.SourceCategory` values, declared in the top-level
+``categories:`` block with a ``weight`` and a freshness ``max_age``. **Categories are
+weighted equally** (``weight: 1`` each); a source's ``weight`` is its share *inside*
+its category, so adding a feed splits its category's share instead of growing it.
 
-Fairness invariant (property-tested): after selection, a source with unselected
-docs left (and under its cap) is never more than one pick behind any other
-source relative to their weights.
+Budget: ``scout_doc_budget`` docs per Scout run are shared by a **two-level weighted
+deficit round-robin**: each pick goes first to the category furthest below its
+share (``picked / category weight`` smallest; ties by name), then, inside that
+category, to the source furthest below its share. Newest doc first within a source.
+A source that runs out of docs (or hits ``max_docs_per_run``) stops competing, and
+a category with no fresh docs left stops competing, so unused share flows to the
+others. Only :data:`~arc.context.categories.SCOUT_CATEGORIES` take part; options
+data and video reach the Director as typed context (D45, D47).
+
+Freshness: a doc older than its source's ``max_age`` (default: its category's) is
+never selected; the Scout closes it ``skipped_stale``.
+
+Fairness invariant (property-tested): after selection, a category that still has
+unselected docs under its caps is never more than one pick behind any other
+category relative to the category weights; inside a category the same holds per
+source relative to the source weights.
 """
 
 from __future__ import annotations
 
-import enum
+import datetime as _dt
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from arc.context.categories import (
+    CATEGORY_ORDER,
+    DEFAULT_CATEGORIES,
+    SCOUT_CATEGORIES,
+    CategorySpec,
+    SourceCategory,
+    earliest_ttl,
+    parse_category,
+)
+from arc.context.ttl import Ttl
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
     from arc.routines.config import RoutinesConfig
 
+log = structlog.get_logger()
+
 __all__ = [
+    "SCOUT_EXCLUDED",
+    "CategoryMix",
     "FeedSpec",
     "Selection",
     "SourceCategory",
@@ -48,30 +73,21 @@ __all__ = [
     "select_fair",
 ]
 
-
-class SourceCategory(enum.StrEnum):
-    MARKET_NEWS = "market_news"
-    COMPANY_NEWS = "company_news"
-    MACRO = "macro"
-    FILINGS = "filings"
-    OPTIONS_DATA = "options_data"
-    CALENDAR = "calendar"
-    VIDEO = "video"
-
-
-# Category when a source job does not declare one (by job-name prefix).
+# Category when a legacy row / removed source has no registry entry (by key prefix).
 DEFAULT_CATEGORY: Mapping[str, SourceCategory] = {
     "rss": SourceCategory.MARKET_NEWS,
-    "edgar": SourceCategory.FILINGS,
-    "earnings": SourceCategory.CALENDAR,
+    "edgar": SourceCategory.COMPANY,
+    "earnings": SourceCategory.COMPANY,
     "youtube": SourceCategory.VIDEO,
 }
 UNKNOWN_CATEGORY = SourceCategory.MARKET_NEWS
-# D45 (E4.6): categories the 30-min Scout never reads. Video reaches the trading
-# loop only through the daily ``youtube.briefs`` job; the registry still lists the
-# channels (labels, the Tower's sources page).
-SCOUT_EXCLUDED: frozenset[SourceCategory] = frozenset({SourceCategory.VIDEO})
+# D45/D47: categories the 30-min Scout never reads (typed context only). The registry
+# still lists their sources (labels, the Tower's sources page).
+SCOUT_EXCLUDED: frozenset[SourceCategory] = frozenset(set(SourceCategory) - SCOUT_CATEGORIES)
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_.]*$")
+STALE_GRACE = _dt.timedelta(hours=2)  # D47 context TTL: max_age + 2h (capped at the policy)
+
+AgeBasis = Literal["published", "ingested"]
 
 
 def registered_domain(host: str) -> str:
@@ -96,6 +112,7 @@ class FeedSpec(BaseModel):
     weight: float = Field(1.0, gt=0, le=100)
     max_docs_per_run: int | None = Field(None, ge=0)
     hosts: list[str] = Field(default_factory=list)
+    max_age: Ttl | None = None
 
     @field_validator("name")
     @classmethod
@@ -104,6 +121,11 @@ class FeedSpec(BaseModel):
             msg = f"feed name must be lower-case [a-z0-9_.], got {v!r}"
             raise ValueError(msg)
         return v
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _category(cls, v: Any) -> Any:
+        return None if v is None else parse_category(v, where="feed")
 
     @classmethod
     def parse(cls, raw: Any) -> FeedSpec:
@@ -136,17 +158,30 @@ class SourceSpec:
     url: str | None = None
     hosts: tuple[str, ...] = ()
     channel: str | None = None  # youtube channel id / url
+    max_age: Ttl | None = None  # per-source override; None = the category's
+    age_basis: AgeBasis = "published"  # D47: earnings rows age from the latest pull
 
     @property
     def display(self) -> str:
         return self.label or self.key
 
 
-def _job_category(job: str, options: Mapping[str, Any]) -> SourceCategory:
+def _job_category(job: str, options: Mapping[str, Any]) -> SourceCategory | None:
     raw = options.get("category")
-    if raw is not None:
-        return SourceCategory(raw)
-    return DEFAULT_CATEGORY.get(job.split(".", 1)[0], UNKNOWN_CATEGORY)
+    return parse_category(raw, where=f"sources.{job}") if raw is not None else None
+
+
+def _ttl_opt(raw: Any) -> Ttl | None:
+    return None if raw is None else Ttl.model_validate(raw)
+
+
+def _age_basis(raw: Any) -> AgeBasis:
+    if raw in (None, "published"):
+        return "published"
+    if raw == "ingested":
+        return "ingested"
+    msg = f"age_basis must be 'published' or 'ingested', got {raw!r}"
+    raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -154,7 +189,9 @@ class SourceRegistry:
     """All registry sources, keyed by source key (stable config order)."""
 
     sources: Mapping[str, SourceSpec]
-    category_weights: Mapping[SourceCategory, float] = field(default_factory=dict)
+    categories: Mapping[SourceCategory, CategorySpec] = field(
+        default_factory=lambda: dict(DEFAULT_CATEGORIES)
+    )
 
     # -- construction -------------------------------------------------------
 
@@ -166,6 +203,8 @@ class SourceRegistry:
                 continue
             opts = spec.options
             category = _job_category(job, opts)
+            job_age = _ttl_opt(opts.get("max_age"))
+            basis = _age_basis(opts.get("age_basis"))
             feeds = opts.get("feeds")
             if feeds:
                 for raw in feeds:
@@ -174,17 +213,26 @@ class SourceRegistry:
                     if key in out:
                         msg = f"duplicate source key {key!r} (feed {feed.url})"
                         raise ValueError(msg)
+                    cat = feed.category or category
+                    if cat is None:  # routines validation already refuses this
+                        msg = f"feed {key!r}: no category (D47)"
+                        raise ValueError(msg)
                     out[key] = SourceSpec(
                         key=key,
                         job=job,
-                        category=feed.category or category,
+                        category=cat,
                         weight=feed.weight,
                         max_docs_per_run=feed.max_docs_per_run,
                         label=feed.label or "",
                         url=feed.url,
                         hosts=feed.match_hosts,
+                        max_age=feed.max_age or job_age,
+                        age_basis=basis,
                     )
                 continue
+            if category is None:
+                msg = f"source {job!r}: no category (D47)"
+                raise ValueError(msg)
             channels = opts.get("channels")
             if channels:  # E4.6: one registry source per YouTube channel (youtube.<slug>)
                 for raw in channels:
@@ -199,6 +247,7 @@ class SourceRegistry:
                         category=category,
                         label=str(raw.get("label") or slug),
                         channel=str(raw.get("channel") or "") or None,
+                        max_age=job_age,
                     )
                 continue
             if job in out:
@@ -217,43 +266,105 @@ class SourceRegistry:
                 max_docs_per_run=int(cap) if cap is not None else None,
                 label=str(opts.get("label") or ""),
                 channel=opts.get("channel"),
+                max_age=job_age,
+                age_basis=basis,
             )
+        cats = {c: routines.category_spec(c) for c in SourceCategory}
         scout = routines.personas.get("scout")
-        raw_cw = (scout.options.get("category_weights") if scout is not None else None) or {}
-        cw = {SourceCategory(k): float(v) for k, v in raw_cw.items()}
-        if any(v <= 0 for v in cw.values()):
-            msg = "category_weights must be > 0"
-            raise ValueError(msg)
-        return cls(sources=out, category_weights=cw)
+        legacy = (scout.options.get("category_weights") if scout is not None else None) or {}
+        if legacy:  # pre-D47 knob, aliased for one release
+            log.warning("sources.category_weights_alias", superseded_by="categories.<c>.weight")
+            for raw_cat, w in legacy.items():
+                c = parse_category(raw_cat, where="personas.scout.category_weights")
+                if float(w) < 0:
+                    msg = "category_weights must be >= 0"
+                    raise ValueError(msg)
+                cats[c] = cats[c].model_copy(update={"weight": float(w)})
+        return cls(sources=out, categories=cats)
 
     # -- lookups ------------------------------------------------------------
 
     def feeds_for(self, job: str) -> list[SourceSpec]:
         return [s for s in self.sources.values() if s.job == job and s.url]
 
-    def effective_weights(self) -> dict[str, float]:
+    def category_spec(self, category: SourceCategory) -> CategorySpec:
+        return self.categories.get(category) or DEFAULT_CATEGORIES[category]
+
+    def category_weights(
+        self, present: Iterable[SourceCategory] | None = None
+    ) -> dict[SourceCategory, float]:
+        """D47 category share (sums to 1) over Scout categories that *have docs*.
+
+        *present* = categories with fresh docs this run; default: every Scout
+        category that has at least one registered source. A category absent from
+        *present*, or with weight 0, gets no share (it flows to the others).
+        """
+        have = {s.category for s in self.sources.values() if s.category in SCOUT_CATEGORIES}
+        cats = have if present is None else set(present) & SCOUT_CATEGORIES
+        raw = {c: self.category_spec(c).weight for c in cats}
+        raw = {c: w for c, w in raw.items() if w > 0}
+        total = sum(raw.values())
+        if total <= 0:
+            return {}
+        return {c: raw[c] / total for c in CATEGORY_ORDER if c in raw}
+
+    def effective_weights(
+        self, present: Iterable[SourceCategory] | None = None
+    ) -> dict[str, float]:
         """Category share × source share within the category (sums to 1).
 
-        Only Scout-readable sources get a weight: :data:`SCOUT_EXCLUDED` categories
-        (video, D45) are left out, so they never take a share of the doc budget.
+        The single place category shares are computed (the Tower calls it too).
+        Only Scout-readable sources get a weight; options data and video never
+        take a share of the doc budget (D45, D47).
         """
+        cat_w = self.category_weights(present)
         by_cat: dict[SourceCategory, list[SourceSpec]] = {}
         for s in self.sources.values():
-            if s.category in SCOUT_EXCLUDED:
-                continue
-            by_cat.setdefault(s.category, []).append(s)
-        if not by_cat:
-            return {}
-        cat_w = {
-            c: self.category_weights.get(c, sum(s.weight for s in ss)) for c, ss in by_cat.items()
-        }
-        total = sum(cat_w.values())
+            if s.category in cat_w:
+                by_cat.setdefault(s.category, []).append(s)
         out: dict[str, float] = {}
         for c, ss in by_cat.items():
             inner = sum(s.weight for s in ss)
             for s in ss:
-                out[s.key] = (cat_w[c] / total) * (s.weight / inner)
+                out[s.key] = cat_w[c] * (s.weight / inner)
         return out
+
+    def max_age_for(self, key: str) -> Ttl:
+        """D47 freshness window of a source: its own ``max_age`` else its category's."""
+        spec = self.spec_for(key)
+        return spec.max_age or self.category_spec(spec.category).max_age
+
+    def is_stale(
+        self,
+        key: str,
+        *,
+        published: _dt.datetime | None,
+        ingested: _dt.datetime | None,
+        now: _dt.datetime,
+    ) -> bool:
+        """Is a doc of source *key* past its window at *now*? (age basis per source)."""
+        spec = self.spec_for(key)
+        at = ingested if spec.age_basis == "ingested" else published
+        at = at or ingested or published
+        if at is None:
+            return False
+        return self.max_age_for(key).expires_at(at) <= now
+
+    def freshness_ttl(self, keys: Iterable[str], base: Ttl | None, at: _dt.datetime) -> Ttl | None:
+        """D47 context TTL: ``min(base, shortest max_age among *keys* + 2h)``.
+
+        Session-based windows (options data) are used as they are (no grace).
+        """
+        cands: list[Ttl] = [] if base is None else [base]
+        windows = [self.max_age_for(k) for k in dict.fromkeys(keys)]
+        if windows:
+            shortest = earliest_ttl(windows, at)
+            assert shortest is not None
+            if shortest.duration is not None:
+                cands.append(Ttl(duration=shortest.duration + STALE_GRACE))
+            else:
+                cands.append(shortest)
+        return earliest_ttl(cands, at)
 
     def key_for(self, row: Mapping[str, Any]) -> str:
         """Registry key of a ``raw_docs`` row (``source_key`` column, else derived)."""
@@ -300,9 +411,17 @@ class Selection:
     picked: Mapping[str, int]
     available: Mapping[str, int]
     weights: Mapping[str, float]
+    category_of: Mapping[str, str] = field(default_factory=dict)
+    category_weights: Mapping[str, float] = field(default_factory=dict)
 
     def over_budget(self) -> dict[str, int]:
         return {k: self.available[k] - self.picked.get(k, 0) for k in self.available}
+
+    def category_picked(self) -> dict[str, int]:
+        out: Counter[str] = Counter()
+        for k, n in self.picked.items():
+            out[self.category_of.get(k, "")] += n
+        return dict(out)
 
 
 def select_fair(
@@ -311,26 +430,40 @@ def select_fair(
     budget: int,
     *,
     caps: Mapping[str, int | None] | None = None,
+    categories: Mapping[str, str] | None = None,
+    category_weights: Mapping[str, float] | None = None,
 ) -> Selection:
-    """Weighted deficit round-robin over *docs_by_source* (each list newest first).
+    """Two-level weighted deficit round-robin over *docs_by_source* (each newest first).
 
-    Sources missing from *weights* get the smallest known weight (never zero), so a
-    doc from an unregistered source is still read, just never favoured.
+    *categories* maps a source to its category and *category_weights* gives each
+    category's weight; without them every source is in one category (plain per-source
+    round-robin). *weights* are the per-source weights inside a category. Sources
+    missing from *weights* get the smallest known weight (never zero); categories
+    missing from *category_weights* get the smallest known category weight, so a doc
+    from an unregistered source is still read, just never favoured.
     """
     caps = caps or {}
+    cat_of = {k: (categories or {}).get(k, "") for k in docs_by_source}
     floor = min((w for w in weights.values() if w > 0), default=1.0)
     w = {k: (weights.get(k) or floor) for k in docs_by_source}
+    cw_in = category_weights or {}
+    cfloor = min((v for v in cw_in.values() if v > 0), default=1.0)
+    cw = {c: (cw_in.get(c) or cfloor) for c in set(cat_of.values())}
     limit = {
         k: min(len(v), caps[k] if caps.get(k) is not None else len(v))  # type: ignore[type-var]
         for k, v in docs_by_source.items()
     }
     picked: Counter[str] = Counter()
+    cat_picked: Counter[str] = Counter()
     selected: list[str] = []
     active = sorted(k for k in docs_by_source if limit[k] > 0)
     while len(selected) < budget and active:
-        k = min(active, key=lambda s: ((picked[s] + 1) / w[s], s))
+        cats = sorted({cat_of[k] for k in active})
+        c = min(cats, key=lambda x: ((cat_picked[x] + 1) / cw[x], x))
+        k = min((s for s in active if cat_of[s] == c), key=lambda s: ((picked[s] + 1) / w[s], s))
         selected.append(docs_by_source[k][picked[k]])
         picked[k] += 1
+        cat_picked[c] += 1
         if picked[k] >= limit[k]:
             active.remove(k)
     return Selection(
@@ -338,6 +471,8 @@ def select_fair(
         picked=dict(picked),
         available={k: len(v) for k, v in docs_by_source.items()},
         weights=w,
+        category_of=cat_of,
+        category_weights=cw,
     )
 
 
@@ -353,3 +488,72 @@ def format_source_mix(
         for k in keys
         if selection.available.get(k)
     ]
+
+
+@dataclass(frozen=True)
+class CategoryMix:
+    """D47 Scout card row: one category's share and its sources' accounting.
+
+    ``sources`` = ``[(label, picked, over_budget, stale)]`` in registry order.
+    """
+
+    category: str
+    label: str
+    share: float
+    picked: int
+    sources: list[tuple[str, int, int, int]]
+
+
+def category_mix(
+    selection: Selection | None,
+    registry: SourceRegistry,
+    *,
+    stale: Mapping[str, int] | None = None,
+) -> list[CategoryMix]:
+    """The Scout card's grouped source mix (fixed category order, Scout categories only).
+
+    A source shows up when it had fresh docs or stale ones this run; a category
+    shows up when any of its sources did.
+    """
+    stale = stale or {}
+    avail = dict(selection.available) if selection else {}
+    picked = dict(selection.picked) if selection else {}
+    over = selection.over_budget() if selection else {}
+    shares = (
+        {SourceCategory(c): v for c, v in _norm(selection.category_weights).items() if c}
+        if selection
+        else {}
+    )
+    keys = list(registry.sources)
+    keys += sorted(k for k in {*avail, *stale} if k not in keys)
+    out: list[CategoryMix] = []
+    for cat in CATEGORY_ORDER:
+        if cat not in SCOUT_CATEGORIES:
+            continue
+        rows = [
+            (
+                registry.spec_for(k).display,
+                picked.get(k, 0),
+                over.get(k, 0),
+                stale.get(k, 0),
+            )
+            for k in keys
+            if registry.spec_for(k).category is cat and (avail.get(k) or stale.get(k))
+        ]
+        if not rows:
+            continue
+        out.append(
+            CategoryMix(
+                category=cat.value,
+                label=registry.category_spec(cat).label,
+                share=round(shares.get(cat, 0.0), 4),
+                picked=sum(r[1] for r in rows),
+                sources=rows,
+            )
+        )
+    return out
+
+
+def _norm(weights: Mapping[str, float]) -> dict[str, float]:
+    total = sum(v for v in weights.values() if v > 0)
+    return {k: (v / total if total else 0.0) for k, v in weights.items()}

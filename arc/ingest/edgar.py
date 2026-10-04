@@ -25,6 +25,7 @@ from arc.universe.ingest import IngestUniverse
 
 if TYPE_CHECKING:
     from arc.config import ArcSettings
+    from arc.context.ttl import Ttl
 
 log = structlog.get_logger()
 
@@ -98,13 +99,18 @@ def _fetch_submissions(cik: str, settings: ArcSettings) -> dict | None:
 
 
 def _filings_of_form(data: dict | None, cik: str, form_type: str, *, count: int) -> list[dict]:
-    """The *count* most recent filings of *form_type* in a submissions document."""
+    """The *count* most recent filings of *form_type* in a submissions document.
+
+    Newest first (EDGAR's ``recent`` arrays are newest first). ``acceptanceDateTime``
+    is carried when present (D47: the filing's real publish time).
+    """
     if not data:
         return []
     recent = data.get("filings", {}).get("recent", {})
     forms = recent.get("form", [])
     accessions = recent.get("accessionNumber", [])
     dates = recent.get("filingDate", [])
+    accepted = recent.get("acceptanceDateTime", [])
     primary_docs = recent.get("primaryDocument", [])
 
     results = []
@@ -117,6 +123,7 @@ def _filings_of_form(data: dict | None, cik: str, form_type: str, *, count: int)
             {
                 "accessionNumber": accessions[i] if i < len(accessions) else "",
                 "filingDate": dates[i] if i < len(dates) else "",
+                "acceptanceDateTime": accepted[i] if i < len(accepted) else "",
                 "primaryDocument": primary_docs[i] if i < len(primary_docs) else "",
                 "form": form,
                 "cik": cik,
@@ -124,6 +131,26 @@ def _filings_of_form(data: dict | None, cik: str, form_type: str, *, count: int)
         )
 
     return results
+
+
+def filing_published_at(filing: dict) -> datetime | None:
+    """D47: the filing's accepted time (UTC), else its filing date (00:00 UTC).
+
+    ``None`` when neither parses (the caller then has no age to judge by).
+    """
+    raw = str(filing.get("acceptanceDateTime") or "")
+    if raw:
+        try:
+            ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+        except ValueError:
+            pass
+    try:
+        return datetime.strptime(str(filing.get("filingDate") or ""), "%Y-%m-%d").replace(
+            tzinfo=UTC
+        )
+    except ValueError:
+        return None
 
 
 def _fetch_recent_filings(
@@ -169,10 +196,22 @@ def _fetch_filing_text(url: str, settings: ArcSettings) -> str:
 def fetch_edgar(
     conn: sqlite3.Connection,
     settings: ArcSettings,
+    *,
+    now: datetime | None = None,
+    max_age: Ttl | None = None,
 ) -> list[RawDoc]:
     """Fetch recent EDGAR filings for configured tickers.
 
     Returns only newly stored documents.
+
+    D47 (E4.7): ``published_at`` is the filing's accepted time. With *max_age*
+    (the ``company`` category window), a filing older than that at *now* is
+    skipped before its text is downloaded and never stored (logged as
+    ``ingest.skipped_stale``): a ticker new to the universe, or an old filing
+    re-listed in the submissions feed, no longer floods the queue with months-old
+    10-Qs. The per-form cursor is the newest accession seen; the walk stops at it
+    in EDGAR's newest-first order (accession numbers are prefixed by the filer
+    agent's CIK, so comparing them as strings is not chronological).
     """
     cursor_repo = IngestCursorRepo(conn)
     doc_repo = RawDocRepo(conn)
@@ -186,6 +225,8 @@ def fetch_edgar(
     # download per run (it was one ~0.8 MB download per such ticker per run).
     fallback_ciks: dict[str, str] | None = None
     requests = 0
+    stale = 0
+    run_now = now or datetime.now(UTC)
 
     for ticker in tickers:
         cik = uni.cik(ticker)
@@ -211,9 +252,19 @@ def fetch_edgar(
 
             newest_accession: str | None = None
 
-            for filing in filings:
+            for filing in filings:  # newest first
                 acc = filing["accessionNumber"]
-                if last_accession and acc <= last_accession:
+                if last_accession and acc == last_accession:
+                    break  # everything from here on was seen by an earlier run
+
+                pub_dt = filing_published_at(filing)
+                if (
+                    max_age is not None
+                    and pub_dt is not None
+                    and max_age.expires_at(pub_dt) <= run_now
+                ):
+                    stale += 1
+                    newest_accession = newest_accession or acc
                     continue
 
                 url = _filing_url(
@@ -227,17 +278,11 @@ def fetch_edgar(
                 if not text:
                     continue
 
-                filing_date = filing.get("filingDate", "")
-                try:
-                    pub_dt = datetime.strptime(filing_date, "%Y-%m-%d").replace(tzinfo=UTC)
-                except (ValueError, TypeError):
-                    pub_dt = datetime.now(UTC)
-
                 h = content_hash(CONNECTOR, url)
                 doc = RawDoc(
                     source=CONNECTOR,
                     url=url,
-                    published_at=pub_dt,
+                    published_at=pub_dt or run_now,
                     text=text,
                     tickers_hint=list(
                         dict.fromkeys([ticker, *uni.tickers_in(text[:_HINT_SCAN_CHARS])])
@@ -257,11 +302,18 @@ def fetch_edgar(
                 if doc_id is not None:
                     results.append(doc)
 
-                if newest_accession is None or acc > newest_accession:
-                    newest_accession = acc
+                newest_accession = newest_accession or acc
 
             if newest_accession:
                 cursor_repo.set(cursor_key, newest_accession)
 
-    log.info("edgar.done", new_docs=len(results), requests=requests, tickers=len(tickers))
+    if stale:
+        log.info("ingest.skipped_stale", source=CONNECTOR, count=stale, max_age=str(max_age))
+    log.info(
+        "edgar.done",
+        new_docs=len(results),
+        skipped_stale=stale,
+        requests=requests,
+        tickers=len(tickers),
+    )
     return results

@@ -181,6 +181,7 @@ DIRECTOR_READS = [
     "macro_calendar",
     "unusual_options",
     "position_review",  # E5.9: fresh E6.4 reviews feed the portfolio context
+    "story",  # E4.7 (D47): per-category freshness lines (counts + headlines, by code)
 ]  # == routines.yaml director.reads (D30 adds the options-data kinds)
 # E5.9 drop reasons (Director stage; deterministic). Values == ReasonCode values.
 DROP_CONCENTRATION = ReasonCode.DROP_CONCENTRATION.value

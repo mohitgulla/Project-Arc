@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from arc.config import ArcSettings
+    from arc.context.ttl import Ttl
 
 log = structlog.get_logger()
 
@@ -94,14 +95,21 @@ def fetch_rss(
     settings: ArcSettings,
     *,
     source_keys: Mapping[str, str] | None = None,
+    max_ages: Mapping[str, Ttl] | None = None,
+    now: datetime | None = None,
 ) -> list[RawDoc]:
     """Fetch all configured RSS feeds and store new entries.
 
     *source_keys* maps a feed URL to its E4.5 registry name (``wsj_markets``); the
     name is stored on each doc so the Scout's per-source budget can group by feed.
-    Returns only newly stored documents (duplicates are skipped).
+    *max_ages* (D47) maps a feed URL to its category's freshness window: an entry
+    older than that at *now* is never stored (logged per feed as
+    ``ingest.skipped_stale``). Returns only newly stored documents (duplicates are
+    skipped).
     """
     keys: Mapping[str, str] = source_keys or {}
+    ages: Mapping[str, Ttl] = max_ages or {}
+    run_now = now or datetime.now(UTC)
     cursor_repo = IngestCursorRepo(conn)
     doc_repo = RawDocRepo(conn)
     feeds = settings.ingest_rss_feeds
@@ -133,10 +141,17 @@ def fetch_rss(
             continue
 
         newest_dt = last_dt
+        max_age = ages.get(feed_url)
+        stale = 0
 
         for entry in parsed.entries:
             pub_dt = _parse_published(entry)
             if pub_dt <= last_dt:
+                continue
+            if pub_dt > newest_dt:
+                newest_dt = pub_dt
+            if max_age is not None and max_age.expires_at(pub_dt) <= run_now:
+                stale += 1  # D47: past its category's window; never stored
                 continue
 
             url = _entry_url(entry)
@@ -170,9 +185,13 @@ def fetch_rss(
             if doc_id is not None:
                 results.append(doc)
 
-            if pub_dt > newest_dt:
-                newest_dt = pub_dt
-
+        if stale:
+            log.info(
+                "ingest.skipped_stale",
+                source=keys.get(feed_url) or feed_url,
+                count=stale,
+                max_age=str(max_age),
+            )
         if newest_dt > last_dt:
             cursor_repo.set(cursor_key, newest_dt.isoformat())
 
