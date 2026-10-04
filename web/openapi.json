@@ -7697,6 +7697,8 @@
           },
           "preset": {
             "enum": [
+              "1d",
+              "7d",
               "week",
               "mtd",
               "qtd",
@@ -13540,6 +13542,8 @@
             "schema": {
               "default": "90d",
               "enum": [
+                "1d",
+                "7d",
                 "week",
                 "mtd",
                 "qtd",
@@ -13558,7 +13562,7 @@
             "name": "compare",
             "required": false,
             "schema": {
-              "default": "prev",
+              "default": "none",
               "enum": [
                 "prev",
                 "yoy",
@@ -13681,6 +13685,8 @@
             "schema": {
               "default": "90d",
               "enum": [
+                "1d",
+                "7d",
                 "week",
                 "mtd",
                 "qtd",

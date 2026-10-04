@@ -3342,7 +3342,7 @@ export interface components {
              * Preset
              * @enum {string}
              */
-            preset: "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+            preset: "1d" | "7d" | "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
             win_loss: components["schemas"]["WinLossCard"];
         };
         /** PeriodView */
@@ -5605,7 +5605,7 @@ export interface operations {
     performance_api_performance_get: {
         parameters: {
             query?: {
-                preset?: "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+                preset?: "1d" | "7d" | "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
                 compare?: "prev" | "yoy" | "none";
                 include_tests?: boolean;
                 from?: string | null;
@@ -5650,7 +5650,7 @@ export interface operations {
         parameters: {
             query?: {
                 by?: "ticker" | "structure" | "exit_reason" | "reason_code" | "profile" | "regime";
-                preset?: "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
+                preset?: "1d" | "7d" | "week" | "mtd" | "qtd" | "ytd" | "30d" | "90d" | "all" | "custom";
                 include_tests?: boolean;
                 from?: string | null;
                 to?: string | null;

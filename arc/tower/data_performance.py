@@ -90,7 +90,8 @@ __all__ = [
     "resolve_period",
 ]
 
-Preset = Literal["week", "mtd", "qtd", "ytd", "30d", "90d", "all", "custom"]
+# ``1d`` / ``7d`` back the page range selector's 1D / 1W (E8.8c); 1M = ``30d``, 3M = ``90d``.
+Preset = Literal["1d", "7d", "week", "mtd", "qtd", "ytd", "30d", "90d", "all", "custom"]
 Compare = Literal["prev", "yoy", "none"]
 BreakdownBy = Literal["ticker", "structure", "exit_reason", "reason_code", "profile", "regime"]
 BREAKDOWNS: tuple[BreakdownBy, ...] = (
@@ -165,7 +166,7 @@ def resolve_period(
         return _period(q0, today, q_end)
     if preset == "ytd":
         return _period(today.replace(month=1, day=1), today, today.replace(month=12, day=31))
-    if preset in ("30d", "90d"):
+    if preset in ("1d", "7d", "30d", "90d"):
         return _period(today - _dt.timedelta(days=int(preset[:-1]) - 1), today)
     if preset == "all":
         return _period(min(inception or today, today), today)

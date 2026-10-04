@@ -45,7 +45,11 @@ export function Card({
           )}
         </header>
       )}
-      {subtitle && <p className="mb-3 text-micro text-muted">{subtitle}</p>}
+      {subtitle && (
+        <p className="mb-3 truncate text-micro text-muted" data-subtext>
+          {subtitle}
+        </p>
+      )}
       {children}
     </section>
   );

@@ -210,6 +210,15 @@ they are never dropped.
   themes. `web/e2e/mobile.ts` holds the shared asserts later cards call per page:
   `expectNoOverflow` (page and every `.arc-card`, except `data-scroll-x` containers),
   `expectTouchTargets` (≥ 44 px) and `expectMinFontSize` (≥ `--fs-micro`, 11 px).
+- **Page range selector** (E8.8c, Performance): a page-level `SegmentedControl`
+  `1D 1W 1M 3M YTD ALL` (default 3M, `?range=`) replaces per-page period / compare
+  dropdowns. On mobile it is sticky under the header (`top: --header-h`, page background, a
+  hairline under it). No period-over-period deltas on the cards.
+- **Sub-text marker:** every one-line explanation (`Card subtitle`, `KeyValueList` `sub`)
+  carries `data-subtext` and truncates; e2e asserts each is one line at 520 px. A metric's
+  long explanation goes in an `InfoTip` beside its label (`KeyValueList` `info`).
+- **Compact key-values:** `KeyValueList columns={2}` splits rows into two lists side by side
+  from 400 px up (one column below), e.g. Win / Loss.
 
 ### 10.1 Overview (E8.8b)
 

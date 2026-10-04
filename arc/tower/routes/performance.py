@@ -110,7 +110,9 @@ def performance(  # noqa: PLR0913 - one query parameter per control
     conn: Conn,
     cache: Cache,
     preset: Annotated[Preset, Query()] = "90d",
-    compare: Annotated[Compare, Query()] = "prev",
+    # TODO(cleanup PR): the SPA stopped sending ``compare`` in E8.8c; drop the parameter and
+    # the compare_* response fields once no caller sends it. Default ``none`` skips the work.
+    compare: Annotated[Compare, Query()] = "none",
     include_tests: Annotated[bool, Query()] = False,
     date_from: Annotated[_dt.date | None, Query(alias="from")] = None,
     date_to: Annotated[_dt.date | None, Query(alias="to")] = None,

@@ -118,6 +118,9 @@ def _non_test(conn: sqlite3.Connection, first: dt.date, last: dt.date):  # noqa:
         ("ytd", dt.date(2026, 1, 1), dt.date(2026, 12, 31)),
         ("30d", dt.date(2026, 8, 30), TODAY),
         ("90d", dt.date(2026, 7, 1), TODAY),
+        # E8.8c page ranges 1D / 1W (1M = 30d, 3M = 90d)
+        ("1d", TODAY, TODAY),
+        ("7d", dt.date(2026, 9, 22), TODAY),
     ],
 )
 def test_presets(preset: str, first: dt.date, slot_end: dt.date) -> None:
@@ -286,6 +289,41 @@ def test_include_tests_puts_the_smoke_test_back(fx_db: Path) -> None:
     assert on.costs.fills == off.costs.fills + 2  # its open and close fills
     assert on.net_pnl.tests_excluded_pnl == 0.0
     assert on.net_pnl.net == pytest.approx(off.net_pnl.net + off.net_pnl.tests_excluded_pnl)
+
+
+def test_page_default_3m_equals_the_old_90d_view(client: TestClient) -> None:
+    """E8.8c parity: the page's default request (3M -> ``preset=90d``, no ``compare``, no
+    ``include_tests``) returns the same numbers as the pre-E8.8c ``?preset=90d&compare=prev``
+    view; only the comparison fields differ (the page no longer asks for them)."""
+    new = client.get("/api/performance", params={"preset": "90d"}).json()
+    old = client.get("/api/performance", params={"preset": "90d", "compare": "prev"}).json()
+    assert new["compare"] == "none" and new["compare_period"] is None
+    assert new["include_tests"] is False
+
+    compare_keys = {
+        "compare_net",
+        "change",
+        "compare_total",
+        "compare_win_rate",
+        "compare_expectancy",
+    }
+
+    def strip(body: dict) -> dict:  # type: ignore[type-arg]
+        out = {k: v for k, v in body.items() if k not in {"compare", "compare_period"}}
+        for card in ("net_pnl", "costs", "win_loss"):
+            out[card] = {k: v for k, v in body[card].items() if k not in compare_keys}
+        return out
+
+    assert strip(new) == strip(old)
+    assert new["win_loss"]["stats"]["closed"] > 0 and new["net_pnl"]["net"] is not None
+
+
+def test_range_presets_answer(client: TestClient) -> None:
+    for preset, days in (("1d", 1), ("7d", 7), ("30d", 30), ("90d", 90)):
+        r = client.get("/api/performance", params={"preset": preset})
+        assert r.status_code == 200 and r.json()["period"]["days"] == days, preset
+    for preset in ("ytd", "all"):
+        assert client.get("/api/performance", params={"preset": preset}).status_code == 200
 
 
 def test_breakdowns(conn: sqlite3.Connection, perf) -> None:  # noqa: ANN001

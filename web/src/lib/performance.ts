@@ -1,7 +1,7 @@
 /**
- * Performance page model (E8.7c): URL <-> API query, period/compare labels, chart
- * views. Pure (no React) so vitest covers it. Every number comes from the API, which
- * computes it with the weekly scorecard's functions; nothing is recomputed here.
+ * Performance page model (E8.7c, E8.8c): URL <-> API query, period labels, chart views.
+ * Pure (no React) so vitest covers it. Every number comes from the API, which computes it
+ * with the weekly scorecard's functions; nothing is recomputed here.
  */
 import type { Schemas } from "./api";
 import { formatMoney, formatPercent } from "./format";
@@ -9,25 +9,25 @@ import { formatMoney, formatPercent } from "./format";
 export type Performance = Schemas["PerformanceResponse"];
 export type Breakdown = Schemas["BreakdownItem"];
 export type Preset = Performance["preset"];
-export type Compare = Performance["compare"];
 export type BreakdownBy = Schemas["BreakdownResponse"]["by"];
 export type PeriodView = Schemas["PeriodView"];
 
-export const PRESETS: ReadonlyArray<{ value: Preset; label: string }> = [
-  { value: "week", label: "This week" },
-  { value: "mtd", label: "MTD" },
-  { value: "qtd", label: "QTD" },
-  { value: "ytd", label: "YTD" },
-  { value: "30d", label: "Last 30d" },
-  { value: "90d", label: "Last 90d" },
-  { value: "all", label: "All" },
-  { value: "custom", label: "Custom" },
-];
-export const COMPARES: ReadonlyArray<{ value: Compare; label: string }> = [
-  { value: "prev", label: "Previous period" },
-  { value: "yoy", label: "Same period last year" },
-  { value: "none", label: "None" },
-];
+/**
+ * The page range selector (E8.8c, D48): one SegmentedControl, URL-synced as `?range=`.
+ * Each range maps to an existing `/api/performance` preset (1M = 30d, 3M = 90d).
+ */
+export const PERF_RANGES = ["1D", "1W", "1M", "3M", "YTD", "ALL"] as const;
+export type PerfRange = (typeof PERF_RANGES)[number];
+export const DEFAULT_RANGE: PerfRange = "3M";
+export const RANGE_PRESET: Record<PerfRange, Preset> = {
+  "1D": "1d",
+  "1W": "7d",
+  "1M": "30d",
+  "3M": "90d",
+  YTD: "ytd",
+  ALL: "all",
+};
+
 export const BREAKDOWN_TABS: ReadonlyArray<{
   value: BreakdownBy;
   label: string;
@@ -40,70 +40,74 @@ export const BREAKDOWN_TABS: ReadonlyArray<{
   { value: "regime", label: "Regime at entry" },
 ];
 
-export const DEFAULT_PRESET: Preset = "90d";
-export const DEFAULT_COMPARE: Compare = "prev";
-
-/** Definitions shown as captions (the same text is in docs/OPS.md §5.6). */
-export const DEFINITIONS = {
-  sharpe:
-    "Sharpe = mean ÷ sample stdev of daily close-to-close equity returns × √252; risk-free rate 0, deposits and withdrawals not netted out.",
-  drawdown:
-    "Max drawdown = largest fall in daily closing equity from a prior peak; recovered = first close back at that peak.",
-  expectancy:
-    "Expectancy = total realised P&L ÷ trades closed (= win rate × avg win + loss rate × avg loss), fills only, before commissions and fees; a $0 scratch counts as a loss.",
-  calibration:
-    "Each row groups a persona's stated confidence (or the Quant's PoP) into buckets and shows how often those trades actually made money; a hit rate under the bucket means over-confidence.",
-  model:
-    "Each dot is a closed trade: modelled net EV (managed exits, after costs, × contracts) against realised P&L. Above the dotted line beat the model.",
-  costs:
-    "Commission and regulatory fees from the stored fee model (closes without one use their open's); spread = modelled crossing cost; slippage = fill vs mid beyond it.",
+/**
+ * One-line sub-text per card or metric (`sub`, ≤ ~60 chars at 520 px) and the longer
+ * explanation that moves into an InfoTip (`tip`; the long form is in docs/OPS.md §5.6).
+ * TOWER_DESIGN §10.
+ */
+export const EXPLAIN = {
+  netPnl: {
+    sub: "Bars per period · dashed = cumulative",
+    tip: "Change in daily closing equity (realised + unrealised), less test-leg P&L. With no equity closes: realised P&L of trades closed.",
+  },
+  sharpe: {
+    sub: "Risk-adjusted return",
+    tip: "Mean daily return ÷ its std dev × √252. Risk-free 0.",
+  },
+  drawdown: {
+    sub: "Worst peak-to-trough fall",
+    tip: "Largest drop in daily closing equity from a prior peak.",
+  },
+  expectancy: {
+    sub: "Avg P&L per closed trade",
+    tip: "Win rate × avg win + loss rate × avg loss. Fills only; a $0 scratch counts as a loss.",
+  },
+  costs: {
+    sub: "Fees + spread + slippage",
+    tip: "Fees from the fee model; spread = modelled crossing cost; slippage = fill vs mid beyond it.",
+  },
+  model: {
+    sub: "Above the line = beat the model",
+    tip: "Each dot is a closed trade: modelled net EV (managed, after costs) vs realised P&L.",
+  },
+  calibration: {
+    sub: "Stated confidence vs actual hit rate",
+    tip: "Trades bucketed by stated confidence; a hit rate below the bucket = over-confident.",
+  },
+  breakdowns: {
+    tip: "Bar = row P&L relative to the largest row. Reason codes count a trade under every persona code on its open and close.",
+  },
 } as const;
 
 export interface PerfQuery {
-  preset: Preset;
-  compare: Compare;
-  include_tests: boolean;
-  from?: string;
-  to?: string;
+  range: PerfRange;
   by: BreakdownBy;
   shadow: boolean;
 }
-
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 function pick<T extends string>(raw: string | null, allowed: ReadonlyArray<{ value: T }>, fallback: T): T {
   return allowed.some((a) => a.value === raw) ? (raw as T) : fallback;
 }
 
+export function parsePerfRange(raw: string | null): PerfRange {
+  return (PERF_RANGES as readonly string[]).includes(raw ?? "") ? (raw as PerfRange) : DEFAULT_RANGE;
+}
+
 /** The page state for the current URL; bad values fall back to defaults. */
 export function perfQuery(params: URLSearchParams): PerfQuery {
-  const preset = pick(params.get("preset"), PRESETS, DEFAULT_PRESET);
-  const from = params.get("from") ?? "";
-  const to = params.get("to") ?? "";
-  const q: PerfQuery = {
-    preset,
-    compare: pick(params.get("compare"), COMPARES, DEFAULT_COMPARE),
-    include_tests: params.get("include_tests") === "true",
+  return {
+    range: parsePerfRange(params.get("range")),
     by: pick(params.get("by"), BREAKDOWN_TABS, "ticker"),
     shadow: params.get("shadow") === "true",
   };
-  if (preset === "custom") {
-    if (ISO.test(from)) q.from = from;
-    if (ISO.test(to)) q.to = to;
-    if (!q.from) q.preset = DEFAULT_PRESET; // a custom range needs a start
-  }
-  return q;
 }
 
-/** The `/api/performance` query (only what the server reads). */
+/**
+ * The `/api/performance` query: the preset only. Paper test legs are always left out
+ * (the server's default), and no period-over-period figures are requested.
+ */
 export function apiQuery(q: PerfQuery): Record<string, string> {
-  const out: Record<string, string> = { preset: q.preset, compare: q.compare };
-  if (q.include_tests) out.include_tests = "true";
-  if (q.preset === "custom") {
-    if (q.from) out.from = q.from;
-    if (q.to) out.to = q.to;
-  }
-  return out;
+  return { preset: RANGE_PRESET[q.range] };
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -126,12 +130,6 @@ export function formatRange(first: string, last: string): string {
 export function shortDate(iso: string): string {
   const [, m, d] = parts(iso);
   return `${MONTHS[m - 1]} ${d}`;
-}
-
-/** "vs $1,204 in Apr 2 – Jun 30, 2026". */
-export function comparisonLine(value: number | null | undefined, period: PeriodView | null | undefined): string | null {
-  if (value === null || value === undefined || !period) return null;
-  return `vs ${formatMoney(value, "pnl")} in ${formatRange(period.first, period.last)}`;
 }
 
 export type BarDatum = {

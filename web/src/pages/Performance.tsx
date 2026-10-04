@@ -1,25 +1,28 @@
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
+import { CappedList } from "../components/CappedList";
 import { Card } from "../components/Card";
-import { ChangePill } from "../components/ChangePill";
+import { CardRow } from "../components/DataTable";
 import { DivergingBars } from "../components/DivergingBars";
 import { EmptyState } from "../components/EmptyState";
+import { InfoTip } from "../components/InfoTip";
 import { KeyValueList } from "../components/KeyValueList";
 import { Money } from "../components/Money";
 import { EquityDrawdownChart, ModelScatter } from "../components/PerformanceCharts";
 import { ProgressRow } from "../components/ProgressRow";
 import { ProportionBar } from "../components/ProportionBar";
+import { SegmentedControl } from "../components/SegmentedControl";
 import { StackedBars } from "../components/StackedBars";
 import { formatEt, formatMoney, formatNumber, formatPercent } from "../lib/format";
+import { useLayout } from "../lib/layout";
 import {
   BREAKDOWN_TABS,
-  COMPARES,
   COST_SERIES,
-  DEFINITIONS,
-  PRESETS,
+  DEFAULT_RANGE,
+  EXPLAIN,
+  PERF_RANGES,
   apiQuery,
   calibrationLabel,
-  comparisonLine,
   costBars,
   equityView,
   formatRange,
@@ -36,13 +39,6 @@ import {
 } from "../lib/performance";
 import { usePerformance } from "../lib/useApi";
 
-const CONTROL =
-  "min-h-[30px] rounded-control border border-line-input bg-control px-2 text-caption text-primary max-tablet:min-h-[44px]";
-
-function Caption({ children }: { children: React.ReactNode }) {
-  return <p className="mt-3 text-caption text-muted">{children}</p>;
-}
-
 function Hero({ value, children }: { value: React.ReactNode; children?: React.ReactNode }) {
   return (
     <div className="mb-3 grid gap-1">
@@ -52,93 +48,33 @@ function Hero({ value, children }: { value: React.ReactNode; children?: React.Re
   );
 }
 
+/** ⓘ beside a card title (TOWER_DESIGN §10: the long explanation lives here, not on the card). */
+function TitleTip({ about, children }: { about: string; children: React.ReactNode }) {
+  return <InfoTip label={`About ${about}`}>{children}</InfoTip>;
+}
+
 // ---------------------------------------------------------------------------
-// Header controls (URL-synced)
+// Page range selector (URL-synced `?range=`, sticky under the header on mobile)
 // ---------------------------------------------------------------------------
 
-function Controls({
-  q,
-  p,
-  update,
-}: {
-  q: PerfQuery;
-  p?: Performance;
-  update: (c: Record<string, string | null>) => void;
-}) {
+function RangeBar({ p }: { p?: Performance }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="perf-controls">
-      <label className="flex items-center gap-2 text-caption text-secondary">
-        <span>Period</span>
-        <select
-          aria-label="Period"
-          value={q.preset}
-          className={CONTROL}
-          onChange={(e) => {
-            const v = e.target.value;
-            update(
-              v === "custom"
-                ? {
-                    preset: v,
-                    from: p?.period.first ?? null,
-                    to: p?.period.last ?? null,
-                  }
-                : { preset: v, from: null, to: null },
-            );
-          }}
-        >
-          {PRESETS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      {q.preset === "custom" && (
-        <>
-          <input
-            type="date"
-            aria-label="From"
-            className={CONTROL}
-            value={q.from ?? ""}
-            onChange={(e) => update({ from: e.target.value || null })}
-          />
-          <input
-            type="date"
-            aria-label="To"
-            className={CONTROL}
-            value={q.to ?? ""}
-            onChange={(e) => update({ to: e.target.value || null })}
-          />
-        </>
-      )}
+    <div
+      className="flex flex-wrap items-center gap-x-4 gap-y-1 max-tablet:sticky max-tablet:top-header-h max-tablet:z-[5] max-tablet:-mx-4 max-tablet:border-b max-tablet:border-line max-tablet:bg-page max-tablet:px-4 max-tablet:py-2"
+      data-testid="perf-controls"
+    >
+      <SegmentedControl
+        label="Range"
+        param="range"
+        fallback={DEFAULT_RANGE}
+        options={PERF_RANGES.map((r) => ({ value: r }))}
+        testid="perf-range-control"
+      />
       {p && (
-        <span className="text-caption text-muted" data-testid="perf-range">
+        <span className="text-caption text-muted tabular-nums" data-testid="perf-range">
           {formatRange(p.period.first, p.period.last)}
         </span>
       )}
-      <label className="flex items-center gap-2 text-caption text-secondary">
-        <span>Compare</span>
-        <select
-          aria-label="Compare"
-          value={q.compare}
-          className={CONTROL}
-          onChange={(e) => update({ compare: e.target.value })}
-        >
-          {COMPARES.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex min-h-[30px] items-center gap-2 text-caption text-secondary max-tablet:min-h-[44px]">
-        <input
-          type="checkbox"
-          checked={q.include_tests}
-          onChange={(e) => update({ include_tests: e.target.checked ? "true" : null })}
-        />
-        <span>Include paper test legs</span>
-      </label>
     </div>
   );
 }
@@ -149,9 +85,10 @@ function Controls({
 
 function NetPnlCard({ p, shadow, setShadow }: { p: Performance; shadow: boolean; setShadow: (on: boolean) => void }) {
   const n = p.net_pnl;
+  const tip = <TitleTip about="net P&L">{EXPLAIN.netPnl.tip}</TitleTip>;
   if (n.empty || n.net === null || n.net === undefined) {
     return (
-      <Card title="Net P&L">
+      <Card title="Net P&L" headerExtra={tip}>
         <EmptyState caption="No closed trades or equity closes in this period." />
       </Card>
     );
@@ -170,42 +107,32 @@ function NetPnlCard({ p, shadow, setShadow }: { p: Performance; shadow: boolean;
         ]
       : []),
   ];
+  const testLegs = (n.tests_excluded_pnl ?? 0) !== 0;
   return (
-    <Card title="Net P&L">
-      <Hero
-        value={
-          <>
-            <Money value={n.net} kind="pnl" explicitSign />
-            {n.change !== null && n.change !== undefined && (
-              <ChangePill value={n.change} metric="pnl" format={(v) => formatMoney(v, "pnl")} />
-            )}
-          </>
-        }
-      >
-        {comparisonLine(n.compare_net, p.compare_period)}
+    <Card title="Net P&L" headerExtra={tip} subtitle={`Bars per ${n.bucket} · dashed = cumulative`}>
+      <Hero value={<Money value={n.net} kind="pnl" explicitSign />}>
         {n.source === "equity" ? (
           <span className="block">
-            Realised {money(n.realised)} · unrealised change {money(n.unrealised_change)}
+            Realised {money(n.realised)} · unrealised {money(n.unrealised_change)}
           </span>
         ) : (
-          <span className="block">Realised on closed trades (no equity closes in the period)</span>
+          <span className="block">Realised on closed trades · no equity closes</span>
         )}
       </Hero>
       <DivergingBars data={pnlBars(p)} nowLabel={n.now_label ?? undefined} overlays={overlays} height={220} />
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-caption text-muted">
-        <span>
-          Bars by {n.bucket}; dashed line = cumulative.
-          {(n.tests_excluded_pnl ?? 0) !== 0 && ` Test legs left out: ${money(n.tests_excluded_pnl)}.`}
-        </span>
-        {shadowKnown && (
-          <label className="flex min-h-[30px] items-center gap-2 text-secondary max-tablet:min-h-[44px]">
-            <input type="checkbox" checked={shadow} onChange={(e) => setShadow(e.target.checked)} />
-            <span>
-              Hold-to-expiry shadow ({n.shadow_known} trades, {money(n.shadow_delta)} vs actual)
-            </span>
-          </label>
-        )}
-      </div>
+      {(shadowKnown || testLegs) && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-caption text-muted">
+          {testLegs && <span data-testid="test-legs">Test legs left out: {money(n.tests_excluded_pnl)}</span>}
+          {shadowKnown && (
+            <label className="flex min-h-[30px] items-center gap-2 text-secondary max-tablet:min-h-[44px]">
+              <input type="checkbox" checked={shadow} onChange={(e) => setShadow(e.target.checked)} />
+              <span>
+                Hold-to-expiry shadow · {n.shadow_known} trades · {money(n.shadow_delta)} vs actual
+              </span>
+            </label>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
@@ -245,47 +172,40 @@ function EquityCard({ p }: { p: Performance }) {
           },
           {
             label: "Max drawdown",
+            sub: EXPLAIN.drawdown.sub,
+            info: <InfoTip label="About max drawdown">{EXPLAIN.drawdown.tip}</InfoTip>,
             value: dd < 0 ? `${formatMoney(dd, "pnl")} (${formatPercent(e.max_drawdown_pct ?? 0)})` : "$0.00",
             hint: ddDates,
           },
           {
             label: "Sharpe (annualised)",
+            sub: EXPLAIN.sharpe.sub,
+            info: <InfoTip label="About Sharpe">{EXPLAIN.sharpe.tip}</InfoTip>,
             value: ratio(e.sharpe),
             hint: `${e.returns ?? 0} daily returns`,
           },
         ]}
       />
-      <Caption>
-        {DEFINITIONS.sharpe} {DEFINITIONS.drawdown}
-      </Caption>
     </Card>
   );
 }
 
 function CostsCard({ p }: { p: Performance }) {
   const c = p.costs;
+  const tip = <TitleTip about="costs">{EXPLAIN.costs.tip}</TitleTip>;
   if (c.empty) {
     return (
-      <Card title="Costs">
+      <Card title="Costs" headerExtra={tip}>
         <EmptyState caption="No fills in this period." />
       </Card>
     );
   }
   return (
-    <Card title="Costs">
-      <Hero
-        value={
-          <>
-            <Money value={c.total ?? 0} kind="pnl" />
-            {c.change !== null && c.change !== undefined && (
-              <ChangePill value={c.change} metric="cost" format={(v) => formatMoney(v, "pnl")} />
-            )}
-          </>
-        }
-      >
+    <Card title="Costs" headerExtra={tip} subtitle={EXPLAIN.costs.sub}>
+      <Hero value={<Money value={c.total ?? 0} kind="pnl" />}>
         {c.cost_pct_of_gross !== null && c.cost_pct_of_gross !== undefined
           ? `${formatPercent(c.cost_pct_of_gross)} of gross P&L (${money(c.gross_pnl)})`
-          : "No closed P&L to compare with"}{" "}
+          : "No closed P&L to set against"}{" "}
         · {c.fills} fills
       </Hero>
       <StackedBars data={costBars(p)} series={[...COST_SERIES]} />
@@ -295,17 +215,16 @@ function CostsCard({ p }: { p: Performance }) {
           {
             label: "Regulatory fees",
             value: money(c.fees),
-            hint: c.fees_from_open ? `${c.fees_from_open} closes priced with their open's fees` : undefined,
+            hint: c.fees_from_open ? `${c.fees_from_open} closes use their open's fees` : undefined,
           },
           {
             label: "Spread (modelled)",
             value: money(c.spread),
-            hint: c.unmodelled ? `${c.unmodelled} fills with no stored cost model` : undefined,
+            hint: c.unmodelled ? `${c.unmodelled} fills with no cost model` : undefined,
           },
           { label: "Slippage beyond model", value: money(c.slippage) },
         ]}
       />
-      <Caption>{DEFINITIONS.costs}</Caption>
     </Card>
   );
 }
@@ -330,25 +249,7 @@ function WinLossCard({ p }: { p: Performance }) {
     );
   return (
     <Card title="Win / Loss">
-      <Hero
-        value={
-          <>
-            <span>{pct(s.win_rate)}</span>
-            {w.compare_win_rate !== null &&
-              w.compare_win_rate !== undefined &&
-              s.win_rate !== null &&
-              s.win_rate !== undefined && (
-                <ChangePill
-                  value={s.win_rate - w.compare_win_rate}
-                  metric="win_rate"
-                  format={(v) => formatPercent(v)}
-                />
-              )}
-          </>
-        }
-      >
-        win rate over {s.closed} closed trades
-      </Hero>
+      <Hero value={<span>{pct(s.win_rate)}</span>}>win rate over {s.closed} closed trades</Hero>
       <ProportionBar
         segments={[
           {
@@ -366,22 +267,30 @@ function WinLossCard({ p }: { p: Performance }) {
         ]}
       />
       <KeyValueList
+        columns={2}
         items={[
-          { label: "Trades closed", value: formatNumber(s.closed) },
+          { label: "Trades", value: formatNumber(s.closed) },
           { label: "Avg win", value: money(s.avg_win) },
           { label: "Avg loss", value: money(s.avg_loss) },
           {
             label: "Profit factor",
+            info: <InfoTip label="About profit factor">Gross wins ÷ gross losses.</InfoTip>,
             value: ratio(s.profit_factor),
-            hint: "gross wins ÷ gross losses",
           },
-          { label: "Expectancy / trade", value: money(s.expectancy) },
-          { label: "Avg days held", value: ratio(s.avg_days_held, 1) },
+          {
+            label: "Expectancy",
+            sub: EXPLAIN.expectancy.sub,
+            info: <InfoTip label="About expectancy">{EXPLAIN.expectancy.tip}</InfoTip>,
+            value: money(s.expectancy),
+          },
+          {
+            label: "Avg hold",
+            value: s.avg_days_held === null || s.avg_days_held === undefined ? "—" : `${ratio(s.avg_days_held, 1)} d`,
+          },
           { label: "Best", value: tradeLink(s.best) },
           { label: "Worst", value: tradeLink(s.worst) },
         ]}
       />
-      <Caption>{DEFINITIONS.expectancy}</Caption>
     </Card>
   );
 }
@@ -389,9 +298,10 @@ function WinLossCard({ p }: { p: Performance }) {
 function ModelCard({ p }: { p: Performance }) {
   const m = p.model;
   const navigate = useNavigate();
+  const tip = <TitleTip about="modelled vs realised">{EXPLAIN.model.tip}</TitleTip>;
   if (m.empty) {
     return (
-      <Card title="Modelled vs Realised">
+      <Card title="Modelled vs Realised" headerExtra={tip}>
         <EmptyState caption="No closed trade in this period has a stored exit model." />
       </Card>
     );
@@ -403,7 +313,7 @@ function ModelCard({ p }: { p: Performance }) {
     y: pt.realised,
   }));
   return (
-    <Card title="Modelled vs Realised">
+    <Card title="Modelled vs Realised" headerExtra={tip} subtitle={EXPLAIN.model.sub}>
       <ModelScatter data={points} xLabel="Net EV" yLabel="Realised" onSelect={(id) => navigate(`/trades/${id}`)} />
       <KeyValueList
         items={[
@@ -423,18 +333,19 @@ function ModelCard({ p }: { p: Performance }) {
             hint: `${m.n_shadow} of ${m.n} known (D19)`,
           },
           {
-            label: "PoP hit rate · managed",
+            label: "PoP hit · managed",
+            info: <InfoTip label="About managed PoP hit rate">Realised win rate vs mean modelled PoP.</InfoTip>,
             value: `${pct(m.win_rate)} vs ${pct(m.mean_managed_pop)}`,
-            hint: "realised win rate vs mean modelled PoP",
           },
           {
-            label: "PoP hit rate · hold to expiry",
+            label: "PoP hit · hold to expiry",
+            info: (
+              <InfoTip label="About hold-to-expiry PoP hit rate">Shadow win rate vs mean static PoP.</InfoTip>
+            ),
             value: `${pct(m.hold_win_rate)} vs ${pct(m.mean_static_pop)}`,
-            hint: "shadow win rate vs mean static PoP",
           },
         ]}
       />
-      <Caption>{DEFINITIONS.model}</Caption>
     </Card>
   );
 }
@@ -442,30 +353,49 @@ function ModelCard({ p }: { p: Performance }) {
 function BreakdownCard({ p, by, setBy }: { p: Performance; by: PerfQuery["by"]; setBy: (b: string) => void }) {
   const rows = p.breakdowns[by] ?? [];
   const maxAbs = Math.max(1e-9, ...rows.map((r) => Math.abs(r.pnl)));
+  const layout = useLayout();
+  const navigate = useNavigate();
   return (
-    <Card title="Breakdowns">
-      <div role="tablist" aria-label="Breakdown" className="mb-3 flex flex-wrap gap-1 rounded-control bg-control p-1">
-        {BREAKDOWN_TABS.map((t) => (
-          <button
-            key={t.value}
-            type="button"
-            role="tab"
-            aria-selected={t.value === by}
-            onClick={() => setBy(t.value)}
-            className={`min-h-[32px] rounded-pill px-3 text-caption max-tablet:min-h-[44px] ${
-              t.value === by
-                ? "bg-range-active font-bold text-[color:var(--range-active-text)]"
-                : "text-secondary hover:bg-hover"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+    <Card title="Breakdowns" headerExtra={<TitleTip about="breakdowns">{EXPLAIN.breakdowns.tip}</TitleTip>}>
+      <div className="mb-3">
+        <SegmentedControl
+          label="Breakdown"
+          value={by}
+          onChange={(v) => setBy(v)}
+          options={BREAKDOWN_TABS.map((t) => ({ value: t.value, label: t.label }))}
+        />
       </div>
       {rows.length === 0 ? (
         <EmptyState caption="No closed trades in this period." />
+      ) : layout === "mobile" ? (
+        <CappedList as="div" testid="breakdown-rows" noun="rows">
+          {rows.map((r) => {
+            const to = tradesLink(r, p.period);
+            return (
+              <CardRow
+                key={r.key || "none"}
+                onClick={to ? () => navigate(to) : undefined}
+                primary={
+                  <>
+                    <span className="min-w-0 truncate">{r.label}</span>
+                    <span className="ml-auto tabular-nums">
+                      <Money value={r.pnl} kind="pnl" explicitSign />
+                    </span>
+                  </>
+                }
+                secondary={
+                  <>
+                    <span>{r.count} trades</span>
+                    <span>{formatPercent(r.win_rate)} win</span>
+                    <span>{formatPercent(Math.abs(r.pnl) / maxAbs)} of largest</span>
+                  </>
+                }
+              />
+            );
+          })}
+        </CappedList>
       ) : (
-        <ul className="grid gap-1" data-testid="breakdown-rows">
+        <CappedList className="grid gap-1" testid="breakdown-rows" noun="rows">
           {rows.map((r) => {
             const to = tradesLink(r, p.period);
             const row = (
@@ -489,28 +419,33 @@ function BreakdownCard({ p, by, setBy }: { p: Performance; by: PerfQuery["by"]; 
               </li>
             );
           })}
-        </ul>
+        </CappedList>
       )}
-      <Caption>
-        Bar = size of the row's P&L relative to the largest row. Reason codes count a trade under every persona code on
-        its open and close decisions.
-      </Caption>
     </Card>
   );
 }
 
 function CalibrationCard({ p }: { p: Performance }) {
   const c = p.calibration;
+  const tip = (
+    <TitleTip about="persona calibration">
+      {EXPLAIN.calibration.tip} Counts every closed trade to the period end.
+    </TitleTip>
+  );
   if (c.empty) {
     return (
-      <Card title="Persona Calibration">
+      <Card title="Persona Calibration" headerExtra={tip}>
         <EmptyState caption="No closed trade has a stated persona confidence yet." />
       </Card>
     );
   }
   return (
-    <Card title="Persona Calibration">
-      <ul className="grid gap-1">
+    <Card
+      title="Persona Calibration"
+      headerExtra={tip}
+      subtitle={`${EXPLAIN.calibration.sub} · ${c.trades} trades`}
+    >
+      <CappedList className="grid gap-1" testid="calibration-rows" noun="buckets">
         {(c.rows ?? []).map((r) => (
           <li key={`${r.persona}-${r.lo}`}>
             <ProgressRow
@@ -522,10 +457,7 @@ function CalibrationCard({ p }: { p: Performance }) {
             />
           </li>
         ))}
-      </ul>
-      <Caption>
-        {DEFINITIONS.calibration} All {c.trades} closed trades to the period end.
-      </Caption>
+      </CappedList>
     </Card>
   );
 }
@@ -563,7 +495,7 @@ function FunnelCard({ p }: { p: Performance }) {
       {violations.length === 0 ? (
         <p className="text-caption text-muted">No gate violations.</p>
       ) : (
-        <ul className="grid gap-1" data-testid="violations">
+        <CappedList className="grid gap-1" testid="violations" noun="codes">
           {violations.map(([code, n]) => (
             <li key={code}>
               <ProgressRow
@@ -574,7 +506,7 @@ function FunnelCard({ p }: { p: Performance }) {
               />
             </li>
           ))}
-        </ul>
+        </CappedList>
       )}
     </Card>
   );
@@ -599,7 +531,7 @@ export function PerformancePage() {
   };
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="performance">
-      <Controls q={q} p={p} update={update} />
+      <RangeBar p={p} />
       {!p ? (
         <Card title="Performance">
           <EmptyState caption={res.isError ? `Could not load performance: ${String(res.error)}` : "Loading…"} />
@@ -627,7 +559,7 @@ export function PerformancePage() {
             </div>
           </div>
           <p className="text-caption text-muted">
-            As of {formatEt(p.as_of)} · the server caches each view for 60 s; figures run to today.
+            As of {formatEt(p.as_of)} · cached 60 s; figures run to today.
           </p>
         </>
       )}
