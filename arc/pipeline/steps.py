@@ -2696,7 +2696,9 @@ class _LazyEnv:
         if self._env is None:
             from arc.pipeline.env import PipelineEnv
 
-            self._env = PipelineEnv.live(self._ctx.settings)
+            self._env = PipelineEnv.live(
+                self._ctx.settings, conn=self._ctx.conn, chain_run_id=self._ctx.chain_run_id
+            )
         return getattr(self._env, name)
 
 

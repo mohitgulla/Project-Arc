@@ -29,3 +29,23 @@ experiments:
       worst_day: -0.02         # any treatment day below -2% of equity
       order_rate_ratio: 1.5    # treatment orders > 1.5x control's
       stop_on_halt: true       # any halt / reconcile fill_unknown on the experiment account
+
+  # E10.2 arm runner (D44). While an experiment is `running`, every arm below runs the
+  # trading loop again right after control's loop chain, on the SAME inputs: control's
+  # Scout/context entries and its recorded market reads (market_tape), forking at the
+  # first chain step the arm's overlay changes. Each arm has its own paper account
+  # (keys_env -> <prefix>_API_KEY/_SECRET_KEY; never ALPACA or ALPACA_TEST) and its own
+  # store (budget, halts, reconcile, positions, ladders), and sizes from a virtual
+  # account opened at control's t0 equity (arc.experiments.virtual).
+  # N arms is configuration: a future live control adds a paper shadow control as
+  #   shadow_control: {spec_arm: control, keys_env: ALPACA_SHADOW, db: "data/arc-shadow-{experiment_id}.db"}
+  runner:
+    enabled: true
+    max_lag_seconds: 240     # skip pairing a control chain older than this (stale quotes)
+    tape_keep_days: 3        # market_tape retention in the control store
+    arm_jobs: [monitor, positions.evaluate, auditor, investor]   # run on the arm's own store
+    arms:
+      treatment:
+        spec_arm: treatment
+        keys_env: ALPACA_EXP   # E10.0 experiment paper account
+        db: "data/arc-exp-{experiment_id}.db"   # a fresh store per experiment

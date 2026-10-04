@@ -135,11 +135,18 @@ def _book(ctx: JobContext, env: PipelineEnv) -> tuple[Any, AccountSnapshot, Port
     switch = HaltSwitch(HaltRepo(ctx.conn))
     # D32: closes are charged against the full daily cap (the gate's order_budget rule).
     budget = read_budget(ctx, env, settings, now=ctx.clock())
+    # E10.2: the profile's day-trade limit on same-day closes (its own store's count).
+    from arc.pipeline.market import day_trades_used
+
+    dt_rule = settings.profile.day_trades
     account = account_snapshot(
         info,
         ctx.now,
         baseline=account_baseline(ctx.conn, info, ctx.now),
         orders_used_today=budget.budget.used,
+        day_trades_used=day_trades_used(
+            ctx.conn, ctx.now.astimezone(ET).date(), dt_rule.window_sessions
+        ),
     )
     return info, switch.apply(account), portfolio, switch
 

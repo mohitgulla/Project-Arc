@@ -1479,6 +1479,51 @@ _EXPERIMENT_TUNABLES: tuple[Tunable, ...] = (
 )
 
 
+def _runner(key: str, desc: str, risk: Risk, **kw: Any) -> Tunable:
+    """``experiments.runner.*`` (E10.2, D44): how arms pair with control's loop.
+
+    The arm list itself (keys, store, spec arm) is structural, never tunable: an
+    arm's broker keys or store must not change from Slack.
+    """
+    return Tunable(
+        key=f"experiments.runner.{key}",
+        group=Group.EXPERIMENTS,
+        type=kw.pop("type", _I),
+        description=f"D44 experiment arm runner: {desc}",
+        target=Target.EXPERIMENTS,
+        risk=risk,
+        path=("experiments", "runner", key),
+        **kw,
+    )
+
+
+_EXPERIMENT_TUNABLES += (
+    _runner(
+        "enabled",
+        "run the configured arms paired with control's trading loop while an experiment "
+        "is running (off = the arms stop trading; control is unaffected).",
+        Risk.TRUE,
+        type=_B,
+    ),
+    _runner(
+        "max_lag_seconds",
+        "skip pairing a control loop chain older than this (its market inputs are stale).",
+        Risk.UP,
+        unit="s",
+        min=30,
+        max=1800,
+        hard_ceiling=1800,
+    ),
+    _runner(
+        "tape_keep_days",
+        "days of the control loop's recorded market reads kept for pairing and audit.",
+        Risk.NONE,
+        min=1,
+        max=30,
+    ),
+)
+
+
 REGISTRY: dict[str, Tunable] = {
     t.key: t
     for t in (

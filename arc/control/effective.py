@@ -148,6 +148,63 @@ def yaml_overrides(
     return out
 
 
+def _arm_source(
+    c: sqlite3.Connection,
+) -> tuple[dict[str, ConfigChange], int, dict[str, dict[str, Any]] | None]:
+    """``(changes, version, overlay)`` for the store *c*.
+
+    E10.2 (D44): an arm store (one with an ``arm_identity``) takes control's D26
+    overrides, read **read-only** from the identity's ``control_db``, plus its own
+    spec arm's overlay on top. Its own ``config_changes`` are never consulted, so a
+    Slack change reaches both arms identically and the overlay is the only
+    difference. A plain store returns its own overrides and no overlay.
+    """
+    from arc.experiments.arms import read_identity
+
+    ident = read_identity(c)
+    if ident is None:
+        changes = _active(c)
+        try:
+            version = ConfigChangeRepo(c).version()
+        except sqlite3.OperationalError:
+            version = 0
+        return changes, version, None
+    p = Path(ident.control_db)
+    changes: dict[str, ConfigChange] = {}
+    version = 0
+    if p.is_file():
+        ctl = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+        ctl.row_factory = sqlite3.Row
+        try:
+            changes = _active(ctl)
+            try:
+                version = ConfigChangeRepo(ctl).version()
+            except sqlite3.OperationalError:
+                version = 0
+        finally:
+            ctl.close()
+    else:
+        log.warning("control.arm_control_db_missing", arm_id=ident.arm_id, control_db=str(p))
+    return changes, version, ident.overlay
+
+
+def _flatten(node: Any, prefix: tuple[str, ...] = ()) -> dict[tuple[str, ...], Any]:
+    """Leaf ``path -> value`` pairs of a nested mapping (== a deep merge of it)."""
+    if isinstance(node, dict) and node:
+        out: dict[tuple[str, ...], Any] = {}
+        for k, v in node.items():
+            out.update(_flatten(v, (*prefix, str(k))))
+        return out
+    return {prefix: node} if prefix else {}
+
+
+def overlay_overrides(
+    overlay: dict[str, dict[str, Any]] | None,
+) -> dict[str, dict[tuple[str, ...], Any]]:
+    """An experiment arm overlay (``target -> partial file``) as D26-style overrides."""
+    return {t: _flatten(data) for t, data in (overlay or {}).items() if data}
+
+
 def effective_settings(
     conn: sqlite3.Connection | None = None,
     *,
@@ -158,24 +215,26 @@ def effective_settings(
 
     Opens ``db_path`` (default ``base.db_path``) when no *conn* is given.
     ``config_version`` is the latest ``config_changes.id`` (0 = none ever).
+    On an experiment arm store (E10.2) the overrides are control's and the arm's
+    overlay is applied on top (:func:`_arm_source`).
     """
     base = base if base is not None else ArcSettings()
     own = conn is None
     c = conn if conn is not None else open_store(db_path or base.db_path)
     try:
-        changes = _active(c)
-        try:
-            version = ConfigChangeRepo(c).version()
-        except sqlite3.OperationalError:
-            version = 0
+        changes, version, overlay = _arm_source(c)
     finally:
         if own:
             c.close()
-    return apply_changes(base, changes, version=version)
+    return apply_changes(base, changes, version=version, overlay=overlay)
 
 
 def apply_changes(
-    base: ArcSettings, changes: dict[str, ConfigChange], *, version: int
+    base: ArcSettings,
+    changes: dict[str, ConfigChange],
+    *,
+    version: int,
+    overlay: dict[str, dict[str, Any]] | None = None,
 ) -> ArcSettings:
     """Pure core of :func:`effective_settings` (no DB).
 
@@ -184,6 +243,11 @@ def apply_changes(
     in live (the env var is paper-only), so a store value for the *live* key is
     applied after validation, with ``model_copy``: the store is the only path
     that can turn a switch on in live.
+
+    *overlay* (E10.2): an experiment arm's ``target -> partial file`` overlay,
+    applied over the D26 YAML overrides (the arm's value wins), so every
+    consumer that goes through :func:`exit_config` / :func:`cost_model` /
+    :func:`ranking_config` / the profile spec sees the arm's config.
     """
     from arc.config import PER_ENV_SWITCHES
 
@@ -211,6 +275,10 @@ def apply_changes(
             continue
         data = trial
     yaml_ov = yaml_overrides(changes, profiles_path=base.account_profiles_file)
+    for target, pairs in overlay_overrides(overlay).items():
+        if target == Target.ROUTINES.value:
+            continue  # routines overlay: effective_routines()
+        yaml_ov.setdefault(target, {}).update(pairs)
     if data.get("account_profile") != base.account_profile or yaml_ov.get("account_profiles"):
         data["account_profile_spec"] = None
     data["config_version"] = version
@@ -256,8 +324,13 @@ def experiments_config(
 def effective_routines(
     conn: sqlite3.Connection | None, path: Path | str | None = None
 ) -> RoutinesConfig:
-    """``config/routines.yaml`` with routine enable/cadence overrides from *conn*."""
+    """``config/routines.yaml`` with routine enable/cadence overrides from *conn*.
+
+    On an experiment arm store: control's overrides plus the arm's routines overlay.
+    """
     if conn is None:
         return load_routines(path)
-    ov = yaml_overrides(_active(conn), routines_path=path).get(Target.ROUTINES.value)
-    return load_routines(path, overrides=ov)
+    changes, _, overlay = _arm_source(conn)
+    ov = yaml_overrides(changes, routines_path=path).get(Target.ROUTINES.value) or {}
+    ov = {**ov, **overlay_overrides(overlay).get(Target.ROUTINES.value, {})}
+    return load_routines(path, overrides=ov or None)

@@ -650,7 +650,7 @@ def _propose(args: argparse.Namespace) -> int:
         )
     else:
         conn = open_db(args.db, copy=args.dry_run and args.db is None)
-        env = PipelineEnv.live(settings, broker=not args.dry_run)
+        env = PipelineEnv.live(settings, broker=not args.dry_run, conn=conn)
         notifier: Notifier = (
             LogNotifier() if args.dry_run or args.no_slack else SlackDayThreadNotifier(conn)
         )
