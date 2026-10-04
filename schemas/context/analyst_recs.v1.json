@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "AnalystRecCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "buy": {
+          "minimum": 0,
+          "title": "Buy",
+          "type": "integer"
+        },
+        "hold": {
+          "minimum": 0,
+          "title": "Hold",
+          "type": "integer"
+        },
+        "period": {
+          "title": "Period",
+          "type": "string"
+        },
+        "sell": {
+          "minimum": 0,
+          "title": "Sell",
+          "type": "integer"
+        },
+        "strong_buy": {
+          "minimum": 0,
+          "title": "Strong Buy",
+          "type": "integer"
+        },
+        "strong_sell": {
+          "minimum": 0,
+          "title": "Strong Sell",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "period",
+        "strong_buy",
+        "buy",
+        "hold",
+        "sell",
+        "strong_sell"
+      ],
+      "title": "AnalystRecCounts",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Latest monthly recommendation trend vs the month before; subject = ticker.",
+  "properties": {
+    "as_of": {
+      "title": "As Of",
+      "type": "string"
+    },
+    "buy": {
+      "minimum": 0,
+      "title": "Buy",
+      "type": "integer"
+    },
+    "hold": {
+      "minimum": 0,
+      "title": "Hold",
+      "type": "integer"
+    },
+    "net_change": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "(strong_buy+buy-sell-strong_sell) now minus the same for prev_period",
+      "title": "Net Change"
+    },
+    "period": {
+      "title": "Period",
+      "type": "string"
+    },
+    "prev_period": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AnalystRecCounts"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "sell": {
+      "minimum": 0,
+      "title": "Sell",
+      "type": "integer"
+    },
+    "source": {
+      "const": "finnhub",
+      "default": "finnhub",
+      "title": "Source",
+      "type": "string"
+    },
+    "strong_buy": {
+      "minimum": 0,
+      "title": "Strong Buy",
+      "type": "integer"
+    },
+    "strong_sell": {
+      "minimum": 0,
+      "title": "Strong Sell",
+      "type": "integer"
+    },
+    "ticker": {
+      "title": "Ticker",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ticker",
+    "period",
+    "strong_buy",
+    "buy",
+    "hold",
+    "sell",
+    "strong_sell",
+    "as_of"
+  ],
+  "title": "AnalystRecsPayload",
+  "type": "object"
+}

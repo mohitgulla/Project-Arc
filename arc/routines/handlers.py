@@ -485,6 +485,188 @@ def earnings_source(ctx: JobContext) -> JobResult:
     return _source_result(ctx, docs)
 
 
+# ---------------------------------------------------------------------------
+# E4.8 (D46): Finnhub per-ticker context jobs (typed kinds, never raw docs)
+# ---------------------------------------------------------------------------
+
+FINNHUB_NO_KEY_DAY = "finnhub:no_api_key_notice"
+FINNHUB_MAX_FAILED_SHARE = 0.5  # more than half the tickers failed -> the run fails
+FINNHUB_EARNINGS_FULL_KEY = "finnhub:earnings_history:last_full"
+
+
+def _finnhub_run(ctx: JobContext, kind: str, *, recent_only: bool = False) -> JobResult:
+    """Shared body of the four Finnhub context jobs (E4.1d outcome rules).
+
+    No key -> ``skipped`` (``no_api_key``, one notice per day). 403 -> ``failed``
+    (``forbidden``), 429 after one retry -> ``failed`` (``rate_limited``). All tickers
+    failed, or more than half -> ``failed``; fewer -> ``ok`` with ``failed_tickers``.
+    Job options: ``tickers`` (replaces the seed list), ``max_tickers``.
+    """
+    import time
+
+    from arc.ingest.finnhub import DbRateLimiter, FinnhubClient, FinnhubError, FinnhubNoKey
+    from arc.ingest.finnhub_context import (
+        InsiderRules,
+        fetch_per_ticker,
+        recent_reporters,
+        ticker_scope,
+    )
+    from arc.pipeline.market import ETF_UNDERLYINGS
+    from arc.routines.runs import RoutineStateRepo
+    from arc.universe.ingest import IngestUniverse
+
+    started = time.monotonic()
+    s = ctx.settings
+    try:
+        client = FinnhubClient(
+            s.finnhub_api_key,
+            limiter=DbRateLimiter(ctx.conn, calls_per_minute=s.finnhub_calls_per_minute),
+        )
+    except FinnhubNoKey as exc:
+        state = RoutineStateRepo(ctx.conn)
+        day = ctx.now.astimezone(ET).date().isoformat()
+        notice = ""
+        if state.get(FINNHUB_NO_KEY_DAY) != day:
+            state.set(FINNHUB_NO_KEY_DAY, day, now=ctx.now)
+            notice = (
+                "Finnhub context skipped: no_api_key (set ARC_FINNHUB_API_KEY in "
+                "~/.hermes/.env); earnings history, insider, analyst and fundamentals "
+                "context is not refreshed"
+            )
+        raise JobSkippedError(str(exc), notice=notice) from exc
+
+    today = ctx.now.astimezone(ET).date()
+    seed = ctx.options.get("tickers") or s.universe
+    universe = IngestUniverse.from_settings(s, now=ctx.now)
+    scope = ticker_scope(
+        ctx.conn,
+        seed=seed,
+        now=ctx.now,
+        max_tickers=int(ctx.options.get("max_tickers", s.finnhub_max_tickers)),
+        master=universe.master,
+        etfs=ETF_UNDERLYINGS,
+    )
+    tickers = scope.tickers
+    if recent_only:
+        lo, hi = (int(x) for x in ctx.options.get("recent_report_days", [1, 3]))
+        tickers = recent_reporters(ctx.conn, tickers, today, lo, hi)
+    rules = InsiderRules(
+        window_days=s.finnhub_insider_window_days,
+        cluster_buyers=s.finnhub_cluster_buyers,
+        cluster_days=s.finnhub_cluster_days,
+    )
+    try:
+        run = fetch_per_ticker(
+            client,
+            kind,  # type: ignore[arg-type]
+            tickers,
+            today=today,
+            write=lambda t, p: ctx.write(kind, t, p),
+            rules=rules,
+        )
+    finally:
+        # D27: endpoints, call count and as_of in the run manifest (never the key).
+        ctx.record_input(
+            "finnhub:" + ",".join(sorted(client.endpoints)),
+            "finnhub",
+            {"endpoints": client.endpoints, "tickers": tickers},
+            as_of=ctx.now,
+            count=client.calls,
+        )
+    duration = round(time.monotonic() - started, 1)
+    log.info(
+        "finnhub.done",
+        job=ctx.job,
+        kind=kind,
+        calls=client.calls,
+        tickers=len(tickers),
+        written=run.written,
+        empty=len(run.empty),
+        failed=len(run.failed),
+        dropped=len(scope.dropped),
+        etfs_skipped=len(scope.etfs_skipped),
+        duration_s=duration,
+    )
+    metrics: dict[str, Any] = {
+        "calls": client.calls,
+        "tickers": len(tickers),
+        "written": run.written,
+        "empty_tickers": run.empty,
+        "failed_tickers": sorted(run.failed),
+        "duration_s": duration,
+        "endpoints": dict(client.endpoints),
+        "as_of": today.isoformat(),
+        "scope": {**scope.sources, "dropped": len(scope.dropped), "etfs": len(scope.etfs_skipped)},
+        "mode": "recent_reporters" if recent_only else "full",
+    }
+    if run.failed and (
+        len(run.failed) == len(tickers) or len(run.failed) / len(tickers) > FINNHUB_MAX_FAILED_SHARE
+    ):
+        sample = "; ".join(f"{t}: {e}" for t, e in list(run.failed.items())[:3])
+        msg = f"{len(run.failed)}/{len(tickers)} tickers failed ({sample})"
+        raise FinnhubError(msg)
+    summary = (
+        f"{run.written} {kind} written · {len(tickers)} tickers · {client.calls} calls"
+        + (
+            f" · {len(run.failed)} failed ({', '.join(sorted(run.failed)[:5])})"
+            if run.failed
+            else ""
+        )
+        + (f" · {len(scope.dropped)} over cap" if scope.dropped else "")
+    )
+    return JobResult(summary=summary, metrics=metrics)
+
+
+def finnhub_insider_source(ctx: JobContext) -> JobResult:
+    """E4.8: open-market insider buys/sells per ticker -> ``insider_activity``."""
+    return _finnhub_run(ctx, "insider_activity")
+
+
+def finnhub_recs_source(ctx: JobContext) -> JobResult:
+    """E4.8: monthly analyst recommendation trend per ticker -> ``analyst_recs``."""
+    return _finnhub_run(ctx, "analyst_recs")
+
+
+def finnhub_fundamentals_source(ctx: JobContext) -> JobResult:
+    """E4.8: trimmed basic financials per ticker -> ``fundamentals``."""
+    return _finnhub_run(ctx, "fundamentals")
+
+
+def finnhub_earnings_history_source(ctx: JobContext) -> JobResult:
+    """E4.8: EPS surprises per ticker -> ``earnings_history``.
+
+    The whole scope once a week: on a ``full_days`` weekday (default Monday), or on
+    any run when the last full run is ``full_every_days`` (default 7) or more days
+    old (a Monday holiday still gets its weekly refresh on Tuesday). Other runs
+    fetch only the tickers whose earnings date was ``recent_report_days`` (default
+    1-3) days ago, so a fresh report lands the morning after.
+    """
+    from arc.routines.config import Weekday
+    from arc.routines.runs import RoutineStateRepo
+
+    today = ctx.now.astimezone(ET).date()
+    full_days = {str(d).lower()[:3] for d in ctx.options.get("full_days", ["mon"])}
+    full = any(Weekday(d).weekday_index == today.weekday() for d in full_days)
+    state = RoutineStateRepo(ctx.conn)
+    last = state.get(FINNHUB_EARNINGS_FULL_KEY)
+    every = int(ctx.options.get("full_every_days", 7))
+    if last is None or (today - _date_of(last)).days >= every:
+        full = True
+    result = _finnhub_run(ctx, "earnings_history", recent_only=not full)
+    if full:
+        state.set(FINNHUB_EARNINGS_FULL_KEY, today.isoformat(), now=ctx.now)
+    return result
+
+
+def _date_of(text: str) -> _dt.date:
+    import datetime as dt
+
+    try:
+        return dt.date.fromisoformat(text[:10])
+    except ValueError:
+        return dt.date.min
+
+
 def symbols_source(ctx: JobContext) -> JobResult:
     """Weekly symbol-master refresh (E5.7 / D28): SEC tickers ∪ Alpaca optionable.
 
@@ -820,6 +1002,11 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "macro_calendar": "arc.routines.handlers:macro_calendar_source",
     "unusual_options": "arc.routines.handlers:unusual_options_source",
     "ex_dividend": "arc.routines.handlers:ex_dividend_source",
+    # E4.8 (D46): Finnhub per-ticker context (typed kinds, shared 55/min budget)
+    "finnhub.insider": "arc.routines.handlers:finnhub_insider_source",
+    "finnhub.recs": "arc.routines.handlers:finnhub_recs_source",
+    "finnhub.fundamentals": "arc.routines.handlers:finnhub_fundamentals_source",
+    "finnhub.earnings_history": "arc.routines.handlers:finnhub_earnings_history_source",
     "scout": "arc.routines.handlers:scout_persona",
     # E5.2 pipeline chain: director → quant → risk → propose (arc/pipeline/steps.py)
     "director": "arc.pipeline.steps:director_step",

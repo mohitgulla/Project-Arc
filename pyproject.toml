@@ -109,6 +109,17 @@ forbidden_modules = [
     "arc.cli",
 ]
 
+# E4.8 / D46: Finnhub per-ticker context is context only; the gate never reads it.
+[[tool.importlinter.contracts]]
+name = "arc.gate never reads Finnhub context (D46): no Finnhub client, no context kinds"
+type = "forbidden"
+source_modules = ["arc.gate"]
+forbidden_modules = [
+    "arc.ingest.finnhub",
+    "arc.ingest.finnhub_context",
+    "arc.context.kinds",
+]
+
 [[tool.importlinter.contracts]]
 name = "arc.journal records and attribution are deterministic: no LLM, network or broker"
 type = "forbidden"

@@ -336,6 +336,116 @@ class ExDividendPayload(BaseModel):
     source: str = "alpaca"
 
 
+# ---------------------------------------------------------------------------
+# E4.8 (D46): Finnhub per-ticker context. Data only: never a gate input, and the
+# gate never imports these (import-linter contract in pyproject.toml).
+# ---------------------------------------------------------------------------
+
+
+class EarningsQuarter(BaseModel):
+    """One reported quarter (Finnhub ``/stock/earnings``); EPS in USD per share."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    period: str = Field(..., description="Fiscal quarter end (YYYY-MM-DD)")
+    actual: float | None = None
+    estimate: float | None = None
+    surprise: float | None = Field(None, description="actual - estimate")
+    surprise_pct: float | None = Field(None, description="surprise / |estimate| x 100")
+
+
+class EarningsHistoryPayload(BaseModel):
+    """Last 4-8 reported quarters with EPS surprise; subject = ticker."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ticker: str
+    quarters: list[EarningsQuarter] = Field(default_factory=list, max_length=8)
+    beat_count: int = Field(..., ge=0, description="Quarters with actual > estimate")
+    miss_count: int = Field(..., ge=0, description="Quarters with actual < estimate")
+    as_of: str = Field(..., description="ET date the data was fetched (YYYY-MM-DD)")
+    source: Literal["finnhub"] = "finnhub"
+
+
+class InsiderActivityPayload(BaseModel):
+    """Open-market insider buys/sells (Form 4 codes P/S only) in the last ``window_days``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ticker: str
+    window_days: int = Field(..., ge=1)
+    buy_count: int = Field(..., ge=0)
+    sell_count: int = Field(..., ge=0)
+    net_shares: int = Field(..., description="Shares bought - shares sold")
+    net_value_usd: float | None = Field(
+        None, description="Sum of signed shares x price over priced trades; None = no price"
+    )
+    distinct_insiders_buying: int = Field(..., ge=0)
+    distinct_insiders_selling: int = Field(..., ge=0)
+    last_txn_date: str | None = None
+    cluster_buy: bool = Field(
+        ..., description="At least cluster_buyers distinct buyers within cluster_days"
+    )
+    as_of: str
+    source: Literal["finnhub"] = "finnhub"
+
+
+class AnalystRecCounts(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    period: str
+    strong_buy: int = Field(..., ge=0)
+    buy: int = Field(..., ge=0)
+    hold: int = Field(..., ge=0)
+    sell: int = Field(..., ge=0)
+    strong_sell: int = Field(..., ge=0)
+
+
+class AnalystRecsPayload(BaseModel):
+    """Latest monthly recommendation trend vs the month before; subject = ticker."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ticker: str
+    period: str
+    strong_buy: int = Field(..., ge=0)
+    buy: int = Field(..., ge=0)
+    hold: int = Field(..., ge=0)
+    sell: int = Field(..., ge=0)
+    strong_sell: int = Field(..., ge=0)
+    prev_period: AnalystRecCounts | None = None
+    net_change: int | None = Field(
+        None, description="(strong_buy+buy-sell-strong_sell) now minus the same for prev_period"
+    )
+    as_of: str
+    source: Literal["finnhub"] = "finnhub"
+
+
+class FundamentalsPayload(BaseModel):
+    """Trimmed Finnhub basic financials (D46 field set); missing = None, never 0."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ticker: str
+    beta: float | None = None
+    high_52w: float | None = None
+    high_52w_date: str | None = None
+    low_52w: float | None = None
+    low_52w_date: str | None = None
+    market_cap_musd: float | None = Field(None, description="Market cap, USD millions")
+    rel_sp500_4w: float | None = Field(None, description="Price relative to S&P 500, %")
+    rel_sp500_13w: float | None = None
+    rel_sp500_26w: float | None = None
+    rel_sp500_52w: float | None = None
+    return_5d_pct: float | None = None
+    return_ytd_pct: float | None = None
+    forward_pe: float | None = None
+    eps_growth_ttm_yoy: float | None = Field(None, description="%")
+    revenue_growth_ttm_yoy: float | None = Field(None, description="%")
+    as_of: str
+    source: Literal["finnhub"] = "finnhub"
+
+
 @dataclass(frozen=True)
 class KindSpec:
     """A context kind: its payload model and current schema version."""
@@ -369,6 +479,11 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("macro_calendar", MacroCalendarPayload),
     KindSpec("unusual_options", UnusualOptionsPayload),
     KindSpec("ex_dividend", ExDividendPayload),
+    # E4.8 (D46): Finnhub per-ticker context (subject = ticker)
+    KindSpec("earnings_history", EarningsHistoryPayload),
+    KindSpec("insider_activity", InsiderActivityPayload),
+    KindSpec("analyst_recs", AnalystRecsPayload),
+    KindSpec("fundamentals", FundamentalsPayload),
 )
 
 

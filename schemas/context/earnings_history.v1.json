@@ -1,0 +1,117 @@
+{
+  "$defs": {
+    "EarningsQuarter": {
+      "additionalProperties": false,
+      "description": "One reported quarter (Finnhub ``/stock/earnings``); EPS in USD per share.",
+      "properties": {
+        "actual": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Actual"
+        },
+        "estimate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimate"
+        },
+        "period": {
+          "description": "Fiscal quarter end (YYYY-MM-DD)",
+          "title": "Period",
+          "type": "string"
+        },
+        "surprise": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "actual - estimate",
+          "title": "Surprise"
+        },
+        "surprise_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "surprise / |estimate| x 100",
+          "title": "Surprise Pct"
+        }
+      },
+      "required": [
+        "period"
+      ],
+      "title": "EarningsQuarter",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Last 4-8 reported quarters with EPS surprise; subject = ticker.",
+  "properties": {
+    "as_of": {
+      "description": "ET date the data was fetched (YYYY-MM-DD)",
+      "title": "As Of",
+      "type": "string"
+    },
+    "beat_count": {
+      "description": "Quarters with actual > estimate",
+      "minimum": 0,
+      "title": "Beat Count",
+      "type": "integer"
+    },
+    "miss_count": {
+      "description": "Quarters with actual < estimate",
+      "minimum": 0,
+      "title": "Miss Count",
+      "type": "integer"
+    },
+    "quarters": {
+      "items": {
+        "$ref": "#/$defs/EarningsQuarter"
+      },
+      "maxItems": 8,
+      "title": "Quarters",
+      "type": "array"
+    },
+    "source": {
+      "const": "finnhub",
+      "default": "finnhub",
+      "title": "Source",
+      "type": "string"
+    },
+    "ticker": {
+      "title": "Ticker",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ticker",
+    "beat_count",
+    "miss_count",
+    "as_of"
+  ],
+  "title": "EarningsHistoryPayload",
+  "type": "object"
+}

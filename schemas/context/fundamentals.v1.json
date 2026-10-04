@@ -1,0 +1,210 @@
+{
+  "additionalProperties": false,
+  "description": "Trimmed Finnhub basic financials (D46 field set); missing = None, never 0.",
+  "properties": {
+    "as_of": {
+      "title": "As Of",
+      "type": "string"
+    },
+    "beta": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Beta"
+    },
+    "eps_growth_ttm_yoy": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "%",
+      "title": "Eps Growth Ttm Yoy"
+    },
+    "forward_pe": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Forward Pe"
+    },
+    "high_52w": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "High 52W"
+    },
+    "high_52w_date": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "High 52W Date"
+    },
+    "low_52w": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Low 52W"
+    },
+    "low_52w_date": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Low 52W Date"
+    },
+    "market_cap_musd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Market cap, USD millions",
+      "title": "Market Cap Musd"
+    },
+    "rel_sp500_13w": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rel Sp500 13W"
+    },
+    "rel_sp500_26w": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rel Sp500 26W"
+    },
+    "rel_sp500_4w": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Price relative to S&P 500, %",
+      "title": "Rel Sp500 4W"
+    },
+    "rel_sp500_52w": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rel Sp500 52W"
+    },
+    "return_5d_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Return 5D Pct"
+    },
+    "return_ytd_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Return Ytd Pct"
+    },
+    "revenue_growth_ttm_yoy": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "%",
+      "title": "Revenue Growth Ttm Yoy"
+    },
+    "source": {
+      "const": "finnhub",
+      "default": "finnhub",
+      "title": "Source",
+      "type": "string"
+    },
+    "ticker": {
+      "title": "Ticker",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ticker",
+    "as_of"
+  ],
+  "title": "FundamentalsPayload",
+  "type": "object"
+}

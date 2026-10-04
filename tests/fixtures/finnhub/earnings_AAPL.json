@@ -1,0 +1,42 @@
+[
+ {
+  "actual": 1.91,
+  "estimate": 1.9271,
+  "period": "2026-06-30",
+  "quarter": 3,
+  "surprise": -0.0171,
+  "surprisePercent": -0.8873,
+  "symbol": "AAPL",
+  "year": 2026
+ },
+ {
+  "actual": 2.01,
+  "estimate": 1.9884,
+  "period": "2026-03-31",
+  "quarter": 2,
+  "surprise": 0.0216,
+  "surprisePercent": 1.0863,
+  "symbol": "AAPL",
+  "year": 2026
+ },
+ {
+  "actual": 2.84,
+  "estimate": 2.7257,
+  "period": "2025-12-31",
+  "quarter": 1,
+  "surprise": 0.1143,
+  "surprisePercent": 4.1934,
+  "symbol": "AAPL",
+  "year": 2026
+ },
+ {
+  "actual": 1.85,
+  "estimate": 1.8075,
+  "period": "2025-09-30",
+  "quarter": 4,
+  "surprise": 0.0425,
+  "surprisePercent": 2.3513,
+  "symbol": "AAPL",
+  "year": 2025
+ }
+]

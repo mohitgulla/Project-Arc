@@ -1,0 +1,93 @@
+{
+  "additionalProperties": false,
+  "description": "Open-market insider buys/sells (Form 4 codes P/S only) in the last ``window_days``.",
+  "properties": {
+    "as_of": {
+      "title": "As Of",
+      "type": "string"
+    },
+    "buy_count": {
+      "minimum": 0,
+      "title": "Buy Count",
+      "type": "integer"
+    },
+    "cluster_buy": {
+      "description": "At least cluster_buyers distinct buyers within cluster_days",
+      "title": "Cluster Buy",
+      "type": "boolean"
+    },
+    "distinct_insiders_buying": {
+      "minimum": 0,
+      "title": "Distinct Insiders Buying",
+      "type": "integer"
+    },
+    "distinct_insiders_selling": {
+      "minimum": 0,
+      "title": "Distinct Insiders Selling",
+      "type": "integer"
+    },
+    "last_txn_date": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Txn Date"
+    },
+    "net_shares": {
+      "description": "Shares bought - shares sold",
+      "title": "Net Shares",
+      "type": "integer"
+    },
+    "net_value_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Sum of signed shares x price over priced trades; None = no price",
+      "title": "Net Value Usd"
+    },
+    "sell_count": {
+      "minimum": 0,
+      "title": "Sell Count",
+      "type": "integer"
+    },
+    "source": {
+      "const": "finnhub",
+      "default": "finnhub",
+      "title": "Source",
+      "type": "string"
+    },
+    "ticker": {
+      "title": "Ticker",
+      "type": "string"
+    },
+    "window_days": {
+      "minimum": 1,
+      "title": "Window Days",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "ticker",
+    "window_days",
+    "buy_count",
+    "sell_count",
+    "net_shares",
+    "distinct_insiders_buying",
+    "distinct_insiders_selling",
+    "cluster_buy",
+    "as_of"
+  ],
+  "title": "InsiderActivityPayload",
+  "type": "object"
+}
