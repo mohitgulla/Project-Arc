@@ -2030,7 +2030,7 @@ export interface components {
             hypothesis: string;
             /**
              * Id
-             * @description X-<n>
+             * @description XP-<n>
              */
             id: string;
             kind: components["schemas"]["ExperimentKind"];

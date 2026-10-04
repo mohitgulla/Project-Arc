@@ -4030,7 +4030,7 @@
             "type": "string"
           },
           "id": {
-            "description": "X-<n>",
+            "description": "XP-<n>",
             "title": "Id",
             "type": "string"
           },

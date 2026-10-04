@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import BaseModel, ConfigDict
 
+from arc.context.ttl import from_db
 from arc.gate.inputs import AccountSnapshot, ClosedLot, MarketSnapshot, Portfolio, Position, Quote
 from arc.models import Greeks, Leg, LegIntent
 from arc.scanner.iv import atm_iv
@@ -51,9 +52,11 @@ __all__ = [
     "build_portfolio",
     "close_quote_sanity",
     "curve_mid",
+    "day_trades_used",
     "limit_price",
     "market_snapshot",
     "next_earnings",
+    "opened_today_symbols",
     "price_structure",
     "settled_cash",
 ]
@@ -106,6 +109,7 @@ def account_snapshot(
     *,
     baseline: Baseline | None,
     orders_used_today: int | None = None,
+    day_trades_used: int | None = None,
 ) -> AccountSnapshot:
     """Gate view of the account. The halt flag is stamped later by ``HaltSwitch.apply``.
 
@@ -117,12 +121,15 @@ def account_snapshot(
     ``orders_used_today`` (D32) is the day's order count from
     :func:`arc.budget.current_budget`; live callers pass it so the gate's
     ``order_budget`` rule runs. ``None`` skips the rule (fixtures, dry runs).
+    ``day_trades_used`` (E10.2) feeds the profile's day-trade rule on closes;
+    ``None`` skips it.
     """
     return AccountSnapshot(
         equity=info.equity,
         last_equity=baseline.value if baseline is not None else Decimal(0),
         settled_cash=settled_cash(info),
         orders_used_today=orders_used_today,
+        day_trades_used=day_trades_used,
         as_of=now,
     )
 
@@ -286,7 +293,53 @@ def build_portfolio(
     for _, _, legs in groups:
         for leg in legs:
             held[leg.occ_symbol] += leg.ratio if leg.side == LegIntent.LONG else -leg.ratio
-    return Portfolio(positions=open_positions, greeks=greeks, closed_lots=lots, legs=dict(held))
+    return Portfolio(
+        positions=open_positions,
+        greeks=greeks,
+        closed_lots=lots,
+        legs=dict(held),
+        opened_today=frozenset(opened_today_symbols(conn, today)),
+    )
+
+
+def _structure_symbols(structure_json: str) -> list[str]:
+    try:
+        legs = json.loads(structure_json).get("legs", [])
+    except (ValueError, AttributeError):
+        return []
+    return [str(leg.get("occ_symbol")) for leg in legs if isinstance(leg, dict)]
+
+
+def opened_today_symbols(conn: sqlite3.Connection, day: _dt.date) -> set[str]:
+    """E10.2: OCC symbols of structures opened on ET *day* (a close of one is a day trade)."""
+    out: set[str] = set()
+    for r in conn.execute("SELECT structure_json, opened_at FROM open_structures"):
+        if from_db(r[1]).astimezone(ET).date() == day:
+            out.update(_structure_symbols(r[0]))
+    return out
+
+
+def day_trades_used(conn: sqlite3.Connection, day: _dt.date, window_sessions: int) -> int:
+    """E10.2: structures opened and closed on the same ET day in the last *window_sessions*.
+
+    Read from ``open_structures`` (``opened_at`` / ``closed_at``), so a store's count
+    is its own account's: an experiment arm counts its own day trades.
+    """
+    from arc.utils.calendar import is_session, previous_session
+
+    start = day
+    if is_session(day):
+        for _ in range(window_sessions - 1):
+            start = previous_session(start)
+    n = 0
+    for r in conn.execute(
+        "SELECT opened_at, closed_at FROM open_structures WHERE closed_at IS NOT NULL"
+    ):
+        opened = from_db(r[0]).astimezone(ET).date()
+        closed = from_db(r[1]).astimezone(ET).date()
+        if opened == closed and start <= closed <= day:
+            n += 1
+    return n
 
 
 # ---------------------------------------------------------------------------

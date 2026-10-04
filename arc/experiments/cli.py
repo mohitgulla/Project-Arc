@@ -71,6 +71,10 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
     ev = common(esub.add_parser("evaluate", help="Evaluate running experiments; apply verdicts"))
     ev.add_argument("experiment_id", nargs="?", default=None)
     ev.add_argument("--now", default=None, help="Evaluate as of this ISO time (default: now)")
+    # E10.2 arm runner: start | pair | arms-tick
+    from arc.experiments.cli_arms import add_arm_parsers
+
+    add_arm_parsers(esub, common, LOCAL_ACTOR)
 
 
 def _out(text: str) -> None:
@@ -230,9 +234,16 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
                 _err(f"arc experiment report: no stored report for {args.experiment_id}")
                 return 2
         else:
-            rep = build_report(
-                conn, store.require(args.experiment_id), cfg, now=now, aa_sigma=store.aa_sigma()
-            )
+            from arc.experiments.paired import paired_view
+
+            with paired_view(conn) as view:
+                rep = build_report(
+                    view,
+                    store.require(args.experiment_id),
+                    cfg,
+                    now=now,
+                    aa_sigma=store.aa_sigma(),
+                )
         reports = [rep]
     else:
         store._now = lambda: now  # noqa: SLF001 - stop events carry the evaluation time
@@ -305,6 +316,10 @@ def run_experiment(args: argparse.Namespace) -> int:
             return 0 if v["ok"] else 1
         elif cmd in ("report", "evaluate"):
             return _run_eval(args, store, conn)
+        elif cmd in ("start", "pair", "arms-tick"):
+            from arc.experiments.cli_arms import run_arm_command
+
+            return run_arm_command(args, conn)
         elif cmd == "stop":
             if not _owner(args.actor):
                 _err(f"arc experiment stop: {args.actor} is not the owner")

@@ -865,6 +865,21 @@ def latest_report(conn: sqlite3.Connection, experiment_id: str) -> ExperimentRep
     return ExperimentReport.model_validate_json(r[0]) if r else None
 
 
+def _build_paired(
+    conn: sqlite3.Connection,
+    st: ExperimentState,
+    cfg: ExperimentsConfig,
+    *,
+    now: _dt.datetime,
+    aa_sigma: float | None,
+) -> ExperimentReport:
+    """:func:`build_report` on the control store with the arm stores unioned in (E10.2)."""
+    from arc.experiments.paired import paired_view
+
+    with paired_view(conn) as view:
+        return build_report(view, st, cfg, now=now, aa_sigma=aa_sigma)
+
+
 def evaluate(
     store: ExperimentStore,
     experiment_id: str,
@@ -879,7 +894,7 @@ def evaluate(
     if st.status is not ExperimentStatus.RUNNING:
         msg = f"{experiment_id} is {st.status.value}, not running"
         raise ExperimentError(msg)
-    report = build_report(conn, st, cfg, now=now, aa_sigma=store.aa_sigma())
+    report = _build_paired(conn, st, cfg, now=now, aa_sigma=store.aa_sigma())
     journal = JournalStore(conn)
     with conn:
         rid = store_report(conn, report, run_id=run_id)

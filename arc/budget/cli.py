@@ -50,9 +50,9 @@ def run_budget(args: argparse.Namespace) -> int:
     broker_note = "skipped (--no-broker)"
     if not args.no_broker:
         try:
-            from arc.broker.alpaca_paper import AlpacaPaperBroker
+            from arc.experiments.broker import trading_broker
 
-            broker = AlpacaPaperBroker()
+            broker = trading_broker(conn, settings)  # E10.2: the store's own account
             broker_note = "alpaca paper"
         except Exception as exc:  # noqa: BLE001 - report, count locally
             broker_note = f"unavailable ({type(exc).__name__}: {exc})"

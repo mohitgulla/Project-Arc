@@ -1116,12 +1116,12 @@ Specs live in `config/experiments/live/<id>.yaml`; defaults (alpha 0.05, power
 tunable as `experiments.*` (`!arc config experiments`). The treatment overlay uses
 the same deep-merge format as the backtest overlays in `config/experiments/*.yaml`.
 
-    arc experiment create --spec config/experiments/live/x1_aa_baseline.yaml   # draft
-    arc experiment register X-1        # locks sha256(canonical spec); queued if the area is busy
-    arc experiment show X-1 [--json]
-    arc experiment verify X-1          # exit 1 when the stored spec no longer matches the lock
+    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml   # draft
+    arc experiment register XP-1        # locks sha256(canonical spec); queued if the area is busy
+    arc experiment show XP-1 [--json]
+    arc experiment verify XP-1          # exit 1 when the stored spec no longer matches the lock
     arc experiment list [--status running]
-    arc experiment stop X-1 --reason owner --actor local
+    arc experiment stop XP-1 --reason owner --actor local
 
 - After `register` the spec is locked (store check plus a DB trigger): a change
   needs a new id. One `registered`/`running` experiment per area; the next
@@ -1138,9 +1138,9 @@ The `experiments.evaluate` routine (trading days 16:40 ET, after the 16:30 audit
 reconcile; deterministic, halt-exempt) evaluates every running experiment and
 stores one `ExperimentReport` in the append-only `experiment_reports` table:
 
-    arc experiment report X-2 --db <db> [--json]      # computed now, read-only
-    arc experiment report X-2 --db <db> --stored      # latest stored report
-    arc experiment evaluate [X-2] --db <db> [--now ISO]   # what the routine does
+    arc experiment report XP-2 --db <db> [--json]      # computed now, read-only
+    arc experiment report XP-2 --db <db> --stored      # latest stored report
+    arc experiment evaluate [XP-2] --db <db> [--now ISO]   # what the routine does
 
 - Series: `d_t = (treat_pnl_t − ctrl_pnl_t) / t0_equity` per session from each
   arm's EOD `pnl_snapshots`; control's legacy-book P&L (marks in control's
@@ -1156,10 +1156,40 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
 - No guardrail (harm) auto-stops (owner, 2026-10-03): only the primary and
   secondary metrics decide. Each arm's drawdown, worst day and order count are
   in the report for the owner, who stops an experiment by hand
-  (`arc experiment stop X-2 --reason harm --actor local`).
+  (`arc experiment stop XP-2 --reason harm --actor local`).
 - `max_sessions` without a win → stop(futility); for an A/A that is the normal
   end and records σ (unlocks ab starts). An A/A whose CI excludes 0 → stop(invalid).
 - Breakdowns by regime / structure kind are reported, never decision inputs.
+
+### 5.19 Arm runner (E10.2, D44)
+
+The treatment arm is the same trading loop on its own paper account
+(`ALPACA_EXP_*`) and its own store (`experiments.runner.arms` in
+`config/experiments.yaml`; N arms is configuration, e.g. a paper shadow control).
+
+    arc experiment start XP-1 --db data/arc.db           # t0 (live: arm account must be flat)
+    arc experiment start XP-1 --fixtures --arm-dir <scratch> --db <scratch>.db
+    arc experiment pair <control chain id> --db <db> [--fixtures --fixture-set bullish]
+    arc experiment arms-tick --db data/arc.db           # what the live tick spawns
+
+- t0: each arm store gets a one-row `arm_identity` and a virtual account opened
+  at control's equity (broker equity for live, the fixture account offline);
+  control's open structures are the legacy book, their max loss is reserved in
+  the arm until each closes on control. The arm account must have no positions
+  or open orders: close them in the Alpaca dashboard (no auto-flatten).
+- The arm sizes and gates from its virtual account (`VirtualBroker`): equity
+  moves only with its own fills/marks, buying power = min(broker, virtual −
+  legacy), and under a cash profile only settled cash (T+1) counts. Control's
+  account profile (debit-only, day-trade limit, D32 budget) applies unchanged.
+- Shared inputs: Scout/sources run once, in control. The arm reuses control's
+  steps before the fork step (the first step its overlay changes; never later
+  than `propose`) and replays control's market tape (`market_tape`). Every arm
+  manifest carries `paired_chain_run_id`, `fork_step`, `arm_id`, `git_sha`.
+- After each live control tick, `arc routines tick` spawns `arc experiment
+  arms-tick` detached (own lock, own lock dirs), only while an experiment runs.
+- Evaluation reads arm rows through `arc.experiments.paired.paired_view`: arm
+  stores ATTACHed read-only, `arm_id` projected per store. Nothing is copied
+  into the control store (D32 counts and Tower stay control-only).
 
 ## 6. Local Models (E8.4)
 

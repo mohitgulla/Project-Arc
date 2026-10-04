@@ -20,7 +20,7 @@ import {
 } from "./experiments";
 
 const ROW = {
-  experiment_id: "X-2",
+  experiment_id: "XP-2",
   title: "TP 40%",
   status: "running",
   reason: null,
@@ -40,7 +40,7 @@ const ROW = {
   verdict_reason: "14/20-60",
   evaluated_at: "2026-10-23T16:45:00-04:00",
   as_of_day: "2026-10-23",
-  line: "[Experiments] X-2 • exits • day 14/20–60 • Δ +0.08%/day [−0.03, +0.19] • Sortino ok",
+  line: "[Experiments] XP-2 • exits • day 14/20–60 • Δ +0.08%/day [−0.03, +0.19] • Sortino ok",
 } as unknown as ExperimentRow;
 
 describe("experiment formatting (same text as the Slack line)", () => {
@@ -101,7 +101,7 @@ describe("detail views", () => {
           worst_day: -0.008, orders: 3, filled_executions: 3, executions: 3, mean_slippage_bps: null,
         },
         {
-          arm: "treatment", arm_id: "X-2:treatment", sessions: 14, total_pnl: 1612.5, max_drawdown: 0,
+          arm: "treatment", arm_id: "XP-2:treatment", sessions: 14, total_pnl: 1612.5, max_drawdown: 0,
           worst_day: null, orders: 8, filled_executions: 4, executions: 4, mean_slippage_bps: 4.25,
         },
       ],

@@ -673,6 +673,36 @@ class Dispatcher:
             return [Outcome(root.job, root.scheduled_for, "deferred", f"lock busy ({exc})")]
         return outcomes + self._fire_completed(outcomes, now, 0)
 
+    def run_paired(
+        self,
+        steps: list[str],
+        scheduled_for: _dt.datetime,
+        *,
+        now: _dt.datetime,
+        chain_run_id: str,
+        reused: Mapping[str, RoutineRun],
+    ) -> list[Outcome]:
+        """E10.2 (D44): an experiment arm's paired copy of a control loop slot.
+
+        Runs in the arm's store as the same scheduled loop slot (loop deadline,
+        no-change digest), resuming at the fork step: *reused* holds the arm's ``ok``
+        rows for the steps before it (their outputs were imported from control's
+        chain), exactly like :meth:`resume_chain`. Locks are this dispatcher's (the
+        arm's own lock dir), so the arm never holds control's ``llm`` lock.
+        """
+        try:
+            with self.locks.hold(*self._lock_names(steps)):
+                return self._run_steps(
+                    steps,
+                    scheduled_for,
+                    reason="schedule",
+                    now=now,
+                    chain_run_id=chain_run_id,
+                    existing=reused,
+                )
+        except LockBusyError as exc:
+            return [Outcome(steps[0], scheduled_for, "deferred", f"lock busy ({exc})")]
+
     def _run_steps(
         self,
         steps: list[str],

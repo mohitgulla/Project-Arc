@@ -97,9 +97,9 @@ def run_execute(args: argparse.Namespace, *, broker: BrokerAdapter | None = None
         return 1
 
     if broker is None:
-        from arc.broker.alpaca_paper import AlpacaPaperBroker
+        from arc.experiments.broker import trading_broker
 
-        broker = AlpacaPaperBroker()
+        broker = trading_broker(conn)  # E10.2: an arm store trades only its own account
     out = execute(
         proposal,
         decision,

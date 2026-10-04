@@ -54,19 +54,19 @@ def _curves(n: int, edge: float, seed: int = 7) -> tuple[list[float], list[float
 
 @pytest.fixture
 def fixture_db(tmp_path: Path) -> tuple[Path, dt.datetime]:
-    """X-2 (ab, running, evaluated after 14 sessions) and X-1 (A/A, draft)."""
+    """XP-2 (ab, running, evaluated after 14 sessions) and XP-1 (A/A, draft)."""
     db = tmp_path / "arc.db"
     c = connect(db)
     migrate(c)
-    store = fx.start(c, fx.spec("X-2"))
+    store = fx.start(c, fx.spec("XP-2"))
     ctrl, treat = _curves(14, 60.0)
-    days = fx.equity_curves(c, "X-2", ctrl, treat)
+    days = fx.equity_curves(c, "XP-2", ctrl, treat)
     fx.executions(c, None, 3, day=days[2])
-    fx.executions(c, "X-2:treatment", 4, attempts=2, day=days[3])
+    fx.executions(c, "XP-2:treatment", 4, attempts=2, day=days[3])
     now = _after(days)
     store._now = lambda: now  # noqa: SLF001
-    evaluate(store, "X-2", CFG, now=now)
-    store.create(fx.spec("X-1", kind="aa"), actor="local")
+    evaluate(store, "XP-2", CFG, now=now)
+    store.create(fx.spec("XP-1", kind="aa"), actor="local")
     c.close()
     return db, now
 
@@ -90,15 +90,15 @@ def test_parity_slack_line_tower_api_and_cli_report(
     fixture_db: tuple[Path, dt.datetime], capsys: pytest.CaptureFixture[str]
 ) -> None:
     db, now = fixture_db
-    assert run_experiment(_cli("report", "X-2", "--db", str(db), "--stored", "--json")) == 0
+    assert run_experiment(_cli("report", "XP-2", "--db", str(db), "--stored", "--json")) == 0
     out = capsys.readouterr().out
     cli = json.loads(out[out.index("{\n") :])
     report = ExperimentReport.model_validate(cli)
 
     client = _client(db, now)
     items = {i["experiment_id"]: i for i in client.get("/api/experiments").json()["items"]}
-    row = items["X-2"]
-    detail = client.get("/api/experiments/X-2").json()
+    row = items["XP-2"]
+    detail = client.get("/api/experiments/XP-2").json()
 
     # the tower serves the stored report verbatim (same canonical JSON, same hash)
     assert detail["report"] == cli
@@ -122,7 +122,7 @@ def test_parity_slack_line_tower_api_and_cli_report(
     assert row["sortino_delta"] == pytest.approx(sd)
     mean, lo, hi = cli["primary"]["mean"], cli["primary"]["ci"]["lo"], cli["primary"]["ci"]["hi"]
     want = (
-        f"[X-2] Day 14 • P&L ∆ {view.pct(mean)}/day (p {view.p_text(cli['primary']['p_value'])})"
+        f"[XP-2] Day 14 • P&L ∆ {view.pct(mean)}/day (p {view.p_text(cli['primary']['p_value'])})"
         f" • Sortino ∆ {view.ratio(sd, sign=True)} (p {view.p_text(cli['secondary']['p_value'])})"
     )
     assert line == want
@@ -146,18 +146,18 @@ def test_unevaluated_experiment_shows_spec_only(fixture_db: tuple[Path, dt.datet
     db, now = fixture_db
     client = _client(db, now)
     items = client.get("/api/experiments").json()["items"]
-    assert [i["experiment_id"] for i in items] == ["X-1", "X-2"]  # newest first
+    assert [i["experiment_id"] for i in items] == ["XP-1", "XP-2"]  # newest first
     x1 = items[0]
     assert x1["status"] == "draft" and x1["kind"] == "aa" and x1["sessions"] is None
     assert x1["line"] is None and x1["secondary"] is None
-    d = client.get("/api/experiments/X-1").json()
+    d = client.get("/api/experiments/XP-1").json()
     assert d["report"] is None and d["curves"] == [] and d["cumulative"] == []
-    assert d["registered_hash"] is None and d["spec"]["id"] == "X-1"
+    assert d["registered_hash"] is None and d["spec"]["id"] == "XP-1"
 
 
 def test_detail_carries_spec_prereg_hash_and_shas(fixture_db: tuple[Path, dt.datetime]) -> None:
     db, now = fixture_db
-    d = _client(db, now).get("/api/experiments/X-2").json()
+    d = _client(db, now).get("/api/experiments/XP-2").json()
     assert d["registered_hash"] == d["spec_hash"] == d["report"]["spec_hash"]
     assert len(d["spec_hash"]) == 64
     assert d["running"]["control_sha"] == fx.CONTROL_SHA
@@ -172,7 +172,7 @@ def test_api_unknown_id_404_get_only_and_empty_store(
 ) -> None:
     db, now = fixture_db
     client = _client(db, now)
-    r = client.get("/api/experiments/X-99")
+    r = client.get("/api/experiments/XP-99")
     assert r.status_code == 404 and r.json()["error"] == "not_found"
     assert client.post("/api/experiments").status_code == 405
     empty = tmp_path / "empty.db"
@@ -204,7 +204,7 @@ def test_tower_never_writes(fixture_db: tuple[Path, dt.datetime]) -> None:
     client = _client(db, now)
     for _ in range(2):
         assert client.get("/api/experiments").status_code == 200
-        assert client.get("/api/experiments/X-2").status_code == 200
+        assert client.get("/api/experiments/XP-2").status_code == 200
     c = sqlite3.connect(db)
     assert c.execute("SELECT count(*) FROM experiment_reports").fetchone()[0] == before
     c.close()
@@ -226,9 +226,9 @@ def test_pct_uses_real_minus_and_na() -> None:
 def _report(
     conn: sqlite3.Connection, ctrl: list[float], treat: list[float], **kw: str
 ) -> ExperimentReport:
-    store = fx.start(conn, fx.spec("X-2", **kw))
-    days = fx.equity_curves(conn, "X-2", ctrl, treat)
-    return build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    store = fx.start(conn, fx.spec("XP-2", **kw))
+    days = fx.equity_curves(conn, "XP-2", ctrl, treat)
+    return build_report(conn, store.require("XP-2"), CFG, now=_after(days))
 
 
 @pytest.fixture
@@ -243,7 +243,7 @@ def test_daily_line_matches_owner_format(conn: sqlite3.Connection) -> None:
     r = _report(conn, ctrl, treat)
     line = view.daily_line(r)
     head, pnl, sortino = line.split(" • ")
-    assert head == "[X-2] Day 14"
+    assert head == "[XP-2] Day 14"
     assert re.fullmatch(r"P&L ∆ [+−]\d+\.\d\d%/day \(p (<0\.001|\d\.\d{2,3})\)", pnl), pnl
     assert re.fullmatch(r"Sortino ∆ [+−]\d+\.\d\d \(p (<0\.001|\d\.\d{2,3})\)", sortino), sortino
     assert "-" not in pnl + sortino  # real minus signs only
@@ -251,13 +251,13 @@ def test_daily_line_matches_owner_format(conn: sqlite3.Connection) -> None:
 
 
 def test_line_before_any_ci_and_for_aa(conn: sqlite3.Connection) -> None:
-    store = fx.start(conn, fx.spec("X-2"))
-    r0 = build_report(conn, store.require("X-2"), CFG, now=fx.T0)
-    assert view.daily_line(r0) == "[X-2] Day 0 • P&L ∆ n/a (p n/a) • Sortino ∆ n/a (p n/a)"
+    store = fx.start(conn, fx.spec("XP-2"))
+    r0 = build_report(conn, store.require("XP-2"), CFG, now=fx.T0)
+    assert view.daily_line(r0) == "[XP-2] Day 0 • P&L ∆ n/a (p n/a) • Sortino ∆ n/a (p n/a)"
     c2 = connect(":memory:")
     migrate(c2)
     aa = _report(c2, [10.0, -5.0, 3.0], [12.0, -4.0, 1.0], kind="aa")
-    assert view.daily_line(aa).startswith("[X-2] A/A Day 3 • P&L ∆ ")
+    assert view.daily_line(aa).startswith("[XP-2] A/A Day 3 • P&L ∆ ")
 
 
 def test_msprt_p_is_the_dual_of_the_ci(conn: sqlite3.Connection) -> None:
@@ -312,9 +312,9 @@ def test_cumulative_band_matches_confidence_sequence_at_every_prefix(
 
 def test_cumulative_uses_the_aa_sigma_when_the_report_did(conn: sqlite3.Connection) -> None:
     ctrl, treat = _curves(6, 50.0, seed=4)
-    store = fx.start(conn, fx.spec("X-2"))
-    days = fx.equity_curves(conn, "X-2", ctrl, treat)
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days), aa_sigma=0.004)
+    store = fx.start(conn, fx.spec("XP-2"))
+    days = fx.equity_curves(conn, "XP-2", ctrl, treat)
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days), aa_sigma=0.004)
     assert r.primary.sigma_source == "aa"
     last = view.cumulative(r, mde=None)[-1]
     assert r.primary.ci is not None
@@ -329,12 +329,12 @@ def test_cumulative_uses_the_aa_sigma_when_the_report_did(conn: sqlite3.Connecti
 
 def _stopped_report(conn: sqlite3.Connection) -> ExperimentReport:
     ctrl, treat = _curves(25, 400.0, seed=5)
-    store = fx.start(conn, fx.spec("X-2"))
-    days = fx.equity_curves(conn, "X-2", ctrl, treat)
+    store = fx.start(conn, fx.spec("XP-2"))
+    days = fx.equity_curves(conn, "XP-2", ctrl, treat)
     store._now = lambda: _after(days)  # noqa: SLF001
-    rep = evaluate(store, "X-2", CFG, now=_after(days))
+    rep = evaluate(store, "XP-2", CFG, now=_after(days))
     assert rep.verdict == "win"
-    assert store.require("X-2").status is ExperimentStatus.STOPPED
+    assert store.require("XP-2").status is ExperimentStatus.STOPPED
     return rep
 
 
@@ -349,7 +349,7 @@ def test_stop_card_layout_matches_owner_spec(conn: sqlite3.Connection) -> None:
     assert b[0]["type"] == "header"
     title = b[0]["text"]["text"]
     assert title == stop_title(rep) == card.text
-    assert title == (f"[X-2] Day 25 • Win • {view.delta_text(rep)} • {view.sortino_text(rep)}")
+    assert title == (f"[XP-2] Day 25 • Win • {view.delta_text(rep)} • {view.sortino_text(rep)}")
     fields = [f["text"] for blk in b if blk.get("fields") for f in blk["fields"]]
     labels = [f.split("\n", 1)[0] for f in fields]
     assert labels[:5] == [
@@ -389,12 +389,12 @@ def test_stop_card_layout_matches_owner_spec(conn: sqlite3.Connection) -> None:
 
 
 def test_stop_card_for_invalid_aa(conn: sqlite3.Connection) -> None:
-    store = fx.start(conn, fx.spec("X-1", kind="aa"))
-    days = fx.equity_curves(conn, "X-1", [0.0] * 10, [300.0 + (i % 3) * 10 for i in range(10)])
+    store = fx.start(conn, fx.spec("XP-1", kind="aa"))
+    days = fx.equity_curves(conn, "XP-1", [0.0] * 10, [300.0 + (i % 3) * 10 for i in range(10)])
     store._now = lambda: _after(days)  # noqa: SLF001
-    rep = evaluate(store, "X-1", CFG, now=_after(days))
+    rep = evaluate(store, "XP-1", CFG, now=_after(days))
     card = experiment_stop_card(rep)
-    assert card.blocks[0]["text"]["text"].startswith("[X-1] A/A Day 10 • Invalid • P&L ∆ ")
+    assert card.blocks[0]["text"]["text"].startswith("[XP-1] A/A Day 10 • Invalid • P&L ∆ ")
     whole = _texts(card.blocks)
     assert "Margin n/a (A/A)" in whole
     assert verdict_sentence(rep).startswith("A/A arms differ: P&L ∆ CI [")
@@ -418,9 +418,9 @@ def test_routine_posts_line_and_stop_card_through_dispatcher(
     db, now = fixture_db
     c = connect(db)
     # a second running experiment in another area that wins on this evaluation
-    store = fx.start(c, fx.spec("X-3", area="ranking"))
+    store = fx.start(c, fx.spec("XP-3", area="ranking"))
     ctrl, treat = _curves(25, 400.0, seed=5)
-    days = fx.equity_curves(c, "X-3", ctrl, treat, prior_close=None)
+    days = fx.equity_curves(c, "XP-3", ctrl, treat, prior_close=None)
     del days
     cfg = RoutinesConfig.model_validate(
         {
@@ -446,10 +446,10 @@ def test_routine_posts_line_and_stop_card_through_dispatcher(
     d.tick(tick, since=tick - dt.timedelta(minutes=5))
     posts = notes.day_thread_posts()
     assert len(posts) == 2, posts
-    assert posts[0].startswith("[X-2] Day 14 • P&L ∆ ")
-    assert posts[1].startswith("[X-3] Day 25 • Win • P&L ∆ ")
+    assert posts[0].startswith("[XP-2] Day 14 • P&L ∆ ")
+    assert posts[1].startswith("[XP-3] Day 25 • Win • P&L ∆ ")
     assert notes.blocks[0] is None and notes.blocks[1] is not None
-    assert store.require("X-3").status is ExperimentStatus.STOPPED
+    assert store.require("XP-3").status is ExperimentStatus.STOPPED
     c.close()
 
 
@@ -473,11 +473,11 @@ def test_latest_report_is_what_the_tower_serves_after_a_second_evaluation(
     c = connect(db)
     store = ExperimentStore(c, now=lambda: now)
     later = now + dt.timedelta(minutes=5)
-    rep2 = evaluate(store, "X-2", CFG, now=later)
+    rep2 = evaluate(store, "XP-2", CFG, now=later)
     c.close()
-    d = _client(db, later).get("/api/experiments/X-2").json()
+    d = _client(db, later).get("/api/experiments/XP-2").json()
     assert d["report"]["evaluated_at"] == rep2.model_dump(mode="json")["evaluated_at"]
     ro = connect(db)
-    stored = latest_report(ro, "X-2")
+    stored = latest_report(ro, "XP-2")
     ro.close()
     assert stored is not None and d["report_hash"] == stored.report_hash()
