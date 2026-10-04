@@ -35,7 +35,7 @@ def test_arm_store_connects_to_the_experiment_account_only(tmp_path) -> None:  #
 
     prod = os.environ.get("ALPACA_API_KEY")
     assert prod is None or prod != os.environ["ALPACA_EXP_API_KEY"], "EXP key equals production"
-    now = now_et()
+    now = now_et()  # wall-clock: live broker account check (option_orders_since window)
     arm = sqlite3.connect(str(tmp_path / "arm.db"))
     arm.row_factory = sqlite3.Row
     migrate(arm)
