@@ -34,6 +34,46 @@ jobs:
       - name: make check
         run: make check
 
+  # D44 two lanes (E10.7): a PR touching a strategy path (config/strategy_lane.yaml)
+  # must carry `Experiment: X-<n>`, `Flag: <stem>.<key>` or `Lane: fast — <reason>` in
+  # its body; flipping an existing strategy default needs an experiment with a `win`
+  # verdict (docs/OPS.md 5.19). Deterministic: git diff + YAML, no LLM. The body is read
+  # at run time (not from the event payload), so after editing the PR body you re-run
+  # this job and it sees the new text.
+  strategy-lane:
+    name: strategy-lane
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (fails if uv.lock is stale)
+        run: uv sync --locked
+
+      - name: Read the current PR body
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/pr_body.md"
+
+      - name: Strategy-lane check
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: uv run python scripts/strategy_lane_check.py --base "$BASE" --head "$HEAD" --body-file "$RUNNER_TEMP/pr_body.md"
+
   audit:
     runs-on: ubuntu-latest
     steps:

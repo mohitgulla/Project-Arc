@@ -1,0 +1,59 @@
+# Strategy-lane CI check (PLAN D44 "two lanes"; card E10.7).
+# Read by scripts/strategy_lane_check.py, which runs as the `strategy-lane` job in
+# .github/workflows/ci.yml on every pull request. Deterministic: no network, no LLM.
+#
+# A PR that touches a path below is a *strategy-lane* PR. It passes only if its body
+# carries one of (docs/OPS.md 5.19):
+#
+#   Experiment: X-<n>          a spec with that id exists in config/experiments/live/
+#   Flag: <stem>.<path>        a NEW key in config/<stem>.yaml whose default is off
+#                              (false / off / none / null / control): control behaviour
+#   Lane: fast — <reason>      bug / safety / infra fix; arc-sentinel audits these
+#
+# A *promotion* (changing or removing a value that already exists in one of the
+# promotion_stems YAMLs below, i.e. flipping a default) passes only with `Experiment: X-<n>`
+# whose committed verdict (config/experiments/live/verdicts/X-<n>.yaml) is `win`, and
+# every changed value must equal that experiment's treatment overlay. `Lane: fast`
+# and `Flag:` never cover a promotion.
+#
+# Globs use fnmatch (`*` also crosses `/`); paths are repo-relative POSIX paths.
+# Gate and safety code (arc/gate/, arc/budget/, arc/pipeline/market_guard.py,
+# halts, reconcile, execution) is deliberately NOT strategy lane.
+# This file is itself strategy lane, so narrowing it needs a cited reason.
+
+strategy_paths:
+  - arc/exits/*                       # exit policy + managed-exit model
+  - arc/scanner/*                     # chain scan, filters, ranking
+  - arc/sizing.py
+  - arc/pipeline/steps.py             # Director/Quant/Risk/propose selection + menu ranking
+  - arc/pipeline/dedupe.py            # idea dedupe (which ideas reach Quant)
+  - arc/pipeline/portfolio_context.py # what the Director sees when it selects
+  - arc/personas/builders.py          # persona prompts
+  - arc/personas/entry_window.py      # entry window / delta bands told to personas
+  - hermes/skills/arc-*/SKILL.md      # persona skill prompts
+  - config/exits.yaml
+  - config/ranking.yaml
+  - config/account_profiles.yaml
+  - config/universe.yaml
+  - config/costs.yaml
+  - config/strategy_lane.yaml
+
+exclude_paths:
+  - "*/__pycache__/*"
+
+# Where registered experiment specs and their committed verdicts live.
+experiments_dir: config/experiments/live
+verdicts_dir: config/experiments/live/verdicts
+
+# Strategy YAMLs where changing or removing an existing value is a *promotion*. These
+# are the files a forward experiment can overlay (arc.experiments.models
+# OVERLAY_TARGETS), so a winning experiment can have tested the new value. A value
+# change in another strategy YAML (universe.yaml: no experiment can overlay it) is an
+# ordinary strategy-lane change: any one lane line covers it.
+promotion_stems: [exits, ranking, costs, account_profiles]
+
+# Values that count as "off" (control behaviour) for a new `Flag:` key.
+flag_off_values: [false, null, "off", "none", "control"]
+
+# Minimum length of the `Lane: fast` reason, so "Lane: fast — x" does not pass.
+fast_reason_min_chars: 10
