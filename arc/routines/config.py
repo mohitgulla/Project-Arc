@@ -65,6 +65,7 @@ from arc.context.categories import (
     CategorySpec,
     SourceCategory,
     parse_category,
+    parse_youtube_category,
 )
 from arc.context.kinds import KINDS
 from arc.context.store import Supersede
@@ -517,7 +518,7 @@ class RoutinesConfig(BaseModel):
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)  # E8.2
     loop: LoopSettings = Field(default_factory=LoopSettings)  # D31/D36 trading loop
     tower: TowerSettings = Field(default_factory=TowerSettings)  # E8.8b Arc Tower display knobs
-    # D47: five equal-weight source categories with a freshness window each. A
+    # D47/D49: six equal-weight source categories with a freshness window each. A
     # missing block (or a category missing from it) uses DEFAULT_CATEGORIES.
     categories: dict[SourceCategory, CategorySpec] = Field(
         default_factory=lambda: dict(DEFAULT_CATEGORIES)
@@ -567,9 +568,11 @@ class RoutinesConfig(BaseModel):
             raise ValueError(msg)
         out: dict[SourceCategory, Any] = dict(DEFAULT_CATEGORIES)
         for key, spec in v.items():
-            try:
-                cat = SourceCategory(str(key))
-            except ValueError:
+            try:  # D49 renames (company, macro) load as logged aliases; `video` refuses
+                cat = parse_category(key, where="categories")
+            except ValueError as exc:
+                if "split in two" in str(exc):
+                    raise
                 names = " | ".join(c.value for c in SourceCategory)
                 msg = f"categories: unknown category {key!r}; expected {names}"
                 raise ValueError(msg) from None
@@ -666,6 +669,19 @@ class RoutinesConfig(BaseModel):
         job_cat = opts.get("category")
         if job_cat is not None:
             parse_category(job_cat, where=f"sources.{name}")
+        channels = opts.get("channels")
+        if channels:  # D49: each YouTube channel declares its own category
+            if job_cat is not None:
+                msg = (
+                    f"source {name!r}: remove the job-level `category:` and set "
+                    "`category: youtube_macro | youtube_micro` on each channel (D49)"
+                )
+                raise ValueError(msg)
+            for raw in channels:
+                slug = raw.get("slug") if isinstance(raw, dict) else raw
+                cat = raw.get("category") if isinstance(raw, dict) else None
+                parse_youtube_category(cat, where=f"sources.{name}.channels.{slug}")
+            return
         feeds = opts.get("feeds") or []
         for raw in feeds:
             if isinstance(raw, dict):

@@ -1,0 +1,47 @@
+# Bravos Research (@BravosResearch): long-form macro thesis videos (Fed, liquidity,
+# debt, cross-market analogues), about 2 a week, 10-22 min, published about 15:00-18:00
+# ET (measured 2026-10-04: 15 uploads 2026-08-09..10-03, 629-1329 s). D49: youtube_macro.
+slug: bravos
+channel_id: UCOHxDwCcOzBaLkeTazanwcw
+display_name: Bravos Research
+url: https://www.youtube.com/channel/UCOHxDwCcOzBaLkeTazanwcw
+cadence: irregular
+horizon: multi_week
+publish_window_et: "14:00-18:00"
+focus:                     # it rarely names exact levels or single-name entries
+  - market_bias
+  - catalysts
+  - risk_flags
+trust_weight: 0.5          # D45: equal weight; D49: splits youtube_macro with FX Evolution
+guidelines_version: "bravos-2026-10-04.1"
+max_active_sessions: 1     # one trading day; the daily job caps it at run + 24 h
+# The closing paid-strategy pitch (read from two real transcripts, 2026-09-29 and
+# 2026-10-03): "secure your spot", "50% discount", "2 years of access for the price of 1",
+# "special Fed hike reports", "only N spots left", "link below".
+sponsor_patterns:
+  - '\bsecure your spot\b'
+  - '\block in your spot\b'
+  - '\blink (?:in the description|below)\b'
+  - '\b\d+% discount\b'
+  - '\bfor the price of (?:just )?(?:one|1) year\b'
+  - '\b(?:\d+|two) years? of access\b'
+  - '\bspots? left\b'
+  - '\bonboarding\b'
+  - '\bresearch and strategy package\b'
+  - '\bnormally(?:,)? (?:we (?:ask|charge)|these special reports)\b'
+  - '\busual(?:ly)? (?:\$\d[\d,]* price tag|costs?)\b'
+  - '\bfraction of the price\b'
+  - '\bcompletely for free\b'
+  - '\bspecial (?:fed hike )?reports?\b'
+  - '\bstrategy team\b'
+  - '\bdoing this (?:deal|offer)\b'
+  - '\bpay for itself\b'
+  - '\bthanks? (?:you )?for watching\b'
+hedge_words:
+  - could
+  - might
+  - may
+  - potentially
+  - we happen to think
+  - seems
+  - if

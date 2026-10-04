@@ -75,6 +75,7 @@ class Cadence(StrEnum):
 class Horizon(StrEnum):
     NEXT_SESSION = "next_session"
     MULTI_DAY = "multi_day"
+    MULTI_WEEK = "multi_week"  # D49: macro-thesis channels (Bravos)
     LONG_TERM = "long_term"
 
 

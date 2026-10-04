@@ -395,7 +395,7 @@ class TestDigestCards:
         # D47: grouped by category, equal shares, sources inside each
         assert (
             "*Source mix*\n*Market news* 50% · 8 read: rss 8\n"
-            "*Company* 50% · 3 read: EDGAR 2 · Earnings 1" in scout
+            "*Company data* 50% · 3 read: EDGAR 2 · Earnings 1" in scout
         )
         assert "• failed liquidity screen (1): UFPT" in scout
         assert "UFPT: ADV 118k &lt; 1.0M; no expiry in the DTE window" in scout

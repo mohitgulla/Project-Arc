@@ -622,7 +622,7 @@ def _earnings_ctx(conn: sqlite3.Connection, settings: ArcSettings, now: datetime
             "sources": {
                 "earnings": {
                     "schedule": ["06:00"],
-                    "category": "company",
+                    "category": "company_data",
                     "writes": ["raw_doc_ref"],
                 }
             }
@@ -652,7 +652,7 @@ def _dispatch(settings: ArcSettings, tmp: Path, days: int = 1) -> tuple[list, li
             "sources": {
                 "earnings": {
                     "schedule": ["06:00"],
-                    "category": "company",
+                    "category": "company_data",
                     "writes": ["raw_doc_ref"],
                 }
             }

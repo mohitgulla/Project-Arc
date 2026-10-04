@@ -1449,39 +1449,42 @@ _TOWER_TUNABLES: tuple[Tunable, ...] = (
 
 
 def _category_tunables() -> tuple[Tunable, ...]:
-    """D47 (E4.7): each source category's weight and freshness window.
+    """D47/D49 (E4.7, E4.9): each source category's weight and freshness window.
 
-    ``options_data`` keeps its session-based window (the per-kind TTLs are the real
-    limit there), so only its weight is tunable.
+    All six categories have a duration window since D49 (``options_data`` 12h, no
+    session special case). The D47 keys of renamed categories (``company``,
+    ``macro``) are aliases of the new keys, so a stored override on an old key
+    applies to the renamed category (:data:`CATEGORY_KEY_RENAMES`).
     """
     from arc.context.categories import SourceCategory
 
+    renamed = {new: old for old, new in CATEGORY_KEY_RENAMES.items()}
     out: list[Tunable] = []
     for c in SourceCategory:
+        old = renamed.get(c.value)
         out.append(
             Tunable(
                 key=f"categories.{c.value}.weight",
                 group=Group.ROUTINES,
                 type=_F,
-                description=f"D47: {c.value} share of the Scout doc budget relative to the "
-                "other categories (all 1 = equal; 0 = never read). Sources split it.",
+                description=f"D49: {c.value} share relative to the other categories (all 1 = "
+                "equal; 0 = never read). Sources (or YouTube channels) split it.",
                 target=Target.ROUTINES,
                 risk=Risk.ANY,
                 path=("categories", c.value, "weight"),
                 min=0,
                 max=5,
                 hard_ceiling=5,
+                aliases=(f"categories.{old}.weight",) if old else (),
             )
         )
-        if c is SourceCategory.OPTIONS_DATA:
-            continue
         out.append(
             Tunable(
                 key=f"categories.{c.value}.max_age",
                 group=Group.ROUTINES,
                 type=_I,
-                description=f"D47: {c.value} freshness window (minutes). Older docs are "
-                "never stored or read (skipped_stale); stories expire at window + 2h.",
+                description=f"D49: {c.value} freshness window (minutes). Older docs are "
+                "never stored or read (skipped_stale); older typed context shows as stale.",
                 target=Target.ROUTINES,
                 risk=Risk.UP,
                 path=("categories", c.value, "max_age"),
@@ -1489,9 +1492,17 @@ def _category_tunables() -> tuple[Tunable, ...]:
                 min=30,
                 max=10_080,
                 hard_ceiling=10_080,
+                aliases=(f"categories.{old}.max_age",) if old else (),
             )
         )
     return tuple(out)
+
+
+# D49: D47 category names renamed in place (old -> new). Their tunable keys stay as
+# aliases, so a change-log override on ``categories.company.weight`` applies to
+# ``categories.company_data.weight``. ``video`` was split, so its keys have no single
+# successor: an override on them is reported and dropped (control.override_unknown_key).
+CATEGORY_KEY_RENAMES: dict[str, str] = {"company": "company_data", "macro": "macro_data"}
 
 
 def _exp(key: str, desc: str, risk: Risk, path: tuple[str, ...], **kw: Any) -> Tunable:

@@ -31,8 +31,16 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
+from arc.context.categories import (
+    DEFAULT_CATEGORIES,
+    YOUTUBE_CATEGORIES,
+    SourceCategory,
+    channel_category,
+    normalize_category,
+    parse_youtube_category,
+)
 from arc.context.ttl import parse_duration
 from arc.ingest.channels.base import BriefParseError
 from arc.ingest.channels.briefs import STATUS_ACTIVE, ChannelBriefRepo, video_from_row
@@ -72,6 +80,11 @@ class DailyChannel(BaseModel):
 
     slug: str = Field(..., description="channel profile slug (arc/ingest/channels/<slug>/)")
     channel: str = Field(..., min_length=3, description="UC... id or a full channel URL")
+    category: SourceCategory = Field(
+        None,  # type: ignore[assignment]  # validated: missing raises (D49)
+        validate_default=True,
+        description="D49: youtube_macro | youtube_micro (required)",
+    )
     label: str = ""
     max_videos: int = Field(5, ge=1, le=50)
     max_audio_minutes: int | None = Field(None, ge=1)
@@ -85,6 +98,12 @@ class DailyChannel(BaseModel):
             msg = f"channel slug must be lower-case [a-z0-9_-], got {v!r}"
             raise ValueError(msg)
         return v
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _category(cls, v: Any, info: ValidationInfo) -> Any:
+        slug = (info.data or {}).get("slug", "?")
+        return parse_youtube_category(v, where=f"youtube.briefs.channels.{slug}")
 
     @field_validator("title_exclude")
     @classmethod
@@ -305,6 +324,7 @@ class ChannelRun:
         p = self.pick
         return {
             "outcome": self.outcome.value,
+            "category": self.channel.category.value,
             "scanned": p.scanned,
             "metadata_fetched": p.metadata_fetched,
             "excluded": [e.as_dict() for e in p.excluded],
@@ -552,35 +572,65 @@ def mark_brief_only(conn: sqlite3.Connection, doc_ids: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def brief_presence_line(present: Iterable[str], channels: Sequence[Mapping[str, str]]) -> str:
-    """``YouTube briefs: n/N channels (missing: …)`` from config + active briefs."""
+def _channel_cat(c: Mapping[str, Any]) -> SourceCategory | None:
+    return normalize_category(c.get("category"))
+
+
+def category_channels(
+    channels: Sequence[Mapping[str, Any]], category: SourceCategory | None
+) -> list[Mapping[str, Any]]:
+    """The configured channels in *category* (all of them when *category* is None)."""
+    if category is None:
+        return list(channels)
+    return [c for c in channels if _channel_cat(c) is category]
+
+
+def brief_presence_line(
+    present: Iterable[str],
+    channels: Sequence[Mapping[str, Any]],
+    category: SourceCategory | None = None,
+) -> str:
+    """``YouTube macro briefs: n/N channels (missing: …)`` from config + active briefs.
+
+    D49: with *category*, the denominator is the channels configured in that category
+    (never all channels, never renormalised over the ones present). Without it, every
+    channel (``YouTube briefs: …``).
+    """
     have = set(present)
-    missing = [c.get("label") or c["slug"] for c in channels if c["slug"] not in have]
-    n = sum(1 for c in channels if c["slug"] in have)
-    line = f"YouTube briefs: {n}/{len(channels)} channels"
+    chs = category_channels(channels, category)
+    missing = [c.get("label") or c["slug"] for c in chs if c["slug"] not in have]
+    n = sum(1 for c in chs if c["slug"] in have)
+    name = "YouTube" if category is None else DEFAULT_CATEGORIES[category].label
+    line = f"{name} briefs: {n}/{len(chs)} channels"
     return f"{line} (missing: {', '.join(missing)})" if missing else line
 
 
 def brief_agreement(
-    briefs: Iterable[Mapping[str, Any]], channels: Sequence[Mapping[str, str]]
+    briefs: Iterable[Mapping[str, Any]],
+    channels: Sequence[Mapping[str, Any]],
+    category: SourceCategory | None = None,
 ) -> list[str]:
     """Distinct-channel agreement per (ticker, stance), counted by code.
 
     Each channel is one equal-weight voice: a channel's several calls on one
-    ticker count once, and the denominator is every configured channel (no
-    renormalisation over the ones present). The market bias counts as ticker
-    ``market``. Sorted by count, then ticker.
+    ticker count once, and the denominator is every configured channel *in the
+    category* (D49; all channels when *category* is None), with no renormalisation
+    over the ones present. Briefs from channels outside the category never count.
+    The market bias counts as ticker ``market``. Sorted by count, then ticker.
     """
-    labels = {c["slug"]: c.get("label") or c["slug"] for c in channels}
+    chs = category_channels(channels, category)
+    labels = {c["slug"]: c.get("label") or c["slug"] for c in chs}
     voices: dict[tuple[str, str], set[str]] = {}
     for b in briefs:
         slug = str(b.get("channel_slug"))
+        if slug not in labels:
+            continue
         bias = b.get("market_bias")
         if isinstance(bias, Mapping) and bias.get("stance"):
             voices.setdefault(("market", str(bias["stance"])), set()).add(slug)
         for call in b.get("calls") or []:
             voices.setdefault((str(call["ticker"]), str(call["stance"])), set()).add(slug)
-    total = len(channels)
+    total = len(chs)
     lines = []
     for (ticker, stance), slugs in sorted(
         voices.items(), key=lambda kv: (-len(kv[1]), kv[0][0], kv[0][1])
@@ -588,6 +638,26 @@ def brief_agreement(
         names = ", ".join(sorted(labels.get(s, s) for s in slugs))
         lines.append(f"{ticker} {stance}: {len(slugs)}/{total} channels ({names})")
     return lines
+
+
+def youtube_groups(
+    channels: Sequence[Mapping[str, Any]],
+) -> list[tuple[SourceCategory | None, list[Mapping[str, Any]]]]:
+    """``[(category, channels)]`` in display order (D49), one per YouTube category.
+
+    Channels recorded before D49 carry no category; then one ungrouped
+    ``(None, channels)`` entry keeps an old prompt input readable.
+    """
+    if channels and all(_channel_cat(c) is None for c in channels):
+        return [(None, list(channels))]
+    return [(cat, category_channels(channels, cat)) for cat in YOUTUBE_CATEGORIES]
+
+
+def brief_category(
+    brief: Mapping[str, Any], channels: Sequence[Mapping[str, Any]]
+) -> SourceCategory | None:
+    """D49: a ``channel_brief``'s category, from its channel's config entry."""
+    return channel_category(brief.get("channel_slug"), channels)
 
 
 def prompt_brief(b: Mapping[str, Any], label: str) -> dict[str, Any]:
@@ -602,11 +672,13 @@ def prompt_brief(b: Mapping[str, Any], label: str) -> dict[str, Any]:
 
 
 def configured_channels(routines_options: Mapping[str, Any] | None) -> list[dict[str, str]]:
-    """``[{slug, label}]`` of the ``youtube.briefs`` job, or ``[]`` when not configured."""
+    """``[{slug, label, category}]`` of the ``youtube.briefs`` job, ``[]`` if not configured."""
     if not routines_options or not routines_options.get("channels"):
         return []
     cfg = DailyBriefConfig.from_options(routines_options)
-    return [{"slug": c.slug, "label": c.display} for c in cfg.channels]
+    return [
+        {"slug": c.slug, "label": c.display, "category": c.category.value} for c in cfg.channels
+    ]
 
 
 def present_count(runs: Iterable[ChannelRun]) -> Counter[str]:

@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 import pytest
+import structlog.testing
 from hypothesis import given
 from hypothesis import settings as hsettings
 from hypothesis import strategies as st
@@ -94,7 +95,12 @@ FEEDS = [
         "url": "https://www.cnbc.com/rss.html",
         "category": "market_news",
     },
-    {"name": "sa", "label": "SA", "url": "https://seekingalpha.com/mc.xml", "category": "company"},
+    {
+        "name": "sa",
+        "label": "SA",
+        "url": "https://seekingalpha.com/mc.xml",
+        "category": "company_data",
+    },
     {
         "name": "nasdaq",
         "label": "Nasdaq",
@@ -105,7 +111,7 @@ FEEDS = [
         "name": "fed",
         "label": "Fed",
         "url": "https://www.federalreserve.gov/feeds/press_all.xml",
-        "category": "macro",
+        "category": "macro_data",
     },
 ]
 
@@ -118,7 +124,7 @@ def _shipped_like() -> RoutinesConfig:
                 "every": "15m",
                 "writes": ["raw_doc_ref"],
                 "label": "EDGAR",
-                "category": "company",
+                "category": "company_data",
             },
         }
     )
@@ -136,15 +142,32 @@ class TestRegistry:
         assert {"wsj", "cnbc", "seekingalpha", "nasdaq", "fed", "edgar", "earnings"} <= set(
             reg.sources
         )
-        assert reg.sources["edgar"].category is SourceCategory.COMPANY
-        assert reg.sources["earnings"].category is SourceCategory.COMPANY
-        assert reg.sources["fed"].category is SourceCategory.MACRO
+        assert reg.sources["edgar"].category is SourceCategory.COMPANY_DATA
+        assert reg.sources["earnings"].category is SourceCategory.COMPANY_DATA
+        assert reg.sources["fed"].category is SourceCategory.MACRO_DATA
         assert reg.sources["wsj"].category is SourceCategory.MARKET_NEWS
         # data jobs write typed kinds, never raw docs: not Scout sources
         assert "vol_term" not in reg.sources and "unusual_options" not in reg.sources
         assert abs(sum(reg.effective_weights().values()) - 1.0) < 1e-9
-        # D47: five categories, weighted equally, each with a freshness window
+        # D49: six categories, weighted equally, each with a freshness window
+        assert [c.value for c in SourceCategory] == [
+            "market_news",
+            "company_data",
+            "macro_data",
+            "options_data",
+            "youtube_macro",
+            "youtube_micro",
+        ]
         assert set(routines.categories) == set(SourceCategory)
+        windows = {c.value: s.max_age.duration for c, s in routines.categories.items()}
+        assert windows == {
+            "market_news": dt.timedelta(hours=6),
+            "company_data": dt.timedelta(hours=24),
+            "macro_data": dt.timedelta(hours=24),
+            "options_data": dt.timedelta(hours=12),
+            "youtube_macro": dt.timedelta(hours=24),
+            "youtube_micro": dt.timedelta(hours=24),
+        }
         assert {c.weight for c in routines.categories.values()} == {1.0}
         assert routines.categories[SourceCategory.MARKET_NEWS].max_age.duration == dt.timedelta(
             hours=6
@@ -157,24 +180,47 @@ class TestRegistry:
         with pytest.raises(ValueError, match="unknown source category"):
             _routines({"edgar": {"every": "15m", "writes": ["raw_doc_ref"], "category": "x"}})
 
-    def test_legacy_category_names_alias_to_d47(self) -> None:
-        reg = SourceRegistry.from_routines(
-            _routines(
-                {
-                    "edgar": {"every": "15m", "writes": ["raw_doc_ref"], "category": "filings"},
-                    "earnings": {"every": "1h", "writes": ["raw_doc_ref"], "category": "calendar"},
-                }
+    def test_legacy_category_names_alias_to_d49(self) -> None:
+        """Pre-D47 names and the D47 names D49 renamed load as logged aliases."""
+        with structlog.testing.capture_logs() as logs:
+            reg = SourceRegistry.from_routines(
+                _routines(
+                    {
+                        "edgar": {"every": "15m", "writes": ["raw_doc_ref"], "category": "filings"},
+                        "earnings": {
+                            "every": "1h",
+                            "writes": ["raw_doc_ref"],
+                            "category": "calendar",
+                        },
+                        "sec": {"every": "1h", "writes": ["raw_doc_ref"], "category": "company"},
+                        "fedwire": {"every": "1h", "writes": ["raw_doc_ref"], "category": "macro"},
+                    }
+                )
             )
-        )
-        assert reg.sources["edgar"].category is SourceCategory.COMPANY
-        assert reg.sources["earnings"].category is SourceCategory.COMPANY
+        assert reg.sources["edgar"].category is SourceCategory.COMPANY_DATA
+        assert reg.sources["earnings"].category is SourceCategory.COMPANY_DATA
+        assert reg.sources["sec"].category is SourceCategory.COMPANY_DATA
+        assert reg.sources["fedwire"].category is SourceCategory.MACRO_DATA
+        aliased = {(e["old"], e["new"]) for e in logs if e["event"] == "sources.category_alias"}
+        assert ("company", "company_data") in aliased and ("macro", "macro_data") in aliased
+
+    def test_video_category_is_refused_with_a_pointer(self) -> None:
+        """D49: `video` was split in two; config load names the per-channel fix."""
+        with pytest.raises(ValueError, match="split in two"):
+            _routines({"edgar": {"every": "15m", "writes": ["raw_doc_ref"], "category": "video"}})
 
     def test_categories_block_is_strict_and_partial(self) -> None:
-        r = RoutinesConfig.model_validate({"categories": {"macro": {"weight": 2, "max_age": "3d"}}})
-        assert r.categories[SourceCategory.MACRO].weight == 2
+        r = RoutinesConfig.model_validate(
+            {"categories": {"macro_data": {"weight": 2, "max_age": "3d"}}}
+        )
+        assert r.categories[SourceCategory.MACRO_DATA].weight == 2
+        old = RoutinesConfig.model_validate({"categories": {"company": {"weight": 3}}})
+        assert old.categories[SourceCategory.COMPANY_DATA].weight == 3  # D49 alias
+        with pytest.raises(ValueError, match="split in two"):
+            RoutinesConfig.model_validate({"categories": {"video": {"weight": 1}}})
         assert r.categories[SourceCategory.MARKET_NEWS].weight == 1  # unset: default kept
         with pytest.raises(ValueError, match="unknown category"):
-            RoutinesConfig.model_validate({"categories": {"filings": {"weight": 1}}})
+            RoutinesConfig.model_validate({"categories": {"crypto": {"weight": 1}}})
 
     def test_plain_url_feed_still_loads(self) -> None:
         """PR #40 shape: a bare URL string is a source named by its domain (job category)."""
@@ -225,7 +271,7 @@ class TestRegistry:
         r = RoutinesConfig.model_validate(
             {
                 "sources": {"rss": {"every": "30m", "writes": ["raw_doc_ref"], "feeds": FEEDS}},
-                "categories": {"macro": {"weight": 2}},
+                "categories": {"macro_data": {"weight": 2}},
             }
         )
         w = SourceRegistry.from_routines(r).effective_weights()
@@ -398,7 +444,7 @@ class TestFreshness:
                     "earnings": {
                         "every": "1h",
                         "writes": ["raw_doc_ref"],
-                        "category": "company",
+                        "category": "company_data",
                         "age_basis": "ingested",
                     }
                 }
@@ -634,7 +680,7 @@ class TestStories:
                 f"8-K item {i}",
                 i * 0.1,
                 source="edgar",
-                category="company",
+                category="company_data",
                 tickers=["TSLA"],
                 form_type="8-K",
             )
@@ -646,7 +692,7 @@ class TestStories:
                 "10-Q",
                 0.2,
                 source="edgar",
-                category="company",
+                category="company_data",
                 tickers=["TSLA"],
                 form_type="10-Q",
             )
@@ -922,7 +968,7 @@ class TestTwoStage:
                     "edgar": {
                         "every": "15m",
                         "writes": ["raw_doc_ref"],
-                        "category": "company",
+                        "category": "company_data",
                         "max_age": "30d",
                     }
                 },
@@ -982,8 +1028,11 @@ def test_story_payload_keeps_code_fields_over_llm(conn) -> None:
 
 
 def test_registry_spec_default_for_unknown_key() -> None:
-    reg = SourceRegistry(sources={"x": SourceSpec(key="x", job="x", category=SourceCategory.MACRO)})
-    assert reg.spec_for("youtube.other").category is SourceCategory.VIDEO
+    reg = SourceRegistry(
+        sources={"x": SourceSpec(key="x", job="x", category=SourceCategory.MACRO_DATA)}
+    )
+    # A removed channel's legacy rows: a YouTube category, never a Scout one (D45, D49)
+    assert reg.spec_for("youtube.other").category is SourceCategory.YOUTUBE_MICRO
 
 
 def test_category_tunables_reach_the_registry(conn, tmp_path) -> None:
@@ -993,9 +1042,12 @@ def test_category_tunables_reach_the_registry(conn, tmp_path) -> None:
     from arc.control.service import ControlService
 
     owner = "U0OWNER001"
-    assert REGISTRY["categories.macro.weight"].max == 5
+    assert REGISTRY["categories.macro_data.weight"].max == 5
     assert REGISTRY["categories.market_news.max_age"].min == 30
-    assert "categories.options_data.max_age" not in REGISTRY  # session-based: weight only
+    # D49: options_data has a duration window now (12h), so its max_age is tunable too
+    assert REGISTRY["categories.options_data.max_age"].min == 30
+    old = ("categories.company.", "categories.macro.", "categories.video.")
+    assert not any(k.startswith(old) for k in REGISTRY)
     p = tmp_path / "routines.yaml"
     p.write_text(DEFAULT_ROUTINES_PATH.read_text())
     svc = ControlService(
@@ -1005,12 +1057,15 @@ def test_category_tunables_reach_the_registry(conn, tmp_path) -> None:
         optionable=lambda s: True,
         is_halted=lambda: False,
     )
-    for key, value in (("categories.macro.weight", "2"), ("categories.market_news.max_age", "90")):
+    for key, value in (
+        ("categories.macro_data.weight", "2"),
+        ("categories.market_news.max_age", "90"),
+    ):
         r = svc.set(key, value, actor=owner, source="slack")
         if r.pending is not None:
             r = svc.confirm(r.pending.code, actor=owner, source="slack")
         assert r.outcome == "applied", r
     reg = SourceRegistry.from_routines(effective_routines(conn, p))
-    assert reg.category_weights()[SourceCategory.MACRO] == pytest.approx(0.5)
+    assert reg.category_weights()[SourceCategory.MACRO_DATA] == pytest.approx(0.5)
     assert reg.max_age_for("wsj").duration == dt.timedelta(minutes=90)
     assert reg.is_stale("wsj", published=NOW - dt.timedelta(hours=2), ingested=NOW, now=NOW)

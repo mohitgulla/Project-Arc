@@ -540,7 +540,7 @@ def _routines(job: str, **opts: Any) -> RoutinesConfig:
         {
             "context_ttl": {kind: {"ttl": "8d", "supersede": "latest"}},
             "sources": {
-                job: {"schedule": ["06:30"], "writes": [kind], "category": "company", **opts}
+                job: {"schedule": ["06:30"], "writes": [kind], "category": "company_data", **opts}
             },
         }
     )

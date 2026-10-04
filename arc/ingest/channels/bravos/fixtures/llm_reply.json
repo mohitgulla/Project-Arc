@@ -1,0 +1,57 @@
+{
+  "market_bias": {
+    "stance": "neutral",
+    "confidence": 0.3,
+    "quote": "Now, today, despite the Fed's recent rate hikes, we can see that the stock market's momentum is still strong, at least for now."
+  },
+  "catalysts": [
+    {
+      "event": "Fed raised rates 25 bps in September and is projected to keep hiking in the coming months",
+      "kind": "fed",
+      "expected_impact": "bearish",
+      "date": null,
+      "tickers": [
+        "SPY"
+      ],
+      "quote": "In September, the Federal Reserve finally pulled the trigger, raising their interest rate by 25 basis points. And they're projected to continue doing so in the coming months."
+    },
+    {
+      "event": "Bank of Korea hikes lead the Fed; two consecutive Korean hikes now followed by the Fed",
+      "kind": "macro",
+      "expected_impact": "bearish",
+      "date": null,
+      "tickers": [],
+      "quote": "After the Bank of Korea raised interest rates for two consecutive months, the Federal Reserve has now followed in the same direction."
+    },
+    {
+      "event": "Ongoing foreign institutional exodus from Korean equities, tracked as a lead indicator for the US",
+      "kind": "macro",
+      "expected_impact": "bearish",
+      "date": null,
+      "tickers": [],
+      "quote": "In August alone, foreign institutional investors reportedly dumped nearly $7.3 billion worth of Korean stocks, extending their selling streak that has now lasted for seven straight months."
+    }
+  ],
+  "risk_flags": [
+    {
+      "flag": "US margin debt ~$1.4T, above the 2000, 2007 and 2021 extremes",
+      "severity": "high",
+      "quote": "Today's margin debt levels have already surpassed the extreme levels that we saw in October of 2021, in July of 2007, and March of 2000."
+    },
+    {
+      "flag": "Tightening financial policy raises the odds of an excessive-leverage unwind",
+      "severity": "high",
+      "quote": "the truth is in a leveraged market when financial policy becomes tight and less supportive, there's a much higher likelihood that excessive leverage unwinds"
+    },
+    {
+      "flag": "Korean situation deteriorating despite the rebound; presenters think the decline is not over",
+      "severity": "med",
+      "quote": "what we actually see when we look a little bit deeper is that the situation in South Korea is getting worse by the day, and we happen to think that this story is actually far from over"
+    },
+    {
+      "flag": "Team sees a major turning point for the US economy with big changes in the coming months",
+      "severity": "med",
+      "quote": "We are at a major turning point for the US economy right now and we want people to be prepared before things start to turn."
+    }
+  ]
+}
