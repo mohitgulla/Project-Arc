@@ -65,16 +65,21 @@ class ExperimentListItem(BaseModel):
     primary_ci_lo: float | None = None
     primary_ci_hi: float | None = None
     ci_level: float | None = Field(None, description="Always-valid CI coverage, e.g. 0.95")
+    primary_p: float | None = Field(None, description="Always-valid mSPRT p of no difference")
     secondary: view.SecondaryState | None = Field(
         None, description="Sortino non-inferiority: ok | not_shown | aa | pending"
     )
     sortino_control: float | None = None
     sortino_treatment: float | None = None
+    sortino_delta: float | None = Field(None, description="Treatment − control Sortino")
+    sortino_p: float | None = Field(
+        None, description="Paired-bootstrap p (one-sided vs the margin; two-sided for aa)"
+    )
     verdict: str | None = Field(None, description="Latest verdict: continue|win|futility|invalid")
     verdict_reason: str | None = None
     evaluated_at: _dt.datetime | None = None
     as_of_day: _dt.date | None = None
-    line: str | None = Field(None, description="The daily [Experiments] Slack line, verbatim")
+    line: str | None = Field(None, description="The daily [XP-n] Slack line, verbatim")
 
 
 class ExperimentsResponse(BaseModel):
@@ -126,9 +131,12 @@ def _item(st: ExperimentState, rep: ExperimentReport | None) -> ExperimentListIt
         primary_ci_lo=None if ci is None else ci.lo,
         primary_ci_hi=None if ci is None else ci.hi,
         ci_level=None if ci is None else ci.level,
+        primary_p=rep.primary.p_value,
         secondary=view.secondary_state(rep),
         sortino_control=rep.secondary.sortino_control,
         sortino_treatment=rep.secondary.sortino_treatment,
+        sortino_delta=view.sortino_delta(rep),
+        sortino_p=rep.secondary.p_value,
         verdict=rep.verdict,
         verdict_reason=rep.verdict_reason,
         evaluated_at=rep.evaluated_at,

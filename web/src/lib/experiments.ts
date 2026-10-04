@@ -54,6 +54,25 @@ export function secondaryText(r: ExperimentRow): string {
   return r.secondary ? (SECONDARY_LABEL[r.secondary] ?? r.secondary) : "—";
 }
 
+/** "0.21" / "0.004" / "<0.001" / "n/a" (same as arc.experiments.view.p_text). */
+export function pText(p: number | null | undefined): string {
+  if (p === null || p === undefined) return "n/a";
+  if (p < 0.001) return "<0.001";
+  return p < 0.01 ? p.toFixed(3) : p.toFixed(2);
+}
+
+/** "+0.35" / "−0.10" / "n/a" (Sortino values and differences). */
+export function ratioText(v: number | null | undefined, sign = false): string {
+  if (v === null || v === undefined) return "n/a";
+  const t = v.toFixed(2);
+  return (sign && v >= 0 ? "+" : "") + t.replace("-", MINUS);
+}
+
+/** "Sortino ∆ +0.35 (p: 0.04)", the Slack line's wording. */
+export function sortinoText(r: ExperimentRow): string {
+  return `∆ ${ratioText(r.sortino_delta, true)} (p: ${pText(r.sortino_p)}) · ${secondaryText(r)}`;
+}
+
 /** Status pill text, with the stop reason: "stopped (win)". */
 export function statusText(r: Pick<ExperimentRow, "status" | "reason">): string {
   return r.reason ? `${r.status} (${r.reason})` : r.status;

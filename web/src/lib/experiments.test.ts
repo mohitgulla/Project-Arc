@@ -9,6 +9,8 @@ import {
   curveView,
   deltaText,
   pct,
+  pText,
+  ratioText,
   secondaryText,
   sessionsText,
   statusText,
@@ -117,5 +119,19 @@ describe("detail views", () => {
       { by: "structure_kind", key: "vertical_debit", control: null, treatment: { trades: 1, pnl: -10 } },
     ]);
     expect(armRows(null)).toEqual([]);
+  });
+});
+
+describe("p-value and Sortino text (owner line format)", () => {
+  it("formats p like the Slack line", () => {
+    expect(pText(undefined)).toBe("n/a");
+    expect(pText(0.0004)).toBe("<0.001");
+    expect(pText(0.004)).toBe("0.004");
+    expect(pText(0.214)).toBe("0.21");
+  });
+  it("signs Sortino deltas with a real minus", () => {
+    expect(ratioText(0.35, true)).toBe("+0.35");
+    expect(ratioText(-0.1, true)).toBe("−0.10");
+    expect(ratioText(null)).toBe("n/a");
   });
 });

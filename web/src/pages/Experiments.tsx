@@ -17,8 +17,10 @@ import {
   cumulativeView,
   curveView,
   deltaText,
+  pText,
   secondaryText,
   sessionsText,
+  sortinoText,
   statusText,
   type ExperimentDetail,
   type ExperimentRow,
@@ -35,16 +37,16 @@ const COLS: ColumnDef<ExperimentRow>[] = [
   { header: "Area", id: "area", accessorFn: (r) => `${r.area}${r.kind === "aa" ? " (A/A)" : ""}` },
   { header: "Sessions", id: "sessions", accessorFn: (r) => sessionsText(r) },
   {
-    header: "Primary Δ",
+    header: "Paired Daily P&L ∆",
     id: "primary",
     accessorFn: (r) => r.primary_mean ?? null,
     cell: ({ row }) => (
       <span className={TONE_TEXT[ciTone(row.original)]}>
-        {deltaText(row.original)} {ciText(row.original)}
+        {deltaText(row.original)} (p: {pText(row.original.primary_p)})
       </span>
     ),
   },
-  { header: "Secondary", id: "secondary", accessorFn: (r) => secondaryText(r) },
+  { header: "Sortino ∆", id: "secondary", accessorFn: (r) => sortinoText(r) },
   { header: "Verdict", id: "verdict", accessorFn: (r) => r.verdict ?? "—" },
 ];
 
@@ -117,17 +119,17 @@ export function ExperimentBody({ d }: { d: ExperimentDetail }) {
           { label: "Status", value: statusText(e) },
           { label: "Sessions", value: sessionsText(e) },
           {
-            label: "Primary Δ (paired daily P&L)",
+            label: "Paired Daily P&L",
             value: (
               <span className={TONE_TEXT[ciTone(e)]}>
-                {deltaText(e)} {ciText(e)}
+                ∆ {deltaText(e)} (p: {pText(e.primary_p)}) {ciText(e)}
               </span>
             ),
             hint: e.ci_level ? `always-valid ${Math.round(e.ci_level * 100)}% CI, % of t0 equity` : undefined,
           },
           {
-            label: "Secondary (Sortino)",
-            value: secondaryText(e),
+            label: "Sortino Ratio",
+            value: sortinoText(e),
             hint:
               e.sortino_control !== null && e.sortino_control !== undefined
                 ? `control ${e.sortino_control.toFixed(2)} · treatment ${e.sortino_treatment?.toFixed(2) ?? "n/a"}`

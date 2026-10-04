@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import sqlite3
 from pathlib import Path  # noqa: TC003 - pytest fixture annotations
 
@@ -25,7 +26,6 @@ from arc.experiments.config import ExperimentsConfig
 from arc.experiments.evaluate import ExperimentReport, build_report, evaluate, latest_report
 from arc.experiments.models import ExperimentStatus
 from arc.experiments.store import ExperimentStore
-from arc.slack.blocks import esc
 from arc.slack.experiments import experiment_line, experiment_stop_card, stop_title
 from arc.store.db import connect
 from arc.store.migrate import migrate
@@ -110,13 +110,16 @@ def test_parity_slack_line_tower_api_and_cli_report(
     # the Slack line is rendered from the same numbers, and the tower carries it verbatim
     line = experiment_line(report).text
     assert row["line"] == detail["experiment"]["line"] == line
+    assert row["primary_p"] == cli["primary"]["p_value"] is not None
+    assert row["sortino_p"] == cli["secondary"]["p_value"] is not None
+    sd = cli["secondary"]["diff_ci"]["estimate"]
+    assert row["sortino_delta"] == pytest.approx(sd)
     mean, lo, hi = cli["primary"]["mean"], cli["primary"]["ci"]["lo"], cli["primary"]["ci"]["hi"]
     want = (
-        f"[Experiments] X-2 • exits • day 14/20–60 • "
-        f"Δ {mean * 100:+.2f}%/day [{lo * 100:+.2f}, {hi * 100:+.2f}] • "
-        f"{view.secondary_text(report)}"
-    ).replace("-", "−")
-    assert line == want.replace("[Experiments] X−2", "[Experiments] X-2")
+        f"[X-2] Day 14 • P&L ∆ {view.pct(mean)}/day (p: {view.p_text(cli['primary']['p_value'])})"
+        f" • Sortino ∆ {view.ratio(sd, sign=True)} (p: {view.p_text(cli['secondary']['p_value'])})"
+    )
+    assert line == want
 
     # per-arm table: same drawdown / worst day / orders as the CLI report
     arms = {a["arm"]: a for a in detail["report"]["arms"]}
@@ -229,28 +232,56 @@ def conn() -> sqlite3.Connection:
     return c
 
 
-def test_daily_line_matches_card_example_shape(conn: sqlite3.Connection) -> None:
+def test_daily_line_matches_owner_format(conn: sqlite3.Connection) -> None:
     ctrl, treat = _curves(14, 80.0)
     r = _report(conn, ctrl, treat)
     line = view.daily_line(r)
-    head, area, prog, delta, sec = line.split(" • ")
-    assert head == "[Experiments] X-2" and area == "exits" and prog == "day 14/20–60"
-    assert delta.startswith("Δ ") and delta.endswith("]") and "%/day [" in delta
-    assert sec in {"Sortino ok", "Sortino not shown"}
-    assert "-" not in delta  # real minus signs only
+    head, pnl, sortino = line.split(" • ")
+    assert head == "[X-2] Day 14"
+    assert re.fullmatch(r"P&L ∆ [+−]\d+\.\d\d%/day \(p: (<0\.001|\d\.\d{2,3})\)", pnl), pnl
+    assert re.fullmatch(r"Sortino ∆ [+−]\d+\.\d\d \(p: (<0\.001|\d\.\d{2,3})\)", sortino), sortino
+    assert "-" not in pnl + sortino  # real minus signs only
+    assert "[Experiments]" not in line and " day " not in line
 
 
 def test_line_before_any_ci_and_for_aa(conn: sqlite3.Connection) -> None:
     store = fx.start(conn, fx.spec("X-2"))
     r0 = build_report(conn, store.require("X-2"), CFG, now=fx.T0)
-    assert view.daily_line(r0) == (
-        "[Experiments] X-2 • exits • day 0/20–60 • Δ n/a/day [n/a] • Sortino pending"
-    )
+    assert view.daily_line(r0) == "[X-2] Day 0 • P&L ∆ n/a (p: n/a) • Sortino ∆ n/a (p: n/a)"
     c2 = connect(":memory:")
     migrate(c2)
     aa = _report(c2, [10.0, -5.0, 3.0], [12.0, -4.0, 1.0], kind="aa")
-    assert view.daily_line(aa).startswith("[Experiments] X-2 • other A/A • day 3/10–10 • Δ ")
-    assert view.daily_line(aa).endswith("Sortino n/a (A/A)")
+    assert view.daily_line(aa).startswith("[X-2] A/A Day 3 • P&L ∆ ")
+
+
+def test_msprt_p_is_the_dual_of_the_ci(conn: sqlite3.Connection) -> None:
+    """p < alpha exactly when the always-valid CI excludes 0 (same sigma, tau)."""
+    for seed, edge in [(1, 0.0), (2, 40.0), (3, 120.0), (5, 400.0), (9, -300.0)]:
+        c = connect(":memory:")
+        migrate(c)
+        ctrl, treat = _curves(25, edge, seed=seed)
+        r = _report(c, ctrl, treat)
+        assert r.primary.ci is not None and r.primary.p_value is not None
+        assert (r.primary.p_value < r.alpha) == r.primary.ci.excludes_zero, (seed, edge)
+
+
+def test_sortino_p_agrees_with_non_inferiority(conn: sqlite3.Connection) -> None:
+    for seed, edge in [(1, 0.0), (5, 400.0), (9, -300.0)]:
+        c = connect(":memory:")
+        migrate(c)
+        ctrl, treat = _curves(25, edge, seed=seed)
+        r = _report(c, ctrl, treat)
+        s = r.secondary
+        assert s.p_value is not None and s.non_inferior is not None
+        # one-sided bootstrap p and the level 1-2a percentile CI share the resamples
+        assert (s.p_value < r.alpha) == s.non_inferior or abs(s.p_value - r.alpha) < 0.01
+
+
+def test_p_text() -> None:
+    assert view.p_text(None) == "n/a"
+    assert view.p_text(0.0004) == "<0.001"
+    assert view.p_text(0.004) == "0.004"
+    assert view.p_text(0.214) == "0.21"
 
 
 def test_cumulative_band_matches_confidence_sequence_at_every_prefix(
@@ -305,40 +336,47 @@ def _texts(blocks: list[dict]) -> str:  # type: ignore[type-arg]
     return json.dumps(blocks, ensure_ascii=False)
 
 
-def test_stop_card_layout_numbers_and_report_link(conn: sqlite3.Connection) -> None:
+def test_stop_card_layout_matches_owner_spec(conn: sqlite3.Connection) -> None:
     rep = _stopped_report(conn)
-    card = experiment_stop_card(rep, tower_url="http://100.64.0.9:4174/")
+    card = experiment_stop_card(rep)
     b = card.blocks
     assert b[0]["type"] == "header"
-    title = "[Experiments] Stopped: X-2 • Win • 25 Sessions"
-    assert b[0]["text"]["text"] == stop_title(rep) == title
-    assert b[1]["type"] == "context"  # summary line
-    summary = b[1]["elements"][0]["text"]
-    assert summary.startswith("Verdict Win · exits ab · Δ ") and summary.endswith("Sortino ok")
+    title = b[0]["text"]["text"]
+    assert title == stop_title(rep) == card.text
+    assert title == (f"[X-2] Day 25 • Win • {view.delta_text(rep)} • {view.sortino_text(rep)}")
     fields = [f["text"] for blk in b if blk.get("fields") for f in blk["fields"]]
     labels = [f.split("\n", 1)[0] for f in fields]
     assert labels[:5] == [
-        "*Primary (paired daily P&L)*",
-        "*Secondary (Sortino)*",
+        "*Paired Daily P&L*",
+        "*Sortino Ratio*",
         "*Control*",
         "*Treatment*",
         "*Sessions*",
     ]
-    assert view.delta_text(rep) in fields[0]
-    assert "Max drawdown" in fields[2] and "Worst day" in fields[2] and "Orders" in fields[2]
+    prim, sec, ctrl, treat, sess = fields[:5]
+    # primary and secondary share one shape: ∆, p, CI, control, treatment, margin
+    for f, p_label in ((prim, "mSPRT p "), (sec, "Bootstrap p ")):
+        rows = [ln.split(" ", 1)[0] for ln in f.split("\n")[1:]]
+        assert rows[:6] == ["∆", p_label.split()[0], rows[2], "Control", "Treatment", "Margin"]
+        assert p_label in f and " CI [" in f
+    assert "Margin −0.50 (non-inferiority)" in sec
+    for arm in (ctrl, treat):
+        for k in ("P&L ", "Max drawdown", "Worst day", "Orders", "Fills", "Mean slippage"):
+            assert k in arm
+    assert f"Day 25/{rep.min_sessions}–{rep.max_sessions}" in sess
+    assert f"{rep.t0:%b %-d} (t0) • Equity $100,000" in sess
     whole = _texts(b)
-    assert "<http://100.64.0.9:4174/experiments/X-2|Tower report>" in whole
-    assert "`arc experiment report X-2 --stored`" in whole
-    assert esc(rep.verdict_reason) in whole  # persona-text escaping (& < >)
+    assert "Tower report" not in whole and "*Report*" not in whole
+    assert "arc experiment report" not in whole
+    reason = next(
+        blk for blk in b if blk.get("text", {}).get("text", "").startswith("*Verdict reason*")
+    )
+    bullets = reason["text"]["text"].split("\n")[1:]
+    assert len(bullets) == 2
+    assert bullets[0].startswith("• Primary CI [") and "&gt; 0" in bullets[0]  # mrkdwn-escaped
+    assert bullets[1].startswith("• Secondary CI [") and "non-inferior" in bullets[1]
     assert b[-1]["type"] == "context" and f"report `{rep.report_hash()[:12]}`" in whole
     assert "```" not in whole  # no code blocks on persona cards
-    assert card.text.startswith(stop_title(rep))
-
-
-def test_stop_card_without_tower_url_still_names_the_command(conn: sqlite3.Connection) -> None:
-    rep = _stopped_report(conn)
-    whole = _texts(experiment_stop_card(rep).blocks)
-    assert "Tower report" not in whole and "arc experiment report X-2 --stored" in whole
 
 
 def test_stop_card_for_invalid_aa(conn: sqlite3.Connection) -> None:
@@ -347,9 +385,9 @@ def test_stop_card_for_invalid_aa(conn: sqlite3.Connection) -> None:
     store._now = lambda: _after(days)  # noqa: SLF001
     rep = evaluate(store, "X-1", CFG, now=_after(days))
     card = experiment_stop_card(rep)
-    title = "[Experiments] Stopped: X-1 A/A • Invalid • 10 Sessions"
-    assert card.blocks[0]["text"]["text"] == title
-    assert "Sortino n/a (A/A)" in _texts(card.blocks)
+    assert card.blocks[0]["text"]["text"].startswith("[X-1] A/A Day 10 • Invalid • P&L ∆ ")
+    whole = _texts(card.blocks)
+    assert "Margin n/a (A/A)" in whole and "A/A: no margin" in whole
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +420,6 @@ def test_routine_posts_line_and_stop_card_through_dispatcher(
                     "days": "trading",
                     "llm": False,
                     "notify": "quiet",
-                    "tower_url": "http://100.64.0.9:4174",
                 }
             }
         }
@@ -399,10 +436,9 @@ def test_routine_posts_line_and_stop_card_through_dispatcher(
     d.tick(tick, since=tick - dt.timedelta(minutes=5))
     posts = notes.day_thread_posts()
     assert len(posts) == 2, posts
-    assert posts[0].startswith("[Experiments] X-2 • exits • day ")
-    assert posts[1].startswith("[Experiments] Stopped: X-3 • Win • ")
+    assert posts[0].startswith("[X-2] Day 14 • P&L ∆ ")
+    assert posts[1].startswith("[X-3] Day 25 • Win • P&L ∆ ")
     assert notes.blocks[0] is None and notes.blocks[1] is not None
-    assert "|Tower report>" in json.dumps(notes.blocks[1])
     assert store.require("X-3").status is ExperimentStatus.STOPPED
     c.close()
 

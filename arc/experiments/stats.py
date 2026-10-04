@@ -56,11 +56,13 @@ __all__ = [
     "mde_fixed",
     "mixing_tau",
     "msprt_halfwidth",
+    "msprt_p_value",
     "non_inferior",
     "sample_sd",
     "seed_for",
     "sortino",
     "sortino_diff_ci",
+    "sortino_diff_p",
 ]
 
 # 2.8 = z_{1-0.05/2} + z_{0.8} (1.96 + 0.84): the fixed-horizon MDE factor at the
@@ -102,6 +104,19 @@ def msprt_halfwidth(
         2.0 * s2 * v / (n_**2 * t2) * (math.log(1.0 / alpha) + 0.5 * np.log(v / s2))
     )
     return out
+
+
+def msprt_p_value(n: int, mean: float, sigma: float, tau: float, theta0: float = 0.0) -> float:
+    """Always-valid p-value of ``theta = theta0`` after *n* sessions: ``min(1, 1/Lambda_n)``.
+
+    The dual of :func:`msprt_halfwidth` with the same sigma and tau: ``p < alpha``
+    exactly when the always-valid CI ``mean +- halfwidth`` excludes *theta0*, so the
+    p shown next to a CI always agrees with it.
+    """
+    s2, t2 = sigma**2, tau**2
+    v = s2 + n * t2
+    log_lam = 0.5 * math.log(s2 / v) + (n**2 * t2 * (mean - theta0) ** 2) / (2.0 * s2 * v)
+    return 1.0 if log_lam <= 0.0 else math.exp(-log_lam)
 
 
 def sample_sd(x: ArrayLike) -> float:
@@ -211,14 +226,9 @@ def sortino_diff_ci(
     """
     t = np.asarray(treat, dtype=float)
     c = np.asarray(ctrl, dtype=float)
-    if t.size != c.size:
-        msg = f"paired series differ in length: {t.size} vs {c.size}"
-        raise ValueError(msg)
-    if t.size < 2:
+    diffs = _boot_diffs(t, c, resamples=resamples, seed=seed, floor=floor)
+    if diffs is None:
         return None
-    rng = np.random.default_rng(seed)
-    idx = rng.integers(0, t.size, size=(resamples, t.size))
-    diffs = _sortino_rows(t[idx], floor) - _sortino_rows(c[idx], floor)
     tail = (1.0 - level) / 2.0
     est = (sortino(t, floor=floor) or 0.0) - (sortino(c, floor=floor) or 0.0)
     return Interval(
@@ -227,6 +237,49 @@ def sortino_diff_ci(
         hi=float(np.quantile(diffs, 1.0 - tail)),
         level=level,
     )
+
+
+def _boot_diffs(
+    t: NDArray[np.float64], c: NDArray[np.float64], *, resamples: int, seed: int, floor: float
+) -> NDArray[np.float64] | None:
+    if t.size != c.size:
+        msg = f"paired series differ in length: {t.size} vs {c.size}"
+        raise ValueError(msg)
+    if t.size < 2:
+        return None
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, t.size, size=(resamples, t.size))
+    out: NDArray[np.float64] = _sortino_rows(t[idx], floor) - _sortino_rows(c[idx], floor)
+    return out
+
+
+def sortino_diff_p(
+    treat: ArrayLike,
+    ctrl: ArrayLike,
+    *,
+    margin: float | None,
+    resamples: int,
+    seed: int,
+    floor: float = DOWNSIDE_FLOOR,
+) -> float | None:
+    """Bootstrap p-value of the Sortino difference, from the same resamples as the CI.
+
+    With a *margin* (A/B): one-sided non-inferiority, ``H0: diff <= -margin``, so
+    ``p < alpha`` matches the level ``1 - 2 alpha`` CI's lower bound clearing
+    ``-margin``. Without one (A/A): two-sided against 0. ``None`` below 2 sessions.
+    """
+    diffs = _boot_diffs(
+        np.asarray(treat, dtype=float),
+        np.asarray(ctrl, dtype=float),
+        resamples=resamples,
+        seed=seed,
+        floor=floor,
+    )
+    if diffs is None:
+        return None
+    if margin is not None:
+        return float(np.mean(diffs <= -margin))
+    return float(min(1.0, 2.0 * min(np.mean(diffs <= 0.0), np.mean(diffs >= 0.0))))
 
 
 def non_inferior(ci: Interval | None, margin: float) -> bool:

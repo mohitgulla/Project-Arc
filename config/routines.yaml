@@ -262,10 +262,8 @@ personas:
     llm: false                  # deterministic: audit store only (no broker, no LLM)
     halt_exempt: true           # read-only evaluation; a halt must not skip it
     ttl: 6h
-    notify: quiet               # E10.5: posts its own [Experiments] line per running experiment
+    notify: quiet               # E10.5: posts its own [XP-n] line per running experiment
                                 #   and a stop card per stopped one (arc/slack/experiments.py)
-    # tower_url: http://100.x.y.z:4174   # stop-card report link; default: the tailnet address
-                                #   + monitoring.remote_access.tower_port when remote access is on
     writes: []                  # experiment_reports + experiment_events, no context
   investor:                     # E6.2: works an approved proposal through its D24 price band
     trigger: approval           # event-driven, never scheduled

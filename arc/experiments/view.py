@@ -6,9 +6,12 @@ and the Tower API (:mod:`arc.tower.data_experiments`) both read these helpers, s
 the two surfaces and ``arc experiment report --json`` always show the same numbers
 (``tests/test_experiments_views.py`` pins the parity).
 
-Formatting: percentages are of t0 equity, 2 dp, with a real minus sign (``−``)
-like the rest of the Slack cards. The primary CI bounds are shown without a
-``%`` sign: ``Δ +0.08%/day [−0.03, +0.19]``.
+Formatting (owner, 2026-10-03): percentages are of t0 equity, 2 dp, with a real
+minus sign (``−``). The daily line and the stop header lead with the experiment
+id and show each metric's delta with its p-value:
+``[XP-2] Day 14 • P&L ∆ +0.08%/day (p: 0.21) • Sortino ∆ +0.35 (p: 0.04)``.
+The primary p is the always-valid mSPRT p (dual of the CI); the Sortino p is the
+paired-bootstrap p (one-sided non-inferiority against the margin).
 """
 
 from __future__ import annotations
@@ -25,7 +28,6 @@ if TYPE_CHECKING:
     from arc.experiments.evaluate import ExperimentReport
 
 __all__ = [
-    "LINE_LABEL",
     "CumulativePoint",
     "CurvePoint",
     "SecondaryState",
@@ -34,13 +36,16 @@ __all__ = [
     "curves",
     "daily_line",
     "delta_text",
+    "label",
+    "p_text",
     "pct",
     "progress_text",
+    "ratio",
     "secondary_state",
-    "secondary_text",
+    "sortino_delta",
+    "sortino_text",
 ]
 
-LINE_LABEL = "[Experiments]"
 MINUS = "\u2212"
 _FORBID = ConfigDict(extra="forbid", frozen=True)
 
@@ -63,14 +68,53 @@ def ci_text(r: ExperimentReport) -> str:
     return f"[{pct(ci.lo, unit='')}, {pct(ci.hi, unit='')}]"
 
 
+def p_text(p: float | None) -> str:
+    """``0.21`` / ``0.004`` / ``<0.001`` / ``n/a``."""
+    if p is None:
+        return "n/a"
+    if p < 0.001:
+        return "<0.001"
+    return f"{p:.3f}" if p < 0.01 else f"{p:.2f}"
+
+
+def ratio(v: float | None, *, sign: bool = False) -> str:
+    """``1.20`` / ``+0.35`` / ``−0.10`` / ``n/a`` (Sortino values and differences)."""
+    if v is None:
+        return "n/a"
+    return f"{v:{'+' if sign else ''}.2f}".replace("-", MINUS)
+
+
+def sortino_delta(r: ExperimentReport) -> float | None:
+    """Treatment − control Sortino (the bootstrap CI's point estimate)."""
+    s = r.secondary
+    if s.diff_ci is not None:
+        return s.diff_ci.estimate
+    if s.sortino_control is None or s.sortino_treatment is None:
+        return None
+    return s.sortino_treatment - s.sortino_control
+
+
 def delta_text(r: ExperimentReport) -> str:
-    """``Δ +0.08%/day [−0.03, +0.19]``: mean paired daily difference and its CI."""
-    return f"Δ {pct(r.primary.mean)}/day {ci_text(r)}"
+    """``P&L ∆ +0.08%/day (p: 0.21)``: mean paired daily difference and its mSPRT p."""
+    mean = "n/a" if r.primary.mean is None else f"{pct(r.primary.mean)}/day"
+    return f"P&L ∆ {mean} (p: {p_text(r.primary.p_value)})"
 
 
-def progress_text(r: ExperimentReport) -> str:
-    """``day 14/20–60``: paired sessions so far / the spec's min–max."""
-    return f"day {r.sessions}/{r.min_sessions}–{r.max_sessions}"
+def sortino_text(r: ExperimentReport) -> str:
+    """``Sortino ∆ +0.35 (p: 0.04)``: treatment − control and its bootstrap p."""
+    return f"Sortino ∆ {ratio(sortino_delta(r), sign=True)} (p: {p_text(r.secondary.p_value)})"
+
+
+def progress_text(r: ExperimentReport, *, bounds: bool = False) -> str:
+    """``Day 14`` (daily line) or ``Day 14/20–60`` (paired sessions / the spec's min–max)."""
+    if not bounds:
+        return f"Day {r.sessions}"
+    return f"Day {r.sessions}/{r.min_sessions}–{r.max_sessions}"
+
+
+def label(r: ExperimentReport) -> str:
+    """``[XP-2]``, or ``[XP-1] A/A`` for an A/A run."""
+    return f"[{r.experiment_id}]" + (" A/A" if r.kind is ExperimentKind.AA else "")
 
 
 def secondary_state(r: ExperimentReport) -> SecondaryState:
@@ -82,23 +126,9 @@ def secondary_state(r: ExperimentReport) -> SecondaryState:
     return "ok" if r.secondary.non_inferior else "not_shown"
 
 
-_SECONDARY_TEXT: dict[SecondaryState, str] = {
-    "ok": "Sortino ok",
-    "not_shown": "Sortino not shown",
-    "aa": "Sortino n/a (A/A)",
-    "pending": "Sortino pending",
-}
-
-
-def secondary_text(r: ExperimentReport) -> str:
-    return _SECONDARY_TEXT[secondary_state(r)]
-
-
 def daily_line(r: ExperimentReport) -> str:
-    """``[Experiments] X-2 • exits • day 14/20–60 • Δ +0.08%/day [−0.03, +0.19] • Sortino ok``."""
-    area = r.area + (" A/A" if r.kind is ExperimentKind.AA else "")
-    parts = [r.experiment_id, area, progress_text(r), delta_text(r), secondary_text(r)]
-    return f"{LINE_LABEL} " + " • ".join(parts)
+    """``[XP-2] Day 14 • P&L ∆ +0.08%/day (p: 0.21) • Sortino ∆ +0.35 (p: 0.04)``."""
+    return " • ".join([f"{label(r)} {progress_text(r)}", delta_text(r), sortino_text(r)])
 
 
 # ---------------------------------------------------------------------------

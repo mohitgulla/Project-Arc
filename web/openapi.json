@@ -3572,7 +3572,7 @@
                 "type": "null"
               }
             ],
-            "description": "The daily [Experiments] Slack line, verbatim",
+            "description": "The daily [XP-n] Slack line, verbatim",
             "title": "Line"
           },
           "max_sessions": {
@@ -3631,6 +3631,18 @@
             "description": "Mean paired daily P&L difference (fraction of t0 equity)",
             "title": "Primary Mean"
           },
+          "primary_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always-valid mSPRT p of no difference",
+            "title": "Primary P"
+          },
           "reason": {
             "anyOf": [
               {
@@ -3681,6 +3693,30 @@
               }
             ],
             "title": "Sortino Control"
+          },
+          "sortino_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Treatment \u2212 control Sortino",
+            "title": "Sortino Delta"
+          },
+          "sortino_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Paired-bootstrap p (one-sided vs the margin; two-sided for aa)",
+            "title": "Sortino P"
           },
           "sortino_treatment": {
             "anyOf": [
@@ -8662,6 +8698,18 @@
             "title": "N",
             "type": "integer"
           },
+          "p_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always-valid mSPRT p of no difference (dual of ci: p < alpha iff ci excludes 0)",
+            "title": "P Value"
+          },
           "sigma": {
             "anyOf": [
               {
@@ -10048,6 +10096,18 @@
             ],
             "description": "None for aa (no margin)",
             "title": "Non Inferior"
+          },
+          "p_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bootstrap p (same resamples as diff_ci): one-sided H0 diff <= -margin; two-sided vs 0 when there is no margin (aa)",
+            "title": "P Value"
           },
           "sortino_control": {
             "anyOf": [

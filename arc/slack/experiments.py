@@ -1,4 +1,4 @@
-"""``[Experiments]`` posts in the #arc-investor day thread (PLAN D44, card E10.5).
+"""Experiment posts in the #arc-investor day thread (PLAN D44, card E10.5).
 
 Two shapes, both built from the stored E10.3
 :class:`~arc.experiments.evaluate.ExperimentReport` and the shared
@@ -6,11 +6,13 @@ Two shapes, both built from the stored E10.3
 
 - :func:`experiment_line`: one line per running experiment after the daily
   evaluation, e.g.
-  ``[Experiments] X-2 • exits • day 14/20–60 • Δ +0.08%/day [−0.03, +0.19] • Sortino ok``.
+  ``[XP-2] Day 14 • P&L ∆ +0.08%/day (p: 0.21) • Sortino ∆ +0.35 (p: 0.04)``.
 - :func:`experiment_stop_card`: one card when the evaluation stops an experiment
-  (win, futility, invalid): header, summary line, a fact grid with the numbers,
-  the verdict reason, and where to read the full report (the tower detail page
-  when its address is known, and the ``arc experiment report`` command).
+  (win, futility, invalid). Its header is the daily line with the verdict
+  (``[XP-2] Day 25 • Win • P&L ∆ … • Sortino ∆ …``), then a fact grid with the
+  two metrics in the same shape (∆, p, CI, control / treatment actuals, margin),
+  the per-arm blocks, sessions and calibration, and the verdict reason as one
+  bullet per metric. Owner layout, 2026-10-03.
 
 Every number is rendered by :mod:`arc.experiments.view`, the same helpers the
 tower API uses, so Slack and the tower show the same values. Pure: no DB, no
@@ -22,13 +24,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from arc.experiments import view
-from arc.experiments.models import ExperimentKind
 from arc.slack import blocks as B
 
 if TYPE_CHECKING:
     from arc.experiments.evaluate import ArmSummary, ExperimentReport
 
-__all__ = ["experiment_line", "experiment_stop_card", "report_command", "stop_title"]
+__all__ = ["experiment_line", "experiment_stop_card", "stop_title", "verdict_bullets"]
 
 _VERDICT_LABEL = {
     "win": "Win",
@@ -43,16 +44,16 @@ def experiment_line(report: ExperimentReport) -> B.CardView:
     return B.CardView(text=view.daily_line(report), blocks=[])
 
 
-def report_command(experiment_id: str) -> str:
-    return f"arc experiment report {experiment_id} --stored"
-
-
 def stop_title(report: ExperimentReport) -> str:
-    """``[Experiments] Stopped: X-2 • Win • 24 Sessions`` (header facts in Title Case)."""
-    kind = " A/A" if report.kind is ExperimentKind.AA else ""
-    return (
-        f"{view.LINE_LABEL} Stopped: {report.experiment_id}{kind} • "
-        f"{_VERDICT_LABEL[report.verdict]} • {report.sessions} Sessions"
+    """``[XP-2] Day 25 • Win • P&L ∆ +0.08%/day (p: 0.004) • Sortino ∆ +0.35 (p: 0.01)``."""
+    r = report
+    return " • ".join(
+        [
+            f"{view.label(r)} {view.progress_text(r)}",
+            _VERDICT_LABEL[r.verdict],
+            view.delta_text(r),
+            view.sortino_text(r),
+        ]
     )
 
 
@@ -61,94 +62,144 @@ def _money(v: float) -> str:
     return text[0] + "$" + text[1:]
 
 
-def _arm(a: ArmSummary) -> str:
+def _mean_pct(pnl: list[float], t0_equity: float) -> float | None:
+    return sum(pnl) / len(pnl) / t0_equity if pnl and t0_equity > 0 else None
+
+
+def _primary(r: ExperimentReport) -> str:
+    p = r.primary
+    level = f"{p.ci.level:.0%}" if p.ci else f"{1 - r.alpha:.0%}"
+    c_mean = _mean_pct([s.control_pnl for s in r.series], r.t0_equity)
+    t_mean = _mean_pct([s.treatment_pnl for s in r.series], r.t0_equity)
+    sigma_src = {"aa": "A/A", "running_corrected": "running"}.get(p.sigma_source or "", "n/a")
     return "\n".join(
         [
-            f"P&L {_money(a.total_pnl)}",
+            f"∆ {view.pct(p.mean)}/day",
+            f"mSPRT p {view.p_text(p.p_value)}",
+            f"{level} CI {view.ci_text(r)} (always-valid)",
+            f"Control {view.pct(c_mean)}/day",
+            f"Treatment {view.pct(t_mean)}/day",
+            "Margin 0 (superiority)",
+            f"Sigma {view.pct(p.sigma, 3, sign=False)} ({sigma_src})",
+        ]
+    )
+
+
+def _secondary(r: ExperimentReport) -> str:
+    s = r.secondary
+    ci = s.diff_ci
+    level = f"{ci.level:.0%}" if ci else f"{1 - 2 * r.alpha:.0%}"
+    ci_txt = (
+        "[n/a]"
+        if ci is None
+        else f"[{view.ratio(ci.lo, sign=True)}, {view.ratio(ci.hi, sign=True)}]"
+    )
+    margin = (
+        "Margin n/a (A/A)"
+        if s.margin is None
+        else f"Margin {view.ratio(-s.margin, sign=True)} (non-inferiority)"
+    )
+    return "\n".join(
+        [
+            f"∆ {view.ratio(view.sortino_delta(r), sign=True)}",
+            f"Bootstrap p {view.p_text(s.p_value)}",
+            f"{level} CI {ci_txt} (paired bootstrap)",
+            f"Control {view.ratio(s.sortino_control)}",
+            f"Treatment {view.ratio(s.sortino_treatment)}",
+            margin,
+        ]
+    )
+
+
+def _arm(a: ArmSummary, t0_equity: float) -> str:
+    ret = a.total_pnl / t0_equity if t0_equity > 0 else None
+    slip = "n/a" if a.mean_slippage_bps is None else f"{a.mean_slippage_bps:.1f} bps"
+    return "\n".join(
+        [
+            f"P&L {_money(a.total_pnl)} ({view.pct(ret)})",
             f"Max drawdown {view.pct(-a.max_drawdown, sign=a.max_drawdown > 0)}",
             f"Worst day {view.pct(a.worst_day)}",
-            f"Orders {a.orders} · fills {a.filled_executions}/{a.executions}",
+            f"Orders {a.orders}",
+            f"Fills {a.filled_executions}/{a.executions}",
+            f"Mean slippage {slip}",
         ]
     )
 
 
-def _ratio(v: float | None) -> str:
-    return "n/a" if v is None else f"{v:.2f}".replace("-", view.MINUS)
-
-
-def experiment_stop_card(report: ExperimentReport, *, tower_url: str | None = None) -> B.CardView:
-    """The card posted once when the daily evaluation stops an experiment.
-
-    *tower_url* is the tower's base URL (``http://<tailscale-ip>:4174``) or None
-    when it is not known; the CLI command is always shown.
-    """
-    r = report
+def verdict_bullets(r: ExperimentReport) -> list[str]:
+    """One bullet per metric: ``Primary CI …`` and ``Secondary CI …``."""
     p, s = r.primary, r.secondary
-    ci_level = f"{p.ci.level:.0%}" if p.ci else f"{1 - r.alpha:.0%}"
-    primary = "\n".join(
-        [
-            f"{view.delta_text(r)}",
-            f"Always-valid {ci_level} CI, % of t0 equity",
-            f"Sigma {view.pct(p.sigma, 3, sign=False)} ({p.sigma_source or 'n/a'})",
-        ]
-    )
-    sec_lines = [
-        view.secondary_text(r),
-        f"Control {_ratio(s.sortino_control)} · treatment {_ratio(s.sortino_treatment)}",
-    ]
-    if s.diff_ci is not None:
-        sec_lines.append(f"Diff CI [{_ratio(s.diff_ci.lo)}, {_ratio(s.diff_ci.hi)}]")
-    if s.margin is not None:
-        sec_lines.append(f"Margin {s.margin}")
-    cal = r.calibration
-    mde = ", ".join(f"{n}: {view.pct(v, 3, sign=False)}" for n, v in cal.mde_fixed.items())
+    if p.ci is None:
+        prim = f"Primary CI n/a after {r.sessions} sessions"
+    else:
+        where = "> 0" if p.ci.lo > 0 else "< 0" if p.ci.hi < 0 else "includes 0"
+        prim = (
+            f"Primary CI {view.ci_text(r)} {where} "
+            f"(mSPRT p {view.p_text(p.p_value)}) "
+            f"after {r.sessions}/{r.min_sessions}–{r.max_sessions} sessions"
+        )
+    ci = s.diff_ci
+    if ci is None:
+        sec = "Secondary CI n/a (fewer than 2 sessions)"
+    else:
+        rng = f"[{view.ratio(ci.lo, sign=True)}, {view.ratio(ci.hi, sign=True)}]"
+        if s.margin is None:
+            sec = f"Secondary CI {rng} (A/A: no margin, reported only)"
+        else:
+            m = view.ratio(-s.margin, sign=True)
+            sec = (
+                f"Secondary CI {rng} lower bound above {m} margin: non-inferior"
+                if s.non_inferior
+                else f"Secondary CI {rng} lower bound not above {m} margin: "
+                "non-inferiority not shown"
+            )
+        sec += f" (bootstrap p {view.p_text(s.p_value)})"
+    return [prim, sec]
+
+
+def experiment_stop_card(report: ExperimentReport) -> B.CardView:
+    """The card posted once when the daily evaluation stops an experiment."""
+    r = report
     pairs: list[tuple[str, str]] = [
-        ("Primary (paired daily P&L)", primary),
-        ("Secondary (Sortino)", "\n".join(sec_lines)),
+        ("Paired Daily P&L", _primary(r)),
+        ("Sortino Ratio", _secondary(r)),
     ]
     arms = {a.arm: a for a in r.arms}
     for name in ("control", "treatment"):
         if name in arms:
-            pairs.append((name.capitalize(), _arm(arms[name])))
+            pairs.append((name.capitalize(), _arm(arms[name], r.t0_equity)))
     pairs.append(
         (
             "Sessions",
             "\n".join(
                 [
-                    f"{view.progress_text(r)}",
-                    f"t0 {r.t0:%b %-d} · equity {_money(r.t0_equity)[1:]}",
+                    view.progress_text(r, bounds=True),
+                    f"{r.t0:%b %-d} (t0) • Equity ${r.t0_equity:,.0f}",
                     f"Legacy book {len(r.legacy_book)}",
                     f"Missing {len(r.missing_sessions)}",
                 ]
             ),
         )
     )
+    cal = r.calibration
     if cal.sigma is not None:
+        mde = ", ".join(f"{n}: {view.pct(v, 3, sign=False)}" for n, v in cal.mde_fixed.items())
         pairs.append(
-            (
-                "Calibration",
-                f"Sigma {view.pct(cal.sigma, 3, sign=False)}\nMDE {mde or 'n/a'}",
-            )
+            ("Calibration", f"Sigma {view.pct(cal.sigma, 3, sign=False)}\nMDE {mde or 'n/a'}")
         )
-    where = [f"`{report_command(r.experiment_id)}`"]
-    if tower_url:
-        where.insert(0, f"<{tower_url.rstrip('/')}/experiments/{r.experiment_id}|Tower report>")
+    title = stop_title(r)
     out: list[B.Block] = [
-        B.header(stop_title(r)),
+        B.header(title),
         B.summary(
+            f"Area {r.area}",
+            "A/A" if r.kind.value == "aa" else "A/B",
             f"Verdict {_VERDICT_LABEL[r.verdict]}",
-            f"{r.area} {r.kind.value}",
-            view.delta_text(r),
-            view.secondary_text(r),
         ),
         *B.facts(pairs),
     ]
-    reason = B.bullets("Verdict reason", [r.verdict_reason])
+    reason = B.bullets("Verdict reason", verdict_bullets(r))
     if reason:
         out.append(reason)
-    out.append(
-        {"type": "section", "text": {"type": "mrkdwn", "text": "*Report*\n" + " · ".join(where)}}
-    )
     out.append(
         B.footer(
             experiment=r.experiment_id,
@@ -157,5 +208,4 @@ def experiment_stop_card(report: ExperimentReport, *, tower_url: str | None = No
             evaluated=f"{r.evaluated_at:%Y-%m-%d %H:%M %Z}",
         )
     )
-    text = " • ".join([stop_title(r), view.delta_text(r), view.secondary_text(r)])
-    return B.CardView(text=text, blocks=out)
+    return B.CardView(text=title, blocks=out)

@@ -1869,7 +1869,7 @@ export interface components {
             kind: components["schemas"]["ExperimentKind"];
             /**
              * Line
-             * @description The daily [Experiments] Slack line, verbatim
+             * @description The daily [XP-n] Slack line, verbatim
              */
             line?: string | null;
             /** Max Sessions */
@@ -1885,6 +1885,11 @@ export interface components {
              * @description Mean paired daily P&L difference (fraction of t0 equity)
              */
             primary_mean?: number | null;
+            /**
+             * Primary P
+             * @description Always-valid mSPRT p of no difference
+             */
+            primary_p?: number | null;
             reason?: components["schemas"]["StopReason"] | null;
             /**
              * Secondary
@@ -1898,6 +1903,16 @@ export interface components {
             sessions?: number | null;
             /** Sortino Control */
             sortino_control?: number | null;
+            /**
+             * Sortino Delta
+             * @description Treatment − control Sortino
+             */
+            sortino_delta?: number | null;
+            /**
+             * Sortino P
+             * @description Paired-bootstrap p (one-sided vs the margin; two-sided for aa)
+             */
+            sortino_p?: number | null;
             /** Sortino Treatment */
             sortino_treatment?: number | null;
             status: components["schemas"]["ExperimentStatus"];
@@ -3596,6 +3611,11 @@ export interface components {
             metric: "paired_daily_net_pnl_pct";
             /** N */
             n: number;
+            /**
+             * P Value
+             * @description Always-valid mSPRT p of no difference (dual of ci: p < alpha iff ci excludes 0)
+             */
+            p_value?: number | null;
             /** Sigma */
             sigma: number | null;
             /** Sigma Source */
@@ -4002,6 +4022,11 @@ export interface components {
              * @description None for aa (no margin)
              */
             non_inferior?: boolean | null;
+            /**
+             * P Value
+             * @description Bootstrap p (same resamples as diff_ci): one-sided H0 diff <= -margin; two-sided vs 0 when there is no margin (aa)
+             */
+            p_value?: number | null;
             /** Sortino Control */
             sortino_control: number | null;
             /** Sortino Treatment */

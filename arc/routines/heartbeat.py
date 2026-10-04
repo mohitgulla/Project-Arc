@@ -359,7 +359,7 @@ class Heartbeats:
         return self._notifier.post(self.day(now), f":warning: {_detail(job, text, inline=True)}")
 
     def card(self, now: _dt.datetime, text: str, blocks: Blocks | None = None) -> str | None:
-        """A handler-rendered post (E10.5: ``[Experiments]`` line / stop card), as-is.
+        """A handler-rendered post (E10.5: ``[XP-n] Day …`` line / stop card), as-is.
 
         The handler owns the label and layout (:mod:`arc.slack.blocks`); nothing is
         folded in and no code fence is added.
