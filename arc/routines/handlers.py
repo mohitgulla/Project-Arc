@@ -526,6 +526,137 @@ def youtube_source(ctx: JobContext) -> JobResult:
     return result
 
 
+_UNSET: Any = object()
+
+
+def _market_price_lookup() -> Callable[[str], float | None] | None:
+    """Reference underlying price for level sanity checks (market data, never the broker)."""
+    try:
+        from arc.data.alpaca import AlpacaMarketData
+        from arc.data.base import reference_price
+        from arc.utils.calendar import now_et
+
+        md = AlpacaMarketData()
+    except Exception as exc:  # noqa: BLE001 - no keys / no network -> unverified levels
+        log.warning("brief.price_lookup_unavailable", error=str(exc))
+        return None
+
+    def lookup(symbol: str) -> float | None:
+        return reference_price(md, symbol, today=now_et().date())
+
+    return lookup
+
+
+def youtube_briefs(
+    ctx: JobContext,
+    llm: ScoutLLM | None = None,
+    *,
+    session: Any = None,
+    list_videos: Callable[[str, int], list[dict[str, Any]]] | None = None,
+    fetch_info: Callable[[str], Mapping[str, Any]] | None = None,
+    price_lookup: Any = _UNSET,
+) -> JobResult:
+    """E4.6 (D45): the daily 05:00 ET YouTube brief run, all channels in one job.
+
+    Per channel: newest qualifying video in ``lookback`` -> transcript -> brief ->
+    ``channel_brief`` context entry (subject ``youtube.<slug>``, the job's
+    ``context`` TTL, supersede latest) plus a ``raw_doc_ref``. The keyword
+    arguments replace the network pieces in tests.
+    """
+    from pathlib import Path
+
+    from arc.context.kinds import ChannelBriefPayload, RawDocRefPayload
+    from arc.ingest.channels import CHANNELS_DIR, ChannelRegistry, default_registry
+    from arc.ingest.channels.daily import DailyBriefConfig, run_daily_briefs
+    from arc.ingest.llm import HermesScoutLLM
+    from arc.ingest.youtube import TranscriptSession, _get_video_info, list_channel_videos
+    from arc.universe.ingest import IngestUniverse
+
+    settings = ctx.settings
+    cfg = DailyBriefConfig.from_options(ctx.options)
+    policy = ctx.routines.context_policy("channel_brief", ctx.job)
+    ttl = policy.ttl.duration if policy.ttl is not None and policy.ttl.duration else None
+    if ttl is None:
+        msg = f"{ctx.job}: context.ttl must be a duration (e.g. 24h)"
+        raise ValueError(msg)
+    now = ctx.now.astimezone(ET)
+    session = session or TranscriptSession.start(ctx.conn, settings, now=now)
+
+    def write_brief(cr: Any) -> None:
+        ctx.write(
+            "channel_brief",
+            cr.channel.source_key,
+            ChannelBriefPayload.model_validate(cr.brief.model_dump()),
+        )
+
+    run = run_daily_briefs(
+        ctx.conn,
+        settings,
+        cfg,
+        llm=llm or HermesScoutLLM.from_settings(settings),
+        session=session,
+        now=now,
+        ttl=ttl,
+        universe=IngestUniverse.from_settings(settings, now=now),
+        registry=(
+            ChannelRegistry.load(CHANNELS_DIR, Path(str(ctx.options["profiles_dir"])))
+            if ctx.options.get("profiles_dir")
+            else default_registry()
+        ),
+        list_videos=list_videos or (lambda url, n: list_channel_videos(url, max_videos=n)),
+        fetch_info=fetch_info or _get_video_info,
+        write_brief=write_brief,
+        price_lookup=_market_price_lookup() if price_lookup is _UNSET else price_lookup,
+    )
+    for cr in run.channels:  # raw_doc_ref for every transcript stored this run
+        if cr.raw_doc_id and cr.pick.published_at is not None:
+            ctx.write(
+                "raw_doc_ref",
+                cr.raw_doc_id,
+                RawDocRefPayload(
+                    doc_id=cr.raw_doc_id,
+                    source="youtube",
+                    url=f"https://www.youtube.com/watch?v={cr.pick.video_id}",
+                    published_at=cr.pick.published_at.isoformat(),
+                ),
+            )
+    stats = session.finish()
+    ctx.record_input(
+        "youtube_videos",
+        "youtube",
+        {c.channel.slug: c.pick.video_id for c in run.channels},
+        as_of=now,
+        count=sum(c.pick.scanned for c in run.channels),
+    )
+    summary = f"{run.summary()} · {stats.summary()}"
+    errors = run.errors
+    notice = ""
+    if errors:
+        notice = "YouTube briefs: " + "; ".join(
+            f"{c.channel.display} failed ({c.error})" for c in errors
+        )
+    tokens_in = sum(c.input_tokens or 0 for c in run.channels)
+    tokens_out = sum(c.output_tokens or 0 for c in run.channels)
+    return JobResult(
+        summary=summary,
+        notice=notice,
+        metrics={
+            "briefs": run.present,
+            "channels_total": len(run.channels),
+            "channels_failed": len(errors),
+            "input_tokens": tokens_in,
+            "output_tokens": tokens_out,
+            "captions_ok": stats.captions.get("ok", 0),
+            "captions_rate_limited": stats.captions.get("rate_limited", 0),
+            "captions_skipped": stats.captions_skipped,
+            "audio_fallbacks": stats.audio,
+            "audio_wall_s": round(stats.audio_wall_s, 1),
+            "captions_cooldown_active": stats.cooldown_until is not None,
+            "channels": {c.channel.slug: c.manifest() for c in run.channels},
+        },
+    )
+
+
 def _scout_note(ctx: JobContext, result: ScoutRunResult, about: list[str]) -> None:
     """One ``observation`` note per scout run from the batches' ``scan_summary`` (D27)."""
     from pydantic import ValidationError
@@ -651,6 +782,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "earnings": "arc.routines.handlers:earnings_source",
     "symbols": "arc.routines.handlers:symbols_source",  # E5.7 weekly symbol master
     "youtube": "arc.routines.handlers:youtube_source",
+    "youtube.briefs": "arc.routines.handlers:youtube_briefs",  # E4.6 daily briefs (D45)
     # E4.5 / D30 options-trading data (no LLM; typed context kinds)
     "vol_term": "arc.routines.handlers:vol_term_source",
     "put_call": "arc.routines.handlers:put_call_source",

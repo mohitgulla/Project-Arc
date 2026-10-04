@@ -1,0 +1,57 @@
+{
+  "market_bias": {
+    "stance": "bullish",
+    "confidence": 0.5,
+    "quote": "So on the daily chart, before we get more granular on the hourly, the base case is we need to stay over 766."
+  },
+  "levels": [
+    {
+      "ticker": "SPY",
+      "kind": "resistance",
+      "price": 779.35,
+      "quote": "77935. It's basically overlapping with the all-time high here and the lower bound."
+    },
+    {
+      "ticker": "SPY",
+      "kind": "support",
+      "price": 759.99,
+      "quote": "And the lower bound down here is going to be at $759.99."
+    },
+    {
+      "ticker": "SPY",
+      "kind": "resistance",
+      "price": 774.85,
+      "quote": "I do like the fact that it suggests a break of this flat top resistance shelf here at 774.85."
+    },
+    {
+      "ticker": "SPY",
+      "kind": "support",
+      "price": 766.0,
+      "quote": "It's 766, the Monday momentum low, which if you extend that off to the left, it's also the CPI high."
+    },
+    {
+      "ticker": "SPY",
+      "kind": "pivot",
+      "price": 768.75,
+      "quote": "Sustained hourly higher lows anywhere over 76875 should put the pressure on the daily equal high balance."
+    }
+  ],
+  "calls": [
+    {
+      "ticker": "SPY",
+      "stance": "bullish",
+      "horizon": "next_session",
+      "instrument_hint": "none",
+      "conviction": 0.7,
+      "quote": "If we could continue to get really tight in here, then a breakout straight up and through 77485 is targeting the all-time high."
+    }
+  ],
+  "catalysts": [],
+  "risk_flags": [
+    {
+      "flag": "daily lower high below 766",
+      "severity": "low",
+      "quote": "this would technically start looking like a little bit of a lower high."
+    }
+  ]
+}

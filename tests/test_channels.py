@@ -541,40 +541,41 @@ class TestLifecycle:
     def test_older_video_stored_superseded(
         self, db: sqlite3.Connection, stockedup: ChannelProcessor
     ) -> None:
-        tue = dt.datetime(2026, 9, 29, 18, 0, tzinfo=ET)
-        mon = dt.datetime(2026, 9, 28, 18, 0, tzinfo=ET)
-        _store(db, stockedup, tue, "new")
-        _, status = _store(db, stockedup, mon, "old", now=tue)
+        # Two uploads the same evening (both apply to Tue 9/29); the older loses.
+        late = dt.datetime(2026, 9, 28, 20, 0, tzinfo=ET)
+        early = dt.datetime(2026, 9, 28, 18, 0, tzinfo=ET)
+        _store(db, stockedup, late, "new")
+        _, status = _store(db, stockedup, early, "old", now=late)
         assert status == STATUS_SUPERSEDED
         assert ChannelBriefRepo(db).status_of("new") == STATUS_ACTIVE
 
-    def test_expires_after_two_sessions(
+    def test_expires_after_one_session(
         self, db: sqlite3.Connection, stockedup: ChannelProcessor
     ) -> None:
-        # Monday evening → applies Tue 9/29; active through Wed 9/30 close.
+        # E4.6 / D45: max_active_sessions 1. Monday evening → applies Tue 9/29 only.
         _store(db, stockedup, dt.datetime(2026, 9, 28, 18, 0, tzinfo=ET), "m")
-        assert active_briefs(db, dt.datetime(2026, 9, 30, 15, 59, tzinfo=ET))
-        assert active_briefs(db, dt.datetime(2026, 9, 30, 16, 0, tzinfo=ET)) == []
+        assert active_briefs(db, dt.datetime(2026, 9, 29, 15, 59, tzinfo=ET))
+        assert active_briefs(db, dt.datetime(2026, 9, 29, 16, 0, tzinfo=ET)) == []
         assert ChannelBriefRepo(db).status_of("m") == STATUS_EXPIRED
 
-    def test_weekend_expiry_skips_to_monday_tuesday(
+    def test_weekend_expiry_skips_to_monday(
         self, db: sqlite3.Connection, stockedup: ChannelProcessor
     ) -> None:
-        # Friday evening → applies Mon 9/28; still active over the weekend and Monday.
+        # Friday evening → applies Mon 9/28; active over the weekend and Monday only.
         _store(db, stockedup, dt.datetime(2026, 9, 25, 18, 0, tzinfo=ET), "f")
         assert active_briefs(db, dt.datetime(2026, 9, 27, 12, 0, tzinfo=ET))
-        assert active_briefs(db, dt.datetime(2026, 9, 29, 12, 0, tzinfo=ET))
-        assert active_briefs(db, dt.datetime(2026, 9, 29, 16, 1, tzinfo=ET)) == []
+        assert active_briefs(db, dt.datetime(2026, 9, 28, 12, 0, tzinfo=ET))
+        assert active_briefs(db, dt.datetime(2026, 9, 28, 16, 1, tzinfo=ET)) == []
 
     def test_holiday_expiry(self, stockedup: ChannelProcessor) -> None:
-        # Wed before Thanksgiving → applies Fri 11/27 (early close), then Mon 11/30.
+        # Wed before Thanksgiving → applies Fri 11/27 (early close, 13:00), one session.
         brief = _build(
             stockedup,
             _payload(),
             video=_video(published=dt.datetime(2026, 11, 25, 18, 0, tzinfo=ET)),
         ).brief
         assert brief.applies_to_session == dt.date(2026, 11, 27)
-        assert expires_at(brief, stockedup) == dt.datetime(2026, 11, 30, 16, 0, tzinfo=ET)
+        assert expires_at(brief, stockedup) == dt.datetime(2026, 11, 27, 13, 0, tzinfo=ET)
 
     def test_stored_already_expired(
         self, db: sqlite3.Connection, stockedup: ChannelProcessor
@@ -750,7 +751,7 @@ class TestRegistry:
         assert proc.profile.slug == "stockedup"
         assert proc.profile.cadence.value == "trading_daily"
         assert proc.profile.horizon.value == "next_session"
-        assert proc.profile.active_sessions == 2
+        assert proc.profile.active_sessions == 1  # E4.6 / D45
         assert "Extract only what the host" in proc.guidelines
 
     def test_unknown_channel_falls_back_to_default(self, registry: ChannelRegistry) -> None:

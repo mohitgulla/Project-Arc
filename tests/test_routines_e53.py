@@ -77,8 +77,8 @@ def _day_plan(cfg: RoutinesConfig, start: dt.datetime, end: dt.datetime) -> dict
 
 class TestShippedDefaults:
     def test_sources(self, shipped: RoutinesConfig) -> None:
-        yt = shipped.sources["youtube.stockedup"]
-        assert yt.cadence == "at 12:00, 22:00 ET (daily)"  # D31: YouTube stays twice a day
+        yt = shipped.sources["youtube.briefs"]
+        assert yt.cadence == "at 05:00 ET (trading)"  # D45: one pre-market brief run
         assert shipped.sources["rss"].cadence == "every 15m 06:00-20:00 ET (trading)"  # D31
         assert shipped.sources["edgar"].cadence == "every 15m 06:00-20:00 ET (trading)"
         assert shipped.sources["earnings"].cadence == "at 06:00, 18:00 ET (trading)"
@@ -107,7 +107,7 @@ class TestShippedDefaults:
 
     def test_full_trading_day(self, shipped: RoutinesConfig) -> None:
         plan = _day_plan(shipped, et(2026, 9, 28, 0, 0), et(2026, 9, 29, 0, 0))  # Monday
-        assert plan["youtube.stockedup"] == ["Mon 12:00", "Mon 22:00"]
+        assert plan["youtube.briefs"] == ["Mon 05:00"]  # D45: 02:00 PT, trading days only
         # D31: Scout 09:00..16:00 every 30 min = 15 runs, plus the 22:00 overnight run.
         assert len(plan["scout"]) == 15
         assert (plan["scout"][0], plan["scout"][-1]) == ("Mon 09:00", "Mon 16:00")
@@ -130,14 +130,26 @@ class TestShippedDefaults:
         fri = _day_plan(shipped, et(2026, 10, 2, 0, 0), et(2026, 10, 3, 0, 0))
         assert fri["scorecard"] == ["Fri 16:45"]
         weekend = _day_plan(shipped, et(2026, 10, 3, 0, 0), et(2026, 10, 5, 0, 0))
-        # Only the daily jobs; Sunday 22:00 matters (StockedUp posts Sunday for Monday).
-        assert set(weekend) == {"youtube.stockedup", "scout.overnight"}
+        # Only the daily overnight Scout; YouTube runs on trading days only (D45).
+        assert set(weekend) == {"scout.overnight"}
         assert weekend["scout.overnight"] == ["Sat 22:00", "Sun 22:00"]
+
+    def test_youtube_briefs_trading_days_only(self, shipped: RoutinesConfig) -> None:
+        """E4.6: 05:00 ET on a trading day; none on a Saturday or a market holiday."""
+        mon = _day_plan(shipped, et(2026, 9, 28, 0, 0), et(2026, 9, 29, 0, 0))
+        assert mon["youtube.briefs"] == ["Mon 05:00"]
+        sat = _day_plan(shipped, et(2026, 10, 3, 0, 0), et(2026, 10, 4, 0, 0))
+        assert "youtube.briefs" not in sat
+        thanksgiving = _day_plan(shipped, et(2026, 11, 26, 0, 0), et(2026, 11, 27, 0, 0))
+        assert "youtube.briefs" not in thanksgiving
+        assert "rss" not in thanksgiving  # same calendar as the other trading-day jobs
+        friday_after = _day_plan(shipped, et(2026, 11, 27, 0, 0), et(2026, 11, 28, 0, 0))
+        assert friday_after["youtube.briefs"] == ["Fri 05:00"]  # early close is a trading day
 
     def test_sources_run_before_scout_in_the_same_tick(self, shipped: RoutinesConfig) -> None:
         d = Dispatcher(connect(":memory:"), shipped, is_halted=lambda: False)
         order = [x.job for x in d.plan(et(2026, 9, 27, 22, 0), since=et(2026, 9, 27, 21, 55))]
-        assert order == ["youtube.stockedup", "scout.overnight"]
+        assert order == ["scout.overnight"]
         # In session: the 15-min sources land before the personas of the same slot.
         # The loop runs before the Scout (name order), so a 30-min Scout holding the
         # LLM lock never makes the same tick's loop slot skip; the next slot reads it.

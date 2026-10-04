@@ -39,7 +39,7 @@ Here is the scan:
       "catalyst_date": "2026-10-28",
       "confidence": 0.62,
       "sources": [
-        "https://www.youtube.com/watch?v=fixture0005",
+        "https://example.com/news/fed-preview-transcript",
         "https://made-up.example.org/fed-preview"
       ],
       "rationale": "FOMC hold expected. (The made-up source is stripped; the grounded one is kept.)"
@@ -76,7 +76,7 @@ Here is the scan:
       "stance": "to the moon",
       "catalyst_type": "news",
       "confidence": 0.99,
-      "sources": ["https://www.youtube.com/watch?v=fixture0005"],
+      "sources": ["https://example.com/news/fed-preview-transcript"],
       "rationale": "Invalid stance (prompt-injection echo), so it fails the schema."
     },
     {

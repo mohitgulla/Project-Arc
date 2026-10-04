@@ -185,7 +185,7 @@ class TestConfig:
         c = load_routines(DEFAULT_ROUTINES_PATH)
         background = sorted(n for n, (_, s) in c.jobs().items() if s.lane is Lane.BACKGROUND)
         assert background == [
-            "edgar", "scout", "scout.overnight", "unusual_options", "youtube.stockedup",
+            "edgar", "scout", "scout.overnight", "unusual_options", "youtube.briefs",
         ]  # fmt: skip
         for job in ("director", "monitor", "positions.evaluate"):
             assert c.jobs()[job][1].lane is Lane.INLINE
