@@ -11,17 +11,21 @@ Cron pre-run gate (no args):
   2. Skip (last stdout line ``{"wakeAgent": false}``) unless the journal has at
      least one closed outcome AND (a closed outcome was recorded since the last
      run OR a halt was raised since the last run: a ``daily_loss`` halt is the
-     drawdown event). The first rule is the E9.4 start condition: no review of
-     an empty journal.
+     drawdown event OR a forward experiment started/stopped/was promoted or
+     rejected since the last run). The first rule is the E9.4 start condition: no
+     review of an empty journal.
   3. Otherwise snapshot ``config/*.yaml``, run the read-only ``arc`` views on the
      copy (attribution, weekly scorecard, gaps, counterfactual, ``journal show``
      per trade closed this week, config diff/history/show), build the
      realised-vs-model table by structure kind x regime, list this week's halts,
-     the newest ``docs/RESEARCH/*.md`` and the A-id ledger, and print the context
-     (<= 30k chars; full text in ``RUN_DIR/context.md``).
+     the forward experiments (D44, E10.6: status, hash lock, latest stored
+     ``ExperimentReport`` with arm / regime / structure breakdowns, queue per
+     area), the newest ``docs/RESEARCH/*.md`` and the A-id ledger, and print the
+     context (<= 30k chars; full text in ``RUN_DIR/context.md``).
 
 Agent subcommands:
-  record RUN_DIR              validate RUN_DIR/findings.json, reconcile into the ledger
+  record RUN_DIR              validate RUN_DIR/findings.json, reconcile into the ledger,
+                              write draft forward specs to RUN_DIR/forward-specs/<X-n>.yaml
   mark RUN_DIR                advance the watermark to this run (only after record)
   check-report FILE           the Slack report respects the size cap and sections
 Owner subcommands (run by an interactive Hermes session on the owner's thread reply):
@@ -98,10 +102,40 @@ THEME_STATUSES = ("no-evidence", "watching", "action-proposed", "settled")
 REPORT_SECTIONS = (
     "Performance vs model",
     "Standing themes",
+    "Experiments",
     "Recommendations",
     "Obvious flaws",
     "create A-",
 )
+
+# Forward A/B experiments (PLAN D44, E10.6). Mirrors arc.experiments.models without importing
+# it: this gate runs on the host python3 with the stdlib only.
+EXPERIMENT_AREAS = ("entries", "exits", "ranking", "sizing", "other")
+OVERLAY_TARGETS = ("ranking", "exits", "costs", "account_profiles", "routines")
+SPEC_KEYS = (
+    "spec_version",
+    "id",
+    "title",
+    "hypothesis",
+    "area",
+    "kind",
+    "arms",
+    "primary_metric",
+    "secondary_metric",
+    "non_inferiority_margin",
+    "alpha",
+    "power",
+    "mde",
+    "min_sessions",
+    "max_sessions",
+    "proposed_by",
+    "backtest_ref",
+)
+SPEC_REQUIRED = ("id", "title", "hypothesis", "area", "arms", "non_inferiority_margin")
+EXPERIMENT_ID_RE = re.compile(r"^X-[1-9]\d*$")
+# Statuses the weekly report must cover (terminal promoted/rejected ones are history).
+REPORTABLE = ("draft", "queued", "registered", "running", "stopped")
+FORWARD_SPECS_DIR = "forward-specs"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -216,11 +250,23 @@ def wake_decision(conn: sqlite3.Connection, state: dict, now: dt.datetime) -> di
     if halts:
         kinds = sorted({h["kind"] for h in halts})
         reasons.append(f"{len(halts)} halt(s) since the last run ({', '.join(kinds)})")
+    exp_events = []
+    if _has_table(conn, "experiment_events"):
+        exp_events = [
+            f"{e} {s}" + (f" ({r})" if r else "")
+            for e, s, r in conn.execute(
+                "SELECT experiment_id, status, reason FROM experiment_events WHERE at > ? "
+                "AND status IN ('running', 'stopped', 'promoted', 'rejected') ORDER BY id",
+                (to_db(since),),
+            )
+        ]
+    if exp_events:
+        reasons.append(f"experiment status change(s) since the last run: {', '.join(exp_events)}")
     wake = closed_total > 0 and bool(reasons)
     if closed_total == 0:
         reasons = ["no closed outcome in the journal yet (E9.4 start condition)"]
     elif not reasons:
-        reasons = ["no new closed outcome and no halt since the last run"]
+        reasons = ["no new closed outcome, no halt and no experiment status change since the last run"]
     return {
         "wake": wake,
         "reasons": reasons,
@@ -263,6 +309,215 @@ def _num(v, fmt: str) -> str:
     return "n/a" if v is None else format(v, fmt)
 
 
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    return (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,))
+        .fetchone()
+        is not None
+    )
+
+
+def _loads(text, default):
+    try:
+        return json.loads(text) if text else default
+    except ValueError:
+        return default
+
+
+def experiments_overview(conn: sqlite3.Connection) -> list[dict]:
+    """Every forward experiment (D44) with its status, lock and latest stored report.
+
+    Reads ``experiments`` / ``experiment_events`` / ``experiment_reports`` (E10.1, E10.3) on
+    the COPY. A store from before E10 has none of them: returns ``[]``.
+    """
+    if not _has_table(conn, "experiments") or not _has_table(conn, "experiment_events"):
+        return []
+    has_reports = _has_table(conn, "experiment_reports")
+    ids = [
+        r[0]
+        for r in conn.execute(
+            "SELECT experiment_id FROM experiments GROUP BY experiment_id ORDER BY MIN(id)"
+        )
+    ]
+    out = []
+    for eid in ids:
+        area, kind, spec_text, spec_hash, revision = conn.execute(
+            "SELECT area, kind, spec, spec_hash, revision FROM experiments "
+            "WHERE experiment_id = ? ORDER BY revision DESC LIMIT 1",
+            (eid,),
+        ).fetchone()
+        spec = _loads(spec_text, {})
+        events = [
+            {"id": i, "status": s, "reason": r, "spec_hash": h, "detail": _loads(d, {}), "at": a}
+            for i, s, r, h, d, a in conn.execute(
+                "SELECT id, status, reason, spec_hash, detail, at FROM experiment_events "
+                "WHERE experiment_id = ? ORDER BY id",
+                (eid,),
+            )
+        ]
+        last = events[-1] if events else {"status": "draft", "reason": None, "at": None}
+        locked = [e for e in events if e["status"] != "draft"]
+        running = next((e for e in events if e["status"] == "running"), None)
+        stopped = next((e for e in reversed(events) if e["status"] == "stopped"), None)
+        report = None
+        if has_reports:
+            row = conn.execute(
+                "SELECT evaluated_at, verdict, sessions, as_of_day, payload FROM experiment_reports "
+                "WHERE experiment_id = ? ORDER BY id DESC LIMIT 1",
+                (eid,),
+            ).fetchone()
+            if row:
+                report = {
+                    "evaluated_at": row[0],
+                    "verdict": row[1],
+                    "sessions": row[2],
+                    "as_of_day": row[3],
+                    "payload": _loads(row[4], {}),
+                }
+        out.append(
+            {
+                "experiment_id": eid,
+                "area": area,
+                "kind": kind,
+                "title": spec.get("title", ""),
+                "hypothesis": spec.get("hypothesis", ""),
+                "proposed_by": spec.get("proposed_by"),
+                "backtest_ref": spec.get("backtest_ref"),
+                "overlay": ((spec.get("arms") or {}).get("treatment") or {}).get("overlay") or {},
+                "revision": revision,
+                "spec_hash": spec_hash,
+                "registered_hash": locked[0]["spec_hash"] if locked else None,
+                "status": last["status"],
+                "reason": last["reason"],
+                "status_at": last["at"],
+                "queued_event": max(
+                    (e["id"] for e in events if e["status"] == "queued"), default=None
+                ),
+                "t0": (running or {}).get("detail", {}).get("t0"),
+                "aa_override": bool((running or {}).get("detail", {}).get("aa_override")),
+                "stop": (stopped or {}).get("detail") or None,
+                "report": report,
+            }
+        )
+    return out
+
+
+def next_experiment_id(overview: list[dict]) -> str:
+    nums = [int(e["experiment_id"][2:]) for e in overview if EXPERIMENT_ID_RE.match(e["experiment_id"])]
+    return f"X-{max(nums, default=0) + 1}"
+
+
+def area_queues(overview: list[dict]) -> dict[str, dict]:
+    """Per area: the experiment holding it (registered/running) and the queue behind it."""
+    out = {}
+    for area in EXPERIMENT_AREAS:
+        mine = [e for e in overview if e["area"] == area]
+        holder = [e["experiment_id"] for e in mine if e["status"] in ("registered", "running")]
+        queued = sorted(
+            (e for e in mine if e["status"] == "queued"), key=lambda e: e["queued_event"] or 0
+        )
+        out[area] = {"holder": holder, "queued": [e["experiment_id"] for e in queued]}
+    return out
+
+
+def _pct(v) -> str:
+    return "n/a" if v is None else f"{v * 100:+.3f}%"
+
+
+def experiment_lines(overview: list[dict]) -> list[str]:
+    """The pre-run context section for forward experiments (status, report, breakdowns, queue)."""
+    if not overview:
+        return ["- none registered yet (arc experiment list is empty)"]
+    out = []
+    for e in overview:
+        status = e["status"] + (f" ({e['reason']})" if e["reason"] else "")
+        lock = (
+            "draft (not locked)"
+            if e["registered_hash"] is None
+            else f"locked sha256 {e['registered_hash'][:12]}"
+        )
+        out.append(
+            f"### {e['experiment_id']} [{status}] {e['kind']}/{e['area']}: {e['title']}"
+        )
+        out.append(
+            f"- hypothesis: {clip(e['hypothesis'], 300)} | proposed_by {e['proposed_by']} | "
+            f"backtest_ref {e['backtest_ref'] or '-'} | {lock} | since {e['status_at']}"
+        )
+        if e["overlay"]:
+            out.append(f"- treatment overlay: {json.dumps(e['overlay'], sort_keys=True)}")
+        if e["t0"]:
+            out.append(
+                f"- t0 {e['t0']}" + (" | ab started WITHOUT an A/A (owner override)"
+                                     if e["aa_override"] else "")
+            )
+        if e["stop"]:
+            s = e["stop"]
+            out.append(
+                f"- stop: sessions {s.get('sessions')} sigma {_pct(s.get('sigma'))} "
+                f"note {s.get('note') or '-'}"
+            )
+        r = e["report"]
+        if not r:
+            out.append("- latest report: none stored yet")
+            continue
+        p = r["payload"]
+        prim, sec = p.get("primary") or {}, p.get("secondary") or {}
+        ci = prim.get("ci") or {}
+        ci_txt = f"[{_pct(ci.get('lo'))}, {_pct(ci.get('hi'))}]" if ci else "n/a"
+        out.append(
+            f"- latest report {r['evaluated_at']} as of {r['as_of_day'] or '-'}: verdict "
+            f"{r['verdict'].upper()} ({p.get('verdict_reason', '')}); sessions {r['sessions']} "
+            f"(min {p.get('min_sessions')}, max {p.get('max_sessions')})"
+        )
+        out.append(
+            f"- primary (paired daily net P&L diff, % t0 equity): mean {_pct(prim.get('mean'))}/day "
+            f"always-valid CI {ci_txt} sigma {_pct(prim.get('sigma'))} "
+            f"({prim.get('sigma_source') or '-'})"
+        )
+        margin = sec.get("margin")
+        out.append(
+            f"- secondary Sortino: control {_num(sec.get('sortino_control'), '.2f')} "
+            f"treatment {_num(sec.get('sortino_treatment'), '.2f')} "
+            + (
+                f"margin {margin}: non_inferior={sec.get('non_inferior')}"
+                if margin is not None
+                else "(aa: no margin)"
+            )
+        )
+        for a in p.get("arms") or []:
+            out.append(
+                f"- arm {a.get('arm')}: P&L {_num(a.get('total_pnl'), '+,.2f')} "
+                f"max DD {_pct(a.get('max_drawdown'))} worst day {_pct(a.get('worst_day'))} "
+                f"orders {a.get('orders')} fills {a.get('filled_executions')}/"
+                f"{a.get('executions')} slippage {_num(a.get('mean_slippage_bps'), '.1f')} bps"
+            )
+        cal = p.get("calibration") or {}
+        if cal.get("sigma") is not None:
+            out.append(
+                f"- calibration: sigma {_pct(cal.get('sigma'))} MDE "
+                + ", ".join(f"{k}:{_pct(v)}" for k, v in (cal.get("mde_fixed") or {}).items())
+                + f" | slippage gap {_num(cal.get('slippage_gap_bps'), '+.1f')} bps"
+            )
+        rows = p.get("breakdowns") or []
+        if rows:
+            out.append("- breakdowns (closed trades; per arm):")
+            out += [
+                f"  - {b.get('by')}={b.get('key')} {b.get('arm')}: n={b.get('trades')} "
+                f"realised {_num(b.get('realised_pnl'), '+,.2f')}"
+                for b in rows
+            ]
+        else:
+            out.append("- breakdowns: no closed trade in either arm yet")
+    out.append("")
+    out.append("### Queue per area (one registered/running experiment per area)")
+    for area, q in area_queues(overview).items():
+        out.append(
+            f"- {area}: holder {', '.join(q['holder']) or '-'} | queued "
+            f"{', '.join(q['queued']) or '-'}"
+        )
+    return out
+
+
 def table_lines(rows: list[dict], slippage_frac: str) -> list[str]:
     out = [
         "| kind | regime | n | realised $ | EV $ | avg realised-EV $ | win | slippage bps "
@@ -289,9 +544,142 @@ def slippage_frac(costs_yaml: Path) -> str:
     return m.group(1) if m else "n/a"
 
 
-def validate_findings(doc: dict, ledger: dict, prev_themes: dict | None = None) -> list[str]:
+def _leaves(data, prefix: tuple = ()) -> list[tuple]:
+    """Dotted leaf paths of a nested overlay (a list is one leaf, as in a config value)."""
+    if isinstance(data, dict) and data:
+        out = []
+        for k, v in data.items():
+            out += _leaves(v, (*prefix, str(k)))
+        return out
+    return [prefix]
+
+
+def validate_forward_spec(
+    spec, exp: dict, used_ids: frozenset = frozenset(), where: str = "forward_spec"
+) -> list[str]:
+    """A draft forward-experiment spec (``config/experiments/live/`` format, D44).
+
+    Mirrors the parts of ``arc.experiments.models.ExperimentSpec`` the Analyst controls, plus the
+    Analyst's own rules: ab only, one variable, after the E7.5 backtest gate. The Analyst never
+    registers it; ``arc experiment create`` re-validates it in full when the owner does.
+    """
+    if not isinstance(spec, dict):
+        return [f"{where} must be an object in the config/experiments/live format"]
+    errs = []
+    extra = sorted(set(spec) - set(SPEC_KEYS))
+    if extra:
+        errs.append(f"{where} has unknown keys {extra} (ExperimentSpec is extra=forbid)")
+    missing = [k for k in SPEC_REQUIRED if spec.get(k) in (None, "", {})]
+    if missing:
+        errs.append(f"{where} missing {missing}")
+    eid = str(spec.get("id", ""))
+    if spec.get("id") is not None and not EXPERIMENT_ID_RE.match(eid):
+        errs.append(f"{where}.id {eid!r} must look like X-<n>")
+    elif eid in used_ids:
+        errs.append(f"{where}.id {eid} is already used in the experiment registry; take the next")
+    if spec.get("kind", "ab") != "ab":
+        errs.append(f"{where}.kind must be 'ab' (the owner runs A/A calibrations)")
+    if spec.get("area") is not None and spec["area"] not in EXPERIMENT_AREAS:
+        errs.append(f"{where}.area must be one of {EXPERIMENT_AREAS}")
+    if spec.get("proposed_by") not in (None, "analyst"):
+        errs.append(f"{where}.proposed_by is filled in by `record` with the A-id; omit it")
+    margin = spec.get("non_inferiority_margin")
+    if margin is not None and (
+        isinstance(margin, bool) or not isinstance(margin, (int, float)) or margin <= 0
+    ):
+        errs.append(f"{where}.non_inferiority_margin must be a number > 0")
+    arms = spec.get("arms") or {}
+    if not isinstance(arms, dict) or set(arms) - {"control", "treatment"}:
+        errs.append(f"{where}.arms may only hold control and treatment")
+        arms = {}
+    if ((arms.get("control") or {}).get("overlay")) or set(arms.get("control") or {}) - {"overlay"}:
+        errs.append(f"{where}: the control arm is the production config (empty overlay)")
+    overlay = (arms.get("treatment") or {}).get("overlay") or {}
+    if not isinstance(overlay, dict) or not overlay:
+        errs.append(f"{where}: the treatment arm needs an overlay (what changes)")
+        overlay = {}
+    bad = sorted(set(overlay) - set(OVERLAY_TARGETS))
+    if bad:
+        errs.append(f"{where} overlay targets {bad} not in {OVERLAY_TARGETS}")
+    leaves = _leaves(overlay)
+    if overlay and len(leaves) != 1:
+        errs.append(
+            f"ONE-VARIABLE: {where} overlay changes {len(leaves)} values "
+            f"({', '.join('.'.join(x) for x in leaves)}); exactly one is allowed"
+        )
+    elif overlay:
+        dotted = ".".join(leaves[0])
+        var = str(exp.get("variable") or "")
+        if not var or not (dotted == var or dotted.endswith("." + var)):
+            errs.append(
+                f"ONE-VARIABLE: {where} overlay changes {dotted} but experiment.variable is "
+                f"{var!r}"
+            )
+    if exp.get("status") != "harness-run":
+        errs.append(
+            f"{where} only after the E7.5 backtest gate: experiment.status must be harness-run"
+        )
+    ref = spec.get("backtest_ref")
+    if not ref or ref != exp.get("harness_ref"):
+        errs.append(f"{where}.backtest_ref must equal experiment.harness_ref (the E7.5 run)")
+    return errs
+
+
+def _validate_experiment_lines(doc: dict, findings: list, experiments: list[dict]) -> list[str]:
+    """The weekly "Experiments" section: one line per live experiment + the next proposal."""
+    errs = []
+    lines = doc.get("experiments", [])
+    if not isinstance(lines, list):
+        return ["experiments must be a list of {experiment_id, status, note}"]
+    by_id = {}
+    for j, ln in enumerate(lines):
+        eid = ln.get("experiment_id") if isinstance(ln, dict) else None
+        if not eid:
+            errs.append(f"experiments[{j}] needs experiment_id")
+            continue
+        if eid in by_id:
+            errs.append(f"experiments: {eid} listed twice")
+        by_id[eid] = ln
+        if not str(ln.get("note", "")).strip():
+            errs.append(f"experiments {eid} needs a note (what the data says and why)")
+    known = {e["id"]: e for e in experiments}
+    for eid, ln in by_id.items():
+        if eid not in known:
+            errs.append(f"experiments: {eid} is not in the experiment registry")
+        elif ln.get("status") != known[eid]["status"]:
+            errs.append(
+                f"experiments {eid} status {ln.get('status')!r} != registry "
+                f"{known[eid]['status']!r}"
+            )
+    for e in experiments:
+        if e["status"] in REPORTABLE and e["id"] not in by_id:
+            errs.append(f"experiment {e['id']} ({e['status']}) has no line in experiments")
+    nxt = str(doc.get("next_experiment", "")).strip()
+    if not nxt:
+        errs.append(
+            "next_experiment is required: a recommendation key with a forward_spec, or "
+            "'none: <why>'"
+        )
+    elif not nxt.lower().startswith("none"):
+        keys = {f.get("key") for f in findings if isinstance(f.get("forward_spec"), dict)}
+        if nxt not in keys:
+            errs.append(
+                f"next_experiment {nxt!r} must be the key of a finding with a forward_spec "
+                "(or 'none: <why>')"
+            )
+    return errs
+
+
+def validate_findings(
+    doc: dict,
+    ledger: dict,
+    prev_themes: dict | None = None,
+    experiments: list[dict] | None = None,
+) -> list[str]:
     errs: list[str] = []
     prev_themes = prev_themes or {}
+    experiments = experiments or []
+    used_ids = frozenset(e["id"] for e in experiments)
     if doc.get("verdict") not in ("quiet", "findings"):
         errs.append("verdict must be 'quiet' or 'findings'")
     findings, resolved = doc.get("findings", []), doc.get("resolved", [])
@@ -344,8 +732,23 @@ def validate_findings(doc: dict, ledger: dict, prev_themes: dict | None = None) 
                     f"findings[{i}] harness-run needs experiment.harness_ref "
                     "(docs/RESEARCH file or run dir)"
                 )
+            if f.get("forward_spec") is not None:
+                errs += [
+                    f"findings[{i}] {e}"
+                    for e in validate_forward_spec(f["forward_spec"], exp, used_ids)
+                ]
+        elif f.get("forward_spec") is not None:
+            errs.append(f"findings[{i}] forward_spec is only allowed on a recommendation")
+    spec_ids = [
+        (f.get("forward_spec") or {}).get("id")
+        for f in findings
+        if isinstance(f.get("forward_spec"), dict)
+    ]
+    if len(spec_ids) != len(set(spec_ids)):
+        errs.append("two forward_spec drafts share an experiment id")
     if recs > MAX_RECOMMENDATIONS:
         errs.append(f"{recs} recommendations: at most {MAX_RECOMMENDATIONS} per run")
+    errs += _validate_experiment_lines(doc, findings, experiments)
     themes = {t.get("theme"): t for t in doc.get("themes", [])}
     for tid in THEMES:
         t = themes.get(tid)
@@ -468,11 +871,39 @@ def validate_report(text: str) -> list[str]:
 # ---------- agent / owner subcommands ----------
 
 
+def write_forward_specs(run_dir: Path, doc: dict, report: dict) -> list[Path]:
+    """Write each recommendation's draft spec to RUN_DIR/forward-specs/<X-n>.yaml.
+
+    JSON is valid YAML, so ``arc experiment create --spec <file>`` reads it as is (the gate has
+    no YAML writer: stdlib only). ``proposed_by`` is the finding's A-id, so the registry links
+    the experiment back to the ledger. Drafts only: registering is the owner's step.
+    """
+    ids = {x["key"]: x["id"] for bucket in report.values() for x in bucket if "key" in x}
+    out = []
+    for f in doc.get("findings", []):
+        spec = f.get("forward_spec")
+        if not isinstance(spec, dict) or f["key"] not in ids:
+            continue
+        spec = {**spec, "kind": "ab", "proposed_by": ids[f["key"]]}
+        path = run_dir / FORWARD_SPECS_DIR / f"{spec['id']}.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"# DRAFT forward experiment from Arc Analyst {ids[f['key']]} ({f['key']}).\n"
+            "# Not registered. Owner: copy to config/experiments/live/, then\n"
+            f"#   arc experiment create --spec <file> && arc experiment register {spec['id']}\n"
+            + json.dumps(spec, indent=2, sort_keys=True)
+            + "\n"
+        )
+        out.append(path)
+    return out
+
+
 def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     doc = json.loads((run_dir / "findings.json").read_text())
     ledger = load_json(p.ledger, {"next_id": 1, "items": {}})
     state = load_json(p.state, {})
-    errs = validate_findings(doc, ledger, state.get("themes"))
+    experiments = load_json(run_dir / "metrics.json", {}).get("experiments", [])
+    errs = validate_findings(doc, ledger, state.get("themes"), experiments)
     if errs:
         print("findings.json rejected (ledger unchanged):\n- " + "\n- ".join(errs))
         return 2
@@ -483,7 +914,11 @@ def cmd_record(p: Paths, run_dir: Path, now: dt.datetime) -> int:
     }
     save_json(p.state, state)
     save_json(run_dir / "reconciled.json", report)
-    print(json.dumps({k: [x["id"] for x in v] for k, v in report.items()}, indent=2))
+    specs = write_forward_specs(run_dir, doc, report)
+    out = {k: [x["id"] for x in v] for k, v in report.items()}
+    if specs:
+        out["forward_specs"] = [str(s) for s in specs]
+    print(json.dumps(out, indent=2))
     return 0
 
 
@@ -635,6 +1070,7 @@ def build_context(p: Paths, run_dir: Path, copy: Path, decision: dict, now: dt.d
             (to_db(since),),
         ).fetchall()
         closed_week_n = sum(r["n"] for r in week_rows)
+        overview = experiments_overview(conn)
     finally:
         conn.close()
 
@@ -730,6 +1166,10 @@ def build_context(p: Paths, run_dir: Path, copy: Path, decision: dict, now: dt.d
     ]
     out += [
         "",
+        f"## Forward experiments (D44; next free id {next_experiment_id(overview)}; "
+        f"full: sqlite3 'file:{copy}?mode=ro' or arc experiment report <id> --stored --db {copy})",
+        *experiment_lines(overview),
+        "",
         "## Scorecard attribution, this week",
         clip(views["attribution-7d"], 2500),
         "",
@@ -783,6 +1223,10 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
     conn = sqlite3.connect(f"{staging.resolve().as_uri()}?mode=ro", uri=True)
     try:
         decision = wake_decision(conn, state, now)
+        experiments = [
+            {"id": e["experiment_id"], "status": e["status"], "area": e["area"]}
+            for e in experiments_overview(conn)
+        ]
     finally:
         conn.close()
     if not decision["wake"]:
@@ -796,7 +1240,11 @@ def cmd_gate(p: Paths, now: dt.datetime) -> int:
     staging.replace(copy)
     save_json(
         run_dir / "metrics.json",
-        {"now": iso(now), **{k: v for k, v in decision.items() if k != "wake"}},
+        {
+            "now": iso(now),
+            **{k: v for k, v in decision.items() if k != "wake"},
+            "experiments": experiments,  # registry snapshot `record` validates against
+        },
     )
     ctx = build_context(p, run_dir, copy, decision, now)
     (run_dir / "context.md").write_text(ctx)

@@ -144,7 +144,7 @@ def test_skip_when_nothing_changed_since_last_run(
     assert aa.main([], p, NOW + _dt.timedelta(days=7)) == 0
     out = capsys.readouterr().out
     assert _last_json(out) == {"wakeAgent": False}
-    assert "no new closed outcome and no halt" in out
+    assert "no new closed outcome, no halt and no experiment status change" in out
 
 
 def test_halt_wakes_without_new_outcome(
@@ -336,7 +336,8 @@ def _themes(**over: str) -> list[dict[str, str]]:
 
 def _write_valid_findings(run_dir: Path, findings: list[dict[str, Any]] | None = None) -> None:
     doc = {"verdict": "findings" if findings else "quiet", "themes": _themes(),
-           "findings": findings or [], "resolved": []}  # fmt: skip
+           "findings": findings or [], "resolved": [], "experiments": [],
+           "next_experiment": "none: no bucket has n >= 30"}  # fmt: skip
     (run_dir / "findings.json").write_text(json.dumps(doc))
 
 
@@ -437,8 +438,10 @@ def _rec(n: int, **exp: Any) -> dict[str, Any]:
 
 
 def _errs(findings: list[dict[str, Any]], **kw: Any) -> list[str]:
-    doc = {"verdict": "findings", "themes": kw.pop("themes", _themes()), "findings": findings}
-    return aa.validate_findings(doc, {"items": {}}, kw.pop("prev", None))
+    doc = {"verdict": "findings", "themes": kw.pop("themes", _themes()), "findings": findings,
+           "experiments": kw.pop("lines", []),
+           "next_experiment": kw.pop("next_experiment", "none: n < 30")}  # fmt: skip
+    return aa.validate_findings(doc, {"items": {}}, kw.pop("prev", None), kw.pop("registry", []))
 
 
 def test_min_sample_blocks_recommendations_below_30() -> None:
@@ -460,6 +463,202 @@ def test_one_variable_experiment_spec_required() -> None:
     assert any("harness_ref" in e for e in _errs([_rec(40, status="harness-run")]))
     recs = [{**_rec(40), "key": f"ranker:{i}"} for i in range(4)]
     assert any("at most 3" in e for e in _errs(recs))
+
+
+# ---------------------------------------------------------------------------
+# forward experiments (D44, E10.6)
+# ---------------------------------------------------------------------------
+
+REGISTRY = [
+    {"id": "X-1", "status": "stopped", "area": "other"},
+    {"id": "X-2", "status": "running", "area": "exits"},
+    {"id": "X-3", "status": "queued", "area": "exits"},
+]
+LINES = [
+    {"experiment_id": e["id"], "status": e["status"], "note": "n=0 closed per arm"}
+    for e in REGISTRY
+]
+
+
+def _fwd(**over: Any) -> dict[str, Any]:
+    spec = {
+        "id": "X-4", "title": "managed_net_ev ranker",
+        "hypothesis": "ranking by managed net EV adds ~0.05%/day net",
+        "area": "ranking", "kind": "ab",
+        "arms": {"treatment": {"overlay": {"exits": {"pipeline": {"rank_menu_by": "managed_net_ev"}}}}},
+        "non_inferiority_margin": 0.5, "backtest_ref": "docs/RESEARCH/backtests/r1",
+    }  # fmt: skip
+    spec.update(over)
+    return {k: v for k, v in spec.items() if v is not None}
+
+
+def _rec_fwd(spec: dict[str, Any] | None = None, **exp: Any) -> dict[str, Any]:
+    exp = {"status": "harness-run", "harness_ref": "docs/RESEARCH/backtests/r1",
+           "variable": "rank_menu_by", **exp}  # fmt: skip
+    return {**_rec(40, **exp), "forward_spec": spec if spec is not None else _fwd()}
+
+
+def _ferrs(findings: list[dict[str, Any]], **kw: Any) -> list[str]:
+    kw.setdefault("lines", LINES)
+    kw.setdefault("registry", REGISTRY)
+    kw.setdefault("next_experiment", "ranker:managed-net-ev")
+    return _errs(findings, **kw)
+
+
+def test_forward_spec_valid_after_the_harness_run() -> None:
+    assert _ferrs([_rec_fwd()]) == []
+    # validated against the real ExperimentSpec model, so the format really is the live one
+    from arc.experiments.models import ExperimentSpec
+
+    ExperimentSpec.model_validate({**_fwd(), "proposed_by": "A-1"})
+
+
+@pytest.mark.parametrize(
+    ("finding", "needle"),
+    [
+        (_rec_fwd(status="hypothesis, untested", harness_ref=None), "harness-run"),
+        (_rec_fwd(_fwd(backtest_ref="docs/other")), "backtest_ref must equal"),
+        (_rec_fwd(_fwd(kind="aa")), "kind must be 'ab'"),
+        (_rec_fwd(_fwd(id="X-2")), "already used"),
+        (_rec_fwd(_fwd(id="exp-4")), "must look like X-<n>"),
+        (_rec_fwd(_fwd(area="vibes")), "area must be one of"),
+        (_rec_fwd(_fwd(proposed_by="owner")), "proposed_by"),
+        (_rec_fwd(_fwd(alpha_level=0.1)), "unknown keys"),
+        (_rec_fwd(_fwd(hypothesis="")), "missing"),
+        (_rec_fwd(_fwd(non_inferiority_margin=0)), "non_inferiority_margin"),
+        (_rec_fwd(_fwd(arms={"treatment": {"overlay": {"exits": {"pipeline": {
+            "rank_menu_by": "managed_net_ev", "top_n": 3}}}}})), "changes 2 values"),
+        (_rec_fwd(_fwd(arms={"treatment": {"overlay": {"exits": {"take_profit_pct": 0.4}}}})),
+         "experiment.variable is 'rank_menu_by'"),
+        (_rec_fwd(_fwd(arms={"treatment": {"overlay": {"gate": {"x": 1}}}})), "overlay targets"),
+        (_rec_fwd(_fwd(arms={"control": {"overlay": {"ranking": {"rank_by": "x"}}},
+                             "treatment": {"overlay": {"ranking": {"rank_by": "y"}}}})),
+         "control arm is the production config"),
+        ({**_flaw(), "forward_spec": _fwd()}, "only allowed on a recommendation"),
+    ],
+)  # fmt: skip
+def test_forward_spec_rules(finding: dict[str, Any], needle: str) -> None:
+    errs = _ferrs([finding], next_experiment="none: test")
+    assert any(needle in e for e in errs), errs
+
+
+def test_experiments_section_covers_the_registry() -> None:
+    assert any("X-3 (queued) has no line" in e for e in _ferrs([], lines=LINES[:2],
+                                                               next_experiment="none: x"))  # fmt: skip
+    wrong = [{**LINES[1], "status": "stopped"}, LINES[0], LINES[2]]
+    assert any("status 'stopped' != registry 'running'" in e
+               for e in _ferrs([], lines=wrong, next_experiment="none: x"))  # fmt: skip
+    ghost = [*LINES, {"experiment_id": "X-9", "status": "running", "note": "?"}]
+    assert any("X-9 is not in the experiment registry" in e
+               for e in _ferrs([], lines=ghost, next_experiment="none: x"))  # fmt: skip
+    assert any("needs a note" in e for e in _ferrs(
+        [], lines=[{**LINES[0], "note": ""}, *LINES[1:]], next_experiment="none: x"))  # fmt: skip
+    assert any("next_experiment is required" in e for e in _ferrs([], next_experiment=""))
+    assert any("must be the key of a finding with a forward_spec" in e
+               for e in _ferrs([_rec(40)], next_experiment="ranker:managed-net-ev"))  # fmt: skip
+    assert _ferrs([], next_experiment="none: no bucket has n >= 30") == []
+    # promoted / rejected experiments need no line
+    done = [{"id": "X-5", "status": "promoted", "area": "sizing"}]
+    assert _ferrs([], registry=[*REGISTRY, *done], next_experiment="none: x") == []
+
+
+@pytest.fixture(scope="module")
+def _experiment_db(_pipeline_db: bytes) -> bytes:
+    from tests import experiment_fixtures as fx
+
+    conn = _conn(_pipeline_db)
+    fx.reviewer_registry(conn)
+    return conn.serialize()
+
+
+def test_context_has_forward_experiments_and_record_writes_draft_specs(
+    _experiment_db: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    conn = _conn(_experiment_db)
+    _close_one(conn, NOW - _dt.timedelta(days=2))
+    db = _to_disk(conn, tmp_path / "live.db")
+    p = _paths(tmp_path, db)
+    assert aa.main([], p, NOW) == 0
+    out = capsys.readouterr().out
+    assert "## Forward experiments (D44; next free id X-4;" in out
+    assert "### X-1 [stopped (futility)] aa/other" in out
+    assert "- stop: sessions 10 sigma" in out
+    assert "verdict FUTILITY" in out and "always-valid CI [" in out
+    assert "- calibration: sigma" in out and "MDE 10:" in out
+    assert "- arm control: P&L" in out and "- arm treatment: P&L" in out
+    assert "- breakdowns: no closed trade in either arm yet" in out
+    assert "### X-2 [running] ab/exits" in out and "- latest report: none stored yet" in out
+    assert '- treatment overlay: {"exits": {"default": {"take_profit_pct": 0.4}}}' in out
+    assert "- exits: holder X-2 | queued X-3" in out
+    run_dir = _run_dir(p)
+    metrics = aa.load_json(run_dir / "metrics.json", {})
+    assert [e["id"] for e in metrics["experiments"]] == ["X-1", "X-2", "X-3"]
+    # record: the registry snapshot is enforced and the draft spec is written for the owner
+    doc = {"verdict": "findings", "themes": _themes(), "findings": [_rec_fwd()], "resolved": [],
+           "experiments": LINES, "next_experiment": "ranker:managed-net-ev"}  # fmt: skip
+    (run_dir / "findings.json").write_text(json.dumps({**doc, "experiments": LINES[:1]}))
+    assert aa.main(["record", str(run_dir)], p, NOW) == 2
+    assert "X-2 (running) has no line" in capsys.readouterr().out
+    (run_dir / "findings.json").write_text(json.dumps(doc))
+    assert aa.main(["record", str(run_dir)], p, NOW) == 0
+    printed = json.loads(capsys.readouterr().out)
+    draft = run_dir / "forward-specs" / "X-4.yaml"
+    assert printed["forward_specs"] == [str(draft)]
+    text = draft.read_text()
+    assert "DRAFT forward experiment from Arc Analyst A-1" in text
+    spec = yaml.safe_load(text)
+    assert spec["proposed_by"] == "A-1" and spec["kind"] == "ab"
+    # the owner's `arc experiment create --spec` loader accepts the draft as written
+    from arc.experiments.overlay import load_spec
+
+    assert load_spec(draft).id == "X-4"
+
+
+def test_experiment_status_change_wakes_the_analyst(
+    _experiment_db: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    conn = _conn(_experiment_db)
+    _close_one(conn, NOW - _dt.timedelta(days=30))
+    db = _to_disk(conn, tmp_path / "live.db")
+    p = _paths(tmp_path, db)
+    # last run before the fixture's X-2 start (2026-10-17), nothing closed since
+    aa.save_json(p.state, {"closed_watermark": 10**9,
+                           "last_run_at": aa.iso(_dt.datetime(2026, 10, 15, tzinfo=ET))})
+    assert aa.main([], p, NOW + _dt.timedelta(days=14)) == 0
+    out = capsys.readouterr().out
+    assert "wakeAgent" not in out
+    # X-1 stopped (fixture clock, Oct 5) before the last run; X-3 queued is not a wake
+    assert "WAKE: experiment status change(s) since the last run: X-2 running\n" in out
+    # once those events are older than the last run (X-2 ran at ~16:30 ET Oct 17): quiet
+    aa.save_json(p.state, {"closed_watermark": 10**9,
+                           "last_run_at": aa.iso(NOW + _dt.timedelta(days=14))})
+    assert aa.main([], p, NOW + _dt.timedelta(days=15)) == 0
+    assert _last_json(capsys.readouterr().out) == {"wakeAgent": False}
+
+
+def test_pre_e10_store_has_no_experiments(_pipeline_db: bytes) -> None:
+    conn = _conn(_pipeline_db)
+    for t in ("experiment_reports", "experiment_events", "experiments"):
+        conn.execute(f"DROP TABLE IF EXISTS {t}")
+    assert aa.experiments_overview(conn) == []
+    assert aa.experiment_lines([]) == ["- none registered yet (arc experiment list is empty)"]
+    assert aa.next_experiment_id([]) == "X-1"
+
+
+def test_skill_documents_forward_experiments() -> None:
+    text = _skill()
+    for rule in (
+        "FORWARD EXPERIMENTS (D44)",
+        "you never register,\n   start, stop or promote",
+        "`forward_spec`",
+        "`next_experiment`",
+        "RUN_DIR/forward-specs/<X-n>.yaml",
+        "*Experiments*",
+        "register X-<n>",
+        "No guardrails",
+    ):
+        assert rule in text, rule
+    assert "Experiments" in aa.REPORT_SECTIONS
 
 
 def test_every_standing_theme_needs_a_status() -> None:

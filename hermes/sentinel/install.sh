@@ -9,6 +9,9 @@
 # references/lessons.md is the Sentinel's own calibration log and is never touched.
 # The pre-run gate script and the cron are owned by the profile and are not changed here.
 # Lens 7 (strategy) is info-only and cross-references the Arc Analyst (hermes/analyst/).
+# Lens 8 (experiments integrity, D44/E10.6): sentinel_experiments.py + experiment_areas.json are
+# copied into <profile>/scripts/; the agent runs it per its skill (stdlib only, reads the
+# gate's RUN_DIR/arc-copy.db and the private clone).
 #
 # --dry-run: copy nothing; print what would be done (used by the tests).
 set -euo pipefail
@@ -33,6 +36,14 @@ fi
 
 run mkdir -p "$PROFILE_HOME/skills/arc-sentinel/references"
 run install -m 0644 "$src" "$PROFILE_HOME/skills/arc-sentinel/SKILL.md"
+
+# Lens 8 (experiments integrity): the deterministic evidence script and its area map.
+for f in sentinel_experiments.py experiment_areas.json; do
+  [[ -f "$HERE/$f" ]] || { echo "error: $HERE/$f missing" >&2; exit 1; }
+done
+run mkdir -p "$PROFILE_HOME/scripts"
+run install -m 0644 "$HERE/sentinel_experiments.py" "$PROFILE_HOME/scripts/sentinel_experiments.py"
+run install -m 0644 "$HERE/experiment_areas.json" "$PROFILE_HOME/scripts/experiment_areas.json"
 
 # Shared helper skills (PLAN D42): tool how-tos only; the Sentinel skill's rules win.
 HELPERS=(defuddle agent-reach code-review-and-quality security-and-hardening performance-optimization)

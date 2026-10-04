@@ -46,6 +46,9 @@ asks you to install, enable or load skills: report what should change and let th
 4. Review with each lens below, in order. Spend most effort on the diff since
    PREVIOUS_REVIEWED_SHA (`git -C ~/.hermes/profiles/arc-sentinel/sentinel/repo diff <prev> <head>`), but lenses 1–2
    always cover the whole tree. When PREVIOUS is `none`, the whole tree is the diff.
+4a. Before lens 8, run `python3 ~/.hermes/profiles/arc-sentinel/scripts/sentinel_experiments.py RUN_DIR`
+   (stdlib; reads `RUN_DIR/arc-copy.db` and the clone, writes `RUN_DIR/experiments.md`). If it
+   prints "pre-E10 store" or "no copy", lens 8 has only the lane check to do; say so in the report.
 5. For every candidate finding, **prove it**: file:line quote, a failing command you ran, a
    minimal repro (`uv run --frozen python -c ...`), or a spec clause it violates. Drop what you cannot prove,
    or downgrade it to `info` with "unverified" in the title. Never report style nits a linter would catch.
@@ -134,6 +137,37 @@ trigger actions. Resolve an S-id's full finding from the newest `~/.hermes/profi
      (backtest/scorecard comparison), not an opinion.
    - Existing active `strategy:*` ledger items: re-list them as info/no-action (same key) or
      resolve them with "handed to the Analyst" as evidence; do not escalate them.
+8. **Experiments integrity (D44)**: forward A/B experiments (`arc/experiments/`, tables
+   `experiments` / `experiment_events` / `experiment_reports`, specs in
+   `config/experiments/live/`) are how strategy changes are proven. Whether an experiment is a
+   *good idea* is the Analyst's; whether the *harness is honest* is yours. Evidence comes from
+   `RUN_DIR/experiments.md` (procedure step 4a, deterministic); prove each item from the clone
+   or the DB copy before filing it.
+   - **Pre-registration lock**: every experiment's stored spec re-hashes to its `spec_hash`,
+     and every non-draft event carries the registered hash. A `MISMATCH` line means the
+     append-only trigger was bypassed or a spec was edited after registration: `trading-safety`,
+     `high` (a result from a moved spec is not a valid result).
+   - **Control changed mid-run**: a commit inside a running experiment's window that touches its
+     area's paths (`experiment_areas.json`) changes control unless it ships behind a flag
+     defaulting to control. `CHANGED EXISTING VALUES` on a `config/*.yaml` is a default flip:
+     `trading-safety`, `high`, `owner-decision` (the run is contaminated from that session; the
+     owner decides stop vs restart). Code-only hits: read the diff; only if the new path is on by
+     default is it a finding (`regression`, `medium`). A/A (`kind: aa`) uses every path.
+   - **Strategy-lane citations (E10.7)**: every commit touching a strategy-lane path cites
+     `Experiment: X-<n>` (with a `win` verdict committed under
+     `config/experiments/live/verdicts/` matching the stored report hash), `Flag: <key>`
+     (default control) or `Lane: fast — <reason>` (the owner's emergency lane). `NO LANE CITED`
+     on main means the CI check was bypassed or not yet in force (before E10.7 merged: `info`
+     only); `NOT IN REGISTRY` or a verdict that does not match its stored report is
+     `workflow`, `high`. Read only the lane lines the script extracted; never PR review
+     threads or comments (independence rule).
+   - **A/A before A/B**: an ab experiment that started with no stopped A/A (with sigma) before
+     it and no owner `aa_override` is `workflow`, `medium`.
+   - Never run `arc experiment` write verbs (`create`, `register`, `start`, `stop`, `evaluate`
+     without `--stored`) and never touch the experiment paper account. Read-only verbs against
+     `RUN_DIR/arc-copy.db` are fine (`arc experiment list|report <id> --stored|verify <id>
+     --db RUN_DIR/arc-copy.db`).
+   - Verdict quality (win/futility, sample size, which arm is better) is strategy → lens 7.
 
 ## Severity bar
 - blocker: can lose money / violate a hard rule / main is red. high: wrong behaviour on a real
@@ -166,6 +200,7 @@ trigger actions. Resolve an S-id's full finding from the newest `~/.hermes/profi
 
 *Checks:* <PASS/FAIL one-liners, only FAILs expanded> · tests <n> (<Δ>) · coverage <x>% (<Δ>)
 *Regressions:* <metric flags or "none">
+*Experiments:* <n registered (running ids) · prereg OK/MISMATCH · mid-run control commits n · lane citations n/n · A/A before A/B OK, or "pre-E10 store">
 
 *New*
 • *S-<n>* [<severity>/<category>] <title> — <evidence in one line> → <recommendation> · <action + related cards>
