@@ -45,8 +45,8 @@ def _db(path: Path | str = ":memory:") -> sqlite3.Connection:
 
 def _ident(control_db: str = "/nonexistent/arc.db", overlay: dict | None = None) -> ArmIdentity:
     return ArmIdentity(
-        arm_id="X-1:treatment",
-        experiment_id="X-1",
+        arm_id="XP-1:treatment",
+        experiment_id="XP-1",
         arm="treatment",
         spec_arm="treatment",
         keys_env="ALPACA_EXP",
@@ -77,7 +77,7 @@ def test_identity_written_once_and_control_has_none() -> None:
     assert read_identity(c) is None
     write_identity(c, _ident())
     got = read_identity(c)
-    assert got is not None and got.arm_id == "X-1:treatment"
+    assert got is not None and got.arm_id == "XP-1:treatment"
     with pytest.raises(sqlite3.IntegrityError):
         write_identity(c, _ident())
     with pytest.raises(sqlite3.DatabaseError):
@@ -89,7 +89,7 @@ def test_runner_config_ships_one_treatment_arm_on_its_own_keys() -> None:
     assert set(runner.arms) == {"treatment"}
     arm = runner.arms["treatment"]
     assert arm.keys_env == "ALPACA_EXP" and arm.spec_arm == "treatment"
-    assert arm.db_path("X-3").endswith("arc-exp-X-3.db")
+    assert arm.db_path("XP-3").endswith("arc-exp-XP-3.db")
 
 
 # --- virtual account ----------------------------------------------------------
@@ -108,24 +108,24 @@ def _fill(side: str, px: str, at: dt.datetime, oid: str = "o1") -> Fill:
 
 def test_virtual_ledger_replay_settlement_and_legacy() -> None:
     c = _db()
-    open_account(c, "X-1:treatment", t0_equity=D(10000), legacy={"os-1": D(500)}, at=NOW)
-    st = replay(rows(c, "X-1:treatment"), as_of=NOW.date())
+    open_account(c, "XP-1:treatment", t0_equity=D(10000), legacy={"os-1": D(500)}, at=NOW)
+    st = replay(rows(c, "XP-1:treatment"), as_of=NOW.date())
     assert st.cash == 10000 and st.legacy_reserved == 500 and st.spendable == 9500
     buy = _fill("buy", "2.00", NOW + dt.timedelta(minutes=5))
     sell = _fill("sell", "3.00", NOW + dt.timedelta(hours=2), oid="o2")
-    assert record_fills(c, "X-1:treatment", [buy, sell]) == 2
-    assert record_fills(c, "X-1:treatment", [buy, sell]) == 0  # idempotent
-    st = replay(rows(c, "X-1:treatment"), as_of=NOW.date())
+    assert record_fills(c, "XP-1:treatment", [buy, sell]) == 2
+    assert record_fills(c, "XP-1:treatment", [buy, sell]) == 0  # idempotent
+    st = replay(rows(c, "XP-1:treatment"), as_of=NOW.date())
     assert st.cash == D(10100)
     assert st.unsettled == D(300)  # proceeds settle T+1
     assert st.settled == D(10100) - 300 - 500
-    nxt = replay(rows(c, "X-1:treatment"), as_of=dt.date(2026, 10, 7))
+    nxt = replay(rows(c, "XP-1:treatment"), as_of=dt.date(2026, 10, 7))
     assert nxt.unsettled == 0
-    assert release_legacy(c, "X-1:treatment", ["os-1", "os-x"], at=NOW) == ["os-1"]
-    assert replay(rows(c, "X-1:treatment"), as_of=NOW.date()).legacy_reserved == 0
+    assert release_legacy(c, "XP-1:treatment", ["os-1", "os-x"], at=NOW) == ["os-1"]
+    assert replay(rows(c, "XP-1:treatment"), as_of=NOW.date()).legacy_reserved == 0
     # replaying the same ledger reproduces the same state
-    assert replay(rows(c, "X-1:treatment"), as_of=NOW.date()) == replay(
-        rows(c, "X-1:treatment"), as_of=NOW.date()
+    assert replay(rows(c, "XP-1:treatment"), as_of=NOW.date()) == replay(
+        rows(c, "XP-1:treatment"), as_of=NOW.date()
     )
 
 
@@ -160,7 +160,7 @@ def test_trading_broker_chosen_by_store(monkeypatch: pytest.MonkeyPatch) -> None
     assert trading_broker(ctl, factory=factory, environ=ENV).label == "prod"  # type: ignore[attr-defined]
     arm = _db()
     write_identity(arm, _ident())
-    open_account(arm, "X-1:treatment", t0_equity=D(10000), legacy={}, at=NOW)
+    open_account(arm, "XP-1:treatment", t0_equity=D(10000), legacy={}, at=NOW)
     from arc.config import ArcSettings
 
     s = ArcSettings(_env_file=None, account_profile="cash_debit")  # type: ignore[call-arg]
@@ -233,11 +233,11 @@ def test_arm_manifest_fields() -> None:
     write_identity(arm, _ident())
     arm.execute(
         """INSERT INTO arm_pairs (arm_id, control_chain_run_id, arm_chain_run_id, fork_step,
-                                  status, at) VALUES ('X-1:treatment', 'c1', 'c1.treatment',
+                                  status, at) VALUES ('XP-1:treatment', 'c1', 'c1.treatment',
                                   'propose', 'ok', 'now')"""
     )
     assert _arm_of(arm, "c1.treatment") == {
-        "arm_id": "X-1:treatment",
+        "arm_id": "XP-1:treatment",
         "paired_chain_run_id": "c1",
         "fork_step": "propose",
     }

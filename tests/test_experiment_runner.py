@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 T0 = FIXTURE_NOW - dt.timedelta(hours=1)
-SPEC = "config/experiments/live/x1_aa_baseline.yaml"
+SPEC = "config/experiments/live/xp1_aa_baseline.yaml"
 
 
 def _db(path: Path | str = ":memory:") -> sqlite3.Connection:
@@ -53,7 +53,7 @@ def _arc(*argv: str) -> int:
 
 def _registered(db: Path) -> None:
     assert _arc("experiment", "create", "--spec", SPEC, "--db", str(db)) == 0
-    assert _arc("experiment", "register", "X-1", "--db", str(db)) == 0
+    assert _arc("experiment", "register", "XP-1", "--db", str(db)) == 0
 
 
 def _runner(*names: str) -> RunnerConfig:
@@ -83,7 +83,7 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
     conn = _db(control)
     st = start_arms(
         conn,
-        "X-1",
+        "XP-1",
         actor="local",
         now=T0,
         t0_equity=D(10000),
@@ -118,7 +118,7 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
     for name, path in stores.items():
         arm = _db(path)
         ident = read_identity(arm)
-        assert ident is not None and ident.arm_id == f"X-1:{name}"
+        assert ident is not None and ident.arm_id == f"XP-1:{name}"
         runs = arm.execute(
             "SELECT job, status, summary FROM routine_runs ORDER BY step_index"
         ).fetchall()
@@ -138,7 +138,7 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
         assert manifests, "the arm's own steps leave manifests"
         for m in manifests:
             p = json.loads(m["payload"])
-            assert m["arm_id"] == f"X-1:{name}"
+            assert m["arm_id"] == f"XP-1:{name}"
             assert p["paired_chain_run_id"] == chain and p["fork_step"] == "propose"
             assert p["git_sha"]
         # the Director's decisions are control's, under the arm's chain id
@@ -167,7 +167,7 @@ def test_pair_skips_a_stale_control_chain(control: Path, tmp_path: Path) -> None
     conn = _db(control)
     start_arms(
         conn,
-        "X-1",
+        "XP-1",
         actor="local",
         now=T0,
         t0_equity=D(10000),
@@ -199,11 +199,11 @@ def test_start_refuses_existing_store_and_leaves_nothing(control: Path, tmp_path
     conn = _db(control)
     arms = tmp_path / "arms"
     arms.mkdir()
-    (arms / "exp-X-1.db").write_text("")
+    (arms / "exp-XP-1.db").write_text("")
     with pytest.raises(ArmStartError, match="already exists"):
         start_arms(
             conn,
-            "X-1",
+            "XP-1",
             actor="local",
             now=T0,
             t0_equity=D(10000),
@@ -214,7 +214,7 @@ def test_start_refuses_existing_store_and_leaves_nothing(control: Path, tmp_path
     assert arm_stores(conn) == {}
     from arc.experiments.store import ExperimentStore
 
-    assert ExperimentStore(conn).require("X-1").status.value == "registered"
+    assert ExperimentStore(conn).require("XP-1").status.value == "registered"
 
     def not_flat(arm: ArmRunner) -> None:
         raise ArmStartError(f"{arm.keys_env} account holds 1 position(s)")
@@ -222,7 +222,7 @@ def test_start_refuses_existing_store_and_leaves_nothing(control: Path, tmp_path
     with pytest.raises(ArmStartError, match="holds 1 position"):
         start_arms(
             conn,
-            "X-1",
+            "XP-1",
             actor="local",
             now=T0,
             t0_equity=D(10000),
@@ -231,7 +231,7 @@ def test_start_refuses_existing_store_and_leaves_nothing(control: Path, tmp_path
             check_flat=not_flat,
             control_sha="abcdef1",
         )
-    assert not (arms / "shadow-X-1.db").exists()
+    assert not (arms / "shadow-XP-1.db").exists()
 
 
 # --- virtual account vs a big paper account -----------------------------------------
@@ -250,7 +250,7 @@ def _paper(equity: str = "95000") -> AccountInfo:
 
 
 NOW = dt.datetime(2026, 10, 6, 10, 0, tzinfo=ET)  # Tuesday
-AID = "X-1:treatment"
+AID = "XP-1:treatment"
 
 
 def _fill(side: str, px: str, at: dt.datetime, oid: str, qty: int = 1) -> Fill:
@@ -357,7 +357,7 @@ def _arm_store(tmp_path: Path, overlay: dict) -> sqlite3.Connection:
     write_identity(
         arm,
         ArmIdentity(
-            arm_id=AID, experiment_id="X-1", arm="treatment", spec_arm="treatment",
+            arm_id=AID, experiment_id="XP-1", arm="treatment", spec_arm="treatment",
             keys_env="ALPACA_EXP", control_db=str(ctl), overlay=overlay, created_at=NOW,
         ),
     )  # fmt: skip
@@ -480,7 +480,7 @@ def test_tick_spawns_arms_only_while_an_experiment_runs(
     assert cli_arms.spawn_arms_tick(conn, env) is None  # registered, not running
     start_arms(
         conn,
-        "X-1",
+        "XP-1",
         actor="local",
         now=T0,
         t0_equity=D(10000),

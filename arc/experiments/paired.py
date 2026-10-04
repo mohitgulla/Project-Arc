@@ -5,7 +5,7 @@ arm's rows carry no ``arm_id``: the store is the tag (``arm_identity``). Readers
 that compare arms (the E10.3 evaluator) open the control store through
 :func:`paired_view`, which ATTACHes every arm store read-only and creates TEMP
 views named like the base tables. SQLite resolves an unqualified name in ``temp``
-first, so ``SELECT ... FROM pnl_snapshots WHERE arm_id = 'X-1:treatment'`` sees
+first, so ``SELECT ... FROM pnl_snapshots WHERE arm_id = 'XP-1:treatment'`` sees
 control's rows (``arm_id`` as stored, NULL for control) plus each arm's rows with
 ``arm_id`` projected from the arm's identity. No row is ever copied into the
 control store: mirrored executions would count against control's D32 order
