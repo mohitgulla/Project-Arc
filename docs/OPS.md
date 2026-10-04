@@ -1112,7 +1112,7 @@ report thread: `create A-<n>`, `comment A-<n>`, `wontfix A-<n> <why>`,
 
 Pre-registration only: nothing here trades (the treatment runner is E10.2).
 Specs live in `config/experiments/live/<id>.yaml`; defaults (alpha 0.05, power
-0.8, 20/60 sessions, A/A 10 sessions, D44 guardrails) in `config/experiments.yaml`,
+0.8, 20/60 sessions, A/A 10 sessions) in `config/experiments.yaml`,
 tunable as `experiments.*` (`!arc config experiments`). The treatment overlay uses
 the same deep-merge format as the backtest overlays in `config/experiments/*.yaml`.
 
@@ -1131,6 +1131,35 @@ the same deep-merge format as the backtest overlays in `config/experiments/*.yam
 - Every step writes a `decisions` row (stage `experiment`). `arm_id` on
   `run_manifests`, `proposals`, `decisions`, `outcomes`, `pnl_snapshots` and
   `executions` is NULL for control (all rows today).
+
+### 5.18 Daily evaluation and verdict (E10.3, D44)
+
+The `experiments.evaluate` routine (trading days 16:40 ET, after the 16:30 auditor
+reconcile; deterministic, halt-exempt) evaluates every running experiment and
+stores one `ExperimentReport` in the append-only `experiment_reports` table:
+
+    arc experiment report X-2 --db <db> [--json]      # computed now, read-only
+    arc experiment report X-2 --db <db> --stored      # latest stored report
+    arc experiment evaluate [X-2] --db <db> [--now ISO]   # what the routine does
+
+- Series: `d_t = (treat_pnl_t − ctrl_pnl_t) / t0_equity` per session from each
+  arm's EOD `pnl_snapshots`; control's legacy-book P&L (marks in control's
+  `positions_snapshots` + close cash) is removed. Missing sessions are listed.
+  The treatment arm is read on its **virtual** equity only
+  (`details_json.virtual_equity`, = t0 equity at t0, written by the E10.2 arm
+  reconcile); the experiment account's broker `equity` is never used, so a
+  treatment row without `virtual_equity` counts as a missing session.
+- Primary: always-valid mSPRT confidence sequence (normal mixture). σ is the
+  A/A's when recorded, else the running sd inflated to its chi² upper bound
+  (`experiments.stats.sigma_upper_q`). Win = lower bound > 0 after
+  `min_sessions` **and** Sortino non-inferior (paired bootstrap CI vs margin).
+- No guardrail (harm) auto-stops (owner, 2026-10-03): only the primary and
+  secondary metrics decide. Each arm's drawdown, worst day and order count are
+  in the report for the owner, who stops an experiment by hand
+  (`arc experiment stop X-2 --reason harm --actor local`).
+- `max_sessions` without a win → stop(futility); for an A/A that is the normal
+  end and records σ (unlocks ab starts). An A/A whose CI excludes 0 → stop(invalid).
+- Breakdowns by regime / structure kind are reported, never decision inputs.
 
 ## 6. Local Models (E8.4)
 

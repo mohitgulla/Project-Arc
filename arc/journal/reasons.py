@@ -237,6 +237,8 @@ class ReasonCode(StrEnum):
     EXPERIMENT_STOPPED = "experiment:stopped"
     EXPERIMENT_PROMOTED = "experiment:promoted"
     EXPERIMENT_REJECTED = "experiment:rejected"
+    EXPERIMENT_EVALUATED = "experiment:evaluated"  # E10.3 daily evaluation (report stored)
+    EXPERIMENT_INVALID = "experiment:invalid"  # E10.3 an A/A "won": the harness is broken
 
 
 def gate_reason(violation: str) -> ReasonCode:
@@ -421,6 +423,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.EXPERIMENT_STOPPED: "Experiment stopped",
     ReasonCode.EXPERIMENT_PROMOTED: "Experiment's treatment promoted",
     ReasonCode.EXPERIMENT_REJECTED: "Experiment's treatment rejected",
+    ReasonCode.EXPERIMENT_EVALUATED: "Experiment evaluated",
+    ReasonCode.EXPERIMENT_INVALID: "A/A experiment invalid (arms differ)",
 }
 
 

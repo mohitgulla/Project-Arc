@@ -11,11 +11,9 @@
 # the same deep-merge overlay format).
 #
 # Owner decisions 2026-10-03 (#project-arc): alpha 0.05 two-sided, power 0.8, min
-# 20 / max 60 sessions (futility stop at max), an A/A run of ~10 sessions first;
-# guardrails stop for harm, never as a win: treatment max drawdown worse than
-# control by > 3 pp of equity, worst day < -2% of equity, any halt or reconcile
-# fill_unknown on the experiment account, order rate > 1.5x control. Re-set from
-# the A/A (E10.4).
+# 20 / max 60 sessions (futility stop at max), an A/A run of ~10 sessions first.
+# Re-set from the A/A (E10.4). Primary + secondary metrics only: no guardrail
+# (harm) auto-stops (owner, 2026-10-03, PR #102).
 
 experiments:
   defaults:
@@ -24,8 +22,8 @@ experiments:
     min_sessions: 20         # no win/futility verdict before this many paired sessions
     max_sessions: 60         # futility stop
     aa_sessions: 10          # A/A experiments: min = max = this unless the spec sets them
-    guardrails:
-      max_dd_worse: 0.03       # treatment max drawdown worse than control by > 3 pp equity
-      worst_day: -0.02         # any treatment day below -2% of equity
-      order_rate_ratio: 1.5    # treatment orders > 1.5x control's
-      stop_on_halt: true       # any halt / reconcile fill_unknown on the experiment account
+  # E10.3 evaluation (arc/experiments/evaluate.py). Not copied into specs (not
+  # hash-locked): how the numbers are computed, not what the experiment tests.
+  stats:
+    sigma_upper_q: 0.05      # no A/A sigma: running sd inflated to its 95% upper chi2 bound
+    bootstrap_resamples: 2000   # paired bootstrap of the Sortino difference (seeded)
