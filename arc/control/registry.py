@@ -1430,6 +1430,23 @@ _MONITORING_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
+# E8.8b (D48): Arc Tower display knobs under `tower:` in routines.yaml. Display only (the
+# tower is read-only and no trading code reads them), so a change applies immediately.
+_TOWER_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="tower.overview.activity_hours",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E8.8b: the Overview's Recent Activity shows this many rolling hours.",
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("tower", "overview", "activity_hours"),
+        unit="h",
+        min=1,
+        max=168,
+    ),
+)
+
 
 def _category_tunables() -> tuple[Tunable, ...]:
     """D47 (E4.7): each source category's weight and freshness window.
@@ -1624,6 +1641,7 @@ REGISTRY: dict[str, Tunable] = {
         *_exit_tunables(),
         *_LOOP_TUNABLES,
         *_MONITORING_TUNABLES,
+        *_TOWER_TUNABLES,
         *_category_tunables(),
         *_EXPERIMENT_TUNABLES,
     )
@@ -1707,7 +1725,7 @@ def _num(t: Tunable, raw: str) -> float:
     pct = text.endswith("%")
     if pct:
         text = text[:-1]
-    if text.endswith(t.unit) and t.unit in {"s", "d"}:
+    if text.endswith(t.unit) and t.unit in {"s", "d", "h"}:
         text = text[: -len(t.unit)]
     try:
         v = float(text)
@@ -1963,7 +1981,7 @@ def format_value(t: Tunable, v: Any) -> str:
         return f"{float(v) * 100:.4g}%"
     if isinstance(v, float) and t.unit == "$":
         return f"${v:,.2f}"
-    if isinstance(v, int | float) and t.unit in {"s", "d"}:
+    if isinstance(v, int | float) and t.unit in {"s", "d", "h"}:
         return f"{v:g}{t.unit}"
     if isinstance(v, float):
         return f"{v:g}"
@@ -1977,7 +1995,7 @@ def format_value(t: Tunable, v: Any) -> str:
 DEFAULT_STOP_VALUE = 0.75  # D23 relaxed stop, used when a stop is created from 'none'
 _SECTIONS = ("sources", "personas")
 # Top-level routines.yaml sections whose tunables are plain paths (not per job).
-_PLAIN_ROUTINE_SECTIONS = (("loop",), ("monitoring",), ("categories",))
+_PLAIN_ROUTINE_SECTIONS = (("loop",), ("monitoring",), ("categories",), ("tower",))
 # Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
 _PERSONA_SWITCHES = frozenset({("personas", "finnhub_context")})
 

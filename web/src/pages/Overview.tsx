@@ -1,10 +1,14 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { AsOfBadge, useNow } from "../components/AsOfBadge";
+import { useNow } from "../components/AsOfBadge";
+import { CappedList, LIST_CAP } from "../components/CappedList";
 import { Card } from "../components/Card";
 import { ChangePill } from "../components/ChangePill";
 import { EmptyState } from "../components/EmptyState";
+import { Freshness } from "../components/Freshness";
+import { InfoTip } from "../components/InfoTip";
+import { KeyValueList } from "../components/KeyValueList";
 import { Money } from "../components/Money";
 import { ProgressRow } from "../components/ProgressRow";
 import { ProportionBar } from "../components/ProportionBar";
@@ -16,7 +20,6 @@ import { TrendChart } from "../components/TrendChart";
 import { num } from "../lib/api";
 import {
   STALE_FACTOR,
-  formatAge,
   formatEt,
   formatMoney,
   formatNumber,
@@ -30,10 +33,14 @@ import {
   parseOverviewRange,
   pnlSplit,
   proposalStage,
+  shortAge,
   sortMovers,
+  statusRow,
   stripTone,
   structureLabel,
+  usedOfCap,
   violationCode,
+  type StatusSlot,
   type ActivityItem,
   type Overview,
   type OverviewRange,
@@ -51,7 +58,10 @@ function useCadences() {
     monitor: c.monitor?.every_s,
     auditor: c.auditor?.every_s,
     tick: c.tick?.every_s,
+    health: c.health?.every_s,
     caps: meta.data?.gate_caps,
+    env: meta.data?.env,
+    accountProfile: meta.data?.account_profile,
   };
 }
 
@@ -59,73 +69,108 @@ function useCadences() {
 // Status strip
 // ---------------------------------------------------------------------------
 
-function StatusStrip({ o, tickS }: { o: Overview; tickS?: number }) {
+const DOT: Record<StatusSlot["tone"], string> = {
+  ok: "bg-pos",
+  warn: "bg-warn",
+  neg: "bg-neg",
+  none: "bg-track",
+};
+
+/** One fixed cell: `● label value`; stale / non-ok turns the value --warn (no pill). */
+function SlotCell({ slot }: { slot: StatusSlot }) {
+  return (
+    <>
+      <span className={`h-2 w-2 shrink-0 rounded-full ${DOT[slot.tone]}`} aria-hidden="true" />
+      <span className="min-w-0 truncate">
+        {slot.label && <span className="text-secondary">{slot.label} </span>}
+        <span className={`font-semibold tabular-nums ${slot.tone === "warn" ? "text-warn" : "text-primary"}`}>{slot.value}</span>
+      </span>
+    </>
+  );
+}
+
+const CELL = "flex min-h-[44px] min-w-0 items-center gap-2 rounded-control px-2 text-caption tablet:min-h-[32px]";
+
+/**
+ * E8.8b status row (D48): fixed slots Trading · Tick · Health · Alerts · Orders · env chip,
+ * each `label value` with a status dot. A 3x2 grid of equal cells up to 768 px; one row above,
+ * with the env chip right-aligned. A halt replaces slot 1 with HALTED + reason + age.
+ */
+function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useCadences>; now: number }) {
   const [open, setOpen] = useState(false);
   const s = o.status;
   const tone = stripTone(o);
   const alerts = s.alerts ?? [];
+  const slots = statusRow(o, { now, tickS: cad.tick, healthS: cad.health, env: cad.env, accountProfile: cad.accountProfile });
   const border = tone === "neg" ? "border-neg" : tone === "warn" ? "border-warn" : "border-line";
   return (
     <section
       data-testid="status-strip"
       data-tone={tone}
-      className={`arc-card flex flex-col gap-3 border ${border} !py-3`}
+      className={`arc-card flex flex-col gap-2 border ${border} !py-2`}
       aria-label="Trading status"
     >
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-caption">
-        {s.halted && s.halt ? (
-          <span className="flex flex-wrap items-center gap-2" data-testid="halt-banner">
-            <span className="rounded-pill bg-neg-bg px-2 py-0.5 font-bold text-neg-text">HALTED</span>
-            <span className="text-primary">{s.halt.reason}</span>
-            <span className="text-muted">
-              by {s.halt.actor}
-              {s.halt.at && <> · since {formatEt(s.halt.at)} ({formatAge(s.halt.at)})</>}
-              {s.active_halts > 1 && <> · {s.active_halts} active</>}
-            </span>
-          </span>
-        ) : (
-          <span className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-pos" />
-            <span className="font-semibold text-primary">Trading enabled</span>
-          </span>
-        )}
-        <span className="flex items-center gap-2 text-secondary">
-          Tick <AsOfBadge at={s.tick_at} cadenceS={tickS} label="last tick" compact />
-          {s.tick_status && s.tick_status !== "ok" && <span className="text-warn">{s.tick_status}</span>}
-        </span>
-        <span className="flex items-center gap-2 text-secondary">
-          Health <AsOfBadge at={s.health_at} label="health check" compact />
-          {s.health_status && s.health_status !== "ok" && <span className="text-warn">{s.health_status}</span>}
-        </span>
-        <button
-          type="button"
-          aria-expanded={open}
-          disabled={alerts.length === 0}
-          onClick={() => setOpen(!open)}
-          className={`min-h-[32px] rounded-pill px-2 ${alerts.length ? "text-warn hover:bg-hover" : "text-secondary"}`}
-          data-testid="alerts-toggle"
-        >
-          {alerts.length} open alert{alerts.length === 1 ? "" : "s"}
-          {alerts.length > 0 && <span aria-hidden="true"> {open ? "▲" : "▼"}</span>}
-        </button>
-        {s.order_budget && (
-          <span className="text-secondary tabular-nums" data-testid="order-budget">
-            Orders today {s.order_budget.used}/{s.order_budget.limit}
-            {s.order_budget.tier !== "normal" && <span className="text-warn"> · {s.order_budget.tier}</span>}{" "}
-            <AsOfBadge at={s.order_budget.as_of} compact />
-          </span>
-        )}
-      </div>
-      {open && alerts.length > 0 && (
-        <ul className="grid gap-1 border-t border-line pt-2 text-caption">
-          {alerts.map((a) => (
-            <li key={a.key} className="flex flex-wrap gap-x-3">
-              <span className="font-semibold text-warn">{a.kind.replace(/_/g, " ")}</span>
-              <span className="text-primary">{a.message}</span>
-              {a.opened_at && <span className="text-muted">{formatAge(a.opened_at)}</span>}
+      <ul className="grid grid-cols-3 gap-1 tablet:flex tablet:flex-wrap tablet:items-center tablet:gap-x-4" data-testid="status-slots">
+        {slots.map((slot) => {
+          if (slot.key === "trading" && slot.tone === "neg")
+            return (
+              <li key={slot.key} className={`${CELL} col-span-3 flex-wrap py-1`} data-testid="halt-banner" title={slot.title}>
+                <span className="rounded-pill bg-neg-bg px-2 py-0.5 font-bold text-neg-text">HALTED</span>
+                <span className="min-w-0 text-primary [overflow-wrap:anywhere]">{slot.detail}</span>
+                <span className="text-muted tabular-nums">
+                  {s.halt?.actor}
+                  {slot.value && <> · {slot.value}</>}
+                  {s.active_halts > 1 && <> · {s.active_halts} active</>}
+                </span>
+              </li>
+            );
+          if (slot.key === "alerts")
+            return (
+              <li key={slot.key} className="min-w-0">
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  aria-controls="status-alerts"
+                  disabled={alerts.length === 0}
+                  onClick={() => setOpen(!open)}
+                  className={`${CELL} arc-press w-full text-left enabled:hover:bg-hover`}
+                  title={slot.title}
+                  data-testid="alerts-toggle"
+                >
+                  <SlotCell slot={slot} />
+                  {alerts.length > 0 && (
+                    <span aria-hidden="true" className="text-micro text-muted">
+                      {open ? "▲" : "▼"}
+                    </span>
+                  )}
+                </button>
+              </li>
+            );
+          if (slot.key === "env")
+            return (
+              <li key={slot.key} className={`${CELL} tablet:ml-auto`} data-testid="env-chip" title={slot.title}>
+                <span className="min-w-0 truncate rounded-pill bg-control px-2 py-0.5 text-micro text-secondary">{slot.value}</span>
+              </li>
+            );
+          return (
+            <li key={slot.key} className={CELL} title={slot.title} data-testid={slot.key === "orders" ? "order-budget" : `slot-${slot.key}`}>
+              <SlotCell slot={slot} />
             </li>
-          ))}
-        </ul>
+          );
+        })}
+      </ul>
+      {open && alerts.length > 0 && (
+        <div id="status-alerts" className="border-t border-line pt-2">
+          <CappedList className="grid gap-1 text-caption" testid="status-alerts" noun="alerts">
+            {alerts.map((a) => (
+              <li key={a.key} className="flex flex-wrap gap-x-3">
+                <span className="font-semibold text-warn">{a.kind.replace(/_/g, " ")}</span>
+                <span className="min-w-0 text-primary [overflow-wrap:anywhere]">{a.message}</span>
+                {a.opened_at && <span className="text-muted tabular-nums">{shortAge(a.opened_at, now)}</span>}
+              </li>
+            ))}
+          </CappedList>
+        </div>
       )}
     </section>
   );
@@ -148,6 +193,16 @@ function EquityCard({ o, range, cad }: { o: Overview; range: OverviewRange; cad:
             <span className="rounded-pill bg-control px-2 py-0.5 text-micro text-secondary">reconciled</span>
           )}
         </span>
+      }
+      headerExtra={
+        <>
+          <InfoTip label="About the equity series" testid="equity-info">
+            {v.source === "intraday" ? "Today's 5-min monitor marks." : "Reconciled daily closes."}
+          </InfoTip>
+          <span className="max-w-full basis-full min-[521px]:basis-auto" data-testid="equity-range">
+            <RangeControl fallback="1D" ranges={OVERVIEW_RANGES} size="sm" />
+          </span>
+        </>
       }
       value={value === null ? "—" : <Money value={value} kind="equity" />}
       change={
@@ -174,17 +229,11 @@ function EquityCard({ o, range, cad }: { o: Overview; range: OverviewRange; cad:
         label: e.source === "intraday" ? "monitor mark" : "reconcile",
       }}
     >
-      <div className="grid gap-3">
-        <RangeControl fallback="1D" ranges={OVERVIEW_RANGES} />
-        {v.series.length > 1 ? (
-          <TrendChart data={v.series} reference={v.reference} kind="equity" />
-        ) : (
-          <EmptyState caption={range === "1D" ? "No monitor marks today yet." : "No reconciled days in this range."} />
-        )}
-        <p className="text-micro text-muted">
-          {v.source === "intraday" ? "Today's 5-min monitor marks" : "Reconciled daily closes"}
-        </p>
-      </div>
+      {v.series.length > 1 ? (
+        <TrendChart data={v.series} reference={v.reference} kind="equity" />
+      ) : (
+        <EmptyState caption={range === "1D" ? "No monitor marks today yet." : "No reconciled days in this range."} />
+      )}
     </StatCard>
   );
 }
@@ -223,32 +272,54 @@ function PnlCard({ o, cad }: { o: Overview; cad: ReturnType<typeof useCadences> 
       }
       freshness={pnlFreshness}
     >
-      <ProportionBar
-        segments={[
-          {
-            label: "Realized",
-            value: split.realized,
-            color: "var(--accent-bar)",
-            display: realized === null ? "—" : <Money value={realized} kind="pnl" explicitSign />,
-          },
-          {
-            label: "Unrealized",
-            value: split.unrealized,
-            color: "var(--series-1)",
-            display: unrealized === null ? "—" : <Money value={unrealized} kind="pnl" explicitSign />,
-          },
-        ]}
-      />
-      <p className="mt-2 flex flex-wrap gap-x-2 text-micro text-muted">
-        <span>realized</span>
-        <AsOfBadge at={d.realized_at} cadenceS={cad.auditor} label="reconcile" compact />
-        <span>unrealized</span>
-        <AsOfBadge at={d.unrealized_at} cadenceS={cad.monitor} label="monitor mark" compact />
-      </p>
-      <p className="mt-3 text-caption text-secondary tabular-nums" data-testid="mtd-ytd">
-        MTD {money(perf?.mtd_pnl)} ({pct(perf?.mtd_pct)}) · YTD {money(perf?.ytd_pnl)} ({pct(perf?.ytd_pct)})
-        {d.performance_day && <span className="text-muted"> · through {d.performance_day}</span>}
-      </p>
+      <dl className="grid grid-cols-2 gap-3" data-testid="pnl-split">
+        {(
+          [
+            ["Realized", realized, d.realized_at, cad.auditor, "reconcile"],
+            ["Unrealized", unrealized, d.unrealized_at, cad.monitor, "monitor mark"],
+          ] as const
+        ).map(([label, v, at, cadence, src]) => (
+          <div key={label} className="min-w-0">
+            <dt className="flex flex-wrap items-center gap-x-2 text-caption text-secondary">
+              {label}
+              <Freshness at={at} cadenceS={cadence} label={src} />
+            </dt>
+            <dd className="text-title font-semibold tabular-nums">{v === null ? "—" : <Money value={v} kind="pnl" explicitSign />}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="mt-3">
+        <ProportionBar
+          legend={false}
+          segments={[
+            { label: "Realized", value: split.realized, color: "var(--accent-bar)" },
+            { label: "Unrealized", value: split.unrealized, color: "var(--series-1)" },
+          ]}
+        />
+      </div>
+      <div className="mt-3 text-caption" data-testid="mtd-ytd">
+        <KeyValueList
+          items={[
+            {
+              label: "MTD",
+              value: (
+                <>
+                  {money(perf?.mtd_pnl)} <span className="font-normal text-secondary">({pct(perf?.mtd_pct)})</span>
+                </>
+              ),
+            },
+            {
+              label: "YTD",
+              value: (
+                <>
+                  {money(perf?.ytd_pnl)} <span className="font-normal text-secondary">({pct(perf?.ytd_pct)})</span>
+                </>
+              ),
+              hint: d.performance_day ? `through ${d.performance_day}` : undefined,
+            },
+          ]}
+        />
+      </div>
     </StatCard>
   );
 }
@@ -278,15 +349,16 @@ function GreeksCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
         <div className="grid">
           <ProgressRow
             label="|Δ| net delta"
-            value={delta === null ? "—" : formatNumber(delta, 1)}
-            right={g.delta_cap != null ? `cap ${formatNumber(g.delta_cap, 0)}` : undefined}
+            value={usedOfCap(delta === null ? "—" : formatNumber(delta, 1), g.delta_cap != null ? formatNumber(g.delta_cap, 0) : null)}
             fraction={delta !== null && g.delta_cap ? Math.abs(delta) / g.delta_cap : 0}
             warnAt={0.8}
           />
           <ProgressRow
             label="|ν| vega $/vol pt"
-            value={vegaUsd === null ? "—" : formatMoney(vegaUsd, "price")}
-            right={g.vega_cap_usd != null ? `cap ${formatMoney(g.vega_cap_usd, "price")}` : undefined}
+            value={usedOfCap(
+              vegaUsd === null ? "—" : formatMoney(vegaUsd, "price"),
+              g.vega_cap_usd != null ? formatMoney(g.vega_cap_usd, "price") : null,
+            )}
             fraction={vegaUsd !== null && g.vega_cap_usd ? Math.abs(vegaUsd) / g.vega_cap_usd : 0}
             warnAt={0.8}
           />
@@ -409,37 +481,76 @@ const ACTIVITY_TONE: Record<ActivityItem["tone"], string> = {
   warn: "bg-warn",
 };
 
-function ActivityCard({ o }: { o: Overview }) {
-  const items = o.activity ?? [];
+/** Severity dot · message (2-line clamp, full text on tap) · age; grouped alerts expand inline. */
+function ActivityRow({ a, now }: { a: ActivityItem; now: number }) {
+  const [open, setOpen] = useState(false);
+  const entries = a.entries ?? [];
+  const grouped = (a.count ?? 1) > 1;
+  const age = (
+    <span className="shrink-0 text-micro text-muted tabular-nums" title={`${formatEt(a.at)} ET`}>
+      {shortAge(a.at, now)}
+    </span>
+  );
+  const dot = <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${ACTIVITY_TONE[a.tone]}`} aria-hidden="true" />;
+  const text = (
+    <span className={`min-w-0 flex-1 text-caption text-primary [overflow-wrap:anywhere] ${open ? "" : "line-clamp-2"}`}>{a.text}</span>
+  );
+  const row = "flex min-h-[44px] w-full items-start gap-3 py-2 text-left hover:bg-hover tablet:min-h-[36px]";
   return (
-    <Card title="Recent Activity">
-      {items.length === 0 ? (
-        <EmptyState caption="Nothing yet." />
+    <li className="border-b border-line last:border-b-0" data-group={a.group ?? undefined}>
+      {a.ref ? (
+        <Link to={`/trades/${a.ref}`} className={row}>
+          {dot}
+          {text}
+          {age}
+        </Link>
       ) : (
-        <ul className="grid" data-testid="activity">
-          {items.map((a, i) => {
-            const body = (
-              <>
-                <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${ACTIVITY_TONE[a.tone]}`} />
-                <span className="min-w-0 flex-1 text-caption text-primary">{a.text}</span>
-                <span className="shrink-0 text-micro text-muted tabular-nums" title={formatEt(a.at)}>
-                  {formatAge(a.at)}
-                </span>
-              </>
-            );
-            return (
-              <li key={`${a.at}-${i}`} className="border-b border-line last:border-b-0">
-                {a.ref ? (
-                  <Link to={`/trades/${a.ref}`} className="flex gap-3 py-2 hover:bg-hover">
-                    {body}
-                  </Link>
-                ) : (
-                  <div className="flex gap-3 py-2">{body}</div>
-                )}
-              </li>
-            );
-          })}
+        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={row}>
+          {dot}
+          {text}
+          {grouped && (
+            <span aria-hidden="true" className="text-micro text-muted">
+              {open ? "▲" : "▼"}
+            </span>
+          )}
+          {age}
+        </button>
+      )}
+      {open && grouped && (
+        <ul className="mb-2 ml-5 grid gap-1 border-l border-line pl-3" data-testid="activity-group">
+          {entries.map((e, i) => (
+            <li key={`${e.at}-${i}`} className="flex gap-3 text-micro">
+              <span className="min-w-0 flex-1 text-secondary [overflow-wrap:anywhere]">{e.text}</span>
+              <span className="shrink-0 text-muted tabular-nums" title={`${formatEt(e.at)} ET`}>
+                {shortAge(e.at, now)}
+              </span>
+            </li>
+          ))}
         </ul>
+      )}
+    </li>
+  );
+}
+
+function ActivityCard({ o }: { o: Overview }) {
+  const now = useNow();
+  const items = o.activity ?? [];
+  const h = o.activity_hours;
+  return (
+    <Card
+      title={`Recent Activity · ${h} h`}
+      action={{ label: "VIEW ALL", to: "/ops#alerts" }}
+      subtitle={<>since {formatEt(o.activity_since)} ET · repeated alerts grouped</>}
+      testid="activity-card"
+    >
+      {items.length === 0 ? (
+        <EmptyState caption={`Nothing in the last ${h} h`} />
+      ) : (
+        <CappedList className="grid" testid="activity" limit={LIST_CAP}>
+          {items.map((a, i) => (
+            <ActivityRow key={`${a.at}-${a.group ?? ""}-${i}`} a={a} now={now} />
+          ))}
+        </CappedList>
       )}
     </Card>
   );
@@ -454,6 +565,7 @@ export function OverviewPage() {
   const range = parseOverviewRange(params.get("range"));
   const q = useOverview(range);
   const cad = useCadences();
+  const now = useNow();
   const o = q.data;
 
   if (!o) {
@@ -464,30 +576,44 @@ export function OverviewPage() {
     );
   }
   const positions = o.positions ?? [];
+  // Mobile/tablet (one column, E8.8b order): status → Equity → P&L Today → Positions → Greeks
+  // vs Caps → Today's Proposals → Movers → Recent Activity. The column wrappers are
+  // `display: contents` below desktop so `order` interleaves them; desktop keeps two stacks.
+  const col = "contents desktop:grid desktop:min-w-0 desktop:content-start desktop:gap-10";
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="overview" data-marks-stale={o.marks_stale}>
-      <StatusStrip o={o} tickS={cad.tick} />
-      <div className="grid gap-6 desktop:grid-cols-2 desktop:gap-10">
-        <div className="grid min-w-0 content-start gap-6 desktop:gap-10">
-          <EquityCard o={o} range={range} cad={cad} />
-          <Card
-            title="Positions"
-            action={{ label: "VIEW ALL", to: "/positions" }}
-            freshness={{ at: o.marks_at, cadenceS: cad.monitor, label: "monitor mark" }}
-          >
-            {positions.length === 0 ? (
-              <EmptyState caption="No open structures." />
-            ) : (
-              <PositionsTable rows={positions} />
-            )}
-          </Card>
-          <ProposalsCard o={o} />
+      <StatusStrip o={o} cad={cad} now={now} />
+      <div className="grid gap-6 desktop:grid-cols-2 desktop:gap-10" data-testid="overview-grid">
+        <div className={col}>
+          <div className="order-1 min-w-0 desktop:order-none">
+            <EquityCard o={o} range={range} cad={cad} />
+          </div>
+          <div className="order-3 min-w-0 desktop:order-none">
+            <Card
+              title="Positions"
+              action={{ label: "VIEW ALL", to: "/positions" }}
+              freshness={{ at: o.marks_at, cadenceS: cad.monitor, label: "monitor mark" }}
+            >
+              {positions.length === 0 ? <EmptyState caption="No open structures." /> : <PositionsTable rows={positions} />}
+            </Card>
+          </div>
+          <div className="order-5 min-w-0 desktop:order-none">
+            <ProposalsCard o={o} />
+          </div>
         </div>
-        <div className="grid min-w-0 content-start gap-6 desktop:gap-10">
-          <PnlCard o={o} cad={cad} />
-          <GreeksCard o={o} monitorS={cad.monitor} />
-          <MoversCard o={o} monitorS={cad.monitor} />
-          <ActivityCard o={o} />
+        <div className={col}>
+          <div className="order-2 min-w-0 desktop:order-none">
+            <PnlCard o={o} cad={cad} />
+          </div>
+          <div className="order-4 min-w-0 desktop:order-none">
+            <GreeksCard o={o} monitorS={cad.monitor} />
+          </div>
+          <div className="order-6 min-w-0 desktop:order-none">
+            <MoversCard o={o} monitorS={cad.monitor} />
+          </div>
+          <div className="order-7 min-w-0 desktop:order-none">
+            <ActivityCard o={o} />
+          </div>
         </div>
       </div>
     </div>

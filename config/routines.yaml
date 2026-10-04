@@ -103,6 +103,11 @@ loop:
   slack_layout: root_per_loop   # root_per_loop (D36) | day_thread (pre-D36 rollback)
   action_roots: [positions.evaluate]   # D38: these chains get the same root line, only when they propose (SELL: …)
 
+# E8.8b / D48: Arc Tower display knobs (read per request; never used by trading code).
+tower:
+  overview:
+    activity_hours: 24     # Recent Activity is a rolling window of this many hours (1-168)
+
 # Default TTL / supersede policy per context kind (producers may override
 # per job with `context:`). TTLs: "<n>m|h|d" or "<n> session(s)".
 context_ttl:
