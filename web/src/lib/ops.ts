@@ -22,6 +22,13 @@ export type ContextEntry = Schemas["ContextEntryResponse"];
 export type Sources = Schemas["SourcesResponse"];
 export type Llm = Schemas["LlmResponse"];
 export type OpsConfig = Schemas["ConfigResponse"];
+export type TimelineBand = Schemas["TimelineBand"];
+export type SourceRow = Schemas["SourceRow"];
+export type SourceCategory = Schemas["SourceCategoryRow"];
+export type SourceStatus = SourceRow["status"];
+export type AutoApprove = Schemas["AutoApproveView"];
+export type AlertRow = Alerts["alerts"][number];
+export type HaltRow = Halts["halts"][number];
 
 export type SlotStatus = Slot["status"];
 
@@ -329,17 +336,6 @@ export function filterLog<T extends { level: string }>(lines: T[], min: string):
   return lines.filter((l) => rank(l.level) >= floor);
 }
 
-// -- budget --------------------------------------------------------------------------
-
-/** Tier marks on the 0..limit budget bar, as 0..1 fractions. */
-export function budgetMarks(b: Pick<Budget, "limit" | "restrict_at" | "open_limit">): Array<{ label: string; at: number }> {
-  if (!b.limit) return [];
-  return [
-    { label: `restrict ${b.restrict_at}`, at: b.restrict_at / b.limit },
-    { label: `opens stop ${b.open_limit}`, at: b.open_limit / b.limit },
-  ];
-}
-
 // -- context -------------------------------------------------------------------------
 
 /** Time left until *iso* (from *now*), compact. */
@@ -388,4 +384,229 @@ export function configGroups(keys: OpsConfig["keys"]): Array<{ group: string; ke
     group,
     keys: [...ks].sort((a, b) => Number(b.source === "override") - Number(a.source === "override")),
   }));
+}
+
+// -- E8.8d: widget order -------------------------------------------------------------
+
+/** Owner's widget order on /ops (D48), the same on mobile and desktop. */
+export const OPS_WIDGETS = [
+  "Session Timeline",
+  "Sources",
+  "Health",
+  "LLM Usage",
+  "Context Store",
+  "Auto-Approve",
+  "Alerts",
+  "Halts",
+  "Runs",
+  "Config",
+] as const;
+
+/** Sections closed on a first visit (E8.8a remembers the owner's choice after that). */
+export const OPS_CLOSED_BY_DEFAULT = ["Alerts", "Halts", "Runs"] as const;
+
+// -- E8.8d: Session Timeline bands -----------------------------------------------------
+
+/** Persona chip text (routines.yaml `persona:`); sources carry none. */
+export const PERSONA_CHIP: Record<string, string> = {
+  scout: "Scout",
+  director: "Director",
+  investor: "Investor",
+  risk: "Risk",
+  auditor: "Auditor",
+  monitor: "Monitor",
+};
+
+export interface BandView {
+  band: TimelineBand;
+  rows: TimelineRow[];
+  /** The band is a sub-band of a group (Sources › Market news): show the group eyebrow. */
+  sub: boolean;
+  /** First band of its group (where the eyebrow goes). */
+  firstOfGroup: boolean;
+}
+
+/**
+ * Rows by band in the API's band order (the loop row sits in its own band). The API decides
+ * the band of every job from routines.yaml; this only joins rows to bands, so a new job lands
+ * in its band with no UI change. Rows the API did not put in a band fall under a trailing
+ * "Other" band.
+ */
+export function bandRows(s: Pick<Session, "bands" | "rows" | "loop">): BandView[] {
+  const all = [...(s.loop ? [s.loop] : []), ...s.rows];
+  const byJob = new Map(all.map((r) => [r.job, r]));
+  const used = new Set<string>();
+  const out: BandView[] = [];
+  let lastGroup = "";
+  for (const band of s.bands ?? []) {
+    const rows = band.jobs.map((j) => byJob.get(j)).filter((r): r is TimelineRow => Boolean(r));
+    rows.forEach((r) => used.add(r.job));
+    if (!rows.length) continue;
+    out.push({ band, rows, sub: band.label !== band.group_label, firstOfGroup: band.group !== lastGroup });
+    lastGroup = band.group;
+  }
+  const rest = all.filter((r) => !used.has(r.job));
+  if (rest.length) {
+    const other = out.find((b) => b.band.key === "other");
+    if (other) other.rows.push(...rest);
+    else
+      out.push({
+        band: { key: "other", label: "Other", group: "other", group_label: "Other", jobs: rest.map((r) => r.job) },
+        rows: rest,
+        sub: false,
+        firstOfGroup: lastGroup !== "other",
+      });
+  }
+  return out;
+}
+
+export interface SlotTally {
+  total: number;
+  /** done + no_change: the slot ran and finished. */
+  ok: number;
+  settled: number;
+  missed: number;
+  failed: number;
+  skipped: number;
+  running: number;
+  next: Slot | null;
+}
+
+export function tallySlots(slots: Slot[]): SlotTally {
+  const n = (st: SlotStatus) => slots.filter((x) => x.status === st).length;
+  const ok = n("done") + n("no_change");
+  const failed = n("failed");
+  const missed = n("missed");
+  const skipped = n("skipped");
+  return {
+    total: slots.length,
+    ok,
+    settled: ok + failed + missed + skipped,
+    missed,
+    failed,
+    skipped,
+    running: n("running"),
+    next: slots.find((x) => x.status === "future") ?? null,
+  };
+}
+
+function problems(t: SlotTally): string[] {
+  const out: string[] = [];
+  if (t.failed) out.push(`${t.failed} failed`);
+  if (t.missed) out.push(`${t.missed} missed`);
+  if (t.skipped) out.push(`${t.skipped} skipped`);
+  return out;
+}
+
+/** Band header rollup: `14/16 ok · 1 missed` (settled slots only; future ones are not judged). */
+export function bandRollup(rows: TimelineRow[]): string {
+  const t = tallySlots(rows.flatMap((r) => r.slots));
+  if (!t.settled) return t.next ? `next ${t.next.at.slice(11, 16)}` : "no slots";
+  return [`${t.ok}/${t.settled} ok`, ...problems(t)].join(" · ");
+}
+
+/** A band starts open on mobile when any of its slots failed or was missed. */
+export function bandHasProblem(rows: TimelineRow[]): boolean {
+  return rows.some((r) => r.slots.some((x) => x.status === "failed" || x.status === "missed"));
+}
+
+/** Job row summary: `9/12 done · 1 missed · next 10:30`. */
+export function rowSummary(row: TimelineRow): string {
+  const t = tallySlots(row.slots);
+  const parts = [`${t.ok}/${t.total} done`, ...problems(t)];
+  if (t.running) parts.push("running");
+  if (t.next) parts.push(`next ${t.next.at.slice(11, 16)}`);
+  return parts.join(" · ");
+}
+
+/** ⓘ facts under the about line: cadence · window · LLM · writes. */
+export function rowFacts(row: TimelineRow): string[] {
+  const out = [row.cadence];
+  if (row.window) out.push(`window ${row.window}`);
+  out.push(row.llm ? "LLM yes" : "LLM no");
+  out.push(row.writes?.length ? `writes ${row.writes.join(", ")}` : "writes nothing");
+  return out;
+}
+
+// -- E8.8d: Sources by D47 category ------------------------------------------------------
+
+export const SOURCE_STATUS_RANK: Record<SourceStatus, number> = {
+  ok: 0,
+  idle: 1,
+  pending: 2,
+  backoff: 3,
+  late: 4,
+  failed: 5,
+};
+
+export const SOURCE_STATUS_TONE: Record<SourceStatus, "pos" | "neutral" | "warn" | "neg"> = {
+  ok: "pos",
+  idle: "neutral",
+  pending: "warn",
+  backoff: "warn",
+  late: "neg",
+  failed: "neg",
+};
+
+export function worstStatus(statuses: SourceStatus[]): SourceStatus {
+  return statuses.reduce<SourceStatus>((w, s) => (SOURCE_STATUS_RANK[s] > SOURCE_STATUS_RANK[w] ? s : w), "ok");
+}
+
+/** A status that opens its category on a phone. */
+export function isSourceProblem(s: SourceStatus): boolean {
+  return SOURCE_STATUS_RANK[s] >= SOURCE_STATUS_RANK.pending;
+}
+
+/**
+ * Source rows under their category, in the API's category order (never a hard-coded list:
+ * D49 renames and splits categories). Rows whose category the API did not list come last.
+ */
+export function sourceGroups(s: Pick<Sources, "categories" | "sources">): Array<{ category: SourceCategory; rows: SourceRow[] }> {
+  const cats = s.categories ?? [];
+  const out = cats.map((category) => ({ category, rows: s.sources.filter((r) => r.category === category.key) }));
+  const known = new Set(cats.map((c) => c.key));
+  const extra = [...new Set(s.sources.filter((r) => !known.has(r.category)).map((r) => r.category))];
+  for (const key of extra) {
+    const rows = s.sources.filter((r) => r.category === key);
+    out.push({
+      category: {
+        key,
+        label: key,
+        weight: 0,
+        share: null,
+        max_age: "—",
+        newest_doc_at: null,
+        status: worstStatus(rows.map((r) => r.status ?? "ok")),
+        sources: rows.length,
+      },
+      rows,
+    });
+  }
+  return out.filter((g) => g.rows.length > 0);
+}
+
+/** `20 %` (whole percent; `<1 %` for tiny non-zero shares, `—` when not budgeted). */
+export function sharePct(v: number | null | undefined): string {
+  if (v == null) return "—";
+  if (v > 0 && v < 0.005) return "<1 %";
+  return `${Math.round(v * 100)} %`;
+}
+
+// -- E8.8d: repeat grouping (Alerts / Halts, like the overview's `missed_window ×12`) ----
+
+export interface RepeatGroup<T> {
+  key: string;
+  items: T[];
+  /** `missed_window ×12`, or the plain key for a single item. */
+  text: string;
+}
+
+/** Group items by `keyOf`, keeping first-seen order (the API sorts newest first). */
+export function groupRepeats<T>(items: T[], keyOf: (t: T) => string): Array<RepeatGroup<T>> {
+  const by = new Map<string, T[]>();
+  for (const it of items) {
+    const k = keyOf(it);
+    by.set(k, [...(by.get(k) ?? []), it]);
+  }
+  return [...by.entries()].map(([key, its]) => ({ key, items: its, text: its.length > 1 ? `${key} ×${its.length}` : key }));
 }

@@ -357,6 +357,19 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
             outs.append(cand)
             out_ids["candidate"] = [cand]
             summary = "1 candidate (SPY) from 12 docs across 5 sources"
+        elif o.job == "youtube.briefs":
+            # E8.8d: per-channel brief outcomes (E4.6 manifest metrics) for the Sources card
+            from arc.ingest.sources import SourceRegistry
+
+            slugs = [s.key.split(".", 1)[1] for s in SourceRegistry.from_routines(routines).sources.values()
+                     if s.job == o.job and s.channel]  # fmt: skip
+            shapes = [
+                {"outcome": "briefed", "title": "Fed week ahead"},
+                {"outcome": "pending", "pending_reason": "no captions yet"},
+                {"outcome": "no_video"},
+            ]
+            extra = {"channels": {c: shapes[i % 3] for i, c in enumerate(slugs)}}
+            summary = f"{len(slugs)} channels: 1 brief, 1 pending, 1 no video"
         running = (
             o.job == "monitor"
             and o.scheduled_for == last_monitor
@@ -407,7 +420,8 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
                 "text": "fixture", "tickers_hint": '["SPY"]',
                 "content_hash": _sha("doc", s.key, k), "ingested_at": to_db(at),
                 "source_key": s.key,
-                "scout_status": "skipped_budget" if (i, k) == (1, 1) else "scouted",
+                "scout_status": "skipped_budget" if (i, k) == (1, 1)
+                else "skipped_stale" if (i, k) == (0, 0) else "scouted",
             })  # fmt: skip
     _ins(conn, "ingest_cursors", {
         "connector": "youtube:captions_backoff",
@@ -426,6 +440,9 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
     alerts.open(f"missed:edgar:{to_db(edgar_slot)}", "missed_window",
                 f"edgar slot {edgar_slot:%H:%M} ET missed", at=now - dt.timedelta(hours=3),
                 resolved=True)  # fmt: skip
+    for k in range(1, 4):  # E8.8d: repeats collapse into one `missed_window ×n` row
+        alerts.open(f"missed:rss:{k}", "missed_window", f"rss slot -{k}h missed",
+                    at=now - dt.timedelta(hours=3 + k), resolved=True)  # fmt: skip
     alerts.open("tick_stale", "tick_stale", "no tick heartbeat for 17 min",
                 at=now - dt.timedelta(days=1, hours=2))  # fmt: skip
     alerts.resolve("tick_stale", at=now - dt.timedelta(days=1, hours=1, minutes=40))

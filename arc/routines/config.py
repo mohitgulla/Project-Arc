@@ -37,6 +37,11 @@ Job keys (``sources.<name>`` / ``personas.<name>``):
 - Any other key (e.g. ``only_for: open_positions``, ``channel: <url>``) is kept
   as a handler option in :attr:`JobSpec.options`, so new filters never break
   validation.
+- Display keys (E8.8d, D48), read only by the Arc Tower's Session Timeline and
+  validated here: ``label`` (friendly name), ``group`` (one of
+  :data:`TIMELINE_GROUPS`; a source's band is its D47 category instead),
+  ``persona`` (one of :data:`TIMELINE_PERSONAS`, the chip) and ``about`` (one
+  line on what the job does). A job without them shows under "Other" with its key.
 
 ``steps.<name>`` configures chain steps that are not scheduled on their own
 (e.g. ``propose``): same keys as a job minus the cadence.
@@ -78,6 +83,21 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_ROUTINES_PATH = REPO_ROOT / "config" / "routines.yaml"
 
+#: E8.8d (D48): Session Timeline bands, in display order (key, label). ``sources`` is
+#: assigned by D47 category (one sub-band per category); ``other`` is the fallback.
+TIMELINE_GROUPS: tuple[tuple[str, str], ...] = (
+    ("sources", "Sources"),
+    ("scout", "Scout"),
+    ("trading_loop", "Trading loop"),
+    ("position_management", "Position management"),
+    ("post_market", "Post-market"),
+    ("other", "Other"),
+)
+#: E8.8d: persona chips a job may declare (``persona:``); sources declare none.
+TIMELINE_PERSONAS: tuple[str, ...] = ("scout", "director", "investor", "risk", "auditor", "monitor")
+#: E8.8d: ``about:`` is one line; longer text belongs in docs, not the timeline ⓘ.
+ABOUT_MAX_CHARS = 160
+
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 _JOB_NAME = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$")
 
@@ -88,6 +108,29 @@ def _parse_hhmm(text: str) -> _dt.time:
         msg = f"invalid time {text!r}; expected 24h 'HH:MM' in ET"
         raise ValueError(msg)
     return _dt.time(int(m.group(1)), int(m.group(2)))
+
+
+def _check_display_keys(name: str, spec: JobSpec) -> None:
+    """E8.8d: optional Session Timeline keys (``label``/``group``/``persona``/``about``).
+
+    Typos fail config load, so a job never lands in "Other" by accident.
+    """
+    opts = spec.options
+    groups = [g for g, _ in TIMELINE_GROUPS]
+    for key in ("label", "about"):
+        if key in opts and (not isinstance(opts[key], str) or not opts[key].strip()):
+            msg = f"job {name!r}: {key} must be a non-empty string"
+            raise ValueError(msg)
+    if len(str(opts.get("about", ""))) > ABOUT_MAX_CHARS:
+        msg = f"job {name!r}: about is one line (<= {ABOUT_MAX_CHARS} chars)"
+        raise ValueError(msg)
+    if "group" in opts and opts["group"] not in groups:
+        msg = f"job {name!r}: unknown group {opts['group']!r}; expected {' | '.join(groups)}"
+        raise ValueError(msg)
+    if "persona" in opts and opts["persona"] not in TIMELINE_PERSONAS:
+        names = " | ".join(TIMELINE_PERSONAS)
+        msg = f"job {name!r}: unknown persona {opts['persona']!r}; expected {names}"
+        raise ValueError(msg)
 
 
 class Days(enum.StrEnum):
@@ -630,6 +673,8 @@ class RoutinesConfig(BaseModel):
             ):
                 msg = f"job {name!r}: lane background is only for scheduled jobs without a chain"
                 raise ValueError(msg)
+        for name, spec in [*self.sources.items(), *self.personas.items()]:
+            _check_display_keys(name, spec)
         known_jobs = set(names)
         if "loop" in self.model_fields_set and self.loop.job not in self.personas:
             msg = f"loop.job: unknown persona {self.loop.job!r}"
