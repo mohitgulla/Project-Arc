@@ -166,6 +166,7 @@ the plist with `--print`, and remove it with `--uninstall`.
 | tick_slow (E8.2a) | In the last `coverage_window` (60m), at least `tick_slow_count` (2) ticks took longer than `tick_slow_after` (4m, from E5.10's `tick_duration_ms`), or the p90 gap between ticks is above 1.5 × `tick.interval` (7m30s). The message names the slowest job. | `tick_slow` |
 | routine_windows | Only for **slow-cadence** jobs (slots at least `per_slot_min_interval`, 60m, apart: Scout overnight, auditor, earnings, the daily sources). A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
 | slot_coverage (E8.2a) | For **fast** jobs (the 5-min loop, monitor, the 30-min Scout, rss/edgar): the job ran fewer than `coverage_min` (80 %) of its slots judged in the last `coverage_window` (60m). Slots are judged the same way as routine_windows (collapse aware), and halted slots count in neither number. One alert per job, which names the likely cause from the tick heartbeats (slow ticks with the top job, or tick gaps). | `coverage:<job>` |
+| earnings_coverage (E4.1d) | The `earnings` source job is enabled, the effective universe has at least one non-ETF ticker, and no earnings-calendar doc was stored in the last `earnings_stale_after` (7d). The message names the last earnings run's status and error (e.g. `skipped: no_api_key`, `failed: HTTPError …`). Without the dates `next_earnings` is empty and short premium on stocks fails closed. Never folded into a tick incident. | `coverage:earnings` |
 | stuck_runs | A `routine_runs` row is still `running` after `stuck_after` (70m), or after its job's `stuck_after_jobs` override (`monitor: 10m`, E5.3a). | `stuck:<run_id>` |
 | gateway | `hermes gateway status` or `hermes cron status` shows a `✗`, exits non-zero, or times out. `⚠` warnings count as degraded: they are recorded but not alerted unless `gateway.alert_on_degraded: true`. | `gateway` |
 | remote_access (E8.6, on since 2026-10-03) | `GET <ts-ip>:1994/api/status` doesn't answer, or answers without `auth_required: true` and `basic` in `auth_providers`; `GET <ts-ip>:4174/api/health` isn't 200 with `status: ok`; or either port accepts a connection on a LAN address. See §5.7. | `remote_hermes`, `remote_tower`, `remote_exposed` |
@@ -761,8 +762,9 @@ screen in `config/universe.yaml`. `ARC_UNIVERSE_MODE=strict` restores the allow-
 
 Every Scout source is a named entry in `config/routines.yaml`: each RSS feed under
 `sources.rss.feeds` (`name`, `url`, optional `label`, `category`, `weight`,
-`max_docs_per_run`, `hosts`), and `edgar` / `earnings` / `youtube.*` with a
-`category` and `label`. Adding or re-weighting a source is a YAML edit only.
+`max_docs_per_run`, `hosts`), and `edgar` / `earnings` with a
+`category` and `label`. Adding or re-weighting a source is a YAML edit only. YouTube
+(category `video`) has no Scout share since D45; see §5.22.
 
 - **Budget.** Each Scout run reads `scout_doc_budget` docs (default 120, Slack-tunable
   20-400), shared by weighted round-robin (equal weights by default; per-category
@@ -950,7 +952,7 @@ fires without the `arc routines tick` cron (E5.3).
 |---|---|---|
 | `rss`, `edgar` | every 15m 06:00-20:00 | sources, at least as often as the Scout |
 | `scout` | every 30m 09:00-16:00 (15 runs) | candidates from the last 30 min of sources; ttl 20m, no catch-up |
-| `scout.overnight` | 22:00 daily | the after-close pass (StockedUp etc.); ttl 3h |
+| `scout.overnight` | 22:00 daily | the after-close pass over fast sources; ttl 3h (YouTube moved to `youtube.briefs`, §5.22) |
 | `director` | every 5m 09:40-15:50 (75 slots) | the trading loop: director → quant → risk → propose → execute; ttl 5m |
 | `monitor` | every 5m 09:30-16:00 | unchanged (D35) |
 
@@ -1316,6 +1318,61 @@ without stopping the experiment: `!arc set experiments.runner.enabled false`.
       --out docs/RESEARCH/experiments/XP-1-aa.md
 
 and commit it (replaces the template's dry-run example).
+
+### 5.22 YouTube channel briefs: one 05:00 ET run, four channels (E4.6, D45)
+
+**What runs.** `youtube.briefs` in `config/routines.yaml`, 05:00 ET (02:00 PT) on
+trading days, background lane, holds the LLM lock, `ttl: 3h` (a missed morning is
+skipped after 08:00, never caught up). Channels, in config order:
+
+| slug | channel | notes |
+|---|---|---|
+| `stockedup` | StockedUp `UC-m6zNItyoDk5lSykDlhE4Q` | Shorts skipped |
+| `fxevolution` | FX Evolution `UCvJZEG5x-DVYZKTz--pS39w` | `Live Stream` titles excluded |
+| `tradebrigade` | Trade Brigade `UCYKtr6GfycBqQJf32tbQSbQ` | 50-77 min videos: `max_audio_minutes: 90` |
+| `arete` | Arete Trading `UCTeFsS-bP0XEt3NBMjfW2cA` | `^PREMARKET LIVE` clips excluded, `max_videos: 10` |
+
+**Per channel (deterministic, in code):**
+1. Flat-list the newest `max_videos` uploads. A listing failure (yt-dlp missing,
+   timeout, non-zero exit) is an **error**: the summary shows `✗` and a notice posts.
+2. Drop live/upcoming streams, Shorts (≤ 60 s or `/shorts/`) and `title_exclude`
+   matches; take the newest remaining video published in the last `lookback` (24 h).
+3. None → **no brief today** (`– (no video 24h)`): no info, not a neutral vote, and
+   yesterday's brief does not carry over.
+4. Transcript: captions first, audio fallback; one caption breaker and one audio
+   budget (`yt_max_audio_per_slot`, default 4) for the whole run, so a 429 on one
+   channel sends the rest to audio instead of starting four cooldowns.
+5. The transcript is stored as a `raw_docs` row (`source_key youtube.<slug>`) and
+   closed `scout_status='brief_only'`: **the 30-min Scout never reads video**.
+6. The channel profile (`arc/ingest/channels/<slug>/profile.yaml` + `GUIDELINES.md`)
+   extracts a `ChannelBrief`; every item needs a verbatim quote, and sponsor/promo
+   reads are stripped first. The brief expires 24 h after the run and supersedes the
+   channel's previous `channel_brief` entry.
+
+**What the Director sees.** A code-built block: `YouTube briefs: 3/4 channels
+(missing: FX)`, then agreement per (ticker, stance) counted over distinct
+channels with the configured channel count as the denominator, then each brief.
+Channels are equal-weight (`trust_weight: 0.5` each); free text never feeds the gate.
+A new brief changes the loop's input digest, so the next Director slot runs in full.
+
+**Adding a channel.** One `channels:` entry (slug, `UC…` id or a channel URL,
+label, optional `title_exclude` / `max_videos` / `max_audio_minutes` /
+`skip_shorts`) plus `arc/ingest/channels/<slug>/` with `profile.yaml`,
+`GUIDELINES.md` and fixtures. No code change; `tests/test_youtube_briefs.py` checks
+that every configured slug has a profile.
+
+**Run it by hand** (scratch DB, never `data/arc.db`):
+
+```
+.venv/bin/arc routines run youtube.briefs --db ~/.hermes/cache/scratch/yt.db \
+  --no-slack --lock-dir ~/.hermes/cache/scratch/yt-lock
+sqlite3 ~/.hermes/cache/scratch/yt.db \
+  "select channel_slug, video_id, status, expires_at from channel_briefs"
+```
+
+The run's manifest metrics carry one record per channel (`outcome`, excluded
+videos with reasons, video id/title/published, transcript source, items kept and
+dropped by reason, model, tokens, wall time, error).
 
 ## 6. Local Models (E8.4)
 

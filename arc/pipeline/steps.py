@@ -891,6 +891,7 @@ def _loop_inputs(
     return LoopInputs(
         candidates=sorted(f"{e.id}@{e.schema_version}" for e in snap.of_kind("candidate")),
         regimes=sorted(f"{e.subject}@{e.id}" for e in snap.of_kind("regime")),
+        briefs=sorted(f"{e.subject}@{e.id}" for e in snap.of_kind("channel_brief")),
         positions=sorted(f"{p.structure_id}:{p.contracts}" for p in pctx.positions),
         pnl_bucket=pnl_bucket(pctx.account.day_pnl, pctx.account.equity, bucket_pct),
         pending_orders=pending_orders,
@@ -989,6 +990,14 @@ def _loop_record_full_run(ctx: JobContext) -> None:
         LoopState(ctx.conn).record_digest(digest, ctx.now, full_run=True)
 
 
+def _youtube_channels(ctx: JobContext) -> list[dict[str, str]]:
+    """``[{slug, label}]`` of the ``youtube.briefs`` job (E4.6), ``[]`` if not configured."""
+    from arc.ingest.channels.daily import JOB, configured_channels
+
+    found = ctx.routines.job(JOB)
+    return configured_channels(found[1].options if found else None)
+
+
 def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
     cand_entries = ctx.snapshot.of_kind("candidate")
@@ -1075,6 +1084,8 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "recent_ideas": "\n".join(recent_lines),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
         "rules": _director_rules(cands, settings, budget, pctx),
+        # E4.6 (D45): [{slug, label}] of the youtube.briefs job, for the n/N line.
+        "youtube_channels": _youtube_channels(ctx),
     }
     reply, out = _ask(ctx, env, "director", snap, inputs, DirectorOutput)
     kept, dropped, rejected = _filter_shortlist(out, cands)

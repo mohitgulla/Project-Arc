@@ -100,6 +100,9 @@ class MonitoringSettings(BaseModel):
     # E8.2a: `tick_slow` fails when this many ticks in the window took > tick_slow_after.
     tick_slow_count: Annotated[int, Field(ge=1, le=100)] = 2
     tick_slow_after: _dt.timedelta = _dt.timedelta(minutes=4)
+    # E4.1d: `coverage:earnings` when no earnings doc was ingested for this long while
+    # the universe has a non-ETF ticker (the gate's earnings blackout needs the dates).
+    earnings_stale_after: _dt.timedelta = _dt.timedelta(days=7)
     alert_channel: AlertChannel = AlertChannel.PROJECT_ARC
     gateway: GatewayCheck = Field(default_factory=GatewayCheck)
     remote_access: RemoteAccessCheck = Field(default_factory=RemoteAccessCheck)
@@ -113,6 +116,7 @@ class MonitoringSettings(BaseModel):
         "per_slot_min_interval",
         "coverage_window",
         "tick_slow_after",
+        "earnings_stale_after",
         mode="before",
     )
     @classmethod

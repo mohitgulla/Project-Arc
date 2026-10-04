@@ -113,15 +113,17 @@ class ChannelBriefRepo:
         *,
         now: _dt.datetime,
         raw_doc_id: str | None = None,
+        expires: _dt.datetime | None = None,
     ) -> str:
         """Store a brief; supersede the channel's previous active brief.
 
         A brief that is already past its expiry is stored as ``expired``; one
         older than the current active brief is stored as ``superseded``.
-        Returns the stored status.
+        *expires* (E4.6 / D45: run time + the job's context TTL) replaces the
+        profile's session-based expiry when given. Returns the stored status.
         """
         brief = result.brief
-        exp = expires_at(brief, processor)
+        exp = expires if expires is not None else expires_at(brief, processor)
         now_iso = _utc_iso(now)
         published = brief.published_at.astimezone(ET).isoformat()
         slug = brief.channel_slug

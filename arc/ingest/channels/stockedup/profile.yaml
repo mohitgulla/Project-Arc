@@ -14,8 +14,8 @@ focus:
   - risk_flags
 trust_weight: 0.5
 guidelines_version: "stockedup-2026-09-27.2"
-# Active from publish until the next video, hard cap 2 sessions (D14).
-max_active_sessions: 2
+# E4.6 / D45: one brief per trading day; the daily job also caps it at run + 24 h.
+max_active_sessions: 1
 # Sponsor / self-promo reads stripped before extraction (in addition to the
 # shared defaults in base.py: sponsor, "use code", subscribe, patreon, ...).
 sponsor_patterns:

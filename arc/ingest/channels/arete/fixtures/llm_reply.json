@@ -1,0 +1,35 @@
+{
+  "market_bias": null,
+  "levels": [
+    {
+      "ticker": "STX",
+      "kind": "support",
+      "price": 800.0,
+      "quote": "you want to watch and see if you can get to 800 today. That's the put wall."
+    }
+  ],
+  "calls": [
+    {
+      "ticker": "STX",
+      "stance": "bullish",
+      "horizon": "next_session",
+      "instrument_hint": "none",
+      "conviction": 0.7,
+      "quote": "Right at those levels, I'm going to sell puts."
+    }
+  ],
+  "catalysts": [
+    {
+      "event": "Analysts back STX and WDC after Toshiba capacity news",
+      "kind": "other",
+      "tickers": [
+        "STX",
+        "WDC"
+      ],
+      "date": null,
+      "expected_impact": "bullish",
+      "quote": "And then they're coming out there and stating, hey, we like Western Digital and think that these names are still going to hit their targets."
+    }
+  ],
+  "risk_flags": []
+}

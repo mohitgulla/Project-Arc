@@ -1,0 +1,44 @@
+{
+  "market_bias": {
+    "stance": "neutral",
+    "confidence": 0.4,
+    "quote": "Kind of like the calm before the storm, but there doesn't seem to be a storm in at least the cues at this stage."
+  },
+  "levels": [],
+  "calls": [
+    {
+      "ticker": "XLF",
+      "stance": "bearish",
+      "horizon": "swing",
+      "instrument_hint": "none",
+      "conviction": 0.4,
+      "quote": "When the financials fall off, that could be telling us there's a bit of weakness in the market."
+    },
+    {
+      "ticker": "QQQ",
+      "stance": "bullish",
+      "horizon": "swing",
+      "instrument_hint": "none",
+      "conviction": 0.5,
+      "quote": "We're still making higher highs and higher lows, which we'll check out."
+    }
+  ],
+  "catalysts": [],
+  "risk_flags": [
+    {
+      "flag": "weak breadth",
+      "severity": "med",
+      "quote": "Generally speaking, when you get breadth that bad, when you're down at these levels, usually you're in about a 5% correction."
+    },
+    {
+      "flag": "MOVE index / bond volatility",
+      "severity": "med",
+      "quote": "Now, when the move index spike, especially if it's sustained for a little while, then that can create again more panic in market."
+    },
+    {
+      "flag": "consumer spending pullback",
+      "severity": "low",
+      "quote": "it's showing us that people are pulling back on their spending, and that's eventually going to hit the stock market if we lose capex spend from AI."
+    }
+  ]
+}

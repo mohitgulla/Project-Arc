@@ -1,0 +1,36 @@
+# FX Evolution (@FXEvolutionVideo): macro / cross-asset market wrap, posted around
+# 23:00-01:00 ET, 18-30 min. Its Monday "Live Stream" is excluded in routines.yaml.
+slug: fxevolution
+channel_id: UCvJZEG5x-DVYZKTz--pS39w
+display_name: FX Evolution
+url: https://www.youtube.com/channel/UCvJZEG5x-DVYZKTz--pS39w
+cadence: trading_daily
+horizon: multi_day
+publish_window_et: "23:00-01:00"
+focus:
+  - market_bias
+  - levels
+  - calls
+  - catalysts
+  - risk_flags
+trust_weight: 0.5          # D45: four channels, equal weight
+guidelines_version: "fxevolution-2026-10-04.1"
+max_active_sessions: 1     # one trading day; the daily job caps it at run + 24 h
+# Self-promo reads stripped before extraction (shared defaults in base.py also apply).
+sponsor_patterns:
+  - '\blive sessions?\b'
+  - '\bsigning up\b'
+  - '\bsign up\b'
+  - '\bpin(?:ned)? comment\b'
+  - '\bdescription down below\b'
+  - '\bnewsletter\b'
+  - '\bacademy\b'
+  - '\bgive (?:them|him|her) a follow\b'
+hedge_words:
+  - could
+  - might
+  - may
+  - maybe
+  - watching
+  - interesting
+  - suggest

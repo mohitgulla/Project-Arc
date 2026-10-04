@@ -453,12 +453,13 @@ KNOBS = (
     "monitoring.coverage_min",
     "monitoring.tick_slow_count",
     "monitoring.tick_slow_after",
+    "monitoring.earnings_stale_after",
 )
 
 
 def test_every_new_knob_is_registered() -> None:
     fields = {"per_slot_min_interval", "coverage_window", "coverage_min", "tick_slow_count",
-              "tick_slow_after"}  # fmt: skip
+              "tick_slow_after", "earnings_stale_after"}  # fmt: skip
     assert {k.removeprefix("monitoring.") for k in KNOBS} == fields
     for k in KNOBS:
         t = REGISTRY[k]
@@ -518,3 +519,110 @@ def test_control_override_changes_the_check(
     assert effective_routines(conn, config_file).monitoring != load_routines(config_file).monitoring
     assert _results(conn, config_file, NOW)[check].severity == after
     assert _svc(conn).view(key).value is not None
+
+
+# ---------------------------------------------------------------------------
+# E4.1d: coverage:earnings (stale earnings calendar)
+# ---------------------------------------------------------------------------
+
+EARNINGS_YAML = """
+    sources:
+      earnings: {schedule: ["06:00", "18:00"], days: trading, writes: [raw_doc_ref]}
+    monitoring:
+      gateway: {enabled: false}
+"""
+STOCKS = ["SPY", "QQQ", "AAPL", "MSFT"]
+
+
+def _earnings_cfg() -> RoutinesConfig:
+    return RoutinesConfig.model_validate(yaml.safe_load(textwrap.dedent(EARNINGS_YAML)))
+
+
+def _earnings_doc(conn: sqlite3.Connection, ingested: dt.datetime, sym: str = "AAPL") -> None:
+    conn.execute(
+        """INSERT INTO raw_docs (id, source, url, published_at, text, tickers_hint,
+                                 content_hash, ingested_at)
+           VALUES (?, 'earnings', ?, '2026-10-28T00:00:00+00:00', 't', ?, ?, ?)""",
+        (uuid.uuid4().hex[:16], f"https://finnhub.io/calendar/earnings/{sym}/2026-10-28",
+         f'["{sym}"]', uuid.uuid4().hex, to_db(ingested)),
+    )  # fmt: skip
+    conn.commit()
+
+
+def test_stale_earnings_calendar_alerts(conn: sqlite3.Connection) -> None:
+    """E4.1d: no earnings doc newer than 7 d while the universe has stocks -> one
+    `coverage:earnings` condition (posted once, resolved when a fresh doc lands)."""
+    r, ms = _earnings_cfg(), MonitoringSettings()
+    run(conn, "earnings", et(6, 0), "skipped", "no_api_key: ARC_FINNHUB_API_KEY is not set")
+
+    res = checks.earnings_coverage(conn, r, ms, NOW, STOCKS)
+    assert res.severity == "failed"
+    (f,) = res.findings
+    assert f.key == "coverage:earnings"
+    assert "none ever stored" in f.message and "no_api_key" in f.message
+    assert "AAPL" in f.message and "SPY" not in f.message
+
+    n = alerts.RecordingOpsNotifier()
+    out = alerts.apply(conn, [res], now=NOW, correlation={}, notifier=n)
+    assert [a.key for a in out.opened] == ["coverage:earnings"]
+    assert len(n.posts) == 1 and "earnings calendar stale" in n.posts[0]
+    # Still stale an hour later: no repeat post.
+    later = NOW + dt.timedelta(hours=1)
+    alerts.apply(conn, [checks.earnings_coverage(conn, r, ms, later, STOCKS)], now=later,
+                 correlation={}, notifier=n)  # fmt: skip
+    assert len(n.posts) == 1
+    # A slot-coverage run alone does not resolve it (it is not that check's alert).
+    alerts.apply(conn, [checks.slot_coverage(conn, r, ms, later)], now=later, correlation={},
+                 notifier=n)  # fmt: skip
+    assert AlertRepo(conn).open_for("coverage:earnings") is not None
+
+    # An old doc (8 d) is still stale; a fresh one resolves the alert.
+    _earnings_doc(conn, NOW - dt.timedelta(days=8))
+    assert checks.earnings_coverage(conn, r, ms, later, STOCKS).severity == "failed"
+    _earnings_doc(conn, later - dt.timedelta(hours=2), "MSFT")
+    fresh = checks.earnings_coverage(conn, r, ms, later, STOCKS)
+    assert fresh.severity == "ok" and "2 stored" in fresh.summary
+    out = alerts.apply(conn, [fresh], now=later, correlation={}, notifier=n)
+    assert [a.key for a in out.resolved] == ["coverage:earnings"]
+    assert "earnings calendar fresh again" in n.posts[-1]
+
+
+def test_earnings_coverage_not_judged(conn: sqlite3.Connection) -> None:
+    r, ms = _earnings_cfg(), MonitoringSettings()
+    # ETF-only universe: ETFs have no earnings, nothing to alert on.
+    assert checks.earnings_coverage(conn, r, ms, NOW, ["SPY", "QQQ"]).severity == "ok"
+    # No earnings job enabled (e.g. a test config): not judged.
+    assert checks.earnings_coverage(conn, cfg(), ms, NOW, STOCKS).severity == "ok"
+    # Threshold is config.
+    _earnings_doc(conn, NOW - dt.timedelta(days=3))
+    short = MonitoringSettings(earnings_stale_after=dt.timedelta(days=2))
+    assert checks.earnings_coverage(conn, r, short, NOW, STOCKS).severity == "failed"
+    assert checks.earnings_coverage(conn, r, ms, NOW, STOCKS).severity == "ok"
+    # The earnings job never gets a slot-ratio coverage alert of its own.
+    assert "earnings" not in checks.slot_coverage(conn, r, ms, NOW).detail.get("jobs", {})
+
+
+def test_earnings_coverage_in_run_checks_and_override(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    p = tmp_path / "routines.yaml"
+    p.write_text(textwrap.dedent(EARNINGS_YAML))
+    _earnings_doc(conn, NOW - dt.timedelta(days=3))
+    assert _results(conn, p, NOW)["earnings_coverage"].severity == "ok"
+    _set(conn, "monitoring.earnings_stale_after", "2")
+    assert effective_routines(conn, p).monitoring.earnings_stale_after == dt.timedelta(days=2)
+    assert _results(conn, p, NOW)["earnings_coverage"].severity == "failed"
+
+
+def test_stale_earnings_is_not_folded_into_a_tick_incident(conn: sqlite3.Connection) -> None:
+    """A tick outage does not explain a calendar that was never stored: post it."""
+    r, ms = _earnings_cfg(), MonitoringSettings()
+    n = alerts.RecordingOpsNotifier()
+    results = [
+        checks.tick_staleness(conn, ms, NOW),
+        checks.earnings_coverage(conn, r, ms, NOW, STOCKS),
+    ]
+    out = alerts.apply(conn, results, now=NOW, correlation={}, notifier=n)
+    assert {a.key for a in out.opened} == {"tick_stale", "coverage:earnings"}
+    assert not out.folded
+    assert "earnings calendar stale" in n.posts[0]

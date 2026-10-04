@@ -494,7 +494,7 @@ class TestRunScout:
         by_ticker = {c.ticker: c for c in res.candidates}
         # AAPL: bullish 0.8 vs bearish 0.6 → 0.2, below threshold → not surfaced.
         assert set(by_ticker) == {"NVDA", "XOM", "SPY"}
-        assert by_ticker["SPY"].sources == ["https://www.youtube.com/watch?v=fixture0005"]
+        assert by_ticker["SPY"].sources == ["https://example.com/news/fed-preview-transcript"]
         stored = CandidateRepo(conn).get_for_day("AAPL", res.day)
         assert stored is not None
         assert stored["confidence"] == pytest.approx(0.2)

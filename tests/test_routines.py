@@ -186,18 +186,22 @@ class TestConfig:
         assert c.personas["director"].ttl.duration == dt.timedelta(minutes=5)
         assert c.personas["scout"].every == dt.timedelta(minutes=30)
         assert c.personas["scout.overnight"].schedule == [dt.time(22, 0)]
-        assert c.sources["youtube.stockedup"].schedule == [dt.time(22, 0), dt.time(12, 0)]
+        assert c.sources["youtube.briefs"].schedule == [dt.time(5, 0)]  # D45 / E4.6
         assert c.monitoring.stuck_after_for("director") == dt.timedelta(minutes=10)
         assert c.loop.max_idle == dt.timedelta(minutes=30)
         assert c.loop.max_runtime == dt.timedelta(minutes=4)
         assert {r.run for r in c.triggers_for("approval")} == {"investor"}
-        stockedup = c.sources["youtube.stockedup"]
-        assert stockedup.options == {
-            "channel": "UC-m6zNItyoDk5lSykDlhE4Q",
-            "category": "video",
-            "label": "StockedUp",
-        }
-        assert c.context_policy("channel_brief", "youtube.stockedup").ttl is not None
+        yt = c.sources["youtube.briefs"]
+        assert "youtube.stockedup" not in c.sources
+        assert yt.options["category"] == "video" and yt.options["lookback"] == "24h"
+        assert [ch["slug"] for ch in yt.options["channels"]] == [
+            "stockedup",
+            "fxevolution",
+            "tradebrigade",
+            "arete",
+        ]
+        brief_ttl = c.context_policy("channel_brief", "youtube.briefs").ttl
+        assert brief_ttl is not None and brief_ttl.duration == dt.timedelta(hours=24)
 
     def test_card_example_parses(self) -> None:
         c = cfg(
@@ -1041,7 +1045,8 @@ class TestDryRunAndCli:
         order = [ln.split()[3] for ln in out.splitlines() if ln.strip()[:2].rstrip(".").isdigit()]
         assert order[-1] == "scout"
         # D31: 12:00 is a loop slot too; the loop runs before the Scout of the same tick.
-        assert set(order[:-1]) == {"edgar", "rss", "youtube.stockedup", "director", "monitor"}
+        # D45: no 12:00 YouTube slot any more (05:00 ET only).
+        assert set(order[:-1]) == {"edgar", "rss", "director", "monitor"}
         assert order.index("director") < order.index("scout")
         assert "quant" in out and "may-run" not in out  # no trigger any more
 

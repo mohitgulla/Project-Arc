@@ -53,6 +53,7 @@ class LoopInputs(BaseModel):
     pending_orders: int
     budget_tier: str
     suppressed: list[str]  # dedupe-suppressed idea keys, sorted
+    briefs: list[str] = []  # E4.6: active channel_brief "<subject>@<entry id>", sorted
 
     def digest(self) -> str:
         return _digest(self.model_dump(mode="json"))
