@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { PHONE_75, PHONE_75_TAG } from "./mobile";
+
 const FIXTURE_URL =
   process.env.ARC_E2E_FIXTURE_URL ?? `http://127.0.0.1:${process.env.ARC_E2E_FIXTURE_PORT ?? "4182"}`;
 
@@ -7,6 +9,7 @@ const FIXTURE_URL =
 // list with two URL filters, the detail page, mobile card rows + mobile detail, both themes.
 const VIEWPORTS = [
   { name: "mobile", width: 390, height: 844 },
+  PHONE_75, // E8.8a: the owner's iPhone at 75 % zoom (520x1125); phone-75 project only
   { name: "desktop", width: 1440, height: 900 },
 ] as const;
 const THEMES = ["dark", "light"] as const;
@@ -39,7 +42,7 @@ async function noOverflow(page: Page) {
 
 for (const vp of VIEWPORTS) {
   for (const theme of THEMES) {
-    test.describe(`trades ${vp.name} ${vp.width}x${vp.height} ${theme}`, () => {
+    test.describe(`trades ${vp.name} ${vp.width}x${vp.height} ${theme}`, { tag: vp.name === PHONE_75.name ? PHONE_75_TAG : [] }, () => {
       test.use({ viewport: { width: vp.width, height: vp.height } });
 
       test("list with two URL filters, then the SPY drill-down", async ({ page }) => {
@@ -57,9 +60,10 @@ for (const vp of VIEWPORTS) {
         await open(page, "/trades?stage=open,closed&kind=open", theme);
         await expect(page.getByTestId("summary-count")).toContainText("4");
         await expect(page.getByTestId("summary-realized")).toContainText("+$300.00");
-        const rows = vp.name === "mobile" ? page.getByTestId("datatable-cards").locator(":scope > button") : page.locator("tbody tr");
+        const mobile = vp.width <= 768; // §6 mobile layout (390, phone-75 520, 768)
+        const rows = mobile ? page.getByTestId("datatable-cards").locator(":scope > button") : page.locator("tbody tr");
         await expect(rows).toHaveCount(4);
-        if (vp.name === "mobile") await expect(page.getByTestId("filters-open")).toContainText("Filters (3)");
+        if (mobile) await expect(page.getByTestId("filters-open")).toContainText("Filters (3)");
         await noOverflow(page);
         await page.screenshot({ path: `e2e/screenshots/trades-${vp.name}-${theme}.png`, fullPage: true });
 
@@ -82,7 +86,7 @@ for (const vp of VIEWPORTS) {
         await page.getByTestId("sec-decisions").getByRole("button", { name: "▶ Details" }).nth(4).click();
         await expect(page.getByTestId("persona-call").first()).toContainText("claude-");
         expect(errors).toEqual([]);
-        if (vp.name === "mobile") {
+        if (mobile) {
           await page.getByRole("button", { name: "Back" }).click();
           await expect(page).toHaveURL(/\/trades\?stage=/);
         }

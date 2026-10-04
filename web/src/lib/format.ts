@@ -255,6 +255,103 @@ export function formatAsOf(
   return cadenceSeconds !== undefined && isStale(t, cadenceSeconds, now) ? `stale · ${base}` : base;
 }
 
+/** One source time behind a widget: when it was produced, by what, and how often it runs. */
+export interface FreshnessSource {
+  at: Date | string | number | null | undefined;
+  /** Producing job's cadence (s, from /api/meta); stale = 3x. Omitted: never stale. */
+  cadenceS?: number;
+  /** What produced the time, e.g. `monitor mark`, `reconcile`, `loaded`. */
+  label?: string;
+}
+
+export interface FreshnessView {
+  state: "none" | "fresh" | "stale";
+  /** Header-line text after the dot: `3m ago`, `stale · 1d ago`, `no data`. */
+  compact: string;
+  /** Tooltip text: `as of Fri 10-02 15:59 ET · monitor mark · stale after 15m`. */
+  full: string;
+}
+
+/** The E8.8 header freshness badge (TOWER_DESIGN §10): compact age plus a full tooltip line. */
+export function freshnessView(
+  src: FreshnessSource,
+  now: Date | number = Date.now(),
+  opts: { stale?: boolean } = {},
+): FreshnessView {
+  const { at, cadenceS, label } = src;
+  if (at === null || at === undefined || ageSeconds(at, now) === null) {
+    return { state: "none", compact: "no data", full: label ? `${label}: no data yet` : "no data yet" };
+  }
+  const stale = Boolean(opts.stale) || (cadenceS !== undefined && isStale(at, cadenceS, now));
+  const age = formatAge(at, now);
+  const parts = [`as of ${formatEt(at)} ET`];
+  if (label) parts.push(label);
+  if (cadenceS !== undefined) parts.push(`stale after ${Math.round((STALE_FACTOR * cadenceS) / 60)}m`);
+  return { state: stale ? "stale" : "fresh", compact: stale ? `stale · ${age}` : age, full: parts.join(" · ") };
+}
+
+/**
+ * A widget mixing two sources (P&L realized vs unrealized) badges the **older** one (D48).
+ * Sources with no time are skipped; null when none has one.
+ */
+export function olderSource(sources: readonly FreshnessSource[]): FreshnessSource | null {
+  let best: FreshnessSource | null = null;
+  let bestMs = Infinity;
+  for (const s of sources) {
+    if (s.at === null || s.at === undefined) continue;
+    const ms = toDate(s.at).getTime();
+    if (Number.isNaN(ms)) continue;
+    if (ms < bestMs) {
+      best = s;
+      bestMs = ms;
+    }
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------------------
+// Widget titles (Title Case, D48)
+// ---------------------------------------------------------------------------
+
+/** Words that stay lower case inside a title (never first or last). */
+export const TITLE_SMALL_WORDS: ReadonlySet<string> = new Set([
+  "a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "per", "the", "to", "via", "vs",
+]);
+
+function capWord(w: string, forceCap: boolean): string {
+  // Acronyms and mixed case stay as written: P&L, LLM, EV, PoP, ET, t0.
+  if (/[A-Z]/.test(w.slice(1)) || /\d/.test(w) || !/^[a-z]/i.test(w)) return w;
+  const lower = w.toLowerCase();
+  if (!forceCap && TITLE_SMALL_WORDS.has(lower)) return lower;
+  return w.charAt(0).toUpperCase() + w.slice(1);
+}
+
+/**
+ * Title Case for widget titles (D48): `Greeks vs caps` -> `Greeks vs Caps`, `Win / loss` ->
+ * `Win / Loss`, `Auto-approve` -> `Auto-Approve`. Small words stay lower case except first and
+ * last; acronyms (P&L, LLM, EV, PoP) and tokens with digits are kept as written.
+ */
+export function titleCase(s: string): string {
+  const tokens = s.split(/(\s+)/);
+  const words = tokens.map((t, i) => ({ t, i })).filter(({ t }) => /[A-Za-z0-9]/.test(t));
+  const first = words[0]?.i;
+  const last = words[words.length - 1]?.i;
+  return tokens
+    .map((t, i) => {
+      if (!/[A-Za-z]/.test(t)) return t;
+      const edge = i === first || i === last;
+      return t
+        .split("-")
+        .map((part, j) => capWord(part, edge || j > 0))
+        .join("-");
+    })
+    .join("");
+}
+
+export function isTitleCase(s: string): boolean {
+  return titleCase(s) === s;
+}
+
 // ---------------------------------------------------------------------------
 // Options legs
 // ---------------------------------------------------------------------------

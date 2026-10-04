@@ -17,7 +17,7 @@ export interface TileData {
 /** ~100x138 mover tile: ticker, name, Sparkline, ChangePill (§4). */
 export function Tile({ ticker, name, values, change, metric = "pnl", to }: TileData) {
   const body = (
-    <div className="flex h-[138px] w-[100px] shrink-0 flex-col justify-between rounded-card border border-line bg-card p-3 hover:bg-hover">
+    <div className="flex h-[138px] w-[100px] shrink-0 flex-col justify-between rounded-control border border-line bg-card p-3 hover:bg-hover">
       <div className="min-w-0">
         <div className="font-semibold text-title">{ticker}</div>
         <div className="truncate text-micro text-muted" title={name}>

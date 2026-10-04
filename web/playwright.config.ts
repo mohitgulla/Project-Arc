@@ -1,5 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
+import { PHONE_75_DEVICE } from "./e2e/mobile";
+
 // E2E: the shell and /kitchen-sink at the three TOWER_DESIGN §6 viewports, both themes,
 // against an empty scratch DB; the Overview (E8.7a) against the populated fixture DB
 // (scripts/tower_fixture_db.py, see e2e/overview.spec.ts); the Performance page (E8.7c)
@@ -31,6 +33,15 @@ export default defineConfig({
     // Full Chromium in new-headless mode (no separate headless-shell download needed).
     channel: "chromium",
   },
+  // `default` keeps the TOWER_DESIGN §6 viewports (390/768/1440) and the behaviour tests.
+  // `phone-75` (E8.8a, D48) is the owner's iPhone Safari at 75 % zoom: 520x1125, touch, iPhone
+  // UA. It runs only tests tagged `@phone-75` (the project name itself is part of every test's
+  // grep title, so the tag carries the `@`); see e2e/mobile.ts.
+  // Engine: Chromium (WebKit download hangs extracting on the dev host, as chromium did in E8.7d).
+  projects: [
+    { name: "default", grepInvert: /@phone-75/ },
+    { name: "phone-75", grep: /@phone-75/, use: { ...PHONE_75_DEVICE } },
+  ],
   webServer: process.env.ARC_E2E_URL
     ? undefined
     : [

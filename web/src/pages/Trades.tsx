@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Outlet, useNavigate, useSearchParams } from "react-router-dom";
 
-import { AsOfBadge } from "../components/AsOfBadge";
 import { Card } from "../components/Card";
 import { CardRow } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
@@ -522,7 +521,7 @@ export function TradesPage() {
   const search = params.toString();
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="trades">
-      <Card title="Trades" asOf={data ? <AsOfBadge at={data.as_of} label="loaded" /> : undefined}>
+      <Card title="Trades" freshness={{ at: data?.as_of, label: "loaded" }}>
         <div className="mb-4 flex flex-col gap-3">
           <Filters opts={opts.data} />
           {layout === "mobile" && (

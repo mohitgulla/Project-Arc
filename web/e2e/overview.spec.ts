@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { PHONE_75, PHONE_75_TAG } from "./mobile";
+
 const FIXTURE_URL =
   process.env.ARC_E2E_FIXTURE_URL ?? `http://127.0.0.1:${process.env.ARC_E2E_FIXTURE_PORT ?? "4182"}`;
 
@@ -7,6 +9,7 @@ const FIXTURE_URL =
 // server start): TOWER_DESIGN §6 viewports x both themes, plus the stale badge both ways.
 const VIEWPORTS = [
   { name: "mobile", width: 390, height: 844 },
+  PHONE_75, // E8.8a: the owner's iPhone at 75 % zoom (520x1125); phone-75 project only
   { name: "tablet", width: 768, height: 1024 },
   { name: "desktop", width: 1440, height: 900 },
 ] as const;
@@ -23,7 +26,7 @@ async function open(page: Page, path: string, theme: (typeof THEMES)[number]) {
 
 for (const vp of VIEWPORTS) {
   for (const theme of THEMES) {
-    test.describe(`overview ${vp.name} ${vp.width}x${vp.height} ${theme}`, () => {
+    test.describe(`overview ${vp.name} ${vp.width}x${vp.height} ${theme}`, { tag: vp.name === PHONE_75.name ? PHONE_75_TAG : [] }, () => {
       test.use({ viewport: { width: vp.width, height: vp.height } });
 
       test("renders every card on the fixture", async ({ page }) => {
@@ -37,7 +40,7 @@ for (const vp of VIEWPORTS) {
         await page.getByTestId("alerts-toggle").click();
         await expect(strip).toContainText("scout slot 12:00 ET missed");
         // Cards.
-        for (const title of ["Equity", "P&L today", "Positions", "Greeks vs caps", "Today's proposals", "Movers", "Recent activity"])
+        for (const title of ["Equity", "P&L Today", "Positions", "Greeks vs Caps", "Today's Proposals", "Movers", "Recent Activity"])
           await expect(page.getByRole("heading", { level: 2, name: title, exact: false }).first()).toBeVisible();
         await expect(page.getByTestId("trend-chart").locator("svg path").first()).toBeVisible();
         await expect(page.getByTestId("mtd-ytd")).toContainText("MTD");
@@ -47,8 +50,8 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("proposals")).toContainText("per_underlying_limit");
         await expect(page.getByTestId("activity").locator(":scope > li")).toHaveCount(20);
         await expect(page.getByTestId("max-loss-caps")).toContainText("SPY");
-        // Fresh marks: no stale badge.
-        await expect(page.getByTestId("greeks-stale")).toHaveCount(0);
+        // Fresh marks: the Greeks header badge is fresh (one freshness slot, §10).
+        await expect(page.getByTestId("greeks-freshness")).toHaveAttribute("data-freshness", "fresh");
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         expect(overflow).toBeLessThanOrEqual(0);
         await page.screenshot({ path: `e2e/screenshots/overview-${vp.name}-${theme}.png`, fullPage: true });
@@ -75,7 +78,8 @@ test.describe("overview behaviour", () => {
     // The fixture's last mark is 2 min before server start; move the browser clock 20 min on.
     await page.clock.install({ time: Date.now() + 20 * 60_000 });
     await open(page, "/", "light");
-    await expect(page.getByTestId("greeks-stale")).toBeVisible();
+    await expect(page.getByTestId("greeks-freshness")).toHaveAttribute("data-freshness", "stale");
+    await expect(page.getByTestId("greeks-freshness")).toContainText("stale ·");
     await expect(page.locator("[data-stale=true]").first()).toBeVisible();
     await page.screenshot({ path: "e2e/screenshots/overview-stale-desktop-light.png", fullPage: true });
   });

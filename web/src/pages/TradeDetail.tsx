@@ -632,14 +632,14 @@ export function TradeDetailBody({ d }: { d: TradeDetail }) {
       <Header d={d} />
       <SectionBlock title="Payoff" source="proposals.structure_json (arc.structures)" testid="sec-payoff"><Payoff d={d} /></SectionBlock>
       <SectionBlock title="Quant" source="proposals.quant_json, market_contexts.analytics" testid="sec-quant"><Quant d={d} /></SectionBlock>
-      <SectionBlock title="Decision trail" source="decisions, persona_calls" testid="sec-decisions"><Decisions d={d} /></SectionBlock>
+      <SectionBlock title="Decision Trail" source="decisions, persona_calls" testid="sec-decisions"><Decisions d={d} /></SectionBlock>
       <SectionBlock title="Gate" source="gate_decisions" testid="sec-gate"><Gate d={d} /></SectionBlock>
       <SectionBlock title="Approval" source="approval_requests" testid="sec-approval"><Approval d={d} /></SectionBlock>
       <SectionBlock title="Execution" source="executions, orders, order_events, fills" testid="sec-execution"><Execution d={d} /></SectionBlock>
-      <SectionBlock title="Position & exits" source="open_structures, proposals (kind=close), swaps" testid="sec-position"><Position d={d} /></SectionBlock>
-      <SectionBlock title="Outcome & review" source="outcomes, decision_reviews" testid="sec-outcome"><Outcome d={d} /></SectionBlock>
-      <SectionBlock title="Market context" source="market_contexts, context_snapshots, context_entries, candidates" testid="sec-market"><Market d={d} /></SectionBlock>
-      <SectionBlock title="Run manifest" source="run_manifests (D27)" testid="sec-manifest"><Manifest d={d} /></SectionBlock>
+      <SectionBlock title="Position & Exits" source="open_structures, proposals (kind=close), swaps" testid="sec-position"><Position d={d} /></SectionBlock>
+      <SectionBlock title="Outcome & Review" source="outcomes, decision_reviews" testid="sec-outcome"><Outcome d={d} /></SectionBlock>
+      <SectionBlock title="Market Context" source="market_contexts, context_snapshots, context_entries, candidates" testid="sec-market"><Market d={d} /></SectionBlock>
+      <SectionBlock title="Run Manifest" source="run_manifests (D27)" testid="sec-manifest"><Manifest d={d} /></SectionBlock>
     </div>
   );
 }
