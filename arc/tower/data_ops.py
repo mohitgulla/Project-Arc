@@ -79,7 +79,7 @@ __all__ = [
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 
 #: The session timeline's visible span (ET), per the card.
-TIMELINE_START = _dt.time(6, 0)
+TIMELINE_START = _dt.time(5, 0)  # E8.8d: the pre-market jobs (YouTube briefs 05:00) show
 TIMELINE_END = _dt.time(22, 0)
 ALERT_LOOKBACK = _dt.timedelta(days=7)
 EXPIRED_LOOKBACK = _dt.timedelta(hours=24)
@@ -190,6 +190,31 @@ class TimelineRow(BaseModel):
     kind: Literal["source", "persona", "loop"]
     cadence: str
     slots: list[Slot]
+    # E8.8d: config-driven band + explanation (routines.yaml label/group/persona/about).
+    group: str = Field(default="other", description="Timeline group (TIMELINE_GROUPS key)")
+    band: str = Field(
+        default="other", description="Band key: the group, or `sources.<category>` for a source"
+    )
+    persona: str | None = Field(default=None, description="Persona chip (none for sources)")
+    about: str | None = Field(default=None, description="One line on what the job does")
+    window: str | None = Field(default=None, description="Intraday window (ET), when any")
+    llm: bool = Field(default=False, description="Holds the LLM lock (calls a model)")
+    writes: list[str] = Field(default_factory=list, description="Declared context kinds")
+    categories: list[str] = Field(
+        default_factory=list, description="D47 categories the source job feeds (all of them)"
+    )
+
+
+class TimelineBand(BaseModel):
+    """E8.8d: one Session Timeline band, in display order."""
+
+    model_config = _STRICT
+
+    key: str = Field(description="`sources.<category>` or a TIMELINE_GROUPS key")
+    label: str
+    group: str
+    group_label: str
+    jobs: list[str] = Field(description="Job names in this band, in row order")
 
 
 class SessionResponse(BaseModel):
@@ -202,6 +227,9 @@ class SessionResponse(BaseModel):
     loop_job: str = Field(description="The D31 trading loop's job (second row)")
     loop: TimelineRow | None
     rows: list[TimelineRow]
+    bands: list[TimelineBand] = Field(
+        default_factory=list, description="E8.8d: bands in display order (non-empty only)"
+    )
     counts: dict[str, int] = Field(description="Slots by status")
     unscheduled: list[RunRow] = Field(
         default_factory=list, description="Root runs on the day with no slot (manual / event)"
@@ -276,12 +304,14 @@ def load_session(
             kind="loop" if name == loop_job else kind.value,
             cadence=spec.cadence,
             slots=slots,
+            **_display(name, kind.value, spec, routines),
         )
         if name == loop_job:
             loop_row = row
         else:
             out_rows.append(row)
     unscheduled = [run for key, run in roots.items() if key not in used]
+    out_rows, bands = _bands(out_rows, loop_row, routines)
     return SessionResponse(
         as_of=now,
         day=day,
@@ -290,6 +320,7 @@ def load_session(
         loop_job=loop_job,
         loop=loop_row,
         rows=out_rows,
+        bands=bands,
         counts=dict(counts),
         unscheduled=unscheduled,
     )
@@ -298,6 +329,89 @@ def load_session(
 def _label(name: str, spec: JobSpec) -> str:
     label = spec.options.get("label") if isinstance(spec.options, dict) else None
     return str(label) if label else name
+
+
+def _source_categories(spec: JobSpec) -> list[str]:
+    """D47/D49 categories a source job feeds: its own ``category`` plus its feeds' and
+    channels', in display order."""
+    from arc.context.categories import CATEGORY_ORDER, normalize_category
+
+    found: set[str] = set()
+    opts = spec.options
+    for raw in [
+        opts.get("category"),
+        *[f.get("category") for f in opts.get("feeds") or [] if isinstance(f, dict)],
+        *[c.get("category") for c in opts.get("channels") or [] if isinstance(c, dict)],
+    ]:
+        if raw is None:
+            continue
+        cat = normalize_category(raw)
+        if cat is not None:
+            found.add(cat.value)
+    return [c.value for c in CATEGORY_ORDER if c.value in found]
+
+
+def _display(name: str, kind: str, spec: JobSpec, routines: RoutinesConfig) -> dict[str, Any]:
+    """E8.8d: band, persona chip and ⓘ facts of a timeline row, from routines.yaml only.
+
+    A source's band is its D47 category (the first in display order when its feeds span
+    several); a persona's is its ``group:``. Anything unmapped lands in ``other``.
+    """
+    opts = spec.options
+    cats = _source_categories(spec) if kind == "source" else []
+    group = str(opts.get("group") or ("sources" if cats else "other"))
+    band = f"sources.{cats[0]}" if group == "sources" and cats else group
+    if group == "sources" and not cats:
+        group = band = "other"
+    llm = spec.llm if spec.llm is not None else kind == "persona"
+    return {
+        "group": group,
+        "band": band,
+        "persona": opts.get("persona") if kind != "source" else None,
+        "about": opts.get("about"),
+        "window": str(spec.window) if spec.window else None,
+        "llm": bool(llm),
+        "writes": list(spec.writes or []),
+        "categories": cats,
+    }
+
+
+def _bands(
+    rows: list[TimelineRow], loop: TimelineRow | None, routines: RoutinesConfig
+) -> tuple[list[TimelineRow], list[TimelineBand]]:
+    """Rows sorted into band order (config order inside a band) and the non-empty bands.
+
+    The loop row stays out of ``rows`` (``SessionResponse.loop``) but is a member of its
+    band, so the UI can place it under "Trading loop".
+    """
+    from arc.context.categories import CATEGORY_ORDER
+    from arc.routines.config import TIMELINE_GROUPS
+
+    group_label = dict(TIMELINE_GROUPS)
+    order: list[tuple[str, str, str]] = []  # (band key, label, group)
+    for g, glabel in TIMELINE_GROUPS:
+        if g == "sources":
+            order += [
+                (f"sources.{c.value}", routines.category_spec(c).label or c.value, g)
+                for c in CATEGORY_ORDER
+            ]
+        else:
+            order.append((g, glabel, g))
+    rank = {key: i for i, (key, _, _) in enumerate(order)}
+    every = [*([loop] if loop else []), *rows]
+    ordered = sorted(every, key=lambda r: rank.get(r.band, len(order)))
+    bands = [
+        TimelineBand(
+            key=key,
+            label=label,
+            group=g,
+            group_label=group_label[g],
+            jobs=[r.job for r in ordered if r.band == key],
+        )
+        for key, label, g in order
+        if any(r.band == key for r in ordered)
+    ]
+    return [r for r in ordered if r is not loop], bands
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +429,7 @@ class HealthItem(BaseModel):
     age_s: int | None = None
     value: str
     threshold: str = Field(description="What the status is judged against")
+    chip: str = Field(default="", description="E8.8d: compact chip text, e.g. `Tick ok 3m`")
 
 
 class HealthStripResponse(BaseModel):
@@ -455,9 +570,49 @@ def load_health(
             status=log_status,
             value="no log file" if size is None else f"{size / 1_000_000:.1f} MB",
             threshold=f"rotates at {cap / 1_000_000:.1f} MB" if cap else "-",
+            chip=_log_chip(size, cap),
         )
     )
-    return HealthStripResponse(as_of=now, items=items, checks=checks)
+    return HealthStripResponse(as_of=now, items=[_with_chip(it) for it in items], checks=checks)
+
+
+def _mb(n: int) -> str:
+    """``1.2`` / ``5`` / ``0.002``: MB without a trailing ``.0`` and never a false 0."""
+    mb = n / 1_000_000
+    if mb >= 0.1:  # noqa: PLR2004 - one decimal from 100 KB up
+        return f"{mb:.1f}".removesuffix(".0")
+    return f"{mb:.3f}".rstrip("0").rstrip(".") or "0"
+
+
+def _log_chip(size: int | None, cap: int) -> str:
+    if size is None:
+        return "Log none"
+    return f"Log {_mb(size)} / {_mb(cap)} MB" if cap else f"Log {_mb(size)} MB"
+
+
+#: E8.8d: short chip labels (the long explanation lives in the chip's ⓘ).
+_CHIP_LABEL = {
+    "tick": "Tick",
+    "health": "Health check",
+    "gateway": "Gateway",
+    "remote_access": "Remote",
+    "log": "Log",
+}
+
+
+def _with_chip(it: HealthItem) -> HealthItem:
+    """``Tick ok 3m`` / ``Gateway ok`` / ``Log 1.2 / 5 MB``: one short line per check."""
+    if it.chip:
+        return it
+    name = _CHIP_LABEL.get(it.key, it.label)
+    state = "not checked" if it.status == "unknown" else it.status
+    if it.age_s is not None and it.key in ("tick", "health"):
+        from arc.context.categories import age_text
+
+        chip = f"{name} {state} {age_text(_dt.timedelta(seconds=it.age_s))}"
+    else:
+        chip = f"{name} {state}"
+    return it.model_copy(update={"chip": chip})
 
 
 # ---------------------------------------------------------------------------
@@ -1151,6 +1306,29 @@ def load_context_entry(
 # ---------------------------------------------------------------------------
 
 
+SourceStatus = Literal["ok", "idle", "pending", "backoff", "late", "failed"]
+#: Worst-wins order for the category rollup (E8.8d).
+SOURCE_STATUS_RANK: dict[str, int] = {
+    "ok": 0,
+    "idle": 1,
+    "pending": 2,
+    "backoff": 3,
+    "late": 4,
+    "failed": 5,
+}
+
+
+class ChannelBriefState(BaseModel):
+    """E4.6: a YouTube channel's brief outcome in the latest ``youtube.briefs`` run today."""
+
+    model_config = _STRICT
+
+    outcome: Literal["ok", "pending", "no_video", "error", "not_run"]
+    text: str = Field(description="`brief ok` / `pending: <reason>` / `no video in 24h` / …")
+    video_title: str | None = None
+    run_id: str | None = None
+
+
 class SourceRow(BaseModel):
     model_config = _STRICT
 
@@ -1159,23 +1337,60 @@ class SourceRow(BaseModel):
     job: str
     category: str
     weight: float = Field(description="Effective fairness weight (category × source share)")
+    share_in_category: float | None = Field(
+        default=None,
+        description="Share of its category's Scout budget (registry); null for typed-context "
+        "sources (options data, YouTube), which never draw on the doc budget",
+    )
+    unit: Literal["docs", "entries"] = Field(
+        default="docs", description="docs = raw documents; entries = typed context entries"
+    )
     cadence: str
     every_s: int | None
     last_fetch: _dt.datetime | None = Field(description="Latest ok run of the source job")
     last_doc_at: _dt.datetime | None
     docs_today: int
     skipped_budget_today: int
+    skipped_stale_today: int = Field(
+        default=0, description="D47: docs closed skipped_stale today (older than max_age)"
+    )
     runs_24h: int
     failed_24h: int
     error_rate: float | None
     late: bool = Field(description=f"No fetch within {SOURCE_LATE_FACTOR} x cadence")
     backoff: str | None = Field(default=None, description="Cooldown / backoff state, when any")
+    last_run_failed: bool = Field(default=False, description="The latest run of the job failed")
+    brief: ChannelBriefState | None = Field(
+        default=None, description="E4.6: today's brief status (YouTube channels only)"
+    )
+    status: SourceStatus = Field(default="ok", description="Row pill (worst condition)")
+
+
+class SourceCategoryRow(BaseModel):
+    """E8.8d: one D47 category block header."""
+
+    model_config = _STRICT
+
+    key: str
+    label: str
+    weight: float = Field(description="categories.<c>.weight (config)")
+    share: float | None = Field(
+        description="Share of the Scout doc budget (SourceRegistry.category_weights); null "
+        "for categories the Scout never reads (typed context only)"
+    )
+    max_age: str = Field(description="D47 freshness window")
+    newest_doc_at: _dt.datetime | None
+    status: SourceStatus = Field(description="Worst status of its sources")
+    sources: int
 
 
 class SourcesResponse(BaseModel):
     model_config = _STRICT
 
     as_of: _dt.datetime
+    categories: list[SourceCategoryRow] = Field(
+        default_factory=list, description="E8.8d: D47 categories in display order"
+    )
     sources: list[SourceRow]
 
 
@@ -1219,18 +1434,79 @@ def _caption_backoff(conn: sqlite3.Connection, now: _dt.datetime) -> str | None:
     return None
 
 
-def load_sources(
+def _channel_briefs(
+    conn: sqlite3.Connection, job: str, lookback: str, day: tuple[_dt.datetime, _dt.datetime]
+) -> tuple[dict[str, ChannelBriefState], str | None]:
+    """E4.6: per-channel outcome of the latest manifest of *job* scheduled today."""
+    if not _has_table(conn, "run_manifests"):
+        return {}, None
+    row = conn.execute(
+        "SELECT m.run_id, m.payload FROM run_manifests m JOIN routine_runs r"
+        " ON r.run_id = m.run_id WHERE m.job = ? AND r.scheduled_for >= ?"
+        " AND r.scheduled_for < ? ORDER BY r.scheduled_for DESC, m.attempt DESC LIMIT 1",
+        (job, to_db(day[0]), to_db(day[1])),
+    ).fetchone()
+    if row is None:
+        return {}, None
+    channels = (_json(row["payload"], {}).get("metrics") or {}).get("channels") or {}
+    out: dict[str, ChannelBriefState] = {}
+    for slug, c in channels.items():
+        if not isinstance(c, dict):
+            continue
+        outcome = str(c.get("outcome") or "")
+        title = c.get("title")
+        if outcome in ("briefed", "existing"):
+            state = ChannelBriefState(outcome="ok", text="brief ok", video_title=title)
+        elif outcome == "pending":
+            reason = c.get("pending_reason") or "no transcript yet"
+            state = ChannelBriefState(
+                outcome="pending", text=f"pending: {reason}", video_title=title
+            )
+        elif outcome == "no_video":
+            state = ChannelBriefState(outcome="no_video", text=f"no video in {lookback}")
+        else:
+            err = c.get("error") or outcome or "unknown"
+            state = ChannelBriefState(outcome="error", text=f"error: {err}", video_title=title)
+        out[f"youtube.{slug}"] = state.model_copy(update={"run_id": row["run_id"]})
+    return out, row["run_id"]
+
+
+def _row_status(
+    *, failed: bool, late: bool, backoff: str | None, brief: ChannelBriefState | None, idle: bool
+) -> SourceStatus:
+    if failed or (brief is not None and brief.outcome == "error"):
+        return "failed"
+    if late:
+        return "late"
+    if backoff:
+        return "backoff"
+    if brief is not None and brief.outcome == "pending":
+        return "pending"
+    if idle or (brief is not None and brief.outcome in ("no_video", "not_run")):
+        return "idle"
+    return "ok"
+
+
+def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the typed sources
     conn: sqlite3.Connection, routines: RoutinesConfig, *, now: _dt.datetime
 ) -> SourcesResponse:
+    """Sources by D47 category. Shares come from :class:`SourceRegistry` (never
+    recomputed here): ``category_weights()`` for a category, ``effective_weights()``
+    for a source. Typed-context sources (options data, macro calendar, Finnhub) are
+    listed by job with their context entries as the activity count."""
+    from arc.context.categories import CATEGORY_ORDER, normalize_category
     from arc.ingest.sources import SourceRegistry
 
     reg = SourceRegistry.from_routines(routines)
     weights = reg.effective_weights()
-    day_lo, day_hi = _day_bounds(now.astimezone(ET).date())
+    cat_w = reg.category_weights()
+    day = _day_bounds(now.astimezone(ET).date())
+    day_lo, day_hi = day
     since24 = to_db(now - _dt.timedelta(hours=24))
     # per-doc keys: resolve every recent doc through the registry (legacy rows lack source_key)
     docs: dict[str, int] = Counter()
     skipped: dict[str, int] = Counter()
+    stale: dict[str, int] = Counter()
     last_doc: dict[str, _dt.datetime] = {}
     has_key = "source_key" in {r[1] for r in conn.execute("PRAGMA table_info(raw_docs)")}
     extra = ", source_key, scout_status" if has_key else ""
@@ -1249,16 +1525,21 @@ def load_sources(
             docs[key] += 1
             if has_key and r["scout_status"] == "skipped_budget":
                 skipped[key] += 1
+            if has_key and r["scout_status"] == "skipped_stale":
+                stale[key] += 1
     runs = defaultdict(lambda: [0, 0])
     last_ok: dict[str, _dt.datetime] = {}
+    last_status: dict[str, str] = {}
     for r in conn.execute(
         "SELECT job, status, finished_at FROM routine_runs WHERE scheduled_for >= ?"
-        " AND step_index = 0",
+        " AND step_index = 0 ORDER BY scheduled_for, rowid",
         (since24,),
     ):
         runs[r["job"]][0] += 1
         if r["status"] == "failed":
             runs[r["job"]][1] += 1
+        if r["status"] in ("ok", "failed"):
+            last_status[r["job"]] = r["status"]
     for r in conn.execute(
         "SELECT job, MAX(finished_at) FROM routine_runs WHERE status = 'ok' GROUP BY job"
     ):
@@ -1266,16 +1547,49 @@ def load_sources(
         if t is not None:
             last_ok[r[0]] = t
     backoff = _caption_backoff(conn, now)
-    out: list[SourceRow] = []
-    for s in reg.sources.values():
-        found = routines.job(s.job)
+
+    def _common(job: str) -> dict[str, Any]:
+        found = routines.job(job)
         spec = found[1] if found else None
         every = _every_s(spec) if spec else None
-        n, failed = runs.get(s.job, [0, 0])
-        last = last_ok.get(s.job)
+        n, failed = runs.get(job, [0, 0])
+        last = last_ok.get(job)
         late = False
         if spec is not None and every is not None and _in_window(spec, now):
             late = last is None or (now - last).total_seconds() > SOURCE_LATE_FACTOR * every
+        return {
+            "cadence": spec.cadence if spec else "-",
+            "every_s": every,
+            "last_fetch": last,
+            "runs_24h": n,
+            "failed_24h": failed,
+            "error_rate": round(failed / n, 4) if n else None,
+            "late": late,
+            "last_run_failed": last_status.get(job) == "failed",
+        }
+
+    out: list[SourceRow] = []
+    briefs_by_job: dict[str, dict[str, ChannelBriefState]] = {}
+    for s in reg.sources.values():
+        common = _common(s.job)
+        brief: ChannelBriefState | None = None
+        if s.channel is not None and s.job.startswith("youtube"):
+            if s.job not in briefs_by_job:
+                found = routines.job(s.job)
+                lookback = str((found[1].options.get("lookback") if found else None) or "24h")
+                briefs_by_job[s.job] = _channel_briefs(conn, s.job, lookback, day)[0]
+            brief = briefs_by_job[s.job].get(s.key) or ChannelBriefState(
+                outcome="not_run", text="not run today"
+            )
+        src_backoff = backoff if s.job.startswith("youtube") else None
+        c_share = cat_w.get(s.category)
+        share = weights.get(s.key)
+        if c_share and share:
+            in_cat: float | None = round(share / c_share, 4)
+        elif s.channel is not None:  # D49: a channel's split of its YouTube category
+            in_cat = round(reg.share_in_category(s.key), 4)
+        else:
+            in_cat = None
         out.append(
             SourceRow(
                 key=s.key,
@@ -1283,20 +1597,92 @@ def load_sources(
                 job=s.job,
                 category=s.category.value,
                 weight=round(weights.get(s.key, 0.0), 4),
-                cadence=spec.cadence if spec else "-",
-                every_s=every,
-                last_fetch=last,
+                share_in_category=in_cat,
                 last_doc_at=last_doc.get(s.key),
                 docs_today=docs.get(s.key, 0),
                 skipped_budget_today=skipped.get(s.key, 0),
-                runs_24h=n,
-                failed_24h=failed,
-                error_rate=round(failed / n, 4) if n else None,
-                late=late,
-                backoff=backoff if s.job.startswith("youtube") else None,
+                skipped_stale_today=stale.get(s.key, 0),
+                backoff=src_backoff,
+                brief=brief,
+                status=_row_status(
+                    failed=common["last_run_failed"],
+                    late=common["late"],
+                    backoff=src_backoff,
+                    brief=brief,
+                    idle=False,
+                ),
+                **common,
             )
         )
-    return SourcesResponse(as_of=now, sources=out)
+    # Typed-context sources (no raw docs): one row per job, counted by context entries.
+    in_registry = {s.job for s in reg.sources.values()}
+    entries: dict[str, int] = Counter()
+    newest: dict[str, _dt.datetime] = {}
+    if _has_table(conn, "context_entries"):
+        for r in conn.execute(
+            "SELECT produced_by, created_at FROM context_entries WHERE created_at >= ?",
+            (to_db(now - _dt.timedelta(days=7)),),
+        ):
+            at = parse_ts(r["created_at"])
+            if at is None:
+                continue
+            job = r["produced_by"]
+            if job not in newest or at > newest[job]:
+                newest[job] = at
+            if day_lo <= at < day_hi:
+                entries[job] += 1
+    for job, spec in routines.sources.items():
+        if not spec.enabled or job in in_registry:
+            continue
+        cat = normalize_category(spec.options.get("category"))
+        if cat is None:
+            continue
+        common = _common(job)
+        out.append(
+            SourceRow(
+                key=job,
+                label=_label(job, spec),
+                job=job,
+                category=cat.value,
+                weight=0.0,
+                share_in_category=None,
+                unit="entries",
+                last_doc_at=newest.get(job),
+                docs_today=entries.get(job, 0),
+                skipped_budget_today=0,
+                status=_row_status(
+                    failed=common["last_run_failed"],
+                    late=common["late"],
+                    backoff=None,
+                    brief=None,
+                    idle=common["runs_24h"] == 0 and job not in newest,
+                ),
+                **common,
+            )
+        )
+    rank = {c.value: i for i, c in enumerate(CATEGORY_ORDER)}
+    out.sort(key=lambda r: rank.get(r.category, len(rank)))
+    categories: list[SourceCategoryRow] = []
+    for c in CATEGORY_ORDER:
+        rows = [r for r in out if r.category == c.value]
+        if not rows:
+            continue
+        spec = reg.category_spec(c)
+        stamps = [r.last_doc_at for r in rows if r.last_doc_at is not None]
+        share = cat_w.get(c)
+        categories.append(
+            SourceCategoryRow(
+                key=c.value,
+                label=spec.label,
+                weight=spec.weight,
+                share=round(share, 4) if share is not None else None,
+                max_age=str(spec.max_age),
+                newest_doc_at=max(stamps) if stamps else None,
+                status=max((r.status for r in rows), key=lambda s: SOURCE_STATUS_RANK[s]),
+                sources=len(rows),
+            )
+        )
+    return SourcesResponse(as_of=now, categories=categories, sources=out)
 
 
 # ---------------------------------------------------------------------------
@@ -1519,6 +1905,65 @@ class ConfigResponse(BaseModel):
         description="E6.6a: scorecard gate line, e.g. 'scorecard gate: OFF (opt-out) — 3 closed "
         "trades < 30 required; …' (null when the store has no trade tables)",
     )
+    auto_approve: AutoApproveView | None = Field(
+        None, description="E8.8d: the Auto-Approve widget as key/values (null without trade tables)"
+    )
+
+
+class AutoApproveView(BaseModel):
+    """E8.8d: paper / live / scorecard gate / last flip, for a KeyValue layout."""
+
+    model_config = _STRICT
+
+    paper: bool
+    live: bool
+    env: str
+    scorecard_gate: Literal["off", "met", "unmet"] = Field(
+        description="off = opt-out; unmet = holding opens"
+    )
+    reason: str = Field(description="What the gate would say (its criteria vs the scorecard)")
+    blocks: bool = Field(description="True when the gate is holding opens right now")
+    last_flip_key: str | None = None
+    last_flip_at: _dt.datetime | None = None
+    last_flip_by: str | None = None
+    last_flip_to: Any = None
+
+
+ConfigResponse.model_rebuild()  # resolves the forward reference to AutoApproveView
+
+
+def _auto_approve_view(
+    conn: sqlite3.Connection, settings: ArcSettings, keys: list[ConfigKeyRow], now: _dt.datetime
+) -> AutoApproveView | None:
+    if not (_has_table(conn, "open_structures") and _has_table(conn, "executions")):
+        return None
+    from arc.journal.scorecard import auto_approve_gate
+
+    gate = auto_approve_gate(conn, settings, now=now)
+    state = gate.readiness.gate_state(gate.scorecard_gate)
+    line = gate.line
+    reason = line.split(" — ", 1)[1] if " — " in line else line
+    by_key = {k.key: k for k in keys}
+    flips = [
+        by_key[k]
+        for k in ("auto_approve.paper", "auto_approve.live", "auto_approve.scorecard_gate")
+        if k in by_key and by_key[k].last_change_at is not None
+    ]
+    last = max(flips, key=lambda k: k.last_change_at or now, default=None)
+    paper = by_key.get("auto_approve.paper")
+    live = by_key.get("auto_approve.live")
+    return AutoApproveView(
+        paper=bool(paper.value) if paper else bool(settings.auto_approve),
+        live=bool(live.value) if live else False,
+        env=settings.env.value,
+        scorecard_gate=state,  # type: ignore[arg-type]
+        reason=reason,
+        blocks=state == "unmet",
+        last_flip_key=last.key if last else None,
+        last_flip_at=last.last_change_at if last else None,
+        last_flip_by=last.last_change_by if last else None,
+        last_flip_to=last.value if last else None,
+    )
 
 
 def _scorecard_gate_line(
@@ -1587,6 +2032,7 @@ def load_config(
         changes=changes,
         note=note,
         scorecard_gate=_scorecard_gate_line(conn, settings, now),
+        auto_approve=_auto_approve_view(conn, settings, keys, now),
     )
 
 

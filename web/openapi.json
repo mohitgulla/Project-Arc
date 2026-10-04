@@ -555,6 +555,91 @@
         "title": "Arms",
         "type": "object"
       },
+      "AutoApproveView": {
+        "additionalProperties": false,
+        "description": "E8.8d: paper / live / scorecard gate / last flip, for a KeyValue layout.",
+        "properties": {
+          "blocks": {
+            "description": "True when the gate is holding opens right now",
+            "title": "Blocks",
+            "type": "boolean"
+          },
+          "env": {
+            "title": "Env",
+            "type": "string"
+          },
+          "last_flip_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Flip At"
+          },
+          "last_flip_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Flip By"
+          },
+          "last_flip_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Flip Key"
+          },
+          "last_flip_to": {
+            "title": "Last Flip To"
+          },
+          "live": {
+            "title": "Live",
+            "type": "boolean"
+          },
+          "paper": {
+            "title": "Paper",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "What the gate would say (its criteria vs the scorecard)",
+            "title": "Reason",
+            "type": "string"
+          },
+          "scorecard_gate": {
+            "description": "off = opt-out; unmet = holding opens",
+            "enum": [
+              "off",
+              "met",
+              "unmet"
+            ],
+            "title": "Scorecard Gate",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paper",
+          "live",
+          "env",
+          "scorecard_gate",
+          "reason",
+          "blocks"
+        ],
+        "title": "AutoApproveView",
+        "type": "object"
+      },
       "BreakdownItem": {
         "additionalProperties": false,
         "properties": {
@@ -1163,6 +1248,56 @@
         "title": "CandidateView",
         "type": "object"
       },
+      "ChannelBriefState": {
+        "additionalProperties": false,
+        "description": "E4.6: a YouTube channel's brief outcome in the latest ``youtube.briefs`` run today.",
+        "properties": {
+          "outcome": {
+            "enum": [
+              "ok",
+              "pending",
+              "no_video",
+              "error",
+              "not_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "text": {
+            "description": "`brief ok` / `pending: <reason>` / `no video in 24h` / \u2026",
+            "title": "Text",
+            "type": "string"
+          },
+          "video_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Title"
+          }
+        },
+        "required": [
+          "outcome",
+          "text"
+        ],
+        "title": "ChannelBriefState",
+        "type": "object"
+      },
       "ConfigChangeRow": {
         "additionalProperties": false,
         "properties": {
@@ -1371,6 +1506,17 @@
             "title": "As Of",
             "type": "string"
           },
+          "auto_approve": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoApproveView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E8.8d: the Auto-Approve widget as key/values (null without trade tables)"
+          },
           "changes": {
             "items": {
               "$ref": "#/components/schemas/ConfigChangeRow"
@@ -1426,6 +1572,54 @@
           "changes"
         ],
         "title": "ConfigResponse",
+        "type": "object"
+      },
+      "ContextEntryRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "produced_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produced By"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ContextEntryRef",
         "type": "object"
       },
       "ContextEntryResponse": {
@@ -1552,6 +1746,33 @@
         "title": "ContextEntryResponse",
         "type": "object"
       },
+      "ContextKindRead": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "entries": {
+            "description": "First 200 by subject; `count` is the full total",
+            "items": {
+              "$ref": "#/components/schemas/ContextEntryRef"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "count"
+        ],
+        "title": "ContextKindRead",
+        "type": "object"
+      },
       "ContextKindRow": {
         "additionalProperties": false,
         "properties": {
@@ -1662,6 +1883,33 @@
           "expired_24h"
         ],
         "title": "ContextKindRow",
+        "type": "object"
+      },
+      "ContextReads": {
+        "additionalProperties": false,
+        "description": "Context entries in the input snapshots this trade's runs read (E8.8f Context tab).",
+        "properties": {
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/ContextKindRead"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "snapshot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Snapshot Ids",
+            "type": "array"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "ContextReads",
         "type": "object"
       },
       "ContextResponse": {
@@ -5106,6 +5354,12 @@
             ],
             "title": "At"
           },
+          "chip": {
+            "default": "",
+            "description": "E8.8d: compact chip text, e.g. `Tick ok 3m`",
+            "title": "Chip",
+            "type": "string"
+          },
           "key": {
             "title": "Key",
             "type": "string"
@@ -6111,6 +6365,20 @@
             ],
             "title": "Cost Usd"
           },
+          "declared_reads": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declared Reads"
+          },
           "finished_at": {
             "anyOf": [
               {
@@ -6144,6 +6412,13 @@
               }
             ],
             "title": "Git Sha"
+          },
+          "input_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Input Counts",
+            "type": "object"
           },
           "input_tokens": {
             "anyOf": [
@@ -6192,6 +6467,13 @@
           "run_id": {
             "title": "Run Id",
             "type": "string"
+          },
+          "snapshot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Snapshot Ids",
+            "type": "array"
           },
           "started_at": {
             "anyOf": [
@@ -10221,6 +10503,14 @@
             "title": "As Of",
             "type": "string"
           },
+          "bands": {
+            "description": "E8.8d: bands in display order (non-empty only)",
+            "items": {
+              "$ref": "#/components/schemas/TimelineBand"
+            },
+            "title": "Bands",
+            "type": "array"
+          },
           "counts": {
             "additionalProperties": {
               "type": "integer"
@@ -10388,6 +10678,83 @@
         "title": "Slot",
         "type": "object"
       },
+      "SourceCategoryRow": {
+        "additionalProperties": false,
+        "description": "E8.8d: one D47 category block header.",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "max_age": {
+            "description": "D47 freshness window",
+            "title": "Max Age",
+            "type": "string"
+          },
+          "newest_doc_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newest Doc At"
+          },
+          "share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Share of the Scout doc budget (SourceRegistry.category_weights); null for categories the Scout never reads (typed context only)",
+            "title": "Share"
+          },
+          "sources": {
+            "title": "Sources",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Worst status of its sources",
+            "enum": [
+              "ok",
+              "idle",
+              "pending",
+              "backoff",
+              "late",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "weight": {
+            "description": "categories.<c>.weight (config)",
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "weight",
+          "share",
+          "max_age",
+          "newest_doc_at",
+          "status",
+          "sources"
+        ],
+        "title": "SourceCategoryRow",
+        "type": "object"
+      },
       "SourceRow": {
         "additionalProperties": false,
         "properties": {
@@ -10402,6 +10769,17 @@
             ],
             "description": "Cooldown / backoff state, when any",
             "title": "Backoff"
+          },
+          "brief": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChannelBriefState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E4.6: today's brief status (YouTube channels only)"
           },
           "cadence": {
             "title": "Cadence",
@@ -10478,6 +10856,12 @@
             "description": "Latest ok run of the source job",
             "title": "Last Fetch"
           },
+          "last_run_failed": {
+            "default": false,
+            "description": "The latest run of the job failed",
+            "title": "Last Run Failed",
+            "type": "boolean"
+          },
           "late": {
             "description": "No fetch within 2 x cadence",
             "title": "Late",
@@ -10487,9 +10871,51 @@
             "title": "Runs 24H",
             "type": "integer"
           },
+          "share_in_category": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Share of its category's Scout budget (registry); null for typed-context sources (options data, YouTube), which never draw on the doc budget",
+            "title": "Share In Category"
+          },
           "skipped_budget_today": {
             "title": "Skipped Budget Today",
             "type": "integer"
+          },
+          "skipped_stale_today": {
+            "default": 0,
+            "description": "D47: docs closed skipped_stale today (older than max_age)",
+            "title": "Skipped Stale Today",
+            "type": "integer"
+          },
+          "status": {
+            "default": "ok",
+            "description": "Row pill (worst condition)",
+            "enum": [
+              "ok",
+              "idle",
+              "pending",
+              "backoff",
+              "late",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "unit": {
+            "default": "docs",
+            "description": "docs = raw documents; entries = typed context entries",
+            "enum": [
+              "docs",
+              "entries"
+            ],
+            "title": "Unit",
+            "type": "string"
           },
           "weight": {
             "description": "Effective fairness weight (category \u00d7 source share)",
@@ -10524,6 +10950,14 @@
             "format": "date-time",
             "title": "As Of",
             "type": "string"
+          },
+          "categories": {
+            "description": "E8.8d: D47 categories in display order",
+            "items": {
+              "$ref": "#/components/schemas/SourceCategoryRow"
+            },
+            "title": "Categories",
+            "type": "array"
           },
           "sources": {
             "items": {
@@ -11119,11 +11553,83 @@
         "title": "TimeAdjustedTarget",
         "type": "object"
       },
+      "TimelineBand": {
+        "additionalProperties": false,
+        "description": "E8.8d: one Session Timeline band, in display order.",
+        "properties": {
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "group_label": {
+            "title": "Group Label",
+            "type": "string"
+          },
+          "jobs": {
+            "description": "Job names in this band, in row order",
+            "items": {
+              "type": "string"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "key": {
+            "description": "`sources.<category>` or a TIMELINE_GROUPS key",
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "group",
+          "group_label",
+          "jobs"
+        ],
+        "title": "TimelineBand",
+        "type": "object"
+      },
       "TimelineRow": {
         "additionalProperties": false,
         "properties": {
+          "about": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One line on what the job does",
+            "title": "About"
+          },
+          "band": {
+            "default": "other",
+            "description": "Band key: the group, or `sources.<category>` for a source",
+            "title": "Band",
+            "type": "string"
+          },
           "cadence": {
             "title": "Cadence",
+            "type": "string"
+          },
+          "categories": {
+            "description": "D47 categories the source job feeds (all of them)",
+            "items": {
+              "type": "string"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "group": {
+            "default": "other",
+            "description": "Timeline group (TIMELINE_GROUPS key)",
+            "title": "Group",
             "type": "string"
           },
           "job": {
@@ -11143,11 +11649,49 @@
             "title": "Label",
             "type": "string"
           },
+          "llm": {
+            "default": false,
+            "description": "Holds the LLM lock (calls a model)",
+            "title": "Llm",
+            "type": "boolean"
+          },
+          "persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Persona chip (none for sources)",
+            "title": "Persona"
+          },
           "slots": {
             "items": {
               "$ref": "#/components/schemas/Slot"
             },
             "title": "Slots",
+            "type": "array"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Intraday window (ET), when any",
+            "title": "Window"
+          },
+          "writes": {
+            "description": "Declared context kinds",
+            "items": {
+              "type": "string"
+            },
+            "title": "Writes",
             "type": "array"
           }
         },
@@ -11260,6 +11804,9 @@
             "format": "date-time",
             "title": "As Of",
             "type": "string"
+          },
+          "context": {
+            "$ref": "#/components/schemas/ContextReads"
           },
           "decisions": {
             "$ref": "#/components/schemas/DecisionTrail"
@@ -13358,7 +13905,7 @@
     },
     "/api/ops/session": {
       "get": {
-        "description": "The ET day's scheduled slots (06:00-22:00) with each one's run, plus the loop row.",
+        "description": "The ET day's scheduled slots (05:00-22:00) with each one's run, plus the loop row.",
         "operationId": "session_api_ops_session_get",
         "parameters": [
           {

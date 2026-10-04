@@ -1719,6 +1719,11 @@ def lookup(key: str) -> Tunable:
     raise TunableError(msg)
 
 
+def is_alias(key: str) -> bool:
+    """True for an alias of a registry key (e.g. a D49-renamed ``categories.company.*``)."""
+    return key.strip().lower() in _ALIASES
+
+
 def keys_in_group(group: Group) -> list[Tunable]:
     return [t for t in REGISTRY.values() if t.group is group]
 

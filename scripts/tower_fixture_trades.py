@@ -161,6 +161,18 @@ def _order_events(
         )  # fmt: skip
 
 
+# E8.8f: the SPY open's Risk narrative, in the live shape (sizing math, a numbered list,
+# closing advice) so the Why tab's structured view is exercised end to end.
+SPY_RISK_NARRATIVE = (
+    "Defined-risk bull call debit vertical; max loss $390 per contract. "
+    "The gate formula allows floor(8% x $100,000 / $390) = 20, and the structure cap is 5. "
+    "I advise 2 contracts, about 0.8% of equity at risk. "
+    "Reasons: (1) SPY regime is bull with 0.82 stickiness. (2) Managed EV is +$12.40 after "
+    "35 bps of costs. (3) No earnings or macro print inside the window. "
+    "Work the order at or inside mid. Advisory only; the deterministic risk gate decides."
+)
+
+
 def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
     conn: sqlite3.Connection,
     *,
@@ -203,9 +215,9 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
             "summary": f"{job} ok",
         })  # fmt: skip
     conn.execute(
-        "UPDATE proposals SET run_id = ?, chain_run_id = ?, spot = ?, regime = ? "
-        "WHERE proposal_hash = ?",
-        (runs["risk"], chain, "663.40", "bull", spy_hash),
+        "UPDATE proposals SET run_id = ?, chain_run_id = ?, spot = ?, regime = ?, "
+        "risk_narrative = ? WHERE proposal_hash = ?",
+        (runs["risk"], chain, "663.40", "bull", SPY_RISK_NARRATIVE, spy_hash),
     )
     # candidate with sources + corroboration
     cid = conn.execute(

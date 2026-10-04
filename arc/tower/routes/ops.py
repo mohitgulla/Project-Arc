@@ -74,7 +74,7 @@ def _slack_channel() -> str:
 
 @router.get("/session", response_model=SessionResponse, responses={422: {"model": ErrorResponse}})
 def session(cfg: Tower, conn: Conn, day: Annotated[str | None, Query()] = None) -> SessionResponse:
-    """The ET day's scheduled slots (06:00-22:00) with each one's run, plus the loop row."""
+    """The ET day's scheduled slots (05:00-22:00) with each one's run, plus the loop row."""
     now = cfg.clock()
     try:
         d = resolve_day(day, now)

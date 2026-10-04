@@ -6,25 +6,29 @@ import { IconBack, IconClose } from "./icons";
 /**
  * Detail view (§4, §6): a right-side panel on >=1280px; below that a full-page view with a
  * back button. The caller decides where it mounts (a route in E8.7b); *onClose* goes back.
+ * The scrolling body carries `data-detail-scroll` so sticky children can watch its scroll.
  */
 export function DetailPanel({
   title,
   onClose,
   children,
   inline = false,
+  wide = false,
 }: {
   title: ReactNode;
   onClose: () => void;
   children: ReactNode;
   /** Render in place (kitchen sink) instead of fixed to the viewport. */
   inline?: boolean;
+  /** 600 px side panel instead of 440 (trade detail: the stat strip is one row, E8.8f). */
+  wide?: boolean;
 }) {
   const layout = useLayout();
   const side = layout === "desktop";
   const position = inline
     ? "relative"
     : side
-      ? "fixed right-0 top-0 bottom-0 z-30 w-[440px]"
+      ? `fixed right-0 top-0 bottom-0 z-30 ${wide ? "w-[600px]" : "w-[440px]"}`
       : "fixed inset-0 z-30";
   return (
     <aside
@@ -45,7 +49,9 @@ export function DetailPanel({
           </button>
         )}
       </header>
-      <div className="min-h-0 flex-1 overflow-auto p-[var(--card-pad)]">{children}</div>
+      <div data-detail-scroll className="min-h-0 flex-1 overflow-auto p-[var(--card-pad)]">
+        {children}
+      </div>
     </aside>
   );
 }

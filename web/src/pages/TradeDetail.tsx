@@ -1,522 +1,358 @@
 import type { ReactNode } from "react";
-import { useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { ChangePill } from "../components/ChangePill";
+import { CappedList } from "../components/CappedList";
 import { DetailPanel } from "../components/DetailPanel";
 import { EmptyState } from "../components/EmptyState";
-import { KeyValueList, type KeyValue } from "../components/KeyValueList";
+import { KeyValueList } from "../components/KeyValueList";
 import { Money } from "../components/Money";
-import { PayoffChart } from "../components/PayoffChart";
-import { Section } from "../components/Section";
+import { SegmentedControl } from "../components/SegmentedControl";
 import { StatusStepper, type Stage } from "../components/StatusStepper";
-import { Timeline, type TimelineItem } from "../components/Timeline";
 import { ApiError, num } from "../lib/api";
-import { formatAge, formatEt, formatLeg, formatNumber, formatPercent } from "../lib/format";
+import { formatEt, formatLeg, formatNumber, formatPercent } from "../lib/format";
+import { useLayout } from "../lib/layout";
 import { structureLabel } from "../lib/overview";
-import { humanize, shortHash, STAGE_LABEL, type TradeDetail } from "../lib/trades";
+import {
+  defaultTab,
+  lifecycleStages,
+  focusStage,
+  parseTab,
+  SOURCES,
+  statStrip,
+  TABS,
+  type LifeKey,
+  type LifeStage,
+  type Stat,
+  type TabKey,
+} from "../lib/tradeDetail";
+import { humanize, STAGE_LABEL, stageTone, type TradeDetail } from "../lib/trades";
 import { useTrade } from "../lib/useApi";
+import {
+  Approval,
+  Block,
+  DASH,
+  Decisions,
+  et,
+  Execution,
+  Gate,
+  M,
+  n0,
+  None,
+  Outcome,
+  Payoff,
+  pct,
+  Position,
+  QuantBlocks,
+  RiskView,
+  t,
+  Thesis,
+} from "./TradeDetailParts";
 
 // ---------------------------------------------------------------------------
-// Small pieces
+// Sticky summary
 // ---------------------------------------------------------------------------
 
-const DASH = <span className="text-muted">—</span>;
+const TONE_PILL = {
+  pos: "bg-pos-bg text-pos-text",
+  neg: "bg-neg-bg text-neg-text",
+  neutral: "bg-control text-secondary",
+} as const;
 
-function M({ v, kind = "pnl", sign = false }: { v: string | number | null | undefined; kind?: "pnl" | "price" | "fill" | "max_loss" | "equity" | "buying_power"; sign?: boolean }) {
-  const n = num(v as string | null | undefined);
-  return n === null ? DASH : <Money value={n} kind={kind} explicitSign={sign} />;
-}
-
-const pct = (v: number | null | undefined) => (v == null ? DASH : formatPercent(v));
-const n0 = (v: number | null | undefined, d = 0) => (v == null ? DASH : formatNumber(v, d));
-const et = (v: string | null | undefined) => (v ? formatEt(v) : "—");
-const t = (v: string | null | undefined) => (v ? formatEt(v) : DASH);
-
-function Src({ children }: { children: ReactNode }) {
-  return <p className="mb-2 text-micro text-muted">source: {children}</p>;
-}
-
-function SectionBlock({ title, source, testid, children, defaultOpen = true }: { title: string; source: string; testid: string; children: ReactNode; defaultOpen?: boolean }) {
+function StatusPill({ d }: { d: TradeDetail }) {
+  const s = d.header.row.stage;
   return (
-    <div data-testid={testid} className="border-b border-line pb-3 last:border-b-0">
-      <Section title={title} defaultOpen={defaultOpen}>
-        <Src>{source}</Src>
-        {children}
-      </Section>
-    </div>
+    <span className={`shrink-0 rounded-pill px-2 py-0.5 text-caption font-semibold ${TONE_PILL[stageTone(s)]}`} data-testid="status-pill">
+      {STAGE_LABEL[s]}
+    </span>
   );
 }
 
-function None({ what }: { what: string }) {
-  return <p className="py-2 text-caption text-muted">{what}</p>;
+function statValue(s: Stat): ReactNode {
+  if (s.value === null && (s.value2 ?? null) === null) return DASH;
+  switch (s.key) {
+    case "net_ev":
+    case "pnl":
+      return s.value === null ? DASH : <Money value={s.value} explicitSign />;
+    case "pop":
+      return s.value === null ? DASH : formatPercent(s.value);
+    case "max":
+      return (
+        <>
+          {s.value === null ? DASH : <Money value={s.value} kind="price" />}
+          <span className="text-muted"> / </span>
+          {s.value2 == null ? DASH : <Money value={s.value2} kind="max_loss" />}
+        </>
+      );
+    case "cost":
+      return s.value === null ? DASH : formatNumber(s.value, 1);
+    case "dte":
+      return s.value === null ? DASH : formatNumber(s.value);
+  }
 }
 
-function TradeLink({ hash, children }: { hash: string; children?: ReactNode }) {
-  const { search } = useLocation();
+function StatStrip({ d }: { d: TradeDetail }) {
   return (
-    <Link to={{ pathname: `/trades/${hash}`, search }} className="text-accent hover:underline">
-      {children ?? <code>{shortHash(hash)}</code>}
-    </Link>
+    <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-control bg-line tablet:grid-cols-6" data-testid="stat-strip">
+      {statStrip(d).map((s) => (
+        <div key={s.key} className="min-w-0 bg-card px-2 py-1.5" data-testid={`stat-${s.key}`} title={s.hint}>
+          <dt className="truncate text-micro text-muted">{s.label}</dt>
+          <dd className="truncate text-body font-semibold tabular-nums">{statValue(s)}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Sections
-// ---------------------------------------------------------------------------
-
-function Header({ d }: { d: TradeDetail }) {
-  const h = d.header;
-  const r = h.row;
-  const realized = num(r.realized_pnl);
-  const ev = r.net_ev == null ? null : r.net_ev;
+function LegChips({ d }: { d: TradeDetail }) {
   return (
-    <div data-testid="trade-header" className="grid gap-3 pb-3">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="text-display font-semibold text-title">{r.ticker}</span>
-        <span className="text-secondary">
-          {structureLabel(r.structure_kind)} · <span className="capitalize">{r.kind}</span> · {r.contracts ?? "—"}×
+    <div className="flex flex-wrap gap-1.5 text-caption" data-testid="leg-chips">
+      {d.header.legs.map((l) => (
+        <span key={l.occ_symbol} title={l.occ_symbol} className="rounded-label bg-control px-2 py-0.5 tabular-nums">
+          {l.side === "long" ? "+" : "−"}
+          {l.ratio && l.ratio > 1 ? `${l.ratio}× ` : ""}
+          {formatLeg(l.occ_symbol)}
+          {l.premium != null && <span className="text-muted"> @ {formatNumber(Number(l.premium), 2)}</span>}
         </span>
-        <span className="ml-auto text-caption text-muted">{STAGE_LABEL[r.stage]}</span>
-      </div>
-      <div className="flex flex-wrap gap-2 text-caption">
-        {h.legs.map((l) => (
-          <span key={l.occ_symbol} title={l.occ_symbol} className="rounded-label bg-control px-2 py-0.5 tabular-nums">
-            {l.side === "long" ? "+" : "−"}
-            {l.ratio && l.ratio > 1 ? `${l.ratio}× ` : ""}
-            {formatLeg(l.occ_symbol)}
-            {l.premium != null && <span className="text-muted"> @ {formatNumber(Number(l.premium), 2)}</span>}
-          </span>
-        ))}
-      </div>
-      <StatusStepper reached={h.lifecycle as Stage} failedAt={(h.lifecycle_failed ?? undefined) as Stage | undefined} />
-      <div className="flex flex-wrap items-end gap-x-8 gap-y-2">
-        <div data-testid="trade-hero">
-          <div className="text-micro uppercase tracking-wide text-muted">{realized != null ? "Realized P&L" : "Net EV (modelled)"}</div>
-          <div className="flex items-center gap-2 text-hero font-semibold">
-            {realized != null ? <Money value={realized} explicitSign /> : ev != null ? <Money value={ev} explicitSign /> : DASH}
-            {realized != null && ev != null && ev !== 0 && (
-              <span title="realised vs modelled net EV">
-                <ChangePill value={(realized - ev) / Math.abs(ev)} metric="pnl" />
-              </span>
-            )}
-          </div>
-          {realized != null && ev != null && (
-            <div className="text-caption text-muted">
-              realised vs modelled <Money value={ev} explicitSign />
-            </div>
-          )}
-        </div>
-        <div className="text-caption text-secondary">
-          <div>proposed {t(r.created_at)}</div>
-          {h.opened_at && <div>opened {t(h.opened_at)}</div>}
-          {h.closed_at && <div>closed {t(h.closed_at)}</div>}
-          {h.dte != null && <div>{h.dte} DTE at proposal</div>}
-        </div>
-      </div>
-      {h.thesis && <p className="text-body text-secondary">{h.thesis}</p>}
-      {h.risk_narrative && <p className="text-caption text-muted">Risk: {h.risk_narrative}</p>}
-      <p className="text-micro text-muted">
-        <code title={r.proposal_hash}>{r.proposal_hash}</code>
-      </p>
-    </div>
-  );
-}
-
-function Payoff({ d }: { d: TradeDetail }) {
-  const p = d.payoff;
-  if (p.error || !p.points?.length) return <None what={p.error ? `Payoff unavailable: ${p.error}` : "No payoff for this structure."} />;
-  const items: KeyValue[] = [
-    { label: "Max gain", value: p.max_gain == null ? "unlimited" : <Money value={p.max_gain} explicitSign /> },
-    { label: "Max loss", value: p.max_loss == null ? "unlimited" : <Money value={-Math.abs(p.max_loss)} /> },
-    { label: "Breakeven", value: p.breakevens?.length ? p.breakevens.map((b) => formatNumber(b, 2)).join(" / ") : DASH },
-    { label: "Spot at entry", value: n0(p.entry_spot, 2), hint: p.entry_spot_at ? et(p.entry_spot_at) : undefined },
-    { label: "Latest spot", value: n0(p.latest_spot, 2), hint: p.latest_spot_at ? et(p.latest_spot_at) : undefined },
-  ];
-  if (p.mark_pnl != null) items.push({ label: "Mark P&L", value: <Money value={p.mark_pnl} explicitSign />, hint: p.mark_at ? `${et(p.mark_at)} · ${formatAge(p.mark_at)}` : undefined });
-  return (
-    <>
-      <PayoffChart points={p.points} breakevens={p.breakevens ?? []} entrySpot={p.entry_spot} latestSpot={p.latest_spot} />
-      <p className="mb-2 text-micro text-muted">at expiry, {p.contracts} contract{p.contracts === 1 ? "" : "s"}, after the entry debit/credit</p>
-      <KeyValueList items={items} />
-    </>
-  );
-}
-
-function Quant({ d }: { d: TradeDetail }) {
-  const q = d.quant;
-  const a = q.analytics;
-  const em = a?.exit_model;
-  const kv: KeyValue[] = [
-    {
-      label: "Net EV (managed exits)",
-      value: q.net_ev_managed == null ? DASH : <Money value={q.net_ev_managed} explicitSign />,
-      hint: "per unit, after all costs",
-    },
-    { label: "Net EV (hold to expiry)", value: q.net_ev_hold == null ? DASH : <Money value={q.net_ev_hold} explicitSign />, hint: "per unit, after all costs" },
-    { label: "PoP managed / hold", value: <>{pct(q.pop_managed)} / {pct(q.pop_hold)}</> },
-    { label: "PoP (Quant)", value: pct(q.pop) },
-    { label: "EV (Quant, gross)", value: <M v={q.ev} sign /> },
-    { label: "Max gain / loss", value: <><M v={q.max_gain} /> / <M v={q.max_loss} kind="max_loss" /></> },
-    { label: "Contracts", value: n0(q.contracts) },
-    { label: "Notional / % equity", value: <><M v={q.notional} kind="max_loss" /> · {pct(q.pct_equity)}</> },
-    { label: "Buying power", value: <M v={q.buying_power} kind="buying_power" /> },
-    { label: "Cost", value: q.cost_bps == null ? DASH : `${formatNumber(q.cost_bps, 1)} bps` },
-  ];
-  if (a) {
-    kv.push(
-      { label: "Spot", value: n0(a.spot, 2), hint: a.spot_as_of ? et(a.spot_as_of) : undefined },
-      { label: "Expected move", value: a.expected_move == null ? DASH : formatNumber(a.expected_move, 2) },
-      { label: "IV / IV rank / IV pct", value: <>{pct(a.vol?.atm_iv)} / {pct(a.vol?.iv_rank)} / {pct(a.vol?.iv_percentile)}</> },
-      { label: "HV20 / HV60", value: <>{pct(a.vol?.hv20)} / {pct(a.vol?.hv60)}</> },
-      { label: "Entry slippage / fees", value: <><M v={a.entry_slippage} /> / <M v={a.entry_fees ? Object.values(a.entry_fees).reduce((x, y) => x + (y ?? 0), 0) : null} /></>, hint: "per unit" },
-    );
-  }
-  if (em) {
-    kv.push(
-      { label: "Entry costs", value: <Money value={em.entry_costs} />, hint: "slippage + commissions" },
-      {
-        label: "Exit plan",
-        value: [
-          em.policy.take_profit_pct_of_debit != null && `TP ${formatPercent(em.policy.take_profit_pct_of_debit)} of debit`,
-          em.policy.take_profit_pct_of_max_gain != null && `TP ${formatPercent(em.policy.take_profit_pct_of_max_gain)} of max gain`,
-          em.policy.stop && `stop ${formatPercent(em.policy.stop.value)} ${humanize(em.policy.stop.basis).toLowerCase()}`,
-          em.policy.close_at_dte != null && `close at ${em.policy.close_at_dte} DTE`,
-        ]
-          .filter(Boolean)
-          .join(" · ") || DASH,
-      },
-      { label: "Exit odds", value: `TP ${formatPercent(em.managed.p_take_profit)} · stop ${formatPercent(em.managed.p_stop)} · DTE ${formatPercent(em.managed.p_dte_exit)}`, hint: `${formatNumber(em.managed.expected_days_held, 1)} days expected` },
-    );
-  }
-  return (
-    <>
-      <KeyValueList items={kv} />
-      {a?.legs?.length ? (
-        <div className="arc-scroll-x mt-3">
-          <table className="w-full text-caption tabular-nums" data-testid="quant-legs">
-            <thead className="text-muted">
-              <tr>
-                {["Leg", "Bid", "Ask", "Spread", "IV", "Δ", "OI", "Moneyness"].map((h) => (
-                  <th key={h} className="px-2 py-1 text-left font-semibold">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {a.legs.map((l) => (
-                <tr key={l.occ_symbol} className="border-t border-line">
-                  <td className="px-2 py-1" title={l.occ_symbol}>
-                    {l.side === "long" ? "+" : "−"}
-                    {formatLeg(l.occ_symbol)}
-                  </td>
-                  <td className="px-2 py-1">{n0(l.bid, 2)}</td>
-                  <td className="px-2 py-1">{n0(l.ask, 2)}</td>
-                  <td className="px-2 py-1">{l.spread_pct == null ? DASH : formatPercent(l.spread_pct)}</td>
-                  <td className="px-2 py-1">{pct(l.iv)}</td>
-                  <td className="px-2 py-1">{n0(l.delta, 2)}</td>
-                  <td className="px-2 py-1">{n0(l.open_interest)}</td>
-                  <td className="px-2 py-1">{l.moneyness_pct == null ? DASH : formatPercent(l.moneyness_pct, { explicitSign: true })}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-      {q.analytics_error && !a && <p className="mt-2 text-micro text-muted">Full analytics not available for this proposal ({q.analytics_error}).</p>}
-    </>
-  );
-}
-
-function PromptToggle({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button type="button" className="text-caption text-accent hover:underline" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? "hide prompt" : "show prompt"}
-      </button>
-      {open && <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-control bg-control p-2 text-micro">{text}</pre>}
-    </>
-  );
-}
-
-function Decisions({ d }: { d: TradeDetail }) {
-  const trail = d.decisions;
-  const items = trail.items ?? [];
-  if (!items.length) return <None what="No persona decisions recorded for this trade." />;
-  const calls = trail.persona_calls ?? {};
-  const tl: TimelineItem[] = items.map((it) => {
-    const call = it.persona_call_id ? calls[it.persona_call_id] : undefined;
-    const failed = ["rejected", "failed", "blocked"].includes(it.choice);
-    return {
-      id: it.id,
-      persona: it.persona,
-      stage: `${humanize(it.stage)} · ${it.choice}`,
-      reason: it.reason_label,
-      at: et(it.at),
-      status: failed ? "failed" : it.this_trade ? "done" : "pending",
-      body: (
-        <div className="grid gap-1" data-testid={`decision-${it.id}`}>
-          {it.reason_text && <p>{it.reason_text}</p>}
-          <p className="text-micro text-muted">
-            <code>{it.reason_code}</code> · subject {it.subject}
-            {it.confidence != null && <> · confidence {formatPercent(it.confidence)}</>}
-            {!it.this_trade && <> · chain context</>}
-            {it.inputs_snapshot_id && <> · snapshot <code>{it.inputs_snapshot_id}</code></>}
-          </p>
-          {call && (
-            <div className="rounded-control bg-control p-2 text-caption" data-testid="persona-call">
-              <div>
-                {call.model} · {n0(call.input_tokens)} in / {n0(call.output_tokens)} out · {call.latency_ms == null ? "—" : `${formatNumber(call.latency_ms / 1000, 1)} s`} ·{" "}
-                {call.cost_usd == null ? "—" : `$${formatNumber(call.cost_usd, 4)}`} · {call.status}
-              </div>
-              <div className="text-micro text-muted">
-                prompt sha256 <code>{call.prompt_sha256.slice(0, 12)}</code>
-              </div>
-              {call.prompt_text && <PromptToggle text={call.prompt_text} />}
-            </div>
-          )}
-        </div>
-      ),
-    };
-  });
-  return (
-    <>
-      {trail.chain_run_id && <p className="mb-2 text-caption text-secondary">chain <code>{trail.chain_run_id}</code> · grey dots are chain context, not this trade</p>}
-      <Timeline items={tl} />
-    </>
-  );
-}
-
-function Gate({ d }: { d: TradeDetail }) {
-  if (!d.gate.length) return <None what="Not gated yet." />;
-  return (
-    <div className="grid gap-3">
-      {d.gate.map((g) => (
-        <div key={g.id} className="grid gap-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`font-semibold ${g.passed ? "text-pos-text" : "text-neg-text"}`}>{g.passed ? "PASS" : "FAIL"}</span>
-            <span className="text-caption text-muted">{et(g.decided_at)}</span>
-            {g.token_version && <span className="text-caption text-muted">token {g.token_version} (never shown)</span>}
-          </div>
-          {g.violations.map((v, i) => (
-            <div key={i} className="rounded-control bg-control px-2 py-1 text-caption" data-testid="gate-violation">
-              <span className="font-semibold">{v.label}</span> <code className="text-muted">{v.code}</code>
-              <div className="text-secondary">{v.detail}</div>
-            </div>
-          ))}
-          {g.account_snapshot && Object.keys(g.account_snapshot).length > 0 && (
-            <KeyValueList
-              items={Object.entries(g.account_snapshot).map(([k, v]) => ({
-                label: humanize(k),
-                value: typeof v === "number" ? formatNumber(v, 2) : String(v),
-              }))}
-            />
-          )}
-        </div>
       ))}
     </div>
   );
 }
 
-function Approval({ d }: { d: TradeDetail }) {
-  const a = d.approval;
-  if (!a) return <None what="No approval request." />;
+/** Watches the detail scroller: true once scrolled past the summary (hysteresis, no flicker). */
+function useCollapsed(ref: React.RefObject<HTMLElement | null>, enabled: boolean): boolean {
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    const scroller = ref.current?.closest<HTMLElement>("[data-detail-scroll]") ?? null;
+    if (!enabled || !scroller) {
+      setCollapsed(false);
+      return;
+    }
+    const onScroll = () => setCollapsed((c) => (c ? scroller.scrollTop > 40 : scroller.scrollTop > 160));
+    onScroll();
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    return () => scroller.removeEventListener("scroll", onScroll);
+  }, [ref, enabled]);
+  return collapsed;
+}
+
+function Summary({ d, tab, onTab }: { d: TradeDetail; tab: TabKey; onTab: (t: TabKey) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const mobile = useLayout() === "mobile";
+  const collapsed = useCollapsed(ref, mobile);
+  const r = d.header.row;
+  const h = d.header;
+  const ev = num(d.quant.net_ev_managed);
+  const failedAt = (h.lifecycle_failed ?? undefined) as Stage | undefined;
+  const current = humanize(failedAt ? `${failedAt} failed` : h.lifecycle);
   return (
-    <KeyValueList
-      items={[
-        { label: "Status", value: <span className="capitalize">{a.status}</span> },
-        { label: "Posted", value: t(a.posted_at) },
-        { label: "TTL", value: a.ttl_s == null ? DASH : `${formatNumber(a.ttl_s / 60, 1)} min`, hint: a.expires_at ? `expires ${et(a.expires_at)}` : undefined },
-        { label: "Decided", value: t(a.decided_at), hint: a.decided_by ?? undefined },
-        { label: "Limit at approval", value: <M v={a.limit_price} kind="price" /> },
-        { label: "Reason", value: a.reason || DASH },
-        {
-          label: "Slack",
-          value: a.permalink ? (
-            <a href={a.permalink} className="text-accent hover:underline" target="_blank" rel="noreferrer">
-              thread ↗
-            </a>
-          ) : a.thread_ts ? (
-            <code className="text-caption">{a.channel} / {a.thread_ts}</code>
+    <div
+      ref={ref}
+      data-testid="trade-header"
+      data-collapsed={collapsed}
+      // Sticky inside the DetailPanel scroller; the negative margins cover its padding.
+      className="sticky top-[calc(-1*var(--card-pad))] z-10 -mx-[var(--card-pad)] -mt-[var(--card-pad)] border-b border-line bg-card px-[var(--card-pad)] pb-2 pt-[var(--card-pad)]"
+    >
+      {collapsed ? (
+        <div className="flex min-h-[32px] items-center gap-2" data-testid="summary-compact">
+          <span className="font-semibold text-title">{r.ticker}</span>
+          <span className="text-muted">·</span>
+          <span className="text-caption text-muted">EV</span>
+          <span className="font-semibold tabular-nums">{ev === null ? DASH : <Money value={ev} explicitSign />}</span>
+          <span className="ml-auto">
+            <StatusPill d={d} />
+          </span>
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="text-title font-semibold">{r.ticker}</span>
+            <span className="min-w-0 text-secondary">
+              {structureLabel(r.structure_kind)} · <span className="capitalize">{r.kind}</span> · {r.contracts ?? "—"}×
+            </span>
+            <span className="ml-auto">
+              <StatusPill d={d} />
+            </span>
+          </div>
+          <LegChips d={d} />
+          {mobile ? (
+            <div className="flex items-center gap-2" data-testid="stepper-compact">
+              <StatusStepper compact reached={h.lifecycle as Stage} failedAt={failedAt} />
+              <span className={`text-caption ${failedAt ? "text-neg-text" : "text-secondary"}`}>{current}</span>
+            </div>
           ) : (
-            DASH
-          ),
-        },
-      ]}
-    />
+            <StatusStepper reached={h.lifecycle as Stage} failedAt={failedAt} />
+          )}
+          <StatStrip d={d} />
+        </div>
+      )}
+      <div className="mt-2">
+        <SegmentedControl options={TABS} value={tab} onChange={onTab} label="Trade detail" testid="trade-tabs" />
+      </div>
+    </div>
   );
 }
 
-function Execution({ d }: { d: TradeDetail }) {
-  const x = d.execution;
-  if (!x) return <None what="Not executed." />;
-  const events: TimelineItem[] = (x.orders ?? []).flatMap((o) =>
-    (o.events ?? []).map((e, i) => ({
-      id: `${o.id}-${i}`,
-      persona: e.actor.replace(/^arc:/, ""),
-      stage: `${e.from_state ?? "·"} → ${e.to_state}`,
-      at: et(e.at),
-      status: ["rejected", "cancelled", "failed", "expired"].includes(e.to_state) ? ("failed" as const) : ("done" as const),
-      body: e.detail ? <span>{e.detail}</span> : undefined,
-    })),
-  );
+// ---------------------------------------------------------------------------
+// Lifecycle tab
+// ---------------------------------------------------------------------------
+
+const DOT: Record<LifeStage["state"], string> = {
+  done: "bg-accent",
+  active: "bg-accent ring-2 ring-accent/30",
+  failed: "bg-neg",
+  pending: "bg-track",
+};
+
+function oneLine(key: LifeKey, d: TradeDetail): ReactNode {
+  switch (key) {
+    case "gate": {
+      const g = d.gate[d.gate.length - 1];
+      if (!g) return "Not gated yet";
+      return (
+        <>
+          <span className={g.passed ? "text-pos-text" : "text-neg-text"}>{g.passed ? "PASS" : "FAIL"}</span>
+          {g.violations.length > 0 && ` · ${g.violations.length} violation${g.violations.length === 1 ? "" : "s"}`} · {et(g.decided_at)}
+        </>
+      );
+    }
+    case "approval": {
+      const a = d.approval;
+      if (!a) return "No approval request";
+      return (
+        <>
+          <span className="capitalize">{a.status}</span>
+          {a.decided_by && ` by ${a.decided_by}`} · {et(a.decided_at ?? a.posted_at)}
+        </>
+      );
+    }
+    case "execution": {
+      const x = d.execution;
+      if (!x) return "Not executed";
+      return (
+        <>
+          <span className="capitalize">{x.status ?? "—"}</span> · {x.filled_qty ?? 0}/{x.contracts ?? "—"}
+          {x.fill_price != null && (
+            <>
+              {" "}
+              @ <M v={x.fill_price} kind="fill" />
+            </>
+          )}{" "}
+          · step {x.steps_used ?? "—"}/{x.max_steps ?? "—"}
+        </>
+      );
+    }
+    case "position": {
+      const p = d.position;
+      if (!p || (!p.structure_id && !(p.exits ?? []).length && !(p.swaps ?? []).length)) return "No position";
+      return (
+        <>
+          <span className="capitalize">{p.status ?? "—"}</span>
+          {p.exit_pending && " · exit pending"}
+          {p.realized_pnl != null && (
+            <>
+              {" "}
+              · <M v={p.realized_pnl} sign />
+            </>
+          )}
+          {p.exit_reason && ` · ${humanize(p.exit_reason)}`}
+          {(p.exits ?? []).length > 0 && ` · ${(p.exits ?? []).length} exit${(p.exits ?? []).length === 1 ? "" : "s"}`}
+        </>
+      );
+    }
+    case "outcome": {
+      const o = d.outcome.outcome;
+      const rv = (d.outcome.reviews ?? [])[0];
+      if (!o && !rv) return "No outcome yet";
+      return (
+        <>
+          {o && (
+            <>
+              <M v={o.realised_pnl} sign /> vs EV <M v={o.ev_total} sign />
+            </>
+          )}
+          {rv && `${o ? " · " : ""}${humanize(rv.label)}`}
+        </>
+      );
+    }
+  }
+}
+
+const BODY: Record<LifeKey, (p: { d: TradeDetail }) => ReactNode> = {
+  gate: Gate,
+  approval: Approval,
+  execution: Execution,
+  position: Position,
+  outcome: Outcome,
+};
+
+const TESTID: Record<LifeKey, string> = {
+  gate: "sec-gate",
+  approval: "sec-approval",
+  execution: "sec-execution",
+  position: "sec-position",
+  outcome: "sec-outcome",
+};
+
+function Lifecycle({ d }: { d: TradeDetail }) {
+  const stages = lifecycleStages(d);
+  const latest = focusStage(stages);
+  const [open, setOpen] = useState<Partial<Record<LifeKey, boolean>>>({});
+  const h = d.header;
   return (
-    <>
+    <div className="grid gap-4">
       <KeyValueList
         items={[
-          { label: "Status", value: <span className="capitalize">{x.status ?? "—"}</span>, hint: x.detail ?? undefined },
-          { label: "Band", value: <><M v={x.band_lo} kind="price" /> – <M v={x.band_hi} kind="price" /></> },
-          { label: "Steps used / max", value: `${x.steps_used ?? "—"} / ${x.max_steps ?? "—"}`, hint: x.attempts != null ? `${x.attempts} attempt${x.attempts === 1 ? "" : "s"}` : undefined },
-          { label: "Filled", value: `${x.filled_qty ?? 0} / ${x.contracts ?? "—"}` },
-          { label: "Fill price", value: <M v={x.fill_price} kind="fill" /> },
-          { label: "Slippage vs limit", value: <M v={x.slippage_vs_limit} kind="price" sign />, hint: x.limit != null ? `limit ${formatNumber(Number(x.limit), 2)}` : undefined },
-          { label: "Slippage vs mid", value: <M v={x.slippage_vs_mid} kind="price" sign />, hint: x.mid != null ? `mid ${formatNumber(Number(x.mid), 2)}` : undefined },
-          { label: "Started / finished", value: <>{t(x.started_at)} / {t(x.finished_at)}</> },
+          { label: "Proposed", value: t(h.row.created_at), hint: h.expires_at ? `expires ${et(h.expires_at)}` : undefined },
+          ...(h.opened_at ? [{ label: "Opened", value: t(h.opened_at) }] : []),
+          ...(h.closed_at ? [{ label: "Closed", value: t(h.closed_at) }] : []),
         ]}
       />
-      {(x.orders ?? []).length > 0 && (
-        <ul className="mt-3 text-caption" data-testid="order-refs">
-          {(x.orders ?? []).map((o) => (
-            <li key={o.id}>
-              Order <code>{o.client_order_ref}</code>
-              <span className="text-muted"> · {o.state}{o.broker_order_id ? ` · broker ${o.broker_order_id}` : ""} (gate token never shown)</span>
+      <ol className="relative" data-testid="lifecycle">
+        {stages.map((s, i) => {
+          const expanded = s.reached && (open[s.key] ?? s.key === latest);
+          const Body = BODY[s.key];
+          return (
+            <li key={s.key} className="relative flex gap-3 pb-4 last:pb-0" data-testid={TESTID[s.key]} data-state={s.state}>
+              {i < stages.length - 1 && <span className="absolute left-[5px] top-4 h-[calc(100%-8px)] w-px bg-line" aria-hidden="true" />}
+              <span className={`mt-1.5 h-[11px] w-[11px] shrink-0 rounded-full ${DOT[s.state]}`} aria-hidden="true" />
+              <div className={`min-w-0 flex-1 ${s.reached ? "" : "text-muted"}`}>
+                {s.reached ? (
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    onClick={() => setOpen((o) => ({ ...o, [s.key]: !expanded }))}
+                    className="arc-press flex min-h-[32px] w-full flex-wrap items-baseline gap-x-2 text-left max-tablet:min-h-[44px]"
+                  >
+                    <span className="font-semibold text-title">{s.title}</span>
+                    <span className="min-w-0 text-caption text-secondary tabular-nums">{oneLine(s.key, d)}</span>
+                    <span className="ml-auto text-caption text-muted" aria-hidden="true">
+                      {expanded ? "▼" : "▶"}
+                    </span>
+                  </button>
+                ) : (
+                  <div className="flex min-h-[32px] flex-wrap items-baseline gap-x-2 max-tablet:min-h-[44px]">
+                    <span className="font-semibold">{s.title}</span>
+                    <span className="text-caption">not reached</span>
+                  </div>
+                )}
+                {expanded && (
+                  <div className="mt-1 text-body">
+                    <Body d={d} />
+                  </div>
+                )}
+              </div>
             </li>
-          ))}
-        </ul>
-      )}
-      {events.length > 0 && (
-        <div className="mt-3" data-testid="order-events">
-          <p className="mb-1 text-caption text-secondary">Order state machine</p>
-          <Timeline items={events} />
-        </div>
-      )}
-      {(x.fills ?? []).length > 0 && (
-        <table className="mt-3 w-full text-caption tabular-nums" data-testid="fills">
-          <thead className="text-muted">
-            <tr>
-              <th className="px-2 py-1 text-left">Fill time</th>
-              <th className="px-2 py-1 text-left">Price</th>
-              <th className="px-2 py-1 text-left">Qty</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(x.fills ?? []).map((f) => (
-              <tr key={f.id} className="border-t border-line">
-                <td className="px-2 py-1">{et(f.filled_at)}</td>
-                <td className="px-2 py-1"><M v={f.price} kind="fill" /></td>
-                <td className="px-2 py-1">{f.qty}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 
-function Position({ d }: { d: TradeDetail }) {
-  const p = d.position;
-  if (!p) return <None what="No position for this trade." />;
-  return (
-    <>
-      {p.structure_id && (
-        <KeyValueList
-          items={[
-            { label: "Status", value: <span className="capitalize">{p.status ?? "—"}{p.exit_pending ? " · exit pending" : ""}</span> },
-            { label: "Structure", value: <code className="text-caption">{p.structure_id}</code> },
-            { label: "Opened by", value: p.open_proposal_hash ? <TradeLink hash={p.open_proposal_hash} /> : DASH },
-            { label: "Entry / close net", value: <><M v={p.entry_net} kind="price" /> / <M v={p.close_net} kind="price" /></> },
-            { label: "Realized P&L", value: <M v={p.realized_pnl} sign /> },
-            { label: "Exit reason", value: humanize(p.exit_reason) },
-            { label: "Days held", value: n0(p.days_held) },
-            { label: "Opened / closed", value: <>{t(p.opened_at)} / {t(p.closed_at)}</> },
-          ]}
-        />
-      )}
-      {(p.exits ?? []).length > 0 && (
-        <div className="mt-3">
-          <p className="mb-1 text-caption text-secondary">Exit proposals</p>
-          <ul className="grid gap-1 text-caption">
-            {(p.exits ?? []).map((e) => (
-              <li key={e.proposal_hash} data-testid="exit-link">
-                <TradeLink hash={e.proposal_hash} /> · {STAGE_LABEL[e.stage]} · {humanize(e.exit_reason)} · {et(e.created_at)}
-                {e.close_net != null && <> · close <M v={e.close_net} kind="price" /></>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {(p.swaps ?? []).length > 0 && (
-        <div className="mt-3" data-testid="swaps">
-          <p className="mb-1 text-caption text-secondary">Close to reallocate</p>
-          {(p.swaps ?? []).map((w) => (
-            <div key={w.id} className="rounded-control bg-control px-2 py-1 text-caption">
-              {w.close_ticker} {w.close_proposal_hash ? <TradeLink hash={w.close_proposal_hash}>close</TradeLink> : "close"} →{" "}
-              {w.open_ticker} {w.open_proposal_hash ? <TradeLink hash={w.open_proposal_hash}>open</TradeLink> : "open"} · {w.status}
-              <div className="text-secondary">{w.detail}</div>
-            </div>
-          ))}
-        </div>
-      )}
-      {p.floor_exit && (
-        <div className="mt-3" data-testid="floor-exit">
-          <p className="mb-1 text-caption text-secondary">Remaining-EV floor exit</p>
-          <KeyValueList
-            items={[
-              { label: "Remaining EV per $ BP", value: n4(p.floor_exit.remaining_ev_per_bp) },
-              { label: "Floor", value: n4(p.floor_exit.floor) },
-              { label: "Entry managed Net EV per $ BP", value: <>{n4(p.floor_exit.entry_managed_net_ev_per_bp)} (<M v={p.floor_exit.entry_managed_net_ev} sign /> per unit)</> },
-              { label: "Minutes since fill", value: n0(p.floor_exit.minutes_since_fill) },
-              { label: "Fired on", value: p.floor_exit.window ? humanize(p.floor_exit.window) + " marks" : "Not recorded (before E6.4a)" },
-            ]}
-          />
-        </div>
-      )}
-    </>
-  );
-}
-
-function n4(v: number | null | undefined): ReactNode {
-  return v == null ? DASH : (v > 0 ? "+" : "") + v.toFixed(4);
-}
-
-function Outcome({ d }: { d: TradeDetail }) {
-  const o = d.outcome.outcome;
-  const reviews = d.outcome.reviews ?? [];
-  if (!o && !reviews.length) return <None what="No outcome recorded yet." />;
-  return (
-    <>
-      {o && (
-        <KeyValueList
-          items={[
-            { label: "Realized P&L", value: <M v={o.realised_pnl} sign /> },
-            { label: "Modelled EV", value: <M v={o.ev_total} sign />, hint: "net, for the whole position" },
-            { label: "P&L vs EV", value: <M v={o.pnl_vs_ev} sign /> },
-            { label: "Max adverse excursion", value: <M v={o.max_adverse_excursion} sign /> },
-            { label: "Hold-to-expiry shadow P&L", value: <M v={o.hold_to_expiry_shadow_pnl} sign />, hint: "D19" },
-            { label: "Entry / exit fill", value: <><M v={o.entry_fill} kind="fill" /> / <M v={o.exit_fill} kind="fill" /></> },
-            { label: "Slippage", value: o.slippage_bps == null ? DASH : `${formatNumber(o.slippage_bps, 1)} bps`, hint: o.cost_bps != null ? `cost ${formatNumber(o.cost_bps, 1)} bps` : undefined },
-            { label: "Days held", value: n0(o.days_held), hint: humanize(o.exit_reason) },
-          ]}
-        />
-      )}
-      {reviews.map((r) => (
-        <div key={r.id} className="mt-3 rounded-control bg-control p-2 text-caption" data-testid="review">
-          <div className="font-semibold">
-            {humanize(r.label)} · root cause {humanize(r.root_cause).toLowerCase()}
-          </div>
-          <div className="text-secondary">{r.notes}</div>
-          <div className="text-micro text-muted">
-            {r.reviewer} · {et(r.at)}
-            {(r.cites ?? []).length > 0 && <> · cites {(r.cites ?? []).join(", ")}</>}
-          </div>
-        </div>
-      ))}
-    </>
-  );
-}
+// ---------------------------------------------------------------------------
+// Context tab
+// ---------------------------------------------------------------------------
 
 function Market({ d }: { d: TradeDetail }) {
   const m = d.market;
@@ -524,7 +360,7 @@ function Market({ d }: { d: TradeDetail }) {
   const r = m.regime;
   if (m.spot == null && !r && !c && !(m.legs ?? []).length) return <None what="No market context stored." />;
   return (
-    <>
+    <div className="grid gap-3">
       <KeyValueList
         items={[
           { label: "Spot", value: n0(m.spot, 2), hint: m.at ? et(m.at) : undefined },
@@ -534,12 +370,12 @@ function Market({ d }: { d: TradeDetail }) {
         ]}
       />
       {(m.legs ?? []).length > 0 && (
-        <table className="mt-2 w-full text-caption tabular-nums" data-testid="market-legs">
+        <table className="w-full text-caption tabular-nums" data-testid="market-legs">
           <thead className="text-muted">
             <tr>
-              {["Leg", "Bid", "Mid", "Ask", "IV"].map((h) => (
-                <th key={h} className="px-2 py-1 text-left">
-                  {h}
+              {["Leg", "Bid", "Mid", "Ask", "IV"].map((x) => (
+                <th key={x} className="px-2 py-1 text-left">
+                  {x}
                 </th>
               ))}
             </tr>
@@ -547,7 +383,9 @@ function Market({ d }: { d: TradeDetail }) {
           <tbody>
             {(m.legs ?? []).map((l) => (
               <tr key={l.occ_symbol} className="border-t border-line">
-                <td className="px-2 py-1" title={l.occ_symbol}>{formatLeg(l.occ_symbol)}</td>
+                <td className="px-2 py-1" title={l.occ_symbol}>
+                  {formatLeg(l.occ_symbol)}
+                </td>
                 <td className="px-2 py-1">{n0(l.bid, 2)}</td>
                 <td className="px-2 py-1">{n0(l.mid, 2)}</td>
                 <td className="px-2 py-1">{n0(l.ask, 2)}</td>
@@ -558,10 +396,7 @@ function Market({ d }: { d: TradeDetail }) {
         </table>
       )}
       {r && (
-        <div className="mt-3" data-testid="regime">
-          <p className="mb-1 text-caption text-secondary">
-            Regime read {r.snapshot_id && <>(snapshot <code>{r.snapshot_id}</code>)</>}
-          </p>
+        <Block title="Regime Read" testid="regime" aside={r.snapshot_id ? <code className="truncate text-micro text-muted">{r.snapshot_id}</code> : undefined}>
           <KeyValueList
             items={[
               { label: "Regime", value: r.current ?? DASH, hint: r.as_of ?? undefined },
@@ -571,11 +406,10 @@ function Market({ d }: { d: TradeDetail }) {
               { label: "IV / IV rank / HV20", value: <>{pct(r.iv)} / {pct(r.iv_rank)} / {pct(r.hv20)}</> },
             ]}
           />
-        </div>
+        </Block>
       )}
       {c && (
-        <div className="mt-3" data-testid="candidate">
-          <p className="mb-1 text-caption text-secondary">Scout candidate</p>
+        <Block title="Scout Candidate" testid="candidate">
           <KeyValueList
             items={[
               { label: "Stance / catalyst", value: `${c.stance} · ${humanize(c.catalyst_type)}`, hint: c.catalyst_date ?? undefined },
@@ -584,7 +418,7 @@ function Market({ d }: { d: TradeDetail }) {
             ]}
           />
           {(c.sources ?? []).length > 0 && (
-            <ul className="mt-1 grid gap-0.5 text-caption">
+            <CappedList className="mt-1 grid gap-0.5 text-caption" noun="sources">
               {(c.sources ?? []).map((s) => (
                 <li key={s} className="truncate">
                   {/^https?:\/\//.test(s) ? (
@@ -596,29 +430,162 @@ function Market({ d }: { d: TradeDetail }) {
                   )}
                 </li>
               ))}
-            </ul>
+            </CappedList>
           )}
-        </div>
+        </Block>
       )}
-    </>
+    </div>
   );
 }
 
-function Manifest({ d }: { d: TradeDetail }) {
-  const m = d.manifest;
-  if (!m) return <None what="No run manifest for this trade's run." />;
+function ContextRead({ d }: { d: TradeDetail }) {
+  const c = d.context;
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const kinds = c?.kinds ?? [];
+  const snaps = c?.snapshot_ids ?? [];
+  const total = c?.total ?? 0;
+  if (!kinds.length) return <None what="No context snapshot recorded for this trade's steps." />;
   return (
-    <KeyValueList
-      items={[
-        { label: "Run", value: <Link to={m.route} className="text-accent hover:underline"><code>{m.run_id}</code></Link>, hint: `${m.job} · attempt ${m.attempt} · ${m.status}` },
-        { label: "Git sha", value: m.git_sha ? <code title={m.git_sha}>{m.git_sha.slice(0, 12)}{m.git_dirty ? " (dirty)" : ""}</code> : DASH },
-        { label: "Config version", value: m.config_version ?? DASH },
-        ...Object.entries(m.config_hashes ?? {}).map(([k, v]) => ({ label: k, value: <code className="text-caption">{String(v).slice(0, 12)}</code> })),
-        { label: "Models", value: (m.models_served ?? []).join(", ") || DASH, hint: (m.models_requested ?? []).join(", ") !== (m.models_served ?? []).join(", ") ? `requested ${(m.models_requested ?? []).join(", ")}` : undefined },
-        { label: "Tokens / cost", value: <>{n0(m.input_tokens)} / {n0(m.output_tokens)} · {m.cost_usd == null ? "—" : `$${formatNumber(m.cost_usd, 4)}`}</> },
-        { label: "Started / finished", value: <>{t(m.started_at)} / {t(m.finished_at)}</> },
-      ]}
-    />
+    <div className="grid gap-1" data-testid="context-read">
+      <p className="text-caption text-muted">
+        {total} entr{total === 1 ? "y" : "ies"} in {snaps.length} snapshot{snaps.length === 1 ? "" : "s"}
+      </p>
+      <ul className="divide-y divide-line">
+        {kinds.map((k) => {
+          const expanded = open[k.kind] ?? false;
+          return (
+            <li key={k.kind}>
+              <button
+                type="button"
+                aria-expanded={expanded}
+                onClick={() => setOpen((o) => ({ ...o, [k.kind]: !expanded }))}
+                className="arc-press flex min-h-[34px] w-full items-center justify-between gap-3 text-left max-tablet:min-h-[44px]"
+              >
+                <span className="text-secondary">
+                  <span className="mr-2 text-caption text-muted" aria-hidden="true">
+                    {expanded ? "▼" : "▶"}
+                  </span>
+                  {humanize(k.kind)}
+                </span>
+                <span className="font-semibold tabular-nums">{k.count}</span>
+              </button>
+              {expanded && (
+                <CappedList className="grid gap-0.5 pb-2 pl-5 text-caption" noun="entries">
+                  {(k.entries ?? []).map((e) => (
+                    <li key={e.id} className="flex min-w-0 gap-2">
+                      <span className="shrink-0 font-semibold">{e.subject ?? "—"}</span>
+                      <span className="min-w-0 truncate text-muted">
+                        {e.produced_by ?? ""} · {e.valid_from ? formatEt(e.valid_from) : "—"} · <code>{e.id}</code>
+                      </span>
+                    </li>
+                  ))}
+                </CappedList>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Audit tab
+// ---------------------------------------------------------------------------
+
+/** Clipboard copy that also works on the plain-http tailnet origin (no `navigator.clipboard`). */
+function copyText(text: string): boolean {
+  try {
+    if (window.isSecureContext && navigator.clipboard) {
+      void navigator.clipboard.writeText(text);
+      return true;
+    }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function HashCopy({ hash }: { hash: string }) {
+  const [copied, setCopied] = useState<boolean | null>(null);
+  return (
+    <span className="inline-flex items-center gap-2">
+      <code title={hash} data-testid="proposal-hash">
+        {hash.slice(0, 10)}…{hash.slice(-4)}
+      </code>
+      <button
+        type="button"
+        className="arc-action arc-press arc-hit"
+        onClick={() => {
+          setCopied(copyText(hash));
+          window.setTimeout(() => setCopied(null), 1500);
+        }}
+        aria-label="Copy proposal hash"
+      >
+        {copied === null ? "Copy" : copied ? "Copied" : "Select"}
+      </button>
+    </span>
+  );
+}
+
+function Audit({ d }: { d: TradeDetail }) {
+  const m = d.manifest;
+  const r = d.header.row;
+  return (
+    <div className="grid gap-4">
+      <Block title="Identity" testid="audit-ids">
+        <KeyValueList
+          items={[
+            { label: "Proposal hash", value: <HashCopy hash={r.proposal_hash} /> },
+            { label: "Candidate", value: <code className="text-caption">{d.header.candidate_id}</code> },
+            { label: "Account profile", value: r.account_profile ?? DASH },
+            ...(r.structure_id ? [{ label: "Structure", value: <code className="text-caption">{r.structure_id}</code> }] : []),
+            ...(r.chain_run_id ? [{ label: "Chain", value: <code className="text-caption">{r.chain_run_id}</code> }] : []),
+          ]}
+        />
+      </Block>
+      <Block title="Run Manifest" testid="sec-manifest">
+        {m ? (
+          <KeyValueList
+            items={[
+              { label: "Run", value: <Link to={m.route} className="text-accent hover:underline"><code>{m.run_id}</code></Link>, hint: `${m.job} · attempt ${m.attempt} · ${m.status}` },
+              { label: "Git sha", value: m.git_sha ? <code title={m.git_sha}>{m.git_sha.slice(0, 12)}{m.git_dirty ? " (dirty)" : ""}</code> : DASH },
+              { label: "Config version", value: m.config_version ?? DASH },
+              ...Object.entries(m.config_hashes ?? {}).map(([k, v]) => ({ label: k, value: <code className="text-caption">{String(v).slice(0, 12)}</code> })),
+              { label: "Models", value: (m.models_served ?? []).join(", ") || DASH, hint: (m.models_requested ?? []).join(", ") !== (m.models_served ?? []).join(", ") ? `requested ${(m.models_requested ?? []).join(", ")}` : undefined },
+              { label: "Tokens / cost", value: <>{n0(m.input_tokens)} / {n0(m.output_tokens)} · {m.cost_usd == null ? "—" : `$${formatNumber(m.cost_usd, 4)}`}</> },
+              { label: "Declared reads", value: m.declared_reads == null ? "all kinds" : m.declared_reads.join(", ") || DASH },
+              {
+                label: "Inputs read",
+                value: Object.keys(m.input_counts ?? {}).length ? Object.entries(m.input_counts ?? {}).map(([k, v]) => `${k} ${v}`).join(" · ") : DASH,
+              },
+              { label: "Started / finished", value: <>{t(m.started_at)} / {t(m.finished_at)}</> },
+            ]}
+          />
+        ) : (
+          <None what="No run manifest for this trade's run." />
+        )}
+      </Block>
+      <Block title="Sources" testid="audit-sources">
+        <ul className="grid gap-1 text-caption">
+          {SOURCES.map((s) => (
+            <li key={s.block} className="flex flex-wrap gap-x-2">
+              <span className="font-semibold text-secondary">{s.block}</span>
+              <span className="text-muted">source: {s.tables}</span>
+            </li>
+          ))}
+        </ul>
+      </Block>
+    </div>
   );
 }
 
@@ -626,20 +593,67 @@ function Manifest({ d }: { d: TradeDetail }) {
 // Page
 // ---------------------------------------------------------------------------
 
+function TabPanel({ tab, d }: { tab: TabKey; d: TradeDetail }) {
+  switch (tab) {
+    case "why":
+      return (
+        <div className="grid gap-4">
+          <Block title="Thesis">
+            <Thesis d={d} />
+          </Block>
+          <Block title="Risk View">
+            <RiskView text={d.header.risk_narrative} />
+          </Block>
+          <Block title="Decision Trail" testid="sec-decisions">
+            <Decisions d={d} />
+          </Block>
+        </div>
+      );
+    case "numbers":
+      return (
+        <div className="grid gap-4">
+          <Block title="Payoff" testid="sec-payoff">
+            <Payoff d={d} />
+          </Block>
+          <QuantBlocks d={d} />
+        </div>
+      );
+    case "lifecycle":
+      return <Lifecycle d={d} />;
+    case "context":
+      return (
+        <div className="grid gap-4">
+          <Block title="Market Context" testid="sec-market">
+            <Market d={d} />
+          </Block>
+          <Block title="Context Read">
+            <ContextRead d={d} />
+          </Block>
+        </div>
+      );
+    case "audit":
+      return <Audit d={d} />;
+  }
+}
+
 export function TradeDetailBody({ d }: { d: TradeDetail }) {
+  const [params, setParams] = useSearchParams();
+  const tab = parseTab(params.get("tab")) ?? defaultTab(d.header.row.stage);
+  const ref = useRef<HTMLDivElement>(null);
+  const pick = (next: TabKey) => {
+    const p = new URLSearchParams(params);
+    p.set("tab", next);
+    setParams(p, { replace: true });
+    // Start the new tab at its top, under the sticky summary.
+    const scroller = ref.current?.closest<HTMLElement>("[data-detail-scroll]");
+    if (scroller && scroller.scrollTop > 0) scroller.scrollTo({ top: 0 });
+  };
   return (
-    <div className="grid gap-2" data-testid="trade-detail">
-      <Header d={d} />
-      <SectionBlock title="Payoff" source="proposals.structure_json (arc.structures)" testid="sec-payoff"><Payoff d={d} /></SectionBlock>
-      <SectionBlock title="Quant" source="proposals.quant_json, market_contexts.analytics" testid="sec-quant"><Quant d={d} /></SectionBlock>
-      <SectionBlock title="Decision Trail" source="decisions, persona_calls" testid="sec-decisions"><Decisions d={d} /></SectionBlock>
-      <SectionBlock title="Gate" source="gate_decisions" testid="sec-gate"><Gate d={d} /></SectionBlock>
-      <SectionBlock title="Approval" source="approval_requests" testid="sec-approval"><Approval d={d} /></SectionBlock>
-      <SectionBlock title="Execution" source="executions, orders, order_events, fills" testid="sec-execution"><Execution d={d} /></SectionBlock>
-      <SectionBlock title="Position & Exits" source="open_structures, proposals (kind=close), swaps" testid="sec-position"><Position d={d} /></SectionBlock>
-      <SectionBlock title="Outcome & Review" source="outcomes, decision_reviews" testid="sec-outcome"><Outcome d={d} /></SectionBlock>
-      <SectionBlock title="Market Context" source="market_contexts, context_snapshots, context_entries, candidates" testid="sec-market"><Market d={d} /></SectionBlock>
-      <SectionBlock title="Run Manifest" source="run_manifests (D27)" testid="sec-manifest"><Manifest d={d} /></SectionBlock>
+    <div ref={ref} className="grid gap-3" data-testid="trade-detail" data-tab={tab}>
+      <Summary d={d} tab={tab} onTab={pick} />
+      <div role="tabpanel" aria-label={TABS.find((x) => x.value === tab)?.label} data-testid={`tab-${tab}`} className="min-w-0">
+        <TabPanel tab={tab} d={d} />
+      </div>
     </div>
   );
 }
@@ -650,7 +664,12 @@ export function TradeDetailRoute() {
   const navigate = useNavigate();
   const { search } = useLocation();
   const q = useTrade(hash);
-  const close = () => navigate({ pathname: "/trades", search });
+  const close = () => {
+    const p = new URLSearchParams(search);
+    p.delete("tab");
+    const s = p.toString();
+    navigate({ pathname: "/trades", search: s ? `?${s}` : "" });
+  };
   const title = q.data ? `${q.data.header.row.ticker} · ${structureLabel(q.data.header.row.structure_kind)}` : "Trade";
   let body: ReactNode;
   if (q.isError) {
@@ -662,7 +681,7 @@ export function TradeDetailRoute() {
     body = <TradeDetailBody d={q.data} />;
   }
   return (
-    <DetailPanel title={title} onClose={close}>
+    <DetailPanel title={title} onClose={close} wide>
       {body}
     </DetailPanel>
   );

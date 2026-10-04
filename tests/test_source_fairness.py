@@ -1069,3 +1069,44 @@ def test_category_tunables_reach_the_registry(conn, tmp_path) -> None:
     assert reg.category_weights()[SourceCategory.MACRO_DATA] == pytest.approx(0.5)
     assert reg.max_age_for("wsj").duration == dt.timedelta(minutes=90)
     assert reg.is_stale("wsj", published=NOW - dt.timedelta(hours=2), ingested=NOW, now=NOW)
+
+
+def test_stored_override_on_a_renamed_category_key_migrates(conn, tmp_path) -> None:
+    """D49: a change-log row on `categories.company.*` applies to company_data; one on
+    the split `categories.video.*` is reported and dropped (it has no single successor)."""
+    from arc.control.effective import effective_routines
+    from arc.control.service import ControlService
+    from arc.control.store import ConfigChangeRepo
+
+    p = tmp_path / "routines.yaml"
+    p.write_text(DEFAULT_ROUTINES_PATH.read_text())
+    repo = ConfigChangeRepo(conn)
+    for key, new in (
+        ("categories.company.weight", 3),
+        ("categories.macro.max_age", 2880),  # minutes, as Slack stores it
+        ("categories.video.weight", 4),
+    ):
+        repo.append(
+            key=key, old=1, new=new, is_default=False, actor="U0OWNER001", reason=None,
+            at=NOW, source="slack", status="applied", direction="neutral",
+        )  # fmt: skip
+    with structlog.testing.capture_logs() as logs:
+        r = effective_routines(conn, p)
+    assert r.categories[SourceCategory.COMPANY_DATA].weight == 3
+    assert r.categories[SourceCategory.MACRO_DATA].max_age.duration == dt.timedelta(days=2)
+    assert r.categories[SourceCategory.YOUTUBE_MACRO].weight == 1  # video: dropped
+    assert r.categories[SourceCategory.YOUTUBE_MICRO].weight == 1
+    dropped = [e["key"] for e in logs if e["event"] == "control.override_unknown_key"]
+    assert dropped == ["categories.video.weight"]
+    # `!arc config` shows the migrated value under the new key, never the old one
+    svc = ControlService(
+        conn,
+        base=ArcSettings(_env_file=None),  # type: ignore[call-arg]
+        now=lambda: NOW,
+        optionable=lambda s: True,
+        is_halted=lambda: False,
+    )
+    shown = list(svc.keys())
+    assert "categories.company.weight" not in shown
+    v = svc.view("categories.company_data.weight")
+    assert v.overridden and v.last is not None and v.last.key == "categories.company.weight"
