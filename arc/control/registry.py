@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from arc.context.ttl import parse_duration
+
 __all__ = [
     "EXIT_KINDS",
     "NEVER_TUNABLE",
@@ -1371,6 +1373,20 @@ _MONITORING_TUNABLES: tuple[Tunable, ...] = (
         max=30,
         hard_ceiling=30,
     ),
+    Tunable(
+        key="monitoring.earnings_stale_after",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E4.1d: coverage:earnings alerts when no earnings-calendar doc was "
+        "stored for this many days while the universe has a stock (blackout dates).",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("monitoring", "earnings_stale_after"),
+        unit="d",
+        min=1,
+        max=30,
+        hard_ceiling=30,
+    ),
 )
 
 
@@ -1922,6 +1938,8 @@ def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
             return None
         if t.unit == "m":
             return _minutes(str(v))
+        if t.unit == "d" and isinstance(v, str):  # a monitoring duration ("7d")
+            return int(round(parse_duration(v).total_seconds() / 86_400))
         return v
     if t.target is Target.ROUTINES:
         _, spec = _routine(t, raw)
@@ -1956,6 +1974,8 @@ def write_raw(t: Tunable, value: Any, raw: dict[str, Any]) -> list[tuple[tuple[s
     if t.target is Target.ROUTINES and t.path[:1] in _PLAIN_ROUTINE_SECTIONS:
         if t.unit == "m":
             return [(t.path, f"{int(value)}m")]
+        if t.unit == "d":
+            return [(t.path, f"{int(value)}d")]
         return [(t.path, value)]
     if t.target is Target.ROUTINES:
         section, spec = _routine(t, raw)

@@ -12,6 +12,8 @@
   ``tick_duration_ms``) or p90 spacing > 1.5 x ``tick.interval``.
 - :func:`tick_staleness`  no ``tick`` heartbeat for ``tick_stale_after``.
 - :func:`stuck_runs`      a ``routine_runs`` row still ``running`` after ``stuck_after``.
+- :func:`earnings_coverage` E4.1d: ``coverage:earnings`` while no earnings doc is
+  newer than ``earnings_stale_after`` and the universe has a non-ETF ticker.
 - :func:`stranded_events` E6.2e: a dispatched event with no run after ``tick.dispatch_grace``.
 - :func:`approvals_unposted` E6.1b: a pending approval request older than one tick
   with no Slack card (its post failed and keeps failing).
@@ -342,7 +344,8 @@ def slot_coverage(
     findings: list[Finding] = []
     per_job: dict[str, dict[str, Any]] = {}
     for name, (_kind, spec) in routines.jobs().items():
-        if per_slot(spec, settings):
+        # E4.1d: `coverage:earnings` is the calendar-freshness condition, not a slot ratio.
+        if per_slot(spec, settings) or name == EARNINGS_JOB:
             continue
         cov = job_coverage(
             conn, name, spec, _window_slots(spec, settings, first_tick=first.at, lo=lo, hi=now)
@@ -575,6 +578,69 @@ def stuck_runs(
     return CheckResult(
         "stuck_runs", "failed" if findings else "ok", f"{len(findings)} stuck", findings
     )
+
+
+EARNINGS_JOB = "earnings"
+
+
+def earnings_coverage(
+    conn: sqlite3.Connection,
+    routines: RoutinesConfig,
+    settings: MonitoringSettings,
+    now: _dt.datetime,
+    universe: list[str],
+) -> CheckResult:
+    """E4.1d: ``coverage:earnings`` while no earnings doc was ingested within
+    ``earnings_stale_after`` and the universe holds a non-ETF ticker.
+
+    Without a fresh calendar ``next_earnings`` is empty, so every stock is
+    ``earnings_unknown`` and the gate's earnings blackout has no dates. Only judged
+    while the ``earnings`` source job is enabled.
+    """
+    from arc.pipeline.market import ETF_UNDERLYINGS
+
+    if EARNINGS_JOB not in routines.jobs():
+        return CheckResult("earnings_coverage", "ok", "not judged: earnings job disabled")
+    stocks = sorted({t.upper() for t in universe} - ETF_UNDERLYINGS)
+    if not stocks:
+        return CheckResult("earnings_coverage", "ok", "not judged: ETF-only universe")
+    row = conn.execute(
+        "SELECT MAX(ingested_at) AS last, COUNT(*) AS n FROM raw_docs WHERE source = ?",
+        (EARNINGS_JOB,),
+    ).fetchone()
+    try:
+        last = from_db(row["last"]) if row and row["last"] else None
+    except ValueError:  # a hand-written ingested_at: judge as never stored
+        last = None
+    days = settings.earnings_stale_after.total_seconds() / 86_400
+    if last is not None and now - last <= settings.earnings_stale_after:
+        age_h = (now - last).total_seconds() / 3600
+        return CheckResult(
+            "earnings_coverage", "ok", f"last earnings doc {age_h:.0f} h ago ({row['n']} stored)"
+        )
+    run = conn.execute(
+        """SELECT status, summary, error FROM routine_runs WHERE job = ?
+           ORDER BY scheduled_for DESC LIMIT 1""",
+        (EARNINGS_JOB,),
+    ).fetchone()
+    last_run = (
+        f"last run {run['status']}: {run['error'] or run['summary'] or ''}".rstrip(": ")
+        if run
+        else "no earnings run recorded"
+    )
+    seen = f"last stored {last:%m-%d %H:%M %Z}" if last else "none ever stored"
+    f = Finding(
+        key=f"coverage:{EARNINGS_JOB}",
+        kind="coverage",
+        severity="failed",
+        message=(
+            f"earnings calendar stale: no earnings doc in the last {days:g} d ({seen}) "
+            f"while the universe has {len(stocks)} stock(s), e.g. {', '.join(stocks[:3])}; "
+            f"the gate's earnings blackout has no dates · {last_run}"
+        ),
+        detail={"job": EARNINGS_JOB, "last": last.isoformat() if last else None},
+    )
+    return CheckResult("earnings_coverage", "failed", f"stale ({seen})", (f,))
 
 
 def stranded_events(

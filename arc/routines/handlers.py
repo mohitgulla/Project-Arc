@@ -49,7 +49,15 @@ log = structlog.get_logger(__name__)
 
 
 class JobSkippedError(Exception):
-    """Raised by a handler to record its run as ``skipped`` (not a failure)."""
+    """Raised by a handler to record its run as ``skipped`` (not a failure).
+
+    ``notice`` (optional) is posted to the day thread like :attr:`JobResult.notice`:
+    for a skip a human must act on (E4.1d: no earnings API key), deduped by the handler.
+    """
+
+    def __init__(self, *args: object, notice: str = "") -> None:
+        super().__init__(*args)
+        self.notice = notice
 
 
 class ContractViolationError(RuntimeError):
@@ -424,10 +432,35 @@ def edgar_source(ctx: JobContext) -> JobResult:
     return _source_result(ctx, fetch_edgar(ctx.conn, settings))
 
 
-def earnings_source(ctx: JobContext) -> JobResult:
-    from arc.ingest.earnings import fetch_earnings
+EARNINGS_NO_KEY_DAY = "earnings:no_api_key_notice"
 
-    return _source_result(ctx, fetch_earnings(ctx.conn, ctx.settings))
+
+def earnings_source(ctx: JobContext) -> JobResult:
+    """E4.1d: no key -> ``skipped`` (``no_api_key``, one notice per day); a fetch,
+    HTTP, JSON, truncation or rate-limit error propagates -> ``failed`` + alert.
+
+    Fetch knobs (``row_cap``, ``chunk_days``, ``rate_limit_per_min``, ...) are the
+    job's options in ``config/routines.yaml``.
+    """
+    from arc.ingest.earnings import EarningsFetchConfig, EarningsNoKeyError, fetch_earnings
+    from arc.routines.runs import RoutineStateRepo
+
+    cfg = EarningsFetchConfig.from_options(ctx.options)
+    try:
+        docs = fetch_earnings(ctx.conn, ctx.settings, cfg=cfg, today=ctx.now.date())
+    except EarningsNoKeyError as exc:
+        state = RoutineStateRepo(ctx.conn)
+        day = ctx.now.astimezone(ET).date().isoformat()
+        notice = ""
+        if state.get(EARNINGS_NO_KEY_DAY) != day:
+            state.set(EARNINGS_NO_KEY_DAY, day, now=ctx.now)
+            notice = (
+                "earnings calendar skipped: no_api_key (set ARC_FINNHUB_API_KEY in "
+                "~/.hermes/.env); next_earnings is empty, so short premium on stocks "
+                "fails closed"
+            )
+        raise JobSkippedError(str(exc), notice=notice) from exc
+    return _source_result(ctx, docs)
 
 
 def symbols_source(ctx: JobContext) -> JobResult:

@@ -8,15 +8,23 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
+import urllib.error
+from datetime import UTC, date, datetime, timedelta
+from email.message import Message
+from typing import TYPE_CHECKING
 from unittest import mock
+from urllib.parse import parse_qs, urlparse
 
 import pytest
+from structlog.testing import capture_logs
 
 from arc.config import DEFAULT_YOUTUBE_CHANNELS, ArcSettings
 from arc.ingest.caption_backoff import CaptionResult, CaptionStatus
 from arc.ingest.store import IngestCursorRepo, RawDocRepo, content_hash
 from arc.store.migrate import migrate
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -317,73 +325,335 @@ class TestEdgarConnector:
 # ---------------------------------------------------------------------------
 
 
+TODAY = date(2026, 10, 5)
+
+
+def _no_sleep(_s: float) -> None:
+    return None
+
+
+class _FakeFinnhub:
+    """``get_json`` double: answers each (from, to) call from *responder*; records calls."""
+
+    def __init__(self, responder) -> None:  # noqa: ANN001
+        self.responder = responder
+        self.calls: list[tuple[date, date]] = []
+
+    def __call__(self, url: str, _timeout: float):  # noqa: ANN204
+        q = parse_qs(urlparse(url).query)
+        start, end = date.fromisoformat(q["from"][0]), date.fromisoformat(q["to"][0])
+        assert q["token"] == ["test_key_123"]
+        self.calls.append((start, end))
+        return self.responder(start, end)
+
+
+def _events(start: date, end: date, per_day: int = 1, prefix: str = "S") -> dict:
+    rows = []
+    d = start
+    while d <= end:
+        rows += [{"symbol": f"{prefix}{i}", "date": d.isoformat()} for i in range(per_day)]
+        d += timedelta(days=1)
+    return {"earningsCalendar": rows}
+
+
+def _http_error(code: int, headers: dict[str, str] | None = None) -> urllib.error.HTTPError:
+    msg = Message()
+    for k, v in (headers or {}).items():
+        msg[k] = v
+    return urllib.error.HTTPError("https://finnhub.io/x", code, "err", msg, None)
+
+
 class TestEarningsConnector:
-    def test_fetches_events(self, db: sqlite3.Connection, settings: ArcSettings) -> None:
+    def _fetch(self, db, settings, get_json, **kw):  # noqa: ANN001, ANN202
         from arc.ingest.earnings import fetch_earnings
 
-        api_response = json.dumps(
-            {
-                "earningsCalendar": [
-                    {
-                        "symbol": "AAPL",
-                        "date": "2026-01-28",
-                        "epsEstimate": 2.10,
-                        "hour": "amc",
-                        "revenueEstimate": 124000000000,
-                    },
-                    {"symbol": "MSFT", "date": "2026-01-29", "epsEstimate": 3.20, "hour": "bmo"},
-                    {"symbol": "UNKNOWN", "date": "2026-01-30"},  # not in universe
-                ]
-            }
-        ).encode()
+        return fetch_earnings(db, settings, today=TODAY, get_json=get_json, sleep=_no_sleep, **kw)
 
-        def mock_urlopen(req, **_kwargs):
-            ctx = mock.MagicMock()
-            ctx.read.return_value = api_response
-            ctx.__enter__ = lambda s: s
-            ctx.__exit__ = mock.Mock(return_value=False)
-            return ctx
-
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen):
-            docs = fetch_earnings(db, settings)
-
+    def test_fetches_events(self, db: sqlite3.Connection, settings: ArcSettings) -> None:
+        payload = {
+            "earningsCalendar": [
+                {
+                    "symbol": "AAPL",
+                    "date": "2026-10-28",
+                    "epsEstimate": 2.10,
+                    "hour": "amc",
+                    "revenueEstimate": 124000000000,
+                },
+                {"symbol": "MSFT", "date": "2026-10-29", "epsEstimate": 3.20, "hour": "bmo"},
+                {"symbol": "UNKNOWN", "date": "2026-10-30"},  # not in universe
+            ]
+        }
+        docs = self._fetch(db, settings, _FakeFinnhub(lambda s, e: payload))
         assert len(docs) == 2
         tickers = [d.tickers_hint[0] for d in docs]
         assert "AAPL" in tickers
         assert "MSFT" in tickers
         assert all(d.source == "earnings" for d in docs)
 
-    def test_no_api_key(self, db: sqlite3.Connection) -> None:
-        from arc.ingest.earnings import fetch_earnings
+    def test_missing_key_is_skipped_not_ok(self, db: sqlite3.Connection, tmp_path: Path) -> None:
+        """E4.1d: no key -> the routine run is `skipped` (no_api_key), never `ok`,
+        with one day-thread notice per day."""
+        from arc.ingest.earnings import EarningsNoKeyError, fetch_earnings
+        from arc.routines.handlers import JobSkippedError, earnings_source
 
-        no_key_settings = ArcSettings(env="paper", finnhub_api_key="")
-        docs = fetch_earnings(db, no_key_settings)
-        assert docs == []
+        no_key = ArcSettings(env="paper", finnhub_api_key="")
+        with pytest.raises(EarningsNoKeyError, match="no_api_key"):
+            fetch_earnings(db, no_key)
+
+        ctx = _earnings_ctx(db, no_key)
+        with pytest.raises(JobSkippedError, match="no_api_key") as first:
+            earnings_source(ctx)
+        assert "no_api_key" in first.value.notice
+        with pytest.raises(JobSkippedError) as again:  # same day: no second notice
+            earnings_source(ctx)
+        assert again.value.notice == ""
+        tomorrow = _earnings_ctx(db, no_key, now=ctx.now + timedelta(days=1))
+        with pytest.raises(JobSkippedError) as next_day:
+            earnings_source(tomorrow)
+        assert next_day.value.notice
+
+        # Through the dispatcher, three runs over two days: every run row is `skipped`
+        # with the reason (never `ok`), and one notice per day.
+        rows, posts = _dispatch(no_key, tmp_path, days=2)
+        assert [r["status"] for r in rows] == ["skipped", "skipped"]
+        assert all(r["summary"].startswith("no_api_key") for r in rows)
+        assert sum("no_api_key" in p for p in posts) == 2
+        assert not any("FAILED" in p for p in posts)
+
+    def test_http_error_is_failed_not_ok(
+        self, db: sqlite3.Connection, settings: ArcSettings, tmp_path: Path
+    ) -> None:
+        """E4.1d: an HTTP error propagates (run `failed`, exception class in `error`)."""
+
+        def boom(_s: date, _e: date) -> dict:
+            raise _http_error(500)
+
+        with (
+            capture_logs() as logs,
+            pytest.raises(urllib.error.HTTPError),
+        ):
+            self._fetch(db, settings, _FakeFinnhub(boom))
+        failed = [e for e in logs if e["event"] == "earnings.finnhub_failed"]
+        assert failed and "500" in failed[0]["error"]
+        assert failed[0]["error_class"] == "HTTPError"
+        assert IngestCursorRepo(db).get("earnings") is None  # nothing advanced
+
+        def bad_json(_s: date, _e: date) -> dict:
+            raise json.JSONDecodeError("bad", "x", 0)
+
+        with pytest.raises(json.JSONDecodeError):
+            self._fetch(db, settings, _FakeFinnhub(bad_json))
+        with pytest.raises(ValueError, match="unexpected Finnhub payload"):
+            self._fetch(db, settings, _FakeFinnhub(lambda s, e: {"error": "bad token"}))
+
+        with mock.patch("arc.ingest.earnings._get_json", side_effect=_http_error(503)):
+            rows, posts = _dispatch(settings, tmp_path)
+        assert rows[0]["status"] == "failed"
+        assert rows[0]["error"].startswith("HTTPError")
+        assert any("FAILED" in p and "earnings" in p for p in posts)  # the dispatcher alert
+
+    def test_window_is_chunked_weekly(self, db: sqlite3.Connection, settings: ArcSettings) -> None:
+        fake = _FakeFinnhub(lambda s, e: {})
+        fake.responder = lambda s, e: {
+            "earningsCalendar": [{"symbol": "AAPL", "date": s.isoformat()}]
+            + [{"symbol": "AAPL", "date": e.isoformat()}]  # overlapping duplicates
+            + [{"symbol": "AAPL", "date": s.isoformat()}]
+        }
+        with capture_logs() as logs:
+            docs = self._fetch(db, settings, fake)
+        start, end = TODAY - timedelta(days=7), TODAY + timedelta(days=30)
+        assert fake.calls[0] == (start, start + timedelta(days=6))
+        assert fake.calls[-1][1] == end
+        assert all((e - s).days <= 6 for s, e in fake.calls)
+        assert len(fake.calls) == 6  # 38 days in 7-day chunks
+        # contiguous, no gaps, no overlaps
+        for (_, prev_end), (nxt, _) in zip(fake.calls, fake.calls[1:], strict=False):
+            assert nxt == prev_end + timedelta(days=1)
+        assert len(docs) == len({d.url for d in docs})  # deduped on (symbol, date)
+        done = next(e for e in logs if e["event"] == "earnings.done")
+        assert done["calls"] == 6 and done["chunks_split"] == 0
+        assert done["min_date"] == start.isoformat() and done["max_date"] == end.isoformat()
+        assert done["events"] == 12
+
+    def test_chunk_size_and_window_are_config(
+        self, db: sqlite3.Connection, settings: ArcSettings
+    ) -> None:
+        from arc.ingest.earnings import EarningsFetchConfig
+
+        cfg = EarningsFetchConfig.from_options(
+            {"chunk_days": 3, "lookback_days": 0, "horizon_days": 8, "label": "Earnings"}
+        )
+        fake = _FakeFinnhub(lambda s, e: {"earningsCalendar": []})
+        self._fetch(db, settings, fake, cfg=cfg)
+        assert fake.calls == [
+            (TODAY, TODAY + timedelta(days=2)),
+            (TODAY + timedelta(days=3), TODAY + timedelta(days=5)),
+            (TODAY + timedelta(days=6), TODAY + timedelta(days=8)),
+        ]
+
+    def test_capped_chunk_splits_to_days(
+        self, db: sqlite3.Connection, settings: ArcSettings
+    ) -> None:
+        from arc.ingest.earnings import EarningsFetchConfig
+
+        cfg = EarningsFetchConfig(row_cap=5, lookback_days=0, horizon_days=13)
+        capped = (TODAY + timedelta(days=7), TODAY + timedelta(days=13))
+
+        def respond(s: date, e: date) -> dict:
+            if (s, e) == capped:  # the free tier keeps only the latest rows
+                return _events(e, e, per_day=5, prefix="X")
+            if s == e:
+                day = s.isoformat()
+                return {"earningsCalendar": [{"symbol": "AAPL", "date": day},
+                                             {"symbol": "MSFT", "date": day}]}  # fmt: skip
+            return _events(s, e, per_day=0)
+
+        fake = _FakeFinnhub(respond)
+        with capture_logs() as logs:
+            docs = self._fetch(db, settings, fake, cfg=cfg)
+        assert fake.calls[:2] == [(TODAY, TODAY + timedelta(days=6)), capped]
+        assert fake.calls[2:] == [
+            (capped[0] + timedelta(days=i), capped[0] + timedelta(days=i)) for i in range(7)
+        ]
+        assert len(docs) == 14  # AAPL + MSFT on each of the 7 split days
+        done = next(e for e in logs if e["event"] == "earnings.done")
+        assert done["chunks_split"] == 1 and done["calls"] == 9
+        assert done["max_rows"] == 5
+
+    def test_capped_single_day_fails_truncated(
+        self, db: sqlite3.Connection, settings: ArcSettings
+    ) -> None:
+        from arc.ingest.earnings import EarningsFetchConfig, EarningsFetchError
+
+        cfg = EarningsFetchConfig(row_cap=5, lookback_days=0, horizon_days=6)
+        fake = _FakeFinnhub(lambda s, e: _events(e, e, per_day=5, prefix="AAPL"))
+        with pytest.raises(EarningsFetchError, match="truncated") as exc:
+            self._fetch(db, settings, fake, cfg=cfg)
+        assert exc.value.reason == "truncated"
+        assert fake.calls[1] == (TODAY, TODAY)  # split, then the first day is still capped
+        assert db.execute("SELECT COUNT(*) FROM raw_docs").fetchone()[0] == 0  # no partial ok
+        assert IngestCursorRepo(db).get("earnings") is None
+
+        # A one-day chunk at the cap is truncated straight away.
+        one_day = EarningsFetchConfig(row_cap=5, chunk_days=1, lookback_days=0, horizon_days=1)
+        with pytest.raises(EarningsFetchError, match="truncated"):
+            self._fetch(db, settings, _FakeFinnhub(lambda s, e: _events(s, e, 5)), cfg=one_day)
+
+    def test_429_is_failed_rate_limited(
+        self, db: sqlite3.Connection, settings: ArcSettings
+    ) -> None:
+        from arc.ingest.earnings import EarningsFetchConfig, EarningsFetchError, fetch_earnings
+
+        cfg = EarningsFetchConfig(lookback_days=0, horizon_days=6)
+        slept: list[float] = []
+
+        def always_429(_s: date, _e: date) -> dict:
+            raise _http_error(429, {"Retry-After": "7"})
+
+        fake = _FakeFinnhub(always_429)
+        with pytest.raises(EarningsFetchError, match="rate_limited") as exc:
+            fetch_earnings(db, settings, cfg=cfg, today=TODAY, get_json=fake, sleep=slept.append)
+        assert exc.value.reason == "rate_limited"
+        assert len(fake.calls) == 2  # one retry, then failed
+        assert 7.0 in slept
+
+        # A 429 without Retry-After waits the configured default, and a retry that
+        # succeeds keeps the run going.
+        state = {"n": 0}
+
+        def once_429(s: date, e: date) -> dict:
+            state["n"] += 1
+            if state["n"] == 1:
+                raise _http_error(429)
+            return {"earningsCalendar": [{"symbol": "AAPL", "date": s.isoformat()}]}
+
+        slept.clear()
+        docs = fetch_earnings(
+            db, settings, cfg=cfg, today=TODAY, get_json=_FakeFinnhub(once_429), sleep=slept.append
+        )
+        assert len(docs) == 1
+        assert 60.0 in slept
+
+    def test_throttle_stays_under_rate_limit(
+        self, db: sqlite3.Connection, settings: ArcSettings
+    ) -> None:
+        from arc.ingest.earnings import EarningsFetchConfig, fetch_earnings
+
+        clock = {"t": 0.0}
+        slept: list[float] = []
+
+        def sleep(s: float) -> None:
+            slept.append(s)
+            clock["t"] += s
+
+        cfg = EarningsFetchConfig(rate_limit_per_min=30, lookback_days=0, horizon_days=20)
+        fake = _FakeFinnhub(lambda s, e: {"earningsCalendar": []})
+        fetch_earnings(
+            db, settings, cfg=cfg, today=TODAY, get_json=fake, sleep=sleep,
+            clock=lambda: clock["t"],
+        )  # fmt: skip
+        assert len(fake.calls) == 3
+        assert slept == [2.0, 2.0]  # 60 / 30 per call, never faster
 
     def test_incremental(self, db: sqlite3.Connection, settings: ArcSettings) -> None:
-        from arc.ingest.earnings import fetch_earnings
-
-        api_response = json.dumps(
-            {
-                "earningsCalendar": [
-                    {"symbol": "AAPL", "date": "2026-01-28", "epsEstimate": 2.10},
-                ]
-            }
-        ).encode()
-
-        def mock_urlopen(req, **_kwargs):
-            ctx = mock.MagicMock()
-            ctx.read.return_value = api_response
-            ctx.__enter__ = lambda s: s
-            ctx.__exit__ = mock.Mock(return_value=False)
-            return ctx
-
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen):
-            docs1 = fetch_earnings(db, settings)
-            docs2 = fetch_earnings(db, settings)
-
+        payload = {
+            "earningsCalendar": [{"symbol": "AAPL", "date": "2026-10-28", "epsEstimate": 2.1}]
+        }
+        fake = _FakeFinnhub(lambda s, e: payload)
+        docs1 = self._fetch(db, settings, fake)
+        assert IngestCursorRepo(db).get("earnings") == TODAY.isoformat()
+        calls = len(fake.calls)
+        docs2 = self._fetch(db, settings, fake)
         assert len(docs1) == 1
         assert len(docs2) == 0  # deduplicated
+        # The second run starts at the cursor (today), not today - lookback.
+        assert fake.calls[calls][0] == TODAY
+
+
+def _earnings_ctx(conn: sqlite3.Connection, settings: ArcSettings, now: datetime | None = None):  # noqa: ANN202
+    from arc.context import ContextStore
+    from arc.routines.config import RoutinesConfig
+    from arc.routines.handlers import JobContext
+    from arc.utils.calendar import ET
+
+    now = now or datetime(2026, 10, 5, 6, 0, tzinfo=ET)
+    routines = RoutinesConfig.model_validate(
+        {"sources": {"earnings": {"schedule": ["06:00"], "writes": ["raw_doc_ref"]}}}
+    )
+    kind, spec = routines.step("earnings")
+    return JobContext(
+        job="earnings", kind=kind, spec=spec, run_id="run-e", chain_run_id=None,
+        scheduled_for=now, now=now, conn=conn, snapshot=ContextStore(conn).snapshot(now),
+        routines=routines, settings_factory=lambda: settings,
+    )  # fmt: skip
+
+
+def _dispatch(settings: ArcSettings, tmp: Path, days: int = 1) -> tuple[list, list[str]]:
+    """Run the real ``earnings`` handler through the dispatcher on *days* mornings."""
+    from arc.routines.config import RoutinesConfig
+    from arc.routines.dispatcher import Dispatcher
+    from arc.routines.heartbeat import RecordingNotifier
+    from arc.routines.locks import LockManager
+    from arc.store.db import connect
+    from arc.utils.calendar import ET
+
+    conn = connect(":memory:")
+    migrate(conn)
+    routines = RoutinesConfig.model_validate(
+        {"sources": {"earnings": {"schedule": ["06:00"], "writes": ["raw_doc_ref"]}}}
+    )
+    notifier = RecordingNotifier()
+    d = Dispatcher(
+        conn, routines, notifier=notifier, settings_factory=lambda: settings,
+        locks=LockManager(tmp), is_halted=lambda: False,
+    )  # fmt: skip
+    for i in range(days):
+        now = datetime(2026, 10, 5 + i, 6, 1, tzinfo=ET)
+        d.run_job("earnings", now, reason="schedule", now=now)
+    rows = conn.execute(
+        "SELECT status, summary, error FROM routine_runs WHERE job = 'earnings' ORDER BY rowid"
+    ).fetchall()
+    return rows, [t for _, t in notifier.posts]
 
 
 # ---------------------------------------------------------------------------
@@ -600,8 +870,11 @@ class TestRawDocModel:
 
 
 class TestIngestConfig:
-    def test_default_empty(self) -> None:
-        s = ArcSettings(env="paper")
+    def test_default_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Hermetic: a shell that sourced ~/.hermes/.env exports the real key.
+        for var in ("ARC_FINNHUB_API_KEY", "ARC_INGEST_RSS_FEEDS", "ARC_INGEST_YOUTUBE_CHANNELS"):
+            monkeypatch.delenv(var, raising=False)
+        s = ArcSettings(env="paper", _env_file=None)  # type: ignore[call-arg]
         assert s.ingest_rss_feeds == []
         assert s.ingest_youtube_channels == DEFAULT_YOUTUBE_CHANNELS
         assert s.finnhub_api_key == ""

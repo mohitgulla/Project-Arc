@@ -66,6 +66,7 @@ CONDITION_PREFIXES = (
 # alerts and (E8.2a) newly opened coverage alerts.
 INCIDENT_KEYS = ("tick_stale", "gateway", "tick_slow")
 COVERAGE_PREFIX = "coverage:"
+EARNINGS_COVERAGE = "coverage:earnings"  # E4.1d: stale calendar, not a slot ratio
 # Which check must have run for an open alert of this key prefix to be resolved.
 _RESOLVED_BY = (
     ("gateway", "gateway"),
@@ -73,6 +74,7 @@ _RESOLVED_BY = (
     ("tick_slow", "tick_slow"),
     ("stuck:", "stuck_runs"),
     ("remote_", "remote_access"),
+    (EARNINGS_COVERAGE, "earnings_coverage"),  # E4.1d (before the generic prefix)
     (COVERAGE_PREFIX, "slot_coverage"),
     ("approvals_unposted", "approvals_unposted"),
 )
@@ -81,6 +83,12 @@ _RESOLVED_BY = (
 DEFAULT_FOLD_LEAD = _dt.timedelta(minutes=25)
 FOLDED_INTO = "folded_into"
 INCIDENT_SINCE = "since"
+
+
+def _slot_coverage(key: str) -> bool:
+    """A per-job slot-coverage condition (foldable into an incident). E4.1d's
+    ``coverage:earnings`` is a stale-calendar condition with its own cause: never folded."""
+    return key.startswith(COVERAGE_PREFIX) and key != EARNINGS_COVERAGE
 
 
 class OpsNotifier(Protocol):
@@ -209,6 +217,10 @@ def _resolve_line(alert: OpsAlert, results: dict[str, CheckResult]) -> str:
         ts = results.get("tick_slow")
         now = f" ({ts.summary})" if ts else ""
         return f"routines ticks back within limits{now}"
+    if alert.key == EARNINGS_COVERAGE:
+        ec = results.get("earnings_coverage")
+        now = f" ({ec.summary})" if ec else ""
+        return f"earnings calendar fresh again{now}"
     if alert.key.startswith(COVERAGE_PREFIX):
         job = alert.key.removeprefix(COVERAGE_PREFIX)
         sc = results.get("slot_coverage")
@@ -318,7 +330,7 @@ def apply(
         if f.mode == ONE_OFF:
             continue
         active.add(f.key)
-        if f.key.startswith(COVERAGE_PREFIX):
+        if _slot_coverage(f.key):
             continue
         existing = repo.open_for(f.key)
         if existing is None:
@@ -335,7 +347,8 @@ def apply(
         if a.key in active or not a.key.startswith(CONDITION_PREFIXES):
             continue
         # Only resolve what this run actually re-checked (e.g. --no-gateway leaves it alone).
-        if any(a.key.startswith(p) and check not in checked for p, check in _RESOLVED_BY):
+        owner = next((check for p, check in _RESOLVED_BY if a.key.startswith(p)), None)
+        if owner is not None and owner not in checked:
             continue
         resolved = repo.resolve(a.key, at=now)
         if resolved is None:  # pragma: no cover - open_alerts() just listed it
@@ -350,7 +363,7 @@ def apply(
     #     else alert; a folded one whose incident closed while it still fails is posted.
     open_incident = next((i for k in INCIDENT_KEYS if (i := repo.open_for(k))), None)
     for f in findings:
-        if f.mode == ONE_OFF or not f.key.startswith(COVERAGE_PREFIX):
+        if f.mode == ONE_OFF or not _slot_coverage(f.key):
             continue
         existing = repo.open_for(f.key)
         if existing is None:

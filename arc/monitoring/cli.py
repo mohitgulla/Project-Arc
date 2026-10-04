@@ -84,6 +84,13 @@ def _settings(args: argparse.Namespace) -> MonitoringSettings:
     return load_routines(args.config).monitoring
 
 
+def _universe(conn: sqlite3.Connection) -> list[str]:
+    """The effective seed universe (D26 overrides included) for ``coverage:earnings``."""
+    from arc.control.effective import effective_settings
+
+    return list(effective_settings(conn).universe)
+
+
 def run_checks(
     conn: sqlite3.Connection,
     args: argparse.Namespace,
@@ -103,6 +110,7 @@ def run_checks(
         checks.tick_slow(conn, routines, ms, now),
         checks.missed_windows(conn, routines, ms, now),
         checks.slot_coverage(conn, routines, ms, now),
+        checks.earnings_coverage(conn, routines, ms, now, _universe(conn)),
         checks.stuck_runs(conn, ms, now),
         checks.stranded_events(conn, routines, now),
         checks.approvals_unposted(conn, routines, now),

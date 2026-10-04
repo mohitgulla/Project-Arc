@@ -253,6 +253,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E4.1 Source connectors — RSS, SEC EDGAR (10 req/s, UA header), earnings calendar, YouTube transcripts (yt-dlp) ← E1.2
 - E4.1b YouTube audio-transcription fallback — local mlx-whisper when no captions (D15) ← E4.1
 - E4.1c YouTube caption 429 handling — classify, per-run breaker, DB-persisted exponential cooldown (D15) ← E4.1b
+- E4.1d Earnings connector fails loudly — no key = `skipped` (`no_api_key`, one notice/day), fetch error = `failed`; Finnhub free-tier 1,500-row cap handled by 7-day chunks split to days (`truncated` if a day caps), 60/min throttle, 429 → `rate_limited`; `coverage:earnings` ops condition (E8.2a) ← E4.1, E8.2a
 - E4.2 Candidate pipeline — LLM summarization filter → `Candidate`, dedupe, storage, confidence threshold ← E4.1, E1.3
 - E4.3 Regime features — Markov 3-state regime + IV/HV + IVR as structured inputs ← E1.4
 - E4.4 Channel processors — per-channel profile + extraction guidelines → `ChannelBrief` (levels, directional calls, catalysts, risk flags, tickers; each with verbatim quote); active-brief lifecycle (superseded by next video); StockedUp first (D13, D14) ← E4.1, E4.2
