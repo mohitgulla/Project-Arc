@@ -1095,6 +1095,17 @@ export interface components {
              */
             scorecard_gate?: string | null;
         };
+        /** ContextEntryRef */
+        ContextEntryRef: {
+            /** Id */
+            id: string;
+            /** Produced By */
+            produced_by?: string | null;
+            /** Subject */
+            subject?: string | null;
+            /** Valid From */
+            valid_from?: string | null;
+        };
         /** ContextEntryResponse */
         ContextEntryResponse: {
             /**
@@ -1129,6 +1140,18 @@ export interface components {
             /** Valid From */
             valid_from: string | null;
         };
+        /** ContextKindRead */
+        ContextKindRead: {
+            /** Count */
+            count: number;
+            /**
+             * Entries
+             * @description First 200 by subject; `count` is the full total
+             */
+            entries?: components["schemas"]["ContextEntryRef"][];
+            /** Kind */
+            kind: string;
+        };
         /** ContextKindRow */
         ContextKindRow: {
             /** Active */
@@ -1157,6 +1180,21 @@ export interface components {
              * @description Configured TTL (context_ttl in routines.yaml)
              */
             ttl: string | null;
+        };
+        /**
+         * ContextReads
+         * @description Context entries in the input snapshots this trade's runs read (E8.8f Context tab).
+         */
+        ContextReads: {
+            /** Kinds */
+            kinds?: components["schemas"]["ContextKindRead"][];
+            /** Snapshot Ids */
+            snapshot_ids?: string[];
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
         };
         /** ContextResponse */
         ContextResponse: {
@@ -2809,12 +2847,18 @@ export interface components {
             config_version?: string | null;
             /** Cost Usd */
             cost_usd?: number | null;
+            /** Declared Reads */
+            declared_reads?: string[] | null;
             /** Finished At */
             finished_at?: string | null;
             /** Git Dirty */
             git_dirty?: boolean | null;
             /** Git Sha */
             git_sha?: string | null;
+            /** Input Counts */
+            input_counts?: {
+                [key: string]: number;
+            };
             /** Input Tokens */
             input_tokens?: number | null;
             /** Job */
@@ -2829,6 +2873,8 @@ export interface components {
             route: string;
             /** Run Id */
             run_id: string;
+            /** Snapshot Ids */
+            snapshot_ids?: string[];
             /** Started At */
             started_at?: string | null;
             /** Status */
@@ -4501,6 +4547,7 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
+            context?: components["schemas"]["ContextReads"];
             decisions: components["schemas"]["DecisionTrail"];
             execution: components["schemas"]["ExecutionSection"] | null;
             /** Gate */

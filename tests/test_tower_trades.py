@@ -639,6 +639,36 @@ def test_detail_manifest(conn: sqlite3.Connection) -> None:
     assert _detail(conn, "p-googl").manifest is None
 
 
+def test_detail_context_reads(conn: sqlite3.Connection) -> None:
+    """E8.8f Context tab: the entries of every snapshot this trade's own steps read, per kind."""
+    d = _detail(conn, "pos-spy")
+    c = d.context
+    assert "snap-fx-spy" in c.snapshot_ids
+    assert c.total == sum(k.count for k in c.kinds) >= 1
+    regime = next(k for k in c.kinds if k.kind == "regime")
+    assert [e.id for e in regime.entries] == ["ctx-fx-regime-spy"]
+    assert regime.entries[0].subject == "SPY" and regime.entries[0].produced_by == "features"
+    # Only this trade's steps count: chain context rows (other tickers) add no snapshot.
+    own = {i.inputs_snapshot_id for i in d.decisions.items if i.this_trade and i.inputs_snapshot_id}
+    assert own <= set(c.snapshot_ids)
+    empty = _detail(conn, "p-googl").context
+    assert empty.total == 0 and empty.kinds == [] and empty.snapshot_ids == []
+
+
+def test_detail_manifest_reads(conn: sqlite3.Connection) -> None:
+    """E8.8f Audit tab: declared reads + per-kind input counts from the run manifest."""
+    mf = _detail(conn, "pos-spy").manifest
+    assert mf is not None
+    assert isinstance(mf.snapshot_ids, list) and isinstance(mf.input_counts, dict)
+    assert all(isinstance(v, int) for v in mf.input_counts.values())
+
+
+def test_detail_risk_narrative_is_stored_verbatim(conn: sqlite3.Connection) -> None:
+    """The Why tab parses Risk's narrative client-side only; the API serves it untouched."""
+    h = _detail(conn, "pos-spy").header
+    assert h.risk_narrative == fixture._trades_module().SPY_RISK_NARRATIVE
+
+
 def test_detail_minimal_trade_renders_with_empty_sections(conn: sqlite3.Connection) -> None:
     d = _detail(conn, "p-googl")
     assert d.gate == [] and d.approval is None and d.execution is None and d.position is None
@@ -677,6 +707,7 @@ def test_missing_optional_tables(fx_db: Path, tmp_path: Path) -> None:
         for i in full.items:
             d = load_trade(c, i.proposal_hash, now=NOW)
             assert d is not None and d.outcome.outcome is None and d.decisions.items == []
+            assert d.context.total == 0  # no context_snapshots: an empty Context tab
         opts = load_filter_options(c, now=NOW)
         assert opts.reason_codes == [] and opts.account_profiles == []
         assert search(c, "SPY", now=NOW).matches

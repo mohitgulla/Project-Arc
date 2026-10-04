@@ -1428,6 +1428,54 @@
         "title": "ConfigResponse",
         "type": "object"
       },
+      "ContextEntryRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "produced_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produced By"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ContextEntryRef",
+        "type": "object"
+      },
       "ContextEntryResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1552,6 +1600,33 @@
         "title": "ContextEntryResponse",
         "type": "object"
       },
+      "ContextKindRead": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "entries": {
+            "description": "First 200 by subject; `count` is the full total",
+            "items": {
+              "$ref": "#/components/schemas/ContextEntryRef"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "count"
+        ],
+        "title": "ContextKindRead",
+        "type": "object"
+      },
       "ContextKindRow": {
         "additionalProperties": false,
         "properties": {
@@ -1662,6 +1737,33 @@
           "expired_24h"
         ],
         "title": "ContextKindRow",
+        "type": "object"
+      },
+      "ContextReads": {
+        "additionalProperties": false,
+        "description": "Context entries in the input snapshots this trade's runs read (E8.8f Context tab).",
+        "properties": {
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/ContextKindRead"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "snapshot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Snapshot Ids",
+            "type": "array"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "ContextReads",
         "type": "object"
       },
       "ContextResponse": {
@@ -6111,6 +6213,20 @@
             ],
             "title": "Cost Usd"
           },
+          "declared_reads": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declared Reads"
+          },
           "finished_at": {
             "anyOf": [
               {
@@ -6144,6 +6260,13 @@
               }
             ],
             "title": "Git Sha"
+          },
+          "input_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Input Counts",
+            "type": "object"
           },
           "input_tokens": {
             "anyOf": [
@@ -6192,6 +6315,13 @@
           "run_id": {
             "title": "Run Id",
             "type": "string"
+          },
+          "snapshot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Snapshot Ids",
+            "type": "array"
           },
           "started_at": {
             "anyOf": [
@@ -11260,6 +11390,9 @@
             "format": "date-time",
             "title": "As Of",
             "type": "string"
+          },
+          "context": {
+            "$ref": "#/components/schemas/ContextReads"
           },
           "decisions": {
             "$ref": "#/components/schemas/DecisionTrail"
