@@ -121,7 +121,7 @@ Charts: Recharts, wrapped so no page imports Recharts directly. Tooltips share o
 
 ## 6. Mobile (≤768 px) and tablet (769–1279 px)
 
-- Sidebar becomes a 5-item bottom tab bar (56 px, safe-area aware); header keeps title +
+- Sidebar becomes a 6-item bottom tab bar (56 px, safe-area aware; Experiments added by E10.5); header keeps title +
   as-of badge + theme toggle. Search moves to a header icon.
 - All grids collapse to one column; card padding 16; hero numbers `fs-stat`.
 - `DataTable` renders each row as a `CardRow`: primary line (ticker · structure · change

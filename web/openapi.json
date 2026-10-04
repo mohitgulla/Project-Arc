@@ -373,6 +373,129 @@
         "title": "ApprovalView",
         "type": "object"
       },
+      "Area": {
+        "description": "What part of the strategy the experiment changes; one running per area.",
+        "enum": [
+          "entries",
+          "exits",
+          "ranking",
+          "sizing",
+          "other"
+        ],
+        "title": "Area",
+        "type": "string"
+      },
+      "Arm": {
+        "additionalProperties": false,
+        "description": "One arm: a config overlay per target file (empty = production config).",
+        "properties": {
+          "overlay": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "description": "config file stem -> partial file, deep-merged over config/<stem>.yaml",
+            "title": "Overlay",
+            "type": "object"
+          }
+        },
+        "title": "Arm",
+        "type": "object"
+      },
+      "ArmSummary": {
+        "additionalProperties": false,
+        "description": "Per-arm numbers from t0 (reported for the owner; no verdict reads them).",
+        "properties": {
+          "arm": {
+            "title": "Arm",
+            "type": "string"
+          },
+          "arm_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arm Id"
+          },
+          "executions": {
+            "title": "Executions",
+            "type": "integer"
+          },
+          "filled_executions": {
+            "title": "Filled Executions",
+            "type": "integer"
+          },
+          "max_drawdown": {
+            "title": "Max Drawdown",
+            "type": "number"
+          },
+          "mean_slippage_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Slippage Bps"
+          },
+          "orders": {
+            "title": "Orders",
+            "type": "integer"
+          },
+          "sessions": {
+            "title": "Sessions",
+            "type": "integer"
+          },
+          "total_pnl": {
+            "title": "Total Pnl",
+            "type": "number"
+          },
+          "worst_day": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Worst daily return (fraction)",
+            "title": "Worst Day"
+          }
+        },
+        "required": [
+          "arm",
+          "arm_id",
+          "sessions",
+          "total_pnl",
+          "max_drawdown",
+          "orders",
+          "filled_executions",
+          "executions",
+          "mean_slippage_bps"
+        ],
+        "title": "ArmSummary",
+        "type": "object"
+      },
+      "Arms": {
+        "additionalProperties": false,
+        "properties": {
+          "control": {
+            "$ref": "#/components/schemas/Arm"
+          },
+          "treatment": {
+            "$ref": "#/components/schemas/Arm"
+          }
+        },
+        "title": "Arms",
+        "type": "object"
+      },
       "BreakdownItem": {
         "additionalProperties": false,
         "properties": {
@@ -475,6 +598,44 @@
           "rows"
         ],
         "title": "BreakdownResponse",
+        "type": "object"
+      },
+      "BreakdownRow": {
+        "additionalProperties": false,
+        "properties": {
+          "arm": {
+            "title": "Arm",
+            "type": "string"
+          },
+          "by": {
+            "enum": [
+              "regime",
+              "structure_kind"
+            ],
+            "title": "By",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "realised_pnl": {
+            "title": "Realised Pnl",
+            "type": "number"
+          },
+          "trades": {
+            "title": "Trades",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "by",
+          "key",
+          "arm",
+          "trades",
+          "realised_pnl"
+        ],
+        "title": "BreakdownRow",
         "type": "object"
       },
       "Breakdowns": {
@@ -701,6 +862,88 @@
           "stale_after_s"
         ],
         "title": "Cadence",
+        "type": "object"
+      },
+      "Calibration": {
+        "additionalProperties": false,
+        "description": "What an A/A measures (reported for every experiment; decisive for none).",
+        "properties": {
+          "divergent_chains": {
+            "default": 0,
+            "title": "Divergent Chains",
+            "type": "integer"
+          },
+          "fill_rate_gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "treatment - control fill rate",
+            "title": "Fill Rate Gap"
+          },
+          "llm_divergence_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Share of paired chains whose arm decisions differ",
+            "title": "Llm Divergence Rate"
+          },
+          "mde_always_valid": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "sessions -> effect detected with `power` (peeking)",
+            "title": "Mde Always Valid",
+            "type": "object"
+          },
+          "mde_fixed": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "sessions -> 2.8 sigma / sqrt(n)",
+            "title": "Mde Fixed",
+            "type": "object"
+          },
+          "paired_chains": {
+            "default": 0,
+            "title": "Paired Chains",
+            "type": "integer"
+          },
+          "sigma": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sample sd of d_t (fraction of t0 equity)",
+            "title": "Sigma"
+          },
+          "slippage_gap_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "treatment - control mean slippage",
+            "title": "Slippage Gap Bps"
+          }
+        },
+        "title": "Calibration",
         "type": "object"
       },
       "CalibrationCard": {
@@ -1698,6 +1941,92 @@
           "empty"
         ],
         "title": "CostsCard",
+        "type": "object"
+      },
+      "CumulativePoint": {
+        "additionalProperties": false,
+        "description": "Cumulative paired difference after *n* sessions, with its always-valid band.\n\n``cum_d`` = sum of d_t so far; ``lo``/``hi`` = n x the always-valid CI on the\nmean after n sessions (the same :func:`stats.confidence_sequence` the\nevaluator runs), so the last point is the report's CI x sessions.",
+        "properties": {
+          "cum_d": {
+            "title": "Cum D",
+            "type": "number"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "hi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hi"
+          },
+          "lo": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lo"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "n",
+          "cum_d",
+          "lo",
+          "hi"
+        ],
+        "title": "CumulativePoint",
+        "type": "object"
+      },
+      "CurvePoint": {
+        "additionalProperties": false,
+        "description": "One point of both arms' equity curves from t0 (legacy book excluded).",
+        "properties": {
+          "control": {
+            "description": "t0 equity + control's cumulative P&L ($)",
+            "title": "Control",
+            "type": "number"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Session; None = t0 (both arms at t0 equity)",
+            "title": "Day"
+          },
+          "treatment": {
+            "description": "t0 equity + treatment's cumulative P&L ($)",
+            "title": "Treatment",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "control",
+          "treatment"
+        ],
+        "title": "CurvePoint",
         "type": "object"
       },
       "DayPnlSection": {
@@ -3008,6 +3337,809 @@
         "title": "ExitPolicy",
         "type": "object"
       },
+      "ExperimentDetailResponse": {
+        "additionalProperties": false,
+        "description": "Everything on the detail page: the list row, spec + hashes, report and chart series.",
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "cumulative": {
+            "items": {
+              "$ref": "#/components/schemas/CumulativePoint"
+            },
+            "title": "Cumulative",
+            "type": "array"
+          },
+          "curves": {
+            "items": {
+              "$ref": "#/components/schemas/CurvePoint"
+            },
+            "title": "Curves",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "experiment": {
+            "$ref": "#/components/schemas/ExperimentListItem"
+          },
+          "registered_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered Hash"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExperimentReport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latest stored E10.3 report"
+          },
+          "report_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "sha256 of the report's canonical JSON",
+            "title": "Report Hash"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "running": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunningDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spec": {
+            "$ref": "#/components/schemas/ExperimentSpec"
+          },
+          "spec_hash": {
+            "title": "Spec Hash",
+            "type": "string"
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StopDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "as_of",
+          "experiment",
+          "spec",
+          "spec_hash",
+          "registered_hash",
+          "revision",
+          "running",
+          "stop",
+          "events"
+        ],
+        "title": "ExperimentDetailResponse",
+        "type": "object"
+      },
+      "ExperimentEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "experiment_id": {
+            "title": "Experiment Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StopReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spec_hash": {
+            "title": "Spec Hash",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExperimentStatus"
+          }
+        },
+        "required": [
+          "id",
+          "experiment_id",
+          "status",
+          "spec_hash",
+          "actor",
+          "at"
+        ],
+        "title": "ExperimentEvent",
+        "type": "object"
+      },
+      "ExperimentKind": {
+        "enum": [
+          "aa",
+          "ab"
+        ],
+        "title": "ExperimentKind",
+        "type": "string"
+      },
+      "ExperimentListItem": {
+        "additionalProperties": false,
+        "description": "One row of the list: status, area, sessions n/min/max, primary diff + CI, secondary.",
+        "properties": {
+          "area": {
+            "title": "Area",
+            "type": "string"
+          },
+          "as_of_day": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of Day"
+          },
+          "ci_level": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always-valid CI coverage, e.g. 0.95",
+            "title": "Ci Level"
+          },
+          "evaluated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluated At"
+          },
+          "experiment_id": {
+            "title": "Experiment Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ExperimentKind"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The daily [Experiments] Slack line, verbatim",
+            "title": "Line"
+          },
+          "max_sessions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Sessions"
+          },
+          "min_sessions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Sessions"
+          },
+          "primary_ci_hi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Ci Hi"
+          },
+          "primary_ci_lo": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Ci Lo"
+          },
+          "primary_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mean paired daily P&L difference (fraction of t0 equity)",
+            "title": "Primary Mean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StopReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "secondary": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ok",
+                  "not_shown",
+                  "aa",
+                  "pending"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sortino non-inferiority: ok | not_shown | aa | pending",
+            "title": "Secondary"
+          },
+          "sessions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Paired sessions in the latest report",
+            "title": "Sessions"
+          },
+          "sortino_control": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sortino Control"
+          },
+          "sortino_treatment": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sortino Treatment"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExperimentStatus"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latest verdict: continue|win|futility|invalid",
+            "title": "Verdict"
+          },
+          "verdict_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict Reason"
+          }
+        },
+        "required": [
+          "experiment_id",
+          "title",
+          "status",
+          "area",
+          "kind",
+          "min_sessions",
+          "max_sessions"
+        ],
+        "title": "ExperimentListItem",
+        "type": "object"
+      },
+      "ExperimentReport": {
+        "additionalProperties": false,
+        "description": "One evaluation of one experiment (stored append-only in ``experiment_reports``).",
+        "properties": {
+          "alpha": {
+            "title": "Alpha",
+            "type": "number"
+          },
+          "area": {
+            "title": "Area",
+            "type": "string"
+          },
+          "arms": {
+            "items": {
+              "$ref": "#/components/schemas/ArmSummary"
+            },
+            "title": "Arms",
+            "type": "array"
+          },
+          "as_of_day": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of Day"
+          },
+          "breakdowns": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "Breakdowns",
+            "type": "array"
+          },
+          "calibration": {
+            "$ref": "#/components/schemas/Calibration"
+          },
+          "config": {
+            "additionalProperties": true,
+            "description": "Effective experiments config used",
+            "title": "Config",
+            "type": "object"
+          },
+          "config_hash": {
+            "title": "Config Hash",
+            "type": "string"
+          },
+          "control_sha": {
+            "title": "Control Sha",
+            "type": "string"
+          },
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "evaluator_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluator Sha"
+          },
+          "experiment_id": {
+            "title": "Experiment Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ExperimentKind"
+          },
+          "legacy_book": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Legacy Book",
+            "type": "array"
+          },
+          "max_sessions": {
+            "title": "Max Sessions",
+            "type": "integer"
+          },
+          "min_sessions": {
+            "title": "Min Sessions",
+            "type": "integer"
+          },
+          "missing_sessions": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Missing Sessions",
+            "type": "array"
+          },
+          "power": {
+            "title": "Power",
+            "type": "number"
+          },
+          "primary": {
+            "$ref": "#/components/schemas/Primary"
+          },
+          "registered_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered Hash"
+          },
+          "report_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Report Version",
+            "type": "integer"
+          },
+          "secondary": {
+            "$ref": "#/components/schemas/Secondary"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/SessionRow"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "sessions": {
+            "title": "Sessions",
+            "type": "integer"
+          },
+          "spec_hash": {
+            "title": "Spec Hash",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExperimentStatus",
+            "description": "Status when evaluated"
+          },
+          "t0": {
+            "format": "date-time",
+            "title": "T0",
+            "type": "string"
+          },
+          "t0_equity": {
+            "title": "T0 Equity",
+            "type": "number"
+          },
+          "treatment_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Treatment Sha"
+          },
+          "verdict": {
+            "enum": [
+              "continue",
+              "win",
+              "futility",
+              "invalid"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          },
+          "verdict_reason": {
+            "title": "Verdict Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "experiment_id",
+          "kind",
+          "area",
+          "status",
+          "evaluated_at",
+          "t0",
+          "t0_equity",
+          "legacy_book",
+          "as_of_day",
+          "sessions",
+          "min_sessions",
+          "max_sessions",
+          "alpha",
+          "power",
+          "series",
+          "missing_sessions",
+          "primary",
+          "secondary",
+          "arms",
+          "calibration",
+          "breakdowns",
+          "verdict",
+          "verdict_reason",
+          "spec_hash",
+          "registered_hash",
+          "config_hash",
+          "config",
+          "control_sha",
+          "treatment_sha",
+          "evaluator_sha"
+        ],
+        "title": "ExperimentReport",
+        "type": "object"
+      },
+      "ExperimentSpec": {
+        "additionalProperties": false,
+        "description": "A pre-registrable experiment (``config/experiments/live/*.yaml``).\n\nFields left ``None`` (alpha, power, sessions) are filled from\n``config/experiments.yaml`` by ``arc experiment create``; the filled spec is\nwhat gets hash-locked.",
+        "properties": {
+          "alpha": {
+            "anyOf": [
+              {
+                "exclusiveMaximum": 0.5,
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alpha"
+          },
+          "area": {
+            "$ref": "#/components/schemas/Area"
+          },
+          "arms": {
+            "$ref": "#/components/schemas/Arms"
+          },
+          "backtest_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E7.5 run dir / compare verdict (required for ab)",
+            "title": "Backtest Ref"
+          },
+          "hypothesis": {
+            "minLength": 1,
+            "title": "Hypothesis",
+            "type": "string"
+          },
+          "id": {
+            "description": "X-<n>",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ExperimentKind"
+          },
+          "max_sessions": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Sessions"
+          },
+          "mde": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Daily P&L diff (% equity); None until the A/A",
+            "title": "Mde"
+          },
+          "min_sessions": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Sessions"
+          },
+          "non_inferiority_margin": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sortino may be worse than control by at most this (required for ab)",
+            "title": "Non Inferiority Margin"
+          },
+          "power": {
+            "anyOf": [
+              {
+                "exclusiveMaximum": 1.0,
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power"
+          },
+          "primary_metric": {
+            "const": "paired_daily_net_pnl_pct",
+            "default": "paired_daily_net_pnl_pct",
+            "title": "Primary Metric",
+            "type": "string"
+          },
+          "proposed_by": {
+            "description": "owner | A-<n> (an arc-analyst finding)",
+            "title": "Proposed By",
+            "type": "string"
+          },
+          "secondary_metric": {
+            "const": "sortino",
+            "default": "sortino",
+            "title": "Secondary Metric",
+            "type": "string"
+          },
+          "spec_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Spec Version",
+            "type": "integer"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "hypothesis",
+          "area",
+          "kind",
+          "proposed_by"
+        ],
+        "title": "ExperimentSpec",
+        "type": "object"
+      },
+      "ExperimentStatus": {
+        "enum": [
+          "draft",
+          "queued",
+          "registered",
+          "running",
+          "stopped",
+          "promoted",
+          "rejected"
+        ],
+        "title": "ExperimentStatus",
+        "type": "string"
+      },
+      "ExperimentsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "items"
+        ],
+        "title": "ExperimentsResponse",
+        "type": "object"
+      },
       "FeeBreakdown": {
         "additionalProperties": false,
         "description": "Dollar fees of one or more trades, by type (all \u2265 0).",
@@ -3976,6 +5108,39 @@
           "items"
         ],
         "title": "HealthStripResponse",
+        "type": "object"
+      },
+      "Interval": {
+        "additionalProperties": false,
+        "description": "A confidence interval ``[lo, hi]`` around ``estimate`` (fractions).",
+        "properties": {
+          "estimate": {
+            "title": "Estimate",
+            "type": "number"
+          },
+          "hi": {
+            "title": "Hi",
+            "type": "number"
+          },
+          "level": {
+            "description": "Coverage, e.g. 0.95",
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Level",
+            "type": "number"
+          },
+          "lo": {
+            "title": "Lo",
+            "type": "number"
+          }
+        },
+        "required": [
+          "estimate",
+          "lo",
+          "hi",
+          "level"
+        ],
+        "title": "Interval",
         "type": "object"
       },
       "IvModel": {
@@ -7456,6 +8621,95 @@
         "title": "PositionsResponse",
         "type": "object"
       },
+      "Primary": {
+        "additionalProperties": false,
+        "description": "Paired daily net P&L difference (fraction of t0 equity) and its always-valid CI.",
+        "properties": {
+          "ci": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always-valid (mSPRT) two-sided CI"
+          },
+          "lower_bound_positive": {
+            "default": false,
+            "title": "Lower Bound Positive",
+            "type": "boolean"
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          },
+          "metric": {
+            "const": "paired_daily_net_pnl_pct",
+            "default": "paired_daily_net_pnl_pct",
+            "title": "Metric",
+            "type": "string"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "sigma": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sigma"
+          },
+          "sigma_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "aa",
+                  "running_corrected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sigma Source"
+          },
+          "tau": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Normal-mixture scale (spec mde or MDE@min)",
+            "title": "Tau"
+          }
+        },
+        "required": [
+          "n",
+          "mean",
+          "sigma",
+          "sigma_source"
+        ],
+        "title": "Primary",
+        "type": "object"
+      },
       "ProposalAnalytics": {
         "additionalProperties": false,
         "description": "Everything the v2 proposal card shows beyond the Proposal itself.",
@@ -8639,6 +9893,54 @@
         "title": "RunRow",
         "type": "object"
       },
+      "RunningDetail": {
+        "additionalProperties": false,
+        "description": "What ``running`` records at t0 (E10.2 fills it).",
+        "properties": {
+          "aa_override": {
+            "default": false,
+            "title": "Aa Override",
+            "type": "boolean"
+          },
+          "config_hashes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Config Hashes",
+            "type": "object"
+          },
+          "control_sha": {
+            "minLength": 7,
+            "title": "Control Sha",
+            "type": "string"
+          },
+          "legacy_book": {
+            "description": "open_structures ids open at t0 (excluded from metrics)",
+            "items": {
+              "type": "string"
+            },
+            "title": "Legacy Book",
+            "type": "array"
+          },
+          "t0": {
+            "format": "date-time",
+            "title": "T0",
+            "type": "string"
+          },
+          "t0_equity": {
+            "exclusiveMinimum": 0.0,
+            "title": "T0 Equity",
+            "type": "number"
+          }
+        },
+        "required": [
+          "t0",
+          "t0_equity",
+          "control_sha"
+        ],
+        "title": "RunningDetail",
+        "type": "object"
+      },
       "SearchMatch": {
         "additionalProperties": false,
         "properties": {
@@ -8701,6 +10003,80 @@
           "matches"
         ],
         "title": "SearchResponse",
+        "type": "object"
+      },
+      "Secondary": {
+        "additionalProperties": false,
+        "properties": {
+          "diff_ci": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Paired bootstrap CI of treatment - control (level 1 - 2 alpha)"
+          },
+          "margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Non-inferiority margin (spec)",
+            "title": "Margin"
+          },
+          "metric": {
+            "const": "sortino",
+            "default": "sortino",
+            "title": "Metric",
+            "type": "string"
+          },
+          "non_inferior": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None for aa (no margin)",
+            "title": "Non Inferior"
+          },
+          "sortino_control": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sortino Control"
+          },
+          "sortino_treatment": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sortino Treatment"
+          }
+        },
+        "required": [
+          "sortino_control",
+          "sortino_treatment"
+        ],
+        "title": "Secondary",
         "type": "object"
       },
       "SessionResponse": {
@@ -8776,6 +10152,55 @@
           "counts"
         ],
         "title": "SessionResponse",
+        "type": "object"
+      },
+      "SessionRow": {
+        "additionalProperties": false,
+        "properties": {
+          "control_equity": {
+            "title": "Control Equity",
+            "type": "number"
+          },
+          "control_pnl": {
+            "description": "Day P&L, legacy book excluded ($)",
+            "title": "Control Pnl",
+            "type": "number"
+          },
+          "d": {
+            "description": "(treatment_pnl - control_pnl) / t0_equity",
+            "title": "D",
+            "type": "number"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "legacy_pnl": {
+            "description": "Legacy book's day P&L removed from control ($)",
+            "title": "Legacy Pnl",
+            "type": "number"
+          },
+          "treatment_equity": {
+            "description": "Treatment arm's virtual equity ($)",
+            "title": "Treatment Equity",
+            "type": "number"
+          },
+          "treatment_pnl": {
+            "title": "Treatment Pnl",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "control_equity",
+          "treatment_equity",
+          "control_pnl",
+          "legacy_pnl",
+          "treatment_pnl",
+          "d"
+        ],
+        "title": "SessionRow",
         "type": "object"
       },
       "Slot": {
@@ -9261,6 +10686,60 @@
           "pct_debit"
         ],
         "title": "StopBasis",
+        "type": "string"
+      },
+      "StopDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "sessions": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessions"
+          },
+          "sigma": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Daily P&L-diff stdev (% equity); A/A records it",
+            "title": "Sigma"
+          }
+        },
+        "title": "StopDetail",
+        "type": "object"
+      },
+      "StopReason": {
+        "enum": [
+          "win",
+          "harm",
+          "futility",
+          "owner",
+          "invalid"
+        ],
+        "title": "StopReason",
         "type": "string"
       },
       "StopRule": {
@@ -11063,6 +12542,101 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/experiments": {
+      "get": {
+        "description": "Every forward experiment with the latest stored evaluation's numbers.",
+        "operationId": "experiments_api_experiments_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExperimentsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Experiments",
+        "tags": [
+          "experiments"
+        ]
+      }
+    },
+    "/api/experiments/{experiment_id}": {
+      "get": {
+        "description": "One experiment: spec + hashes, latest report, equity curves and cumulative d_t band.",
+        "operationId": "experiment_api_experiments__experiment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "experiment_id",
+            "required": true,
+            "schema": {
+              "title": "Experiment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExperimentDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Experiment",
+        "tags": [
+          "experiments"
+        ]
+      }
+    },
     "/api/health": {
       "get": {
         "description": "200 when the audit store opens read-only and answers a query.",

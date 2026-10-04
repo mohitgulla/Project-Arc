@@ -52,6 +52,12 @@ export const IconOps = (p: P) => (
     <path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" />
   </Svg>
 );
+export const IconExperiments = (p: P) => (
+  <Svg {...p}>
+    <path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3" />
+    <path d="M7.5 15h9" />
+  </Svg>
+);
 export const IconSun = (p: P) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="4" />

@@ -160,4 +160,11 @@ forbidden_modules = [
 # The tower reads routines.yaml cadences via arc.routines.config, whose context-kind
 # registry types persona outputs (pydantic schemas only; no client, no network). Only
 # that one edge is allowed: arc.tower itself may still not import arc.personas.
-ignore_imports = ["arc.context.kinds -> arc.personas.schemas"]
+# E10.5: the tower reads stored ExperimentReports via arc.experiments.evaluate, whose
+# evaluator imports arc.routines.manifest lazily (inside _evaluator_sha, for the git
+# sha) and never on the tower's read path; manifest's LLM-usage reader is the only
+# arc.llm_routing edge. arc.tower itself may still not import arc.llm_routing.
+ignore_imports = [
+    "arc.context.kinds -> arc.personas.schemas",
+    "arc.experiments.evaluate -> arc.routines.manifest",
+]

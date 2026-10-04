@@ -1132,6 +1132,8 @@ class Dispatcher:
         posts = trace.notifications
         if result.notice:
             posts.append(self.heartbeats.notice(now, run.job, result.notice))
+        for card in result.extra_cards:
+            posts.append(self.heartbeats.card(now, card.text, card.blocks or None))
         in_loop_thread = bool(self._loop_root_ts)
         if in_loop_thread and (self._loop_no_change or result.metrics.get("no_change")):
             # D36: a no_change loop gets only the [Routines] metadata reply in its thread;

@@ -76,6 +76,9 @@ class JobResult:
     # E5.9 (D33): an OK result that ends the chain here (e.g. the Director found no trade:
     # no Quant/Risk LLM calls). Recorded as ``metrics["stop_chain"]`` for the audit trail.
     stop_chain: bool = False
+    # E10.5 (D44): further cards posted to the day thread after this run's own post,
+    # one message each (e.g. one [Experiments] card per stopped experiment).
+    extra_cards: list[CardView] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

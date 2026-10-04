@@ -14,6 +14,7 @@ import { TradesPage } from "./pages/Trades";
 import { ContextEntryPage, OpsPage, RunDetailPage } from "./pages/Ops";
 import { NotFoundPage } from "./routes/pages";
 import { PerformancePage } from "./pages/Performance";
+import { ExperimentsPage } from "./pages/Experiments";
 
 function makeClient() {
   return new QueryClient({
@@ -48,6 +49,7 @@ export function App() {
               </Route>
               <Route path="positions/*" element={<PositionsPage />} />
               <Route path="performance/*" element={<PerformancePage />} />
+              <Route path="experiments/:experimentId?" element={<ExperimentsPage />} />
               <Route path="ops" element={<OpsPage />} />
               <Route path="ops/runs/:runId" element={<RunDetailPage />} />
               <Route path="ops/context/:entryId" element={<ContextEntryPage />} />
