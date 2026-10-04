@@ -1116,12 +1116,12 @@ Specs live in `config/experiments/live/<id>.yaml`; defaults (alpha 0.05, power
 tunable as `experiments.*` (`!arc config experiments`). The treatment overlay uses
 the same deep-merge format as the backtest overlays in `config/experiments/*.yaml`.
 
-    arc experiment create --spec config/experiments/live/x1_aa_baseline.yaml   # draft
-    arc experiment register X-1        # locks sha256(canonical spec); queued if the area is busy
-    arc experiment show X-1 [--json]
-    arc experiment verify X-1          # exit 1 when the stored spec no longer matches the lock
+    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml   # draft
+    arc experiment register XP-1        # locks sha256(canonical spec); queued if the area is busy
+    arc experiment show XP-1 [--json]
+    arc experiment verify XP-1          # exit 1 when the stored spec no longer matches the lock
     arc experiment list [--status running]
-    arc experiment stop X-1 --reason owner --actor local
+    arc experiment stop XP-1 --reason owner --actor local
 
 - After `register` the spec is locked (store check plus a DB trigger): a change
   needs a new id. One `registered`/`running` experiment per area; the next
@@ -1138,9 +1138,9 @@ The `experiments.evaluate` routine (trading days 16:40 ET, after the 16:30 audit
 reconcile; deterministic, halt-exempt) evaluates every running experiment and
 stores one `ExperimentReport` in the append-only `experiment_reports` table:
 
-    arc experiment report X-2 --db <db> [--json]      # computed now, read-only
-    arc experiment report X-2 --db <db> --stored      # latest stored report
-    arc experiment evaluate [X-2] --db <db> [--now ISO]   # what the routine does
+    arc experiment report XP-2 --db <db> [--json]      # computed now, read-only
+    arc experiment report XP-2 --db <db> --stored      # latest stored report
+    arc experiment evaluate [XP-2] --db <db> [--now ISO]   # what the routine does
 
 - Series: `d_t = (treat_pnl_t − ctrl_pnl_t) / t0_equity` per session from each
   arm's EOD `pnl_snapshots`; control's legacy-book P&L (marks in control's
@@ -1156,7 +1156,7 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
 - No guardrail (harm) auto-stops (owner, 2026-10-03): only the primary and
   secondary metrics decide. Each arm's drawdown, worst day and order count are
   in the report for the owner, who stops an experiment by hand
-  (`arc experiment stop X-2 --reason harm --actor local`).
+  (`arc experiment stop XP-2 --reason harm --actor local`).
 - `max_sessions` without a win → stop(futility); for an A/A that is the normal
   end and records σ (unlocks ab starts). An A/A whose CI excludes 0 → stop(invalid).
 - Breakdowns by regime / structure kind are reported, never decision inputs.

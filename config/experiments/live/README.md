@@ -10,10 +10,10 @@ deep-merged over it with `arc.utils.yamlpatch.deep_merge` (the function
 
 Lifecycle:
 
-    arc experiment create --spec config/experiments/live/x1_aa_baseline.yaml --db <db>
-    arc experiment register X-1 --db <db>     # locks sha256(canonical spec)
-    arc experiment show X-1 --db <db>
-    arc experiment verify X-1 --db <db>
+    arc experiment create --spec config/experiments/live/xp1_aa_baseline.yaml --db <db>
+    arc experiment register XP-1 --db <db>     # locks sha256(canonical spec)
+    arc experiment show XP-1 --db <db>
+    arc experiment verify XP-1 --db <db>
 
 Unset `alpha`, `power`, `min_sessions` and `max_sessions` are
 filled from `config/experiments.yaml` at `create`; the filled spec is what gets
