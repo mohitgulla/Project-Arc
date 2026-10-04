@@ -44,6 +44,15 @@ Rules enforced here, in code:
 
 Slack is best-effort: state is committed before anything is posted, so a Slack
 failure never changes a decision.
+
+E6.1b: a failed card post is not final. The request keeps ``message_ts`` NULL and
+its ``channel`` becomes :data:`UNPOSTED_CHANNEL`; every later full sweep (the
+tick's, never the in-chain ``execute`` step's ``only=`` publish) re-renders and
+re-posts each such *pending* request once, as long as it was created at least
+``RETRY_AFTER`` ago (so the sweep in the same tick as the first attempt does not
+post it twice). ``SweepReport.post_failed`` / ``reposted`` carry the counts to the
+tick heartbeat; ``arc health check`` alerts on a pending request with no card
+(``approvals_unposted``).
 """
 
 from __future__ import annotations
@@ -79,7 +88,9 @@ log = structlog.get_logger(__name__)
 __all__ = [
     "AUTO_APPROVER",
     "GATE_REENABLE_ACTOR",
+    "RETRY_AFTER",
     "TTL_ACTOR",
+    "UNPOSTED_CHANNEL",
     "ApprovalService",
     "CardPoster",
     "DecideResult",
@@ -95,6 +106,13 @@ __all__ = [
 TTL_ACTOR = "arc:ttl"
 AUTO_APPROVER = "arc:auto-approve"
 GATE_REENABLE_ACTOR = "arc:scorecard-gate"  # E6.6a: ends the D34 paper collection phase
+# E6.1b: ``approval_requests.channel`` of a request whose card post raised. Such a
+# pending request is re-posted by the next full sweep (no schema change: the column
+# already means "where the card went", ``log`` when it went nowhere on purpose).
+UNPOSTED_CHANNEL = "post_failed"
+# A request is retried only once it is at least this old: the first attempt and a
+# retry never land in the same tick (the in-chain publish, then the tick's sweep).
+RETRY_AFTER = _dt.timedelta(minutes=1)
 
 
 class RequestStatus(StrEnum):
@@ -199,6 +217,10 @@ class SweepReport:
     auto_approved: list[str]
     expired: list[str]
     auto_gated: list[str] = field(default_factory=list)  # E7.5a: left for a manual click
+    # E6.1b: card posts that raised in this sweep (first attempts and retries), and
+    # pending requests whose earlier failed post went through on this sweep's retry.
+    post_failed: list[str] = field(default_factory=list)
+    reposted: list[str] = field(default_factory=list)
 
     def as_json(self) -> dict[str, list[str]]:
         return {
@@ -206,6 +228,8 @@ class SweepReport:
             "auto_approved": self.auto_approved,
             "auto_gated": self.auto_gated,
             "expired": self.expired,
+            "post_failed": self.post_failed,
+            "reposted": self.reposted,
         }
 
 
@@ -419,6 +443,9 @@ class ApprovalService:
                            WHERE proposal_hash = ?""",
                         (posted.channel, posted.thread_ts, posted.message_ts, phash),
                     )
+            else:
+                self._mark_unposted(phash)
+                report.post_failed.append(phash)
             report.published.append(phash)
             log.info(
                 "approvals.published",
@@ -445,7 +472,83 @@ class ApprovalService:
                 )
                 if res.outcome is Outcome.APPROVED:
                     report.auto_approved.append(phash)
+        if only is None:  # E6.1b: only a full sweep retries; the in-chain publish never
+            self._repost_unposted(now, day, report)
         return report
+
+    # -- E6.1b: retry failed card posts ----------------------------------------
+
+    def _mark_unposted(self, phash: str) -> None:
+        with self.conn:
+            self.conn.execute(
+                """UPDATE approval_requests SET channel = ?, thread_ts = NULL, message_ts = NULL
+                   WHERE proposal_hash = ?""",
+                (UNPOSTED_CHANNEL, phash),
+            )
+
+    def unposted(self, now: _dt.datetime, *, day: str | None = None) -> list[sqlite3.Row]:
+        """Pending, unexpired requests whose card post failed, oldest first."""
+        sql = """SELECT proposal_hash, ticker, day FROM approval_requests
+                 WHERE status = 'pending' AND channel = ? AND message_ts IS NULL
+                   AND expires_at > ? AND created_at <= ?"""
+        params: list[str] = [UNPOSTED_CHANNEL, to_db(now), to_db(now - RETRY_AFTER)]
+        if day:
+            sql += " AND day = ?"
+            params.append(day)
+        return self.conn.execute(sql + " ORDER BY created_at, rowid", params).fetchall()
+
+    def _repost_unposted(self, now: _dt.datetime, day: str | None, report: SweepReport) -> None:
+        """Re-render and re-post each pending request whose card post failed (once each).
+
+        The proposal is re-read from the request (hash re-checked), so the card is
+        for the same ``proposal_hash``. Failures are logged as one line per sweep.
+        """
+        failed: list[str] = []
+        for r in self.unposted(now, day=day):
+            phash = r["proposal_hash"]
+            req = self._request(phash)
+            if req is None:  # pragma: no cover - row just read
+                continue
+            view = render_card(
+                req.proposal,
+                self._decision_for(phash),
+                proposal_hash=phash,
+                actionable=True,
+                note=self._pending_note(phash),
+                trail=load_trail(self.conn, phash, req.ticker),
+                kind=self._kind(phash),
+            )
+            posted = self._post(_dt.date.fromisoformat(req.day), view, phash, quiet=True)
+            if posted is None:
+                failed.append(phash)
+                continue
+            with self.conn:
+                self.conn.execute(
+                    """UPDATE approval_requests SET channel = ?, thread_ts = ?, message_ts = ?
+                       WHERE proposal_hash = ? AND message_ts IS NULL""",
+                    (posted.channel, posted.thread_ts, posted.message_ts, phash),
+                )
+            report.reposted.append(phash)
+            log.info("approvals.reposted", proposal_hash=phash, ticker=req.ticker)
+        if failed:
+            report.post_failed.extend(failed)
+            log.error(
+                "approvals.repost_failed",
+                count=len(failed),
+                proposal_hashes=[h[:12] for h in failed],
+            )
+
+    def _pending_note(self, phash: str) -> str:
+        """The note of a still-pending card: the E7.5a scorecard hold, if one was journaled."""
+        row = self.conn.execute(
+            """SELECT reason_text FROM decisions WHERE proposal_hash = ? AND reason_code = ?
+               ORDER BY at DESC, rowid DESC LIMIT 1""",
+            (phash, str(ReasonCode.AUTO_APPROVE_GATED)),
+        ).fetchone()
+        if row is None:
+            return ""
+        summary = str(row["reason_text"]).split(": ", 1)[-1]
+        return f"Auto-approve held back (scorecard gate): {summary}. Approve manually."
 
     # -- E6.6a: readiness on every auto-approval; gate re-enable at n ---------
 
@@ -709,12 +812,15 @@ class ApprovalService:
             supersedes_id=supersedes_id,
         ).id
 
-    def _post(self, day: _dt.date, view: CardView, phash: str) -> PostedCard | None:
+    def _post(
+        self, day: _dt.date, view: CardView, phash: str, *, quiet: bool = False
+    ) -> PostedCard | None:
         try:
             chain = JournalStore(self.conn).chain_for_proposal(phash)
             return self.poster.post(day, view, chain_run_id=chain)
         except Exception as exc:  # noqa: BLE001 - state is committed; posting is best-effort
-            log.error("approvals.post_failed", proposal_hash=phash, error=str(exc))
+            if not quiet:  # a retry's failures are logged once per sweep by the caller
+                log.error("approvals.post_failed", proposal_hash=phash, error=str(exc))
             return None
 
     def refresh_loop_root(self, proposal_hash: str) -> None:
@@ -789,7 +895,7 @@ class ApprovalService:
         )
 
     def _notify(self, req: _Request, user: str, text: str) -> None:
-        if not user or req.channel == "log":
+        if not user or req.channel in ("log", UNPOSTED_CHANNEL):
             return
         try:
             self.poster.notify_user(req.channel, user, text, req.thread_ts)

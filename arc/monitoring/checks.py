@@ -13,6 +13,8 @@
 - :func:`tick_staleness`  no ``tick`` heartbeat for ``tick_stale_after``.
 - :func:`stuck_runs`      a ``routine_runs`` row still ``running`` after ``stuck_after``.
 - :func:`stranded_events` E6.2e: a dispatched event with no run after ``tick.dispatch_grace``.
+- :func:`approvals_unposted` E6.1b: a pending approval request older than one tick
+  with no Slack card (its post failed and keeps failing).
 - :func:`gateway_health`  ``hermes gateway status`` and ``hermes cron status``.
 - :func:`remote_access`   E8.6: Hermes dashboard (gated) + tower on the tailnet, not the LAN.
 
@@ -481,6 +483,35 @@ def rollup_line(covs: list[Coverage], routines: RoutinesConfig, *, max_jobs: int
     return f"Slots: {jobs} · {tail}" if jobs else f"Slots: {tail}"
 
 
+def approvals_line(conn: sqlite3.Connection, now: _dt.datetime) -> str | None:
+    """E6.1b: ``Approvals: sweep failed 2 · card posts failed 3 · re-posted 3 · unposted 0``.
+
+    Sums today's (ET) ``tick`` heartbeats' ``approvals`` detail and counts the
+    pending requests that have no card right now. ``None`` when all are zero.
+    """
+    from arc.utils.calendar import ET
+
+    day_start = _dt.datetime.combine(now.astimezone(ET).date(), _dt.time.min, tzinfo=ET)
+    totals = {"sweep_failed": 0, "post_failed": 0, "reposted": 0}
+    for hb in HeartbeatRepo(conn).between("tick", day_start - _dt.timedelta(microseconds=1), now):
+        counts = hb.detail.get("approvals") or {}
+        for k in totals:
+            totals[k] += int(counts.get(k) or 0)
+    row = conn.execute(
+        """SELECT COUNT(*) FROM approval_requests
+           WHERE status = 'pending' AND message_ts IS NULL AND channel != 'log'
+             AND expires_at > ?""",
+        (to_db(now),),
+    ).fetchone()
+    unposted = int(row[0])
+    if not any(totals.values()) and not unposted:
+        return None
+    return (
+        f"Approvals: sweep failed {totals['sweep_failed']} · card posts failed "
+        f"{totals['post_failed']} · re-posted {totals['reposted']} · unposted {unposted}"
+    )
+
+
 def tick_staleness(
     conn: sqlite3.Connection, settings: MonitoringSettings, now: _dt.datetime
 ) -> CheckResult:
@@ -587,6 +618,44 @@ def stranded_events(
         f"{len(findings)} stranded",
         tuple(findings),
     )
+
+
+def approvals_unposted(
+    conn: sqlite3.Connection, routines: RoutinesConfig, now: _dt.datetime
+) -> CheckResult:
+    """E6.1b: a pending approval request older than one tick whose card never posted.
+
+    The tick's sweep re-posts such a card on every tick (``approvals.reposted``); a
+    finding here means it keeps failing, so the owner has nothing to click and the
+    proposal will expire at its TTL unseen. One condition, resolved once every
+    pending request has a card (or expired).
+    """
+    older = now - routines.tick.interval
+    rows = conn.execute(
+        """SELECT proposal_hash, ticker, created_at, expires_at FROM approval_requests
+           WHERE status = 'pending' AND message_ts IS NULL AND channel != 'log'
+             AND created_at <= ? AND expires_at > ?
+           ORDER BY created_at""",
+        (to_db(older), to_db(now)),
+    ).fetchall()
+    if not rows:
+        return CheckResult("approvals_unposted", "ok", "0 pending without a card")
+    items = [
+        f"{r['ticker']} {str(r['proposal_hash'])[:12]} "
+        f"(since {from_db(r['created_at']):%H:%M %Z}, expires {from_db(r['expires_at']):%H:%M})"
+        for r in rows
+    ]
+    f = Finding(
+        key="approvals_unposted",
+        kind="approvals_unposted",
+        severity="failed",
+        message=(
+            f"{len(rows)} pending approval request(s) have no Slack card (post failed; "
+            f"retried every tick): {', '.join(items)}"
+        ),
+        detail={"proposal_hashes": [str(r["proposal_hash"]) for r in rows]},
+    )
+    return CheckResult("approvals_unposted", "failed", f"{len(rows)} pending without a card", (f,))
 
 
 # ---------------------------------------------------------------------------

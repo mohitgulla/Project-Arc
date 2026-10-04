@@ -804,6 +804,8 @@ def test_cli_tick_records_heartbeat_and_health_cycle(
     hb = HeartbeatRepo(c).latest("tick")
     assert hb is not None and hb.correlation["tick_id"] == "tick-cli1"
     assert hb.detail["counts"] == {"ok": 1} or "ok" in hb.detail["counts"]
+    # E6.1b: the tick's approval sweep counts ride on the heartbeat.
+    assert hb.detail["approvals"] == {"sweep_failed": 0, "post_failed": 0, "reposted": 0}
     run_ids = [o["run_id"] for o in hb.detail["outcomes"]]
     assert run_ids
 
@@ -958,3 +960,141 @@ def test_install_script_prints_plist() -> None:
     assert "<integer>1800</integer>" in out
     assert "/.venv/bin/python</string>" in out
     assert "arc_health_check.py" in out
+
+
+# ---------------------------------------------------------------------------
+# E6.1b: pending approval requests whose Slack card never posted
+# ---------------------------------------------------------------------------
+
+
+def _request(
+    conn: sqlite3.Connection,
+    phash: str,
+    *,
+    created: dt.datetime,
+    expires: dt.datetime,
+    channel: str = "post_failed",
+    message_ts: str | None = None,
+    status: str = "pending",
+) -> None:
+    from arc.context.ttl import to_db
+
+    conn.execute("PRAGMA foreign_keys = OFF")  # no proposals row needed for the check
+    conn.execute(
+        """INSERT INTO approval_requests (proposal_hash, ticker, day, proposal_json, status,
+               channel, message_ts, expires_at, created_at)
+           VALUES (?, 'SPY', '2026-09-28', '{}', ?, ?, ?, ?, ?)""",
+        (phash, status, channel, message_ts, to_db(expires), to_db(created)),
+    )
+    conn.commit()
+
+
+def test_unposted_pending_request_alerts(conn: sqlite3.Connection) -> None:
+    routines = cfg()
+    t0 = et(2026, 9, 28, 10, 0)
+    exp = t0 + dt.timedelta(minutes=20)
+    _request(conn, "a" * 64, created=t0, expires=exp)
+    # Posted, log-only (dry run), decided and expired requests never count.
+    _request(conn, "b" * 64, created=t0, expires=exp, channel="C_INV", message_ts="1.2")
+    _request(conn, "c" * 64, created=t0, expires=exp, channel="log")
+    _request(conn, "d" * 64, created=t0, expires=exp, status="approved")
+    _request(conn, "e" * 64, created=t0 - dt.timedelta(hours=1), expires=t0)
+
+    # Younger than one tick: the next sweep retries it first, no alert yet.
+    res = checks.approvals_unposted(conn, routines, t0 + dt.timedelta(minutes=4))
+    assert res.severity == "ok" and not res.findings
+
+    later = t0 + dt.timedelta(minutes=6)
+    res = checks.approvals_unposted(conn, routines, later)
+    assert res.severity == "failed" and res.summary == "1 pending without a card"
+    (f,) = res.findings
+    assert f.key == "approvals_unposted" and f.detail["proposal_hashes"] == ["a" * 64]
+    assert "SPY aaaaaaaaaaaa" in f.message and "no Slack card" in f.message
+
+    n = alerts.RecordingOpsNotifier()
+    out = alerts.apply(conn, [res], now=later, correlation={}, notifier=n)
+    assert [a.key for a in out.opened] == ["approvals_unposted"]
+    assert len(n.posts) == 1 and "[Ops]" in n.posts[0] and "no Slack card" in n.posts[0]
+    # Still failing on the next check: no repeat post.
+    alerts.apply(conn, [res], now=later, correlation={}, notifier=n)
+    assert len(n.posts) == 1
+
+    # The retry posted it: the condition resolves with one ✅ line.
+    conn.execute(
+        "UPDATE approval_requests SET channel = 'C_INV', message_ts = '9.9' WHERE "
+        "proposal_hash = ?",
+        ("a" * 64,),
+    )
+    ok = checks.approvals_unposted(conn, routines, later + dt.timedelta(minutes=5))
+    assert ok.severity == "ok"
+    out = alerts.apply(conn, [ok], now=later, correlation={}, notifier=n)
+    assert [a.key for a in out.resolved] == ["approvals_unposted"]
+    assert "has its Slack card" in n.posts[1]
+
+
+def test_approvals_ops_line_sums_tick_heartbeats(conn: sqlite3.Connection) -> None:
+    t0 = et(2026, 9, 28, 10, 0)
+    assert checks.approvals_line(conn, t0) is None
+    hb = HeartbeatRepo(conn)
+    hb.record(
+        "tick", "ok", at=et(2026, 9, 27, 15, 0), detail={"approvals": {"sweep_failed": 5}}
+    )  # fmt: skip  (yesterday)
+    hb.record("tick", "ok", at=t0, detail={"approvals": {"sweep_failed": 1}})
+    hb.record("tick", "ok", at=t0 + dt.timedelta(minutes=5),
+              detail={"approvals": {"post_failed": 2, "reposted": 1}})  # fmt: skip
+    hb.record("tick", "ok", at=t0 + dt.timedelta(minutes=10), detail={})  # pre-E6.1b tick
+    _request(conn, "a" * 64, created=t0, expires=t0 + dt.timedelta(hours=1))
+    line = checks.approvals_line(conn, t0 + dt.timedelta(minutes=15))
+    assert line == "Approvals: sweep failed 1 · card posts failed 2 · re-posted 1 · unposted 1"
+
+
+def test_auditor_ops_section_carries_approvals_line(conn: sqlite3.Connection) -> None:
+    from arc.routines import auditor as aud
+    from arc.slack.digests import auditor_card
+
+    t0 = et(2026, 9, 28, 10, 0)
+    HeartbeatRepo(conn).record("tick", "ok", at=t0, detail={"approvals": {"sweep_failed": 3}})
+
+    class Ctx:
+        def __init__(self) -> None:
+            self.conn, self.routines, self.now = conn, cfg(), t0 + dt.timedelta(hours=6)
+
+    line = aud._approvals_line(Ctx())  # type: ignore[arg-type]
+    assert line is not None and line.startswith("Approvals: sweep failed 3")
+
+    class Broken(Ctx):
+        @property
+        def conn(self) -> sqlite3.Connection:  # type: ignore[override]
+            raise RuntimeError("no db")
+
+        @conn.setter
+        def conn(self, _v: object) -> None:
+            pass
+
+    assert aud._approvals_line(Broken()) is None  # type: ignore[arg-type]
+    text = json.dumps(auditor_card(_journal_out(), ops_line=f"Slots: missed 0\n{line}").blocks)
+    assert "*Ops*" in text and "sweep failed 3" in text and "Slots: missed 0" in text
+
+
+def _journal_out():  # noqa: ANN202
+    from arc.personas.schemas import AuditorOutput
+
+    return AuditorOutput(
+        journal_date="2026-09-28",
+        reconciliation_status="clean",
+        daily_pnl=0.0,
+        open_positions=0,
+        closed_today=0,
+        fills_reviewed=0,
+        anomalies=[],
+        lessons=[],
+        journal_narrative="Quiet day.",
+    )
+
+
+def test_tick_heartbeat_counts_a_failed_approval_sweep() -> None:
+    from arc.routines.cli import _approvals_detail
+
+    assert _approvals_detail(None) == {"sweep_failed": 1, "post_failed": 0, "reposted": 0}
+    sweep = {"published": ["a"], "post_failed": ["a", "b"], "reposted": ["b"]}
+    assert _approvals_detail(sweep) == {"sweep_failed": 0, "post_failed": 2, "reposted": 1}

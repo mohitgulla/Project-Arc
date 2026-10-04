@@ -231,6 +231,17 @@ def _approval_sweep(
         return None
 
 
+def _approvals_detail(approvals: dict[str, list[str]] | None) -> dict[str, int]:
+    """E6.1b: the tick heartbeat's approval counts (``None``: the sweep raised)."""
+    if approvals is None:
+        return {"sweep_failed": 1, "post_failed": 0, "reposted": 0}
+    return {
+        "sweep_failed": 0,
+        "post_failed": len(approvals.get("post_failed", [])),
+        "reposted": len(approvals.get("reposted", [])),
+    }
+
+
 def _outcome_json(o: Outcome) -> dict[str, object]:
     return {
         "job": o.job,
@@ -279,7 +290,13 @@ def _tick(
     report = disp.tick(now, dry_run=args.dry_run, since=since)
     approvals = None if args.dry_run else _approval_sweep(args, conn, report.now)
     if correlation is not None:
-        _record_tick(conn, report, correlation, duration_ms=int((time.monotonic() - t0) * 1000))
+        _record_tick(
+            conn,
+            report,
+            correlation,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            approvals=_approvals_detail(approvals),
+        )
         _spawn_arms(args, conn)
     if args.json:
         payload: dict[str, object] = {
@@ -343,11 +360,14 @@ def _record_tick(
     correlation: dict[str, str],
     *,
     duration_ms: int | None = None,
+    approvals: dict[str, int] | None = None,
 ) -> None:
     """E8.2 liveness: one ``tick`` heartbeat per live tick (read by ``arc health check``).
 
     E5.10: the detail also carries the tick's own wall time (``tick_duration_ms``) and
-    its three slowest due jobs, for the slow-tick alert (E8.2a).
+    its three slowest due jobs, for the slow-tick alert (E8.2a). E6.1b: ``approvals``
+    counts this tick's approval sweep (``sweep_failed`` 0/1, card ``post_failed``,
+    ``reposted``), summed per day on the Auditor card's Ops section.
     """
     from collections import Counter
 
@@ -366,6 +386,7 @@ def _record_tick(
             "reclaimed": report.reclaimed,
             "tick_duration_ms": duration_ms,
             "slowest_jobs": report.slowest(3),
+            "approvals": approvals or {},
             "outcomes": [
                 {"job": o.job, "status": o.status, "run_id": o.run_id}
                 for o in report.outcomes
