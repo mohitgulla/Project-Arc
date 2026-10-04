@@ -11,7 +11,7 @@ import { OverviewPage } from "./pages/Overview";
 import { PositionsPage } from "./pages/Positions";
 import { TradeDetailRoute } from "./pages/TradeDetail";
 import { TradesPage } from "./pages/Trades";
-import { ContextEntryPage, OpsPage, RunDetailPage } from "./pages/Ops";
+import { ContextEntryPage, OpsConfigPage, OpsPage, RunDetailPage } from "./pages/Ops";
 import { NotFoundPage } from "./routes/pages";
 import { PerformancePage } from "./pages/Performance";
 import { ExperimentsPage } from "./pages/Experiments";
@@ -51,6 +51,7 @@ export function App() {
               <Route path="performance/*" element={<PerformancePage />} />
               <Route path="experiments/:experimentId?" element={<ExperimentsPage />} />
               <Route path="ops" element={<OpsPage />} />
+              <Route path="ops/config" element={<OpsConfigPage />} />
               <Route path="ops/runs/:runId" element={<RunDetailPage />} />
               <Route path="ops/context/:entryId" element={<ContextEntryPage />} />
               <Route path="settings" element={<SettingsPage />} />

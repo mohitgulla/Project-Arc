@@ -1,29 +1,43 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  budgetMarks,
+  OPS_CLOSED_BY_DEFAULT,
+  OPS_WIDGETS,
+  bandHasProblem,
+  bandRollup,
+  bandRows,
   configGroups,
   contractRows,
   dayParam,
   externalInputs,
   filterLog,
   formatDuration,
+  groupRepeats,
   hourTicks,
   llmBars,
   loopSplit,
   manifestGroups,
   personaLabel,
+  rowFacts,
+  rowSummary,
   runApiQuery,
   runQuery,
   runStatusLabel,
   runStatusTone,
+  sharePct,
   slotCounts,
   slotTitle,
+  sourceGroups,
   timeLeft,
   timelinePct,
+  worstStatus,
   type Llm,
   type OpsConfig,
+  type Session,
   type Slot,
+  type SourceRow,
+  type Sources,
+  type TimelineBand,
   type TimelineRow,
 } from "./ops";
 
@@ -194,15 +208,7 @@ describe("run detail", () => {
   });
 });
 
-describe("budget, llm, config", () => {
-  it("marks the D32 tiers on the budget bar", () => {
-    expect(budgetMarks({ limit: 200, restrict_at: 100, open_limit: 175 })).toEqual([
-      { label: "restrict 100", at: 0.5 },
-      { label: "opens stop 175", at: 0.875 },
-    ]);
-    expect(budgetMarks({ limit: 0, restrict_at: 0, open_limit: 0 })).toEqual([]);
-  });
-
+describe("llm, config", () => {
   it("stacks LLM cost by persona per day", () => {
     const llm = {
       personas: ["director", "scout"],
@@ -226,5 +232,183 @@ describe("budget, llm, config", () => {
       ["risk", ["b", "a"]],
       ["scout", ["c"]],
     ]);
+  });
+});
+
+// ---- E8.8d -------------------------------------------------------------------------
+
+const T = (hhmm: string) => `2026-09-30T${hhmm}:00-04:00`;
+
+function eSlot(status: Slot["status"], hhmm = "10:00", job = "x"): Slot {
+  return { job, at: T(hhmm), status, chain_steps: 0, run: null } as Slot;
+}
+
+function eRow(job: string, band: string, extra: Partial<TimelineRow> = {}): TimelineRow {
+  return {
+    job,
+    label: job,
+    kind: "persona",
+    cadence: "every 30m",
+    slots: [],
+    group: band.split(".")[0]!,
+    band,
+    persona: null,
+    about: null,
+    window: null,
+    llm: false,
+    writes: [],
+    categories: [],
+    ...extra,
+  } as TimelineRow;
+}
+
+function band(key: string, label: string, group: string, groupLabel: string, jobs: string[]): TimelineBand {
+  return { key, label, group, group_label: groupLabel, jobs };
+}
+
+describe("E8.8d widget order", () => {
+  it("is the owner's order (snapshot)", () => {
+    expect(OPS_WIDGETS).toMatchInlineSnapshot(`
+      [
+        "Session Timeline",
+        "Sources",
+        "Health",
+        "LLM Usage",
+        "Context Store",
+        "Auto-Approve",
+        "Alerts",
+        "Halts",
+        "Runs",
+        "Config",
+      ]
+    `);
+    expect(OPS_CLOSED_BY_DEFAULT).toEqual(["Alerts", "Halts", "Runs"]);
+    expect(OPS_WIDGETS).not.toContain("Order Budget");
+  });
+});
+
+describe("E8.8d timeline bands", () => {
+  // The API assigns bands from routines.yaml (category for sources, group: for the rest,
+  // fallback other); the UI joins rows to bands in the API's order.
+  const session = {
+    loop: eRow("director", "trading_loop", { persona: "director", label: "Director → Quant → Risk → Propose → Execute" }),
+    rows: [
+      eRow("rss", "sources.market_news", { kind: "source", categories: ["market_news", "company_data"] }),
+      eRow("edgar", "sources.company_data", { kind: "source" }),
+      eRow("scout", "scout", { persona: "scout" }),
+      eRow("positions.evaluate", "position_management", { persona: "investor", label: "Investor exits" }),
+      eRow("mystery", "other"),
+      eRow("orphan", "nowhere"), // no band from the API: falls under Other
+    ],
+    bands: [
+      band("sources.market_news", "Market news", "sources", "Sources", ["rss"]),
+      band("sources.company_data", "Company data", "sources", "Sources", ["edgar"]),
+      band("scout", "Scout", "scout", "Scout", ["scout"]),
+      band("trading_loop", "Trading loop", "trading_loop", "Trading loop", ["director"]),
+      band("position_management", "Position management", "position_management", "Position management", ["positions.evaluate"]),
+      band("other", "Other", "other", "Other", ["mystery"]),
+    ],
+  } as unknown as Session;
+
+  it("keeps the API's band order and puts the loop row in its band", () => {
+    const v = bandRows(session);
+    expect(v.map((b) => b.band.key)).toEqual([
+      "sources.market_news",
+      "sources.company_data",
+      "scout",
+      "trading_loop",
+      "position_management",
+      "other",
+    ]);
+    expect(v.find((b) => b.band.key === "trading_loop")!.rows.map((r) => r.job)).toEqual(["director"]);
+  });
+
+  it("marks category sub-bands under the Sources group, once", () => {
+    const v = bandRows(session);
+    expect(v.filter((b) => b.sub).map((b) => [b.band.key, b.firstOfGroup])).toEqual([
+      ["sources.market_news", true],
+      ["sources.company_data", false],
+    ]);
+    expect(v.find((b) => b.band.key === "scout")!.sub).toBe(false);
+  });
+
+  it("falls back to Other for rows without a band", () => {
+    const other = bandRows(session).at(-1)!;
+    expect(other.band.key).toBe("other");
+    expect(other.rows.map((r) => r.job)).toEqual(["mystery", "orphan"]);
+  });
+
+  it("creates an Other band when the API sent none", () => {
+    const v = bandRows({ ...session, bands: [] });
+    expect(v).toHaveLength(1);
+    expect(v[0]!.band.label).toBe("Other");
+    expect(v[0]!.rows).toHaveLength(7);
+  });
+
+  it("rolls a band up over settled slots and opens it on a problem", () => {
+    const rows = [
+      eRow("a", "scout", { slots: [eSlot("done", "06:00"), eSlot("no_change", "07:00"), eSlot("missed", "08:00"), eSlot("future", "16:00")] }),
+      eRow("b", "scout", { slots: [eSlot("done", "06:30")] }),
+    ];
+    expect(bandRollup(rows)).toBe("3/4 ok · 1 missed");
+    expect(bandHasProblem(rows)).toBe(true);
+    expect(bandHasProblem([rows[1]!])).toBe(false);
+    expect(bandRollup([eRow("c", "scout", { slots: [eSlot("future", "21:00")] })])).toBe("next 21:00");
+  });
+
+  it("summarises a job row and lists its ⓘ facts", () => {
+    const r = eRow("rss", "sources.market_news", {
+      slots: [eSlot("done", "09:00"), eSlot("failed", "09:15"), eSlot("missed", "09:30"), eSlot("future", "10:30"), eSlot("future", "10:45")],
+      window: "09:00-16:00",
+      llm: false,
+      writes: [],
+    });
+    expect(rowSummary(r)).toBe("1/5 done · 1 failed · 1 missed · next 10:30");
+    expect(rowFacts(r)).toEqual(["every 30m", "window 09:00-16:00", "LLM no", "writes nothing"]);
+    expect(rowFacts(eRow("scout", "scout", { llm: true, writes: ["story"] }))).toEqual(["every 30m", "LLM yes", "writes story"]);
+  });
+});
+
+describe("E8.8d sources by category", () => {
+  const src = (key: string, category: string, status: SourceRow["status"]): SourceRow =>
+    ({ key, label: key, category, status, share_in_category: 0.5 }) as SourceRow;
+
+  it("worst status wins the rollup", () => {
+    expect(worstStatus(["ok", "idle", "ok"])).toBe("idle");
+    expect(worstStatus(["ok", "late", "backoff", "pending"])).toBe("late");
+    expect(worstStatus(["failed", "late"])).toBe("failed");
+    expect(worstStatus([])).toBe("ok");
+  });
+
+  it("groups rows under the API's categories, in its order (rename-safe)", () => {
+    const s = {
+      categories: [
+        { key: "youtube_macro", label: "YouTube macro", weight: 1, share: null, max_age: "24h", newest_doc_at: null, status: "pending", sources: 1 },
+        { key: "market_news", label: "Market news", weight: 1, share: 0.25, max_age: "6h", newest_doc_at: null, status: "ok", sources: 1 },
+        { key: "empty", label: "Empty", weight: 1, share: 0.25, max_age: "6h", newest_doc_at: null, status: "ok", sources: 0 },
+      ],
+      sources: [src("wsj", "market_news", "ok"), src("youtube.a", "youtube_macro", "pending"), src("x", "brand_new", "late")],
+    } as unknown as Sources;
+    const g = sourceGroups(s);
+    expect(g.map((x) => x.category.key)).toEqual(["youtube_macro", "market_news", "brand_new"]);
+    expect(g[2]!.category.status).toBe("late");
+  });
+
+  it("formats shares", () => {
+    expect(sharePct(0.2)).toBe("20 %");
+    expect(sharePct(0.001)).toBe("<1 %");
+    expect(sharePct(null)).toBe("—");
+  });
+});
+
+describe("E8.8d repeat grouping", () => {
+  it("collapses repeats like the overview (`missed_window ×12`)", () => {
+    const items = [
+      ...Array.from({ length: 12 }, (_, i) => ({ id: `m${i}`, kind: "missed_window" })),
+      { id: "s", kind: "stuck" },
+    ];
+    const g = groupRepeats(items, (a) => a.kind);
+    expect(g.map((x) => x.text)).toEqual(["missed_window ×12", "stuck"]);
+    expect(g[0]!.items).toHaveLength(12);
   });
 });
