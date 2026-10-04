@@ -7,7 +7,7 @@ no broker, no network. The caller injects ``now``.
 ``pnl_snapshots`` row for (the reconcile's latest row per ``details_json.day``,
 by ``arm_id``; NULL = control)::
 
-    treat_pnl_t = equity_t - equity_{t-1}            (t0_equity before the first session)
+    treat_pnl_t = virtual_t - virtual_{t-1}          (t0_equity before the first session)
     ctrl_pnl_t  = equity_t - equity_{t-1} - legacy_pnl_t
     d_t         = (treat_pnl_t - ctrl_pnl_t) / t0_equity
 
@@ -18,6 +18,16 @@ their closes, so the legacy book is excluded from control's series. The
 treatment arm never holds the legacy book (its virtual account opens flat).
 A session missing for either arm (or its previous session, or a needed legacy
 mark) is left out and listed in ``missing_sessions``.
+
+**Arm equity basis (contract with the E10.2 runner).** Control's equity is
+``details_json.equity`` (its broker equity). The treatment arm's is
+``details_json.virtual_equity`` *only*: the arm's virtual account (E10.2), which
+by definition equals ``RunningDetail.t0_equity`` at t0 and then moves only with
+the arm's own P&L. The experiment paper account's broker equity is never reset
+(e.g. $95k broker vs a $10k control), so a treatment row's ``equity`` is never
+read and never used as a fallback: a treatment row without ``virtual_equity`` is
+treated as absent and its session is listed in ``missing_sessions``. That is what
+makes ``t0_equity`` a valid previous value before the arm's first EOD row.
 
 **Verdict** (first that applies):
 
@@ -106,6 +116,9 @@ log = structlog.get_logger(__name__)
 REPORT_VERSION = 1
 EVALUATOR_ACTOR = "arc.experiments"
 TREATMENT_ARM = "treatment"
+# the treatment arm's pnl_snapshots.details_json key the evaluator reads (module
+# docstring: equals t0_equity at t0; the broker ``equity`` is never a fallback)
+TREATMENT_EQUITY_FIELD = "virtual_equity"
 MULTIPLIER = Decimal(100)
 _FORBID = ConfigDict(extra="forbid", frozen=True)
 
@@ -127,7 +140,7 @@ class SessionRow(BaseModel):
 
     day: _dt.date
     control_equity: float
-    treatment_equity: float
+    treatment_equity: float = Field(..., description="Treatment arm's virtual equity ($)")
     control_pnl: float = Field(..., description="Day P&L, legacy book excluded ($)")
     legacy_pnl: float = Field(..., description="Legacy book's day P&L removed from control ($)")
     treatment_pnl: float
@@ -275,8 +288,13 @@ def _arm_clause(aid: str | None, col: str = "arm_id") -> tuple[str, tuple[object
     return (f"{col} IS NULL", ()) if aid is None else (f"{col} = ?", (aid,))
 
 
-def _eod_equity(conn: sqlite3.Connection, aid: str | None) -> dict[_dt.date, float]:
-    """ET day -> equity of the arm's latest ``pnl_snapshots`` row that day."""
+def _eod_equity(
+    conn: sqlite3.Connection, aid: str | None, field: str = "equity"
+) -> dict[_dt.date, float]:
+    """ET day -> *field* of the arm's latest ``pnl_snapshots`` row that day.
+
+    A row without a finite *field* is skipped (the day stays absent; no fallback).
+    """
     where, args = _arm_clause(aid)
     rows = conn.execute(
         f"""SELECT details_json FROM pnl_snapshots
@@ -287,7 +305,7 @@ def _eod_equity(conn: sqlite3.Connection, aid: str | None) -> dict[_dt.date, flo
     out: dict[_dt.date, float] = {}
     for r in rows:
         d = json.loads(r[0])
-        eq = _f(d.get("equity"))
+        eq = _f(d.get(field))
         if eq is not None:
             out[_dt.date.fromisoformat(d["day"])] = eq
     return out
@@ -368,7 +386,7 @@ def _series(
     assert run is not None  # noqa: S101 - caller checks
     t_arm = arm_id(st.experiment_id, TREATMENT_ARM)
     ctrl = _eod_equity(conn, None)
-    treat = _eod_equity(conn, t_arm)
+    treat = _eod_equity(conn, t_arm, TREATMENT_EQUITY_FIELD)
     legacy = set(run.legacy_book)
     marks = _legacy_marks(conn, legacy)
     cash = _legacy_cash(conn, legacy)
@@ -389,8 +407,8 @@ def _series(
     for day in days:
         prev = previous_session(day)
         c, c_prev, t = ctrl.get(day), ctrl.get(prev), treat.get(day)
-        # the arm's virtual account opens at t0_equity: before its first EOD row the
-        # previous equity is t0's
+        # the arm's virtual equity is t0_equity at t0 by definition (module
+        # docstring), so before its first EOD row the previous value is t0's
         t_prev = treat.get(prev, t0_eq if day == first else None)
         lv, lv_prev = legacy_value(day), legacy_value(prev)
         if None in (c, c_prev, t, t_prev, lv, lv_prev):
@@ -548,8 +566,9 @@ def _arm_summary(
 ) -> ArmSummary:
     """Drawdown and worst day on the arm's own curve from t0 (``t0_equity + cum P&L``).
 
-    The curve, not the snapshot equity: the treatment's broker equity carries the
-    virtual account's reserved excess (E10.2), and control's carries the legacy book.
+    The curve, not the snapshot equity: control's equity carries the legacy book.
+    The treatment's P&L is on the virtual-equity basis, so its curve is its
+    virtual equity (never the broker equity with its reserved excess).
     """
     curve = t0_equity + np.concatenate([[0.0], np.cumsum(pnl)])
     before = curve[:-1]

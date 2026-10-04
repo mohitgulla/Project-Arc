@@ -1145,6 +1145,10 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
 - Series: `d_t = (treat_pnl_t − ctrl_pnl_t) / t0_equity` per session from each
   arm's EOD `pnl_snapshots`; control's legacy-book P&L (marks in control's
   `positions_snapshots` + close cash) is removed. Missing sessions are listed.
+  The treatment arm is read on its **virtual** equity only
+  (`details_json.virtual_equity`, = t0 equity at t0, written by the E10.2 arm
+  reconcile); the experiment account's broker `equity` is never used, so a
+  treatment row without `virtual_equity` counts as a missing session.
 - Primary: always-valid mSPRT confidence sequence (normal mixture). σ is the
   A/A's when recorded, else the running sd inflated to its chi² upper bound
   (`experiments.stats.sigma_upper_q`). Win = lower bound > 0 after

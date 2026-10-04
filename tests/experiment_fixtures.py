@@ -28,6 +28,9 @@ T0 = dt.datetime(2026, 10, 5, 9, 0, tzinfo=ET)  # Monday, before the open
 T0_EQUITY = 100_000.0
 CONTROL_SHA = "2187d41aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 TREATMENT_SHA = "2187d41bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+# the experiment paper account's broker equity is never reset to control's (E10.2):
+# treatment rows carry broker ``equity`` = virtual equity + this unusable excess
+BROKER_EXCESS = -5_000.0  # e.g. a $95k paper account against a $100k control
 
 
 def spec(eid: str = "X-2", *, kind: str = "ab", **kw: object) -> ExperimentSpec:
@@ -88,17 +91,27 @@ def eod(day: dt.date) -> dt.datetime:
     return session_close(day) + dt.timedelta(minutes=30)
 
 
-def pnl_row(conn: sqlite3.Connection, day: dt.date, equity: float, aid: str | None) -> None:
+def pnl_row(
+    conn: sqlite3.Connection,
+    day: dt.date,
+    equity: float,
+    aid: str | None,
+    *,
+    virtual: bool = True,
+) -> None:
+    """One EOD snapshot. Arm rows: *equity* is the virtual equity (``virtual_equity``)
+    and the broker ``equity`` is offset by :data:`BROKER_EXCESS`, as on the real
+    experiment account; ``virtual=False`` writes the broker equity only."""
+    details: dict[str, str] = {"day": day.isoformat(), "equity": str(equity)}
+    if aid is not None:
+        details["equity"] = str(equity + BROKER_EXCESS)
+        if virtual:
+            details["virtual_equity"] = str(equity)
     conn.execute(
         """INSERT INTO pnl_snapshots
            (id, snapshot_at, realized, unrealized, total, details_json, arm_id)
            VALUES (?, ?, '0', '0', '0', ?, ?)""",
-        (
-            uuid.uuid4().hex,
-            to_db(eod(day)),
-            json.dumps({"day": day.isoformat(), "equity": str(equity)}),
-            aid,
-        ),
+        (uuid.uuid4().hex, to_db(eod(day)), json.dumps(details), aid),
     )
 
 

@@ -168,29 +168,66 @@ def test_sortino_diff_ci_deterministic_and_paired() -> None:
 SIMS, HORIZON, SIGMA, MIN_N = 2000, 60, 0.004, 20
 
 
+def _vector_bounds(
+    csum: np.ndarray, csq: np.ndarray, n: int, *, known_sigma: float | None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorised ``stats.confidence_sequence`` at look *n* for every sim: (lo, hi).
+
+    Same parameters as production (CFG's sigma_upper_q, mde=None -> tau from
+    MIN_N); ``test_vectorised_bounds_equal_production_confidence_sequence`` proves
+    the rows equal the production function, so the sims test production maths.
+    """
+    from scipy.stats import chi2
+
+    mean = csum[:, n - 1] / n
+    if known_sigma is None:
+        var = (csq[:, n - 1] - n * mean * mean) / (n - 1)
+        q = CFG.stats.sigma_upper_q
+        s = np.sqrt(np.maximum(var, 0)) * math.sqrt((n - 1) / chi2.ppf(q, n - 1))
+    else:
+        s = np.full(csum.shape[0], known_sigma)
+    tau = stats.mixing_tau(1.0, mde=None, min_sessions=MIN_N) * s
+    hw = stats.msprt_halfwidth(n, s, tau, ALPHA)
+    return mean - hw, mean + hw
+
+
 def _peeking_rejections(
     d: np.ndarray, *, known_sigma: float | None, first: int = 2
 ) -> tuple[np.ndarray, np.ndarray]:
     """(CI ever excluded 0 at any daily look, ever lower bound > 0 at a look >= MIN_N)."""
-    from scipy.stats import chi2
-
     sims = d.shape[0]
     any_ = np.zeros(sims, bool)
     win = np.zeros(sims, bool)
     csum = np.cumsum(d, axis=1)
     csq = np.cumsum(d * d, axis=1)
     for n in range(first, d.shape[1] + 1):
-        mean = csum[:, n - 1] / n
-        if known_sigma is None:
-            var = (csq[:, n - 1] - n * mean * mean) / (n - 1)
-            s = np.sqrt(np.maximum(var, 0)) * math.sqrt((n - 1) / chi2.ppf(0.05, n - 1))
-        else:
-            s = np.full(sims, known_sigma)
-        hw = stats.msprt_halfwidth(n, s, stats.mde_fixed(1.0, MIN_N) * s, ALPHA)
-        any_ |= (mean - hw > 0) | (mean + hw < 0)
+        lo, hi = _vector_bounds(csum, csq, n, known_sigma=known_sigma)
+        any_ |= (lo > 0) | (hi < 0)
         if n >= MIN_N:
-            win |= mean - hw > 0
+            win |= lo > 0
     return any_, win
+
+
+@pytest.mark.parametrize("known_sigma", [SIGMA, None], ids=["aa_sigma", "running_corrected"])
+def test_vectorised_bounds_equal_production_confidence_sequence(
+    known_sigma: float | None,
+) -> None:
+    rng = np.random.default_rng(3)
+    d = rng.normal(0.0002, SIGMA, size=(5, HORIZON))
+    csum, csq = np.cumsum(d, axis=1), np.cumsum(d * d, axis=1)
+    for n in (2, MIN_N, 37, HORIZON):
+        lo, hi = _vector_bounds(csum, csq, n, known_sigma=known_sigma)
+        for i in range(d.shape[0]):
+            ci, _, _ = stats.confidence_sequence(
+                d[i, :n],
+                alpha=ALPHA,
+                sigma=known_sigma,
+                sigma_upper_q=CFG.stats.sigma_upper_q,
+                mde=None,
+                min_sessions=MIN_N,
+            )
+            assert ci is not None
+            assert (lo[i], hi[i]) == pytest.approx((ci.lo, ci.hi), rel=1e-9, abs=1e-12)
 
 
 @pytest.mark.parametrize("known_sigma", [SIGMA, None], ids=["aa_sigma", "running_corrected"])
@@ -279,6 +316,65 @@ def test_missing_arm_session_is_skipped_and_listed(conn: sqlite3.Connection) -> 
     r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
     assert [s.day for s in r.series] == [days[0]]  # day 3 needs day 2's arm close too
     assert r.missing_sessions == days[1:]
+
+
+def test_treatment_reads_virtual_equity_not_broker_equity(conn: sqlite3.Connection) -> None:
+    """Review E10.3 #1: the experiment account's broker equity is never reset.
+
+    Broker $95k vs t0 $100k (and vs a $10k control), equal P&L, no pre-t0 arm row:
+    the first session's d is 0 (not -5% / -850%) and nothing stops.
+    """
+    for t0_equity in (100_000.0, 10_000.0):
+        c = connect(":memory:")
+        migrate(c)
+        store = fx.start(c, fx.spec(), t0_equity=t0_equity)
+        days = fx.equity_curves(
+            c, "X-2", [10, 10, 10], [10, 10, 10], t0_equity=t0_equity, prior_close=t0_equity
+        )
+        raw = c.execute(
+            "SELECT json_extract(details_json, '$.equity') FROM pnl_snapshots"
+            " WHERE arm_id IS NOT NULL ORDER BY rowid LIMIT 1"
+        ).fetchone()[0]
+        assert float(raw) == t0_equity + 10 + fx.BROKER_EXCESS  # broker != virtual
+        r = build_report(c, store.require("X-2"), CFG, now=_after(days))
+        assert [s.d for s in r.series] == pytest.approx([0.0, 0.0, 0.0])
+        assert [s.treatment_equity for s in r.series] == pytest.approx(
+            [t0_equity + 10, t0_equity + 20, t0_equity + 30]
+        )
+        assert r.arms[1].total_pnl == pytest.approx(30)
+        assert r.arms[1].max_drawdown == pytest.approx(0.0)
+        assert r.verdict == "continue" and r.missing_sessions == []
+
+
+def test_treatment_row_without_virtual_equity_is_missing_not_fabricated(
+    conn: sqlite3.Connection,
+) -> None:
+    """No ``virtual_equity`` -> the session is missing; broker ``equity`` is no fallback."""
+    store = fx.start(conn, fx.spec())
+    days = fx.sessions(3)
+    t_arm = arm_id("X-2", "treatment")
+    from arc.utils.calendar import previous_session
+
+    fx.pnl_row(conn, previous_session(days[0]), 100_000, None)
+    for i, day in enumerate(days, start=1):
+        fx.pnl_row(conn, day, 100_000 + 10 * i, None)
+        fx.pnl_row(conn, day, 100_000 + 10 * i, t_arm, virtual=day != days[0])
+    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    # day 1 has only broker equity (95,010): missing; day 2 then lacks its previous
+    # virtual close and is missing too; day 3 pairs on virtual equity alone
+    assert r.missing_sessions == days[:2]
+    assert [s.day for s in r.series] == [days[2]]
+    assert r.series[0].d == pytest.approx(0.0)
+    assert r.series[0].treatment_equity == pytest.approx(100_030)
+
+
+def test_aa_sigma_is_not_inflated_by_the_broker_excess(conn: sqlite3.Connection) -> None:
+    """An A/A with identical arms on a $95k account vs $100k control: d == 0, never invalid."""
+    store = fx.start(conn, fx.spec("X-1", kind="aa"))
+    days = fx.equity_curves(conn, "X-1", [25, -40, 15, 5], [25, -40, 15, 5])
+    r = build_report(conn, store.require("X-1"), CFG, now=_after(days))
+    assert [s.d for s in r.series] == pytest.approx([0.0] * 4)
+    assert r.verdict == "continue"
 
 
 def test_legacy_book_excluded_from_control(conn: sqlite3.Connection) -> None:
