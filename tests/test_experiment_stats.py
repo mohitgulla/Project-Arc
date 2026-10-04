@@ -520,7 +520,7 @@ def test_aa_never_wins_records_sigma_and_unlocks_ab(conn: sqlite3.Connection) ->
     assert r.secondary.non_inferior is None
     sd = stats.sample_sd([s.d for s in r.series])
     assert r.calibration.sigma == pytest.approx(sd)
-    assert set(r.calibration.mde_fixed) == {10, 20, 60}
+    assert set(r.calibration.mde_fixed) == {10, 20, 40, 60}
     assert r.calibration.mde_fixed[20] == pytest.approx(2.8 * sd / math.sqrt(20))
     assert all(r.calibration.mde_always_valid[k] > r.calibration.mde_fixed[k] for k in (10, 20, 60))
     assert store.aa_sigma() == pytest.approx(sd)  # E10.1's gate for ab starts

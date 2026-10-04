@@ -712,9 +712,10 @@ def build_report(
 
     # -- calibration ---------------------------------------------------------
     sd = stats.sample_sd(d) if n >= 2 else None
-    horizons = sorted(
-        {cfg.defaults.min_sessions, cfg.defaults.max_sessions, sp.min_sessions, sp.max_sessions}
-    )
+    # the A/A's MDE table (E10.4): the default window's ends and midpoint (20/40/60)
+    # plus this spec's own window
+    lo_s, hi_s = cfg.defaults.min_sessions, cfg.defaults.max_sessions
+    horizons = sorted({lo_s, (lo_s + hi_s) // 2, hi_s, sp.min_sessions, sp.max_sessions})
     paired, diverged = _divergence(conn, t_arm, run.t0)
     fill = [(a.filled_executions / a.executions) if a.executions else None for a in (ctrl, treat)]
     cal = Calibration(

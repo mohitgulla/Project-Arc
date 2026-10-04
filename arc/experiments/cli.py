@@ -68,6 +68,13 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
     rp.add_argument("experiment_id")
     rp.add_argument("--stored", action="store_true", help="Latest stored report, no recompute")
     rp.add_argument("--now", default=None, help="Evaluate as of this ISO time (default: now)")
+    rp.add_argument(
+        "--format",
+        choices=["text", "md"],
+        default="text",
+        help="text (default) or md: the A/A calibration report as Markdown (E10.4)",
+    )
+    rp.add_argument("--out", default=None, help="With --format md: write the document here")
     ev = common(esub.add_parser("evaluate", help="Evaluate running experiments; apply verdicts"))
     ev.add_argument("experiment_id", nargs="?", default=None)
     ev.add_argument("--now", default=None, help="Evaluate as of this ISO time (default: now)")
@@ -220,6 +227,22 @@ def _owner(actor: str) -> bool:
     return actor.upper() in {u.upper() for u in ArcSettings().approver_slack_user_ids}
 
 
+def _write_md(rep: ExperimentReport, out: str | None) -> int:
+    """``report --format md``: the calibration Markdown to stdout, or the doc to *out*."""
+    from pathlib import Path
+
+    from arc.experiments.calibration import aa_document, calibration_markdown
+
+    if out is None:
+        _out("\n".join(calibration_markdown(rep)))
+        return 0
+    path = Path(out)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(aa_document(rep))
+    _out(f"wrote {path}")
+    return 0
+
+
 def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) -> int:
     from arc.control.effective import effective_settings, experiments_config
     from arc.experiments.evaluate import build_report, evaluate, evaluate_running, latest_report
@@ -245,6 +268,11 @@ def _run_eval(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) ->
                     aa_sigma=store.aa_sigma(),
                 )
         reports = [rep]
+        if args.format == "md":
+            return _write_md(rep, args.out)
+        if args.out:
+            _err("arc experiment report: --out needs --format md")
+            return 2
     else:
         store._now = lambda: now  # noqa: SLF001 - stop events carry the evaluation time
         if args.experiment_id is not None:
