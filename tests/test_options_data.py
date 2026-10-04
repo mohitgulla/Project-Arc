@@ -3,6 +3,9 @@
 Fixtures in tests/fixtures/options_data are trimmed copies of the live payloads
 fetched 2026-09-29 (Cboe history CSVs + daily market statistics, the Fed FOMC
 calendar page for 2026 and 2024, the BLS release-schedule ICS for Sep-Dec 2026).
+``bea_schedule.ics`` is a trimmed raw copy (CRLF, folded lines, ``\\,`` escapes) of the
+BEA release-schedule ICS fetched 2026-10-04: 22 VEVENTs (8 GDP, 7 Personal Income and
+Outlays, and 7 regional/territory/trade releases that must be dropped).
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import requests
 from hypothesis import given
 from hypothesis import strategies as st
 
+from arc.context.kinds import MacroEvent
 from arc.context.store import ContextStore
 from arc.data.base import OptionContract
 from arc.ingest.options_data import (
@@ -29,6 +33,7 @@ from arc.ingest.options_data import (
     fetch_vol_term,
     macro_calendar,
     next_ex_dividends,
+    parse_bea_ics,
     parse_bls_ics,
     parse_cboe_history,
     parse_fomc_calendar,
@@ -66,6 +71,7 @@ def _fixture_get(url: str, ua: str) -> bytes:
     name = url.rsplit("/", 1)[-1]
     if name.endswith("_daily_options"):
         name += ".json"
+    name = {"online-calendar-subscription.ics": "bea_schedule.ics"}.get(name, name)
     path = FIX / name
     if not path.exists():
         raise requests.HTTPError(f"404 {url}")
@@ -176,27 +182,31 @@ class TestMacroCalendar:
 
     def test_merged_window(self) -> None:
         payload, counts = fetch_macro_calendar(TODAY, 45, get=_fixture_get)
-        assert counts["fomc"] > 0 and counts["bls"] > 0
+        assert counts["fomc"] > 0 and counts["bls"] > 0 and counts["bea"] > 0
         got = [(e.date, e.kind) for e in payload.events]
-        assert got[:5] == [
+        assert got[:6] == [
             ("2026-09-29", "jolts"),
+            ("2026-09-30", "gdp"),
+            ("2026-09-30", "pce"),
             ("2026-10-02", "nfp"),
             ("2026-10-14", "cpi"),
             ("2026-10-15", "ppi"),
-            ("2026-10-28", "fomc"),
         ]
+        assert ("2026-10-28", "fomc") in got
+        assert ("2026-10-29", "gdp") in got and ("2026-10-29", "pce") in got
         assert all(TODAY.isoformat() <= d <= "2026-11-13" for d, _ in got)
 
-    def test_bls_gets_the_contact_user_agent(self) -> None:
-        """Live 2026-09-29: BLS 403s an agent without a contact email."""
+    def test_bls_and_bea_get_the_contact_user_agent(self) -> None:
+        """Live 2026-09-29: BLS 403s an agent without a contact email; BEA gets the same."""
         seen: dict[str, str] = {}
 
         def get(url: str, ua: str) -> bytes:
             seen[url.split("/")[2]] = ua
-            return _fixture_get(url, BLS_UA if "bls" in url else ua)
+            return _fixture_get(url, ua if ua == BROWSER_UA else BLS_UA)
 
         fetch_macro_calendar(TODAY, 45, get=get, contact_ua="Owner arc@owner.example")
         assert seen["www.bls.gov"] == "Owner arc@owner.example"
+        assert seen["www.bea.gov"] == "Owner arc@owner.example"
         assert "@" in BLS_UA
 
     def test_one_calendar_down_still_returns_the_other(self) -> None:
@@ -208,10 +218,132 @@ class TestMacroCalendar:
         payload, counts = fetch_macro_calendar(TODAY, 45, get=get)
         assert counts["fomc"] == 0 and payload.events
 
+    @pytest.mark.parametrize(
+        "failure",
+        [requests.HTTPError("403 Forbidden"), requests.ConnectionError("down"), "garbage"],
+    )
+    def test_bea_failure_keeps_fomc_and_bls(self, failure: object) -> None:
+        from structlog.testing import capture_logs
+
+        status: dict[str, str] = {}
+
+        def get(url: str, ua: str) -> bytes:
+            if "bea.gov" in url:
+                if isinstance(failure, Exception):
+                    raise failure
+                # parses, but the date is impossible: the parser must raise, not crash the run
+                return b"BEGIN:VEVENT\r\nSUMMARY:GDP (Advance Estimate)\\, 3rd Quarter 2026\r\n" + (
+                    b"DTSTART;VALUE=DATE-TIME:20261399T123000Z\r\nEND:VEVENT\r\n"
+                )
+            return _fixture_get(url, ua)
+
+        with capture_logs() as logs:
+            payload, counts = fetch_macro_calendar(TODAY, 45, get=get, status=status)
+        assert counts["bea"] == 0 and counts["fomc"] > 0 and counts["bls"] > 0
+        assert status["fomc"] == status["bls"] == "ok"
+        assert status["bea"].startswith("failed:")
+        assert {e.kind for e in payload.events} >= {"fomc", "cpi"}
+        assert not any(e.source == "bea.gov" for e in payload.events)
+        failed = [x for x in logs if x["event"] == "macro_calendar.source_failed"]
+        assert [x["source"] for x in failed] == ["bea"]
+
     def test_dedupes_same_day_same_kind(self) -> None:
         events = parse_bls_ics((FIX / "bls.ics").read_text())
         p = macro_calendar(events + events, TODAY, 90)
         assert len({(e.date, e.kind) for e in p.events}) == len(p.events)
+
+    def test_dedupe_key_includes_name(self) -> None:
+        """Two distinct releases of one kind on one day both survive; exact repeats don't."""
+        a = MacroEvent(date="2026-10-29", time="08:30", kind="gdp", name="GDP A", source="x")
+        b = a.model_copy(update={"name": "GDP B"})
+        p = macro_calendar([a, b, a], TODAY, 45)
+        assert [e.name for e in p.events] == ["GDP A", "GDP B"]
+
+
+class TestBea:
+    def _events(self) -> list[MacroEvent]:
+        return parse_bea_ics((FIX / "bea_schedule.ics").read_text())
+
+    def test_counts_and_kinds(self) -> None:
+        events = self._events()
+        # fixture: 22 VEVENTs = 8 GDP + 7 Personal Income and Outlays kept; 7 dropped
+        # (State / Puerto Rico / County GDP, 2x Real PCE by State, International Trade)
+        assert sum(e.kind == "gdp" for e in events) == 8
+        assert sum(e.kind == "pce" for e in events) == 7
+        assert len(events) == 15
+        assert {e.kind for e in events} == {"gdp", "pce"}  # never "other"
+        assert all(e.source == "bea.gov" for e in events)
+
+    def test_ignored_releases_are_dropped(self) -> None:
+        names = " ".join(e.name for e in self._events())
+        for word in ("County", "State", "Puerto", "Trade", "Real Personal"):
+            assert word not in names
+        for day in ("2025-03-28", "2025-09-16", "2026-02-05", "2026-02-19", "2026-12-02"):
+            assert not any(e.date == day for e in self._events())
+
+    def test_names_and_next_release(self) -> None:
+        by_day = {(e.date, e.kind): e for e in self._events()}
+        gdp = by_day[("2026-10-29", "gdp")]
+        pce = by_day[("2026-10-29", "pce")]
+        assert gdp.name == "GDP Q3 2026 (advance)" and gdp.time == "08:30"
+        assert pce.name == "PCE / Personal Income September 2026" and pce.time == "08:30"
+        assert by_day[("2026-11-25", "gdp")].name == "GDP Q3 2026 (second)"
+        assert by_day[("2026-12-23", "gdp")].name == "GDP Q3 2026 (third)"
+        # pre-2026 long title, folded across two lines in the raw ICS
+        assert by_day[("2025-01-30", "gdp")].name == "GDP Q4 2024 (advance)"
+        assert by_day[("2025-03-27", "gdp")].name == "GDP Q4 2024 (third)"
+        assert by_day[("2025-12-23", "gdp")].name == "GDP Q3 2025 (initial)"
+
+    def test_utc_to_et_across_dst(self) -> None:
+        by_day = {(e.date, e.kind): e for e in self._events()}
+        assert by_day[("2026-10-29", "gdp")].time == "08:30"  # 12:30Z in EDT
+        assert by_day[("2026-11-25", "gdp")].time == "08:30"  # 13:30Z in EST
+        assert by_day[("2025-12-05", "pce")].time == "10:00"  # 15:00Z in EST
+
+    def test_late_utc_rolls_back_to_the_et_date(self) -> None:
+        ics = (
+            "BEGIN:VEVENT\r\nSUMMARY:Personal Income and Outlays\\, May 2026\r\n"
+            "DTSTART;VALUE=DATE-TIME:20260627T020000Z\r\nEND:VEVENT\r\n"
+        )
+        (e,) = parse_bea_ics(ics)
+        assert (e.date, e.time) == ("2026-06-26", "22:00")
+
+    def test_tzid_and_all_day_starts(self) -> None:
+        ics = (
+            "BEGIN:VEVENT\r\nSUMMARY:GDP (Advance Estimate)\\, 1st Quarter 2027\r\n"
+            "DTSTART;TZID=America/New_York:20270429T083000\r\nEND:VEVENT\r\n"
+            "BEGIN:VEVENT\r\nSUMMARY:Personal Income and Outlays\\, March 2027\r\n"
+            "DTSTART;VALUE=DATE:20270430\r\nEND:VEVENT\r\n"
+            "BEGIN:VEVENT\r\nSUMMARY:Personal Income and Outlays\\, April 2027\r\n"
+            "DTSTART;TZID=Europe/London:20270528T083000\r\nEND:VEVENT\r\n"
+            "BEGIN:VEVENT\r\nSUMMARY:GDP (Second Estimate)\r\nDTSTART:not-a-date\r\nEND:VEVENT\r\n"
+        )
+        got = [(e.date, e.time, e.kind) for e in parse_bea_ics(ics)]
+        assert got == [("2027-04-29", "08:30", "gdp"), ("2027-04-30", None, "pce")]
+
+    def test_quarterless_gdp_title_and_escapes(self) -> None:
+        ics = (
+            "BEGIN:VEVENT\r\nSUMMARY:GDP (Advance Estimate)\\; revised\\\\notes\r\n"
+            "DTSTART:20270129T133000Z\r\nEND:VEVENT\r\n"
+            "BEGIN:VEVENT\r\nSUMMARY:Gross Domestic Product\\, annual update\r\n"
+            "DTSTART:20270130T133000Z\r\nEND:VEVENT\r\n"
+        )
+        assert [e.name for e in parse_bea_ics(ics)] == ["GDP (advance)", "GDP"]
+
+    @given(
+        st.datetimes(
+            min_value=dt.datetime(2020, 1, 1),  # noqa: DTZ001 - naive UTC wall time for the ICS
+            max_value=dt.datetime(2035, 12, 31),  # noqa: DTZ001
+        )
+    )
+    def test_property_et_conversion(self, at: dt.datetime) -> None:
+        ics = (
+            "BEGIN:VEVENT\r\nSUMMARY:Personal Income and Outlays\\, X\r\n"
+            f"DTSTART:{at:%Y%m%dT%H%M}00Z\r\nEND:VEVENT\r\n"
+        )
+        (e,) = parse_bea_ics(ics)
+        want = at.replace(second=0, microsecond=0, tzinfo=dt.UTC).astimezone(ET)
+        assert (e.date, e.time) == (want.date().isoformat(), want.strftime("%H:%M"))
 
 
 # ---------------------------------------------------------------------------
