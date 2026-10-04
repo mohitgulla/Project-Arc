@@ -395,6 +395,8 @@ def test_digest_is_unchanged_with_the_flag_off() -> None:
     pre = _loop_inputs([]).model_dump(mode="json")
     pre.pop("facts")
     assert _loop_inputs([]).digest() == digest(pre)  # == the pre-E4.8a digest
+    assert _loop_inputs([]).payload() == pre  # recorded input == pre-E4.8a payload
+    assert digest(_loop_inputs(["k"]).payload()) == _loop_inputs(["k"]).digest()
 
 
 def test_digest_moves_on_as_of_only() -> None:

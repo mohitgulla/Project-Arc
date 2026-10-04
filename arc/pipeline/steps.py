@@ -955,8 +955,8 @@ def _loop_no_change(
         facts_tickers=facts_tickers or [],
     )
     new_digest = inputs.digest()
-    log.debug("pipeline.loop_inputs", digest=new_digest[:12], **inputs.model_dump(mode="json"))
-    ctx.record_input("loop_inputs", "db", inputs.model_dump(mode="json"))
+    log.debug("pipeline.loop_inputs", digest=new_digest[:12], **inputs.payload())
+    ctx.record_input("loop_inputs", "db", inputs.payload())
     if not ctx.is_loop_run:
         return None
     state = LoopState(ctx.conn)

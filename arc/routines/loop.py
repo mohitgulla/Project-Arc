@@ -57,11 +57,16 @@ class LoopInputs(BaseModel):
     # E4.8a: Finnhub facts "<kind>:<ticker>@<as_of>", sorted; [] with the flag off.
     facts: list[str] = []
 
-    def digest(self) -> str:
+    def payload(self) -> dict[str, object]:
+        """The recorded/digested form; without ``facts`` when empty (flag off), so the
+        payload and digest are the pre-E4.8a ones."""
         data = self.model_dump(mode="json")
-        if not data["facts"]:  # flag off: the digest is the pre-E4.8a digest
+        if not data["facts"]:
             data.pop("facts")
-        return _digest(data)
+        return data
+
+    def digest(self) -> str:
+        return _digest(self.payload())
 
 
 def pnl_bucket(day_pnl: float | None, equity: float | None, bucket_pct: float) -> int:
