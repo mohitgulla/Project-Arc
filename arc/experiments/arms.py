@@ -16,6 +16,7 @@ import datetime as _dt  # noqa: TC003 - pydantic resolves ArmIdentity's annotati
 import json
 import os
 import sqlite3
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,6 +31,7 @@ __all__ = [
     "ArmIdentity",
     "ArmKeyError",
     "arm_keys",
+    "arm_stores",
     "read_identity",
     "write_identity",
 ]
@@ -124,3 +126,15 @@ def arm_keys(keys_env: str, environ: Mapping[str, str] | None = None) -> tuple[s
             msg = f"{keys_env}_API_KEY equals {other}_API_KEY: the arm must not share an account"
             raise ArmKeyError(msg)
     return key, secret
+
+
+def arm_stores(conn: sqlite3.Connection) -> dict[str, Path]:
+    """Arm name -> store path recorded in the control store at t0.
+
+    Lives here (not in :mod:`arc.experiments.runner`) so the read path the tower
+    uses (``evaluate`` -> ``paired``) never imports the runner's broker/routine code.
+    """
+    rows = conn.execute(
+        "SELECT key, value FROM routine_state WHERE key LIKE 'experiment_arm:%' ORDER BY key"
+    ).fetchall()
+    return {r[0].split(":", 1)[1]: Path(r[1]) for r in rows}

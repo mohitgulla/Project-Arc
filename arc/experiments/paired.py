@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from arc.experiments.arms import read_identity
+from arc.experiments.arms import arm_stores, read_identity
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -57,8 +57,6 @@ def _columns(conn: sqlite3.Connection, schema: str, table: str) -> list[str]:
 
 
 def _arm_paths(conn: sqlite3.Connection) -> list[Path]:
-    from arc.experiments.runner import arm_stores
-
     return [p for p in arm_stores(conn).values() if p.is_file()]
 
 
