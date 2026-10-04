@@ -866,7 +866,7 @@ class TestTickScript:
 def test_yaml_comment_overview_matches_config() -> None:
     raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
     assert raw["tick"]["interval"] == "5m"
-    assert set(raw["personas"]) == {
+    assert set(raw["personas"]) - {"finnhub_context"} == {
         "scout", "scout.overnight", "director", "monitor", "auditor", "scorecard", "investor",
         "positions.evaluate", "experiments.evaluate",
     }  # fmt: skip

@@ -1,0 +1,32 @@
+# E4.8a (D46, D44): DRAFT forward A/B for the Finnhub facts in the persona prompts.
+# Not registered: `arc experiment create` + `register` hash-lock it, so the owner
+# reviews the margin and sessions first (and XP-1's A/A sets the real MDE).
+#
+# Treatment = `personas.finnhub_context: on`. In a paired run the arm reuses control's
+# Scout output (shared input), so the arm differs only from the Director step on:
+# the Director sees one compact facts line per candidate (EPS surprises, insider net,
+# analyst trend, beta / 52w distance / rel-strength / cap bucket / fwd P/E).
+# Promotion (flipping the default in config/routines.yaml) needs a committed
+# `verdicts/XP-2.yaml` with `verdict: win` (docs/OPS.md 5.20).
+spec_version: 1
+id: XP-2
+title: Finnhub per-ticker facts in the Director prompt
+hypothesis: >
+  Giving the Director slow-moving per-ticker facts (earnings surprise history, insider
+  net buying, analyst recommendation trend, beta and 52-week position) improves which
+  candidates it ranks, raising paired daily net P&L without a worse Sortino.
+area: entries
+kind: ab
+arms:
+  control:
+    overlay: {}
+  treatment:
+    overlay:
+      routines:
+        personas:
+          finnhub_context: "on"
+non_inferiority_margin: 0.5
+proposed_by: owner
+# The E7.5 backtester replays no LLM, so a persona-prompt change has no backtest;
+# the forward run is the only test.
+backtest_ref: "none: persona prompt change, not backtestable (E7.5 replays no LLM)"

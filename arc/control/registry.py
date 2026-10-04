@@ -1329,6 +1329,20 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         path=("loop", "slack_layout"),
         choices=("root_per_loop", "day_thread"),
     ),
+    # E4.8a (D46/D44): Finnhub facts in the Scout/Director prompts. Strategy lane:
+    # the default stays off until an experiment (XP-2) returns a `win` verdict.
+    Tunable(
+        key="personas.finnhub_context",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E4.8a: show the Finnhub per-ticker facts (earnings surprises, insider, "
+        "analyst recs, fundamentals) to the Scout and the Director. Experiment XP-2 tests it.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "finnhub_context"),
+        choices=("off", "on"),
+        aliases=("routines.personas.finnhub_context", "finnhub_context"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -1964,6 +1978,8 @@ DEFAULT_STOP_VALUE = 0.75  # D23 relaxed stop, used when a stop is created from 
 _SECTIONS = ("sources", "personas")
 # Top-level routines.yaml sections whose tunables are plain paths (not per job).
 _PLAIN_ROUTINE_SECTIONS = (("loop",), ("monitoring",), ("categories",))
+# Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
+_PERSONA_SWITCHES = frozenset({("personas", "finnhub_context")})
 
 
 def _get(data: Any, path: tuple[str, ...]) -> Any:
@@ -2006,6 +2022,13 @@ def _minutes(text: str) -> int:
 
 def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
     """The value of YAML-targeted *t* in *raw* file data, in registry form."""
+    if t.target is Target.ROUTINES and t.path in _PERSONA_SWITCHES:
+        v = _get(raw, t.path)
+        if v is None:
+            return "off"  # an absent switch is off (the control behaviour)
+        if isinstance(v, bool):  # YAML 1.1 reads a bare on/off as a boolean
+            return "on" if v else "off"
+        return str(v).strip().lower()
     if t.target is Target.ROUTINES and t.path[:1] in _PLAIN_ROUTINE_SECTIONS:
         v = _get(raw, t.path)
         if v is None:
@@ -2050,6 +2073,8 @@ def write_raw(t: Tunable, value: Any, raw: dict[str, Any]) -> list[tuple[tuple[s
 
     Pure helper for :mod:`arc.control.effective`; the pairs are applied in order.
     """
+    if t.target is Target.ROUTINES and t.path in _PERSONA_SWITCHES:
+        return [(t.path, str(value))]
     if t.target is Target.ROUTINES and t.path[:1] in _PLAIN_ROUTINE_SECTIONS:
         if t.unit == "m":
             return [(t.path, f"{int(value)}m")]

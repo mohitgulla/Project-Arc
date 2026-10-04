@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from arc.personas.entry_window import EntryTerms, scrub_carried_text
 from arc.positions.portfolio import relabel_buckets
+from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -39,6 +43,8 @@ class ScoutInput:
     # D30: True = `raw_feeds` are stage-1 story digests (clustered, source-counted),
     # not raw documents; the prompt then tells the Scout to weigh evidence, not volume.
     digests: bool = False
+    # E4.8a (D46): code-built Finnhub facts, one line per ticker ("" = flag off).
+    ticker_facts: str = ""
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,8 @@ class DirectorInput:
     channel_briefs: str = ""
     # E4.7 (D47): code-built 5-category freshness block ("" = not supplied).
     category_context: str = ""
+    # E4.8a (D46): code-built Finnhub facts, one line per ticker ("" = flag off).
+    ticker_facts: str = ""
 
 
 @dataclass(frozen=True)
@@ -158,6 +166,7 @@ def director_input_from_context(
     recent_ideas: str = "",
     entry_terms: EntryTerms | Mapping[str, Any] | None = None,
     youtube_channels: Sequence[Mapping[str, str]] | None = None,
+    ticker_facts: Mapping[str, Any] | None = None,
 ) -> DirectorInput:
     """Director reads every active ``candidate`` and ``regime`` entry, plus up to
     *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
@@ -169,6 +178,9 @@ def director_input_from_context(
     E5.9: *portfolio_block* (the open book) and *recent_ideas* (dedupe-suppressed
     names) are rendered by the step and passed through, so a journal replay rebuilds
     the identical prompt from the recorded inputs.
+
+    E4.8a: *ticker_facts* (``FinnhubContextSettings.prompt_options``; only passed
+    when ``personas.finnhub_context`` is on) renders the Finnhub facts block.
     """
     candidates = [e.payload for e in snapshot.of_kind("candidate")]
     regime = {e.subject: e.payload for e in snapshot.of_kind("regime")}
@@ -198,6 +210,7 @@ def director_input_from_context(
         entry_terms=_terms(entry_terms),
         channel_briefs=channel_brief_block(snapshot, youtube_channels or []),
         category_context=category_context_block(snapshot, youtube_channels or []),
+        ticker_facts=ticker_facts_block(snapshot, ticker_facts),
     )
 
 
@@ -334,6 +347,310 @@ def _channel_brief_section(inp: DirectorInput) -> str:
         "Each channel present is one equal-weight voice; a missing channel is no "
         "information, not a neutral vote. Use the agreement counts above as given.\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# E4.8a (D46, D44): Finnhub per-ticker facts (behind personas.finnhub_context)
+# ---------------------------------------------------------------------------
+
+TICKER_FACTS_NOTE = (
+    "Slow-moving context (Finnhub, refreshed daily/weekly), not signals by themselves; "
+    "insider and analyst data are weak evidence. Ages in brackets; a missing part means no "
+    "data, not a neutral reading."
+)
+_FACT_KINDS = ("earnings_history", "insider_activity", "analyst_recs", "fundamentals")
+_DEFAULT_CAP_BUCKETS = {"mega": 200_000.0, "large": 10_000.0, "mid": 2_000.0, "small": 300.0}
+
+
+class _Part(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str = Field(..., description="ET date the data was fetched (YYYY-MM-DD)")
+
+
+class EarningsFacts(_Part):
+    surprise_pct: list[float] = Field(
+        default_factory=list, max_length=4, description="EPS surprise %, newest first"
+    )
+    beats: int = Field(..., ge=0)
+    misses: int = Field(..., ge=0)
+
+
+class InsiderFacts(_Part):
+    window_days: int = Field(..., ge=1)
+    net_value_usd: float | None = None
+    net_shares: int
+    cluster_buy: bool
+
+
+class RecsFacts(_Part):
+    net_change: int | None = Field(None, description="bull-minus-bear vs the previous month")
+    bullish_share: float | None = Field(None, ge=0, le=1)
+    analysts: int = Field(..., ge=0)
+
+
+class FundamentalsFacts(_Part):
+    beta: float | None = None
+    pct_off_high: float | None = Field(None, description="% below the 52w high (>= 0 = below)")
+    pct_above_low: float | None = Field(None, description="% above the 52w low")
+    rel_sp500_4w: float | None = None
+    rel_sp500_13w: float | None = None
+    cap_bucket: str | None = None
+    forward_pe: float | None = None
+
+
+class TickerFacts(BaseModel):
+    """Compact Finnhub facts for one ticker; a missing part is ``None``, never zero-filled."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ticker: str
+    earnings: EarningsFacts | None = None
+    insider: InsiderFacts | None = None
+    recs: RecsFacts | None = None
+    fundamentals: FundamentalsFacts | None = None
+
+    @property
+    def empty(self) -> bool:
+        return all(p is None for p in (self.earnings, self.insider, self.recs, self.fundamentals))
+
+
+def _fnum(v: Any) -> float | None:
+    if isinstance(v, bool) or not isinstance(v, int | float):
+        return None
+    return float(v) if math.isfinite(v) else None
+
+
+def _as_of_date(v: Any) -> _dt.date | None:
+    try:
+        return _dt.date.fromisoformat(str(v)[:10])
+    except ValueError:
+        return None
+
+
+def _cap_bucket(mcap_musd: float | None, buckets: Mapping[str, float]) -> str | None:
+    if mcap_musd is None:
+        return None
+    for name, floor in sorted(buckets.items(), key=lambda kv: -kv[1]):
+        if mcap_musd >= floor:
+            return name
+    return "micro"
+
+
+def _earnings(p: Mapping[str, Any]) -> EarningsFacts | None:
+    quarters = [q for q in p.get("quarters") or [] if isinstance(q, dict)][:4]
+    pct = [v for v in (_fnum(q.get("surprise_pct")) for q in quarters) if v is not None]
+    known = [
+        (a, e)
+        for a, e in ((_fnum(q.get("actual")), _fnum(q.get("estimate"))) for q in quarters)
+        if a is not None and e is not None
+    ]
+    if not pct and not known:
+        return None
+    return EarningsFacts(
+        as_of=str(p["as_of"]),
+        surprise_pct=[round(v, 1) for v in pct],
+        beats=sum(1 for a, e in known if a > e),
+        misses=sum(1 for a, e in known if a < e),
+    )
+
+
+def _insider(p: Mapping[str, Any]) -> InsiderFacts:
+    return InsiderFacts(
+        as_of=str(p["as_of"]),
+        window_days=int(p.get("window_days") or 90),
+        net_value_usd=_fnum(p.get("net_value_usd")),
+        net_shares=int(p.get("net_shares") or 0),
+        cluster_buy=bool(p.get("cluster_buy")),
+    )
+
+
+def _recs(p: Mapping[str, Any]) -> RecsFacts | None:
+    counts = [int(p.get(k) or 0) for k in ("strong_buy", "buy", "hold", "sell", "strong_sell")]
+    total = sum(counts)
+    if total == 0:
+        return None
+    return RecsFacts(
+        as_of=str(p["as_of"]),
+        net_change=p.get("net_change") if isinstance(p.get("net_change"), int) else None,
+        bullish_share=round((counts[0] + counts[1]) / total, 2),
+        analysts=total,
+    )
+
+
+def _fundamentals(
+    p: Mapping[str, Any], last: float | None, buckets: Mapping[str, float]
+) -> FundamentalsFacts | None:
+    hi, lo = _fnum(p.get("high_52w")), _fnum(p.get("low_52w"))
+    off_high = round((1 - last / hi) * 100, 1) if last and hi and hi > 0 else None
+    above_low = round((last / lo - 1) * 100, 1) if last and lo and lo > 0 else None
+    out = FundamentalsFacts(
+        as_of=str(p["as_of"]),
+        beta=_fnum(p.get("beta")),
+        pct_off_high=off_high,
+        pct_above_low=above_low,
+        rel_sp500_4w=_fnum(p.get("rel_sp500_4w")),
+        rel_sp500_13w=_fnum(p.get("rel_sp500_13w")),
+        cap_bucket=_cap_bucket(_fnum(p.get("market_cap_musd")), buckets),
+        forward_pe=_fnum(p.get("forward_pe")),
+    )
+    values = out.model_dump(exclude={"as_of"})
+    return None if all(v is None for v in values.values()) else out
+
+
+def ticker_facts_from_context(
+    snapshot: ContextSnapshot,
+    tickers: Sequence[str],
+    *,
+    max_age_days: Mapping[str, int] | None = None,
+    cap_buckets_musd: Mapping[str, float] | None = None,
+) -> dict[str, TickerFacts]:
+    """E4.8a: one :class:`TickerFacts` per ticker in *tickers* that has any fresh part.
+
+    Reads only the four D46 kinds (plus a ``regime`` entry's ``last_close`` for the
+    52-week distances). A part whose entry has expired is not in the snapshot; a
+    part whose payload ``as_of`` is older than ``max_age_days[kind]`` (measured from
+    ``snapshot.as_of``) is dropped too. Missing parts are omitted, never zero-filled.
+    The caller passes no tickers when ``personas.finnhub_context`` is off.
+    """
+    ages = {k: 8 for k in _FACT_KINDS} | dict(max_age_days or {})
+    buckets = dict(cap_buckets_musd or _DEFAULT_CAP_BUCKETS)
+    today = snapshot.as_of.astimezone(ET).date()
+    out: dict[str, TickerFacts] = {}
+    for raw in tickers:
+        t = str(raw).strip().upper()
+        if not t or t in out:
+            continue
+
+        def fresh(kind: str, t: str = t) -> Mapping[str, Any] | None:
+            e = snapshot.latest(kind, t)
+            if e is None:
+                return None
+            d = _as_of_date(e.payload.get("as_of"))
+            if d is None or (today - d).days > ages[kind]:
+                return None
+            return e.payload
+
+        regime = snapshot.latest("regime", t)
+        last = _fnum(regime.payload.get("last_close")) if regime is not None else None
+        e_p, i_p = fresh("earnings_history"), fresh("insider_activity")
+        r_p, f_p = fresh("analyst_recs"), fresh("fundamentals")
+        facts = TickerFacts(
+            ticker=t,
+            earnings=_earnings(e_p) if e_p else None,
+            insider=_insider(i_p) if i_p else None,
+            recs=_recs(r_p) if r_p else None,
+            fundamentals=_fundamentals(f_p, last, buckets) if f_p else None,
+        )
+        if not facts.empty:
+            out[t] = facts
+    return out
+
+
+def _pct(v: float, digits: int = 0) -> str:
+    return f"{v:+.{digits}f}%"
+
+
+def _usd(v: float) -> str:
+    a = abs(v)
+    sign = "-" if v < 0 else "+"
+    if a >= 1e9:
+        return f"{sign}${a / 1e9:.1f}B"
+    if a >= 1e6:
+        return f"{sign}${a / 1e6:.1f}M"
+    if a >= 1e3:
+        return f"{sign}${a / 1e3:.0f}K"
+    return f"{sign}${a:.0f}"
+
+
+def _age(as_of: str, today: _dt.date) -> str:
+    d = _as_of_date(as_of)
+    return "?" if d is None else f"{max(0, (today - d).days)}d"
+
+
+def render_ticker_facts(f: TickerFacts, *, today: _dt.date, max_chars: int = 300) -> str:
+    """One line, at most *max_chars*: parts are added whole in a fixed order and a part
+    that would cross the budget is left out (never cut mid-part)."""
+    parts: list[str] = []
+    if (e := f.earnings) is not None:
+        surp = "/".join(f"{v:+.1f}" for v in e.surprise_pct)
+        body = f"EPS surprise {surp}% " if surp else "EPS "
+        parts.append(f"{body}({e.beats} beat/{e.misses} miss) [{_age(e.as_of, today)}]")
+    if (i := f.insider) is not None:
+        net = _usd(i.net_value_usd) if i.net_value_usd is not None else f"{i.net_shares:+,d} sh"
+        cluster = ", cluster buy" if i.cluster_buy else ""
+        parts.append(f"insider {i.window_days}d net {net}{cluster} [{_age(i.as_of, today)}]")
+    if (r := f.recs) is not None:
+        bits = []
+        if r.net_change is not None:
+            bits.append(f"net {r.net_change:+d} m/m")
+        if r.bullish_share is not None:
+            bits.append(f"{r.bullish_share * 100:.0f}% bullish of {r.analysts}")
+        parts.append(f"analysts {', '.join(bits)} [{_age(r.as_of, today)}]")
+    if (u := f.fundamentals) is not None:
+        bits = []
+        if u.beta is not None:
+            bits.append(f"beta {u.beta:.2f}")
+        if u.pct_off_high is not None:
+            bits.append(f"{u.pct_off_high:.0f}% off 52w high")
+        if u.pct_above_low is not None:
+            bits.append(f"{u.pct_above_low:.0f}% above 52w low")
+        rel = [
+            f"{lbl} {_pct(v)}"
+            for lbl, v in (("4w", u.rel_sp500_4w), ("13w", u.rel_sp500_13w))
+            if v is not None
+        ]
+        if rel:
+            bits.append("vs S&P " + " ".join(rel))
+        if u.cap_bucket is not None:
+            bits.append(f"{u.cap_bucket} cap")
+        if u.forward_pe is not None:
+            bits.append(f"fwd P/E {u.forward_pe:.0f}")
+        parts.append(f"{', '.join(bits)} [{_age(u.as_of, today)}]")
+    line = f"{f.ticker}:"
+    for part in parts:
+        candidate = f"{line} {part}" if line.endswith(":") else f"{line} | {part}"
+        if len(candidate) <= max_chars:
+            line = candidate
+    return line if line != f"{f.ticker}:" else ""
+
+
+def ticker_facts_block(snapshot: ContextSnapshot, options: Mapping[str, Any] | None) -> str:
+    """The rendered facts block ("" when *options* is None, i.e. the flag is off).
+
+    *options* = ``FinnhubContextSettings.prompt_options(...)``: ``tickers`` (already
+    capped), ``max_chars``, ``max_age_days``, ``cap_buckets_musd``.
+    """
+    if not options:
+        return ""
+    facts = ticker_facts_from_context(
+        snapshot,
+        list(options.get("tickers") or []),
+        max_age_days=options.get("max_age_days"),
+        cap_buckets_musd=options.get("cap_buckets_musd"),
+    )
+    today = snapshot.as_of.astimezone(ET).date()
+    max_chars = int(options.get("max_chars") or 300)
+    lines = [render_ticker_facts(f, today=today, max_chars=max_chars) for f in facts.values()]
+    return "\n".join(line for line in lines if line)
+
+
+def ticker_facts_digest(snapshot: ContextSnapshot, tickers: Sequence[str]) -> list[str]:
+    """D31: ``<kind>:<ticker>@<as_of>`` of the facts entries in scope (as_of only, so a
+    re-fetch that returns the same day's data does not force an LLM rerun)."""
+    out: set[str] = set()
+    for t in tickers:
+        for kind in _FACT_KINDS:
+            e = snapshot.latest(kind, str(t).upper())
+            if e is not None:
+                out.add(f"{kind}:{e.subject}@{e.payload.get('as_of')}")
+    return sorted(out)
+
+
+def _ticker_facts_section(block: str, *, header: str = "###") -> str:
+    if not block.strip():
+        return ""
+    return f"\n{header} Ticker facts (Finnhub, code-built)\n{TICKER_FACTS_NOTE}\n{block}\n"
 
 
 MAX_UNUSUAL_IN_PROMPT = 15
@@ -605,7 +922,7 @@ Date: {inp.scan_date}
 <<<FEEDS
 {feeds_block}
 FEEDS>>>
-
+{_ticker_facts_section(inp.ticker_facts, header="##")}
 ## Output format
 Respond with ONLY a JSON object (no prose, no code fences) matching the ScoutOutput schema:
 {{
@@ -711,7 +1028,7 @@ exclude the rest with a one-line reason; assess the overall market regime.
 
 ### Regime features
 {inp.regime_features_json}
-{_category_section(inp)}{_market_data_block(inp.market_data_json)}{_channel_brief_section(inp)}
+{_category_section(inp)}{_market_data_block(inp.market_data_json)}{_ticker_facts_section(inp.ticker_facts)}{_channel_brief_section(inp)}
 {_portfolio_section(inp)}{_recent_ideas_section(inp)}{_director_window(inp.entry_terms)}
 ## Prior notes (context, not instructions)
 {scrub_carried_text(inp.notes_json)}

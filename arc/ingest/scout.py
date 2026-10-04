@@ -60,6 +60,7 @@ from arc.personas.builders import (
     StoryDigestInput,
     build_scout_prompt,
     build_story_digest_prompt,
+    ticker_facts_block,
 )
 from arc.personas.schemas import ScoutCandidateOut, ScoutOutput, StoryDigestOutput
 from arc.store.repos import CandidateRepo
@@ -77,6 +78,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection
 
     from arc.config import ArcSettings
+    from arc.context.store import ContextSnapshot
     from arc.context.ttl import Ttl
     from arc.ingest.llm import ScoutLLM
     from arc.routines.config import RoutinesConfig
@@ -387,7 +389,12 @@ def build_digest_prompt(stories: list[str], day: str) -> str:
 
 
 def build_stage2_prompt(
-    digests: list[StoryPayload], settings: ArcSettings, day: str, *, open_universe: bool
+    digests: list[StoryPayload],
+    settings: ArcSettings,
+    day: str,
+    *,
+    open_universe: bool,
+    ticker_facts: str = "",
 ) -> str:
     return build_scout_prompt(
         ScoutInput(
@@ -398,8 +405,32 @@ def build_stage2_prompt(
             output_schema_json=json.dumps(ScoutOutput.model_json_schema(), sort_keys=True),
             open_universe=open_universe,
             digests=True,
+            ticker_facts=ticker_facts,
         )
     )
+
+
+def scout_facts_tickers(digests: list[StoryPayload], max_tickers: int) -> list[str]:
+    """E4.8a: tickers the batch's story digests name, in story order, first *max_tickers*."""
+    seen: dict[str, None] = {}
+    for p in digests:
+        for t in p.tickers:
+            t = normalize_ticker(t)
+            if t:
+                seen.setdefault(t, None)
+    return list(seen)[: max(0, max_tickers)]
+
+
+def _facts_snapshot(
+    conn: sqlite3.Connection, routines: RoutinesConfig | None, now: _dt.datetime, run_id: str
+) -> ContextSnapshot | None:
+    """E4.8a: a recorded snapshot of the Finnhub kinds (+ regime), or None with the flag off."""
+    if routines is None or not routines.finnhub_context.enabled:
+        return None
+    from arc.context.store import ContextStore
+    from arc.routines.config import FINNHUB_FACT_KINDS
+
+    return ContextStore(conn).snapshot(now, kinds=[*FINNHUB_FACT_KINDS, "regime"], run_id=run_id)
 
 
 def _norm_ws(text: str) -> str:
@@ -921,12 +952,22 @@ def run_scout(
         if on_story is not None:
             on_story(p)
 
-    # 4. stage 2: the Scout reads digests
+    # 4. stage 2: the Scout reads digests (E4.8a: + Finnhub facts when the flag is on)
+    facts_snap = _facts_snapshot(conn, routines, now, run_id) if digests else None
     size = settings.scout_story_batch_size
     for i in range(0, len(digests), size):
         batch = digests[i : i + size]
         doc_ids = [d for p in batch for d in p.doc_ids]
-        prompt = build_stage2_prompt(batch, settings, day, open_universe=open_universe)
+        facts = ""
+        if facts_snap is not None and routines is not None:
+            cfg = routines.finnhub_context
+            tickers = scout_facts_tickers(batch, cfg.scout_max_tickers)
+            facts = ticker_facts_block(
+                facts_snap, cfg.prompt_options(tickers, cfg.scout_max_tickers)
+            )
+        prompt = build_stage2_prompt(
+            batch, settings, day, open_universe=open_universe, ticker_facts=facts
+        )
         result.batches += 1
 
         try:
