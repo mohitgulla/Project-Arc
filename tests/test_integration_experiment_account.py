@@ -42,12 +42,12 @@ def test_arm_store_connects_to_the_experiment_account_only(tmp_path) -> None:  #
     write_identity(
         arm,
         ArmIdentity(
-            arm_id="X-0:treatment", experiment_id="X-0", arm="treatment",
+            arm_id="XP-0:treatment", experiment_id="XP-0", arm="treatment",
             spec_arm="treatment", keys_env="ALPACA_EXP",
             control_db=str(tmp_path / "missing-control.db"), overlay={}, created_at=now,
         ),
     )  # fmt: skip
-    open_account(arm, "X-0:treatment", t0_equity=Decimal(10000), legacy={}, at=now)
+    open_account(arm, "XP-0:treatment", t0_equity=Decimal(10000), legacy={}, at=now)
     assert read_identity(arm) is not None
     s = ArcSettings(account_profile="cash_debit")  # type: ignore[call-arg]
     broker = trading_broker(arm, s, now=lambda: now)
