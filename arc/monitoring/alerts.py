@@ -53,7 +53,15 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 # Condition kinds this module may auto-resolve (keys of findings from the checks).
-CONDITION_PREFIXES = ("tick_stale", "tick_slow", "gateway", "stuck:", "remote_", "coverage:")
+CONDITION_PREFIXES = (
+    "tick_stale",
+    "tick_slow",
+    "gateway",
+    "stuck:",
+    "remote_",
+    "coverage:",
+    "approvals_unposted",
+)
 # Conditions that make routine slots miss: while open they absorb missed-window
 # alerts and (E8.2a) newly opened coverage alerts.
 INCIDENT_KEYS = ("tick_stale", "gateway", "tick_slow")
@@ -66,6 +74,7 @@ _RESOLVED_BY = (
     ("stuck:", "stuck_runs"),
     ("remote_", "remote_access"),
     (COVERAGE_PREFIX, "slot_coverage"),
+    ("approvals_unposted", "approvals_unposted"),
 )
 # A slot whose window closed this long before an incident opened is still blamed on it
 # (``tick_stale`` opens ``tick_stale_after`` after the last tick; its ``since`` is exact).
@@ -218,6 +227,8 @@ def _resolve_line(alert: OpsAlert, results: dict[str, CheckResult]) -> str:
         return f"Hermes gateway healthy again{now}"
     if alert.key.startswith("stuck:"):
         return f"run {alert.key.removeprefix('stuck:')} is no longer stuck"
+    if alert.key == "approvals_unposted":
+        return "every pending approval request has its Slack card (or expired)"
     if alert.key.startswith("remote_"):
         ra = results.get("remote_access")
         what = {

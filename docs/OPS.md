@@ -665,6 +665,21 @@ card edited to "not executed". `arc health check` also reports each such event o
 running. `arc routines events [--json]` lists every dispatched, unconsumed event with its
 age, its run (if one started) and `STRANDED` when it is past the grace with no run.
 
+Card post failed (E6.1b): the approval request is committed before its card is posted, so
+a Slack error (`approvals.post_failed`) leaves a `pending` request with
+`channel = 'post_failed'` and no `message_ts`. Every later tick's sweep (never the
+in-chain `execute` publish, and only once the request is a minute old) re-renders the
+card for the same proposal hash and posts it once (`approvals.reposted`); a retry that
+fails again is one `approvals.repost_failed` line per sweep. The tick heartbeat detail
+carries `approvals: {sweep_failed, post_failed, reposted}` and the Auditor card's Ops
+section shows the day's sums (`Approvals: sweep failed 0 · card posts failed 1 ·
+re-posted 1 · unposted 0`, hidden when all are zero). `arc health check` raises the
+`approvals_unposted` condition when a pending request older than one tick still has no
+card, and resolves it once every pending request has one (or expired). D34 auto-approval
+is unaffected: it is decided at publish time whether or not the card posted, and a
+decided request is never re-posted. Dry-run / `--no-slack` cards go to `channel = 'log'`
+on purpose and are neither retried nor alerted.
+
 Halted: an approval that arrives (or is dispatched) while halted stays pending; the drain
 reports it `deferred` ("held until !resume or HH:MM ET") every tick. After `!resume`
 inside the proposal's TTL (`proposals.expires_at`) the Investor runs; past the TTL the

@@ -20,6 +20,7 @@ from arc.approvals.card import strategy_name, title
 from arc.approvals.service import (
     AUTO_APPROVER,
     TTL_ACTOR,
+    UNPOSTED_CHANNEL,
     ApprovalService,
     LogCardPoster,
     Outcome,
@@ -392,6 +393,111 @@ class TestPublish:
         assert rep.published == [_phash(conn)]
         assert _status(conn, _phash(conn)) == "pending"  # the TTL still applies
 
+    def test_failed_card_post_is_retried_next_sweep(
+        self, conn: sqlite3.Connection, arc_settings: ArcSettings
+    ) -> None:
+        """E6.1b: a card whose post raised is re-posted by the next sweep, once."""
+
+        class Flaky(RecordingPoster):
+            def __init__(self) -> None:
+                super().__init__()
+                self.calls = 0
+
+            def post(self, day: _dt.date, view: Any, *, chain_run_id: str | None = None):  # noqa: ANN201
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("slack down")
+                return super().post(day, view, chain_run_id=chain_run_id)
+
+        poster = Flaky()
+        svc = ApprovalService(conn, arc_settings, poster)
+        ph = _phash(conn)
+        with structlog.testing.capture_logs() as logs:
+            rep1 = svc.sweep(NOW)
+            # The same tick (in-chain publish, then the sweep) never retries at once.
+            rep1b = svc.sweep(NOW + _dt.timedelta(seconds=30))
+        assert rep1.published == [ph] and rep1.post_failed == [ph] and rep1.reposted == []
+        assert rep1b.reposted == [] and rep1b.post_failed == []
+        assert [e["event"] for e in logs].count("approvals.post_failed") == 1
+        row = conn.execute("SELECT * FROM approval_requests").fetchone()
+        assert (row["status"], row["channel"], row["message_ts"]) == (
+            "pending",
+            UNPOSTED_CHANNEL,
+            None,
+        )
+        assert poster.calls == 1
+
+        rep2 = svc.sweep(NOW + _dt.timedelta(minutes=5))
+        assert rep2.published == [] and rep2.reposted == [ph] and rep2.post_failed == []
+        assert poster.calls == 2
+        day, view = poster.posted[0]
+        assert day == _dt.date(2026, 9, 25)
+        assert any(b["type"] == "actions" for b in view.blocks)  # still approvable
+        assert ph in _text(view.blocks)  # same proposal_hash on the buttons
+        row = conn.execute("SELECT * FROM approval_requests").fetchone()
+        assert (row["status"], row["channel"], row["thread_ts"], row["message_ts"]) == (
+            "pending",
+            "C_INV",
+            "100.1",
+            "200.1",
+        )
+        # Posted now: later sweeps leave it alone, and a click updates the card.
+        assert svc.sweep(NOW + _dt.timedelta(minutes=10)).reposted == []
+        assert poster.calls == 2
+        res = svc.decide(ph, user=OWNER, approve=True, now=NOW + _dt.timedelta(minutes=11))
+        assert res.outcome is Outcome.APPROVED
+        assert poster.updated and poster.updated[0][:2] == ("C_INV", "200.1")
+
+    def test_repost_failure_logged_once_per_sweep(
+        self, conn: sqlite3.Connection, arc_settings: ArcSettings
+    ) -> None:
+        class Down(LogCardPoster):
+            calls = 0
+
+            def post(self, day: _dt.date, view: Any, *, chain_run_id: str | None = None):  # noqa: ANN201
+                Down.calls += 1
+                raise RuntimeError("slack down")
+
+        svc = ApprovalService(conn, arc_settings, Down())
+        svc.sweep(NOW)
+        with structlog.testing.capture_logs() as logs:
+            rep = svc.sweep(NOW + _dt.timedelta(minutes=5))
+        assert rep.post_failed == [_phash(conn)] and rep.reposted == []
+        assert Down.calls == 2  # one first attempt, one retry: never twice per sweep
+        events = [e["event"] for e in logs]
+        assert events.count("approvals.repost_failed") == 1
+        assert "approvals.post_failed" not in events
+        # Past the TTL: expired, never re-posted.
+        rep = svc.sweep(NOW + TTL)
+        assert rep.expired == [_phash(conn)] and rep.post_failed == []
+        assert Down.calls == 2
+
+    def test_in_chain_publish_does_not_retry(
+        self, conn: sqlite3.Connection, arc_settings: ArcSettings
+    ) -> None:
+        class Down(LogCardPoster):
+            def post(self, day: _dt.date, view: Any, *, chain_run_id: str | None = None):  # noqa: ANN201
+                raise RuntimeError("slack down")
+
+        ApprovalService(conn, arc_settings, Down()).publish_pending(NOW)
+        poster = RecordingPoster()
+        svc = ApprovalService(conn, arc_settings, poster)
+        later = NOW + _dt.timedelta(minutes=5)
+        assert svc.publish_pending(later, only=[_phash(conn)]).reposted == []
+        assert poster.posted == []
+        assert svc.publish_pending(later).reposted == [_phash(conn)]
+
+    def test_log_only_cards_are_not_retried(
+        self, conn: sqlite3.Connection, arc_settings: ArcSettings
+    ) -> None:
+        """A dry run's card went to the log on purpose: no retry, no ops alert."""
+        svc = ApprovalService(conn, arc_settings, LogCardPoster())
+        svc.sweep(NOW)
+        poster = RecordingPoster()
+        later = NOW + _dt.timedelta(minutes=5)
+        assert ApprovalService(conn, arc_settings, poster).sweep(later).reposted == []
+        assert poster.posted == []
+
     def test_day_filter(self, svc: ApprovalService) -> None:
         assert svc.publish_pending(NOW, day="2026-01-01").published == []
         assert len(svc.publish_pending(NOW, day="2026-09-25").published) == 1
@@ -618,6 +724,31 @@ class TestAutoApprove:
         assert rec is not None and rec.decision is ApprovalDecision.APPROVED
         assert rec.slack_user == AUTO_APPROVER
 
+    def test_post_failure_does_not_block_auto_approval(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """E6.1b: D34 approves at publish time even when Slack is down; no re-post."""
+        monkeypatch.setenv("ARC_AUTO_APPROVE", "true")
+        monkeypatch.setenv("ARC_AUTO_APPROVE_SCORECARD_GATE", "false")
+        s = ArcSettings(_env_file=None, account_profile="margin")  # type: ignore[call-arg]
+
+        class Down(LogCardPoster):
+            def post(self, day: _dt.date, view: Any, *, chain_run_id: str | None = None):  # noqa: ANN201
+                raise RuntimeError("slack down")
+
+        rep = ApprovalService(conn, s, Down()).publish_pending(NOW)
+        ph = _phash(conn)
+        assert rep.auto_approved == [ph] and rep.post_failed == [ph]
+        rec = approval_record(conn, ph)
+        assert rec is not None and rec.decision is ApprovalDecision.APPROVED
+        assert rec.slack_user == AUTO_APPROVER
+        assert _status(conn, ph) == "approved"
+        n = conn.execute("SELECT COUNT(*) FROM routine_events WHERE name = 'approval'").fetchone()
+        assert n[0] == 1  # the execution hand-off event, as with a posted card
+        poster = RecordingPoster()
+        later = ApprovalService(conn, s, poster).sweep(NOW + _dt.timedelta(minutes=5))
+        assert later.reposted == [] and poster.posted == []  # decided: nothing to click
+
     def test_not_for_informational_cards(self, _pipeline_db: bytes, monkeypatch) -> None:  # noqa: ANN001
         monkeypatch.setenv("ARC_AUTO_APPROVE", "true")
         conn = _db(_pipeline_db, token=None)
@@ -787,12 +918,16 @@ def test_routines_tick_runs_sweep(
         "auto_approved": [],
         "auto_gated": [],
         "expired": [],
+        "post_failed": [],
+        "reposted": [],
     }
     assert rcli._approval_sweep(argparse.Namespace(no_slack=True), conn, NOW) == {
         "published": [],
         "auto_approved": [],
         "auto_gated": [],
         "expired": [],
+        "post_failed": [],
+        "reposted": [],
     }
     assert calls == ["sweep", "expire"]
 

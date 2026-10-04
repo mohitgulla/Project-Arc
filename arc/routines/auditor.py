@@ -139,7 +139,9 @@ def auditor(
     )
     out = auditor_output(report)
     ctx.write("journal", report.day.isoformat(), out)
-    ops_line = _slots_line(ctx)
+    slots_line = _slots_line(ctx)
+    approvals_line = _approvals_line(ctx)
+    ops_line = "\n".join(x for x in (slots_line, approvals_line) if x) or None
     card = auditor_card(
         out,
         performance=performance(ctx.conn, report.day),
@@ -161,7 +163,8 @@ def auditor(
             "wash_sales": len(report.wash_sales),
             "expired": len(report.expired),
             "day_pnl": float(report.day_pnl) if report.day_pnl is not None else None,
-            "slots": ops_line,
+            "slots": slots_line,
+            "approvals": approvals_line,
         },
     )
 
@@ -174,6 +177,17 @@ def _slots_line(ctx: JobContext) -> str | None:
         return rollup_line(slot_rollup(ctx.conn, ctx.routines, ctx.now), ctx.routines)
     except Exception as exc:  # noqa: BLE001 - ops detail must not block the reconcile card
         log.warning("auditor.slots_unavailable", error=str(exc))
+        return None
+
+
+def _approvals_line(ctx: JobContext) -> str | None:
+    """E6.1b: today's approval sweep / card-post failures for the Ops section."""
+    from arc.monitoring.checks import approvals_line
+
+    try:
+        return approvals_line(ctx.conn, ctx.now)
+    except Exception as exc:  # noqa: BLE001 - ops detail must not block the reconcile card
+        log.warning("auditor.approvals_unavailable", error=str(exc))
         return None
 
 
