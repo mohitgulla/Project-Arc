@@ -19,6 +19,7 @@ You are working a Kanban card for Project Arc, an agentic **options** trading sy
 - Work in the worktree Hermes gave you. Branch name is preset. Commit small, message format: `E1.2: <what changed>`.
 - Open a PR against `main` and pass its URL as `metadata.published_pr` on completion (completion contract).
 - Never force-push, never merge your own PR.
+- **Strategy lane (D44, CI job `strategy-lane`, docs/OPS.md §5.20).** A PR touching a strategy path (`config/strategy_lane.yaml`) must carry one line in its body: `Experiment: XP-<n>` (registered experiment), `Flag: <stem>.<key>` (a NEW key in `config/<stem>.yaml` defaulting off), or `Lane: fast — <reason>` (bug/safety/infra; arc-sentinel audits). Flipping an existing strategy default needs `Experiment: XP-<n>` with a committed `win` verdict (`config/experiments/live/verdicts/XP-<n>.yaml`), and only to the values it tested.
 
 ## Comms
 - Progress, blockers, and the PR link go in the card's thread in `#project-arc` (Hermes posts card events there).

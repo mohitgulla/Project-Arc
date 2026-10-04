@@ -1191,6 +1191,44 @@ The treatment arm is the same trading loop on its own paper account
   stores ATTACHed read-only, `arm_id` projected per store. Nothing is copied
   into the control store (D32 counts and Tower stay control-only).
 
+### 5.20 Strategy-lane CI check: two PR lanes (E10.7, D44)
+
+Every pull request runs the `strategy-lane`
+CI job (`scripts/strategy_lane_check.py`; paths and knobs in
+`config/strategy_lane.yaml`). It is deterministic: `git diff` between the merge base
+and the PR head plus a YAML leaf diff, no network beyond reading the PR body, no LLM.
+
+A PR is **strategy lane** when it touches a strategy path: `arc/exits/`,
+`arc/scanner/`, `arc/sizing.py`, the pipeline selection/ranking modules
+(`arc/pipeline/steps.py`, `dedupe.py`, `portfolio_context.py`), persona prompts
+(`arc/personas/builders.py`, `entry_window.py`, `hermes/skills/arc-*/SKILL.md`),
+`config/{exits,ranking,account_profiles,universe,costs}.yaml` and the lane config
+itself. Gate and safety code (`arc/gate/`, `arc/budget/`, `market_guard.py`,
+execution, reconcile, halts) is not. Such a PR passes only with one of these lines in
+its body:
+
+    Experiment: XP-<n>            # this change is what XP-<n> tests (spec in config/experiments/live/)
+    Flag: <stem>.<key.path>      # a NEW key in config/<stem>.yaml, default off (false/off/none/null/control)
+    Lane: fast — <reason>        # bug / safety / infra fix (>= 10 chars); arc-sentinel audits these
+
+- **Flag** — the check confirms the key is new in this PR and its value is off, so
+  both experiment arms run the same binary in control behaviour until an overlay
+  turns it on. Example: `Flag: exits.pipeline.skip_iv_crush`.
+- **Promotion** (flipping a default): any change or removal of an existing value in
+  `exits`, `ranking`, `costs` or `account_profiles` YAML (the files an experiment
+  overlay can patch). It needs `Experiment: XP-<n>` with a committed verdict file
+  `config/experiments/live/verdicts/XP-<n>.yaml` (`experiment_id`, `verdict: win`,
+  `report_hash` copied from `arc experiment show XP-<n> --json`), and every changed
+  value must equal that experiment's treatment overlay. `Flag:` and `Lane: fast` never
+  cover a promotion. Comment-only YAML edits are not promotions.
+- A value change in `universe.yaml` (no overlay can test it) needs any one lane line.
+- A wrong extra line (an unknown `XP-<n>`, a flag that is not new) fails even if
+  another lane line passes, so the audit trail never cites something false.
+- The job reads the PR body at run time: after fixing the body, re-run the
+  `strategy-lane` job (`gh run rerun <id> --failed`); no new push is needed.
+- Local dry run: `.venv/bin/python scripts/strategy_lane_check.py --base origin/main
+  --head HEAD --body-file <body.md>` (exit 0 pass, 1 fail, 2 config error).
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.
