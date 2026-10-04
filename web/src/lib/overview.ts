@@ -5,6 +5,7 @@
 import type { TrendPoint } from "../components/TrendChart";
 import type { Stage } from "../components/StatusStepper";
 import { num, type Schemas } from "./api";
+import { STALE_FACTOR, formatAge, formatEt, isStale } from "./format";
 
 export type Overview = Schemas["OverviewResponse"];
 export type EquitySection = Schemas["EquitySection"];
@@ -138,4 +139,99 @@ export function sortMovers<T extends { change_today?: number | null }>(movers: T
 /** Realized vs unrealized split for the ProportionBar (absolute magnitudes). */
 export function pnlSplit(realized: number | null, unrealized: number | null): { realized: number; unrealized: number } {
   return { realized: Math.abs(realized ?? 0), unrealized: Math.abs(unrealized ?? 0) };
+}
+
+// ---------------------------------------------------------------------------
+// E8.8b status row (D48): fixed slots, `label value` + a status dot, no nested pills.
+// ---------------------------------------------------------------------------
+
+export type SlotTone = "ok" | "warn" | "neg" | "none";
+
+export interface StatusSlot {
+  key: "trading" | "tick" | "health" | "alerts" | "orders" | "env";
+  label: string;
+  value: string;
+  tone: SlotTone;
+  /** Full text for the tooltip / accessible name. */
+  title?: string;
+  /** Halt only: reason line and age, shown under the HALTED pill. */
+  detail?: string;
+}
+
+export interface StatusContext {
+  now: number;
+  tickS?: number;
+  healthS?: number;
+  env?: string;
+  accountProfile?: string;
+}
+
+/** `3m ago` -> `3m`; `just now` -> `now`. */
+export function shortAge(at: string | null | undefined, now: number): string {
+  if (!at) return "—";
+  const a = formatAge(at, now);
+  return a === "just now" ? "now" : a.replace(/ ago$/, "");
+}
+
+/**
+ * Slot order (fixed): Trading · Tick · Health · Alerts · Orders · env chip. A halt replaces
+ * the Trading slot (`HALTED`, reason, age); a stale or non-ok heartbeat turns its slot --warn.
+ */
+export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): StatusSlot[] {
+  const s = o.status;
+  const slots: StatusSlot[] = [];
+  if (s.halted && s.halt) {
+    const since = s.halt.at ? `${shortAge(s.halt.at, ctx.now)} · since ${formatEt(s.halt.at)}` : "";
+    const more = s.active_halts > 1 ? ` · ${s.active_halts} active` : "";
+    slots.push({
+      key: "trading",
+      label: "HALTED",
+      value: s.halt.at ? shortAge(s.halt.at, ctx.now) : "",
+      tone: "neg",
+      detail: `${s.halt.reason}`,
+      title: `Halted by ${s.halt.actor}: ${s.halt.reason}${since ? ` (${since})` : ""}${more}`,
+    });
+  } else {
+    slots.push({ key: "trading", label: "Trading", value: "enabled", tone: "ok", title: "Trading enabled (no active halt)" });
+  }
+  const beat = (key: "tick" | "health", label: string, at: string | null | undefined, status: string | null | undefined, cadence?: number): StatusSlot => {
+    if (!at) return { key, label, value: "no data", tone: "none", title: `${label}: no heartbeat yet` };
+    const stale = cadence !== undefined && isStale(at, cadence, ctx.now);
+    const bad = !!status && status !== "ok";
+    const age = shortAge(at, ctx.now);
+    const value = key === "health" || bad ? `${status ?? "?"} ${age}` : age;
+    const note = stale ? ` · stale (after ${Math.round((STALE_FACTOR * (cadence ?? 0)) / 60)}m)` : "";
+    return {
+      key,
+      label,
+      value,
+      tone: stale || bad ? "warn" : "ok",
+      title: `${label} ${status ?? ""} · as of ${formatEt(at)} ET${note}`.replace(/\s+/g, " "),
+    };
+  };
+  slots.push(beat("tick", "Tick", s.tick_at, s.tick_status, ctx.tickS));
+  slots.push(beat("health", "Health", s.health_at, s.health_status, ctx.healthS));
+  const n = (s.alerts ?? []).length;
+  slots.push({ key: "alerts", label: "Alerts", value: String(n), tone: n > 0 ? "warn" : "ok", title: `${n} open alert${n === 1 ? "" : "s"}` });
+  const b = s.order_budget;
+  if (b) {
+    const tier = b.tier && b.tier !== "normal" ? ` · ${b.tier}` : "";
+    slots.push({
+      key: "orders",
+      label: "Orders",
+      value: `${b.used}/${b.limit}${tier}`,
+      tone: tier ? "warn" : "ok",
+      title: `D32 order budget: ${b.used} of ${b.limit} today${tier}${b.as_of ? ` · as of ${formatEt(b.as_of)} ET` : ""}`,
+    });
+  } else {
+    slots.push({ key: "orders", label: "Orders", value: "—", tone: "none", title: "No order budget in the monitor heartbeat yet" });
+  }
+  const env = [ctx.env, ctx.accountProfile].filter(Boolean).join(" · ");
+  slots.push({ key: "env", label: "", value: env || "—", tone: "none", title: "Environment · account profile" });
+  return slots;
+}
+
+/** Greeks row value `2.1 / 300` (used / cap), cap omitted when unknown. */
+export function usedOfCap(used: string, cap: string | null): string {
+  return cap === null ? used : `${used} / ${cap}`;
 }

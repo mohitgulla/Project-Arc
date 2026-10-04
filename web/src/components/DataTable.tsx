@@ -17,26 +17,34 @@ export interface CardRowSpec<T> {
   primary: (row: T) => ReactNode;
   /** Secondary line: the three most important columns. */
   secondary: (row: T) => ReactNode;
+  /** Optional right-aligned cell, vertically centred (P&L pill). */
+  aside?: (row: T) => ReactNode;
 }
 
 /** Mobile rendering of a table row (§6): primary line + secondary line, tap -> detail. */
 export function CardRow({
   primary,
   secondary,
+  aside,
   onClick,
 }: {
   primary: ReactNode;
   secondary: ReactNode;
+  /** Right-aligned, vertically centred across both lines (e.g. a P&L pill). */
+  aside?: ReactNode;
   onClick?: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex min-h-[56px] w-full flex-col items-stretch gap-1 border-b border-line px-1 py-2.5 text-left last:border-b-0 hover:bg-hover"
+      className="flex min-h-[56px] w-full items-center gap-3 border-b border-line px-1 py-2.5 text-left last:border-b-0 hover:bg-hover"
     >
-      <div className="flex items-center gap-2 font-semibold text-title">{primary}</div>
-      <div className="flex flex-wrap gap-x-3 text-caption text-secondary tabular-nums">{secondary}</div>
+      <span className="flex min-w-0 flex-1 flex-col items-stretch gap-1">
+        <span className="flex items-center gap-2 font-semibold text-title">{primary}</span>
+        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-secondary tabular-nums">{secondary}</span>
+      </span>
+      {aside !== undefined && <span className="shrink-0">{aside}</span>}
     </button>
   );
 }
@@ -86,6 +94,7 @@ export function DataTable<T>({
             key={r.id}
             primary={cardRow.primary(r.original)}
             secondary={cardRow.secondary(r.original)}
+            aside={cardRow.aside?.(r.original)}
             onClick={onRowClick ? () => onRowClick(r.original) : undefined}
           />
         ))}

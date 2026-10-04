@@ -1,13 +1,72 @@
 {
   "components": {
     "schemas": {
-      "ActivityItem": {
+      "ActivityEntry": {
         "additionalProperties": false,
+        "description": "One event inside a grouped activity row.",
         "properties": {
           "at": {
             "format": "date-time",
             "title": "At",
             "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "tone": {
+            "default": "neutral",
+            "enum": [
+              "neutral",
+              "neg",
+              "warn",
+              "pos"
+            ],
+            "title": "Tone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "text"
+        ],
+        "title": "ActivityEntry",
+        "type": "object"
+      },
+      "ActivityItem": {
+        "additionalProperties": false,
+        "description": "One Recent Activity row. Repeats of one alert kind in the window collapse into a\nsingle row (``count`` > 1, newest ``at``, worst tone) with every event in ``entries``.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "count": {
+            "default": 1,
+            "description": "events in this row (> 1 when grouped)",
+            "title": "Count",
+            "type": "integer"
+          },
+          "entries": {
+            "description": "each grouped event, newest first (empty if count 1)",
+            "items": {
+              "$ref": "#/components/schemas/ActivityEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "alert kind the row groups (`missed_window`), if grouped",
+            "title": "Group"
           },
           "kind": {
             "enum": [
@@ -7234,6 +7293,17 @@
             "title": "Activity",
             "type": "array"
           },
+          "activity_hours": {
+            "description": "Recent Activity window (rolling hours)",
+            "title": "Activity Hours",
+            "type": "integer"
+          },
+          "activity_since": {
+            "description": "as_of \u2212 activity_hours",
+            "format": "date-time",
+            "title": "Activity Since",
+            "type": "string"
+          },
           "as_of": {
             "format": "date-time",
             "title": "As Of",
@@ -7326,7 +7396,9 @@
           "proposals",
           "proposals_since",
           "movers",
-          "activity"
+          "activity",
+          "activity_hours",
+          "activity_since"
         ],
         "title": "OverviewResponse",
         "type": "object"
@@ -13378,7 +13450,7 @@
     },
     "/api/overview": {
       "get": {
-        "description": "Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,\nmovers and recent activity, read in one pass (SELECT only).",
+        "description": "Status strip, equity (by range), day P&L, positions, Greeks vs caps, proposals,\nmovers and recent activity (rolling window), read in one pass (SELECT only).",
         "operationId": "overview_api_overview_get",
         "parameters": [
           {
@@ -13397,6 +13469,26 @@
               ],
               "title": "Range",
               "type": "string"
+            }
+          },
+          {
+            "description": "Recent Activity window in hours (default: config `tower.overview.activity_hours`, 24)",
+            "in": "query",
+            "name": "activity_hours",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 168,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Recent Activity window in hours (default: config `tower.overview.activity_hours`, 24)",
+              "title": "Activity Hours"
             }
           }
         ],

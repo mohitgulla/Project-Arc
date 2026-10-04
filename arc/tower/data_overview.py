@@ -66,6 +66,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "RANGES",
+    "ActivityEntry",
     "ActivityItem",
     "AlertView",
     "DayPnlSection",
@@ -93,10 +94,14 @@ RANGES: tuple[OverviewRange, ...] = ("1D", "1W", "1M", "3M", "YTD", "ALL")
 _RANGE_DAYS = {"1W": 7, "1M": 30, "3M": 91}
 PositionStatus = Literal["open", "closed", "all"]
 
-ACTIVITY_LIMIT = 20
+ACTIVITY_HOURS = 24  # default window; config `tower.overview.activity_hours` (E8.8b)
+ACTIVITY_MAX_HOURS = 168
+# Rows returned after grouping: the window bounds the list, this bounds the payload.
+ACTIVITY_LIMIT = 200
 PROPOSAL_WINDOW = _dt.timedelta(hours=24)
-# Rows read per activity source before the merge (newest by rowid; the merge keeps 20).
-_PER_SOURCE = 40
+# Rows read per activity source before the window filter + merge (newest by rowid). Large
+# enough for a week of 5-min alerts per source; a busier source undercounts its group.
+_PER_SOURCE = 500
 # A reconciled day's equity is plotted at the close.
 _CLOSE = _dt.time(16, 0)
 
@@ -255,16 +260,37 @@ class MoverTile(BaseModel):
 
 
 ActivityKind = Literal["fill", "execution", "exit", "halt", "resume", "reconcile", "alert"]
+ActivityTone = Literal["neutral", "neg", "warn", "pos"]
+
+
+class ActivityEntry(BaseModel):
+    """One event inside a grouped activity row."""
+
+    model_config = _STRICT
+
+    at: _dt.datetime
+    tone: ActivityTone = "neutral"
+    text: str
 
 
 class ActivityItem(BaseModel):
+    """One Recent Activity row. Repeats of one alert kind in the window collapse into a
+    single row (``count`` > 1, newest ``at``, worst tone) with every event in ``entries``."""
+
     model_config = _STRICT
 
     at: _dt.datetime
     kind: ActivityKind
-    tone: Literal["neutral", "neg", "warn", "pos"] = "neutral"
+    tone: ActivityTone = "neutral"
     text: str
     ref: str | None = Field(default=None, description="proposal hash for a drill-down link")
+    group: str | None = Field(
+        default=None, description="alert kind the row groups (`missed_window`), if grouped"
+    )
+    count: int = Field(default=1, description="events in this row (> 1 when grouped)")
+    entries: list[ActivityEntry] = Field(
+        default_factory=list, description="each grouped event, newest first (empty if count 1)"
+    )
 
 
 class OverviewResponse(BaseModel):
@@ -286,6 +312,8 @@ class OverviewResponse(BaseModel):
     proposals_since: _dt.datetime
     movers: list[MoverTile]
     activity: list[ActivityItem]
+    activity_hours: int = Field(description="Recent Activity window (rolling hours)")
+    activity_since: _dt.datetime = Field(description="as_of − activity_hours")
 
 
 class PositionsResponse(BaseModel):
@@ -757,12 +785,17 @@ def _recent(conn: sqlite3.Connection, sql: str, order: str = "rowid") -> list[sq
     return conn.execute(f"{sql} ORDER BY {order} DESC LIMIT {_PER_SOURCE}").fetchall()
 
 
-def _activity(conn: sqlite3.Connection) -> list[ActivityItem]:  # noqa: C901 - one branch per source
+def _activity(conn: sqlite3.Connection, since: _dt.datetime) -> list[ActivityItem]:  # noqa: C901 - one branch per source
+    """Every event at or after *since*, newest first, alert repeats grouped by kind."""
     items: list[ActivityItem] = []
+    alert_kind: dict[int, str] = {}  # id(item) -> alert group key
 
-    def add(at: _dt.datetime | None, **kw: Any) -> None:
-        if at is not None:
-            items.append(ActivityItem(at=at, **kw))
+    def add(at: _dt.datetime | None, group: str | None = None, **kw: Any) -> None:
+        if at is not None and at >= since:
+            item = ActivityItem(at=at, **kw)
+            items.append(item)
+            if group is not None:
+                alert_kind[id(item)] = group
 
     if _has_table(conn, "fills") and _has_table(conn, "orders"):
         for r in _recent(
@@ -845,15 +878,51 @@ def _activity(conn: sqlite3.Connection) -> list[ActivityItem]:  # noqa: C901 - o
             one_off = r["resolved_at"] is not None and r["resolved_at"] == r["opened_at"]
             add(
                 parse_ts(r["opened_at"]),
+                group=r["kind"],
                 kind="alert",
                 tone="neutral" if one_off else "warn",
                 text=f"Alert {r['kind']}: {r['message']}",
             )
             if r["resolved_at"] and not one_off:
-                add(parse_ts(r["resolved_at"]), kind="alert", text=f"Alert {r['kind']} resolved")
+                add(
+                    parse_ts(r["resolved_at"]),
+                    group=f"{r['kind']} resolved",
+                    kind="alert",
+                    text=f"Alert {r['kind']} resolved",
+                )
 
-    items.sort(key=lambda i: i.at, reverse=True)
-    return items[:ACTIVITY_LIMIT]
+    return _group_alerts(items, alert_kind)[:ACTIVITY_LIMIT]
+
+
+_TONE_RANK: dict[str, int] = {"neutral": 0, "pos": 1, "warn": 2, "neg": 3}
+
+
+def _group_alerts(items: list[ActivityItem], groups: dict[int, str]) -> list[ActivityItem]:
+    """Newest first; repeats of one alert kind collapse into one row ``<kind> ×n``."""
+    by_group: dict[str, list[ActivityItem]] = {}
+    for it in items:
+        g = groups.get(id(it))
+        if g is not None:
+            by_group.setdefault(g, []).append(it)
+    out: list[ActivityItem] = [it for it in items if groups.get(id(it)) is None]
+    for g, members in by_group.items():
+        if len(members) == 1:
+            out.append(members[0])
+            continue
+        members.sort(key=lambda i: i.at, reverse=True)
+        out.append(
+            ActivityItem(
+                at=members[0].at,
+                kind="alert",
+                tone=max((m.tone for m in members), key=_TONE_RANK.__getitem__),
+                text=f"{g} ×{len(members)}",
+                group=g,
+                count=len(members),
+                entries=[ActivityEntry(at=m.at, tone=m.tone, text=m.text) for m in members],
+            )
+        )
+    out.sort(key=lambda i: i.at, reverse=True)
+    return out
 
 
 def _status(conn: sqlite3.Connection, monitor: sqlite3.Row | None) -> StatusSection:
@@ -949,9 +1018,17 @@ def load_overview(
     vega_cap_pct: float = 0.005,
     max_alloc_pct: float = 0.05,
     stale_after: _dt.timedelta,
+    activity_hours: int = ACTIVITY_HOURS,
 ) -> OverviewResponse:
-    """Every Overview section read in one pass as of *now* (SELECT only)."""
+    """Every Overview section read in one pass as of *now* (SELECT only).
+
+    Recent Activity covers the rolling *activity_hours* before *now* (1–168).
+    """
+    if not 1 <= activity_hours <= ACTIVITY_MAX_HOURS:
+        msg = f"activity_hours must be 1..{ACTIVITY_MAX_HOURS}, got {activity_hours}"
+        raise ValueError(msg)
     now_et = now.astimezone(ET)
+    activity_since = now_et - _dt.timedelta(hours=activity_hours)
     today = now_et.date()
     monitor = _latest_heartbeat(conn, "monitor")
     latest = _latest_mark(conn, monitor)
@@ -983,5 +1060,7 @@ def load_overview(
         proposals=_proposal_rows(conn, now_et),
         proposals_since=now_et - PROPOSAL_WINDOW,
         movers=_movers(positions, marks),
-        activity=_activity(conn),
+        activity=_activity(conn, activity_since),
+        activity_hours=activity_hours,
+        activity_since=activity_since,
     )

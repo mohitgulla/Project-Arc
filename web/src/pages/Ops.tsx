@@ -1,7 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { useNow } from "../components/AsOfBadge";
 import { Card } from "../components/Card";
@@ -519,7 +519,7 @@ function BudgetCard({ b }: { b: Budget }) {
       <div data-testid="order-budget">
         <div className="relative">
           <ProgressRow
-            label="Options orders today"
+            label="Options orders"
             value={`${b.used} / ${b.limit}`}
             right={`${b.remaining_opens} opens left`}
             fraction={b.used / b.limit}
@@ -775,6 +775,12 @@ export function OpsPage() {
   const sources = useOps("/api/ops/sources");
   const llm = useOps("/api/ops/llm", { days: 30 });
   const config = useOps("/api/ops/config");
+  // `/ops#alerts` (Overview Recent Activity VIEW ALL, E8.8b): scroll once the alerts have loaded.
+  const { hash } = useLocation();
+  const alertsLoaded = alerts.data !== undefined;
+  useEffect(() => {
+    if (hash === "#alerts" && alertsLoaded) document.getElementById("alerts")?.scrollIntoView({ block: "start" });
+  }, [hash, alertsLoaded]);
   const setDay = (d: string) => {
     const next = new URLSearchParams(params);
     if (d === "today") next.delete("day");
@@ -794,7 +800,9 @@ export function OpsPage() {
           </p>
         </Card>
       )}
-      <AlertsSection a={alerts.data as Alerts | undefined} />
+      <div id="alerts" className="min-w-0 scroll-mt-20">
+        <AlertsSection a={alerts.data as Alerts | undefined} />
+      </div>
       <HaltsSection h={halts.data as Halts | undefined} />
       <RunsSection />
       <div className="grid gap-6 desktop:grid-cols-2 desktop:gap-10">

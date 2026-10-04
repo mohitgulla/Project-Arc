@@ -505,6 +505,18 @@ def build(
     alerts.open("gateway", "gateway_down", "Hermes gateway not responding",
                 at=now - dt.timedelta(hours=6))  # fmt: skip
     alerts.resolve("gateway", at=now - dt.timedelta(hours=5, minutes=40))
+    # E8.8b: a run of one-off missed slots (the owner's live "wall of missed_window"); Recent
+    # Activity groups them with the open scout alert into one `missed_window ×12` row. One
+    # more 30 h back sits outside the 24 h window, and one coverage alert gives a 9th row so
+    # the 8-row cap shows.
+    for k in range(11):
+        at = now - dt.timedelta(hours=2, minutes=5 * k)
+        alerts.open(f"missed:rss:{k}", "missed_window", f"rss slot {at:%H:%M} ET missed",
+                    at=at, resolved=True)  # fmt: skip
+    alerts.open("missed:rss:old", "missed_window", "rss slot missed (yesterday)",
+                at=now - dt.timedelta(hours=30), resolved=True)  # fmt: skip
+    alerts.open("coverage:monitor", "coverage", "monitor ran 9/12 slots in the last 60 min",
+                at=now - dt.timedelta(hours=4), resolved=True)  # fmt: skip
     for k in range(6):
         HeartbeatRepo(conn).record(
             "tick",

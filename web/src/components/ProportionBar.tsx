@@ -7,8 +7,11 @@ export interface Segment {
   display?: ReactNode; // formatted value for the legend
 }
 
-/** Dual/multi-segment 4px bar + legend row (dot · label · value) (§4). */
-export function ProportionBar({ segments }: { segments: Segment[] }) {
+/**
+ * Dual/multi-segment 4px bar + legend row (dot · label · value) (§4). `legend={false}` when
+ * the card already shows the values above the bar (Overview P&L Today stat pair, E8.8b).
+ */
+export function ProportionBar({ segments, legend = true }: { segments: Segment[]; legend?: boolean }) {
   const total = segments.reduce((s, x) => s + Math.max(0, x.value), 0) || 1;
   return (
     <div>
@@ -21,6 +24,7 @@ export function ProportionBar({ segments }: { segments: Segment[] }) {
           />
         ))}
       </div>
+      {legend && (
       <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-caption">
         {segments.map((s) => (
           <li key={s.label} className="flex items-center gap-2">
@@ -30,6 +34,7 @@ export function ProportionBar({ segments }: { segments: Segment[] }) {
           </li>
         ))}
       </ul>
+      )}
     </div>
   );
 }

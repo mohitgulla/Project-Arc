@@ -341,7 +341,7 @@ function Stories() {
         <Card title="Greeks vs Caps">
           <ProgressRow label="Net Δ" value="25.0" right="cap 301.5" fraction={25 / 301.5} />
           <ProgressRow label="Net ν ($/vol pt)" value={<Money value={-3} kind="pnl" />} right="cap $503" fraction={3 / 502.5} />
-          <ProgressRow label="Orders today" value="182" right="of 200" fraction={182 / 200} warnAt={0.875} />
+          <ProgressRow label="Orders" value="182" right="of 200" fraction={182 / 200} warnAt={0.875} />
           <ProgressRow label="Max loss / 5% cap" value={<Money value={5400} kind="max_loss" />} right="cap $5,025" fraction={5400 / 5025} />
         </Card>
       </Story>

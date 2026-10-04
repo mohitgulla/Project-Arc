@@ -39,6 +39,19 @@ function Pnl({ p }: { p: PositionRow }) {
 
 const legsText = (p: PositionRow) => p.legs.map(formatLeg).join(" / ");
 
+/** Legs as small chips (E8.8b): one per OCC leg, wraps instead of running on. */
+export function LegChips({ p }: { p: PositionRow }) {
+  return (
+    <span className="inline-flex flex-wrap gap-1" data-testid="leg-chips">
+      {p.legs.map((l) => (
+        <span key={l} className="whitespace-nowrap rounded-pill bg-control px-2 py-0.5 text-micro text-secondary tabular-nums">
+          {formatLeg(l)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 /** Columns shown on the Overview card; `full` adds the rest (Positions page). */
 export function positionColumns(full: boolean): ColumnDef<PositionRow, unknown>[] {
   const cols: ColumnDef<PositionRow, unknown>[] = [
@@ -52,7 +65,7 @@ export function positionColumns(full: boolean): ColumnDef<PositionRow, unknown>[
       id: "legs",
       header: "Legs",
       accessorFn: legsText,
-      cell: (c) => <span className="whitespace-nowrap text-caption text-secondary">{String(c.getValue())}</span>,
+      cell: (c) => <LegChips p={c.row.original} />,
     },
     { accessorKey: "contracts", header: "Qty", cell: (c) => formatNumber(Number(c.getValue())) },
     { id: "entry", header: "Entry", accessorFn: (p) => num(p.entry_net), cell: (c) => <Net v={c.row.original.entry_net} /> },
@@ -131,17 +144,13 @@ export function PositionsTable({ rows, full = false }: { rows: PositionRow[]; fu
           <>
             {p.ticker} <span className="font-normal text-secondary">· {structureLabel(p.kind)}</span>
             {p.held === false && <span className="text-caption text-neg-text">not held</span>}
-            <span className="ml-auto">
-              {p.status === "open" && p.unrealized_pct != null ? (
-                <ChangePill value={p.unrealized_pct} metric="pnl" />
-              ) : (
-                <Pnl p={p} />
-              )}
-            </span>
           </>
         ),
+        aside: (p) =>
+          p.status === "open" && p.unrealized_pct != null ? <ChangePill value={p.unrealized_pct} metric="pnl" /> : <Pnl p={p} />,
         secondary: (p) => (
           <>
+            <LegChips p={p} />
             <span>{p.contracts}×</span>
             <span>
               <Net v={p.entry_net} /> → <Net v={p.status === "closed" ? p.close_net : p.mark_net} />
