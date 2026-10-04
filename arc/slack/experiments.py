@@ -6,7 +6,7 @@ Two shapes, both built from the stored E10.3
 
 - :func:`experiment_line`: one line per running experiment after the daily
   evaluation, e.g.
-  ``[XP-2] Day 14 • P&L ∆ +0.08%/day (p: 0.21) • Sortino ∆ +0.35 (p: 0.04)``.
+  ``[XP-2] Day 14 • P&L ∆ +0.08%/day (p 0.21) • Sortino ∆ +0.35 (p 0.04)``.
 - :func:`experiment_stop_card`: one card when the evaluation stops an experiment
   (win, futility, invalid). Its header is the daily line with the verdict
   (``[XP-2] Day 25 • Win • P&L ∆ … • Sortino ∆ …``), then a fact grid with the
@@ -45,7 +45,7 @@ def experiment_line(report: ExperimentReport) -> B.CardView:
 
 
 def stop_title(report: ExperimentReport) -> str:
-    """``[XP-2] Day 25 • Win • P&L ∆ +0.08%/day (p: 0.004) • Sortino ∆ +0.35 (p: 0.01)``."""
+    """``[XP-2] Day 25 • Win • P&L ∆ +0.08%/day (p 0.004) • Sortino ∆ +0.35 (p 0.01)``."""
     r = report
     return " • ".join(
         [
@@ -118,39 +118,42 @@ def _arm(a: ArmSummary, t0_equity: float) -> str:
         [
             f"P&L {_money(a.total_pnl)} ({view.pct(ret)})",
             f"Max drawdown {view.pct(-a.max_drawdown, sign=a.max_drawdown > 0)}",
+            f"Mean slippage {slip}",
             f"Worst day {view.pct(a.worst_day)}",
             f"Orders {a.orders}",
             f"Fills {a.filled_executions}/{a.executions}",
-            f"Mean slippage {slip}",
         ]
     )
 
 
 def verdict_bullets(r: ExperimentReport) -> list[str]:
-    """One bullet per metric: ``Primary CI …`` and ``Secondary CI …``."""
+    """One bullet per metric.
+
+    ``Primary: Paired Daily P&L CI …`` and ``Secondary: Sortino Ratio CI …``.
+    """
     p, s = r.primary, r.secondary
     if p.ci is None:
-        prim = f"Primary CI n/a after {r.sessions} sessions"
+        prim = f"Primary: Paired Daily P&L CI n/a after {r.sessions} sessions"
     else:
         where = "> 0" if p.ci.lo > 0 else "< 0" if p.ci.hi < 0 else "includes 0"
         prim = (
-            f"Primary CI {view.ci_text(r)} {where} "
+            f"Primary: Paired Daily P&L CI {view.ci_text(r)} {where} "
             f"(mSPRT p {view.p_text(p.p_value)}) "
             f"after {r.sessions}/{r.min_sessions}–{r.max_sessions} sessions"
         )
     ci = s.diff_ci
     if ci is None:
-        sec = "Secondary CI n/a (fewer than 2 sessions)"
+        sec = "Secondary: Sortino Ratio CI n/a (fewer than 2 sessions)"
     else:
         rng = f"[{view.ratio(ci.lo, sign=True)}, {view.ratio(ci.hi, sign=True)}]"
         if s.margin is None:
-            sec = f"Secondary CI {rng} (A/A: no margin, reported only)"
+            sec = f"Secondary: Sortino Ratio CI {rng} (A/A: no margin, reported only)"
         else:
             m = view.ratio(-s.margin, sign=True)
             sec = (
-                f"Secondary CI {rng} lower bound above {m} margin: non-inferior"
+                f"Secondary: Sortino Ratio CI {rng} lower bound above {m} margin: non-inferior"
                 if s.non_inferior
-                else f"Secondary CI {rng} lower bound not above {m} margin: "
+                else f"Secondary: Sortino Ratio CI {rng} lower bound not above {m} margin: "
                 "non-inferiority not shown"
             )
         sec += f" (bootstrap p {view.p_text(s.p_value)})"

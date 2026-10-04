@@ -68,9 +68,9 @@ export function ratioText(v: number | null | undefined, sign = false): string {
   return (sign && v >= 0 ? "+" : "") + t.replace("-", MINUS);
 }
 
-/** "Sortino ∆ +0.35 (p: 0.04)", the Slack line's wording. */
+/** "Sortino ∆ +0.35 (p 0.04)", the Slack line's wording. */
 export function sortinoText(r: ExperimentRow): string {
-  return `∆ ${ratioText(r.sortino_delta, true)} (p: ${pText(r.sortino_p)}) · ${secondaryText(r)}`;
+  return `∆ ${ratioText(r.sortino_delta, true)} (p ${pText(r.sortino_p)}) · ${secondaryText(r)}`;
 }
 
 /** Status pill text, with the stop reason: "stopped (win)". */

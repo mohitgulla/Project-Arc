@@ -9,7 +9,7 @@ the two surfaces and ``arc experiment report --json`` always show the same numbe
 Formatting (owner, 2026-10-03): percentages are of t0 equity, 2 dp, with a real
 minus sign (``−``). The daily line and the stop header lead with the experiment
 id and show each metric's delta with its p-value:
-``[XP-2] Day 14 • P&L ∆ +0.08%/day (p: 0.21) • Sortino ∆ +0.35 (p: 0.04)``.
+``[XP-2] Day 14 • P&L ∆ +0.08%/day (p 0.21) • Sortino ∆ +0.35 (p 0.04)``.
 The primary p is the always-valid mSPRT p (dual of the CI); the Sortino p is the
 paired-bootstrap p (one-sided non-inferiority against the margin).
 """
@@ -95,14 +95,14 @@ def sortino_delta(r: ExperimentReport) -> float | None:
 
 
 def delta_text(r: ExperimentReport) -> str:
-    """``P&L ∆ +0.08%/day (p: 0.21)``: mean paired daily difference and its mSPRT p."""
+    """``P&L ∆ +0.08%/day (p 0.21)``: mean paired daily difference and its mSPRT p."""
     mean = "n/a" if r.primary.mean is None else f"{pct(r.primary.mean)}/day"
-    return f"P&L ∆ {mean} (p: {p_text(r.primary.p_value)})"
+    return f"P&L ∆ {mean} (p {p_text(r.primary.p_value)})"
 
 
 def sortino_text(r: ExperimentReport) -> str:
-    """``Sortino ∆ +0.35 (p: 0.04)``: treatment − control and its bootstrap p."""
-    return f"Sortino ∆ {ratio(sortino_delta(r), sign=True)} (p: {p_text(r.secondary.p_value)})"
+    """``Sortino ∆ +0.35 (p 0.04)``: treatment − control and its bootstrap p."""
+    return f"Sortino ∆ {ratio(sortino_delta(r), sign=True)} (p {p_text(r.secondary.p_value)})"
 
 
 def progress_text(r: ExperimentReport, *, bounds: bool = False) -> str:
@@ -127,7 +127,7 @@ def secondary_state(r: ExperimentReport) -> SecondaryState:
 
 
 def daily_line(r: ExperimentReport) -> str:
-    """``[XP-2] Day 14 • P&L ∆ +0.08%/day (p: 0.21) • Sortino ∆ +0.35 (p: 0.04)``."""
+    """``[XP-2] Day 14 • P&L ∆ +0.08%/day (p 0.21) • Sortino ∆ +0.35 (p 0.04)``."""
     return " • ".join([f"{label(r)} {progress_text(r)}", delta_text(r), sortino_text(r)])
 
 

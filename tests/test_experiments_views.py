@@ -116,8 +116,8 @@ def test_parity_slack_line_tower_api_and_cli_report(
     assert row["sortino_delta"] == pytest.approx(sd)
     mean, lo, hi = cli["primary"]["mean"], cli["primary"]["ci"]["lo"], cli["primary"]["ci"]["hi"]
     want = (
-        f"[X-2] Day 14 • P&L ∆ {view.pct(mean)}/day (p: {view.p_text(cli['primary']['p_value'])})"
-        f" • Sortino ∆ {view.ratio(sd, sign=True)} (p: {view.p_text(cli['secondary']['p_value'])})"
+        f"[X-2] Day 14 • P&L ∆ {view.pct(mean)}/day (p {view.p_text(cli['primary']['p_value'])})"
+        f" • Sortino ∆ {view.ratio(sd, sign=True)} (p {view.p_text(cli['secondary']['p_value'])})"
     )
     assert line == want
 
@@ -238,16 +238,16 @@ def test_daily_line_matches_owner_format(conn: sqlite3.Connection) -> None:
     line = view.daily_line(r)
     head, pnl, sortino = line.split(" • ")
     assert head == "[X-2] Day 14"
-    assert re.fullmatch(r"P&L ∆ [+−]\d+\.\d\d%/day \(p: (<0\.001|\d\.\d{2,3})\)", pnl), pnl
-    assert re.fullmatch(r"Sortino ∆ [+−]\d+\.\d\d \(p: (<0\.001|\d\.\d{2,3})\)", sortino), sortino
+    assert re.fullmatch(r"P&L ∆ [+−]\d+\.\d\d%/day \(p (<0\.001|\d\.\d{2,3})\)", pnl), pnl
+    assert re.fullmatch(r"Sortino ∆ [+−]\d+\.\d\d \(p (<0\.001|\d\.\d{2,3})\)", sortino), sortino
     assert "-" not in pnl + sortino  # real minus signs only
-    assert "[Experiments]" not in line and " day " not in line
+    assert "[Experiments]" not in line and " day " not in line and "p:" not in line
 
 
 def test_line_before_any_ci_and_for_aa(conn: sqlite3.Connection) -> None:
     store = fx.start(conn, fx.spec("X-2"))
     r0 = build_report(conn, store.require("X-2"), CFG, now=fx.T0)
-    assert view.daily_line(r0) == "[X-2] Day 0 • P&L ∆ n/a (p: n/a) • Sortino ∆ n/a (p: n/a)"
+    assert view.daily_line(r0) == "[X-2] Day 0 • P&L ∆ n/a (p n/a) • Sortino ∆ n/a (p n/a)"
     c2 = connect(":memory:")
     migrate(c2)
     aa = _report(c2, [10.0, -5.0, 3.0], [12.0, -4.0, 1.0], kind="aa")
@@ -361,8 +361,9 @@ def test_stop_card_layout_matches_owner_spec(conn: sqlite3.Connection) -> None:
         assert p_label in f and " CI [" in f
     assert "Margin −0.50 (non-inferiority)" in sec
     for arm in (ctrl, treat):
-        for k in ("P&L ", "Max drawdown", "Worst day", "Orders", "Fills", "Mean slippage"):
-            assert k in arm
+        rows = [ln.rsplit(" ", 1)[0] for ln in arm.split("\n")[1:]]
+        keys = ["P&L", "Max drawdown", "Mean slippage", "Worst day", "Orders", "Fills"]
+        assert [next(k for k in keys if r.startswith(k)) for r in rows] == keys
     assert f"Day 25/{rep.min_sessions}–{rep.max_sessions}" in sess
     assert f"{rep.t0:%b %-d} (t0) • Equity $100,000" in sess
     whole = _texts(b)
@@ -373,8 +374,10 @@ def test_stop_card_layout_matches_owner_spec(conn: sqlite3.Connection) -> None:
     )
     bullets = reason["text"]["text"].split("\n")[1:]
     assert len(bullets) == 2
-    assert bullets[0].startswith("• Primary CI [") and "&gt; 0" in bullets[0]  # mrkdwn-escaped
-    assert bullets[1].startswith("• Secondary CI [") and "non-inferior" in bullets[1]
+    assert (
+        bullets[0].startswith("• Primary: Paired Daily P&amp;L CI [") and "&gt; 0" in bullets[0]
+    )  # mrkdwn-escaped
+    assert bullets[1].startswith("• Secondary: Sortino Ratio CI [") and "non-inferior" in bullets[1]
     assert b[-1]["type"] == "context" and f"report `{rep.report_hash()[:12]}`" in whole
     assert "```" not in whole  # no code blocks on persona cards
 

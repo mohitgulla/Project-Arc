@@ -42,7 +42,7 @@ const COLS: ColumnDef<ExperimentRow>[] = [
     accessorFn: (r) => r.primary_mean ?? null,
     cell: ({ row }) => (
       <span className={TONE_TEXT[ciTone(row.original)]}>
-        {deltaText(row.original)} (p: {pText(row.original.primary_p)})
+        {deltaText(row.original)} (p {pText(row.original.primary_p)})
       </span>
     ),
   },
@@ -122,7 +122,7 @@ export function ExperimentBody({ d }: { d: ExperimentDetail }) {
             label: "Paired Daily P&L",
             value: (
               <span className={TONE_TEXT[ciTone(e)]}>
-                ∆ {deltaText(e)} (p: {pText(e.primary_p)}) {ciText(e)}
+                ∆ {deltaText(e)} (p {pText(e.primary_p)}) {ciText(e)}
               </span>
             ),
             hint: e.ci_level ? `always-valid ${Math.round(e.ci_level * 100)}% CI, % of t0 equity` : undefined,
