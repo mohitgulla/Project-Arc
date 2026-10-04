@@ -25,7 +25,7 @@ Cron pre-run gate (no args):
 
 Agent subcommands:
   record RUN_DIR              validate RUN_DIR/findings.json, reconcile into the ledger,
-                              write draft forward specs to RUN_DIR/forward-specs/<X-n>.yaml
+                              write draft forward specs to RUN_DIR/forward-specs/<XP-n>.yaml
   mark RUN_DIR                advance the watermark to this run (only after record)
   check-report FILE           the Slack report respects the size cap and sections
 Owner subcommands (run by an interactive Hermes session on the owner's thread reply):
@@ -132,7 +132,7 @@ SPEC_KEYS = (
     "backtest_ref",
 )
 SPEC_REQUIRED = ("id", "title", "hypothesis", "area", "arms", "non_inferiority_margin")
-EXPERIMENT_ID_RE = re.compile(r"^X-[1-9]\d*$")
+EXPERIMENT_ID_RE = re.compile(r"^XP-[1-9]\d*$")
 # Statuses the weekly report must cover (terminal promoted/rejected ones are history).
 REPORTABLE = ("draft", "queued", "registered", "running", "stopped")
 FORWARD_SPECS_DIR = "forward-specs"
@@ -266,7 +266,9 @@ def wake_decision(conn: sqlite3.Connection, state: dict, now: dt.datetime) -> di
     if closed_total == 0:
         reasons = ["no closed outcome in the journal yet (E9.4 start condition)"]
     elif not reasons:
-        reasons = ["no new closed outcome, no halt and no experiment status change since the last run"]
+        reasons = [
+            "no new closed outcome, no halt and no experiment status change since the last run"
+        ]
     return {
         "wake": wake,
         "reasons": reasons,
@@ -311,8 +313,9 @@ def _num(v, fmt: str) -> str:
 
 def _has_table(conn: sqlite3.Connection, name: str) -> bool:
     return (
-        conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,))
-        .fetchone()
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
         is not None
     )
 
@@ -362,8 +365,8 @@ def experiments_overview(conn: sqlite3.Connection) -> list[dict]:
         report = None
         if has_reports:
             row = conn.execute(
-                "SELECT evaluated_at, verdict, sessions, as_of_day, payload FROM experiment_reports "
-                "WHERE experiment_id = ? ORDER BY id DESC LIMIT 1",
+                "SELECT evaluated_at, verdict, sessions, as_of_day, payload "
+                "FROM experiment_reports WHERE experiment_id = ? ORDER BY id DESC LIMIT 1",
                 (eid,),
             ).fetchone()
             if row:
@@ -403,8 +406,12 @@ def experiments_overview(conn: sqlite3.Connection) -> list[dict]:
 
 
 def next_experiment_id(overview: list[dict]) -> str:
-    nums = [int(e["experiment_id"][2:]) for e in overview if EXPERIMENT_ID_RE.match(e["experiment_id"])]
-    return f"X-{max(nums, default=0) + 1}"
+    nums = [
+        int(e["experiment_id"].split("-", 1)[1])
+        for e in overview
+        if EXPERIMENT_ID_RE.match(e["experiment_id"])
+    ]
+    return f"XP-{max(nums, default=0) + 1}"
 
 
 def area_queues(overview: list[dict]) -> dict[str, dict]:
@@ -436,9 +443,7 @@ def experiment_lines(overview: list[dict]) -> list[str]:
             if e["registered_hash"] is None
             else f"locked sha256 {e['registered_hash'][:12]}"
         )
-        out.append(
-            f"### {e['experiment_id']} [{status}] {e['kind']}/{e['area']}: {e['title']}"
-        )
+        out.append(f"### {e['experiment_id']} [{status}] {e['kind']}/{e['area']}: {e['title']}")
         out.append(
             f"- hypothesis: {clip(e['hypothesis'], 300)} | proposed_by {e['proposed_by']} | "
             f"backtest_ref {e['backtest_ref'] or '-'} | {lock} | since {e['status_at']}"
@@ -447,8 +452,8 @@ def experiment_lines(overview: list[dict]) -> list[str]:
             out.append(f"- treatment overlay: {json.dumps(e['overlay'], sort_keys=True)}")
         if e["t0"]:
             out.append(
-                f"- t0 {e['t0']}" + (" | ab started WITHOUT an A/A (owner override)"
-                                     if e["aa_override"] else "")
+                f"- t0 {e['t0']}"
+                + (" | ab started WITHOUT an A/A (owner override)" if e["aa_override"] else "")
             )
         if e["stop"]:
             s = e["stop"]
@@ -470,7 +475,8 @@ def experiment_lines(overview: list[dict]) -> list[str]:
             f"(min {p.get('min_sessions')}, max {p.get('max_sessions')})"
         )
         out.append(
-            f"- primary (paired daily net P&L diff, % t0 equity): mean {_pct(prim.get('mean'))}/day "
+            "- primary (paired daily net P&L diff, % t0 equity): "
+            f"mean {_pct(prim.get('mean'))}/day "
             f"always-valid CI {ci_txt} sigma {_pct(prim.get('sigma'))} "
             f"({prim.get('sigma_source') or '-'})"
         )
@@ -574,7 +580,7 @@ def validate_forward_spec(
         errs.append(f"{where} missing {missing}")
     eid = str(spec.get("id", ""))
     if spec.get("id") is not None and not EXPERIMENT_ID_RE.match(eid):
-        errs.append(f"{where}.id {eid!r} must look like X-<n>")
+        errs.append(f"{where}.id {eid!r} must look like XP-<n>")
     elif eid in used_ids:
         errs.append(f"{where}.id {eid} is already used in the experiment registry; take the next")
     if spec.get("kind", "ab") != "ab":
@@ -612,8 +618,7 @@ def validate_forward_spec(
         var = str(exp.get("variable") or "")
         if not var or not (dotted == var or dotted.endswith("." + var)):
             errs.append(
-                f"ONE-VARIABLE: {where} overlay changes {dotted} but experiment.variable is "
-                f"{var!r}"
+                f"ONE-VARIABLE: {where} overlay changes {dotted} but experiment.variable is {var!r}"
             )
     if exp.get("status") != "harness-run":
         errs.append(
@@ -872,7 +877,7 @@ def validate_report(text: str) -> list[str]:
 
 
 def write_forward_specs(run_dir: Path, doc: dict, report: dict) -> list[Path]:
-    """Write each recommendation's draft spec to RUN_DIR/forward-specs/<X-n>.yaml.
+    """Write each recommendation's draft spec to RUN_DIR/forward-specs/<XP-n>.yaml.
 
     JSON is valid YAML, so ``arc experiment create --spec <file>`` reads it as is (the gate has
     no YAML writer: stdlib only). ``proposed_by`` is the finding's A-id, so the registry links

@@ -191,10 +191,10 @@ def executions(
 
 
 def reviewer_registry(conn: sqlite3.Connection) -> dict[str, str]:
-    """E10.6 reviewer fixture: X-1 A/A stopped with sigma and a stored report, X-2 ab
-    running in ``exits`` (started after the A/A, no override), X-3 ab queued behind it.
+    """E10.6 reviewer fixture: XP-1 A/A stopped with sigma and a stored report, XP-2 ab
+    running in ``exits`` (started after the A/A, no override), XP-3 ab queued behind it.
 
-    Returns the ISO time of the X-2 running event (``x2_running_at``) for git-window tests.
+    Returns the ISO time of the XP-2 running event (``x2_running_at``) for git-window tests.
     """
     import numpy as np
 
@@ -205,12 +205,12 @@ def reviewer_registry(conn: sqlite3.Connection) -> dict[str, str]:
     rng = np.random.default_rng(4)
     ctrl = list(rng.normal(0, 300, 10))
     treat = [x + e for x, e in zip(ctrl, rng.normal(0, 150, 10), strict=True)]
-    store = start(conn, spec("X-1", kind="aa"))
-    days = equity_curves(conn, "X-1", ctrl, treat)
-    evaluate(store, "X-1", ExperimentsConfig(), now=eod(days[-1]) + dt.timedelta(minutes=15))
-    if store.require("X-1").status.value == "running":
+    store = start(conn, spec("XP-1", kind="aa"))
+    days = equity_curves(conn, "XP-1", ctrl, treat)
+    evaluate(store, "XP-1", ExperimentsConfig(), now=eod(days[-1]) + dt.timedelta(minutes=15))
+    if store.require("XP-1").status.value == "running":
         store.stop(
-            "X-1",
+            "XP-1",
             StopReason.FUTILITY,
             actor="arc.experiments",
             detail=StopDetail(sigma=0.002, sessions=10, note="A/A calibration done"),
@@ -222,16 +222,16 @@ def reviewer_registry(conn: sqlite3.Connection) -> dict[str, str]:
         return clock[0]
 
     later = ExperimentStore(conn, now=now)
-    later.create(spec("X-2"), actor="local")
-    later.register("X-2", actor="local")
+    later.create(spec("XP-2"), actor="local")
+    later.register("XP-2", actor="local")
     t0 = clock[0] + dt.timedelta(hours=1)
     later.start(
-        "X-2",
+        "XP-2",
         RunningDetail(t0=t0, t0_equity=T0_EQUITY, legacy_book=[], control_sha=CONTROL_SHA),
         actor="local",
     )
     running_at = clock[0]
-    later.create(spec("X-3", hypothesis="stop at 2x credit beats 3x"), actor="local")
-    later.register("X-3", actor="local")
+    later.create(spec("XP-3", hypothesis="stop at 2x credit beats 3x"), actor="local")
+    later.register("XP-3", actor="local")
     conn.commit()
     return {"x2_running_at": running_at.isoformat()}

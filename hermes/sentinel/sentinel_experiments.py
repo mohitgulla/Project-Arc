@@ -1,8 +1,9 @@
 """Arc Sentinel lens ``experiments-integrity`` (PLAN D44, card E10.6). Stdlib only.
 
-Deterministic evidence for the Sentinel's experiments lens, rendered into the pre-run context by
-``arc_sentinel.py``. It reads a private COPY of ``data/arc.db`` (the E10.1/E10.3 tables) and the
-private clone's git history and ``config/``. It never writes the DB, the clone, the board or a PR.
+Deterministic evidence for the Sentinel's experiments lens. The agent runs it (skill procedure
+step 4a) after the profile's pre-run gate ``arc_sentinel.py`` has written ``RUN_DIR/arc-copy.db``;
+the output lands in ``RUN_DIR/experiments.md``. It reads that private COPY of ``data/arc.db`` (the
+E10.1/E10.3 tables) and the private clone's git history and ``config/``. It never writes the DB, the clone, the board or a PR.
 
 Four checks:
 
@@ -17,10 +18,10 @@ Four checks:
    never "behind a flag defaulting to control") and the new keys it added.
 3. **Strategy-lane citations (E10.7).** Commits since the last review that touch a
    strategy-lane path (``config/strategy_lane.yaml`` ``strategy_paths``, else the area map):
-   the lane lines (``Experiment: X-<n>`` / ``Flag: <key>`` / ``Lane: fast — <reason>``) from the
+   the lane lines (``Experiment: XP-<n>`` / ``Flag: <key>`` / ``Lane: fast — <reason>``) from the
    commit message or, for a squash merge ``(#N)``, the PR *body*. Only those lane lines are
    extracted; no PR review thread or comment is read (D23 isolation). Committed promotion
-   verdicts (``config/experiments/live/verdicts/X-<n>.yaml``) are matched to the stored report.
+   verdicts (``config/experiments/live/verdicts/XP-<n>.yaml``) are matched to the stored report.
 4. **A/A before any A/B.** Every ab experiment that started has an aa experiment that stopped
    with a recorded sigma before it, or an owner ``aa_override`` on its running event.
 """
@@ -33,27 +34,28 @@ import hashlib
 import json
 import re
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 AREAS_FILE = "experiment_areas.json"
 DB_FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
 MAX_COMMITS = 25  # per experiment window / per lane listing; the rest is counted
-LANE_EXPERIMENT_RE = re.compile(r"^\s*(?:[-*>]\s*)?experiment\s*:\s*(X-[1-9]\d*)\b", re.I | re.M)
+LANE_EXPERIMENT_RE = re.compile(r"^\s*(?:[-*>]\s*)?experiment\s*:\s*(XP-[1-9]\d*)\b", re.I | re.M)
 LANE_FLAG_RE = re.compile(r"^\s*(?:[-*>]\s*)?flag\s*:\s*`?([A-Za-z0-9_.\-]+)`?", re.I | re.M)
 LANE_FAST_RE = re.compile(r"^\s*(?:[-*>]\s*)?lane\s*:\s*fast\b(.*)$", re.I | re.M)
 PR_RE = re.compile(r"\(#(\d+)\)\s*$")
 OFF_VALUES = ("false", "off", "none", "null", "control", "~", "''", '""')
 
 Git = Callable[..., str]
-PrBody = Callable[[int], Optional[str]]
+PrBody = Callable[[int], Optional[str]]  # noqa: UP045 - runtime alias, python3.9
 
 
 # ---------- pure helpers ----------
 
 
 def parse_db_time(text: str) -> dt.datetime:
-    return dt.datetime.strptime(text, DB_FMT).replace(tzinfo=dt.timezone.utc)
+    return dt.datetime.strptime(text, DB_FMT).replace(tzinfo=dt.timezone.utc)  # noqa: UP017 - runs on host python3.9
 
 
 def canonical(spec_text: str) -> str:
@@ -143,8 +145,7 @@ def config_value_changes(diff: str) -> dict:
 
 def has_tables(conn: sqlite3.Connection, *names: str) -> bool:
     got = {
-        r[0]
-        for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
     }
     return all(n in got for n in names)
 
@@ -221,9 +222,7 @@ def experiments(conn: sqlite3.Connection) -> list[dict]:
 
 def aa_before_ab(exps: list[dict]) -> list[dict]:
     """Every ab that started: the A/A (stopped with sigma) that preceded it, or the override."""
-    aas = [
-        e for e in exps if e["kind"] == "aa" and e["stopped_at"] and e["sigma"] is not None
-    ]
+    aas = [e for e in exps if e["kind"] == "aa" and e["stopped_at"] and e["sigma"] is not None]
     out = []
     for e in exps:
         if e["kind"] != "ab" or not e["running_at"]:
@@ -295,9 +294,7 @@ def commits(git: Git, rev_range: list[str]) -> list[dict]:
     return out
 
 
-def window_commits(
-    git: Git, head: str, exp: dict, areas: dict, now: dt.datetime
-) -> dict:
+def window_commits(git: Git, head: str, exp: dict, areas: dict, now: dt.datetime) -> dict:
     start = parse_db_time(exp["running_at"])
     end = parse_db_time(exp["stopped_at"]) if exp["stopped_at"] else now
     globs = areas["areas"].get(exp["area"], areas["areas"]["other"])
@@ -388,8 +385,11 @@ def render(
     if not exps:
         out.append("- no experiment registered in data/arc.db")
     for e in exps or []:
-        lock = "draft (unlocked)" if e["registered_hash"] is None else (
-            f"registered {e['registered_hash'][:12]}")
+        lock = (
+            "draft (unlocked)"
+            if e["registered_hash"] is None
+            else (f"registered {e['registered_hash'][:12]}")
+        )
         verdict = "OK" if e["prereg_ok"] else "MISMATCH: " + "; ".join(e["prereg_problems"])
         out.append(
             f"- {e['id']} {e['kind']}/{e['area']} [{e['status']}"
@@ -415,8 +415,10 @@ def render(
                 flags.append("new keys (default not off) " + _short(c["new_keys"]))
             if not flags:
                 flags.append("code only: check it ships behind a flag defaulting to control")
-            out.append(f"  - {c['sha'][:7]} {c['subject']} :: {_short(c['touched'])} :: "
-                       + "; ".join(flags))
+            out.append(
+                f"  - {c['sha'][:7]} {c['subject']} :: {_short(c['touched'])} :: "
+                + "; ".join(flags)
+            )
         if len(cs) > MAX_COMMITS:
             out.append(f"  - ... {len(cs) - MAX_COMMITS} more")
     out.append(f"### 3. Strategy-lane commits since the last review (paths: {lane_source})")
@@ -436,16 +438,19 @@ def render(
             cite = "; ".join(parts)
             if c["unknown_experiments"]:
                 cite += " | NOT IN REGISTRY: " + ", ".join(c["unknown_experiments"])
-        out.append(f"- {c['sha'][:7]} {c['subject']} :: {_short(c['touched'], 3)} :: {cite} "
-                   f"[{c['source']}]")
+        out.append(
+            f"- {c['sha'][:7]} {c['subject']} :: {_short(c['touched'], 3)} :: {cite} "
+            f"[{c['source']}]"
+        )
     if len(lanes) > MAX_COMMITS:
         out.append(f"- ... {len(lanes) - MAX_COMMITS} more")
     if verdicts:
         out.append("- committed promotion verdicts:")
         for v in verdicts:
-            out.append(f"  - {v['file']} {v.get('experiment_id')} {v.get('verdict')}: "
-                       + ("OK (matches stored report)" if not v["problems"]
-                          else "; ".join(v["problems"])))
+            out.append(
+                f"  - {v['file']} {v.get('experiment_id')} {v.get('verdict')}: "
+                + ("OK (matches stored report)" if not v["problems"] else "; ".join(v["problems"]))
+            )
     out.append("### 4. A/A before any A/B")
     if not aa:
         out.append("- no ab experiment has started")
@@ -557,9 +562,7 @@ def main(argv: list[str]) -> int:
         return 2
     run_dir = Path(argv[0])
     here = Path(__file__).resolve().parent
-    root = Path(
-        __import__("os").environ.get("ARC_SENTINEL_ROOT", here.parent / "sentinel")
-    )
+    root = Path(__import__("os").environ.get("ARC_SENTINEL_ROOT", here.parent / "sentinel"))
     repo = root / "repo"
     git = _git_in(repo)
     head = git("rev-parse", "HEAD").strip()
@@ -576,7 +579,7 @@ def main(argv: list[str]) -> int:
         git,
         head,
         last,
-        dt.datetime.now(dt.timezone.utc),
+        dt.datetime.now(dt.timezone.utc),  # noqa: UP017 - python3.9
         _gh_pr_body(repo),
         here / AREAS_FILE,
     )

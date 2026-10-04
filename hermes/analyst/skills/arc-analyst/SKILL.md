@@ -87,7 +87,7 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
      exits, costs, account_profiles, routines), `non_inferiority_margin` (Sortino), and
      `backtest_ref`. Leave alpha, power, sessions and `mde` unset: `arc experiment create`
      fills them from `config/experiments.yaml`. `record` sets `proposed_by` to the A-id and
-     writes the draft to `RUN_DIR/forward-specs/<X-n>.yaml` for the owner.
+     writes the draft to `RUN_DIR/forward-specs/<XP-n>.yaml` for the owner.
    - Every run gives each draft/queued/registered/running/stopped experiment one line in
      `experiments` (status equal to the registry's) and names `next_experiment`: the finding key
      whose `forward_spec` should run next, or `none: <why>` (e.g. no bucket at n ≥ 30, or the
@@ -155,12 +155,12 @@ line under "Obvious flaws" as `→ Sentinel` and do not draft a card for it.
     "action": "new-card|comment-on-card|owner-decision|no-action",
     "related_cards": ["E7.5"],
     "draft_card": {"title": "Ex.ya · ...", "parents": ["E7.5"], "body": "Goal / Acceptance (incl. the harness run and its decision rule) / Plan ref"},
-    "forward_spec": {"id": "X-3", "title": "managed_net_ev menu ranking", "hypothesis": "ranking by managed net EV adds ~0.05%/day net because ...",
+    "forward_spec": {"id": "XP-3", "title": "managed_net_ev menu ranking", "hypothesis": "ranking by managed net EV adds ~0.05%/day net because ...",
                      "area": "ranking", "kind": "ab", "arms": {"treatment": {"overlay": {"exits": {"pipeline": {"rank_menu_by": "managed_net_ev"}}}}},
                      "non_inferiority_margin": 0.5, "backtest_ref": "docs/RESEARCH/backtests/<run>"}
   }],
   "resolved": [{"key": "existing key", "evidence": "why it no longer holds (numbers)"}],
-  "experiments": [{"experiment_id": "X-1", "status": "stopped", "note": "A/A: sigma 0.20%/day → MDE 0.12% at 20 sessions; n=0 closed per arm, nothing to attribute"}],
+  "experiments": [{"experiment_id": "XP-1", "status": "stopped", "note": "A/A: sigma 0.20%/day → MDE 0.12% at 20 sessions; n=0 closed per arm, nothing to attribute"}],
   "next_experiment": "ranker:managed-net-ev | none: <why>"
 }
 ```
@@ -180,8 +180,8 @@ draft/queued/registered/running/stopped experiment in the context with its regis
 *Standing themes*
 • cost-model: <status> — <note with N> (one line per theme, all six)
 *Experiments*
-• *X-<n>* <kind>/<area> <status> · <sessions>/<min>–<max> sessions · mean <±d>%/day CI [<lo>, <hi>] · <verdict> — why: <regime/structure rows with n>
-• queue: <area>: <holder> ← <queued> · next: *A-<n>* → draft X-<m> (<variable>: <incumbent> → <challenger>) or none: <why>
+• *XP-<n>* <kind>/<area> <status> · <sessions>/<min>–<max> sessions · mean <±d>%/day CI [<lo>, <hi>] · <verdict> — why: <regime/structure rows with n>
+• queue: <area>: <holder> ← <queued> · next: *A-<n>* → draft XP-<m> (<variable>: <incumbent> → <challenger>) or none: <why>
 *Recommendations* (≤3; "none: no bucket has n ≥ 30" is a valid answer)
 • *A-<n>* <variable>: <incumbent> → <challenger> · n=<n> · metric <…> · expected <effect> · hypothesis, untested
 *Obvious flaws*
@@ -212,10 +212,10 @@ Only the owner (`U0C5KUMH28G`) may trigger actions. Resolve an A-id from the new
 - `accept A-<n>`: `triage A-<n> accepted`. `fixed A-<n>`: `triage A-<n> fixed` (next run
   re-verifies).
 - `rerun`: `arc_analyst.py reset`, then `hermes -p arc-analyst cron run <arc-analyst-weekly-audit id from hermes -p arc-analyst cron list>`.
-- `register X-<n>` / `start X-<n>` / `promote X-<n>`: not yours. Reply with the draft's path
-  (`RUN_DIR/forward-specs/X-<n>.yaml`) and the owner's commands: copy it to
+- `register XP-<n>` / `start XP-<n>` / `promote XP-<n>`: not yours. Reply with the draft's path
+  (`RUN_DIR/forward-specs/XP-<n>.yaml`) and the owner's commands: copy it to
   `config/experiments/live/`, then `arc experiment create --spec <file>` and
-  `arc experiment register X-<n>`; promotion is the owner's PR citing `Experiment: X-<n>`.
+  `arc experiment register XP-<n>`; promotion is the owner's PR citing `Experiment: XP-<n>`.
 - Questions: answer from RUN_DIR artefacts and the DB copy. Never change config or code.
 
 ## Pitfalls

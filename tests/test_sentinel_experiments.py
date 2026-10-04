@@ -107,16 +107,16 @@ def test_prereg_lock_verifies_every_experiment(tmp_path: Path) -> None:
     conn = _ro(db)
     exps = {e["id"]: e for e in se.experiments(conn)}
     conn.close()
-    assert set(exps) == {"X-1", "X-2", "X-3"}
+    assert set(exps) == {"XP-1", "XP-2", "XP-3"}
     assert all(e["prereg_ok"] for e in exps.values()), exps
-    assert exps["X-1"]["kind"] == "aa" and exps["X-1"]["status"] == "stopped"
-    assert exps["X-1"]["sigma"] is not None
-    assert exps["X-2"]["status"] == "running" and exps["X-3"]["status"] == "queued"
+    assert exps["XP-1"]["kind"] == "aa" and exps["XP-1"]["status"] == "stopped"
+    assert exps["XP-1"]["sigma"] is not None
+    assert exps["XP-2"]["status"] == "running" and exps["XP-3"]["status"] == "queued"
     # the script's re-hash is arc's spec_hash (canonical JSON, sha256)
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     store = ExperimentStore(conn)
-    assert exps["X-2"]["stored_hash"] == store.require("X-2").spec_hash
+    assert exps["XP-2"]["stored_hash"] == store.require("XP-2").spec_hash
     conn.close()
 
 
@@ -125,22 +125,22 @@ def test_prereg_mismatch_when_the_trigger_was_bypassed(tmp_path: Path) -> None:
     conn = sqlite3.connect(db)
     conn.execute("DROP TRIGGER experiments_no_update")
     spec = json.loads(
-        conn.execute("SELECT spec FROM experiments WHERE experiment_id = 'X-2'").fetchone()[0]
+        conn.execute("SELECT spec FROM experiments WHERE experiment_id = 'XP-2'").fetchone()[0]
     )
     spec["hypothesis"] = "edited after registration"
     conn.execute(
-        "UPDATE experiments SET spec = ? WHERE experiment_id = 'X-2'",
+        "UPDATE experiments SET spec = ? WHERE experiment_id = 'XP-2'",
         (json.dumps(spec, sort_keys=True, separators=(",", ":")),),
     )
     conn.commit()
     conn.close()
     conn = _ro(db)
-    x2 = next(e for e in se.experiments(conn) if e["id"] == "X-2")
+    x2 = next(e for e in se.experiments(conn) if e["id"] == "XP-2")
     conn.close()
     assert not x2["prereg_ok"]
     assert any("re-hashes to" in p for p in x2["prereg_problems"])
     text = se.render([x2], [], [], "areas", [], [])
-    assert "X-2 ab/exits [running]" in text and "MISMATCH" in text
+    assert "XP-2 ab/exits [running]" in text and "MISMATCH" in text
 
 
 def test_pre_e10_store_and_missing_copy_degrade(tmp_path: Path) -> None:
@@ -184,7 +184,7 @@ def test_commits_in_a_running_window_touching_its_area(tmp_path: Path) -> None:
     conn = _ro(db)
     exps = se.experiments(conn)
     conn.close()
-    x2 = next(e for e in exps if e["id"] == "X-2")
+    x2 = next(e for e in exps if e["id"] == "XP-2")
     w = se.window_commits(_git(repo), head, x2, _areas(), NOW)
     subjects = [c["subject"] for c in w["commits"]]
     assert subjects == ["E6.11: exit code", "E6.10: trailing stop behind a flag",
@@ -197,13 +197,13 @@ def test_commits_in_a_running_window_touching_its_area(tmp_path: Path) -> None:
     assert "CHANGED EXISTING VALUES take_profit_pct: 0.5" in text
     assert "new off-default keys trail_enabled: false" in text
     assert "code only: check it ships behind a flag defaulting to control" in text
-    assert "E7.9" not in text  # ranking is not X-2's area
+    assert "E7.9" not in text  # ranking is not XP-2's area
 
 
 def test_window_ends_at_the_stop_event(tmp_path: Path) -> None:
     db, _ = _registry(tmp_path)
     conn = _ro(db)
-    x1 = next(e for e in se.experiments(conn) if e["id"] == "X-1")
+    x1 = next(e for e in se.experiments(conn) if e["id"] == "XP-1")
     conn.close()
     stopped = se.parse_db_time(x1["stopped_at"])
     repo = Repo(tmp_path / "r")
@@ -246,27 +246,27 @@ def test_lane_citations_from_commit_and_pr_body(tmp_path: Path) -> None:
     repo = Repo(tmp_path / "r")
     base = repo.commit({"README.md": "x"}, "init", NOW - _dt.timedelta(days=9))
     t = NOW - _dt.timedelta(days=5)
-    repo.commit({"config/exits.yaml": "a: 1\n"}, "E6.9: promote X-2\n\nExperiment: X-2", t)
+    repo.commit({"config/exits.yaml": "a: 1\n"}, "E6.9: promote XP-2\n\nExperiment: XP-2", t)
     repo.commit({"config/exits.yaml": "a: 2\n"}, "E6.12: hotfix (#12)", t)
     repo.commit({"arc/exits/policy.py": "z\n"}, "E6.13: flagged\n\n**Flag:** `exits.new`", t)
-    repo.commit({"arc/exits/policy.py": "w\n"}, "E6.14: cite unknown\n\nExperiment: X-9", t)
+    repo.commit({"arc/exits/policy.py": "w\n"}, "E6.14: cite unknown\n\nExperiment: XP-9", t)
     repo.commit({"arc/exits/policy.py": "v\n"}, "E6.15: nothing cited", t)
     head = repo.commit({"docs/x.md": "d\n"}, "docs only", t)
     bodies = {12: "Lane: fast — broker outage hotfix"}
     out = se.lane_citations(
         _git(repo), [f"{base}..{head}"], _areas()["areas"]["other"], [], bodies.get,
-        {"X-1", "X-2", "X-3"},
+        {"XP-1", "XP-2", "XP-3"},
     )  # fmt: skip
     by = {c["subject"].split(":")[0]: c for c in out}
     assert set(by) == {"E6.9", "E6.12", "E6.13", "E6.14", "E6.15"}  # docs-only skipped
-    assert by["E6.9"]["experiments"] == ["X-2"] and by["E6.9"]["cited"]
+    assert by["E6.9"]["experiments"] == ["XP-2"] and by["E6.9"]["cited"]
     assert by["E6.12"]["fast"] == "broker outage hotfix" and by["E6.12"]["pr"] == 12
     assert "PR #12 body" in by["E6.12"]["source"]
     assert by["E6.13"]["flags"] == ["exits.new"]
-    assert by["E6.14"]["unknown_experiments"] == ["X-9"]
+    assert by["E6.14"]["unknown_experiments"] == ["XP-9"]
     assert not by["E6.15"]["cited"]
     text = se.render([], [], out, "areas", [], [])
-    assert "NO LANE CITED" in text and "NOT IN REGISTRY: X-9" in text
+    assert "NO LANE CITED" in text and "NOT IN REGISTRY: XP-9" in text
 
 
 def test_strategy_paths_come_from_the_lane_config_when_present(tmp_path: Path) -> None:
@@ -283,14 +283,14 @@ def test_strategy_paths_come_from_the_lane_config_when_present(tmp_path: Path) -
 
 
 def test_pr_body_reader_passes_only_lane_lines() -> None:
-    text = "Summary\nreviewer said: LGTM\n- **Experiment:** X-2\nFlag: `a.b`\nLane: fast — x\n"
+    text = "Summary\nreviewer said: LGTM\n- **Experiment:** XP-2\nFlag: `a.b`\nLane: fast — x\n"
     keep = [
         ln for ln in text.splitlines()
         if se.LANE_EXPERIMENT_RE.match(ln.replace("**", ""))
         or se.LANE_FLAG_RE.match(ln.replace("**", ""))
         or se.LANE_FAST_RE.match(ln.replace("**", ""))
     ]  # fmt: skip
-    assert keep == ["- **Experiment:** X-2", "Flag: `a.b`", "Lane: fast — x"]
+    assert keep == ["- **Experiment:** XP-2", "Flag: `a.b`", "Lane: fast — x"]
     reader = SCRIPT.read_text().split("def _gh_pr_body", 1)[1].split("\ndef ", 1)[0]
     assert '"pr", "view"' in reader and "reviews" not in reader and "comments" not in reader
 
@@ -299,18 +299,18 @@ def test_committed_verdict_is_matched_to_the_stored_report(tmp_path: Path) -> No
     db, _ = _registry(tmp_path)
     conn = _ro(db)
     report_hash = conn.execute(
-        "SELECT report_hash FROM experiment_reports WHERE experiment_id = 'X-1'"
+        "SELECT report_hash FROM experiment_reports WHERE experiment_id = 'XP-1'"
     ).fetchone()[0]
     vdir = tmp_path / "repo" / "config" / "experiments" / "live" / "verdicts"
     vdir.mkdir(parents=True)
-    (vdir / "X-1.yaml").write_text(
-        f"experiment_id: X-1\nverdict: win\nreport_hash: {report_hash}\n"
+    (vdir / "XP-1.yaml").write_text(
+        f"experiment_id: XP-1\nverdict: win\nreport_hash: {report_hash}\n"
     )
-    (vdir / "X-2.yaml").write_text("experiment_id: X-2\nverdict: win\nreport_hash: deadbeef\n")
+    (vdir / "XP-2.yaml").write_text("experiment_id: XP-2\nverdict: win\nreport_hash: deadbeef\n")
     out = {v["experiment_id"]: v for v in se.verdict_files(tmp_path / "repo", conn)}
     conn.close()
-    assert any("stored verdict 'futility'" in p for p in out["X-1"]["problems"])
-    assert out["X-2"]["problems"] == ["report_hash matches no stored experiment_reports row"]
+    assert any("stored verdict 'futility'" in p for p in out["XP-1"]["problems"])
+    assert out["XP-2"]["problems"] == ["report_hash matches no stored experiment_reports row"]
 
 
 # ---------------------------------------------------------------------------
@@ -323,12 +323,12 @@ def test_aa_before_ab(tmp_path: Path) -> None:
     conn = _ro(db)
     rows = se.aa_before_ab(se.experiments(conn))
     conn.close()
-    assert [(r["id"], r["aa"], r["ok"]) for r in rows] == [("X-2", ["X-1"], True)]
+    assert [(r["id"], r["aa"], r["ok"]) for r in rows] == [("XP-2", ["XP-1"], True)]
     # an ab started with no A/A on record goes through the owner override (fx.start)
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     migrate(conn)
-    fx.start(conn, fx.spec("X-2"))
+    fx.start(conn, fx.spec("XP-2"))
     rows = se.aa_before_ab(se.experiments(conn))
     assert rows[0]["ok"] is False and rows[0]["aa_override"] is True
     assert "owner aa_override" in se.render([], [], [], "areas", rows, [])
@@ -356,8 +356,8 @@ def test_cli_writes_experiments_md(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stderr
     text = (run_dir / "experiments.md").read_text()
     assert text.startswith("## Experiments integrity")
-    assert "X-2 ab/exits [running]" in text and ": OK" in text
-    assert "after A/A X-1" in text
+    assert "XP-2 ab/exits [running]" in text and ": OK" in text
+    assert "after A/A XP-1" in text
 
 
 def test_script_is_stdlib_only_and_parses_under_python39() -> None:

@@ -470,9 +470,9 @@ def test_one_variable_experiment_spec_required() -> None:
 # ---------------------------------------------------------------------------
 
 REGISTRY = [
-    {"id": "X-1", "status": "stopped", "area": "other"},
-    {"id": "X-2", "status": "running", "area": "exits"},
-    {"id": "X-3", "status": "queued", "area": "exits"},
+    {"id": "XP-1", "status": "stopped", "area": "other"},
+    {"id": "XP-2", "status": "running", "area": "exits"},
+    {"id": "XP-3", "status": "queued", "area": "exits"},
 ]
 LINES = [
     {"experiment_id": e["id"], "status": e["status"], "note": "n=0 closed per arm"}
@@ -482,10 +482,11 @@ LINES = [
 
 def _fwd(**over: Any) -> dict[str, Any]:
     spec = {
-        "id": "X-4", "title": "managed_net_ev ranker",
+        "id": "XP-4", "title": "managed_net_ev ranker",
         "hypothesis": "ranking by managed net EV adds ~0.05%/day net",
         "area": "ranking", "kind": "ab",
-        "arms": {"treatment": {"overlay": {"exits": {"pipeline": {"rank_menu_by": "managed_net_ev"}}}}},
+        "arms": {"treatment": {"overlay": {
+            "exits": {"pipeline": {"rank_menu_by": "managed_net_ev"}}}}},
         "non_inferiority_margin": 0.5, "backtest_ref": "docs/RESEARCH/backtests/r1",
     }  # fmt: skip
     spec.update(over)
@@ -519,8 +520,8 @@ def test_forward_spec_valid_after_the_harness_run() -> None:
         (_rec_fwd(status="hypothesis, untested", harness_ref=None), "harness-run"),
         (_rec_fwd(_fwd(backtest_ref="docs/other")), "backtest_ref must equal"),
         (_rec_fwd(_fwd(kind="aa")), "kind must be 'ab'"),
-        (_rec_fwd(_fwd(id="X-2")), "already used"),
-        (_rec_fwd(_fwd(id="exp-4")), "must look like X-<n>"),
+        (_rec_fwd(_fwd(id="XP-2")), "already used"),
+        (_rec_fwd(_fwd(id="exp-4")), "must look like XP-<n>"),
         (_rec_fwd(_fwd(area="vibes")), "area must be one of"),
         (_rec_fwd(_fwd(proposed_by="owner")), "proposed_by"),
         (_rec_fwd(_fwd(alpha_level=0.1)), "unknown keys"),
@@ -543,13 +544,13 @@ def test_forward_spec_rules(finding: dict[str, Any], needle: str) -> None:
 
 
 def test_experiments_section_covers_the_registry() -> None:
-    assert any("X-3 (queued) has no line" in e for e in _ferrs([], lines=LINES[:2],
-                                                               next_experiment="none: x"))  # fmt: skip
+    errs = _ferrs([], lines=LINES[:2], next_experiment="none: x")
+    assert any("XP-3 (queued) has no line" in e for e in errs)
     wrong = [{**LINES[1], "status": "stopped"}, LINES[0], LINES[2]]
     assert any("status 'stopped' != registry 'running'" in e
                for e in _ferrs([], lines=wrong, next_experiment="none: x"))  # fmt: skip
-    ghost = [*LINES, {"experiment_id": "X-9", "status": "running", "note": "?"}]
-    assert any("X-9 is not in the experiment registry" in e
+    ghost = [*LINES, {"experiment_id": "XP-9", "status": "running", "note": "?"}]
+    assert any("XP-9 is not in the experiment registry" in e
                for e in _ferrs([], lines=ghost, next_experiment="none: x"))  # fmt: skip
     assert any("needs a note" in e for e in _ferrs(
         [], lines=[{**LINES[0], "note": ""}, *LINES[1:]], next_experiment="none: x"))  # fmt: skip
@@ -558,7 +559,7 @@ def test_experiments_section_covers_the_registry() -> None:
                for e in _ferrs([_rec(40)], next_experiment="ranker:managed-net-ev"))  # fmt: skip
     assert _ferrs([], next_experiment="none: no bucket has n >= 30") == []
     # promoted / rejected experiments need no line
-    done = [{"id": "X-5", "status": "promoted", "area": "sizing"}]
+    done = [{"id": "XP-5", "status": "promoted", "area": "sizing"}]
     assert _ferrs([], registry=[*REGISTRY, *done], next_experiment="none: x") == []
 
 
@@ -580,29 +581,29 @@ def test_context_has_forward_experiments_and_record_writes_draft_specs(
     p = _paths(tmp_path, db)
     assert aa.main([], p, NOW) == 0
     out = capsys.readouterr().out
-    assert "## Forward experiments (D44; next free id X-4;" in out
-    assert "### X-1 [stopped (futility)] aa/other" in out
+    assert "## Forward experiments (D44; next free id XP-4;" in out
+    assert "### XP-1 [stopped (futility)] aa/other" in out
     assert "- stop: sessions 10 sigma" in out
     assert "verdict FUTILITY" in out and "always-valid CI [" in out
     assert "- calibration: sigma" in out and "MDE 10:" in out
     assert "- arm control: P&L" in out and "- arm treatment: P&L" in out
     assert "- breakdowns: no closed trade in either arm yet" in out
-    assert "### X-2 [running] ab/exits" in out and "- latest report: none stored yet" in out
+    assert "### XP-2 [running] ab/exits" in out and "- latest report: none stored yet" in out
     assert '- treatment overlay: {"exits": {"default": {"take_profit_pct": 0.4}}}' in out
-    assert "- exits: holder X-2 | queued X-3" in out
+    assert "- exits: holder XP-2 | queued XP-3" in out
     run_dir = _run_dir(p)
     metrics = aa.load_json(run_dir / "metrics.json", {})
-    assert [e["id"] for e in metrics["experiments"]] == ["X-1", "X-2", "X-3"]
+    assert [e["id"] for e in metrics["experiments"]] == ["XP-1", "XP-2", "XP-3"]
     # record: the registry snapshot is enforced and the draft spec is written for the owner
     doc = {"verdict": "findings", "themes": _themes(), "findings": [_rec_fwd()], "resolved": [],
            "experiments": LINES, "next_experiment": "ranker:managed-net-ev"}  # fmt: skip
     (run_dir / "findings.json").write_text(json.dumps({**doc, "experiments": LINES[:1]}))
     assert aa.main(["record", str(run_dir)], p, NOW) == 2
-    assert "X-2 (running) has no line" in capsys.readouterr().out
+    assert "XP-2 (running) has no line" in capsys.readouterr().out
     (run_dir / "findings.json").write_text(json.dumps(doc))
     assert aa.main(["record", str(run_dir)], p, NOW) == 0
     printed = json.loads(capsys.readouterr().out)
-    draft = run_dir / "forward-specs" / "X-4.yaml"
+    draft = run_dir / "forward-specs" / "XP-4.yaml"
     assert printed["forward_specs"] == [str(draft)]
     text = draft.read_text()
     assert "DRAFT forward experiment from Arc Analyst A-1" in text
@@ -611,7 +612,7 @@ def test_context_has_forward_experiments_and_record_writes_draft_specs(
     # the owner's `arc experiment create --spec` loader accepts the draft as written
     from arc.experiments.overlay import load_spec
 
-    assert load_spec(draft).id == "X-4"
+    assert load_spec(draft).id == "XP-4"
 
 
 def test_experiment_status_change_wakes_the_analyst(
@@ -621,17 +622,20 @@ def test_experiment_status_change_wakes_the_analyst(
     _close_one(conn, NOW - _dt.timedelta(days=30))
     db = _to_disk(conn, tmp_path / "live.db")
     p = _paths(tmp_path, db)
-    # last run before the fixture's X-2 start (2026-10-17), nothing closed since
-    aa.save_json(p.state, {"closed_watermark": 10**9,
-                           "last_run_at": aa.iso(_dt.datetime(2026, 10, 15, tzinfo=ET))})
+    # last run before the fixture's XP-2 start (2026-10-17), nothing closed since
+    aa.save_json(
+        p.state,
+        {"closed_watermark": 10**9, "last_run_at": aa.iso(_dt.datetime(2026, 10, 15, tzinfo=ET))},
+    )
     assert aa.main([], p, NOW + _dt.timedelta(days=14)) == 0
     out = capsys.readouterr().out
     assert "wakeAgent" not in out
-    # X-1 stopped (fixture clock, Oct 5) before the last run; X-3 queued is not a wake
-    assert "WAKE: experiment status change(s) since the last run: X-2 running\n" in out
-    # once those events are older than the last run (X-2 ran at ~16:30 ET Oct 17): quiet
-    aa.save_json(p.state, {"closed_watermark": 10**9,
-                           "last_run_at": aa.iso(NOW + _dt.timedelta(days=14))})
+    # XP-1 stopped (fixture clock, Oct 5) before the last run; XP-3 queued is not a wake
+    assert "WAKE: experiment status change(s) since the last run: XP-2 running\n" in out
+    # once those events are older than the last run (XP-2 ran at ~16:30 ET Oct 17): quiet
+    aa.save_json(
+        p.state, {"closed_watermark": 10**9, "last_run_at": aa.iso(NOW + _dt.timedelta(days=14))}
+    )
     assert aa.main([], p, NOW + _dt.timedelta(days=15)) == 0
     assert _last_json(capsys.readouterr().out) == {"wakeAgent": False}
 
@@ -642,7 +646,7 @@ def test_pre_e10_store_has_no_experiments(_pipeline_db: bytes) -> None:
         conn.execute(f"DROP TABLE IF EXISTS {t}")
     assert aa.experiments_overview(conn) == []
     assert aa.experiment_lines([]) == ["- none registered yet (arc experiment list is empty)"]
-    assert aa.next_experiment_id([]) == "X-1"
+    assert aa.next_experiment_id([]) == "XP-1"
 
 
 def test_skill_documents_forward_experiments() -> None:
@@ -652,9 +656,9 @@ def test_skill_documents_forward_experiments() -> None:
         "you never register,\n   start, stop or promote",
         "`forward_spec`",
         "`next_experiment`",
-        "RUN_DIR/forward-specs/<X-n>.yaml",
+        "RUN_DIR/forward-specs/<XP-n>.yaml",
         "*Experiments*",
-        "register X-<n>",
+        "register XP-<n>",
         "No guardrails",
     ):
         assert rule in text, rule

@@ -154,7 +154,7 @@ trigger actions. Resolve an S-id's full finding from the newest `~/.hermes/profi
      owner decides stop vs restart). Code-only hits: read the diff; only if the new path is on by
      default is it a finding (`regression`, `medium`). A/A (`kind: aa`) uses every path.
    - **Strategy-lane citations (E10.7)**: every commit touching a strategy-lane path cites
-     `Experiment: X-<n>` (with a `win` verdict committed under
+     `Experiment: XP-<n>` (with a `win` verdict committed under
      `config/experiments/live/verdicts/` matching the stored report hash), `Flag: <key>`
      (default control) or `Lane: fast — <reason>` (the owner's emergency lane). `NO LANE CITED`
      on main means the CI check was bypassed or not yet in force (before E10.7 merged: `info`
