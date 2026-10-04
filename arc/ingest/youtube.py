@@ -143,6 +143,9 @@ def _get_video_info(video_url: str) -> dict:
 _CAPTION_LANGS = ("en-orig", "en", "en-US")
 
 
+MAX_CAPTION_CHARS = 50_000  # caption text cap (a ~45-50 min video at speaking pace)
+
+
 def _pick_caption_url(info: dict) -> str:
     """Return a VTT caption URL: manual English subs first, then auto-captions.
 
@@ -166,7 +169,11 @@ def _pick_caption_url(info: dict) -> str:
 
 
 def _clean_vtt(raw: str) -> str:
-    """Strip VTT header, cue timings, numbering and inline tags; join the text."""
+    """Strip VTT header, cue timings, numbering and inline tags; join the text.
+
+    Capped at :data:`MAX_CAPTION_CHARS`; the daily brief job reports a capped
+    transcript as ``transcript_truncated`` (E4.6).
+    """
     text_lines: list[str] = []
     for line in raw.splitlines():
         line = line.strip()
@@ -181,7 +188,7 @@ def _clean_vtt(raw: str) -> str:
         line = re.sub(r"<[^>]+>", "", line)
         if line and line not in text_lines[-1:]:
             text_lines.append(line)
-    return " ".join(text_lines)[:50_000]
+    return " ".join(text_lines)[:MAX_CAPTION_CHARS]
 
 
 def _download_subtitle(url: str) -> CaptionResult:

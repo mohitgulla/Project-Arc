@@ -280,6 +280,8 @@ class ChannelRun:
     outcome: Outcome = Outcome.NO_VIDEO
     pick: Pick = field(default_factory=Pick)
     transcript_source: str | None = None
+    transcript_chars: int = 0
+    transcript_truncated: bool = False
     pending_reason: str | None = None
     raw_doc_id: str | None = None
     brief: ChannelBrief | None = None
@@ -311,6 +313,8 @@ class ChannelRun:
             "published_at": p.published_at.isoformat() if p.published_at else None,
             "duration_s": (p.info or {}).get("duration"),
             "transcript_source": self.transcript_source,
+            "transcript_chars": self.transcript_chars,
+            "transcript_truncated": self.transcript_truncated,
             "pending_reason": self.pending_reason,
             "raw_doc_id": self.raw_doc_id,
             "brief_id": self.brief.brief_id if self.brief else None,
@@ -390,7 +394,12 @@ def run_daily_briefs(
     writes the ``channel_brief`` context entry there). Listing failures, LLM and
     parse errors mark that channel ``error`` and the run carries on.
     """
-    from arc.ingest.youtube import YoutubeListError, store_transcript
+    from arc.ingest.youtube import (
+        MAX_CAPTION_CHARS,
+        TranscriptSource,
+        YoutubeListError,
+        store_transcript,
+    )
 
     now = now.astimezone(ET)
     repo = ChannelBriefRepo(conn)
@@ -451,6 +460,18 @@ def run_daily_briefs(
             log.info("youtube.brief_pending", channel=ch.slug, video_id=vid, reason=pending)
             continue
         cr.transcript_source = source.value if source else None
+        cr.transcript_chars = len(text)
+        cr.transcript_truncated = (
+            source is TranscriptSource.CAPTIONS and len(text) >= MAX_CAPTION_CHARS
+        )
+        if cr.transcript_truncated:
+            log.warning(
+                "youtube.transcript_truncated",
+                channel=ch.slug,
+                video_id=vid,
+                chars=len(text),
+                duration_s=cr.pick.info.get("duration"),
+            )
         info = dict(cr.pick.info)
         info.setdefault("channel_id", ch.channel_id)
         doc_id, _ = store_transcript(

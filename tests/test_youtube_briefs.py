@@ -444,6 +444,8 @@ class TestJob:
         assert per["tradebrigade"]["outcome"] == "briefed"
         assert per["tradebrigade"]["transcript_source"] == "captions"
         assert per["arete"]["input_tokens"] == 100
+        assert per["arete"]["transcript_truncated"] is False
+        assert per["arete"]["transcript_chars"] > 1000
 
     def test_brief_expires_24h_after_the_run(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
