@@ -193,12 +193,13 @@ class TestConfig:
         assert {r.run for r in c.triggers_for("approval")} == {"investor"}
         yt = c.sources["youtube.briefs"]
         assert "youtube.stockedup" not in c.sources
-        assert yt.options["category"] == "video" and yt.options["lookback"] == "24h"
-        assert [ch["slug"] for ch in yt.options["channels"]] == [
-            "stockedup",
-            "fxevolution",
-            "tradebrigade",
-            "arete",
+        assert "category" not in yt.options and yt.options["lookback"] == "24h"  # D49
+        assert [(ch["slug"], ch["category"]) for ch in yt.options["channels"]] == [
+            ("stockedup", "youtube_micro"),
+            ("fxevolution", "youtube_macro"),
+            ("tradebrigade", "youtube_micro"),
+            ("arete", "youtube_micro"),
+            ("bravos", "youtube_macro"),
         ]
         brief_ttl = c.context_policy("channel_brief", "youtube.briefs").ttl
         assert brief_ttl is not None and brief_ttl.duration == dt.timedelta(hours=24)

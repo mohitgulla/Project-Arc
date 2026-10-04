@@ -332,7 +332,8 @@ def _label(name: str, spec: JobSpec) -> str:
 
 
 def _source_categories(spec: JobSpec) -> list[str]:
-    """D47 categories a source job feeds: its own ``category`` plus its feeds', in order."""
+    """D47/D49 categories a source job feeds: its own ``category`` plus its feeds' and
+    channels', in display order."""
     from arc.context.categories import CATEGORY_ORDER, normalize_category
 
     found: set[str] = set()
@@ -340,6 +341,7 @@ def _source_categories(spec: JobSpec) -> list[str]:
     for raw in [
         opts.get("category"),
         *[f.get("category") for f in opts.get("feeds") or [] if isinstance(f, dict)],
+        *[c.get("category") for c in opts.get("channels") or [] if isinstance(c, dict)],
     ]:
         if raw is None:
             continue
@@ -1582,6 +1584,12 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
         src_backoff = backoff if s.job.startswith("youtube") else None
         c_share = cat_w.get(s.category)
         share = weights.get(s.key)
+        if c_share and share:
+            in_cat: float | None = round(share / c_share, 4)
+        elif s.channel is not None:  # D49: a channel's split of its YouTube category
+            in_cat = round(reg.share_in_category(s.key), 4)
+        else:
+            in_cat = None
         out.append(
             SourceRow(
                 key=s.key,
@@ -1589,7 +1597,7 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
                 job=s.job,
                 category=s.category.value,
                 weight=round(weights.get(s.key, 0.0), 4),
-                share_in_category=round(share / c_share, 4) if share and c_share else None,
+                share_in_category=in_cat,
                 last_doc_at=last_doc.get(s.key),
                 docs_today=docs.get(s.key, 0),
                 skipped_budget_today=skipped.get(s.key, 0),

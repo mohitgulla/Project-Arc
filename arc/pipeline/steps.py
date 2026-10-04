@@ -81,6 +81,7 @@ from arc.personas.builders import (
     build_quant_prompt,
     build_risk_prompt,
     build_risk_swap_prompt,
+    category_specs_input,
     director_input_from_context,
     quant_input_from_context,
     risk_input_from_context,
@@ -316,6 +317,10 @@ def build_prompt(
     """
     from_context, builder, schema = PROMPT_BUILDERS[persona]
     kwargs = {k: v for k, v in inputs.items() if k != "rules"}
+    if persona == "director" and "categories" not in kwargs:
+        # Recorded before D49 (no categories input): rebuild the D47 five-category
+        # block, so `arc journal replay` still matches the recorded sha.
+        kwargs["d47_replay"] = True
     if (
         settings is not None
         and persona in ENTRY_TERMS_PERSONAS
@@ -1123,8 +1128,11 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "recent_ideas": "\n".join(recent_lines),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
         "rules": _director_rules(cands, settings, budget, pctx),
-        # E4.6 (D45): [{slug, label}] of the youtube.briefs job, for the n/N line.
+        # E4.6 (D45): [{slug, label, category}] of the youtube.briefs job, for the n/N lines.
         "youtube_channels": _youtube_channels(ctx),
+        # D49: the effective categories block (labels + max_age), so a replay judges
+        # typed-context freshness against the windows this run used.
+        "categories": category_specs_input(ctx.routines),
     }
     facts = _director_ticker_facts(ctx, cand_entries)
     if facts is not None:  # E4.8a: absent when the flag is off (prompt unchanged)

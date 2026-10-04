@@ -134,25 +134,31 @@ context_ttl:
   analyst_recs:  {ttl: 8d, supersede: latest}
   fundamentals:  {ttl: 8d, supersede: latest}
 
-# D47 (E4.7): five source categories, weighted EQUALLY (not per source). A source's
-# `weight:` is its share INSIDE its category, so a new feed splits its category's share
-# instead of growing it. `max_age` is the category's freshness window: the Scout never
-# reads an older doc (closed `skipped_stale`), the rss/edgar connectors never store one,
-# and Scout story/candidate entries expire at min(1 session, max_age + 2h). A source may
-# set its own `max_age:` (none does). Weight 0-5 and max_age 30m-7d are tunable from
-# Slack (`!arc config set categories.<c>.weight|max_age`). Categories market_news,
-# company and macro share the Scout's `scout_doc_budget`; options_data and video reach
-# the Director as typed context only.
-categories:              # D47: equal weight per category; sources split their category's share
-  market_news:  {weight: 1, max_age: 6h,  label: Market news}
-  company:      {weight: 1, max_age: 24h, label: Company}
-  macro:        {weight: 1, max_age: 24h, label: Macro}
-  options_data: {weight: 1, max_age: 1 session, label: Options data}
-  video:        {weight: 1, max_age: 24h, label: YouTube}
+# D47/D49 (E4.7, E4.9): six source categories, weighted EQUALLY (not per source). A
+# source's `weight:` is its share INSIDE its category, so a new feed (or YouTube channel)
+# splits its category's share instead of growing it. `max_age` is the category's
+# freshness window: the Scout never reads an older doc (closed `skipped_stale`), the
+# rss/edgar connectors never store one, and Scout story/candidate entries expire at
+# min(1 session, max_age + 2h). D49: the Director's "Context by category" block also
+# lists a typed context entry (options data, macro calendar, briefs, Finnhub kinds) older
+# than its category's max_age as `stale (age)`, never as fresh (its context TTL is
+# unchanged). A source may set its own `max_age:` (none does). Weight 0-5 and max_age
+# 30m-7d are tunable from Slack (`!arc config set categories.<c>.weight|max_age`).
+# market_news, company_data and macro_data share the Scout's `scout_doc_budget`;
+# options_data and the two YouTube categories reach the Director as typed context only.
+# Old names `company`, `macro` (and company_news/filings/calendar) load as logged
+# aliases for one release; `video` was split (each channel declares its category).
+categories:              # D49: equal weight per category; sources split their category's share
+  market_news:   {weight: 1, max_age: 6h,  label: Market news}
+  company_data:  {weight: 1, max_age: 24h, label: Company data}
+  macro_data:    {weight: 1, max_age: 24h, label: Macro data}
+  options_data:  {weight: 1, max_age: 12h, label: Options data}    # daily snapshots; 12h covers the session from the 09:00 fetch
+  youtube_macro: {weight: 1, max_age: 24h, label: YouTube macro}
+  youtube_micro: {weight: 1, max_age: 24h, label: YouTube micro}
 
 # D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Scout
 # source; each RSS feed is its own source. Every source job that writes context (or
-# every one of its feeds) declares `category:` (one of the five above; a missing or
+# every one of its feeds) declares `category:` (one of the six above; a missing or
 # unknown one fails config load). Other knobs: weight (default 1), max_docs_per_run,
 # label (shown in the Scout card's source mix). The Scout reads `scout_doc_budget` docs
 # per run, split equally across categories with fresh docs, then by weighted
@@ -166,18 +172,18 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     schedule: ["05:00"]         # 02:00 PT; every channel's previous-day upload is captioned by now
     days: trading
     ttl: 3h                     # catch-up window; a missed morning is skipped after 08:00
-    lane: background            # captions + 4 LLM extractions; never delays the tick
+    lane: background            # captions + 5 LLM extractions; never delays the tick
     llm: true                   # holds the global LLM lock (brief extraction)
     notify: quiet               # folded into the first persona post; a channel error posts a notice
     context: {ttl: 24h, supersede: latest}   # briefs live for the trading day (hard expiry)
     writes: [raw_doc_ref, channel_brief]
-    lookback: 24h               # newest qualifying video published in the last 24 h
-    category: video             # YouTube never reaches the 30-min Scout (D45): briefs only
-    channels:                   # adding a channel = one entry here + arc/ingest/channels/<slug>/
-      - {slug: stockedup, channel: UC-m6zNItyoDk5lSykDlhE4Q, label: StockedUp, skip_shorts: true}
-      - {slug: fxevolution, channel: UCvJZEG5x-DVYZKTz--pS39w, label: FX, title_exclude: ['Live Stream']}
-      - {slug: tradebrigade, channel: UCYKtr6GfycBqQJf32tbQSbQ, label: TradeBrigade, max_audio_minutes: 90}
-      - {slug: arete, channel: UCTeFsS-bP0XEt3NBMjfW2cA, label: Arete, title_exclude: ['^PREMARKET LIVE'], max_videos: 10}
+    lookback: 24h               # newest qualifying video published in the last 24 h (every channel; D49: no weekend carry-over)
+    channels:                   # adding a channel = one entry here + arc/ingest/channels/<slug>/; D49: each declares youtube_macro | youtube_micro
+      - {slug: stockedup, channel: UC-m6zNItyoDk5lSykDlhE4Q, label: StockedUp, category: youtube_micro, skip_shorts: true}
+      - {slug: fxevolution, channel: UCvJZEG5x-DVYZKTz--pS39w, label: FX, category: youtube_macro, title_exclude: ['Live Stream']}
+      - {slug: tradebrigade, channel: UCYKtr6GfycBqQJf32tbQSbQ, label: TradeBrigade, category: youtube_micro, max_audio_minutes: 90}
+      - {slug: arete, channel: UCTeFsS-bP0XEt3NBMjfW2cA, label: Arete, category: youtube_micro, title_exclude: ['^PREMARKET LIVE'], max_videos: 10}
+      - {slug: bravos, channel: UCOHxDwCcOzBaLkeTazanwcw, label: Bravos, category: youtube_macro, skip_shorts: true, title_exclude: []}   # D49: ~2 long-form/week, 10-22 min, ~15:00-18:00 ET
   rss:                          # owner pick 2026-09-28: broad market, single names, macro
     label: RSS news
     about: "Polls the news feeds (WSJ, CNBC, Nasdaq, Seeking Alpha, Fed) and stores new articles for the Scout"
@@ -188,16 +194,16 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     feeds:                      # every feed declares its D47 category
       - {name: wsj, label: WSJ, url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", hosts: [wsj.com], category: market_news}
       - {name: cnbc, label: CNBC, url: "https://www.cnbc.com/id/20910258/device/rss/rss.html", category: market_news}
-      - {name: seekingalpha, label: SA, url: "https://seekingalpha.com/market_currents.xml", category: company}
+      - {name: seekingalpha, label: SA, url: "https://seekingalpha.com/market_currents.xml", category: company_data}
       - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets", category: market_news}
-      - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro}
-  edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: company, label: EDGAR, writes: [raw_doc_ref], lane: background,
+      - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro_data}
+  edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: company_data, label: EDGAR, writes: [raw_doc_ref], lane: background,
              about: "SEC filings (8-K, 10-Q, 10-K, Form 4) for the universe; stale filings are skipped"}   # D39: p90 75 s (377 s max on new filings)
   earnings:                     # Finnhub /calendar/earnings (ARC_FINNHUB_API_KEY; no key = skipped run)
     schedule: ["06:00", "18:00"]
     days: trading
     ttl: 6h
-    category: company
+    category: company_data
     label: Earnings
     about: "Finnhub earnings calendar (7 days back, 30 ahead) for event risk"
     age_basis: ingested         # D47: calendar rows are always "the latest pull", never stale by date
@@ -236,7 +242,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: weekdays
     ttl: 24h
     horizon_days: 45
-    category: macro
+    category: macro_data
     writes: [macro_calendar]
   unusual_options:              # self-computed from Alpaca chain snapshots: seed + today's candidates
     label: Unusual options
@@ -267,7 +273,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: trading
     ttl: 3h
     lane: background
-    category: company           # D47: Finnhub per-ticker kinds
+    category: company_data      # D47: Finnhub per-ticker kinds
     writes: [insider_activity]
   finnhub.recs:                 # /stock/recommendation: monthly data, weekly fetch
     label: Finnhub analyst recs
@@ -276,7 +282,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: [mon]
     ttl: 24h                    # a missed Monday still runs that day
     lane: background
-    category: company           # D47: Finnhub per-ticker kinds
+    category: company_data      # D47: Finnhub per-ticker kinds
     writes: [analyst_recs]
   finnhub.fundamentals:         # /stock/metric?metric=all, trimmed to the D46 field set
     label: Finnhub fundamentals
@@ -285,7 +291,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: [mon]
     ttl: 24h
     lane: background
-    category: company           # D47: Finnhub per-ticker kinds
+    category: company_data      # D47: Finnhub per-ticker kinds
     writes: [fundamentals]
   finnhub.earnings_history:     # /stock/earnings: EPS surprises
     label: Finnhub EPS surprises
@@ -294,7 +300,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: trading
     ttl: 3h
     lane: background
-    category: company           # D47: Finnhub per-ticker kinds
+    category: company_data      # D47: Finnhub per-ticker kinds
     writes: [earnings_history]
     full_days: [mon]            # whole scope on these days (or when the last full run is >= full_every_days old)
     full_every_days: 7

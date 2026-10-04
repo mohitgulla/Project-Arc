@@ -44,7 +44,14 @@ from arc.utils.calendar import ET
 if TYPE_CHECKING:
     import sqlite3
 
-SLUGS = ["stockedup", "fxevolution", "tradebrigade", "arete"]
+SLUGS = ["stockedup", "fxevolution", "tradebrigade", "arete", "bravos"]
+CATEGORY = {  # D49: each channel's YouTube category (config/routines.yaml)
+    "stockedup": "youtube_micro",
+    "fxevolution": "youtube_macro",
+    "tradebrigade": "youtube_micro",
+    "arete": "youtube_micro",
+    "bravos": "youtube_macro",
+}
 RUN_AT = dt.datetime(2026, 10, 5, 5, 0, tzinfo=ET)  # Monday 05:00 ET
 
 
@@ -234,20 +241,28 @@ class TestConfig:
         opts = {
             "lookback": "36h",
             "channels": [
-                {"slug": "stockedup", "channel": "UC-m6zNItyoDk5lSykDlhE4Q"},
-                {"slug": "newone", "channel": "https://www.youtube.com/@someone/videos"},
+                {
+                    "slug": "stockedup",
+                    "channel": "UC-m6zNItyoDk5lSykDlhE4Q",
+                    "category": "youtube_micro",
+                },
+                {
+                    "slug": "newone",
+                    "channel": "https://www.youtube.com/@someone/videos",
+                    "category": "youtube_macro",
+                },
             ],
         }
         cfg = DailyBriefConfig.from_options(opts)
         assert cfg.lookback == dt.timedelta(hours=36)
         assert cfg.channels[1].url == "https://www.youtube.com/@someone/videos"
         assert cfg.channels[1].source_key == "youtube.newone"
+        assert cfg.channels[1].category is SourceCategory.YOUTUBE_MACRO
         routines = RoutinesConfig.model_validate(
             {
                 "sources": {
                     JOB: {
                         "schedule": ["05:00"],
-                        "category": "video",
                         "writes": ["raw_doc_ref"],
                         **opts,
                     }
@@ -256,14 +271,78 @@ class TestConfig:
         )
         reg = SourceRegistry.from_routines(routines)
         assert {"youtube.stockedup", "youtube.newone"} <= set(reg.sources)
+        assert reg.sources["youtube.newone"].category is SourceCategory.YOUTUBE_MACRO
+
+    @pytest.mark.parametrize(
+        ("category", "match"),
+        [
+            (None, "missing `category:`"),
+            ("", "missing `category:`"),
+            ("market_news", "not a YouTube category"),
+            ("video", "split in two"),
+            ("youtube", "unknown source category"),
+        ],
+    )
+    def test_every_channel_declares_one_youtube_category(
+        self, category: str | None, match: str
+    ) -> None:
+        """D49: a missing or unknown channel category fails config load (both paths)."""
+        ch: dict[str, Any] = {"slug": "a", "channel": "UCx1"}
+        if category is not None:
+            ch["category"] = category
+        with pytest.raises(ValueError, match=match):
+            DailyBriefConfig.from_options({"channels": [ch]})
+        with pytest.raises(ValueError, match=match):
+            RoutinesConfig.model_validate(
+                {"sources": {JOB: {"schedule": ["05:00"], "writes": [], "channels": [ch]}}}
+            )
+
+    def test_job_level_video_category_is_refused(self) -> None:
+        """D49: the old job-level `category: video` names the per-channel fix."""
+        ch = {"slug": "a", "channel": "UCx1", "category": "youtube_micro"}
+        with pytest.raises(ValueError, match="split in two"):
+            RoutinesConfig.model_validate(
+                {
+                    "sources": {
+                        JOB: {
+                            "schedule": ["05:00"],
+                            "writes": [],
+                            "category": "video",
+                            "channels": [ch],
+                        }
+                    }
+                }
+            )
+        with pytest.raises(ValueError, match="on each channel"):
+            RoutinesConfig.model_validate(
+                {
+                    "sources": {
+                        JOB: {
+                            "schedule": ["05:00"],
+                            "writes": [],
+                            "category": "youtube_micro",
+                            "channels": [ch],
+                        }
+                    }
+                }
+            )
+
+    def test_channels_split_their_category_share(self, shipped: RoutinesConfig) -> None:
+        """D49: 2 macro channels get 1/2 of youtube_macro each, 3 micro channels 1/3."""
+        reg = SourceRegistry.from_routines(shipped)
+        for slug in ("fxevolution", "bravos"):
+            assert reg.share_in_category(f"youtube.{slug}") == pytest.approx(0.5)
+        for slug in ("stockedup", "tradebrigade", "arete"):
+            assert reg.share_in_category(f"youtube.{slug}") == pytest.approx(1 / 3)
+        assert reg.share_in_category("youtube.gone") == 0.0
 
     @pytest.mark.parametrize(
         "channels",
         [
-            [{"slug": "a", "channel": "UCx"}, {"slug": "a", "channel": "UCy"}],
-            [{"slug": "Bad Slug", "channel": "UCx"}],
-            [{"slug": "a", "channel": "UCx", "title_exclude": ["("]}],
-            [{"slug": "a", "channel": "UCx", "unknown": 1}],
+            [{"slug": "a", "channel": "UCx", "category": "youtube_micro"}] * 2,
+            [{"slug": "Bad Slug", "channel": "UCx", "category": "youtube_micro"}],
+            [{"slug": "a", "channel": "UCx", "category": "youtube_micro", "title_exclude": ["("]}],
+            [{"slug": "a", "channel": "UCx", "category": "youtube_micro", "unknown": 1}],
             [],
         ],
     )
@@ -274,10 +353,11 @@ class TestConfig:
     def test_configured_channels(self, shipped: RoutinesConfig) -> None:
         opts = shipped.job(JOB)[1].options  # type: ignore[index]
         assert configured_channels(opts) == [
-            {"slug": "stockedup", "label": "StockedUp"},
-            {"slug": "fxevolution", "label": "FX"},
-            {"slug": "tradebrigade", "label": "TradeBrigade"},
-            {"slug": "arete", "label": "Arete"},
+            {"slug": "stockedup", "label": "StockedUp", "category": "youtube_micro"},
+            {"slug": "fxevolution", "label": "FX", "category": "youtube_macro"},
+            {"slug": "tradebrigade", "label": "TradeBrigade", "category": "youtube_micro"},
+            {"slug": "arete", "label": "Arete", "category": "youtube_micro"},
+            {"slug": "bravos", "label": "Bravos", "category": "youtube_macro"},
         ]
         assert configured_channels(None) == []
 
@@ -288,11 +368,12 @@ class TestConfig:
 
 
 class TestScoutSeparation:
-    def test_video_category_has_no_scout_weight(self, shipped: RoutinesConfig) -> None:
+    def test_youtube_categories_have_no_scout_weight(self, shipped: RoutinesConfig) -> None:
         reg = SourceRegistry.from_routines(shipped)
-        assert SourceCategory.VIDEO in SCOUT_EXCLUDED
+        assert SourceCategory.YOUTUBE_MACRO in SCOUT_EXCLUDED
+        assert SourceCategory.YOUTUBE_MICRO in SCOUT_EXCLUDED
         for slug in SLUGS:
-            assert reg.sources[f"youtube.{slug}"].category is SourceCategory.VIDEO
+            assert reg.sources[f"youtube.{slug}"].category.value == CATEGORY[slug]
         weights = reg.effective_weights()
         assert not any(k.startswith("youtube") for k in weights)
         assert sum(weights.values()) == pytest.approx(1.0)
@@ -330,7 +411,9 @@ class TestScoutSeparation:
 
 
 def _ch(**kw: Any) -> DailyChannel:
-    return DailyChannel(slug="x", channel="UCxxxxxxxxxxxxxxxxxxxxxx", **kw)
+    return DailyChannel(
+        slug="x", channel="UCxxxxxxxxxxxxxxxxxxxxxx", category="youtube_micro", **kw
+    )
 
 
 class TestPick:
@@ -418,17 +501,19 @@ def _briefs(conn: sqlite3.Connection, now: dt.datetime = RUN_AT) -> dict[str, di
 
 
 class TestJob:
-    def test_four_channels_four_briefs(
+    def test_five_channels_five_briefs(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
         result, session, _ = _run(conn, shipped)
         briefs = _briefs(conn)
         assert set(briefs) == {f"youtube.{s}" for s in SLUGS}
-        assert result.metrics["briefs"] == 4
+        assert result.metrics["briefs"] == 5
         assert result.metrics["channels_failed"] == 0
-        assert result.summary.startswith("briefs 4/4 · StockedUp ✓ FX ✓ TradeBrigade ✓ Arete ✓")
+        assert result.summary.startswith(
+            "briefs 5/5 · StockedUp ✓ FX ✓ TradeBrigade ✓ Arete ✓ Bravos ✓"
+        )
         assert not result.notice
-        assert len(session.calls) == 4
+        assert len(session.calls) == 5
         # every item grounded in its transcript; self-promo stripped
         for slug in SLUGS:
             b = briefs[f"youtube.{slug}"]
@@ -451,7 +536,7 @@ class TestJob:
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
         _run(conn, shipped)
-        assert len(_briefs(conn, RUN_AT + dt.timedelta(hours=23, minutes=59))) == 4
+        assert len(_briefs(conn, RUN_AT + dt.timedelta(hours=23, minutes=59))) == 5
         assert _briefs(conn, RUN_AT + dt.timedelta(hours=24, minutes=1)) == {}
         exp = {r[0] for r in conn.execute("SELECT expires_at FROM channel_briefs")}
         assert len(exp) == 1
@@ -464,7 +549,7 @@ class TestJob:
         result, _, _ = _run(conn, shipped, published={"tradebrigade": old})
         briefs = _briefs(conn)
         assert "youtube.tradebrigade" not in briefs
-        assert len(briefs) == 3
+        assert len(briefs) == 4
         assert "TradeBrigade – (no video 24h)" in result.summary
         assert result.metrics["channels"]["tradebrigade"]["outcome"] == "no_video"
         assert not result.notice  # no info is not an error
@@ -483,7 +568,7 @@ class TestJob:
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
         result, _, _ = _run(conn, shipped, list_error={"fxevolution"})
-        assert len(_briefs(conn)) == 3
+        assert len(_briefs(conn)) == 4
         assert result.metrics["channels_failed"] == 1
         assert result.notice.startswith("YouTube briefs: FX failed (YoutubeListError")
         assert "FX ✗" in result.summary
@@ -503,8 +588,8 @@ class TestJob:
         result, session, _ = _run(conn, shipped, now=later)
         assert session.calls == []  # no transcript re-fetched
         assert {c["outcome"] for c in result.metrics["channels"].values()} == {"existing"}
-        assert conn.execute("SELECT count(*) FROM channel_briefs").fetchone()[0] == 4
-        assert len(_briefs(conn, later)) == 4
+        assert conn.execute("SELECT count(*) FROM channel_briefs").fetchone()[0] == 5
+        assert len(_briefs(conn, later)) == 5
 
     def test_newer_video_supersedes(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
@@ -567,7 +652,8 @@ def test_new_channel_fixture_is_grounded_and_promo_stripped(slug: str) -> None:
     assert removed and promo not in cleaned
     norm = normalize_text(cleaned)
     data = json.loads(reply)
-    quotes = [i["quote"] for k in ("levels", "calls", "catalysts", "risk_flags") for i in data[k]]
+    sections = ("levels", "calls", "catalysts", "risk_flags")
+    quotes = [i["quote"] for k in sections for i in data.get(k, [])]  # focus-only sections
     if data.get("market_bias"):
         quotes.append(data["market_bias"]["quote"])
     assert quotes
@@ -581,20 +667,31 @@ def test_new_channel_fixture_is_grounded_and_promo_stripped(slug: str) -> None:
 # ---------------------------------------------------------------------------
 
 CHANNELS = [
-    {"slug": "stockedup", "label": "StockedUp"},
-    {"slug": "fxevolution", "label": "FX"},
-    {"slug": "tradebrigade", "label": "TradeBrigade"},
-    {"slug": "arete", "label": "Arete"},
+    {"slug": "stockedup", "label": "StockedUp", "category": "youtube_micro"},
+    {"slug": "fxevolution", "label": "FX", "category": "youtube_macro"},
+    {"slug": "tradebrigade", "label": "TradeBrigade", "category": "youtube_micro"},
+    {"slug": "arete", "label": "Arete", "category": "youtube_micro"},
+    {"slug": "bravos", "label": "Bravos", "category": "youtube_macro"},
 ]
 
 
 class TestDirectorView:
     def test_presence_line(self) -> None:
         assert brief_presence_line(["stockedup", "arete"], CHANNELS) == (
-            "YouTube briefs: 2/4 channels (missing: FX, TradeBrigade)"
+            "YouTube briefs: 2/5 channels (missing: FX, TradeBrigade, Bravos)"
         )
-        assert brief_presence_line(SLUGS, CHANNELS) == "YouTube briefs: 4/4 channels"
-        assert brief_presence_line([], CHANNELS).startswith("YouTube briefs: 0/4 channels")
+        assert brief_presence_line(SLUGS, CHANNELS) == "YouTube briefs: 5/5 channels"
+        assert brief_presence_line([], CHANNELS).startswith("YouTube briefs: 0/5 channels")
+
+    def test_presence_is_per_category(self) -> None:
+        """D49: the denominator is the channels in that category (code-built)."""
+        present = ["stockedup", "tradebrigade", "arete", "fxevolution"]
+        assert brief_presence_line(present, CHANNELS, SourceCategory.YOUTUBE_MACRO) == (
+            "YouTube macro briefs: 1/2 channels (missing: Bravos)"
+        )
+        assert brief_presence_line(present, CHANNELS, SourceCategory.YOUTUBE_MICRO) == (
+            "YouTube micro briefs: 3/3 channels"
+        )
 
     def test_agreement_counts_distinct_channels(self) -> None:
         briefs = [
@@ -606,25 +703,51 @@ class TestDirectorView:
             {"channel_slug": "arete", "calls": [{"ticker": "SPY", "stance": "bearish"}]},
         ]  # fmt: skip
         lines = brief_agreement(briefs, CHANNELS)
-        assert lines[0] == "SPY bullish: 2/4 channels (StockedUp, TradeBrigade)"
-        assert "market bullish: 2/4 channels (StockedUp, TradeBrigade)" in lines
-        assert "SPY bearish: 1/4 channels (Arete)" in lines
+        assert lines[0] == "SPY bullish: 2/5 channels (StockedUp, TradeBrigade)"
+        assert "market bullish: 2/5 channels (StockedUp, TradeBrigade)" in lines
+        assert "SPY bearish: 1/5 channels (Arete)" in lines
+
+    def test_agreement_is_counted_inside_a_category_only(self) -> None:
+        """D49: a macro channel's call never counts toward a micro agreement (or back)."""
+        briefs = [
+            {"channel_slug": "stockedup", "calls": [{"ticker": "SPY", "stance": "bullish"}]},
+            {"channel_slug": "arete", "calls": [{"ticker": "SPY", "stance": "bullish"}]},
+            {"channel_slug": "fxevolution", "market_bias": {"stance": "bearish"},
+             "calls": [{"ticker": "SPY", "stance": "bullish"}]},
+            {"channel_slug": "bravos", "market_bias": {"stance": "bearish"}},
+        ]  # fmt: skip
+        micro = brief_agreement(briefs, CHANNELS, SourceCategory.YOUTUBE_MICRO)
+        assert micro == ["SPY bullish: 2/3 channels (Arete, StockedUp)"]
+        macro = brief_agreement(briefs, CHANNELS, SourceCategory.YOUTUBE_MACRO)
+        assert macro == [
+            "market bearish: 2/2 channels (Bravos, FX)",
+            "SPY bullish: 1/2 channels (FX)",
+        ]
 
     def test_director_prompt_has_the_briefs(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
         old = RUN_AT - dt.timedelta(hours=30)
-        _run(conn, shipped, published={"fxevolution": old})
+        _run(conn, shipped, published={"bravos": old})
         snap = ContextStore(conn).snapshot(RUN_AT + dt.timedelta(hours=5))
-        block = channel_brief_block(snap, configured_channels(shipped.job(JOB)[1].options))  # type: ignore[index]
-        assert block.splitlines()[0] == "YouTube briefs: 3/4 channels (missing: FX)"
+        channels = configured_channels(shipped.job(JOB)[1].options)  # type: ignore[index]
+        block = channel_brief_block(snap, channels)
+        heads = [ln for ln in block.splitlines() if " briefs: " in ln]
+        assert heads == [
+            "YouTube macro briefs: 1/2 channels (missing: Bravos)",
+            "YouTube micro briefs: 3/3 channels",
+        ]
         inp = director_input_from_context(
-            snap, portfolio_summary="flat", scan_date="2026-10-05", youtube_channels=CHANNELS
+            snap, portfolio_summary="flat", scan_date="2026-10-05", youtube_channels=channels
         )
         prompt = build_director_prompt(inp)
         assert "### YouTube channel briefs" in prompt
-        assert "YouTube briefs: 3/4 channels (missing: FX)" in prompt
+        assert "YouTube macro briefs: 1/2 channels (missing: Bravos)" in prompt
+        assert "YouTube micro briefs: 3/3 channels" in prompt
         assert '"channel": "TradeBrigade"' in prompt
+        # the category block names both YouTube categories with their own counts
+        assert "YouTube macro: 1/2 channels (missing: Bravos)" in prompt
+        assert "YouTube micro: 3/3 channels" in prompt
         # no channels configured -> no section at all
         assert "YouTube channel briefs" not in build_director_prompt(
             director_input_from_context(snap, portfolio_summary="flat", scan_date="2026-10-05")
@@ -636,7 +759,7 @@ class TestDirectorView:
         _run(conn, shipped)
         snap = ContextStore(conn).snapshot(RUN_AT)
         block = channel_brief_block(snap, CHANNELS[:1])
-        assert block.splitlines()[0] == "YouTube briefs: 1/1 channels"
+        assert block.splitlines()[0] == "YouTube micro briefs: 1/1 channels"
         assert "TradeBrigade" not in block
 
 
@@ -648,20 +771,21 @@ def test_guidelines_files_exist() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rule 1: a fifth channel = one config entry + one profile dir, no code change
+# Rule 1: a sixth channel = one config entry + one profile dir, no code change
 # ---------------------------------------------------------------------------
 
 
-def test_fifth_channel_from_temp_config_and_profile_root(
+def test_sixth_channel_from_temp_config_and_profile_root(
     conn: sqlite3.Connection, tmp_path: Path
 ) -> None:
+    """D49: a new channel declares its category and splits that category's share."""
     import shutil
 
     src = CHANNELS_DIR / "fxevolution"
-    dst = tmp_path / "fifthchan"
+    dst = tmp_path / "sixthchan"
     shutil.copytree(src, dst)
-    profile = (dst / "profile.yaml").read_text().replace("slug: fxevolution", "slug: fifthchan")
-    profile = profile.replace("UCvJZEG5x-DVYZKTz--pS39w", "UCfifthfifthfifthfifth00")
+    profile = (dst / "profile.yaml").read_text().replace("slug: fxevolution", "slug: sixthchan")
+    profile = profile.replace("UCvJZEG5x-DVYZKTz--pS39w", "UCsixthsixthsixthsixth00")
     (dst / "profile.yaml").write_text(profile)
     routines = RoutinesConfig.model_validate(
         {
@@ -672,35 +796,42 @@ def test_fifth_channel_from_temp_config_and_profile_root(
                     "context": {"ttl": "24h", "supersede": "latest"},
                     "writes": ["raw_doc_ref", "channel_brief"],
                     "lookback": "24h",
-                    "category": "video",
                     "profiles_dir": str(tmp_path),
                     "channels": [
                         {
-                            "slug": "fifthchan",
-                            "channel": "UCfifthfifthfifthfifth00",
-                            "label": "Fifth",
-                        }
+                            "slug": "sixthchan",
+                            "channel": "UCsixthsixthsixthsixth00",
+                            "label": "Sixth",
+                            "category": "youtube_micro",
+                        },
+                        {
+                            "slug": "otherchan",
+                            "channel": "UCotherotherotherother00",
+                            "label": "Other",
+                            "category": "youtube_micro",
+                        },
                     ],
                 }
             }
         }
     )
     video, transcript, reply = _fixture("fxevolution")
-    vid = "FIFTH000001"
+    vid = "SIXTH000001"
     info = {"id": vid, "title": video["title"], "duration": 1500,
             "timestamp": _ts(RUN_AT - dt.timedelta(hours=6))}  # fmt: skip
     result = youtube_briefs(
         _ctx(conn, routines),
-        RoutedLLM({"fifthchan": reply}),
+        RoutedLLM({"sixthchan": reply}),
         session=FakeSession({vid: transcript}),
-        list_videos=lambda url, n: [{"id": vid, "title": video["title"]}],
+        list_videos=lambda url, n: [{"id": vid, "title": video["title"]}] if "sixth" in url else [],
         fetch_info=lambda url: info,
         price_lookup=None,
     )
-    assert result.summary.startswith("briefs 1/1 · Fifth ✓")
-    assert set(_briefs(conn)) == {"youtube.fifthchan"}
+    assert result.summary.startswith("briefs 1/2 · Sixth ✓")
+    assert set(_briefs(conn)) == {"youtube.sixthchan"}
     reg = SourceRegistry.from_routines(routines)
-    assert reg.sources["youtube.fifthchan"].category is SourceCategory.VIDEO
+    assert reg.sources["youtube.sixthchan"].category is SourceCategory.YOUTUBE_MICRO
+    assert reg.share_in_category("youtube.sixthchan") == pytest.approx(0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -732,15 +863,18 @@ def test_trade_brigade_wednesday_brief_gone_on_thursday(
 # ---------------------------------------------------------------------------
 
 
-def test_one_of_four_present(conn: sqlite3.Connection, shipped: RoutinesConfig) -> None:
+def test_one_of_four_micro_present(conn: sqlite3.Connection, shipped: RoutinesConfig) -> None:
     old = RUN_AT - dt.timedelta(hours=40)
     _run(conn, shipped, published={"fxevolution": old, "tradebrigade": old, "arete": old})
     snap = ContextStore(conn).snapshot(RUN_AT)
     block = channel_brief_block(snap, CHANNELS)
     lines = block.splitlines()
-    assert lines[0] == "YouTube briefs: 1/4 channels (missing: FX, TradeBrigade, Arete)"
-    agreement = [ln for ln in lines if ln.startswith("- ")]
-    assert agreement and all(" 1/4 channels (StockedUp)" in ln for ln in agreement)
+    i_macro = lines.index("YouTube macro briefs: 1/2 channels (missing: FX)")
+    i_micro = lines.index("YouTube micro briefs: 1/3 channels (missing: TradeBrigade, Arete)")
+    micro_agreement = [ln for ln in lines[i_micro:] if ln.startswith("- ")]
+    assert micro_agreement and all(" 1/3 channels (StockedUp)" in ln for ln in micro_agreement)
+    macro_agreement = [ln for ln in lines[i_macro:i_micro] if ln.startswith("- ")]
+    assert macro_agreement and all(" 1/2 channels (Bravos)" in ln for ln in macro_agreement)
 
 
 # ---------------------------------------------------------------------------
@@ -817,7 +951,7 @@ def test_scout_selects_no_video_docs(conn: sqlite3.Connection, shipped: Routines
         )  # fmt: skip
     registry = SourceRegistry.from_routines(shipped)
     docs = _load_docs(repo.list_unscouted(limit=None), registry)
-    assert len(docs) == 24
+    assert len(docs) == 20 + len(SLUGS)
     selected, unselected, _ = select_docs(docs, registry, budget=120)
     assert [d.source for d in selected].count("youtube") == 0
     assert len(selected) == 20

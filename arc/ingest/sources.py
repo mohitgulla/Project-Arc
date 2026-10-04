@@ -8,7 +8,7 @@ Every ingest source is a named entry built from ``config/routines.yaml``:
   ``{name, url, category, weight, max_docs_per_run, label, hosts, max_age}`` (a plain
   URL string still loads, but then the job itself must declare ``category``).
 
-Categories (D47): every source belongs to one of five
+Categories (D47, D49): every source belongs to one of six
 :class:`~arc.context.categories.SourceCategory` values, declared in the top-level
 ``categories:`` block with a ``weight`` and a freshness ``max_age``. **Categories are
 weighted equally** (``weight: 1`` each); a source's ``weight`` is its share *inside*
@@ -21,7 +21,9 @@ category, to the source furthest below its share. Newest doc first within a sour
 A source that runs out of docs (or hits ``max_docs_per_run``) stops competing, and
 a category with no fresh docs left stops competing, so unused share flows to the
 others. Only :data:`~arc.context.categories.SCOUT_CATEGORIES` take part; options
-data and video reach the Director as typed context (D45, D47).
+data and the two YouTube categories reach the Director as typed context (D45, D47,
+D49). A YouTube channel declares its own category (``youtube_macro`` or
+``youtube_micro``); channels split their category's share (:meth:`share_in_category`).
 
 Freshness: a doc older than its source's ``max_age`` (default: its category's) is
 never selected; the Scout closes it ``skipped_stale``.
@@ -52,6 +54,7 @@ from arc.context.categories import (
     SourceCategory,
     earliest_ttl,
     parse_category,
+    parse_youtube_category,
 )
 from arc.context.ttl import Ttl
 
@@ -76,9 +79,11 @@ __all__ = [
 # Category when a legacy row / removed source has no registry entry (by key prefix).
 DEFAULT_CATEGORY: Mapping[str, SourceCategory] = {
     "rss": SourceCategory.MARKET_NEWS,
-    "edgar": SourceCategory.COMPANY,
-    "earnings": SourceCategory.COMPANY,
-    "youtube": SourceCategory.VIDEO,
+    "edgar": SourceCategory.COMPANY_DATA,
+    "earnings": SourceCategory.COMPANY_DATA,
+    # A removed channel's legacy rows (never Scout-read either way, D45); a configured
+    # channel always resolves through its own ``category:`` (D49).
+    "youtube": SourceCategory.YOUTUBE_MICRO,
 }
 UNKNOWN_CATEGORY = SourceCategory.MARKET_NEWS
 # D45/D47: categories the 30-min Scout never reads (typed context only). The registry
@@ -230,9 +235,6 @@ class SourceRegistry:
                         age_basis=basis,
                     )
                 continue
-            if category is None:
-                msg = f"source {job!r}: no category (D47)"
-                raise ValueError(msg)
             channels = opts.get("channels")
             if channels:  # E4.6: one registry source per YouTube channel (youtube.<slug>)
                 for raw in channels:
@@ -244,12 +246,18 @@ class SourceRegistry:
                     out[key] = SourceSpec(
                         key=key,
                         job=job,
-                        category=category,
+                        # D49: the channel's own category (youtube_macro | youtube_micro)
+                        category=parse_youtube_category(
+                            raw.get("category"), where=f"sources.{job}.channels.{slug}"
+                        ),
                         label=str(raw.get("label") or slug),
                         channel=str(raw.get("channel") or "") or None,
                         max_age=job_age,
                     )
                 continue
+            if category is None:
+                msg = f"source {job!r}: no category (D47)"
+                raise ValueError(msg)
             if job in out:
                 msg = f"duplicate source key {job!r}"
                 raise ValueError(msg)
@@ -328,6 +336,19 @@ class SourceRegistry:
             for s in ss:
                 out[s.key] = cat_w[c] * (s.weight / inner)
         return out
+
+    def share_in_category(self, key: str) -> float:
+        """A source's share *inside* its category (its weight over the category total).
+
+        D49: two ``youtube_macro`` channels get 0.5 each, three ``youtube_micro``
+        channels 1/3 each, so a new channel splits its category's share. Unknown
+        keys get 0.
+        """
+        spec = self.sources.get(key)
+        if spec is None:
+            return 0.0
+        total = sum(s.weight for s in self.sources.values() if s.category is spec.category)
+        return spec.weight / total if total > 0 else 0.0
 
     def max_age_for(self, key: str) -> Ttl:
         """D47 freshness window of a source: its own ``max_age`` else its category's."""

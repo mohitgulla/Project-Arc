@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any, cast
 import structlog
 from pydantic import ValidationError
 
+from arc.context.categories import LEGACY_VIDEO
 from arc.context.kinds import StoryEvidence, StoryPayload
 from arc.ingest.llm import FixtureScoutLLM, HermesScoutLLM, LLMResult, ScoutLLMError
 from arc.ingest.sources import (
@@ -640,8 +641,8 @@ def _raw_doc_ttl(routines: RoutinesConfig | None) -> _dt.timedelta:
 
 
 def scout_excluded(doc: _Doc) -> bool:
-    """D45/D47: the Scout never reads this doc (video, options data: typed context only)."""
-    return doc.category in {c.value for c in SCOUT_EXCLUDED}
+    """D45/D47/D49: the Scout never reads this doc (YouTube, options data: typed context)."""
+    return doc.category in {c.value for c in SCOUT_EXCLUDED} or doc.category == LEGACY_VIDEO
 
 
 def _doc_ts(raw: str) -> _dt.datetime | None:

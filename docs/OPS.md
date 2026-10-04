@@ -761,24 +761,40 @@ screen in `config/universe.yaml`. `ARC_UNIVERSE_MODE=strict` restores the allow-
 4. Knobs: `scout_max_new_tickers` (Slack-tunable, ceiling 25), `universe_mode`,
    `pipeline_max_shortlist` (the Quant/Risk budget, not a Director cap).
 
-### 5.11 Source fairness + options data (E4.5, D30; categories + freshness E4.7, D47)
+### 5.11 Source fairness + options data (E4.5, D30; categories + freshness E4.7, D47; six categories E4.9, D49)
 
 Every Scout source is a named entry in `config/routines.yaml`: each RSS feed under
 `sources.rss.feeds` (`name`, `url`, optional `label`, `category`, `weight`,
 `max_age`, `max_docs_per_run`, `hosts`), and `edgar` / `earnings` with a
-`category` and `label`. Every context-writing source **must** declare one of the 5
-D47 categories (`market_news`, `company`, `macro`, `options_data`, `video`); a
-missing or unknown category fails config load. The old names `company_news`,
-`filings`, `calendar` load as `company` for one release (logged
-`sources.category_alias`). Adding or re-weighting a source is a YAML edit only.
-YouTube (category `video`) has no Scout share since D45; see §5.22.
+`category` and `label`. Every context-writing source **must** declare one of the 6
+categories; a missing or unknown category fails config load. Adding or re-weighting
+a source is a YAML edit only.
 
+| category | label | `max_age` | sources | read by |
+|---|---|---|---|---|
+| `market_news` | Market news | 6h | WSJ, CNBC, Nasdaq RSS | Scout, Director |
+| `company_data` | Company data | 24h | Seeking Alpha, EDGAR, earnings, Finnhub kinds (D46) | Scout, Director |
+| `macro_data` | Macro data | 24h | Fed RSS, `macro_calendar` | Scout, Director |
+| `options_data` | Options data | 12h | `vol_term`, `put_call`, `unusual_options`, `ex_dividend` | Director, Risk (typed context) |
+| `youtube_macro` | YouTube macro | 24h | FX Evolution, Bravos Research | Director (channel briefs, §5.22) |
+| `youtube_micro` | YouTube micro | 24h | StockedUp, Trade Brigade, Arete Trading | Director (channel briefs, §5.22) |
+
+- **Renames (D49).** `company` → `company_data`, `macro` → `macro_data`; those and
+  the pre-D47 names `company_news`, `filings`, `calendar` still load for one release
+  (logged `sources.category_alias old= new=`). `video` was split in two, so
+  `category: video` fails config load with a pointer: set `category: youtube_macro |
+  youtube_micro` on each `youtube.briefs` channel. Stored rows that still say
+  `company` / `macro` / `video` are read through `normalize_category` (a `video`
+  brief resolves by its channel slug). A change-log override on an old key
+  (`categories.company.weight`) applies to the renamed key; one on
+  `categories.video.*` is dropped with `control.override_unknown_key`.
 - **Categories.** The top-level `categories:` block sets each category's `weight`
-  (all 1 = equal) and freshness `max_age` (6h / 24h / 24h / 1 session / 24h).
-  Both are Slack-tunable: `!arc config set categories.<c>.weight 0-5` and
-  `categories.<c>.max_age <minutes>` (30-10080; `options_data` keeps its session
-  window). A source's `weight` is its share *inside* its category, so a 4th
-  market_news feed takes a quarter of market_news, and other categories don't move.
+  (all 1 = equal) and freshness `max_age` (table above). Both are Slack-tunable:
+  `!arc config set categories.<c>.weight 0-5` and `categories.<c>.max_age <minutes>`
+  (30-10080, every category including `options_data`). A source's `weight` is its
+  share *inside* its category, so a 4th market_news feed takes a quarter of
+  market_news, and other categories don't move. YouTube channels split their own
+  category the same way (2 macro channels = 1/2 each, 3 micro = 1/3 each).
 - **Budget.** Each Scout run reads `scout_doc_budget` docs (default 120, Slack-tunable
   20-400), split equally across the categories that have fresh docs this run, then
   by source weight inside each category (weighted round-robin; a category or source
@@ -793,10 +809,18 @@ YouTube (category `video`) has no Scout share since D45; see §5.22.
   min(1 session, freshest source's `max_age` + 2h).
 - **Source mix.** The Scout card groups it by category: `*Market news* 50% · 6
   read: WSJ 1 · Nasdaq 5 (10 over budget)`, with `(N stale)` per source.
-- **Director.** Its prompt carries a code-built *Context by category* block: the 5
+- **Director.** Its prompt carries a code-built *Context by category* block: the 6
   headers in fixed order, each with a freshness line (`Market news: 14 stories,
-  newest 22m`, `Options data: vol_term 5h, put_call 8h`, `YouTube: 3/4 channels
-  (missing: …)`); an empty category reads `no fresh info`.
+  newest 22m`, `Options data: vol_term 5h, put_call 8h`, `YouTube macro: 1/2
+  channels (missing: Bravos)`); an empty category reads `no fresh info`.
+- **Typed-kind freshness (D49).** The category `max_age` also applies to typed
+  context (vol_term, put_call, unusual_options, ex_dividend, macro_calendar,
+  channel_brief, Finnhub kinds), measured from `valid_from`. An older entry is
+  listed as `stale (age)`, e.g. `Options data: no fresh info (vol_term stale
+  (13h))`; a category with nothing fresh reads `no fresh info`. The context TTL is
+  unchanged, so stale entries stay readable for audit and the Tower. A Director call
+  recorded before D49 (no `categories` input) replays with the old 5-category block,
+  byte for byte (`arc journal replay`).
 - **EDGAR.** `published_at` is the filing's `acceptanceDateTime` (filing date if
   absent). Filings older than the company window are skipped before download, and
   the cursor is the newest accession seen, so a filing re-listed on the feed (or the
@@ -1348,18 +1372,21 @@ without stopping the experiment: `!arc set experiments.runner.enabled false`.
 
 and commit it (replaces the template's dry-run example).
 
-### 5.22 YouTube channel briefs: one 05:00 ET run, four channels (E4.6, D45)
+### 5.22 YouTube channel briefs: one 05:00 ET run, five channels (E4.6, D45; categories E4.9, D49)
 
 **What runs.** `youtube.briefs` in `config/routines.yaml`, 05:00 ET (02:00 PT) on
 trading days, background lane, holds the LLM lock, `ttl: 3h` (a missed morning is
-skipped after 08:00, never caught up). Channels, in config order:
+skipped after 08:00, never caught up). Every channel declares its category
+(`youtube_macro` or `youtube_micro`, required; the job has no `category:`).
+Channels, in config order:
 
-| slug | channel | notes |
-|---|---|---|
-| `stockedup` | StockedUp `UC-m6zNItyoDk5lSykDlhE4Q` | Shorts skipped |
-| `fxevolution` | FX Evolution `UCvJZEG5x-DVYZKTz--pS39w` | `Live Stream` titles excluded |
-| `tradebrigade` | Trade Brigade `UCYKtr6GfycBqQJf32tbQSbQ` | 50-77 min videos: `max_audio_minutes: 90` |
-| `arete` | Arete Trading `UCTeFsS-bP0XEt3NBMjfW2cA` | `^PREMARKET LIVE` clips excluded, `max_videos: 10` |
+| slug | channel | category | notes |
+|---|---|---|---|
+| `stockedup` | StockedUp `UC-m6zNItyoDk5lSykDlhE4Q` | `youtube_micro` | Shorts skipped |
+| `fxevolution` | FX Evolution `UCvJZEG5x-DVYZKTz--pS39w` | `youtube_macro` | `Live Stream` titles excluded |
+| `tradebrigade` | Trade Brigade `UCYKtr6GfycBqQJf32tbQSbQ` | `youtube_micro` | 50-77 min videos: `max_audio_minutes: 90` |
+| `arete` | Arete Trading `UCTeFsS-bP0XEt3NBMjfW2cA` | `youtube_micro` | `^PREMARKET LIVE` clips excluded, `max_videos: 10` |
+| `bravos` | Bravos Research `UCOHxDwCcOzBaLkeTazanwcw` | `youtube_macro` | macro-thesis channel (`horizon: multi_week`); about 2 long-form uploads a week (15 from 2026-08-09 to 10-03), 10-22 min, published about 15:00-18:00 ET, so the 24 h lookback finds a video on about 2 of 5 mornings (the rest: no info). Paid-package pitch stripped by `sponsor_patterns` |
 
 **Per channel (deterministic, in code):**
 1. Flat-list the newest `max_videos` uploads. A listing failure (yt-dlp missing,
@@ -1378,17 +1405,20 @@ skipped after 08:00, never caught up). Channels, in config order:
    reads are stripped first. The brief expires 24 h after the run and supersedes the
    channel's previous `channel_brief` entry.
 
-**What the Director sees.** A code-built block: `YouTube briefs: 3/4 channels
-(missing: FX)`, then agreement per (ticker, stance) counted over distinct
-channels with the configured channel count as the denominator, then each brief.
-Channels are equal-weight (`trust_weight: 0.5` each); free text never feeds the gate.
+**What the Director sees.** A code-built block per YouTube category: `YouTube macro
+briefs: 1/2 channels (missing: Bravos)` and `YouTube micro briefs: 3/3 channels`,
+each followed by agreement per (ticker, stance) counted over distinct channels
+*inside that category* (the category's channel count is the denominator), then
+each brief. Each YouTube category is one equal voice among the six; its channels
+split it (`trust_weight: 0.5` each); free text never feeds the gate.
 A new brief changes the loop's input digest, so the next Director slot runs in full.
 
 **Adding a channel.** One `channels:` entry (slug, `UC…` id or a channel URL,
-label, optional `title_exclude` / `max_videos` / `max_audio_minutes` /
-`skip_shorts`) plus `arc/ingest/channels/<slug>/` with `profile.yaml`,
-`GUIDELINES.md` and fixtures. No code change; `tests/test_youtube_briefs.py` checks
-that every configured slug has a profile.
+label, `category: youtube_macro | youtube_micro`, optional `title_exclude` /
+`max_videos` / `max_audio_minutes` / `skip_shorts`) plus
+`arc/ingest/channels/<slug>/` with `profile.yaml`, `GUIDELINES.md` and fixtures.
+No code change; `tests/test_youtube_briefs.py` checks that every configured slug
+has a profile.
 
 **Run it by hand** (scratch DB, never `data/arc.db`):
 

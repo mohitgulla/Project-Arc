@@ -492,7 +492,7 @@ def test_scout_facts_tickers_cap_and_order() -> None:
 
     def story(i: int, tickers: list[str]) -> StoryPayload:
         return StoryPayload.model_validate({
-            "story_id": f"s{i}", "headline": "h", "summary": "s", "category": "company",
+            "story_id": f"s{i}", "headline": "h", "summary": "s", "category": "company_data",
             "tickers": tickers, "urls": [f"https://x/{i}"], "doc_ids": [f"d{i}"],
             "source_keys": ["rss"], "distinct_sources": 1,
             "first_published": "2026-10-06T08:00:00-04:00",

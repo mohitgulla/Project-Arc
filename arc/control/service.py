@@ -36,6 +36,7 @@ from arc.control.registry import (
     ValueType,
     direction,
     format_value,
+    is_alias,
     lookup,
     parse_value,
     read_raw,
@@ -235,7 +236,9 @@ class ControlService:
         """One key's value; ``settings`` reuses an effective config built once per list."""
         t = lookup(key)
         s = settings if settings is not None else self.settings()
-        last = self.changes.latest(t.key)
+        # D49: a change-log row on a renamed key (alias) counts as this key's override
+        rows = [r for r in (self.changes.latest(k) for k in (t.key, *t.aliases)) if r]
+        last = max(rows, key=lambda r: r.id) if rows else None
         return KeyView(
             tunable=t,
             value=self._value(t, s),
@@ -247,7 +250,11 @@ class ControlService:
     def keys(self) -> list[str]:
         """Registry keys, each profile's entry DTE window, and overridden pattern keys."""
         profile = self._profile_keys()
-        extra = [k for k in self.changes.active() if k not in REGISTRY and k not in profile]
+        extra = [
+            k
+            for k in self.changes.active()
+            if k not in REGISTRY and k not in profile and not is_alias(k)  # D49 renames
+        ]
         return [*REGISTRY, *profile, *sorted(extra)]
 
     def _profile_keys(self) -> list[str]:

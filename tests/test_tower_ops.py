@@ -472,6 +472,14 @@ def test_sources_categories_share_parity_with_registry(conn, routines) -> None:
             inner = [x.share_in_category or 0 for x in s.sources if x.category == c.key]
             assert sum(inner) == pytest.approx(1.0, abs=1e-3)
     assert sum(c.share or 0 for c in s.categories) == pytest.approx(1.0, abs=1e-3)
+    # D49: each YouTube channel shows its split of its own YouTube category
+    for x in s.sources:
+        if x.job == "youtube.briefs":
+            assert x.share_in_category == pytest.approx(reg.share_in_category(x.key), abs=1e-4)
+    for c in ("youtube_macro", "youtube_micro"):
+        inner = [x.share_in_category or 0 for x in s.sources if x.category == c]
+        if inner:
+            assert sum(inner) == pytest.approx(1.0, abs=1e-3)
 
 
 def test_sources_category_rollup_is_worst_status(conn, routines) -> None:
