@@ -25,6 +25,7 @@ import importlib.metadata
 import json
 import platform
 import socket
+import sqlite3
 import subprocess
 import uuid
 from collections import Counter
@@ -39,7 +40,6 @@ from arc.context.ttl import to_db
 from arc.utils.calendar import ET, now_et, session_phase
 
 if TYPE_CHECKING:
-    import sqlite3
     from collections.abc import Iterable
 
     from arc.config import ArcSettings
@@ -155,6 +155,12 @@ class RunManifest(BaseModel):
     proposal_hashes: list[str] = Field(default_factory=list)
     gate_decision_ids: list[str] = Field(default_factory=list)
     notifications: list[str] = Field(default_factory=list)  # Slack ts of posts for this run
+    # E10.2 (D44): set on runs in an experiment arm store. ``paired_chain_run_id`` is
+    # the control loop chain whose inputs a paired arm chain reused; ``fork_step`` is
+    # the first step the arm re-ran (the first one its overlay changes).
+    arm_id: str | None = None
+    paired_chain_run_id: str | None = None
+    fork_step: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +321,7 @@ def build_manifest(
     git_sha, git_dirty = _git()
     error = run.error
     status = run.status.value
+    arm = _arm_of(conn, run.chain_run_id)
     return RunManifest(
         run_id=run.run_id,
         job=run.job,
@@ -376,7 +383,34 @@ def build_manifest(
         proposal_hashes=[r["proposal_hash"] for r in proposals],
         gate_decision_ids=[r["id"] for r in gates],
         notifications=[n for n in notifications if n],
+        arm_id=arm.get("arm_id"),
+        paired_chain_run_id=arm.get("paired_chain_run_id"),
+        fork_step=arm.get("fork_step"),
     )
+
+
+def _arm_of(conn: sqlite3.Connection, chain_run_id: str | None) -> dict[str, str | None]:
+    """E10.2: ``arm_id`` / ``paired_chain_run_id`` / ``fork_step`` of a run in an arm store.
+
+    ``{}`` on a control store (no ``arm_identity``) or a pre-E10.2 DB.
+    """
+    try:
+        ident = conn.execute("SELECT arm_id FROM arm_identity WHERE id = 1").fetchone()
+    except sqlite3.OperationalError:
+        return {}
+    if ident is None:
+        return {}
+    out: dict[str, str | None] = {"arm_id": ident[0]}
+    if chain_run_id:
+        pair = conn.execute(
+            """SELECT control_chain_run_id, fork_step FROM arm_pairs
+               WHERE arm_chain_run_id = ? LIMIT 1""",
+            (chain_run_id,),
+        ).fetchone()
+        if pair is not None:
+            out["paired_chain_run_id"] = pair[0]
+            out["fork_step"] = pair[1]
+    return out
 
 
 def _opt_str(settings: ArcSettings | None, name: str) -> str | None:
@@ -403,8 +437,8 @@ class ManifestRepo:
             self.conn.execute(
                 """INSERT INTO run_manifests
                    (id, run_id, attempt, job, chain_run_id, status, schema_version, payload,
-                    created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, arm_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     row_id,
                     manifest.run_id,
@@ -415,6 +449,7 @@ class ManifestRepo:
                     manifest.schema_version,
                     manifest.model_dump_json(),
                     to_db(now or now_et()),
+                    manifest.arm_id,
                 ),
             )
         return row_id

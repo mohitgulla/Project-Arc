@@ -30,6 +30,7 @@ from arc.ingest.llm import FixtureScoutLLM, HermesScoutLLM
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
+    import sqlite3
     from collections.abc import Callable
 
     from arc.broker.base import BrokerAdapter
@@ -82,9 +83,23 @@ class PipelineEnv:
     # -- builders ------------------------------------------------------------
 
     @classmethod
-    def live(cls, settings: ArcSettings, *, broker: bool = True) -> PipelineEnv:
+    def live(
+        cls,
+        settings: ArcSettings,
+        *,
+        broker: bool = True,
+        conn: sqlite3.Connection | None = None,
+        chain_run_id: str | None = None,
+    ) -> PipelineEnv:
         """Alpaca data and Hermes personas. With ``broker=False`` (dry run) the
-        account is the fixture account and no broker client is built."""
+        account is the fixture account and no broker client is built.
+
+        E10.2 (D44): with the store *conn* the broker is the store's
+        (:func:`arc.experiments.broker.trading_broker`: an experiment arm store
+        trades only its own paper account, through its virtual account) and the
+        market data is taped for a paired arm (:func:`arc.experiments.tape.tape_market`:
+        control's loop records its reads, the arm's paired chain replays them).
+        """
         from arc.data.alpaca import AlpacaMarketData
 
         # Each persona's model comes from config/llm_routing.yaml (E8.1).
@@ -95,16 +110,26 @@ class PipelineEnv:
             for p in PERSONAS
         }
         if broker:
-            from arc.broker.alpaca_paper import AlpacaPaperBroker
+            if conn is not None:
+                from arc.experiments.broker import trading_broker
 
-            paper = AlpacaPaperBroker()
+                paper: BrokerAdapter = trading_broker(conn, settings)
+            else:
+                from arc.broker.alpaca_paper import AlpacaPaperBroker
+
+                paper = AlpacaPaperBroker()
             account: Callable[[], AccountInfo] = paper.account
             positions: Callable[[], list[BrokerPosition]] = paper.positions
             adapter: BrokerAdapter | None = paper
         else:
             account, positions, adapter = fixture_account, list, None
+        market: MarketDataProvider = AlpacaMarketData()
+        if conn is not None:
+            from arc.experiments.tape import tape_market
+
+            market = tape_market(conn, chain_run_id, market)
         return cls(
-            market=AlpacaMarketData(),
+            market=market,
             account=account,
             positions=positions,
             llms=llms,

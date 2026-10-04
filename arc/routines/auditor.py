@@ -178,12 +178,15 @@ def _slots_line(ctx: JobContext) -> str | None:
 
 
 def auditor_step(ctx: JobContext) -> JobResult:
-    """Dispatcher entry point: Alpaca paper broker (read-only) + Alpaca bars for settles."""
-    from arc.broker.alpaca_paper import AlpacaPaperBroker
+    """Dispatcher entry point: Alpaca paper broker (read-only) + Alpaca bars for settles.
+
+    E10.2: the store's broker (an arm store reconciles its own account, virtually).
+    """
     from arc.data.alpaca import AlpacaMarketData
+    from arc.experiments.broker import trading_broker
 
     return auditor(
         ctx,
-        broker=AlpacaPaperBroker(),
+        broker=trading_broker(ctx.conn, ctx.settings),
         settle_price=settle_from_market(AlpacaMarketData()),
     )

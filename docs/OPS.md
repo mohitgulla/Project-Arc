@@ -1161,6 +1161,36 @@ stores one `ExperimentReport` in the append-only `experiment_reports` table:
   end and records σ (unlocks ab starts). An A/A whose CI excludes 0 → stop(invalid).
 - Breakdowns by regime / structure kind are reported, never decision inputs.
 
+### 5.19 Arm runner (E10.2, D44)
+
+The treatment arm is the same trading loop on its own paper account
+(`ALPACA_EXP_*`) and its own store (`experiments.runner.arms` in
+`config/experiments.yaml`; N arms is configuration, e.g. a paper shadow control).
+
+    arc experiment start X-1 --db data/arc.db           # t0 (live: arm account must be flat)
+    arc experiment start X-1 --fixtures --arm-dir <scratch> --db <scratch>.db
+    arc experiment pair <control chain id> --db <db> [--fixtures --fixture-set bullish]
+    arc experiment arms-tick --db data/arc.db           # what the live tick spawns
+
+- t0: each arm store gets a one-row `arm_identity` and a virtual account opened
+  at control's equity (broker equity for live, the fixture account offline);
+  control's open structures are the legacy book, their max loss is reserved in
+  the arm until each closes on control. The arm account must have no positions
+  or open orders: close them in the Alpaca dashboard (no auto-flatten).
+- The arm sizes and gates from its virtual account (`VirtualBroker`): equity
+  moves only with its own fills/marks, buying power = min(broker, virtual −
+  legacy), and under a cash profile only settled cash (T+1) counts. Control's
+  account profile (debit-only, day-trade limit, D32 budget) applies unchanged.
+- Shared inputs: Scout/sources run once, in control. The arm reuses control's
+  steps before the fork step (the first step its overlay changes; never later
+  than `propose`) and replays control's market tape (`market_tape`). Every arm
+  manifest carries `paired_chain_run_id`, `fork_step`, `arm_id`, `git_sha`.
+- After each live control tick, `arc routines tick` spawns `arc experiment
+  arms-tick` detached (own lock, own lock dirs), only while an experiment runs.
+- Evaluation reads arm rows through `arc.experiments.paired.paired_view`: arm
+  stores ATTACHed read-only, `arm_id` projected per store. Nothing is copied
+  into the control store (D32 counts and Tower stay control-only).
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.

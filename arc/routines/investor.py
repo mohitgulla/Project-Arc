@@ -367,14 +367,18 @@ def investor(
 
 
 def investor_step(ctx: JobContext) -> JobResult:
-    """Dispatcher entry point: Alpaca paper broker, wall clock, real sleep."""
-    from arc.broker.alpaca_paper import AlpacaPaperBroker
+    """Dispatcher entry point: Alpaca paper broker, wall clock, real sleep.
+
+    E10.2: the store's broker, so a ladder spawned on an arm store trades only the
+    arm's paper account.
+    """
     from arc.data.alpaca import AlpacaMarketData
+    from arc.experiments.broker import trading_broker
     from arc.utils.calendar import is_open, now_et
 
     return investor(
         ctx,
-        broker=AlpacaPaperBroker(),
+        broker=trading_broker(ctx.conn, ctx.settings),
         clock=now_et,
         sleep=time.sleep,
         market_open=is_open,
@@ -498,6 +502,14 @@ def execute_step(
         raise JobSkippedError(msg)
     hashes = chain_proposals(ctx.conn, ctx.chain_run_id)
     settings = ctx.settings
+    from arc.experiments.arms import read_identity
+
+    # E10.2: an experiment arm posts no cards (the paired arm is not a second
+    # trader in #arc-investor) but auto-approves under control's switches exactly
+    # as control does; its cards go to the log.
+    arm = read_identity(ctx.conn) is not None
+    if service is None and arm:
+        service = make_service(ctx.conn, settings, slack=False)
     if service is None and not ctx.run_env.slack:
         return JobResult(
             summary=f"{len(hashes)} proposal(s) not published (no Slack); awaiting the next tick",

@@ -56,6 +56,15 @@ class AccountSnapshot(_Frozen):
             "so the order_budget rule is skipped; live callers always count."
         ),
     )
+    day_trades_used: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "E10.2: day trades (a structure opened and closed the same ET day) in the "
+            "profile's rolling window, from arc.pipeline.market.day_trades_used. None = "
+            "not counted, so the day_trades rule is skipped."
+        ),
+    )
     as_of: dt.datetime = Field(..., description="When the snapshot was taken (tz-aware)")
 
 
@@ -98,6 +107,10 @@ class Portfolio(_Frozen):
     legs: dict[str, int] = Field(
         default_factory=dict,
         description="Held option contracts by OCC symbol: + long / − short (closing checks)",
+    )
+    opened_today: frozenset[str] = Field(
+        default_factory=frozenset,
+        description="E10.2: OCC symbols of structures opened this ET day (a close = day trade)",
     )
 
 
