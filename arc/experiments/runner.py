@@ -299,6 +299,18 @@ def live_flat_check(environ: Mapping[str, str] | None = None) -> Callable[[ArmRu
                 "Alpaca dashboard before t0 (the arm must start flat)"
             )
             raise ArmStartError(msg)
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        open_orders = broker._client.get_orders(  # noqa: SLF001 - read-only listing
+            GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=50)
+        )
+        if open_orders:
+            msg = (
+                f"{arm.keys_env} account has {len(open_orders)} open order(s); cancel them "
+                "in the Alpaca dashboard before t0 (the arm must start flat)"
+            )
+            raise ArmStartError(msg)
 
     return check
 

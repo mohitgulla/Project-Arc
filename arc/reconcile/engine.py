@@ -675,8 +675,10 @@ def _realized_today(conn: sqlite3.Connection, day: _dt.date) -> tuple[Decimal, i
     return realized, closed
 
 
-def _pnl_details(report: ReconcileReport, info: AccountInfo | None) -> dict[str, Any]:
-    return {
+def _pnl_details(
+    report: ReconcileReport, info: AccountInfo | None, *, virtual: bool = False
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
         "day": report.day.isoformat(),
         "equity": None if info is None else str(info.equity),
         "last_equity": None if info is None or info.last_equity is None else str(info.last_equity),
@@ -688,6 +690,11 @@ def _pnl_details(report: ReconcileReport, info: AccountInfo | None) -> dict[str,
         "closed_today": report.closed_today,
         "clean": report.clean,
     }
+    if virtual:
+        # E10.2/E10.3 (D44): an experiment arm's account() is its virtual account;
+        # the evaluator reads only this key (arc.experiments.evaluate.TREATMENT_EQUITY_FIELD)
+        out["virtual_equity"] = None if info is None else str(info.equity)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -774,7 +781,9 @@ def reconcile(
             realized=str(report.realized),
             unrealized=str(report.unrealized),
             total=str(report.realized + report.unrealized),
-            details_json=json.dumps(_pnl_details(report, info)),
+            details_json=json.dumps(
+                _pnl_details(report, info, virtual=getattr(broker, "is_virtual", False) is True)
+            ),
             snapshot_at=to_db(now),
             run_id=run_id,
             commit=False,

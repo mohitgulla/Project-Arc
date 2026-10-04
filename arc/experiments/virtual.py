@@ -395,6 +395,9 @@ class VirtualBroker:
     positions and cancels go to the real broker unchanged.
     """
 
+    #: reconcile writes ``details_json.virtual_equity`` for a virtual broker (E10.3)
+    is_virtual = True
+
     def __init__(
         self,
         inner: BrokerAdapter,

@@ -23,6 +23,7 @@ test:
 test-gate:
 	uv run pytest tests/test_gate.py tests/test_halt.py tests/test_gate_token.py \
 		tests/test_gate_hook_policy.py tests/test_gate_band.py tests/test_account_profiles.py \
+		tests/test_day_trades.py \
 		-v --tb=short \
 		--cov=arc.gate --cov-branch --cov-report=term-missing --cov-fail-under=100
 
