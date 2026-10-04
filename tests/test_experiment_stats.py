@@ -158,7 +158,7 @@ def test_sortino_diff_ci_deterministic_and_paired() -> None:
     assert stats.sortino_diff_ci([0.1], [0.1], level=0.9, resamples=200, seed=1) is None
     with pytest.raises(ValueError, match="differ in length"):
         stats.sortino_diff_ci([0.1, 0.2], [0.1], level=0.9, resamples=200, seed=1)
-    assert stats.seed_for("X-1", 3) == stats.seed_for("X-1", 3) != stats.seed_for("X-1", 4)
+    assert stats.seed_for("XP-1", 3) == stats.seed_for("XP-1", 3) != stats.seed_for("XP-1", 4)
 
 
 # ---------------------------------------------------------------------------
@@ -274,14 +274,14 @@ def test_power_at_the_always_valid_mde(known_sigma: float | None) -> None:
 
 def test_series_pairs_eod_snapshots_per_arm(conn: sqlite3.Connection) -> None:
     store = fx.start(conn, fx.spec())
-    days = fx.equity_curves(conn, "X-2", [100, -50, 30], [150, -20, 10])
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    days = fx.equity_curves(conn, "XP-2", [100, -50, 30], [150, -20, 10])
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days))
     assert [s.day for s in r.series] == days
     assert [s.d for s in r.series] == pytest.approx([50e-5, 30e-5, -20e-5])
     assert r.primary.n == 3 and r.primary.mean == pytest.approx(20e-5)
     assert r.primary.sigma_source == "running_corrected"
     assert r.verdict == "continue" and r.missing_sessions == []
-    assert r.arms[0].arm_id is None and r.arms[1].arm_id == "X-2:treatment"
+    assert r.arms[0].arm_id is None and r.arms[1].arm_id == "XP-2:treatment"
     assert r.arms[1].total_pnl == pytest.approx(140)
     assert r.as_of_day == days[-1]
 
@@ -294,9 +294,9 @@ def test_mid_session_t0_starts_next_session_and_today_not_missing(
     days = fx.sessions(3)
     fx.pnl_row(conn, days[0], 100_000, None)  # t0's day: excluded, it is the baseline
     fx.pnl_row(conn, days[1], 100_100, None)
-    fx.pnl_row(conn, days[1], 100_050, arm_id("X-2", "treatment"))
+    fx.pnl_row(conn, days[1], 100_050, arm_id("XP-2", "treatment"))
     now = dt.datetime.combine(days[2], dt.time(12, 0), tzinfo=ET)  # today: no EOD yet
-    r = build_report(conn, store.require("X-2"), CFG, now=now)
+    r = build_report(conn, store.require("XP-2"), CFG, now=now)
     assert [s.day for s in r.series] == [days[1]]
     assert r.series[0].d == pytest.approx(-50 / 100_000)
     assert r.missing_sessions == []
@@ -305,7 +305,7 @@ def test_mid_session_t0_starts_next_session_and_today_not_missing(
 def test_missing_arm_session_is_skipped_and_listed(conn: sqlite3.Connection) -> None:
     store = fx.start(conn, fx.spec())
     days = fx.sessions(3)
-    t_arm = arm_id("X-2", "treatment")
+    t_arm = arm_id("XP-2", "treatment")
     from arc.utils.calendar import previous_session
 
     fx.pnl_row(conn, previous_session(days[0]), 100_000, None)
@@ -313,7 +313,7 @@ def test_missing_arm_session_is_skipped_and_listed(conn: sqlite3.Connection) -> 
         fx.pnl_row(conn, day, c, None)
         fx.pnl_row(conn, day, t, t_arm)
     fx.pnl_row(conn, days[1], 100_200, None)  # control only: the arm missed reconcile
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days))
     assert [s.day for s in r.series] == [days[0]]  # day 3 needs day 2's arm close too
     assert r.missing_sessions == days[1:]
 
@@ -329,14 +329,14 @@ def test_treatment_reads_virtual_equity_not_broker_equity(conn: sqlite3.Connecti
         migrate(c)
         store = fx.start(c, fx.spec(), t0_equity=t0_equity)
         days = fx.equity_curves(
-            c, "X-2", [10, 10, 10], [10, 10, 10], t0_equity=t0_equity, prior_close=t0_equity
+            c, "XP-2", [10, 10, 10], [10, 10, 10], t0_equity=t0_equity, prior_close=t0_equity
         )
         raw = c.execute(
             "SELECT json_extract(details_json, '$.equity') FROM pnl_snapshots"
             " WHERE arm_id IS NOT NULL ORDER BY rowid LIMIT 1"
         ).fetchone()[0]
         assert float(raw) == t0_equity + 10 + fx.BROKER_EXCESS  # broker != virtual
-        r = build_report(c, store.require("X-2"), CFG, now=_after(days))
+        r = build_report(c, store.require("XP-2"), CFG, now=_after(days))
         assert [s.d for s in r.series] == pytest.approx([0.0, 0.0, 0.0])
         assert [s.treatment_equity for s in r.series] == pytest.approx(
             [t0_equity + 10, t0_equity + 20, t0_equity + 30]
@@ -352,14 +352,14 @@ def test_treatment_row_without_virtual_equity_is_missing_not_fabricated(
     """No ``virtual_equity`` -> the session is missing; broker ``equity`` is no fallback."""
     store = fx.start(conn, fx.spec())
     days = fx.sessions(3)
-    t_arm = arm_id("X-2", "treatment")
+    t_arm = arm_id("XP-2", "treatment")
     from arc.utils.calendar import previous_session
 
     fx.pnl_row(conn, previous_session(days[0]), 100_000, None)
     for i, day in enumerate(days, start=1):
         fx.pnl_row(conn, day, 100_000 + 10 * i, None)
         fx.pnl_row(conn, day, 100_000 + 10 * i, t_arm, virtual=day != days[0])
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days))
     # day 1 has only broker equity (95,010): missing; day 2 then lacks its previous
     # virtual close and is missing too; day 3 pairs on virtual equity alone
     assert r.missing_sessions == days[:2]
@@ -370,9 +370,9 @@ def test_treatment_row_without_virtual_equity_is_missing_not_fabricated(
 
 def test_aa_sigma_is_not_inflated_by_the_broker_excess(conn: sqlite3.Connection) -> None:
     """An A/A with identical arms on a $95k account vs $100k control: d == 0, never invalid."""
-    store = fx.start(conn, fx.spec("X-1", kind="aa"))
-    days = fx.equity_curves(conn, "X-1", [25, -40, 15, 5], [25, -40, 15, 5])
-    r = build_report(conn, store.require("X-1"), CFG, now=_after(days))
+    store = fx.start(conn, fx.spec("XP-1", kind="aa"))
+    days = fx.equity_curves(conn, "XP-1", [25, -40, 15, 5], [25, -40, 15, 5])
+    r = build_report(conn, store.require("XP-1"), CFG, now=_after(days))
     assert [s.d for s in r.series] == pytest.approx([0.0] * 4)
     assert r.verdict == "continue"
 
@@ -393,9 +393,9 @@ def test_legacy_book_excluded_from_control(conn: sqlite3.Connection) -> None:
     fx.legacy_snapshot(conn, days[1], sid, 600.0)
     fx.legacy_snapshot(conn, days[2], sid, None)
     _close_legacy(conn, sid, days[2], cash=850.0)
-    days2 = fx.equity_curves(conn, "X-2", [300, -150, 260], [100, -50, 10])
+    days2 = fx.equity_curves(conn, "XP-2", [300, -150, 260], [100, -50, 10])
     assert days2 == days
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days))
     assert [s.legacy_pnl for s in r.series] == pytest.approx([200, -100, 250])
     assert [s.control_pnl for s in r.series] == pytest.approx([100, -50, 10])
     assert all(s.d == pytest.approx(0.0) for s in r.series)
@@ -448,24 +448,24 @@ def test_legacy_expiry_without_execution_uses_close_net(conn: sqlite3.Connection
     fx.legacy_snapshot(conn, days[0], sid, None)
     _close_legacy(conn, sid, days[0], cash=0.0)
     conn.execute("DELETE FROM executions WHERE structure_id = ?", (sid,))  # expired: no order
-    fx.equity_curves(conn, "X-2", [-300], [0])
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    fx.equity_curves(conn, "XP-2", [-300], [0])
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days))
     assert r.series[0].legacy_pnl == pytest.approx(-300)
     assert r.series[0].d == pytest.approx(0.0)
 
 
 def test_legacy_mark_missing_skips_the_session(conn: sqlite3.Connection) -> None:
     store = fx.start(conn, fx.spec(), legacy=["os-x"])
-    days = fx.equity_curves(conn, "X-2", [10], [10])
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    days = fx.equity_curves(conn, "XP-2", [10], [10])
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days))
     assert r.series == [] and r.missing_sessions == days
 
 
 def _ab_with(
     conn: sqlite3.Connection, ctrl: list[float], treat: list[float], **kw: object
 ) -> tuple[ExperimentStore, list[dt.date]]:
-    store = fx.start(conn, fx.spec("X-2", **kw))
-    days = fx.equity_curves(conn, "X-2", ctrl, treat)
+    store = fx.start(conn, fx.spec("XP-2", **kw))
+    days = fx.equity_curves(conn, "XP-2", ctrl, treat)
     return store, days
 
 
@@ -474,13 +474,13 @@ def test_win_needs_min_sessions_lower_bound_and_non_inferiority(conn: sqlite3.Co
     ctrl = list(rng.normal(20, 300, 25))
     treat = [c + 400 + e for c, e in zip(ctrl, rng.normal(0, 100, 25), strict=True)]
     store, days = _ab_with(conn, ctrl, treat)
-    st_ = store.require("X-2")
+    st_ = store.require("XP-2")
     # before min_sessions: CI may already exclude 0 but no win
     early = build_report(conn, st_, CFG, now=_after(days[:10]))
     assert early.primary.lower_bound_positive and early.verdict == "continue"
-    r = evaluate(store, "X-2", CFG, now=_after(days))
+    r = evaluate(store, "XP-2", CFG, now=_after(days))
     assert r.verdict == "win" and r.secondary.non_inferior is True
-    s = store.require("X-2")
+    s = store.require("XP-2")
     assert s.status is ExperimentStatus.STOPPED and s.reason is StopReason.WIN
     assert s.stop is not None and s.stop.sessions == 25 and s.stop.sigma is None
     assert ReasonCode.EXPERIMENT_EVALUATED.value in _codes(conn)
@@ -493,7 +493,7 @@ def test_positive_primary_but_inferior_sortino_is_not_a_win(conn: sqlite3.Connec
     ctrl = list(np.abs(rng.normal(30, 5, n)))  # steady small gains, no losing day
     treat = [c + (900 if i % 2 else -650) for i, c in enumerate(ctrl)]
     store, days = _ab_with(conn, ctrl, treat, non_inferiority_margin=0.5, max_sessions=40)
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days))
     assert r.primary.mean is not None and r.primary.mean > 0
     assert r.secondary.non_inferior is False
     assert r.verdict == "continue"
@@ -504,18 +504,18 @@ def test_futility_at_max_sessions(conn: sqlite3.Connection) -> None:
     ctrl = list(rng.normal(0, 300, 20))
     treat = list(rng.normal(0, 300, 20))
     store, days = _ab_with(conn, ctrl, treat, min_sessions=10, max_sessions=20)
-    r = evaluate(store, "X-2", CFG, now=_after(days))
+    r = evaluate(store, "XP-2", CFG, now=_after(days))
     assert r.verdict == "futility"
-    assert store.require("X-2").reason is StopReason.FUTILITY
+    assert store.require("XP-2").reason is StopReason.FUTILITY
 
 
 def test_aa_never_wins_records_sigma_and_unlocks_ab(conn: sqlite3.Connection) -> None:
     rng = np.random.default_rng(4)
     ctrl = list(rng.normal(0, 300, 10))
     treat = [c + e for c, e in zip(ctrl, rng.normal(0, 150, 10), strict=True)]
-    store = fx.start(conn, fx.spec("X-1", kind="aa"))
-    days = fx.equity_curves(conn, "X-1", ctrl, treat)
-    r = evaluate(store, "X-1", CFG, now=_after(days))
+    store = fx.start(conn, fx.spec("XP-1", kind="aa"))
+    days = fx.equity_curves(conn, "XP-1", ctrl, treat)
+    r = evaluate(store, "XP-1", CFG, now=_after(days))
     assert r.kind.value == "aa" and r.verdict == "futility"
     assert r.secondary.non_inferior is None
     sd = stats.sample_sd([s.d for s in r.series])
@@ -529,28 +529,28 @@ def test_aa_never_wins_records_sigma_and_unlocks_ab(conn: sqlite3.Connection) ->
 def test_aa_that_wins_is_invalid(conn: sqlite3.Connection) -> None:
     ctrl = [0.0] * 10
     treat = [300.0 + (i % 3) * 10 for i in range(10)]  # systematic gap: harness broken
-    store = fx.start(conn, fx.spec("X-1", kind="aa"))
-    days = fx.equity_curves(conn, "X-1", ctrl, treat)
-    r = evaluate(store, "X-1", CFG, now=_after(days))
+    store = fx.start(conn, fx.spec("XP-1", kind="aa"))
+    days = fx.equity_curves(conn, "XP-1", ctrl, treat)
+    r = evaluate(store, "XP-1", CFG, now=_after(days))
     assert r.verdict == "invalid"
-    assert store.require("X-1").reason is StopReason.INVALID
+    assert store.require("XP-1").reason is StopReason.INVALID
     assert ReasonCode.EXPERIMENT_INVALID.value in _codes(conn)
 
 
 def test_ab_uses_aa_sigma_when_recorded(conn: sqlite3.Connection) -> None:
-    aa = fx.start(conn, fx.spec("X-1", kind="aa", max_sessions=10, min_sessions=10))
-    aa.stop("X-1", StopReason.FUTILITY, actor="arc.experiments",
+    aa = fx.start(conn, fx.spec("XP-1", kind="aa", max_sessions=10, min_sessions=10))
+    aa.stop("XP-1", StopReason.FUTILITY, actor="arc.experiments",
             detail=__import__("arc.experiments.models", fromlist=["StopDetail"]).StopDetail(
                 sigma=0.002))  # fmt: skip
     store = ExperimentStore(conn, now=lambda: fx.T0)
     store.create(fx.spec(), actor="local")
-    store.register("X-2", actor="local")
+    store.register("XP-2", actor="local")
     from arc.experiments.models import RunningDetail
 
-    store.start("X-2", RunningDetail(t0=fx.T0, t0_equity=1e5, control_sha=fx.CONTROL_SHA),
+    store.start("XP-2", RunningDetail(t0=fx.T0, t0_equity=1e5, control_sha=fx.CONTROL_SHA),
                 actor="arc.runner")  # fmt: skip
-    days = fx.equity_curves(conn, "X-2", [10, 20], [30, 10])
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days), aa_sigma=0.002)
+    days = fx.equity_curves(conn, "XP-2", [10, 20], [30, 10])
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days), aa_sigma=0.002)
     assert r.primary.sigma == 0.002 and r.primary.sigma_source == "aa"
 
 
@@ -562,12 +562,12 @@ def test_ab_uses_aa_sigma_when_recorded(conn: sqlite3.Connection) -> None:
 def test_large_losses_are_reported_not_stopped(conn: sqlite3.Connection) -> None:
     """A 3.5% drawdown and a -2.2% day would have tripped the old D44 guardrails."""
     store, days = _ab_with(conn, [0.0] * 5, [-900.0, -900.0, -900.0, -800.0, -2_200.0])
-    t_arm = arm_id("X-2", "treatment")
+    t_arm = arm_id("XP-2", "treatment")
     fx.executions(conn, None, 8, day=days[0])
     fx.executions(conn, t_arm, 10, attempts=2, day=days[0])  # 2.5x control's orders
-    r = evaluate(store, "X-2", CFG, now=_after(days))
+    r = evaluate(store, "XP-2", CFG, now=_after(days))
     assert r.verdict == "continue"
-    assert store.require("X-2").status is ExperimentStatus.RUNNING
+    assert store.require("XP-2").status is ExperimentStatus.RUNNING
     treat = r.arms[1]
     assert treat.max_drawdown == pytest.approx(0.057, abs=1e-3)
     assert treat.worst_day is not None and treat.worst_day < -0.02
@@ -581,7 +581,7 @@ def test_legacy_executions_not_counted_as_control_orders(conn: sqlite3.Connectio
     store = fx.start(conn, fx.spec(), legacy=[sid])
     days = fx.sessions(1)
     _close_legacy(conn, sid, days[0], cash=100)
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days))
     assert r.arms[0].orders == 0
 
 
@@ -592,28 +592,28 @@ def test_legacy_executions_not_counted_as_control_orders(conn: sqlite3.Connectio
 
 def test_report_stored_append_only_and_round_trips(conn: sqlite3.Connection) -> None:
     store, days = _ab_with(conn, [10.0, 20.0], [15.0, 10.0])
-    r1 = evaluate(store, "X-2", CFG, now=_after(days[:1]))
-    r2 = evaluate(store, "X-2", CFG, now=_after(days))
-    assert latest_report(conn, "X-2") == r2 != r1
+    r1 = evaluate(store, "XP-2", CFG, now=_after(days[:1]))
+    r2 = evaluate(store, "XP-2", CFG, now=_after(days))
+    assert latest_report(conn, "XP-2") == r2 != r1
     row = conn.execute(
         "SELECT verdict, sessions, spec_hash, config_hash, control_sha, report_hash, payload "
         "FROM experiment_reports ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert row["sessions"] == 2 and row["verdict"] == "continue"
-    assert row["spec_hash"] == store.require("X-2").registered_hash
+    assert row["spec_hash"] == store.require("XP-2").registered_hash
     assert row["control_sha"] == fx.CONTROL_SHA and row["report_hash"] == r2.report_hash()
     assert r2.config["stats"]["sigma_upper_q"] == 0.05
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         conn.execute("UPDATE experiment_reports SET verdict = 'win'")
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         conn.execute("DELETE FROM experiment_reports")
-    assert latest_report(conn, "X-9") is None
+    assert latest_report(conn, "XP-9") is None
 
 
 def test_report_is_deterministic(conn: sqlite3.Connection) -> None:
     rng = np.random.default_rng(1)
     store, days = _ab_with(conn, list(rng.normal(0, 200, 8)), list(rng.normal(0, 200, 8)))
-    st_ = store.require("X-2")
+    st_ = store.require("XP-2")
     a = build_report(conn, st_, CFG, now=_after(days))
     b = build_report(conn, st_, CFG, now=_after(days))
     assert a.canonical_json() == b.canonical_json()
@@ -621,7 +621,7 @@ def test_report_is_deterministic(conn: sqlite3.Connection) -> None:
 
 def test_provenance_and_calibration_gaps(conn: sqlite3.Connection) -> None:
     store, days = _ab_with(conn, [10.0, 20.0, -5.0], [15.0, 10.0, 0.0])
-    t_arm = arm_id("X-2", "treatment")
+    t_arm = arm_id("XP-2", "treatment")
     fx.executions(conn, None, 2, day=days[0])
     fx.executions(conn, t_arm, 2, day=days[0])
     _manifest(conn, "chain-c1", None, payload={"git_sha": "c" * 40})
@@ -642,7 +642,7 @@ def test_provenance_and_calibration_gaps(conn: sqlite3.Connection) -> None:
         )
     _outcome(conn, None, slippage=4.0, regime="bull", pnl="120", day=days[1])
     _outcome(conn, t_arm, slippage=9.0, regime="bull", pnl="-30", day=days[1])
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days))
     assert r.treatment_sha == fx.TREATMENT_SHA and r.control_sha == fx.CONTROL_SHA
     c = r.calibration
     assert (c.paired_chains, c.divergent_chains, c.llm_divergence_rate) == (2, 1, 0.5)
@@ -702,18 +702,18 @@ def test_evaluate_refuses_non_running(conn: sqlite3.Connection) -> None:
     store = ExperimentStore(conn, now=lambda: fx.T0)
     store.create(fx.spec(), actor="local")
     with pytest.raises(ExperimentError, match="not running"):
-        evaluate(store, "X-2", CFG, now=fx.T0)
+        evaluate(store, "XP-2", CFG, now=fx.T0)
     with pytest.raises(ExperimentError, match="never started"):
-        build_report(conn, store.require("X-2"), CFG, now=fx.T0)
+        build_report(conn, store.require("XP-2"), CFG, now=fx.T0)
 
 
 def test_evaluate_running_covers_every_running_experiment(conn: sqlite3.Connection) -> None:
-    fx.start(conn, fx.spec("X-1", kind="aa"))
-    store = fx.start(conn, fx.spec("X-2"))
-    days = fx.equity_curves(conn, "X-2", [1.0], [2.0])
-    fx.pnl_row(conn, days[0], 100_003, arm_id("X-1", "treatment"))
+    fx.start(conn, fx.spec("XP-1", kind="aa"))
+    store = fx.start(conn, fx.spec("XP-2"))
+    days = fx.equity_curves(conn, "XP-2", [1.0], [2.0])
+    fx.pnl_row(conn, days[0], 100_003, arm_id("XP-1", "treatment"))
     out = evaluate_running(store, CFG, now=_after(days))
-    assert [r.experiment_id for r in out] == ["X-1", "X-2"]
+    assert [r.experiment_id for r in out] == ["XP-1", "XP-2"]
 
 
 def test_effective_stats_config_tunable(conn: sqlite3.Connection) -> None:
@@ -749,14 +749,14 @@ def test_routine_declared_after_auditor_and_resolves() -> None:
 def test_routine_step_stops_invalid_aa_with_notice(conn: sqlite3.Connection) -> None:
     from arc.routines.experiments import experiments_evaluate_step
 
-    store = fx.start(conn, fx.spec("X-1", kind="aa"))
-    days = fx.equity_curves(conn, "X-1", [0.0] * 10, [300.0 + (i % 3) * 10 for i in range(10)])
+    store = fx.start(conn, fx.spec("XP-1", kind="aa"))
+    days = fx.equity_curves(conn, "XP-1", [0.0] * 10, [300.0 + (i % 3) * 10 for i in range(10)])
     ctx = _ctx(conn, _after(days))
     res = experiments_evaluate_step(ctx)  # type: ignore[arg-type]
-    assert "X-1 invalid n=10" in res.summary
-    assert "[Experiments] X-1 stopped (invalid)" in res.notice
-    assert res.metrics["stopped"] == 1 and ctx.inputs == ["experiment:X-1"]
-    assert store.require("X-1").reason is StopReason.INVALID
+    assert "XP-1 invalid n=10" in res.summary
+    assert "[Experiments] XP-1 stopped (invalid)" in res.notice
+    assert res.metrics["stopped"] == 1 and ctx.inputs == ["experiment:XP-1"]
+    assert store.require("XP-1").reason is StopReason.INVALID
 
 
 def test_routine_step_no_notice_while_running(conn: sqlite3.Connection) -> None:
@@ -764,8 +764,8 @@ def test_routine_step_no_notice_while_running(conn: sqlite3.Connection) -> None:
 
     store, days = _ab_with(conn, [0.0, 0.0], [500.0, -2_200.0])
     res = experiments_evaluate_step(_ctx(conn, _after(days)))  # type: ignore[arg-type]
-    assert "X-2 continue n=2" in res.summary and res.notice == ""
-    assert store.require("X-2").status is ExperimentStatus.RUNNING
+    assert "XP-2 continue n=2" in res.summary and res.notice == ""
+    assert store.require("XP-2").status is ExperimentStatus.RUNNING
 
 
 class _Ctx:
@@ -795,26 +795,26 @@ def test_cli_report_and_evaluate(tmp_path, capsys: pytest.CaptureFixture[str]) -
     c = connect(db)
     migrate(c)
     fx.start(c, fx.spec())
-    days = fx.equity_curves(c, "X-2", [100, -50, 30], [150, -20, 10])
+    days = fx.equity_curves(c, "XP-2", [100, -50, 30], [150, -20, 10])
     c.close()
     now = _after(days).isoformat()
-    assert run_experiment(_cli("report", "X-2", "--db", str(db), "--now", now)) == 0
+    assert run_experiment(_cli("report", "XP-2", "--db", str(db), "--now", now)) == 0
     out = capsys.readouterr().out
     assert "verdict CONTINUE" in out and "always-valid 95% CI" in out
     assert "guardrails" not in out and "arms:" in out
-    assert run_experiment(_cli("report", "X-2", "--db", str(db), "--stored")) == 2  # none yet
+    assert run_experiment(_cli("report", "XP-2", "--db", str(db), "--stored")) == 2  # none yet
     capsys.readouterr()
     assert run_experiment(_cli("evaluate", "--db", str(db), "--now", now, "--json")) == 0
     out = capsys.readouterr().out
     stored = json.loads(out[out.index("[\n") :])  # structlog prints to stdout under pytest
     assert stored[0]["sessions"] == 3
-    assert run_experiment(_cli("report", "X-2", "--db", str(db), "--stored", "--json")) == 0
+    assert run_experiment(_cli("report", "XP-2", "--db", str(db), "--stored", "--json")) == 0
     out = capsys.readouterr().out
     again = json.loads(out[out.index("{\n") :])
     assert again == stored[0]
-    assert run_experiment(_cli("evaluate", "X-2", "--db", str(db), "--now", now)) == 0
-    assert "X-2" in capsys.readouterr().out
-    assert run_experiment(_cli("report", "X-9", "--db", str(db))) == 2
+    assert run_experiment(_cli("evaluate", "XP-2", "--db", str(db), "--now", now)) == 0
+    assert "XP-2" in capsys.readouterr().out
+    assert run_experiment(_cli("report", "XP-9", "--db", str(db))) == 2
     assert run_experiment(_cli("evaluate", "--db", str(tmp_path / "e.db"))) == 0
     assert "no running experiments" in capsys.readouterr().out
 
@@ -824,11 +824,11 @@ def test_cli_evaluate_refuses_stopped(tmp_path, capsys: pytest.CaptureFixture[st
     c = connect(db)
     migrate(c)
     store = fx.start(c, fx.spec())
-    store.stop("X-2", StopReason.OWNER, actor="local")
+    store.stop("XP-2", StopReason.OWNER, actor="local")
     c.close()
-    assert run_experiment(_cli("evaluate", "X-2", "--db", str(db))) == 2
+    assert run_experiment(_cli("evaluate", "XP-2", "--db", str(db))) == 2
     assert "is stopped" in capsys.readouterr().err
-    assert run_experiment(_cli("report", "X-2", "--db", str(db), "--now", fx.T0.isoformat())) == 0
+    assert run_experiment(_cli("report", "XP-2", "--db", str(db), "--now", fx.T0.isoformat())) == 0
 
 
 def test_robust_to_bad_rows_and_excludes_legacy_outcomes(conn: sqlite3.Connection) -> None:
@@ -843,7 +843,7 @@ def test_robust_to_bad_rows_and_excludes_legacy_outcomes(conn: sqlite3.Connectio
     fx.legacy_snapshot(conn, days[0], sid, 100.0)
     fx.legacy_snapshot(conn, days[1], sid, None)
     _close_legacy(conn, sid, days[1], cash=100.0)
-    fx.equity_curves(conn, "X-2", [0.0, 0.0], [0.0, 0.0])
+    fx.equity_curves(conn, "XP-2", [0.0, 0.0], [0.0, 0.0])
     for bad in ("n/a", "", "NaN"):
         conn.execute(
             """INSERT INTO pnl_snapshots (id, snapshot_at, realized, unrealized, total,
@@ -866,7 +866,7 @@ def test_robust_to_bad_rows_and_excludes_legacy_outcomes(conn: sqlite3.Connectio
         """INSERT INTO outcomes (id, proposal_hash, status, at) VALUES (?, ?, 'open', ?)""",
         (h, h, to_db(fx.eod(days[1]))),
     )
-    r = build_report(conn, store.require("X-2"), CFG, now=_after(days))
+    r = build_report(conn, store.require("XP-2"), CFG, now=_after(days))
     assert len(r.series) == 2 and all(s.d == pytest.approx(0) for s in r.series)
     keys = {(b.by, b.key, b.arm, b.trades) for b in r.breakdowns}
     assert keys == {

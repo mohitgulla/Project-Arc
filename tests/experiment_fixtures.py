@@ -1,7 +1,7 @@
 """Fixture DB for E10.3 experiment evaluation tests (and the PR's fixture report).
 
 Builds an in-store experiment with per-arm EOD ``pnl_snapshots`` (control
-``arm_id`` NULL, treatment ``X-<n>:treatment``), control ``positions_snapshots``
+``arm_id`` NULL, treatment ``XP-<n>:treatment``), control ``positions_snapshots``
 marking a legacy structure, executions, outcomes and paired-chain manifests:
 the rows the reconcile and the E10.2 arm runner write.
 """
@@ -33,7 +33,7 @@ TREATMENT_SHA = "2187d41bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 BROKER_EXCESS = -5_000.0  # e.g. a $95k paper account against a $100k control
 
 
-def spec(eid: str = "X-2", *, kind: str = "ab", **kw: object) -> ExperimentSpec:
+def spec(eid: str = "XP-2", *, kind: str = "ab", **kw: object) -> ExperimentSpec:
     data: dict[str, object] = {
         "id": eid,
         "title": f"{eid} fixture",

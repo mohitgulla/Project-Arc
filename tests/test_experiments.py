@@ -75,7 +75,7 @@ def store(conn: sqlite3.Connection) -> ExperimentStore:
 
 
 def _spec(
-    eid: str = "X-1", *, area: str = "other", kind: str = "aa", **kw: object
+    eid: str = "XP-1", *, area: str = "other", kind: str = "aa", **kw: object
 ) -> ExperimentSpec:
     data: dict[str, object] = {
         "id": eid,
@@ -117,7 +117,7 @@ def test_spec_hash_is_canonical_and_order_independent() -> None:
 @pytest.mark.parametrize(
     ("patch", "match"),
     [
-        ({"id": "X1"}, "X-<n>"),
+        ({"id": "X1"}, "XP-<n>"),
         ({"proposed_by": "sentinel"}, "proposed_by"),
         ({"arms": {"control": {"overlay": {"exits": {"a": 1}}}}}, "control arm"),
         ({"arms": {"treatment": {"overlay": {"exits": {"a": 1}}}}}, "identical arms"),
@@ -129,7 +129,7 @@ def test_spec_hash_is_canonical_and_order_independent() -> None:
 )
 def test_spec_validation_refuses(patch: dict[str, object], match: str) -> None:
     data = {
-        "id": "X-1",
+        "id": "XP-1",
         "title": "t",
         "hypothesis": "h",
         "area": "other",
@@ -143,7 +143,7 @@ def test_spec_validation_refuses(patch: dict[str, object], match: str) -> None:
 @pytest.mark.parametrize("missing", ["arms", "backtest_ref", "non_inferiority_margin"])
 def test_ab_spec_needs_overlay_backtest_and_margin(missing: str) -> None:
     data = {
-        "id": "X-2",
+        "id": "XP-2",
         "title": "t",
         "hypothesis": "h",
         "area": "exits",
@@ -164,9 +164,9 @@ def test_fill_defaults_from_config_and_aa_length() -> None:
     assert not hasattr(d, "guardrails")  # owner 2026-10-03: no guardrail stops
     aa = _spec()
     assert (aa.min_sessions, aa.max_sessions) == (10, 10)  # A/A runs aa_sessions
-    ab = _spec("X-2", area="exits", kind="ab")
+    ab = _spec("XP-2", area="exits", kind="ab")
     assert (ab.min_sessions, ab.max_sessions, ab.alpha) == (20, 60, 0.05)
-    pinned = _spec("X-3", alpha=0.01, min_sessions=15)
+    pinned = _spec("XP-3", alpha=0.01, min_sessions=15)
     assert pinned.alpha == 0.01 and pinned.min_sessions == 15
     assert (
         aa.complete
@@ -175,8 +175,8 @@ def test_fill_defaults_from_config_and_aa_length() -> None:
 
 
 def test_arm_id_null_means_control() -> None:
-    assert arm_id("X-1", "control") is None
-    assert arm_id("X-1", "treatment") == "X-1:treatment"
+    assert arm_id("XP-1", "control") is None
+    assert arm_id("XP-1", "treatment") == "XP-1:treatment"
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ def test_backtest_overlay_file_drives_a_forward_arm_identically() -> None:
     body = yamlpatch.overlay_body(yaml.safe_load(path.read_text()))
     spec = ExperimentSpec.model_validate(
         {
-            "id": "X-9",
+            "id": "XP-9",
             "title": "short DTE",
             "hypothesis": "h",
             "area": "entries",
@@ -230,10 +230,10 @@ def test_deep_merge_semantics_and_purity() -> None:
 
 
 def test_bad_overlay_fails_at_load(tmp_path: Path) -> None:
-    spec = _spec("X-2", area="exits", kind="ab").model_copy(
+    spec = _spec("XP-2", area="exits", kind="ab").model_copy(
         update={
             "arms": ExperimentSpec.model_validate(
-                _spec("X-2", area="exits", kind="ab").model_dump()
+                _spec("XP-2", area="exits", kind="ab").model_dump()
                 | {"arms": {"treatment": {"overlay": {"exits": {"not_a_knob": 1}}}}}
             ).arms
         }
@@ -263,23 +263,23 @@ def test_create_revises_draft_and_register_locks(store: ExperimentStore) -> None
     assert store.create(_spec(), actor=OWNER).revision == 1  # identical: no new revision
     s = store.create(_spec(title="better title"), actor=OWNER)
     assert s.revision == 2 and s.spec.title == "better title"
-    r = store.register("X-1", actor=OWNER)
+    r = store.register("XP-1", actor=OWNER)
     assert r.status is ExperimentStatus.REGISTERED
     assert r.registered_hash == spec_hash(r.spec) == r.spec_hash
     with pytest.raises(SpecLockedError, match="new id"):
         store.create(_spec(title="sneaky edit"), actor=OWNER)
     with pytest.raises(TransitionError):
-        store.register("X-1", actor=OWNER)
-    assert store.verify("X-1")["ok"]
+        store.register("XP-1", actor=OWNER)
+    assert store.verify("XP-1")["ok"]
 
 
 def test_lock_is_enforced_by_the_db_too(conn: sqlite3.Connection, store: ExperimentStore) -> None:
     store.create(_spec(), actor=OWNER)
-    store.register("X-1", actor=OWNER)
+    store.register("XP-1", actor=OWNER)
     with pytest.raises(sqlite3.IntegrityError, match="locked after registration"):
         conn.execute(
             """INSERT INTO experiments (experiment_id, revision, spec_version, area, kind,
-               spec, spec_hash, actor, created_at) VALUES ('X-1', 9, 1, 'other', 'aa', '{}',
+               spec, spec_hash, actor, created_at) VALUES ('XP-1', 9, 1, 'other', 'aa', '{}',
                'x', 'evil', '2026-10-05T14:00:00.000000Z')"""
         )
     for table in ("experiments", "experiment_events"):
@@ -291,68 +291,68 @@ def test_lock_is_enforced_by_the_db_too(conn: sqlite3.Connection, store: Experim
 
 def test_verify_detects_a_tampered_spec(conn: sqlite3.Connection, store: ExperimentStore) -> None:
     store.create(_spec(), actor=OWNER)
-    store.register("X-1", actor=OWNER)
+    store.register("XP-1", actor=OWNER)
     conn.execute("DROP TRIGGER experiments_no_update")  # simulate out-of-band tampering
     row = conn.execute("SELECT spec FROM experiments").fetchone()
     tampered = json.loads(row[0]) | {"alpha": 0.2}
     conn.execute("UPDATE experiments SET spec = ?", (json.dumps(tampered),))
-    v = store.verify("X-1")
+    v = store.verify("XP-1")
     assert not v["ok"] and v["recomputed_hash"] != v["registered_hash"]
     with pytest.raises(SpecLockedError, match="mismatch"):
-        store.start("X-1", _running(), actor=OWNER)
+        store.start("XP-1", _running(), actor=OWNER)
 
 
 def test_one_registered_or_running_per_area_others_queue(store: ExperimentStore) -> None:
-    for eid in ("X-1", "X-2", "X-3"):
+    for eid in ("XP-1", "XP-2", "XP-3"):
         store.create(_spec(eid, area="other"), actor=OWNER)
-    store.create(_spec("X-4", area="ranking"), actor=OWNER)
-    assert store.register("X-1", actor=OWNER).status is ExperimentStatus.REGISTERED
-    assert store.register("X-2", actor=OWNER).status is ExperimentStatus.QUEUED
-    assert store.register("X-3", actor=OWNER).status is ExperimentStatus.QUEUED
-    assert store.register("X-4", actor=OWNER).status is ExperimentStatus.REGISTERED  # other area
+    store.create(_spec("XP-4", area="ranking"), actor=OWNER)
+    assert store.register("XP-1", actor=OWNER).status is ExperimentStatus.REGISTERED
+    assert store.register("XP-2", actor=OWNER).status is ExperimentStatus.QUEUED
+    assert store.register("XP-3", actor=OWNER).status is ExperimentStatus.QUEUED
+    assert store.register("XP-4", actor=OWNER).status is ExperimentStatus.REGISTERED  # other area
     # a queued spec is locked too
     with pytest.raises(SpecLockedError):
-        store.create(_spec("X-2", title="edit"), actor=OWNER)
-    store.start("X-1", _running(), actor=OWNER)
-    assert [s.experiment_id for s in store.active_in_area("other")] == ["X-1"]
+        store.create(_spec("XP-2", title="edit"), actor=OWNER)
+    store.start("XP-1", _running(), actor=OWNER)
+    assert [s.experiment_id for s in store.active_in_area("other")] == ["XP-1"]
     with pytest.raises(TransitionError):
-        store.start("X-2", _running(), actor=OWNER)  # queued cannot start
-    store.stop("X-1", StopReason.FUTILITY, actor=OWNER, detail=StopDetail(sigma=0.4))
+        store.start("XP-2", _running(), actor=OWNER)  # queued cannot start
+    store.stop("XP-1", StopReason.FUTILITY, actor=OWNER, detail=StopDetail(sigma=0.4))
     # the oldest queued experiment takes the area; the next stays queued
-    assert store.require("X-2").status is ExperimentStatus.REGISTERED
-    assert store.require("X-3").status is ExperimentStatus.QUEUED
+    assert store.require("XP-2").status is ExperimentStatus.REGISTERED
+    assert store.require("XP-3").status is ExperimentStatus.QUEUED
     assert len(store.active_in_area("other")) == 1
 
 
 def test_ab_needs_aa_sigma_unless_owner_overrides(
     conn: sqlite3.Connection, store: ExperimentStore
 ) -> None:
-    store.create(_spec("X-2", area="exits", kind="ab"), actor=OWNER)
-    store.register("X-2", actor=OWNER)
+    store.create(_spec("XP-2", area="exits", kind="ab"), actor=OWNER)
+    store.register("XP-2", actor=OWNER)
     with pytest.raises(AaRequiredError, match="A/A"):
-        store.start("X-2", _running(), actor=OWNER)
+        store.start("XP-2", _running(), actor=OWNER)
     with pytest.raises(AaRequiredError, match="owner"):
-        store.start("X-2", _running(), actor="arc.experiments", aa_override=True)
-    s = store.start("X-2", _running(), actor=OWNER, aa_override=True)
+        store.start("XP-2", _running(), actor="arc.experiments", aa_override=True)
+    s = store.start("XP-2", _running(), actor=OWNER, aa_override=True)
     assert s.status is ExperimentStatus.RUNNING and s.running and s.running.aa_override
-    codes = [d.reason_code for d in JournalStore(conn).decisions() if d.subject == "X-2"]
+    codes = [d.reason_code for d in JournalStore(conn).decisions() if d.subject == "XP-2"]
     assert ReasonCode.EXPERIMENT_AA_OVERRIDE in codes
 
 
 def test_ab_starts_after_an_aa_recorded_sigma(store: ExperimentStore) -> None:
-    store.create(_spec("X-1"), actor=OWNER)
-    store.register("X-1", actor=OWNER)
-    store.start("X-1", _running(), actor=OWNER)
-    store.stop("X-1", StopReason.FUTILITY, actor=OWNER)  # no sigma: does not count
+    store.create(_spec("XP-1"), actor=OWNER)
+    store.register("XP-1", actor=OWNER)
+    store.start("XP-1", _running(), actor=OWNER)
+    store.stop("XP-1", StopReason.FUTILITY, actor=OWNER)  # no sigma: does not count
     assert store.aa_sigma() is None
-    store.create(_spec("X-3"), actor=OWNER)
-    store.register("X-3", actor=OWNER)
-    store.start("X-3", _running(), actor=OWNER)
-    store.stop("X-3", StopReason.FUTILITY, actor=OWNER, detail=StopDetail(sigma=0.35))
+    store.create(_spec("XP-3"), actor=OWNER)
+    store.register("XP-3", actor=OWNER)
+    store.start("XP-3", _running(), actor=OWNER)
+    store.stop("XP-3", StopReason.FUTILITY, actor=OWNER, detail=StopDetail(sigma=0.35))
     assert store.aa_sigma() == 0.35
-    store.create(_spec("X-2", area="exits", kind="ab"), actor=OWNER)
-    store.register("X-2", actor=OWNER)
-    s = store.start("X-2", _running(), actor="arc.experiments")
+    store.create(_spec("XP-2", area="exits", kind="ab"), actor=OWNER)
+    store.register("XP-2", actor=OWNER)
+    s = store.start("XP-2", _running(), actor="arc.experiments")
     assert s.status is ExperimentStatus.RUNNING and s.running and not s.running.aa_override
     assert s.running.t0 == NOW and s.running.t0_equity == 100_000.0
 
@@ -362,17 +362,17 @@ def test_lifecycle_transitions_and_journal(
 ) -> None:
     store.create(_spec(), actor=OWNER)
     with pytest.raises(TransitionError):
-        store.stop("X-1", StopReason.OWNER, actor=OWNER)  # draft cannot stop
-    store.register("X-1", actor=OWNER)
+        store.stop("XP-1", StopReason.OWNER, actor=OWNER)  # draft cannot stop
+    store.register("XP-1", actor=OWNER)
     with pytest.raises(TransitionError):
-        store.decide("X-1", promote=True, actor=OWNER)
-    store.start("X-1", _running(), actor=OWNER)
-    s = store.stop("X-1", StopReason.HARM, actor=OWNER, detail=StopDetail(note="worst day"))
+        store.decide("XP-1", promote=True, actor=OWNER)
+    store.start("XP-1", _running(), actor=OWNER)
+    s = store.stop("XP-1", StopReason.HARM, actor=OWNER, detail=StopDetail(note="worst day"))
     assert s.status is ExperimentStatus.STOPPED and s.reason is StopReason.HARM
-    s = store.decide("X-1", promote=False, actor=OWNER)
+    s = store.decide("XP-1", promote=False, actor=OWNER)
     assert s.status is ExperimentStatus.REJECTED and s.reason is StopReason.HARM
     with pytest.raises(TransitionError):
-        store.stop("X-1", StopReason.OWNER, actor=OWNER)
+        store.stop("XP-1", StopReason.OWNER, actor=OWNER)
     decs = [d for d in JournalStore(conn).decisions() if d.stage is Stage.EXPERIMENT]
     assert [d.reason_code for d in decs] == [
         ReasonCode.EXPERIMENT_DRAFTED,
@@ -381,7 +381,7 @@ def test_lifecycle_transitions_and_journal(
         ReasonCode.EXPERIMENT_STOPPED,
         ReasonCode.EXPERIMENT_REJECTED,
     ]
-    assert all(d.payload["experiment_id"] == "X-1" for d in decs)
+    assert all(d.payload["experiment_id"] == "XP-1" for d in decs)
     assert [e.status.value for e in s.events] == [
         "draft",
         "registered",
@@ -395,13 +395,13 @@ def test_register_refuses_incomplete_spec(store: ExperimentStore) -> None:
     raw = ExperimentSpec.model_validate(_spec().model_dump() | {"alpha": None})
     store.create(raw, actor=OWNER)
     with pytest.raises(ValueError, match="unset defaults"):
-        store.register("X-1", actor=OWNER)
+        store.register("XP-1", actor=OWNER)
 
 
 def test_unknown_experiment(store: ExperimentStore) -> None:
-    assert store.get("X-404") is None
+    assert store.get("XP-404") is None
     with pytest.raises(ValueError, match="unknown experiment"):
-        store.register("X-404", actor=OWNER)
+        store.register("XP-404", actor=OWNER)
 
 
 # ---------------------------------------------------------------------------
@@ -424,7 +424,7 @@ def test_existing_writers_leave_arm_id_null(conn: sqlite3.Connection) -> None:
     JournalStore(conn).record(
         persona="system",
         stage="experiment",
-        subject="X-1",
+        subject="XP-1",
         choice="noted",
         reason_code="experiment:drafted",
         at=NOW,
@@ -479,28 +479,28 @@ def test_cli_create_register_show_verify_stop(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     db = str(tmp_path / "x.db")
-    spec = str(LIVE / "x1_aa_baseline.yaml")
+    spec = str(LIVE / "xp1_aa_baseline.yaml")
     assert run_experiment(_cli("create", "--spec", spec, "--db", db)) == 0
-    assert "X-1  draft" in capsys.readouterr().out
-    assert run_experiment(_cli("register", "X-1", "--db", db)) == 0
-    assert "X-1  registered" in capsys.readouterr().out
-    assert run_experiment(_cli("show", "X-1", "--db", db, "--json")) == 0
+    assert "XP-1  draft" in capsys.readouterr().out
+    assert run_experiment(_cli("register", "XP-1", "--db", db)) == 0
+    assert "XP-1  registered" in capsys.readouterr().out
+    assert run_experiment(_cli("show", "XP-1", "--db", db, "--json")) == 0
     out = capsys.readouterr().out
     shown = json.loads(out[out.index("{\n") :])  # structlog prints to stdout under pytest
     assert shown["status"] == "registered" and shown["registered_hash"] == shown["spec_hash"]
     assert shown["spec"]["min_sessions"] == 10 and shown["spec"]["alpha"] == 0.05
-    assert run_experiment(_cli("show", "X-1", "--db", db)) == 0
+    assert run_experiment(_cli("show", "XP-1", "--db", db)) == 0
     assert "registered sha256" in capsys.readouterr().out
-    assert run_experiment(_cli("verify", "X-1", "--db", db)) == 0
+    assert run_experiment(_cli("verify", "XP-1", "--db", db)) == 0
     assert ": OK" in capsys.readouterr().out
     assert run_experiment(_cli("list", "--db", db)) == 0
-    assert "X-1" in capsys.readouterr().out
+    assert "XP-1" in capsys.readouterr().out
     # re-create after registration is refused (exit 2)
     assert run_experiment(_cli("create", "--spec", spec, "--db", db)) == 2
     assert "locked" in capsys.readouterr().err
-    assert run_experiment(_cli("stop", "X-1", "--reason", "owner", "--actor", "U_NOBODY",
+    assert run_experiment(_cli("stop", "XP-1", "--reason", "owner", "--actor", "U_NOBODY",
                                "--db", db)) == 2  # fmt: skip
-    assert run_experiment(_cli("stop", "X-1", "--reason", "owner", "--actor", "local",
+    assert run_experiment(_cli("stop", "XP-1", "--reason", "owner", "--actor", "local",
                                "--db", db)) == 0  # fmt: skip
     assert "stopped (owner)" in capsys.readouterr().out
     assert run_experiment(_cli("list", "--status", "running", "--db", db)) == 0
@@ -509,6 +509,15 @@ def test_cli_create_register_show_verify_stop(
 
 def test_cli_rejects_bad_spec_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     bad = tmp_path / "bad.yaml"
-    bad.write_text("id: X-1\ntitle: t\n")
+    bad.write_text("id: XP-1\ntitle: t\n")
     assert run_experiment(_cli("create", "--spec", str(bad), "--db", str(tmp_path / "x.db"))) == 2
     assert "invalid spec" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("bad", ["X-1", "XP-0", "xp-1", "XP-01", "XP-", "XP1"])
+def test_experiment_ids_are_xp_n(bad: str) -> None:
+    """Owner, 2026-10-03: experiment ids are ``XP-<n>`` (renamed from ``X-<n>``)."""
+    data = _spec("XP-1").model_dump(mode="json") | {"id": bad}
+    with pytest.raises(ValidationError, match="XP-<n>"):
+        ExperimentSpec.model_validate(data)
+    assert arm_id("XP-12", "treatment") == "XP-12:treatment"

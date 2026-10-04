@@ -55,7 +55,7 @@ __all__ = [
 SPEC_VERSION = 1
 CONTROL_ARM = "control"  # arm_id NULL on a row means this arm
 _FORBID = ConfigDict(extra="forbid", frozen=True)
-_ID_RE = re.compile(r"^X-[1-9]\d*$")
+_ID_RE = re.compile(r"^XP-[1-9]\d*$")
 _PROPOSER_RE = re.compile(r"^(owner|A-[1-9]\d*)$")
 
 # Config files a forward overlay may patch (key = file stem under config/).
@@ -113,7 +113,7 @@ TRANSITIONS: dict[ExperimentStatus, frozenset[ExperimentStatus]] = {
 
 
 def arm_id(experiment_id: str, arm: str) -> str | None:
-    """The ``arm_id`` a row of *arm* carries: NULL for control, ``X-<n>:<arm>`` otherwise."""
+    """The ``arm_id`` a row of *arm* carries: NULL for control, ``XP-<n>:<arm>`` otherwise."""
     return None if arm == CONTROL_ARM else f"{experiment_id}:{arm}"
 
 
@@ -158,7 +158,7 @@ class ExperimentSpec(BaseModel):
     model_config = _FORBID
 
     spec_version: Literal[1] = SPEC_VERSION
-    id: str = Field(..., description="X-<n>")
+    id: str = Field(..., description="XP-<n>")
     title: str = Field(..., min_length=1)
     hypothesis: str = Field(..., min_length=1)
     area: Area
@@ -187,7 +187,7 @@ class ExperimentSpec(BaseModel):
     @classmethod
     def _id(cls, v: str) -> str:
         if not _ID_RE.match(v):
-            msg = f"experiment id {v!r} must look like X-<n>"
+            msg = f"experiment id {v!r} must look like XP-<n>"
             raise ValueError(msg)
         return v
 
