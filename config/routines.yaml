@@ -244,24 +244,28 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: trading
     ttl: 3h
     lane: background
+    category: company           # D47: Finnhub per-ticker kinds
     writes: [insider_activity]
   finnhub.recs:                 # /stock/recommendation: monthly data, weekly fetch
     schedule: ["06:40"]
     days: [mon]
     ttl: 24h                    # a missed Monday still runs that day
     lane: background
+    category: company           # D47: Finnhub per-ticker kinds
     writes: [analyst_recs]
   finnhub.fundamentals:         # /stock/metric?metric=all, trimmed to the D46 field set
     schedule: ["06:50"]
     days: [mon]
     ttl: 24h
     lane: background
+    category: company           # D47: Finnhub per-ticker kinds
     writes: [fundamentals]
   finnhub.earnings_history:     # /stock/earnings: EPS surprises
     schedule: ["07:00"]
     days: trading
     ttl: 3h
     lane: background
+    category: company           # D47: Finnhub per-ticker kinds
     writes: [earnings_history]
     full_days: [mon]            # whole scope on these days (or when the last full run is >= full_every_days old)
     full_every_days: 7

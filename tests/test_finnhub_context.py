@@ -539,7 +539,9 @@ def _routines(job: str, **opts: Any) -> RoutinesConfig:
     return RoutinesConfig.model_validate(
         {
             "context_ttl": {kind: {"ttl": "8d", "supersede": "latest"}},
-            "sources": {job: {"schedule": ["06:30"], "writes": [kind], **opts}},
+            "sources": {
+                job: {"schedule": ["06:30"], "writes": [kind], "category": "company", **opts}
+            },
         }
     )
 
