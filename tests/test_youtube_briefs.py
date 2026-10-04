@@ -312,9 +312,9 @@ class TestScoutSeparation:
         )
         llm = FixtureScoutLLM([])
         settings = ArcSettings(_env_file=None, env="paper", universe_mode="strict")  # type: ignore[call-arg]
-        res = run_scout(
-            conn, settings, llm=llm, dry_run=True, now=dt.datetime(2026, 9, 28, 7, tzinfo=ET)
-        )
+        from arc.pipeline.env import FIXTURE_NOW
+
+        res = run_scout(conn, settings, llm=llm, dry_run=True, now=FIXTURE_NOW)  # D47 clock
         statuses = {
             r["url"]: r["scout_status"]
             for r in conn.execute("SELECT url, scout_status FROM raw_docs WHERE source='youtube'")

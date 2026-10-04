@@ -358,7 +358,11 @@ def _ctx(conn, job: str, writes: list[str], **opts: Any):
     from arc.routines.handlers import JobContext
 
     routines = RoutinesConfig.model_validate(
-        {"sources": {job: {"schedule": ["09:00"], "writes": writes, **opts}}}
+        {
+            "sources": {
+                job: {"schedule": ["09:00"], "writes": writes, "category": "options_data", **opts}
+            }
+        }
     )
     kind, spec = routines.step(job)
     settings = ArcSettings(env="paper", universe=["NVDA", "XOM"])  # type: ignore[arg-type]

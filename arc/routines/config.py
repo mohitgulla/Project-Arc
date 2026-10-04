@@ -60,6 +60,12 @@ from pydantic import (
     model_validator,
 )
 
+from arc.context.categories import (
+    DEFAULT_CATEGORIES,
+    CategorySpec,
+    SourceCategory,
+    parse_category,
+)
 from arc.context.kinds import KINDS
 from arc.context.store import Supersede
 from arc.context.ttl import Ttl, parse_duration
@@ -417,6 +423,11 @@ class RoutinesConfig(BaseModel):
     heartbeat: HeartbeatSettings = Field(default_factory=HeartbeatSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)  # E8.2
     loop: LoopSettings = Field(default_factory=LoopSettings)  # D31/D36 trading loop
+    # D47: five equal-weight source categories with a freshness window each. A
+    # missing block (or a category missing from it) uses DEFAULT_CATEGORIES.
+    categories: dict[SourceCategory, CategorySpec] = Field(
+        default_factory=lambda: dict(DEFAULT_CATEGORIES)
+    )
     context_ttl: dict[str, ContextPolicy] = Field(default_factory=dict)
     sources: dict[str, JobSpec] = Field(default_factory=dict)
     personas: dict[str, JobSpec] = Field(default_factory=dict)
@@ -427,6 +438,29 @@ class RoutinesConfig(BaseModel):
     @classmethod
     def _none_to_empty(cls, v: Any) -> Any:
         return {} if v is None else v
+
+    @field_validator("categories", mode="before")
+    @classmethod
+    def _categories(cls, v: Any) -> Any:
+        """Strict D47 names (no aliases here); unset categories keep their default."""
+        if v is None:
+            return dict(DEFAULT_CATEGORIES)
+        if not isinstance(v, dict):
+            msg = "categories: must be a mapping of category -> {weight, max_age, label}"
+            raise ValueError(msg)
+        out: dict[SourceCategory, Any] = dict(DEFAULT_CATEGORIES)
+        for key, spec in v.items():
+            try:
+                cat = SourceCategory(str(key))
+            except ValueError:
+                names = " | ".join(c.value for c in SourceCategory)
+                msg = f"categories: unknown category {key!r}; expected {names}"
+                raise ValueError(msg) from None
+            if isinstance(spec, dict):  # partial entry: unset fields keep the default
+                base = DEFAULT_CATEGORIES[cat]
+                spec = {"weight": base.weight, "max_age": base.max_age, "label": base.label, **spec}
+            out[cat] = spec
+        return out
 
     @field_validator("context_ttl")
     @classmethod
@@ -456,6 +490,7 @@ class RoutinesConfig(BaseModel):
             if spec.chain or spec.after_sources or spec.halt_exempt:
                 msg = f"source {name!r}: chain/after_sources/halt_exempt are persona-only"
                 raise ValueError(msg)
+            self._check_source_category(name, spec)
         for name, spec in self.personas.items():
             if name in spec.chain or len(set(spec.chain)) != len(spec.chain):
                 msg = f"persona {name!r}: chain repeats a step"
@@ -500,6 +535,61 @@ class RoutinesConfig(BaseModel):
 
     def _is_chain_step(self, name: str) -> bool:
         return any(name in p.chain for p in self.personas.values())
+
+    @staticmethod
+    def _check_source_category(name: str, spec: JobSpec) -> None:
+        """D47: a source that writes context declares its category (job or every feed).
+
+        Unknown names fail; pre-D47 names load as logged aliases for one release.
+        A per-source ``max_age:`` override must be a valid TTL.
+        """
+        opts = spec.options
+        if "max_age" in opts:
+            Ttl.model_validate(opts["max_age"])
+        job_cat = opts.get("category")
+        if job_cat is not None:
+            parse_category(job_cat, where=f"sources.{name}")
+        feeds = opts.get("feeds") or []
+        for raw in feeds:
+            if isinstance(raw, dict):
+                if raw.get("category") is not None:
+                    parse_category(raw["category"], where=f"sources.{name}.feeds")
+                if raw.get("max_age") is not None:
+                    Ttl.model_validate(raw["max_age"])
+        if not spec.writes:  # writes nothing (or undeclared): not a context source
+            return
+        if job_cat is not None:
+            return
+        uncategorised = [
+            (raw.get("name") or raw.get("url")) if isinstance(raw, dict) else raw
+            for raw in feeds
+            if not (isinstance(raw, dict) and raw.get("category") is not None)
+        ]
+        if feeds and not uncategorised:
+            return
+        names = " | ".join(c.value for c in SourceCategory)
+        what = f"feeds {uncategorised}" if feeds else "the job"
+        msg = f"source {name!r}: {what} must declare `category:` ({names}); D47"
+        raise ValueError(msg)
+
+    def category_spec(self, category: SourceCategory) -> CategorySpec:
+        """The ``categories:`` entry for *category* (default when not configured)."""
+        return self.categories.get(category) or DEFAULT_CATEGORIES[category]
+
+    def source_category(self, job: str) -> SourceCategory | None:
+        """Category declared by source *job* (``None`` for an undeclared/feed-only job)."""
+        spec = self.sources.get(job)
+        raw = spec.options.get("category") if spec is not None else None
+        return parse_category(raw, where=f"sources.{job}") if raw is not None else None
+
+    def source_max_age(self, job: str, category: SourceCategory | None = None) -> Ttl:
+        """D47 freshness window: the job's own ``max_age:`` else its category's."""
+        spec = self.sources.get(job)
+        raw = spec.options.get("max_age") if spec is not None else None
+        if raw is not None:
+            return Ttl.model_validate(raw)
+        cat = category or self.source_category(job) or SourceCategory.MARKET_NEWS
+        return self.category_spec(cat).max_age
 
     def is_loop(self, job: str) -> bool:
         """True when *job* is the D31 trading-loop persona (its chain is the loop)."""

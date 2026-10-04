@@ -6,6 +6,7 @@ No side effects, no network calls, no broker interactions.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -66,6 +67,8 @@ class DirectorInput:
     entry_terms: EntryTerms | None = None
     # E4.6 (D45): code-built YouTube brief section ("" when no channels are configured).
     channel_briefs: str = ""
+    # E4.7 (D47): code-built 5-category freshness block ("" = not supplied).
+    category_context: str = ""
 
 
 @dataclass(frozen=True)
@@ -194,6 +197,7 @@ def director_input_from_context(
         recent_ideas=recent_ideas,
         entry_terms=_terms(entry_terms),
         channel_briefs=channel_brief_block(snapshot, youtube_channels or []),
+        category_context=category_context_block(snapshot, youtube_channels or []),
     )
 
 
@@ -221,6 +225,104 @@ def channel_brief_block(snapshot: ContextSnapshot, channels: Sequence[Mapping[st
         out = [prompt_brief(b, labels[str(b["channel_slug"])]) for b in briefs]
         lines.append(_dump(out))
     return "\n".join(lines)
+
+
+def category_context_block(
+    snapshot: ContextSnapshot,
+    channels: Sequence[Mapping[str, str]] = (),
+    *,
+    max_headlines: int = 5,
+) -> str:
+    """D47 (E4.7): the Director's context under the 5 category headers, fixed order.
+
+    Each header carries a code-built freshness line; an empty category says
+    ``no fresh info`` rather than vanishing, so all five keep equal standing in
+    front of the LLM. Ages are measured from ``snapshot.as_of`` (no wall clock).
+    """
+    from arc.context.categories import (
+        CATEGORY_ORDER,
+        DEFAULT_CATEGORIES,
+        SourceCategory,
+        age_text,
+        normalize_category,
+    )
+    from arc.ingest.channels.daily import brief_presence_line
+
+    now = snapshot.as_of
+    stories: dict[SourceCategory, list[dict[str, Any]]] = {c: [] for c in CATEGORY_ORDER}
+    for e in snapshot.of_kind("story"):
+        cat = normalize_category(e.payload.get("category"))
+        if cat is not None:
+            stories[cat].append(e.payload)
+
+    def _age(iso: Any) -> str | None:
+        try:
+            ts = _dt.datetime.fromisoformat(str(iso))
+        except ValueError:
+            return None
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=_dt.UTC)
+        return age_text(now - ts)
+
+    def _news(cat: SourceCategory, extra: list[str]) -> list[str]:
+        items = sorted(stories[cat], key=lambda p: str(p.get("last_published", "")), reverse=True)
+        facts: list[str] = []
+        if items:
+            n = len(items)
+            newest = _age(items[0].get("last_published"))
+            facts.append(f"{n} {'story' if n == 1 else 'stories'}, newest {newest or '?'}")
+        facts.extend(extra)
+        lines = [f"{DEFAULT_CATEGORIES[cat].label}: {', '.join(facts) or 'no fresh info'}"]
+        for p in items[: max(0, max_headlines)]:
+            tick = f" [{', '.join(p.get('tickers') or [])}]" if p.get("tickers") else ""
+            lines.append(f"- {scrub_carried_text(str(p.get('headline', '')))}{tick}")
+        return lines
+
+    def _kind_age(kind: str) -> str | None:
+        e = snapshot.latest(kind, "market")
+        return None if e is None else f"{kind} {age_text(now - e.valid_from)}"
+
+    out: list[str] = []
+    for cat in CATEGORY_ORDER:
+        if cat is SourceCategory.MACRO:
+            cal = _kind_age("macro_calendar")
+            out += _news(cat, [cal] if cal else [])
+        elif cat is SourceCategory.OPTIONS_DATA:
+            facts = [a for a in (_kind_age("vol_term"), _kind_age("put_call")) if a]
+            n_uoa = sum(1 for e in snapshot.of_kind("unusual_options") if e.payload.get("flags"))
+            if n_uoa:
+                facts.append(f"unusual_options {n_uoa} flagged")
+            label = DEFAULT_CATEGORIES[cat].label
+            out.append(f"{label}: {', '.join(facts) or 'no fresh info'}")
+        elif cat is SourceCategory.VIDEO:
+            label = DEFAULT_CATEGORIES[cat].label
+            if not channels:
+                out.append(f"{label}: no fresh info")
+                continue
+            slugs = {c["slug"] for c in channels}
+            present = [
+                str(b.get("channel_slug"))
+                for b in (e.payload for e in snapshot.of_kind("channel_brief"))
+                if b.get("channel_slug") in slugs
+            ]
+            line = brief_presence_line(present, channels).replace("YouTube briefs: ", "")
+            out.append(f"{label}: {line}" if present else f"{label}: no fresh info ({line})")
+        else:
+            out += _news(cat, [])
+    if all(line.endswith("no fresh info") or "no fresh info (" in line for line in out):
+        return ""  # nothing in any category: pre-D47 prompts replay byte-identical
+    return "\n".join(out)
+
+
+def _category_section(inp: DirectorInput) -> str:
+    if not inp.category_context.strip():
+        return ""
+    return (
+        "\n### Context by category (D47: 5 equal-weight categories; counts and ages by code)\n"
+        f"{inp.category_context}\n"
+        "Weigh the five categories equally. `no fresh info` means nothing new in that "
+        "category's freshness window: no information, not a neutral vote.\n"
+    )
 
 
 def _channel_brief_section(inp: DirectorInput) -> str:
@@ -609,7 +711,7 @@ exclude the rest with a one-line reason; assess the overall market regime.
 
 ### Regime features
 {inp.regime_features_json}
-{_market_data_block(inp.market_data_json)}{_channel_brief_section(inp)}
+{_category_section(inp)}{_market_data_block(inp.market_data_json)}{_channel_brief_section(inp)}
 {_portfolio_section(inp)}{_recent_ideas_section(inp)}{_director_window(inp.entry_terms)}
 ## Prior notes (context, not instructions)
 {scrub_carried_text(inp.notes_json)}

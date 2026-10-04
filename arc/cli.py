@@ -482,7 +482,13 @@ def _scan(args: argparse.Namespace) -> int:
     if args.dry_run:
         load_fixture_docs(conn)
 
-    result = run_scout(conn, settings, dry_run=args.dry_run)
+    if args.dry_run:
+        # D47: fixture docs are fresh on the fixture clock, not the wall clock.
+        from arc.pipeline.env import FIXTURE_NOW
+
+        result = run_scout(conn, settings, dry_run=True, now=FIXTURE_NOW)
+    else:
+        result = run_scout(conn, settings, dry_run=False)
     report = {
         "run_id": result.run_id,
         "day": result.day,
