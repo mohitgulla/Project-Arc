@@ -293,7 +293,7 @@ export interface paths {
         };
         /**
          * Session
-         * @description The ET day's scheduled slots (06:00-22:00) with each one's run, plus the loop row.
+         * @description The ET day's scheduled slots (05:00-22:00) with each one's run, plus the loop row.
          */
         get: operations["session_api_ops_session_get"];
         put?: never;
@@ -687,6 +687,42 @@ export interface components {
             control?: components["schemas"]["Arm"];
             treatment?: components["schemas"]["Arm"];
         };
+        /**
+         * AutoApproveView
+         * @description E8.8d: paper / live / scorecard gate / last flip, for a KeyValue layout.
+         */
+        AutoApproveView: {
+            /**
+             * Blocks
+             * @description True when the gate is holding opens right now
+             */
+            blocks: boolean;
+            /** Env */
+            env: string;
+            /** Last Flip At */
+            last_flip_at?: string | null;
+            /** Last Flip By */
+            last_flip_by?: string | null;
+            /** Last Flip Key */
+            last_flip_key?: string | null;
+            /** Last Flip To */
+            last_flip_to?: unknown;
+            /** Live */
+            live: boolean;
+            /** Paper */
+            paper: boolean;
+            /**
+             * Reason
+             * @description What the gate would say (its criteria vs the scorecard)
+             */
+            reason: string;
+            /**
+             * Scorecard Gate
+             * @description off = opt-out; unmet = holding opens
+             * @enum {string}
+             */
+            scorecard_gate: "off" | "met" | "unmet";
+        };
         /** BreakdownItem */
         BreakdownItem: {
             /** Count */
@@ -957,6 +993,26 @@ export interface components {
             /** Ticker */
             ticker: string;
         };
+        /**
+         * ChannelBriefState
+         * @description E4.6: a YouTube channel's brief outcome in the latest ``youtube.briefs`` run today.
+         */
+        ChannelBriefState: {
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "ok" | "pending" | "no_video" | "error" | "not_run";
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Text
+             * @description `brief ok` / `pending: <reason>` / `no video in 24h` / …
+             */
+            text: string;
+            /** Video Title */
+            video_title?: string | null;
+        };
         /** ConfigChangeRow */
         ConfigChangeRow: {
             /** Actor */
@@ -1040,6 +1096,8 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
+            /** @description E8.8d: the Auto-Approve widget as key/values (null without trade tables) */
+            auto_approve?: components["schemas"]["AutoApproveView"] | null;
             /** Changes */
             changes: components["schemas"]["ConfigChangeRow"][];
             /** Config Version */
@@ -2400,6 +2458,12 @@ export interface components {
             age_s?: number | null;
             /** At */
             at?: string | null;
+            /**
+             * Chip
+             * @description E8.8d: compact chip text, e.g. `Tick ok 3m`
+             * @default
+             */
+            chip: string;
             /** Key */
             key: string;
             /** Label */
@@ -4040,6 +4104,11 @@ export interface components {
              */
             as_of: string;
             /**
+             * Bands
+             * @description E8.8d: bands in display order (non-empty only)
+             */
+            bands?: components["schemas"]["TimelineBand"][];
+            /**
              * Counts
              * @description Slots by status
              */
@@ -4130,6 +4199,41 @@ export interface components {
              */
             status: "done" | "running" | "failed" | "skipped" | "no_change" | "missed" | "future";
         };
+        /**
+         * SourceCategoryRow
+         * @description E8.8d: one D47 category block header.
+         */
+        SourceCategoryRow: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Max Age
+             * @description D47 freshness window
+             */
+            max_age: string;
+            /** Newest Doc At */
+            newest_doc_at: string | null;
+            /**
+             * Share
+             * @description Share of the Scout doc budget (SourceRegistry.category_weights); null for categories the Scout never reads (typed context only)
+             */
+            share: number | null;
+            /** Sources */
+            sources: number;
+            /**
+             * Status
+             * @description Worst status of its sources
+             * @enum {string}
+             */
+            status: "ok" | "idle" | "pending" | "backoff" | "late" | "failed";
+            /**
+             * Weight
+             * @description categories.<c>.weight (config)
+             */
+            weight: number;
+        };
         /** SourceRow */
         SourceRow: {
             /**
@@ -4137,6 +4241,8 @@ export interface components {
              * @description Cooldown / backoff state, when any
              */
             backoff?: string | null;
+            /** @description E4.6: today's brief status (YouTube channels only) */
+            brief?: components["schemas"]["ChannelBriefState"] | null;
             /** Cadence */
             cadence: string;
             /** Category */
@@ -4163,14 +4269,45 @@ export interface components {
              */
             last_fetch: string | null;
             /**
+             * Last Run Failed
+             * @description The latest run of the job failed
+             * @default false
+             */
+            last_run_failed: boolean;
+            /**
              * Late
              * @description No fetch within 2 x cadence
              */
             late: boolean;
             /** Runs 24H */
             runs_24h: number;
+            /**
+             * Share In Category
+             * @description Share of its category's Scout budget (registry); null for typed-context sources (options data, YouTube), which never draw on the doc budget
+             */
+            share_in_category?: number | null;
             /** Skipped Budget Today */
             skipped_budget_today: number;
+            /**
+             * Skipped Stale Today
+             * @description D47: docs closed skipped_stale today (older than max_age)
+             * @default 0
+             */
+            skipped_stale_today: number;
+            /**
+             * Status
+             * @description Row pill (worst condition)
+             * @default ok
+             * @enum {string}
+             */
+            status: "ok" | "idle" | "pending" | "backoff" | "late" | "failed";
+            /**
+             * Unit
+             * @description docs = raw documents; entries = typed context entries
+             * @default docs
+             * @enum {string}
+             */
+            unit: "docs" | "entries";
             /**
              * Weight
              * @description Effective fairness weight (category × source share)
@@ -4184,6 +4321,11 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
+            /**
+             * Categories
+             * @description E8.8d: D47 categories in display order
+             */
+            categories?: components["schemas"]["SourceCategoryRow"][];
             /** Sources */
             sources: components["schemas"]["SourceRow"][];
         };
@@ -4394,10 +4536,54 @@ export interface components {
             /** Take Profit Pct */
             take_profit_pct: number;
         };
+        /**
+         * TimelineBand
+         * @description E8.8d: one Session Timeline band, in display order.
+         */
+        TimelineBand: {
+            /** Group */
+            group: string;
+            /** Group Label */
+            group_label: string;
+            /**
+             * Jobs
+             * @description Job names in this band, in row order
+             */
+            jobs: string[];
+            /**
+             * Key
+             * @description `sources.<category>` or a TIMELINE_GROUPS key
+             */
+            key: string;
+            /** Label */
+            label: string;
+        };
         /** TimelineRow */
         TimelineRow: {
+            /**
+             * About
+             * @description One line on what the job does
+             */
+            about?: string | null;
+            /**
+             * Band
+             * @description Band key: the group, or `sources.<category>` for a source
+             * @default other
+             */
+            band: string;
             /** Cadence */
             cadence: string;
+            /**
+             * Categories
+             * @description D47 categories the source job feeds (all of them)
+             */
+            categories?: string[];
+            /**
+             * Group
+             * @description Timeline group (TIMELINE_GROUPS key)
+             * @default other
+             */
+            group: string;
             /** Job */
             job: string;
             /**
@@ -4407,8 +4593,29 @@ export interface components {
             kind: "source" | "persona" | "loop";
             /** Label */
             label: string;
+            /**
+             * Llm
+             * @description Holds the LLM lock (calls a model)
+             * @default false
+             */
+            llm: boolean;
+            /**
+             * Persona
+             * @description Persona chip (none for sources)
+             */
+            persona?: string | null;
             /** Slots */
             slots: components["schemas"]["Slot"][];
+            /**
+             * Window
+             * @description Intraday window (ET), when any
+             */
+            window?: string | null;
+            /**
+             * Writes
+             * @description Declared context kinds
+             */
+            writes?: string[];
         };
         /**
          * TowerSnapshot

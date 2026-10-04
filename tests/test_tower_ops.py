@@ -27,6 +27,7 @@ from arc.store.migrate import migrate
 from arc.tower.api import create_app
 from arc.tower.data import connect_ro
 from arc.tower.data_ops import (
+    TIMELINE_START,
     load_alerts,
     load_budget,
     load_config,
@@ -110,7 +111,7 @@ def test_session_has_every_scheduled_job_and_the_loop_row(conn, routines) -> Non
     s = load_session(conn, routines, now=NOW, day=TODAY)
     assert s.loop is not None and s.loop.job == routines.loop.job == s.loop_job
     assert s.loop.kind == "loop"
-    start = dt.datetime.combine(TODAY, dt.time(6), tzinfo=ET)
+    start = dt.datetime.combine(TODAY, TIMELINE_START, tzinfo=ET)
     end = dt.datetime.combine(TODAY, dt.time(22), tzinfo=ET)
     expected = {
         name
@@ -198,6 +199,12 @@ def test_health_strip(conn, tmp_path) -> None:
     assert items["remote_access"].status == "ok"
     assert items["log"].status == "degraded"  # 2 KB > 1 KB rotation size
     assert h.checks["routine_windows"]["severity"] == "failed"
+    # E8.8d: compact chip text (the long text stays in value/threshold for the ⓘ)
+    chips = {i.key: i.chip for i in h.items}
+    assert chips["tick"] == "Tick ok 1m"
+    assert chips["health"].startswith("Health check failed ")
+    assert chips["gateway"] == "Gateway ok" and chips["remote_access"] == "Remote ok"
+    assert chips["log"] == "Log 0.002 / 0.001 MB"
     # a stale tick is failed whatever its recorded status
     late = load_health(conn, now=NOW + dt.timedelta(hours=1), tick_stale_s=900, health_every_s=1800)
     assert {i.key: i.status for i in late.items}["tick"] == "failed"
@@ -408,8 +415,16 @@ def test_sources_registry_rows(conn, routines) -> None:
 
     s = load_sources(conn, routines, now=NOW)
     reg = SourceRegistry.from_routines(routines)
-    assert [x.key for x in s.sources] == list(reg.sources)
+    raw = [x.key for x in s.sources if x.unit == "docs"]
+    assert sorted(raw) == sorted(reg.sources)  # every registry source, once
+    typed = [x for x in s.sources if x.unit == "entries"]
+    assert {x.job for x in typed} >= {"vol_term", "put_call", "macro_calendar"}
+    assert all(x.share_in_category is None for x in typed)
     by = {x.key: x for x in s.sources}
+    # E8.8d: one stale doc (E4.7 skipped_stale) and the E4.6 per-channel brief states
+    assert sum(x.skipped_stale_today for x in s.sources) == 1
+    briefs = {x.brief.outcome for x in s.sources if x.brief is not None}
+    assert {"ok", "pending", "no_video"} <= briefs
     assert sum(x.docs_today for x in s.sources) > 0
     assert sum(x.skipped_budget_today for x in s.sources) == 1
     edgar = next(x for x in s.sources if x.job == "edgar")
@@ -424,6 +439,100 @@ def test_sources_late_after_twice_the_cadence(conn, routines) -> None:
     s = load_sources(conn, routines, now=later)
     late = {x.job for x in s.sources if x.late}
     assert "rss" in late
+    rss_cats = {x.category for x in s.sources if x.job == "rss"}
+    assert all(c.status in ("late", "failed") for c in s.categories if c.key in rss_cats)
+
+
+def test_sources_categories_share_parity_with_registry(conn, routines) -> None:
+    """E8.8d: category shares and in-category shares are the registry's, never recomputed."""
+    from arc.context.categories import CATEGORY_ORDER
+    from arc.ingest.sources import SourceRegistry
+
+    s = load_sources(conn, routines, now=NOW)
+    reg = SourceRegistry.from_routines(routines)
+    cat_w = reg.category_weights()
+    eff = reg.effective_weights()
+    order = [c.value for c in CATEGORY_ORDER]
+    assert [c.key for c in s.categories] == [k for k in order if k in {c.key for c in s.categories}]
+    assert {c.key for c in s.categories} == {x.category for x in s.sources}
+    for c in s.categories:
+        spec = reg.category_spec(next(x for x in CATEGORY_ORDER if x.value == c.key))
+        assert c.label == spec.label and c.max_age == str(spec.max_age)
+        want = cat_w.get(next(x for x in CATEGORY_ORDER if x.value == c.key))
+        assert c.share == (pytest.approx(want, abs=1e-4) if want is not None else None)
+        assert c.sources == sum(1 for x in s.sources if x.category == c.key)
+    for x in s.sources:
+        if x.unit == "docs" and x.key in eff:
+            cat = next(c for c in CATEGORY_ORDER if c.value == x.category)
+            assert x.share_in_category == pytest.approx(eff[x.key] / cat_w[cat], abs=1e-4)
+            assert x.weight == pytest.approx(eff[x.key], abs=1e-4)
+    # shares inside a Scout category sum to 1
+    for c in s.categories:
+        if c.share is not None:
+            inner = [x.share_in_category or 0 for x in s.sources if x.category == c.key]
+            assert sum(inner) == pytest.approx(1.0, abs=1e-3)
+    assert sum(c.share or 0 for c in s.categories) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_sources_category_rollup_is_worst_status(conn, routines) -> None:
+    from arc.tower.data_ops import SOURCE_STATUS_RANK
+
+    s = load_sources(conn, routines, now=NOW)
+    for c in s.categories:
+        rows = [x for x in s.sources if x.category == c.key]
+        assert SOURCE_STATUS_RANK[c.status] == max(SOURCE_STATUS_RANK[x.status] for x in rows)
+    edgar = next(x for x in s.sources if x.job == "edgar")
+    company = next(c for c in s.categories if c.key == edgar.category)
+    if edgar.last_run_failed:
+        assert edgar.status == "failed" and company.status == "failed"
+
+
+def test_sources_youtube_brief_status_from_manifest(tmp_path, routines) -> None:
+    """E4.6: per-channel brief state from today's youtube.briefs run manifest."""
+    db = tmp_path / "arc.db"
+    c = connect(db)
+    migrate(c)
+    at = dt.datetime.combine(TODAY, dt.time(5, 0), tzinfo=ET)
+    from arc.context.ttl import to_db
+
+    c.execute(
+        "INSERT INTO routine_runs (run_id, job, scheduled_for, status, reason, started_at,"
+        " finished_at, step_index, attempts) VALUES (?,?,?,?,?,?,?,?,?)",
+        ("yt-1", "youtube.briefs", to_db(at), "ok", "schedule", to_db(at), to_db(at), 0, 1),
+    )
+    channels = {
+        "stockedup": {"outcome": "briefed", "title": "Market wrap"},
+        "fxevolution": {"outcome": "pending", "pending_reason": "no captions yet"},
+        "tradebrigade": {"outcome": "no_video"},
+        "arete": {"outcome": "error", "error": "listing failed"},
+    }
+    c.execute(
+        "INSERT INTO run_manifests (id, run_id, attempt, job, status, schema_version, payload,"
+        " created_at) VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "m-1",
+            "yt-1",
+            1,
+            "youtube.briefs",
+            "ok",
+            1,
+            json.dumps({"metrics": {"channels": channels}}),
+            to_db(at),
+        ),
+    )
+    c.commit()
+    c.close()
+    ro = connect_ro(db)
+    s = load_sources(ro, routines, now=NOW)
+    ro.close()
+    yt = {x.key: x for x in s.sources if x.job == "youtube.briefs"}
+    assert yt["youtube.stockedup"].brief and yt["youtube.stockedup"].brief.text == "brief ok"
+    assert yt["youtube.fxevolution"].brief.text == "pending: no captions yet"  # type: ignore[union-attr]
+    assert yt["youtube.fxevolution"].status == "pending"
+    assert yt["youtube.tradebrigade"].brief.text == "no video in 24h"  # type: ignore[union-attr]
+    assert yt["youtube.arete"].status == "failed"
+    video = next(c for c in s.categories if c.key == yt["youtube.arete"].category)
+    assert video.status == "failed" and video.share is None  # never in the Scout budget
 
 
 def test_llm_usage(conn) -> None:
@@ -454,6 +563,47 @@ def test_config_via_control_service(conn) -> None:
     override = {k.key: k for k in c.keys}["max_open_positions"]
     assert override.source == "override" and override.value == 4
     assert override.last_change_by == "U0OWNER"
+    # E8.8d: the Auto-Approve widget's key/values, and the same verdict as the gate line
+    aa = c.auto_approve
+    assert aa is not None and c.scorecard_gate is not None
+    assert aa.scorecard_gate in ("off", "met", "unmet")
+    assert aa.reason and aa.reason in c.scorecard_gate
+    assert aa.blocks == (aa.scorecard_gate == "unmet")
+    assert aa.env == "paper"
+    by = {k.key: k for k in c.keys}
+    assert aa.paper == bool(by["auto_approve.paper"].value)
+
+
+def test_config_auto_approve_reflects_a_flip(fx_db, tmp_path) -> None:
+    """The last flip (key, actor, value) comes from the D26 change log."""
+    import shutil
+
+    from arc.control.store import ConfigChangeRepo
+
+    db = tmp_path / "flip.db"
+    shutil.copy(fx_db, db)
+    rw = connect(db)
+    ConfigChangeRepo(rw).append(
+        key="auto_approve.scorecard_gate",
+        old=False,
+        new=True,
+        is_default=False,
+        actor="U0OWNER",
+        reason="hold opens until the scorecard is met",
+        source="slack",
+        at=NOW,
+        status="applied",
+        direction="safer",
+    )
+    rw.commit()
+    rw.close()
+    ro = connect_ro(db)
+    c = load_config(ro, ArcSettings(), now=NOW + dt.timedelta(minutes=1))
+    ro.close()
+    aa = c.auto_approve
+    assert aa is not None
+    assert aa.last_flip_key == "auto_approve.scorecard_gate" and aa.last_flip_by == "U0OWNER"
+    assert aa.scorecard_gate in ("met", "unmet")
 
 
 def test_config_without_override_tables(tmp_path) -> None:
