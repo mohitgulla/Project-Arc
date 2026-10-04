@@ -6,7 +6,7 @@ from __future__ import annotations
 import datetime as dt
 import sqlite3
 from decimal import Decimal as D
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -21,6 +21,9 @@ from arc.experiments.virtual import open_account, record_fills, release_legacy, 
 from arc.routines.manifest import _arm_of
 from arc.store.migrate import migrate
 from arc.utils.calendar import ET
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 NOW = dt.datetime(2026, 10, 6, 10, 0, tzinfo=ET)  # Tuesday
 ENV = {
