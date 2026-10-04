@@ -161,14 +161,14 @@ Charts: Recharts, wrapped so no page imports Recharts directly. Tooltips share o
 - Loaders in `arc/tower/data_ops.py`, routes `GET /api/ops/{session,health,alerts,halts,
   runs,runs/{run_id},budget,context,context/{entry_id},sources,llm,config}`.
 - Session timeline slots are `config/routines.yaml` slots (`arc.routines.schedule
-  .slots_between`, 06:00–22:00 ET) joined to root `routine_runs` on `(job, scheduled_for)`.
+  .slots_between`, 05:00–22:00 ET) joined to root `routine_runs` on `(job, scheduled_for)`.
   Colours: done `--accent`, running pulsing `--accent`, failed `--neg`, skipped / no_change
   muted, missed `--warn`, future `--track`. The D31 trading loop (`loop.job`) is its own row.
 - Run detail renders the stored D27 manifest (`run_manifests.payload`) and the trace from
   `arc.context.trace.trace_runs`, the same serializer `arc context trace` prints. A read or
   write of a kind outside the job's declared contract is highlighted `--neg`.
-- Order budget counts local orders only (`arc.budget.orders.count_orders(conn, None, …)`);
-  the tower never asks the broker. Hidden when the execution tables are missing.
+- Order budget: the Ops widget was removed (D48, E8.8d); `GET /api/ops/budget` stays as a
+  read-only API (the Overview's `Orders today n/200` comes from the snapshot).
 - Effective config goes through `arc.control.service.ControlService` reads (`show`,
   `history`, `version`); a store without the D26 tables shows yaml values with a note.
 - Health thresholds: tick stale after `monitoring.tick_stale_after`; the health check
@@ -210,3 +210,28 @@ they are never dropped.
   themes. `web/e2e/mobile.ts` holds the shared asserts later cards call per page:
   `expectNoOverflow` (page and every `.arc-card`, except `data-scroll-x` containers),
   `expectTouchTargets` (≥ 44 px) and `expectMinFontSize` (≥ `--fs-micro`, 11 px).
+
+### E8.8d Ops pass
+
+- **Widget order** (`OPS_WIDGETS` in `lib/ops.ts`, same on phone and desktop): Session
+  Timeline · Sources · Health · LLM Usage · Context Store · Auto-Approve · Alerts · Halts ·
+  Runs (the last three collapsible, closed on a first visit) · Config (a link to the full page
+  `/ops/config`, effective config + change log). No Order Budget widget.
+- **Timeline bands come from `config/routines.yaml`**, never code: each job may carry `label`,
+  `group` (`sources | scout | trading_loop | position_management | post_market | other`),
+  `persona` (chip; sources declare none) and `about` (one line ≤ 160 chars, the ⓘ text).
+  A typo fails config load. Sources band by their D47 category (`sources.<category>`, labels
+  from the category registry, so a rename needs no UI change); anything else falls under
+  Other. The band header rolls up settled slots (`14/16 ok · 1 missed`).
+- **≤ 768 px** the Gantt becomes a grouped list: band header → job rows (label, persona chip,
+  `9/12 done · 1 missed · next 10:30`, ⓘ) with a dot strip that scrolls inside the row; tap a
+  row for per-slot details. A band starts open only when it has a failed or missed slot.
+- **Sources** group by D47 category: share, `max_age`, newest doc, worst-wins status
+  (`ok < idle < pending < backoff < late < failed`). Category and in-category shares are read
+  from `SourceRegistry`, never recomputed. Rows add `skipped (stale)` (E4.7) and, for YouTube
+  channels, the E4.6 brief state (brief ok / pending: reason / no video in window). On a phone a
+  category shows its header only unless its status is pending or worse.
+- **Health** is one chip row (`Tick ok 1m`, `Log 0.2 / 50 MB`); the long text is in each chip's
+  ⓘ, and a degraded or failed chip expands inline with its message.
+- **Auto-Approve** is a key/value list (paper, live, scorecard gate, last flip) plus the gate
+  line; **Alerts / Halts** collapse repeats like the Overview (`missed_window ×12`).

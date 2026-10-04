@@ -1,25 +1,32 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { useNow } from "../components/AsOfBadge";
+import { CappedList } from "../components/CappedList";
 import { Card } from "../components/Card";
 import { ChangePill } from "../components/ChangePill";
 import { DataTable } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
+import { InfoTip } from "../components/InfoTip";
 import { KeyValueList } from "../components/KeyValueList";
 import { ProgressRow } from "../components/ProgressRow";
 import { Section } from "../components/Section";
 import { StackedBars } from "../components/StackedBars";
 import { Timeline } from "../components/Timeline";
-import { formatEt, formatNumber } from "../lib/format";
+import { formatAge, formatEt, formatNumber } from "../lib/format";
+import { useLayout } from "../lib/layout";
 import {
   DAY_PRESETS,
   LOG_LEVELS,
+  PERSONA_CHIP,
   SLOT_CLASS,
   SLOT_LABEL,
-  budgetMarks,
+  SOURCE_STATUS_TONE,
+  bandHasProblem,
+  bandRollup,
+  bandRows,
   configGroups,
   contractRows,
   dayParam,
@@ -27,22 +34,29 @@ import {
   filterLog,
   formatDuration,
   formatSeconds,
+  groupRepeats,
   hourTicks,
+  isSourceProblem,
   llmBars,
   llmCost,
   loopSplit,
   manifestGroups,
   personaLabel,
+  rowFacts,
+  rowSummary,
   runApiQuery,
   runQuery,
   runStatusLabel,
   runStatusTone,
+  sharePct,
   slotCounts,
   slotTitle,
+  sourceGroups,
   timeLeft,
   timelinePct,
   type Alerts,
-  type Budget,
+  type AutoApprove,
+  type BandView,
   type ContextStore,
   type Halts,
   type HealthItem,
@@ -52,6 +66,8 @@ import {
   type RunList,
   type RunRow,
   type Session,
+  type SourceCategory,
+  type SourceRow,
   type Sources,
   type StepView,
   type TimelineRow,
@@ -98,8 +114,37 @@ function shortId(id: string | null | undefined, n = 14): string {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Session timeline
+// 1. Session timeline (E8.8d: bands from routines.yaml, persona chips, ⓘ per job)
 // ---------------------------------------------------------------------------
+
+function PersonaChip({ persona }: { persona?: string | null }) {
+  if (!persona) return null;
+  return (
+    <span data-testid="persona-chip" className="shrink-0 rounded-pill bg-control px-1.5 py-px text-micro font-semibold text-secondary">
+      {PERSONA_CHIP[persona] ?? persona}
+    </span>
+  );
+}
+
+function JobInfo({ row }: { row: TimelineRow }) {
+  return (
+    <InfoTip label={`About ${row.label}`} testid="job-info" formula={rowFacts(row).join(" · ")}>
+      {row.about ?? `${row.job} (no about line in routines.yaml)`}
+    </InfoTip>
+  );
+}
+
+function JobLabel({ row, strong }: { row: TimelineRow; strong?: boolean }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <span className={`min-w-0 truncate text-caption ${strong ? "font-semibold text-title" : "text-secondary"}`} title={`${row.job} · ${row.cadence}`}>
+        {row.label}
+      </span>
+      <PersonaChip persona={row.persona} />
+      <JobInfo row={row} />
+    </span>
+  );
+}
 
 function SlotTicks({ row, s }: { row: TimelineRow; s: Session }) {
   const navigate = useNavigate();
@@ -129,11 +174,182 @@ function SlotTicks({ row, s }: { row: TimelineRow; s: Session }) {
   );
 }
 
+const LABEL_W = 196;
+
+/** Desktop / tablet: the Gantt with band header rows. */
+function TimelineGantt({ s, bands }: { s: Session; bands: BandView[] }) {
+  const ticks = hourTicks(s.start, s.end);
+  const nowPct = timelinePct(s.as_of, s.start, s.end);
+  const showNow = s.as_of >= s.start && s.as_of <= s.end;
+  return (
+    <div data-testid="session-timeline" data-layout="gantt" data-scroll-x className="arc-scroll-x">
+      <div className="min-w-[720px]">
+        <div className="relative mb-1 h-4 text-micro text-muted" style={{ marginLeft: LABEL_W + 8 }}>
+          {ticks.map((t) => (
+            <span key={t.label} className="absolute -translate-x-1/2 tabular-nums" style={{ left: `${t.pct}%` }}>
+              {t.label}
+            </span>
+          ))}
+        </div>
+        <div className="relative">
+          {showNow && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute bottom-0 top-0 z-10 w-px bg-accent"
+              style={{ left: `calc(${LABEL_W + 8}px + (100% - ${LABEL_W + 8}px) * ${nowPct / 100})` }}
+            />
+          )}
+          {bands.map(({ band, rows, sub, firstOfGroup }) => (
+            <div key={band.key} data-testid="band" data-band={band.key}>
+              {sub && firstOfGroup && (
+                <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{band.group_label}</div>
+              )}
+              <div className="flex items-baseline gap-2 border-b border-line pb-0.5 pt-2" data-testid="band-header">
+                <span className={`text-caption font-semibold text-title ${sub ? "pl-2" : ""}`}>{band.label}</span>
+                <span className="text-micro text-muted tabular-nums">{bandRollup(rows)}</span>
+              </div>
+              {rows.map((row) => (
+                <div
+                  key={row.job}
+                  className="flex items-center gap-2 py-0.5"
+                  data-testid={row.job === s.loop_job ? "loop-row" : "timeline-row"}
+                  data-job={row.job}
+                >
+                  <span className={`shrink-0 ${sub ? "pl-2" : ""}`} style={{ width: LABEL_W }}>
+                    <JobLabel row={row} strong={row.job === s.loop_job} />
+                  </span>
+                  <SlotTicks row={row} s={s} />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SlotDots({ row }: { row: TimelineRow }) {
+  const navigate = useNavigate();
+  return (
+    <div data-scroll-x className="arc-scroll-x -mx-1 px-1" data-testid="slot-strip">
+      <div className="flex w-max items-center gap-1 py-1">
+        {row.slots.map((slot) => {
+          const title = slotTitle(slot);
+          const run = slot.run;
+          return (
+            <button
+              key={slot.at}
+              type="button"
+              data-status={slot.status}
+              data-testid="slot"
+              aria-label={title}
+              title={title}
+              disabled={!run}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (run) navigate(`/ops/runs/${run.run_id}`);
+              }}
+              className="arc-hit relative inline-flex h-3 w-3 shrink-0 items-center justify-center"
+            >
+              <span className={`h-2.5 w-2.5 rounded-full ${SLOT_CLASS[slot.status]}`} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MobileJobRow({ row, s }: { row: TimelineRow; s: Session }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <li className="py-2" data-testid={row.job === s.loop_job ? "loop-row" : "timeline-row"} data-job={row.job}>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={id}
+          onClick={() => setOpen(!open)}
+          className="flex min-h-[44px] min-w-0 flex-1 flex-col items-start justify-center text-left"
+        >
+          <span className="flex w-full min-w-0 items-center gap-1.5">
+            <span className={`min-w-0 truncate text-caption ${row.job === s.loop_job ? "font-semibold text-title" : "text-primary"}`}>{row.label}</span>
+            <PersonaChip persona={row.persona} />
+          </span>
+          <span className="text-micro text-muted tabular-nums" data-testid="row-summary">
+            {rowSummary(row)}
+          </span>
+        </button>
+        <JobInfo row={row} />
+      </div>
+      <SlotDots row={row} />
+      <ul id={id} hidden={!open} className="mt-1 divide-y divide-line rounded-control bg-control/40 px-2 text-micro" data-testid="slot-details">
+        {row.slots.map((slot) => (
+          <li key={slot.at} className="flex min-h-[32px] items-center gap-2 tabular-nums">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${SLOT_CLASS[slot.status].replace("animate-pulse", "")}`} />
+            <span className="w-11 shrink-0">{slot.at.slice(11, 16)}</span>
+            <span className="w-16 shrink-0 text-secondary">{SLOT_LABEL[slot.status]}</span>
+            {slot.run ? (
+              <Link to={`/ops/runs/${slot.run.run_id}`} className="arc-action min-w-0 truncate">
+                {shortId(slot.run.run_id, 22)}
+              </Link>
+            ) : (
+              <span className="text-muted">—</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </li>
+  );
+}
+
+function MobileBand({ view, s }: { view: BandView; s: Session }) {
+  const { band, rows, sub, firstOfGroup } = view;
+  const [open, setOpen] = useState(() => bandHasProblem(rows));
+  const id = useId();
+  return (
+    <div data-testid="band" data-band={band.key} data-open={open}>
+      {sub && firstOfGroup && <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{band.group_label}</div>}
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(!open)}
+        data-testid="band-header"
+        className="flex min-h-[44px] w-full items-center gap-2 border-b border-line text-left"
+      >
+        <span className="w-3 text-caption text-muted" aria-hidden="true">
+          {open ? "▼" : "▶"}
+        </span>
+        <span className="text-caption font-semibold text-title">{band.label}</span>
+        <span className="min-w-0 truncate text-micro text-muted tabular-nums">· {bandRollup(rows)}</span>
+      </button>
+      <ul id={id} hidden={!open} className="divide-y divide-line pl-5">
+        {rows.map((row) => (
+          <MobileJobRow key={row.job} row={row} s={s} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Mobile (≤ 768): the grouped list; no min-width Gantt. */
+function TimelineList({ s, bands }: { s: Session; bands: BandView[] }) {
+  return (
+    <div data-testid="session-timeline" data-layout="list">
+      {bands.map((v) => (
+        <MobileBand key={v.band.key} view={v} s={s} />
+      ))}
+    </div>
+  );
+}
+
 function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d: string) => void }) {
-  const ticks = s ? hourTicks(s.start, s.end) : [];
+  const layout = useLayout();
   const split = loopSplit(s?.loop);
-  const nowPct = s ? timelinePct(s.as_of, s.start, s.end) : 0;
-  const showNow = s ? s.as_of >= s.start && s.as_of <= s.end : false;
+  const bands = useMemo(() => (s ? bandRows(s) : []), [s]);
   return (
     <Card title="Session Timeline" freshness={{ at: s?.as_of, label: "loaded" }}>
       <div className="mb-3 flex flex-wrap items-center gap-2" data-testid="day-control">
@@ -143,7 +359,7 @@ function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d:
             type="button"
             aria-pressed={day === p.value}
             onClick={() => setDay(p.value)}
-            className={`rounded-pill px-2.5 py-1 text-caption font-semibold max-tablet:min-h-[44px] ${day === p.value ? "bg-range-active text-[color:var(--range-active-text)]" : "text-secondary hover:bg-hover"}`}
+            className={`arc-press rounded-pill px-2.5 py-1 text-caption font-semibold max-tablet:min-h-[44px] ${day === p.value ? "bg-range-active text-[color:var(--range-active-text)]" : "text-secondary hover:bg-hover"}`}
           >
             {p.label}
           </button>
@@ -155,50 +371,15 @@ function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d:
           value={/^\d{4}-/.test(day) ? day : ""}
           onChange={(e) => setDay(e.target.value || "today")}
         />
-        {s && <span className="text-caption text-muted">{s.day} · 06:00–22:00 ET</span>}
+        {s && (
+          <span className="text-caption text-muted tabular-nums">
+            {s.day} · {s.start.slice(11, 16)}–{s.end.slice(11, 16)} ET
+          </span>
+        )}
       </div>
-      {!s ? (
-        <Loading what="the session" />
-      ) : (
-        <div data-testid="session-timeline" className="overflow-x-auto">
-          <div className="min-w-[640px]">
-            <div className="relative mb-1 ml-[132px] h-4 text-micro text-muted">
-              {ticks.map((t) => (
-                <span key={t.label} className="absolute -translate-x-1/2" style={{ left: `${t.pct}%` }}>
-                  {t.label}
-                </span>
-              ))}
-            </div>
-            <div className="relative">
-              {showNow && (
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute bottom-0 top-0 z-10 w-px bg-accent"
-                  style={{ left: `calc(132px + (100% - 132px) * ${nowPct / 100})` }}
-                />
-              )}
-              {s.loop && (
-                <div className="flex items-center gap-2 border-b border-line py-1" data-testid="loop-row">
-                  <span className="w-[124px] shrink-0 truncate text-caption font-semibold text-title" title={s.loop.cadence}>
-                    Trading loop
-                  </span>
-                  <SlotTicks row={s.loop} s={s} />
-                </div>
-              )}
-              {s.rows.map((row) => (
-                <div key={row.job} className="flex items-center gap-2 py-0.5">
-                  <span className="w-[124px] shrink-0 truncate text-caption text-secondary" title={`${row.job} · ${row.cadence}`}>
-                    {row.label}
-                  </span>
-                  <SlotTicks row={row} s={s} />
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      {!s ? <Loading what="the session" /> : layout === "mobile" ? <TimelineList s={s} bands={bands} /> : <TimelineGantt s={s} bands={bands} />}
       {s && (
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-caption text-secondary" data-testid="slot-legend">
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-caption text-secondary tabular-nums" data-testid="slot-legend">
           {slotCounts(s.counts).map(({ status, n }) => (
             <span key={status} className="flex items-center gap-1.5">
               <span className={`h-2.5 w-2.5 rounded-[2px] ${SLOT_CLASS[status].replace("animate-pulse", "")}`} />
@@ -206,7 +387,7 @@ function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d:
             </span>
           ))}
           {s.loop && (
-            <span className="ml-auto text-muted" data-testid="loop-split">
+            <span className="text-muted tablet:ml-auto" data-testid="loop-split">
               loop: {split.full} full · {split.noChange} no change{split.failed ? ` · ${split.failed} failed` : ""}
             </span>
           )}
@@ -217,7 +398,7 @@ function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d:
 }
 
 // ---------------------------------------------------------------------------
-// 2. Health strip
+// 2. Health (E8.8d: one chip row; the long text is in each chip's ⓘ)
 // ---------------------------------------------------------------------------
 
 const HEALTH_TONE: Record<HealthItem["status"], keyof typeof TONE_PILL> = {
@@ -227,27 +408,44 @@ const HEALTH_TONE: Record<HealthItem["status"], keyof typeof TONE_PILL> = {
   unknown: "neutral",
 };
 
+const HEALTH_TEXT: Record<HealthItem["status"], string> = {
+  ok: "text-primary",
+  degraded: "text-warn",
+  failed: "text-neg-text",
+  unknown: "text-secondary",
+};
+
 function HealthStripCard({ h }: { h?: HealthStrip }) {
   return (
     <Card title="Health">
       {!h ? (
         <Loading what="health" />
       ) : (
-        <ul className="grid gap-3 tablet:grid-cols-3 desktop:grid-cols-5" data-testid="health-strip">
-          {h.items.map((it) => (
-            <li key={it.key} className="min-w-0 rounded-control border border-line p-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-caption text-secondary">{it.label}</span>
-                <Pill tone={HEALTH_TONE[it.status]}>{it.status}</Pill>
-              </div>
-              <div className="mt-1 truncate font-semibold text-title" title={it.value}>
-                {it.value}
-              </div>
-              <div className="truncate text-micro text-muted" title={it.threshold}>
-                {it.threshold}
-              </div>
-            </li>
-          ))}
+        <ul className="flex flex-wrap gap-2" data-testid="health-strip">
+          {h.items.map((it) => {
+            const bad = it.status === "degraded" || it.status === "failed";
+            return (
+              <li
+                key={it.key}
+                data-status={it.status}
+                data-testid="health-chip"
+                className={`min-w-0 rounded-control border border-line px-2.5 py-1 ${bad ? "basis-full" : ""}`}
+              >
+                <div className="flex min-h-[32px] items-center gap-1.5 max-tablet:min-h-[44px]">
+                  <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${DOT[HEALTH_TONE[it.status]]}`} />
+                  <span className={`text-caption font-semibold tabular-nums ${HEALTH_TEXT[it.status]}`}>{it.chip || `${it.label} ${it.status}`}</span>
+                  <InfoTip label={`About ${it.label}`} formula={it.threshold}>
+                    {it.label}: {it.value}
+                  </InfoTip>
+                </div>
+                {bad && (
+                  <p className={`pb-1 text-caption [overflow-wrap:anywhere] ${HEALTH_TEXT[it.status]}`} data-testid="health-message">
+                    {it.value} <span className="text-muted">({it.threshold})</span>
+                  </p>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </Card>
@@ -255,121 +453,159 @@ function HealthStripCard({ h }: { h?: HealthStrip }) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Alerts / 4. Halts
+// 3. Alerts / 4. Halts (E8.8d: CappedList, repeats grouped like the overview)
 // ---------------------------------------------------------------------------
 
-type AlertRow = Alerts["alerts"][number];
-const ALERT_COLS: ColumnDef<AlertRow, unknown>[] = [
-  {
-    id: "state",
-    header: "State",
-    accessorFn: (a) => (a.open ? "open" : "resolved"),
-    cell: ({ row }) => <Pill tone={row.original.open ? "neg" : "neutral"}>{row.original.open ? "open" : "resolved"}</Pill>,
-  },
-  { id: "kind", header: "Kind", accessorKey: "kind" },
-  { id: "key", header: "Key", accessorKey: "key", cell: ({ getValue }) => <code className="text-caption">{String(getValue())}</code> },
-  { id: "message", header: "Message", accessorKey: "message" },
-  { id: "opened", header: "Opened", accessorKey: "opened_at", cell: ({ getValue }) => et(getValue() as string) },
-  { id: "resolved", header: "Resolved", accessorKey: "resolved_at", cell: ({ getValue }) => et(getValue() as string) },
-  { id: "duration", header: "Duration", accessorKey: "duration_s", cell: ({ getValue }) => formatSeconds(getValue() as number) },
-];
+const DOT: Record<keyof typeof TONE_PILL, string> = {
+  pos: "bg-pos",
+  neg: "bg-neg",
+  warn: "bg-warn",
+  neutral: "bg-muted",
+};
+
+function RepeatRow({
+  testid,
+  tone,
+  state,
+  text,
+  latest,
+  when,
+  children,
+}: {
+  testid: string;
+  tone: keyof typeof TONE_PILL;
+  state: string;
+  text: string;
+  latest: string;
+  when: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <li className="py-1.5" data-testid={testid}>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(!open)}
+        className="flex min-h-[40px] w-full items-start gap-2 text-left max-tablet:min-h-[44px]"
+      >
+        <span aria-hidden="true" className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${DOT[tone]}`} />
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-x-2">
+            <span className="font-semibold text-title" data-testid={`${testid}-text`}>
+              {text}
+            </span>
+            <Pill tone={tone}>{state}</Pill>
+            <span className="ml-auto text-caption text-muted tabular-nums">{when}</span>
+          </span>
+          <span className="line-clamp-2 text-caption text-secondary [overflow-wrap:anywhere]">{latest}</span>
+        </span>
+      </button>
+      <ul id={id} hidden={!open} className="ml-4 mt-1 divide-y divide-line rounded-control bg-control/40 px-2 text-caption">
+        {children}
+      </ul>
+    </li>
+  );
+}
 
 function AlertsSection({ a }: { a?: Alerts }) {
+  const groups = useMemo(() => (a ? groupRepeats(a.alerts, (r) => r.kind) : []), [a]);
   return (
-    <Section storageKey="alerts" title={<span>Alerts {a && a.open > 0 && <Pill tone="neg">{a.open} open</Pill>}</span>}>
+    <Section
+      storageKey="alerts"
+      defaultOpen={false}
+      title={<span>Alerts {a && a.open > 0 && <Pill tone="neg" testId="alerts-open">{a.open} open</Pill>}</span>}
+    >
       {!a ? (
         <Loading what="alerts" />
       ) : a.alerts.length === 0 ? (
         <EmptyState caption="No ops alerts in the last 7 days." />
       ) : (
         <div data-testid="alerts">
-          <DataTable
-            data={a.alerts}
-            columns={ALERT_COLS}
-            getRowId={(r) => r.id}
-            columnPicker={false}
-            maxHeight={360}
-            cardRow={{
-              primary: (r) => (
-                <>
-                  <Pill tone={r.open ? "neg" : "neutral"}>{r.open ? "open" : "resolved"}</Pill>
-                  <span className="truncate">{r.kind}</span>
-                </>
-              ),
-              secondary: (r) => (
-                <>
-                  <span className="truncate">{r.message}</span>
-                  <span>{et(r.opened_at)}</span>
-                  <span>{formatSeconds(r.duration_s)}</span>
-                </>
-              ),
-            }}
-          />
+          <CappedList className="divide-y divide-line" noun="kinds">
+            {groups.map((g) => {
+              const open = g.items.filter((r) => r.open).length;
+              const head = g.items[0]!;
+              return (
+                <RepeatRow
+                  key={g.key}
+                  testid="alert-group"
+                  tone={open ? "neg" : "neutral"}
+                  state={open ? `${open} open` : "resolved"}
+                  text={g.text}
+                  latest={head.message}
+                  when={et(head.opened_at)}
+                >
+                  {g.items.map((r) => (
+                    <li key={r.id} className="py-1.5">
+                      <div className="flex flex-wrap items-center gap-x-2 tabular-nums">
+                        <code className="text-micro">{r.key}</code>
+                        <span className="text-muted">
+                          {et(r.opened_at)} → {r.resolved_at ? et(r.resolved_at) : "open"} · {formatSeconds(r.duration_s)}
+                        </span>
+                      </div>
+                      <div className="text-secondary [overflow-wrap:anywhere]">{r.message}</div>
+                    </li>
+                  ))}
+                </RepeatRow>
+              );
+            })}
+          </CappedList>
         </div>
       )}
     </Section>
   );
 }
 
-type HaltRow = Halts["halts"][number];
-const HALT_COLS: ColumnDef<HaltRow, unknown>[] = [
-  {
-    id: "state",
-    header: "State",
-    accessorFn: (h) => (h.active ? "active" : "cleared"),
-    cell: ({ row }) => <Pill tone={row.original.active ? "neg" : "neutral"}>{row.original.active ? "ACTIVE" : "cleared"}</Pill>,
-  },
-  { id: "kind", header: "Kind", accessorKey: "kind" },
-  { id: "actor", header: "Actor", accessorKey: "actor" },
-  { id: "reason", header: "Reason", accessorKey: "reason" },
-  { id: "at", header: "Raised", accessorKey: "at", cell: ({ getValue }) => et(getValue() as string) },
-  { id: "cleared", header: "Cleared", accessorKey: "cleared_at", cell: ({ getValue }) => et(getValue() as string) },
-  { id: "cleared_by", header: "Cleared by", accessorKey: "cleared_by", cell: ({ getValue }) => (getValue() as string) ?? "—" },
-  {
-    id: "trades",
-    header: "Trades",
-    accessorKey: "trades",
-    cell: ({ row }) => (
-      <Link className="arc-action" to={row.original.trades_route} onClick={(e) => e.stopPropagation()}>
-        {row.original.trades} ↗
-      </Link>
-    ),
-  },
-];
-
 function HaltsSection({ h }: { h?: Halts }) {
-  const navigate = useNavigate();
+  const groups = useMemo(() => (h ? groupRepeats(h.halts, (r) => r.kind) : []), [h]);
   return (
-    <Section storageKey="halts" title={<span>Halts {h && h.active > 0 && <Pill tone="neg">{h.active} active</Pill>}</span>}>
+    <Section
+      storageKey="halts"
+      defaultOpen={false}
+      title={<span>Halts {h && h.active > 0 && <Pill tone="neg" testId="halts-active">{h.active} active</Pill>}</span>}
+    >
       {!h ? (
         <Loading what="halts" />
       ) : h.halts.length === 0 ? (
         <EmptyState caption="No halts recorded." />
       ) : (
         <div data-testid="halts">
-          <DataTable
-            data={h.halts}
-            columns={HALT_COLS}
-            getRowId={(r) => r.id}
-            columnPicker={false}
-            maxHeight={360}
-            onRowClick={(r) => navigate(r.trades_route)}
-            cardRow={{
-              primary: (r) => (
-                <>
-                  <Pill tone={r.active ? "neg" : "neutral"}>{r.active ? "ACTIVE" : "cleared"}</Pill>
-                  <span className="truncate">{r.kind}</span>
-                </>
-              ),
-              secondary: (r) => (
-                <>
-                  <span className="truncate">{r.reason}</span>
-                  <span>{et(r.at)}</span>
-                  <span>{r.trades} trades</span>
-                </>
-              ),
-            }}
-          />
+          <CappedList className="divide-y divide-line" noun="kinds">
+            {groups.map((g) => {
+              const active = g.items.filter((r) => r.active).length;
+              const head = g.items[0]!;
+              return (
+                <RepeatRow
+                  key={g.key}
+                  testid="halt-group"
+                  tone={active ? "neg" : "neutral"}
+                  state={active ? "ACTIVE" : "cleared"}
+                  text={g.text}
+                  latest={`${head.reason} · ${head.actor}`}
+                  when={et(head.at)}
+                >
+                  {g.items.map((r) => (
+                    <li key={r.id} className="py-1.5">
+                      <div className="flex flex-wrap items-center gap-x-2 tabular-nums">
+                        <span className="text-muted">
+                          {et(r.at)} → {r.cleared_at ? `${et(r.cleared_at)} by ${r.cleared_by ?? "—"}` : "active"}
+                        </span>
+                        <Link className="arc-action ml-auto" to={r.trades_route}>
+                          {r.trades} trades ↗
+                        </Link>
+                      </div>
+                      <div className="text-secondary [overflow-wrap:anywhere]">
+                        {r.reason} · {r.actor}
+                      </div>
+                    </li>
+                  ))}
+                </RepeatRow>
+              );
+            })}
+          </CappedList>
         </div>
       )}
     </Section>
@@ -424,7 +660,7 @@ function RunsSection() {
   };
   const pages = runs ? Math.max(1, Math.ceil(runs.total / runs.size)) : 1;
   return (
-    <Section title="Runs">
+    <Section title="Runs" defaultOpen={false}>
       <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="run-filters">
         <select aria-label="Job" className={CONTROL} value={q.job[0] ?? ""} onChange={(e) => set({ job: e.target.value || null })}>
           <option value="">All jobs</option>
@@ -509,54 +745,8 @@ function RunsSection() {
 }
 
 // ---------------------------------------------------------------------------
-// 7. Budget, 8. Context, 9. Sources, 10. LLM, 11. Config
+// 7. Context, 8. Sources, 9. LLM, 10. Auto-Approve, 11. Config
 // ---------------------------------------------------------------------------
-
-function BudgetCard({ b }: { b: Budget }) {
-  const marks = budgetMarks(b);
-  return (
-    <Card title="Order Budget" subtitle={<>local count; the tower never calls the broker · tier {b.tier}</>}>
-      <div data-testid="order-budget">
-        <div className="relative">
-          <ProgressRow
-            label="Options orders today"
-            value={`${b.used} / ${b.limit}`}
-            right={`${b.remaining_opens} opens left`}
-            fraction={b.used / b.limit}
-            warnAt={b.restrict_at / b.limit}
-          />
-          <div className="relative -mt-1 h-4 text-micro text-muted">
-            {marks.map((m) => (
-              <span key={m.label} className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: `${m.at * 100}%` }}>
-                ▲ {m.label}
-              </span>
-            ))}
-          </div>
-        </div>
-        <KeyValueList
-          items={[
-            { label: "Local orders", value: b.local },
-            { label: "Reserved (in flight)", value: b.reserved },
-            ...Object.entries(b.by_state).map(([state, n]) => ({ label: `Orders ${state}`, value: n })),
-          ]}
-        />
-        {b.orders.length > 0 && (
-          <ul className="mt-2 divide-y divide-line text-caption">
-            {b.orders.map((o) => (
-              <li key={o.id} className="flex items-center justify-between gap-2 py-1.5">
-                <Link to={o.route} className="arc-action">
-                  {o.ticker ?? shortId(o.proposal_hash, 10)} {o.kind ?? ""}
-                </Link>
-                <span className="text-secondary">{o.state}</span>
-                <span className="text-muted">{et(o.created_at)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </Card>
-  );
-}
 
 function ContextCard({ c, now }: { c?: ContextStore; now: number }) {
   return (
@@ -596,39 +786,101 @@ function ContextCard({ c, now }: { c?: ContextStore; now: number }) {
   );
 }
 
-function SourcesCard({ s }: { s?: Sources }) {
+function SourceRowItem({ src }: { src: SourceRow }) {
+  const status = src.status ?? "ok";
+  const tone = SOURCE_STATUS_TONE[status];
+  const unit = src.unit === "entries" ? "entries" : "docs";
   return (
-    <Card title="Sources">
+    <li className="py-2" data-testid="source-row" data-status={status}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-semibold text-title">{src.label}</span>
+        <span className="text-micro text-muted tabular-nums">
+          {src.share_in_category != null ? `${sharePct(src.share_in_category)} of category` : "typed context"}
+        </span>
+        {src.late && (
+          <Pill tone="neg" testId="source-late">
+            late
+          </Pill>
+        )}
+        {src.last_run_failed && !src.late && <Pill tone="neg">failed</Pill>}
+        {src.backoff && <Pill tone="warn">backoff</Pill>}
+        {status === "pending" && <Pill tone="warn">pending</Pill>}
+        <span className="ml-auto text-caption text-muted">{src.cadence}</span>
+      </div>
+      <div className="mt-0.5 flex flex-wrap gap-x-3 text-caption text-secondary tabular-nums">
+        <span>last fetch {et(src.last_fetch)}</span>
+        <span>
+          {src.docs_today} {unit} today
+        </span>
+        {src.skipped_budget_today > 0 && <span>{src.skipped_budget_today} skipped (budget)</span>}
+        {(src.skipped_stale_today ?? 0) > 0 && <span>{src.skipped_stale_today} skipped (stale)</span>}
+        <span>
+          errors {src.error_rate == null ? "—" : `${Math.round(src.error_rate * 100)}%`} of {src.runs_24h} runs (24 h)
+        </span>
+      </div>
+      {src.brief && (
+        <div className={`text-caption ${src.brief.outcome === "error" ? "text-neg-text" : src.brief.outcome === "pending" ? "text-warn" : "text-secondary"}`} data-testid="brief-status">
+          {src.brief.text}
+          {src.brief.video_title ? <span className="text-muted"> · {src.brief.video_title}</span> : null}
+        </div>
+      )}
+      {src.backoff && <div className="text-micro text-warn">{src.backoff}</div>}
+      {tone === "neg" && src.failed_24h > 0 && <div className="text-micro text-neg-text">{src.failed_24h} failed run(s) in 24 h</div>}
+    </li>
+  );
+}
+
+function SourceCategoryBlock({ cat, rows, now, phone }: { cat: SourceCategory; rows: SourceRow[]; now: number; phone: boolean }) {
+  const [open, setOpen] = useState(() => !phone || isSourceProblem(cat.status));
+  const id = useId();
+  const tone = SOURCE_STATUS_TONE[cat.status];
+  return (
+    <li data-testid="source-category" data-category={cat.key} data-status={cat.status} data-open={open} className="py-1">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(!open)}
+        className="flex min-h-[40px] w-full flex-wrap items-center gap-x-2 text-left max-tablet:min-h-[44px]"
+      >
+        <span className="w-3 text-caption text-muted" aria-hidden="true">
+          {open ? "▼" : "▶"}
+        </span>
+        <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${DOT[tone]}`} />
+        <span className="font-semibold text-title">{cat.label}</span>
+        <span className="text-caption text-secondary tabular-nums">
+          {sharePct(cat.share)} · max_age {cat.max_age} · newest {cat.newest_doc_at ? formatAge(cat.newest_doc_at, now) : "—"}
+        </span>
+        <span className="sr-only">status {cat.status}</span>
+      </button>
+      <ul id={id} hidden={!open} className="divide-y divide-line pl-5">
+        {rows.map((src) => (
+          <SourceRowItem key={src.key} src={src} />
+        ))}
+      </ul>
+    </li>
+  );
+}
+
+function SourcesCard({ s, now }: { s?: Sources; now: number }) {
+  const phone = useLayout() === "mobile";
+  const groups = useMemo(() => (s ? sourceGroups(s) : []), [s]);
+  return (
+    <Card
+      title="Sources"
+      freshness={{ at: s?.as_of, label: "loaded" }}
+      headerExtra={
+        <InfoTip label="About sources">
+          One block per D47 category, each an equal share of the Scout&apos;s doc budget; a row&apos;s share is inside its category.
+        </InfoTip>
+      }
+    >
       {!s ? (
         <Loading what="sources" />
       ) : (
         <ul className="divide-y divide-line" data-testid="sources">
-          {s.sources.map((src) => (
-            <li key={src.key} className="py-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-semibold text-title">{src.label}</span>
-                <span className="text-micro text-muted">
-                  {src.category} · w {src.weight}
-                </span>
-                {src.late && (
-                  <Pill tone="neg" testId="source-late">
-                    late
-                  </Pill>
-                )}
-                {src.failed_24h > 0 && <Pill tone="neg">{src.failed_24h} failed</Pill>}
-                {src.backoff && <Pill tone="warn">backoff</Pill>}
-                <span className="ml-auto text-caption text-muted">{src.cadence}</span>
-              </div>
-              <div className="mt-0.5 flex flex-wrap gap-x-3 text-caption text-secondary tabular-nums">
-                <span>last fetch {et(src.last_fetch)}</span>
-                <span>{src.docs_today} docs today</span>
-                {src.skipped_budget_today > 0 && <span>{src.skipped_budget_today} skipped (budget)</span>}
-                <span>
-                  errors {src.error_rate == null ? "—" : `${Math.round(src.error_rate * 100)}%`} of {src.runs_24h} runs (24 h)
-                </span>
-              </div>
-              {src.backoff && <div className="text-micro text-warn">{src.backoff}</div>}
-            </li>
+          {groups.map((g) => (
+            <SourceCategoryBlock key={g.category.key} cat={g.category} rows={g.rows} now={now} phone={phone} />
           ))}
         </ul>
       )}
@@ -695,6 +947,55 @@ function LlmCard({ l }: { l?: Llm }) {
   );
 }
 
+function AutoApproveCard({ a, line }: { a?: AutoApprove | null; line?: string | null }) {
+  if (!a) {
+    return line ? (
+      <Card title="Auto-Approve">
+        <p data-testid="scorecard-gate" className="text-caption text-secondary">
+          {line}
+        </p>
+      </Card>
+    ) : null;
+  }
+  const gate = a.scorecard_gate === "off" ? "off (opt-out)" : a.scorecard_gate === "met" ? "on · met" : "on · not met";
+  return (
+    <Card title="Auto-Approve" testid="auto-approve">
+      <KeyValueList
+        items={[
+          { label: "Paper", value: a.paper ? "on" : "off" },
+          { label: "Live", value: a.live ? "on" : "off", hint: `env ${a.env}` },
+          { label: "Scorecard gate", value: <span className={a.blocks ? "text-warn" : ""}>{gate}</span> },
+          {
+            label: "Last flip",
+            value: a.last_flip_key ? `${a.last_flip_key.replace("auto_approve.", "")} → ${String(a.last_flip_to)}` : "—",
+            hint: a.last_flip_at ? `${et(a.last_flip_at)} · ${a.last_flip_by ?? "—"}` : undefined,
+          },
+        ]}
+      />
+      <p data-testid="scorecard-gate" data-blocks={a.blocks} className={`mt-2 text-caption [overflow-wrap:anywhere] ${a.blocks ? "text-warn" : "text-secondary"}`}>
+        {a.reason}
+      </p>
+    </Card>
+  );
+}
+
+function ConfigLink({ c }: { c?: OpsConfig }) {
+  return (
+    <Card title="Config" testid="config-link">
+      <div className="flex flex-wrap items-center gap-3">
+        <Link to="/ops/config" className="arc-action arc-press inline-flex min-h-[40px] items-center max-tablet:min-h-[44px]">
+          Effective config &amp; change log ↗
+        </Link>
+        {c && (
+          <span className="text-caption text-muted tabular-nums">
+            v{c.config_version} · {c.keys.length} keys · {c.changes.length} changes
+          </span>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 function ConfigSection({ c }: { c?: OpsConfig }) {
   const [filter, setFilter] = useState("");
   const groups = c ? configGroups(c.keys.filter((k) => !filter || k.key.includes(filter))) : [];
@@ -702,7 +1003,6 @@ function ConfigSection({ c }: { c?: OpsConfig }) {
     <Section
       storageKey="effective-config"
       title={<span>Effective Config {c && <span className="text-caption text-muted">v{c.config_version}</span>}</span>}
-      defaultOpen={false}
     >
       {!c ? (
         <Loading what="config" />
@@ -770,7 +1070,6 @@ export function OpsPage() {
   const health = useOps("/api/ops/health");
   const alerts = useOps("/api/ops/alerts");
   const halts = useOps("/api/ops/halts");
-  const budget = useOps("/api/ops/budget");
   const context = useOps("/api/ops/context");
   const sources = useOps("/api/ops/sources");
   const llm = useOps("/api/ops/llm", { days: 30 });
@@ -781,28 +1080,32 @@ export function OpsPage() {
     else next.set("day", d);
     setParams(next, { replace: true });
   };
-  const b = budget.data as Budget | null | undefined;
-  const gateLine = (config.data as OpsConfig | undefined)?.scorecard_gate;
+  const cfg = config.data as OpsConfig | undefined;
+  // Owner order (D48, OPS_WIDGETS): the same on phone and desktop, one column.
   return (
     <div className="grid gap-6 desktop:gap-10" data-testid="ops">
       <SessionCard s={session.data as Session | undefined} day={day} setDay={setDay} />
+      <SourcesCard s={sources.data as Sources | undefined} now={now} />
       <HealthStripCard h={health.data as HealthStrip | undefined} />
-      {gateLine && (
-        <Card title="Auto-Approve">
-          <p data-testid="scorecard-gate" className={`text-caption ${gateLine.includes("OFF") ? "text-warn" : "text-secondary"}`}>
-            {gateLine}
-          </p>
-        </Card>
-      )}
+      <LlmCard l={llm.data as Llm | undefined} />
+      <ContextCard c={context.data as ContextStore | undefined} now={now} />
+      <AutoApproveCard a={cfg?.auto_approve} line={cfg?.scorecard_gate} />
       <AlertsSection a={alerts.data as Alerts | undefined} />
       <HaltsSection h={halts.data as Halts | undefined} />
       <RunsSection />
-      <div className="grid gap-6 desktop:grid-cols-2 desktop:gap-10">
-        {b && <BudgetCard b={b} />}
-        <LlmCard l={llm.data as Llm | undefined} />
-        <ContextCard c={context.data as ContextStore | undefined} now={now} />
-        <SourcesCard s={sources.data as Sources | undefined} />
-      </div>
+      <ConfigLink c={cfg} />
+    </div>
+  );
+}
+
+/**
+ * `/ops/config`: the effective config + change log, moved off the Ops page (D48). E8.8e turns
+ * this into the full control-panel view; until then it is the former Ops section, open.
+ */
+export function OpsConfigPage() {
+  const config = useOps("/api/ops/config");
+  return (
+    <div className="grid gap-6" data-testid="ops-config">
       <ConfigSection c={config.data as OpsConfig | undefined} />
     </div>
   );
