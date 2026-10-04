@@ -26,7 +26,13 @@ from arc.experiments.config import ExperimentsConfig
 from arc.experiments.evaluate import ExperimentReport, build_report, evaluate, latest_report
 from arc.experiments.models import ExperimentStatus
 from arc.experiments.store import ExperimentStore
-from arc.slack.experiments import experiment_line, experiment_stop_card, stop_title
+from arc.slack.blocks import esc
+from arc.slack.experiments import (
+    experiment_line,
+    experiment_stop_card,
+    stop_title,
+    verdict_sentence,
+)
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.tower.api import create_app
@@ -372,12 +378,12 @@ def test_stop_card_layout_matches_owner_spec(conn: sqlite3.Connection) -> None:
     reason = next(
         blk for blk in b if blk.get("text", {}).get("text", "").startswith("*Verdict reason*")
     )
-    bullets = reason["text"]["text"].split("\n")[1:]
-    assert len(bullets) == 2
-    assert (
-        bullets[0].startswith("• Primary: Paired Daily P&amp;L CI [") and "&gt; 0" in bullets[0]
-    )  # mrkdwn-escaped
-    assert bullets[1].startswith("• Secondary: Sortino Ratio CI [") and "non-inferior" in bullets[1]
+    body = reason["text"]["text"].split("\n", 1)[1]
+    assert "\n" not in body and "•" not in body  # one sentence, no bullets
+    assert body == esc(verdict_sentence(rep))
+    assert body.startswith("P&amp;L ∆ CI [") and "is above 0 and Sortino ∆ CI [" in body
+    assert body.endswith("clears the −0.50 margin after 25 sessions.")
+    assert "Paired Daily" not in body and "Primary" not in body and "Secondary" not in body
     assert b[-1]["type"] == "context" and f"report `{rep.report_hash()[:12]}`" in whole
     assert "```" not in whole  # no code blocks on persona cards
 
@@ -390,7 +396,8 @@ def test_stop_card_for_invalid_aa(conn: sqlite3.Connection) -> None:
     card = experiment_stop_card(rep)
     assert card.blocks[0]["text"]["text"].startswith("[X-1] A/A Day 10 • Invalid • P&L ∆ ")
     whole = _texts(card.blocks)
-    assert "Margin n/a (A/A)" in whole and "A/A: no margin" in whole
+    assert "Margin n/a (A/A)" in whole
+    assert verdict_sentence(rep).startswith("A/A arms differ: P&L ∆ CI [")
 
 
 # ---------------------------------------------------------------------------

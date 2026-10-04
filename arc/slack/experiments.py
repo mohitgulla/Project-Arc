@@ -12,7 +12,7 @@ Two shapes, both built from the stored E10.3
   (``[XP-2] Day 25 • Win • P&L ∆ … • Sortino ∆ …``), then a fact grid with the
   two metrics in the same shape (∆, p, CI, control / treatment actuals, margin),
   the per-arm blocks, sessions and calibration, and the verdict reason as one
-  bullet per metric. Owner layout, 2026-10-03.
+  plain sentence. Owner layout, 2026-10-03.
 
 Every number is rendered by :mod:`arc.experiments.view`, the same helpers the
 tower API uses, so Slack and the tower show the same values. Pure: no DB, no
@@ -29,7 +29,7 @@ from arc.slack import blocks as B
 if TYPE_CHECKING:
     from arc.experiments.evaluate import ArmSummary, ExperimentReport
 
-__all__ = ["experiment_line", "experiment_stop_card", "stop_title", "verdict_bullets"]
+__all__ = ["experiment_line", "experiment_stop_card", "stop_title", "verdict_sentence"]
 
 _VERDICT_LABEL = {
     "win": "Win",
@@ -126,38 +126,33 @@ def _arm(a: ArmSummary, t0_equity: float) -> str:
     )
 
 
-def verdict_bullets(r: ExperimentReport) -> list[str]:
-    """One bullet per metric.
+def verdict_sentence(r: ExperimentReport) -> str:
+    """One plain sentence on why the experiment stopped (owner: concise, no metric names).
 
-    ``Primary: Paired Daily P&L CI …`` and ``Secondary: Sortino Ratio CI …``.
+    ``P&L ∆ CI [+0.26, +0.42] is above 0 and Sortino ∆ CI [+56.18, +371.20] clears
+    the −0.50 margin after 25 sessions.``
     """
     p, s = r.primary, r.secondary
-    if p.ci is None:
-        prim = f"Primary: Paired Daily P&L CI n/a after {r.sessions} sessions"
+    pnl = f"P&L ∆ CI {view.ci_text(r)}" if p.ci else "P&L ∆ CI n/a"
+    if s.diff_ci is not None:
+        lo, hi = view.ratio(s.diff_ci.lo, sign=True), view.ratio(s.diff_ci.hi, sign=True)
+        srt = f"Sortino ∆ CI [{lo}, {hi}]"
     else:
-        where = "> 0" if p.ci.lo > 0 else "< 0" if p.ci.hi < 0 else "includes 0"
-        prim = (
-            f"Primary: Paired Daily P&L CI {view.ci_text(r)} {where} "
-            f"(mSPRT p {view.p_text(p.p_value)}) "
-            f"after {r.sessions}/{r.min_sessions}–{r.max_sessions} sessions"
+        srt = "Sortino ∆ CI n/a"
+    n = f"after {r.sessions} sessions"
+    margin = None if s.margin is None else view.ratio(-s.margin, sign=True)
+    if r.verdict == "win":
+        return f"{pnl} is above 0 and {srt} clears the {margin} margin {n}."
+    if r.verdict == "invalid":
+        return f"A/A arms differ: {pnl} excludes 0 {n}, so the harness needs checking."
+    if r.kind.value == "aa":
+        return f"A/A complete: {pnl} includes 0 {n}, as expected."
+    if p.ci is not None and p.ci.lo > 0 and margin is not None:
+        return (
+            f"{pnl} is above 0 but {srt} did not clear the {margin} margin by session {r.sessions}."
         )
-    ci = s.diff_ci
-    if ci is None:
-        sec = "Secondary: Sortino Ratio CI n/a (fewer than 2 sessions)"
-    else:
-        rng = f"[{view.ratio(ci.lo, sign=True)}, {view.ratio(ci.hi, sign=True)}]"
-        if s.margin is None:
-            sec = f"Secondary: Sortino Ratio CI {rng} (A/A: no margin, reported only)"
-        else:
-            m = view.ratio(-s.margin, sign=True)
-            sec = (
-                f"Secondary: Sortino Ratio CI {rng} lower bound above {m} margin: non-inferior"
-                if s.non_inferior
-                else f"Secondary: Sortino Ratio CI {rng} lower bound not above {m} margin: "
-                "non-inferiority not shown"
-            )
-        sec += f" (bootstrap p {view.p_text(s.p_value)})"
-    return [prim, sec]
+    where = "is below 0" if p.ci is not None and p.ci.hi < 0 else "still includes 0"
+    return f"{pnl} {where} {n}, the maximum."
 
 
 def experiment_stop_card(report: ExperimentReport) -> B.CardView:
@@ -200,9 +195,12 @@ def experiment_stop_card(report: ExperimentReport) -> B.CardView:
         ),
         *B.facts(pairs),
     ]
-    reason = B.bullets("Verdict reason", verdict_bullets(r))
-    if reason:
-        out.append(reason)
+    out.append(
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*Verdict reason*\n{B.esc(verdict_sentence(r))}"},
+        }
+    )
     out.append(
         B.footer(
             experiment=r.experiment_id,
