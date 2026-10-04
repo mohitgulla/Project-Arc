@@ -29,15 +29,19 @@ export function Tile({ ticker, name, values, change, metric = "pnl", to }: TileD
     </div>
   );
   return to ? (
-    <Link to={to} className="shrink-0">
+    <Link to={to} className="shrink-0 snap-start">
       {body}
     </Link>
   ) : (
-    body
+    <div className="shrink-0 snap-start">{body}</div>
   );
 }
 
-/** Horizontal scroll container for Tiles. */
+/** Horizontal scroll container for Tiles; snaps tile by tile on touch (E8.8b). */
 export function TileRow({ children }: { children: ReactNode }) {
-  return <div className="arc-scroll-x -mx-1 flex gap-3 px-1 pb-1">{children}</div>;
+  return (
+    <div className="arc-scroll-x -mx-1 flex snap-x snap-mandatory scroll-px-1 gap-3 px-1 pb-1" data-scroll-x data-testid="tile-row">
+      {children}
+    </div>
+  );
 }
