@@ -1,11 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { PHONE_75, PHONE_75_TAG } from "./mobile";
+
 // E8.7e cutover smoke: `arc tower serve` (no flag, uvicorn) serves all five pages of the
 // v2 tower at the phone and desktop viewports in both themes, against the fixture DB
 // with its Ops rows (e2e/serve.mjs --ops). Screenshots: e2e/screenshots/cutover-*.png.
 const OPS_URL = process.env.ARC_E2E_OPS_URL ?? `http://127.0.0.1:${process.env.ARC_E2E_OPS_PORT ?? "4184"}`;
 const VIEWPORTS = [
   { name: "mobile", width: 390, height: 844 },
+  PHONE_75, // E8.8a: the owner's iPhone at 75 % zoom (520x1125); phone-75 project only
   { name: "desktop", width: 1440, height: 900 },
 ] as const;
 const THEMES = ["dark", "light"] as const;
@@ -27,7 +30,7 @@ async function open(page: Page, path: string, theme: (typeof THEMES)[number]) {
 
 for (const vp of VIEWPORTS) {
   for (const theme of THEMES) {
-    test.describe(`cutover ${vp.name} ${vp.width}x${vp.height} ${theme}`, () => {
+    test.describe(`cutover ${vp.name} ${vp.width}x${vp.height} ${theme}`, { tag: vp.name === PHONE_75.name ? PHONE_75_TAG : [] }, () => {
       test.use({ viewport: { width: vp.width, height: vp.height } });
 
       for (const pg of PAGES) {

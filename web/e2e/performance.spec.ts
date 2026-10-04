@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { PHONE_75, PHONE_75_TAG } from "./mobile";
+
 const HISTORY_URL =
   process.env.ARC_E2E_HISTORY_URL ?? `http://127.0.0.1:${process.env.ARC_E2E_HISTORY_PORT ?? "4183"}`;
 
@@ -8,19 +10,20 @@ const HISTORY_URL =
 // TOWER_DESIGN §6 viewports x both themes, plus the controls and the empty state.
 const VIEWPORTS = [
   { name: "mobile", width: 390, height: 844 },
+  PHONE_75, // E8.8a: the owner's iPhone at 75 % zoom (520x1125); phone-75 project only
   { name: "tablet", width: 768, height: 1024 },
   { name: "desktop", width: 1440, height: 900 },
 ] as const;
 const THEMES = ["dark", "light"] as const;
 const CARDS = [
   "Net P&L",
-  "Equity curve",
+  "Equity Curve",
   "Costs",
-  "Win / loss",
-  "Modelled vs realised",
+  "Win / Loss",
+  "Modelled vs Realised",
   "Breakdowns",
-  "Persona calibration",
-  "Gate & funnel",
+  "Persona Calibration",
+  "Gate & Funnel",
 ];
 
 test.use({ baseURL: HISTORY_URL });
@@ -34,7 +37,7 @@ async function open(page: Page, path: string, theme: (typeof THEMES)[number] = "
 
 for (const vp of VIEWPORTS) {
   for (const theme of THEMES) {
-    test.describe(`performance ${vp.name} ${vp.width}x${vp.height} ${theme}`, () => {
+    test.describe(`performance ${vp.name} ${vp.width}x${vp.height} ${theme}`, { tag: vp.name === PHONE_75.name ? PHONE_75_TAG : [] }, () => {
       test.use({ viewport: { width: vp.width, height: vp.height } });
 
       test("renders every card for 90 days vs the previous period", async ({ page }) => {

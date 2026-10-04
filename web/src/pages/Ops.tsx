@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { AsOfBadge, useNow } from "../components/AsOfBadge";
+import { useNow } from "../components/AsOfBadge";
 import { Card } from "../components/Card";
 import { ChangePill } from "../components/ChangePill";
 import { DataTable } from "../components/DataTable";
@@ -135,10 +135,7 @@ function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d:
   const nowPct = s ? timelinePct(s.as_of, s.start, s.end) : 0;
   const showNow = s ? s.as_of >= s.start && s.as_of <= s.end : false;
   return (
-    <Card
-      title="Session timeline"
-      asOf={s ? <AsOfBadge at={s.as_of} label="as of" /> : undefined}
-    >
+    <Card title="Session Timeline" freshness={{ at: s?.as_of, label: "loaded" }}>
       <div className="mb-3 flex flex-wrap items-center gap-2" data-testid="day-control">
         {DAY_PRESETS.map((p) => (
           <button
@@ -279,7 +276,7 @@ const ALERT_COLS: ColumnDef<AlertRow, unknown>[] = [
 
 function AlertsSection({ a }: { a?: Alerts }) {
   return (
-    <Section title={<span>Alerts {a && a.open > 0 && <Pill tone="neg">{a.open} open</Pill>}</span>}>
+    <Section storageKey="alerts" title={<span>Alerts {a && a.open > 0 && <Pill tone="neg">{a.open} open</Pill>}</span>}>
       {!a ? (
         <Loading what="alerts" />
       ) : a.alerts.length === 0 ? (
@@ -343,7 +340,7 @@ const HALT_COLS: ColumnDef<HaltRow, unknown>[] = [
 function HaltsSection({ h }: { h?: Halts }) {
   const navigate = useNavigate();
   return (
-    <Section title={<span>Halts {h && h.active > 0 && <Pill tone="neg">{h.active} active</Pill>}</span>}>
+    <Section storageKey="halts" title={<span>Halts {h && h.active > 0 && <Pill tone="neg">{h.active} active</Pill>}</span>}>
       {!h ? (
         <Loading what="halts" />
       ) : h.halts.length === 0 ? (
@@ -518,7 +515,7 @@ function RunsSection() {
 function BudgetCard({ b }: { b: Budget }) {
   const marks = budgetMarks(b);
   return (
-    <Card title="Order budget" asOf={<span>local count; the tower never calls the broker · tier {b.tier}</span>}>
+    <Card title="Order Budget" subtitle={<>local count; the tower never calls the broker · tier {b.tier}</>}>
       <div data-testid="order-budget">
         <div className="relative">
           <ProgressRow
@@ -564,8 +561,8 @@ function BudgetCard({ b }: { b: Budget }) {
 function ContextCard({ c, now }: { c?: ContextStore; now: number }) {
   return (
     <Card
-      title="Context store"
-      asOf={c ? <span>{c.total_active} active · {c.expired_24h} expired in 24 h</span> : undefined}
+      title="Context Store"
+      subtitle={c ? <>{c.total_active} active · {c.expired_24h} expired in 24 h</> : undefined}
     >
       {!c ? (
         <Loading what="context" />
@@ -643,7 +640,7 @@ function LlmCard({ l }: { l?: Llm }) {
   const bars = useMemo(() => (l ? llmBars(l) : null), [l]);
   const delta = l && l.yesterday_cost > 0 ? (l.today_cost - l.yesterday_cost) / l.yesterday_cost : null;
   return (
-    <Card title="LLM usage" asOf={l ? <span>{l.days} days · {llmCost(l.total_cost)} total</span> : undefined}>
+    <Card title="LLM Usage" subtitle={l ? <>{l.days} days · {llmCost(l.total_cost)} total</> : undefined}>
       {!l || !bars ? (
         <Loading what="LLM usage" />
       ) : (
@@ -703,7 +700,8 @@ function ConfigSection({ c }: { c?: OpsConfig }) {
   const groups = c ? configGroups(c.keys.filter((k) => !filter || k.key.includes(filter))) : [];
   return (
     <Section
-      title={<span>Effective config {c && <span className="text-caption text-muted">v{c.config_version}</span>}</span>}
+      storageKey="effective-config"
+      title={<span>Effective Config {c && <span className="text-caption text-muted">v{c.config_version}</span>}</span>}
       defaultOpen={false}
     >
       {!c ? (
@@ -732,7 +730,7 @@ function ConfigSection({ c }: { c?: OpsConfig }) {
               ))}
             </div>
           </Card>
-          <Card title="Change log">
+          <Card title="Change Log">
             {c.changes.length === 0 ? (
               <EmptyState caption="No overrides: every key is at its yaml value." />
             ) : (
@@ -790,7 +788,7 @@ export function OpsPage() {
       <SessionCard s={session.data as Session | undefined} day={day} setDay={setDay} />
       <HealthStripCard h={health.data as HealthStrip | undefined} />
       {gateLine && (
-        <Card title="Auto-approve">
+        <Card title="Auto-Approve">
           <p data-testid="scorecard-gate" className={`text-caption ${gateLine.includes("OFF") ? "text-warn" : "text-secondary"}`}>
             {gateLine}
           </p>
@@ -885,17 +883,17 @@ function StepBody({ step }: { step: StepView }) {
           <p className="text-caption text-muted">No run manifest was recorded for this run.</p>
         </Card>
       )}
-      <Card title="Declared vs actual">
+      <Card title="Declared vs Actual">
         <ContractTable step={step} />
       </Card>
-      <Card title="Context read / written">
+      <Card title="Context Read / Written">
         <div className="text-micro uppercase text-muted">Read</div>
         <EntryLinks items={step.read} />
         <div className="mt-3 text-micro uppercase text-muted">Wrote</div>
         <EntryLinks items={step.wrote} />
       </Card>
       {ext.length > 0 && (
-        <Card title="External inputs">
+        <Card title="External Inputs">
           <KeyValueList items={ext.map((e) => ({ label: `${e.name} (${e.source})`, value: e.digest, hint: `as of ${e.asOf} · ${e.count}` }))} />
         </Card>
       )}
@@ -914,7 +912,7 @@ function StepBody({ step }: { step: StepView }) {
         </Card>
       )}
       {step.persona_calls.length > 0 && (
-        <Card title="LLM calls">
+        <Card title="LLM Calls">
           <ul className="divide-y divide-line text-caption tabular-nums" data-testid="persona-calls">
             {step.persona_calls.map((c) => (
               <li key={c.id} className="flex flex-wrap gap-x-3 py-1.5">
@@ -1045,7 +1043,7 @@ export function ContextEntryPage() {
   const { data, error } = useContextEntry(entryId);
   if (!data) {
     return (
-      <Card title="Context entry">
+      <Card title="Context Entry">
         <Loading error={error} what={`entry ${entryId}`} />
       </Card>
     );

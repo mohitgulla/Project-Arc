@@ -73,9 +73,10 @@ semibold top-left; action link top-right 12 px uppercase, 0.06 em tracking, `tex
   - Neutral quantities (contracts, count, delta exposure): no colour, `text-secondary`.
 - Total return on a detail panel: explicit sign and parenthesised percent, neutral colour
   (`-$25,599.00 (-59.79%)`).
-- Times: ET, `Mon 09-28 15:35`; ages `4m ago`, `2h ago`, `3d ago`. Every data card shows
-  `as of <time> · <age>`; when age > 3× the producing job's cadence the badge turns `--warn`
-  and reads `stale`.
+- Times: ET, `Mon 09-28 15:35`; ages `4m ago`, `2h ago`, `3d ago`. Every data card carries
+  one freshness badge on its header line (§10): compact `● 3m ago`, with
+  `as of <time> ET · <source> · stale after <3× cadence>` as its tooltip; when age > 3× the
+  producing job's cadence the badge turns `--warn` and reads `stale · <age>`.
 - Options: legs as `AMD 10/02 620C` (root, M/DD, strike, C/P); OCC symbol in `text-muted`
   10 px bold beneath or on hover.
 
@@ -85,9 +86,13 @@ semibold top-left; action link top-right 12 px uppercase, 0.06 em tracking, `tex
 | Component | Notes |
 |---|---|
 | `Shell` | sidebar (desktop) / bottom tab bar (mobile), header with page title, theme toggle, `AsOfBadge`, global search (ticker / hash / run id → jumps to detail) |
-| `StatCard` | hero number, optional `ChangePill`, comparison line, optional child chart |
+| `StatCard` | hero number, optional `ChangePill`, comparison line, optional child chart; `freshness` / `subtitle` / `headerExtra` as `Card` (§10) |
 | `ChangePill` | see §3 |
-| `RangeControl` | segmented `1D 1W 1M 3M YTD 1Y ALL`; active = `range-active` pill, white bold text; URL-synced (`?range=`) |
+| `RangeControl` | segmented `1D 1W 1M 3M YTD 1Y ALL`; a `SegmentedControl` preset; URL-synced (`?range=`) |
+| `SegmentedControl` | one active `range-active` pill (white bold text); `sm` fits a card header; horizontal scroll on overflow (`data-scroll-x`); URL-synced key configurable (`param`) or controlled; 0.96 press scale; 44 px tall on touch (§10) |
+| `Freshness` | the header freshness badge (§10): `● 3m ago` / `● stale · 1d ago` (`--warn`) / `● no data`; full line in a tap-to-reveal tooltip |
+| `InfoTip` | ⓘ (1.5 px stroke, `currentColor`); popover on hover, focus and tap; Esc / outside tap closes; ≤ 2 short sentences + optional mono formula line; 44 px hit area on touch, 40 px desktop (§10) |
+| `CappedList` | renders the first `limit` (default 8) items and `Show n more` / `Show less` (§10) |
 | `TrendChart` | axis-less line, `line-w`, series colour by sign of the change, gradient fill to transparent (~30 % → 0), hollow-ring endpoint, hover tooltip (time + value), optional dotted reference line (prev close / start of range) |
 | `DivergingBars` | monthly/daily bars, green above 0 red below, dotted gridlines, 2 Y ticks, "Now" marker (white 4 px-radius label + thin vertical line), future slots rendered empty so the axis is always full; optional dashed overlay lines (cumulative series) on their own hidden axis |
 | `StackedBars` | category-stacked, 1 px gaps, negative segments allowed, no legend (tooltip) |
@@ -100,7 +105,7 @@ semibold top-left; action link top-right 12 px uppercase, 0.06 em tracking, `tex
 | `KeyValueList` | 34 px rows, label `text-secondary` left, bold value right |
 | `Timeline` | vertical stepper for the decision trail: persona label pill, stage, reason code, time, expandable body |
 | `StatusStepper` | horizontal: proposed → gate → approval → execution → filled → open → exit → closed; done = accent, failed = neg, pending = track |
-| `Section` | collapsible header `▶/▼ Title`, right-side sort/filter control |
+| `Section` | collapsible header `▶/▼ Title`, right-side sort/filter control; remembers open/closed per page + section in `localStorage` (`arc.section:<page>:<section>`), `defaultOpen` applies on first visit only (§10) |
 | `FilterBar` | chips + dropdowns + date-range preset, URL-synced, "Clear" link, collapses into a "Filters (n)" sheet on mobile |
 | `EmptyState` | glowing accent circle + caption |
 | `Tile` | ~100×138 mover tile: ticker, name ellipsised, `Sparkline`, `ChangePill`; horizontal scroll container |
@@ -168,3 +173,40 @@ Charts: Recharts, wrapped so no page imports Recharts directly. Tooltips share o
   `history`, `version`); a store without the D26 tables shows yaml values with a note.
 - Health thresholds: tick stale after `monitoring.tick_stale_after`; the health check
   (LaunchAgent every 30 min) stale after 3×; the log judged against `monitoring.log.max_bytes`.
+
+## 10. E8.8 visual pass (D48)
+
+Mobile first: the owner reads the tower on an iPhone in Safari at 75 % page zoom, about
+**520 CSS px** wide. Design at 520, then check 390 and 1440; if the two would need different
+layouts, mobile wins. Same level of detail everywhere: numbers move (tooltip, tab, disclosure),
+they are never dropped.
+
+- **Title Case widget titles** (`P&L Today`, `Greeks vs Caps`, `Win / Loss`, `Today's
+  Proposals`). Small words stay lower case inside a title (a, an, and, as, at, by, for, from,
+  in, of, on, or, per, the, to, vs, via); acronyms and mixed-case tokens stay as written (P&L,
+  LLM, EV, PoP, t0). `titleCase()` / `isTitleCase()` in `lib/format.ts`;
+  `lib/sources.e88.test.ts` scans every `Card` / `StatCard` / `Section` / `SectionBlock` title
+  literal and fails on sentence case. Slack cards stay sentence case (D22).
+- **One freshness slot per widget**, on the header line right after the title (before the
+  action link): `Card` / `StatCard` `freshness={{ at, cadenceS, label }}`. Compact text is
+  `● 3m ago`, `● stale · 1d ago` (`--warn`, past 3× the cadence) or `● no data`; the full line
+  `as of Fri 10-02 15:59 ET · monitor mark · stale after 15m` is the tooltip (tap-to-reveal on
+  touch). A widget mixing two sources badges the **older** (`olderSource()`); per-value dots
+  stay inline. The footer `asOf` slot is gone (a test greps `web/src` for `asOf=`);
+  non-time footnotes (`last 24 h`, `local count`) go in the one-line `subtitle` under the title.
+- **InfoTip rule:** on-card sub-text is at most one line (~60 chars at 520 px). Anything
+  longer goes in an `InfoTip`: ≤ 2 short sentences plus an optional mono formula line.
+- **Long lists are capped**: `CappedList` renders 8 rows and `Show n more`; never an
+  unbounded wall on a phone.
+- **Section persistence:** open/closed is remembered per page + section; `defaultOpen`
+  applies only on the first visit.
+- **Polish** (`make-interfaces-feel-better`): `tabular-nums` on every number (body and form
+  controls), `text-wrap: balance` on headings / `pretty` on paragraphs, antialiased root,
+  never `transition: all`, 0.96 press scale (`.arc-press`), hit areas ≥ 44 px on touch / 40 px
+  desktop (`.arc-hit` pseudo-element), concentric radii (a tile inside a card uses
+  `--r-control`).
+- **phone-75 target:** the Playwright project `phone-75` (520×1125, `isMobile`, `hasTouch`,
+  iPhone Safari UA, Chromium) runs every spec's `@phone-75`-tagged viewport block in both
+  themes. `web/e2e/mobile.ts` holds the shared asserts later cards call per page:
+  `expectNoOverflow` (page and every `.arc-card`, except `data-scroll-x` containers),
+  `expectTouchTargets` (≥ 44 px) and `expectMinFontSize` (≥ `--fs-micro`, 11 px).

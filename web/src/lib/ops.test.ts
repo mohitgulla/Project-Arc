@@ -158,7 +158,7 @@ describe("run detail", () => {
       config_hashes: { "routines.yaml": "a1b2" },
       snapshot_ids: [],
     });
-    expect(g.map((x) => x.title)).toEqual(["Identity & trigger", "Timing & session", "Outcome", "Code & config", "Inputs", "LLM"]);
+    expect(g.map((x) => x.title)).toEqual(["Identity & Trigger", "Timing & Session", "Outcome", "Code & Config", "Inputs", "LLM"]);
     const flat = Object.fromEntries(g.flatMap((x) => x.rows.map((r) => [r.label, r.value])));
     expect(flat).toMatchObject({
       Duration: "1 min 35 s",

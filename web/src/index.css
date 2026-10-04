@@ -17,7 +17,24 @@
     font-family: var(--font);
     font-size: var(--fs-body);
     font-feature-settings: "tnum" 1, "cv11" 1; /* tabular numerals everywhere */
+    font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Form controls do not inherit the body's numerals; keep digits fixed-width there too. */
+  button,
+  input,
+  select,
+  textarea {
+    font-variant-numeric: tabular-nums;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
   }
   [data-theme] {
     color: var(--text-primary);
@@ -70,5 +87,68 @@
   .arc-touch {
     min-height: 44px;
     min-width: 44px;
+  }
+  /*
+   * §10 hit area for small controls (InfoTip, freshness badge, card action link): the visible
+   * element keeps its size; a centred pseudo-element extends the target to 40 px on hover
+   * devices and 44 px on touch.
+   */
+  .arc-hit {
+    position: relative;
+  }
+  .arc-hit::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 40px);
+    height: max(100%, 40px);
+    transform: translate(-50%, -50%);
+  }
+  @media (hover: none), (max-width: 768px) {
+    .arc-hit::after {
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+    }
+  }
+  /* §10 press feedback: 0.96, transform + colour only (never `transition: all`). */
+  .arc-press {
+    transition-property: transform, background-color, color;
+    transition-duration: 120ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  .arc-press:active {
+    transform: scale(0.96);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .arc-press {
+      transition-property: background-color, color;
+    }
+    .arc-press:active {
+      transform: none;
+    }
+  }
+  /* §10 popover (InfoTip, freshness tooltip): fixed, clamped to the viewport by Popover. */
+  .arc-popover {
+    position: fixed;
+    z-index: 60;
+    max-width: min(300px, calc(100vw - 16px));
+    padding: 8px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-control);
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.12),
+      0 4px 12px rgb(0 0 0 / 0.16);
+    text-align: left;
+    text-wrap: pretty;
+    white-space: normal;
+  }
+  /* §10 titles balance; narrative text wraps pretty. */
+  .arc-title {
+    text-wrap: balance;
+  }
+  .arc-prose {
+    text-wrap: pretty;
   }
 }

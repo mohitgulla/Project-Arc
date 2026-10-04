@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { PHONE_75, PHONE_75_TAG } from "./mobile";
+
 const OPS_URL = process.env.ARC_E2E_OPS_URL ?? `http://127.0.0.1:${process.env.ARC_E2E_OPS_PORT ?? "4184"}`;
 
 // E8.7d Ops & pipeline on the fixture DB with its ops rows (scripts/tower_fixture_ops.py:
@@ -8,11 +10,12 @@ const OPS_URL = process.env.ARC_E2E_OPS_URL ?? `http://127.0.0.1:${process.env.A
 // plus one run detail with the undeclared-write contract mismatch.
 const VIEWPORTS = [
   { name: "mobile", width: 390, height: 844 },
+  PHONE_75, // E8.8a: the owner's iPhone at 75 % zoom (520x1125); phone-75 project only
   { name: "tablet", width: 768, height: 1024 },
   { name: "desktop", width: 1440, height: 900 },
 ] as const;
 const THEMES = ["dark", "light"] as const;
-const CARDS = ["Session timeline", "Health", "LLM usage", "Context store", "Sources", "Order budget"];
+const CARDS = ["Session Timeline", "Health", "LLM Usage", "Context Store", "Sources", "Order Budget"];
 
 test.use({ baseURL: OPS_URL });
 
@@ -36,7 +39,7 @@ async function undeclaredRun(page: Page): Promise<string> {
 
 for (const vp of VIEWPORTS) {
   for (const theme of THEMES) {
-    test.describe(`ops ${vp.name} ${vp.width}x${vp.height} ${theme}`, () => {
+    test.describe(`ops ${vp.name} ${vp.width}x${vp.height} ${theme}`, { tag: vp.name === PHONE_75.name ? PHONE_75_TAG : [] }, () => {
       test.use({ viewport: { width: vp.width, height: vp.height } });
 
       test("renders every section of the Ops page", async ({ page }) => {
@@ -103,7 +106,7 @@ test.describe("ops behaviour", () => {
 
   test("the effective config section lists keys and the change log", async ({ page }) => {
     await open(page, "/ops");
-    await page.getByRole("button", { name: /Effective config/ }).click();
+    await page.getByRole("button", { name: /Effective Config/ }).click();
     await expect(page.getByTestId("config")).toContainText("account_profile");
     await expect(page.getByTestId("config-changes")).toContainText("revert");
   });

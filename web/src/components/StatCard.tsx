@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { Card } from "./Card";
+import type { FreshnessProp } from "./Freshness";
 
 /** Hero number, optional ChangePill, comparison line, optional child chart (§4). */
 export function StatCard({
@@ -9,7 +10,9 @@ export function StatCard({
   change,
   comparison,
   action,
-  asOf,
+  freshness,
+  subtitle,
+  headerExtra,
   children,
 }: {
   title: ReactNode;
@@ -17,11 +20,13 @@ export function StatCard({
   change?: ReactNode;
   comparison?: ReactNode;
   action?: { label: string; to: string };
-  asOf?: ReactNode;
+  freshness?: FreshnessProp;
+  subtitle?: ReactNode;
+  headerExtra?: ReactNode;
   children?: ReactNode;
 }) {
   return (
-    <Card title={title} action={action} asOf={asOf}>
+    <Card title={title} action={action} freshness={freshness} subtitle={subtitle} headerExtra={headerExtra}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="text-hero font-semibold text-title tabular-nums">{value}</span>
         {change}

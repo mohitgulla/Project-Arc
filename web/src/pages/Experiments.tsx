@@ -144,7 +144,7 @@ export function ExperimentBody({ d }: { d: ExperimentDetail }) {
           <Section title="Equity from t0">
             <ArmEquityChart data={curveView(d)} />
           </Section>
-          <Section title="Cumulative difference">
+          <Section title="Cumulative Difference">
             <CumulativeDiffChart data={cumulativeView(d)} />
           </Section>
           <Section title="Arms">
@@ -203,7 +203,7 @@ export function ExperimentBody({ d }: { d: ExperimentDetail }) {
       ) : (
         <p className="text-caption text-muted">No evaluation yet: the spec and status are shown until the first EOD run.</p>
       )}
-      <Section title="Spec and hashes" defaultOpen={false}>
+      <Section title="Spec and Hashes" defaultOpen={false}>
         <KeyValueList
           items={[
             { label: "Spec hash", value: <code className="text-micro">{d.spec_hash.slice(0, 16)}</code> },

@@ -214,7 +214,7 @@ function EquityCard({ p }: { p: Performance }) {
   const e = p.equity;
   if (e.empty) {
     return (
-      <Card title="Equity curve">
+      <Card title="Equity Curve">
         <EmptyState caption="No reconciled daily closes in this period." />
       </Card>
     );
@@ -227,7 +227,7 @@ function EquityCard({ p }: { p: Performance }) {
         }`
       : "No drawdown";
   return (
-    <Card title="Equity curve">
+    <Card title="Equity Curve">
       <Hero value={<Money value={e.end_equity ?? 0} kind="equity" />}>
         {e.return_pct !== null &&
           e.return_pct !== undefined &&
@@ -315,7 +315,7 @@ function WinLossCard({ p }: { p: Performance }) {
   const s = w.stats;
   if (w.empty) {
     return (
-      <Card title="Win / loss">
+      <Card title="Win / Loss">
         <EmptyState caption="No trades closed in this period." />
       </Card>
     );
@@ -329,7 +329,7 @@ function WinLossCard({ p }: { p: Performance }) {
       "—"
     );
   return (
-    <Card title="Win / loss">
+    <Card title="Win / Loss">
       <Hero
         value={
           <>
@@ -391,7 +391,7 @@ function ModelCard({ p }: { p: Performance }) {
   const navigate = useNavigate();
   if (m.empty) {
     return (
-      <Card title="Modelled vs realised">
+      <Card title="Modelled vs Realised">
         <EmptyState caption="No closed trade in this period has a stored exit model." />
       </Card>
     );
@@ -403,7 +403,7 @@ function ModelCard({ p }: { p: Performance }) {
     y: pt.realised,
   }));
   return (
-    <Card title="Modelled vs realised">
+    <Card title="Modelled vs Realised">
       <ModelScatter data={points} xLabel="Net EV" yLabel="Realised" onSelect={(id) => navigate(`/trades/${id}`)} />
       <KeyValueList
         items={[
@@ -503,13 +503,13 @@ function CalibrationCard({ p }: { p: Performance }) {
   const c = p.calibration;
   if (c.empty) {
     return (
-      <Card title="Persona calibration">
+      <Card title="Persona Calibration">
         <EmptyState caption="No closed trade has a stated persona confidence yet." />
       </Card>
     );
   }
   return (
-    <Card title="Persona calibration">
+    <Card title="Persona Calibration">
       <ul className="grid gap-1">
         {(c.rows ?? []).map((r) => (
           <li key={`${r.persona}-${r.lo}`}>
@@ -534,7 +534,7 @@ function FunnelCard({ p }: { p: Performance }) {
   const f = p.funnel;
   if (f.empty) {
     return (
-      <Card title="Gate & funnel">
+      <Card title="Gate & Funnel">
         <EmptyState caption="No proposals in this period." />
       </Card>
     );
@@ -544,7 +544,7 @@ function FunnelCard({ p }: { p: Performance }) {
   const violations = Object.entries(f.violations ?? {}).sort((a, b) => b[1] - a[1]);
   const vmax = Math.max(1, ...violations.map(([, n]) => n));
   return (
-    <Card title="Gate & funnel">
+    <Card title="Gate & Funnel">
       <ul className="grid gap-1" data-testid="funnel">
         {steps.map((s) => (
           <li key={s.key}>

@@ -3,12 +3,14 @@ import type { ReactNode } from "react";
 
 import { AsOfBadge } from "../components/AsOfBadge";
 import { Card } from "../components/Card";
+import { CappedList } from "../components/CappedList";
 import { ChangePill } from "../components/ChangePill";
 import { DataTable } from "../components/DataTable";
 import { DetailPanel } from "../components/DetailPanel";
 import { DivergingBars, type BarPoint } from "../components/DivergingBars";
 import { EmptyState } from "../components/EmptyState";
 import { FilterBar, type FilterDef } from "../components/FilterBar";
+import { InfoTip } from "../components/InfoTip";
 import { KeyValueList } from "../components/KeyValueList";
 import { Money } from "../components/Money";
 import { ProgressRow } from "../components/ProgressRow";
@@ -16,6 +18,7 @@ import { ProportionBar } from "../components/ProportionBar";
 import { RangeControl } from "../components/RangeControl";
 import { Section } from "../components/Section";
 import { SearchInput, SettingsPanel, ThemeToggle } from "../components/Shell";
+import { SegmentedControl } from "../components/SegmentedControl";
 import { Sparkline } from "../components/Sparkline";
 import { StackedBars } from "../components/StackedBars";
 import { StatCard } from "../components/StatCard";
@@ -172,6 +175,15 @@ const FILTERS: FilterDef[] = [
   },
 ];
 
+const GROUP_BY = [
+  { value: "structure", label: "Structure" },
+  { value: "ticker", label: "Ticker" },
+  { value: "regime", label: "Regime at entry" },
+  { value: "persona", label: "Persona" },
+] as const;
+const WINDOWS = ["1D", "1W", "1M", "3M", "YTD", "ALL"].map((value) => ({ value }));
+const ACTIVITY = Array.from({ length: 12 }, (_, i) => `${String(15 - Math.floor(i / 2)).padStart(2, "0")}:${i % 2 ? "05" : "35"} · monitor tick ${12 - i}`);
+
 // ---------------------------------------------------------------------------
 // Stories: one per component in TOWER_DESIGN §4
 // ---------------------------------------------------------------------------
@@ -212,13 +224,65 @@ function Stories() {
           value={<Money value={EQUITY[EQUITY.length - 1]!.v} kind="equity" />}
           change={<ChangePill value={0.0151} metric="equity" />}
           comparison={<>vs <Money value={EQUITY[0]!.v} kind="equity" /> on {formatEt(EQUITY[0]!.t).slice(4, 9)}</>}
-          asOf={<AsOfBadge at="2026-09-28T19:36:00Z" cadenceS={300} now={NOW} />}
+          freshness={{ at: "2026-09-28T19:36:00Z", cadenceS: 300, label: "monitor mark", now: NOW }}
         >
           <RangeControl />
           <div className="mt-3">
             <TrendChart data={EQUITY} reference={EQUITY[0]!.v} />
           </div>
         </StatCard>
+      </Story>
+
+      <Story name="Freshness (fresh / stale / no data)">
+        <div className="grid gap-3" data-testid="freshness-stories">
+          <Card title="P&L Today" freshness={{ at: "2026-09-28T19:37:00Z", cadenceS: 300, label: "monitor mark", now: NOW }}>
+            <p className="text-caption text-secondary">Fresh: within 3× the monitor cadence.</p>
+          </Card>
+          <Card
+            title="Greeks vs Caps"
+            freshness={{ at: "2026-09-27T19:40:00Z", cadenceS: 300, label: "monitor mark", now: NOW }}
+            action={{ label: "VIEW ALL", to: "/positions" }}
+          >
+            <p className="text-caption text-secondary">Stale: older than 3× the cadence, in --warn.</p>
+          </Card>
+          <Card title="Movers" freshness={{ at: null, label: "monitor mark", now: NOW }} subtitle="last 24 h · subtitle line">
+            <p className="text-caption text-secondary">No data: nothing produced yet.</p>
+          </Card>
+        </div>
+      </Story>
+
+      <Story name="InfoTip">
+        <Card
+          title="Net EV"
+          headerExtra={
+            <InfoTip label="About net EV" formula="EV − spread − slippage − fees" testid="infotip-story">
+              Expected value under the managed exit policy, after all costs. Hold-to-expiry EV is on the trade.
+            </InfoTip>
+          }
+        >
+          <p className="text-caption text-secondary">
+            Net EV <span className="font-semibold text-primary">+$87.25</span>{" "}
+            <InfoTip label="About PoP">Probability the trade closes at a profit under the managed exits.</InfoTip>
+          </p>
+        </Card>
+      </Story>
+
+      <Story name="SegmentedControl">
+        <Card title="Breakdowns" headerExtra={<SegmentedControl size="sm" label="Group by" options={GROUP_BY} fallback="structure" />}>
+          <SegmentedControl label="Window" options={WINDOWS} fallback="3M" />
+        </Card>
+      </Story>
+
+      <Story name="CappedList">
+        <Card title="Recent Activity" subtitle="12 rows, capped at 8">
+          <CappedList className="grid" testid="capped-story" noun="items">
+            {ACTIVITY.map((a) => (
+              <li key={a} className="border-b border-line py-2 text-caption last:border-b-0">
+                {a}
+              </li>
+            ))}
+          </CappedList>
+        </Card>
       </Story>
 
       <Story name="TrendChart (down, dotted prev close)">
@@ -257,7 +321,7 @@ function Stories() {
       </Story>
 
       <Story name="StackedBars">
-        <Card title="P&L by structure">
+        <Card title="P&L by Structure">
           <StackedBars data={STACK} series={STACK_SERIES} height={170} />
         </Card>
       </Story>
@@ -274,7 +338,7 @@ function Stories() {
       </Story>
 
       <Story name="ProgressRow">
-        <Card title="Greeks vs caps">
+        <Card title="Greeks vs Caps">
           <ProgressRow label="Net Δ" value="25.0" right="cap 301.5" fraction={25 / 301.5} />
           <ProgressRow label="Net ν ($/vol pt)" value={<Money value={-3} kind="pnl" />} right="cap $503" fraction={3 / 502.5} />
           <ProgressRow label="Orders today" value="182" right="of 200" fraction={182 / 200} warnAt={0.875} />
@@ -299,7 +363,7 @@ function Stories() {
       </Story>
 
       <Story name="DataTable (CardRow on mobile)">
-        <Card title="Open positions" action={{ label: "Trades", to: "/trades" }}>
+        <Card title="Open Positions" action={{ label: "Trades", to: "/trades" }}>
           <DataTable
             data={ROWS}
             columns={COLUMNS}
@@ -341,7 +405,7 @@ function Stories() {
       </Story>
 
       <Story name="Timeline">
-        <Card title="Decision trail">
+        <Card title="Decision Trail">
           <Timeline
             items={[
               { id: "1", persona: "Scout", stage: "Candidate", reason: "news_catalyst", at: "Mon 09-28 09:12" },
@@ -367,7 +431,7 @@ function Stories() {
           <Section title="Proposals" control={<span className="arc-action">Sort: newest</span>}>
             <FilterBar defs={FILTERS} />
           </Section>
-          <Section title="Collapsed section" defaultOpen={false}>
+          <Section title="Collapsed Section" defaultOpen={false}>
             <p>Hidden content</p>
           </Section>
         </Card>

@@ -1,6 +1,5 @@
 import { useSearchParams } from "react-router-dom";
 
-import { AsOfBadge } from "../components/AsOfBadge";
 import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { useMeta, usePositions } from "../lib/useApi";
@@ -18,10 +17,7 @@ export function PositionsPage() {
   const monitorS = useMeta().data?.cadences.monitor?.every_s;
   const rows = q.data?.items ?? [];
   return (
-    <Card
-      title="Positions"
-      asOf={<AsOfBadge at={q.data?.marks_at} cadenceS={monitorS} label="monitor mark" />}
-    >
+    <Card title="Positions" freshness={{ at: q.data?.marks_at, cadenceS: monitorS, label: "monitor mark" }}>
       <div role="tablist" aria-label="Status" className="mb-3 inline-flex gap-1 rounded-control bg-control p-1">
         {STATUSES.map((s) => (
           <button
