@@ -198,7 +198,7 @@ function EquityCard({ o, range, cad, now }: { o: Overview; range: OverviewRange;
       }
       headerExtra={
         <InfoTip label="About the equity series" testid="equity-info">
-          {v.source === "intraday" ? "Today's 5-min monitor marks." : "Reconciled daily closes."}
+          {v.source === "intraday" ? "Today's 10-min monitor marks." : "Reconciled daily closes."}
         </InfoTip>
       }
       value={value === null ? "—" : <Money value={value} kind="equity" />}

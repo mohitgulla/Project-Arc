@@ -81,7 +81,7 @@ MS = MonitoringSettings(per_slot_min_interval=dt.timedelta(minutes=30))
 
 def test_shipped_config_has_monitoring_section() -> None:
     ms = load_routines().monitoring
-    assert ms.tick_stale_after == dt.timedelta(minutes=15)
+    assert ms.tick_stale_after == dt.timedelta(minutes=30)  # D52: 3 missed 10-min ticks
     assert ms.stuck_after > dt.timedelta(minutes=55)  # longer than the tick timeout
     assert ms.alert_channel is AlertChannel.PROJECT_ARC
     assert ms.gateway.enabled
@@ -219,11 +219,11 @@ def test_stuck_after_jobs_validation() -> None:
     assert ok.monitoring.stuck_after_for("quant") == dt.timedelta(minutes=10)
 
 
-def test_shipped_monitor_stuck_after_is_10m() -> None:
+def test_shipped_monitor_stuck_after_is_two_slots() -> None:
     ms = load_routines().monitoring
-    assert ms.stuck_after_for("monitor") == dt.timedelta(minutes=10)
-    # D31: the 5-min trading loop gets the same rule (loop.max_runtime is 4m)
-    assert ms.stuck_after_for("director") == dt.timedelta(minutes=10)
+    assert ms.stuck_after_for("monitor") == dt.timedelta(minutes=20)  # D52: 2 x 10-min slots
+    # D31: the trading loop gets the same rule (loop.max_runtime is 4m)
+    assert ms.stuck_after_for("director") == dt.timedelta(minutes=20)
     assert ms.stuck_after_for("scout") == dt.timedelta(minutes=70)
 
 
