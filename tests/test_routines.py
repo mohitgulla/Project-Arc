@@ -177,17 +177,17 @@ class TestConfig:
         c = load_routines(DEFAULT_ROUTINES_PATH)
         assert c.personas["scout"].after_sources
         assert c.personas["director"].chain == ["quant", "risk", "propose", "execute"]
-        # D31: the 5-min loop replaces the scout.completed -> director trigger.
+        # D31: the trading loop replaces the scout.completed -> director trigger.
         assert c.triggers_for("scout.completed") == []
         assert c.is_loop("director") and not c.is_loop("scout")
-        assert c.personas["director"].every == dt.timedelta(minutes=5)
+        assert c.personas["director"].every == dt.timedelta(minutes=10)  # D52
         assert str(c.personas["director"].window) == "09:40-15:50"
         assert c.personas["director"].ttl is not None
         assert c.personas["director"].ttl.duration == dt.timedelta(minutes=5)
         assert c.personas["scout"].every == dt.timedelta(minutes=30)
         assert c.personas["scout.overnight"].schedule == [dt.time(22, 0)]
         assert c.sources["youtube.briefs"].schedule == [dt.time(5, 0)]  # D45 / E4.6
-        assert c.monitoring.stuck_after_for("director") == dt.timedelta(minutes=10)
+        assert c.monitoring.stuck_after_for("director") == dt.timedelta(minutes=20)
         assert c.loop.max_idle == dt.timedelta(minutes=30)
         assert c.loop.max_runtime == dt.timedelta(minutes=4)
         assert {r.run for r in c.triggers_for("approval")} == {"investor"}

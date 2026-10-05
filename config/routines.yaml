@@ -1,6 +1,7 @@
 # Project Arc routines (D16; defaults tuned in E5.3). Validated by `arc routines validate`.
 #
-# One Hermes cron runs `arc routines tick` every 5 min (hermes/routines/); everything
+# One Hermes cron runs `arc routines tick` every 10 min on the clock (:00, :10, ...; D52,
+# hermes/routines/); everything
 # below is config. Changing a cadence, adding a source/persona, or re-ordering a
 # chain is an edit to this file, not a code or cron change. All times are ET.
 #
@@ -20,12 +21,12 @@
 #   05:30           D51 active universe resolve; Mon: symbol master refresh (E5.7)
 #   06:00           earnings calendar; rss (15m) / edgar (15m) polling until 20:00
 #   09:00-16:00     Scout every 30 min (15 in-session runs; after the fast sources)
-#   09:30-16:00     intraday monitor every 5 min (D35: positions, Greeks, marks + account
-#                   fields for the tower, expiries, halts; 79 slots, 16:00 inclusive)
-#   09:40-15:50     trading loop every 5 min (75 slots): director -> quant -> risk ->
+#   09:30-16:00     intraday monitor every 10 min (D35/D52: positions, Greeks, marks + account
+#                   fields for the tower, expiries, halts; 40 slots, 16:00 inclusive)
+#   09:40-15:50     trading loop every 10 min (38 slots, D52): director -> quant -> risk ->
 #                   propose -> execute. ttl 5m: a missed slot is skipped, never caught up.
 #                   One #arc-investor root line per slot, persona cards in its thread (D36).
-#   09:45-16:00     position manager every 30 min: positions.evaluate -> investor.exits
+#   09:50-15:50     position manager every 30 min (:20/:50, D52): positions.evaluate -> investor.exits
 #                   -> risk.reallocate (early exits + close-to-reallocate swaps, E6.4)
 #   16:30           auditor (reconcile + journal)
 #   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop; E10.5 posts)
@@ -36,7 +37,7 @@
 #
 # lane (D39 / E5.10): `background` = the tick claims the slot, spawns a detached
 # `arc routines run-claimed <run_id>` and moves on, so a slow job never delays the
-# 5-min loop. Chosen by measured p90 > 30 s (run_manifests, 3 days). A background
+# 10-min loop. Chosen by measured p90 > 30 s (run_manifests, 3 days). A background
 # Scout (after_sources) waits up to tick.after_sources_wait for the background
 # sources claimed in the same tick, then reads what is committed.
 #
@@ -47,7 +48,7 @@
 timezone: America/New_York
 
 tick:
-  interval: 5m          # how often the Hermes cron calls `arc routines tick`
+  interval: 10m         # D52: the Hermes cron calls `arc routines tick` at */10 on the clock
   max_lookback: 7d      # never look further back than this for missed slots
   dispatch_grace: 10m   # E6.2e: release a dispatched approval whose Investor never started
   after_sources_wait: 5m   # D39: a background Scout waits at most this for same-tick background sources
@@ -62,14 +63,14 @@ heartbeat:
 # from hermes/monitoring/install.sh (outside the gateway it watches). Alerts go to
 # #project-arc once per problem and again when it clears.
 monitoring:
-  tick_stale_after: 15m    # no `arc routines tick` heartbeat for this long -> alert
+  tick_stale_after: 30m    # no `arc routines tick` heartbeat for this long -> alert (3 missed 10-min ticks)
   miss_grace: 10m          # judge a slot this long after its catch-up window closes
   miss_lookback: 1d
   stuck_after: 70m         # routine run still `running` (tick timeout is 55m)
   stuck_after_jobs:        # per-job override of stuck_after (E5.3a; E5.8 reuses it for the loop)
-    monitor: 10m           # 5-min cadence: two slots without finishing means it is wedged
-    director: 10m          # D31 trading loop: same rule (loop.max_runtime is 4m)
-  # E8.2a: one alert per missed slot only for slow jobs; fast jobs (5-min loop,
+    monitor: 20m           # 10-min cadence (D52): two slots without finishing means it is wedged
+    director: 20m          # D31/D52 trading loop: same rule (loop.max_runtime is 4m)
+  # E8.2a: one alert per missed slot only for slow jobs; fast jobs (10-min loop,
   # monitor, scout, rss) get one `coverage:<job>` condition per job instead.
   per_slot_min_interval: 60m   # slots >= this far apart: one `missed_window` alert per slot
   coverage_window: 60m         # rolling window for `coverage:<job>` and `tick_slow`
@@ -93,7 +94,7 @@ monitoring:
     max_bytes: 5000000
     backups: 5
 
-# D31 / D36: the 5-min trading loop (the `director` persona and its chain).
+# D31 / D36 / D52: the 10-min trading loop (the `director` persona and its chain).
 loop:
   job: director
   max_idle: 30m            # force one full LLM evaluation at least this often
@@ -364,13 +365,13 @@ personas:
     notify: card
     writes: [candidate, note, story, active_universe]
     lane: background            # D39: same Scout handler as above
-  director:                     # D31: the 5-min trading loop (see `loop:` above)
+  director:                     # D31/D52: the 10-min trading loop (see `loop:` above)
     label: "Director → Quant → Risk → Propose → Execute"
-    about: "5-min trading loop: pick ideas, price structures, risk review, propose, auto-approve, execute"
+    about: "10-min trading loop: pick ideas, price structures, risk review, propose, auto-approve, execute"
     group: trading_loop
     persona: director
-    every: 5m
-    window: "09:40-15:50"       # owner 2026-09-28: 75 slots; skips the open's first 10 min
+    every: 10m                  # D52 (owner 2026-10-05; was 5m)
+    window: "09:40-15:50"       # 38 slots; skips the open's first 10 min
     days: trading
     chain: [quant, risk, propose, execute]   # D34: execute = publish + auto-approve + hand off ladders
     reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options, position_review, story,
@@ -383,7 +384,7 @@ personas:
     about: "Positions, Greeks, marks, expiries and the daily-loss halt (no LLM)"
     group: position_management
     persona: monitor
-    every: 5m                   # D35: the tower's mark source; 5m is the tick floor
+    every: 10m                  # D35/D52: the tower's mark source; 10m is the tick floor
     window: "09:30-16:00"
     days: trading
     llm: false                  # deterministic; never waits on the LLM lock
@@ -400,7 +401,7 @@ personas:
     group: position_management
     persona: investor
     every: 30m
-    window: "09:45-16:00"       # offset from the monitor; never at the open's first quotes
+    window: "09:50-15:50"       # D52: :20/:50 on the 10-min tick grid; never at the open's first quotes
     days: trading
     llm: false                  # the review is deterministic; risk.reallocate calls the LLM
     chain: [investor.exits, risk.reallocate, execute]   # D34: auto-approved closes/swaps go out in-run
@@ -470,5 +471,5 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   # approvals / ladders forward); every other chain step defaults to `skip`.
   execute: {reads: [proposal], writes: [], llm: false, notify: summary, on_no_change: run}
 
-triggers: []                    # D31: no scout.completed -> director trigger any more; the 5-min
+triggers: []                    # D31: no scout.completed -> director trigger any more; the 10-min
                                 # loop picks new candidates up within one slot

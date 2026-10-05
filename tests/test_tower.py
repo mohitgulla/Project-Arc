@@ -192,12 +192,12 @@ def test_lookback_widens_window(db: Path) -> None:
 
 
 def test_greeks_stale_after_follows_monitor_cadence(db: Path) -> None:
-    """E5.3a (D35): stale = 3x ``personas.monitor.every`` (5m -> 15 min), one shared rule."""
+    """E5.3a (D35): stale = 3x ``personas.monitor.every`` (10m -> 30 min, D52), one shared rule."""
     from arc.tower.data import monitor_stale_after
 
-    assert monitor_stale_after() == dt.timedelta(minutes=15)
+    assert monitor_stale_after() == dt.timedelta(minutes=30)
     s = _snap(db)
-    assert s.greeks.stale_after_s == 900
+    assert s.greeks.stale_after_s == 1800
     assert _snap(db, stale_after=dt.timedelta(minutes=45)).greeks.stale_after_s == 2700
     # a D26 control-panel cadence override reaches the tower through the same DB
     from arc.config import ArcSettings

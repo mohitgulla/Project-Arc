@@ -442,7 +442,7 @@ def test_api_overview_contract(client: TestClient, rng: str) -> None:
     r = client.get("/api/overview", params={"range": rng})
     assert r.status_code == 200
     o = OverviewResponse.model_validate(r.json())
-    assert o.range == rng and o.as_of == NOW and o.stale_after_s == 900
+    assert o.range == rng and o.as_of == NOW and o.stale_after_s == 1800  # 3 x 10-min monitor (D52)
     assert len(o.positions) == 3 and o.status.halted and o.equity.value is not None
 
 
