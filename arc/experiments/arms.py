@@ -32,6 +32,7 @@ __all__ = [
     "ArmKeyError",
     "arm_keys",
     "arm_stores",
+    "default_environ",
     "read_identity",
     "write_identity",
 ]
@@ -105,14 +106,35 @@ def write_identity(conn: sqlite3.Connection, ident: ArmIdentity) -> None:
         )
 
 
+HERMES_ENV_FILE = Path.home() / ".hermes" / ".env"
+
+
+def default_environ(env_file: Path | None = None) -> dict[str, str]:
+    """``~/.hermes/.env`` overlaid by ``os.environ`` (the process wins).
+
+    The same sources :class:`arc.config.ArcSettings` reads the production keys from:
+    the routines tick (cron) and its detached ``arms-tick`` do not export the file, so
+    reading ``os.environ`` alone left the arm without keys (E10.2b).
+    """
+    path = HERMES_ENV_FILE if env_file is None else env_file
+    merged: dict[str, str] = {}
+    if path.is_file():
+        from dotenv import dotenv_values
+
+        merged.update({k: v for k, v in dotenv_values(path).items() if v})
+    merged.update(os.environ)
+    return merged
+
+
 def arm_keys(keys_env: str, environ: Mapping[str, str] | None = None) -> tuple[str, str]:
     """``(<prefix>_API_KEY, <prefix>_SECRET_KEY)`` for an arm, never production/test keys.
 
+    *environ* defaults to :func:`default_environ` (``~/.hermes/.env`` + ``os.environ``).
     Raises :class:`ArmKeyError` when the prefix is ``ALPACA`` / ``ALPACA_TEST``, a key
     is unset, or the arm's key pair equals the production or test pair (the same
     account under another name).
     """
-    env = os.environ if environ is None else environ
+    env = default_environ() if environ is None else environ
     if keys_env in FORBIDDEN_ARM_KEYS:
         msg = f"arm keys {keys_env}_* are production/test keys; arms use their own account"
         raise ArmKeyError(msg)

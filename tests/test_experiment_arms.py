@@ -72,6 +72,42 @@ def test_arm_keys_never_production_or_test() -> None:
         write_identity(_db(), _ident().model_copy(update={"keys_env": "ALPACA"}))
 
 
+def test_arm_keys_default_reads_hermes_env_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E10.2b: the cron tick has no exported keys; arm_keys() must read ~/.hermes/.env."""
+    import arc.experiments.arms as arms_mod
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "ALPACA_API_KEY=prod\nALPACA_SECRET_KEY=prod-s\n"
+        "ALPACA_EXP_API_KEY=exp\nALPACA_EXP_SECRET_KEY=exp-s\n"
+    )
+    for k in (
+        "ALPACA_API_KEY",
+        "ALPACA_SECRET_KEY",
+        "ALPACA_EXP_API_KEY",
+        "ALPACA_EXP_SECRET_KEY",
+        "ALPACA_TEST_API_KEY",
+        "ALPACA_TEST_SECRET_KEY",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(arms_mod, "HERMES_ENV_FILE", env_file)
+    assert arm_keys("ALPACA_EXP") == ("exp", "exp-s")
+    # the process environment wins over the file
+    monkeypatch.setenv("ALPACA_EXP_API_KEY", "exp2")
+    assert arm_keys("ALPACA_EXP") == ("exp2", "exp-s")
+    # the production-equality guard sees the file's production keys too
+    monkeypatch.setenv("ALPACA_EXP_API_KEY", "prod")
+    with pytest.raises(ArmKeyError, match="equals"):
+        arm_keys("ALPACA_EXP")
+    # no file and nothing exported: still a clear ArmKeyError
+    monkeypatch.delenv("ALPACA_EXP_API_KEY")
+    monkeypatch.setattr(arms_mod, "HERMES_ENV_FILE", tmp_path / "missing.env")
+    with pytest.raises(ArmKeyError, match="not set"):
+        arm_keys("ALPACA_EXP")
+
+
 def test_identity_written_once_and_control_has_none() -> None:
     c = _db()
     assert read_identity(c) is None
