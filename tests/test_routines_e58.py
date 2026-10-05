@@ -6,7 +6,7 @@ Deterministic tests on the bundled fixtures:
   Director/Quant/Risk LLM call, the chain's ``execute`` step still runs;
 * after ``loop.max_idle`` the same inputs get a full run again;
 * a new candidate, a filled position or a P&L bucket change breaks the digest;
-* a loop slot that finds the previous loop (or a Scout) holding a lock is
+* a loop slot that finds the previous loop (or a Sweep) holding a lock is
   recorded as ``skipped`` and never deferred / caught up;
 * the chain deadline: no step starts after ``loop.max_runtime``, the run is
   ``timeout``, and the notice goes out once per day;
@@ -23,8 +23,8 @@ import pytest
 
 from arc.approvals.service import ApprovalService, LogCardPoster, PostedCard
 from arc.context.store import ContextStore
-from arc.ingest.llm import LLMResult, ScoutLLMError
-from arc.ingest.scout import load_fixture_docs
+from arc.ingest.llm import LLMResult, SweepLLMError
+from arc.ingest.sweep import load_fixture_docs
 from arc.llm_routing import LLMRouting, Persona, TierSpec
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
 from arc.pipeline.runner import open_db, pipeline_handlers
@@ -110,9 +110,9 @@ def _llm_calls(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM persona_calls").fetchone()[0]
 
 
-def _seed_scout(conn: sqlite3.Connection, routines: RoutinesConfig) -> None:
+def _seed_sweep(conn: sqlite3.Connection, routines: RoutinesConfig) -> None:
     disp = _disp(conn, routines)
-    (out,) = disp.run_job("scout", SLOT0, reason="manual", now=SLOT0)
+    (out,) = disp.run_job("sweep", SLOT0, reason="manual", now=SLOT0)
     assert out.status == "ok", out.reason
 
 
@@ -124,7 +124,7 @@ def _seed_scout(conn: sqlite3.Connection, routines: RoutinesConfig) -> None:
 class TestNoChange:
     def test_same_inputs_skip_llm_but_run_execute(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         disp = _disp(conn, routines)
         first, second = _warm(disp)
         assert {s for s, o in first.items() if o.status == "ok"} >= {"quant", "risk", "propose"}
@@ -159,7 +159,7 @@ class TestNoChange:
 
     def test_full_run_again_after_max_idle(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         disp = _disp(conn, routines)
         _warm(disp)
         before = _llm_calls(conn)
@@ -171,10 +171,10 @@ class TestNoChange:
 
     def test_new_candidate_changes_digest(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         disp = _disp(conn, routines)
         _, second = _warm(disp)
-        # a new Scout candidate lands between slots
+        # a new Sweep candidate lands between slots
         store = ContextStore(conn)
         cand = store.snapshot(SLOT0, kinds=["candidate"]).latest("candidate", "SPY")
         assert cand is not None
@@ -184,7 +184,7 @@ class TestNoChange:
             kind="candidate",
             subject="QQQ",
             payload=payload,
-            produced_by="scout",
+            produced_by="sweep",
             run_id="run-test",
             now=SLOT0 + dt.timedelta(minutes=6),
         )
@@ -194,7 +194,7 @@ class TestNoChange:
 
     def test_manual_propose_never_skips(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         disp = _disp(conn, routines)
         _warm(disp)
         before = _llm_calls(conn)
@@ -204,7 +204,7 @@ class TestNoChange:
 
     def test_director_outside_the_loop_never_skips(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         other = load_routines(overrides={("loop", "job"): "monitor"})
         disp = _disp(conn, other)
         _warm(disp)
@@ -219,7 +219,7 @@ class TestNoChange:
         the same inputs as slot 2. Slot 2 must not become ``last_full_run``, so slot 3
         is a full evaluation and not ``no_change`` with zero LLM calls."""
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         disp = _disp(conn, routines)
         first = _slot(disp, SLOT0)
         assert first["director"].metrics["no_change"] is False
@@ -262,7 +262,7 @@ class TestNoChange:
 
     def test_failed_first_director_records_no_full_run(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         disp = _disp(conn, routines)
         env = PipelineEnv.fixtures()
         env.llms["director"] = _BrokenLLM()
@@ -282,7 +282,7 @@ class _BrokenLLM:
     def complete(self, prompt: str) -> LLMResult:
         time.sleep(0.05)
         msg = "simulated LLM outage"
-        raise ScoutLLMError(msg)
+        raise SweepLLMError(msg)
 
 
 class TestConfigOnlyCadence:
@@ -315,7 +315,7 @@ class TestConfigOnlyCadence:
         assert ten.is_loop("director") and ten.personas["director"].ttl is not None
         # the loop semantics (no_change skip) still apply under the new cadence
         conn = _conn()
-        _seed_scout(conn, ten)
+        _seed_sweep(conn, ten)
         disp = _disp(conn, ten)
         _slot(disp, SLOT0)
         _slot(disp, SLOT0 + dt.timedelta(minutes=10))
@@ -369,7 +369,7 @@ class TestOverlapAndDeadline:
         self, routines: RoutinesConfig, tmp_path: Path
     ) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         locks = LockManager(tmp_path)
         # D39: the LLM lock only matters for local models; route every persona locally.
         local = LLMRouting(
@@ -383,7 +383,7 @@ class TestOverlapAndDeadline:
         assert out.run_id is not None
         run = RoutineRunRepo(conn).get(out.run_id)
         assert run is not None and run.status.value == "skipped"
-        # the Scout holding the LLM lock is the other case
+        # the Sweep holding the LLM lock is the other case
         with locks.hold(LLM_LOCK):
             (out2,) = disp.run_job(
                 "director", SLOT0 + dt.timedelta(minutes=5), reason="schedule",
@@ -403,7 +403,7 @@ class TestOverlapAndDeadline:
     ) -> None:
         """A skipped loop slot is never caught up on the next tick."""
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         locks = LockManager(tmp_path)
         notes = RecordingNotifier()
         disp = _disp(conn, routines, locks=locks, notifier=notes)
@@ -422,7 +422,7 @@ class TestOverlapAndDeadline:
         self, routines: RoutinesConfig
     ) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         fast = load_routines(overrides=_loop_overrides(max_runtime="1s"))
         notes = RecordingNotifier()
         disp = _disp(conn, fast, notifier=notes)
@@ -516,7 +516,7 @@ def _slot_cards(disp: Dispatcher, at: dt.datetime) -> dict[str, Any]:
 class TestRootPerLoop:
     def test_root_then_cards_in_its_thread_then_metadata(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         disp, notes, poster, _ = _disp_with_cards(conn, routines)
         out = _slot_cards(disp, SLOT0)
         chain = out["director"].chain_run_id
@@ -526,16 +526,16 @@ class TestRootPerLoop:
         # every persona post of this loop is a reply under the root, none in the day thread
         replies = notes.in_thread(ts)
         assert replies and notes.day_thread_posts() == []
-        # D36 thread order: [Scout] context first, then the chain's persona cards,
+        # D36 thread order: [Sweep] context first, then the chain's persona cards,
         # the proposal card (recorded by the poster), and [Routines] last.
         labels = [r.split(" ", 1)[0].lstrip("`\n") for r in replies]
-        order = [lbl for lbl in labels if lbl in {"[Scout]", "[Director]", "[Quant]", "[Risk]"}]
-        assert order == ["[Scout]", "[Director]", "[Quant]", "[Risk]"], replies
-        assert replies[0].startswith("[Scout] scout ✓ [Scout] Context: ")
-        assert "run " + slot_stamp(SLOT0) in replies[0]  # the Scout run the Director read
-        scout_blocks = notes.blocks[notes.threads.index(ts)]
-        assert scout_blocks and scout_blocks[0]["text"]["text"].startswith("[Scout] Context: ")
-        assert any("SPY" in (b.get("text") or {}).get("text", "") for b in scout_blocks)
+        order = [lbl for lbl in labels if lbl in {"[Sweep]", "[Director]", "[Quant]", "[Risk]"}]
+        assert order == ["[Sweep]", "[Director]", "[Quant]", "[Risk]"], replies
+        assert replies[0].startswith("[Sweep] sweep ✓ [Sweep] Context: ")
+        assert "run " + slot_stamp(SLOT0) in replies[0]  # the Sweep run the Director read
+        sweep_blocks = notes.blocks[notes.threads.index(ts)]
+        assert sweep_blocks and sweep_blocks[0]["text"]["text"].startswith("[Sweep] Context: ")
+        assert any("SPY" in (b.get("text") or {}).get("text", "") for b in sweep_blocks)
         assert replies[-1].startswith("```\n[Routines] " + chain)
         assert "director=" in replies[-1] and "digest=" in replies[-1]
         # the proposal card went into the same thread
@@ -553,7 +553,7 @@ class TestRootPerLoop:
 
     def test_root_updates_on_approval_and_rejection(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         disp, notes, poster, svc = _disp_with_cards(conn, routines)
         out = _slot_cards(disp, SLOT0)
         chain = out["director"].chain_run_id
@@ -589,7 +589,7 @@ class TestRootPerLoop:
 
     def test_no_change_and_hold_roots(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         disp, notes, _, _ = _disp_with_cards(conn, routines)
         _slot_cards(disp, SLOT0)
         _slot_cards(disp, SLOT0 + dt.timedelta(minutes=5))
@@ -601,7 +601,7 @@ class TestRootPerLoop:
         assert ts is not None
         assert notes.roots[ts].endswith("• HOLD (no change)")
         assert notes.roots[ts].startswith(":heavy_multiplication_x: ")
-        # a no_change loop gets only the [Routines] reply in its thread (no Scout / Director card)
+        # a no_change loop gets only the [Routines] reply in its thread (no Sweep / Director card)
         replies = notes.in_thread(ts)
         assert len(replies) == 1 and replies[0].startswith("```\n[Routines] " + chain)
         assert "no_change" in replies[0]
@@ -611,7 +611,7 @@ class TestRootPerLoop:
 
     def test_skipped_slot_posts_hold_root(self, routines: RoutinesConfig, tmp_path: Path) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         locks = LockManager(tmp_path)
         notes = RecordingNotifier()
         disp = _disp(conn, routines, locks=locks, notifier=notes)
@@ -637,7 +637,7 @@ class TestRootPerLoop:
 
     def test_day_thread_layout_is_the_rollback(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         legacy = load_routines(overrides=_loop_overrides(slack_layout="day_thread"))
         disp, notes, poster, _ = _disp_with_cards(conn, legacy)
         out = _slot_cards(disp, SLOT0)
@@ -649,7 +649,7 @@ class TestRootPerLoop:
 
     def test_root_from_db_lists_fills(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_scout(conn, routines)
+        _seed_sweep(conn, routines)
         disp, notes, poster, svc = _disp_with_cards(conn, routines)
         out = _slot_cards(disp, SLOT0)
         chain = out["director"].chain_run_id

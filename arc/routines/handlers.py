@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from arc.config import ArcSettings
     from arc.context.ttl import Ttl
     from arc.data.base import MarketDataProvider
-    from arc.ingest.llm import ScoutLLM
-    from arc.ingest.scout import ScoutRunResult
+    from arc.ingest.llm import SweepLLM
+    from arc.ingest.sweep import SweepRunResult
     from arc.models import RawDoc
     from arc.routines.config import JobKind, RoutinesConfig, StepSpec
     from arc.routines.manifest import ExternalInput
@@ -734,7 +734,7 @@ def symbols_source(ctx: JobContext) -> JobResult:
     network). On the ``refresh_days`` (Mondays), or when the cache is missing or
     older than ``symbol_master.refresh_days``: refreshes the symbol master (SEC
     tickers ∪ Alpaca optionable), the only scheduled writer of the cache that
-    ingest and the Scout read (they never fetch mid-run).
+    ingest and the Sweep read (they never fetch mid-run).
     """
     from arc.universe import load_symbol_master, load_universe_config, refresh_symbol_master
 
@@ -1075,7 +1075,7 @@ def _market_price_lookup() -> Callable[[str], float | None] | None:
 
 def youtube_briefs(
     ctx: JobContext,
-    llm: ScoutLLM | None = None,
+    llm: SweepLLM | None = None,
     *,
     session: Any = None,
     list_videos: Callable[[str, int], list[dict[str, Any]]] | None = None,
@@ -1094,7 +1094,7 @@ def youtube_briefs(
     from arc.context.kinds import ChannelBriefPayload, RawDocRefPayload
     from arc.ingest.channels import CHANNELS_DIR, ChannelRegistry, default_registry
     from arc.ingest.channels.daily import DailyBriefConfig, run_daily_briefs
-    from arc.ingest.llm import HermesScoutLLM
+    from arc.ingest.llm import HermesSweepLLM
     from arc.ingest.youtube import TranscriptSession, _get_video_info, list_channel_videos
     from arc.universe.ingest import IngestUniverse
 
@@ -1119,7 +1119,7 @@ def youtube_briefs(
         ctx.conn,
         settings,
         cfg,
-        llm=llm or HermesScoutLLM.from_settings(settings),
+        llm=llm or HermesSweepLLM.from_settings(settings),
         session=session,
         now=now,
         ttl=ttl,
@@ -1183,8 +1183,8 @@ def youtube_briefs(
     )
 
 
-def _scout_note(ctx: JobContext, result: ScoutRunResult, about: list[str]) -> None:
-    """One ``observation`` note per scout run from the batches' ``scan_summary`` (D27)."""
+def _sweep_note(ctx: JobContext, result: SweepRunResult, about: list[str]) -> None:
+    """One ``observation`` note per sweep run from the batches' ``scan_summary`` (D27)."""
     from pydantic import ValidationError
 
     from arc.context.kinds import Evidence, NotePayload, NoteTopic
@@ -1194,20 +1194,20 @@ def _scout_note(ctx: JobContext, result: ScoutRunResult, about: list[str]) -> No
     urls = list(dict.fromkeys(result.summary_sources))[:20]
     try:
         payload = NotePayload(
-            persona="scout",
+            persona="sweep",
             topic=NoteTopic.OBSERVATION,
-            title=f"Scan summary ({result.docs_scouted} docs)",
+            title=f"Scan summary ({result.docs_swept} docs)",
             body="\n\n".join(result.summaries)[:4000],
             about=about,
             evidence=[Evidence(ref=u) for u in urls],
         )
     except ValidationError as exc:
-        log.warning("pipeline.note_invalid", persona="scout", error=str(exc))
+        log.warning("pipeline.note_invalid", persona="sweep", error=str(exc))
         return
     ctx.write("note", "market", payload)
 
 
-def _journal_universe_rejects(ctx: JobContext, result: ScoutRunResult) -> int:
+def _journal_universe_rejects(ctx: JobContext, result: SweepRunResult) -> int:
     """E7.4: one ``candidate``-stage decision per universe reject (D28). Returns the count."""
     from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
     from arc.journal.store import JournalStore
@@ -1223,7 +1223,7 @@ def _journal_universe_rejects(ctx: JobContext, result: ScoutRunResult) -> int:
     for key, code in codes.items():
         for ticker in dict.fromkeys(result.rejected_items.get(key, [])):
             store.record(
-                persona=JournalPersona.SCOUT,
+                persona=JournalPersona.SWEEP,
                 stage=Stage.CANDIDATE,
                 subject=ticker,
                 choice=Choice.REJECTED,
@@ -1237,11 +1237,11 @@ def _journal_universe_rejects(ctx: JobContext, result: ScoutRunResult) -> int:
     return n
 
 
-def _journal_floor_skips(ctx: JobContext, result: ScoutRunResult) -> int:
-    """E12.4: one ``scout_candidate`` decision per core/momentum candidate kept below
-    ``scout_min_confidence`` (payload ``confidence_floor_skipped: tier=<tier>``).
+def _journal_floor_skips(ctx: JobContext, result: SweepRunResult) -> int:
+    """E12.4: one ``sweep_candidate`` decision per core/momentum candidate kept below
+    ``sweep_min_confidence`` (payload ``confidence_floor_skipped: tier=<tier>``).
 
-    Once per ticker per ET day (the Scout runs every 30 min). Returns the count.
+    Once per ticker per ET day (the Sweep runs every 30 min). Returns the count.
     """
     if not result.floor_skipped:
         return 0
@@ -1259,7 +1259,7 @@ def _journal_floor_skips(ctx: JobContext, result: ScoutRunResult) -> int:
             "SELECT subject FROM decisions WHERE reason_code = ? AND at >= ? AND at < ?"
             " AND payload LIKE '%confidence_floor_skipped%'",
             (
-                ReasonCode.SCOUT_CANDIDATE.value,
+                ReasonCode.SWEEP_CANDIDATE.value,
                 to_db(start),
                 to_db(start + dt.timedelta(days=1)),
             ),
@@ -1267,16 +1267,16 @@ def _journal_floor_skips(ctx: JobContext, result: ScoutRunResult) -> int:
     }
     store = JournalStore(ctx.conn)
     n = 0
-    floor = ctx.settings.scout_min_confidence
+    floor = ctx.settings.sweep_min_confidence
     for ticker, (tier, conf) in sorted(result.floor_skipped.items()):
         if ticker in done:
             continue
         store.record(
-            persona=JournalPersona.SCOUT,
+            persona=JournalPersona.SWEEP,
             stage=Stage.CANDIDATE,
             subject=ticker,
             choice=Choice.SELECTED,
-            reason_code=ReasonCode.SCOUT_CANDIDATE,
+            reason_code=ReasonCode.SWEEP_CANDIDATE,
             reason_text=f"{tier} name kept below the confidence floor ({conf:.2f} < {floor:.2f})",
             confidence=conf,
             at=ctx.now,
@@ -1293,16 +1293,16 @@ def _journal_floor_skips(ctx: JobContext, result: ScoutRunResult) -> int:
     return n
 
 
-def scout_persona(
-    ctx: JobContext, llm: ScoutLLM | None = None, guard: UniverseGuard | None = None
+def sweep_persona(
+    ctx: JobContext, llm: SweepLLM | None = None, guard: UniverseGuard | None = None
 ) -> JobResult:
-    """Scout (E4.2): summarise unscouted docs; write each merged Candidate to context.
+    """Sweep (E4.2): summarise unswept docs; write each merged Candidate to context.
 
     *llm* overrides the Hermes backend and *guard* the D28 universe policy
     (``arc propose --fixtures``, tests).
     """
     from arc.context.kinds import CandidatePayload
-    from arc.ingest.scout import run_scout
+    from arc.ingest.sweep import run_sweep
 
     kwargs: dict[str, Any] = {"now": ctx.now, "run_id": ctx.run_id, "routines": ctx.routines}
     if llm is not None:
@@ -1312,7 +1312,7 @@ def scout_persona(
     write_stories = "story" in (ctx.spec.writes or [])  # D30 stage-1 digests
     if "active_universe" in (ctx.spec.writes or []):
         resolve_universe(ctx)  # D51: cheap, no network; the guard + prompt read it
-    result = run_scout(ctx.conn, ctx.settings, **kwargs)
+    result = run_sweep(ctx.conn, ctx.settings, **kwargs)
     if write_stories:  # D47: each story expires at min(policy, freshest source max_age + 2h)
         for p in result.stories:
             ctx.write("story", p.story_id, p, ttl=result.story_ttls.get(p.story_id))
@@ -1327,12 +1327,12 @@ def scout_persona(
         ).id
         for cand in result.candidates
     ]
-    _scout_note(ctx, result, written)
-    from arc.slack.digests import scout_card
+    _sweep_note(ctx, result, written)
+    from arc.slack.digests import sweep_card
 
     return JobResult(
         summary=(
-            f"{result.docs_scouted} docs ({len(result.stories)} stories) → "
+            f"{result.docs_swept} docs ({len(result.stories)} stories) → "
             f"{result.accepted} accepted, {len(result.candidates)} candidates today"
             + (f", {result.over_budget} over budget" if result.over_budget else "")
             + (f", {result.failed_batches} failed batches" if result.failed_batches else "")
@@ -1340,19 +1340,20 @@ def scout_persona(
         metrics={
             "new_candidates": result.accepted,
             "candidates": len(result.candidates),
-            "docs_scouted": result.docs_scouted,
+            "docs_swept": result.docs_swept,
             "stories": len(result.stories),
             "over_budget": result.over_budget,
             "skipped_budget": result.skipped_budget,
             "skipped_stale": result.skipped_stale,
+            "slow_feed": result.slow_feed,
             "digest_batches": result.digest_batches,
             "failed_digest_batches": result.failed_digest_batches,
             "failed_batches": result.failed_batches,
             "new_tickers": len(result.new_tickers),
             **{f"source_{label}": read for label, read, _ in result.source_mix},
         },
-        card=scout_card(
-            docs=result.docs_scouted,
+        card=sweep_card(
+            docs=result.docs_swept,
             accepted=result.accepted,
             candidates=result.candidates,
             rejected=result.rejected,
@@ -1390,7 +1391,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "finnhub.recs": "arc.routines.handlers:finnhub_recs_source",
     "finnhub.fundamentals": "arc.routines.handlers:finnhub_fundamentals_source",
     "finnhub.earnings_history": "arc.routines.handlers:finnhub_earnings_history_source",
-    "scout": "arc.routines.handlers:scout_persona",
+    "sweep": "arc.routines.handlers:sweep_persona",
     # E5.2 pipeline chain: director → quant → risk → propose (arc/pipeline/steps.py)
     "director": "arc.pipeline.steps:director_step",
     "quant": "arc.pipeline.steps:quant_step",

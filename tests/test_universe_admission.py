@@ -1,9 +1,9 @@
 """E12.4 (D51): tier admission rules.
 
-Core + momentum skip the liquidity screen and the Scout confidence floor (kept, and
-journaled ``scout_candidate`` with ``confidence_floor_skipped``); trending names and
+Core + momentum skip the liquidity screen and the Sweep confidence floor (kept, and
+journaled ``sweep_candidate`` with ``confidence_floor_skipped``); trending names and
 discoveries pass the relaxed screen profile; discoveries alone count against
-``scout_max_new_tickers`` (25). The screen is profile-keyed in ``config/universe.yaml``
+``sweep_max_new_tickers`` (25). The screen is profile-keyed in ``config/universe.yaml``
 with a back-compatible loader, and the relaxed thresholds are Slack-tunable.
 """
 
@@ -21,12 +21,12 @@ import yaml
 from arc.config import ArcSettings
 from arc.context.store import ContextStore
 from arc.control.registry import REGISTRY, Direction, Risk, Target, direction, lookup
-from arc.ingest.scout import (
+from arc.ingest.sweep import (
     REJECT_THRESHOLD,
-    ScoutRunResult,
+    SweepRunResult,
     candidates_for_scanner,
     store_candidate,
-    validate_scout_candidate,
+    validate_sweep_candidate,
 )
 from arc.models import Candidate
 from arc.routines.config import RoutinesConfig
@@ -69,7 +69,7 @@ PLTR_LIKE = LiquidityMetrics(
 
 
 def _settings(**kw: Any) -> ArcSettings:
-    base: dict[str, Any] = {"env": "paper", "universe": CORE, "scout_min_confidence": 0.6}
+    base: dict[str, Any] = {"env": "paper", "universe": CORE, "sweep_min_confidence": 0.6}
     return ArcSettings(_env_file=None, **{**base, **kw})  # type: ignore[call-arg]
 
 
@@ -156,7 +156,7 @@ def _item(ticker: str, confidence: float) -> dict[str, Any]:
 
 
 def _validate(guard: UniverseGuard, ticker: str, confidence: float) -> Candidate | str:
-    return validate_scout_candidate(
+    return validate_sweep_candidate(
         _item(ticker, confidence),
         universe=guard,
         min_confidence=0.6,
@@ -287,7 +287,7 @@ class TestGuardTiers:
 
     def test_trending_relaxed_and_not_capped(self, conn: sqlite3.Connection) -> None:
         _write_tier(conn, Tier.TRENDING, ["HOOD"])
-        g = _guard(conn, scout_max_new_tickers=0)
+        g = _guard(conn, sweep_max_new_tickers=0)
         assert not g.is_seed("HOOD") and g.tier_of("HOOD") is Tier.TRENDING
         assert g.screen_profile("HOOD") == "relaxed"
         assert g.admit("HOOD") is None  # OI 462 passes relaxed; cap 0 does not apply
@@ -323,7 +323,7 @@ class TestGuardTiers:
         assert a.passed and not b.passed and g.screens["XLE"] is b
 
     def test_cap_default_25(self) -> None:
-        assert ArcSettings(_env_file=None).scout_max_new_tickers == 25  # type: ignore[call-arg]
+        assert ArcSettings(_env_file=None).sweep_max_new_tickers == 25  # type: ignore[call-arg]
         g = _guard(metrics={})
         assert g.max_new == 25
 
@@ -338,7 +338,7 @@ class TestGuardTiers:
         assert g.floor_exempt() == frozenset({"NVDA", "AAPL", "PLTR", "LLY"})
 
 
-# -- Scout confidence floor ----------------------------------------------------------
+# -- Sweep confidence floor ----------------------------------------------------------
 
 
 class TestConfidenceFloor:
@@ -358,7 +358,7 @@ class TestConfidenceFloor:
         assert isinstance(_validate(g, "XLE", 0.6), Candidate)
 
     def test_allow_list_keeps_the_floor_for_everyone(self) -> None:
-        out = validate_scout_candidate(
+        out = validate_sweep_candidate(
             _item("NVDA", 0.5),
             universe=frozenset(CORE),
             min_confidence=0.6,
@@ -380,10 +380,10 @@ class TestConfidenceFloor:
         )
         assert [c.ticker for c in exempt] == ["HOOD", "LLY", "NVDA"]  # best first
 
-    def test_run_scout_keeps_and_records_floor_skips(self, conn: sqlite3.Connection) -> None:
+    def test_run_sweep_keeps_and_records_floor_skips(self, conn: sqlite3.Connection) -> None:
         from arc.ingest.llm import LLMResult
-        from arc.ingest.scout import run_scout
         from arc.ingest.store import RawDocRepo
+        from arc.ingest.sweep import run_sweep
 
         _write_tier(conn, Tier.MOMENTUM, ["LLY"])
         RawDocRepo(conn).insert(
@@ -404,7 +404,7 @@ class TestConfidenceFloor:
                 return LLMResult(text=reply, model="test")
 
         g = _guard(conn)
-        res = run_scout(conn, _settings(), llm=_LLM(), now=NOW, guard=g)
+        res = run_sweep(conn, _settings(), llm=_LLM(), now=NOW, guard=g)
         assert res.rejected == {REJECT_THRESHOLD: 1}  # XLE (a discovery)
         assert res.floor_skipped == {"NVDA": ("core", 0.4), "LLY": ("momentum", 0.5)}
         assert [c.ticker for c in res.candidates] == ["AAPL", "LLY", "NVDA"]
@@ -415,11 +415,11 @@ class TestConfidenceFloor:
 
 def _ctx(conn: sqlite3.Connection, now: dt.datetime = NOW) -> JobContext:
     routines = RoutinesConfig.model_validate(
-        {"personas": {"scout": {"schedule": ["12:00"], "writes": ["candidate", "note"]}}}
+        {"personas": {"sweep": {"schedule": ["12:00"], "writes": ["candidate", "note"]}}}
     )
-    kind, spec = routines.step("scout")
+    kind, spec = routines.step("sweep")
     return JobContext(
-        job="scout",
+        job="sweep",
         kind=kind,
         spec=spec,
         run_id="run-1",
@@ -435,7 +435,7 @@ def _ctx(conn: sqlite3.Connection, now: dt.datetime = NOW) -> JobContext:
 
 class TestJournal:
     def test_floor_skip_journaled_once_per_day(self, conn: sqlite3.Connection) -> None:
-        res = ScoutRunResult(run_id="r", day=DAY, dry_run=False)
+        res = SweepRunResult(run_id="r", day=DAY, dry_run=False)
         res.floor_skipped = {"NVDA": ("core", 0.4), "LLY": ("momentum", 0.5)}
         assert _journal_floor_skips(_ctx(conn), res) == 2
         rows = conn.execute(
@@ -443,8 +443,8 @@ class TestJournal:
             " ORDER BY subject"
         ).fetchall()
         assert [(r[0], r[1], r[2]) for r in rows] == [
-            ("LLY", "selected", "scout_candidate"),
-            ("NVDA", "selected", "scout_candidate"),
+            ("LLY", "selected", "sweep_candidate"),
+            ("NVDA", "selected", "sweep_candidate"),
         ]
         payload = json.loads(rows[1][3])
         assert payload["confidence_floor_skipped"] == "tier=core"
@@ -455,7 +455,7 @@ class TestJournal:
         assert _journal_floor_skips(_ctx(conn, tomorrow), res) == 2
 
     def test_nothing_to_journal(self, conn: sqlite3.Connection) -> None:
-        res = ScoutRunResult(run_id="r", day=DAY, dry_run=False)
+        res = SweepRunResult(run_id="r", day=DAY, dry_run=False)
         assert _journal_floor_skips(_ctx(conn), res) == 0
 
 
@@ -488,7 +488,7 @@ class TestRegistry:
         assert direction(s, 0.20, 0.30) is Direction.RISKIER
 
     def test_budget_keys(self) -> None:
-        assert lookup("scout_max_new_tickers").hard_ceiling == 25
+        assert lookup("sweep_max_new_tickers").hard_ceiling == 25
         assert ArcSettings(_env_file=None).finnhub_max_tickers == 50  # type: ignore[call-arg]
 
     def test_override_reaches_the_guard(self, conn: sqlite3.Connection) -> None:

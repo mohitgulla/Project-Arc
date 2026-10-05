@@ -3,7 +3,7 @@
 Called by :func:`scripts.tower_fixture_db.build` after the E8.7a rows exist. Adds, for
 the SPY open (the "full" trade), every section the Trades detail shows:
 
-- a Scout candidate with sources, a chain (``routine_runs``) with a D27 run manifest,
+- a Sweep candidate with sources, a chain (``routine_runs``) with a D27 run manifest,
   three persona calls (Director / Quant / Risk) and the decision trail through gate,
   approval and order fill, plus chain-level Director market reads;
 - a full ``MarketContext`` (leg quotes, analytics priced by the real exit model and cost
@@ -199,7 +199,7 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
     at = spy_opened
     chain = "chain-fx-spy"
     runs = {
-        "scout": "run-fx-scout",
+        "sweep": "run-fx-sweep",
         "director": "run-fx-director",
         "quant": "run-fx-quant",
         "risk": "run-fx-risk",
@@ -208,7 +208,7 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
         started = at - dt.timedelta(minutes=12 - 3 * i)
         _ins(conn, "routine_runs", {
             "run_id": rid, "job": job, "chain_run_id": chain, "step_index": i,
-            "reason": "schedule" if i == 0 else f"chain:{runs['scout']}",
+            "reason": "schedule" if i == 0 else f"chain:{runs['sweep']}",
             "scheduled_for": to_db(started), "started_at": to_db(started),
             "finished_at": to_db(started + dt.timedelta(minutes=2)), "status": "ok",
             "attempts": 1, "inputs_snapshot": json.dumps(["snap-fx-spy"]), "outputs": "[]",
@@ -229,7 +229,7 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
         (
             json.dumps(["https://www.sec.gov/Archives/edgar/data/fixture-8k.htm",
                         "wsj:markets/fixture-story", "youtube:fixture-outlook"]),
-            runs["scout"], (at.date() + dt.timedelta(days=9)).isoformat(), cid,
+            runs["sweep"], (at.date() + dt.timedelta(days=9)).isoformat(), cid,
         ),
     )  # fmt: skip
     # regime context entry + the input snapshot the personas read
@@ -290,9 +290,9 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
         n += 1
         return _decision(conn, n, at=t + dt.timedelta(minutes=minutes), **{**common, **kw})
 
-    dec(0, persona="scout", stage="candidate", subject="SPY", choice="selected",
-        code="scout_candidate", text="Three sources point to a breakout above 660.",
-        run=runs["scout"], confidence=0.7)  # fmt: skip
+    dec(0, persona="sweep", stage="candidate", subject="SPY", choice="selected",
+        code="sweep_candidate", text="Three sources point to a breakout above 660.",
+        run=runs["sweep"], confidence=0.7)  # fmt: skip
     dec(3, persona="director", stage="shortlist", subject="market", choice="noted",
         code="market_read", text="Risk-on tape; vol cheap vs realised.",
         run=runs["director"], call=calls["director"])  # fmt: skip
@@ -342,7 +342,7 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
 
     manifest = RunManifest(
         run_id=runs["risk"], job="risk", job_kind="persona", chain_run_id=chain, step_index=3,
-        attempt=1, reason=f"chain:{runs['scout']}", scheduled_for=at - dt.timedelta(minutes=3),
+        attempt=1, reason=f"chain:{runs['sweep']}", scheduled_for=at - dt.timedelta(minutes=3),
         tick_now=at - dt.timedelta(minutes=3), started_at=at - dt.timedelta(minutes=3),
         finished_at=at - dt.timedelta(minutes=1), duration_ms=120_000, market_session="open",
         trading_day=at.date(), status="ok", arc_env="paper", account_profile="cash_debit",

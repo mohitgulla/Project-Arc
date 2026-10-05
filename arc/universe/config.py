@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+import structlog
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from arc.config import ArcSettings
+
+log = structlog.get_logger()
 
 __all__ = [
     "DEFAULT_UNIVERSE_CONFIG",
@@ -131,7 +134,19 @@ class ExtractionConfig(BaseModel):
 class EarningsConfig(BaseModel):
     model_config = _FORBID
 
-    scout: Literal["seed", "all"] = "seed"
+    sweep: Literal["seed", "all"] = "seed"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_scout_key(cls, data: object) -> object:
+        """D54: ``earnings.scout`` (pre-rename) loads as ``earnings.sweep`` for one release."""
+        if isinstance(data, dict) and "scout" in data:
+            data = dict(data)
+            old = data.pop("scout")
+            if "sweep" not in data:
+                data["sweep"] = old
+            log.warning("universe.config_alias", old="earnings.scout", new="earnings.sweep")
+        return data
 
 
 class TierScreen(BaseModel):

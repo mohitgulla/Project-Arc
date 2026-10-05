@@ -12,7 +12,7 @@ from arc.budget import Tier, current_budget
 from arc.config import ArcSettings
 from arc.context.store import ContextStore
 from arc.context.ttl import to_db
-from arc.ingest.scout import load_fixture_docs
+from arc.ingest.sweep import load_fixture_docs
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
 from arc.pipeline.env import FIXTURE_SETS
 from arc.pipeline.runner import open_db, run_propose

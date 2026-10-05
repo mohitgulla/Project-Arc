@@ -30,8 +30,8 @@ from hypothesis import strategies as st
 from arc.config import ArcSettings
 from arc.context.store import ContextStore
 from arc.context.ttl import Ttl, to_db
-from arc.ingest.llm import FixtureScoutLLM
-from arc.ingest.scout import load_fixture_docs
+from arc.ingest.llm import FixtureSweepLLM
+from arc.ingest.sweep import load_fixture_docs
 from arc.journal.reasons import ReasonCode
 from arc.models import LegIntent, Stance
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
@@ -368,7 +368,7 @@ class TestDirectorPortfolioAware:
                 {"structure_id": "bogus", "status": "weakened", "reason": "ignored"},
             ],
         )
-        env.llms["director"] = FixtureScoutLLM([reply])
+        env.llms["director"] = FixtureSweepLLM([reply])
         conn, report = _run(settings, routines, env, conn=conn)
         assert not report.failed
         prompt = env.llms["director"].prompts[0]  # type: ignore[attr-defined]
@@ -422,7 +422,7 @@ class TestDirectorPortfolioAware:
              "portfolio_fit": "neutral"},  # the Director did not call it concentration
         ]  # fmt: skip
         d["excluded"] = []
-        env.llms["director"] = FixtureScoutLLM([json.dumps(d)])
+        env.llms["director"] = FixtureSweepLLM([json.dumps(d)])
         conn, report = _run(settings, routines, env, conn=conn)
         sl = _shortlist(conn)
         assert [(i["ticker"], i["rank"]) for i in sl["shortlist"]] == [("XOM", 1), ("PLTR", 2)]
@@ -440,7 +440,7 @@ class TestDirectorPortfolioAware:
         d = json.loads((FIXTURES_DIR / "director.json").read_text())
         d["shortlist"] = [{**d["shortlist"][0], "stance": "bearish"}]
         d["excluded"] = []
-        env.llms["director"] = FixtureScoutLLM([json.dumps(d)])
+        env.llms["director"] = FixtureSweepLLM([json.dumps(d)])
         conn, report = _run(settings, routines, env, conn=conn)
         assert _shortlist(conn)["shortlist"] == []
         assert _outcome(report, "director").metrics["drop_at_cap"] == 1
@@ -448,7 +448,7 @@ class TestDirectorPortfolioAware:
 
     def test_no_trade_reason_is_journalled(self, settings, routines) -> None:  # noqa: ANN001
         env = PipelineEnv.fixtures()
-        env.llms["director"] = FixtureScoutLLM(
+        env.llms["director"] = FixtureSweepLLM(
             [
                 _director_reply(
                     shortlist=[],
@@ -467,7 +467,7 @@ class TestDirectorPortfolioAware:
         assert "No trade: No Fit" in _posted(notes)
         assert not report.proposals
         # the chain stopped after the Director: no Quant / Risk LLM calls
-        assert [o.job for o in report.outcomes] == ["scout", "director"]
+        assert [o.job for o in report.outcomes] == ["sweep", "director"]
         assert d.metrics["stop_chain"] is True
         assert env.llms["quant"].prompts == [] and env.llms["risk"].prompts == []  # type: ignore[attr-defined]
 
@@ -477,7 +477,7 @@ class TestDirectorPortfolioAware:
         routines,  # noqa: ANN001
     ) -> None:
         env = PipelineEnv.fixtures()
-        env.llms["director"] = FixtureScoutLLM([_director_reply(shortlist=[], excluded=[])])
+        env.llms["director"] = FixtureSweepLLM([_director_reply(shortlist=[], excluded=[])])
         conn, _ = _run(settings, routines, env)
         assert _shortlist(conn)["no_trade_reason"] == "no_fit"
 
@@ -571,7 +571,7 @@ class TestMarketGuard:
         assert not sl["market_guard"]["opens_allowed"]
         assert not report.proposals
         assert "No trade: market unclear" in _posted(notes)
-        assert [o.job for o in report.outcomes] == ["scout", "director"]
+        assert [o.job for o in report.outcomes] == ["sweep", "director"]
         assert env.llms["quant"].prompts == [] and env.llms["risk"].prompts == []  # type: ignore[attr-defined]
 
     def test_exits_ignore_the_guard(self, settings: ArcSettings) -> None:

@@ -29,20 +29,20 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class ScoutInput:
-    """Input context for the Scout prompt builder."""
+class SweepInput:
+    """Input context for the Sweep prompt builder."""
 
     universe: list[str]
     raw_feeds: list[str]  # pre-fetched text from RSS/EDGAR/earnings/YouTube
     scan_date: str  # ISO-8601
     min_confidence: float | None = None  # threshold the pipeline will apply
-    output_schema_json: str = ""  # JSON Schema of ScoutOutput, embedded verbatim
+    output_schema_json: str = ""  # JSON Schema of SweepOutput, embedded verbatim
     # D28/D51: True = `universe` is the watch list (core + momentum + trending) and
     # any US-listed optionable
     # ticker the feeds discuss may be proposed (screened deterministically after).
     open_universe: bool = False
     # D30: True = `raw_feeds` are stage-1 story digests (clustered, source-counted),
-    # not raw documents; the prompt then tells the Scout to weigh evidence, not volume.
+    # not raw documents; the prompt then tells the Sweep to weigh evidence, not volume.
     digests: bool = False
     # E4.8a (D46): code-built Finnhub facts, one line per ticker ("" = flag off).
     ticker_facts: str = ""
@@ -50,7 +50,7 @@ class ScoutInput:
 
 @dataclass(frozen=True)
 class StoryDigestInput:
-    """Input for the Scout stage-1 story digest prompt (E4.5, D30)."""
+    """Input for the Sweep stage-1 story digest prompt (E4.5, D30)."""
 
     stories: list[str]  # rendered stories, each with its docs
     scan_date: str
@@ -61,7 +61,7 @@ class StoryDigestInput:
 class DirectorInput:
     """Input context for the Director prompt builder."""
 
-    candidates_json: str  # serialized ScoutOutput
+    candidates_json: str  # serialized SweepOutput
     regime_features_json: str  # serialized regime/IV/HV data
     portfolio_summary: str  # current portfolio state
     scan_date: str
@@ -1092,14 +1092,14 @@ by a deterministic gate — you provide narrative and suggestions, not decisions
 
 
 # ---------------------------------------------------------------------------
-# Scout
+# Sweep
 # ---------------------------------------------------------------------------
 
 
-def build_scout_prompt(inp: ScoutInput) -> str:
-    """Build the Scout persona prompt.
+def build_sweep_prompt(inp: SweepInput) -> str:
+    """Build the Sweep persona prompt.
 
-    Scout scans raw information feeds and surfaces Candidate objects.
+    Sweep scans raw information feeds and surfaces Candidate objects.
     """
     feeds_block = "\n---\n".join(inp.raw_feeds) if inp.raw_feeds else "(no feeds)"
     threshold_line = (
@@ -1150,8 +1150,8 @@ def build_scout_prompt(inp: ScoutInput) -> str:
     else:
         feed_kind = ""
     return f"""{_SYSTEM_PREAMBLE}
-## Role: Scout (Information Retrieval)
-Slack label: [Scout]
+## Role: Sweep (Information Retrieval)
+Slack label: [Sweep]
 
 You scan raw information sources (RSS, SEC EDGAR, earnings calendars, YouTube
 {scope}
@@ -1187,7 +1187,7 @@ Date: {inp.scan_date}
 FEEDS>>>
 {_ticker_facts_section(inp.ticker_facts, header="##")}
 ## Output format
-Respond with ONLY a JSON object (no prose, no code fences) matching the ScoutOutput schema:
+Respond with ONLY a JSON object (no prose, no code fences) matching the SweepOutput schema:
 {{
   "candidates": [
     {{
@@ -1206,7 +1206,7 @@ Respond with ONLY a JSON object (no prose, no code fences) matching the ScoutOut
 
 
 def build_story_digest_prompt(inp: StoryDigestInput) -> str:
-    """Scout stage 1 (E4.5, D30): one short digest per story, cheap tier, batched.
+    """Sweep stage 1 (E4.5, D30): one short digest per story, cheap tier, batched.
 
     The pipeline already clustered near-duplicates and counted distinct sources;
     this call only compresses each story so stage 2 reads a bounded prompt.
@@ -1218,8 +1218,8 @@ def build_story_digest_prompt(inp: StoryDigestInput) -> str:
         else ""
     )
     return f"""{_SYSTEM_PREAMBLE}
-## Role: Scout — story digest (stage 1)
-Slack label: [Scout]
+## Role: Sweep — story digest (stage 1)
+Slack label: [Sweep]
 
 Each item below is one STORY: one or more documents (from one or several sources)
 that the pipeline grouped because they report the same event. Summarise each story
@@ -1274,7 +1274,7 @@ def build_director_prompt(inp: DirectorInput) -> str:
 ## Role: Director (Aggregator)
 Slack label: [Director]
 
-You receive candidates from Scout plus regime features and portfolio state.
+You receive candidates from Sweep plus regime features and portfolio state.
 Your job: rank every candidate you would consider trading by conviction (no cap),
 each with a thesis, suggested structure type and up to 3 grounded evidence facts;
 exclude the rest with a one-line reason; assess the overall market regime.
@@ -1286,7 +1286,7 @@ exclude the rest with a one-line reason; assess the overall market regime.
 
 ## Inputs
 
-### Candidates (from Scout)
+### Candidates (from Sweep)
 {scrub_carried_text(inp.candidates_json)}
 
 ### Regime features

@@ -156,7 +156,7 @@ def mentions_dte(text: str) -> bool:
 def scrub_carried_text(text: str) -> str:
     """Replace persona-written DTE / delta ranges in carried-over prose.
 
-    Earlier persona output (notes, the shortlist, Quant structures, Scout
+    Earlier persona output (notes, the shortlist, Quant structures, Sweep
     rationales) is context, not instructions: a window a persona improvised
     ("prefer N-M DTE", "short strikes at N-M delta") must not reach the next
     prompt as a rule, so each such range is rewritten to ``configured-range``

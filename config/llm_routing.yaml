@@ -19,6 +19,6 @@ personas:
   director: frontier
   quant:    frontier
   risk:     frontier
-  scout:    cheap
+  sweep:    cheap
   investor: cheap
   auditor:  cheap

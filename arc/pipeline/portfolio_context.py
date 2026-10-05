@@ -131,10 +131,10 @@ def _thesis(conn: sqlite3.Connection, row: Mapping[str, Any]) -> PortfolioThesis
     ).fetchone()
     return PortfolioThesis(
         director=str(prop["thesis"]) if prop else "",
-        scout_catalyst=str(cand["catalyst_type"]) if cand else None,
-        scout_catalyst_date=cand["catalyst_date"] if cand else None,
-        scout_stance=Stance(cand["stance"]) if cand else None,
-        scout_confidence=float(cand["confidence"]) if cand else None,
+        sweep_catalyst=str(cand["catalyst_type"]) if cand else None,
+        sweep_catalyst_date=cand["catalyst_date"] if cand else None,
+        sweep_stance=Stance(cand["stance"]) if cand else None,
+        sweep_confidence=float(cand["confidence"]) if cand else None,
     )
 
 
@@ -286,7 +286,7 @@ def build_portfolio_context(
         if review is None:
             warnings.append(f"{row['ticker']} {row['id']}: no marks (P&L unknown)")
         thesis = _thesis(conn, row)
-        stance = thesis.scout_stance or structure_stance(st)
+        stance = thesis.sweep_stance or structure_stance(st)
         max_loss_total = float(st.max_loss or 0) * n
         g = _scale(st.greeks, n)
         opened_greeks = Greeks(
@@ -484,8 +484,8 @@ def render_portfolio_context(
     for p in pc.positions[:limit]:
         th = p.thesis
         thesis = th.director.strip() or "(no thesis on record)"
-        cat = f"{th.scout_catalyst}" + (
-            f" {th.scout_catalyst_date}" if th.scout_catalyst_date else ""
+        cat = f"{th.sweep_catalyst}" + (
+            f" {th.sweep_catalyst_date}" if th.sweep_catalyst_date else ""
         )
         lines.append(
             f"- {p.structure_id} {p.ticker} {p.kind or 'structure'} {p.stance.value} "
@@ -504,8 +504,8 @@ def render_portfolio_context(
             + (f"; signals: {', '.join(p.signals)}" if p.signals else "")
             + f"\n  Thesis: {thesis}"
             + (
-                f" [Scout: {th.scout_stance.value if th.scout_stance else '?'} {cat}]"
-                if th.scout_catalyst
+                f" [Sweep: {th.sweep_stance.value if th.sweep_stance else '?'} {cat}]"
+                if th.sweep_catalyst
                 else ""
             )
         )

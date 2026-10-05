@@ -141,7 +141,7 @@ def test_summary_lists_options_for_categorical_keys(svc: ControlService) -> None
     assert "_(options: scanner | managed_net_ev | rorc_day | vrp)_" in card.text
     assert "_(options: intraday | eod)_" in card.text
     # the active profile's DTE window, the E6.4 knobs and routines are all in the summary
-    for key in ("profiles.cash_debit.dte_min", "realloc_min_edge", "routines.scout.cadence"):
+    for key in ("profiles.cash_debit.dte_min", "realloc_min_edge", "routines.sweep.cadence"):
         assert f"`{key}`" in card.text
     assert all(len(b["text"]["text"]) <= 3000 for b in card.blocks if "text" in b)
 
@@ -176,8 +176,8 @@ def test_unknown_key() -> None:
 def test_aliases_and_patterns() -> None:
     assert lookup("per_underlying_cap").key == "max_alloc_pct"
     assert lookup("profile").key == "account_profile"
-    r = lookup("routines.scout.enabled")
-    assert r.target is Target.ROUTINES and r.path == ("scout", "enabled")
+    r = lookup("routines.sweep.enabled")
+    assert r.target is Target.ROUTINES and r.path == ("sweep", "enabled")
     p = lookup("profiles.cash_debit.dte_min")
     assert p.path == ("profiles", "cash_debit", "dte_min")
 
@@ -201,8 +201,8 @@ def test_aliases_and_patterns() -> None:
         ("exits.long_call.time_targets", "14", "expected"),
         ("exits.long_call.time_targets", "99:0.3", "out of range"),
         ("exits.long_call.time_targets", "14:0.3,14:0.2", "duplicate"),
-        ("routines.scout.cadence", "sometimes", "use 'every"),
-        ("routines.scout.cadence", "at 25:00", "invalid time"),
+        ("routines.sweep.cadence", "sometimes", "use 'every"),
+        ("routines.sweep.cadence", "at 25:00", "invalid time"),
         ("dte_max", "5%", "percentage"),
         ("slippage_frac", "1.5", "outside"),
     ],
@@ -227,10 +227,10 @@ def test_parse_values() -> None:
         {"dte_lte": 14, "take_profit_pct": 0.35},
     ]
     assert parse_value(lookup("exits.long_call.time_targets"), "none") == []
-    assert parse_value(lookup("routines.scout.cadence"), "Every 30m 09:00-16:00") == (
+    assert parse_value(lookup("routines.sweep.cadence"), "Every 30m 09:00-16:00") == (
         "every 30m 09:00-16:00"
     )
-    assert parse_value(lookup("routines.scout.cadence"), "at 09:30, 12:00") == "at 09:30,12:00"
+    assert parse_value(lookup("routines.sweep.cadence"), "at 09:30, 12:00") == "at 09:30,12:00"
     assert parse_value(lookup("step_seconds"), "30s") == 30
     with pytest.raises(TunableError, match="not in ARC_APPROVER"):
         parse_value(lookup("approver_ids"), "U0NEWUSER1", base_list=[OWNER])
@@ -257,7 +257,7 @@ def test_directions() -> None:
     assert direction(uni, ["SPY"], ["SPY", "NVDA"]) is Direction.RISKIER
     assert direction(uni, ["SPY", "NVDA"], ["SPY"]) is Direction.SAFER
     assert direction(lookup("pipeline_scan_top"), 3, 5) is Direction.NEUTRAL
-    assert direction(lookup("routines.scout.enabled"), True, False) is Direction.RISKIER
+    assert direction(lookup("routines.sweep.enabled"), True, False) is Direction.RISKIER
     evl = lookup("exits.long_call.stop_eval")
     assert direction(evl, "intraday", "eod") is Direction.RISKIER
 
@@ -604,17 +604,17 @@ def test_stop_eval_and_targets_round_trip(svc: ControlService) -> None:
 
 
 def test_routine_override(conn: sqlite3.Connection, svc: ControlService) -> None:
-    r = svc.set("routines.scout.enabled", "off", actor=OWNER, source="slack")
+    r = svc.set("routines.sweep.enabled", "off", actor=OWNER, source="slack")
     assert r.pending is not None
     svc.confirm(r.pending.code, actor=OWNER, source="slack")
     cfg = effective_routines(conn)
-    assert cfg.personas["scout"].enabled is False
-    r = svc.set("routines.scout.cadence", "every 60m 09:00-16:00", actor=OWNER, source="slack")
+    assert cfg.personas["sweep"].enabled is False
+    r = svc.set("routines.sweep.cadence", "every 60m 09:00-16:00", actor=OWNER, source="slack")
     assert r.pending is not None
     svc.confirm(r.pending.code, actor=OWNER, source="slack")
-    spec = effective_routines(conn).personas["scout"]
+    spec = effective_routines(conn).personas["sweep"]
     assert spec.every is not None and spec.window is not None
-    assert svc.view("routines.scout.cadence").value == "every 60m 09:00-16:00"
+    assert svc.view("routines.sweep.cadence").value == "every 60m 09:00-16:00"
     bad = svc.set("routines.nope.enabled", "off", actor=OWNER, source="slack")
     assert bad.outcome == "refused"
 

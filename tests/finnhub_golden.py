@@ -194,11 +194,11 @@ def director_prompt(snap: Any, **extra: Any) -> str:
     return build_director_prompt(inp)
 
 
-def scout_prompt(**extra: Any) -> str:
-    from arc.personas.builders import ScoutInput, build_scout_prompt
+def sweep_prompt(**extra: Any) -> str:
+    from arc.personas.builders import SweepInput, build_sweep_prompt
 
-    return build_scout_prompt(
-        ScoutInput(
+    return build_sweep_prompt(
+        SweepInput(
             universe=["SPY", "AAPL"],
             raw_feeds=["[story s1] category=company tickers=AAPL,NVDA\n  summary"],
             scan_date="2026-10-06",
@@ -218,4 +218,4 @@ def sha(text: str) -> str:
 if __name__ == "__main__":  # pragma: no cover - run by hand against origin/main
     sys.path.insert(0, sys.argv[1])
     print("director", sha(director_prompt(snapshot())))
-    print("scout", sha(scout_prompt()))
+    print("sweep", sha(sweep_prompt()))

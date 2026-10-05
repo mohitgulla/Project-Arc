@@ -20,7 +20,7 @@ import structlog
 
 from arc.config import ArcSettings
 from arc.context.store import ContextStore
-from arc.ingest.llm import FixtureScoutLLM
+from arc.ingest.llm import FixtureSweepLLM
 from arc.personas.builders import (
     DirectorInput,
     QuantInput,
@@ -315,7 +315,7 @@ class TestScrub:
 
 
 def _run(settings: ArcSettings, env: PipelineEnv):  # noqa: ANN202
-    from arc.ingest.scout import load_fixture_docs
+    from arc.ingest.sweep import load_fixture_docs
     from arc.pipeline.runner import run_propose
     from arc.routines.heartbeat import RecordingNotifier
 
@@ -408,7 +408,7 @@ class TestPipeline:
             if sk["ticker"] == "NVDA":
                 sk["reason"] = "50 DTE, outside the window"
         env = PipelineEnv.fixtures()
-        env.llms["quant"] = FixtureScoutLLM([json.dumps(quant)])
+        env.llms["quant"] = FixtureSweepLLM([json.dumps(quant)])
         with structlog.testing.capture_logs() as logs:
             conn, _ = _run(_settings("margin"), env)
         hits = [e for e in logs if e["event"] == "quant.dte_rule_outside_config"]

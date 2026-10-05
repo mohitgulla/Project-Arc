@@ -15,7 +15,7 @@ Policy (E5.4 §3, tuned in E5.3, cards in E5.5):
   can also raise an immediate notice (e.g. the intraday monitor tripping the daily-loss halt).
 - Day thread: a post goes to today's session thread while today is a trading
   session and it is before ``heartbeat.day_rollover`` (default 24:00 ET, so the
-  22:00 Scout stays in that day's thread). Weekend/holiday posts go to the
+  22:00 Sweep stays in that day's thread). Weekend/holiday posts go to the
   **next** session's thread, so Sunday night's StockedUp run lands in Monday's.
 
 Posting is best-effort: a Slack error is logged and never fails the run.
@@ -45,7 +45,7 @@ _PENDING_KEY = "heartbeat:pending_sources"
 _MAX_PENDING_JOBS = 50
 _ROUTINES_LABEL = "[Routines]"
 _PERSONA_LABELS = {
-    "scout": "[Scout]",
+    "sweep": "[Sweep]",
     "director": "[Director]",
     "quant": "[Quant]",
     "risk": "[Risk]",
@@ -338,8 +338,8 @@ class Heartbeats:
 
         E5.5b: a ``[Routines]`` line (non-persona job) is posted inside a ```
         code block, folded sources included. On a card the folded sources go in
-        a ``[Scout] Session notes`` section before the audit footer (the sources
-        belong to the Scout, whatever card they land on).
+        a ``[Sweep] Session notes`` section before the audit footer (the sources
+        belong to the Sweep, whatever card they land on).
         """
         label = label_for(job)
         line = f"{label} {job} ✓ {text}".rstrip()
@@ -421,15 +421,15 @@ def _detail(job: str, text: str, *, sep: str = ": ", inline: bool = False) -> st
 
 
 def _fold_sources_into_card(blocks: Blocks, folded: str) -> Blocks:
-    """Put the folded sources line in ``[Scout] Session notes`` before the footer.
+    """Put the folded sources line in ``[Sweep] Session notes`` before the footer.
 
     The footer (a context block of audit ids, always last on a digest card) stays
-    last. When the card already has a ``[Scout] Session notes`` section, the line
+    last. When the card already has a ``[Sweep] Session notes`` section, the line
     is appended to it; otherwise a new one is inserted before the footer.
     """
     body = [*blocks]
     footer = body.pop() if body and body[-1].get("type") == "context" else None
-    title = f"*{persona_label(Persona.SCOUT)} Session notes*"
+    title = f"*{persona_label(Persona.SWEEP)} Session notes*"
     idx = next(
         (
             i
@@ -443,7 +443,7 @@ def _fold_sources_into_card(blocks: Blocks, folded: str) -> Blocks:
         body[idx] = {"type": "section", "text": {"type": "mrkdwn", "text": B.clip(merged)}}
     else:
         body = body[: B.MAX_BLOCKS - 2]
-        section = B.persona_section(Persona.SCOUT, "Session notes", folded)
+        section = B.persona_section(Persona.SWEEP, "Session notes", folded)
         assert section is not None  # ``folded`` is never empty
         body.append(section)
     if footer is not None:

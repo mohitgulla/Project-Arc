@@ -101,7 +101,7 @@ def fetch_rss(
     """Fetch all configured RSS feeds and store new entries.
 
     *source_keys* maps a feed URL to its E4.5 registry name (``wsj_markets``); the
-    name is stored on each doc so the Scout's per-source budget can group by feed.
+    name is stored on each doc so the Sweep's per-source budget can group by feed.
     *max_ages* (D47) maps a feed URL to its category's freshness window: an entry
     older than that at *now* is never stored (logged per feed as
     ``ingest.skipped_stale``). Returns only newly stored documents (duplicates are

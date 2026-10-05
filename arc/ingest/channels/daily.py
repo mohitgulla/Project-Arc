@@ -8,7 +8,7 @@ validated :class:`~arc.models.ChannelBrief` per channel::
         ──▶ newest qualifying video inside the window (metadata fetched only until
             a video is older than now - lookback)
         ──▶ transcript (captions, then audio; shared caption breaker + audio cap)
-        ──▶ raw_doc (source_key youtube.<slug>, scout_status brief_only)
+        ──▶ raw_doc (source_key youtube.<slug>, sweep_status brief_only)
         ──▶ channel processor (LLM extraction + verbatim-quote check)
         ──▶ channel_briefs row (hard expiry = run + ttl) + channel_brief context entry
 
@@ -44,7 +44,7 @@ from arc.context.categories import (
 from arc.context.ttl import parse_duration
 from arc.ingest.channels.base import BriefParseError
 from arc.ingest.channels.briefs import STATUS_ACTIVE, ChannelBriefRepo, video_from_row
-from arc.ingest.llm import ScoutLLMError
+from arc.ingest.llm import SweepLLMError
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from arc.config import ArcSettings
     from arc.ingest.channels import ChannelRegistry
     from arc.ingest.channels.base import ProcessResult
-    from arc.ingest.llm import ScoutLLM
+    from arc.ingest.llm import SweepLLM
     from arc.ingest.youtube import TranscriptSession
     from arc.models import ChannelBrief
     from arc.universe.ingest import IngestUniverse
@@ -62,7 +62,7 @@ log = structlog.get_logger()
 
 JOB = "youtube.briefs"
 SOURCE_PREFIX = "youtube."
-SCOUT_STATUS_BRIEF_ONLY = "brief_only"
+SWEEP_STATUS_BRIEF_ONLY = "brief_only"
 LIVE_STATUSES = frozenset({"is_live", "is_upcoming", "post_live"})
 SHORTS_MAX_SECONDS = 60
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -396,7 +396,7 @@ def run_daily_briefs(
     settings: ArcSettings,
     cfg: DailyBriefConfig,
     *,
-    llm: ScoutLLM,
+    llm: SweepLLM,
     session: TranscriptSession,
     now: _dt.datetime,
     ttl: _dt.timedelta,
@@ -514,7 +514,7 @@ def run_daily_briefs(
                 universe=universe.mention_universe(video.transcript),
                 price_lookup=price_lookup,
             )
-        except (ScoutLLMError, BriefParseError) as exc:
+        except (SweepLLMError, BriefParseError) as exc:
             cr.outcome, cr.error = Outcome.ERROR, _no_text_reason(exc)
             cr.wall_s = clock() - started
             log.error("youtube.brief_failed", channel=ch.slug, video_id=vid, error=cr.error)
@@ -561,7 +561,7 @@ def _items(brief: ChannelBrief) -> int:
 
 
 def mark_brief_only(conn: sqlite3.Connection, doc_ids: list[str]) -> None:
-    """Close YouTube docs for the Scout: they reach trading only through briefs (D45)."""
+    """Close YouTube docs for the Sweep: they reach trading only through briefs (D45)."""
     from arc.ingest.store import RawDocRepo
 
     RawDocRepo(conn).mark_brief_only(doc_ids, run_id=JOB)

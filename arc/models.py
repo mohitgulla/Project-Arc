@@ -16,12 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 from arc.utils.calendar import ET
 
 # ---------------------------------------------------------------------------
-# Candidate (from Scout persona)
+# Candidate (from Sweep persona)
 # ---------------------------------------------------------------------------
 
 
 class CatalystType(StrEnum):
-    """Type of catalyst identified by the Scout."""
+    """Type of catalyst identified by the Sweep."""
 
     EARNINGS = "earnings"
     MACRO = "macro"
@@ -39,9 +39,9 @@ class Stance(StrEnum):
 
 
 class Candidate(BaseModel):
-    """A trading candidate surfaced by the Scout persona.
+    """A trading candidate surfaced by the Sweep persona.
 
-    Funnel discipline (E4.2): this is the only Scout artefact that flows
+    Funnel discipline (E4.2): this is the only Sweep artefact that flows
     downstream to the scanner. It deliberately carries **no free text** —
     every field is an enum, a symbol, a number, a date or a source URL.
     Persona rationale stays in the audit store and never leaves it.

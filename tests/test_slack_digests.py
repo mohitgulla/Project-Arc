@@ -198,13 +198,13 @@ def journal(**kw: Any) -> AuditorOutput:
 
 
 # ---------------------------------------------------------------------------
-# Scout
+# Sweep
 # ---------------------------------------------------------------------------
 
 
-class TestScout:
+class TestSweep:
     def test_title_rows_rejects_and_footer(self) -> None:
-        view = D.scout_card(
+        view = D.sweep_card(
             docs=12,
             accepted=3,
             candidates=[cand(), cand("XOM", stance=Stance.BEARISH, catalyst_date=None)],
@@ -215,7 +215,7 @@ class TestScout:
             chain_run_id="chain-1",
         )
         assert (
-            view.text == view.blocks[0]["text"]["text"] == "[Scout] Scan: 12 Sources → 2 Candidates"
+            view.text == view.blocks[0]["text"]["text"] == "[Sweep] Scan: 12 Sources → 2 Candidates"
         )
         text = _all(view)
         assert "*3* accepted this run · 3 rejected" in text
@@ -236,16 +236,16 @@ class TestScout:
         )
         assert "•" not in sections[0] and "•" not in sections[1]
         assert "source" not in text.lower().replace("sources →", "")
-        assert "http" not in text  # owner: no source links on the Scout card
+        assert "http" not in text  # owner: no source links on the Sweep card
         assert "• not in universe (2): PLTR, AAPL" in text
         assert "• invalid reply (1): TSLA" in text
         assert _footer(view) == "run `run-1` · chain `chain-1`"
         _assert_slack_limits(view)
 
     def test_empty_run_and_failed_batches(self) -> None:
-        view = D.scout_card(docs=1, accepted=0, candidates=[], rejected={}, failed_batches=2)
+        view = D.sweep_card(docs=1, accepted=0, candidates=[], rejected={}, failed_batches=2)
         text = _all(view)
-        assert view.text == "[Scout] Scan: 1 Source → 0 Candidates"
+        assert view.text == "[Sweep] Scan: 1 Source → 0 Candidates"
         assert "*Candidates*\nnone" in text
         assert ":warning: 2 failed batches" in text
         assert "Rejected" not in text
@@ -254,7 +254,7 @@ class TestScout:
 
     def test_source_mix_story_count_and_corroboration(self) -> None:
         """D30: source mix fact with over-budget counts, story count, distinct sources."""
-        view = D.scout_card(
+        view = D.sweep_card(
             docs=70,
             accepted=1,
             candidates=[cand(corroboration=3)],
@@ -271,14 +271,14 @@ class TestScout:
         assert "75% confidence · 3 sources" in text
         _assert_slack_limits(view)
         one = _all(
-            D.scout_card(
+            D.sweep_card(
                 docs=1, accepted=0, candidates=[cand(corroboration=1)], rejected={}, stories=1
             )
         )
         assert "1 story" in one and "· 1 source" in one
 
     def test_escapes_rationale_and_rejected_names(self) -> None:
-        view = D.scout_card(
+        view = D.sweep_card(
             docs=1,
             accepted=1,
             candidates=[
@@ -296,7 +296,7 @@ class TestScout:
         # E5.5b: one section per candidate, so a long list is clipped to rows
         # plus a "+N more" line, and the whole card stays under 50 blocks.
         many = [cand(f"T{i}", sources=[f"https://example.com/{'z' * 80}/{i}"]) for i in range(80)]
-        view = D.scout_card(docs=80, accepted=80, candidates=many, rejected={"schema": 1})
+        view = D.sweep_card(docs=80, accepted=80, candidates=many, rejected={"schema": 1})
         _assert_slack_limits(view)
         contexts = [b["elements"][0]["text"] for b in view.blocks if b["type"] == "context"]
         assert any(t.startswith("+60 more: T20, T21") for t in contexts)
@@ -305,13 +305,13 @@ class TestScout:
 
     def test_ten_candidates_fit_without_clipping(self) -> None:
         many = [cand(f"T{i}") for i in range(10)]
-        view = D.scout_card(docs=10, accepted=10, candidates=many, rejected={})
+        view = D.sweep_card(docs=10, accepted=10, candidates=many, rejected={})
         _assert_slack_limits(view)
         assert "more" not in _all(view)
         assert sum(b["type"] == "divider" for b in view.blocks) == 10
 
     def test_long_rationale_is_clipped(self) -> None:
-        view = D.scout_card(
+        view = D.sweep_card(
             docs=1, accepted=1, candidates=[cand()], rejected={}, rationales={"NVDA": LONG}
         )
         _assert_slack_limits(view)
@@ -339,7 +339,7 @@ class TestDirector:
             out,
             candidates=5,
             dropped=[("AAPL", "not_a_candidate"), ("XOM", "not_picked"), ("TSLA", "not_picked")],
-            evidence={"SPY": "Scout neutral · macro catalyst Oct 28"},
+            evidence={"SPY": "Sweep neutral · macro catalyst Oct 28"},
             run_id="r",
             chain_run_id="c",
         )
@@ -348,11 +348,11 @@ class TestDirector:
         assert (
             "*SPY*\nRank 1 · Neutral · 70% confidence · Iron Condor\n"
             "Thesis: Range-bound into FOMC.\nRegime: Low realised vol.\n"
-            "Evidence: Scout neutral · macro"
+            "Evidence: Sweep neutral · macro"
         ) in text
         assert "Rank 2 · Bullish · 70% confidence · Vertical Spread" in text
         assert "[Director] SPY" not in text and "_Regime:_" not in text
-        assert "• not a Scout candidate (1): AAPL" in text
+        assert "• not a Sweep candidate (1): AAPL" in text
         assert "• not ranked or excluded by Director (2): XOM, TSLA" in text
         assert "*[Director] Session notes*\nTwo setups." in text
         assert _footer(view) == "run `r` · chain `c`"

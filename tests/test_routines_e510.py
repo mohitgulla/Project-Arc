@@ -56,7 +56,7 @@ YAML = """
       rss: {every: 30m, window: "06:00-20:00", days: trading}
       edgar: {every: 30m, window: "06:00-20:00", days: trading, lane: background}
     personas:
-      scout: {every: 30m, window: "09:00-16:00", days: trading, after_sources: true,
+      sweep: {every: 30m, window: "09:00-16:00", days: trading, after_sources: true,
               ttl: 20m, lane: background}
       director: {every: 30m, window: "09:00-16:00", days: trading, ttl: 5m}
 """
@@ -103,7 +103,7 @@ class Handlers:
         return handler
 
     def all(self) -> dict[str, Callable[[JobContext], JobResult]]:
-        return {n: self(n) for n in ("rss", "edgar", "scout", "director")}
+        return {n: self(n) for n in ("rss", "edgar", "sweep", "director")}
 
 
 @pytest.fixture
@@ -190,8 +190,8 @@ class TestConfig:
             "finnhub.fundamentals",
             "finnhub.insider",
             "finnhub.recs",
-            "scout",
-            "scout.overnight",
+            "sweep",
+            "sweep.overnight",
             "unusual_options",
             "youtube.briefs",
         ]  # fmt: skip  (E4.8: the Finnhub jobs wait on the shared 55/min budget)
@@ -217,8 +217,8 @@ class TestTickSpawns:
         report = make(conn, handlers=h, spawner=sp).tick(NOON)
         assert h.calls == ["rss", "director"]  # inline work only
         by_job = {o.job: o for o in report.outcomes}
-        assert by_job["edgar"].status == "spawned" and by_job["scout"].status == "spawned"
-        assert sp.run_ids() == [by_job["edgar"].run_id, by_job["scout"].run_id]
+        assert by_job["edgar"].status == "spawned" and by_job["sweep"].status == "spawned"
+        assert sp.run_ids() == [by_job["edgar"].run_id, by_job["sweep"].run_id]
         for run_id in sp.run_ids():
             assert status(conn, run_id) == "running"  # claimed: a doubled tick is a no-op
         argv, _ = sp.calls[0]
@@ -246,7 +246,7 @@ class TestTickSpawns:
         """Dry runs, tests and `arc routines run` keep the old behaviour."""
         h = Handlers()
         report = make(conn, handlers=h).tick(NOON)
-        assert sorted(h.calls) == ["director", "edgar", "rss", "scout"]
+        assert sorted(h.calls) == ["director", "edgar", "rss", "sweep"]
         assert {o.status for o in report.outcomes} == {"ok"}
 
     def test_busy_job_lock_defers_without_claiming(
@@ -255,13 +255,13 @@ class TestTickSpawns:
         """A previous run still holding the job's flock: deferred, nothing recorded."""
         sp, locks = Spawner(), LockManager(tmp_path)
         d = make(conn, spawner=sp, locks=locks)
-        with LockManager(tmp_path).hold("scout"):
+        with LockManager(tmp_path).hold("sweep"):
             report = d.tick(NOON)
-        scout = next(o for o in report.outcomes if o.job == "scout")
-        assert scout.status == "deferred" and scout.run_id is None
+        sweep = next(o for o in report.outcomes if o.job == "sweep")
+        assert sweep.status == "deferred" and sweep.run_id is None
         assert [r for r in sp.run_ids() if status(conn, r)] and len(sp.calls) == 1  # edgar
         assert (
-            conn.execute("SELECT COUNT(*) FROM routine_runs WHERE job='scout'").fetchone()[0] == 0
+            conn.execute("SELECT COUNT(*) FROM routine_runs WHERE job='sweep'").fetchone()[0] == 0
         )
 
     def test_spawn_failure_fails_the_run_and_alerts(self, conn: sqlite3.Connection) -> None:
@@ -269,14 +269,14 @@ class TestTickSpawns:
         d = make(conn, spawner=Spawner(fail=True))
         d.heartbeats._notifier = notes  # type: ignore[attr-defined]
         report = d.tick(NOON)
-        scout = next(o for o in report.outcomes if o.job == "scout")
-        assert scout.status == "failed" and "spawn failed" in scout.reason
-        assert scout.run_id is not None and status(conn, scout.run_id) == "failed"
+        sweep = next(o for o in report.outcomes if o.job == "sweep")
+        assert sweep.status == "failed" and "spawn failed" in sweep.reason
+        assert sweep.run_id is not None and status(conn, sweep.run_id) == "failed"
         assert any("spawn failed" in text for _, text in notes.posts)
 
     def test_tick_does_not_wait_on_slow_background_jobs(self, conn: sqlite3.Connection) -> None:
-        """Scout + EDGAR sleep 1.5 s each; the tick's inline work is far below that."""
-        h = Handlers(sleep=1.5, slow=frozenset({"scout", "edgar"}))
+        """Sweep + EDGAR sleep 1.5 s each; the tick's inline work is far below that."""
+        h = Handlers(sleep=1.5, slow=frozenset({"sweep", "edgar"}))
         t0 = time.monotonic()
         report = make(conn, handlers=h, spawner=Spawner()).tick(NOON)
         elapsed = time.monotonic() - t0
@@ -344,8 +344,8 @@ class TestRunClaimed:
         self, conn: sqlite3.Connection, tmp_path: Path
     ) -> None:
         h = Handlers()
-        d, run_id = self._claimed(conn, "scout", handlers=h, locks=LockManager(tmp_path))
-        with LockManager(tmp_path).hold("scout"):
+        d, run_id = self._claimed(conn, "sweep", handlers=h, locks=LockManager(tmp_path))
+        with LockManager(tmp_path).hold("sweep"):
             (out,) = d.run_claimed(run_id)
         assert out.status == "skipped" and "previous run still going" in out.reason
         assert h.calls == [] and status(conn, run_id) == "skipped"
@@ -356,7 +356,7 @@ class TestRunClaimed:
 
     def test_halt_is_checked_in_the_child(self, conn: sqlite3.Connection) -> None:
         h = Handlers()
-        d, run_id = self._claimed(conn, "scout", handlers=h, halted=lambda: True)
+        d, run_id = self._claimed(conn, "sweep", handlers=h, halted=lambda: True)
         (out,) = d.run_claimed(run_id)
         assert out.status == "skipped" and out.reason == "halted (persona)"
         assert h.calls == [] and status(conn, run_id) == "skipped"
@@ -368,48 +368,48 @@ class TestRunClaimed:
 
 
 class TestAfterSources:
-    """D39: a background Scout waits (bounded) for same-tick background sources."""
+    """D39: a background Sweep waits (bounded) for same-tick background sources."""
 
-    def test_scout_waits_for_running_same_tick_source(self, conn: sqlite3.Connection) -> None:
+    def test_sweep_waits_for_running_same_tick_source(self, conn: sqlite3.Connection) -> None:
         sp = Spawner()
         make(conn, spawner=sp).tick(NOON)
         repo = RoutineRunRepo(conn)
-        edgar_id, scout_id = sp.run_ids()
+        edgar_id, sweep_id = sp.run_ids()
         order: list[str] = []
 
-        def sleep(_s: float) -> None:  # the source finishes while the Scout waits
+        def sleep(_s: float) -> None:  # the source finishes while the Sweep waits
             order.append("wait")
             repo.finish(edgar_id, status=RunStatus.OK, summary="done", now=NOON)
 
         h = Handlers()
         d = make(conn, handlers=h, sleep=sleep)
-        (out, *_) = d.run_claimed(scout_id)
+        (out, *_) = d.run_claimed(sweep_id)
         assert out.status == "ok"
-        assert order == ["wait"] and h.calls == ["scout"]
+        assert order == ["wait"] and h.calls == ["sweep"]
 
     def test_no_wait_when_sources_already_done(self, conn: sqlite3.Connection) -> None:
         sp = Spawner()
         make(conn, spawner=sp).tick(NOON)
-        edgar_id, scout_id = sp.run_ids()
+        edgar_id, sweep_id = sp.run_ids()
         RoutineRunRepo(conn).finish(edgar_id, status=RunStatus.OK, now=NOON)
         waits: list[float] = []
-        make(conn, sleep=waits.append).run_claimed(scout_id)
+        make(conn, sleep=waits.append).run_claimed(sweep_id)
         assert waits == []
 
     def test_wait_is_bounded(self, conn: sqlite3.Connection) -> None:
-        """A stuck source never holds the Scout past tick.after_sources_wait."""
+        """A stuck source never holds the Sweep past tick.after_sources_wait."""
         routines = cfg(after_sources_wait="1s")
         sp = Spawner()
         make(conn, routines, spawner=sp).tick(NOON)
-        _, scout_id = sp.run_ids()
+        _, sweep_id = sp.run_ids()
         h = Handlers()
-        (out, *_) = make(conn, routines, handlers=h).run_claimed(scout_id)
-        assert out.status == "ok" and h.calls == ["scout"]
+        (out, *_) = make(conn, routines, handlers=h).run_claimed(sweep_id)
+        assert out.status == "ok" and h.calls == ["sweep"]
 
     def test_other_ticks_sources_are_ignored(self, conn: sqlite3.Connection) -> None:
         sp = Spawner()
         make(conn, spawner=sp).tick(NOON)
-        edgar_id, scout_id = sp.run_ids()
+        edgar_id, sweep_id = sp.run_ids()
         RoutineRunRepo(conn).finish(edgar_id, status=RunStatus.OK, now=NOON)
         # an older, still-running edgar run from an earlier tick
         RoutineRunRepo(conn).claim(
@@ -417,7 +417,7 @@ class TestAfterSources:
             now=NOON - dt.timedelta(hours=1),
         )  # fmt: skip
         waits: list[float] = []
-        make(conn, sleep=waits.append).run_claimed(scout_id)
+        make(conn, sleep=waits.append).run_claimed(sweep_id)
         assert waits == []
 
 
@@ -429,12 +429,12 @@ class TestAfterSources:
 class TestLLMLock:
     def test_remote_routes_take_no_llm_lock(self, conn: sqlite3.Connection) -> None:
         d = make(conn, routing=REMOTE)
-        assert d._lock_names(["scout"]) == ["scout"]
+        assert d._lock_names(["sweep"]) == ["sweep"]
         assert LLM_LOCK not in d._lock_names(["director"])
 
     def test_local_routes_take_the_llm_lock(self, conn: sqlite3.Connection) -> None:
         d = make(conn, routing=LOCAL)
-        assert d._lock_names(["scout"]) == ["scout", LLM_LOCK]
+        assert d._lock_names(["sweep"]) == ["sweep", LLM_LOCK]
         assert d._lock_names(["rss"]) == ["rss"]  # sources never call an LLM
 
     def test_mixed_routing_per_persona(self, conn: sqlite3.Connection) -> None:
@@ -447,7 +447,7 @@ class TestLLMLock:
         )
         routines = cfg(YAML.replace("ttl: 5m}", "ttl: 5m, chain: [quant]}"))
         d = make(conn, routines, routing=routing)
-        assert d._lock_names(["scout"]) == ["scout"]
+        assert d._lock_names(["sweep"]) == ["sweep"]
         assert d._lock_names(["director", "quant"]) == ["director", LLM_LOCK]
 
     def test_unreadable_routing_fails_safe(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
@@ -461,9 +461,9 @@ class TestLLMLock:
             handlers=Handlers().all(),
             settings_factory=lambda: ArcSettings(llm_routing_file=bad, _env_file=None),  # type: ignore[call-arg]
         )
-        assert d._lock_names(["scout"]) == ["scout", LLM_LOCK]
+        assert d._lock_names(["sweep"]) == ["sweep", LLM_LOCK]
 
-    def test_scout_holding_llm_lock_no_longer_blocks_the_loop(
+    def test_sweep_holding_llm_lock_no_longer_blocks_the_loop(
         self, conn: sqlite3.Connection, tmp_path: Path
     ) -> None:
         h = Handlers()
@@ -471,14 +471,14 @@ class TestLLMLock:
         with LockManager(tmp_path).hold(LLM_LOCK):
             report = d.tick(NOON)
         assert {o.job: o.status for o in report.outcomes}["director"] == "ok"
-        assert "scout" in h.calls
+        assert "sweep" in h.calls
 
     def test_local_route_still_serialises(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
         h = Handlers()
         d = make(conn, handlers=h, locks=LockManager(tmp_path), routing=LOCAL)
         with LockManager(tmp_path).hold(LLM_LOCK):
             report = d.tick(NOON)
-        assert {o.job: o.status for o in report.outcomes}["scout"] == "deferred"
+        assert {o.job: o.status for o in report.outcomes}["sweep"] == "deferred"
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +496,7 @@ def test_tick_heartbeat_records_duration_and_slowest(conn: sqlite3.Connection) -
     assert hb is not None
     assert hb.detail["tick_duration_ms"] == 1234
     slow = hb.detail["slowest_jobs"]
-    assert len(slow) == 3 and {s["job"] for s in slow} <= {"rss", "edgar", "scout", "director"}
+    assert len(slow) == 3 and {s["job"] for s in slow} <= {"rss", "edgar", "sweep", "director"}
     assert all(isinstance(s["ms"], int) for s in slow)
 
 

@@ -12,7 +12,7 @@ import datetime as _dt  # noqa: TC003 - pydantic field
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arc.journal.reasons import ReasonCode
 from arc.models import Greeks, Stance
@@ -105,10 +105,21 @@ class PortfolioThesis(BaseModel):
     model_config = _FORBID
 
     director: str = Field("", description="The Director's thesis when the position was proposed")
-    scout_catalyst: str | None = None
-    scout_catalyst_date: str | None = None
-    scout_stance: Stance | None = None
-    scout_confidence: float | None = None
+    sweep_catalyst: str | None = None
+    sweep_catalyst_date: str | None = None
+    sweep_stance: Stance | None = None
+    sweep_confidence: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_scout_keys(cls, data: object) -> object:
+        """D54: payloads stored before the rename carry ``scout_*`` keys (the Sweep)."""
+        if isinstance(data, dict) and any(str(k).startswith("scout_") for k in data):
+            return {
+                (f"sweep_{k[len('scout_') :]}" if str(k).startswith("scout_") else k): v
+                for k, v in data.items()
+            }
+        return data
 
 
 class PortfolioPosition(BaseModel):

@@ -20,7 +20,7 @@
 #                   one channel_brief each, fresh for the day; the Director reads them
 #   05:30           D51 active universe resolve; Mon: symbol master refresh (E5.7)
 #   06:00           earnings calendar; rss (15m) / edgar (15m) polling until 20:00
-#   09:00-16:00     Scout every 30 min (15 in-session runs; after the fast sources)
+#   09:00-16:00     Sweep every 30 min (15 in-session runs; after the fast sources)
 #   09:30-16:00     intraday monitor every 10 min (D35/D52: positions, Greeks, marks + account
 #                   fields for the tower, expiries, halts; 40 slots, 16:00 inclusive)
 #   09:40-15:50     trading loop every 10 min (38 slots, D52): director -> quant -> risk ->
@@ -32,13 +32,13 @@
 #   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop; E10.5 posts)
 #   16:45 Fri       weekly scorecard
 #   18:00           earnings calendar
-#   22:00 daily     overnight Scout (after-close fast sources; Sunday 22:00 feeds Monday).
-#                   YouTube never reaches the Scout (D45): briefs only, at 05:00.
+#   22:00 daily     overnight Sweep (after-close fast sources; Sunday 22:00 feeds Monday).
+#                   YouTube never reaches the Sweep (D45): briefs only, at 05:00.
 #
 # lane (D39 / E5.10): `background` = the tick claims the slot, spawns a detached
 # `arc routines run-claimed <run_id>` and moves on, so a slow job never delays the
 # 10-min loop. Chosen by measured p90 > 30 s (run_manifests, 3 days). A background
-# Scout (after_sources) waits up to tick.after_sources_wait for the background
+# Sweep (after_sources) waits up to tick.after_sources_wait for the background
 # sources claimed in the same tick, then reads what is committed.
 #
 # notify (E5.5): sources default `quiet` (folded into the next persona post);
@@ -51,11 +51,11 @@ tick:
   interval: 10m         # D52: the Hermes cron calls `arc routines tick` at */10 on the clock
   max_lookback: 7d      # never look further back than this for missed slots
   dispatch_grace: 10m   # E6.2e: release a dispatched approval whose Investor never started
-  after_sources_wait: 5m   # D39: a background Scout waits at most this for same-tick background sources
+  after_sources_wait: 5m   # D39: a background Sweep waits at most this for same-tick background sources
 
 heartbeat:
   # Posts before this time on a trading day go to that day's #arc-investor thread;
-  # "24:00" = the whole calendar day (the 22:00 Scout stays in that day). Weekend/holiday
+  # "24:00" = the whole calendar day (the 22:00 Sweep stays in that day). Weekend/holiday
   # posts go to the NEXT session's.
   day_rollover: "24:00"
 
@@ -71,7 +71,7 @@ monitoring:
     monitor: 20m           # 10-min cadence (D52): two slots without finishing means it is wedged
     director: 20m          # D31/D52 trading loop: same rule (loop.max_runtime is 4m)
   # E8.2a: one alert per missed slot only for slow jobs; fast jobs (10-min loop,
-  # monitor, scout, rss) get one `coverage:<job>` condition per job instead.
+  # monitor, sweep, rss) get one `coverage:<job>` condition per job instead.
   per_slot_min_interval: 60m   # slots >= this far apart: one `missed_window` alert per slot
   coverage_window: 60m         # rolling window for `coverage:<job>` and `tick_slow`
   coverage_min: 0.8            # coverage:<job> fails below this share of slots run
@@ -146,14 +146,14 @@ context_ttl:
 # D47/D49 (E4.7, E4.9): six source categories, weighted EQUALLY (not per source). A
 # source's `weight:` is its share INSIDE its category, so a new feed (or YouTube channel)
 # splits its category's share instead of growing it. `max_age` is the category's
-# freshness window: the Scout never reads an older doc (closed `skipped_stale`), the
-# rss/edgar connectors never store one, and Scout story/candidate entries expire at
+# freshness window: the Sweep never reads an older doc (closed `skipped_stale`), the
+# rss/edgar connectors never store one, and Sweep story/candidate entries expire at
 # min(1 session, max_age + 2h). D49: the Director's "Context by category" block also
 # lists a typed context entry (options data, macro calendar, briefs, Finnhub kinds) older
 # than its category's max_age as `stale (age)`, never as fresh (its context TTL is
 # unchanged). A source may set its own `max_age:` (none does). Weight 0-5 and max_age
 # 30m-7d are tunable from Slack (`!arc config set categories.<c>.weight|max_age`).
-# market_news, company_data and macro_data share the Scout's `scout_doc_budget`;
+# market_news, company_data and macro_data share the Sweep's `sweep_doc_budget`;
 # options_data and the two YouTube categories reach the Director as typed context only.
 # Old names `company`, `macro` (and company_news/filings/calendar) load as logged
 # aliases for one release; `video` was split (each channel declares its category).
@@ -165,11 +165,11 @@ categories:              # D49: equal weight per category; sources split their c
   youtube_macro: {weight: 1, max_age: 24h, label: YouTube macro}
   youtube_micro: {weight: 1, max_age: 24h, label: YouTube micro}
 
-# D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Scout
+# D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Sweep
 # source; each RSS feed is its own source. Every source job that writes context (or
 # every one of its feeds) declares `category:` (one of the six above; a missing or
 # unknown one fails config load). Other knobs: weight (default 1), max_docs_per_run,
-# label (shown in the Scout card's source mix). The Scout reads `scout_doc_budget` docs
+# label (shown in the Sweep card's source mix). The Sweep reads `sweep_doc_budget` docs
 # per run, split equally across categories with fresh docs, then by weighted
 # round-robin inside a category; the rest wait, and are closed `skipped_budget` once
 # older than the raw_doc_ref TTL above.
@@ -195,8 +195,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
       - {slug: bravos, channel: UCOHxDwCcOzBaLkeTazanwcw, label: Bravos, category: youtube_macro, skip_shorts: true, title_exclude: []}   # D49: ~2 long-form/week, 10-22 min, ~15:00-18:00 ET
   rss:                          # owner pick 2026-09-28: broad market, single names, macro
     label: RSS news
-    about: "Polls the news feeds (WSJ, CNBC, Nasdaq, Seeking Alpha, Fed) and stores new articles for the Scout"
-    every: 15m                  # D31: at least as often as the 30-min Scout
+    about: "Polls the news feeds (WSJ, CNBC, Nasdaq, Seeking Alpha, Fed) and stores new articles for the Sweep"
+    every: 15m                  # D31: at least as often as the 30-min Sweep
     window: "06:00-20:00"
     days: trading
     writes: [raw_doc_ref]
@@ -216,6 +216,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     label: Earnings
     about: "Finnhub earnings calendar (7 days back, 30 ahead) for event risk"
     age_basis: ingested         # D47: calendar rows are always "the latest pull", never stale by date
+    feed: scout                 # D54: slow feed (06:00/18:00); the Sweep never reads these docs, next_earnings() still does
     writes: [raw_doc_ref]
     # E4.1d: the free tier silently caps a call at row_cap rows (keeping the latest dates),
     # so the window (today - lookback_days .. today + horizon_days) is fetched in
@@ -340,9 +341,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     size: 25
   universe.trending:            # E12.3 / D51: daily rules-based top 25 (no Alpaca ranking input)
     label: Trending tier
-    about: "Daily top 25 popular names (news flow, Reddit, Stocktwits, Scout); relaxed screen"
+    about: "Daily top 25 popular names (news flow, Reddit, Stocktwits, Sweep); relaxed screen"
     group: other
-    schedule: ["08:45"]         # before the open, after the overnight Scout; `arc universe trending` = by hand
+    schedule: ["08:45"]         # before the open, after the overnight Sweep; `arc universe trending` = by hand
     days: trading
     ttl: 1h                     # a missed 08:45 slot still runs until 09:45
     # context_ttl default for universe_tier: 1 session, supersede latest. A failed run
@@ -357,7 +358,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
       # Equal weights: trend_score = sum of input scores / number of ENABLED inputs. An
       # input with no fresh data scores 0 for every name (never renormalised). Adding
       # or removing an input is config only; `type` picks the adapter
-      # (news | apewisdom | stocktwits | scout). Alpaca is never a ranking input.
+      # (news | apewisdom | stocktwits | sweep). Alpaca is never a ranking input.
       inputs:
         news:                   # distinct raw_docs source_keys per ticker (EDGAR = 1)
           type: news
@@ -375,18 +376,18 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
           type: stocktwits
           label: Stocktwits trending
           urls: [https://api.stocktwits.com/api/2/trending/symbols.json]
-        scout:                  # candidates rows, weighted by corroboration
-          type: scout
-          label: Scout corroboration
+        sweep:                  # candidates rows, weighted by corroboration
+          type: sweep
+          label: Sweep corroboration
           lookback_sessions: 3
           max_age: 3d
 
-# E4.8a (D46/D44): Finnhub per-ticker facts in the Scout/Director prompts. The switch
+# E4.8a (D46/D44): Finnhub per-ticker facts in the Sweep/Director prompts. The switch
 # is `personas.finnhub_context` below (default off = prompts unchanged); these are its
 # knobs. Experiment XP-2 (config/experiments/live/xp2_finnhub_context.yaml) tests `on`.
 finnhub_context:
   max_chars_per_ticker: 300     # rendered facts line per ticker (hard budget)
-  scout_max_tickers: 8          # Scout: tickers its story digests name, first N
+  sweep_max_tickers: 8          # Sweep: tickers its story digests name, first N
   director_max_tickers: 10      # Director: the candidates it ranks, first N
   max_age_days:                 # a part fetched longer ago than this is omitted
     earnings_history: 8
@@ -409,11 +410,11 @@ director_diversification:
 personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
-  scout:                        # D31: every 30 min in session (15 runs), after the fast sources
-    label: Scout
-    about: "Reads fresh news, filings and earnings; writes candidate ideas and story digests"
-    group: scout
-    persona: scout
+  sweep:                        # D31: every 30 min in session (15 runs), after the fast sources
+    label: Sweep
+    about: "Reads fresh news and filings; writes candidate ideas and story digests"
+    group: sweep
+    persona: sweep
     every: 30m
     window: "09:00-16:00"
     days: trading
@@ -421,19 +422,19 @@ personas:
     ttl: 20m                    # a slot missed by 20 min is skipped (the next one is closer)
     notify: card
     writes: [candidate, note, story, active_universe]   # note: scan summary (D27); story: D30 stage-1 digests; active_universe: D51 resolve at start
-    lane: background            # D39: p90 441 s; the tick never waits on the Scout
-  scout.overnight:              # D15/D31: 22:00 after-close fast sources (no YouTube, D45)
-    label: Overnight Scout
-    about: "After-close Scout run over the evening news; feeds the next session"
-    group: scout
-    persona: scout
+    lane: background            # D39: p90 441 s; the tick never waits on the Sweep
+  sweep.overnight:              # D15/D31: 22:00 after-close fast sources (no YouTube, D45)
+    label: Overnight Sweep
+    about: "After-close Sweep run over the evening news; feeds the next session"
+    group: sweep
+    persona: sweep
     schedule: ["22:00"]
     days: daily
     after_sources: true
     ttl: 3h
     notify: card
     writes: [candidate, note, story, active_universe]
-    lane: background            # D39: same Scout handler as above
+    lane: background            # D39: same Sweep handler as above
   director:                     # D31/D52: the 10-min trading loop (see `loop:` above)
     label: "Director → Quant → Risk → Propose → Execute"
     about: "10-min trading loop: pick ideas, price structures, risk review, propose, auto-approve, execute"
@@ -540,5 +541,5 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   # approvals / ladders forward); every other chain step defaults to `skip`.
   execute: {reads: [proposal], writes: [], llm: false, notify: summary, on_no_change: run}
 
-triggers: []                    # D31: no scout.completed -> director trigger any more; the 10-min
+triggers: []                    # D31: no sweep.completed -> director trigger any more; the 10-min
                                 # loop picks new candidates up within one slot

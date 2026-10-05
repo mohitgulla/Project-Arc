@@ -7,11 +7,11 @@ monitor, auditor, the 5-min Director loop), each with a D27 run manifest. On top
 
 - outcomes: the loop's root runs alternate full / ``no_change`` (the D31 digest skip:
   the chain's LLM steps are recorded as skipped); one failed ``edgar`` run; one skipped
-  Scout slot (halted); the last ``monitor`` slot still ``running``;
+  Sweep slot (halted); the last ``monitor`` slot still ``running``;
 - a Director run whose manifest writes a ``proposal`` entry it never declared (the
   contract-mismatch highlight), and snapshots of what the runs read;
 - context entries of every registered kind (active, and some expired in the last 24 h);
-- persona calls with tokens / latency / cost for every full loop, Scout batches, and
+- persona calls with tokens / latency / cost for every full loop, Sweep batches, and
   30 days of history for the LLM trend;
 - ops alerts in the 7-day window (with the base fixture's: 1 open, 4 resolved) and
   one older resolved one, a cleared halt from yesterday, a health heartbeat
@@ -64,8 +64,8 @@ _PERSONA_MODEL = {
     "director": "claude-sonnet-5",
     "quant": "claude-sonnet-5",
     "risk": "claude-sonnet-5",
-    "scout": "claude-sonnet-5",
-    "scout.digest": "claude-haiku-5",
+    "sweep": "claude-sonnet-5",
+    "sweep.digest": "claude-haiku-5",
     "risk.reallocate": "claude-haiku-5",
 }
 
@@ -283,7 +283,7 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
     chain: str | None = None
     seen: set[tuple[str, str]] = set()
     loop_n = 0
-    failed_done = scout_skipped = undeclared_done = False
+    failed_done = sweep_skipped = undeclared_done = False
     last_monitor = max((o.scheduled_for for o in outcomes if o.job == "monitor"), default=None)
     root_state: dict[str, str] = {}  # chain id -> "full" | "no_change" | "failed"
     call_n = 0
@@ -362,13 +362,13 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
             status, summary = "failed", None
             error = "HTTPError: 503 Service Unavailable (sec.gov)"
             failed_done = True
-        elif o.job == "scout" and not scout_skipped and o.scheduled_for.date() == today:
+        elif o.job == "sweep" and not sweep_skipped and o.scheduled_for.date() == today:
             status, summary = "skipped", "halted: trading halt active (persona jobs skip)"
-            scout_skipped = True
+            sweep_skipped = True
             dur = dt.timedelta(0)
-        elif o.job in ("scout", "scout.overnight"):
+        elif o.job in ("sweep", "sweep.overnight"):
             call_n += 1
-            calls.append(ops.call(rid_guess, "scout", started + dt.timedelta(seconds=25), call_n))
+            calls.append(ops.call(rid_guess, "sweep", started + dt.timedelta(seconds=25), call_n))
             cand = ops.entry(f"ctx-{rid_guess[8:]}-candidate", "candidate", "SPY",
                              at=started + dt.timedelta(seconds=40), ttl=dt.timedelta(hours=6),
                              by=o.job, run_id=rid_guess)  # fmt: skip
@@ -405,7 +405,7 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
                          finished=finished, chain=chain, snapshot_ids=snaps, outputs=out_ids,
                          calls=calls, extra=extra)  # fmt: skip
 
-    # -- LLM history: 30 days, a few calls a day, and Scout batches ------------------
+    # -- LLM history: 30 days, a few calls a day, and Sweep batches ------------------
     for d in range(1, 31):
         day_at = dt.datetime.combine(today - dt.timedelta(days=d), dt.time(11, 0), tzinfo=ET)
         for j, persona in enumerate(("director", "quant", "risk")):
@@ -415,9 +415,9 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
                          day_at + dt.timedelta(minutes=10 * k + j), call_n)  # fmt: skip
     for d in range(0, 8):
         at = now - dt.timedelta(days=d, hours=1)
-        for stage, model in (("digest", "claude-haiku-5"), ("scout", "claude-sonnet-5")):
+        for stage, model in (("digest", "claude-haiku-5"), ("sweep", "claude-sonnet-5")):
             tin, tout = 9000 + 500 * d, 1200
-            _ins(conn, "scout_batches", {
+            _ins(conn, "sweep_batches", {
                 "id": f"sb-ops-{d}-{stage}", "run_id": f"run-ops-sb-{d}", "model": model,
                 "doc_ids": "[]", "prompt_sha256": _sha(d, stage), "raw_response": "{}",
                 "status": "ok", "error": None, "accepted": 1, "rejected": "{}",
@@ -438,7 +438,7 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
                 "text": "fixture", "tickers_hint": '["SPY"]',
                 "content_hash": _sha("doc", s.key, k), "ingested_at": to_db(at),
                 "source_key": s.key,
-                "scout_status": "skipped_budget" if (i, k) == (1, 1)
+                "sweep_status": "skipped_budget" if (i, k) == (1, 1)
                 else "skipped_stale" if (i, k) == (0, 0) else "scouted",
             })  # fmt: skip
     _ins(conn, "ingest_cursors", {
@@ -450,7 +450,7 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
 
     # -- alerts (3 in the window, 1 open), a cleared halt, health checks --------------
     alerts = AlertRepo(conn)
-    # (the base fixture's open ``missed:scout`` alert is the one open alert)
+    # (the base fixture's open ``missed:sweep`` alert is the one open alert)
     alerts.open("stuck:monitor", "stuck_run", "monitor run still running after 10 min",
                 at=now - dt.timedelta(minutes=45))  # fmt: skip
     alerts.resolve("stuck:monitor", at=now - dt.timedelta(minutes=31))
@@ -491,11 +491,11 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
                         actor="U0OWNER", reason="tighten while halted", source="slack",
                         at=now - dt.timedelta(days=2), status="applied",
                         direction="safer")  # fmt: skip
-    changes.append(key="scout_min_confidence", old=0.6, new=0.5, is_default=False,
+    changes.append(key="sweep_min_confidence", old=0.6, new=0.5, is_default=False,
                    actor="U0OWNER", reason="more candidates", source="slack",
                    at=now - dt.timedelta(days=1, hours=6), status="applied",
                    direction="riskier")  # fmt: skip
-    changes.append(key="scout_min_confidence", old=0.5, new=None, is_default=True,
+    changes.append(key="sweep_min_confidence", old=0.5, new=None, is_default=True,
                    actor="U0OWNER", reason="revert", source="slack",
                    at=now - dt.timedelta(days=1), status="reverted", direction="safer",
                    supersedes_id=c1.id + 1)  # fmt: skip

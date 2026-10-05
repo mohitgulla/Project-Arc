@@ -324,7 +324,7 @@ def fetch_earnings(
     # earnings blackout need them for any name the open universe may trade). Without
     # a master (strict mode / no cache) this is the seed list, as before.
     uni = IngestUniverse.from_settings(settings, conn=conn)
-    seed_only_to_scout = uni.config.earnings.scout == "seed"
+    seed_only_to_sweep = uni.config.earnings.sweep == "seed"
     results: list[RawDoc] = []
     calendar_only: list[str] = []
 
@@ -377,14 +377,14 @@ def fetch_earnings(
 
         if doc_id is not None:
             results.append(doc)
-            if seed_only_to_scout and not uni.is_seed(symbol):
+            if seed_only_to_sweep and not uni.is_seed(symbol):
                 calendar_only.append(doc_id)
 
-    # Non-seed events are calendar data only (config/universe.yaml earnings.scout: seed):
-    # stored for next_earnings / the gate, but marked scouted so the ~1k-event calendar
-    # does not crowd the Scout's batches.
+    # Non-seed events are calendar data only (config/universe.yaml earnings.sweep: seed):
+    # stored for next_earnings / the gate, but marked swept so the ~1k-event calendar
+    # does not crowd the Sweep's batches.
     if calendar_only:
-        doc_repo.mark_scouted(calendar_only, run_id="earnings:calendar-only")
+        doc_repo.mark_swept(calendar_only, run_id="earnings:calendar-only")
 
     # The whole window was fetched: the next run starts from today (minus lookback).
     cursor_repo.set(CONNECTOR, today.isoformat())

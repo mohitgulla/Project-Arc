@@ -10907,7 +10907,7 @@
                 "type": "null"
               }
             ],
-            "description": "Share of the Scout doc budget (SourceRegistry.category_weights); null for categories the Scout never reads (typed context only)",
+            "description": "Share of the Sweep doc budget (SourceRegistry.category_weights); null for categories the Sweep never reads (typed context only)",
             "title": "Share"
           },
           "sources": {
@@ -11010,6 +11010,16 @@
             "title": "Failed 24H",
             "type": "integer"
           },
+          "feed": {
+            "default": "sweep",
+            "description": "D54: Director feed (sweep = fast, intraday; scout = slow, daily or slower)",
+            "enum": [
+              "sweep",
+              "scout"
+            ],
+            "title": "Feed",
+            "type": "string"
+          },
           "job": {
             "title": "Job",
             "type": "string"
@@ -11071,7 +11081,7 @@
                 "type": "null"
               }
             ],
-            "description": "Share of its category's Scout budget (registry); null for typed-context sources (options data, YouTube), which never draw on the doc budget",
+            "description": "Share of its category's Sweep budget (registry); null for typed-context sources (options data, YouTube), which never draw on the doc budget",
             "title": "Share In Category"
           },
           "skipped_budget_today": {

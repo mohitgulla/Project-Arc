@@ -38,7 +38,7 @@ DEFAULT_ROUTING_PATH = REPO_ROOT / "config" / "llm_routing.yaml"
 class Persona(StrEnum):
     """The six personas of PLAN §2.4 (D12 names)."""
 
-    SCOUT = "scout"
+    SWEEP = "sweep"
     DIRECTOR = "director"
     QUANT = "quant"
     RISK = "risk"

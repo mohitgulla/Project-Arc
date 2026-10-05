@@ -126,7 +126,7 @@ class RunnerConfig(BaseModel):
         default_factory=lambda: ["monitor", "positions.evaluate", "auditor", "investor"],
         description=(
             "Jobs an arm runs on its own store and account (position management, "
-            "reconcile, ladders). Sources and the Scout are shared from control; the loop "
+            "reconcile, ladders). Sources and the Sweep are shared from control; the loop "
             "runs paired; everything else is control's."
         ),
     )

@@ -469,7 +469,7 @@
           "title": "Director",
           "type": "string"
         },
-        "scout_catalyst": {
+        "sweep_catalyst": {
           "anyOf": [
             {
               "type": "string"
@@ -479,9 +479,9 @@
             }
           ],
           "default": null,
-          "title": "Scout Catalyst"
+          "title": "Sweep Catalyst"
         },
-        "scout_catalyst_date": {
+        "sweep_catalyst_date": {
           "anyOf": [
             {
               "type": "string"
@@ -491,9 +491,9 @@
             }
           ],
           "default": null,
-          "title": "Scout Catalyst Date"
+          "title": "Sweep Catalyst Date"
         },
-        "scout_confidence": {
+        "sweep_confidence": {
           "anyOf": [
             {
               "type": "number"
@@ -503,9 +503,9 @@
             }
           ],
           "default": null,
-          "title": "Scout Confidence"
+          "title": "Sweep Confidence"
         },
-        "scout_stance": {
+        "sweep_stance": {
           "anyOf": [
             {
               "$ref": "#/$defs/Stance"

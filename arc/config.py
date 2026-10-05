@@ -640,7 +640,7 @@ class ArcSettings(BaseSettings):
     # -- Ingestion (E4.1) ----------------------------------------------------
     ingest_rss_feeds: list[str] = Field(
         default_factory=list,
-        description="RSS feed URLs for the Scout connector.",
+        description="RSS feed URLs for the Sweep connector.",
     )
     ingest_rss_timeout_seconds: float = Field(
         default=20.0,
@@ -759,49 +759,49 @@ class ArcSettings(BaseSettings):
         ),
     )
 
-    # -- Scout candidate pipeline (E4.2) -------------------------------------
-    scout_hermes_bin: str = Field(
+    # -- Sweep candidate pipeline (E4.2) -------------------------------------
+    sweep_hermes_bin: str = Field(
         default="hermes",
-        description="Hermes CLI executable used for one-shot Scout calls.",
+        description="Hermes CLI executable used for one-shot Sweep calls.",
     )
-    scout_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
+    sweep_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
         default=240,
-        description="Timeout for a single Scout LLM batch call.",
+        description="Timeout for a single Sweep LLM batch call.",
     )
-    scout_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+    sweep_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.6,
-        description="Candidates below this Scout confidence are dropped.",
+        description="Candidates below this Sweep confidence are dropped.",
     )
-    scout_batch_size: Annotated[int, Field(ge=1, le=50)] = Field(
+    sweep_batch_size: Annotated[int, Field(ge=1, le=50)] = Field(
         default=8,
         description="Max stories digested per stage-1 (digest) LLM call (E4.5).",
     )
-    scout_max_doc_chars: Annotated[int, Field(ge=200)] = Field(
+    sweep_max_doc_chars: Annotated[int, Field(ge=200)] = Field(
         default=4000,
-        description="Per-document text budget in the Scout prompt (truncated beyond).",
+        description="Per-document text budget in the Sweep prompt (truncated beyond).",
     )
     # -- Source fairness + synthesis (E4.5, D30) --------------------------------
-    scout_doc_budget: Annotated[int, Field(ge=1, le=1000)] = Field(
+    sweep_doc_budget: Annotated[int, Field(ge=1, le=1000)] = Field(
         default=120,
         description=(
-            "D30: docs the Scout reads per run, shared across sources by weighted "
+            "D30: docs the Sweep reads per run, shared across sources by weighted "
             "round-robin (config/routines.yaml sources); the rest wait or are "
             "marked skipped_budget when their context TTL runs out."
         ),
     )
-    scout_story_threshold: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+    sweep_story_threshold: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.5,
         description="D30: token-set Jaccard of normalised headlines to cluster two docs.",
     )
-    scout_story_window_hours: Annotated[float, Field(gt=0, le=168)] = Field(
+    sweep_story_window_hours: Annotated[float, Field(gt=0, le=168)] = Field(
         default=24.0,
         description="D30: docs cluster into one story only within this many hours.",
     )
-    scout_story_batch_size: Annotated[int, Field(ge=1, le=200)] = Field(
+    sweep_story_batch_size: Annotated[int, Field(ge=1, le=200)] = Field(
         default=40,
-        description="D30: story digests per stage-2 Scout LLM call.",
+        description="D30: story digests per stage-2 Sweep LLM call.",
     )
-    scout_story_doc_chars: Annotated[int, Field(ge=100)] = Field(
+    sweep_story_doc_chars: Annotated[int, Field(ge=100)] = Field(
         default=1500,
         description="D30: per-document text in the stage-1 digest prompt (3 docs per story).",
     )
@@ -892,17 +892,17 @@ class ArcSettings(BaseSettings):
         default=UniverseMode.SEED,
         description=(
             "ARC_UNIVERSE_MODE: seed (default) = any symbol-master ticker that passes the "
-            "liquidity screen may become a Scout candidate; strict = universe only."
+            "liquidity screen may become a Sweep candidate; strict = universe only."
         ),
     )
     universe_config_file: Path | None = Field(
         default=None,
         description="ARC_UNIVERSE_CONFIG_FILE; None -> config/universe.yaml.",
     )
-    scout_max_new_tickers: Annotated[int, Field(ge=0, le=50)] = Field(
+    sweep_max_new_tickers: Annotated[int, Field(ge=0, le=50)] = Field(
         default=25,
         description=(
-            "Max discoveries (names in no D51 tier) the Scout may accept per run (D28, "
+            "Max discoveries (names in no D51 tier) the Sweep may accept per run (D28, "
             "D51: 25); extra ones are rejected as over_new_ticker_cap."
         ),
     )

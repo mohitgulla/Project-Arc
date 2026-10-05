@@ -5,7 +5,7 @@ every status (``ok``, ``failed``, ``skipped``), after the run's row is final.
 Handlers never write it, so no job can forget one. Handlers add only the
 external data they used, through :meth:`JobContext.record_input`; everything
 else is derived here from the run row, the context store, ``persona_calls`` /
-``scout_batches``, and the journal/proposal/gate tables.
+``sweep_batches``, and the journal/proposal/gate tables.
 
 Rules:
 
@@ -140,9 +140,9 @@ class RunManifest(BaseModel):
     # outputs
     output_ids: dict[str, list[str]]
     dropped: dict[str, int] = Field(default_factory=dict)
-    # LLM usage (derived from persona_calls / scout_batches of this run)
+    # LLM usage (derived from persona_calls / sweep_batches of this run)
     persona_call_ids: list[str] = Field(default_factory=list)
-    scout_batch_ids: list[str] = Field(default_factory=list)
+    sweep_batch_ids: list[str] = Field(default_factory=list)
     models_requested: list[str] = Field(default_factory=list)
     models_served: list[str] = Field(default_factory=list)
     prompt_sha256: list[str] = Field(default_factory=list)
@@ -295,7 +295,7 @@ def build_manifest(
     kind_versions = {k: KINDS[k].schema_version for k in sorted(contract_kinds) if k in KINDS}
     # LLM usage
     calls = _rows(conn, "SELECT * FROM persona_calls WHERE run_id = ? ORDER BY rowid", run.run_id)
-    batches = _rows(conn, "SELECT * FROM scout_batches WHERE run_id = ? ORDER BY rowid", run.run_id)
+    batches = _rows(conn, "SELECT * FROM sweep_batches WHERE run_id = ? ORDER BY rowid", run.run_id)
     dropped: Counter[str] = Counter()
     for c in calls:
         dropped.update(json.loads(c["dropped"] or "{}"))
@@ -305,11 +305,11 @@ def build_manifest(
     bkeys = set(batches[0].keys()) if batches else set()
 
     def col(name: str) -> list[Any]:
-        # E4.5: scout_batches carry usage (both Scout stages) since migration 015.
+        # E4.5: sweep_batches carry usage (both Sweep stages) since migration 015.
         out = [c[name] for c in calls] if name in keys else []
         return out + ([b[name] for b in batches] if name in bkeys else [])
 
-    personas = [c["persona"] for c in calls] + (["scout"] if batches else [])
+    personas = [c["persona"] for c in calls] + (["sweep"] if batches else [])
     served = sorted({*(c["model"] for c in calls), *(b["model"] for b in batches)})
     cost = _sum(col("cost_usd"))
     # downstream links
@@ -368,7 +368,7 @@ def build_manifest(
         output_ids=output_ids,
         dropped=dict(sorted(dropped.items())),
         persona_call_ids=[c["id"] for c in calls],
-        scout_batch_ids=[b["id"] for b in batches],
+        sweep_batch_ids=[b["id"] for b in batches],
         models_requested=_models_requested(personas, settings),
         models_served=served,
         prompt_sha256=[

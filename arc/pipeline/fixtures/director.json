@@ -33,7 +33,7 @@
     {
       "ticker": "BRK.B",
       "rank": 4,
-      "thesis": "Fixture: not among the offline Scout candidates, so the pipeline drops it.",
+      "thesis": "Fixture: not among the offline Sweep candidates, so the pipeline drops it.",
       "regime_context": "Fixture: uptrend.",
       "suggested_structure_type": "vertical_spread",
       "stance": "bullish",

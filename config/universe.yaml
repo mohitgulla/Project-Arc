@@ -7,17 +7,17 @@
 #              more than 30 names is a pre-D51 flat list and is ignored for this one)
 #   momentum   top 25 S&P 500 Momentum holdings, monthly (E12.2; context `universe_tier`)
 #   trending   up to 25 rules-based names, daily (E12.3; context `universe_tier`)
-#   discovery  today's Scout candidates in no other tier
+#   discovery  today's Sweep candidates in no other tier
 # Sizes and the active cap (50) are runtime tunables: universe_momentum_size,
 # universe_trending_size, universe_active_max. Overflow is journaled
 # universe:over_active_cap, never dropped silently.
 #
 # ARC_UNIVERSE_MODE picks the admission mode (no code change):
-#   seed    (default) core + momentum are always accepted (no screen, no Scout
+#   seed    (default) core + momentum are always accepted (no screen, no Sweep
 #           confidence floor). Any other US-listed ticker the sources surface may
-#           become a Scout candidate if it is in the symbol master below and passes
+#           become a Sweep candidate if it is in the symbol master below and passes
 #           its tier's liquidity screen (trending + discovery: relaxed). At most
-#           scout_max_new_tickers (25) discoveries per Scout run; trending names do
+#           sweep_max_new_tickers (25) discoveries per Sweep run; trending names do
 #           not count against it.
 #   strict  the active list is an allow-list (the pre-D28 behaviour).
 #
@@ -36,7 +36,7 @@ tiers:
   # market guard always has an SPY read. ETFs can still enter as trending/discoveries.
   market_reference: [SPY, QQQ]
   # E12.4: liquidity screen profile per screened tier (strict | relaxed). Core and
-  # momentum skip the screen and the Scout confidence floor (never configured here).
+  # momentum skip the screen and the Sweep confidence floor (never configured here).
   trending: {screen: relaxed}
   discovery: {screen: relaxed}
 
@@ -58,7 +58,7 @@ symbol_master:
   # (tradable / has_options flags). Relative paths are from the repo root.
   # The `symbols` source job (config/routines.yaml) refreshes it weekly, or run
   # `arc universe refresh`. An older file is still used (stale-file fallback,
-  # logged). With no file, ingest and the Scout fall back to the seed list
+  # logged). With no file, ingest and the Sweep fall back to the seed list
   # (non-seed names fail closed as unknown_symbol); they never fetch mid-run.
   cache: data/symbol_master.json
   refresh_days: 7
@@ -66,7 +66,7 @@ symbol_master:
   listed_exchanges: [Nasdaq, NYSE, CBOE]   # SEC exchange values; OTC / unlisted are left out
 
 liquidity_screen:
-  # Deterministic, no LLM. Runs on non-seed Scout candidates (D51: trending names and
+  # Deterministic, no LLM. Runs on non-seed Sweep candidates (D51: trending names and
   # discoveries; core + momentum are never screened) before they are written to
   # context. Every check must pass; a missing number fails closed. Two profiles; each
   # screened tier picks one under tiers.<tier>.screen. A pre-D51 flat block (keys
@@ -118,8 +118,8 @@ extraction:
 
 earnings:
   # Earnings events are kept for every symbol-master ticker (next_earnings and the
-  # gate's earnings blackout need them). scout: seed sends only seed-list events to
-  # the Scout; non-seed events are stored as calendar data (marked scouted) so the
+  # gate's earnings blackout need them). sweep: seed sends only seed-list events to
+  # the Sweep; non-seed events are stored as calendar data (marked swept) so the
   # ~1k-event calendar cannot crowd out the other sources before E4.5's per-source
-  # budgets land. scout: all sends every event to the Scout.
-  scout: seed
+  # budgets land. sweep: all sends every event to the Sweep.
+  sweep: seed

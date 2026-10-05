@@ -74,13 +74,13 @@ BASE_YAML = """
     sources:
       rss: {every: 30m, window: "06:00-20:00", days: trading}
     personas:
-      scout: {schedule: ["22:00", "12:00"], days: daily, after_sources: true, ttl: 3h}
+      sweep: {schedule: ["22:00", "12:00"], days: daily, after_sources: true, ttl: 3h}
       director: {schedule: ["09:00"], days: trading, chain: [quant, risk, propose], ttl: 2h,
                  writes: [shortlist]}
       auditor: {schedule: ["16:30"], days: trading, halt_exempt: true, ttl: 6h}
       investor: {trigger: approval}
     triggers:
-      - on: scout.completed
+      - on: sweep.completed
         if: "new_candidates > 0 and session == 'open'"
         run: director
 """
@@ -128,7 +128,7 @@ LOCAL_ROUTING = LLMRouting(
     personas={p: "local" for p in Persona},
 )
 
-ALL = ["rss", "scout", "director", "quant", "risk", "propose", "auditor", "investor"]
+ALL = ["rss", "sweep", "director", "quant", "risk", "propose", "auditor", "investor"]
 
 
 @pytest.fixture
@@ -175,17 +175,17 @@ def runs(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
 class TestConfig:
     def test_shipped_config_validates(self) -> None:
         c = load_routines(DEFAULT_ROUTINES_PATH)
-        assert c.personas["scout"].after_sources
+        assert c.personas["sweep"].after_sources
         assert c.personas["director"].chain == ["quant", "risk", "propose", "execute"]
-        # D31: the trading loop replaces the scout.completed -> director trigger.
-        assert c.triggers_for("scout.completed") == []
-        assert c.is_loop("director") and not c.is_loop("scout")
+        # D31: the trading loop replaces the sweep.completed -> director trigger.
+        assert c.triggers_for("sweep.completed") == []
+        assert c.is_loop("director") and not c.is_loop("sweep")
         assert c.personas["director"].every == dt.timedelta(minutes=10)  # D52
         assert str(c.personas["director"].window) == "09:40-15:50"
         assert c.personas["director"].ttl is not None
         assert c.personas["director"].ttl.duration == dt.timedelta(minutes=5)
-        assert c.personas["scout"].every == dt.timedelta(minutes=30)
-        assert c.personas["scout.overnight"].schedule == [dt.time(22, 0)]
+        assert c.personas["sweep"].every == dt.timedelta(minutes=30)
+        assert c.personas["sweep.overnight"].schedule == [dt.time(22, 0)]
         assert c.sources["youtube.briefs"].schedule == [dt.time(5, 0)]  # D45 / E4.6
         assert c.monitoring.stuck_after_for("director") == dt.timedelta(minutes=20)
         assert c.loop.max_idle == dt.timedelta(minutes=30)
@@ -214,12 +214,12 @@ class TestConfig:
               edgar:             {every: 15m, window: "06:00-20:00", days: trading}
               earnings:          {schedule: ["06:00", "18:00"], days: trading}
             personas:
-              scout:    {schedule: ["22:00", "12:00"], days: daily, after_sources: true}
+              sweep:    {schedule: ["22:00", "12:00"], days: daily, after_sources: true}
               director: {schedule: ["09:00"], days: trading, chain: [quant, risk, propose]}
               auditor:  {schedule: ["16:30"], days: trading}
               investor: {trigger: approval}
             triggers:
-              - on: scout.completed
+              - on: sweep.completed
                 if: "new_candidates > 0 and session == 'open'"
                 run: director
             """
@@ -479,7 +479,7 @@ class TestTick:
     def test_sources_run_before_after_sources_persona(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
         report = d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
-        assert rec.calls == ["rss", "scout"]
+        assert rec.calls == ["rss", "sweep"]
         assert [o.status for o in report.outcomes] == ["ok", "ok"]
 
     def test_duplicate_tick_does_not_double_run(self, conn: sqlite3.Connection) -> None:
@@ -487,7 +487,7 @@ class TestTick:
         now = et(2026, 9, 28, 12, 0)
         d.tick(now, since=et(2026, 9, 28, 11, 55))
         report = d.tick(now, since=et(2026, 9, 28, 11, 55))  # e.g. cron fired twice
-        assert rec.calls == ["rss", "scout"]
+        assert rec.calls == ["rss", "sweep"]
         assert {o.status for o in report.outcomes} == {"duplicate"}
         # and a second dispatcher on the same DB (overlapping process) agrees
         d2, rec2, _ = make(conn)
@@ -501,7 +501,7 @@ class TestTick:
         d.tick(et(2026, 9, 28, 12, 0))
         d.tick(et(2026, 9, 28, 12, 5))
         d.tick(et(2026, 9, 28, 12, 30))
-        assert rec.calls == ["rss", "scout", "rss"]
+        assert rec.calls == ["rss", "sweep", "rss"]
 
     def test_catchup_runs_missed_job_once(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
@@ -538,11 +538,11 @@ class TestTick:
         d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
         d.tick(et(2026, 9, 28, 16, 30), since=et(2026, 9, 28, 16, 25))
         assert rec.calls == ["rss", "rss", "auditor"]  # rss at 12:00 and 16:30
-        assert ("scout", "skipped", "2026-09-28T16:00:00.000000Z") in runs(conn)
+        assert ("sweep", "skipped", "2026-09-28T16:00:00.000000Z") in runs(conn)
 
     def test_halt_blocks_triggered_persona(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
-        rec.metrics["scout"] = {"new_candidates": 2}
+        rec.metrics["sweep"] = {"new_candidates": 2}
         d._halt_state["halted"] = False  # type: ignore[attr-defined]
         original = d._fire
 
@@ -561,18 +561,18 @@ class TestTick:
         report = d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
         rss = next(o for o in report.outcomes if o.job == "rss")
         assert rss.status == "failed" and "boom" in rss.summary
-        assert rec.calls == ["rss", "scout"]  # one failed job doesn't stop the tick
+        assert rec.calls == ["rss", "sweep"]  # one failed job doesn't stop the tick
         assert any("FAILED" in text and "rss" in text for _, text in notes.posts)
         row = RoutineRunRepo(conn).get(rss.run_id or "")
         assert row is not None and row.error and "boom" in row.error
 
     def test_handler_skip_and_bad_return(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
-        rec.skip.add("scout")
+        rec.skip.add("sweep")
         d.handlers["rss"] = lambda ctx: "nope"  # type: ignore[assignment,return-value]
         report = d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
         by_job = {o.job: o for o in report.outcomes}
-        assert by_job["scout"].status == "skipped"
+        assert by_job["sweep"].status == "skipped"
         assert by_job["rss"].status == "failed" and "JobResult" in by_job["rss"].summary
 
     def test_unimplemented_persona_is_skipped_not_failed(self, conn: sqlite3.Connection) -> None:
@@ -642,8 +642,8 @@ class TestChains:
 
     def test_manual_run_and_errors(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
-        d.run_manual("scout", now=et(2026, 9, 28, 13, 7))
-        assert rec.calls == ["rss", "scout"]  # after_sources
+        d.run_manual("sweep", now=et(2026, 9, 28, 13, 7))
+        assert rec.calls == ["rss", "sweep"]  # after_sources
         rec.calls.clear()
         d.run_manual("director", now=et(2026, 9, 28, 13, 8), chain=True, fresh=True)
         assert rec.calls == ["director", "quant", "risk", "propose"]
@@ -658,19 +658,19 @@ class TestChains:
 class TestTriggers:
     def test_trigger_condition_true_runs_director_chain(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
-        rec.metrics["scout"] = {"new_candidates": 2}
+        rec.metrics["sweep"] = {"new_candidates": 2}
         report = d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
-        assert rec.calls == ["rss", "scout", "director", "quant", "risk", "propose"]
+        assert rec.calls == ["rss", "sweep", "director", "quant", "risk", "propose"]
         director = next(o for o in report.outcomes if o.job == "director")
-        assert director.reason == "event:scout.completed"
+        assert director.reason == "event:sweep.completed"
 
     def test_trigger_condition_false(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
-        rec.metrics["scout"] = {"new_candidates": 0}
+        rec.metrics["sweep"] = {"new_candidates": 0}
         d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
         assert "director" not in rec.calls
         # candidates but market closed (22:00 run) -> no director
-        rec.metrics["scout"] = {"new_candidates": 5}
+        rec.metrics["sweep"] = {"new_candidates": 5}
         d.tick(et(2026, 9, 28, 22, 0), since=et(2026, 9, 28, 21, 55))
         assert "director" not in rec.calls
 
@@ -872,7 +872,7 @@ class TestHeartbeats:
         d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
         assert len(notes.posts) == 1
         text = notes.posts[0][1]
-        assert text.startswith("[Scout] scout ✓")
+        assert text.startswith("[Sweep] sweep ✓")
         assert "rss ×2 (last: rss done)" in text  # E5.3: repeated source runs fold into one
         assert notes.posts[0][0] == dt.date(2026, 9, 28)
 
@@ -882,25 +882,25 @@ class TestHeartbeats:
 
     @staticmethod
     def _card_dispatcher(
-        conn: sqlite3.Connection, scout_notify: str | None
+        conn: sqlite3.Connection, sweep_notify: str | None
     ) -> tuple[Dispatcher, RecordingNotifier]:
         from arc.slack.blocks import CardView, header
 
-        extra = f", notify: {scout_notify}" if scout_notify else ""
+        extra = f", notify: {sweep_notify}" if sweep_notify else ""
         text = f"""
             sources:
               rss: {{every: 30m}}
             personas:
-              scout: {{schedule: ["12:00"]{extra}}}
+              sweep: {{schedule: ["12:00"]{extra}}}
         """
-        view = CardView(text="[Scout] Scan: 1 doc → 1 candidate", blocks=[header("card")])
+        view = CardView(text="[Sweep] Scan: 1 doc → 1 candidate", blocks=[header("card")])
         notes = RecordingNotifier()
         d = Dispatcher(
             conn,
             cfg(text),
             handlers={
                 "rss": lambda ctx: JobResult(summary="1 new doc"),
-                "scout": lambda ctx: JobResult(summary="1 docs → 1 accepted", card=view),
+                "sweep": lambda ctx: JobResult(summary="1 docs → 1 accepted", card=view),
             },
             notifier=notes,
             is_halted=lambda: False,
@@ -916,11 +916,11 @@ class TestHeartbeats:
     ) -> None:
         """``notify:`` in routines.yaml alone switches card / one-liner / quiet (E5.5)."""
         d, notes = self._card_dispatcher(conn, notify)
-        d.run_manual("scout", now=et(2026, 9, 28, 12, 0))
+        d.run_manual("sweep", now=et(2026, 9, 28, 12, 0))
         assert len(notes.posts) == posts
         if posts:
             # The fallback text is the unchanged one-liner in every mode.
-            assert notes.posts[0][1] == "[Scout] scout ✓ 1 docs → 1 accepted"
+            assert notes.posts[0][1] == "[Sweep] sweep ✓ 1 docs → 1 accepted"
             assert (notes.blocks[0] is not None) is has_blocks
 
     def test_card_default_without_a_card_falls_back_to_one_liner(
@@ -934,14 +934,14 @@ class TestHeartbeats:
     def test_card_folds_pending_sources(self, conn: sqlite3.Connection) -> None:
         d, notes = self._card_dispatcher(conn, None)
         Heartbeats(conn, notes).queue_source("rss", "3 new docs")
-        d.run_manual("scout", now=et(2026, 9, 28, 12, 0))
+        d.run_manual("sweep", now=et(2026, 9, 28, 12, 0))
         blocks = notes.blocks[0]
         assert blocks is not None
-        # E5.5b: the folded line is a [Scout] Session notes section before the
+        # E5.5b: the folded line is a [Sweep] Session notes section before the
         # footer; the footer stays last. The card fixture has no footer, so the
         # section is simply the last block here.
         assert blocks[-1]["text"]["text"] == (
-            "*[Scout] Session notes*\nsources since last update: rss: 3 new docs"
+            "*[Sweep] Session notes*\nsources since last update: rss: 3 new docs"
         )
         assert notes.posts[0][1].endswith("\n> sources since last update: rss: 3 new docs")
 
@@ -961,7 +961,7 @@ class TestHeartbeats:
 
     def test_shipped_config_cards_for_personas(self) -> None:
         r = load_routines(DEFAULT_ROUTINES_PATH)
-        for name in ("scout", "director", "auditor", "investor", "quant", "risk"):
+        for name in ("sweep", "director", "auditor", "investor", "quant", "risk"):
             assert r.step(name)[1].notify == "card", name
         assert r.step("propose")[1].notify == "summary"  # E6.1 owns the proposal card
         assert all(s.notify in (None, "quiet") for s in r.sources.values())
@@ -998,7 +998,7 @@ class TestHeartbeats:
 class TestLocks:
     def test_lock_busy_and_release(self, tmp_path: Path) -> None:
         a, b = LockManager(tmp_path), LockManager(tmp_path)
-        with a.hold("scout", LLM_LOCK):
+        with a.hold("sweep", LLM_LOCK):
             with pytest.raises(LockBusyError), b.hold("director", LLM_LOCK):
                 pass
             with b.hold("rss"):
@@ -1022,10 +1022,10 @@ class TestLocks:
         with LockManager(tmp_path).hold(LLM_LOCK):
             report = d.tick(et(2026, 9, 28, 12, 0))
         assert rec.calls == ["rss"]
-        assert next(o for o in report.outcomes if o.job == "scout").status == "deferred"
+        assert next(o for o in report.outcomes if o.job == "sweep").status == "deferred"
         assert [r[0] for r in runs(conn)] == ["rss"]
-        d.tick(et(2026, 9, 28, 12, 5))  # next tick, inside scout's 3h window
-        assert rec.calls == ["rss", "scout"]
+        d.tick(et(2026, 9, 28, 12, 5))  # next tick, inside sweep's 3h window
+        assert rec.calls == ["rss", "sweep"]
 
 
 class TestDryRunAndCli:
@@ -1034,7 +1034,7 @@ class TestDryRunAndCli:
         report = d.tick(et(2026, 9, 28, 12, 0), dry_run=True, since=et(2026, 9, 28, 11, 55))
         assert rec.calls == []
         assert runs(conn) == []
-        assert [o.job for o in report.outcomes] == ["rss", "scout", "director"]
+        assert [o.job for o in report.outcomes] == ["rss", "sweep", "director"]
         assert report.outcomes[-1].status == "may-run"
         lines = report.lines()
         assert "dry-run" in lines[0]
@@ -1044,11 +1044,11 @@ class TestDryRunAndCli:
         out = capsys.readouterr().out
         assert rc == 0
         order = [ln.split()[3] for ln in out.splitlines() if ln.strip()[:2].rstrip(".").isdigit()]
-        assert order[-1] == "scout"
-        # D31: 12:00 is a loop slot too; the loop runs before the Scout of the same tick.
+        assert order[-1] == "sweep"
+        # D31: 12:00 is a loop slot too; the loop runs before the Sweep of the same tick.
         # D45: no 12:00 YouTube slot any more (05:00 ET only).
         assert set(order[:-1]) == {"edgar", "rss", "director", "monitor"}
-        assert order.index("director") < order.index("scout")
+        assert order.index("director") < order.index("sweep")
         assert "quant" in out and "may-run" not in out  # no trigger any more
 
     def test_cli_validate_list_history_context(

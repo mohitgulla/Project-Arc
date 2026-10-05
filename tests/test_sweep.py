@@ -1,4 +1,4 @@
-"""Tests for the Scout candidate pipeline (E4.2)."""
+"""Tests for the Sweep candidate pipeline (E4.2)."""
 
 from __future__ import annotations
 
@@ -18,12 +18,13 @@ from pydantic import ValidationError
 from arc.config import ArcSettings
 from arc.ingest.llm import (
     FIXTURE_MODEL,
-    FixtureScoutLLM,
-    HermesScoutLLM,
+    FixtureSweepLLM,
+    HermesSweepLLM,
     LLMResult,
-    ScoutLLMError,
+    SweepLLMError,
 )
-from arc.ingest.scout import (
+from arc.ingest.store import RawDocRepo, SweepBatchRepo
+from arc.ingest.sweep import (
     FIXTURES_DIR,
     REJECT_SCHEMA,
     REJECT_SOURCE,
@@ -38,11 +39,10 @@ from arc.ingest.scout import (
     normalize_ticker,
     parse_catalyst_date,
     render_doc,
-    run_scout,
+    run_sweep,
     store_candidate,
-    validate_scout_candidate,
+    validate_sweep_candidate,
 )
-from arc.ingest.store import RawDocRepo, ScoutBatchRepo
 from arc.models import Candidate, CatalystType, Stance
 from arc.pipeline.env import FIXTURE_NOW
 from arc.store.db import connect
@@ -72,9 +72,9 @@ def settings() -> ArcSettings:
         env="paper",
         universe=sorted(UNIVERSE),
         universe_mode="strict",
-        scout_min_confidence=0.6,
-        scout_batch_size=8,
-        scout_max_doc_chars=500,
+        sweep_min_confidence=0.6,
+        sweep_batch_size=8,
+        sweep_max_doc_chars=500,
     )
 
 
@@ -107,7 +107,7 @@ def _item(**kw: Any) -> dict[str, Any]:
 
 
 def _validate(item: dict[str, Any]) -> Candidate | str:
-    return validate_scout_candidate(
+    return validate_sweep_candidate(
         item,
         universe=UNIVERSE,
         min_confidence=0.6,
@@ -181,10 +181,10 @@ class TestHelpers:
     def test_prompt_contains_contract(self, settings: ArcSettings) -> None:
         doc = _Doc("d1", "rss", URL_A, "2026-09-27", "AAPL beats", ["AAPL"])
         prompt = build_prompt([doc], settings, DAY)
-        assert "Scout" in prompt
+        assert "Sweep" in prompt
         assert URL_A in prompt
         assert ">= 0.60" in prompt
-        assert '"ScoutOutput"' in prompt  # JSON schema embedded
+        assert '"SweepOutput"' in prompt  # JSON schema embedded
         assert "untrusted" in prompt
         for t in UNIVERSE:
             assert t in prompt
@@ -381,11 +381,11 @@ class TestStorage:
         assert out[0].created_at.tzinfo is not None
         assert out[0].id
 
-    def test_mark_scouted(self, conn) -> None:
+    def test_mark_swept(self, conn) -> None:
         ids = _seed(conn, 3)
         repo = RawDocRepo(conn)
-        repo.mark_scouted(ids[:2], run_id="r")
-        assert [d["id"] for d in repo.list_unscouted()] == [ids[2]]
+        repo.mark_swept(ids[:2], run_id="r")
+        assert [d["id"] for d in repo.list_unswept()] == [ids[2]]
 
 
 # ---------------------------------------------------------------------------
@@ -397,14 +397,14 @@ class _RaisingLLM:
     model = "boom"
 
     def complete(self, prompt: str) -> LLMResult:
-        raise ScoutLLMError("rate limited")
+        raise SweepLLMError("rate limited")
 
 
-class TestRunScout:
+class TestRunSweep:
     def test_happy_path_batches_and_audit(self, conn, settings) -> None:
-        settings.scout_story_batch_size = 2
+        settings.sweep_story_batch_size = 2
         _seed(conn, 3)
-        llm = FixtureScoutLLM(
+        llm = FixtureSweepLLM(
             [
                 _reply(_item(sources=["https://example.com/aapl/0"], rationale="SECRET-A")),
                 _reply(
@@ -417,9 +417,9 @@ class TestRunScout:
                 ),
             ]
         )
-        res = run_scout(conn, settings, llm=llm, now=NOW, run_id="run-1")
+        res = run_sweep(conn, settings, llm=llm, now=NOW, run_id="run-1")
 
-        assert (res.batches, res.failed_batches, res.docs_scouted) == (2, 0, 3)
+        assert (res.batches, res.failed_batches, res.docs_swept) == (2, 0, 3)
         assert res.accepted == 2
         assert res.rejected == {REJECT_UNIVERSE: 1}
         assert len(res.candidates) == 1
@@ -430,27 +430,27 @@ class TestRunScout:
         assert "https://example.com/aapl/0" in llm.prompts[0]
         assert "https://example.com/aapl/2" not in llm.prompts[0]
 
-        batches = ScoutBatchRepo(conn).list_for_run("run-1")
+        batches = SweepBatchRepo(conn).list_for_run("run-1")
         assert [b["status"] for b in batches] == ["ok", "ok"]
         assert json.loads(batches[1]["rejected"]) == {REJECT_UNIVERSE: 1}
         assert "SECRET-A" in batches[0]["raw_response"]  # audit keeps free text
-        assert RawDocRepo(conn).list_unscouted() == []
+        assert RawDocRepo(conn).list_unswept() == []
 
     def test_second_run_is_noop(self, conn, settings) -> None:
         _seed(conn, 2)
-        llm = FixtureScoutLLM([_reply(_item(sources=["https://example.com/aapl/0"]))])
-        run_scout(conn, settings, llm=llm, now=NOW)
-        res = run_scout(conn, settings, llm=llm, now=NOW)
+        llm = FixtureSweepLLM([_reply(_item(sources=["https://example.com/aapl/0"]))])
+        run_sweep(conn, settings, llm=llm, now=NOW)
+        res = run_sweep(conn, settings, llm=llm, now=NOW)
         assert res.batches == 0
         assert len(llm.prompts) == 1
         assert len(res.candidates) == 1
 
     def test_llm_error_leaves_docs_for_retry(self, conn, settings) -> None:
         _seed(conn, 2)
-        res = run_scout(conn, settings, llm=_RaisingLLM(), now=NOW, run_id="r")
-        assert (res.batches, res.failed_batches, res.docs_scouted) == (1, 1, 0)
-        assert len(RawDocRepo(conn).list_unscouted()) == 2
-        (b,) = ScoutBatchRepo(conn).list_for_run("r")
+        res = run_sweep(conn, settings, llm=_RaisingLLM(), now=NOW, run_id="r")
+        assert (res.batches, res.failed_batches, res.docs_swept) == (1, 1, 0)
+        assert len(RawDocRepo(conn).list_unswept()) == 2
+        (b,) = SweepBatchRepo(conn).list_for_run("r")
         assert (b["status"], b["model"], b["raw_response"]) == ("llm_error", "boom", None)
         assert "rate limited" in b["error"]
 
@@ -459,34 +459,40 @@ class TestRunScout:
     )
     def test_parse_error_leaves_docs_for_retry(self, conn, settings, text: str) -> None:
         _seed(conn, 1)
-        res = run_scout(conn, settings, llm=FixtureScoutLLM([text]), now=NOW, run_id="r")
+        res = run_sweep(conn, settings, llm=FixtureSweepLLM([text]), now=NOW, run_id="r")
         assert res.failed_batches == 1
-        assert len(RawDocRepo(conn).list_unscouted()) == 1
-        (b,) = ScoutBatchRepo(conn).list_for_run("r")
+        assert len(RawDocRepo(conn).list_unswept()) == 1
+        (b,) = SweepBatchRepo(conn).list_for_run("r")
         assert b["status"] == "parse_error"
         assert b["raw_response"] == text
 
-    def test_empty_candidates_marks_scouted(self, conn, settings) -> None:
+    def test_empty_candidates_marks_swept(self, conn, settings) -> None:
         _seed(conn, 1)
-        res = run_scout(conn, settings, llm=FixtureScoutLLM([_reply()]), now=NOW)
-        assert res.docs_scouted == 1
+        res = run_sweep(conn, settings, llm=FixtureSweepLLM([_reply()]), now=NOW)
+        assert res.docs_swept == 1
         assert res.candidates == []
 
     def test_day_is_et(self, conn, settings) -> None:
         _seed(conn, 1)
         late_utc = dt.datetime(2026, 9, 29, 2, 0, tzinfo=dt.UTC)  # 22:00 ET on the 28th
-        llm = FixtureScoutLLM([_reply(_item(sources=["https://example.com/aapl/0"]))])
-        res = run_scout(conn, settings, llm=llm, now=late_utc)
+        llm = FixtureSweepLLM([_reply(_item(sources=["https://example.com/aapl/0"]))])
+        res = run_sweep(conn, settings, llm=llm, now=late_utc)
         assert res.day == "2026-09-28"
 
     def test_dry_run_fixtures_end_to_end(self, conn, settings) -> None:
         # strict mode (fixture settings): PLTR / UFPT / ZZZQ are all not_in_universe
         assert load_fixture_docs(conn) == 11
         assert load_fixture_docs(conn) == 0  # dedupe by content hash
-        res = run_scout(conn, settings, dry_run=True, now=FIXTURE_NOW)  # D47: fixture clock
+        res = run_sweep(conn, settings, dry_run=True, now=FIXTURE_NOW)  # D47: fixture clock
         assert res.dry_run
         assert res.failed_batches == 0
-        assert res.docs_scouted == 11
+        # D54: the fixture's one `source: earnings` doc is the slow feed now; it is
+        # closed `slow_feed`, never read, and still in raw_docs for next_earnings().
+        assert res.docs_swept == 10
+        assert res.slow_feed == 1
+        assert conn.execute(
+            "SELECT sweep_status FROM raw_docs WHERE source = 'earnings'"
+        ).fetchall() == [("slow_feed",)]
         assert dict(res.rejected) == {
             REJECT_UNIVERSE: 3,
             REJECT_SOURCE: 1,
@@ -504,7 +510,7 @@ class TestRunScout:
         stored = CandidateRepo(conn).get_for_day("AAPL", res.day)
         assert stored is not None
         assert stored["confidence"] == pytest.approx(0.2)
-        models = {r[0] for r in conn.execute("SELECT model FROM scout_batches")}
+        models = {r[0] for r in conn.execute("SELECT model FROM sweep_batches")}
         assert models == {FIXTURE_MODEL}
 
     def test_dry_run_default_backend_is_fixture(self, conn, settings, monkeypatch) -> None:
@@ -513,7 +519,7 @@ class TestRunScout:
 
         monkeypatch.setattr(subprocess, "run", boom)
         load_fixture_docs(conn)
-        run_scout(conn, settings, dry_run=True, now=FIXTURE_NOW)
+        run_sweep(conn, settings, dry_run=True, now=FIXTURE_NOW)
 
     def test_live_default_backend_is_hermes(self, conn, settings, monkeypatch) -> None:
         seen: list[Any] = []
@@ -523,10 +529,10 @@ class TestRunScout:
                 seen.append(prompt)
                 return LLMResult(_reply(), "spy")
 
-        monkeypatch.setattr(HermesScoutLLM, "from_settings", classmethod(lambda cls, s: Spy()))
+        monkeypatch.setattr(HermesSweepLLM, "from_settings", classmethod(lambda cls, s: Spy()))
         _seed(conn, 1)
-        run_scout(conn, settings, now=NOW)
-        # live: stage-1 digest call, then the stage-2 Scout call, both on the backend
+        run_sweep(conn, settings, now=NOW)
+        # live: stage-1 digest call, then the stage-2 Sweep call, both on the backend
         assert len(seen) == 2
         assert "story digest (stage 1)" in seen[0]
         assert "story digests (D30)" in seen[1]
@@ -552,17 +558,17 @@ class _Runner:
         return subprocess.CompletedProcess(cmd, self.rc, self.stdout, "boom stderr")
 
 
-def _hermes(runner: _Runner) -> HermesScoutLLM:
-    return HermesScoutLLM(model="claude-opus-5", provider="anthropic", runner=runner)
+def _hermes(runner: _Runner) -> HermesSweepLLM:
+    return HermesSweepLLM(model="claude-opus-5", provider="anthropic", runner=runner)
 
 
 class TestHermesBackend:
     def test_from_settings_uses_cheap_tier(self) -> None:
         s = ArcSettings(env="paper")
-        llm = HermesScoutLLM.from_settings(s)
+        llm = HermesSweepLLM.from_settings(s)
         assert llm.model == "anthropic/claude-opus-5"
         assert llm.provider == "anthropic"
-        assert llm.timeout_seconds == s.scout_timeout_seconds
+        assert llm.timeout_seconds == s.sweep_timeout_seconds
 
     def test_command_and_isolation(self, monkeypatch) -> None:
         monkeypatch.setenv("HERMES_KANBAN_TASK", "t_x")
@@ -586,29 +592,29 @@ class TestHermesBackend:
         assert out.model == "claude-opus-5"
 
     def test_nonzero_exit(self) -> None:
-        with pytest.raises(ScoutLLMError, match="exited 1: boom stderr"):
+        with pytest.raises(SweepLLMError, match="exited 1: boom stderr"):
             _hermes(_Runner(rc=1)).complete("p")
 
     def test_usage_failed_flag(self) -> None:
-        with pytest.raises(ScoutLLMError):
+        with pytest.raises(SweepLLMError):
             _hermes(_Runner(usage={"failed": True})).complete("p")
 
     @pytest.mark.parametrize(
         "exc", [subprocess.TimeoutExpired(["hermes"], 1), FileNotFoundError("hermes")]
     )
     def test_transport_errors(self, exc: Exception) -> None:
-        with pytest.raises(ScoutLLMError, match="hermes call failed"):
+        with pytest.raises(SweepLLMError, match="hermes call failed"):
             _hermes(_Runner(exc=exc)).complete("p")
 
 
 class TestFixtureBackend:
     def test_exhausted_returns_empty_scan(self) -> None:
-        llm = FixtureScoutLLM(["A"])
+        llm = FixtureSweepLLM(["A"])
         assert llm.complete("p1").text == "A"
         assert json.loads(llm.complete("p2").text)["candidates"] == []
 
     def test_from_dir_sorted(self) -> None:
-        llm = FixtureScoutLLM.from_dir(FIXTURES_DIR / "responses")
+        llm = FixtureSweepLLM.from_dir(FIXTURES_DIR / "responses")
         assert len(llm.responses) == 1  # D30: one stage-2 call reads every story digest
         assert "Fixture scan" in llm.responses[0]
 
@@ -643,7 +649,7 @@ class TestFunnelDiscipline:
 
     def test_scanner_view_carries_no_persona_text(self, conn, settings) -> None:
         _seed(conn, 1)
-        llm = FixtureScoutLLM(
+        llm = FixtureSweepLLM(
             [
                 json.dumps(
                     {
@@ -655,7 +661,7 @@ class TestFunnelDiscipline:
                 )
             ]
         )
-        res = run_scout(conn, settings, llm=llm, now=NOW)
+        res = run_sweep(conn, settings, llm=llm, now=NOW)
         blob = json.dumps([c.model_dump(mode="json") for c in res.candidates])
         assert "RAT-XYZ" not in blob
         assert "SUMMARY-XYZ" not in blob
@@ -663,7 +669,7 @@ class TestFunnelDiscipline:
 
     def test_downstream_packages_never_touch_unstructured_stores(self) -> None:
         root = Path(__file__).resolve().parent.parent / "arc"
-        forbidden = re.compile(r"raw_docs|scout_batches|RawDoc|rationale|scan_summary|arc\.ingest")
+        forbidden = re.compile(r"raw_docs|sweep_batches|RawDoc|rationale|scan_summary|arc\.ingest")
         offenders = [
             str(p.relative_to(root))
             for pkg in ("scanner", "structures", "gate", "pricing", "execution")
@@ -688,7 +694,7 @@ def test_cli_scan_dry_run() -> None:
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report["dry_run"] is True
-    assert report["docs_scouted"] == 11
+    assert report["docs_swept"] == 10  # D54: the earnings doc is the slow feed
     # seed mode (default): with no symbol master cached (tests are hermetic) non-seed
     # names fail closed as unknown_symbol. D51: PLTR is core now (admitted); SPY is
     # the market reference, not a trade name, so it fails closed like any non-seed.

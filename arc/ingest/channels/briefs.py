@@ -11,7 +11,7 @@ Lifecycle ("informs trading until replaced")::
   sessions (so a ``trading_daily`` channel covers at most 2 sessions),
   computed with :mod:`arc.utils.calendar` so weekends and holidays are
   skipped.
-* :func:`active_briefs` is what downstream (Scout / Director context) reads;
+* :func:`active_briefs` is what downstream (Sweep / Director context) reads;
   a stale brief never comes back from it.
 
 :func:`brief_to_candidates` is the deterministic bridge to the E4.2
@@ -39,8 +39,8 @@ from arc.ingest.channels.base import (
     VideoDoc,
     video_id_from_url,
 )
-from arc.ingest.llm import FixtureScoutLLM, ScoutLLMError
-from arc.ingest.scout import merge_candidates
+from arc.ingest.llm import FixtureSweepLLM, SweepLLMError
+from arc.ingest.sweep import merge_candidates
 from arc.models import (
     BriefCatalystKind,
     CallHorizon,
@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from arc.config import ArcSettings
-    from arc.ingest.llm import ScoutLLM
+    from arc.ingest.llm import SweepLLM
 
 log = structlog.get_logger()
 
@@ -275,8 +275,8 @@ def brief_to_candidates(
     * ``sources = [video_url]``; ``created_at = published_at``.
     * Tickers outside the active list (D51; *universe*, default the core) are
       logged as proposed additions (D9) and do not become candidates here: this
-      bridge bypasses the Scout's D28 liquidity screen, so open-universe names
-      reach the Director only via the Scout (which reads the same transcript).
+      bridge bypasses the Sweep's D28 liquidity screen, so open-universe names
+      reach the Director only via the Sweep (which reads the same transcript).
       One candidate per ticker (merged).
     """
     reg = registry or default_registry()
@@ -407,7 +407,7 @@ class BriefRunResult:
 def process_new_videos(
     conn: sqlite3.Connection,
     settings: ArcSettings,
-    llm: ScoutLLM,
+    llm: SweepLLM,
     *,
     registry: ChannelRegistry | None = None,
     price_lookup: Callable[[str], float | None] | None = None,
@@ -457,7 +457,7 @@ def process_new_videos(
                 universe=uni.mention_universe(video.transcript),
                 price_lookup=price_lookup,
             )
-        except (ScoutLLMError, BriefParseError) as exc:
+        except (SweepLLMError, BriefParseError) as exc:
             run.failed += 1
             log.warning("channel.brief.failed", channel=slug, video=video.video_id, error=str(exc))
             continue
@@ -497,7 +497,7 @@ def load_channel_fixture(conn: sqlite3.Connection, processor: ChannelProcessor) 
     )
 
 
-def fixture_llm(processor: ChannelProcessor) -> FixtureScoutLLM:
+def fixture_llm(processor: ChannelProcessor) -> FixtureSweepLLM:
     fx = processor.fixtures_dir
     path = fx / "llm_reply.json" if fx else Path("/nonexistent")
-    return FixtureScoutLLM([path.read_text()] if path.exists() else [])
+    return FixtureSweepLLM([path.read_text()] if path.exists() else [])

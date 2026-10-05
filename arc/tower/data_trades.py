@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from arc.journal import legacy
 from arc.journal.analytics import ProposalAnalytics  # noqa: TC001 - pydantic field
 from arc.journal.floor_exit import FloorExitFacts, floor_exit_facts
 from arc.journal.reasons import gate_reason, reason_label
@@ -1489,16 +1490,17 @@ def _decisions(conn: sqlite3.Connection, p: sqlite3.Row, chain: str | None) -> D
            ORDER BY at, rid""",
         (h, chain, chain, p["ticker"] or ""),
     ).fetchall()
+    cut = legacy.cutover(conn)  # D54: pre-rename "scout" rows are the Sweep
     items = [
         DecisionItem(
             id=r["id"],
             at=parse_ts(r["at"]),
-            persona=r["persona"],
+            persona=legacy.persona_key(r["persona"], parse_ts(r["at"]), cut),
             stage=r["stage"],
             subject=r["subject"],
             choice=r["choice"],
-            reason_code=r["reason_code"],
-            reason_label=reason_label(r["reason_code"]),
+            reason_code=legacy.reason_code(r["reason_code"]),
+            reason_label=reason_label(legacy.reason_code(r["reason_code"])),
             reason_text=r["reason_text"] or "",
             confidence=r["confidence"],
             this_trade=r["proposal_hash"] == h,

@@ -268,7 +268,7 @@ they are never dropped.
   buttons, **Effective Config** (`/ops/config`) and **Change Log** (`/ops/config/changes`),
   plus the `v7 · 196 keys · 7 changes` caption. No Order Budget widget.
 - **Timeline bands come from `config/routines.yaml`**, never code: each job may carry `label`,
-  `group` (`sources | scout | trading_loop | position_management | post_market | other`),
+  `group` (`sources | sweep | trading_loop | position_management | post_market | other`),
   `persona` (chip; sources declare none) and `about` (one line ≤ 160 chars, the ⓘ text).
   A typo fails config load. Sources band by their D47 category (`sources.<category>`, labels
   from the category registry, so a rename needs no UI change); anything else falls under
@@ -336,7 +336,7 @@ they are never dropped.
   **Lifecycle** (Gate → Approval → Execution → Position & Exits → Outcome & Review as one
   vertical timeline; each reached stage shows a one-line result and expands; not-reached stages
   are muted; the first failure, else the latest reached stage, opens expanded) · **Context**
-  (market context, Regime Read, Scout Candidate, and the context entries the trade's own steps
+  (market context, Regime Read, Sweep Candidate, and the context entries the trade's own steps
   read, counted per kind, expandable) · **Audit** (identity with the shortened proposal hash +
   copy, run manifest incl. declared reads / inputs read, and the `source: <tables>` lines that
   used to sit under every section header). Default tab: Why while live, Lifecycle once

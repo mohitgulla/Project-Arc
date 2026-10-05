@@ -3,7 +3,7 @@
 ## System DAG
 
 ```
- Market Data & Math Engine [Deterministic]   Information Retrieval [Scout persona]
+ Market Data & Math Engine [Deterministic]   Information Retrieval [Sweep persona]
         |  chains, IV, history                      |  RSS, EDGAR, earnings cal, YouTube
         v                                           v
  Greek Analysis [Deterministic]   ------>  Aggregator [Director persona]
@@ -53,7 +53,7 @@
                              v
    expire TTLs -> plan due slots (cursor..now, catch-up once within TTL, skip if halted)
      -> sources (fetch-only)  --append-->  context_entries (raw_doc_ref, channel_brief)
-     -> lane: background jobs (D39: scout, edgar, ...) -> claim slot, spawn `arc routines run-claimed`
+     -> lane: background jobs (D39: sweep, edgar, ...) -> claim slot, spawn `arc routines run-claimed`
      -> personas [llm lock only for local models, D39]
           snapshot(as_of, kinds) --id--> routine_runs.inputs_snapshot
           handler(ctx) --append--> context_entries (candidate, shortlist, ...)
@@ -80,7 +80,7 @@ shipped job and step to declare `writes`.
 |---|---|---|
 | `rss`, `edgar`, `earnings` | - | `raw_doc_ref` |
 | `youtube.briefs` (E4.6, D45) | - | `raw_doc_ref`, `channel_brief` (TTL 24 h, supersede latest, one per channel) |
-| `scout` | all | `candidate`, `note` (one scan-summary observation per run) |
+| `sweep` | all | `candidate`, `note` (one scan-summary observation per run) |
 | `director` | `candidate`, `regime`, `channel_brief`, `note` | `shortlist`, `regime`, `note` |
 | `quant` | `shortlist`, `regime` | `structures`, `note` |
 | `risk` | `structures` | `risk_review`, `note` |
@@ -127,8 +127,8 @@ Shipped defaults in `config/routines.yaml`, all times ET:
 | 06:00-20:00 trading days | `rss` every 30m, `edgar` every 15m |
 | 09:30 trading days | pre-market chain `director -> quant -> risk -> propose` |
 | 09:30-16:00 trading days, every 30m | `monitor`: positions, net Greeks, expiries, daily-loss halt. Read-only, no LLM, halt-exempt |
-| 05:00 trading days | `youtube.briefs`: newest video per channel from the last 24 h (StockedUp, FX Evolution, Trade Brigade, Arete) → one `channel_brief` each, read by the Director (D45). YouTube docs never reach the Scout |
-| 22:00 daily | `scout.overnight` (fast sources only) |
+| 05:00 trading days | `youtube.briefs`: newest video per channel from the last 24 h (StockedUp, FX Evolution, Trade Brigade, Arete) → one `channel_brief` each, read by the Director (D45). YouTube docs never reach the Sweep |
+| 22:00 daily | `sweep.overnight` (fast sources only) |
 | 16:30 trading days | `auditor` |
 | 16:45 Fridays (`days: [fri]`) | `scorecard` (weekly) |
 
@@ -137,7 +137,7 @@ Shipped defaults in `config/routines.yaml`, all times ET:
   Success prints nothing. If the tick crashes or times out, Hermes alerts #project-arc.
 - Heartbeats post to the session's `💡 Thu Oct 1 · Session Notes` thread in #arc-investor.
   On a trading day every post until `heartbeat.day_rollover` (24:00 ET, i.e. midnight) goes
-  to that day's thread, so the 22:00 Scout run stays in the same day. Weekend/holiday posts
+  to that day's thread, so the 22:00 Sweep run stays in the same day. Weekend/holiday posts
   go to the next session's thread: a Sunday 22:00 run posts in Monday's. Quiet jobs, sources
   and `monitor`, fold into the next persona line, one entry per job. `JobResult.notice`
   posts immediately (halt, expiring positions) as one line, `:warning: `[Routines] …``.
@@ -197,7 +197,7 @@ Project-Arc/
 All models live in `arc/models.py`. See PLAN.md section 2.3 for full specifications.
 
 ### Candidate
-Surfaced by the Scout persona. Fields: ticker, stance, catalyst_type (enum),
+Surfaced by the Sweep persona. Fields: ticker, stance, catalyst_type (enum),
 catalyst_date, confidence (0-1), sources[], created_at.
 
 ### Structure

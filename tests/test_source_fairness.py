@@ -1,4 +1,4 @@
-"""E4.5 / D30: source registry, fair selection, story clustering, two-stage Scout."""
+"""E4.5 / D30: source registry, fair selection, story clustering, two-stage Sweep."""
 
 from __future__ import annotations
 
@@ -15,14 +15,7 @@ from hypothesis import strategies as st
 from arc.config import ArcSettings
 from arc.context.kinds import KINDS, StoryPayload
 from arc.context.ttl import Ttl
-from arc.ingest.llm import FixtureScoutLLM, LLMResult, ScoutLLMError
-from arc.ingest.scout import (
-    _Doc,
-    count_corroboration,
-    run_scout,
-    select_docs,
-    story_payload,
-)
+from arc.ingest.llm import FixtureSweepLLM, LLMResult, SweepLLMError
 from arc.ingest.sources import (
     FeedSpec,
     SourceCategory,
@@ -38,6 +31,13 @@ from arc.ingest.stories import (
     headline_of,
     jaccard,
     normalize_headline,
+)
+from arc.ingest.sweep import (
+    _Doc,
+    count_corroboration,
+    run_sweep,
+    select_docs,
+    story_payload,
 )
 from arc.routines.config import DEFAULT_ROUTINES_PATH, RoutinesConfig, load_routines
 from arc.store.db import connect
@@ -61,20 +61,20 @@ def settings() -> ArcSettings:
         env="paper",
         universe=UNIVERSE,
         universe_mode="strict",
-        scout_min_confidence=0.6,
-        scout_doc_budget=120,
+        sweep_min_confidence=0.6,
+        sweep_doc_budget=120,
     )
 
 
-def _routines(sources: dict[str, Any], scout: dict[str, Any] | None = None) -> RoutinesConfig:
+def _routines(sources: dict[str, Any], sweep: dict[str, Any] | None = None) -> RoutinesConfig:
     return RoutinesConfig.model_validate(
         {
             "sources": sources,
             "personas": {
-                "scout": {
+                "sweep": {
                     "schedule": ["12:00"],
                     "writes": ["candidate", "note", "story"],
-                    **(scout or {}),
+                    **(sweep or {}),
                 }
             },
         }
@@ -146,7 +146,7 @@ class TestRegistry:
         assert reg.sources["earnings"].category is SourceCategory.COMPANY_DATA
         assert reg.sources["fed"].category is SourceCategory.MACRO_DATA
         assert reg.sources["wsj"].category is SourceCategory.MARKET_NEWS
-        # data jobs write typed kinds, never raw docs: not Scout sources
+        # data jobs write typed kinds, never raw docs: not Sweep sources
         assert "vol_term" not in reg.sources and "unusual_options" not in reg.sources
         assert abs(sum(reg.effective_weights().values()) - 1.0) < 1e-9
         # D49: six categories, weighted equally, each with a freshness window
@@ -460,7 +460,7 @@ class TestFreshness:
         capped = reg.freshness_ttl(["edgar"], Ttl(duration=dt.timedelta(hours=4)), NOW)
         assert capped is not None and capped.duration == dt.timedelta(hours=4)
 
-    def test_scout_closes_stale_docs_and_never_reads_them(self, conn, settings) -> None:
+    def test_sweep_closes_stale_docs_and_never_reads_them(self, conn, settings) -> None:
         repo = RawDocRepo(conn)
         repo.insert(
             source="rss",
@@ -480,8 +480,8 @@ class TestFreshness:
             id="new",
             source_key="wsj",
         )
-        llm = FixtureScoutLLM([_scout_reply()])
-        res = run_scout(
+        llm = FixtureSweepLLM([_sweep_reply()])
+        res = run_sweep(
             conn,
             settings,
             llm=llm,
@@ -489,7 +489,7 @@ class TestFreshness:
             run_id="r1",
             registry=SourceRegistry.from_routines(_shipped_like()),
         )
-        status = {r[0]: r[1] for r in conn.execute("SELECT id, scout_status FROM raw_docs")}
+        status = {r[0]: r[1] for r in conn.execute("SELECT id, sweep_status FROM raw_docs")}
         assert status == {"old": "skipped_stale", "new": "scouted"}
         assert res.skipped_stale == 1 and res.stale_by_source == {"wsj": 1}
         assert all("rate fears" not in p for p in llm.prompts)
@@ -756,15 +756,15 @@ def _seed(conn, rows: list[tuple[str, str, str, str, list[str]]], now: dt.dateti
         )
 
 
-def _scout_reply(*items: dict[str, Any]) -> str:
+def _sweep_reply(*items: dict[str, Any]) -> str:
     return json.dumps({"candidates": list(items), "scan_summary": "s"})
 
 
 class _Scripted:
     """Stage-1 answers by prompt kind; stage-2 reply fixed."""
 
-    def __init__(self, digest: str | Exception, scout: str) -> None:
-        self.digest, self.scout = digest, scout
+    def __init__(self, digest: str | Exception, sweep: str) -> None:
+        self.digest, self.sweep = digest, sweep
         self.prompts: list[str] = []
 
     def complete(self, prompt: str) -> LLMResult:
@@ -775,7 +775,7 @@ class _Scripted:
             return LLMResult(
                 self.digest, "m-cheap", input_tokens=100, output_tokens=20, cost_usd=0.01
             )
-        return LLMResult(self.scout, "m-scout", input_tokens=300, output_tokens=50, cost_usd=0.03)
+        return LLMResult(self.sweep, "m-sweep", input_tokens=300, output_tokens=50, cost_usd=0.03)
 
 
 NV_ROWS = [
@@ -812,10 +812,10 @@ NV_ROWS = [
 
 class TestTwoStage:
     def _story_ids(self, conn, settings: ArcSettings) -> dict[str, str]:
-        from arc.ingest.scout import _cluster, _load_docs
+        from arc.ingest.sweep import _cluster, _load_docs
 
         reg = SourceRegistry.from_routines(_shipped_like())
-        docs = _load_docs(RawDocRepo(conn).list_unscouted(limit=None), reg)
+        docs = _load_docs(RawDocRepo(conn).list_unswept(limit=None), reg)
         return {s.docs[0].tickers[0]: s.id for s in _cluster(docs, settings)}
 
     def test_stage2_reads_digests_and_corroboration_is_code_owned(
@@ -844,7 +844,7 @@ class TestTwoStage:
                 ]
             }
         )
-        scout = _scout_reply(
+        sweep = _sweep_reply(
             {
                 "ticker": "NVDA",
                 "stance": "bullish",
@@ -856,9 +856,9 @@ class TestTwoStage:
                 "rationale": "buyback",
             }
         )
-        llm = _Scripted(digest, scout)
+        llm = _Scripted(digest, sweep)
         stories: list[StoryPayload] = []
-        res = run_scout(
+        res = run_sweep(
             conn,
             settings,
             llm=llm,
@@ -886,15 +886,15 @@ class TestTwoStage:
         # usage summed across both stages (D27 manifest totals)
         assert (res.input_tokens, res.output_tokens) == (400, 70)
         assert res.cost_usd == pytest.approx(0.04)
-        stages = [r[0] for r in conn.execute("SELECT stage FROM scout_batches ORDER BY rowid")]
-        assert stages == ["digest", "scout"]
-        status = {r[0]: r[1] for r in conn.execute("SELECT id, scout_status FROM raw_docs")}
+        stages = [r[0] for r in conn.execute("SELECT stage FROM sweep_batches ORDER BY rowid")]
+        assert stages == ["digest", "sweep"]
+        status = {r[0]: r[1] for r in conn.execute("SELECT id, sweep_status FROM raw_docs")}
         assert set(status.values()) == {"scouted"}
 
     def test_digest_failure_falls_back_to_extractive(self, conn, settings: ArcSettings) -> None:
         _seed(conn, NV_ROWS)
-        llm = _Scripted(ScoutLLMError("boom"), _scout_reply())
-        res = run_scout(
+        llm = _Scripted(SweepLLMError("boom"), _sweep_reply())
+        res = run_sweep(
             conn,
             settings,
             llm=llm,
@@ -905,8 +905,8 @@ class TestTwoStage:
         )
         assert res.failed_digest_batches == 1
         assert all(p.mode == "extractive" for p in res.stories)
-        assert res.batches == 1  # the Scout still ran over the headline digests
-        row = conn.execute("SELECT status FROM scout_batches WHERE stage='digest'").fetchone()
+        assert res.batches == 1  # the Sweep still ran over the headline digests
+        row = conn.execute("SELECT status FROM sweep_batches WHERE stage='digest'").fetchone()
         assert row[0] == "llm_error"
 
     @pytest.mark.parametrize(
@@ -929,9 +929,9 @@ class TestTwoStage:
         # ingested_at is stamped with the wall clock; pin it to the injected `now` so the
         # TTL arithmetic below doesn't depend on when the suite runs (E4.5a, E1.1b).
         conn.execute("UPDATE raw_docs SET ingested_at = ?", (now.isoformat(),))
-        s = settings.model_copy(update={"scout_doc_budget": 4})
+        s = settings.model_copy(update={"sweep_doc_budget": 4})
         reg = SourceRegistry.from_routines(_shipped_like())
-        res = run_scout(conn, s, llm=FixtureScoutLLM([]), now=now, run_id="r1", registry=reg)
+        res = run_sweep(conn, s, llm=FixtureSweepLLM([]), now=now, run_id="r1", registry=reg)
         # D47: market_news (WSJ, 1 doc) and company (EDGAR) split the 4 equally; WSJ's
         # unused share flows to EDGAR
         assert dict((lbl, (r, o)) for lbl, r, o in res.source_mix) == {
@@ -942,18 +942,18 @@ class TestTwoStage:
         # past EDGAR's 24h company window: the waiting filings close skipped_stale
         later = now + dt.timedelta(days=2)
         routines = load_routines(DEFAULT_ROUTINES_PATH)
-        res2 = run_scout(
+        res2 = run_sweep(
             conn,
             s,
-            llm=FixtureScoutLLM([]),
+            llm=FixtureSweepLLM([]),
             now=later,
             run_id="r2",
             registry=reg,
             routines=routines,
         )
-        assert res2.skipped_stale == 7 and res2.docs_scouted == 0
+        assert res2.skipped_stale == 7 and res2.docs_swept == 0
         closed = conn.execute(
-            "SELECT count(*) FROM raw_docs WHERE scout_status='skipped_stale' AND scout_run_id='r2'"
+            "SELECT count(*) FROM raw_docs WHERE sweep_status='skipped_stale' AND sweep_run_id='r2'"
         ).fetchone()[0]
         assert closed == 7
 
@@ -967,7 +967,7 @@ class TestTwoStage:
         ]
         _seed(conn, rows)
         conn.execute("UPDATE raw_docs SET ingested_at = ?", (NOW.isoformat(),))
-        s = settings.model_copy(update={"scout_doc_budget": 2})
+        s = settings.model_copy(update={"sweep_doc_budget": 2})
         r = RoutinesConfig.model_validate(
             {
                 "sources": {
@@ -978,15 +978,15 @@ class TestTwoStage:
                         "max_age": "30d",
                     }
                 },
-                "personas": {"scout": {"schedule": ["12:00"], "writes": ["candidate", "note"]}},
+                "personas": {"sweep": {"schedule": ["12:00"], "writes": ["candidate", "note"]}},
             }
         )
         reg = SourceRegistry.from_routines(r)
-        run_scout(conn, s, llm=FixtureScoutLLM([]), now=NOW, run_id="r1", registry=reg)
-        res2 = run_scout(
+        run_sweep(conn, s, llm=FixtureSweepLLM([]), now=NOW, run_id="r1", registry=reg)
+        res2 = run_sweep(
             conn,
             s,
-            llm=FixtureScoutLLM([]),
+            llm=FixtureSweepLLM([]),
             now=NOW + dt.timedelta(days=6),
             run_id="r2",
             registry=reg,
@@ -1037,12 +1037,12 @@ def test_registry_spec_default_for_unknown_key() -> None:
     reg = SourceRegistry(
         sources={"x": SourceSpec(key="x", job="x", category=SourceCategory.MACRO_DATA)}
     )
-    # A removed channel's legacy rows: a YouTube category, never a Scout one (D45, D49)
+    # A removed channel's legacy rows: a YouTube category, never a Sweep one (D45, D49)
     assert reg.spec_for("youtube.other").category is SourceCategory.YOUTUBE_MICRO
 
 
 def test_category_tunables_reach_the_registry(conn, tmp_path) -> None:
-    """D47: `!arc config set categories.<c>.weight|max_age` changes the next Scout run."""
+    """D47: `!arc config set categories.<c>.weight|max_age` changes the next Sweep run."""
     from arc.control.effective import effective_routines
     from arc.control.registry import REGISTRY
     from arc.control.service import ControlService

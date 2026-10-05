@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from arc.context.ttl import from_db, to_db
+from arc.journal.legacy import cutover as legacy_cutover
 from arc.monitoring.store import HeartbeatRepo
 from arc.routines.schedule import catchup_deadline, slots_between
 from arc.utils.calendar import ET
@@ -105,11 +106,20 @@ def _slot_attempted(
     persona was halted is ``"halted"``: intended, never a miss, and not counted
     by the coverage check (E8.2a).
     """
+    # D54: slots before the rename were recorded under the old job name ('scout*'); after
+    # the cutover 'scout' is the slow-feed persona, never a Sweep slot.
+    names = [job]
+    if job.split(".")[0] == "sweep":
+        cut = legacy_cutover(conn)
+        if cut is None or slot < cut:
+            names.append(f"scout{job[len('sweep') :]}")
+    marks = ",".join("?" * len(names))
     rows = conn.execute(
-        """SELECT scheduled_for, status, summary FROM routine_runs
-           WHERE job = ? AND step_index = 0 AND scheduled_for >= ? AND scheduled_for <= ?
-           ORDER BY scheduled_for""",
-        (job, to_db(slot), to_db(deadline)),
+        f"""SELECT scheduled_for, status, summary FROM routine_runs
+           WHERE job IN ({marks}) AND step_index = 0
+             AND scheduled_for >= ? AND scheduled_for <= ?
+           ORDER BY scheduled_for""",  # noqa: S608 - placeholders only
+        (*names, to_db(slot), to_db(deadline)),
     ).fetchall()
     own = [r for r in rows if r["scheduled_for"] == to_db(slot)]
     if own and not _is_missed_row(own[0]):
@@ -471,7 +481,7 @@ def slot_rollup(
 
 
 def rollup_line(covs: list[Coverage], routines: RoutinesConfig, *, max_jobs: int = 6) -> str | None:
-    """``Slots: director 71/75, monitor 77/78, scout 15/15 · missed 6 (list in tower Ops)``.
+    """``Slots: director 71/75, monitor 77/78, sweep 15/15 · missed 6 (list in tower Ops)``.
 
     Personas first (most slots first), then any source that missed a slot; the
     missed total covers every job.

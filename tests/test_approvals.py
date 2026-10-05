@@ -969,7 +969,7 @@ def test_slack_poster_uses_shared_day_thread(
 
     web = FakeWeb()
     client = ArcSlackClient(client=web)  # type: ignore[arg-type]
-    SlackDayThreadNotifier(conn, client).post(_dt.date(2026, 9, 25), "[Scout] hello")
+    SlackDayThreadNotifier(conn, client).post(_dt.date(2026, 9, 25), "[Sweep] hello")
     svc = ApprovalService(conn, arc_settings, SlackCardPoster(conn, client))
     svc.publish_pending(NOW)
     kinds = [k for k, _ in web.calls]

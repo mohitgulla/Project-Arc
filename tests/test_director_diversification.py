@@ -23,8 +23,8 @@ from arc.control.effective import effective_routines
 from arc.control.registry import REGISTRY, lookup, read_raw, write_raw
 from arc.control.service import ControlService
 from arc.experiments.overlay import arm_config_data, load_spec
-from arc.ingest.llm import FixtureScoutLLM
-from arc.ingest.scout import load_fixture_docs
+from arc.ingest.llm import FixtureSweepLLM
+from arc.ingest.sweep import load_fixture_docs
 from arc.personas.builders import RELAXED_DIVERSIFICATION_FIT
 from arc.personas.schemas import DirectorRankedItem
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
@@ -62,7 +62,9 @@ from tests.test_routines_e53 import _env
 
 REPO = Path(__file__).resolve().parent.parent
 # sha256 of tests/diversification_golden.py's outputs on origin/main 58969a5 (pre-E12.5).
-MAIN_DIRECTOR_SHA = "f4e530ad491d0727e8c26cd8e4f9cddcdc01b54834d061dbaa15be9ac7762501"
+# E5.12 (D54) re-pinned the Director sha: "Scout" -> "Sweep" in two label lines only
+# (diffed against origin/main 23be73a; no other byte changed).
+MAIN_DIRECTOR_SHA = "f31dc95c9485740125e1ecb67dbbf6688e1d36722b7654af16632f1dddf32979"
 MAIN_RULES_SHA = "08bc85caa583b536a000ab72d9625df6eb64eeb595bc21ad341fc32e62c63265"
 RELAXED = DirectorDiversificationSettings(mode="relaxed")
 STRICT = DirectorDiversificationSettings()
@@ -405,7 +407,7 @@ def _director_run(mode: str) -> tuple[Any, Any]:
          "portfolio_fit": "adds_concentration"},  # only the bullish stance is flagged
     ]  # fmt: skip
     d["excluded"] = []
-    env.llms["director"] = FixtureScoutLLM([json.dumps(d)])
+    env.llms["director"] = FixtureSweepLLM([json.dumps(d)])
     routines = load_routines()
     routines = routines.model_copy(
         update={"director_diversification": DirectorDiversificationSettings(mode=mode)}  # type: ignore[arg-type]

@@ -733,7 +733,11 @@ function SourceRowItem({ src }: { src: SourceRow }) {
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="font-semibold text-title">{src.label}</span>
         <span className="text-micro text-muted tabular-nums">
-          {src.share_in_category != null ? `${sharePct(src.share_in_category)} of category` : "typed context"}
+          {src.share_in_category != null
+            ? `${sharePct(src.share_in_category)} of category`
+            : src.feed === "scout" && unit === "docs"
+              ? "Scout feed"
+              : "typed context"}
         </span>
         {src.late && (
           <Pill tone="neg" testId="source-late">
@@ -809,7 +813,7 @@ function SourcesCard({ s, now }: { s?: Sources; now: number }) {
       freshness={{ at: s?.as_of, label: "loaded" }}
       headerExtra={
         <InfoTip label="About sources">
-          One block per D47 category, each an equal share of the Scout&apos;s doc budget; a row&apos;s share is inside its category.
+          One block per D47 category, each an equal share of the Sweep&apos;s doc budget; a row&apos;s share is inside its category.
         </InfoTip>
       }
     >

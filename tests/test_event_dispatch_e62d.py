@@ -332,14 +332,14 @@ class TestOneRunPerEvent:
 
     def test_scheduled_slot_key_still_unique(self, conn: sqlite3.Connection) -> None:
         runs = RoutineRunRepo(conn)
-        assert runs.claim(job="scout", scheduled_for=NOW, reason="schedule", now=NOW)
-        assert runs.claim(job="scout", scheduled_for=NOW, reason="schedule", now=NOW) is None
+        assert runs.claim(job="sweep", scheduled_for=NOW, reason="schedule", now=NOW)
+        assert runs.claim(job="sweep", scheduled_for=NOW, reason="schedule", now=NOW) is None
         # event runs neither collide with the slot nor with each other
-        assert runs.claim(job="scout", scheduled_for=NOW, reason="e", now=NOW, event_id="e1")
-        assert runs.claim(job="scout", scheduled_for=NOW, reason="e", now=NOW, event_id="e2")
-        assert runs.claim(job="scout", scheduled_for=NOW, reason="e", event_id="e1") is None
-        assert runs.find("scout", NOW).event_id is None  # type: ignore[union-attr]
-        assert runs.for_event("scout", "e2") is not None
+        assert runs.claim(job="sweep", scheduled_for=NOW, reason="e", now=NOW, event_id="e1")
+        assert runs.claim(job="sweep", scheduled_for=NOW, reason="e", now=NOW, event_id="e2")
+        assert runs.claim(job="sweep", scheduled_for=NOW, reason="e", event_id="e1") is None
+        assert runs.find("sweep", NOW).event_id is None  # type: ignore[union-attr]
+        assert runs.for_event("sweep", "e2") is not None
 
     def test_migration_keeps_existing_runs(self) -> None:
         from arc.store.migrate import MIGRATIONS_DIR
@@ -353,7 +353,7 @@ class TestOneRunPerEvent:
         c.execute(
             """INSERT INTO routine_runs (run_id, job, reason, scheduled_for, status,
                config_version)
-               VALUES ('r1', 'scout', 'schedule', '2026-10-09T14:00:00Z', 'ok', 3)"""
+               VALUES ('r1', 'sweep', 'schedule', '2026-10-09T14:00:00Z', 'ok', 3)"""
         )
         c.commit()
         c.executescript((MIGRATIONS_DIR / "018_event_runs.sql").read_text())

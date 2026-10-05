@@ -19,6 +19,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from arc.context.ttl import from_db, to_db
+from arc.journal import legacy
 from arc.journal.models import (
     DecisionRecord,
     DecisionReview,
@@ -146,15 +147,19 @@ class JournalStore:
 
     @staticmethod
     def _row(row: sqlite3.Row) -> DecisionRecord:
+        at = from_db(row["at"])
+        # D54: pre-rename rows say persona 'scout' / reason 'scout_candidate' (the Sweep).
+        # A journal row has no store handle here, so 'scout' always maps to the Sweep until
+        # the new Scout persona (E5.13) adds its own enum value and cutover-aware read.
         return DecisionRecord(
             id=row["id"],
             chain_run_id=row["chain_run_id"],
             run_id=row["run_id"],
-            persona=JournalPersona(row["persona"]),
+            persona=JournalPersona(legacy.persona_key(row["persona"], at, None)),
             stage=Stage(row["stage"]),
             subject=row["subject"],
             choice=Choice(row["choice"]),
-            reason_code=ReasonCode(row["reason_code"]),
+            reason_code=ReasonCode(legacy.reason_code(row["reason_code"])),
             reason_text=row["reason_text"],
             confidence=row["confidence"],
             inputs_snapshot_id=row["inputs_snapshot_id"],
@@ -162,7 +167,7 @@ class JournalStore:
             proposal_hash=row["proposal_hash"],
             payload=json.loads(row["payload"]),
             supersedes_id=row["supersedes_id"],
-            at=from_db(row["at"]),
+            at=at,
         )
 
     # -- chain lookups -------------------------------------------------------

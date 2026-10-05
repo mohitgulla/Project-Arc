@@ -85,10 +85,10 @@ class TestShippedDefaults:
 
     def test_personas(self, shipped: RoutinesConfig) -> None:
         p = shipped.personas
-        # D31: 30-min Scout in session + the 22:00 overnight run; D52: 10-min trading loop.
-        assert p["scout"].cadence == "every 30m 09:00-16:00 ET (trading)"
-        assert p["scout"].after_sources and p["scout.overnight"].after_sources
-        assert p["scout.overnight"].cadence == "at 22:00 ET (daily)"
+        # D31: 30-min Sweep in session + the 22:00 overnight run; D52: 10-min trading loop.
+        assert p["sweep"].cadence == "every 30m 09:00-16:00 ET (trading)"
+        assert p["sweep"].after_sources and p["sweep.overnight"].after_sources
+        assert p["sweep.overnight"].cadence == "at 22:00 ET (daily)"
         assert p["director"].cadence == "every 10m 09:40-15:50 ET (trading)"
         assert p["director"].chain == ["quant", "risk", "propose", "execute"]
         assert p["director"].ttl is not None
@@ -99,7 +99,7 @@ class TestShippedDefaults:
         assert p["auditor"].cadence == "at 16:30 ET (trading)" and p["auditor"].halt_exempt
         assert p["scorecard"].cadence == "at 16:45 ET (fri)"
         assert p["investor"].trigger == "approval"
-        assert shipped.triggers_for("scout.completed") == []  # D31: the loop polls instead
+        assert shipped.triggers_for("sweep.completed") == []  # D31: the loop polls instead
         assert shipped.loop.job == "director" and shipped.is_loop("director")
 
     def test_monitor_handler_registered(self, shipped: RoutinesConfig) -> None:
@@ -108,10 +108,10 @@ class TestShippedDefaults:
     def test_full_trading_day(self, shipped: RoutinesConfig) -> None:
         plan = _day_plan(shipped, et(2026, 9, 28, 0, 0), et(2026, 9, 29, 0, 0))  # Monday
         assert plan["youtube.briefs"] == ["Mon 05:00"]  # D45: 02:00 PT, trading days only
-        # D31: Scout 09:00..16:00 every 30 min = 15 runs, plus the 22:00 overnight run.
-        assert len(plan["scout"]) == 15
-        assert (plan["scout"][0], plan["scout"][-1]) == ("Mon 09:00", "Mon 16:00")
-        assert plan["scout.overnight"] == ["Mon 22:00"]
+        # D31: Sweep 09:00..16:00 every 30 min = 15 runs, plus the 22:00 overnight run.
+        assert len(plan["sweep"]) == 15
+        assert (plan["sweep"][0], plan["sweep"][-1]) == ("Mon 09:00", "Mon 16:00")
+        assert plan["sweep.overnight"] == ["Mon 22:00"]
         assert plan["earnings"] == ["Mon 06:00", "Mon 18:00"]
         assert len(plan["rss"]) == 57 and plan["rss"][0] == "Mon 06:00"  # 06:00..20:00 / 15m
         assert len(plan["edgar"]) == 57 and plan["edgar"][-1] == "Mon 20:00"
@@ -130,9 +130,9 @@ class TestShippedDefaults:
         fri = _day_plan(shipped, et(2026, 10, 2, 0, 0), et(2026, 10, 3, 0, 0))
         assert fri["scorecard"] == ["Fri 16:45"]
         weekend = _day_plan(shipped, et(2026, 10, 3, 0, 0), et(2026, 10, 5, 0, 0))
-        # Only the daily overnight Scout; YouTube runs on trading days only (D45).
-        assert set(weekend) == {"scout.overnight"}
-        assert weekend["scout.overnight"] == ["Sat 22:00", "Sun 22:00"]
+        # Only the daily overnight Sweep; YouTube runs on trading days only (D45).
+        assert set(weekend) == {"sweep.overnight"}
+        assert weekend["sweep.overnight"] == ["Sat 22:00", "Sun 22:00"]
 
     def test_youtube_briefs_trading_days_only(self, shipped: RoutinesConfig) -> None:
         """E4.6: 05:00 ET on a trading day; none on a Saturday or a market holiday."""
@@ -146,15 +146,15 @@ class TestShippedDefaults:
         friday_after = _day_plan(shipped, et(2026, 11, 27, 0, 0), et(2026, 11, 28, 0, 0))
         assert friday_after["youtube.briefs"] == ["Fri 05:00"]  # early close is a trading day
 
-    def test_sources_run_before_scout_in_the_same_tick(self, shipped: RoutinesConfig) -> None:
+    def test_sources_run_before_sweep_in_the_same_tick(self, shipped: RoutinesConfig) -> None:
         d = Dispatcher(connect(":memory:"), shipped, is_halted=lambda: False)
         order = [x.job for x in d.plan(et(2026, 9, 27, 22, 0), since=et(2026, 9, 27, 21, 55))]
-        assert order == ["scout.overnight"]
+        assert order == ["sweep.overnight"]
         # In session: the 15-min sources land before the personas of the same slot.
-        # The loop runs before the Scout (name order), so a 30-min Scout holding the
+        # The loop runs before the Sweep (name order), so a 30-min Sweep holding the
         # LLM lock never makes the same tick's loop slot skip; the next slot reads it.
         order = [x.job for x in d.plan(et(2026, 9, 28, 10, 0), since=et(2026, 9, 28, 9, 55))]
-        assert order == ["edgar", "rss", "director", "monitor", "scout"]
+        assert order == ["edgar", "rss", "director", "monitor", "sweep"]
 
     def test_halt_skips_chain_but_not_monitor_auditor(self, shipped: RoutinesConfig) -> None:
         d = Dispatcher(connect(":memory:"), shipped, is_halted=lambda: True)
@@ -212,7 +212,7 @@ class TestDayThread:
             (et(2026, 9, 28, 12, 0), dt.date(2026, 9, 28)),  # Mon midday -> Mon
             (et(2026, 9, 28, 19, 59), dt.date(2026, 9, 28)),
             # Owner 2026-09-30: the day thread switches at 24:00 ET, not 20:00.
-            (et(2026, 9, 28, 22, 0), dt.date(2026, 9, 28)),  # Mon 22:00 Scout -> Mon
+            (et(2026, 9, 28, 22, 0), dt.date(2026, 9, 28)),  # Mon 22:00 Sweep -> Mon
             (et(2026, 9, 28, 23, 59, 59), dt.date(2026, 9, 28)),
             (et(2026, 9, 29, 0, 0), dt.date(2026, 9, 29)),  # midnight -> Tue
             (et(2026, 9, 27, 22, 0), dt.date(2026, 9, 28)),  # Sun 22:00 -> Mon
@@ -252,7 +252,7 @@ class TestHeartbeatPolicy:
         for n in (3, 0, 2):
             hb.queue_source("edgar", f"{n} new docs", new_docs=n)
         hb.queue_source("rss", "1 new doc", new_docs=1)
-        hb.summary(et(2026, 9, 28, 12, 0), "scout", "done")
+        hb.summary(et(2026, 9, 28, 12, 0), "sweep", "done")
         (day, text) = notes.posts[0]
         assert day == dt.date(2026, 9, 28)
         assert "edgar ×3, 5 new docs total (last: 2 new docs)" in text
@@ -272,7 +272,7 @@ class TestHeartbeatPolicy:
         notes = RecordingNotifier()
         hb = Heartbeats(conn, notes)
         hb.notice(et(2026, 9, 28, 10, 0), "monitor", "halt")
-        hb.alert(et(2026, 9, 29, 0, 30), "scout", "boom")  # after midnight -> Tue
+        hb.alert(et(2026, 9, 29, 0, 30), "sweep", "boom")  # after midnight -> Tue
         # A one-line [Routines] notice is inline code on the emoji's line (owner 2026-09-30).
         assert notes.posts[0] == (
             dt.date(2026, 9, 28),
@@ -280,7 +280,7 @@ class TestHeartbeatPolicy:
         )
         assert notes.posts[1] == (
             dt.date(2026, 9, 29),
-            ":rotating_light: [Scout] scout FAILED: boom",
+            ":rotating_light: [Sweep] sweep FAILED: boom",
         )
 
     def test_routines_lines_are_code_blocks_and_persona_lines_are_not(
@@ -311,10 +311,10 @@ class TestHeartbeatPolicy:
         assert text.startswith("```\n") and text.endswith("\n```")
         assert "saw `\u200b`\u200b` in output" in text
 
-    def test_card_folds_sources_into_scout_session_notes_before_footer(
+    def test_card_folds_sources_into_sweep_session_notes_before_footer(
         self, conn: sqlite3.Connection
     ) -> None:
-        """E5.5b: folded sources → ``[Scout] Session notes`` section, footer stays last."""
+        """E5.5b: folded sources → ``[Sweep] Session notes`` section, footer stays last."""
         from arc.slack import blocks as B
         from arc.slack.personas import Persona
 
@@ -327,26 +327,26 @@ class TestHeartbeatPolicy:
         assert posted is not None
         assert [b["type"] for b in posted] == ["header", "divider", "section", "context"]
         assert posted[-1] == B.footer(run="r-1", chain="c-1")
-        # Attributed to the Scout even on a Director card; persona text is escaped.
+        # Attributed to the Sweep even on a Director card; persona text is escaped.
         assert posted[2]["text"]["text"] == (
-            "*[Scout] Session notes*\nsources since last update: rss: 3 new &lt;docs&gt;"
+            "*[Sweep] Session notes*\nsources since last update: rss: 3 new &lt;docs&gt;"
         )
         assert card[-1]["type"] == "context"  # the caller's list is not mutated
         assert "> sources since last update: rss: 3 new <docs>" in notes.posts[0][1]
 
-        # A Scout card that already has session notes gets the line appended.
+        # A Sweep card that already has session notes gets the line appended.
         hb.queue_source("edgar", "1 new doc", new_docs=1)
         card2 = [
-            B.header("[Scout] Scan"),
-            B.persona_section(Persona.SCOUT, "Session notes", "Quiet tape."),
+            B.header("[Sweep] Scan"),
+            B.persona_section(Persona.SWEEP, "Session notes", "Quiet tape."),
             B.footer(run="r-2"),
         ]
-        hb.summary(et(2026, 9, 28, 12, 30), "scout", "scan", blocks=card2)
+        hb.summary(et(2026, 9, 28, 12, 30), "sweep", "scan", blocks=card2)
         posted2 = notes.blocks[1]
         assert posted2 is not None
         assert [b["type"] for b in posted2] == ["header", "section", "context"]
         assert posted2[1]["text"]["text"] == (
-            "*[Scout] Session notes*\nQuiet tape.\nsources since last update: edgar: 1 new doc"
+            "*[Sweep] Session notes*\nQuiet tape.\nsources since last update: edgar: 1 new doc"
         )
         assert posted2[-1] == B.footer(run="r-2")
 
@@ -363,7 +363,7 @@ class TestHeartbeatPolicy:
         assert posted is not None
         assert len(posted) == B.MAX_BLOCKS
         assert posted[-1] == B.footer(run="r")
-        assert posted[-2]["text"]["text"].startswith("*[Scout] Session notes*")
+        assert posted[-2]["text"]["text"].startswith("*[Sweep] Session notes*")
 
     def test_dispatcher_posts_quiet_job_notice_and_rolls_over(
         self, conn: sqlite3.Connection
@@ -372,14 +372,14 @@ class TestHeartbeatPolicy:
             {
                 "personas": {
                     "monitor": {"every": "30m", "notify": "quiet", "llm": False},
-                    "scout": {"schedule": ["22:00"]},
+                    "sweep": {"schedule": ["22:00"]},
                 }
             }
         )
         notes = RecordingNotifier()
         handlers = {
             "monitor": lambda ctx: JobResult(summary="ok", notice="HALT"),
-            "scout": lambda ctx: JobResult(summary="3 candidates"),
+            "sweep": lambda ctx: JobResult(summary="3 candidates"),
         }
         d = Dispatcher(conn, cfg, handlers=handlers, notifier=notes, is_halted=lambda: False)
         d.tick(et(2026, 9, 28, 22, 0), since=et(2026, 9, 28, 21, 55))
@@ -389,12 +389,12 @@ class TestHeartbeatPolicy:
             ":warning: `[Routines] monitor: HALT`",
         )
         assert notes.posts[1][0] == dt.date(2026, 9, 28)
-        assert notes.posts[1][1].startswith("[Scout] scout ✓ 3 candidates")
+        assert notes.posts[1][1].startswith("[Sweep] sweep ✓ 3 candidates")
         assert "monitor: ok" in notes.posts[1][1]
 
 
 # ---------------------------------------------------------------------------
-# YouTube run summary (owner note: every Scout run shows the caption outcome)
+# YouTube run summary (owner note: every Sweep run shows the caption outcome)
 # ---------------------------------------------------------------------------
 
 
@@ -704,8 +704,8 @@ class TestSimulateCli:
         data = json.loads(capsys.readouterr().out)
         assert rc == 0
         jobs = [o["job"] for t in data["ticks"] for o in t["outcomes"]]
-        # Saturday: only the overnight Scout + StockedUp; no in-session jobs.
-        assert jobs.count("scout.overnight") == 1 and "scout" not in jobs
+        # Saturday: only the overnight Sweep + StockedUp; no in-session jobs.
+        assert jobs.count("sweep.overnight") == 1 and "sweep" not in jobs
         assert "rss" not in jobs and "director" not in jobs
 
     @pytest.mark.parametrize("extra", [[], ["--dry-run", "--step", "0m"]])
@@ -869,7 +869,7 @@ def test_yaml_comment_overview_matches_config() -> None:
     raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
     assert raw["tick"]["interval"] == "10m"  # D52
     assert set(raw["personas"]) - {"finnhub_context", "director_diversification"} == {
-        "scout", "scout.overnight", "director", "monitor", "auditor", "scorecard", "investor",
+        "sweep", "sweep.overnight", "director", "monitor", "auditor", "scorecard", "investor",
         "positions.evaluate", "experiments.evaluate",
     }  # fmt: skip
     # D31: the loop's cadence and window are config; the loop knobs are one block.

@@ -377,7 +377,7 @@ function Market({ d }: { d: TradeDetail }) {
         </Block>
       )}
       {c && (
-        <Block title="Scout Candidate" testid="candidate">
+        <Block title="Sweep Candidate" testid="candidate">
           <KeyValueList
             items={[
               { label: "Stance / catalyst", value: `${c.stance} · ${humanize(c.catalyst_type)}`, hint: c.catalyst_date ?? undefined },

@@ -131,7 +131,7 @@ describe("formatting", () => {
 
   it("labels personas", () => {
     expect(personaLabel("director")).toBe("Director");
-    expect(personaLabel("scout.digest")).toBe("Scout (digest)");
+    expect(personaLabel("sweep.digest")).toBe("Sweep (digest)");
   });
 });
 
@@ -211,26 +211,26 @@ describe("run detail", () => {
 describe("llm, config", () => {
   it("stacks LLM cost by persona per day", () => {
     const llm = {
-      personas: ["director", "scout"],
+      personas: ["director", "sweep"],
       series: [
-        { day: "2026-09-29", calls: 2, input_tokens: 1, output_tokens: 1, cost_usd: 0.3, by_persona: { director: 0.1, scout: 0.2 }, by_model: {} },
+        { day: "2026-09-29", calls: 2, input_tokens: 1, output_tokens: 1, cost_usd: 0.3, by_persona: { director: 0.1, sweep: 0.2 }, by_model: {} },
         { day: "2026-09-30", calls: 1, input_tokens: 1, output_tokens: 1, cost_usd: 0.1, by_persona: { director: 0.1 }, by_model: {} },
       ],
     } as unknown as Llm;
     const b = llmBars(llm);
     expect(b.data).toEqual([
-      { label: "09-29", director: 0.1, scout: 0.2 },
-      { label: "09-30", director: 0.1, scout: 0 },
+      { label: "09-29", director: 0.1, sweep: 0.2 },
+      { label: "09-30", director: 0.1, sweep: 0 },
     ]);
-    expect(b.series.map((s) => s.label)).toEqual(["Director", "Scout"]);
+    expect(b.series.map((s) => s.label)).toEqual(["Director", "Sweep"]);
   });
 
   it("groups config keys with overrides first", () => {
     const k = (key: string, group: string, source: "yaml" | "override") => ({ key, group, source }) as OpsConfig["keys"][number];
-    const g = configGroups([k("a", "risk", "yaml"), k("b", "risk", "override"), k("c", "scout", "yaml")]);
+    const g = configGroups([k("a", "risk", "yaml"), k("b", "risk", "override"), k("c", "sweep", "yaml")]);
     expect(g.map((x) => [x.group, x.keys.map((y) => y.key)])).toEqual([
       ["risk", ["b", "a"]],
-      ["scout", ["c"]],
+      ["sweep", ["c"]],
     ]);
   });
 });
@@ -295,7 +295,7 @@ describe("E8.8d timeline bands", () => {
     rows: [
       eRow("rss", "sources.market_news", { kind: "source", categories: ["market_news", "company_data"] }),
       eRow("edgar", "sources.company_data", { kind: "source" }),
-      eRow("scout", "scout", { persona: "scout" }),
+      eRow("sweep", "sweep", { persona: "sweep" }),
       eRow("positions.evaluate", "position_management", { persona: "investor", label: "Investor exits" }),
       eRow("mystery", "other"),
       eRow("orphan", "nowhere"), // no band from the API: falls under Other
@@ -303,7 +303,7 @@ describe("E8.8d timeline bands", () => {
     bands: [
       band("sources.market_news", "Market news", "sources", "Sources", ["rss"]),
       band("sources.company_data", "Company data", "sources", "Sources", ["edgar"]),
-      band("scout", "Scout", "scout", "Scout", ["scout"]),
+      band("sweep", "Sweep", "sweep", "Sweep", ["sweep"]),
       band("trading_loop", "Trading loop", "trading_loop", "Trading loop", ["director"]),
       band("position_management", "Position management", "position_management", "Position management", ["positions.evaluate"]),
       band("other", "Other", "other", "Other", ["mystery"]),
@@ -315,7 +315,7 @@ describe("E8.8d timeline bands", () => {
     expect(v.map((b) => b.band.key)).toEqual([
       "sources.market_news",
       "sources.company_data",
-      "scout",
+      "sweep",
       "trading_loop",
       "position_management",
       "other",
@@ -329,7 +329,7 @@ describe("E8.8d timeline bands", () => {
       ["sources.market_news", true],
       ["sources.company_data", false],
     ]);
-    expect(v.find((b) => b.band.key === "scout")!.sub).toBe(false);
+    expect(v.find((b) => b.band.key === "sweep")!.sub).toBe(false);
   });
 
   it("falls back to Other for rows without a band", () => {
@@ -347,13 +347,13 @@ describe("E8.8d timeline bands", () => {
 
   it("rolls a band up over settled slots and opens it on a problem", () => {
     const rows = [
-      eRow("a", "scout", { slots: [eSlot("done", "06:00"), eSlot("no_change", "07:00"), eSlot("missed", "08:00"), eSlot("future", "16:00")] }),
-      eRow("b", "scout", { slots: [eSlot("done", "06:30")] }),
+      eRow("a", "sweep", { slots: [eSlot("done", "06:00"), eSlot("no_change", "07:00"), eSlot("missed", "08:00"), eSlot("future", "16:00")] }),
+      eRow("b", "sweep", { slots: [eSlot("done", "06:30")] }),
     ];
     expect(bandRollup(rows)).toBe("3/4 ok · 1 missed");
     expect(bandHasProblem(rows)).toBe(true);
     expect(bandHasProblem([rows[1]!])).toBe(false);
-    expect(bandRollup([eRow("c", "scout", { slots: [eSlot("future", "21:00")] })])).toBe("next 21:00");
+    expect(bandRollup([eRow("c", "sweep", { slots: [eSlot("future", "21:00")] })])).toBe("next 21:00");
   });
 
   it("summarises a job row and lists its ⓘ facts", () => {
@@ -365,7 +365,7 @@ describe("E8.8d timeline bands", () => {
     });
     expect(rowSummary(r)).toBe("1/5 done · 1 failed · 1 missed · next 10:30");
     expect(rowFacts(r)).toEqual(["every 30m", "window 09:00-16:00", "LLM no", "writes nothing"]);
-    expect(rowFacts(eRow("scout", "scout", { llm: true, writes: ["story"] }))).toEqual(["every 30m", "LLM yes", "writes story"]);
+    expect(rowFacts(eRow("sweep", "sweep", { llm: true, writes: ["story"] }))).toEqual(["every 30m", "LLM yes", "writes story"]);
   });
 });
 
