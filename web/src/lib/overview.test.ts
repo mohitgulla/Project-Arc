@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  directionView,
+  equityDates,
   equityView,
   exitStatus,
   parseOverviewRange,
@@ -84,12 +86,43 @@ describe("range -> series selection", () => {
   });
 });
 
+describe("equity date range (D50)", () => {
+  const NOW = Date.parse("2026-09-28T19:40:00Z");
+  it("runs from start_at to value_at in the Performance format, ET", () => {
+    expect(equityDates(daily, NOW)).toBe("Sep 25 – 28, 2026");
+    expect(equityDates({ ...daily, start_at: "2026-08-31T16:00:00-04:00" }, NOW)).toBe("Aug 31 – Sep 28, 2026");
+    expect(equityDates({ ...daily, start_at: "2025-12-31T16:00:00-05:00" }, NOW)).toBe("Dec 31, 2025 – Sep 28, 2026");
+  });
+  it("falls back to the first series point, then to today", () => {
+    expect(equityDates({ ...daily, start_at: null }, NOW)).toBe("Sep 14 – 28, 2026");
+    expect(equityDates({ ...intraday, start_at: null, series: [], value_at: null }, NOW)).toBe("Sep 28, 2026");
+    expect(equityDates(undefined, NOW)).toBe("Sep 28, 2026");
+  });
+  it("a 1D range on the same day prints one date; an evening ET instant stays on its ET day", () => {
+    expect(equityDates({ ...intraday, start_at: "2026-09-28T09:30:00-04:00" }, NOW)).toBe("Sep 28, 2026");
+    expect(equityDates({ ...intraday, start_at: null, series: [], value_at: "2026-09-29T01:30:00Z" }, NOW)).toBe("Sep 28, 2026");
+  });
+});
+
 describe("labels", () => {
-  it("renders structure kinds in sentence case", () => {
-    expect(structureLabel("vertical_debit")).toBe("Debit vertical");
-    expect(structureLabel("long_call")).toBe("Long call");
-    expect(structureLabel("some_new_kind")).toBe("Some new kind");
+  it("renders structure kinds in Title Case (D50; Slack stays sentence case)", () => {
+    expect(structureLabel("vertical_debit")).toBe("Debit Vertical");
+    expect(structureLabel("vertical_credit")).toBe("Credit Vertical");
+    expect(structureLabel("long_call")).toBe("Long Call");
+    expect(structureLabel("long_put")).toBe("Long Put");
+    expect(structureLabel("iron_condor")).toBe("Iron Condor");
+    expect(structureLabel("covered_call")).toBe("Covered Call");
+    expect(structureLabel("cash_secured_put")).toBe("Cash-Secured Put");
+    expect(structureLabel("some_new_kind")).toBe("Some New Kind");
     expect(structureLabel(null)).toBe("—");
+  });
+
+  it("direction label and colour", () => {
+    expect(directionView("bullish")).toEqual({ label: "Bullish", className: "text-pos-text" });
+    expect(directionView("bearish")).toEqual({ label: "Bearish", className: "text-neg-text" });
+    expect(directionView("neutral")).toEqual({ label: "Neutral", className: "text-secondary" });
+    expect(directionView(null)).toBeNull();
+    expect(directionView(undefined)).toBeNull();
   });
 
   it("exit status", () => {

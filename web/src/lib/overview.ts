@@ -5,7 +5,8 @@
 import type { TrendPoint } from "../components/TrendChart";
 import type { Stage } from "../components/StatusStepper";
 import { num, type Schemas } from "./api";
-import { STALE_FACTOR, formatAge, formatEt, isStale } from "./format";
+import { ET_ZONE, STALE_FACTOR, formatAge, formatEt, isStale } from "./format";
+import { formatRange } from "./performance";
 
 export type Overview = Schemas["OverviewResponse"];
 export type EquitySection = Schemas["EquitySection"];
@@ -58,28 +59,70 @@ export function equityView(e: EquitySection | undefined, range: OverviewRange): 
   };
 }
 
+// Title Case on the Tower (D50); Slack keeps sentence case (D22).
+const ET_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: ET_ZONE, year: "numeric", month: "2-digit", day: "2-digit" });
+
+/** The ET calendar date (`YYYY-MM-DD`) of an instant. */
+export function etDay(t: string | number | Date): string | null {
+  const d = new Date(t);
+  return Number.isNaN(d.getTime()) ? null : ET_DAY.format(d);
+}
+
+/**
+ * Equity card date range (D50), Performance `formatRange` format, ET: from the range start
+ * (`start_at`, else the first plotted point) to `value_at`. Without either end it falls back to
+ * today (*now*), so a 1D range with no prior close prints just today's date.
+ */
+export function equityDates(e: EquitySection | undefined, now: number): string {
+  const today = etDay(now) as string;
+  if (!e) return formatRange(today, today);
+  const first = [...(e.series ?? [])].sort((a, b) => Date.parse(a.t) - Date.parse(b.t))[0]?.t;
+  const end = (e.value_at && etDay(e.value_at)) || today;
+  const start = (e.start_at && etDay(e.start_at)) || (first && etDay(first)) || end;
+  return start > end ? formatRange(end, end) : formatRange(start, end);
+}
+
 const KIND_LABEL: Record<string, string> = {
-  vertical_debit: "Debit vertical",
-  vertical_credit: "Credit vertical",
-  long_call: "Long call",
-  long_put: "Long put",
-  iron_condor: "Iron condor",
+  vertical_debit: "Debit Vertical",
+  vertical_credit: "Credit Vertical",
+  long_call: "Long Call",
+  long_put: "Long Put",
+  iron_condor: "Iron Condor",
   calendar: "Calendar",
   diagonal: "Diagonal",
   butterfly: "Butterfly",
   strangle: "Strangle",
   straddle: "Straddle",
-  covered_call: "Covered call",
-  cash_secured_put: "Cash-secured put",
+  covered_call: "Covered Call",
+  cash_secured_put: "Cash-Secured Put",
 };
 
-/** `vertical_debit` -> `Debit vertical`; unknown kinds -> sentence case. */
+/** `snake_case` -> `Snake Case` (each word capitalised). */
+export function titleWords(s: string): string {
+  return s
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/** `vertical_debit` -> `Debit Vertical`; unknown kinds Title Case each word. */
 export function structureLabel(kind: string | null | undefined): string {
   if (!kind) return "—";
-  const known = KIND_LABEL[kind];
-  if (known) return known;
-  const words = kind.replace(/_/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  return KIND_LABEL[kind] ?? titleWords(kind);
+}
+
+export type Direction = "bullish" | "bearish" | "neutral";
+
+/**
+ * D50 direction after the structure label: `Bullish` / `Bearish` / `Neutral` + its colour. The
+ * --pos / --neg family's text tokens (`--pos-text` / `--neg-text`): plain --pos on the light card
+ * is ~3:1, under AA for caption text.
+ */
+export function directionView(d: Direction | null | undefined): { label: string; className: string } | null {
+  if (!d) return null;
+  const className = d === "bullish" ? "text-pos-text" : d === "bearish" ? "text-neg-text" : "text-secondary";
+  return { label: titleWords(d), className };
 }
 
 /** Exit column: `pending · profit target`, `profit target`, or an em dash. */
@@ -173,9 +216,22 @@ export function shortAge(at: string | null | undefined, now: number): string {
   return a === "just now" ? "now" : a.replace(/ ago$/, "");
 }
 
+/** Heartbeat status in Title Case: `ok` -> `OK`, `failed` -> `Failed`. */
+export function statusWord(status: string | null | undefined): string {
+  if (!status) return "?";
+  return status.toLowerCase() === "ok" ? "OK" : titleWords(status);
+}
+
+/** `paper` + `cash_debit` -> `Paper • Cash Debit` (either part may be missing). */
+export function envLabel(env?: string, profile?: string): string {
+  return [env, profile].filter(Boolean).map((x) => titleWords(x as string)).join(" • ");
+}
+
 /**
- * Slot order (fixed): Trading · Tick · Health · Alerts · Orders · env chip. A halt replaces
- * the Trading slot (`HALTED`, reason, age); a stale or non-ok heartbeat turns its slot --warn.
+ * Slot order (fixed, D50): Trading · env · Orders · Tick · Health · Alerts, which reads as a
+ * 3x2 grid on mobile (row 1 Trading | env | Orders, row 2 Tick | Health | Alerts) and one row on
+ * desktop. A halt replaces the Trading slot (`HALTED`, reason, age); a stale or non-ok heartbeat
+ * turns its slot --warn. Values are Title Case.
  */
 export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): StatusSlot[] {
   const s = o.status;
@@ -192,30 +248,13 @@ export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): Stat
       title: `Halted by ${s.halt.actor}: ${s.halt.reason}${since ? ` (${since})` : ""}${more}`,
     });
   } else {
-    slots.push({ key: "trading", label: "Trading", value: "enabled", tone: "ok", title: "Trading enabled (no active halt)" });
+    slots.push({ key: "trading", label: "Trading", value: "Enabled", tone: "ok", title: "Trading enabled (no active halt)" });
   }
-  const beat = (key: "tick" | "health", label: string, at: string | null | undefined, status: string | null | undefined, cadence?: number): StatusSlot => {
-    if (!at) return { key, label, value: "no data", tone: "none", title: `${label}: no heartbeat yet` };
-    const stale = cadence !== undefined && isStale(at, cadence, ctx.now);
-    const bad = !!status && status !== "ok";
-    const age = shortAge(at, ctx.now);
-    const value = key === "health" || bad ? `${status ?? "?"} ${age}` : age;
-    const note = stale ? ` · stale (after ${Math.round((STALE_FACTOR * (cadence ?? 0)) / 60)}m)` : "";
-    return {
-      key,
-      label,
-      value,
-      tone: stale || bad ? "warn" : "ok",
-      title: `${label} ${status ?? ""} · as of ${formatEt(at)} ET${note}`.replace(/\s+/g, " "),
-    };
-  };
-  slots.push(beat("tick", "Tick", s.tick_at, s.tick_status, ctx.tickS));
-  slots.push(beat("health", "Health", s.health_at, s.health_status, ctx.healthS));
-  const n = (s.alerts ?? []).length;
-  slots.push({ key: "alerts", label: "Alerts", value: String(n), tone: n > 0 ? "warn" : "ok", title: `${n} open alert${n === 1 ? "" : "s"}` });
+  const env = envLabel(ctx.env, ctx.accountProfile);
+  slots.push({ key: "env", label: "", value: env || "—", tone: "none", title: "Environment • account profile" });
   const b = s.order_budget;
   if (b) {
-    const tier = b.tier && b.tier !== "normal" ? ` · ${b.tier}` : "";
+    const tier = b.tier && b.tier !== "normal" ? ` · ${titleWords(b.tier)}` : "";
     slots.push({
       key: "orders",
       label: "Orders",
@@ -226,8 +265,25 @@ export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): Stat
   } else {
     slots.push({ key: "orders", label: "Orders", value: "—", tone: "none", title: "No order budget in the monitor heartbeat yet" });
   }
-  const env = [ctx.env, ctx.accountProfile].filter(Boolean).join(" · ");
-  slots.push({ key: "env", label: "", value: env || "—", tone: "none", title: "Environment · account profile" });
+  const beat = (key: "tick" | "health", label: string, at: string | null | undefined, status: string | null | undefined, cadence?: number): StatusSlot => {
+    if (!at) return { key, label, value: "No data", tone: "none", title: `${label}: no heartbeat yet` };
+    const stale = cadence !== undefined && isStale(at, cadence, ctx.now);
+    const bad = !!status && status !== "ok";
+    const age = shortAge(at, ctx.now);
+    const value = key === "health" || bad ? `${statusWord(status)} ${age}` : age;
+    const note = stale ? ` · stale (after ${Math.round((STALE_FACTOR * (cadence ?? 0)) / 60)}m)` : "";
+    return {
+      key,
+      label,
+      value,
+      tone: stale || bad ? "warn" : "ok",
+      title: `${label} ${status ? statusWord(status) : ""} · as of ${formatEt(at)} ET${note}`.replace(/\s+/g, " "),
+    };
+  };
+  slots.push(beat("tick", "Tick", s.tick_at, s.tick_status, ctx.tickS));
+  slots.push(beat("health", "Health", s.health_at, s.health_status, ctx.healthS));
+  const n = (s.alerts ?? []).length;
+  slots.push({ key: "alerts", label: "Alerts", value: String(n), tone: n > 0 ? "warn" : "ok", title: `${n} open alert${n === 1 ? "" : "s"}` });
   return slots;
 }
 

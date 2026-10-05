@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { CappedList } from "../components/CappedList";
@@ -9,11 +9,11 @@ import { KeyValueList } from "../components/KeyValueList";
 import { Money } from "../components/Money";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { StatusStepper, type Stage } from "../components/StatusStepper";
-import { ApiError, num } from "../lib/api";
+import { StructureLabel } from "../components/StructureLabel";
+import { ApiError } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import { formatEt, formatLeg, formatNumber, formatPercent } from "../lib/format";
 import { useLayout } from "../lib/layout";
-import { structureLabel } from "../lib/overview";
 import {
   defaultTab,
   lifecycleStages,
@@ -51,7 +51,7 @@ import {
 } from "./TradeDetailParts";
 
 // ---------------------------------------------------------------------------
-// Sticky summary
+// Pinned summary
 // ---------------------------------------------------------------------------
 
 const TONE_PILL = {
@@ -120,73 +120,40 @@ function LegChips({ d }: { d: TradeDetail }) {
   );
 }
 
-/** Watches the detail scroller: true once scrolled past the summary (hysteresis, no flicker). */
-function useCollapsed(ref: React.RefObject<HTMLElement | null>, enabled: boolean): boolean {
-  const [collapsed, setCollapsed] = useState(false);
-  useEffect(() => {
-    const scroller = ref.current?.closest<HTMLElement>("[data-detail-scroll]") ?? null;
-    if (!enabled || !scroller) {
-      setCollapsed(false);
-      return;
-    }
-    const onScroll = () => setCollapsed((c) => (c ? scroller.scrollTop > 40 : scroller.scrollTop > 160));
-    onScroll();
-    scroller.addEventListener("scroll", onScroll, { passive: true });
-    return () => scroller.removeEventListener("scroll", onScroll);
-  }, [ref, enabled]);
-  return collapsed;
-}
-
+/**
+ * The pinned top section (D50): ticker line, leg chips, stepper, stat strip and the tabs, fully
+ * visible at every width. It sits outside the scroller (only the tab panel scrolls), so it never
+ * collapses and never depends on `position: sticky`.
+ */
 function Summary({ d, tab, onTab }: { d: TradeDetail; tab: TabKey; onTab: (t: TabKey) => void }) {
-  const ref = useRef<HTMLDivElement>(null);
   const mobile = useLayout() === "mobile";
-  const collapsed = useCollapsed(ref, mobile);
   const r = d.header.row;
   const h = d.header;
-  const ev = num(d.quant.net_ev_managed);
   const failedAt = (h.lifecycle_failed ?? undefined) as Stage | undefined;
   const current = humanize(failedAt ? `${failedAt} failed` : h.lifecycle);
   return (
-    <div
-      ref={ref}
-      data-testid="trade-header"
-      data-collapsed={collapsed}
-      // Sticky inside the DetailPanel scroller; the negative margins cover its padding.
-      className="sticky top-[calc(-1*var(--card-pad))] z-10 -mx-[var(--card-pad)] -mt-[var(--card-pad)] border-b border-line bg-card px-[var(--card-pad)] pb-2 pt-[var(--card-pad)]"
-    >
-      {collapsed ? (
-        <div className="flex min-h-[32px] items-center gap-2" data-testid="summary-compact">
-          <span className="font-semibold text-title">{r.ticker}</span>
-          <span className="text-muted">·</span>
-          <span className="text-caption text-muted">EV</span>
-          <span className="font-semibold tabular-nums">{ev === null ? DASH : <Money value={ev} explicitSign />}</span>
+    <div data-testid="trade-header" className="shrink-0 border-b border-line bg-card px-[var(--card-pad)] pb-2 pt-3 tablet:pt-[var(--card-pad)]">
+      <div className="grid gap-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-title font-semibold">{r.ticker}</span>
+          <span className="min-w-0 text-secondary">
+            <StructureLabel kind={r.structure_kind} direction={r.direction} /> · <span className="capitalize">{r.kind}</span> · {r.contracts ?? "—"}×
+          </span>
           <span className="ml-auto">
             <StatusPill d={d} />
           </span>
         </div>
-      ) : (
-        <div className="grid gap-2">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="text-title font-semibold">{r.ticker}</span>
-            <span className="min-w-0 text-secondary">
-              {structureLabel(r.structure_kind)} · <span className="capitalize">{r.kind}</span> · {r.contracts ?? "—"}×
-            </span>
-            <span className="ml-auto">
-              <StatusPill d={d} />
-            </span>
+        <LegChips d={d} />
+        {mobile ? (
+          <div className="flex items-center gap-2" data-testid="stepper-compact">
+            <StatusStepper compact reached={h.lifecycle as Stage} failedAt={failedAt} />
+            <span className={`text-caption ${failedAt ? "text-neg-text" : "text-secondary"}`}>{current}</span>
           </div>
-          <LegChips d={d} />
-          {mobile ? (
-            <div className="flex items-center gap-2" data-testid="stepper-compact">
-              <StatusStepper compact reached={h.lifecycle as Stage} failedAt={failedAt} />
-              <span className={`text-caption ${failedAt ? "text-neg-text" : "text-secondary"}`}>{current}</span>
-            </div>
-          ) : (
-            <StatusStepper reached={h.lifecycle as Stage} failedAt={failedAt} />
-          )}
-          <StatStrip d={d} />
-        </div>
-      )}
+        ) : (
+          <StatusStepper reached={h.lifecycle as Stage} failedAt={failedAt} />
+        )}
+        <StatStrip d={d} />
+      </div>
       <div className="mt-2">
         <SegmentedControl options={TABS} value={tab} onChange={onTab} label="Trade detail" testid="trade-tabs" />
       </div>
@@ -618,20 +585,23 @@ function TabPanel({ tab, d }: { tab: TabKey; d: TradeDetail }) {
 export function TradeDetailBody({ d }: { d: TradeDetail }) {
   const [params, setParams] = useSearchParams();
   const tab = parseTab(params.get("tab")) ?? defaultTab(d.header.row.stage);
-  const ref = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
   const pick = (next: TabKey) => {
     const p = new URLSearchParams(params);
     p.set("tab", next);
     setParams(p, { replace: true });
-    // Start the new tab at its top, under the sticky summary.
-    const scroller = ref.current?.closest<HTMLElement>("[data-detail-scroll]");
-    if (scroller && scroller.scrollTop > 0) scroller.scrollTo({ top: 0 });
+    // Start the new tab at its top, under the pinned summary.
+    const el = scroller.current;
+    if (el && el.scrollTop > 0) el.scrollTo({ top: 0 });
   };
+  // Flex column inside the pinned DetailPanel body: the summary is fixed, only the panel scrolls.
   return (
-    <div ref={ref} className="grid gap-3" data-testid="trade-detail" data-tab={tab}>
+    <div className="flex min-h-0 flex-1 flex-col" data-testid="trade-detail" data-tab={tab}>
       <Summary d={d} tab={tab} onTab={pick} />
-      <div role="tabpanel" aria-label={TABS.find((x) => x.value === tab)?.label} data-testid={`tab-${tab}`} className="min-w-0">
-        <TabPanel tab={tab} d={d} />
+      <div ref={scroller} data-detail-scroll className="min-h-0 flex-1 overflow-auto overscroll-contain p-[var(--card-pad)]">
+        <div role="tabpanel" aria-label={TABS.find((x) => x.value === tab)?.label} data-testid={`tab-${tab}`} className="min-w-0">
+          <TabPanel tab={tab} d={d} />
+        </div>
       </div>
     </div>
   );
@@ -649,18 +619,33 @@ export function TradeDetailRoute() {
     const s = p.toString();
     navigate({ pathname: "/trades", search: s ? `?${s}` : "" });
   };
-  const title = q.data ? `${q.data.header.row.ticker} · ${structureLabel(q.data.header.row.structure_kind)}` : "Trade";
+  const row = q.data?.header.row;
+  const title = row ? (
+    <>
+      {row.ticker} · <StructureLabel kind={row.structure_kind} direction={row.direction} />
+    </>
+  ) : (
+    "Trade"
+  );
   let body: ReactNode;
   if (q.isError) {
     const notFound = q.error instanceof ApiError && q.error.status === 404;
-    body = <EmptyState caption={notFound ? `No trade ${hash?.slice(0, 12) ?? ""}…` : `Could not load trade: ${String(q.error)}`} />;
+    body = (
+      <div data-detail-scroll className="min-h-0 flex-1 overflow-auto p-[var(--card-pad)]">
+        <EmptyState caption={notFound ? `No trade ${hash?.slice(0, 12) ?? ""}…` : `Could not load trade: ${String(q.error)}`} />
+      </div>
+    );
   } else if (!q.data) {
-    body = <EmptyState caption="Loading…" />;
+    body = (
+      <div data-detail-scroll className="min-h-0 flex-1 overflow-auto p-[var(--card-pad)]">
+        <EmptyState caption="Loading…" />
+      </div>
+    );
   } else {
     body = <TradeDetailBody d={q.data} />;
   }
   return (
-    <DetailPanel title={title} onClose={close} wide>
+    <DetailPanel title={title} onClose={close} wide pinned>
       {body}
     </DetailPanel>
   );

@@ -222,16 +222,33 @@ they are never dropped.
 
 ### 10.1 Overview (E8.8b)
 
-- **Status row:** fixed slots `● Trading enabled` · `Tick 3m` · `Health ok 7m` · `Alerts n`
-  (button; expands the open alerts inline, capped) · `Orders 8/200` (+ tier when not normal;
-  never "Orders today") · `paper · cash_debit` chip. Each slot is `label value` with a status
-  dot, no nested pills. A stale or non-ok heartbeat turns the value `--warn` (stale = 3× the
-  cadence from `/api/meta` `cadences.tick|health`). A halt replaces slot 1 with the red
-  `HALTED` pill + reason + actor · age. ≤ 768 px: a 3×2 grid of equal cells (≥ 44 px); wider:
-  one row, env chip right-aligned. Model: `statusRow()` in `lib/overview.ts`.
-- **Equity:** the `1D 1W 1M 3M YTD ALL` control is a compact SegmentedControl in the card
-  header, right of the title (wraps under the title at 520 px, never below the hero). The
-  series caption is an InfoTip on the title.
+- **Status row** (order and wording D50, E8.8g): fixed slots `● Trading Enabled` ·
+  `● Paper • Cash Debit` · `Orders 8/200` (+ tier when not normal; never "Orders today") ·
+  `Tick 4m` · `Health Failed 25m` · `Alerts n` (button; expands the open alerts inline, capped).
+  Values are Title Case (`Enabled`, `OK`, `Failed`, `No data`; ages unchanged). The env slot is
+  `env • account_profile`, each split on `_` and Title Cased (`cash_long_only` → `Cash Long
+  Only`), styled exactly like the other values (caption, semibold, `text-primary`, neutral dot),
+  never a pill. Each slot is `label value` with a status dot, no nested pills. A stale or non-ok
+  heartbeat turns the value `--warn` (stale = 3× the cadence from `/api/meta`
+  `cadences.tick|health`). A halt replaces slot 1 with the red `HALTED` pill + reason + actor ·
+  age. ≤ 768 px: a 3×2 grid of equal cells (≥ 44 px), row 1 `Trading | env | Orders`, row 2
+  `Tick | Health | Alerts`; wider: one row in the same order. Model: `statusRow()` in
+  `lib/overview.ts`.
+- **Equity** (D50): the `1D 1W 1M 3M YTD ALL` control sits **below the hero block** (value,
+  pill, $ change, `vs … at prev close`), followed by the range's dates in the Performance
+  `formatRange` format (`Sep 4 – Oct 4, 2026`; one day prints `Oct 4, 2026`), ET, from
+  `start_at` (else the first series point, else today) to `value_at`; then the chart. Same
+  layout as the Performance RangeBar (dates wrap under the control when narrow). The series
+  caption is an InfoTip in the header. Model: `equityDates()` in `lib/overview.ts`.
+- **Structure labels** (D50, every Tower surface: Trades, Positions, trade detail, Overview,
+  Performance breakdowns): Title Case (`Debit Vertical`, `Credit Vertical`, `Long Call`,
+  `Long Put`, `Iron Condor`, `Covered Call`, `Cash-Secured Put`; unknown kinds Title Case each
+  word), followed by the trade direction `· Bullish` / `· Bearish` / `· Neutral` coloured
+  `--pos-text` / `--neg-text` / `--text-secondary` (`StructureLabel` component). The direction
+  is the API's `direction` field, derived deterministically from leg sides and strikes
+  (`arc.structures.legs_direction`): long call bullish, long put bearish, a vertical is bullish
+  when its long leg is the lower strike, everything else neutral, no legs → nothing shown. A
+  close row inherits the direction of the structure it exits. Slack keeps sentence case (D22).
 - **P&L Today:** hero + pill; Realized / Unrealized as a 2-column stat pair (inline freshness
   dot each) above the proportion bar (no legend); MTD / YTD as two KeyValue rows.
 - **Recent Activity · 24 h:** rolling window (`activity_hours`, default
@@ -304,13 +321,15 @@ they are never dropped.
 
 ### 10.5 Trade detail (E8.8f)
 
-- **Sticky summary** (inside the DetailPanel scroller, `data-detail-scroll`): ticker ·
-  structure · kind · qty · status pill; leg chips; StatusStepper (compact on mobile: dots +
+- **Pinned summary** (D50, E8.8g): ticker · structure · direction · kind · qty · status pill; leg chips; StatusStepper (compact on mobile: dots +
   the current stage label); a stat strip of Net EV (managed) · PoP (managed) · Max gain / loss
   · Cost (bps) · DTE · P&L now (Realized P&L once closed), 3×2 ≤ 768 px, one row wider. Values
   are the same API fields the Numbers tab shows (`statStrip()` in `lib/tradeDetail.ts`,
-  parity-tested). On mobile, scrolling past 160 px collapses it to one line, ticker · EV ·
-  status (back at < 40 px, hysteresis so it never flickers). The tabs stay in the sticky area.
+  parity-tested). The whole top section, tabs included, is fixed in place at every width and
+  never collapses: it is rendered outside the scroller (DetailPanel `pinned`: a flex column,
+  summary `shrink-0`, tab panel `min-h-0 flex-1 overflow-auto` carrying `data-detail-scroll`),
+  not `position: sticky`, so iPhone Safari keeps it put. A tab switch resets the panel to its
+  top. At 520×1125 the content area keeps ≥ 45 % of the viewport.
 - **Tabs** (SegmentedControl, `?tab=` URL-synced, horizontally scrollable): **Why** (thesis
   with its persona, Risk view, decision trail) · **Numbers** (payoff, then Quant as Value ·
   Odds · Costs & Liquidity · Vol & Sizing; the leg table is one card per leg on mobile) ·

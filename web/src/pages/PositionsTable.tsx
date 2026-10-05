@@ -7,7 +7,8 @@ import { DataTable } from "../components/DataTable";
 import { Money } from "../components/Money";
 import { num } from "../lib/api";
 import { formatEt, formatLeg, formatNumber } from "../lib/format";
-import { exitStatus, structureLabel, type PositionRow } from "../lib/overview";
+import { StructureLabel, structureText } from "../components/StructureLabel";
+import { exitStatus, type PositionRow } from "../lib/overview";
 
 /** Per-share net: `$4.15` debit, `-$1.20` credit (+ debit / − credit convention). */
 function Net({ v }: { v: string | null | undefined }) {
@@ -60,7 +61,12 @@ export function positionColumns(full: boolean): ColumnDef<PositionRow, unknown>[
       header: "Ticker",
       cell: (c) => <span className="font-semibold text-title">{String(c.getValue())}</span>,
     },
-    { id: "kind", header: "Structure", accessorFn: (p) => structureLabel(p.kind) },
+    {
+      id: "kind",
+      header: "Structure",
+      accessorFn: (p) => structureText(p.kind, p.direction),
+      cell: (c) => <StructureLabel kind={c.row.original.kind} direction={c.row.original.direction} />,
+    },
     {
       id: "legs",
       header: "Legs",
@@ -142,7 +148,9 @@ export function PositionsTable({ rows, full = false }: { rows: PositionRow[]; fu
       cardRow={{
         primary: (p) => (
           <>
-            {p.ticker} <span className="font-normal text-secondary">· {structureLabel(p.kind)}</span>
+            {p.ticker} <span className="font-normal text-secondary">
+              · <StructureLabel kind={p.kind} direction={p.direction} />
+            </span>
             {p.held === false && <span className="text-caption text-neg-text">not held</span>}
           </>
         ),
