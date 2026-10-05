@@ -39,6 +39,7 @@ from arc.tower.data_ops import (
     load_sources,
     resolve_day,
 )
+from arc.tower.data_universe import UniverseResponse, load_universe
 from arc.tower.routes.deps import Conn, Tower, effective  # noqa: TC001 - FastAPI dependencies
 from arc.tower.schemas import ErrorResponse
 
@@ -200,6 +201,18 @@ def sources(cfg: Tower, conn: Conn) -> SourcesResponse:
 def llm(cfg: Tower, conn: Conn, days: Annotated[int, Query(ge=1, le=365)] = 30) -> LlmResponse:
     """LLM calls, tokens and cost per day / persona / model."""
     return load_llm(conn, now=cfg.clock(), days=days)
+
+
+@router.get("/universe", response_model=UniverseResponse)
+def universe(cfg: Tower, conn: Conn) -> UniverseResponse:
+    """E12.6 (D51): the stored active list by tier, tier feeds, drops, ignored override."""
+    settings, routines = effective(cfg)
+    return load_universe(
+        conn,
+        settings,
+        now=cfg.clock(),
+        director_diversification=routines.director_diversification.mode,
+    )
 
 
 @router.get("/config", response_model=ConfigResponse)

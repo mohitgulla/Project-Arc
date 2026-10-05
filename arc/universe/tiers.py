@@ -59,6 +59,7 @@ __all__ = [
     "active_tickers_ro",
     "build_active",
     "core_tickers",
+    "ignored_core_override",
     "load_tier_inputs",
     "market_reference",
     "open_underlyings",
@@ -66,6 +67,7 @@ __all__ = [
     "seed_tickers",
     "tier_membership",
     "watch_tickers",
+    "yaml_core",
 ]
 
 MAX_CORE = 30  # hard ceiling on the core list (registry `universe` max_items)
@@ -266,7 +268,7 @@ def core_tickers(settings: ArcSettings) -> list[str]:
     names = list(dict.fromkeys(_norm(t) for t in settings.universe if _norm(t)))
     if len(names) <= MAX_CORE:
         return names
-    core = list(dict.fromkeys(_norm(t) for t in _universe_cfg(settings).core))
+    core = yaml_core(settings)
     log.warning(
         "universe.core_override_ignored",
         override=len(names),
@@ -275,6 +277,19 @@ def core_tickers(settings: ArcSettings) -> list[str]:
         hint="run `!arc config universe <core>` (or reset it) so the Tower shows the core",
     )
     return core
+
+
+def yaml_core(settings: ArcSettings) -> list[str]:
+    """``config/universe.yaml`` ``core:`` (normalised, deduped): the core list in use
+    whenever the ``universe`` override is longer than :data:`MAX_CORE`."""
+    return list(dict.fromkeys(_norm(t) for t in _universe_cfg(settings).core))
+
+
+def ignored_core_override(settings: ArcSettings) -> int | None:
+    """The ``universe`` override's name count when :func:`core_tickers` ignores it
+    (more than :data:`MAX_CORE` names), else ``None``. Pure: no log (the Tower reads it)."""
+    n = len(dict.fromkeys(_norm(t) for t in settings.universe if _norm(t)))
+    return n if n > MAX_CORE else None
 
 
 def market_reference(settings: ArcSettings) -> list[str]:

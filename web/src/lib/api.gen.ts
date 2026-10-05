@@ -324,6 +324,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ops/universe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Universe
+         * @description E12.6 (D51): the stored active list by tier, tier feeds, drops, ignored override.
+         */
+        get: operations["universe_api_ops_universe_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/overview": {
         parameters: {
             query?: never;
@@ -1345,6 +1365,21 @@ export interface components {
             undeclared_reads: string[];
             /** Undeclared Writes */
             undeclared_writes: string[];
+        };
+        /** CoreOverrideIgnored */
+        CoreOverrideIgnored: {
+            /**
+             * Core In Use
+             * @description The config/universe.yaml core list in use
+             */
+            core_in_use: string[];
+            /**
+             * Count
+             * @description Names in the `universe` override
+             */
+            count: number;
+            /** Note */
+            note: string;
         };
         /** CostBar */
         CostBar: {
@@ -5249,6 +5284,140 @@ export interface components {
             /** Underlying Up */
             underlying_up?: number | null;
         };
+        /** UniverseActiveRow */
+        UniverseActiveRow: {
+            /**
+             * Also In
+             * @description Lower tiers that also list it
+             */
+            also_in?: string[];
+            /** Rank */
+            rank: number;
+            /** Reason */
+            reason: string;
+            /** Source */
+            source: string;
+            /** Ticker */
+            ticker: string;
+            /** Tier */
+            tier: string;
+        };
+        /** UniverseDroppedRow */
+        UniverseDroppedRow: {
+            /**
+             * Reason
+             * @description over_active_cap | over_tier_size | …
+             */
+            reason: string;
+            /** Ticker */
+            ticker: string;
+            /** Tier */
+            tier: string;
+        };
+        /** UniverseResponse */
+        UniverseResponse: {
+            /** Active */
+            active: components["schemas"]["UniverseActiveRow"][];
+            /**
+             * Active Max
+             * @description universe_active_max (effective)
+             */
+            active_max: number;
+            /** Age S */
+            age_s?: number | null;
+            /**
+             * As Of
+             * Format: date-time
+             * @description Server time of this read
+             */
+            as_of: string;
+            /**
+             * Config Version
+             * @description Config version the resolve ran under
+             */
+            config_version: number | null;
+            core_override_ignored?: components["schemas"]["CoreOverrideIgnored"] | null;
+            /**
+             * Director Diversification
+             * @description personas.director_diversification (E12.5): strict | relaxed
+             */
+            director_diversification?: string | null;
+            /** Dropped */
+            dropped: components["schemas"]["UniverseDroppedRow"][];
+            /** Market Reference */
+            market_reference: string[];
+            /** Note */
+            note?: string | null;
+            /**
+             * Resolved At
+             * @description When the stored resolve was written
+             */
+            resolved_at: string | null;
+            /** Resolved By */
+            resolved_by?: string | null;
+            /**
+             * Resolved For
+             * @description The stored resolve's as_of day
+             */
+            resolved_for: string | null;
+            /**
+             * State
+             * @description today = resolved today; stale = latest resolve is older (consumers use the core list until the next one); none = never resolved (core list shown)
+             * @enum {string}
+             */
+            state: "today" | "stale" | "none";
+            /** Tiers */
+            tiers: components["schemas"]["UniverseTierRow"][];
+        };
+        /** UniverseTierRow */
+        UniverseTierRow: {
+            /**
+             * Active
+             * @description Names this tier holds in the active list
+             */
+            active: number;
+            /** Age S */
+            age_s?: number | null;
+            /**
+             * Expired
+             * @description The latest feed expired: read as empty by the resolve
+             */
+            expired: boolean;
+            /**
+             * Fetched At
+             * @description Latest universe_tier entry's fetch time
+             */
+            fetched_at: string | null;
+            /**
+             * Name
+             * @description core | momentum | trending | discovery (precedence order)
+             */
+            name: string;
+            /**
+             * Offered
+             * @description Names the tier offered before dedupe and caps (raw_count)
+             */
+            offered: number;
+            /**
+             * Partial
+             * @default false
+             */
+            partial: boolean;
+            /**
+             * Size Cap
+             * @description The tier's size: core ceiling 30, momentum/trending sizes; null = no cut
+             */
+            size_cap: number | null;
+            /**
+             * Source
+             * @description Feed source (stockanalysis, reddit+…, settings, scout)
+             */
+            source: string | null;
+            /** Source As Of */
+            source_as_of?: string | null;
+            /** Url */
+            url?: string | null;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -5888,6 +6057,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourcesResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    universe_api_ops_universe_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UniverseResponse"];
                 };
             };
             /** @description Service Unavailable */

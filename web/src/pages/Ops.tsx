@@ -917,7 +917,7 @@ function AutoApproveCard({ a, line }: { a?: AutoApprove | null; line?: string | 
 const CONFIG_BUTTON =
   "arc-press inline-flex min-h-[40px] items-center gap-1.5 rounded-control border border-line bg-control px-3 text-caption font-semibold text-primary hover:bg-hover max-tablet:min-h-[44px]";
 
-/** E8.8e: two entries to the full-page config, `/ops/config` and its Change Log tab. */
+/** E8.8e: entries to the full-page config, `/ops/config` and its Change Log tab; E12.6: Universe. */
 function ConfigLink({ c }: { c?: OpsConfig }) {
   return (
     <Card title="Config" testid="config-link">
@@ -927,6 +927,9 @@ function ConfigLink({ c }: { c?: OpsConfig }) {
         </Link>
         <Link to="/ops/config/changes" className={CONFIG_BUTTON} data-testid="config-changes-open">
           Change Log ↗
+        </Link>
+        <Link to="/ops/universe" className={CONFIG_BUTTON} data-testid="universe-open">
+          Universe ↗
         </Link>
         {c && (
           <span className="text-caption text-muted tabular-nums">

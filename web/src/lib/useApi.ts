@@ -132,6 +132,7 @@ type OpsPath = Extract<
   | "/api/ops/sources"
   | "/api/ops/llm"
   | "/api/ops/config"
+  | "/api/ops/universe"
 >;
 
 /** Ops & pipeline (E8.7d): one polled query per card. */
