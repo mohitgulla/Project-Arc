@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import argparse
@@ -36,6 +36,16 @@ def add_universe_parser(sub: argparse._SubParsersAction) -> None:  # type: ignor
         action="store_true",
         help="Offline: recorded chains + the fixture symbol master (no network).",
     )
+    c.add_argument(
+        "--profile",
+        choices=["strict", "relaxed"],
+        default=None,
+        help=(
+            "Screen every ticker with this liquidity profile, core/momentum included "
+            "(default: each name's tier profile; core + momentum are never screened)"
+        ),
+    )
+    c.add_argument("--db", default=None, help="SQLite path for tier membership, read-only")
     t = usub.add_parser("tiers", help="D51 tiers -> dedupe -> active list (read-only)")
     t.add_argument("--db", default=None, help="SQLite path (default: data/arc.db), read-only")
     t.add_argument(
@@ -58,12 +68,13 @@ def _out(obj: object, as_json: bool) -> None:
 
 def run_universe(args: argparse.Namespace) -> int:
     from arc.config import ArcSettings
-    from arc.universe import load_symbol_master, load_universe_config, refresh_symbol_master
+    from arc.universe import load_symbol_master, refresh_symbol_master
+    from arc.universe.config import universe_config
     from arc.universe.tiers import core_tickers
     from arc.utils.calendar import now_et
 
     settings = ArcSettings()
-    cfg = load_universe_config(settings.universe_config_file)
+    cfg = universe_config(settings)
     now = now_et()
     cmd = args.universe_command
     if cmd == "tiers":
@@ -104,7 +115,6 @@ def run_universe(args: argparse.Namespace) -> int:
         _out(info, args.json)
         return 0
     # check
-    from arc.universe.guard import UniverseGuard
 
     if args.fixture:
         from arc.data.recorded import MULTI_NAME_FIXTURES, RecordedMarketData
@@ -115,21 +125,26 @@ def run_universe(args: argparse.Namespace) -> int:
             settings, FIXTURE_NOW, RecordedMarketData.from_files(*MULTI_NAME_FIXTURES)
         )
     else:
-        guard = UniverseGuard.from_settings(settings, now=now)
+        guard = _live_guard(args, settings, now)
     rows = []
     for raw in args.tickers:
         t = raw.strip().upper()
-        row: dict[str, object] = {"ticker": t, "seed": guard.is_seed(t)}
+        tier = guard.tier_of(t).value
+        row: dict[str, object] = {"ticker": t, "seed": guard.is_seed(t), "tier": tier}
         if (reason := guard.known(t)) is not None:
             row |= {"admitted": False, "reject": reason, "detail": guard.details.get(t, "")}
-        elif guard.is_seed(t):
-            row |= {"admitted": True, "reject": None, "detail": "seed (never screened)"}
+        elif guard.is_seed(t) and args.profile is None:
+            row |= {"admitted": True, "reject": None, "detail": f"{tier} (never screened)"}
         else:
-            res = guard.screen(t)
+            profile = args.profile or guard.screen_profile(t)
+            res = guard.screen(t, profile)
+            seed_note = f" ({tier}: admitted unscreened)" if guard.is_seed(t) else ""
             row |= {
-                "admitted": res.passed,
-                "reject": None if res.passed else "illiquid",
-                "detail": res.detail(),
+                "profile": profile,
+                "screen_passed": res.passed,
+                "admitted": res.passed or guard.is_seed(t),
+                "reject": None if res.passed or guard.is_seed(t) else "illiquid",
+                "detail": f"{profile}: {res.detail()}{seed_note}",
                 "metrics": res.metrics.model_dump(mode="json"),
             }
         rows.append(row)
@@ -139,8 +154,42 @@ def run_universe(args: argparse.Namespace) -> int:
         for r in rows:
             mark = "ok" if r["admitted"] else str(r["reject"])
             detail = f"  {r['detail']}" if r["detail"] else ""
-            sys.stdout.write(f"{r['ticker']:<6} {mark}{detail}\n")
+            m = r.get("metrics")
+            if isinstance(m, dict) and not m.get("error"):
+                detail += "  [" + _metrics_line(m) + "]"
+            sys.stdout.write(f"{r['ticker']:<6} {r['tier']:<9} {mark}{detail}\n")
+    if args.profile is not None:  # a what-if screen: exit on the screen result
+        return 0 if all(r.get("screen_passed", r["admitted"]) for r in rows) else 1
     return 0 if all(r["admitted"] for r in rows) else 1
+
+
+def _metrics_line(m: dict[str, object]) -> str:
+    def num(k: str, fmt: str) -> str:
+        v = m.get(k)
+        return "-" if v is None else format(v, fmt)
+
+    return (
+        f"px {num('price', '.2f')} · ADV {num('adv_shares', ',.0f')} · "
+        f"OI {num('atm_open_interest', 'd')} · spread {num('atm_spread_pct', '.1%')} · "
+        f"expiries {m.get('expiries_in_window', 0)}"
+    )
+
+
+def _live_guard(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetime) -> Any:
+    """Live guard with tier membership from the store (read-only) when it exists."""
+    from arc.control.effective import effective_settings
+    from arc.store.db import connect_ro
+    from arc.universe.guard import UniverseGuard
+
+    try:
+        conn = connect_ro(args.db)
+    except FileNotFoundError:
+        return UniverseGuard.from_settings(settings, now=now)
+    try:
+        eff = effective_settings(conn, base=settings)
+        return UniverseGuard.from_settings(eff, now=now, conn=conn)
+    finally:
+        conn.close()
 
 
 def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetime) -> int:

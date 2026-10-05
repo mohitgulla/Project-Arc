@@ -489,13 +489,17 @@ class TestRunScout:
         assert res.docs_scouted == 11
         assert dict(res.rejected) == {
             REJECT_UNIVERSE: 3,
-            REJECT_THRESHOLD: 1,
             REJECT_SOURCE: 1,
             REJECT_SCHEMA: 1,
         }
         by_ticker = {c.ticker: c for c in res.candidates}
-        # AAPL: bullish 0.8 vs bearish 0.6 → 0.2, below threshold → not surfaced.
-        assert set(by_ticker) == {"NVDA", "XOM", "SPY"}
+        # E12.4: core names skip the confidence floor. JPM (0.4) and AAPL (bullish 0.8
+        # vs bearish 0.6 → 0.2) are core, so both are kept below 0.6.
+        assert set(by_ticker) == {"NVDA", "XOM", "SPY", "JPM", "AAPL"}
+        assert res.floor_skipped == {
+            "AAPL": ("core", pytest.approx(0.2)),
+            "JPM": ("core", pytest.approx(0.4)),
+        }
         assert by_ticker["SPY"].sources == ["https://example.com/news/fed-preview-transcript"]
         stored = CandidateRepo(conn).get_for_day("AAPL", res.day)
         assert stored is not None
@@ -688,5 +692,6 @@ def test_cli_scan_dry_run() -> None:
     # seed mode (default): with no symbol master cached (tests are hermetic) non-seed
     # names fail closed as unknown_symbol. D51: PLTR is core now (admitted); SPY is
     # the market reference, not a trade name, so it fails closed like any non-seed.
-    assert {c["ticker"] for c in report["candidates"]} == {"NVDA", "XOM", "PLTR"}
+    # E12.4: core JPM (0.4) and AAPL (0.2) skip the confidence floor.
+    assert {c["ticker"] for c in report["candidates"]} == {"NVDA", "XOM", "PLTR", "JPM", "AAPL"}
     assert all("rationale" not in c for c in report["candidates"])

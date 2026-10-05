@@ -199,6 +199,7 @@ def fetch_edgar(
     *,
     now: datetime | None = None,
     max_age: Ttl | None = None,
+    tickers: list[str] | None = None,
 ) -> list[RawDoc]:
     """Fetch recent EDGAR filings for configured tickers.
 
@@ -218,8 +219,13 @@ def fetch_edgar(
     # D51: filings for today's active list (core until the first resolve of the day).
     # D28: CIKs come from the cached symbol master when it has them (no per-ticker
     # download of the SEC file); ticker hints add master-validated symbols in the text.
+    # E12.4: plus open-position underlyings (filings on a held name matter even when it
+    # left the active list). *tickers* (the job's `tickers` option) replaces the scope.
     uni = IngestUniverse.from_settings(settings, now=now, conn=conn)
-    tickers = list(uni.seed)
+    if tickers is None:
+        from arc.universe.tiers import open_underlyings
+
+        tickers = list(dict.fromkeys([*uni.seed, *open_underlyings(conn)]))
 
     results: list[RawDoc] = []
     # E5.10: tickers missing from the symbol master share ONE company_tickers.json

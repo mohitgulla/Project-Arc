@@ -761,9 +761,14 @@ read it (core until the first resolve of the day).
   `!arc config universe <core 25>` so the Tower shows the core.
 
 In seed mode (`ARC_UNIVERSE_MODE=seed`, the default) core + momentum names are always
-accepted; other names reach the Scout only if they are in the symbol master and pass
-the liquidity screen in `config/universe.yaml`. `ARC_UNIVERSE_MODE=strict` makes the
-active list the allow-list.
+accepted, unscreened and below the Scout confidence floor too (journaled
+`scout_candidate` with `confidence_floor_skipped: tier=<tier>`). Trending names and
+discoveries reach the Scout only if they are in the symbol master and pass their
+tier's liquidity screen profile in `config/universe.yaml` (E12.4): `strict` (price ≥ 10,
+ADV ≥ 1M, near-ATM OI ≥ 500, ATM spread ≤ 10%) or `relaxed` (price ≥ 5, ADV ≥ 500k,
+near-ATM OI ≥ 150, ATM spread ≤ 20%), picked by `tiers.trending.screen` /
+`tiers.discovery.screen` (both `relaxed`). `ARC_UNIVERSE_MODE=strict` makes the active
+list the allow-list.
 
 1. First install (once, before the first seed-mode Scout run; needs the paper keys):
    `set -a; source ~/.hermes/.env; set +a; arc universe refresh`
@@ -772,10 +777,16 @@ active list the allow-list.
 2. Check it: `arc universe status` (exit 1 = missing cache; ingest then uses the seed
    list only and the Scout rejects non-seed names as `unknown_symbol`).
 3. Would a name be admitted? `arc universe check PLTR HOOD` (read-only market data;
-   `--fixture` = offline). The same checks run in the Scout; rejects are journalled
-   as `universe:<reason>` and shown on the Scout card.
-4. Knobs: `scout_max_new_tickers` (Slack-tunable, ceiling 25), `universe_mode`,
-   `pipeline_max_shortlist` (the Quant/Risk budget, not a Director cap).
+   tier membership from `--db`, default `data/arc.db`, read-only; `--fixture` =
+   offline). `--profile relaxed|strict` screens every name with that profile, core
+   and momentum included (a what-if; exit code = the screen result). The same checks
+   run in the Scout; rejects are journalled as `universe:<reason>` and shown on the
+   Scout card.
+4. Knobs: `scout_max_new_tickers` (discoveries per Scout run, default 25, ceiling 25;
+   trending names don't count), `universe_screen_relaxed_min_price` /
+   `_min_adv_shares` / `_min_atm_open_interest` / `_max_atm_spread_pct` (Slack-tunable;
+   looser is riskier and needs the confirm), `universe_mode`, `pipeline_max_shortlist`
+   (the Quant/Risk budget, not a Director cap).
 
 ### 5.11 Source fairness + options data (E4.5, D30; categories + freshness E4.7, D47; six categories E4.9, D49)
 
@@ -1471,10 +1482,12 @@ tickers whose earnings date in the calendar docs was 1–3 days ago.
 `routine_state[finnhub:calls]` enforces it across processes. A job that has to wait
 logs `finnhub.rate_wait wait_s=…`.
 
-**Scope.** Seed universe ∪ live `candidate` subjects ∪ open-structure underlyings,
-with ETFs skipped. It is capped at `finnhub_max_tickers` (40), seed first, and the
-cap logs `finnhub.scope_capped dropped=…`. The job options `tickers` / `max_tickers`
-override the scope per job in YAML.
+**Scope (D51, E12.4).** Open-structure underlyings → live `candidate` subjects → core
+→ momentum → trending (today's active list by tier), with ETFs skipped: the names
+being traded get context first. It is capped at `finnhub_max_tickers` (50) in that
+order, and the cap logs `finnhub.scope_capped dropped=…`. 50 tickers × 3 jobs fit the
+shared 55/min budget (the jobs run 10 min apart). The job option `tickers` replaces
+the tier part of the scope and `max_tickers` the cap, per job in YAML.
 
 **Outcomes** follow the E4.1d earnings rules:
 

@@ -4,24 +4,34 @@ and extraction knobs (D28)."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from arc.config import UniverseMode
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from arc.config import ArcSettings
 
 __all__ = [
     "DEFAULT_UNIVERSE_CONFIG",
     "REPO_ROOT",
+    "SCREEN_PROFILES",
     "EarningsConfig",
     "ExtractionConfig",
+    "LiquidityScreens",
     "LiquidityThresholds",
+    "ScreenProfile",
     "SymbolMasterConfig",
+    "TierScreen",
     "TiersConfig",
     "UniverseConfig",
     "UniverseMode",
     "load_universe_config",
+    "universe_config",
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -57,6 +67,53 @@ class LiquidityThresholds(BaseModel):
     max_atm_spread_pct: float = Field(0.10, ge=0.0)
 
 
+ScreenProfile = Literal["strict", "relaxed"]
+SCREEN_PROFILES: tuple[ScreenProfile, ...] = ("strict", "relaxed")
+
+
+def _relaxed_default() -> LiquidityThresholds:
+    """D51 relaxed screen (trending + discoveries)."""
+    return LiquidityThresholds(
+        min_price=5.0, min_adv_shares=500_000, min_atm_open_interest=150, max_atm_spread_pct=0.20
+    )
+
+
+class LiquidityScreens(BaseModel):
+    """Profile-keyed liquidity screen (D51): ``strict`` (the D28 values) and ``relaxed``.
+
+    Back-compatible: a pre-D51 flat block (threshold keys directly under
+    ``liquidity_screen``) is read as the ``strict`` profile, ``relaxed`` keeping its
+    defaults. Threshold keys mixed in next to the profile keys also go to ``strict``.
+    """
+
+    model_config = _FORBID
+
+    strict: LiquidityThresholds = Field(default_factory=LiquidityThresholds)
+    relaxed: LiquidityThresholds = Field(default_factory=_relaxed_default)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _flat_is_strict(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        flat = {k: v for k, v in data.items() if k in LiquidityThresholds.model_fields}
+        if not flat:
+            return data
+        rest = {k: v for k, v in data.items() if k not in flat}
+        strict = rest.get("strict") or {}
+        if not isinstance(strict, dict):
+            return data  # let field validation report the bad shape
+        return {**rest, "strict": {**flat, **strict}}
+
+    def profile(self, name: ScreenProfile) -> LiquidityThresholds:
+        return self.strict if name == "strict" else self.relaxed
+
+    @property
+    def adv_feed(self) -> Literal["iex", "sip", "delayed_sip"]:
+        """ADV bars feed (from ``strict``; one ADV market per run)."""
+        return self.strict.adv_feed
+
+
 class ExtractionConfig(BaseModel):
     model_config = _FORBID
 
@@ -70,9 +127,18 @@ class EarningsConfig(BaseModel):
     scout: Literal["seed", "all"] = "seed"
 
 
+class TierScreen(BaseModel):
+    """Admission screen of one screened tier (D51, E12.4)."""
+
+    model_config = _FORBID
+
+    screen: ScreenProfile = "relaxed"
+
+
 class TiersConfig(BaseModel):
     """D51 tier layout. Sizes and the active cap are runtime tunables (ArcSettings
-    ``universe_*``); this block documents the order and holds the market reference."""
+    ``universe_*``); this block documents the order, holds the market reference and
+    the screen profile of the screened tiers (core + momentum are never screened)."""
 
     model_config = _FORBID
 
@@ -80,6 +146,8 @@ class TiersConfig(BaseModel):
         default_factory=lambda: ["core", "momentum", "trending", "discovery"]
     )
     market_reference: list[str] = Field(default_factory=lambda: ["SPY", "QQQ"])
+    trending: TierScreen = Field(default_factory=TierScreen)
+    discovery: TierScreen = Field(default_factory=TierScreen)
 
     @field_validator("order")
     @classmethod
@@ -96,13 +164,33 @@ class UniverseConfig(BaseModel):
     core: list[str] = Field(default_factory=list, max_length=30)
     tiers: TiersConfig = Field(default_factory=TiersConfig)
     symbol_master: SymbolMasterConfig = Field(default_factory=SymbolMasterConfig)
-    liquidity_screen: LiquidityThresholds = Field(default_factory=LiquidityThresholds)
+    liquidity_screen: LiquidityScreens = Field(default_factory=LiquidityScreens)
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
     earnings: EarningsConfig = Field(default_factory=EarningsConfig)
 
+    def screen_for(self, tier: Literal["trending", "discovery"]) -> LiquidityThresholds:
+        """Thresholds of the profile configured for *tier* (``tiers.<tier>.screen``)."""
+        spec = self.tiers.trending if tier == "trending" else self.tiers.discovery
+        return self.liquidity_screen.profile(spec.screen)
 
-def load_universe_config(path: Path | str | None = None) -> UniverseConfig:
-    """Load and validate ``config/universe.yaml`` (or *path*)."""
+
+def load_universe_config(
+    path: Path | str | None = None, *, overrides: Mapping[tuple[str, ...], object] | None = None
+) -> UniverseConfig:
+    """Load and validate ``config/universe.yaml`` (or *path*).
+
+    *overrides* (D26 control panel, ``path -> value`` from the file root, e.g.
+    ``("liquidity_screen", "relaxed", "min_price")``) patch the YAML first.
+    """
+    from arc.utils.yamlpatch import apply_overrides
+
     p = Path(path) if path is not None else DEFAULT_UNIVERSE_CONFIG
-    data = yaml.safe_load(p.read_text()) or {}
+    data = apply_overrides(yaml.safe_load(p.read_text()) or {}, overrides)
     return UniverseConfig.model_validate(data)
+
+
+def universe_config(settings: ArcSettings) -> UniverseConfig:
+    """The effective ``config/universe.yaml``: the file plus the D26 overrides on *settings*."""
+    return load_universe_config(
+        settings.universe_config_file, overrides=settings.yaml_overrides("universe") or None
+    )

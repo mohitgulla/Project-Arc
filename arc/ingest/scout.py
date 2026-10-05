@@ -14,7 +14,9 @@ Filters (deterministic, applied after the LLM):
   tickers always pass; any other ticker must be in the symbol master
   (``unknown_symbol``), optionable, under the per-run new-ticker cap
   (``over_new_ticker_cap``) and pass the liquidity screen (``illiquid``).
-* **threshold** — confidence must be ``>= settings.scout_min_confidence``.
+* **threshold** — confidence must be ``>= settings.scout_min_confidence``. E12.4
+  (D51): core and momentum tickers skip it (kept, and journaled by the scout job
+  as ``scout_candidate`` with ``confidence_floor_skipped: tier=<tier>``).
 * **sources** — only URLs of documents actually in the batch survive; a
   candidate with no grounded source is dropped (no hallucinated citations).
 
@@ -131,6 +133,9 @@ class ScoutRunResult:
     # non-seed tickers admitted this run. Display + journal only.
     reject_details: dict[str, str] = field(default_factory=dict)
     new_tickers: list[str] = field(default_factory=list)
+    # E12.4: ticker -> (tier, confidence) of candidates accepted this run below
+    # scout_min_confidence because their tier (core / momentum) skips the floor.
+    floor_skipped: dict[str, tuple[str, float]] = field(default_factory=dict)
     # E4.5 (D30): fair selection + story synthesis accounting (display + manifest).
     source_mix: list[tuple[str, int, int]] = field(default_factory=list)  # label, read, over
     over_budget: int = 0
@@ -270,7 +275,8 @@ def validate_scout_candidate(
 
     *universe* is either a plain allow-list (strict behaviour) or a
     :class:`UniverseGuard` (D28): the symbol check runs first, the new-ticker cap
-    and liquidity screen run last, only for otherwise-valid candidates.
+    and liquidity screen run last, only for otherwise-valid candidates. With a
+    guard, core and momentum tickers skip *min_confidence* (E12.4).
     """
     try:
         out = ScoutCandidateOut.model_validate(item)
@@ -284,7 +290,9 @@ def validate_scout_candidate(
             return why
     elif ticker not in cast("Collection[str]", universe):
         return REJECT_UNIVERSE
-    if out.confidence < min_confidence:
+    if out.confidence < min_confidence and (
+        guard is None or guard.skips_confidence_floor(ticker) is None
+    ):
         return REJECT_THRESHOLD
 
     sources = [s.strip() for s in out.sources if s.strip() in allowed_sources]
@@ -572,15 +580,26 @@ def store_candidate(
 
 
 def candidates_for_scanner(
-    conn: sqlite3.Connection, day: str, *, min_confidence: float
+    conn: sqlite3.Connection,
+    day: str,
+    *,
+    min_confidence: float,
+    floor_exempt: Collection[str] = (),
 ) -> list[Candidate]:
     """The ONLY Scout output downstream stages may consume.
 
     Returns typed ``Candidate`` models (no persona free text) for *day*
-    at or above *min_confidence*, best first.
+    at or above *min_confidence*, best first. Tickers in *floor_exempt* (E12.4:
+    core + momentum) are returned whatever their confidence.
     """
-    rows = CandidateRepo(conn).list_for_day(day, min_confidence=min_confidence)
-    return [_row_to_candidate(r) for r in rows]
+    exempt = {normalize_ticker(t) for t in floor_exempt}
+    floor = 0.0 if exempt else min_confidence
+    rows = CandidateRepo(conn).list_for_day(day, min_confidence=floor)
+    return [
+        _row_to_candidate(r)
+        for r in rows
+        if float(r["confidence"]) >= min_confidence or normalize_ticker(r["ticker"]) in exempt
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1094,8 +1113,16 @@ def run_scout(
 
     result.new_tickers = list(guard.admitted_new)
     result.candidates = candidates_for_scanner(
-        conn, day, min_confidence=settings.scout_min_confidence
+        conn,
+        day,
+        min_confidence=settings.scout_min_confidence,
+        floor_exempt=guard.floor_exempt(),
     )
+    # E12.4: day-level candidates below the floor that stayed because of their tier
+    for c in result.candidates:
+        tier = guard.skips_confidence_floor(c.ticker)
+        if c.confidence < settings.scout_min_confidence and tier is not None:
+            result.floor_skipped[c.ticker] = (tier.value, c.confidence)
     for cand in result.candidates:
         keys = [source_key_of(u) for u in cand.sources]
         ttl = registry.freshness_ttl(keys, None, now)

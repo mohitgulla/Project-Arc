@@ -483,28 +483,58 @@ def _open_structure(conn: sqlite3.Connection, ticker: str, status: str = "open")
 
 class TestScope:
     def test_union_order_etf_skip_and_cap(self, conn: sqlite3.Connection) -> None:
+        """E12.4 (D51): open underlyings -> candidates -> core -> momentum -> trending."""
         _candidate(conn, "ORCL")
-        _candidate(conn, "AAPL")  # already seed
+        _candidate(conn, "AAPL")  # also core: counted once, as a candidate
         _open_structure(conn, "NFLX")
         _open_structure(conn, "COST", status="closed")  # closed: out
         master = _master(("ARKK", ["alpaca"]), ("ORCL", ["sec", "alpaca"]))
         _candidate(conn, "ARKK")  # alpaca-only listing -> fund
+        tiers = {
+            "core": ["SPY", "AAPL", "MSFT", "brk-b"],
+            "momentum": ["LLY", "MSFT"],
+            "trending": ["HOOD"],
+        }
+        scope = ticker_scope(
+            conn, tiers=tiers, now=NOW, max_tickers=50, master=master, etfs=frozenset({"SPY"})
+        )
+        assert scope.tickers == ["NFLX", "ORCL", "AAPL", "MSFT", "BRK.B", "LLY", "HOOD"]
+        assert set(scope.etfs_skipped) == {"SPY", "ARKK"}
+        assert scope.sources == {
+            "open": 1,
+            "candidates": 2,
+            "core": 2,
+            "momentum": 1,
+            "trending": 1,
+        }
+        with capture_logs() as logs:
+            capped = ticker_scope(conn, tiers=tiers, now=NOW, max_tickers=2)
+        assert capped.tickers == ["NFLX", "ORCL"]  # the names being traded first
+        assert capped.dropped == ["AAPL", "ARKK", "SPY", "MSFT", "BRK.B", "LLY", "HOOD"]
+        assert any(e["event"] == "finnhub.scope_capped" and e["dropped"] == 7 for e in logs)
+
+    def test_cap_50_keeps_open_and_candidates_over_tiers(self, conn: sqlite3.Connection) -> None:
+        _open_structure(conn, "ZZOP")
+        _candidate(conn, "ZZCA")
+        core = [f"C{i:02d}" for i in range(25)]
+        momentum = [f"M{i:02d}" for i in range(25)]
+        trending = [f"T{i:02d}" for i in range(25)]
         scope = ticker_scope(
             conn,
-            seed=["SPY", "AAPL", "MSFT", "brk-b"],
+            tiers={"core": core, "momentum": momentum, "trending": trending},
             now=NOW,
-            max_tickers=40,
-            master=master,
-            etfs=frozenset({"SPY"}),
+            max_tickers=ArcSettings().finnhub_max_tickers,
         )
-        assert scope.tickers == ["AAPL", "MSFT", "BRK.B", "ORCL", "NFLX"]
-        assert set(scope.etfs_skipped) == {"SPY", "ARKK"}
-        assert scope.sources == {"seed": 3, "candidates": 1, "open": 1}
-        with capture_logs() as logs:
-            capped = ticker_scope(conn, seed=["AAPL", "MSFT", "BRK.B"], now=NOW, max_tickers=2)
-        assert capped.tickers == ["AAPL", "MSFT"]  # seed first
-        assert capped.dropped == ["BRK.B", "ORCL", "ARKK", "NFLX"]
-        assert any(e["event"] == "finnhub.scope_capped" and e["dropped"] == 4 for e in logs)
+        assert len(scope.tickers) == 50
+        assert scope.tickers[:2] == ["ZZOP", "ZZCA"]
+        assert scope.sources == {
+            "open": 1,
+            "candidates": 1,
+            "core": 25,
+            "momentum": 23,
+            "trending": 0,
+        }
+        assert scope.dropped == momentum[23:] + trending
 
     def test_recent_reporters(self, conn: sqlite3.Connection) -> None:
         for sym, day in (("AAPL", "2026-10-03"), ("MSFT", "2026-09-30"), ("NVDA", "2026-10-05")):
@@ -791,7 +821,8 @@ def test_registry_exposes_finnhub_budget() -> None:
 
     assert REGISTRY["finnhub_calls_per_minute"].hard_ceiling == 60
     assert ArcSettings().finnhub_calls_per_minute == 55
-    assert ArcSettings().finnhub_max_tickers == 40
+    assert ArcSettings().finnhub_max_tickers == 50  # D51
+    assert REGISTRY["finnhub_max_tickers"].min == 1
 
 
 class TestEarningsCalendarOnSharedClient:

@@ -96,8 +96,8 @@ def _stored_doc(conn: sqlite3.Connection, source: str, url: str) -> RawDoc:
     [
         ("rss", rss_source, "arc.ingest.rss.fetch_rss", {"feeds": ["https://f/x"]},
          "ingest_rss_feeds", ["https://f/x"]),
-        ("edgar", edgar_source, "arc.ingest.edgar.fetch_edgar", {"tickers": ["AAPL"]},
-         "universe", ["AAPL"]),
+        ("edgar", edgar_source, "arc.ingest.edgar.fetch_edgar", {"tickers": ["aapl"]},
+         None, None),
         ("youtube.stockedup", youtube_source, "arc.ingest.youtube.fetch_youtube",
          {"channel": "UCabc"}, "ingest_youtube_channels",
          ["https://www.youtube.com/channel/UCabc/videos"]),
@@ -128,6 +128,48 @@ def test_source_handlers_write_doc_refs(
     assert {r.subject for r in refs} == {r.payload["doc_id"] for r in refs}
     assert all(r.produced_by == job and r.run_id == "run-1" for r in refs)
     assert len(ctx.outputs) == 2
+
+
+def _open_structure(conn: sqlite3.Connection, ticker: str) -> None:
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT INTO open_structures (id, ticker, open_proposal_hash, candidate_id,"
+        " structure_json, contracts, entry_net, opened_at, status)"
+        " VALUES (?, ?, ?, 'c', '{}', 1, '1.0', '2026-09-20', 'open')",
+        (f"os-{ticker}", ticker, f"h-{ticker}"),
+    )
+    conn.commit()
+
+
+def test_edgar_scope_is_active_list_plus_open_underlyings(conn: sqlite3.Connection) -> None:
+    """E12.4: EDGAR = active list + open underlyings; a `tickers` option replaces it."""
+    _open_structure(conn, "ZZOP")
+    with mock.patch("arc.ingest.edgar.fetch_edgar", return_value=[]) as fetch:
+        edgar_source(_ctx(conn, "edgar"))
+    assert fetch.call_args.kwargs["tickers"] is None  # resolved inside fetch_edgar
+    with mock.patch("arc.ingest.edgar.fetch_edgar", return_value=[]) as fetch:
+        edgar_source(_ctx(conn, "edgar", {"tickers": ["aapl"]}))
+    assert fetch.call_args.kwargs["tickers"] == ["AAPL"]
+
+    from arc.ingest import edgar
+
+    seen: list[str] = []
+    uni = mock.Mock(seed=("NVDA", "AAPL"))
+    uni.cik.side_effect = lambda t: seen.append(t)  # no CIK: the walk skips every ticker
+    with (
+        mock.patch.object(edgar.IngestUniverse, "from_settings", return_value=uni),
+        mock.patch.object(edgar, "_company_tickers", return_value={}),
+    ):
+        edgar.fetch_edgar(conn, ArcSettings(), now=NOW)
+    assert seen[:3] == ["NVDA", "AAPL", "ZZOP"]
+
+
+def test_data_tickers_include_open_underlyings(conn: sqlite3.Connection) -> None:
+    from arc.routines.handlers import _data_tickers
+
+    _open_structure(conn, "ZZOP")
+    got = _data_tickers(_ctx(conn, "unusual_options", {"tickers": ["nvda"]}))
+    assert got == ["NVDA", "ZZOP"]
 
 
 def test_source_without_options_uses_settings(conn: sqlite3.Connection) -> None:

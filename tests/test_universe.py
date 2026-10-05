@@ -379,7 +379,7 @@ def test_universe_config_file_override(tmp_path: Path) -> None:
     path = tmp_path / "u.yaml"
     raw = Path("config/universe.yaml").read_text()
     path.write_text(raw.replace("min_atm_open_interest: 500", "min_atm_open_interest: 7"))
-    assert load_universe_config(path).liquidity_screen.min_atm_open_interest == 7
+    assert load_universe_config(path).liquidity_screen.strict.min_atm_open_interest == 7
 
 
 def test_fixture_master_is_valid() -> None:

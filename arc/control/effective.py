@@ -33,6 +33,7 @@ from arc.exits.policy import DEFAULT_EXITS_PATH, load_exit_config
 from arc.experiments.config import DEFAULT_EXPERIMENTS_PATH, load_experiments_config
 from arc.routines.config import DEFAULT_ROUTINES_PATH, load_routines
 from arc.scanner.rank import DEFAULT_RANKING_PATH, load_ranking_config
+from arc.universe.config import DEFAULT_UNIVERSE_CONFIG
 
 if TYPE_CHECKING:
     from arc.backtest.costs import CostModel
@@ -63,6 +64,7 @@ YAML_PATHS: dict[Target, Path] = {
     Target.ROUTINES: DEFAULT_ROUTINES_PATH,
     Target.RANKING: DEFAULT_RANKING_PATH,
     Target.EXPERIMENTS: DEFAULT_EXPERIMENTS_PATH,
+    Target.UNIVERSE: DEFAULT_UNIVERSE_CONFIG,
 }
 
 

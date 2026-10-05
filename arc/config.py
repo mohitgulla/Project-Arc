@@ -665,10 +665,11 @@ class ArcSettings(BaseSettings):
         ),
     )
     finnhub_max_tickers: Annotated[int, Field(ge=1, le=200)] = Field(
-        default=40,
+        default=50,
         description=(
-            "D46: per-ticker Finnhub jobs fetch at most this many tickers per run "
-            "(seed universe first, then live candidates, then open underlyings)."
+            "D46/D51: per-ticker Finnhub jobs fetch at most this many tickers per run "
+            "(open-position underlyings first, then today's candidates, core, momentum, "
+            "trending)."
         ),
     )
     finnhub_insider_window_days: Annotated[int, Field(ge=7, le=365)] = Field(
@@ -899,10 +900,10 @@ class ArcSettings(BaseSettings):
         description="ARC_UNIVERSE_CONFIG_FILE; None -> config/universe.yaml.",
     )
     scout_max_new_tickers: Annotated[int, Field(ge=0, le=50)] = Field(
-        default=10,
+        default=25,
         description=(
-            "Max non-seed tickers the Scout may accept per run (D28); extra ones are "
-            "rejected as over_new_ticker_cap."
+            "Max discoveries (names in no D51 tier) the Scout may accept per run (D28, "
+            "D51: 25); extra ones are rejected as over_new_ticker_cap."
         ),
     )
 
