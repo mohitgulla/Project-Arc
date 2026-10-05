@@ -11,8 +11,14 @@ Job keys (``sources.<name>`` / ``personas.<name>``):
   anchored at the window start (midnight when no window), or
 - ``trigger: approval`` — event-driven only (``<job>.completed``, ``approval``,
   ``halt``, or any name emitted with ``arc routines emit``).
-- ``days: daily | trading | weekdays`` (default ``daily``), or a list of
-  weekdays for weekly jobs (``days: [fri]``).
+- ``days: daily | trading | weekdays | month_start`` (default ``daily``), or a
+  list of weekdays for weekly jobs (``days: [fri]``). ``month_start`` = the first
+  trading session of each calendar month (holiday-aware, E12.2 / D51).
+- ``catch_up: {days, until_written: <kind>:<subject>}`` — a slow job's retry
+  cadence: on ``catch_up.days`` slots that are not regular slots, the job also
+  runs while no entry of that kind/subject was written since its latest regular
+  slot (first deploy, or a failed regular run). E.g. a monthly job retries every
+  trading session until one run succeeds.
 - ``chain: [a, b, c]`` — steps run in order after this job, in one chain run.
 - ``after_sources: true`` — run every source due in the same tick first.
 - ``ttl`` — catch-up window: a missed slot runs (once) only while inside it.
@@ -141,6 +147,7 @@ class Days(enum.StrEnum):
     DAILY = "daily"
     TRADING = "trading"
     WEEKDAYS = "weekdays"
+    MONTH_START = "month_start"  # first trading session of each calendar month (E12.2)
 
 
 class Weekday(enum.StrEnum):
@@ -185,6 +192,56 @@ class ContextPolicy(BaseModel):
 
     ttl: Ttl | None = None
     supersede: Supersede = Supersede.LATEST
+
+
+class CatchUp(BaseModel):
+    """Retry cadence of a slow job (E12.2): run on ``days`` slots that are not regular
+    slots while no ``until_written`` (``kind:subject``) entry was written since the
+    job's latest regular slot (or ever, when no regular slot is within ``lookback``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    days: Days | list[Weekday] = Days.TRADING
+    until_written: str
+    lookback: _dt.timedelta = _dt.timedelta(days=45)
+
+    @field_validator("days", mode="before")
+    @classmethod
+    def _days(cls, v: Any) -> Any:
+        return _weekday_list(v)
+
+    @field_validator("lookback", mode="before")
+    @classmethod
+    def _lookback(cls, v: Any) -> Any:
+        return parse_duration(v) if isinstance(v, str) else v
+
+    @field_validator("until_written")
+    @classmethod
+    def _target(cls, v: str) -> str:
+        kind, sep, subject = v.partition(":")
+        if not sep or not subject.strip():
+            msg = f"catch_up.until_written must be '<kind>:<subject>', got {v!r}"
+            raise ValueError(msg)
+        if kind not in KINDS:
+            msg = f"catch_up.until_written: unknown context kind {kind!r}"
+            raise ValueError(msg)
+        return v
+
+    @property
+    def target(self) -> tuple[str, str]:
+        kind, _, subject = self.until_written.partition(":")
+        return kind, subject.strip()
+
+
+def _weekday_list(v: Any) -> Any:
+    """``days: [Fri, mon]`` -> ``["fri", "mon"]`` (each weekday once)."""
+    if isinstance(v, list):
+        names = [str(d).strip().lower()[:3] for d in v]
+        if not names or len(set(names)) != len(names):
+            msg = "days list must name each weekday once (e.g. [fri])"
+            raise ValueError(msg)
+        return names
+    return v
 
 
 class Window(BaseModel):
@@ -276,6 +333,7 @@ class JobSpec(StepSpec):
     halt_exempt: bool = False
     enabled: bool = True
     lane: Lane = Lane.INLINE  # D39: background = the tick claims the slot and spawns it
+    catch_up: CatchUp | None = None  # E12.2: retry a slow job until it has written
 
     @field_validator("schedule", mode="before")
     @classmethod
@@ -294,13 +352,7 @@ class JobSpec(StepSpec):
     @field_validator("days", mode="before")
     @classmethod
     def _days(cls, v: Any) -> Any:
-        if isinstance(v, list):
-            names = [str(d).strip().lower()[:3] for d in v]
-            if not names or len(set(names)) != len(names):
-                msg = "days list must name each weekday once (e.g. [fri])"
-                raise ValueError(msg)
-            return names
-        return v
+        return _weekday_list(v)
 
     @property
     def days_label(self) -> str:
@@ -322,6 +374,9 @@ class JobSpec(StepSpec):
             raise ValueError(msg)
         if len(set(self.schedule)) != len(self.schedule):
             msg = "schedule has duplicate times"
+            raise ValueError(msg)
+        if self.catch_up is not None and not self.schedule:
+            msg = "catch_up is only valid with schedule"
             raise ValueError(msg)
         return self
 

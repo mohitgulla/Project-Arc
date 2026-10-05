@@ -34,6 +34,19 @@ tiers:
   # market guard always has an SPY read. ETFs can still enter as trending/discoveries.
   market_reference: [SPY, QQQ]
 
+momentum:
+  # E12.2 momentum tier: S&P 500 Momentum index constituents are not free, so the
+  # holdings of Invesco SPMO (tracks the index) are the proxy. Source order and size
+  # are `universe.momentum` job options in config/routines.yaml.
+  urls:
+    stockanalysis: https://stockanalysis.com/etf/spmo/holdings/   # embedded top-25 array
+    schwab: https://www.schwab.wallst.com/schwab/Prospect/research/etfs/schwabETF/index.asp?type=holdings&symbol=SPMO
+  share_class_aliases: {GOOG: GOOGL}   # collapsed before ranking (weights summed)
+  min_rows: 20                         # fewer parsed rows -> try the next source
+  stale_after_days: 40                 # page as-of older -> keep it, raise coverage:universe.momentum
+  timeout_s: 20
+  retries: 2                           # connection errors / 5xx only
+
 symbol_master:
   # Local cache of the SEC ticker file + Alpaca active US-equity assets
   # (tradable / has_options flags). Relative paths are from the repo root.

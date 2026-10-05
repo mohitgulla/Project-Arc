@@ -756,6 +756,18 @@ briefs, `unusual_options`/`ex_dividend`, Finnhub scope, monitoring and `arc hist
 read it (core until the first resolve of the day).
 
 - See it: `arc universe tiers [--json] [--db PATH] [--now ISO]` (read-only).
+- **Momentum tier (E12.2):** job `universe.momentum`, 06:00 ET on the first trading
+  session of each month (`days: month_start`). It writes the top 25 holdings of Invesco
+  SPMO (the S&P 500 Momentum proxy) from stockanalysis.com, falling back to Schwab's
+  first 20 rows (`partial`). GOOG folds into GOOGL; ETFs/funds and non-optionable names
+  are dropped. The entry lives 35 days, so a failed month keeps last month's list; if
+  no entry was written since the month-start slot, the job retries every trading
+  session at 06:00 (`catch_up:`) until one run succeeds. The diff posts as a notice
+  (`Momentum tier: +LITE +GS −NEM · 25 names · as of Oct 2`). A page as-of older than 40
+  days raises `coverage:universe.momentum`. By hand: `arc universe momentum --dry-run`
+  (fetch + print, no write) or `arc universe momentum [--db PATH] [--no-slack]` (runs the
+  job). Weekly instead: `days: [mon]` and `context: {ttl: 8d}` in `config/routines.yaml`.
+  stockanalysis lists only 25 rows, so the GOOG fold leaves 24 names (marked `partial`).
 - A `universe` override longer than 30 names (pre-D51 flat list) is ignored in favour
   of the yaml core (logged `universe.core_override_ignored`). Reset it from Slack with
   `!arc config universe <core 25>` so the Tower shows the core.

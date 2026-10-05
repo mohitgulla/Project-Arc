@@ -168,15 +168,23 @@ class JobContext:
         *,
         as_of: _dt.datetime | None = None,
         count: int | None = None,
+        digest: str | None = None,
     ) -> ExternalInput:
         """Record market/broker/DB data this run used (D27 run manifest).
 
         Only the sha256 of *payload*'s canonical JSON is kept, never the data.
+        *digest* (E12.2) records a digest the caller computed instead, e.g. the
+        sha256 of a fetched page's raw bytes.
         """
-        from arc.routines.manifest import ExternalInput, digest
+        from arc.routines.manifest import ExternalInput
+        from arc.routines.manifest import digest as _digest
 
         item = ExternalInput(
-            name=name, source=source, as_of=as_of, digest=digest(payload), count=count
+            name=name,
+            source=source,
+            as_of=as_of,
+            digest=digest or _digest(payload),
+            count=count,
         )
         self.external_inputs.append(item)
         return item
@@ -681,10 +689,11 @@ def _date_of(text: str) -> _dt.date:
         return dt.date.min
 
 
-def resolve_universe(ctx: JobContext) -> ActiveUniverse:
+def resolve_universe(ctx: JobContext, *, write: Callable[..., Any] | None = None) -> ActiveUniverse:
     """D51: resolve today's active list (no network) and write ``active_universe``.
 
     Overflow past ``universe_active_max`` is journaled ``universe:over_active_cap``.
+    *write* (E12.2) replaces ``ctx.write``, e.g. to cap the entry's TTL.
     """
     from arc.universe.tiers import build_active, record_active
 
@@ -696,7 +705,7 @@ def resolve_universe(ctx: JobContext) -> ActiveUniverse:
         ctx.conn,
         active,
         at=ctx.now,
-        write=ctx.write,
+        write=write or ctx.write,
         run_id=ctx.run_id,
         chain_run_id=ctx.chain_run_id,
     )
@@ -752,6 +761,101 @@ def symbols_source(ctx: JobContext) -> JobResult:
     )
     metrics |= {"active": len(active.members), **{f"tier_{k}": v for k, v in c.items()}}
     return JobResult(summary=" · ".join(parts), metrics=metrics)
+
+
+MOMENTUM_SOURCES_DEFAULT = ("stockanalysis", "schwab")
+
+
+def run_momentum(
+    *,
+    settings: ArcSettings,
+    options: Mapping[str, Any],
+    now: _dt.datetime,
+    get: Callable[[str], bytes] | None = None,
+) -> Any:
+    """E12.2: fetch + select the momentum tier (no write). Returns a ``MomentumFetch``.
+
+    Raises :class:`arc.universe.momentum.MomentumError` when every source fails.
+    """
+    from arc.pipeline.market import ETF_UNDERLYINGS
+    from arc.universe import load_symbol_master, load_universe_config
+    from arc.universe.momentum import fetch_momentum
+
+    cfg = load_universe_config(settings.universe_config_file)
+    master = load_symbol_master(
+        cfg.symbol_master, user_agent=settings.edgar_user_agent, now=now, fetch_if_missing=False
+    )
+    order = [str(s) for s in options.get("source_order", MOMENTUM_SOURCES_DEFAULT)]
+    size = int(options.get("size", settings.universe_momentum_size))
+    return fetch_momentum(
+        cfg.momentum,
+        source_order=order,
+        size=size,
+        user_agent=settings.edgar_user_agent,
+        master=master,
+        etfs=ETF_UNDERLYINGS | set(cfg.tiers.market_reference),
+        get=get,
+    )
+
+
+def universe_momentum_source(ctx: JobContext) -> JobResult:
+    """E12.2 / D51: monthly S&P 500 Momentum top N (SPMO holdings) -> ``universe_tier``.
+
+    Writes the ``momentum`` tier entry (TTL from the job's ``context:`` policy, 35d),
+    records the fetched page's digest + URL + as-of in the run manifest (D27), posts
+    the monthly diff as a notice, then re-resolves today's active list. Every source
+    failing raises: the run is ``failed`` + alerted, nothing is written, and the
+    previous entry stays valid until its TTL.
+    """
+    import datetime as dt
+
+    from arc.universe import load_universe_config
+    from arc.universe.momentum import (
+        build_payload,
+        is_stale,
+        notice_line,
+        previous_members,
+        tier_diff,
+    )
+
+    fetch = run_momentum(settings=ctx.settings, options=ctx.options, now=ctx.now)
+    today = ctx.now.astimezone(ET).date()
+    cfg = load_universe_config(ctx.settings.universe_config_file).momentum
+    stale = is_stale(fetch.as_of, today, cfg.stale_after_days)
+    as_of_dt = dt.datetime.combine(fetch.as_of, dt.time(), tzinfo=ET) if fetch.as_of else None
+    ctx.record_input(
+        "spmo_holdings", fetch.url, None, as_of=as_of_dt, count=len(fetch.rows), digest=fetch.digest
+    )
+    previous = previous_members(ctx.conn)
+    order = [str(s) for s in ctx.options.get("source_order", MOMENTUM_SOURCES_DEFAULT)]
+    line = notice_line(fetch, previous, stale=stale, primary=order[0] if order else "")
+    ctx.write("universe_tier", "momentum", build_payload(fetch, now=ctx.now))
+    # The job's `context:` (35d) is for the tier entry; the active list keeps its own
+    # `context_ttl` (1 session), so tomorrow's runs re-resolve it.
+    active_ttl = ctx.routines.context_ttl.get("active_universe")
+
+    def write_active(kind: str, subject: str, payload: Any, **kw: Any) -> Any:
+        return ctx.write(kind, subject, payload, ttl=active_ttl.ttl if active_ttl else None, **kw)
+
+    active = resolve_universe(ctx, write=write_active)
+    added, removed = tier_diff(previous or [], fetch.tickers)
+    return JobResult(
+        summary=f"{line} · active {len(active.members)}",
+        notice=line,
+        metrics={
+            "names": len(fetch.picks),
+            "rows": len(fetch.rows),
+            "source": fetch.source,
+            "source_as_of": fetch.as_of.isoformat() if fetch.as_of else None,
+            "stale": stale,
+            "partial": fetch.partial,
+            "added": added,
+            "removed": removed,
+            "dropped": [f"{s}:{r}" for s, r in fetch.dropped],
+            "source_errors": fetch.errors,
+            "active": len(active.members),
+        },
+    )
 
 
 def youtube_url(channel: str) -> str:
@@ -1057,6 +1161,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "edgar": "arc.routines.handlers:edgar_source",
     "earnings": "arc.routines.handlers:earnings_source",
     "symbols": "arc.routines.handlers:symbols_source",  # E5.7 weekly symbol master
+    "universe.momentum": "arc.routines.handlers:universe_momentum_source",  # E12.2 monthly
     "youtube": "arc.routines.handlers:youtube_source",
     "youtube.briefs": "arc.routines.handlers:youtube_briefs",  # E4.6 daily briefs (D45)
     # E4.5 / D30 options-trading data (no LLM; typed context kinds)

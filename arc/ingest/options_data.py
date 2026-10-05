@@ -26,6 +26,7 @@ import csv
 import datetime as _dt
 import io
 import re
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -82,10 +83,35 @@ BEA_ICS_URL = "https://www.bea.gov/news/schedule/ics/online-calendar-subscriptio
 VOL_INDICES = ("VIX9D", "VIX", "VIX3M", "VVIX")
 
 
-def http_get(url: str, user_agent: str, *, timeout: float = 20.0) -> bytes:
-    resp = requests.get(url, headers={"User-Agent": user_agent}, timeout=timeout)
-    resp.raise_for_status()
-    return resp.content
+def http_get(
+    url: str,
+    user_agent: str,
+    *,
+    timeout: float = 20.0,
+    retries: int = 0,
+    backoff_s: float = 2.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bytes:
+    """GET *url* with *user_agent*; raises on HTTP errors.
+
+    ``retries`` (default 0) re-tries connection errors, timeouts and 5xx responses
+    with a linear backoff (``backoff_s`` × attempt). A 4xx is never retried.
+    """
+    attempt = 0
+    while True:
+        try:
+            resp = requests.get(url, headers={"User-Agent": user_agent}, timeout=timeout)
+            resp.raise_for_status()
+            return resp.content
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            if status < 500 or attempt >= retries:
+                raise
+        except (requests.ConnectionError, requests.Timeout):
+            if attempt >= retries:
+                raise
+        attempt += 1
+        sleep(backoff_s * attempt)
 
 
 # ---------------------------------------------------------------------------

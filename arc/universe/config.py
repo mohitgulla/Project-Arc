@@ -17,6 +17,7 @@ __all__ = [
     "EarningsConfig",
     "ExtractionConfig",
     "LiquidityThresholds",
+    "MomentumConfig",
     "SymbolMasterConfig",
     "TiersConfig",
     "UniverseConfig",
@@ -70,6 +71,36 @@ class EarningsConfig(BaseModel):
     scout: Literal["seed", "all"] = "seed"
 
 
+class MomentumConfig(BaseModel):
+    """E12.2 momentum tier source (S&P 500 Momentum via Invesco SPMO holdings).
+
+    Which sources run, in what order, and how many names the tier writes are job
+    options in ``config/routines.yaml`` (``universe.momentum``); this block holds the
+    source URLs and the deterministic selection rules.
+    """
+
+    model_config = _FORBID
+
+    urls: dict[Literal["stockanalysis", "schwab"], str] = Field(
+        default_factory=lambda: {
+            "stockanalysis": "https://stockanalysis.com/etf/spmo/holdings/",
+            "schwab": (
+                "https://www.schwab.wallst.com/schwab/Prospect/research/etfs/schwabETF/"
+                "index.asp?type=holdings&symbol=SPMO"
+            ),
+        }
+    )
+    # Share classes collapsed to one name before ranking (the first-listed class keeps
+    # its rank; later classes are dropped as duplicates).
+    share_class_aliases: dict[str, str] = Field(default_factory=lambda: {"GOOG": "GOOGL"})
+    # A source with fewer parsed rows than this falls through to the next source.
+    min_rows: int = Field(20, ge=1)
+    # The page's as-of date older than this -> keep the list, raise coverage:universe.momentum.
+    stale_after_days: int = Field(40, ge=1)
+    timeout_s: float = Field(20.0, gt=0)
+    retries: int = Field(2, ge=0, le=5)
+
+
 class TiersConfig(BaseModel):
     """D51 tier layout. Sizes and the active cap are runtime tunables (ArcSettings
     ``universe_*``); this block documents the order and holds the market reference."""
@@ -95,6 +126,7 @@ class UniverseConfig(BaseModel):
 
     core: list[str] = Field(default_factory=list, max_length=30)
     tiers: TiersConfig = Field(default_factory=TiersConfig)
+    momentum: MomentumConfig = Field(default_factory=MomentumConfig)
     symbol_master: SymbolMasterConfig = Field(default_factory=SymbolMasterConfig)
     liquidity_screen: LiquidityThresholds = Field(default_factory=LiquidityThresholds)
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
