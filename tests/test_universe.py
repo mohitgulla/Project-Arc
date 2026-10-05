@@ -150,7 +150,14 @@ class TestExtract:
             "Palantir (NASDAQ: PLTR) rallied; $nvda too. Berkshire (BRK-B) flat. "
             "SPY closed green. IT spending and AI hype; F is a letter."
         )
-        assert extract_tickers(text, self.ACCEPTED, self.CFG) == ["PLTR", "NVDA", "BRK.B", "SPY"]
+        # E12.3: a 3-letter bare word (SPY) counts only when allowed (core/momentum/ref)
+        assert extract_tickers(text, self.ACCEPTED, self.CFG) == ["PLTR", "NVDA", "BRK.B"]
+        assert extract_tickers(text, self.ACCEPTED, self.CFG, bare_allow={"SPY"}) == [
+            "PLTR",
+            "NVDA",
+            "BRK.B",
+            "SPY",
+        ]
 
     def test_cashtag_beats_stop_word_and_length(self) -> None:
         assert extract_tickers("$AI and $F", self.ACCEPTED, self.CFG) == ["AI", "F"]

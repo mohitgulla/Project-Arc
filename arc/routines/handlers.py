@@ -873,6 +873,148 @@ def universe_momentum_source(ctx: JobContext) -> JobResult:
     )
 
 
+def trending_get(cfg: Any, user_agent: str) -> Callable[[str], bytes]:
+    """E12.3: HTTP GET for the trending network inputs (connection errors / 5xx
+    retried, never 4xx). Lives here, not in ``arc.universe.trending``, so the config
+    validator importing that module stays free of HTTP clients (tower contract)."""
+    from arc.ingest.options_data import http_get
+
+    def get(url: str) -> bytes:
+        return http_get(url, user_agent, timeout=cfg.timeout_s, retries=cfg.retries)
+
+    return get
+
+
+def run_trending_tier(
+    *,
+    conn: sqlite3.Connection,
+    settings: ArcSettings,
+    routines: RoutinesConfig,
+    options: Mapping[str, Any],
+    now: _dt.datetime,
+    get: Callable[[str], bytes] | None = None,
+    screen: bool = True,
+    market_factory: Callable[[], Any] | None = None,
+) -> Any:
+    """E12.3: gather + rank + screen the trending tier (no write). ``TrendingResult``.
+
+    Raises :class:`arc.universe.trending.TrendingError` when the tier cannot be built.
+    """
+    from arc.ingest.sources import SourceRegistry
+    from arc.universe import load_symbol_master
+    from arc.universe.config import universe_config
+    from arc.universe.guard import UniverseGuard
+    from arc.universe.ingest import IngestUniverse
+    from arc.universe.tiers import Tier, market_reference, tier_membership
+    from arc.universe.trending import TrendingConfig, run_trending
+
+    tcfg = TrendingConfig.from_options(options)
+    ucfg = universe_config(settings)
+    master = load_symbol_master(
+        ucfg.symbol_master, user_agent=settings.edgar_user_agent, now=now, fetch_if_missing=False
+    )
+    exclude: dict[str, str] = {}
+    for t, tier in tier_membership(conn, settings, now).items():
+        if tier in (Tier.CORE, Tier.MOMENTUM):
+            exclude[t] = tier.value
+    if tcfg.exclude_market_reference:
+        for t in market_reference(settings):
+            exclude.setdefault(t, "market_reference")
+    # a share class of an excluded name (GOOG for core GOOGL) is the same company
+    for alias, target in ucfg.momentum.share_class_aliases.items():
+        if target in exclude:
+            exclude.setdefault(alias, exclude[target])
+    ingest = IngestUniverse.from_settings(settings, now=now, master=master, conn=conn)
+    registry = SourceRegistry.from_routines(routines)
+    guard_screen: Callable[[str], Any] | None = None
+    if screen:
+        guard = UniverseGuard.from_settings(
+            settings,
+            now=now,
+            master=master,
+            config=ucfg,
+            conn=conn,
+            market_factory=market_factory,
+        )
+        profile = ucfg.tiers.trending.screen
+        guard_screen = lambda sym: guard.screen(sym, profile)  # noqa: E731
+
+    size = int(options.get("size", settings.universe_trending_size))
+    return run_trending(
+        tcfg,
+        conn=conn,
+        now=now,
+        master=master,
+        size=size,
+        exclude=exclude,
+        get=get or trending_get(tcfg, settings.edgar_user_agent),
+        tickers_in=ingest.tickers_in,
+        key_for=registry.key_for,
+        screen=guard_screen,
+    )
+
+
+def universe_trending_source(ctx: JobContext) -> JobResult:
+    """E12.3 / D51: daily rules-based trending top N -> ``universe_tier`` (trending).
+
+    Records each input (URL, digest, count) in the run manifest, journals every
+    admission / screen fail / single-input reject, writes the tier entry (1 session),
+    posts the daily diff as a notice, then re-resolves today's active list. A run
+    that cannot build the tier raises: ``failed`` + alerted, nothing written, and the
+    tier is empty today (yesterday's entry has expired).
+    """
+    from arc.universe.trending import (
+        build_payload,
+        journal_decisions,
+        notice_line,
+        previous_members,
+    )
+
+    res = run_trending_tier(
+        conn=ctx.conn,
+        settings=ctx.settings,
+        routines=ctx.routines,
+        options=ctx.options,
+        now=ctx.now,
+    )
+    for i in res.inputs:
+        ctx.record_input(
+            f"trending.{i.name}",
+            " ".join(i.urls) or i.type,
+            sorted(i.raw),
+            as_of=i.newest,
+            count=i.count,
+            digest=i.digest or None,
+        )
+    previous = previous_members(ctx.conn)
+    line = notice_line(res, previous)
+    journaled = journal_decisions(
+        ctx.conn, res, at=ctx.now, run_id=ctx.run_id, chain_run_id=ctx.chain_run_id
+    )
+    ctx.write("universe_tier", "trending", build_payload(res, now=ctx.now))
+    active = resolve_universe(ctx)
+    prev = set(previous or [])
+    return JobResult(
+        summary=f"{line} · active {len(active.members)}",
+        notice=line,
+        metrics={
+            "names": len(res.members),
+            "tickers": res.tickers,
+            "added": [t for t in res.tickers if t not in prev],
+            "removed": [t for t in (previous or []) if t not in set(res.tickers)],
+            "ranked": len(res.ranked),
+            "pool": len(res.pool),
+            "screen_fail": sum(1 for r in res.pool if r.screen_passed is False),
+            "single_input": len(res.single_input),
+            "excluded": len(res.excluded),
+            "inputs": {i.name: i.status for i in res.inputs},
+            "input_errors": res.failed_inputs,
+            "journaled": journaled,
+            "active": len(active.members),
+        },
+    )
+
+
 def youtube_url(channel: str) -> str:
     """Accept a full URL or a bare ``UC...`` channel id."""
     if channel.startswith(("http://", "https://")):
@@ -1234,6 +1376,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "earnings": "arc.routines.handlers:earnings_source",
     "symbols": "arc.routines.handlers:symbols_source",  # E5.7 weekly symbol master
     "universe.momentum": "arc.routines.handlers:universe_momentum_source",  # E12.2 monthly
+    "universe.trending": "arc.routines.handlers:universe_trending_source",  # E12.3 daily
     "youtube": "arc.routines.handlers:youtube_source",
     "youtube.briefs": "arc.routines.handlers:youtube_briefs",  # E4.6 daily briefs (D45)
     # E4.5 / D30 options-trading data (no LLM; typed context kinds)

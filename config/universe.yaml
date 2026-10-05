@@ -92,15 +92,29 @@ liquidity_screen:
   # The chain must have >= 1 expiry inside the active account profile's entry DTE window.
 
 extraction:
-  # Ticker hints in ingest (rss, youtube). Cashtags ($NVDA) and "(NVDA)" match any
-  # length; bare upper-case words need min_symbol_len and must not be a stop word.
+  # Ticker hints in ingest (rss, youtube, edgar). Cashtags ($NVDA) match any length;
+  # labelled forms "(NVDA)", "(NYSE: NVDA)", "(Symbol: XLE)", "ticker symbol TE" match
+  # any length unless in paren_stop_words; bare upper-case words need min_symbol_len,
+  # must not be a stop word, and (E12.3) shorter than bare_min_len (4) they count only
+  # for core + momentum names (ET, SA, TD, RBC are words, not trades).
   # Every match is validated against the symbol master (seed symbols always match).
   min_symbol_len: 2
-  # Quoted: YAML 1.1 reads bare ON / NO / YES as booleans.
-  stop_words: ["AI", "AM", "ARE", "AT", "BE", "BY", "CEO", "CFO", "CPI", "CTO", "DO", "EPS",
-               "ETF", "EU", "EV", "FDA", "FED", "FOMC", "FOR", "GDP", "GO", "HAS", "IPO", "IS",
-               "IT", "NEW", "NO", "NOW", "NYSE", "OF", "ON", "ONE", "OR", "PCE", "PM", "PPI",
-               "SEC", "SO", "THE", "TV", "UK", "UP", "US", "USA", "USD", "WHO", "YES"]
+  bare_min_len: 4
+  # Quoted: YAML 1.1 reads bare ON / NO / YES as booleans. E12.3 additions were built
+  # from the live raw_docs hints (2026-09-27..10-05): bare acronyms and words that
+  # are also listed symbols (RSI 42 docs, NOW, ET, MSCI, SA, COLA, PFD, PMI, MLP, TD,
+  # RBC, NASA, and EDGAR boilerplate FORM / CFR / ACT).
+  stop_words: ["ACT", "AI", "ALL", "AM", "ANY", "ARE", "AT", "BDC", "BE", "BY", "CAN", "CD",
+               "CEO", "CFO", "CFR", "COLA", "CPI", "CTO", "DD", "DO", "EPS", "ES", "ET",
+               "ETF", "EU", "EV", "FDA", "FED", "FOMC", "FOR", "FORM", "GDP", "GO", "HAS",
+               "IPO", "IQ", "IS", "IT", "KEY", "LOW", "MAX", "MLP", "MSCI", "NASA", "NEW",
+               "NO", "NOW", "NYSE", "OF", "ON", "ONE", "OR", "PCE", "PFD", "PM", "PMI",
+               "PPI", "RBC", "RSI", "SA", "SEC", "SO", "TD", "THE", "TV", "UK", "UP", "US",
+               "USA", "USD", "WHO", "YES", "YOU"]
+  # Never a ticker even in parentheses: "artificial intelligence (AI)",
+  # "cost-of-living adjustment (COLA)", "Relative Strength Index (RSI)".
+  paren_stop_words: ["AI", "COLA", "CPI", "EPS", "ETF", "FDA", "GDP", "IPO", "PCE", "PMI",
+                     "PPI", "RSI", "SEC"]
 
 earnings:
   # Earnings events are kept for every symbol-master ticker (next_earnings and the

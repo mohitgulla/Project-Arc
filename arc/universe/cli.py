@@ -10,6 +10,10 @@
 - ``arc universe momentum [--dry-run] [--db PATH] [--no-slack]``  E12.2: run the
   ``universe.momentum`` routine now (same as ``arc routines run universe.momentum``)
   and print the momentum tier it wrote; ``--dry-run`` fetches and prints only.
+- ``arc universe trending [--dry-run] [--no-screen] [--top N] [--db PATH] [--no-slack]``
+  E12.3: run the ``universe.trending`` routine now and print the tier it wrote;
+  ``--dry-run`` reads the store read-only, prints the per-input score table and the
+  tier, and writes nothing (``--no-screen`` also skips the Alpaca liquidity screen).
 """
 
 from __future__ import annotations
@@ -66,6 +70,14 @@ def add_universe_parser(sub: argparse._SubParsersAction) -> None:  # type: ignor
     )
     m.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
     m.add_argument("--no-slack", action="store_true", help="Notice to the log only")
+    tr = usub.add_parser("trending", help="E12.3: run the daily trending tier job now")
+    tr.add_argument("--dry-run", action="store_true", help="Score + print only; write nothing")
+    tr.add_argument(
+        "--no-screen", action="store_true", help="--dry-run only: skip the liquidity screen"
+    )
+    tr.add_argument("--top", type=int, default=40, help="Rows of the score table (dry run)")
+    tr.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+    tr.add_argument("--no-slack", action="store_true", help="Notice to the log only")
     for q in (p, *usub.choices.values()):
         q.add_argument("--json", action="store_true", help="Emit JSON")
 
@@ -94,6 +106,8 @@ def run_universe(args: argparse.Namespace) -> int:
         return _run_tiers(args, settings, now)
     if cmd == "momentum":
         return _run_momentum(args, settings, now)
+    if cmd == "trending":
+        return _run_trending(args, settings, now)
     if cmd == "refresh":
         master = refresh_symbol_master(
             cfg.symbol_master, user_agent=settings.edgar_user_agent, now=now
@@ -357,6 +371,113 @@ def _run_momentum_job(args: argparse.Namespace) -> int:
                 {"rank": m.rank, "ticker": m.ticker, "reason": m.reason} for m in pay.members
             ],
             **{k: out.metrics.get(k) for k in ("added", "removed", "stale", "dropped", "active")},
+        }
+    _print_tier(info, args.json)
+    return 0 if out is not None and out.status == "ok" else 1
+
+
+def _run_trending(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetime) -> int:
+    """``--dry-run``: gather + rank (+ screen) from the store read-only and print the
+    score table (writes nothing). Otherwise run the ``universe.trending`` routine."""
+    if not args.dry_run:
+        if args.no_screen:
+            _out({"error": "--no-screen is only valid with --dry-run"}, args.json)
+            return 2
+        return _run_tier_job(args, "universe.trending", "trending")
+    from arc.control.effective import effective_settings
+    from arc.routines.config import load_routines
+    from arc.routines.handlers import run_trending_tier
+    from arc.store.db import connect_ro
+    from arc.universe.trending import TrendingError, table
+
+    routines = load_routines()
+    job = routines.jobs().get("universe.trending")
+    options: dict[str, object] = dict(job[1].options) if job is not None else {}
+    try:
+        conn = connect_ro(args.db)
+    except FileNotFoundError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 1
+    try:
+        eff = effective_settings(conn, base=settings)
+        res = run_trending_tier(
+            conn=conn,
+            settings=eff,
+            routines=routines,
+            options=options,
+            now=now,
+            screen=not args.no_screen,
+        )
+    except TrendingError as exc:
+        _out({"error": str(exc)}, args.json)
+        return 1
+    finally:
+        conn.close()
+    info: dict[str, object] = {
+        "written": False,
+        "as_of": res.as_of.isoformat(),
+        "screened": res.screened,
+        "inputs": {
+            i.name: f"{i.status} · {len(i.raw)} names" + (f" · {i.error}" if i.error else "")
+            for i in res.inputs
+        },
+        "ranked": len(res.ranked),
+        "single_input": len(res.single_input),
+        "excluded (core/momentum/reference)": len(res.excluded),
+        "names": len(res.members),
+        "tickers": " ".join(res.tickers),
+    }
+    rows = table(res, limit=args.top)
+    if args.json:
+        _out({**info, "table": rows}, True)
+        return 0
+    _out(info, False)
+    head = f"{'#':>3} {'ticker':<6} " + " ".join(f"{n[:10]:>10}" for n in res.order)
+    sys.stdout.write(head + f" {'score':>6} {'n':>2} {'screen':<6} reason\n")
+    for r in rows:
+        cells = " ".join(f"{'-' if r[n] is None else format(r[n], '.2f'):>10}" for n in res.order)
+        rank = r["rank"] if r["rank"] is not None else ""
+        sys.stdout.write(
+            f"{rank!s:>3} {r['ticker']:<6} {cells} {r['trend_score']:>6.3f} {r['inputs']:>2} "
+            f"{r['screen']:<6} {r['reason']}"
+            + (f" [{r['screen_detail']}]" if r["screen"] == "fail" else "")
+            + "\n"
+        )
+    return 0
+
+
+def _run_tier_job(args: argparse.Namespace, job: str, subject: str) -> int:
+    """Run *job* through the dispatcher and print the ``universe_tier`` it wrote."""
+    import argparse as _argparse
+
+    from arc.routines.cli import DEFAULT_LOCK_DIR, _conn, _dispatcher, _outcome_json
+    from arc.universe.tiers import UniverseTierPayload
+    from arc.utils.calendar import now_et
+
+    rargs = _argparse.Namespace(
+        db=args.db, config=None, now=None, no_slack=args.no_slack, lock_dir=str(DEFAULT_LOCK_DIR)
+    )
+    conn = _conn(rargs)
+    outcomes = _dispatcher(rargs, conn).run_manual(job, now=now_et())
+    out = outcomes[-1] if outcomes else None
+    info: dict[str, object] = {"run": _outcome_json(out) if out else None}
+    row = conn.execute(
+        "SELECT payload FROM context_entries WHERE kind = 'universe_tier' AND subject = ? "
+        "ORDER BY valid_from DESC, rowid DESC LIMIT 1",
+        (subject,),
+    ).fetchone()
+    if out is not None and out.status == "ok" and row is not None:
+        pay = UniverseTierPayload.model_validate_json(row[0])
+        info |= {
+            "written": True,
+            "source": pay.source,
+            "as_of": pay.source_as_of.isoformat() if pay.source_as_of else None,
+            "names": len(pay.members),
+            "partial": pay.partial,
+            "members": [
+                {"rank": m.rank, "ticker": m.ticker, "reason": m.reason} for m in pay.members
+            ],
+            **{k: out.metrics.get(k) for k in ("added", "removed", "input_errors", "active")},
         }
     _print_tier(info, args.json)
     return 0 if out is not None and out.status == "ok" else 1

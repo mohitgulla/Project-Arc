@@ -88,6 +88,10 @@ class ReasonCode(StrEnum):
     UNIVERSE_NEW_TICKER_CAP = "universe:over_new_ticker_cap"
     # D51 (E12.1): the tiered universe resolver cut a name past the active-list cap
     UNIVERSE_OVER_ACTIVE_CAP = "universe:over_active_cap"
+    # D51 (E12.3): the daily trending tier (universe.trending job)
+    UNIVERSE_TRENDING_ADMITTED = "universe:trending_admitted"
+    UNIVERSE_TRENDING_SCREEN_FAIL = "universe:trending_screen_fail"
+    UNIVERSE_TRENDING_SINGLE_INPUT = "universe:trending_single_input"
     # shortlist (Director)
     SHORTLISTED = "shortlisted"
     NOT_RANKED = "not_ranked"
@@ -293,6 +297,9 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.UNIVERSE_ILLIQUID: "Options too illiquid",
     ReasonCode.UNIVERSE_NEW_TICKER_CAP: "Over the new-ticker cap",
     ReasonCode.UNIVERSE_OVER_ACTIVE_CAP: "Over the active-list cap",
+    ReasonCode.UNIVERSE_TRENDING_ADMITTED: "Added to the trending tier",
+    ReasonCode.UNIVERSE_TRENDING_SCREEN_FAIL: "Trending, but options too illiquid",
+    ReasonCode.UNIVERSE_TRENDING_SINGLE_INPUT: "Trending on one input only",
     ReasonCode.SHORTLISTED: "Shortlisted by the Director",
     ReasonCode.NOT_RANKED: "Not ranked by the Director",
     ReasonCode.NOT_A_CANDIDATE: "Not one of the Scout's candidates",

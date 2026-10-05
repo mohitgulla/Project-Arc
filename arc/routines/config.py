@@ -748,6 +748,10 @@ class RoutinesConfig(BaseModel):
                 raise ValueError(msg)
         for name, spec in [*self.sources.items(), *self.personas.items()]:
             _check_display_keys(name, spec)
+            if "trending" in spec.options:  # E12.3: validate the input registry at load
+                from arc.universe.trending_config import TrendingConfig
+
+                TrendingConfig.model_validate(spec.options["trending"])
         known_jobs = set(names)
         if "loop" in self.model_fields_set and self.loop.job not in self.personas:
             msg = f"loop.job: unknown persona {self.loop.job!r}"
