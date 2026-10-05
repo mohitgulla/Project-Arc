@@ -382,8 +382,9 @@ def macro_calendar_source(ctx: JobContext) -> JobResult:
 
 
 def _data_tickers(ctx: JobContext) -> list[str]:
-    """Today's active list (D51) plus today's candidates (what the chain may trade)."""
-    from arc.universe.tiers import active_tickers
+    """Today's active list (D51) + open-position underlyings (E12.4) + today's
+    candidates: what the chain may trade or must manage."""
+    from arc.universe.tiers import active_tickers, open_underlyings
 
     tickers = [
         str(t).upper()
@@ -393,7 +394,7 @@ def _data_tickers(ctx: JobContext) -> list[str]:
         "SELECT DISTINCT ticker FROM candidates WHERE day = ?",
         (ctx.now.astimezone(ET).date().isoformat(),),
     ).fetchall()
-    return list(dict.fromkeys([*tickers, *(r[0] for r in rows)]))
+    return list(dict.fromkeys([*tickers, *open_underlyings(ctx.conn), *(str(r[0]) for r in rows)]))
 
 
 def unusual_options_source(ctx: JobContext, market: MarketDataProvider | None = None) -> JobResult:
@@ -467,13 +468,19 @@ def edgar_source(ctx: JobContext) -> JobResult:
     from arc.ingest.edgar import fetch_edgar
     from arc.ingest.sources import SourceRegistry
 
-    settings = ctx.settings
     tickers = ctx.options.get("tickers")
-    if tickers:
-        settings = settings.model_copy(update={"universe": list(tickers)})
     reg = SourceRegistry.from_routines(ctx.routines)
     max_age = reg.max_age_for(ctx.job) if ctx.job in reg.sources else None
-    return _source_result(ctx, fetch_edgar(ctx.conn, settings, now=ctx.now, max_age=max_age))
+    return _source_result(
+        ctx,
+        fetch_edgar(
+            ctx.conn,
+            ctx.settings,
+            now=ctx.now,
+            max_age=max_age,
+            tickers=[str(t).upper() for t in tickers] if tickers else None,
+        ),
+    )
 
 
 EARNINGS_NO_KEY_DAY = "earnings:no_api_key_notice"
@@ -558,11 +565,19 @@ def _finnhub_run(ctx: JobContext, kind: str, *, recent_only: bool = False) -> Jo
         raise JobSkippedError(str(exc), notice=notice) from exc
 
     today = ctx.now.astimezone(ET).date()
+    from arc.universe.tiers import Tier, active_by_tier
+
     universe = IngestUniverse.from_settings(s, now=ctx.now, conn=ctx.conn)
-    seed = ctx.options.get("tickers") or list(universe.seed)  # D51: today's active list
+    # E12.4 (D51): open underlyings -> today's candidates -> core -> momentum -> trending
+    # (today's active list by tier); a `tickers` job option replaces the tier part.
+    if ctx.options.get("tickers"):
+        tiers: dict[str, list[str]] = {"tickers": list(ctx.options["tickers"])}
+    else:
+        by_tier = active_by_tier(ctx.conn, s, ctx.now)
+        tiers = {t.value: by_tier[t] for t in (Tier.CORE, Tier.MOMENTUM, Tier.TRENDING)}
     scope = ticker_scope(
         ctx.conn,
-        seed=seed,
+        tiers=tiers,
         now=ctx.now,
         max_tickers=int(ctx.options.get("max_tickers", s.finnhub_max_tickers)),
         master=universe.master,
@@ -1080,6 +1095,62 @@ def _journal_universe_rejects(ctx: JobContext, result: ScoutRunResult) -> int:
     return n
 
 
+def _journal_floor_skips(ctx: JobContext, result: ScoutRunResult) -> int:
+    """E12.4: one ``scout_candidate`` decision per core/momentum candidate kept below
+    ``scout_min_confidence`` (payload ``confidence_floor_skipped: tier=<tier>``).
+
+    Once per ticker per ET day (the Scout runs every 30 min). Returns the count.
+    """
+    if not result.floor_skipped:
+        return 0
+    import datetime as dt
+
+    from arc.context.ttl import to_db
+    from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
+    from arc.journal.store import JournalStore
+
+    day = ctx.now.astimezone(ET).date()
+    start = dt.datetime(day.year, day.month, day.day, tzinfo=ET)
+    done = {
+        r[0]
+        for r in ctx.conn.execute(
+            "SELECT subject FROM decisions WHERE reason_code = ? AND at >= ? AND at < ?"
+            " AND payload LIKE '%confidence_floor_skipped%'",
+            (
+                ReasonCode.SCOUT_CANDIDATE.value,
+                to_db(start),
+                to_db(start + dt.timedelta(days=1)),
+            ),
+        ).fetchall()
+    }
+    store = JournalStore(ctx.conn)
+    n = 0
+    floor = ctx.settings.scout_min_confidence
+    for ticker, (tier, conf) in sorted(result.floor_skipped.items()):
+        if ticker in done:
+            continue
+        store.record(
+            persona=JournalPersona.SCOUT,
+            stage=Stage.CANDIDATE,
+            subject=ticker,
+            choice=Choice.SELECTED,
+            reason_code=ReasonCode.SCOUT_CANDIDATE,
+            reason_text=f"{tier} name kept below the confidence floor ({conf:.2f} < {floor:.2f})",
+            confidence=conf,
+            at=ctx.now,
+            chain_run_id=ctx.chain_run_id,
+            run_id=ctx.run_id,
+            payload={
+                "confidence_floor_skipped": f"tier={tier}",
+                "tier": tier,
+                "confidence": conf,
+                "min_confidence": floor,
+            },
+        )
+        n += 1
+    return n
+
+
 def scout_persona(
     ctx: JobContext, llm: ScoutLLM | None = None, guard: UniverseGuard | None = None
 ) -> JobResult:
@@ -1104,6 +1175,7 @@ def scout_persona(
         for p in result.stories:
             ctx.write("story", p.story_id, p, ttl=result.story_ttls.get(p.story_id))
     _journal_universe_rejects(ctx, result)
+    _journal_floor_skips(ctx, result)
     written = [
         ctx.write(
             "candidate",

@@ -78,6 +78,7 @@ class Target(StrEnum):
     ROUTINES = "routines"  # config/routines.yaml
     RANKING = "ranking"  # config/ranking.yaml (E6.4a: live Net EV floor)
     EXPERIMENTS = "experiments"  # config/experiments.yaml (E10.1: forward A/B defaults)
+    UNIVERSE = "universe"  # config/universe.yaml (E12.4: relaxed liquidity screen)
 
 
 class ValueType(StrEnum):
@@ -402,7 +403,7 @@ _STATIC: tuple[Tunable, ...] = (
         "scout_max_new_tickers",
         Group.UNIVERSE,
         _I,
-        "D28: max non-seed tickers the Scout may accept per run (seed mode).",
+        "D28/D51: max discoveries (names in no tier) the Scout may accept per run (seed mode).",
         Risk.UP,
         min=0,
         max=25,
@@ -418,6 +419,60 @@ _STATIC: tuple[Tunable, ...] = (
         min=20,
         max=400,
         hard_ceiling=400,
+    ),
+    # E12.4 (D51): relaxed liquidity screen (trending + discoveries; config/universe.yaml).
+    # Lower floors / a wider spread admit more names to be looked at; the gate's spread
+    # check and the scanner's contract filters still protect every order.
+    Tunable(
+        key="universe_screen_relaxed_min_price",
+        group=Group.UNIVERSE,
+        type=_F,
+        description="D51 relaxed screen (trending + discoveries): min underlying price.",
+        target=Target.UNIVERSE,
+        risk=Risk.DOWN,
+        path=("liquidity_screen", "relaxed", "min_price"),
+        unit="$",
+        min=1.0,
+        max=100.0,
+        hard_ceiling=1.0,
+    ),
+    Tunable(
+        key="universe_screen_relaxed_min_adv_shares",
+        group=Group.UNIVERSE,
+        type=_F,
+        description="D51 relaxed screen: min mean daily share volume (last adv_days sessions).",
+        target=Target.UNIVERSE,
+        risk=Risk.DOWN,
+        path=("liquidity_screen", "relaxed", "min_adv_shares"),
+        min=100_000,
+        max=10_000_000,
+        hard_ceiling=100_000,
+    ),
+    Tunable(
+        key="universe_screen_relaxed_min_atm_open_interest",
+        group=Group.UNIVERSE,
+        type=_I,
+        description="D51 relaxed screen: min call + put open interest over the 3 strikes "
+        "nearest spot (expiry nearest 30 DTE).",
+        target=Target.UNIVERSE,
+        risk=Risk.DOWN,
+        path=("liquidity_screen", "relaxed", "min_atm_open_interest"),
+        min=25,
+        max=5000,
+        hard_ceiling=25,
+    ),
+    Tunable(
+        key="universe_screen_relaxed_max_atm_spread_pct",
+        group=Group.UNIVERSE,
+        type=_F,
+        description="D51 relaxed screen: max ATM (ask - bid) / mid, call and put averaged.",
+        target=Target.UNIVERSE,
+        risk=Risk.UP,
+        path=("liquidity_screen", "relaxed", "max_atm_spread_pct"),
+        unit="pct",
+        min=0.02,
+        max=0.40,
+        hard_ceiling=0.40,
     ),
     # E4.8 / D46: Finnhub per-ticker context (data only; the gate never reads it).
     _s(
@@ -435,8 +490,9 @@ _STATIC: tuple[Tunable, ...] = (
         "finnhub_max_tickers",
         Group.UNIVERSE,
         _I,
-        "D46: tickers per Finnhub context run (seed first, then candidates, then open "
-        "underlyings). Each ticker is one call per job, against the per-minute budget.",
+        "D46/D51: tickers per Finnhub context run (open-position underlyings first, then "
+        "today's candidates, core, momentum, trending). Each ticker is one call per job, "
+        "against the per-minute budget.",
         Risk.NONE,
         min=1,
         max=200,

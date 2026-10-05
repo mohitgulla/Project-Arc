@@ -230,6 +230,8 @@ class ControlService:
     def _yaml_path(self, target: Target) -> Any:
         if target is Target.PROFILES:
             return self.base.account_profiles_file
+        if target is Target.UNIVERSE:
+            return self.base.universe_config_file
         return None
 
     def view(self, key: str, settings: ArcSettings | None = None) -> KeyView:
@@ -356,6 +358,10 @@ class ControlService:
                 from arc.experiments.config import load_experiments_config
 
                 load_experiments_config(overrides=ov.get("experiments"))
+            elif t.target is Target.UNIVERSE:
+                from arc.universe.config import load_universe_config
+
+                load_universe_config(self.base.universe_config_file, overrides=ov.get("universe"))
             elif t.target is Target.ROUTINES:
                 from arc.routines.config import load_routines
 

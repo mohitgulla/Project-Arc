@@ -5,12 +5,16 @@ One :class:`UniverseGuard` per Scout run. It answers two questions:
 * :meth:`UniverseGuard.known` — may the ticker be named at all? ``strict``: it is
   in the active list. ``seed``: it is a seed (D51: core or momentum) or in the
   symbol master.
-* :meth:`UniverseGuard.admit` — may this (already schema/confidence/source
-  validated) candidate be written to context? Seed tickers always pass. A
-  non-seed ticker must be optionable at the broker, fit under the per-run
-  ``scout_max_new_tickers`` cap, and pass the deterministic liquidity screen.
-  Screen results are cached per ticker for the run, so one ticker is measured
-  once however many batches name it.
+* :meth:`UniverseGuard.admit` — may this (already schema/source validated)
+  candidate be written to context? Seed tickers (D51: core + momentum) always
+  pass. A trending-tier name must be optionable and pass the screen profile of
+  ``tiers.trending.screen``. Any other name (a discovery) must be optionable, fit
+  under the per-run ``scout_max_new_tickers`` cap, and pass the
+  ``tiers.discovery.screen`` profile (E12.4: both default ``relaxed``). Screen
+  results are cached per ticker and profile for the run, so one ticker is
+  measured once however many batches name it.
+* :meth:`UniverseGuard.skips_confidence_floor` — E12.4: core + momentum names are
+  kept below ``scout_min_confidence``.
 
 The guard never touches the gate: gate caps apply per underlying whatever the
 universe (PLAN §5).
@@ -24,9 +28,10 @@ from typing import TYPE_CHECKING
 import structlog
 
 from arc.config import UniverseMode
-from arc.universe.config import load_universe_config
+from arc.universe.config import universe_config
 from arc.universe.master import load_symbol_master, normalize_symbol
 from arc.universe.screen import measure_liquidity, screen_liquidity
+from arc.universe.tiers import SEED_TIERS, Tier
 
 if TYPE_CHECKING:
     import datetime as _dt
@@ -35,7 +40,7 @@ if TYPE_CHECKING:
 
     from arc.config import ArcSettings
     from arc.data.base import MarketDataProvider
-    from arc.universe.config import UniverseConfig
+    from arc.universe.config import LiquidityThresholds, ScreenProfile, UniverseConfig
     from arc.universe.master import SymbolMaster
     from arc.universe.screen import ScreenResult
 
@@ -69,8 +74,12 @@ class UniverseGuard:
     dte_window: tuple[int, int]
     market_factory: Callable[[], MarketDataProvider] | None = None
     adv_market_factory: Callable[[], MarketDataProvider] | None = None
+    #: E12.4: ``ticker -> tier`` for core, momentum and trending (others are discoveries).
+    tiers: dict[str, Tier] = field(default_factory=dict)
     admitted_new: list[str] = field(default_factory=list)
-    screens: dict[str, ScreenResult] = field(default_factory=dict)
+    admitted_trending: list[str] = field(default_factory=list)
+    screens: dict[str, ScreenResult] = field(default_factory=dict)  # last screen per ticker
+    _screen_cache: dict[tuple[str, str], ScreenResult] = field(default_factory=dict, repr=False)
     details: dict[str, str] = field(default_factory=dict)  # ticker -> why it was rejected
     _market: MarketDataProvider | None = field(default=None, repr=False)
     _adv_market: MarketDataProvider | None = field(default=None, repr=False)
@@ -92,11 +101,13 @@ class UniverseGuard:
 
         D51: the seed set (admitted without the screen) is core ∪ the valid momentum
         tier read from *conn* (core only without a store). In strict mode the whole
-        active list is the allow-list.
+        active list is the allow-list. E12.4: the trending feed from *conn* picks the
+        ``trending`` screen profile; *config* defaults to the effective universe.yaml
+        (D26 ``universe_screen_*`` overrides applied).
         """
-        from arc.universe.tiers import active_tickers, seed_tickers
+        from arc.universe.tiers import active_tickers, tier_membership
 
-        cfg = config or load_universe_config(settings.universe_config_file)
+        cfg = config or universe_config(settings)
         mode = UniverseMode(settings.universe_mode)
         if master is None and mode is UniverseMode.SEED and load_master:
             # Never fetches here (a Scout run must not stall on the SEC file): the
@@ -108,7 +119,8 @@ class UniverseGuard:
                 now=now,
                 fetch_if_missing=False,
             )
-        seed = seed_tickers(conn, settings, now)
+        tiers = tier_membership(conn, settings, now)
+        seed = [t for t, tier in tiers.items() if tier in SEED_TIERS]
         if mode is UniverseMode.STRICT:
             seed = [*seed, *active_tickers(conn, settings, now)]
         return cls(
@@ -121,6 +133,7 @@ class UniverseGuard:
             dte_window=settings.entry_dte_window,
             market_factory=market_factory,
             adv_market_factory=adv_market_factory,
+            tiers={normalize_symbol(t): tier for t, tier in tiers.items()},
         )
 
     # -- membership ----------------------------------------------------------
@@ -149,6 +162,29 @@ class UniverseGuard:
     def is_seed(self, ticker: str) -> bool:
         return normalize_symbol(ticker) in self.seed
 
+    def tier_of(self, ticker: str) -> Tier:
+        """The ticker's highest tier (D51); a name in no tier is a discovery."""
+        return self.tiers.get(normalize_symbol(ticker), Tier.DISCOVERY)
+
+    def skips_confidence_floor(self, ticker: str) -> Tier | None:
+        """E12.4: the tier (core / momentum) whose names are kept below
+        ``scout_min_confidence``, else ``None`` (the floor applies)."""
+        tier = self.tier_of(ticker)
+        return tier if tier in SEED_TIERS else None
+
+    def floor_exempt(self) -> frozenset[str]:
+        """E12.4: every core + momentum ticker (kept below ``scout_min_confidence``)."""
+        return frozenset(t for t, tier in self.tiers.items() if tier in SEED_TIERS)
+
+    def screen_profile(self, ticker: str) -> ScreenProfile:
+        """The screen profile for *ticker*'s tier (``tiers.<tier>.screen``)."""
+        spec = (
+            self.config.tiers.trending
+            if self.tier_of(ticker) is Tier.TRENDING
+            else self.config.tiers.discovery
+        )
+        return spec.screen
+
     # -- admission (cap + screen) -------------------------------------------
 
     def _markets(self) -> tuple[MarketDataProvider, MarketDataProvider]:
@@ -167,14 +203,17 @@ class UniverseGuard:
             else:
                 from arc.data.alpaca import AlpacaMarketData
 
-                self._adv_market = AlpacaMarketData(data_feed=self.config.liquidity_screen.adv_feed)
+                feed = self.config.liquidity_screen.adv_feed
+                self._adv_market = AlpacaMarketData(data_feed=feed)
         return self._market, self._adv_market
 
-    def screen(self, ticker: str) -> ScreenResult:
-        """Measure + screen *ticker* (cached for the run)."""
+    def screen(self, ticker: str, profile: ScreenProfile | None = None) -> ScreenResult:
+        """Measure + screen *ticker* with *profile* (default: its tier's), cached for the run."""
         sym = normalize_symbol(ticker)
-        if sym not in self.screens:
-            thresholds = self.config.liquidity_screen
+        prof: ScreenProfile = profile or self.screen_profile(sym)
+        key = (sym, prof)
+        if key not in self._screen_cache:
+            thresholds: LiquidityThresholds = self.config.liquidity_screen.profile(prof)
             try:
                 market, adv_market = self._markets()
             except Exception as exc:  # noqa: BLE001 - no data = fail closed
@@ -191,10 +230,12 @@ class UniverseGuard:
                     adv_market=adv_market,
                 )
             res = screen_liquidity(metrics, thresholds)
-            self.screens[sym] = res
+            self._screen_cache[key] = res
             log.info(
                 "universe.screen",
                 ticker=sym,
+                profile=prof,
+                tier=self.tier_of(sym).value,
                 passed=res.passed,
                 detail=res.detail(),
                 price=metrics.price,
@@ -202,7 +243,8 @@ class UniverseGuard:
                 atm_oi=metrics.atm_open_interest,
                 atm_spread=metrics.atm_spread_pct,
             )
-        return self.screens[sym]
+        self.screens[sym] = self._screen_cache[key]
+        return self._screen_cache[key]
 
     def admit(self, ticker: str) -> str | None:
         """``None`` = write it to context; else the rejection key (detail in :attr:`details`)."""
@@ -211,17 +253,24 @@ class UniverseGuard:
             return None
         if (reason := self.known(sym)) is not None:
             return reason
-        if sym in self.admitted_new:
+        if sym in self.admitted_new or sym in self.admitted_trending:
             return None
         if self.master is not None and (why := self.master.not_optionable(sym)):
             self.details[sym] = why
             return REJECT_ILLIQUID
+        if self.tier_of(sym) is Tier.TRENDING:  # a tier name: screened, never capped
+            res = self.screen(sym)
+            if not res.passed:
+                self.details[sym] = f"{self.screen_profile(sym)} screen: {res.detail()}"
+                return REJECT_ILLIQUID
+            self.admitted_trending.append(sym)
+            return None
         if len(self.admitted_new) >= self.max_new:
             self.details[sym] = f"cap {self.max_new} new tickers per run"
             return REJECT_NEW_TICKER_CAP
         res = self.screen(sym)
         if not res.passed:
-            self.details[sym] = res.detail()
+            self.details[sym] = f"{self.screen_profile(sym)} screen: {res.detail()}"
             return REJECT_ILLIQUID
         self.admitted_new.append(sym)
         return None

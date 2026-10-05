@@ -13,10 +13,12 @@
 # universe:over_active_cap, never dropped silently.
 #
 # ARC_UNIVERSE_MODE picks the admission mode (no code change):
-#   seed    (default) core + momentum are always accepted (no screen). Any other US-listed
-#           ticker the sources surface may become a Scout candidate if it is in the
-#           symbol master below and passes the liquidity screen. At most
-#           scout_max_new_tickers non-seed names per Scout run.
+#   seed    (default) core + momentum are always accepted (no screen, no Scout
+#           confidence floor). Any other US-listed ticker the sources surface may
+#           become a Scout candidate if it is in the symbol master below and passes
+#           its tier's liquidity screen (trending + discovery: relaxed). At most
+#           scout_max_new_tickers (25) discoveries per Scout run; trending names do
+#           not count against it.
 #   strict  the active list is an allow-list (the pre-D28 behaviour).
 #
 # The risk gate never reads this file: every PLAN §5 cap applies per underlying,
@@ -33,6 +35,10 @@ tiers:
   # Not trade names: the Director writes their `regime` entries every run so the D33
   # market guard always has an SPY read. ETFs can still enter as trending/discoveries.
   market_reference: [SPY, QQQ]
+  # E12.4: liquidity screen profile per screened tier (strict | relaxed). Core and
+  # momentum skip the screen and the Scout confidence floor (never configured here).
+  trending: {screen: relaxed}
+  discovery: {screen: relaxed}
 
 momentum:
   # E12.2 momentum tier: S&P 500 Momentum index constituents are not free, so the
@@ -60,15 +66,29 @@ symbol_master:
   listed_exchanges: [Nasdaq, NYSE, CBOE]   # SEC exchange values; OTC / unlisted are left out
 
 liquidity_screen:
-  # Deterministic, no LLM. Runs on non-seed Scout candidates before they are
-  # written to context. Every check must pass; a missing number fails closed.
-  min_price: 10.0                 # underlying reference price ($)
-  min_adv_shares: 1000000         # mean daily share volume over the last adv_days completed sessions
-  adv_days: 20
-  adv_feed: sip                   # completed sessions only; the free IEX feed carries ~2-3% of volume
-  min_atm_open_interest: 500      # call + put OI summed over the atm_strikes strikes nearest spot,
-  atm_strikes: 3                  #   expiry nearest 30 DTE (one strike alone fails PLTR/HOOD: OI 448/141)
-  max_atm_spread_pct: 0.10        # mean (ask - bid) / mid of the call and put at the strike nearest spot
+  # Deterministic, no LLM. Runs on non-seed Scout candidates (D51: trending names and
+  # discoveries; core + momentum are never screened) before they are written to
+  # context. Every check must pass; a missing number fails closed. Two profiles; each
+  # screened tier picks one under tiers.<tier>.screen. A pre-D51 flat block (keys
+  # directly under liquidity_screen) still loads, as the strict profile.
+  # The screen only decides who gets looked at: the gate's spread check and the
+  # scanner's contract filters still protect every order.
+  strict:                         # the D28 values
+    min_price: 10.0               # underlying reference price ($)
+    min_adv_shares: 1000000       # mean daily share volume over the last adv_days completed sessions
+    adv_days: 20
+    adv_feed: sip                 # completed sessions only; the free IEX feed carries ~2-3% of volume
+    min_atm_open_interest: 500    # call + put OI summed over the atm_strikes strikes nearest spot,
+    atm_strikes: 3                #   expiry nearest 30 DTE (one strike alone fails PLTR/HOOD: OI 448/141)
+    max_atm_spread_pct: 0.10      # mean (ask - bid) / mid of the call and put at the strike nearest spot
+  relaxed:                        # D51 default for trending + discovery (Slack: universe_screen_relaxed_*)
+    min_price: 5.0                # 2026-10-04: strict failed PLTR (OI 462, spread 1.9%), XLE, ACN, HON;
+    min_adv_shares: 500000        #   Alpaca open_interest reads low across the board (SPY near-ATM 1,431)
+    adv_days: 20
+    adv_feed: sip
+    min_atm_open_interest: 150
+    atm_strikes: 3
+    max_atm_spread_pct: 0.20
   # The chain must have >= 1 expiry inside the active account profile's entry DTE window.
 
 extraction:

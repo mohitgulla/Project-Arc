@@ -46,6 +46,7 @@ __all__ = [
     "DROP_OVER_ACTIVE_CAP",
     "DROP_OVER_TIER_SIZE",
     "MAX_CORE",
+    "SEED_TIERS",
     "TIER_ORDER",
     "ActiveUniverse",
     "DroppedMember",
@@ -53,14 +54,17 @@ __all__ = [
     "TierInputs",
     "TierMember",
     "UniverseTierPayload",
+    "active_by_tier",
     "active_tickers",
     "active_tickers_ro",
     "build_active",
     "core_tickers",
     "load_tier_inputs",
     "market_reference",
+    "open_underlyings",
     "resolve_active",
     "seed_tickers",
+    "tier_membership",
     "watch_tickers",
 ]
 
@@ -246,9 +250,9 @@ def resolve_active(
 
 
 def _universe_cfg(settings: ArcSettings) -> Any:
-    from arc.universe.config import load_universe_config
+    from arc.universe.config import universe_config
 
-    return load_universe_config(settings.universe_config_file)
+    return universe_config(settings)
 
 
 def core_tickers(settings: ArcSettings) -> list[str]:
@@ -524,11 +528,55 @@ def seed_tickers(
     conn: sqlite3.Connection | None, settings: ArcSettings, now: _dt.datetime
 ) -> list[str]:
     """Names the Scout admits without the screen: core ∪ valid momentum members (D51)."""
-    core = core_tickers(settings)
+    return [t for t, tier in tier_membership(conn, settings, now).items() if tier in SEED_TIERS]
+
+
+#: D51 / E12.4: tiers admitted without the liquidity screen and the Scout confidence floor.
+SEED_TIERS: frozenset[Tier] = frozenset({Tier.CORE, Tier.MOMENTUM})
+
+
+def tier_membership(
+    conn: sqlite3.Connection | None, settings: ArcSettings, now: _dt.datetime
+) -> dict[str, Tier]:
+    """``ticker -> highest tier`` over core, the valid momentum feed and the valid
+    trending feed (E12.4 admission). Feeds are read whole (not cut by the active cap):
+    a tier member keeps its admission rule even when the active list overflows.
+    Discoveries are not listed (every other name is one)."""
+    out: dict[str, Tier] = {t: Tier.CORE for t in core_tickers(settings)}
     if conn is None:
-        return core
-    momentum, _ = _feed_tier(conn, Tier.MOMENTUM, now)
-    return list(dict.fromkeys([*core, *(_norm(m.ticker) for m in momentum)]))
+        return out
+    for tier in (Tier.MOMENTUM, Tier.TRENDING):
+        members, _ = _feed_tier(conn, tier, now)
+        for m in members:
+            out.setdefault(_norm(m.ticker), tier)
+    return out
+
+
+def active_by_tier(
+    conn: sqlite3.Connection | None, settings: ArcSettings, now: _dt.datetime
+) -> dict[Tier, list[str]]:
+    """Today's stored active list split by tier (every tier listed); the core list
+    under ``core`` before the first resolve of the day or without a store."""
+    out: dict[Tier, list[str]] = {t: [] for t in TIER_ORDER}
+    if conn is not None and (active := _stored_active(conn, now)) is not None:
+        for m in active.members:
+            out[m.tier].append(m.ticker)
+        return out
+    out[Tier.CORE] = core_tickers(settings)
+    return out
+
+
+def open_underlyings(conn: sqlite3.Connection | None) -> list[str]:
+    """Underlyings of open structures, sorted (empty without a store or before migrate)."""
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT ticker FROM open_structures WHERE status = 'open' ORDER BY ticker"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [_norm(str(r[0])) for r in rows if _norm(str(r[0]))]
 
 
 def active_tickers_ro(settings: ArcSettings, now: _dt.datetime) -> list[str]:

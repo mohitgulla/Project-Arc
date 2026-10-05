@@ -245,7 +245,7 @@ class TestFixtureRun:
 
         calls = {c["persona"]: c for c in PersonaCallRepo(conn).for_run(root or "")}
         assert calls["director"]["status"] == "ok"
-        assert json.loads(calls["director"]["dropped"]) == {"not_a_candidate": 1}  # AAPL
+        assert json.loads(calls["director"]["dropped"]) == {"not_a_candidate": 1}  # BRK.B
 
         kinds = {
             r["kind"] for r in conn.execute("SELECT DISTINCT kind FROM context_entries").fetchall()
@@ -362,17 +362,17 @@ class TestDigestCards:
         texts = [t for _, t in notes.posts]
         headers = [b[0]["text"]["text"] if b else None for b in notes.blocks]
         assert headers == [
-            "[Scout] Scan: 11 Sources → 4 Candidates",
-            "[Director] Ranked: 3 / 4 • Market Risk ON",
+            "[Scout] Scan: 11 Sources → 6 Candidates",  # E12.4: + core AAPL/JPM below the floor
+            "[Director] Ranked: 3 / 6 • Market Risk ON",
             "[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
             "[Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
             None,  # propose has no card (E6.1 posts the proposal card)
             None,  # execute (D34): summary only; the Investor posts the order card
         ]
         # Fallback text = the pre-E5.5 one-liners.
-        assert texts[0] == ("[Scout] scout ✓ 11 docs (11 stories) → 6 accepted, 4 candidates today")
+        assert texts[0] == ("[Scout] scout ✓ 11 docs (11 stories) → 7 accepted, 6 candidates today")
         assert texts[1] == (
-            "[Director] director ✓ 4 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
+            "[Director] director ✓ 6 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
             "XOM (bearish); excluded 1; dropped {'not_a_candidate': 1}"
         )
         assert texts[2].startswith("[Quant] quant ✓ SPY iron_condor 740/745/798/803 2026-10-30")
@@ -398,7 +398,7 @@ class TestDigestCards:
             "*Company data* 50% · 3 read: EDGAR 2 · Earnings 1" in scout
         )
         assert "• failed liquidity screen (1): UFPT" in scout
-        assert "UFPT: ADV 118k &lt; 1.0M; no expiry in the DTE window" in scout
+        assert "UFPT: relaxed screen: ADV 118k &lt; 500k; no expiry in the DTE window" in scout
         assert "• unknown symbol (1): ZZZQ" in scout
         assert "http" not in scout  # no source links
         assert "before sizing" not in json.dumps(notes.blocks[2])
@@ -413,7 +413,7 @@ class TestDigestCards:
         assert "Director evidence: 8-K: buyback $50B, Sep 24 · uptrend" in director
         assert "a fourth item is cut" not in director
         assert "*Excluded (1)*\\n• *PLTR*: Fixture: new open-universe name" in director
-        assert "not a Scout candidate (1): AAPL" in director
+        assert "not a Scout candidate (1): BRK.B" in director
         quant = json.dumps(notes.blocks[2], ensure_ascii=False)
         assert "*Skipped (1)*\\n• *NVDA*: Fixture: bull put credit is thin" in quant
         assert "no tradable chain (1): XOM" in quant
@@ -521,7 +521,7 @@ class TestFunnel:
         skipped = {s["ticker"] for s in st["skipped"]}
         accounted = structured | skipped | set(st["not_structured"]) | set(st["over_budget"])
         sl = _latest_payload(conn, "shortlist")
-        assert {i["ticker"] for i in sl["shortlist"] if i["ticker"] != "AAPL"} <= accounted
+        assert {i["ticker"] for i in sl["shortlist"] if i["ticker"] != "BRK.B"} <= accounted
         assert structured == {"SPY"}
         assert skipped == {"NVDA", "XOM"}  # NVDA by Quant (reason), XOM auto: no chain
         assert "credit is thin" in _decisions(conn, "structure", "quant_skipped")["NVDA"]

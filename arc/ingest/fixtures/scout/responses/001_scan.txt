@@ -60,7 +60,7 @@ Here is the scan:
       "catalyst_date": null,
       "confidence": 0.4,
       "sources": ["https://example.com/news/jpm-nim"],
-      "rationale": "Below the confidence threshold, so it is rejected."
+      "rationale": "Below the confidence floor, kept because JPM is core (E12.4)."
     },
     {
       "ticker": "META",

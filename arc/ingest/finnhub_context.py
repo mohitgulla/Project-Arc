@@ -316,7 +316,7 @@ class TickerScope:
     tickers: list[str]
     dropped: list[str]
     etfs_skipped: list[str]
-    sources: dict[str, int]  # seed / candidates / open -> tickers taken from each
+    sources: dict[str, int]  # open / candidates / core / momentum / trending -> tickers taken
 
 
 def _is_etf(symbol: str, master: SymbolMaster | None, etfs: frozenset[str]) -> bool:
@@ -330,24 +330,23 @@ def _is_etf(symbol: str, master: SymbolMaster | None, etfs: frozenset[str]) -> b
 def ticker_scope(
     conn: sqlite3.Connection,
     *,
-    seed: Iterable[str],
+    tiers: Mapping[str, Iterable[str]],
     now: _dt.datetime,
     max_tickers: int,
     master: SymbolMaster | None = None,
     etfs: frozenset[str] = frozenset(),
 ) -> TickerScope:
-    """Seed ∪ live ``candidate`` subjects ∪ open-structure underlyings, ETFs skipped,
-    capped at *max_tickers* in that order (seed first)."""
+    """Open-structure underlyings ∪ live ``candidate`` subjects ∪ *tiers* (in their
+    given order, D51: core, momentum, trending), ETFs skipped, capped at *max_tickers*
+    in that order: the names being traded get context first (E12.4)."""
     from arc.context.store import ContextStore
+    from arc.universe.tiers import open_underlyings
 
     candidates = [e.subject for e in ContextStore(conn).query(as_of=now, kinds=["candidate"])]
-    open_rows = conn.execute(
-        "SELECT DISTINCT ticker FROM open_structures WHERE status = 'open' ORDER BY ticker"
-    ).fetchall()
-    groups = {
-        "seed": list(seed),
+    groups: dict[str, list[str]] = {
+        "open": open_underlyings(conn),
         "candidates": candidates,
-        "open": [r[0] for r in open_rows],
+        **{label: list(names) for label, names in tiers.items()},
     }
     ordered: list[str] = []
     origin: dict[str, str] = {}

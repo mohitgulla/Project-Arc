@@ -140,7 +140,7 @@ class TestPipelineRecords:
         assert ("SPY", "selected", "shortlisted") in rows
         assert ("NVDA", "selected", "shortlisted") in rows
         assert ("XOM", "selected", "shortlisted") in rows
-        assert ("AAPL", "rejected", "not_a_candidate") in rows
+        assert ("BRK.B", "rejected", "not_a_candidate") in rows
         assert ("PLTR", "rejected", "director_excluded") in rows  # E5.7: with its reason
         assert ("session", "noted", "market_read") in rows
 

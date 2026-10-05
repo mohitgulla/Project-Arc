@@ -253,7 +253,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     horizon_days: 45
     category: macro_data
     writes: [macro_calendar]
-  unusual_options:              # self-computed from Alpaca chain snapshots: seed + today's candidates
+  unusual_options:              # self-computed from Alpaca chain snapshots: active list + open underlyings + today's candidates
     label: Unusual options
     about: "Unusual options volume computed from Alpaca chain snapshots"
     schedule: ["12:30", "15:45"]
@@ -273,8 +273,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     writes: [ex_dividend]
   # E4.8 (D46): Finnhub per-ticker context (free key, typed kinds, never raw docs). One
   # shared budget of finnhub_calls_per_minute (55 of the key's 60/min) across processes,
-  # earnings calendar included. Scope: seed ∪ live candidates ∪ open underlyings, ETFs
-  # skipped, capped at finnhub_max_tickers (seed first). Options: tickers, max_tickers.
+  # earnings calendar included. Scope (D51, E12.4): open underlyings → live candidates →
+  # core → momentum → trending, ETFs skipped, capped at finnhub_max_tickers (50) in that
+  # order. Options: tickers (replaces the tier part), max_tickers.
   finnhub.insider:              # /stock/insider-transactions: open-market P/S only
     label: Finnhub insider
     about: "Open-market insider buys and sells per ticker"
