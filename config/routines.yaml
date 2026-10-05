@@ -107,6 +107,9 @@ loop:
 tower:
   overview:
     activity_hours: 24     # Recent Activity is a rolling window of this many hours (1-168)
+  # E8.8e: change-log actor display names (Slack user id -> name); unknown ids show as is.
+  actor_names:
+    U0C5KUMH28G: Mohit
 
 # Default TTL / supersede policy per context kind (producers may override
 # per job with `context:`). TTLs: "<n>m|h|d" or "<n> session(s)".

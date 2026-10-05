@@ -1314,6 +1314,17 @@
             "title": "Direction",
             "type": "string"
           },
+          "group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group"
+          },
           "halted": {
             "title": "Halted",
             "type": "boolean"
@@ -1326,6 +1337,11 @@
             "title": "Is Default",
             "type": "boolean"
           },
+          "is_list": {
+            "default": false,
+            "title": "Is List",
+            "type": "boolean"
+          },
           "key": {
             "title": "Key",
             "type": "string"
@@ -1333,8 +1349,30 @@
           "new": {
             "title": "New"
           },
+          "new_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Text"
+          },
           "old": {
             "title": "Old"
+          },
+          "old_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Text"
           },
           "reason": {
             "anyOf": [
@@ -1385,12 +1423,45 @@
         "title": "ConfigChangeRow",
         "type": "object"
       },
+      "ConfigGroupRow": {
+        "additionalProperties": false,
+        "description": "E8.8e: one registry group (a page section), in registry order.",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "keys": {
+            "title": "Keys",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "keys"
+        ],
+        "title": "ConfigGroupRow",
+        "type": "object"
+      },
       "ConfigKeyRow": {
         "additionalProperties": false,
         "properties": {
           "bounds": {
             "title": "Bounds",
             "type": "string"
+          },
+          "choices": {
+            "description": "Categorical options, safest first",
+            "items": {
+              "type": "string"
+            },
+            "title": "Choices",
+            "type": "array"
           },
           "default": {
             "title": "Default"
@@ -1420,6 +1491,12 @@
           },
           "hard_ceiling": {
             "title": "Hard Ceiling"
+          },
+          "is_list": {
+            "default": false,
+            "description": "A list value (tickers, ids): own full line",
+            "title": "Is List",
+            "type": "boolean"
           },
           "key": {
             "title": "Key",
@@ -1459,6 +1536,28 @@
             ],
             "title": "Last Change Id"
           },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
           "risk": {
             "title": "Risk",
             "type": "string"
@@ -1471,11 +1570,22 @@
             "title": "Source",
             "type": "string"
           },
+          "unit": {
+            "default": "",
+            "title": "Unit",
+            "type": "string"
+          },
           "value": {
             "title": "Value"
           },
           "value_text": {
             "title": "Value Text",
+            "type": "string"
+          },
+          "value_type": {
+            "default": "",
+            "description": "Registry ValueType (float, choice, tickers, \u2026)",
+            "title": "Value Type",
             "type": "string"
           }
         },
@@ -1500,6 +1610,14 @@
           "account_profile": {
             "title": "Account Profile",
             "type": "string"
+          },
+          "actor_names": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "E8.8e: `tower.actor_names` (Slack id -> display name); unknown ids as is",
+            "title": "Actor Names",
+            "type": "object"
           },
           "as_of": {
             "format": "date-time",
@@ -1531,6 +1649,14 @@
           "env": {
             "title": "Env",
             "type": "string"
+          },
+          "groups": {
+            "description": "E8.8e: registry groups in registry order (sections)",
+            "items": {
+              "$ref": "#/components/schemas/ConfigGroupRow"
+            },
+            "title": "Groups",
+            "type": "array"
           },
           "keys": {
             "items": {
@@ -11166,6 +11292,18 @@
             "title": "Gate Decisions",
             "type": "array"
           },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E8.8e: routines.yaml `label` of the job",
+            "title": "Label"
+          },
           "manifest": {
             "anyOf": [
               {
@@ -11189,6 +11327,18 @@
             "description": "Manifest output ids by kind, with links (context entries / proposals)",
             "title": "Outputs",
             "type": "object"
+          },
+          "persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E8.8e: routines.yaml `persona` (chip)",
+            "title": "Persona"
           },
           "persona_calls": {
             "items": {
