@@ -69,6 +69,7 @@ __all__ = [
     "load_halts",
     "load_health",
     "load_llm",
+    "job_labels",
     "load_run",
     "load_runs",
     "load_session",
@@ -900,6 +901,8 @@ class StepView(BaseModel):
     gate_decisions: list[str]
     slack_posts: list[LinkRef]
     manifest: dict[str, Any] | None = Field(description="The stored D27 RunManifest (JSON)")
+    label: str | None = Field(None, description="E8.8e: routines.yaml `label` of the job")
+    persona: str | None = Field(None, description="E8.8e: routines.yaml `persona` (chip)")
 
 
 class LogLine(BaseModel):
@@ -933,7 +936,21 @@ def _permalink(channel: str | None, ts: str) -> str | None:
     return f"https://slack.com/archives/{channel}/p{ts.replace('.', '')}"
 
 
-def _step(conn: sqlite3.Connection, t: dict[str, Any], slack_channel: str | None) -> StepView:
+def job_labels(routines: RoutinesConfig) -> dict[str, tuple[str, str | None]]:
+    """E8.8e: job -> (label, persona) from routines.yaml, for the run detail header."""
+    out: dict[str, tuple[str, str | None]] = {}
+    for name, (kind, spec) in routines.jobs().items():
+        persona = spec.options.get("persona") if kind.value != "source" else None
+        out[name] = (_label(name, spec), str(persona) if persona else None)
+    return out
+
+
+def _step(
+    conn: sqlite3.Connection,
+    t: dict[str, Any],
+    slack_channel: str | None,
+    labels: dict[str, tuple[str, str | None]] | None = None,
+) -> StepView:
     row = conn.execute("SELECT * FROM routine_runs WHERE run_id = ?", (t["run_id"],)).fetchone()
     contract = t["contract"]
     un_r, un_w = set(contract["undeclared_reads"]), set(contract["undeclared_writes"])
@@ -1008,6 +1025,8 @@ def _step(conn: sqlite3.Connection, t: dict[str, Any], slack_channel: str | None
             for ts in m.get("notifications") or []
         ],
         manifest=t["manifest"],
+        label=(labels or {}).get(row["job"], (None, None))[0],
+        persona=(labels or {}).get(row["job"], (None, None))[1],
     )
 
 
@@ -1051,19 +1070,22 @@ def load_run(
     now: _dt.datetime,
     log_path: Any | None = None,
     slack_channel: str | None = None,
+    labels: dict[str, tuple[str, str | None]] | None = None,
 ) -> RunDetailResponse:
-    """The run's trace plus its chain's. Raises LookupError for an unknown run id."""
+    """The run's trace plus its chain's. Raises LookupError for an unknown run id.
+
+    *labels* (:func:`job_labels`) adds each step's routines.yaml label and persona."""
     row = conn.execute(
         "SELECT run_id, chain_run_id FROM routine_runs WHERE run_id = ?", (run_id,)
     ).fetchone()
     if row is None:
         msg = f"no routine run {run_id!r}"
         raise LookupError(msg)
-    own = _step(conn, trace_runs(conn, run_id)[0], slack_channel)
+    own = _step(conn, trace_runs(conn, run_id)[0], slack_channel, labels)
     chain_id = row["chain_run_id"]
     chain: list[StepView] = []
     if chain_id:
-        chain = [_step(conn, t, slack_channel) for t in trace_runs(conn, chain_id)]
+        chain = [_step(conn, t, slack_channel, labels) for t in trace_runs(conn, chain_id)]
     log, available = _log_tail(log_path, run_id)
     return RunDetailResponse(
         as_of=now,
@@ -1870,6 +1892,17 @@ class ConfigKeyRow(BaseModel):
     last_change_id: int | None = None
     last_change_at: _dt.datetime | None = None
     last_change_by: str | None = None
+    # E8.8e: the registry entry's shape, for the full-page view (allowed values, list layout)
+    value_type: str = Field(
+        default="", description="Registry ValueType (float, choice, tickers, …)"
+    )
+    is_list: bool = Field(default=False, description="A list value (tickers, ids): own full line")
+    choices: list[str] = Field(
+        default_factory=list, description="Categorical options, safest first"
+    )
+    min: float | None = None
+    max: float | None = None
+    unit: str = ""
 
 
 class ConfigChangeRow(BaseModel):
@@ -1888,6 +1921,38 @@ class ConfigChangeRow(BaseModel):
     supersedes_id: int | None = Field(description="Revert marker: the change this one undid")
     direction: str
     halted: bool
+    # E8.8e: registry formatting (null when the key is no longer in the registry)
+    group: str | None = None
+    is_list: bool = False
+    old_text: str | None = None
+    new_text: str | None = None
+
+
+class ConfigGroupRow(BaseModel):
+    """E8.8e: one registry group (a page section), in registry order."""
+
+    model_config = _STRICT
+
+    key: str
+    label: str
+    keys: int
+
+
+#: E8.8e section labels for the registry groups (Title Case, D48). A group missing here
+#: falls back to its key capitalised, so a new registry group needs no tower change.
+GROUP_LABELS: dict[str, str] = {
+    "account": "Account",
+    "universe": "Universe",
+    "risk": "Risk",
+    "entries": "Entries",
+    "exits": "Exits",
+    "positions": "Positions",
+    "execution": "Execution",
+    "costs": "Costs",
+    "approvals": "Approvals",
+    "routines": "Routines",
+    "experiments": "Experiments",
+}
 
 
 class ConfigResponse(BaseModel):
@@ -1899,6 +1964,13 @@ class ConfigResponse(BaseModel):
     account_profile: str
     keys: list[ConfigKeyRow]
     changes: list[ConfigChangeRow]
+    groups: list[ConfigGroupRow] = Field(
+        default_factory=list, description="E8.8e: registry groups in registry order (sections)"
+    )
+    actor_names: dict[str, str] = Field(
+        default_factory=dict,
+        description="E8.8e: `tower.actor_names` (Slack id -> display name); unknown ids as is",
+    )
     note: str | None = None
     scorecard_gate: str | None = Field(
         None,
@@ -1978,10 +2050,18 @@ def _scorecard_gate_line(
 
 
 def load_config(
-    conn: sqlite3.Connection, base: ArcSettings, *, now: _dt.datetime, history: int = 50
+    conn: sqlite3.Connection,
+    base: ArcSettings,
+    *,
+    now: _dt.datetime,
+    history: int = 50,
+    actor_names: dict[str, str] | None = None,
 ) -> ConfigResponse:
     """The D26 effective config via :class:`ControlService` (reads only: ``show``,
-    ``history``, ``version``, ``settings``). No override tables: yaml values, version 0."""
+    ``history``, ``version``, ``settings``). No override tables: yaml values, version 0.
+
+    *actor_names* is ``tower.actor_names`` (Slack id -> display name), passed through for the
+    change log; it never changes a value."""
     from arc.control.service import ControlService
 
     has = _has_table(conn, "config_changes") and _has_table(conn, "config_pending")
@@ -2003,26 +2083,7 @@ def load_config(
         finally:
             mem.close()
         note = "No override tables in this store (D26 not migrated): file/env values only."
-    keys = [
-        ConfigKeyRow(
-            key=v["key"],
-            group=v["group"],
-            value=v["value"],
-            value_text=str(v["value_text"]),
-            default=v["default"],
-            default_text=str(v["default_text"]),
-            source="override" if v["overridden"] else "yaml",
-            bounds=str(v["bounds"]),
-            hard_ceiling=v["hard_ceiling"],
-            risk=str(v["risk"]),
-            description=str(v["description"]),
-            env=v["env"],
-            last_change_id=v["last_change_id"],
-            last_change_at=parse_ts(v["last_change_at"]),
-            last_change_by=v["last_change_by"],
-        )
-        for v in views
-    ]
+    keys = [_key_row(v) for v in views]
     return ConfigResponse(
         as_of=now,
         config_version=version,
@@ -2030,32 +2091,118 @@ def load_config(
         account_profile=settings.account_profile,
         keys=keys,
         changes=changes,
+        groups=_groups(keys),
+        actor_names=dict(actor_names or {}),
         note=note,
         scorecard_gate=_scorecard_gate_line(conn, settings, now),
         auto_approve=_auto_approve_view(conn, settings, keys, now),
     )
 
 
+_LIST_TYPES = frozenset({"tickers", "user_ids"})
+
+
+def _is_list(vtype: str, *values: Any) -> bool:
+    """A list of plain members (tickers, ids): rendered as chips on its own line and diffed
+    as ``+A -B``. Take-profit target lists (dicts) stay scalar text."""
+    if vtype in _LIST_TYPES:
+        return True
+    if vtype:
+        return False
+    lists = [v for v in values if isinstance(v, list)]
+    return bool(lists) and all(not isinstance(x, dict) for v in lists for x in v)
+
+
+def _tunable(key: str) -> Any | None:
+    from arc.control.registry import TunableError, lookup
+
+    try:
+        return lookup(key)
+    except TunableError:
+        return None
+
+
+def _key_row(v: dict[str, Any]) -> ConfigKeyRow:
+    t = _tunable(v["key"])
+    vtype = t.type.value if t is not None else ""
+    return ConfigKeyRow(
+        key=v["key"],
+        group=v["group"],
+        value=v["value"],
+        value_text=str(v["value_text"]),
+        default=v["default"],
+        default_text=str(v["default_text"]),
+        source="override" if v["overridden"] else "yaml",
+        bounds=str(v["bounds"]),
+        hard_ceiling=v["hard_ceiling"],
+        risk=str(v["risk"]),
+        description=str(v["description"]),
+        env=v["env"],
+        last_change_id=v["last_change_id"],
+        last_change_at=parse_ts(v["last_change_at"]),
+        last_change_by=v["last_change_by"],
+        value_type=vtype,
+        is_list=_is_list(vtype, v["value"]),
+        choices=list(t.choices) if t is not None else [],
+        min=t.min if t is not None else None,
+        max=t.max if t is not None else None,
+        unit=t.unit if t is not None else "",
+    )
+
+
+def _groups(keys: list[ConfigKeyRow]) -> list[ConfigGroupRow]:
+    """Registry groups in registry (enum) order, then any group the registry does not list."""
+    from arc.control.registry import Group
+
+    counts = Counter(k.group for k in keys)
+    order = [g.value for g in Group] + sorted(set(counts) - {g.value for g in Group})
+    return [
+        ConfigGroupRow(
+            key=g, label=GROUP_LABELS.get(g, g.replace("_", " ").title()), keys=counts[g]
+        )
+        for g in order
+        if counts[g]
+    ]
+
+
 def _config_views(
     svc: Any, history: int
 ) -> tuple[list[dict[str, Any]], int, list[ConfigChangeRow]]:
     views = [v.as_json() for v in svc.show()]
-    changes = [
-        ConfigChangeRow(
-            id=c.id,
-            key=c.key,
-            old=c.old,
-            new=c.new,
-            is_default=c.is_default,
-            actor=c.actor,
-            reason=c.reason,
-            at=c.at,
-            source=c.source,
-            status=c.status,
-            supersedes_id=c.supersedes_id,
-            direction=c.direction,
-            halted=c.halted,
-        )
-        for c in svc.history(limit=history)
-    ]
+    changes = [_change_row(c) for c in svc.history(limit=history)]
     return views, int(svc.version()), changes
+
+
+def _change_row(c: Any) -> ConfigChangeRow:
+    from arc.control.registry import format_value
+
+    t = _tunable(c.key)
+
+    def fmt(v: Any) -> str | None:
+        if v is None:
+            return None
+        try:
+            return format_value(t, v) if t is not None else str(v)
+        except (TypeError, ValueError, KeyError):  # a stored value the registry no longer parses
+            return str(v)
+
+    vtype = t.type.value if t is not None else ""
+    return ConfigChangeRow(
+        id=c.id,
+        key=c.key,
+        old=c.old,
+        new=c.new,
+        is_default=c.is_default,
+        actor=c.actor,
+        reason=c.reason,
+        at=c.at,
+        source=c.source,
+        status=c.status,
+        supersedes_id=c.supersedes_id,
+        direction=c.direction,
+        halted=c.halted,
+        group=t.group.value if t is not None else None,
+        is_list=_is_list(vtype, c.old, c.new),
+        old_text=fmt(c.old),
+        new_text=fmt(c.new),
+    )

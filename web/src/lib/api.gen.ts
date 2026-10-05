@@ -1063,18 +1063,29 @@ export interface components {
             at: string;
             /** Direction */
             direction: string;
+            /** Group */
+            group?: string | null;
             /** Halted */
             halted: boolean;
             /** Id */
             id: number;
             /** Is Default */
             is_default: boolean;
+            /**
+             * Is List
+             * @default false
+             */
+            is_list: boolean;
             /** Key */
             key: string;
             /** New */
             new?: unknown;
+            /** New Text */
+            new_text?: string | null;
             /** Old */
             old?: unknown;
+            /** Old Text */
+            old_text?: string | null;
             /** Reason */
             reason: string | null;
             /** Source */
@@ -1090,10 +1101,27 @@ export interface components {
              */
             supersedes_id: number | null;
         };
+        /**
+         * ConfigGroupRow
+         * @description E8.8e: one registry group (a page section), in registry order.
+         */
+        ConfigGroupRow: {
+            /** Key */
+            key: string;
+            /** Keys */
+            keys: number;
+            /** Label */
+            label: string;
+        };
         /** ConfigKeyRow */
         ConfigKeyRow: {
             /** Bounds */
             bounds: string;
+            /**
+             * Choices
+             * @description Categorical options, safest first
+             */
+            choices?: string[];
             /** Default */
             default: unknown;
             /** Default Text */
@@ -1106,6 +1134,12 @@ export interface components {
             group: string;
             /** Hard Ceiling */
             hard_ceiling?: unknown;
+            /**
+             * Is List
+             * @description A list value (tickers, ids): own full line
+             * @default false
+             */
+            is_list: boolean;
             /** Key */
             key: string;
             /** Last Change At */
@@ -1114,6 +1148,10 @@ export interface components {
             last_change_by?: string | null;
             /** Last Change Id */
             last_change_id?: number | null;
+            /** Max */
+            max?: number | null;
+            /** Min */
+            min?: number | null;
             /** Risk */
             risk: string;
             /**
@@ -1121,15 +1159,33 @@ export interface components {
              * @enum {string}
              */
             source: "yaml" | "override";
+            /**
+             * Unit
+             * @default
+             */
+            unit: string;
             /** Value */
             value: unknown;
             /** Value Text */
             value_text: string;
+            /**
+             * Value Type
+             * @description Registry ValueType (float, choice, tickers, …)
+             * @default
+             */
+            value_type: string;
         };
         /** ConfigResponse */
         ConfigResponse: {
             /** Account Profile */
             account_profile: string;
+            /**
+             * Actor Names
+             * @description E8.8e: `tower.actor_names` (Slack id -> display name); unknown ids as is
+             */
+            actor_names?: {
+                [key: string]: string;
+            };
             /**
              * As Of
              * Format: date-time
@@ -1143,6 +1199,11 @@ export interface components {
             config_version: number;
             /** Env */
             env: string;
+            /**
+             * Groups
+             * @description E8.8e: registry groups in registry order (sections)
+             */
+            groups?: components["schemas"]["ConfigGroupRow"][];
             /** Keys */
             keys: components["schemas"]["ConfigKeyRow"][];
             /** Note */
@@ -4503,6 +4564,11 @@ export interface components {
             /** Gate Decisions */
             gate_decisions: string[];
             /**
+             * Label
+             * @description E8.8e: routines.yaml `label` of the job
+             */
+            label?: string | null;
+            /**
              * Manifest
              * @description The stored D27 RunManifest (JSON)
              */
@@ -4516,6 +4582,11 @@ export interface components {
             outputs: {
                 [key: string]: components["schemas"]["LinkRef"][];
             };
+            /**
+             * Persona
+             * @description E8.8e: routines.yaml `persona` (chip)
+             */
+            persona?: string | null;
             /** Persona Calls */
             persona_calls: components["schemas"]["PersonaCallRow"][];
             /** Proposals */

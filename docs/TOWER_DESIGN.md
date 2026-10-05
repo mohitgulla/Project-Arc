@@ -246,9 +246,10 @@ they are never dropped.
 ### 10.2 Ops (E8.8d)
 
 - **Widget order** (`OPS_WIDGETS` in `lib/ops.ts`, same on phone and desktop): Session
-  Timeline · Sources · Health · LLM Usage · Context Store · Auto-Approve · Alerts · Halts ·
-  Runs (the last three collapsible, closed on a first visit) · Config (a link to the full page
-  `/ops/config`, effective config + change log). No Order Budget widget.
+  Timeline · Sources · Health · LLM Usage · Context Store · Auto-Approve · Config · Alerts ·
+  Halts · Runs (the last three collapsible, closed on a first visit). Config (D50) is two
+  buttons, **Effective Config** (`/ops/config`) and **Change Log** (`/ops/config/changes`),
+  plus the `v7 · 196 keys · 7 changes` caption. No Order Budget widget.
 - **Timeline bands come from `config/routines.yaml`**, never code: each job may carry `label`,
   `group` (`sources | scout | trading_loop | position_management | post_market | other`),
   `persona` (chip; sources declare none) and `about` (one line ≤ 160 chars, the ⓘ text).
@@ -265,8 +266,41 @@ they are never dropped.
   category shows its header only unless its status is pending or worse.
 - **Health** is one chip row (`Tick ok 1m`, `Log 0.2 / 50 MB`); the long text is in each chip's
   ⓘ, and a degraded or failed chip expands inline with its message.
-- **Auto-Approve** is a key/value list (paper, live, scorecard gate, last flip) plus the gate
-  line; **Alerts / Halts** collapse repeats like the Overview (`missed_window ×12`).
+- **Auto-Approve** is a key/value list (paper, live, scorecard gate, last flip), with no
+  sub-text (D50: the gate's full reason is on `/ops/config`, `auto_approve.*`); **Alerts /
+  Halts** collapse repeats like the Overview (`missed_window ×12`).
+- **Config page** (`/ops/config`, `pages/OpsConfig.tsx`, E8.8e / D50) is **one page-level
+  scroll**: no inner scroll container anywhere (no `max-h-*` + `overflow-auto`).
+  - One page filter (key, group, description, value) at the top, sticky under the app header
+    below 1280 px, plus an **Overrides only** toggle; both filter every section.
+  - Sections are the registry groups (`Group` order in `arc/control/registry.py`, labels
+    from `GROUP_LABELS` in `data_ops.py`); a left rail at ≥ 1280 px, a sideways-scrolling
+    chip bar (`data-scroll-x`) below, both jump to the section headers.
+  - Key rows: the key wraps after each `.` and is never truncated; scalar values sit beside
+    it; **list values (universe, approver ids) sit on their own full-width line below the
+    key**, every member as a chip with a count (`100 tickers`), no "show more" cap. Under it:
+    description, default, allowed (registry bounds; choices as chips with the current one
+    highlighted, like `!arc config`), risk direction in words, last change (age + actor).
+    A row with history expands to its own change list.
+  - **Change Log** (`/ops/config/changes`, deep-linkable tab): newest first, paged 20 at a
+    time. Lists read `universe · 20 → 100 tickers` with a wrapping `+SMH … −DIA` chip diff
+    and a **Show full lists** disclosure (both lists wrap); scalars read `old → new`. Actors
+    show their `tower.actor_names` display name (`config/routines.yaml`; display only, an
+    unknown id shows as is); source reads Slack / CLI.
+  - Footer: read-only, edits happen in Slack (`!arc config set …`).
+- **Run detail** (`/ops/runs/:runId`, `pages/RunDetail.tsx`, E8.8e) is concise:
+  - Summary card: job label + persona chip (routines.yaml), status, duration, trigger,
+    scheduled-for, config version, git sha (12, copy-on-tap), LLM cost + tokens, attempt,
+    chain link.
+  - Chain runs list their steps (step · label · status · duration · `r/w` counts · LLM
+    calls); tapping one shows the same layout below (`?step=<run id>`, deep-linkable).
+  - Body: Declared vs Actual (violations in `--neg`) · Context Read / Written as **count
+    chips per kind** (`raw_doc_ref 312`), undeclared kinds first and always red; a chip
+    expands to a capped list (8) and the raw ids stay hidden until **Show ids** · LLM Calls
+    (capped) · Outputs (capped per kind) · Links.
+  - **Full Manifest** and **Log** are collapsed disclosures; the manifest groups are
+    KeyValue blocks with hashes shortened and copy-on-tap; the log shows the last 50 lines at
+    the chosen level. Every field of the former page is still reachable (D48).
 
 ### 10.5 Trade detail (E8.8f)
 

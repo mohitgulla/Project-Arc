@@ -185,7 +185,7 @@ type Manifest = Record<string, unknown>;
 
 export interface ManifestGroup {
   title: string;
-  rows: Array<{ label: string; value: string }>;
+  rows: Array<{ key: string; label: string; value: string }>;
 }
 
 function text(v: unknown): string {
@@ -294,7 +294,7 @@ export function manifestGroups(m: Manifest | null | undefined): ManifestGroup[] 
         if (k === "cost_usd" && typeof v === "number") value = formatMoney(v, "price");
         if ((k === "input_tokens" || k === "output_tokens") && typeof v === "number") value = formatNumber(v);
         if (k === "git_sha" && typeof v === "string") value = v.slice(0, 12);
-        return { label, value };
+        return { key: k, label, value };
       }),
   })).filter((g) => g.rows.length > 0);
 }
@@ -396,10 +396,10 @@ export const OPS_WIDGETS = [
   "LLM Usage",
   "Context Store",
   "Auto-Approve",
+  "Config",
   "Alerts",
   "Halts",
   "Runs",
-  "Config",
 ] as const;
 
 /** Sections closed on a first visit (E8.8a remembers the owner's choice after that). */

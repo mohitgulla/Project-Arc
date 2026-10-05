@@ -10,6 +10,7 @@ import { Money } from "../components/Money";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { StatusStepper, type Stage } from "../components/StatusStepper";
 import { ApiError, num } from "../lib/api";
+import { copyText } from "../lib/clipboard";
 import { formatEt, formatLeg, formatNumber, formatPercent } from "../lib/format";
 import { useLayout } from "../lib/layout";
 import { structureLabel } from "../lib/overview";
@@ -492,28 +493,6 @@ function ContextRead({ d }: { d: TradeDetail }) {
 // ---------------------------------------------------------------------------
 // Audit tab
 // ---------------------------------------------------------------------------
-
-/** Clipboard copy that also works on the plain-http tailnet origin (no `navigator.clipboard`). */
-function copyText(text: string): boolean {
-  try {
-    if (window.isSecureContext && navigator.clipboard) {
-      void navigator.clipboard.writeText(text);
-      return true;
-    }
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    ta.remove();
-    return ok;
-  } catch {
-    return false;
-  }
-}
 
 function HashCopy({ hash }: { hash: string }) {
   const [copied, setCopied] = useState<boolean | null>(null);

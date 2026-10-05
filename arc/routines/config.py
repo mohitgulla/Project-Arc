@@ -473,6 +473,18 @@ class TowerSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     overview: TowerOverviewSettings = Field(default_factory=TowerOverviewSettings)
+    # E8.8e: display names for change-log actors (Slack user id -> name). An id not in the
+    # map shows as is. Display only, never an authorization input (D10 owner check is
+    # `owner_slack_user_id`).
+    actor_names: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _names_non_empty(self) -> TowerSettings:
+        for k, v in self.actor_names.items():
+            if not str(k).strip() or not str(v).strip():
+                msg = "tower.actor_names: ids and names must be non-empty"
+                raise ValueError(msg)
+        return self
 
 
 # E4.8a (D46/D44): the Finnhub per-ticker kinds a persona may see as compact facts.

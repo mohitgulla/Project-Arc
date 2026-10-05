@@ -40,6 +40,24 @@ GIT_SHA = "0123456789abcdef0123456789abcdef01234567"
 UNDECLARED_RUN_TAG = "undeclared"
 STEP = dt.timedelta(minutes=5)
 
+#: E8.8e: a universe change of a 20-item list to a 100-item list (DIA, XLF dropped), for the
+#: Effective Config / Change Log wrapping checks (>= 100 tickers on one key).
+UNIVERSE_OLD: tuple[str, ...] = (
+    "SPY", "QQQ", "IWM", "DIA", "XLF", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL",
+    "META", "TSLA", "AMD", "AVGO", "JPM", "XOM", "UNH", "COST", "NFLX", "CRM",
+)  # fmt: skip
+UNIVERSE_NEW: tuple[str, ...] = tuple(t for t in UNIVERSE_OLD if t not in ("DIA", "XLF")) + (
+    "SMH", "SCHD", "XLE", "XLK", "XLV", "XLI", "XLY", "XLP", "XLU", "XLB",
+    "XLRE", "XLC", "GLD", "SLV", "TLT", "HYG", "EEM", "EFA", "FXI", "KWEB",
+    "ARKK", "SOXX", "IBB", "XBI", "KRE", "ORCL", "ADBE", "INTC", "QCOM", "TXN",
+    "MU", "AMAT", "LRCX", "KLAC", "MRVL", "SNOW", "PLTR", "SHOP", "UBER", "ABNB",
+    "PYPL", "SQ", "COIN", "HOOD", "BAC", "WFC", "C", "GS", "MS", "SCHW",
+    "V", "MA", "AXP", "BRK.B", "JNJ", "PFE", "MRK", "ABBV", "LLY", "TMO",
+    "CVX", "COP", "SLB", "OXY", "HD", "LOW", "WMT", "TGT", "NKE", "SBUX",
+    "MCD", "DIS", "CMCSA", "T", "VZ", "BA", "CAT", "DE", "GE", "HON",
+    "LMT", "RTX",
+)  # fmt: skip
+
 #: Per-model prices used for the fixture costs ($ per 1M input / output tokens).
 _PRICE = {"claude-sonnet-5": (3.0, 15.0), "claude-haiku-5": (0.8, 4.0)}
 _PERSONA_MODEL = {
@@ -481,6 +499,12 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
                    actor="U0OWNER", reason="revert", source="slack",
                    at=now - dt.timedelta(days=1), status="reverted", direction="safer",
                    supersedes_id=c1.id + 1)  # fmt: skip
+    # E8.8e: a long list change (20 -> 100 tickers, DIA and XLF dropped) by the owner's real
+    # Slack id, so the page shows its `tower.actor_names` name and the wrapping list diff.
+    changes.append(key="universe", old=list(UNIVERSE_OLD), new=list(UNIVERSE_NEW),
+                   is_default=False, actor="U0C5KUMH28G", reason="widen the seed list",
+                   source="cli", at=now - dt.timedelta(hours=20), status="applied",
+                   direction="riskier")  # fmt: skip
 
 
 def write_log(db_path: Path, run_id: str, now: dt.datetime) -> Path:

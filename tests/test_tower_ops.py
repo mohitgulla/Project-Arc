@@ -563,7 +563,7 @@ def test_config_via_control_service(conn) -> None:
     from arc.control.registry import REGISTRY
 
     c = load_config(conn, ArcSettings(), now=NOW)
-    assert c.config_version == 3 and c.note is None
+    assert c.config_version == 4 and c.note is None
     assert set(REGISTRY) <= {k.key for k in c.keys}  # + the per-routine keys
     assert [ch.id for ch in c.changes] == sorted((ch.id for ch in c.changes), reverse=True)
     revert = next(ch for ch in c.changes if ch.status == "reverted")

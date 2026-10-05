@@ -24,6 +24,7 @@ from arc.tower.data_ops import (
     RunListResponse,
     SessionResponse,
     SourcesResponse,
+    job_labels,
     load_alerts,
     load_budget,
     load_config,
@@ -155,6 +156,7 @@ def run_detail(cfg: Tower, conn: Conn, run_id: str) -> RunDetailResponse:
             now=cfg.clock(),
             log_path=_log_path(cfg, routines.monitoring.log.path),
             slack_channel=_slack_channel(),
+            labels=job_labels(routines),
         )
     except LookupError as exc:
         raise TowerError(404, "not_found", str(exc.args[0])) from exc
@@ -208,4 +210,5 @@ def config(cfg: Tower, conn: Conn) -> ConfigResponse:
         from arc.config import ArcSettings
 
         base = ArcSettings()
-    return load_config(conn, base, now=cfg.clock())
+    _, routines = effective(cfg)
+    return load_config(conn, base, now=cfg.clock(), actor_names=routines.tower.actor_names)

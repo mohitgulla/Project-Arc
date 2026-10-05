@@ -276,10 +276,10 @@ describe("E8.8d widget order", () => {
         "LLM Usage",
         "Context Store",
         "Auto-Approve",
+        "Config",
         "Alerts",
         "Halts",
         "Runs",
-        "Config",
       ]
     `);
     expect(OPS_CLOSED_BY_DEFAULT).toEqual(["Alerts", "Halts", "Runs"]);
