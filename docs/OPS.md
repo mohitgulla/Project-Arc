@@ -768,6 +768,26 @@ read it (core until the first resolve of the day).
   (fetch + print, no write) or `arc universe momentum [--db PATH] [--no-slack]` (runs the
   job). Weekly instead: `days: [mon]` and `context: {ttl: 8d}` in `config/routines.yaml`.
   stockanalysis lists only 25 rows, so the GOOG fold leaves 24 names (marked `partial`).
+- **Trending tier (E12.3):** job `universe.trending`, 08:45 ET every trading day (TTL 1
+  session: a failed run writes nothing, and the tier is empty that day, never carried
+  stale). No LLM, and Alpaca is never a ranking input. Four equally weighted inputs under
+  `trending.inputs` in `config/routines.yaml`: news flow (distinct `raw_docs` sources over
+  3 sessions; EDGAR counts once, for the filer), Reddit (ApeWisdom pages 1–2: mentions +
+  24 h rank gain), Stocktwits trending (crypto/non-US dropped) and Scout corroboration
+  (`candidates` over 3 sessions). Each input is rank-normalised to (0, 1];
+  `trend_score` = sum / number of enabled inputs (an input with no data scores 0, and
+  the others are not renormalised). A name needs ≥ 2 inputs; core, momentum and
+  SPY/QQQ are excluded first; the top 40 get the relaxed screen and the first 25 passes
+  are the tier. Every admission / screen fail / single-input reject is journaled
+  (`universe:trending_*`). Notice: `Trending tier: 22 names (+NKE −LULU) · inputs news,
+  reddit, stocktwits, scout`. By hand: `arc universe trending --dry-run [--no-screen]
+  [--json]` (read-only score table) or `arc universe trending [--db PATH] [--no-slack]`.
+  Adding/removing an input of a known type (`news | apewisdom | stocktwits | scout`) is a
+  YAML edit.
+- **Ticker extraction (E12.3):** bare upper-case words of 2–3 letters count only for
+  core + momentum names (`extraction.bare_min_len: 4`); `$SYM`, `(SYM)`, `(NYSE: SYM)`
+  and `ticker symbol SYM` still match any length. RSI, ET, SA, TD, MSCI, COLA, NOW… are
+  stop words in bare form (`config/universe.yaml`).
 - A `universe` override longer than 30 names (pre-D51 flat list) is ignored in favour
   of the yaml core (logged `universe.core_override_ignored`). Reset it from Slack with
   `!arc config universe <core 25>` so the Tower shows the core.

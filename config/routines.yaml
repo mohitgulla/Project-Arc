@@ -338,6 +338,48 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     writes: [universe_tier, active_universe]   # re-resolves today's active list after the write
     source_order: [stockanalysis, schwab]      # Schwab only when stockanalysis fails or < 20 rows
     size: 25
+  universe.trending:            # E12.3 / D51: daily rules-based top 25 (no Alpaca ranking input)
+    label: Trending tier
+    about: "Daily top 25 popular names (news flow, Reddit, Stocktwits, Scout); relaxed screen"
+    group: other
+    schedule: ["08:45"]         # before the open, after the overnight Scout; `arc universe trending` = by hand
+    days: trading
+    ttl: 1h                     # a missed 08:45 slot still runs until 09:45
+    # context_ttl default for universe_tier: 1 session, supersede latest. A failed run
+    # writes nothing; yesterday's entry has already expired, so the tier is empty today.
+    writes: [universe_tier, active_universe]   # re-resolves today's active list after the write
+    trending:
+      pool: 40                  # top 40 by trend score get the relaxed liquidity screen
+      min_inputs: 2             # a name needs >= 2 inputs (blocks one-source pumps)
+      exclude_market_reference: true   # SPY/QQQ stay regime-only (D51)
+      timeout_s: 15
+      retries: 1
+      # Equal weights: trend_score = sum of input scores / number of ENABLED inputs. An
+      # input with no fresh data scores 0 for every name (never renormalised). Adding
+      # or removing an input is config only; `type` picks the adapter
+      # (news | apewisdom | stocktwits | scout). Alpaca is never a ranking input.
+      inputs:
+        news:                   # distinct raw_docs source_keys per ticker (EDGAR = 1)
+          type: news
+          label: News flow
+          lookback_sessions: 3
+          max_age: 3d
+          exclude_sources: [earnings]   # the earnings calendar is not news flow
+        reddit:                 # ApeWisdom all-stocks, pages 1-2 (free, no key)
+          type: apewisdom
+          label: Reddit (ApeWisdom)
+          urls:
+            - https://apewisdom.io/api/v1.0/filter/all-stocks/page/1
+            - https://apewisdom.io/api/v1.0/filter/all-stocks/page/2
+        stocktwits:             # Stocktwits trending (free, no key; crypto/non-US dropped)
+          type: stocktwits
+          label: Stocktwits trending
+          urls: [https://api.stocktwits.com/api/2/trending/symbols.json]
+        scout:                  # candidates rows, weighted by corroboration
+          type: scout
+          label: Scout corroboration
+          lookback_sessions: 3
+          max_age: 3d
 
 # E4.8a (D46/D44): Finnhub per-ticker facts in the Scout/Director prompts. The switch
 # is `personas.finnhub_context` below (default off = prompts unchanged); these are its

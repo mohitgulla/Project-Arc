@@ -91,7 +91,8 @@ def test_every_scheduled_live_job_has_label_and_about(empty_db) -> None:
         assert r is not None
         assert r.label != r.job or r.job in {"scout", "director"}, r.job
         assert r.about, r.job
-        assert r.band != "other" or r.job == "symbols", r.job
+        # universe maintenance (symbols, E12.2 momentum, E12.3 trending) sits in "other"
+        assert r.band != "other" or r.job == "symbols" or r.job.startswith("universe."), r.job
 
 
 def test_new_job_in_temp_yaml_lands_in_its_band(tmp_path, empty_db) -> None:

@@ -45,6 +45,13 @@ class IngestUniverse:
     #: D51 market reference (SPY, QQQ): tagged as mentions (regime/macro context),
     #: never a trade name, so not in :attr:`seed`.
     reference: tuple[str, ...] = ()
+    #: E12.3: core + momentum names. In the open universe only these (and the
+    #: reference) keep the legacy case-insensitive seed match, and only they may match
+    #: as a bare word shorter than ``extraction.bare_min_len``. Other active names
+    #: (trending, discoveries) go through :func:`extract_tickers`' rules, so a short
+    #: trending name such as NOW cannot match every "now" and feed its own news score.
+    #: ``None`` = every seed name (pre-E12.3 behaviour, used by direct constructors).
+    bare_allow: tuple[str, ...] | None = None
 
     @classmethod
     def from_settings(
@@ -60,7 +67,7 @@ class IngestUniverse:
         D51: the seed tuple is today's active list read from *conn* (the core list
         without a store or before the first resolve of the day).
         """
-        from arc.universe.tiers import active_tickers, market_reference
+        from arc.universe.tiers import SEED_TIERS, active_tickers, market_reference, tier_membership
         from arc.utils.calendar import now_et
 
         cfg = load_universe_config(settings.universe_config_file)
@@ -74,18 +81,41 @@ class IngestUniverse:
                 now=now,
                 fetch_if_missing=False,
             )
-        active = active_tickers(conn, settings, now or now_et())
+        at = now or now_et()
+        active = active_tickers(conn, settings, at)
         seed = tuple(dict.fromkeys(normalize_symbol(t) for t in active))
         reference = tuple(
             t
             for t in dict.fromkeys(normalize_symbol(t) for t in market_reference(settings))
             if t not in seed
         )
-        return cls(mode=mode, seed=seed, config=cfg, master=master, reference=reference)
+        bare_allow = tuple(
+            normalize_symbol(t)
+            for t, tier in tier_membership(conn, settings, at).items()
+            if tier in SEED_TIERS
+        )
+        return cls(
+            mode=mode,
+            seed=seed,
+            config=cfg,
+            master=master,
+            reference=reference,
+            bare_allow=bare_allow,
+        )
 
     @property
     def open(self) -> bool:
         return self.mode is UniverseMode.SEED and self.master is not None
+
+    def _legacy_seed(self) -> tuple[str, ...]:
+        """Names matched by the pre-D28 case-insensitive rule (see :attr:`bare_allow`)."""
+        if not self.open or self.bare_allow is None:
+            return self.seed
+        allow = set(self.bare_allow)
+        return tuple(t for t in self.seed if t in allow)
+
+    def _allow(self) -> tuple[str, ...]:
+        return (*(self.seed if self.bare_allow is None else self.bare_allow), *self.reference)
 
     def accepted(self) -> frozenset[str]:
         base = frozenset(self.seed) | frozenset(self.reference)
@@ -101,17 +131,22 @@ class IngestUniverse:
         sym = normalize_symbol(symbol)
         return sym in self.seed or (self.open and self.master is not None and sym in self.master)
 
+    def _extract(self, text: str) -> list[str]:
+        return extract_tickers(
+            text, self.accepted(), self.config.extraction, bare_allow=self._allow()
+        )
+
     def tickers_in(self, text: str) -> list[str]:
-        """Seed + market-reference matches (pre-D28 rule) first, then validated
+        """Legacy seed + market-reference matches (pre-D28 rule) first, then validated
         open-universe matches."""
         upper = text.upper()
         found = [
             t
-            for t in (*self.seed, *self.reference)
+            for t in (*self._legacy_seed(), *self.reference)
             if re.search(rf"(?:^|[\s\[($])\$?({re.escape(t)})(?:[\s\]).,;:!?]|$)", upper)
         ]
         if self.open:
-            for sym in extract_tickers(text, self.accepted(), self.config.extraction):
+            for sym in self._extract(text):
                 if sym not in found:
                     found.append(sym)
         return found
@@ -119,9 +154,11 @@ class IngestUniverse:
     def mention_universe(self, text: str) -> list[str]:
         """Seed list, market reference and the open-universe symbols found in *text*
         (channel briefs pass this as their ``universe``, so ``tickers_mentioned`` keeps
-        its own match rules)."""
-        extra = extract_tickers(text, self.accepted(), self.config.extraction) if self.open else []
-        return list(dict.fromkeys([*self.seed, *self.reference, *extra]))
+        its own match rules). E12.3: in the open universe, active names outside core +
+        momentum are listed only when :func:`extract_tickers` found them."""
+        if not self.open:
+            return list(dict.fromkeys([*self.seed, *self.reference]))
+        return list(dict.fromkeys([*self._legacy_seed(), *self.reference, *self._extract(text)]))
 
     def cik(self, symbol: str) -> str | None:
         """Zero-padded CIK from the symbol master, if known."""

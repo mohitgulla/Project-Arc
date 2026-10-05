@@ -119,7 +119,13 @@ class ExtractionConfig(BaseModel):
     model_config = _FORBID
 
     min_symbol_len: int = Field(2, ge=1)
+    # E12.3: a bare upper-case word shorter than this counts only for core + momentum
+    # names; cashtags and labelled forms ("(SYM)", "ticker symbol SYM") match any length.
+    bare_min_len: int = Field(4, ge=1)
     stop_words: list[str] = Field(default_factory=list)
+    # E12.3: also never matched as "(SYM)" / "ticker symbol SYM" ("(AI)", "(COLA)").
+    # Cashtags always match.
+    paren_stop_words: list[str] = Field(default_factory=list)
 
 
 class EarningsConfig(BaseModel):
