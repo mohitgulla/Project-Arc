@@ -10,7 +10,7 @@ import datetime as _dt
 import json
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -81,6 +81,8 @@ class DirectorInput:
     d47_replay: bool = False
     # E4.8a (D46): code-built Finnhub facts, one line per ticker ("" = flag off).
     ticker_facts: str = ""
+    # E12.5 (D51): personas.director_diversification (strict = the E5.9 wording).
+    diversification: Literal["strict", "relaxed"] = "strict"
 
 
 @dataclass(frozen=True)
@@ -173,6 +175,7 @@ def director_input_from_context(
     ticker_facts: Mapping[str, Any] | None = None,
     categories: Mapping[str, Mapping[str, Any]] | None = None,
     d47_replay: bool = False,
+    diversification: Literal["strict", "relaxed"] = "strict",
 ) -> DirectorInput:
     """Director reads every active ``candidate`` and ``regime`` entry, plus up to
     *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
@@ -193,6 +196,9 @@ def director_input_from_context(
 
     E4.8a: *ticker_facts* (``FinnhubContextSettings.prompt_options``; only passed
     when ``personas.finnhub_context`` is on) renders the Finnhub facts block.
+
+    E12.5: *diversification* (recorded only when ``relaxed``) swaps the portfolio-fit
+    concentration wording; ``strict`` keeps the E5.9 prompt byte for byte.
     """
     candidates = [e.payload for e in snapshot.of_kind("candidate")]
     regime = {e.subject: e.payload for e in snapshot.of_kind("regime")}
@@ -233,6 +239,7 @@ def director_input_from_context(
         ),
         d47_replay=d47_replay,
         ticker_facts=ticker_facts_block(snapshot, ticker_facts),
+        diversification=diversification,
     )
 
 
@@ -893,6 +900,16 @@ def _ticker_facts_section(block: str, *, header: str = "###") -> str:
 MAX_UNUSUAL_IN_PROMPT = 15
 
 
+# E12.5 (D51): the relaxed-diversification portfolio-fit wording (owner text).
+RELAXED_DIVERSIFICATION_FIT = (
+    "adds_concentration, or neutral. Correlation with a held name or a shared industry "
+    "is not, by itself, a reason to exclude. Rank two names in the same industry when "
+    "each has its own catalyst and evidence; say in the thesis how the second differs "
+    "(catalyst, timing, structure). Use `adds_concentration` only when the add would "
+    "push a sector past the flagged level. "
+)
+
+
 def _portfolio_section(inp: DirectorInput) -> str:
     """E5.9: the open book, its aggregates and the portfolio-fit instructions.
 
@@ -901,13 +918,19 @@ def _portfolio_section(inp: DirectorInput) -> str:
     """
     if not inp.portfolio_block.strip():
         return f"### Current portfolio\n{inp.portfolio_summary}\n"
+    if inp.diversification == "relaxed":
+        fit = RELAXED_DIVERSIFICATION_FIT
+    else:
+        fit = (
+            "adds_concentration (piles onto a flagged sector, stance or expiry, or a name "
+            "already held), or neutral. "
+        )
     return (
         "### Current portfolio (open book; deterministic, E5.9)\n"
         f"{scrub_carried_text(relabel_buckets(inp.portfolio_block))}\n\n"
         "Assess every candidate against this book: `portfolio_fit` = diversifies "
         "(new sector / stance / expiry), hedges (offsets a flagged skew), "
-        "adds_concentration (piles onto a flagged sector, stance or expiry, or a name "
-        "already held), or neutral. Give `portfolio_view` (verdict: balanced | "
+        f"{fit}Give `portfolio_view` (verdict: balanced | "
         "concentrated | hedge_needed | reduce_risk, plus one or two lines) and one "
         "`thesis_checks` entry per open structure (intact | weakened | invalidated, with "
         "why) using today's candidates, regime and notes. Never suggest closing or "

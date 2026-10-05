@@ -1431,6 +1431,22 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("off", "on"),
         aliases=("routines.personas.finnhub_context", "finnhub_context"),
     ),
+    # E12.5 (D51/D44): Director diversification. Strategy lane: strict is the
+    # control; relaxed lets two same-industry names rank and loosens the drops.
+    Tunable(
+        key="personas.director_diversification",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E12.5: how strictly the Director diversifies. strict = E5.9 drops; "
+        "relaxed = two names per industry may rank, adds_concentration drops only on a "
+        "flagged sector once the industry holds director_diversification."
+        "max_names_per_industry names, looser flag thresholds. Experiment XP-3 tests it.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "director_diversification"),
+        choices=("strict", "relaxed"),
+        aliases=("routines.personas.director_diversification", "director_diversification"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -2102,6 +2118,10 @@ _SECTIONS = ("sources", "personas")
 _PLAIN_ROUTINE_SECTIONS = (("loop",), ("monitoring",), ("categories",), ("tower",))
 # Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
 _PERSONA_SWITCHES = frozenset({("personas", "finnhub_context")})
+# Scalar choice switches under `personas:` (E12.5) -> the control value when absent.
+_PERSONA_CHOICE_SWITCHES: dict[tuple[str, ...], str] = {
+    ("personas", "director_diversification"): "strict",
+}
 
 
 def _get(data: Any, path: tuple[str, ...]) -> Any:
@@ -2151,6 +2171,9 @@ def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
         if isinstance(v, bool):  # YAML 1.1 reads a bare on/off as a boolean
             return "on" if v else "off"
         return str(v).strip().lower()
+    if t.target is Target.ROUTINES and t.path in _PERSONA_CHOICE_SWITCHES:
+        v = _get(raw, t.path)
+        return _PERSONA_CHOICE_SWITCHES[t.path] if v is None else str(v).strip().lower()
     if t.target is Target.ROUTINES and t.path[:1] in _PLAIN_ROUTINE_SECTIONS:
         v = _get(raw, t.path)
         if v is None:
@@ -2195,7 +2218,9 @@ def write_raw(t: Tunable, value: Any, raw: dict[str, Any]) -> list[tuple[tuple[s
 
     Pure helper for :mod:`arc.control.effective`; the pairs are applied in order.
     """
-    if t.target is Target.ROUTINES and t.path in _PERSONA_SWITCHES:
+    if t.target is Target.ROUTINES and (
+        t.path in _PERSONA_SWITCHES or t.path in _PERSONA_CHOICE_SWITCHES
+    ):
         return [(t.path, str(value))]
     if t.target is Target.ROUTINES and t.path[:1] in _PLAIN_ROUTINE_SECTIONS:
         if t.unit == "m":

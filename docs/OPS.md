@@ -1554,6 +1554,35 @@ in order to fit:
   a weekly refresh is one.
 - The gate never sees any of it, and `Candidate` gains no field.
 
+### 5.25 Director diversification: strict | relaxed (E12.5, D51, D44)
+
+    personas.director_diversification: strict   # config/routines.yaml; strict | relaxed
+
+`strict` (the shipped default) is the E5.9 behaviour: the prompt and the Director
+rules are byte-identical to the pre-E12.5 ones (golden hashes in
+`tests/test_director_diversification.py`), and the prompt input `diversification` is
+not recorded, so `arc journal replay` of older calls is unchanged. `relaxed`:
+
+- **Prompt:** a held name's correlation or a shared industry is not, by itself, a
+  reason to exclude; two same-industry names may both rank when each has its own
+  catalyst, and the thesis says how the second differs. `adds_concentration` is for
+  an add that would push a sector past its flagged level. `portfolio_fit` stays.
+- **Deterministic drop** (`_portfolio_filter`): an `adds_concentration` pick drops
+  only when its sector is flagged **and** the book (plus picks already kept this
+  run) holds `director_diversification.max_names_per_industry` (2) names in its
+  industry (`config/sectors.yaml` `industries:`; an unmapped name counts by sector).
+  Stance skew alone no longer drops. A pick on an already-held ticker still drops.
+- **Flag thresholds:** `director_diversification.relaxed` sector 0.55 / stance 0.85 /
+  expiry 0.70 (strict `portfolio.*_max_pct` 0.40 / 0.75 / 0.60; relaxed never goes
+  below the strict value).
+
+Unchanged in both modes: the gate's per-underlying cap (`max_alloc_pct`), the
+8-position max, the Greek caps, the D33 idea dedupe, and Risk's advisory
+`concentration_warning`. Two ways to turn it on: `!arc config
+personas.director_diversification relaxed` (riskier, asks for a confirm), or run the
+draft A/B `config/experiments/live/xp3_relaxed_diversification.yaml` (XP-3, not
+registered). Flipping the shipped default needs an XP-3 `win` verdict.
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.

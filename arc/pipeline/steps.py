@@ -152,6 +152,7 @@ if TYPE_CHECKING:
     from arc.gate.inputs import Portfolio
     from arc.pipeline.env import PipelineEnv
     from arc.pipeline.market import PricedStructure
+    from arc.routines.config import DirectorDiversificationSettings
     from arc.routines.handlers import Handler, JobContext
     from arc.scanner import ScanCandidate
 
@@ -595,6 +596,7 @@ def _director_rules(
     settings: ArcSettings | None = None,
     budget: BudgetView | None = None,
     portfolio: PortfolioContext | None = None,
+    diversification: DirectorDiversificationSettings | None = None,
 ) -> list[str]:
     """Director constraints (E5.7: rank, don't gatekeep; no count cap in the prompt).
 
@@ -624,10 +626,20 @@ def _director_rules(
         )
     if portfolio is not None and not portfolio.empty and portfolio.aggregates is not None:
         ag = portfolio.aggregates
+        if diversification is not None and diversification.is_relaxed:
+            drops = (
+                "adds_concentration picks on a flagged sector are dropped by the pipeline "
+                f"once the book holds {diversification.max_names_per_industry} names in "
+                "that industry; a shared industry alone is not a reason to exclude."
+            )
+        else:
+            drops = (
+                "adds_concentration picks on a flagged sector/stance/expiry are dropped "
+                "by the pipeline."
+            )
         rules.append(
             "portfolio_fit is required per pick (diversifies | hedges | adds_concentration | "
-            "neutral); adds_concentration picks on a flagged sector/stance/expiry are dropped "
-            "by the pipeline. Names at their per-underlying max-loss cap "
+            f"neutral); {drops} Names at their per-underlying max-loss cap "
             f"({', '.join(ag.at_cap_underlyings) or 'none'}) cannot be opened."
         )
         rules.append(
@@ -724,6 +736,7 @@ def _portfolio_context(
         budget_tier=budget.tier.value,
         portfolio=portfolio,
         snapshot=ctx.snapshot,
+        diversification=ctx.routines.director_diversification,
     )
     ctx.write("portfolio_context", SESSION_SUBJECT, pctx)
     return pctx
@@ -772,6 +785,9 @@ def _portfolio_filter(
     pctx: PortfolioContext,
     held: Mapping[str, str],
     settings: ArcSettings,
+    diversification: DirectorDiversificationSettings | None = None,
+    *,
+    industries: Mapping[str, str] | None = None,
 ) -> tuple[list[DirectorRankedItem], Counter[str], list[tuple[DirectorRankedItem, str]]]:
     """E5.9 deterministic Director-stage drops (portfolio + held ideas).
 
@@ -779,13 +795,43 @@ def _portfolio_filter(
     * ``at_cap``: the underlying is at its per-underlying max-loss cap.
     * ``adds_concentration``: the Director says the pick adds concentration and the
       dimension it lands on (sector / stance / expiry) is already flagged.
-    Re-ranks the survivors 1..n.
+
+    E12.5 (D51) ``relaxed`` diversification changes only the last rule: the pick is
+    dropped when its ticker is already held (the D33 dedupe), or when its sector is
+    flagged **and** the book plus the picks kept so far already hold
+    ``max_names_per_industry`` names in its industry (``config/sectors.yaml``
+    ``industries:``; an unmapped name counts by its sector). Stance skew alone no
+    longer drops. Re-ranks the survivors 1..n.
     """
+    from arc.pipeline.portfolio_context import load_industries, load_sectors
+
+    relaxed = diversification is not None and diversification.is_relaxed
+    max_names = diversification.max_names_per_industry if diversification is not None else 0
     dropped: Counter[str] = Counter()
     rejected: list[tuple[DirectorRankedItem, str]] = []
     out: list[DirectorRankedItem] = []
     ag = pctx.aggregates
-    sectors = pctx.thresholds and {p.ticker: p.sector for p in pctx.positions}
+    sectors = {p.ticker: p.sector for p in pctx.positions}
+    sector_map: dict[str, str] | None = None
+
+    def sector_of(ticker: str) -> str:
+        nonlocal sector_map
+        if ticker in sectors:
+            return sectors[ticker]
+        if sector_map is None:
+            sector_map = load_sectors()
+        return sector_map.get(ticker, "unknown")
+
+    names_by_industry: dict[str, set[str]] = {}
+    if relaxed:
+        imap = industries if industries is not None else load_industries()
+
+        def industry_of(ticker: str) -> str:
+            return imap.get(ticker) or f"sector:{sector_of(ticker)}"
+
+        for p in pctx.positions:
+            names_by_industry.setdefault(industry_of(p.ticker), set()).add(p.ticker)
+
     for item in kept:
         if held.get(item.ticker) == item.stance:
             dropped[DROP_DEDUPE] += 1
@@ -796,20 +842,24 @@ def _portfolio_filter(
             rejected.append((item, DROP_AT_CAP))
             continue
         if ag is not None and item.portfolio_fit == "adds_concentration":
-            sector = sectors.get(item.ticker) if sectors else None
-            if sector is None:
-                from arc.pipeline.portfolio_context import load_sectors
-
-                sector = load_sectors().get(item.ticker, "unknown")
-            flagged = (
-                sector in ag.flagged_sectors
-                or item.stance in ag.flagged_stances
-                or item.ticker in ag.by_underlying
-            )
+            sector = sector_of(item.ticker)
+            if relaxed:
+                names = names_by_industry.get(industry_of(item.ticker), set())
+                flagged = item.ticker in ag.by_underlying or (
+                    sector in ag.flagged_sectors and len(names - {item.ticker}) >= max_names
+                )
+            else:
+                flagged = (
+                    sector in ag.flagged_sectors
+                    or item.stance in ag.flagged_stances
+                    or item.ticker in ag.by_underlying
+                )
             if flagged:
                 dropped[DROP_CONCENTRATION] += 1
                 rejected.append((item, DROP_CONCENTRATION))
                 continue
+        if relaxed:
+            names_by_industry.setdefault(industry_of(item.ticker), set()).add(item.ticker)
         out.append(item.model_copy(update={"rank": len(out) + 1}))
     return out, dropped, rejected
 
@@ -1124,6 +1174,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         return skip
     # Quant/Risk budget (never shown to the Director); D32 lowers it in the restrictive tier.
     qr_budget = _shortlist_limit(settings, budget)
+    diversification = ctx.routines.director_diversification  # E12.5 (D51)
     inputs = {
         "portfolio_summary": summary,
         "scan_date": _today(ctx).isoformat(),
@@ -1131,7 +1182,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "portfolio_block": "" if pctx.empty else render_portfolio_context(pctx, settings),
         "recent_ideas": "\n".join(recent_lines),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
-        "rules": _director_rules(cands, settings, budget, pctx),
+        "rules": _director_rules(cands, settings, budget, pctx, diversification),
         # E4.6 (D45): [{slug, label, category}] of the youtube.briefs job, for the n/N lines.
         "youtube_channels": _youtube_channels(ctx),
         # D49: the effective categories block (labels + max_age), so a replay judges
@@ -1141,9 +1192,11 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     facts = _director_ticker_facts(ctx, cand_entries)
     if facts is not None:  # E4.8a: absent when the flag is off (prompt unchanged)
         inputs["ticker_facts"] = facts
+    if diversification.is_relaxed:  # E12.5: absent when strict (prompt unchanged)
+        inputs["diversification"] = diversification.mode
     reply, out = _ask(ctx, env, "director", snap, inputs, DirectorOutput)
     kept, dropped, rejected = _filter_shortlist(out, cands)
-    kept, pdropped, prejected = _portfolio_filter(kept, pctx, held, settings)
+    kept, pdropped, prejected = _portfolio_filter(kept, pctx, held, settings, diversification)
     dropped.update(pdropped)
     rejected.extend(prejected)
     ranked = {i.ticker for i in kept}
