@@ -53,7 +53,9 @@ verdicts_dir: config/experiments/live/verdicts
 promotion_stems: [exits, ranking, costs, account_profiles]
 
 # Values that count as "off" (control behaviour) for a new `Flag:` key.
-flag_off_values: [false, null, "off", "none", "control"]
+# "strict" (E12.5): the control of a strict | relaxed choice switch
+# (personas.director_diversification); it names the unchanged behaviour.
+flag_off_values: [false, null, "off", "none", "control", "strict"]
 
 # Minimum length of the `Lane: fast` reason, so "Lane: fast — x" does not pass.
 fast_reason_min_chars: 10
