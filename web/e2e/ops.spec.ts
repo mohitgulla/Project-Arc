@@ -17,7 +17,8 @@ const VIEWPORTS = [
 const THEMES = ["dark", "light"] as const;
 // E8.8d: the owner's widget order (Alerts / Halts / Runs are collapsible sections).
 const CARDS = ["Session Timeline", "Sources", "Health", "LLM Usage", "Context Store", "Auto-Approve", "Config"];
-const ORDER = ["Session Timeline", "Sources", "Health", "LLM Usage", "Context Store", "Auto-Approve", "Alerts", "Halts", "Runs", "Config"];
+// E8.8e: Config sits right below Auto-Approve.
+const ORDER = ["Session Timeline", "Sources", "Health", "LLM Usage", "Context Store", "Auto-Approve", "Config", "Alerts", "Halts", "Runs"];
 
 test.use({ baseURL: OPS_URL });
 
@@ -67,7 +68,9 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("llm-today")).toContainText("$");
         await expect(page.getByTestId("stacked-bars").locator("svg path").first()).toBeVisible();
         await expect(page.getByTestId("auto-approve")).toContainText("Scorecard gate");
-        await expect(page.getByTestId("config-link").getByRole("link")).toHaveAttribute("href", "/ops/config");
+        await expect(page.getByTestId("auto-approve").getByTestId("scorecard-gate")).toHaveCount(0); // E8.8e: no sub-text
+        await expect(page.getByTestId("config-open")).toHaveAttribute("href", "/ops/config");
+        await expect(page.getByTestId("config-changes-open")).toHaveAttribute("href", "/ops/config/changes");
         await expectNoOverflow(page);
         if (vp.width <= 520) {
           await expectTouchTargets(page, "[data-testid=ops] [data-testid=session-timeline]");
@@ -81,14 +84,71 @@ for (const vp of VIEWPORTS) {
         const runId = await undeclaredRun(page);
         await open(page, `/ops/runs/${runId}`, theme);
         await expect(page.getByTestId("run-detail")).toBeVisible();
+        await expect(page.getByTestId("run-summary")).toContainText("Director");
         await expect(page.getByTestId("contract-mismatch")).toContainText("write proposal");
         await expect(page.getByTestId("contract").locator("tr[data-mismatch]")).toHaveCount(1);
         await expect(page.getByTestId("chain-steps")).toBeVisible();
         await expect(page.getByTestId("persona-calls")).toContainText("Director");
+        // E8.8e: the undeclared kind is always shown, in red, as a count chip
+        await expect(page.getByTestId("ctx-wrote").locator("[data-testid=kind-count][data-undeclared]")).toHaveCount(1);
+        // the log is collapsed: the tail renders only once opened
+        await expect(page.getByTestId("run-log")).toHaveCount(0);
+        await page.getByTestId("log-block").locator("summary").click();
         await expect(page.getByTestId("run-log")).toContainText("context.undeclared_write");
-        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-        expect(overflow).toBeLessThanOrEqual(0);
+        await expectNoOverflow(page);
         await page.screenshot({ path: `e2e/screenshots/ops-run-${vp.name}-${theme}.png`, fullPage: true });
+      });
+
+      test("config page: one page scroll, every key, nothing truncated", async ({ page }) => {
+        await open(page, "/ops/config", theme);
+        const root = page.getByTestId("ops-config");
+        await expect(root.getByTestId("cfg-section").first()).toBeVisible();
+        const api = (await (await page.request.get("/api/ops/config")).json()) as { keys: Array<{ key: string }> };
+        await expect(root.getByTestId("cfg-key")).toHaveCount(api.keys.length);
+        // no inner (vertical) scroll container anywhere on the page; the section chip bar is a
+        // declared sideways scroller (`data-scroll-x`), which forces a computed overflow-y
+        const inner = await root.evaluate((el) =>
+          Array.from(el.querySelectorAll<HTMLElement>("*"))
+            .filter((n) => !n.hasAttribute("data-scroll-x"))
+            .filter((n) => ["auto", "scroll"].includes(getComputedStyle(n).overflowY))
+            .map((n) => n.className.slice(0, 40)),
+        );
+        expect(inner).toEqual([]);
+        // keys and values never truncated
+        const clipped = await root.evaluate((el) =>
+          Array.from(el.querySelectorAll<HTMLElement>("[data-testid=cfg-key-cell], [data-testid=cfg-value], [data-testid=cfg-key-name]"))
+            .filter((n) => n.scrollWidth > n.clientWidth + 1)
+            .map((n) => n.textContent?.slice(0, 40)),
+        );
+        expect(clipped).toEqual([]);
+        // the universe (100 tickers) sits on its own line below the key, every chip visible
+        const uni = root.locator('[data-testid=cfg-key][data-key="universe"]');
+        await expect(uni.getByTestId("cfg-list-count")).toHaveText("100 tickers");
+        await expect(uni.getByTestId("cfg-list").locator("li")).toHaveCount(100);
+        const [keyBox, valBox] = await Promise.all([uni.getByTestId("cfg-key-cell").boundingBox(), uni.getByTestId("cfg-value").boundingBox()]);
+        expect(valBox!.y).toBeGreaterThanOrEqual(keyBox!.y + keyBox!.height - 1);
+        await expect(uni.getByTestId("cfg-list").locator("li").last()).toBeVisible();
+        await expect(root.locator('[data-key="account_profile"]').getByTestId("cfg-choices")).toContainText("cash_long_only");
+        await expect(root.getByTestId(vp.width >= 1280 ? "cfg-rail" : "cfg-chips")).toBeVisible();
+        await expectNoOverflow(page);
+        if (vp.width <= 520) {
+          await expectTouchTargets(page, "[data-testid=ops-config] [data-testid=cfg-filter-bar]");
+          await expectMinFontSize(page, "[data-testid=ops-config]");
+        }
+        await page.screenshot({ path: `e2e/screenshots/ops-config-${vp.name}-${theme}.png`, fullPage: true });
+      });
+
+      test("change log wraps a 20 -> 100 ticker change", async ({ page }) => {
+        await open(page, "/ops/config/changes", theme);
+        const ch = page.locator('[data-testid=cfg-change][data-key="universe"]');
+        await expect(ch.getByTestId("cfg-change-headline")).toContainText("20 → 100 tickers");
+        await expect(ch.getByTestId("cfg-change-diff")).toContainText("+SMH");
+        await expect(ch.getByTestId("cfg-change-diff")).toContainText("\u2212DIA");
+        await expect(ch.getByTestId("cfg-change-actor")).toHaveText("Mohit");
+        await ch.getByTestId("cfg-change-full").click();
+        await expect(ch.getByTestId("cfg-change-lists").locator("li")).toHaveCount(120);
+        await expectNoOverflow(page);
+        await page.screenshot({ path: `e2e/screenshots/ops-config-changes-${vp.name}-${theme}.png`, fullPage: true });
       });
     });
   }
@@ -104,7 +164,7 @@ test.describe("ops behaviour", () => {
     await expect(page.getByTestId("source-category").first()).toBeVisible();
     const titles = await page
       .getByTestId("ops")
-      .locator(":scope > section")
+      .locator(":scope > section, :scope > #alerts > section")
       .evaluateAll((els) =>
         els.map((el) => (el.querySelector("h2") ?? el.querySelector("header button"))?.textContent?.replace(/[▶▼]/g, "").trim() ?? ""),
       );
@@ -129,6 +189,7 @@ test.describe("ops behaviour", () => {
     await open(page, "/ops");
     await page.getByTestId("loop-row").locator('[data-status="done"]').first().click();
     await expect(page).toHaveURL(/\/ops\/runs\/run-ops-director-/);
+    await page.locator('[data-testid=kind-count][data-kind="candidate"]').first().click();
     await page.getByRole("link", { name: /^candidate:/ }).first().click();
     await expect(page).toHaveURL(/\/ops\/context\//);
     await expect(page.getByTestId("context-entry")).toContainText("candidate");
@@ -177,12 +238,53 @@ test.describe("ops behaviour", () => {
     await expect(src.getByTestId("brief-status").filter({ hasText: /no video in/ }).first()).toBeVisible();
   });
 
-  test("the effective config lives on /ops/config", async ({ page }) => {
+  test("both Config buttons navigate; filter and overrides are page level", async ({ page }) => {
     await open(page, "/ops");
-    await page.getByTestId("config-link").getByRole("link").click();
+    await page.getByTestId("config-open").click();
     await expect(page).toHaveURL(/\/ops\/config$/);
     await expect(page.getByTestId("config")).toContainText("account_profile");
+    await expect(page.getByTestId("cfg-tab-config")).toHaveAttribute("aria-selected", "true");
+    const sections = page.getByTestId("cfg-section");
+    const all = await sections.count();
+    expect(all).toBeGreaterThan(3);
+    await page.getByTestId("cfg-filter").fill("max_open_positions");
+    await expect(sections).toHaveCount(1);
+    await expect(sections.first()).toHaveAttribute("data-group", "risk");
+    await page.getByTestId("cfg-filter").fill("");
+    await page.getByTestId("cfg-overrides-only").click();
+    await expect(page.getByTestId("cfg-overrides-only")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("cfg-key").filter({ hasNot: page.getByText("override", { exact: true }) })).toHaveCount(0);
+    await page.getByTestId("cfg-overrides-only").click();
+    // per-key history shows the display name
+    const uni = page.locator('[data-testid=cfg-key][data-key="universe"]');
+    await uni.getByTestId("cfg-key-history").click();
+    await expect(uni.getByTestId("cfg-change-actor").first()).toHaveText("Mohit");
+    // the rail jumps to a section
+    await page.getByTestId("cfg-rail").getByRole("button", { name: /^Exits/ }).click();
+    await expect(page.locator('[data-testid=cfg-section][data-group="exits"]')).toBeInViewport();
+    await page.goto("/ops");
+    await page.getByTestId("config-changes-open").click();
+    await expect(page).toHaveURL(/\/ops\/config\/changes$/);
     await expect(page.getByTestId("config-changes")).toContainText("revert");
+    await expect(page.getByTestId("config-changes")).toContainText("U0OWNER"); // unknown id as is
+    await page.getByTestId("cfg-filter").fill("mohit");
+    await expect(page.getByTestId("cfg-change")).toHaveCount(1);
+  });
+
+  test("run detail is concise: ids hidden until Show ids, manifest collapsed", async ({ page }) => {
+    await open(page, "/ops");
+    await page.getByTestId("loop-row").locator('[data-status="done"]').first().click();
+    await expect(page).toHaveURL(/\/ops\/runs\/run-ops-director-/);
+    await expect(page.getByTestId("context-id")).toHaveCount(0);
+    await expect(page.getByTestId("manifest-group")).toHaveCount(0);
+    const read = page.getByTestId("ctx-read");
+    await read.getByTestId("kind-count").first().click();
+    await expect(page.getByTestId("context-id")).toHaveCount(0);
+    await read.getByTestId("ctx-read-show-ids").click();
+    await expect(page.getByTestId("context-id").first()).toBeVisible();
+    await page.getByTestId("full-manifest").locator("summary").click();
+    await expect(page.getByTestId("manifest-group").first()).toBeVisible();
+    await expect(page.getByTestId("full-manifest")).toContainText("Git sha");
   });
 });
 
@@ -227,5 +329,19 @@ test.describe("ops phone-75", { tag: PHONE_75_TAG }, () => {
       await expect(page.getByRole("button", { name: new RegExp(`^${name}`) })).toHaveAttribute("aria-expanded", "false");
     await expect(page.getByText("Order Budget")).toHaveCount(0);
     await expectNoOverflow(page);
+  });
+
+  test("run detail of a director run is under 3,000 px tall at 520 px", async ({ page }) => {
+    await open(page, "/ops");
+    const res = await page.request.get("/api/ops/runs?job=director&status=ok&size=1&day=today");
+    const { rows } = (await res.json()) as { rows: Array<{ run_id: string }> };
+    await open(page, `/ops/runs/${rows[0]!.run_id}`);
+    await expect(page.getByTestId("run-summary")).toBeVisible();
+    await expect(page.getByTestId("context-id")).toHaveCount(0);
+    const h = await page.evaluate(() => document.documentElement.scrollHeight);
+    expect(h).toBeLessThan(3000);
+    await expectNoOverflow(page);
+    await expectTouchTargets(page, "[data-testid=run-detail]");
+    await expectMinFontSize(page, "[data-testid=run-detail]");
   });
 });

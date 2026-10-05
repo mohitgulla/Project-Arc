@@ -14,24 +14,17 @@ import { KeyValueList } from "../components/KeyValueList";
 import { ProgressRow } from "../components/ProgressRow";
 import { Section } from "../components/Section";
 import { StackedBars } from "../components/StackedBars";
-import { Timeline } from "../components/Timeline";
-import { formatAge, formatEt, formatNumber } from "../lib/format";
+import { formatAge, formatNumber } from "../lib/format";
 import { useLayout } from "../lib/layout";
 import {
   DAY_PRESETS,
-  LOG_LEVELS,
-  PERSONA_CHIP,
   SLOT_CLASS,
   SLOT_LABEL,
   SOURCE_STATUS_TONE,
   bandHasProblem,
   bandRollup,
   bandRows,
-  configGroups,
-  contractRows,
   dayParam,
-  externalInputs,
-  filterLog,
   formatDuration,
   formatSeconds,
   groupRepeats,
@@ -40,14 +33,11 @@ import {
   llmBars,
   llmCost,
   loopSplit,
-  manifestGroups,
   personaLabel,
   rowFacts,
   rowSummary,
   runApiQuery,
   runQuery,
-  runStatusLabel,
-  runStatusTone,
   sharePct,
   slotCounts,
   slotTitle,
@@ -69,62 +59,14 @@ import {
   type SourceCategory,
   type SourceRow,
   type Sources,
-  type StepView,
   type TimelineRow,
 } from "../lib/ops";
-import { useContextEntry, useOps, useRun } from "../lib/useApi";
-
-const CONTROL =
-  "min-h-[30px] rounded-control border border-line-input bg-control px-2 text-caption text-primary max-tablet:min-h-[44px]";
-
-const TONE_PILL: Record<string, string> = {
-  pos: "bg-pos-bg text-pos-text",
-  neg: "bg-neg-bg text-neg-text",
-  warn: "bg-control text-warn",
-  neutral: "bg-control text-secondary",
-};
-
-function Pill({ tone, children, testId }: { tone: keyof typeof TONE_PILL; children: ReactNode; testId?: string }) {
-  return (
-    <span
-      data-testid={testId}
-      data-tone={tone}
-      className={`inline-flex items-center rounded-pill px-1.5 py-0.5 text-caption font-semibold ${TONE_PILL[tone]}`}
-    >
-      {children}
-    </span>
-  );
-}
-
-function Loading({ error, what }: { error?: unknown; what: string }) {
-  return (
-    <p className="py-6 text-caption text-muted">
-      {error ? `Could not load ${what}: ${String((error as Error).message ?? error)}` : `Loading ${what}…`}
-    </p>
-  );
-}
-
-function et(iso: string | null | undefined): string {
-  return iso ? formatEt(iso) : "—";
-}
-
-function shortId(id: string | null | undefined, n = 14): string {
-  if (!id) return "—";
-  return id.length > n ? `${id.slice(0, n)}…` : id;
-}
+import { useContextEntry, useOps } from "../lib/useApi";
+import { CONTROL, Loading, PersonaChip, Pill, RunStatus, et, shortId, type PillTone } from "./opsShared";
 
 // ---------------------------------------------------------------------------
 // 1. Session timeline (E8.8d: bands from routines.yaml, persona chips, ⓘ per job)
 // ---------------------------------------------------------------------------
-
-function PersonaChip({ persona }: { persona?: string | null }) {
-  if (!persona) return null;
-  return (
-    <span data-testid="persona-chip" className="shrink-0 rounded-pill bg-control px-1.5 py-px text-micro font-semibold text-secondary">
-      {PERSONA_CHIP[persona] ?? persona}
-    </span>
-  );
-}
 
 function JobInfo({ row }: { row: TimelineRow }) {
   return (
@@ -401,7 +343,7 @@ function SessionCard({ s, day, setDay }: { s?: Session; day: string; setDay: (d:
 // 2. Health (E8.8d: one chip row; the long text is in each chip's ⓘ)
 // ---------------------------------------------------------------------------
 
-const HEALTH_TONE: Record<HealthItem["status"], keyof typeof TONE_PILL> = {
+const HEALTH_TONE: Record<HealthItem["status"], PillTone> = {
   ok: "pos",
   degraded: "warn",
   failed: "neg",
@@ -456,7 +398,7 @@ function HealthStripCard({ h }: { h?: HealthStrip }) {
 // 3. Alerts / 4. Halts (E8.8d: CappedList, repeats grouped like the overview)
 // ---------------------------------------------------------------------------
 
-const DOT: Record<keyof typeof TONE_PILL, string> = {
+const DOT: Record<PillTone, string> = {
   pos: "bg-pos",
   neg: "bg-neg",
   warn: "bg-warn",
@@ -473,7 +415,7 @@ function RepeatRow({
   children,
 }: {
   testid: string;
-  tone: keyof typeof TONE_PILL;
+  tone: PillTone;
   state: string;
   text: string;
   latest: string;
@@ -615,10 +557,6 @@ function HaltsSection({ h }: { h?: Halts }) {
 // ---------------------------------------------------------------------------
 // 5. Runs
 // ---------------------------------------------------------------------------
-
-function RunStatus({ r }: { r: Pick<RunRow, "status" | "no_change"> }) {
-  return <Pill tone={runStatusTone(r)}>{runStatusLabel(r)}</Pill>;
-}
 
 const RUN_COLS: ColumnDef<RunRow, unknown>[] = [
   { id: "status", header: "Status", accessorKey: "status", cell: ({ row }) => <RunStatus r={row.original} /> },
@@ -972,19 +910,23 @@ function AutoApproveCard({ a, line }: { a?: AutoApprove | null; line?: string | 
           },
         ]}
       />
-      <p data-testid="scorecard-gate" data-blocks={a.blocks} className={`mt-2 text-caption [overflow-wrap:anywhere] ${a.blocks ? "text-warn" : "text-secondary"}`}>
-        {a.reason}
-      </p>
     </Card>
   );
 }
 
+const CONFIG_BUTTON =
+  "arc-press inline-flex min-h-[40px] items-center gap-1.5 rounded-control border border-line bg-control px-3 text-caption font-semibold text-primary hover:bg-hover max-tablet:min-h-[44px]";
+
+/** E8.8e: two entries to the full-page config, `/ops/config` and its Change Log tab. */
 function ConfigLink({ c }: { c?: OpsConfig }) {
   return (
     <Card title="Config" testid="config-link">
       <div className="flex flex-wrap items-center gap-3">
-        <Link to="/ops/config" className="arc-action arc-press inline-flex min-h-[40px] items-center max-tablet:min-h-[44px]">
-          Effective config &amp; change log ↗
+        <Link to="/ops/config" className={CONFIG_BUTTON} data-testid="config-open">
+          Effective Config ↗
+        </Link>
+        <Link to="/ops/config/changes" className={CONFIG_BUTTON} data-testid="config-changes-open">
+          Change Log ↗
         </Link>
         {c && (
           <span className="text-caption text-muted tabular-nums">
@@ -993,68 +935,6 @@ function ConfigLink({ c }: { c?: OpsConfig }) {
         )}
       </div>
     </Card>
-  );
-}
-
-function ConfigSection({ c }: { c?: OpsConfig }) {
-  const [filter, setFilter] = useState("");
-  const groups = c ? configGroups(c.keys.filter((k) => !filter || k.key.includes(filter))) : [];
-  return (
-    <Section
-      storageKey="effective-config"
-      title={<span>Effective Config {c && <span className="text-caption text-muted">v{c.config_version}</span>}</span>}
-    >
-      {!c ? (
-        <Loading what="config" />
-      ) : (
-        <div data-testid="config" className="grid gap-4 desktop:grid-cols-[2fr_1fr]">
-          <Card title={`${c.keys.length} keys · ${c.env} · ${c.account_profile}`}>
-            {c.note && <p className="mb-2 text-caption text-warn">{c.note}</p>}
-            <input aria-label="Filter keys" placeholder="Filter keys" className={`${CONTROL} mb-2 w-full`} value={filter} onChange={(e) => setFilter(e.target.value)} />
-            <div className="max-h-[560px] overflow-auto">
-              {groups.map((g) => (
-                <div key={g.group} className="mb-3">
-                  <div className="text-micro font-semibold uppercase tracking-wide text-muted">{g.group}</div>
-                  <KeyValueList
-                    items={g.keys.map((k) => ({
-                      label: (
-                        <span title={k.description}>
-                          {k.key} {k.source === "override" && <Pill tone="warn">override</Pill>}
-                        </span>
-                      ),
-                      value: k.value_text,
-                      hint: `${k.source === "override" ? `default ${k.default_text} · ` : ""}${k.bounds}`,
-                    }))}
-                  />
-                </div>
-              ))}
-            </div>
-          </Card>
-          <Card title="Change Log">
-            {c.changes.length === 0 ? (
-              <EmptyState caption="No overrides: every key is at its yaml value." />
-            ) : (
-              <ul className="divide-y divide-line text-caption" data-testid="config-changes">
-                {c.changes.map((ch) => (
-                  <li key={ch.id} className="py-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-title">{ch.key}</span>
-                      {ch.status === "reverted" && <Pill tone="neutral">revert</Pill>}
-                      <span className="ml-auto text-muted">{et(ch.at)}</span>
-                    </div>
-                    <div className="text-secondary">
-                      {String(ch.old ?? "—")} → {ch.is_default ? "default" : String(ch.new ?? "—")} · {ch.direction} · {ch.actor}
-                      {ch.supersedes_id ? ` · undoes #${ch.supersedes_id}` : ""}
-                    </div>
-                    {ch.reason && <div className="text-muted">{ch.reason}</div>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-        </div>
-      )}
-    </Section>
   );
 }
 
@@ -1096,251 +976,12 @@ export function OpsPage() {
       <LlmCard l={llm.data as Llm | undefined} />
       <ContextCard c={context.data as ContextStore | undefined} now={now} />
       <AutoApproveCard a={cfg?.auto_approve} line={cfg?.scorecard_gate} />
+      <ConfigLink c={cfg} />
       <div id="alerts" className="min-w-0 scroll-mt-20">
         <AlertsSection a={alerts.data as Alerts | undefined} />
       </div>
       <HaltsSection h={halts.data as Halts | undefined} />
       <RunsSection />
-      <ConfigLink c={cfg} />
-    </div>
-  );
-}
-
-/**
- * `/ops/config`: the effective config + change log, moved off the Ops page (D48). E8.8e turns
- * this into the full control-panel view; until then it is the former Ops section, open.
- */
-export function OpsConfigPage() {
-  const config = useOps("/api/ops/config");
-  return (
-    <div className="grid gap-6" data-testid="ops-config">
-      <ConfigSection c={config.data as OpsConfig | undefined} />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// 6. Run detail (/ops/runs/:runId)
-// ---------------------------------------------------------------------------
-
-function ContractTable({ step }: { step: StepView }) {
-  const c = step.contract;
-  const rows = [
-    ...contractRows(c.declared_reads, c.actual_reads, c.undeclared_reads).map((r) => ({ ...r, dir: "read" })),
-    ...contractRows(c.declared_writes, c.actual_writes, c.undeclared_writes).map((r) => ({ ...r, dir: "write" })),
-  ];
-  return (
-    <div data-testid="contract">
-      {c.declared_reads === null && c.declared_writes === null ? (
-        <p className="text-caption text-muted">This job declares no I/O contract.</p>
-      ) : !c.ok ? (
-        <p className="mb-2 rounded-control bg-neg-bg px-2 py-1 text-caption font-semibold text-neg-text" data-testid="contract-mismatch">
-          Contract mismatch: undeclared {[...c.undeclared_reads.map((k) => `read ${k}`), ...c.undeclared_writes.map((k) => `write ${k}`)].join(", ")}
-        </p>
-      ) : (
-        <p className="mb-2 text-caption text-pos-text">Reads and writes match the declared contract.</p>
-      )}
-      <table className="w-full text-caption">
-        <thead className="text-muted">
-          <tr>
-            <th className="py-1 text-left font-normal">Kind</th>
-            <th className="text-left font-normal">Dir</th>
-            <th className="text-center font-normal">Declared</th>
-            <th className="text-center font-normal">Actual</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={`${r.dir}-${r.kind}`} data-mismatch={r.mismatch || undefined} className={`border-t border-line ${r.mismatch ? "bg-neg-bg text-neg-text" : ""}`}>
-              <td className="py-1">{r.kind}</td>
-              <td>{r.dir}</td>
-              <td className="text-center">{r.declared ? "✓" : "—"}</td>
-              <td className="text-center">{r.used ? "✓" : "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function EntryLinks({ items }: { items: StepView["read"] }) {
-  if (items.length === 0) return <p className="text-caption text-muted">None.</p>;
-  return (
-    <ul className="flex flex-wrap gap-2 text-caption">
-      {items.map((e) => (
-        <li key={e.id}>
-          <Link to={`/ops/context/${e.id}`} className={`arc-action ${e.undeclared ? "text-neg-text" : ""}`}>
-            {e.kind}:{e.subject}
-          </Link>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function StepBody({ step }: { step: StepView }) {
-  const m = step.manifest as Record<string, unknown> | null;
-  const ext = externalInputs(m);
-  return (
-    <div className="grid gap-4 desktop:grid-cols-2">
-      {manifestGroups(m).map((g) => (
-        <Card key={g.title} title={g.title}>
-          <KeyValueList items={g.rows.map((r) => ({ label: r.label, value: <span className="break-all">{r.value}</span> }))} />
-        </Card>
-      ))}
-      {!m && (
-        <Card title="Manifest">
-          <p className="text-caption text-muted">No run manifest was recorded for this run.</p>
-        </Card>
-      )}
-      <Card title="Declared vs Actual">
-        <ContractTable step={step} />
-      </Card>
-      <Card title="Context Read / Written">
-        <div className="text-micro uppercase text-muted">Read</div>
-        <EntryLinks items={step.read} />
-        <div className="mt-3 text-micro uppercase text-muted">Wrote</div>
-        <EntryLinks items={step.wrote} />
-      </Card>
-      {ext.length > 0 && (
-        <Card title="External Inputs">
-          <KeyValueList items={ext.map((e) => ({ label: `${e.name} (${e.source})`, value: e.digest, hint: `as of ${e.asOf} · ${e.count}` }))} />
-        </Card>
-      )}
-      {Object.keys(step.outputs).length > 0 && (
-        <Card title="Outputs">
-          {Object.entries(step.outputs).map(([kind, refs]) => (
-            <div key={kind} className="mb-2">
-              <div className="text-micro uppercase text-muted">{kind}</div>
-              <ul className="flex flex-wrap gap-2 text-caption">
-                {refs.map((r) => (
-                  <li key={r.id}>{r.route ? <Link to={r.route} className="arc-action">{shortId(r.label, 28)}</Link> : r.label}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </Card>
-      )}
-      {step.persona_calls.length > 0 && (
-        <Card title="LLM Calls">
-          <ul className="divide-y divide-line text-caption tabular-nums" data-testid="persona-calls">
-            {step.persona_calls.map((c) => (
-              <li key={c.id} className="flex flex-wrap gap-x-3 py-1.5">
-                <span className="font-semibold text-title">{personaLabel(c.persona)}</span>
-                <span className="text-muted">{c.model}</span>
-                <span>
-                  {formatNumber(c.input_tokens ?? 0)} / {formatNumber(c.output_tokens ?? 0)} tok
-                </span>
-                <span>{formatDuration(c.latency_ms)}</span>
-                <span className="ml-auto">{c.cost_usd == null ? "—" : llmCost(c.cost_usd)}</span>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
-      {(step.proposals.length > 0 || step.decisions.length > 0 || step.gate_decisions.length > 0 || step.slack_posts.length > 0 || step.events.length > 0) && (
-        <Card title="Links">
-          <KeyValueList
-            items={[
-              { label: "Proposals", value: step.proposals.length ? step.proposals.map((p) => <Link key={p.id} className="arc-action mr-2" to={p.route ?? "#"}>{p.label}</Link>) : "—" },
-              { label: "Decisions", value: step.decisions.length ? step.decisions.join(", ") : "—" },
-              { label: "Gate decisions", value: step.gate_decisions.length ? step.gate_decisions.join(", ") : "—" },
-              {
-                label: "Slack posts",
-                value: step.slack_posts.length
-                  ? step.slack_posts.map((s) => (
-                      <a key={s.id} className="arc-action mr-2" href={s.route ?? "#"} target="_blank" rel="noreferrer">
-                        {s.label} ↗
-                      </a>
-                    ))
-                  : "—",
-              },
-              { label: "Events", value: step.events.length ? step.events.map((e) => `${e.role} ${e.name}`).join(", ") : "—" },
-            ]}
-          />
-        </Card>
-      )}
-    </div>
-  );
-}
-
-export function RunDetailPage() {
-  const { runId } = useParams();
-  const { data, error } = useRun(runId);
-  const [level, setLevel] = useState<string>("info");
-  const [stepId, setStepId] = useState<string | null>(null);
-  if (!data) {
-    return (
-      <Card title="Run">
-        <Loading error={error} what={`run ${runId}`} />
-        <Link to="/ops" className="arc-action">
-          ← Ops
-        </Link>
-      </Card>
-    );
-  }
-  const r = data.step.run;
-  const selected = data.chain.find((s) => s.run.run_id === (stepId ?? data.run_id)) ?? data.step;
-  const log = filterLog(data.log, level);
-  return (
-    <div className="grid gap-6 desktop:gap-10" data-testid="run-detail">
-      <Card title={<span className="break-all">{r.job} · {r.run_id}</span>} action={{ label: "OPS", to: "/ops" }}>
-        <div className="flex flex-wrap items-center gap-3">
-          <RunStatus r={r} />
-          <span className="text-caption text-secondary">scheduled {et(r.scheduled_for)}</span>
-          <span className="text-caption text-secondary">took {formatDuration(r.duration_ms)}</span>
-          {!selected.contract.ok && <Pill tone="neg">contract mismatch</Pill>}
-        </div>
-        {(r.error ?? r.summary) && <p className={`mt-2 ${r.error ? "text-neg-text" : "text-secondary"}`}>{r.error ?? r.summary}</p>}
-      </Card>
-      {data.chain.length > 1 && (
-        <Card title={`Chain ${data.chain_run_id}`}>
-          <div data-testid="chain-steps">
-            <Timeline
-              items={data.chain.map((s) => ({
-                id: s.run.run_id,
-                persona: `step ${s.run.step_index}`,
-                stage: s.run.job,
-                reason: runStatusLabel(s.run),
-                at: (
-                  <button type="button" className="arc-action" onClick={() => setStepId(s.run.run_id)} aria-pressed={selected.run.run_id === s.run.run_id}>
-                    {selected.run.run_id === s.run.run_id ? "shown" : "show"}
-                  </button>
-                ),
-                status: s.run.status === "failed" ? "failed" : s.run.status === "ok" ? "done" : "pending",
-                body: s.run.error ?? s.run.summary ?? undefined,
-              }))}
-            />
-          </div>
-        </Card>
-      )}
-      <StepBody step={selected} />
-      <Card title="Log">
-        <div className="mb-2 flex items-center gap-2">
-          <label className="flex items-center gap-2 text-caption text-secondary">
-            Level
-            <select aria-label="Log level" className={CONTROL} value={level} onChange={(e) => setLevel(e.target.value)}>
-              {LOG_LEVELS.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="text-caption text-muted">{data.log_available ? `${log.length} of ${data.log.length} lines` : "no log file on this host"}</span>
-        </div>
-        <ol className="max-h-[360px] overflow-auto font-mono text-micro" data-testid="run-log">
-          {log.map((l, i) => (
-            <li key={i} className={`border-b border-line py-1 ${l.level === "error" ? "text-neg-text" : l.level === "warning" ? "text-warn" : "text-secondary"}`}>
-              <span className="text-muted">{l.ts ?? ""}</span> {l.level} <span className="font-semibold">{l.event}</span>{" "}
-              {Object.entries(l.fields)
-                .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
-                .join(" ")}
-            </li>
-          ))}
-        </ol>
-      </Card>
     </div>
   );
 }
