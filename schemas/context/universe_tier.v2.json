@@ -81,6 +81,11 @@
       "title": "Members",
       "type": "array"
     },
+    "partial": {
+      "default": false,
+      "title": "Partial",
+      "type": "boolean"
+    },
     "source": {
       "title": "Source",
       "type": "string"
@@ -100,6 +105,11 @@
     },
     "tier": {
       "$ref": "#/$defs/Tier"
+    },
+    "url": {
+      "default": "",
+      "title": "Url",
+      "type": "string"
     }
   },
   "required": [

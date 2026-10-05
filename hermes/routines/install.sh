@@ -7,7 +7,7 @@
 # checkout's .venv/bin/arc against its data/arc.db and config/routines.yaml.
 #
 # - Copies arc_routines_tick.py to ~/.hermes/scripts/ (Hermes only runs scripts from there).
-# - Creates `arc-routines-tick`: every 5m, --no-agent (no LLM for the cron itself), cwd = REPO_DIR.
+# - Creates `arc-routines-tick`: cron `*/10 * * * *` (on the clock, D52), --no-agent (no LLM for the cron itself), cwd = REPO_DIR.
 # - Idempotent: an existing job with the same name is removed first.
 # - Delivery: the script prints nothing on success, so nothing is posted. A crashed or
 #   timed-out tick prints its error and Hermes posts it to #project-arc (ops/dev channel).
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 NAME="arc-routines-tick"
-SCHEDULE="every 5m"
+SCHEDULE="*/10 * * * *"   # D52: on the clock; `every 10m` drifts (next = finish + 10m)
 DELIVER="slack:C0C4KBPN7T5"   # #project-arc
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="${1:-$HOME/GitHub/Project-Arc}"

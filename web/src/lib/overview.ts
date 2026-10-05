@@ -33,7 +33,7 @@ export interface EquityView {
 }
 
 /**
- * Range -> series selection. `1D` plots today's 5-min monitor marks; every other range
+ * Range -> series selection. `1D` plots today's 10-min monitor marks; every other range
  * plots reconciled daily closes (plus today's live mark as the last point). A response for
  * a different range than requested (a poll that raced a range click) is not plotted.
  */

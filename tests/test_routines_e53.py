@@ -85,15 +85,15 @@ class TestShippedDefaults:
 
     def test_personas(self, shipped: RoutinesConfig) -> None:
         p = shipped.personas
-        # D31: 30-min Scout in session + the 22:00 overnight run; 5-min trading loop.
+        # D31: 30-min Scout in session + the 22:00 overnight run; D52: 10-min trading loop.
         assert p["scout"].cadence == "every 30m 09:00-16:00 ET (trading)"
         assert p["scout"].after_sources and p["scout.overnight"].after_sources
         assert p["scout.overnight"].cadence == "at 22:00 ET (daily)"
-        assert p["director"].cadence == "every 5m 09:40-15:50 ET (trading)"
+        assert p["director"].cadence == "every 10m 09:40-15:50 ET (trading)"
         assert p["director"].chain == ["quant", "risk", "propose", "execute"]
         assert p["director"].ttl is not None
         assert p["director"].ttl.duration == dt.timedelta(minutes=5)
-        assert p["monitor"].cadence == "every 5m 09:30-16:00 ET (trading)"  # D35 (E5.3a)
+        assert p["monitor"].cadence == "every 10m 09:30-16:00 ET (trading)"  # D35, D52
         assert p["monitor"].options["eod_marks_from"] == "15:50"
         assert p["monitor"].llm is False and p["monitor"].halt_exempt
         assert p["auditor"].cadence == "at 16:30 ET (trading)" and p["auditor"].halt_exempt
@@ -115,14 +115,14 @@ class TestShippedDefaults:
         assert plan["earnings"] == ["Mon 06:00", "Mon 18:00"]
         assert len(plan["rss"]) == 57 and plan["rss"][0] == "Mon 06:00"  # 06:00..20:00 / 15m
         assert len(plan["edgar"]) == 57 and plan["edgar"][-1] == "Mon 20:00"
-        # D31: the loop, 09:40..15:50 inclusive every 5 min = 75 slots.
-        assert len(plan["director"]) == 75 and len(set(plan["director"])) == 75
+        # D52: the loop, 09:40..15:50 inclusive every 10 min = 38 slots (was 75 at 5m).
+        assert len(plan["director"]) == 38 and len(set(plan["director"])) == 38
         assert (plan["director"][0], plan["director"][-1]) == ("Mon 09:40", "Mon 15:50")
-        # D35: every 5 min, 09:30..16:00 inclusive = 6.5 h x 12 + 1 = 79 slots
-        assert len(plan["monitor"]) == 79
-        assert len(set(plan["monitor"])) == 79  # no slot planned twice
+        # D52: every 10 min, 09:30..16:00 inclusive = 6.5 h x 6 + 1 = 40 slots
+        assert len(plan["monitor"]) == 40
+        assert len(set(plan["monitor"])) == 40  # no slot planned twice
         assert (plan["monitor"][0], plan["monitor"][-1]) == ("Mon 09:30", "Mon 16:00")
-        assert len(plan["positions.evaluate"]) == 13  # 09:45..15:45 every 30 min
+        assert len(plan["positions.evaluate"]) == 13  # D52: 09:50..15:50 every 30 min (:20/:50)
         assert plan["auditor"] == ["Mon 16:30"]
         assert "scorecard" not in plan and "investor" not in plan
 
@@ -860,12 +860,14 @@ class TestTickScript:
         assert os.access(sh, os.X_OK)
         text = sh.read_text()
         assert text.count("hermes cron create") == 1
-        assert '"every 5m"' in text and "--no-agent" in text and "--workdir" in text
+        # D52: on the clock; an `every 10m` interval re-anchors on each run's finish and drifts
+        assert 'SCHEDULE="*/10 * * * *"' in text
+        assert "--no-agent" in text and "--workdir" in text
 
 
 def test_yaml_comment_overview_matches_config() -> None:
     raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
-    assert raw["tick"]["interval"] == "5m"
+    assert raw["tick"]["interval"] == "10m"  # D52
     assert set(raw["personas"]) - {"finnhub_context"} == {
         "scout", "scout.overnight", "director", "monitor", "auditor", "scorecard", "investor",
         "positions.evaluate", "experiments.evaluate",
@@ -873,8 +875,8 @@ def test_yaml_comment_overview_matches_config() -> None:
     # D31: the loop's cadence and window are config; the loop knobs are one block.
     assert raw["personas"]["director"] == {
         **raw["personas"]["director"],
-        "every": "5m", "window": "09:40-15:50", "days": "trading", "ttl": "5m",
+        "every": "10m", "window": "09:40-15:50", "days": "trading", "ttl": "5m",
     }  # fmt: skip
     assert raw["loop"]["job"] == "director" and raw["loop"]["max_runtime"] == "4m"
-    assert raw["monitoring"]["stuck_after_jobs"]["director"] == "10m"
+    assert raw["monitoring"]["stuck_after_jobs"]["director"] == "20m"  # D52: two 10-min slots
     assert raw["triggers"] == []

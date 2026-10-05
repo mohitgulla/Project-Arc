@@ -48,7 +48,7 @@
 ## Scheduling: routine dispatcher + context store (E5.4, D16)
 
 ```
- Hermes cron (every 5m) --> arc routines tick
+ Hermes cron (*/10) --> arc routines tick
                              |  config/routines.yaml (sources, personas, chains, triggers)
                              v
    expire TTLs -> plan due slots (cursor..now, catch-up once within TTL, skip if halted)
@@ -132,7 +132,7 @@ Shipped defaults in `config/routines.yaml`, all times ET:
 | 16:30 trading days | `auditor` |
 | 16:45 Fridays (`days: [fri]`) | `scorecard` (weekly) |
 
-- One Hermes cron job, `arc-routines-tick`, runs every 5m with `--no-agent`. It runs
+- One Hermes cron job, `arc-routines-tick`, runs `*/10 * * * *` (on the clock, D52) with `--no-agent`. It runs
   `hermes/routines/arc_routines_tick.py`; install it with `hermes/routines/install.sh`.
   Success prints nothing. If the tick crashes or times out, Hermes alerts #project-arc.
 - Heartbeats post to the session's `💡 Thu Oct 1 · Session Notes` thread in #arc-investor.

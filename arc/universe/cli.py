@@ -7,6 +7,9 @@
   Master lookup + the live liquidity screen (read-only market data).
 - ``arc universe tiers [--db PATH]``  D51 tiers, dedupe, active list and drops,
   resolved now from the store opened read-only (writes nothing).
+- ``arc universe momentum [--dry-run] [--db PATH] [--no-slack]``  E12.2: run the
+  ``universe.momentum`` routine now (same as ``arc routines run universe.momentum``)
+  and print the momentum tier it wrote; ``--dry-run`` fetches and prints only.
 """
 
 from __future__ import annotations
@@ -53,6 +56,16 @@ def add_universe_parser(sub: argparse._SubParsersAction) -> None:  # type: ignor
         default=None,
         help="Resolve as of this ISO time (ET if naive), e.g. a past session; default now",
     )
+    m = usub.add_parser("momentum", help="E12.2: run the monthly momentum tier job now")
+    m.add_argument("--dry-run", action="store_true", help="Fetch and print only; write nothing")
+    m.add_argument(
+        "--source",
+        choices=["stockanalysis", "schwab"],
+        default=None,
+        help="--dry-run only: try just this source (default: the job's source_order)",
+    )
+    m.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+    m.add_argument("--no-slack", action="store_true", help="Notice to the log only")
     for q in (p, *usub.choices.values()):
         q.add_argument("--json", action="store_true", help="Emit JSON")
 
@@ -79,6 +92,8 @@ def run_universe(args: argparse.Namespace) -> int:
     cmd = args.universe_command
     if cmd == "tiers":
         return _run_tiers(args, settings, now)
+    if cmd == "momentum":
+        return _run_momentum(args, settings, now)
     if cmd == "refresh":
         master = refresh_symbol_master(
             cfg.symbol_master, user_agent=settings.edgar_user_agent, now=now
@@ -265,3 +280,97 @@ def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetim
     lines.append(f"market reference (regime only): {' '.join(out['market_reference'])}")
     sys.stdout.write("\n".join(lines) + "\n")
     return 0
+
+
+def _run_momentum(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetime) -> int:
+    """``--dry-run``: fetch + select and print (writes nothing). Otherwise run the
+    ``universe.momentum`` routine (run row, manifest, notice) and print what it wrote."""
+    if not args.dry_run:
+        if args.source:
+            _out({"error": "--source is only valid with --dry-run"}, args.json)
+            return 2
+        return _run_momentum_job(args)
+    from arc.routines.config import load_routines
+    from arc.routines.handlers import run_momentum
+    from arc.universe.momentum import MomentumError
+
+    options: dict[str, object] = {}
+    job = load_routines().jobs().get("universe.momentum")
+    if job is not None:
+        options = job[1].options
+    if args.source:
+        options["source_order"] = [args.source]
+    try:
+        fetch = run_momentum(settings=settings, options=options, now=now)
+    except MomentumError as exc:
+        _out({"error": str(exc)}, args.json)
+        return 1
+    _print_tier(
+        {
+            "written": False,
+            "source": fetch.source,
+            "url": fetch.url,
+            "as_of": fetch.as_of.isoformat() if fetch.as_of else None,
+            "rows": len(fetch.rows),
+            "names": len(fetch.picks),
+            "partial": fetch.partial,
+            "members": [
+                {"rank": i, "ticker": p.symbol, "weight": p.weight, "merged": list(p.merged)}
+                for i, p in enumerate(fetch.picks, 1)
+            ],
+            "dropped": [f"{s}:{r}" for s, r in fetch.dropped],
+            "source_errors": fetch.errors,
+        },
+        args.json,
+    )
+    return 0
+
+
+def _run_momentum_job(args: argparse.Namespace) -> int:
+    import argparse as _argparse
+
+    from arc.routines.cli import DEFAULT_LOCK_DIR, _conn, _dispatcher, _outcome_json
+    from arc.universe.tiers import UniverseTierPayload
+    from arc.utils.calendar import now_et
+
+    rargs = _argparse.Namespace(
+        db=args.db, config=None, now=None, no_slack=args.no_slack, lock_dir=str(DEFAULT_LOCK_DIR)
+    )
+    conn = _conn(rargs)
+    outcomes = _dispatcher(rargs, conn).run_manual("universe.momentum", now=now_et())
+    out = outcomes[-1] if outcomes else None
+    info: dict[str, object] = {"run": _outcome_json(out) if out else None}
+    row = conn.execute(
+        "SELECT payload FROM context_entries WHERE kind = 'universe_tier' AND subject = "
+        "'momentum' ORDER BY valid_from DESC, rowid DESC LIMIT 1"
+    ).fetchone()
+    if out is not None and out.status == "ok" and row is not None:
+        pay = UniverseTierPayload.model_validate_json(row[0])
+        info |= {
+            "written": True,
+            "source": pay.source,
+            "url": pay.url,
+            "as_of": pay.source_as_of.isoformat() if pay.source_as_of else None,
+            "names": len(pay.members),
+            "partial": pay.partial,
+            "members": [
+                {"rank": m.rank, "ticker": m.ticker, "reason": m.reason} for m in pay.members
+            ],
+            **{k: out.metrics.get(k) for k in ("added", "removed", "stale", "dropped", "active")},
+        }
+    _print_tier(info, args.json)
+    return 0 if out is not None and out.status == "ok" else 1
+
+
+def _print_tier(info: dict[str, object], as_json: bool) -> None:
+    if as_json:
+        _out(info, True)
+        return
+    _out({k: v for k, v in info.items() if k != "members"}, False)
+    for m in info.get("members") or []:  # type: ignore[union-attr]
+        detail = (
+            f"{m['weight']:>6.2f}%" + (f"  (incl. {'+'.join(m['merged'])})" if m["merged"] else "")
+            if "weight" in m
+            else str(m.get("reason", ""))
+        )
+        sys.stdout.write(f"{m['rank']:>3} {m['ticker']:<6} {detail}\n")

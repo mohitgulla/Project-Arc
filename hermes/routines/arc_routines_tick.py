@@ -1,7 +1,7 @@
 """Hermes cron script: run ``arc routines tick`` once (D16, E5.3).
 
 Installed by ``hermes/routines/install.sh`` as the ONE Hermes cron job for
-Project Arc routines (``every 5m``, ``--no-agent``, ``--workdir <repo>``).
+Project Arc routines (``*/10 * * * *``, ``--no-agent``, ``--workdir <repo>``).
 Every cadence, chain and trigger lives in ``config/routines.yaml``; this file
 only runs the dispatcher.
 

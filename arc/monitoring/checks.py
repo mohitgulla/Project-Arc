@@ -14,6 +14,8 @@
 - :func:`stuck_runs`      a ``routine_runs`` row still ``running`` after ``stuck_after``.
 - :func:`earnings_coverage` E4.1d: ``coverage:earnings`` while no earnings doc is
   newer than ``earnings_stale_after`` and the universe has a non-ETF ticker.
+- :func:`momentum_coverage` E12.2: ``coverage:universe.momentum`` while the momentum
+  tier's SPMO holdings as-of date is older than ``momentum.stale_after_days``.
 - :func:`stranded_events` E6.2e: a dispatched event with no run after ``tick.dispatch_grace``.
 - :func:`approvals_unposted` E6.1b: a pending approval request older than one tick
   with no Slack card (its post failed and keeps failing).
@@ -30,6 +32,7 @@ import datetime as _dt
 import math
 import os
 import shutil
+import sqlite3
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,9 +41,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from arc.context.ttl import from_db, to_db
 from arc.monitoring.store import HeartbeatRepo
 from arc.routines.schedule import catchup_deadline, slots_between
+from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
-    import sqlite3
     from collections.abc import Callable
 
     from arc.monitoring.config import GatewayCheck, MonitoringSettings, RemoteAccessCheck
@@ -641,6 +644,56 @@ def earnings_coverage(
         detail={"job": EARNINGS_JOB, "last": last.isoformat() if last else None},
     )
     return CheckResult("earnings_coverage", "failed", f"stale ({seen})", (f,))
+
+
+MOMENTUM_JOB = "universe.momentum"
+
+
+def momentum_coverage(
+    conn: sqlite3.Connection,
+    routines: RoutinesConfig,
+    now: _dt.datetime,
+    *,
+    stale_after_days: int,
+) -> CheckResult:
+    """E12.2: ``coverage:universe.momentum`` while the latest momentum tier entry's
+    source as-of date (the SPMO holdings page) is older than *stale_after_days*.
+
+    The entry is kept (it is still the best list there is); this only flags it. No
+    entry at all is not judged here: the job's failed runs are already alerted, and
+    the dispatcher's catch-up retries it every session.
+    """
+    from arc.universe.tiers import UniverseTierPayload
+
+    if MOMENTUM_JOB not in routines.jobs():
+        return CheckResult("momentum_coverage", "ok", "not judged: universe.momentum disabled")
+    try:
+        row = conn.execute(
+            "SELECT payload, valid_from FROM context_entries WHERE kind = 'universe_tier' "
+            "AND subject = 'momentum' ORDER BY valid_from DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = None
+    if row is None:
+        return CheckResult("momentum_coverage", "ok", "not judged: no momentum entry yet")
+    payload = UniverseTierPayload.model_validate_json(row[0])
+    as_of = payload.source_as_of
+    today = now.astimezone(ET).date()
+    age = (today - as_of).days if as_of else None
+    if age is not None and age <= stale_after_days:
+        return CheckResult("momentum_coverage", "ok", f"SPMO holdings as of {as_of} ({age} d old)")
+    seen = f"as of {as_of} ({age} d old)" if as_of else "with no as-of date"
+    f = Finding(
+        key=f"coverage:{MOMENTUM_JOB}",
+        kind="coverage",
+        severity="failed",
+        message=(
+            f"momentum tier stale: the latest SPMO holdings list ({payload.source}) is {seen}, "
+            f"older than {stale_after_days} d; it is kept until a fresher list is fetched"
+        ),
+        detail={"job": MOMENTUM_JOB, "as_of": as_of.isoformat() if as_of else None},
+    )
+    return CheckResult("momentum_coverage", "failed", f"stale ({seen})", (f,))
 
 
 def stranded_events(

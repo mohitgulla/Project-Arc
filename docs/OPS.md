@@ -148,7 +148,7 @@ Config: the `monitoring:` section of `config/routines.yaml` (validated by
 
 | Piece | Runs as | Does |
 |---|---|---|
-| `arc routines tick` | Hermes cron `arc-routines-tick`, every 5m (`hermes/routines/install.sh`) | Records one `tick` heartbeat per live tick with its `tick_id`, outcome counts and run ids. A crash still records a `failed` heartbeat. |
+| `arc routines tick` | Hermes cron `arc-routines-tick`, `*/10 * * * *` on the clock (D52; `hermes/routines/install.sh`) | Records one `tick` heartbeat per live tick with its `tick_id`, outcome counts and run ids. A crash still records a `failed` heartbeat. |
 | `arc health check` | launchd agent `com.projectarc.health-check`, every 30m (`hermes/monitoring/install.sh`) | Runs the checks below, records a `health` heartbeat, and opens/resolves ops alerts. Exit 1 while anything is failing. |
 
 The health check runs under launchd rather than as a Hermes cron. The gateway
@@ -165,7 +165,7 @@ the plist with `--print`, and remove it with `--uninstall`.
 | tick | There is no `tick` heartbeat for `tick_stale_after` (15m), or none ever. | `tick_stale` |
 | tick_slow (E8.2a) | In the last `coverage_window` (60m), at least `tick_slow_count` (2) ticks took longer than `tick_slow_after` (4m, from E5.10's `tick_duration_ms`), or the p90 gap between ticks is above 1.5 × `tick.interval` (7m30s). The message names the slowest job. | `tick_slow` |
 | routine_windows | Only for **slow-cadence** jobs (slots at least `per_slot_min_interval`, 60m, apart: Scout overnight, auditor, earnings, the daily sources). A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
-| slot_coverage (E8.2a) | For **fast** jobs (the 5-min loop, monitor, the 30-min Scout, rss/edgar): the job ran fewer than `coverage_min` (80 %) of its slots judged in the last `coverage_window` (60m). Slots are judged the same way as routine_windows (collapse aware), and halted slots count in neither number. One alert per job, which names the likely cause from the tick heartbeats (slow ticks with the top job, or tick gaps). | `coverage:<job>` |
+| slot_coverage (E8.2a) | For **fast** jobs (the 10-min loop, monitor, the 30-min Scout, rss/edgar): the job ran fewer than `coverage_min` (80 %) of its slots judged in the last `coverage_window` (60m). Slots are judged the same way as routine_windows (collapse aware), and halted slots count in neither number. One alert per job, which names the likely cause from the tick heartbeats (slow ticks with the top job, or tick gaps). | `coverage:<job>` |
 | earnings_coverage (E4.1d) | The `earnings` source job is enabled, the effective universe has at least one non-ETF ticker, and no earnings-calendar doc was stored in the last `earnings_stale_after` (7d). The message names the last earnings run's status and error (e.g. `skipped: no_api_key`, `failed: HTTPError …`). Without the dates `next_earnings` is empty and short premium on stocks fails closed. Never folded into a tick incident. | `coverage:earnings` |
 | stuck_runs | A `routine_runs` row is still `running` after `stuck_after` (70m), or after its job's `stuck_after_jobs` override (`monitor: 10m`, E5.3a). | `stuck:<run_id>` |
 | gateway | `hermes gateway status` or `hermes cron status` shows a `✗`, exits non-zero, or times out. `⚠` warnings count as degraded: they are recorded but not alerted unless `gateway.alert_on_degraded: true`. | `gateway` |
@@ -188,7 +188,7 @@ per check run:
   ago, tick-…)"), not the text the alert opened with.
 - A missed routine window of a slow-cadence job is posted exactly once. Several
   missed slots of the same job in one post collapse into one line per job.
-- A fast job never gets one alert per slot (E8.2a). A degraded 5-min loop shows
+- A fast job never gets one alert per slot (E8.2a). A degraded 10-min loop shows
   up as one `coverage:director` alert, e.g. "director ran 7/12 slots in the last
   60 min (58%) · likely cause: slow ticks (max 8m03s, scout 5m40s)". It
   resolves with the recovered ratio: "director slot coverage recovered: ran
@@ -323,9 +323,9 @@ with no code change:
 
 | Data | Stale after |
 |---|---|
-| Monitor marks (Greeks, intraday equity, broker legs) | 3 × `personas.monitor.every` (15 min at 5m); `greeks.stale_after_s` in the snapshot |
+| Monitor marks (Greeks, intraday equity, broker legs) | 3 × `personas.monitor.every` (30 min at 10m); `greeks.stale_after_s` in the snapshot |
 | Auditor and other cadenced jobs in `/api/meta` | 3 × the job's cadence |
-| Tick | 3 × the tick interval (15 min at 5m); the Ops health strip uses `monitoring.tick_stale_after` |
+| Tick | 3 × the tick interval (30 min at 10m); the Ops health strip uses `monitoring.tick_stale_after` |
 | Health check heartbeat | 3 × the LaunchAgent's 30 min |
 
 Outside the session the pages show the last in-session monitor run, marked stale.
@@ -343,16 +343,16 @@ Outside the session the pages show the last in-session monitor run, marked stale
 | Gate violations | failed `gate_decisions`, split by rule code |
 | Ops | `routine_runs`, `run_manifests`, `heartbeats`, `ops_alerts`, `context_entries`, the D32 local order count, D26 control tables |
 
-The intraday `monitor` routine runs every 5 minutes in session (D35; `personas.monitor`
+The intraday `monitor` routine runs every 10 minutes in session (D35/D52, was 5; `personas.monitor`
 in `config/routines.yaml`) and writes one `heartbeats` row per run (`component = monitor`):
 Greeks, `equity`, `last_equity`, `cash`, `buying_power`, `options_buying_power`,
 `non_marginable_bp`, `broker_requests` (the run's request estimate), and the broker legs
 with `current_price`, `lastday_price` and `change_today` when Alpaca reports them. The
-tower reads only this row, so marks are at most ~6 minutes old in session.
+tower reads only this row, so marks are at most ~11 minutes old in session.
 
 Broker load: each run makes 2 + 4 × (open underlyings) Alpaca requests (account, positions,
 then quote, chain snapshot, contracts page and volume snapshot per underlying): 34 at the
-default 8 open positions, one run per 5 minutes, far below Alpaca Basic's 200 requests/min.
+default 8 open positions, one run per 10 minutes, far below Alpaca Basic's 200 requests/min.
 
 Quick check of the fields on a DB:
 
@@ -756,6 +756,18 @@ briefs, `unusual_options`/`ex_dividend`, Finnhub scope, monitoring and `arc hist
 read it (core until the first resolve of the day).
 
 - See it: `arc universe tiers [--json] [--db PATH] [--now ISO]` (read-only).
+- **Momentum tier (E12.2):** job `universe.momentum`, 06:00 ET on the first trading
+  session of each month (`days: month_start`). It writes the top 25 holdings of Invesco
+  SPMO (the S&P 500 Momentum proxy) from stockanalysis.com, falling back to Schwab's
+  first 20 rows (`partial`). GOOG folds into GOOGL; ETFs/funds and non-optionable names
+  are dropped. The entry lives 35 days, so a failed month keeps last month's list; if
+  no entry was written since the month-start slot, the job retries every trading
+  session at 06:00 (`catch_up:`) until one run succeeds. The diff posts as a notice
+  (`Momentum tier: +LITE +GS −NEM · 25 names · as of Oct 2`). A page as-of older than 40
+  days raises `coverage:universe.momentum`. By hand: `arc universe momentum --dry-run`
+  (fetch + print, no write) or `arc universe momentum [--db PATH] [--no-slack]` (runs the
+  job). Weekly instead: `days: [mon]` and `context: {ttl: 8d}` in `config/routines.yaml`.
+  stockanalysis lists only 25 rows, so the GOOG fold leaves 24 names (marked `partial`).
 - A `universe` override longer than 30 names (pre-D51 flat list) is ignored in favour
   of the yaml core (logged `universe.core_override_ignored`). Reset it from Slack with
   `!arc config universe <core 25>` so the Tower shows the core.
@@ -1023,7 +1035,7 @@ stance or underlying that is already flagged).
 
 Knobs live under `!arc config dedupe | portfolio | no_trade`.
 
-### 5.14 Two-speed routines: 30-min Scout, 5-min trading loop (E5.8, D31/D36)
+### 5.14 Two-speed routines: 30-min Scout, 10-min trading loop (E5.8, D31/D36/D52)
 
 **What runs (ET, trading days).** `config/routines.yaml` declares it; nothing
 fires without the `arc routines tick` cron (E5.3).
@@ -1033,8 +1045,8 @@ fires without the `arc routines tick` cron (E5.3).
 | `rss`, `edgar` | every 15m 06:00-20:00 | sources, at least as often as the Scout |
 | `scout` | every 30m 09:00-16:00 (15 runs) | candidates from the last 30 min of sources; ttl 20m, no catch-up |
 | `scout.overnight` | 22:00 daily | the after-close pass over fast sources; ttl 3h (YouTube moved to `youtube.briefs`, §5.22) |
-| `director` | every 5m 09:40-15:50 (75 slots) | the trading loop: director → quant → risk → propose → execute; ttl 5m |
-| `monitor` | every 5m 09:30-16:00 | unchanged (D35) |
+| `director` | every 10m 09:40-15:50 (38 slots, D52) | the trading loop: director → quant → risk → propose → execute; ttl 5m |
+| `monitor` | every 10m 09:30-16:00 (40 slots, D52) | positions, Greeks, marks (D35) |
 
 The `scout.completed → director` trigger is gone: the loop picks a new candidate
 up within one slot.

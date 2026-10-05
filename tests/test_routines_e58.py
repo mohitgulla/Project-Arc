@@ -307,7 +307,7 @@ class TestConfigOnlyCadence:
     def test_every_10m_gives_38_slots_and_loop_semantics_hold(
         self, routines: RoutinesConfig
     ) -> None:
-        assert len(self._day_plan(routines)) == 75  # shipped: 5m, 09:40-15:50
+        assert len(self._day_plan(routines)) == 38  # shipped (D52): 10m, 09:40-15:50
         ten = load_routines(overrides={("personas", "director", "every"): "10m"})
         slots = self._day_plan(ten)
         assert len(slots) == 38  # 09:40, 09:50, …, 15:50
@@ -409,14 +409,14 @@ class TestOverlapAndDeadline:
         disp = _disp(conn, routines, locks=locks, notifier=notes)
         slot = SLOT0.replace(hour=9, minute=40)
         with locks.hold("director"):
-            disp.tick(slot + dt.timedelta(seconds=30), since=slot - dt.timedelta(minutes=5))
+            disp.tick(slot + dt.timedelta(seconds=30), since=slot - dt.timedelta(minutes=10))
         runs = [r for r in RoutineRunRepo(conn).history(limit=50) if r.job == "director"]
         assert [r.status.value for r in runs] == ["skipped"]
         # next tick: only the next slot is planned, not the skipped one
         due = [
-            j for j in disp.plan(slot + dt.timedelta(minutes=5, seconds=30)) if j.job == "director"
+            j for j in disp.plan(slot + dt.timedelta(minutes=10, seconds=30)) if j.job == "director"
         ]
-        assert [j.slot for j in due] == [slot + dt.timedelta(minutes=5)]
+        assert [j.slot for j in due] == [slot + dt.timedelta(minutes=10)]  # D52: 10-min loop
 
     def test_chain_deadline_skips_later_steps_and_alerts_once(
         self, routines: RoutinesConfig

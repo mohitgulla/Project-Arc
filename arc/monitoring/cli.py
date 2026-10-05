@@ -92,6 +92,14 @@ def _universe(conn: sqlite3.Connection, now: _dt.datetime) -> list[str]:
     return active_tickers(conn, effective_settings(conn), now)
 
 
+def _momentum_stale_days() -> int:
+    """E12.2: ``config/universe.yaml`` ``momentum.stale_after_days``."""
+    from arc.config import ArcSettings
+    from arc.universe.config import load_universe_config
+
+    return load_universe_config(ArcSettings().universe_config_file).momentum.stale_after_days
+
+
 def run_checks(
     conn: sqlite3.Connection,
     args: argparse.Namespace,
@@ -112,6 +120,7 @@ def run_checks(
         checks.missed_windows(conn, routines, ms, now),
         checks.slot_coverage(conn, routines, ms, now),
         checks.earnings_coverage(conn, routines, ms, now, _universe(conn, now)),
+        checks.momentum_coverage(conn, routines, now, stale_after_days=_momentum_stale_days()),
         checks.stuck_runs(conn, ms, now),
         checks.stranded_events(conn, routines, now),
         checks.approvals_unposted(conn, routines, now),

@@ -90,7 +90,7 @@ test.describe("overview behaviour", () => {
   test("range control switches the equity series; every range prints its dates", async ({ page }) => {
     await open(page, "/", "dark");
     await page.getByTestId("equity-info").click();
-    await expect(page.getByText("Today's 5-min monitor marks.")).toBeVisible();
+    await expect(page.getByText("Today's 10-min monitor marks.")).toBeVisible();
     await page.keyboard.press("Escape");
     const resp = page.waitForResponse((r) => r.url().includes("/api/overview?range=1M"));
     await page.getByRole("tab", { name: "1M" }).click();
