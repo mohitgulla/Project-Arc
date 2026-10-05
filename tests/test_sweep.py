@@ -490,9 +490,8 @@ class TestRunSweep:
         # closed `slow_feed`, never read, and still in raw_docs for next_earnings().
         assert res.docs_swept == 10
         assert res.slow_feed == 1
-        assert conn.execute(
-            "SELECT sweep_status FROM raw_docs WHERE source = 'earnings'"
-        ).fetchall() == [("slow_feed",)]
+        q = "SELECT sweep_status FROM raw_docs WHERE source = 'earnings'"
+        assert [r[0] for r in conn.execute(q)] == ["slow_feed"]
         assert dict(res.rejected) == {
             REJECT_UNIVERSE: 3,
             REJECT_SOURCE: 1,

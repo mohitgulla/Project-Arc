@@ -370,7 +370,7 @@ class TestDigestCards:
             None,  # execute (D34): summary only; the Investor posts the order card
         ]
         # Fallback text = the pre-E5.5 one-liners.
-        assert texts[0] == ("[Sweep] sweep ✓ 11 docs (11 stories) → 7 accepted, 6 candidates today")
+        assert texts[0] == ("[Sweep] sweep ✓ 10 docs (10 stories) → 7 accepted, 6 candidates today")
         assert texts[1] == (
             "[Director] director ✓ 6 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
             "XOM (bearish); excluded 1; dropped {'not_a_candidate': 1}"
@@ -395,7 +395,7 @@ class TestDigestCards:
         # D47: grouped by category, equal shares, sources inside each
         assert (
             "*Source mix*\n*Market news* 50% · 8 read: rss 8\n"
-            "*Company data* 50% · 3 read: EDGAR 2 · Earnings 1" in sweep
+            "*Company data* 50% · 2 read: EDGAR 2" in sweep  # D54: earnings = slow feed
         )
         assert "• failed liquidity screen (1): UFPT" in sweep
         assert "UFPT: relaxed screen: ADV 118k &lt; 500k; no expiry in the DTE window" in sweep
