@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from arc.context.store import ContextSnapshot
     from arc.gate.inputs import Portfolio
     from arc.pipeline.env import PipelineEnv
+    from arc.routines.config import DirectorDiversificationSettings
 
 __all__ = [
     "DEFAULT_SECTORS_PATH",
@@ -217,12 +218,16 @@ def build_portfolio_context(
     snapshot: ContextSnapshot | None = None,
     sectors: Mapping[str, str] | None = None,
     review_max_age: _dt.timedelta = _dt.timedelta(minutes=30),
+    diversification: DirectorDiversificationSettings | None = None,
 ) -> PortfolioContext:
     """Assemble the Director's portfolio view from the audit DB and the market.
 
     *portfolio* is the gate ``Portfolio`` (:func:`arc.pipeline.market.build_portfolio`)
     when the caller could value the book; its net Greeks are used. Otherwise Greeks
     are the sum of each structure's as-opened Greeks (``greeks_source=as_opened``).
+
+    E12.5: *diversification* in ``relaxed`` mode flags sector / stance / expiry
+    concentration at its relaxed thresholds (never below the strict settings).
     """
     from arc.pipeline.market import account_baseline
     from arc.reconcile.baseline import day_pnl
@@ -246,10 +251,19 @@ def build_portfolio_context(
         halted=halted,
         order_budget_tier=budget_tier,
     )
+    sector_max, stance_max, expiry_max = (
+        settings.portfolio_sector_max_pct,
+        settings.portfolio_stance_max_pct,
+        settings.portfolio_expiry_max_pct,
+    )
+    if diversification is not None:
+        sector_max, stance_max, expiry_max = diversification.thresholds(
+            sector_max, stance_max, expiry_max
+        )
     thresholds = {
-        "sector_max_pct": settings.portfolio_sector_max_pct,
-        "stance_max_pct": settings.portfolio_stance_max_pct,
-        "expiry_max_pct": settings.portfolio_expiry_max_pct,
+        "sector_max_pct": sector_max,
+        "stance_max_pct": stance_max,
+        "expiry_max_pct": expiry_max,
         "greek_near_cap_pct": settings.portfolio_greek_near_cap_pct,
         "max_alloc_pct": settings.max_alloc_pct,
     }
@@ -342,13 +356,9 @@ def build_portfolio_context(
     )
 
     flags: list[PortfolioFlag] = []
-    f_sectors = [s for s, sh in sector_sh.items() if sh > settings.portfolio_sector_max_pct]
-    f_stances = [
-        s
-        for s, sh in stance_sh.items()
-        if s != Stance.NEUTRAL.value and sh > settings.portfolio_stance_max_pct
-    ]
-    f_buckets = [b for b, sh in bucket_sh.items() if sh > settings.portfolio_expiry_max_pct]
+    f_sectors = [s for s, sh in sector_sh.items() if sh > sector_max]
+    f_stances = [s for s, sh in stance_sh.items() if s != Stance.NEUTRAL.value and sh > stance_max]
+    f_buckets = [b for b, sh in bucket_sh.items() if sh > expiry_max]
     if f_sectors and len(positions) > 1:
         flags.append("over_concentrated_sector")
     if f_stances and len(positions) > 1:

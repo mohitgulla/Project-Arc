@@ -395,8 +395,20 @@ finnhub_context:
     fundamentals: 8
   cap_buckets_musd: {mega: 200000, large: 10000, mid: 2000, small: 300}   # below small = micro
 
+# E12.5 (D51/D44): Director diversification. The switch is
+# `personas.director_diversification` below (default strict = the E5.9 behaviour);
+# these knobs only apply in `relaxed`. Draft experiment XP-3
+# (config/experiments/live/xp3_relaxed_diversification.yaml) tests `relaxed`.
+director_diversification:
+  max_names_per_industry: 2     # relaxed: an adds_concentration pick on a flagged sector drops only once the book holds this many names in its industry
+  relaxed:                      # relaxed-mode flag thresholds (never below the strict portfolio.*_max_pct)
+    sector_max_pct: 0.55        # strict portfolio.sector_max_pct 0.40
+    stance_max_pct: 0.85        # strict portfolio.stance_max_pct 0.75
+    expiry_max_pct: 0.70        # strict portfolio.expiry_max_pct 0.60
+
 personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
+  director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
   scout:                        # D31: every 30 min in session (15 runs), after the fast sources
     label: Scout
     about: "Reads fresh news, filings and earnings; writes candidate ideas and story digests"

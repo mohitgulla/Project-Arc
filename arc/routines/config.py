@@ -555,6 +555,65 @@ FINNHUB_FACT_KINDS: tuple[str, ...] = (
 # Persona-level switches that live under ``personas:`` next to the jobs (a scalar,
 # not a job mapping). Each maps to the settings block whose ``enabled`` it sets.
 PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context",)
+# Persona-level choice switches (E12.5): ``personas.<name>: <choice>`` sets the
+# ``mode`` of the same-named settings block. The first choice is the control.
+PERSONA_CHOICES: dict[str, tuple[str, ...]] = {
+    "director_diversification": ("strict", "relaxed"),
+}
+
+
+class RelaxedConcentration(BaseModel):
+    """E12.5 (D51): the concentration-flag thresholds used in ``relaxed`` mode.
+
+    They never tighten the strict (Slack-tunable ``portfolio.*_max_pct``) values:
+    the effective threshold is the larger of the two.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sector_max_pct: Annotated[float, Field(gt=0.0, le=1.0)] = 0.55
+    stance_max_pct: Annotated[float, Field(gt=0.0, le=1.0)] = 0.85
+    expiry_max_pct: Annotated[float, Field(gt=0.0, le=1.0)] = 0.70
+
+
+class DirectorDiversificationSettings(BaseModel):
+    """E12.5 (D51, D44): how strictly the Director stage diversifies the book.
+
+    ``mode`` comes from ``personas.director_diversification: strict | relaxed``
+    (default ``strict`` = the E5.9 behaviour, byte-identical prompts). ``relaxed``:
+    the prompt says correlation / a shared industry alone is no reason to exclude,
+    an ``adds_concentration`` pick is dropped only when its sector is flagged **and**
+    the book already holds ``max_names_per_industry`` names in its industry (stance
+    skew alone no longer drops), and the flag thresholds are the ``relaxed`` block.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["strict", "relaxed"] = "strict"
+    max_names_per_industry: Annotated[int, Field(ge=1, le=10)] = 2
+    relaxed: RelaxedConcentration = Field(default_factory=RelaxedConcentration)
+
+    @property
+    def is_relaxed(self) -> bool:
+        return self.mode == "relaxed"
+
+    def thresholds(self, sector: float, stance: float, expiry: float) -> tuple[float, float, float]:
+        """The (sector, stance, expiry) flag thresholds for this mode, given the strict ones."""
+        if not self.is_relaxed:
+            return sector, stance, expiry
+        r = self.relaxed
+        return (
+            max(sector, r.sector_max_pct),
+            max(stance, r.stance_max_pct),
+            max(expiry, r.expiry_max_pct),
+        )
+
+
+def parse_choice(v: Any, choices: tuple[str, ...], *, where: str) -> str:
+    if isinstance(v, str) and v.strip().lower() in choices:
+        return v.strip().lower()
+    msg = f"{where}: expected {' | '.join(choices)}, got {v!r}"
+    raise ValueError(msg)
 
 
 def parse_on_off(v: Any, *, where: str) -> bool:
@@ -643,6 +702,10 @@ class RoutinesConfig(BaseModel):
     triggers: list[TriggerRule] = Field(default_factory=list)
     # E4.8a: knobs + the ``personas.finnhub_context`` flag (as ``enabled``).
     finnhub_context: FinnhubContextSettings = Field(default_factory=FinnhubContextSettings)
+    # E12.5: knobs + the ``personas.director_diversification`` switch (as ``mode``).
+    director_diversification: DirectorDiversificationSettings = Field(
+        default_factory=DirectorDiversificationSettings
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -661,6 +724,16 @@ class RoutinesConfig(BaseModel):
                 msg = f"{flag}.enabled: set the switch as personas.{flag}: on | off"
                 raise ValueError(msg)
             block["enabled"] = parse_on_off(raw, where=f"personas.{flag}")
+            out[flag] = block
+        for flag, choices in PERSONA_CHOICES.items():
+            if flag not in personas:
+                continue
+            raw = personas.pop(flag)
+            block = dict(out.get(flag) or {})
+            if "mode" in block:
+                msg = f"{flag}.mode: set the switch as personas.{flag}: {' | '.join(choices)}"
+                raise ValueError(msg)
+            block["mode"] = parse_choice(raw, choices, where=f"personas.{flag}")
             out[flag] = block
         out["personas"] = personas
         return out
