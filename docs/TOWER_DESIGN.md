@@ -223,16 +223,16 @@ they are never dropped.
 ### 10.1 Overview (E8.8b)
 
 - **Status row** (order and wording D50, E8.8g): fixed slots `● Trading Enabled` ·
-  `● Paper • Cash Debit` · `Orders 8/200` (+ tier when not normal; never "Orders today") ·
-  `Tick 4m` · `Health Failed 25m` · `Alerts n` (button; expands the open alerts inline, capped).
+  `● Paper Trade` · `Health Failed 25m` · `Orders 8/200` (+ tier when not normal; never "Orders
+  today") · `Tick 4m` · `Alerts n` (button; expands the open alerts inline, capped).
   Values are Title Case (`Enabled`, `OK`, `Failed`, `No data`; ages unchanged). The env slot is
-  `env • account_profile`, each split on `_` and Title Cased (`cash_long_only` → `Cash Long
-  Only`), styled exactly like the other values (caption, semibold, `text-primary`, neutral dot),
+  `<Env> Trade` (`Paper Trade`); the account profile (`cash_debit`) is in its tooltip only. It is
+  styled exactly like the other values (caption, semibold, `text-primary`, neutral dot),
   never a pill. Each slot is `label value` with a status dot, no nested pills. A stale or non-ok
   heartbeat turns the value `--warn` (stale = 3× the cadence from `/api/meta`
   `cadences.tick|health`). A halt replaces slot 1 with the red `HALTED` pill + reason + actor ·
-  age. ≤ 768 px: a 3×2 grid of equal cells (≥ 44 px), row 1 `Trading | env | Orders`, row 2
-  `Tick | Health | Alerts`; wider: one row in the same order. Model: `statusRow()` in
+  age. ≤ 768 px: a 3×2 grid of equal cells (≥ 44 px), row 1 `Trading | env | Health`, row 2
+  `Orders | Tick | Alerts`; wider: one row in the same order. Model: `statusRow()` in
   `lib/overview.ts`.
 - **Equity** (D50): the `1D 1W 1M 3M YTD ALL` control sits **below the hero block** (value,
   pill, $ change, `vs … at prev close`), followed by the range's dates in the Performance

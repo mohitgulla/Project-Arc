@@ -42,7 +42,7 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("slot-tick")).toContainText("Tick");
         await expect(page.getByTestId("slot-health")).toContainText("Health");
         // D50: the env slot is plain text like the others, Title Case.
-        await expect(page.getByTestId("env-slot")).toHaveText("Paper • Cash Debit");
+        await expect(page.getByTestId("env-slot")).toHaveText("Paper Trade");
         await expect(page.getByTestId("alerts-toggle")).toContainText("Alerts 1");
         await page.getByTestId("alerts-toggle").click();
         await expect(strip).toContainText("scout slot 12:00 ET missed");
@@ -142,7 +142,7 @@ test.describe("overview behaviour", () => {
   });
 });
 
-// D50: slot order Trading · env · Orders · Tick · Health · Alerts (3x2 grid on a phone, one
+// D50: slot order Trading · env · Health · Orders · Tick · Alerts (3x2 grid on a phone, one
 // row on desktop). The fixture's active halt replaces slot 1 with the HALTED banner.
 for (const vp of [PHONE_75, { name: "desktop", width: 1440, height: 900 }] as const) {
   test.describe(`overview status row order ${vp.name}`, { tag: vp.name === PHONE_75.name ? PHONE_75_TAG : [] }, () => {
@@ -167,10 +167,10 @@ for (const vp of [PHONE_75, { name: "desktop", width: 1440, height: 900 }] as co
       );
       expect(texts).toHaveLength(6);
       expect(texts[0]).toMatch(vp.name === "desktop" ? /^HALTED / : /^Trading Enabled$/);
-      expect(texts[1]).toBe("Paper • Cash Debit");
-      expect(texts[2]).toMatch(/^Orders 31\/200/);
-      expect(texts[3]).toMatch(/^Tick /);
-      expect(texts[4]).toMatch(/^Health (OK|Failed|Partial|No data)/);
+      expect(texts[1]).toBe("Paper Trade");
+      expect(texts[2]).toMatch(/^Health (OK|Failed|Partial|No data)/);
+      expect(texts[3]).toMatch(/^Orders 31\/200/);
+      expect(texts[4]).toMatch(/^Tick /);
       expect(texts[5]).toBe("Alerts 1");
       // Visual reading order (top, then left) is the DOM order on both layouts. (The fixture's
       // long halt reason can wrap the desktop row; without a halt it is one row.)
@@ -180,7 +180,7 @@ for (const vp of [PHONE_75, { name: "desktop", width: 1440, height: 900 }] as co
       const reading = [...boxes].sort((a, b) => a.top - b.top || a.left - b.left).map((b) => b.i);
       expect(reading).toEqual([0, 1, 2, 3, 4, 5]);
       if (vp.name !== "desktop") {
-        // phone: 3x2 grid, row 1 Trading | env | Orders, row 2 Tick | Health | Alerts
+        // phone: 3x2 grid, row 1 Trading | env | Health, row 2 Orders | Tick | Alerts
         expect(new Set(boxes.slice(0, 3).map((b) => b.top)).size).toBe(1);
         expect(new Set(boxes.slice(3).map((b) => b.top)).size).toBe(1);
       }

@@ -28,16 +28,17 @@ const CTX = { now: NOW, tickS: 300, healthS: 1800, env: "paper", accountProfile:
 describe("E8.8b status row", () => {
   it("has the fixed slot order and plain `label value` text", () => {
     const row = statusRow(status(), CTX);
-    // D50 (E8.8g): Trading · env · Orders · Tick · Health · Alerts, Title Case values.
-    expect(row.map((s) => s.key)).toEqual(["trading", "env", "orders", "tick", "health", "alerts"]);
+    // D50: Trading · env · Health · Orders · Tick · Alerts, Title Case values.
+    expect(row.map((s) => s.key)).toEqual(["trading", "env", "health", "orders", "tick", "alerts"]);
     expect(row.map((s) => `${s.label} ${s.value}`.trim())).toEqual([
       "Trading Enabled",
-      "Paper • Cash Debit",
+      "Paper Trade",
+      "Health OK 7m",
       "Orders 8/200",
       "Tick 3m",
-      "Health OK 7m",
       "Alerts 0",
     ]);
+    expect(row[1]?.title).toContain("cash_debit");
     expect(row.every((s) => s.tone === "ok" || s.key === "env")).toBe(true);
   });
 
@@ -59,15 +60,15 @@ describe("E8.8b status row", () => {
 
   it("stale or non-ok heartbeats turn --warn (no pill), with the threshold in the title", () => {
     const row = statusRow(status({ tick_at: min(16), health_at: min(95) }), CTX);
-    expect(row[3]).toMatchObject({ key: "tick", value: "16m", tone: "warn" });
-    expect(row[3]?.title).toContain("stale (after 15m)");
-    expect(row[4]).toMatchObject({ key: "health", value: "OK 1h", tone: "warn" });
+    expect(row[4]).toMatchObject({ key: "tick", value: "16m", tone: "warn" });
+    expect(row[4]?.title).toContain("stale (after 15m)");
+    expect(row[2]).toMatchObject({ key: "health", value: "OK 1h", tone: "warn" });
     const bad = statusRow(status({ tick_status: "partial" }), CTX);
-    expect(bad[3]).toMatchObject({ value: "Partial 3m", tone: "warn" });
+    expect(bad[4]).toMatchObject({ value: "Partial 3m", tone: "warn" });
     const failed = statusRow(status({ health_status: "failed", health_at: min(25) }), CTX);
-    expect(`${failed[4]?.label} ${failed[4]?.value}`).toBe("Health Failed 25m");
+    expect(`${failed[2]?.label} ${failed[2]?.value}`).toBe("Health Failed 25m");
     const none = statusRow(status({ tick_at: null }), CTX);
-    expect(none[3]).toMatchObject({ value: "No data", tone: "none" });
+    expect(none[4]).toMatchObject({ value: "No data", tone: "none" });
   });
 
   it("alerts count, and the order tier only when it is not normal", () => {
@@ -75,17 +76,15 @@ describe("E8.8b status row", () => {
     const row = statusRow(status({ alerts: [alert, { ...alert, key: "k2" }] }), CTX);
     expect(row[5]).toMatchObject({ key: "alerts", value: "2", tone: "warn" });
     const tier = statusRow(status({ order_budget: { used: 182, limit: 200, tier: "throttled", as_of: null } }), CTX);
-    expect(tier[2]).toMatchObject({ label: "Orders", value: "182/200 · Throttled", tone: "warn" });
+    expect(tier[3]).toMatchObject({ label: "Orders", value: "182/200 · Throttled", tone: "warn" });
     const missing = statusRow(status({ order_budget: null }), CTX);
-    expect(missing[2]).toMatchObject({ value: "—", tone: "none" });
+    expect(missing[3]).toMatchObject({ value: "—", tone: "none" });
   });
 
-  it("env slot: env • profile, each split on _ and Title Cased", () => {
-    expect(envLabel("paper", "cash_debit")).toBe("Paper • Cash Debit");
-    expect(envLabel("paper", "cash_long_only")).toBe("Paper • Cash Long Only");
-    expect(envLabel("paper", "margin")).toBe("Paper • Margin");
-    expect(envLabel("paper", undefined)).toBe("Paper");
-    expect(envLabel(undefined, undefined)).toBe("");
+  it("env slot: `<Env> Trade`, the account profile only in the tooltip", () => {
+    expect(envLabel("paper")).toBe("Paper Trade");
+    expect(envLabel("live")).toBe("Live Trade");
+    expect(envLabel(undefined)).toBe("");
     expect(statusRow(status(), { now: NOW })[1]).toMatchObject({ key: "env", value: "—", tone: "none" });
   });
 
