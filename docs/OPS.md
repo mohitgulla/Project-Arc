@@ -841,7 +841,7 @@ a source is a YAML edit only.
   |---|---|---|---|
   | `vol_term` | Cboe VIX9D/VIX/VIX3M/VVIX daily history | `vol_term` (contango/backwardation) | 09:00, 16:45 |
   | `put_call` | Cboe daily market statistics | `put_call` | 09:00 |
-  | `macro_calendar` | federalreserve.gov FOMC page + BLS release ICS | `macro_calendar` | 05:45 |
+  | `macro_calendar` | federalreserve.gov FOMC page + BLS release ICS + BEA release ICS | `macro_calendar` | 05:45 |
   | `unusual_options` | Alpaca chain snapshots (self-computed) | `unusual_options` per ticker | 12:30, 15:45 |
   | `ex_dividend` | Alpaca corporate actions | `ex_dividend` per ticker | 06:15 |
 

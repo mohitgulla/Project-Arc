@@ -125,7 +125,7 @@ context_ttl:
   story:         {ttl: 1 session, supersede: latest}       # D30 stage-1 digest; subject = story id
   vol_term:      {ttl: 1 session, supersede: latest}       # D30 options data; subject = market
   put_call:      {ttl: 1 session, supersede: latest}
-  macro_calendar: {ttl: 7d, supersede: latest}             # long-lived: FOMC/BLS dates move rarely
+  macro_calendar: {ttl: 7d, supersede: latest}             # long-lived: FOMC/BLS/BEA dates move rarely
   unusual_options: {ttl: 1 session, supersede: latest}     # subject = ticker
   ex_dividend:   {ttl: 7d, supersede: latest}              # subject = ticker
   # E4.8 (D46): Finnhub per-ticker context; subject = ticker. Context only, never a gate input.
@@ -235,9 +235,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     ttl: 6h
     category: options_data
     writes: [put_call]
-  macro_calendar:               # FOMC decisions (federalreserve.gov) + BLS CPI/PPI/NFP/JOLTS/ECI
+  macro_calendar:               # FOMC (federalreserve.gov) + BLS CPI/PPI/NFP/JOLTS/ECI + BEA GDP/PCE
     label: Macro calendar
-    about: "FOMC decisions and BLS release dates (CPI, PPI, NFP, JOLTS, ECI)"
+    about: "FOMC decisions, BLS release dates (CPI, PPI, NFP, JOLTS, ECI) and BEA GDP / PCE"
     schedule: ["05:45"]
     days: weekdays
     ttl: 24h

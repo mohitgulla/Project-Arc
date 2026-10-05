@@ -339,18 +339,22 @@ def put_call_source(ctx: JobContext) -> JobResult:
 
 
 def macro_calendar_source(ctx: JobContext) -> JobResult:
-    """E4.5: FOMC decisions + BLS releases (CPI/PPI/NFP/JOLTS/ECI) -> ``macro_calendar``."""
+    """E4.5/E4.10: FOMC + BLS (CPI/PPI/NFP/JOLTS/ECI) + BEA (GDP/PCE) -> ``macro_calendar``."""
     from arc.ingest.options_data import fetch_macro_calendar
 
     horizon = int(ctx.options.get("horizon_days", ctx.settings.ingest_macro_horizon_days))
+    status: dict[str, str] = {}
     payload, counts = fetch_macro_calendar(
-        ctx.now.astimezone(ET).date(), horizon, contact_ua=ctx.settings.edgar_user_agent
+        ctx.now.astimezone(ET).date(),
+        horizon,
+        contact_ua=ctx.settings.edgar_user_agent,
+        status=status,
     )
     if not any(counts.values()):
-        msg = "FOMC and BLS calendars both unavailable"
+        msg = "FOMC, BLS and BEA calendars all unavailable"
         raise JobSkippedError(msg)
     _data_result(
-        ctx, "macro_calendar", "fed+bls", payload.model_dump(mode="json"), len(payload.events)
+        ctx, "macro_calendar", "fed+bls+bea", payload.model_dump(mode="json"), len(payload.events)
     )
     ctx.write("macro_calendar", "market", payload)
     nxt = payload.events[0] if payload.events else None
@@ -360,7 +364,11 @@ def macro_calendar_source(ctx: JobContext) -> JobResult:
             + (f" · next {nxt.kind.upper()} {nxt.date}" if nxt else "")
             + "".join(f" · {k} unavailable" for k, v in counts.items() if not v)
         ),
-        metrics={"events": len(payload.events), **{f"{k}_events": v for k, v in counts.items()}},
+        metrics={
+            "events": len(payload.events),
+            **{f"{k}_events": v for k, v in counts.items()},
+            **{f"{k}_status": v for k, v in status.items()},
+        },
     )
 
 

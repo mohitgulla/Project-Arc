@@ -11,7 +11,8 @@ context entries (kinds in :mod:`arc.context.kinds`); nothing here calls an LLM.
   ETP / SPX / VIX put-call ratios) for the latest session that has data.
 * :func:`fetch_macro_calendar` — FOMC decision days (federalreserve.gov calendar
   page) and BLS release dates for CPI / PPI / Employment Situation / JOLTS / ECI
-  (the BLS release-schedule ICS).
+  (the BLS release-schedule ICS), plus BEA GDP estimates and Personal Income and
+  Outlays (PCE) from the BEA release-schedule ICS.
 * :func:`unusual_activity` — per-underlying options volume vs its own 20-session
   average (``options_volume_daily``) and per-contract volume / open interest,
   from the Alpaca chain snapshot the scanner already uses. No new provider.
@@ -57,6 +58,7 @@ __all__ = [
     "fetch_macro_calendar",
     "fetch_put_call",
     "fetch_vol_term",
+    "parse_bea_ics",
     "parse_bls_ics",
     "parse_cboe_history",
     "parse_fomc_calendar",
@@ -75,6 +77,7 @@ CBOE_HISTORY_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{ind
 CBOE_DAILY_URL = "https://cdn.cboe.com/data/us/options/market_statistics/daily/{day}_daily_options"
 FOMC_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
 BLS_ICS_URL = "https://www.bls.gov/schedule/news_release/bls.ics"
+BEA_ICS_URL = "https://www.bea.gov/news/schedule/ics/online-calendar-subscription.ics"
 
 VOL_INDICES = ("VIX9D", "VIX", "VIX3M", "VVIX")
 
@@ -220,7 +223,7 @@ def fetch_put_call(
 
 
 # ---------------------------------------------------------------------------
-# Macro calendar (FOMC + BLS)
+# Macro calendar (FOMC + BLS + BEA)
 # ---------------------------------------------------------------------------
 
 _MONTHS = {
@@ -333,16 +336,117 @@ def parse_bls_ics(text: str) -> list[MacroEvent]:
     return sorted(events, key=lambda e: (e.date, e.kind))
 
 
+def _ics_unescape(value: str) -> str:
+    """RFC 5545 TEXT unescape (``\\,`` ``\\;`` ``\\n`` ``\\\\``)."""
+    return re.sub(
+        r"\\([\\,;nN])", lambda m: " " if m.group(1) in "nN" else m.group(1), value
+    ).strip()
+
+
+def _ics_vevents(text: str) -> list[dict[str, tuple[str, str]]]:
+    """VEVENTs as ``{NAME: (params, value)}`` after unfolding (params keep ``TZID`` etc.)."""
+    out: list[dict[str, tuple[str, str]]] = []
+    cur: dict[str, tuple[str, str]] | None = None
+    for line in _unfold_ics(text):
+        if line == "BEGIN:VEVENT":
+            cur = {}
+        elif line == "END:VEVENT":
+            if cur is not None:
+                out.append(cur)
+            cur = None
+        elif cur is not None and ":" in line:
+            key, _, value = line.partition(":")
+            name, _, params = key.partition(";")
+            cur[name.upper()] = (params, value)
+    return out
+
+
+def _ics_start_et(params: str, value: str) -> tuple[_dt.date, str | None] | None:
+    """DTSTART -> (ET date, ``HH:MM`` ET or ``None`` for an all-day event).
+
+    ``...Z`` is UTC and converted to ET; a floating/``TZID`` time is taken as ET
+    (the BEA calendar declares ``America/New_York``).
+    """
+    m = re.fullmatch(r"(\d{8})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?", value.strip())
+    if m is None:
+        return None
+    day = _dt.datetime.strptime(m.group(1), "%Y%m%d").date()  # noqa: DTZ007 - a date
+    if m.group(2) is None:
+        return day, None
+    naive = _dt.datetime.combine(day, _dt.time(int(m.group(2)), int(m.group(3))))
+    if m.group(5):
+        at = naive.replace(tzinfo=_dt.UTC).astimezone(ET)
+    else:
+        tz = re.search(r"TZID=([^;:]+)", params)
+        if tz and tz.group(1) not in ("America/New_York", "US/Eastern"):
+            return None  # never guess another zone's offset
+        at = naive.replace(tzinfo=ET)
+    return at.date(), at.strftime("%H:%M")
+
+
+# Whitelisted BEA headline releases. ``GDP (`` / ``Gross Domestic Product,`` are the
+# national accounts (short and pre-2026 long title); "GDP by County", "Gross Domestic
+# Product by State / for Puerto Rico" and "Real Personal Consumption Expenditures by
+# State" fail these prefixes on purpose.
+_BEA_GDP = re.compile(r"^(?:GDP \(|Gross Domestic Product, )")
+_BEA_PCE = re.compile(r"^Personal Income and Outlays, (.+)$")
+_BEA_QUARTER = re.compile(r"(\d)(?:st|nd|rd|th) Quarter(?: and Year)? (\d{4})", re.IGNORECASE)
+_BEA_ESTIMATE = re.compile(r"\((\w+) Estimate\)", re.IGNORECASE)
+
+
+def _bea_kind_name(summary: str) -> tuple[str, str] | None:
+    if _BEA_GDP.match(summary):
+        q = _BEA_QUARTER.search(summary)
+        est = _BEA_ESTIMATE.search(summary)
+        name = f"GDP Q{q.group(1)} {q.group(2)}" if q else "GDP"
+        if est:
+            name += f" ({est.group(1).lower()})"
+        return "gdp", name
+    pce = _BEA_PCE.match(summary)
+    if pce:
+        return "pce", f"PCE / Personal Income {pce.group(1).strip()}"[:120]
+    return None
+
+
+def parse_bea_ics(text: str) -> list[MacroEvent]:
+    """BEA release schedule (ICS) -> GDP estimates and Personal Income and Outlays (PCE).
+
+    Only the whitelisted headline releases are kept; every other BEA release
+    (trade, international transactions, regional GDP/PCE, satellite accounts) is
+    dropped, never typed ``other``. Times are converted from UTC to ET.
+    """
+    events: list[MacroEvent] = []
+    for ev in _ics_vevents(text):
+        summary = _ics_unescape(ev.get("SUMMARY", ("", ""))[1])
+        typed = _bea_kind_name(summary)
+        start = _ics_start_et(*ev.get("DTSTART", ("", "")))
+        if typed is None or start is None:
+            continue
+        day, time = start
+        events.append(
+            MacroEvent(
+                date=day.isoformat(),
+                time=time,
+                kind=typed[0],  # type: ignore[arg-type]
+                name=typed[1],
+                source="bea.gov",
+            )
+        )
+    return sorted(events, key=lambda e: (e.date, e.kind))
+
+
 def macro_calendar(
     events: Iterable[MacroEvent], today: _dt.date, horizon_days: int
 ) -> MacroCalendarPayload:
+    """Events in ``[today, today + horizon_days]``, deduped on (date, kind, name)."""
     until = today + _dt.timedelta(days=horizon_days)
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     kept: list[MacroEvent] = []
     for e in sorted(events, key=lambda e: (e.date, e.kind)):
         d = _dt.date.fromisoformat(e.date)
-        if today <= d <= until and (e.date, e.kind) not in seen:
-            seen.add((e.date, e.kind))
+        key = (e.date, e.kind, e.name)
+        if today <= d <= until and key not in seen:
+            seen.add(key)
             kept.append(e)
     return MacroCalendarPayload(as_of=today.isoformat(), horizon_days=horizon_days, events=kept)
 
@@ -353,21 +457,36 @@ def fetch_macro_calendar(
     *,
     get: Callable[[str, str], bytes] | None = None,
     contact_ua: str = BLS_UA,
+    status: dict[str, str] | None = None,
 ) -> tuple[MacroCalendarPayload, dict[str, int]]:
-    """Merged FOMC + BLS calendar and per-source event counts (0 = fetch failed).
+    """Merged FOMC + BLS + BEA calendar and per-source event counts (0 = fetch failed).
 
-    *contact_ua*: a User-Agent with a contact email; BLS answers 403 without one.
+    One source failing (HTTP error or an unparseable payload) never drops the
+    others; it is logged ``macro_calendar.source_failed`` and counted 0.
+    *status*, when given, is filled per source with ``ok`` or ``failed:<ErrorClass>``
+    (for the run manifest: an empty-but-healthy feed is not a failure).
+    *contact_ua*: a User-Agent with a contact email; BLS answers 403 without one
+    (sent to BEA too, same courtesy).
     """
     events: list[MacroEvent] = []
     counts: dict[str, int] = {}
+    status = {} if status is None else status
     for name, url, ua, parse in (
         ("fomc", FOMC_URL, BROWSER_UA, parse_fomc_calendar),
         ("bls", BLS_ICS_URL, contact_ua, parse_bls_ics),
+        ("bea", BEA_ICS_URL, contact_ua, parse_bea_ics),
     ):
         try:
             got = parse((get or http_get)(url, ua).decode("utf-8", "replace"))
-        except requests.RequestException as exc:
-            log.warning("macro_calendar.fetch_error", source=name, error=str(exc))
+            status[name] = "ok"
+        except (requests.RequestException, ValueError) as exc:  # ValidationError is a ValueError
+            log.warning(
+                "macro_calendar.source_failed",
+                source=name,
+                error_class=type(exc).__name__,
+                error=str(exc)[:300],
+            )
+            status[name] = f"failed:{type(exc).__name__}"
             got = []
         counts[name] = len(got)
         events.extend(got)
