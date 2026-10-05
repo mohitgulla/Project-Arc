@@ -222,14 +222,14 @@ export function statusWord(status: string | null | undefined): string {
   return status.toLowerCase() === "ok" ? "OK" : titleWords(status);
 }
 
-/** `paper` + `cash_debit` -> `Paper • Cash Debit` (either part may be missing). */
-export function envLabel(env?: string, profile?: string): string {
-  return [env, profile].filter(Boolean).map((x) => titleWords(x as string)).join(" • ");
+/** `paper` -> `Paper Trade` (D50 rev): the env only; the account profile goes in the slot tooltip. */
+export function envLabel(env?: string): string {
+  return env ? `${titleWords(env)} Trade` : "";
 }
 
 /**
- * Slot order (fixed, D50): Trading · env · Orders · Tick · Health · Alerts, which reads as a
- * 3x2 grid on mobile (row 1 Trading | env | Orders, row 2 Tick | Health | Alerts) and one row on
+ * Slot order (fixed, D50): Trading · env · Health · Orders · Tick · Alerts, which reads as a
+ * 3x2 grid on mobile (row 1 Trading | env | Health, row 2 Orders | Tick | Alerts) and one row on
  * desktop. A halt replaces the Trading slot (`HALTED`, reason, age); a stale or non-ok heartbeat
  * turns its slot --warn. Values are Title Case.
  */
@@ -250,21 +250,9 @@ export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): Stat
   } else {
     slots.push({ key: "trading", label: "Trading", value: "Enabled", tone: "ok", title: "Trading enabled (no active halt)" });
   }
-  const env = envLabel(ctx.env, ctx.accountProfile);
-  slots.push({ key: "env", label: "", value: env || "—", tone: "none", title: "Environment • account profile" });
-  const b = s.order_budget;
-  if (b) {
-    const tier = b.tier && b.tier !== "normal" ? ` · ${titleWords(b.tier)}` : "";
-    slots.push({
-      key: "orders",
-      label: "Orders",
-      value: `${b.used}/${b.limit}${tier}`,
-      tone: tier ? "warn" : "ok",
-      title: `D32 order budget: ${b.used} of ${b.limit} today${tier}${b.as_of ? ` · as of ${formatEt(b.as_of)} ET` : ""}`,
-    });
-  } else {
-    slots.push({ key: "orders", label: "Orders", value: "—", tone: "none", title: "No order budget in the monitor heartbeat yet" });
-  }
+  const env = envLabel(ctx.env);
+  const envTitle = ["Environment", ctx.env, ctx.accountProfile && `account profile ${ctx.accountProfile}`].filter(Boolean).join(" · ");
+  slots.push({ key: "env", label: "", value: env || "—", tone: "none", title: envTitle });
   const beat = (key: "tick" | "health", label: string, at: string | null | undefined, status: string | null | undefined, cadence?: number): StatusSlot => {
     if (!at) return { key, label, value: "No data", tone: "none", title: `${label}: no heartbeat yet` };
     const stale = cadence !== undefined && isStale(at, cadence, ctx.now);
@@ -280,8 +268,21 @@ export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): Stat
       title: `${label} ${status ? statusWord(status) : ""} · as of ${formatEt(at)} ET${note}`.replace(/\s+/g, " "),
     };
   };
-  slots.push(beat("tick", "Tick", s.tick_at, s.tick_status, ctx.tickS));
   slots.push(beat("health", "Health", s.health_at, s.health_status, ctx.healthS));
+  const b = s.order_budget;
+  if (b) {
+    const tier = b.tier && b.tier !== "normal" ? ` · ${titleWords(b.tier)}` : "";
+    slots.push({
+      key: "orders",
+      label: "Orders",
+      value: `${b.used}/${b.limit}${tier}`,
+      tone: tier ? "warn" : "ok",
+      title: `D32 order budget: ${b.used} of ${b.limit} today${tier}${b.as_of ? ` · as of ${formatEt(b.as_of)} ET` : ""}`,
+    });
+  } else {
+    slots.push({ key: "orders", label: "Orders", value: "—", tone: "none", title: "No order budget in the monitor heartbeat yet" });
+  }
+  slots.push(beat("tick", "Tick", s.tick_at, s.tick_status, ctx.tickS));
   const n = (s.alerts ?? []).length;
   slots.push({ key: "alerts", label: "Alerts", value: String(n), tone: n > 0 ? "warn" : "ok", title: `${n} open alert${n === 1 ? "" : "s"}` });
   return slots;

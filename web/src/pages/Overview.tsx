@@ -93,8 +93,8 @@ function SlotCell({ slot }: { slot: StatusSlot }) {
 const CELL = "flex min-h-[44px] min-w-0 items-center gap-2 rounded-control px-2 text-caption tablet:min-h-[32px]";
 
 /**
- * Status row (D48, D50 order): fixed slots Trading · env · Orders · Tick · Health · Alerts, each
- * `label value` with a status dot; the env slot (`Paper • Cash Debit`) is plain text styled like
+ * Status row (D48, D50 order): fixed slots Trading · env · Health · Orders · Tick · Alerts, each
+ * `label value` with a status dot; the env slot (`Paper Trade`) is plain text styled like
  * the others, with a neutral dot. A 3x2 grid of equal cells up to 768 px; one row above, same
  * order. A halt replaces slot 1 with HALTED + reason + age.
  */
