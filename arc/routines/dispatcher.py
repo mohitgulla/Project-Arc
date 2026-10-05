@@ -36,6 +36,7 @@ from __future__ import annotations
 import contextlib
 import datetime as _dt
 import os
+import sqlite3
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -44,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from arc.context.store import ContextSnapshot, ContextStore
+from arc.context.ttl import to_db
 from arc.monitoring.correlation import bind as bind_ids
 from arc.routines.conditions import evaluate_condition
 from arc.routines.config import JobKind, Lane, Notify
@@ -65,11 +67,10 @@ from arc.routines.runs import (
     RoutineStateRepo,
     RunStatus,
 )
-from arc.routines.schedule import catchup_deadline, slots_between
+from arc.routines.schedule import catch_up_slots, catchup_deadline, slots_between
 from arc.utils.calendar import ET, now_et, session_phase
 
 if TYPE_CHECKING:
-    import sqlite3
     from collections.abc import Callable, Mapping, Sequence
 
     from arc.config import ArcSettings
@@ -258,8 +259,20 @@ class Dispatcher:
         halted = self._is_halted() if halted is None else halted
         due: list[DueJob] = []
         for name, (kind, spec) in self.routines.jobs().items():
-            slots = slots_between(spec, self._window_start(name, now, since), now)
+            start = self._window_start(name, now, since)
+            slots = slots_between(spec, start, now)
             if not slots:
+                retry = self._catch_up_slot(spec, start, now)
+                if retry is not None and spec.catch_up is not None:
+                    chain = tuple(spec.chain)
+                    if kind is JobKind.PERSONA and halted and not spec.halt_exempt:
+                        due.append(DueJob(name, kind, retry, "skip-halted", 0, chain))
+                    else:
+                        note = (
+                            f"catch-up: no {spec.catch_up.until_written} since the last "
+                            "regular slot"
+                        )
+                        due.append(DueJob(name, kind, retry, "run", 0, chain, note))
                 continue
             slot = slots[-1]
             collapsed = len(slots) - 1
@@ -274,6 +287,34 @@ class Dispatcher:
         # Sources first (after_sources), then personas; each group in slot order.
         due.sort(key=lambda d: (d.kind is not JobKind.SOURCE, d.slot, d.job))
         return due
+
+    def _catch_up_slot(
+        self, spec: JobSpec, start: _dt.datetime, now: _dt.datetime
+    ) -> _dt.datetime | None:
+        """E12.2: the latest ``catch_up`` slot in ``(start, now]`` (inside its catch-up
+        window), when the job has not written ``catch_up.until_written`` since its
+        latest regular slot (or, with no regular slot in ``lookback``, has no valid
+        entry at all). ``None`` otherwise. Read-only."""
+        cu = spec.catch_up
+        if cu is None:
+            return None
+        retries = [s for s in catch_up_slots(spec, start, now) if now <= catchup_deadline(spec, s)]
+        if not retries:
+            return None
+        kind, subject = cu.target
+        regular = slots_between(spec, now - cu.lookback, now)
+        try:
+            if regular:
+                row = self.conn.execute(
+                    "SELECT 1 FROM context_entries WHERE kind = ? AND subject = ? "
+                    "AND created_at >= ? LIMIT 1",
+                    (kind, subject, to_db(regular[-1])),
+                ).fetchone()
+            else:
+                row = self.store.query(as_of=now, kinds=[kind], subjects=[subject]) or None
+        except sqlite3.OperationalError:  # store not migrated: nothing written yet
+            row = None
+        return None if row else retries[-1]
 
     # -- tick ----------------------------------------------------------------
 
@@ -329,6 +370,8 @@ class Dispatcher:
         if d.action == "skip-halted":
             return "halted (persona)"
         if d.action == "skip-missed":
+            return d.note
+        if d.note:  # E12.2 catch-up slot
             return d.note
         if d.collapsed:
             return f"schedule; catch-up ({d.collapsed} earlier slot(s) collapsed)"

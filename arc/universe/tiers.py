@@ -117,6 +117,10 @@ class UniverseTierPayload(BaseModel):
     source: str
     source_as_of: _dt.date | None = None
     digest: str = ""
+    # v2 (E12.2): where the list came from and whether the source listed fewer rows
+    # than the tier wants (Schwab fallback: first 20 rows only).
+    url: str = ""
+    partial: bool = False
 
 
 class DroppedMember(BaseModel):

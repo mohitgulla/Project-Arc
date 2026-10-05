@@ -323,6 +323,20 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     ttl: 24h                    # a missed slot still runs that day
     refresh_days: [mon]         # symbol master refetch days (also when missing or stale)
     writes: [active_universe]   # data/symbol_master.json is a file, never context
+  universe.momentum:            # E12.2 / D51: S&P 500 Momentum top 25 (SPMO holdings proxy)
+    label: Momentum tier
+    about: "Monthly S&P 500 Momentum top 25 (SPMO holdings); retries each session until one run succeeds"
+    group: other
+    schedule: ["06:00"]         # after `symbols` 05:30; `arc universe momentum` = by hand
+    days: month_start           # first trading session of each month (weekly instead: days: [mon], ttl 8d)
+    ttl: 3h                     # a missed slot still runs that morning
+    catch_up:                   # no momentum entry written since the month-start slot (first
+      days: trading             # deploy, or a failed month-start run): retry each session 06:00
+      until_written: "universe_tier:momentum"
+    context: {ttl: 35d, supersede: latest}  # a missed month never empties the tier
+    writes: [universe_tier, active_universe]   # re-resolves today's active list after the write
+    source_order: [stockanalysis, schwab]      # Schwab only when stockanalysis fails or < 20 rows
+    size: 25
 
 # E4.8a (D46/D44): Finnhub per-ticker facts in the Scout/Director prompts. The switch
 # is `personas.finnhub_context` below (default off = prompts unchanged); these are its

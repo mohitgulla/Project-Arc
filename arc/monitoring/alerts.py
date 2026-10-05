@@ -67,6 +67,7 @@ CONDITION_PREFIXES = (
 INCIDENT_KEYS = ("tick_stale", "gateway", "tick_slow")
 COVERAGE_PREFIX = "coverage:"
 EARNINGS_COVERAGE = "coverage:earnings"  # E4.1d: stale calendar, not a slot ratio
+MOMENTUM_COVERAGE = "coverage:universe.momentum"  # E12.2: stale SPMO list, not a slot ratio
 # Which check must have run for an open alert of this key prefix to be resolved.
 _RESOLVED_BY = (
     ("gateway", "gateway"),
@@ -75,6 +76,7 @@ _RESOLVED_BY = (
     ("stuck:", "stuck_runs"),
     ("remote_", "remote_access"),
     (EARNINGS_COVERAGE, "earnings_coverage"),  # E4.1d (before the generic prefix)
+    (MOMENTUM_COVERAGE, "momentum_coverage"),  # E12.2 (before the generic prefix)
     (COVERAGE_PREFIX, "slot_coverage"),
     ("approvals_unposted", "approvals_unposted"),
 )
@@ -87,8 +89,9 @@ INCIDENT_SINCE = "since"
 
 def _slot_coverage(key: str) -> bool:
     """A per-job slot-coverage condition (foldable into an incident). E4.1d's
-    ``coverage:earnings`` is a stale-calendar condition with its own cause: never folded."""
-    return key.startswith(COVERAGE_PREFIX) and key != EARNINGS_COVERAGE
+    ``coverage:earnings`` is a stale-calendar condition with its own cause: never folded.
+    E12.2's ``coverage:universe.momentum`` (a stale source list) likewise."""
+    return key.startswith(COVERAGE_PREFIX) and key not in (EARNINGS_COVERAGE, MOMENTUM_COVERAGE)
 
 
 class OpsNotifier(Protocol):
@@ -221,6 +224,10 @@ def _resolve_line(alert: OpsAlert, results: dict[str, CheckResult]) -> str:
         ec = results.get("earnings_coverage")
         now = f" ({ec.summary})" if ec else ""
         return f"earnings calendar fresh again{now}"
+    if alert.key == MOMENTUM_COVERAGE:
+        mc = results.get("momentum_coverage")
+        now = f" ({mc.summary})" if mc else ""
+        return f"momentum tier source fresh again{now}"
     if alert.key.startswith(COVERAGE_PREFIX):
         job = alert.key.removeprefix(COVERAGE_PREFIX)
         sc = results.get("slot_coverage")

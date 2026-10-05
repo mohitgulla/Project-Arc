@@ -16,12 +16,17 @@ import datetime as _dt
 from typing import TYPE_CHECKING
 
 from arc.routines.config import Days, Weekday
-from arc.utils.calendar import ET, is_session
+from arc.utils.calendar import ET, is_session, previous_session
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from arc.routines.config import JobSpec
+
+
+def is_month_start(d: _dt.date) -> bool:
+    """True when *d* is the first trading session of its calendar month (holiday-aware)."""
+    return is_session(d) and previous_session(d).month != d.month
 
 
 def day_matches(days: Days | list[Weekday], d: _dt.date) -> bool:
@@ -32,6 +37,8 @@ def day_matches(days: Days | list[Weekday], d: _dt.date) -> bool:
         return True
     if days is Days.WEEKDAYS:
         return d.weekday() < 5
+    if days is Days.MONTH_START:
+        return is_month_start(d)
     return is_session(d)
 
 
@@ -87,10 +94,22 @@ def slots_between(spec: JobSpec, start: _dt.datetime, end: _dt.datetime) -> list
     return sorted(iter_slots(spec, start, end))
 
 
+def catch_up_slots(spec: JobSpec, start: _dt.datetime, end: _dt.datetime) -> list[_dt.datetime]:
+    """E12.2: the job's ``catch_up.days`` slots in ``(start, end]`` that are not regular
+    slots, ascending (the job's ``schedule`` times on the catch-up days). Empty without
+    ``catch_up``. Whether a catch-up slot runs is the dispatcher's call (it checks
+    ``catch_up.until_written``)."""
+    if spec.catch_up is None:
+        return []
+    regular = set(slots_between(spec, start, end))
+    retry = spec.model_copy(update={"days": spec.catch_up.days})
+    return [s for s in slots_between(retry, start, end) if s not in regular]
+
+
 def next_slot(
-    spec: JobSpec, after: _dt.datetime, *, horizon: _dt.timedelta = _dt.timedelta(days=14)
+    spec: JobSpec, after: _dt.datetime, *, horizon: _dt.timedelta = _dt.timedelta(days=40)
 ) -> _dt.datetime | None:
-    """First slot strictly after *after* (within *horizon*), or ``None``."""
+    """First slot strictly after *after* (within *horizon*: covers ``month_start``), or ``None``."""
     for slot in slots_between(spec, after, after + horizon):
         return slot
     return None
