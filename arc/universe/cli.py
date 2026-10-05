@@ -5,6 +5,8 @@
 - ``arc universe status``  cache path, age, counts, mode (never fetches).
 - ``arc universe check <TICKER>...``  would the Scout admit these names?
   Master lookup + the live liquidity screen (read-only market data).
+- ``arc universe tiers [--db PATH]``  D51 tiers, dedupe, active list and drops,
+  resolved now from the store opened read-only (writes nothing).
 """
 
 from __future__ import annotations
@@ -15,6 +17,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import argparse
+    import datetime as _dt
+
+    from arc.config import ArcSettings
 
 __all__ = ["add_universe_parser", "run_universe"]
 
@@ -30,6 +35,13 @@ def add_universe_parser(sub: argparse._SubParsersAction) -> None:  # type: ignor
         "--fixture",
         action="store_true",
         help="Offline: recorded chains + the fixture symbol master (no network).",
+    )
+    t = usub.add_parser("tiers", help="D51 tiers -> dedupe -> active list (read-only)")
+    t.add_argument("--db", default=None, help="SQLite path (default: data/arc.db), read-only")
+    t.add_argument(
+        "--now",
+        default=None,
+        help="Resolve as of this ISO time (ET if naive), e.g. a past session; default now",
     )
     for q in (p, *usub.choices.values()):
         q.add_argument("--json", action="store_true", help="Emit JSON")
@@ -47,12 +59,15 @@ def _out(obj: object, as_json: bool) -> None:
 def run_universe(args: argparse.Namespace) -> int:
     from arc.config import ArcSettings
     from arc.universe import load_symbol_master, load_universe_config, refresh_symbol_master
+    from arc.universe.tiers import core_tickers
     from arc.utils.calendar import now_et
 
     settings = ArcSettings()
     cfg = load_universe_config(settings.universe_config_file)
     now = now_et()
     cmd = args.universe_command
+    if cmd == "tiers":
+        return _run_tiers(args, settings, now)
     if cmd == "refresh":
         master = refresh_symbol_master(
             cfg.symbol_master, user_agent=settings.edgar_user_agent, now=now
@@ -84,7 +99,7 @@ def run_universe(args: argparse.Namespace) -> int:
             "symbols": len(loaded.symbols),
             "optionable": sum(1 for s in loaded.symbols.values() if s.options),
             "sources": loaded.sources,
-            "seed": len(settings.universe),
+            "core": len(core_tickers(settings)),
         }
         _out(info, args.json)
         return 0
@@ -126,3 +141,78 @@ def run_universe(args: argparse.Namespace) -> int:
             detail = f"  {r['detail']}" if r["detail"] else ""
             sys.stdout.write(f"{r['ticker']:<6} {mark}{detail}\n")
     return 0 if all(r["admitted"] for r in rows) else 1
+
+
+def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetime) -> int:
+    """Resolve the active list now from the store (read-only) and print every stage."""
+    from arc.control.effective import effective_settings
+    from arc.store.db import connect_ro
+    from arc.universe.tiers import TIER_ORDER, build_active, market_reference
+
+    if args.now:
+        import datetime as dt
+
+        from arc.utils.calendar import ET
+
+        parsed = dt.datetime.fromisoformat(args.now)
+        now = parsed.replace(tzinfo=ET) if parsed.tzinfo is None else parsed.astimezone(ET)
+    try:
+        conn = connect_ro(args.db)
+    except FileNotFoundError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 1
+    try:
+        eff = effective_settings(conn, base=settings)
+        active, inputs = build_active(conn, eff, now)
+        stored = conn.execute(
+            "SELECT payload, valid_from FROM context_entries WHERE kind = 'active_universe' "
+            "AND status = 'active' ORDER BY valid_from DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    tiers = {
+        "core": inputs.core,
+        "momentum": inputs.momentum,
+        "trending": inputs.trending,
+        "discovery": inputs.discoveries,
+    }
+    out = {
+        "as_of": active.as_of.isoformat(),
+        "config_version": eff.config_version,
+        "active_max": eff.universe_active_max,
+        "tiers": {k: [m.ticker for m in v] for k, v in tiers.items()},
+        "raw_counts": active.raw_counts,
+        "expired_tiers": [t.value for t in active.expired_tiers],
+        "dedupe": {m.ticker: [t.value for t in m.also_in] for m in active.members if m.also_in},
+        "active": [
+            {"ticker": m.ticker, "tier": m.tier.value, "rank": m.rank, "reason": m.reason}
+            for m in active.members
+        ],
+        "active_count": len(active.members),
+        "counts": active.counts,
+        "dropped": [d.model_dump(mode="json") for d in active.dropped],
+        "market_reference": market_reference(eff),
+        "stored_active_at": stored["valid_from"] if stored else None,
+    }
+    if args.json:
+        _out(out, True)
+        return 0
+    lines = [f"as of {out['as_of']} · config v{out['config_version']} · cap {out['active_max']}"]
+    for tier in TIER_ORDER:
+        names = out["tiers"][tier.value]
+        lines.append(f"{tier.value:<10} {len(names):>3}  {' '.join(names) or '-'}")
+    if out["expired_tiers"]:
+        lines.append(f"expired (read as empty): {', '.join(out['expired_tiers'])}")
+    for sym, also in out["dedupe"].items():
+        lines.append(f"dedupe     {sym} also in {', '.join(also)}")
+    c = active.counts
+    lines.append(
+        f"active     {len(active.members):>3}  core {c['core']} · momentum {c['momentum']} · "
+        f"trending {c['trending']} · discovery {c['discovery']}"
+    )
+    lines.append(f"           {' '.join(active.tickers)}")
+    for d in active.dropped:
+        lines.append(f"dropped    {d.ticker} ({d.tier.value}): {d.reason}")
+    lines.append(f"market reference (regime only): {' '.join(out['market_reference'])}")
+    sys.stdout.write("\n".join(lines) + "\n")
+    return 0

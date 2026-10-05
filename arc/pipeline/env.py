@@ -172,6 +172,10 @@ def fixture_vix() -> tuple[float, str]:
     return float(data["vix"]), str(data["as_of"])
 
 
+# D51: names the recorded fixture day treats as seeds beyond today's core (see below).
+FIXTURE_SEED_EXTRA: frozenset[str] = frozenset({"SPY"})
+
+
 def fixture_universe_guard(
     settings: ArcSettings, now: _dt.datetime, market: MarketDataProvider
 ) -> UniverseGuard:
@@ -180,9 +184,14 @@ def fixture_universe_guard(
     from arc.universe.master import SymbolMaster
 
     master = SymbolMaster.model_validate_json((FIXTURES_DIR / "symbol_master.json").read_text())
-    return UniverseGuard.from_settings(
+    guard = UniverseGuard.from_settings(
         settings, now=now, master=master, market_factory=lambda: market
     )
+    # D51: SPY left the core list, but the recorded fixture day (2026-09-25) was
+    # captured with SPY in the D9 seed list and its recording has no daily volume
+    # (pre-E5.7), so it cannot be screened. Keep it a seed here, as on that day.
+    guard.seed = guard.seed | FIXTURE_SEED_EXTRA
+    return guard
 
 
 def fixture_account() -> AccountInfo:

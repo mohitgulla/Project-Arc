@@ -215,10 +215,11 @@ def fetch_edgar(
     """
     cursor_repo = IngestCursorRepo(conn)
     doc_repo = RawDocRepo(conn)
-    tickers = settings.universe
+    # D51: filings for today's active list (core until the first resolve of the day).
     # D28: CIKs come from the cached symbol master when it has them (no per-ticker
     # download of the SEC file); ticker hints add master-validated symbols in the text.
-    uni = IngestUniverse.from_settings(settings)
+    uni = IngestUniverse.from_settings(settings, now=now, conn=conn)
+    tickers = list(uni.seed)
 
     results: list[RawDoc] = []
     # E5.10: tickers missing from the symbol master share ONE company_tickers.json

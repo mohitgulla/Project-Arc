@@ -94,6 +94,9 @@ TIMELINE_GROUPS: tuple[tuple[str, str], ...] = (
     ("post_market", "Post-market"),
     ("other", "Other"),
 )
+#: D51: universe bookkeeping kinds. A source job writing only these is not a context
+#: data source (no D47 category; it never reaches a persona's category block).
+UNIVERSE_KINDS: frozenset[str] = frozenset({"universe_tier", "active_universe"})
 #: E8.8d: persona chips a job may declare (``persona:``); sources declare none.
 TIMELINE_PERSONAS: tuple[str, ...] = ("scout", "director", "investor", "risk", "auditor", "monitor")
 #: E8.8d: ``about:`` is one line; longer text belongs in docs, not the timeline ⓘ.
@@ -746,7 +749,8 @@ class RoutinesConfig(BaseModel):
                     parse_category(raw["category"], where=f"sources.{name}.feeds")
                 if raw.get("max_age") is not None:
                     Ttl.model_validate(raw["max_age"])
-        if not spec.writes:  # writes nothing (or undeclared): not a context source
+        if not set(spec.writes or []) - UNIVERSE_KINDS:
+            # writes nothing, or only D51 universe bookkeeping: not a context data source
             return
         if job_cat is not None:
             return

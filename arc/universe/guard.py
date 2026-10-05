@@ -3,7 +3,8 @@
 One :class:`UniverseGuard` per Scout run. It answers two questions:
 
 * :meth:`UniverseGuard.known` — may the ticker be named at all? ``strict``: it is
-  in the seed list. ``seed``: it is in the seed list or in the symbol master.
+  in the active list. ``seed``: it is a seed (D51: core or momentum) or in the
+  symbol master.
 * :meth:`UniverseGuard.admit` — may this (already schema/confidence/source
   validated) candidate be written to context? Seed tickers always pass. A
   non-seed ticker must be optionable at the broker, fit under the per-run
@@ -29,6 +30,7 @@ from arc.universe.screen import measure_liquidity, screen_liquidity
 
 if TYPE_CHECKING:
     import datetime as _dt
+    import sqlite3
     from collections.abc import Callable
 
     from arc.config import ArcSettings
@@ -84,8 +86,16 @@ class UniverseGuard:
         market_factory: Callable[[], MarketDataProvider] | None = None,
         adv_market_factory: Callable[[], MarketDataProvider] | None = None,
         load_master: bool = True,
+        conn: sqlite3.Connection | None = None,
     ) -> UniverseGuard:
-        """Guard for one run. In seed mode the symbol master is loaded unless given."""
+        """Guard for one run. In seed mode the symbol master is loaded unless given.
+
+        D51: the seed set (admitted without the screen) is core ∪ the valid momentum
+        tier read from *conn* (core only without a store). In strict mode the whole
+        active list is the allow-list.
+        """
+        from arc.universe.tiers import active_tickers, seed_tickers
+
         cfg = config or load_universe_config(settings.universe_config_file)
         mode = UniverseMode(settings.universe_mode)
         if master is None and mode is UniverseMode.SEED and load_master:
@@ -98,9 +108,12 @@ class UniverseGuard:
                 now=now,
                 fetch_if_missing=False,
             )
+        seed = seed_tickers(conn, settings, now)
+        if mode is UniverseMode.STRICT:
+            seed = [*seed, *active_tickers(conn, settings, now)]
         return cls(
             mode=mode,
-            seed=frozenset(normalize_symbol(t) for t in settings.universe),
+            seed=frozenset(normalize_symbol(t) for t in seed),
             config=cfg,
             master=master,
             max_new=settings.scout_max_new_tickers,

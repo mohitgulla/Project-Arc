@@ -1,4 +1,5 @@
-"""``config/universe.yaml``: symbol master, liquidity screen and extraction knobs (D28)."""
+"""``config/universe.yaml``: core tier, tier layout (D51), symbol master, liquidity screen
+and extraction knobs (D28)."""
 
 from __future__ import annotations
 
@@ -6,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from arc.config import UniverseMode
 
@@ -17,6 +18,7 @@ __all__ = [
     "ExtractionConfig",
     "LiquidityThresholds",
     "SymbolMasterConfig",
+    "TiersConfig",
     "UniverseConfig",
     "UniverseMode",
     "load_universe_config",
@@ -68,9 +70,31 @@ class EarningsConfig(BaseModel):
     scout: Literal["seed", "all"] = "seed"
 
 
+class TiersConfig(BaseModel):
+    """D51 tier layout. Sizes and the active cap are runtime tunables (ArcSettings
+    ``universe_*``); this block documents the order and holds the market reference."""
+
+    model_config = _FORBID
+
+    order: list[Literal["core", "momentum", "trending", "discovery"]] = Field(
+        default_factory=lambda: ["core", "momentum", "trending", "discovery"]
+    )
+    market_reference: list[str] = Field(default_factory=lambda: ["SPY", "QQQ"])
+
+    @field_validator("order")
+    @classmethod
+    def _fixed_order(cls, v: list[str]) -> list[str]:
+        if v != ["core", "momentum", "trending", "discovery"]:
+            msg = "tiers.order is fixed (D51): core, momentum, trending, discovery"
+            raise ValueError(msg)
+        return v
+
+
 class UniverseConfig(BaseModel):
     model_config = _FORBID
 
+    core: list[str] = Field(default_factory=list, max_length=30)
+    tiers: TiersConfig = Field(default_factory=TiersConfig)
     symbol_master: SymbolMasterConfig = Field(default_factory=SymbolMasterConfig)
     liquidity_screen: LiquidityThresholds = Field(default_factory=LiquidityThresholds)
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)

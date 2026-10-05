@@ -1,0 +1,112 @@
+{
+  "$defs": {
+    "Tier": {
+      "description": "Universe tiers, highest precedence first.",
+      "enum": [
+        "core",
+        "momentum",
+        "trending",
+        "discovery"
+      ],
+      "title": "Tier",
+      "type": "string"
+    },
+    "TierMember": {
+      "additionalProperties": false,
+      "description": "One name in one tier (rank 1 = first).",
+      "properties": {
+        "also_in": {
+          "description": "lower tiers that also listed this name (dedupe)",
+          "items": {
+            "$ref": "#/$defs/Tier"
+          },
+          "title": "Also In",
+          "type": "array"
+        },
+        "as_of": {
+          "format": "date",
+          "title": "As Of",
+          "type": "string"
+        },
+        "rank": {
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier"
+        }
+      },
+      "required": [
+        "ticker",
+        "tier",
+        "rank",
+        "source",
+        "as_of"
+      ],
+      "title": "TierMember",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "``universe_tier`` context entry (subject = tier name), written by E12.2 / E12.3.",
+  "properties": {
+    "digest": {
+      "default": "",
+      "title": "Digest",
+      "type": "string"
+    },
+    "fetched_at": {
+      "format": "date-time",
+      "title": "Fetched At",
+      "type": "string"
+    },
+    "members": {
+      "items": {
+        "$ref": "#/$defs/TierMember"
+      },
+      "title": "Members",
+      "type": "array"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "source_as_of": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source As Of"
+    },
+    "tier": {
+      "$ref": "#/$defs/Tier"
+    }
+  },
+  "required": [
+    "tier",
+    "fetched_at",
+    "source"
+  ],
+  "title": "UniverseTierPayload",
+  "type": "object"
+}

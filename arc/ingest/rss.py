@@ -119,7 +119,7 @@ def fetch_rss(
         return []
 
     results: list[RawDoc] = []
-    uni = IngestUniverse.from_settings(settings)
+    uni = IngestUniverse.from_settings(settings, now=now, conn=conn)
 
     for feed_url in feeds:
         cursor_key = f"{CONNECTOR}:{feed_url}"

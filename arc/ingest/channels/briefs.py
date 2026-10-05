@@ -55,7 +55,7 @@ from arc.utils.calendar import ET, add_sessions, now_et, session_close
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from arc.config import ArcSettings
     from arc.ingest.llm import ScoutLLM
@@ -263,6 +263,7 @@ def brief_to_candidates(
     settings: ArcSettings,
     *,
     registry: ChannelRegistry | None = None,
+    universe: Iterable[str] | None = None,
 ) -> list[Candidate]:
     """Map a brief's universe-ticker calls and ticker catalysts to ``Candidate``s.
 
@@ -272,15 +273,20 @@ def brief_to_candidates(
       in the brief is ``earnings``; a call with a named level is
       ``technical``; otherwise ``news``. Catalysts map by kind.
     * ``sources = [video_url]``; ``created_at = published_at``.
-    * Tickers outside the seed universe are logged as proposed additions (D9)
-      and do not become candidates here: this bridge bypasses the Scout's D28
-      liquidity screen, so open-universe names reach the Director only via the
-      Scout (which reads the same transcript). One candidate per ticker (merged).
+    * Tickers outside the active list (D51; *universe*, default the core) are
+      logged as proposed additions (D9) and do not become candidates here: this
+      bridge bypasses the Scout's D28 liquidity screen, so open-universe names
+      reach the Director only via the Scout (which reads the same transcript).
+      One candidate per ticker (merged).
     """
     reg = registry or default_registry()
     proc = reg.for_slug(brief.channel_slug) or reg.default
     trust = proc.profile.trust_weight
-    universe = {t.upper() for t in settings.universe}
+    if universe is None:  # D51: the caller passes today's active list; else the core
+        from arc.universe.tiers import core_tickers
+
+        universe = core_tickers(settings)
+    universe = {t.upper() for t in universe}
 
     earnings = {
         t: c for c in brief.catalysts if c.kind is BriefCatalystKind.EARNINGS for t in c.tickers
@@ -418,7 +424,7 @@ def process_new_videos(
     now = (now or now_et()).astimezone(ET)
     repo = ChannelBriefRepo(conn)
     run = BriefRunResult()
-    uni = IngestUniverse.from_settings(settings, now=now)
+    uni = IngestUniverse.from_settings(settings, now=now, conn=conn)
 
     rows = [
         dict(r)
@@ -459,7 +465,9 @@ def process_new_videos(
         run.processed += 1
         run.stored[status] = run.stored.get(status, 0) + 1
         run.results.append(result)
-        run.candidates.extend(brief_to_candidates(result.brief, settings, registry=registry))
+        run.candidates.extend(
+            brief_to_candidates(result.brief, settings, registry=registry, universe=uni.seed)
+        )
     return run
 
 

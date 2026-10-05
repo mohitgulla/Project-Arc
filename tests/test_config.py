@@ -50,12 +50,13 @@ class TestDefaults:
         }
         assert set(s.structure_whitelist) == expected
 
-    def test_default_universe_matches_d9(self) -> None:
+    def test_default_universe_is_d51_core(self) -> None:
         s = get_settings()
         assert s.universe == DEFAULT_UNIVERSE
-        assert len(s.universe) == 20
-        assert "SPY" in s.universe
-        assert "HD" in s.universe
+        assert len(s.universe) == 25
+        # D51: no ETFs in the core; SPY/QQQ are the market reference, not trade names
+        assert "SPY" not in s.universe and "QQQ" not in s.universe
+        assert s.universe[-8:] == ["SOFI", "HOOD", "INTC", "SMCI", "NFLX", "UBER", "BAC", "MARA"]
 
 
 # ---------------------------------------------------------------------------

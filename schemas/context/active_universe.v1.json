@@ -1,0 +1,151 @@
+{
+  "$defs": {
+    "DroppedMember": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier"
+        }
+      },
+      "required": [
+        "ticker",
+        "tier",
+        "reason"
+      ],
+      "title": "DroppedMember",
+      "type": "object"
+    },
+    "Tier": {
+      "description": "Universe tiers, highest precedence first.",
+      "enum": [
+        "core",
+        "momentum",
+        "trending",
+        "discovery"
+      ],
+      "title": "Tier",
+      "type": "string"
+    },
+    "TierMember": {
+      "additionalProperties": false,
+      "description": "One name in one tier (rank 1 = first).",
+      "properties": {
+        "also_in": {
+          "description": "lower tiers that also listed this name (dedupe)",
+          "items": {
+            "$ref": "#/$defs/Tier"
+          },
+          "title": "Also In",
+          "type": "array"
+        },
+        "as_of": {
+          "format": "date",
+          "title": "As Of",
+          "type": "string"
+        },
+        "rank": {
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier"
+        }
+      },
+      "required": [
+        "ticker",
+        "tier",
+        "rank",
+        "source",
+        "as_of"
+      ],
+      "title": "TierMember",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "``active_universe`` context entry (subject ``active``): one per resolve.",
+  "properties": {
+    "as_of": {
+      "format": "date",
+      "title": "As Of",
+      "type": "string"
+    },
+    "config_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Config Version"
+    },
+    "counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "description": "active members per tier (every tier listed)",
+      "title": "Counts",
+      "type": "object"
+    },
+    "dropped": {
+      "items": {
+        "$ref": "#/$defs/DroppedMember"
+      },
+      "title": "Dropped",
+      "type": "array"
+    },
+    "expired_tiers": {
+      "description": "tiers whose latest feed expired (read as empty)",
+      "items": {
+        "$ref": "#/$defs/Tier"
+      },
+      "title": "Expired Tiers",
+      "type": "array"
+    },
+    "members": {
+      "items": {
+        "$ref": "#/$defs/TierMember"
+      },
+      "title": "Members",
+      "type": "array"
+    },
+    "raw_counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "description": "names each tier offered before dedupe and caps",
+      "title": "Raw Counts",
+      "type": "object"
+    }
+  },
+  "required": [
+    "as_of"
+  ],
+  "title": "ActiveUniverse",
+  "type": "object"
+}

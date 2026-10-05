@@ -625,7 +625,9 @@ def test_edgar_one_submissions_request_per_company(
     monkeypatch.setattr(E, "_company_tickers", tickers)
     monkeypatch.setattr(E, "_fetch_submissions", subs)
     monkeypatch.setattr(E, "_fetch_filing_text", filing)
-    monkeypatch.setattr(E.IngestUniverse, "from_settings", classmethod(lambda cls, s: _NoMaster()))
+    monkeypatch.setattr(
+        E.IngestUniverse, "from_settings", classmethod(lambda cls, s, **_kw: _NoMaster())
+    )
     settings = ArcSettings(universe=["AAPL", "MSFT", "QQQ"], _env_file=None)  # type: ignore[call-arg]
     docs = E.fetch_edgar(conn, settings)
     assert calls == {"tickers": 1, "submissions": 2, "filing": 6}
@@ -637,6 +639,8 @@ def test_edgar_one_submissions_request_per_company(
 
 
 class _NoMaster:
+    seed = ("AAPL", "MSFT")
+
     def cik(self, _t: str) -> None:
         return None
 

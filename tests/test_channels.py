@@ -683,7 +683,11 @@ class TestBriefToCandidates:
             ],
         }
         brief = _build(stockedup, payload, video=video).brief
-        by = {c.ticker: c for c in brief_to_candidates(brief, settings)}
+        # D51: SPY is the market reference, not a trade name, so the default (core)
+        # universe drops it; an active list that holds it (e.g. as trending) keeps it.
+        assert {c.ticker for c in brief_to_candidates(brief, settings)} == {"NVDA", "JPM"}
+        active = [*settings.universe, "SPY"]
+        by = {c.ticker: c for c in brief_to_candidates(brief, settings, universe=active)}
         assert set(by) == {"NVDA", "SPY", "JPM"}
         assert by["NVDA"].catalyst_type is CatalystType.EARNINGS
         assert by["NVDA"].catalyst_date == dt.datetime(2026, 9, 30, tzinfo=ET)

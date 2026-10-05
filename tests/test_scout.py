@@ -685,7 +685,8 @@ def test_cli_scan_dry_run() -> None:
     report = json.loads(result.stdout)
     assert report["dry_run"] is True
     assert report["docs_scouted"] == 11
-    # seed mode (default): PLTR is a new, liquid name; with no symbol master cached
-    # (tests are hermetic) non-seed names fail closed as unknown_symbol.
-    assert {c["ticker"] for c in report["candidates"]} == {"NVDA", "XOM", "SPY"}
+    # seed mode (default): with no symbol master cached (tests are hermetic) non-seed
+    # names fail closed as unknown_symbol. D51: PLTR is core now (admitted); SPY is
+    # the market reference, not a trade name, so it fails closed like any non-seed.
+    assert {c["ticker"] for c in report["candidates"]} == {"NVDA", "XOM", "PLTR"}
     assert all("rationale" not in c for c in report["candidates"])

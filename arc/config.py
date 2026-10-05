@@ -101,30 +101,38 @@ DEFAULT_YOUTUBE_CHANNELS: list[str] = [
 
 
 # ---------------------------------------------------------------------------
-# Default universe (D9)
+# Default core universe (D51; was the D9 flat seed list)
 # ---------------------------------------------------------------------------
 
+# D51 core tier: 25 stocks, no ETFs; the last 8 fit a $10k-$25k account. Must equal
+# config/universe.yaml `core:` (tests/test_universe_tiers.py pins it). SPY/QQQ are the
+# market reference (config/universe.yaml `tiers.market_reference`), not trade names.
 DEFAULT_UNIVERSE: list[str] = [
-    "SPY",
-    "QQQ",
-    "IWM",
-    "DIA",
-    "XLF",
-    "XLE",
-    "XLK",
+    "NVDA",
     "AAPL",
     "MSFT",
-    "NVDA",
     "AMZN",
     "GOOGL",
     "META",
     "TSLA",
     "AMD",
+    "AVGO",
+    "MU",
     "JPM",
-    "BAC",
     "XOM",
     "UNH",
-    "HD",
+    "BA",
+    "ORCL",
+    "COIN",
+    "PLTR",
+    "SOFI",
+    "HOOD",
+    "INTC",
+    "SMCI",
+    "NFLX",
+    "UBER",
+    "BAC",
+    "MARA",
 ]
 
 
@@ -859,9 +867,25 @@ class ArcSettings(BaseSettings):
     universe: list[str] = Field(
         default_factory=lambda: list(DEFAULT_UNIVERSE),
         description=(
-            "Seed/watch list (D28): always scanned and always accepted. In strict mode "
-            "(ARC_UNIVERSE_MODE=strict) it is the allow-list."
+            "D51 core tier (was the D28 seed list): always scanned and always accepted. "
+            "Consumers read the active list (arc.universe.tiers.active_tickers), never this "
+            "field. A list longer than 30 is a pre-D51 override and is ignored in favour of "
+            "config/universe.yaml core. In strict mode (ARC_UNIVERSE_MODE=strict) the "
+            "active list is the allow-list."
         ),
+    )
+    universe_active_max: Annotated[int, Field(ge=1, le=60)] = Field(
+        default=50,
+        description="D51: the deduped active list (core > momentum > trending > discovery) "
+        "is capped at this many names; the rest are journaled universe:over_active_cap.",
+    )
+    universe_momentum_size: Annotated[int, Field(ge=0, le=50)] = Field(
+        default=25,
+        description="D51: momentum tier size (top N S&P 500 Momentum holdings, monthly, E12.2).",
+    )
+    universe_trending_size: Annotated[int, Field(ge=0, le=50)] = Field(
+        default=25,
+        description="D51: trending tier size (daily rules-based list, E12.3).",
     )
     universe_mode: UniverseMode = Field(
         default=UniverseMode.SEED,

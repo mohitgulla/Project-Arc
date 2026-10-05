@@ -24,6 +24,7 @@ from arc.models import Candidate, CatalystType, ChannelBrief, Proposal, Stance
 from arc.personas.schemas import AuditorOutput, DirectorOutput, QuantOutput, RiskOutput
 from arc.positions.evaluate import PositionReview
 from arc.positions.portfolio import MarketGuard, PortfolioContext
+from arc.universe.tiers import ActiveUniverse, UniverseTierPayload
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -484,6 +485,10 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("insider_activity", InsiderActivityPayload),
     KindSpec("analyst_recs", AnalystRecsPayload),
     KindSpec("fundamentals", FundamentalsPayload),
+    # D51 (E12.1): tiered universe. universe_tier subject = tier name (E12.2/E12.3
+    # write momentum/trending); active_universe subject = "active" (one per resolve).
+    KindSpec("universe_tier", UniverseTierPayload),
+    KindSpec("active_universe", ActiveUniverse),
 )
 
 
