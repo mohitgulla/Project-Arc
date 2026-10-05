@@ -417,7 +417,11 @@ def test_cli_serve_print_command_and_missing_db(
 
 
 def test_cli_snapshot(db: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["tower", "snapshot", "--db", str(db), "--json"]) == 0
+    # The CLI reads the wall clock (TowerConfig.clock); the fixture's violations are at
+    # NOW (2026-09-28), so a 7-day window aged them out on 2026-10-05 and main went red.
+    # A window wide enough to always include NOW keeps the test independent of today.
+    wide = ["--lookback-days", "36500"]
+    assert main(["tower", "snapshot", "--db", str(db), "--json", *wide]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["greeks"]["delta"] == 25.0 and payload["violation_counts"]
     assert main(["tower", "snapshot", "--db", str(db)]) == 0
