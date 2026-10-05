@@ -3153,6 +3153,8 @@ export interface components {
              * @description Structure day change: legs' change_today weighted by value
              */
             change_today?: number | null;
+            /** Direction */
+            direction?: ("bullish" | "bearish" | "neutral") | null;
             /** Kind */
             kind: string | null;
             /** Open Proposal Hash */
@@ -3683,6 +3685,11 @@ export interface components {
              * @description $ change today (broker marks)
              */
             day_change?: string | null;
+            /**
+             * Direction
+             * @description D50: bullish / bearish / neutral from the opening legs
+             */
+            direction?: ("bullish" | "bearish" | "neutral") | null;
             /** Dte */
             dte?: number | null;
             /** Entry Net */
@@ -3927,6 +3934,8 @@ export interface components {
             created_at: string | null;
             /** Day */
             day: string | null;
+            /** Direction */
+            direction?: ("bullish" | "bearish" | "neutral") | null;
             /** Ev */
             ev: string | null;
             /** Execution */
@@ -3967,6 +3976,8 @@ export interface components {
             created_at: string | null;
             /** Day */
             day: string | null;
+            /** Direction */
+            direction?: ("bullish" | "bearish" | "neutral") | null;
             /** Ev */
             ev: string | null;
             /** Execution */
@@ -5030,6 +5041,11 @@ export interface components {
             created_at: string | null;
             /** Day */
             day: string | null;
+            /**
+             * Direction
+             * @description D50: bullish / bearish / neutral from leg sides and strikes; a close inherits the structure it exits; null without legs
+             */
+            direction?: ("bullish" | "bearish" | "neutral") | null;
             /** Execution */
             execution: string | null;
             /** Exit Reason */

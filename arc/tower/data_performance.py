@@ -783,14 +783,22 @@ def _model(closed: list[ClosedPosition]) -> ModelCard:
     )
 
 
+# Title Case on the Tower (D50); Slack keeps sentence case (D22).
 _STRUCTURE_LABEL = {
-    "long_call": "Long call",
-    "long_put": "Long put",
-    "vertical_debit": "Debit vertical",
-    "vertical_credit": "Credit vertical",
-    "iron_condor": "Iron condor",
+    "long_call": "Long Call",
+    "long_put": "Long Put",
+    "vertical_debit": "Debit Vertical",
+    "vertical_credit": "Credit Vertical",
+    "iron_condor": "Iron Condor",
+    "covered_call": "Covered Call",
+    "cash_secured_put": "Cash-Secured Put",
     "other": "Other",
 }
+
+
+def structure_label(kind: str) -> str:
+    """``vertical_debit`` -> ``Debit Vertical``; unknown kinds Title Case each word."""
+    return _STRUCTURE_LABEL.get(kind) or " ".join(w.capitalize() for w in kind.split("_"))
 
 
 def _humanise(code: str) -> str:
@@ -812,7 +820,7 @@ def _items(by: BreakdownBy, rows: list[BreakdownRow]) -> list[BreakdownItem]:
         if not r.key:
             label = "Not recorded"
         elif by == "structure":
-            label = _STRUCTURE_LABEL.get(r.key, _humanise(r.key))
+            label = structure_label(r.key)
         elif by == "reason_code":
             label = reason_label(r.key)
         elif by == "ticker":

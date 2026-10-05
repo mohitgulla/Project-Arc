@@ -8,7 +8,8 @@ Public API:
       :func:`strike_grid`, :func:`max_gain_loss`, :func:`breakevens`,
       :func:`net_debit_credit`, :func:`net_greeks`, :func:`classify`,
       :func:`is_defined_risk`, :func:`assert_defined_risk`,
-      :func:`buying_power`, :class:`MarketInputs`, :class:`UndefinedRiskError`
+      :func:`buying_power`, :func:`legs_direction`, :func:`structure_stance`,
+      :class:`MarketInputs`, :class:`UndefinedRiskError`
 """
 
 from arc.structures.analytics import (
@@ -21,12 +22,14 @@ from arc.structures.analytics import (
     buying_power,
     classify,
     is_defined_risk,
+    legs_direction,
     max_gain_loss,
     net_debit_credit,
     net_greeks,
     payoff_at,
     payoff_grid,
     strike_grid,
+    structure_stance,
 )
 from arc.structures.builders import (
     credit_vertical,
@@ -52,6 +55,7 @@ __all__ = [
     "format_occ",
     "iron_condor",
     "is_defined_risk",
+    "legs_direction",
     "long_call",
     "long_put",
     "max_gain_loss",
@@ -61,4 +65,5 @@ __all__ = [
     "payoff_at",
     "payoff_grid",
     "strike_grid",
+    "structure_stance",
 ]

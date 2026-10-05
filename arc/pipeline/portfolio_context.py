@@ -24,7 +24,7 @@ import structlog
 import yaml
 from pydantic import ConfigDict
 
-from arc.models import Greeks, Stance, Structure, StructureKind
+from arc.models import Greeks, Stance, Structure
 from arc.positions.evaluate import PositionReview
 from arc.positions.portfolio import (
     GreekUsage,
@@ -37,7 +37,7 @@ from arc.positions.portfolio import (
     bucket_display,
     expiry_bucket,
 )
-from arc.structures import parse_occ
+from arc.structures import parse_occ, structure_stance
 from arc.utils.calendar import ET, dte_calendar
 
 if TYPE_CHECKING:
@@ -89,29 +89,6 @@ def load_sectors(path: Path | str | None = None) -> dict[str, str]:
 
 def _sector(ticker: str, sectors: Mapping[str, str]) -> str:
     return sectors.get(ticker.upper(), UNKNOWN_SECTOR)
-
-
-# ---------------------------------------------------------------------------
-# Stance of an open structure
-# ---------------------------------------------------------------------------
-
-
-def structure_stance(st: Structure) -> Stance:
-    """Directional read of a structure from its legs (fallback when no candidate row)."""
-    kind = st.kind
-    if kind is StructureKind.LONG_CALL:
-        return Stance.BULLISH
-    if kind is StructureKind.LONG_PUT:
-        return Stance.BEARISH
-    if kind is StructureKind.IRON_CONDOR:
-        return Stance.NEUTRAL
-    kinds = {parse_occ(leg.occ_symbol).kind.value for leg in st.legs}
-    debit = st.net_debit_credit > 0
-    if kinds == {"c"}:
-        return Stance.BULLISH if debit else Stance.BEARISH
-    if kinds == {"p"}:
-        return Stance.BEARISH if debit else Stance.BULLISH
-    return Stance.NEUTRAL
 
 
 # ---------------------------------------------------------------------------

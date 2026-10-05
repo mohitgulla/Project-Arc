@@ -49,7 +49,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from arc.journal.analytics import ProposalAnalytics  # noqa: TC001 - pydantic field
 from arc.journal.floor_exit import FloorExitFacts, floor_exit_facts
 from arc.journal.reasons import gate_reason, reason_label
-from arc.tower.data import _dec, _has_table, _json, parse_ts
+from arc.tower.data import Direction, _dec, _has_table, _json, direction_of, parse_ts
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -175,6 +175,11 @@ WITH {{stubs}}base AS (
     s.id AS structure_id, s.status AS structure_status,
     s.entry_net AS s_entry, s.close_net AS s_close, s.contracts AS s_contracts,
     s2.id AS closes_structure_id,
+    -- D50 direction: a close inherits the legs of the structure it exits (the exit link,
+    -- else its close execution's structure)
+    CASE WHEN p.kind = 'close' THEN COALESCE(s2.structure_json, (
+      SELECT structure_json FROM open_structures
+      WHERE id = x.structure_id AND x.kind = 'close')) END AS exited_structure_json,
     COALESCE(o.exit_reason, s.exit_reason, s2.exit_reason) AS exit_reason,
     o.realised_pnl AS outcome_pnl,
     -- realized P&L per close tranche (the rule above), one indexed lookup per structure
@@ -325,6 +330,11 @@ class TradeRow(BaseModel):
         default=None, description="The structure this close exits"
     )
     swap_id: str | None = None
+    direction: Direction | None = Field(
+        default=None,
+        description="D50: bullish / bearish / neutral from leg sides and strikes; a close "
+        "inherits the structure it exits; null without legs",
+    )
 
 
 class TradeSummary(BaseModel):
@@ -975,7 +985,19 @@ def _row(r: sqlite3.Row) -> TradeRow:
         structure_id=r["structure_id"],
         closes_structure_id=r["closes_structure_id"],
         swap_id=r["swap_id"],
+        direction=_direction(r),
     )
+
+
+def _direction(r: sqlite3.Row) -> Direction | None:
+    """D50: an open reads its own legs; a close inherits the structure it exits, else it
+    reads its own (reversed-side) legs flipped back."""
+    if r["kind"] == "close":
+        exited = _json(r["exited_structure_json"], {}) or {}
+        if isinstance(exited, dict) and exited.get("legs"):
+            return direction_of(exited["legs"])
+        return direction_of(r["legs_json"], closing=True)
+    return direction_of(r["legs_json"])
 
 
 def _ready(conn: sqlite3.Connection) -> bool:
