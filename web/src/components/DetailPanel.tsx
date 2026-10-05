@@ -6,7 +6,9 @@ import { IconBack, IconClose } from "./icons";
 /**
  * Detail view (§4, §6): a right-side panel on >=1280px; below that a full-page view with a
  * back button. The caller decides where it mounts (a route in E8.7b); *onClose* goes back.
- * The scrolling body carries `data-detail-scroll` so sticky children can watch its scroll.
+ * The scrolling body carries `data-detail-scroll`. With *pinned* the body does not scroll: the
+ * child lays out a fixed top section plus its own `data-detail-scroll` scroller (trade detail,
+ * D50), so the top never moves, without relying on `position: sticky` (iPhone Safari).
  */
 export function DetailPanel({
   title,
@@ -14,6 +16,7 @@ export function DetailPanel({
   children,
   inline = false,
   wide = false,
+  pinned = false,
 }: {
   title: ReactNode;
   onClose: () => void;
@@ -22,6 +25,8 @@ export function DetailPanel({
   inline?: boolean;
   /** 600 px side panel instead of 440 (trade detail: the stat strip is one row, E8.8f). */
   wide?: boolean;
+  /** The child owns scrolling: a non-scrolling flex column body, no padding. */
+  pinned?: boolean;
 }) {
   const layout = useLayout();
   const side = layout === "desktop";
@@ -49,9 +54,13 @@ export function DetailPanel({
           </button>
         )}
       </header>
-      <div data-detail-scroll className="min-h-0 flex-1 overflow-auto p-[var(--card-pad)]">
-        {children}
-      </div>
+      {pinned ? (
+        <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+      ) : (
+        <div data-detail-scroll className="min-h-0 flex-1 overflow-auto p-[var(--card-pad)]">
+          {children}
+        </div>
+      )}
     </aside>
   );
 }

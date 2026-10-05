@@ -28,7 +28,7 @@ from typing import NamedTuple
 
 from pydantic import BaseModel, Field
 
-from arc.models import Greeks, Leg, LegIntent, Structure, StructureKind
+from arc.models import Greeks, Leg, LegIntent, Stance, Structure, StructureKind
 from arc.pricing.bs import BSMInputs, OptionKind, greeks
 from arc.structures.occ import OccSymbol, parse_occ
 from arc.utils.calendar import dte_calendar, now_et
@@ -43,12 +43,14 @@ __all__ = [
     "buying_power",
     "classify",
     "is_defined_risk",
+    "legs_direction",
     "max_gain_loss",
     "net_debit_credit",
     "net_greeks",
     "payoff_at",
     "payoff_grid",
     "strike_grid",
+    "structure_stance",
 ]
 
 CONTRACT_MULTIPLIER = Decimal(100)
@@ -304,6 +306,59 @@ def _vertical_kind(a: _RLeg, b: _RLeg) -> StructureKind | None:
     else:
         debit = long_.occ.strike > short.occ.strike
     return StructureKind.VERTICAL_DEBIT if debit else StructureKind.VERTICAL_CREDIT
+
+
+def legs_direction(legs: Sequence[Leg], *, closing: bool = False) -> Stance | None:
+    """Directional read of a leg set from sides and strikes (never premiums or net sign).
+
+    - long call -> bullish; long put -> bearish
+    - call vertical: long leg at the lower strike -> bullish, else bearish
+    - put vertical: long leg at the higher strike -> bearish, else bullish
+    - anything else (condor, straddle, strangle, butterfly, calendar / diagonal, mixed
+      calls and puts, a lone short option, an unparsable OCC symbol) -> neutral
+    - no legs -> ``None``
+
+    *closing* marks the legs of a close proposal, whose sides are the reverse of the
+    structure it exits: they are flipped back first, so a close reads like its open.
+    """
+    if not legs:
+        return None
+    try:
+        occs = [parse_occ(leg.occ_symbol) for leg in legs]
+    except ValueError:
+        return Stance.NEUTRAL
+    flip = -1 if closing else 1
+    signs = [flip * (1 if leg.side == LegIntent.LONG else -1) for leg in legs]
+    if len({o.expiration for o in occs}) != 1 or len({o.root for o in occs}) != 1:
+        return Stance.NEUTRAL
+    if len(legs) == 1:
+        if signs[0] < 0:
+            return Stance.NEUTRAL
+        return Stance.BULLISH if occs[0].kind == OptionKind.CALL else Stance.BEARISH
+    if len(legs) == 2:
+        (a, b), (sa, sb) = occs, signs
+        if a.kind != b.kind or sa == sb or a.strike == b.strike:
+            return Stance.NEUTRAL
+        if legs[0].ratio != legs[1].ratio:
+            return Stance.NEUTRAL
+        long_, short = (a, b) if sa > 0 else (b, a)
+        # Call vertical long-low = bull call spread; put vertical long-high = bear put spread.
+        # Either way the long leg at the lower strike is the bullish one.
+        return Stance.BULLISH if long_.strike < short.strike else Stance.BEARISH
+    return Stance.NEUTRAL
+
+
+def structure_stance(st: Structure, *, closing: bool = False) -> Stance:
+    """Directional read of a structure from its kind and legs (see :func:`legs_direction`)."""
+    kind = st.kind
+    if not closing:
+        if kind is StructureKind.LONG_CALL:
+            return Stance.BULLISH
+        if kind is StructureKind.LONG_PUT:
+            return Stance.BEARISH
+    if kind is StructureKind.IRON_CONDOR:
+        return Stance.NEUTRAL
+    return legs_direction(st.legs, closing=closing) or Stance.NEUTRAL
 
 
 def classify(legs: Sequence[Leg]) -> StructureKind:

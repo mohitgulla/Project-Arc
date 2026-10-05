@@ -342,7 +342,7 @@ def test_breakdowns(conn: sqlite3.Connection, perf) -> None:  # noqa: ANN001
     assert "exit:take_profit" in {r.key for r in b.reason_code}
     top = b.ticker[0]
     assert top.filter == {"ticker": top.key, "stage": "closed"}
-    assert next(r for r in b.structure if r.key == "long_call").label == "Long call"
+    assert next(r for r in b.structure if r.key == "long_call").label == "Long Call"
 
 
 def test_breakdown_route_equals_the_tab(conn: sqlite3.Connection, perf) -> None:  # noqa: ANN001

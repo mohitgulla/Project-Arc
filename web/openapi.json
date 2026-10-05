@@ -7007,6 +7007,22 @@
             "description": "Structure day change: legs' change_today weighted by value",
             "title": "Change Today"
           },
+          "direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "bullish",
+                  "bearish",
+                  "neutral"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
           "kind": {
             "anyOf": [
               {
@@ -8695,6 +8711,23 @@
             "description": "$ change today (broker marks)",
             "title": "Day Change"
           },
+          "direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "bullish",
+                  "bearish",
+                  "neutral"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D50: bullish / bearish / neutral from the opening legs",
+            "title": "Direction"
+          },
           "dte": {
             "anyOf": [
               {
@@ -9451,6 +9484,22 @@
             ],
             "title": "Day"
           },
+          "direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "bullish",
+                  "bearish",
+                  "neutral"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
           "ev": {
             "anyOf": [
               {
@@ -9644,6 +9693,22 @@
               }
             ],
             "title": "Day"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "bullish",
+                  "bearish",
+                  "neutral"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
           },
           "ev": {
             "anyOf": [
@@ -12584,6 +12649,23 @@
               }
             ],
             "title": "Day"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "bullish",
+                  "bearish",
+                  "neutral"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D50: bullish / bearish / neutral from leg sides and strikes; a close inherits the structure it exits; null without legs",
+            "title": "Direction"
           },
           "execution": {
             "anyOf": [

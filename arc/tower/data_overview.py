@@ -42,6 +42,7 @@ from arc.models import Performance  # noqa: TC001 - pydantic field
 from arc.reconcile.baseline import BaselineSource  # noqa: TC001 - pydantic field
 from arc.reconcile.performance import DailyEquity, daily_equity, performance_from
 from arc.tower.data import (
+    Direction,
     GreeksView,
     HaltView,
     LegView,
@@ -56,6 +57,7 @@ from arc.tower.data import (
     _legs,
     _order_budget,
     _proposals,
+    direction_of,
     parse_ts,
     prev_close_of,
 )
@@ -224,6 +226,9 @@ class PositionRow(BaseModel):
     held_at: _dt.datetime | None = None
     max_loss: Decimal | None = Field(default=None, description="Structure max loss × contracts")
     open_proposal_hash: str
+    direction: Direction | None = Field(
+        default=None, description="D50: bullish / bearish / neutral from the opening legs"
+    )
 
 
 class GreeksSection(BaseModel):
@@ -250,6 +255,7 @@ class MoverTile(BaseModel):
     structure_id: str
     ticker: str
     kind: str | None
+    direction: Direction | None = None
     open_proposal_hash: str
     unrealized_pct: float | None = None
     change_today: float | None = Field(
@@ -700,6 +706,7 @@ def _position_rows(
                 held_at=held_at if is_open and r["id"] in held else None,
                 max_loss=max_loss_unit * n if max_loss_unit is not None else None,
                 open_proposal_hash=r["open_proposal_hash"],
+                direction=direction_of(st.get("legs")),
             )
         )
     return out
@@ -771,6 +778,7 @@ def _movers(positions: list[PositionRow], marks: list[IntradayMark]) -> list[Mov
                 structure_id=p.id,
                 ticker=p.ticker,
                 kind=p.kind,
+                direction=p.direction,
                 open_proposal_hash=p.open_proposal_hash,
                 unrealized_pct=p.unrealized_pct,
                 change_today=change,

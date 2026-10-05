@@ -7,6 +7,7 @@ import { EmptyState } from "../components/EmptyState";
 import { IconClose, IconFilter } from "../components/icons";
 import { Money } from "../components/Money";
 import { StatusStepper } from "../components/StatusStepper";
+import { StructureLabel } from "../components/StructureLabel";
 import { num } from "../lib/api";
 import { formatEt, formatLeg, formatNumber, formatPercent } from "../lib/format";
 import { useLayout } from "../lib/layout";
@@ -356,7 +357,7 @@ const COLS: Col[] = [
   { id: "time", header: "Time", sort: "time", cell: (r) => <span className="text-secondary">{r.created_at ? formatEt(r.created_at) : "—"}</span> },
   { id: "ticker", header: "Ticker", sort: "ticker", cell: (r) => <span className="font-semibold text-title">{r.ticker}</span> },
   { id: "kind", header: "Kind", cell: (r) => <span className="capitalize text-secondary">{r.kind}</span> },
-  { id: "structure", header: "Structure", cell: (r) => structureLabel(r.structure_kind) },
+  { id: "structure", header: "Structure", cell: (r) => <StructureLabel kind={r.structure_kind} direction={r.direction} /> },
   { id: "legs", header: "Legs", optional: true, cell: (r) => <span className="text-caption text-secondary">{r.legs.map(formatLeg).join(" / ")}</span> },
   { id: "contracts", header: "Qty", sort: "contracts", cell: (r) => (r.contracts == null ? "—" : formatNumber(r.contracts)) },
   { id: "limit", header: "Limit", sort: "limit", cell: (r) => moneyCell(r.limit, "price") },
@@ -383,7 +384,11 @@ function TradesTable({ rows, sort, dir, onSort, onOpen }: { rows: TradeRow[]; so
             onClick={() => onOpen(r)}
             primary={
               <>
-                {r.ticker} <span className="font-normal text-secondary">· {structureLabel(r.structure_kind)}{r.kind === "close" ? " · close" : ""}</span>
+                {r.ticker}{" "}
+                <span className="font-normal text-secondary">
+                  · <StructureLabel kind={r.structure_kind} direction={r.direction} />
+                  {r.kind === "close" ? " · close" : ""}
+                </span>
                 <span className="ml-auto">{r.realized_pnl != null ? moneyCell(r.realized_pnl, "pnl", true) : moneyCell(r.net_ev, "pnl", true)}</span>
               </>
             }

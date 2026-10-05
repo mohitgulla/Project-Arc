@@ -15,6 +15,7 @@ import { ProportionBar } from "../components/ProportionBar";
 import { RangeControl } from "../components/RangeControl";
 import { StatCard } from "../components/StatCard";
 import { StatusStepper } from "../components/StatusStepper";
+import { StructureLabel, structureText } from "../components/StructureLabel";
 import { Tile, TileRow } from "../components/Tile";
 import { TrendChart } from "../components/TrendChart";
 import { num } from "../lib/api";
@@ -29,6 +30,7 @@ import {
 } from "../lib/format";
 import {
   OVERVIEW_RANGES,
+  equityDates,
   equityView,
   parseOverviewRange,
   pnlSplit,
@@ -37,7 +39,6 @@ import {
   sortMovers,
   statusRow,
   stripTone,
-  structureLabel,
   usedOfCap,
   violationCode,
   type StatusSlot,
@@ -92,9 +93,10 @@ function SlotCell({ slot }: { slot: StatusSlot }) {
 const CELL = "flex min-h-[44px] min-w-0 items-center gap-2 rounded-control px-2 text-caption tablet:min-h-[32px]";
 
 /**
- * E8.8b status row (D48): fixed slots Trading · Tick · Health · Alerts · Orders · env chip,
- * each `label value` with a status dot. A 3x2 grid of equal cells up to 768 px; one row above,
- * with the env chip right-aligned. A halt replaces slot 1 with HALTED + reason + age.
+ * Status row (D48, D50 order): fixed slots Trading · env · Orders · Tick · Health · Alerts, each
+ * `label value` with a status dot; the env slot (`Paper • Cash Debit`) is plain text styled like
+ * the others, with a neutral dot. A 3x2 grid of equal cells up to 768 px; one row above, same
+ * order. A halt replaces slot 1 with HALTED + reason + age.
  */
 function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useCadences>; now: number }) {
   const [open, setOpen] = useState(false);
@@ -148,8 +150,8 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
             );
           if (slot.key === "env")
             return (
-              <li key={slot.key} className={`${CELL} tablet:ml-auto`} data-testid="env-chip" title={slot.title}>
-                <span className="min-w-0 truncate rounded-pill bg-control px-2 py-0.5 text-micro text-secondary">{slot.value}</span>
+              <li key={slot.key} className={CELL} data-testid="env-slot" title={slot.title}>
+                <SlotCell slot={slot} />
               </li>
             );
           return (
@@ -180,7 +182,7 @@ function StatusStrip({ o, cad, now }: { o: Overview; cad: ReturnType<typeof useC
 // Equity + P&L
 // ---------------------------------------------------------------------------
 
-function EquityCard({ o, range, cad }: { o: Overview; range: OverviewRange; cad: ReturnType<typeof useCadences> }) {
+function EquityCard({ o, range, cad, now }: { o: Overview; range: OverviewRange; cad: ReturnType<typeof useCadences>; now: number }) {
   const e = o.equity;
   const v = equityView(e, range);
   const value = num(e.value);
@@ -195,14 +197,9 @@ function EquityCard({ o, range, cad }: { o: Overview; range: OverviewRange; cad:
         </span>
       }
       headerExtra={
-        <>
-          <InfoTip label="About the equity series" testid="equity-info">
-            {v.source === "intraday" ? "Today's 5-min monitor marks." : "Reconciled daily closes."}
-          </InfoTip>
-          <span className="max-w-full basis-full min-[521px]:basis-auto" data-testid="equity-range">
-            <RangeControl fallback="1D" ranges={OVERVIEW_RANGES} size="sm" />
-          </span>
-        </>
+        <InfoTip label="About the equity series" testid="equity-info">
+          {v.source === "intraday" ? "Today's 5-min monitor marks." : "Reconciled daily closes."}
+        </InfoTip>
       }
       value={value === null ? "—" : <Money value={value} kind="equity" />}
       change={
@@ -217,10 +214,10 @@ function EquityCard({ o, range, cad }: { o: Overview; range: OverviewRange; cad:
       }
       comparison={
         v.reference !== undefined ? (
-          <>
+          <span data-testid="equity-comparison">
             vs {formatMoney(v.reference, "equity")} at {e.start_label ?? "range start"}
             {e.start_source === "broker_last_equity" && <span className="text-muted"> · prev close: broker</span>}
-          </>
+          </span>
         ) : undefined
       }
       freshness={{
@@ -229,6 +226,13 @@ function EquityCard({ o, range, cad }: { o: Overview; range: OverviewRange; cad:
         label: e.source === "intraday" ? "monitor mark" : "reconcile",
       }}
     >
+      {/* D50: the range selector sits below the hero, with its dates (Performance RangeBar layout). */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1" data-testid="equity-range">
+        <RangeControl fallback="1D" ranges={OVERVIEW_RANGES} size="sm" />
+        <span className="text-caption text-muted tabular-nums" data-testid="equity-dates">
+          {equityDates(e.range === range ? e : undefined, now)}
+        </span>
+      </div>
       {v.series.length > 1 ? (
         <TrendChart data={v.series} reference={v.reference} kind="equity" />
       ) : (
@@ -426,7 +430,7 @@ function ProposalsCard({ o }: { o: Overview }) {
                   <span className="min-w-0 truncate">
                     <span className="font-semibold text-title">{p.ticker ?? "?"}</span>{" "}
                     <span className="text-secondary">
-                      {p.kind} · {structureLabel(p.structure_kind)}
+                      {p.kind} · <StructureLabel kind={p.structure_kind} direction={p.direction} />
                       {p.contracts != null && <> · {p.contracts}×</>}
                     </span>
                   </span>
@@ -462,7 +466,7 @@ function MoversCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
             <Tile
               key={m.structure_id}
               ticker={m.ticker}
-              name={m.change_today == null ? structureLabel(m.kind) : `day ${formatPercent(m.change_today, { explicitSign: true })}`}
+              name={m.change_today == null ? structureText(m.kind, m.direction) : `day ${formatPercent(m.change_today, { explicitSign: true })}`}
               values={m.spark ?? []}
               change={m.unrealized_pct ?? 0}
               to={`/trades/${m.open_proposal_hash}`}
@@ -586,7 +590,7 @@ export function OverviewPage() {
       <div className="grid gap-6 desktop:grid-cols-2 desktop:gap-10" data-testid="overview-grid">
         <div className={col}>
           <div className="order-1 min-w-0 desktop:order-none">
-            <EquityCard o={o} range={range} cad={cad} />
+            <EquityCard o={o} range={range} cad={cad} now={now} />
           </div>
           <div className="order-3 min-w-0 desktop:order-none">
             <Card

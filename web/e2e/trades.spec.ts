@@ -272,13 +272,55 @@ test.describe("trade detail phone-75 first screen", { tag: PHONE_75_TAG }, () =>
       const panel = await page.getByRole("tabpanel").boundingBox();
       expect(panel!.height, `${name} panel height`).toBeLessThanOrEqual(3 * h);
     }
-    // Scrolling collapses the summary to one line (ticker · EV · status) and keeps it on screen.
-    await tab(page, "Numbers");
-    await page.locator("[data-detail-scroll]").evaluate((el) => el.scrollTo({ top: 600 }));
-    await expect(page.getByTestId("summary-compact")).toBeVisible();
-    await expect(page.getByTestId("summary-compact")).toContainText("SPY");
-    const top = await page.getByTestId("trade-header").boundingBox();
-    expect(top!.y).toBeGreaterThanOrEqual(0);
-    expect(top!.y).toBeLessThan(120);
   });
 });
+
+// D50: the whole summary (ticker line, legs, stepper, stat strip, tabs) is pinned at every width:
+// only the tab panel scrolls, nothing collapses.
+for (const vp of [PHONE_75, { name: "desktop", width: 1440, height: 900 }] as const) {
+  test.describe(`trade detail pinned summary ${vp.name}`, { tag: vp.name === PHONE_75.name ? PHONE_75_TAG : [] }, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height } });
+    for (const theme of THEMES) {
+      test(`Audit tab scrolled 600 px keeps the summary in place (${theme})`, async ({ page }) => {
+        await open(page, "/trades?ticker=SPY&kind=open", theme);
+        const rows = vp.name === "desktop" ? page.locator("tbody tr") : page.getByTestId("datatable-cards").locator(":scope > button");
+        await rows.first().click();
+        await tab(page, "Audit");
+        const header = page.getByTestId("trade-header");
+        await expect(header).toContainText("SPY");
+        await expect(header.getByTestId("direction")).toHaveText("Bullish");
+        const before = await header.boundingBox();
+        const scroller = page.locator("[data-detail-scroll]");
+        // Make sure the panel can scroll 600 px even on a short tab, then scroll it.
+        await scroller.evaluate((el) => {
+          const pad = document.createElement("div");
+          pad.style.height = "1400px";
+          pad.dataset.e2ePad = "1";
+          el.appendChild(pad);
+        });
+        await scroller.evaluate((el) => el.scrollTo({ top: 600 }));
+        await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(600);
+        const after = await header.boundingBox();
+        expect(after!.y).toBeCloseTo(before!.y, 0);
+        expect(after!.height).toBeCloseTo(before!.height, 0);
+        await expect(page.getByTestId("stat-strip")).toBeInViewport();
+        await expect(page.getByTestId("trade-tabs")).toBeInViewport();
+        await expect(page.getByTestId("stat-strip").locator("[data-testid^=stat-]")).toHaveCount(6);
+        // the scroller, not the page, moved
+        expect(await page.evaluate(() => window.scrollY)).toBe(0);
+        if (vp.name !== "desktop") {
+          // ≥ ~45 % of the 520x1125 viewport is left for the tab content
+          const h = page.viewportSize()!.height;
+          const box = await scroller.boundingBox();
+          expect(box!.height / h).toBeGreaterThanOrEqual(0.45);
+        }
+        await scroller.evaluate((el) => el.querySelector("[data-e2e-pad]")?.remove());
+        await page.screenshot({ path: `e2e/screenshots/trade-detail-audit-scrolled-${vp.name}-${theme}.png` });
+        // switching tab starts the new tab at its top
+        await scroller.evaluate((el) => el.scrollTo({ top: 200 }));
+        await tab(page, "Why");
+        await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(0);
+      });
+    }
+  });
+}

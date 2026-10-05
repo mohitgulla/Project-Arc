@@ -34,11 +34,11 @@ import sqlite3
 from collections import Counter
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arc.models import Performance  # noqa: TC001 - pydantic field
+from arc.models import Leg, Performance  # noqa: TC001 - pydantic field
 from arc.reconcile.baseline import BaselineSource, start_of_day_equity
 from arc.reconcile.performance import daily_equity, performance_from
 from arc.utils.calendar import ET
@@ -50,10 +50,12 @@ __all__ = [
     "LegView",
     "OpsView",
     "PnlView",
+    "Direction",
     "ProposalView",
     "StructureView",
     "TowerSnapshot",
     "connect_ro",
+    "direction_of",
     "load_snapshot",
     "monitor_stale_after",
     "parse_ts",
@@ -153,6 +155,29 @@ def _json(text: str | None, default: Any) -> Any:
         return json.loads(text)
     except ValueError:
         return default
+
+
+Direction = Literal["bullish", "bearish", "neutral"]
+
+
+def direction_of(legs: Any, *, closing: bool = False) -> Direction | None:
+    """Trade direction from stored legs (JSON text or a list of leg dicts), D50.
+
+    Deterministic, from leg sides and strikes (:func:`arc.structures.legs_direction`),
+    never the LLM or the candidate stance. *closing* flips a close proposal's sides
+    back so it reads like the structure it exits. No legs -> ``None``; malformed -> neutral.
+    """
+    from arc.structures import legs_direction
+
+    raw = _json(legs, []) if isinstance(legs, str) or legs is None else legs
+    if not isinstance(raw, list) or not raw:
+        return None
+    try:
+        parsed = [Leg.model_validate(leg) for leg in raw]
+    except ValueError:
+        return "neutral"
+    stance = legs_direction(parsed, closing=closing)
+    return None if stance is None else stance.value  # type: ignore[return-value]
 
 
 def _has_table(conn: sqlite3.Connection, name: str) -> bool:
@@ -260,6 +285,7 @@ class ProposalView(BaseModel):
     ticker: str | None
     kind: str
     structure_kind: str | None
+    direction: Direction | None = None
     contracts: int | None
     limit: Decimal | None
     ev: Decimal | None
@@ -518,18 +544,39 @@ def _structures(conn: sqlite3.Connection, legs: list[LegView]) -> list[Structure
     return out
 
 
+def _proposal_direction(
+    kind: str | None, st: dict[str, Any], exited: str | None
+) -> Direction | None:
+    """D50: an open reads its own legs; a close reads the structure it exits, else its own
+    (reversed-side) legs flipped back."""
+    if kind != "close":
+        return direction_of(st.get("legs"))
+    ex = _json(exited, {}) or {}
+    if isinstance(ex, dict) and ex.get("legs"):
+        return direction_of(ex["legs"])
+    return direction_of(st.get("legs"), closing=True)
+
+
 def _proposals(conn: sqlite3.Connection, since_day: str, limit: int) -> list[ProposalView]:
     approvals = _has_table(conn, "approval_requests")
     executions = _has_table(conn, "executions")
     join_a = "LEFT JOIN approval_requests a ON a.proposal_hash = p.proposal_hash"
     join_x = "LEFT JOIN executions x ON x.proposal_hash = p.proposal_hash"
+    # D50: a close inherits the direction of the structure it exits.
+    exited = (
+        "(SELECT structure_json FROM open_structures WHERE exit_proposal_hash = p.proposal_hash"
+        " LIMIT 1)"
+        if _has_table(conn, "open_structures")
+        else "NULL"
+    )
     rows = conn.execute(
         f"""SELECT p.proposal_hash, p.day, p.ticker, p.kind, p.structure_json, p.quant_json,
                    p.sizing_json, p.created_at,
                    g.passed AS gate_passed, g.violations_json AS gate_violations,
                    {"a.status" if approvals else "NULL"} AS approval,
                    {"x.status" if executions else "NULL"} AS execution,
-                   {"x.fill_price" if executions else "NULL"} AS fill_price
+                   {"x.fill_price" if executions else "NULL"} AS fill_price,
+                   {exited} AS exited_json
             FROM proposals p
             LEFT JOIN gate_decisions g ON g.id = (
                 SELECT id FROM gate_decisions WHERE proposal_hash = p.proposal_hash
@@ -552,6 +599,7 @@ def _proposals(conn: sqlite3.Connection, since_day: str, limit: int) -> list[Pro
                 ticker=r["ticker"],
                 kind=r["kind"] or "open",
                 structure_kind=st.get("kind"),
+                direction=_proposal_direction(r["kind"], st, r["exited_json"]),
                 contracts=sizing.get("contracts"),
                 limit=limit_price,
                 ev=_dec(quant.get("ev")),

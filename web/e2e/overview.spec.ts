@@ -41,7 +41,8 @@ for (const vp of VIEWPORTS) {
         await expect(strip).not.toContainText("Orders today");
         await expect(page.getByTestId("slot-tick")).toContainText("Tick");
         await expect(page.getByTestId("slot-health")).toContainText("Health");
-        await expect(page.getByTestId("env-chip")).toContainText("paper");
+        // D50: the env slot is plain text like the others, Title Case.
+        await expect(page.getByTestId("env-slot")).toHaveText("Paper • Cash Debit");
         await expect(page.getByTestId("alerts-toggle")).toContainText("Alerts 1");
         await page.getByTestId("alerts-toggle").click();
         await expect(strip).toContainText("scout slot 12:00 ET missed");
@@ -50,7 +51,10 @@ for (const vp of VIEWPORTS) {
           await expect(page.getByRole("heading", { level: 2, name: title, exact: false }).first()).toBeVisible();
         await expect(page.getByTestId("trend-chart").locator("svg path").first()).toBeVisible();
         await expect(page.getByTestId("mtd-ytd")).toContainText("MTD");
-        await expect(page.getByText("Debit vertical").first()).toBeVisible();
+        await expect(page.getByText("Debit Vertical").first()).toBeVisible();
+        // D50: direction right after the structure label (QQQ put debit vertical = Bearish).
+        await expect(page.getByTestId("direction").first()).toBeVisible();
+        await expect(page.locator("[data-direction=bearish]").first()).toHaveText("Bearish");
         await expect(page.getByText("NO", { exact: true }).or(page.getByText("not held")).first()).toBeVisible();
         await expect(page.getByTestId("proposals").locator(":scope > li")).toHaveCount(9);
         await expect(page.getByTestId("proposals")).toContainText("per_underlying_limit");
@@ -58,12 +62,14 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("activity").locator(":scope > li")).toHaveCount(8);
         await expect(page.getByTestId("activity-more")).toHaveText("Show 1 more");
         await expect(page.getByTestId("activity")).toContainText("missed_window ×12");
-        // Range control lives in the Equity card header, above the hero number.
-        const header = page.getByTestId("equity-range").locator("xpath=ancestor::header[1]");
-        await expect(header.getByRole("tab", { name: "3M" })).toBeVisible();
+        // D50: the range control sits below the hero block (under the comparison line), with dates.
+        await expect(page.getByTestId("equity-range").getByRole("tab", { name: "3M" })).toBeVisible();
         const rangeBox = await page.getByTestId("equity-range").boundingBox();
-        const heroBox = await page.locator("section:has([data-testid=equity-range]) .text-hero").boundingBox();
-        expect(rangeBox!.y + rangeBox!.height).toBeLessThanOrEqual(heroBox!.y);
+        const cmpBox = await page.getByTestId("equity-comparison").boundingBox();
+        expect(rangeBox!.y).toBeGreaterThanOrEqual(cmpBox!.y + cmpBox!.height);
+        const chartBox = await page.getByTestId("trend-chart").boundingBox();
+        expect(rangeBox!.y + rangeBox!.height).toBeLessThanOrEqual(chartBox!.y);
+        await expect(page.getByTestId("equity-dates")).toHaveText(/^[A-Z][a-z]{2} \d{1,2}(, \d{4})?( – ([A-Z][a-z]{2} )?\d{1,2}, \d{4})?$/);
         await expect(page.getByTestId("max-loss-caps")).toContainText("SPY");
         // Fresh marks: the Greeks header badge is fresh (one freshness slot, §10).
         await expect(page.getByTestId("greeks-freshness")).toHaveAttribute("data-freshness", "fresh");
@@ -81,7 +87,7 @@ for (const vp of VIEWPORTS) {
 test.describe("overview behaviour", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("range control switches the equity series", async ({ page }) => {
+  test("range control switches the equity series; every range prints its dates", async ({ page }) => {
     await open(page, "/", "dark");
     await page.getByTestId("equity-info").click();
     await expect(page.getByText("Today's 5-min monitor marks.")).toBeVisible();
@@ -94,6 +100,13 @@ test.describe("overview behaviour", () => {
     await expect(page.getByText("Reconciled daily closes.")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByText(/vs \$[\d,]+ at \d\d-\d\d/)).toBeVisible();
+    const dates = page.getByTestId("equity-dates");
+    for (const r of ["1W", "3M", "YTD", "ALL", "1D", "1M"]) {
+      await page.getByRole("tab", { name: r, exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`range=${r}`));
+      await expect(dates).toHaveText(/\d{1,2}, \d{4}$/);
+      if (r === "1M") await expect(dates).toContainText("–"); // a multi-day range spans two dates
+    }
   });
 
   test("stale badge appears once the last monitor mark is older than 3x the cadence", async ({ page }) => {
@@ -126,6 +139,72 @@ test.describe("overview behaviour", () => {
     await expect(page.getByTestId("activity").locator(":scope > li")).toHaveCount(9);
     await page.getByTestId("activity-card").getByRole("link", { name: /VIEW ALL/ }).click();
     await expect(page).toHaveURL(/\/ops#alerts$/);
+  });
+});
+
+// D50: slot order Trading · env · Orders · Tick · Health · Alerts (3x2 grid on a phone, one
+// row on desktop). The fixture's active halt replaces slot 1 with the HALTED banner.
+for (const vp of [PHONE_75, { name: "desktop", width: 1440, height: 900 }] as const) {
+  test.describe(`overview status row order ${vp.name}`, { tag: vp.name === PHONE_75.name ? PHONE_75_TAG : [] }, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height } });
+    test("slots read in the owner's order, Title Case", async ({ page }) => {
+      await open(page, "/", "light");
+      if (vp.name !== "desktop") {
+        // the halt banner spans the grid; drop it to read the plain 3x2 slot grid
+        await page.route("**/api/overview*", async (route) => {
+          const res = await route.fetch();
+          const body = await res.json();
+          body.status.halted = false;
+          body.status.halt = null;
+          await route.fulfill({ response: res, json: body });
+        });
+        await page.reload();
+        await expect(page.locator("[data-testid=status-slots] > li").first()).toHaveText("Trading Enabled");
+      }
+      await expect(page.locator("[data-testid=status-slots] > li")).toHaveCount(6);
+      const texts = await page.locator("[data-testid=status-slots] > li").evaluateAll((lis) =>
+        lis.map((li) => (li as HTMLElement).innerText.replace(/\s+/g, " ").replace(/ ?[▲▼]$/, "").trim()),
+      );
+      expect(texts).toHaveLength(6);
+      expect(texts[0]).toMatch(vp.name === "desktop" ? /^HALTED / : /^Trading Enabled$/);
+      expect(texts[1]).toBe("Paper • Cash Debit");
+      expect(texts[2]).toMatch(/^Orders 31\/200/);
+      expect(texts[3]).toMatch(/^Tick /);
+      expect(texts[4]).toMatch(/^Health (OK|Failed|Partial|No data)/);
+      expect(texts[5]).toBe("Alerts 1");
+      // Visual reading order (top, then left) is the DOM order on both layouts. (The fixture's
+      // long halt reason can wrap the desktop row; without a halt it is one row.)
+      const boxes = await page.locator("[data-testid=status-slots] > li").evaluateAll((lis) =>
+        lis.map((li, i) => ({ i, top: Math.round(li.getBoundingClientRect().top), left: Math.round(li.getBoundingClientRect().left) })),
+      );
+      const reading = [...boxes].sort((a, b) => a.top - b.top || a.left - b.left).map((b) => b.i);
+      expect(reading).toEqual([0, 1, 2, 3, 4, 5]);
+      if (vp.name !== "desktop") {
+        // phone: 3x2 grid, row 1 Trading | env | Orders, row 2 Tick | Health | Alerts
+        expect(new Set(boxes.slice(0, 3).map((b) => b.top)).size).toBe(1);
+        expect(new Set(boxes.slice(3).map((b) => b.top)).size).toBe(1);
+      }
+    });
+  });
+}
+
+test.describe("overview status row desktop without a halt", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test("one row in the same order", async ({ page }) => {
+    await page.route("**/api/overview*", async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      body.status.halted = false;
+      body.status.halt = null;
+      await route.fulfill({ response: res, json: body });
+    });
+    await open(page, "/", "dark");
+    const slots = page.locator("[data-testid=status-slots] > li");
+    await expect(slots.first()).toHaveText("Trading Enabled");
+    const tops = await slots.evaluateAll((lis) => lis.map((li) => Math.round(li.getBoundingClientRect().top)));
+    expect(tops).toHaveLength(6);
+    expect(new Set(tops).size).toBe(1);
+    await page.getByTestId("status-strip").screenshot({ path: "e2e/screenshots/overview-status-row-desktop-dark.png" });
   });
 });
 
