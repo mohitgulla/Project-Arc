@@ -323,7 +323,7 @@ def fetch_earnings(
     # D28: keep events for every symbol-master ticker (next_earnings and the gate's
     # earnings blackout need them for any name the open universe may trade). Without
     # a master (strict mode / no cache) this is the seed list, as before.
-    uni = IngestUniverse.from_settings(settings)
+    uni = IngestUniverse.from_settings(settings, conn=conn)
     seed_only_to_scout = uni.config.earnings.scout == "seed"
     results: list[RawDoc] = []
     calendar_only: list[str] = []

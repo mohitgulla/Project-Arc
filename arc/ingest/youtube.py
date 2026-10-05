@@ -699,7 +699,7 @@ def fetch_youtube(
         )
     )
     results: list[RawDoc] = []
-    uni = IngestUniverse.from_settings(settings)
+    uni = IngestUniverse.from_settings(settings, now=now, conn=conn)
 
     for channel_url in channels:
         cursor_key = f"{CONNECTOR}:{channel_url}"

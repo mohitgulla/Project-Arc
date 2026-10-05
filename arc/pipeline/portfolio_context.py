@@ -59,6 +59,7 @@ __all__ = [
     "PortfolioPosition",
     "build_portfolio_context",
     "empty_portfolio_line",
+    "load_industries",
     "load_sectors",
     "render_portfolio_context",
 ]
@@ -84,6 +85,25 @@ def load_sectors(path: Path | str | None = None) -> dict[str, str]:
     for sector, tickers in (data.get("sectors") or {}).items():
         for t in tickers or []:
             out[str(t).upper()] = str(sector)
+    return out
+
+
+def load_industries(path: Path | str | None = None) -> dict[str, str]:
+    """``ticker -> industry`` from ``config/sectors.yaml`` ``industries:`` (D51, E12.1).
+
+    Unknown names are absent (callers map them to ``unknown``). A ticker listed under
+    two industries is a config error.
+    """
+    p = Path(path) if path is not None else DEFAULT_SECTORS_PATH
+    data = yaml.safe_load(p.read_text()) or {}
+    out: dict[str, str] = {}
+    for industry, tickers in (data.get("industries") or {}).items():
+        for t in tickers or []:
+            sym = str(t).upper()
+            if sym in out:
+                msg = f"sectors.yaml: {sym} is in industries {out[sym]!r} and {industry!r}"
+                raise ValueError(msg)
+            out[sym] = str(industry)
     return out
 
 

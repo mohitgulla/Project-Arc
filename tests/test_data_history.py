@@ -499,7 +499,8 @@ class TestCli:
             main(["history", "coverage", "--end", "2024-02-09", "--data-dir", str(tmp_path)]) == 0
         )
         out = capsys.readouterr().out
-        assert "alpaca" in out and "thetadata" in out and "HD" in out
+        # D51: no store at the default path in tests -> the core list
+        assert "alpaca" in out and "thetadata" in out and "MARA" in out
 
     def test_make_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import argparse

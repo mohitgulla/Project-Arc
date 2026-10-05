@@ -407,19 +407,33 @@ def test_symbols_handler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr("arc.universe.refresh_symbol_master", fake_refresh)
 
+    from arc.store.db import connect
+
     class Ctx:
         settings = _settings()
         now = NOW
+        options: dict[str, Any] = {}
+        conn = connect(tmp_path / "arc.db")
+        run_id = "run-1"
+        chain_run_id = None
         recorded: list[tuple[Any, ...]] = []
+        written: list[tuple[Any, ...]] = []
 
         def record_input(self, *a: Any, **kw: Any) -> None:
             self.recorded.append((a, kw))
+
+        def write(self, *a: Any, **kw: Any) -> None:
+            self.written.append(a)
 
     ctx = Ctx()
     res = handlers.symbols_source(ctx)  # type: ignore[arg-type]
     assert calls and res.metrics["symbols"] == 6  # NVDA PLTR BRK.B UFPT NOOP SPY
     assert res.metrics["optionable"] == 5
     assert ctx.recorded[0][0][0] == "symbol_master"
+    # D51: the same job resolves the active list every trading day
+    assert ctx.recorded[1][0][0] == "active_universe"
+    assert ctx.written[0][0] == "active_universe"
+    assert res.metrics["active"] == len(ctx.settings.universe)
 
 
 def test_cli_check_fixture(capsys: pytest.CaptureFixture[str]) -> None:

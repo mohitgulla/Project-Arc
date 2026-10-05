@@ -743,16 +743,32 @@ log actor `arc:scorecard-gate`, reason `E7.5a: collection phase complete (n=30)`
 posts `Scorecard gate: ON (auto, …)` to the day thread. It does this once; turning the
 gate off again afterwards is respected.
 
-### 5.11 Open universe (E5.7, D9/D28)
+### 5.11 Open universe (E5.7, D9/D28) and tiers (E12.1, D51)
 
-`settings.universe` is a seed list (`ARC_UNIVERSE_MODE=seed`, the default). Other
-names reach the Scout only if they are in the symbol master and pass the liquidity
-screen in `config/universe.yaml`. `ARC_UNIVERSE_MODE=strict` restores the allow-list.
+The trade universe is four tiers resolved into one **active list** (max
+`universe_active_max` 50): core (`universe`, 25 names in `config/universe.yaml`
+`core:`) > momentum (E12.2) > trending (E12.3) > today's Scout discoveries. A name
+keeps its highest tier; names past the cap are journaled `universe:over_active_cap`.
+SPY/QQQ are the `market_reference`: they always get a Director `regime` entry but are
+not trade names. The active list resolves at 05:30 ET each trading day (`symbols`
+job, context `active_universe`) and at the start of every Scout run; ingest, EDGAR,
+briefs, `unusual_options`/`ex_dividend`, Finnhub scope, monitoring and `arc history`
+read it (core until the first resolve of the day).
+
+- See it: `arc universe tiers [--json] [--db PATH] [--now ISO]` (read-only).
+- A `universe` override longer than 30 names (pre-D51 flat list) is ignored in favour
+  of the yaml core (logged `universe.core_override_ignored`). Reset it from Slack with
+  `!arc config universe <core 25>` so the Tower shows the core.
+
+In seed mode (`ARC_UNIVERSE_MODE=seed`, the default) core + momentum names are always
+accepted; other names reach the Scout only if they are in the symbol master and pass
+the liquidity screen in `config/universe.yaml`. `ARC_UNIVERSE_MODE=strict` makes the
+active list the allow-list.
 
 1. First install (once, before the first seed-mode Scout run; needs the paper keys):
    `set -a; source ~/.hermes/.env; set +a; arc universe refresh`
-   (about 10k symbols; writes `data/symbol_master.json`). After that the weekly
-   `symbols` routine (Mon 05:30 ET) keeps it fresh.
+   (about 10k symbols; writes `data/symbol_master.json`). After that the `symbols`
+   routine refetches it on Mondays 05:30 ET (or when missing/stale).
 2. Check it: `arc universe status` (exit 1 = missing cache; ingest then uses the seed
    list only and the Scout rejects non-seed names as `unknown_symbol`).
 3. Would a name be admitted? `arc universe check PLTR HOOD` (read-only market data;

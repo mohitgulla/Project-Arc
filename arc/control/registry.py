@@ -244,7 +244,7 @@ PROFILE_ORDER: tuple[str, ...] = ("cash_long_only", "cash_debit", "margin")  # s
 RANK_MENU_BY: tuple[str, ...] = ("scanner", "managed_net_ev", "rorc_day", "vrp")
 STOP_BASES: tuple[str, ...] = ("pct_max_loss", "pct_debit", "credit_multiple")
 
-MAX_UNIVERSE = 60  # hard ceiling on the number of underlyings
+MAX_UNIVERSE = 30  # D51: hard ceiling on the core list (arc.universe.tiers.MAX_CORE)
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.]{0,9}$")
 _USER_RE = re.compile(r"^[UW][A-Z0-9]{6,20}$")
 # Only `enabled` and `cadence` of a routine are tunable at runtime. `lane` (D39) and
@@ -351,11 +351,43 @@ _STATIC: tuple[Tunable, ...] = (
         "universe",
         Group.UNIVERSE,
         ValueType.TICKERS,
-        "Seed/watch list (D28): always scanned and accepted; in strict mode the only "
-        "underlyings the Scout may pick. '+NVDA,-TSLA' edits the list; added tickers must "
-        "be optionable.",
+        "D51 core tier (25 names, no ETFs): always scanned and accepted, no liquidity "
+        "screen. The active list adds momentum, trending and discoveries (cap "
+        "universe_active_max). '+NVDA,-TSLA' edits the list; added tickers must be "
+        "optionable.",
         Risk.GROW,
         max_items=MAX_UNIVERSE,
+    ),
+    _s(
+        "universe_active_max",
+        Group.UNIVERSE,
+        _I,
+        "D51: the deduped active list (core > momentum > trending > discovery) is capped "
+        "at this many names; the rest are journaled universe:over_active_cap.",
+        Risk.UP,
+        min=1,
+        max=60,
+        hard_ceiling=60,
+    ),
+    _s(
+        "universe_momentum_size",
+        Group.UNIVERSE,
+        _I,
+        "D51: momentum tier size (top N S&P 500 Momentum holdings, refreshed monthly).",
+        Risk.UP,
+        min=0,
+        max=50,
+        hard_ceiling=50,
+    ),
+    _s(
+        "universe_trending_size",
+        Group.UNIVERSE,
+        _I,
+        "D51: trending tier size (daily rules-based list).",
+        Risk.UP,
+        min=0,
+        max=50,
+        hard_ceiling=50,
     ),
     _s(
         "universe_mode",

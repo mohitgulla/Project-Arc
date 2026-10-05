@@ -58,7 +58,9 @@ REPO = Path(__file__).resolve().parent.parent
 # sha256 of the prompts built by tests/finnhub_golden.py on origin/main 9834f58
 # (before E4.8a). Flag off must reproduce them byte for byte.
 MAIN_DIRECTOR_SHA = "6424390f6ba136d34f8fa940c2246cac8c936ffeb672b824f73018216efbc56d"
-MAIN_SCOUT_SHA = "2ca04ca0694b0b5b6d74e556d0b143d9f4c78ee5965a9858111e3a6c4008a7bf"
+# D51 (E12.1) re-pinned the Scout sha: the watch list is the 25-name core and the
+# task line says "Watch list (core + momentum + trending)" (a deliberate prompt change).
+MAIN_SCOUT_SHA = "f77cbd75bc2d531468a195a04546d877956dc0e6b1edc6e3272ff66800593294"
 ON = FinnhubContextSettings(enabled=True)
 TODAY = g._now().date()
 

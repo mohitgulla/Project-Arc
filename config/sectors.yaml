@@ -1,17 +1,43 @@
-# Sector map for the portfolio context (E5.9, D33).
+# Sector map for the portfolio context (E5.9, D33) and industry map (D51, E12.1).
 #
 # The E5.7 symbol master carries no sector, so allocation-by-sector uses this
-# small fallback: seed universe + broad ETFs. Unknown tickers land in "unknown"
-# (still counted, so a concentration in unmapped names is visible, not hidden).
+# small fallback: the D51 core, the S&P 500 Momentum top 25 (SPMO, 2026-10-04),
+# the old seed names and broad ETFs. Unknown tickers land in "unknown" (still
+# counted, so a concentration in unmapped names is visible, not hidden).
 # Adding a name is an edit here, not a code change.
 sectors:
   broad_market: [SPY, QQQ, IWM, DIA, VTI, VOO]
-  technology: [AAPL, MSFT, NVDA, AMD, GOOGL, META, XLK, PLTR, CRM, ORCL, AVGO, INTC]
+  technology: [AAPL, MSFT, NVDA, AMD, GOOGL, META, XLK, PLTR, CRM, ORCL, AVGO, INTC,
+               MU, SMCI, LRCX, AMAT, KLAC, MRVL, SNDK, STX, WDC, CSCO, DELL, LITE, PANW]
   consumer_discretionary: [AMZN, TSLA, HD, NKE, SBUX, MCD]
-  financials: [JPM, BAC, XLF, GS, MS, WFC, C]
+  consumer_staples: [KO]
+  financials: [JPM, BAC, XLF, GS, MS, WFC, C, COIN, SOFI, HOOD, MARA]
   energy: [XOM, CVX, XLE, COP]
-  health_care: [UNH, JNJ, PFE, LLY, XLV]
-  industrials: [UFPT, CAT, BA, XLI]
+  health_care: [UNH, JNJ, PFE, LLY, XLV, MRK]
+  industrials: [UFPT, CAT, BA, XLI, UBER]
   communication: [NFLX, DIS, T, VZ]
   utilities: [XLU]
   real_estate: [XLRE]
+
+# D51 (E12.1): one level below sector, for the relaxed Director diversification
+# (E12.5: two names in the same industry may both be ranked). Every core name and
+# every SPMO top-25 name has exactly one industry (tests/test_universe_tiers.py).
+# A name missing here has industry "unknown".
+industries:
+  semis: [NVDA, AMD, AVGO, INTC, LRCX, AMAT, KLAC, MRVL]
+  memory_storage: [MU, SNDK, STX, WDC]
+  hardware_networking: [AAPL, SMCI, DELL, CSCO, LITE]
+  software: [MSFT, ORCL, PLTR, PANW, CRM]
+  megacap_internet: [GOOGL, META, AMZN, NFLX]
+  autos: [TSLA]
+  banks: [JPM, BAC]
+  capital_markets: [GS, MS]
+  fintech: [SOFI, HOOD]
+  crypto: [COIN, MARA]
+  oil_gas: [XOM]
+  managed_care: [UNH]
+  pharma: [JNJ, MRK]
+  aerospace: [BA]
+  machinery: [CAT]
+  mobility: [UBER]
+  beverages: [KO]

@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from arc.routines.runs import RoutineEvent
     from arc.slack.blocks import CardView
     from arc.universe.guard import UniverseGuard
+    from arc.universe.tiers import ActiveUniverse
 
 log = structlog.get_logger(__name__)
 
@@ -373,8 +374,13 @@ def macro_calendar_source(ctx: JobContext) -> JobResult:
 
 
 def _data_tickers(ctx: JobContext) -> list[str]:
-    """Seed universe plus today's candidates (what the chain may trade)."""
-    tickers = [str(t).upper() for t in ctx.options.get("tickers") or ctx.settings.universe]
+    """Today's active list (D51) plus today's candidates (what the chain may trade)."""
+    from arc.universe.tiers import active_tickers
+
+    tickers = [
+        str(t).upper()
+        for t in ctx.options.get("tickers") or active_tickers(ctx.conn, ctx.settings, ctx.now)
+    ]
     rows = ctx.conn.execute(
         "SELECT DISTINCT ticker FROM candidates WHERE day = ?",
         (ctx.now.astimezone(ET).date().isoformat(),),
@@ -544,8 +550,8 @@ def _finnhub_run(ctx: JobContext, kind: str, *, recent_only: bool = False) -> Jo
         raise JobSkippedError(str(exc), notice=notice) from exc
 
     today = ctx.now.astimezone(ET).date()
-    seed = ctx.options.get("tickers") or s.universe
-    universe = IngestUniverse.from_settings(s, now=ctx.now)
+    universe = IngestUniverse.from_settings(s, now=ctx.now, conn=ctx.conn)
+    seed = ctx.options.get("tickers") or list(universe.seed)  # D51: today's active list
     scope = ticker_scope(
         ctx.conn,
         seed=seed,
@@ -675,30 +681,77 @@ def _date_of(text: str) -> _dt.date:
         return dt.date.min
 
 
-def symbols_source(ctx: JobContext) -> JobResult:
-    """Weekly symbol-master refresh (E5.7 / D28): SEC tickers ∪ Alpaca optionable.
+def resolve_universe(ctx: JobContext) -> ActiveUniverse:
+    """D51: resolve today's active list (no network) and write ``active_universe``.
 
-    The only scheduled writer of the cache that ingest and the Scout read (they
-    never fetch mid-run). Writes no context; the symbol list's digest is recorded.
+    Overflow past ``universe_active_max`` is journaled ``universe:over_active_cap``.
     """
-    from arc.universe import load_universe_config, refresh_symbol_master
+    from arc.universe.tiers import build_active, record_active
+
+    active, _ = build_active(ctx.conn, ctx.settings, ctx.now)
+    ctx.record_input(
+        "active_universe", "tiers", active.tickers, as_of=ctx.now, count=len(active.members)
+    )
+    record_active(
+        ctx.conn,
+        active,
+        at=ctx.now,
+        write=ctx.write,
+        run_id=ctx.run_id,
+        chain_run_id=ctx.chain_run_id,
+    )
+    return active
+
+
+def symbols_source(ctx: JobContext) -> JobResult:
+    """Pre-market universe job (E5.7 / D28, D51).
+
+    Every trading day: resolves the D51 active list (``active_universe``, no
+    network). On the ``refresh_days`` (Mondays), or when the cache is missing or
+    older than ``symbol_master.refresh_days``: refreshes the symbol master (SEC
+    tickers ∪ Alpaca optionable), the only scheduled writer of the cache that
+    ingest and the Scout read (they never fetch mid-run).
+    """
+    from arc.universe import load_symbol_master, load_universe_config, refresh_symbol_master
 
     cfg = load_universe_config(ctx.settings.universe_config_file)
-    master = refresh_symbol_master(
-        cfg.symbol_master, user_agent=ctx.settings.edgar_user_agent, now=ctx.now
+    weekday = ctx.now.astimezone(ET).strftime("%a").lower()
+    refresh_on = [str(d).lower() for d in ctx.options.get("refresh_days", ["mon"])]
+    cached = load_symbol_master(
+        cfg.symbol_master,
+        user_agent=ctx.settings.edgar_user_agent,
+        now=ctx.now,
+        fetch_if_missing=False,
     )
-    ctx.record_input(
-        "symbol_master",
-        "sec+alpaca",
-        sorted(master.symbols),
-        as_of=master.fetched_at,
-        count=len(master.symbols),
+    due = (
+        weekday in refresh_on
+        or cached is None
+        or cached.is_stale(ctx.now, cfg.symbol_master.refresh_days)
     )
-    optionable = sum(1 for s in master.symbols.values() if s.options)
-    return JobResult(
-        summary=f"{len(master.symbols)} symbols ({optionable} optionable)",
-        metrics={"symbols": len(master.symbols), "optionable": optionable, **master.sources},
+    metrics: dict[str, Any] = {}
+    parts: list[str] = []
+    if due:
+        master = refresh_symbol_master(
+            cfg.symbol_master, user_agent=ctx.settings.edgar_user_agent, now=ctx.now
+        )
+        ctx.record_input(
+            "symbol_master",
+            "sec+alpaca",
+            sorted(master.symbols),
+            as_of=master.fetched_at,
+            count=len(master.symbols),
+        )
+        optionable = sum(1 for s in master.symbols.values() if s.options)
+        parts.append(f"{len(master.symbols)} symbols ({optionable} optionable)")
+        metrics |= {"symbols": len(master.symbols), "optionable": optionable, **master.sources}
+    active = resolve_universe(ctx)
+    c = active.counts
+    parts.append(
+        f"active {len(active.members)} (core {c['core']} · momentum {c['momentum']} · "
+        f"trending {c['trending']} · discovery {c['discovery']})"
     )
+    metrics |= {"active": len(active.members), **{f"tier_{k}": v for k, v in c.items()}}
+    return JobResult(summary=" · ".join(parts), metrics=metrics)
 
 
 def youtube_url(channel: str) -> str:
@@ -809,7 +862,7 @@ def youtube_briefs(
         session=session,
         now=now,
         ttl=ttl,
-        universe=IngestUniverse.from_settings(settings, now=now),
+        universe=IngestUniverse.from_settings(settings, now=now, conn=ctx.conn),
         registry=(
             ChannelRegistry.load(CHANNELS_DIR, Path(str(ctx.options["profiles_dir"])))
             if ctx.options.get("profiles_dir")
@@ -940,6 +993,8 @@ def scout_persona(
     if guard is not None:
         kwargs["guard"] = guard
     write_stories = "story" in (ctx.spec.writes or [])  # D30 stage-1 digests
+    if "active_universe" in (ctx.spec.writes or []):
+        resolve_universe(ctx)  # D51: cheap, no network; the guard + prompt read it
     result = run_scout(ctx.conn, ctx.settings, **kwargs)
     if write_stories:  # D47: each story expires at min(policy, freshest source max_age + 2h)
         for p in result.stories:

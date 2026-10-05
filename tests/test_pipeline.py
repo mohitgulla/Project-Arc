@@ -387,11 +387,11 @@ class TestDigestCards:
         scout = "\n".join(
             b["text"]["text"] for b in notes.blocks[0] or [] if b["type"] == "section"
         )
-        # E5.7 open universe: PLTR is new and passes the screen, UFPT fails it, ZZZQ is
-        # not a listed symbol; the failed checks are shown for the illiquid name.
-        assert (
-            "*PLTR*\nbullish · news · 90% confidence · 1 source · new, passed liquidity screen"
-        ) in scout
+        # E5.7 open universe: UFPT fails the screen, ZZZQ is not a listed symbol; the
+        # failed checks are shown for the illiquid name. D51: PLTR is core now, so it is
+        # admitted without the "new" tag.
+        assert "*PLTR*\nbullish · news · 90% confidence · 1 source\n" in scout
+        assert "PLTR*\nbullish · news · 90% confidence · 1 source · new" not in scout
         # D47: grouped by category, equal shares, sources inside each
         assert (
             "*Source mix*\n*Market news* 50% · 8 read: rss 8\n"

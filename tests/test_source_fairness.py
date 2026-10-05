@@ -584,8 +584,14 @@ class TestEdgarFreshness:
             edgar.IngestUniverse,
             "from_settings",
             classmethod(
-                lambda cls, s: type(
-                    "U", (), {"cik": lambda self, t: "1", "tickers_in": lambda self, x: []}
+                lambda cls, s, **_kw: type(
+                    "U",
+                    (),
+                    {
+                        "cik": lambda self, t: "1",
+                        "tickers_in": lambda self, x: [],
+                        "seed": tuple(s.universe),
+                    },
                 )()
             ),
         )

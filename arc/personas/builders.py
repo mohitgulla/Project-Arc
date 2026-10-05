@@ -37,7 +37,8 @@ class ScoutInput:
     scan_date: str  # ISO-8601
     min_confidence: float | None = None  # threshold the pipeline will apply
     output_schema_json: str = ""  # JSON Schema of ScoutOutput, embedded verbatim
-    # D28: True = `universe` is a seed/watch list and any US-listed optionable
+    # D28/D51: True = `universe` is the watch list (core + momentum + trending) and
+    # any US-listed optionable
     # ticker the feeds discuss may be proposed (screened deterministically after).
     open_universe: bool = False
     # D30: True = `raw_feeds` are stage-1 story digests (clustered, source-counted),
@@ -1091,16 +1092,19 @@ def build_scout_prompt(inp: ScoutInput) -> str:
     )
     if inp.open_universe:
         scope = (
-            "transcripts) and surface trading candidates: the seed/watch list below plus any\n"
-            "other US-listed, optionable stock or ETF the feeds actually discuss."
+            "transcripts) and surface trading candidates: names on the watch list below and\n"
+            "any other US-listed, optionable stock or ETF the feeds actually discuss."
         )
-        task_line = f"Analyze the feeds below. Seed/watch list: {', '.join(inp.universe)}."
+        task_line = (
+            "Analyze the feeds below. Watch list (core + momentum + trending): "
+            f"{', '.join(inp.universe)}. The watch list is not a preference: judge every name "
+            "on the feeds' evidence alone."
+        )
         ticker_rule = (
             "- ticker MUST be the exact US-listed symbol (upper-case, e.g. NVDA, BRK.B) of a\n"
-            "  company or ETF the feeds discuss. Seed-list names are always accepted; any other\n"
-            "  ticker must be a real listed symbol and then passes a deterministic liquidity\n"
-            "  screen (price, volume, option open interest and spreads). Unknown symbols are\n"
-            "  discarded."
+            "  company or ETF the feeds discuss. Any listed symbol may be proposed; names off\n"
+            "  the watch list pass a deterministic liquidity screen (price, volume, option\n"
+            "  open interest and spreads). Unknown symbols are discarded."
         )
     else:
         scope = "transcripts) and surface trading candidates for the configured universe."

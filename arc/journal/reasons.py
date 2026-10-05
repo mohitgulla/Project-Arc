@@ -86,6 +86,8 @@ class ReasonCode(StrEnum):
     UNIVERSE_UNKNOWN_SYMBOL = "universe:unknown_symbol"
     UNIVERSE_ILLIQUID = "universe:illiquid"
     UNIVERSE_NEW_TICKER_CAP = "universe:over_new_ticker_cap"
+    # D51 (E12.1): the tiered universe resolver cut a name past the active-list cap
+    UNIVERSE_OVER_ACTIVE_CAP = "universe:over_active_cap"
     # shortlist (Director)
     SHORTLISTED = "shortlisted"
     NOT_RANKED = "not_ranked"
@@ -290,6 +292,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.UNIVERSE_UNKNOWN_SYMBOL: "Unknown symbol",
     ReasonCode.UNIVERSE_ILLIQUID: "Options too illiquid",
     ReasonCode.UNIVERSE_NEW_TICKER_CAP: "Over the new-ticker cap",
+    ReasonCode.UNIVERSE_OVER_ACTIVE_CAP: "Over the active-list cap",
     ReasonCode.SHORTLISTED: "Shortlisted by the Director",
     ReasonCode.NOT_RANKED: "Not ranked by the Director",
     ReasonCode.NOT_A_CANDIDATE: "Not one of the Scout's candidates",

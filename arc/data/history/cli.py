@@ -81,10 +81,12 @@ def add_history_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
 
 
 def run_history(args: argparse.Namespace) -> int:
+    from arc.universe.tiers import active_tickers_ro
+
     tickers = (
         [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
         if args.tickers
-        else list(get_settings().universe)
+        else active_tickers_ro(get_settings(), now_et())  # D51: today's active list
     )
     end = args.end or previous_session(now_et().date() + dt.timedelta(days=1))
     store = ParquetHistoryStore(args.data_dir)

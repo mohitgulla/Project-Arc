@@ -9,9 +9,9 @@ Flow per run::
 Filters (deterministic, applied after the LLM):
 
 * **schema** — each candidate must validate against ``ScoutCandidateOut``.
-* **universe** (D28, :class:`~arc.universe.guard.UniverseGuard`) — ``strict``:
-  ticker must be in ``settings.universe``. ``seed`` (default): seed tickers
-  always pass; any other ticker must be in the symbol master
+* **universe** (D28/D51, :class:`~arc.universe.guard.UniverseGuard`) — ``strict``:
+  ticker must be in the active list. ``seed`` (default): core and momentum
+  tickers always pass; any other ticker must be in the symbol master
   (``unknown_symbol``), optionable, under the per-run new-ticker cap
   (``over_new_ticker_cap``) and pass the liquidity screen (``illiquid``).
 * **threshold** — confidence must be ``>= settings.scout_min_confidence``.
@@ -72,6 +72,7 @@ from arc.universe.guard import (
     REJECT_UNKNOWN_SYMBOL,
     UniverseGuard,
 )
+from arc.universe.tiers import watch_tickers
 from arc.utils.calendar import ET, now_et
 
 if TYPE_CHECKING:
@@ -321,13 +322,23 @@ def render_doc(doc: _Doc, *, max_chars: int) -> str:
 
 
 def build_prompt(
-    docs: list[_Doc], settings: ArcSettings, day: str, *, open_universe: bool | None = None
+    docs: list[_Doc],
+    settings: ArcSettings,
+    day: str,
+    *,
+    open_universe: bool | None = None,
+    universe: list[str] | None = None,
 ) -> str:
+    """*universe* = the watch list (D51: core + momentum + trending); default the core."""
     if open_universe is None:
         open_universe = settings.universe_mode == "seed"
+    if universe is None:
+        from arc.universe.tiers import core_tickers
+
+        universe = core_tickers(settings)
     return build_scout_prompt(
         ScoutInput(
-            universe=list(settings.universe),
+            universe=list(universe),
             raw_feeds=[render_doc(d, max_chars=settings.scout_max_doc_chars) for d in docs],
             scan_date=day,
             min_confidence=settings.scout_min_confidence,
@@ -396,10 +407,16 @@ def build_stage2_prompt(
     *,
     open_universe: bool,
     ticker_facts: str = "",
+    universe: list[str] | None = None,
 ) -> str:
+    """*universe* = the watch list (D51: core + momentum + trending); default the core."""
+    if universe is None:
+        from arc.universe.tiers import core_tickers
+
+        universe = core_tickers(settings)
     return build_scout_prompt(
         ScoutInput(
-            universe=list(settings.universe),
+            universe=list(universe),
             raw_feeds=[render_digest(p) for p in digests],
             scan_date=day,
             min_confidence=settings.scout_min_confidence,
@@ -919,8 +936,9 @@ def run_scout(
         return registry.key_for(row) if row else url
 
     if guard is None:
-        guard = UniverseGuard.from_settings(settings, now=now, load_master=bool(docs))
+        guard = UniverseGuard.from_settings(settings, now=now, load_master=bool(docs), conn=conn)
     open_universe = guard.mode == "seed"
+    watch = watch_tickers(conn, settings, now)  # D51: core + momentum + trending
     log.info(
         "scout.run.start",
         run_id=run_id,
@@ -967,7 +985,12 @@ def run_scout(
                 facts_snap, cfg.prompt_options(tickers, cfg.scout_max_tickers)
             )
         prompt = build_stage2_prompt(
-            batch, settings, day, open_universe=open_universe, ticker_facts=facts
+            batch,
+            settings,
+            day,
+            open_universe=open_universe,
+            ticker_facts=facts,
+            universe=watch,
         )
         result.batches += 1
 

@@ -1090,7 +1090,11 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             notice=notice,
         )
 
-    regimes = _regime_entries(ctx, env, sorted(cands))
+    # D51: the market reference (SPY, QQQ) always gets a fresh regime entry, so the
+    # D33 guard reads SPY even when SPY is not a candidate (it left the core list).
+    from arc.universe.tiers import market_reference
+
+    regimes = _regime_entries(ctx, env, sorted(set(cands) | set(market_reference(settings))))
     # Re-read (and record) the context now that today's regime entries exist.
     snap = ContextStore(ctx.conn).snapshot(ctx.now, kinds=DIRECTOR_READS, run_id=ctx.run_id)
     RoutineRunRepo(ctx.conn).set_inputs(ctx.run_id, [ctx.snapshot.id, snap.id])
