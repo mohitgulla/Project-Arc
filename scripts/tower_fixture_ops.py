@@ -517,7 +517,9 @@ MOMENTUM_FIXTURE: tuple[str, ...] = (
 TRENDING_FIXTURE: tuple[str, ...] = (
     "RKLB", "NVDA", "ASTS", "OKLO", "APP", "IONQ", "SOUN", "HIMS",
 )  # fmt: skip
-DISCOVERY_FIXTURE: tuple[str, ...] = ("QCOM", "CRWV", "NBIS", "TEM", "SNDK", "BBAI")
+DISCOVERY_FIXTURE: tuple[str, ...] = (
+    "QCOM", "CRWV", "NBIS", "TEM", "SOFI", "UBER", "BAC", "SMCI", "MARA", "SNDK", "BBAI",
+)  # fmt: skip
 
 
 def add_universe(conn: sqlite3.Connection, now: dt.datetime) -> None:

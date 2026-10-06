@@ -204,7 +204,7 @@ class TestScreenConfig:
 
     def test_unknown_profile_rejected(self, tmp_path: Path) -> None:
         p = tmp_path / "u.yaml"
-        p.write_text(yaml.safe_dump({"tiers": {"trending": {"screen": "loose"}}}))
+        p.write_text(yaml.safe_dump({"tiers": {"trending": {"screen": "bogus"}}}))
         with pytest.raises(ValueError, match="screen"):
             load_universe_config(p)
 
@@ -472,7 +472,9 @@ RELAXED_KEYS = {
 class TestRegistry:
     def test_relaxed_keys_classified(self) -> None:
         got = {k for k, t in REGISTRY.items() if t.target is Target.UNIVERSE}
-        assert got == set(RELAXED_KEYS)
+        # E13.4: the standard/loose screens mirror relaxed, plus the tier-model flag
+        d56 = {k.replace("relaxed", prof) for k in RELAXED_KEYS for prof in ("standard", "loose")}
+        assert got == set(RELAXED_KEYS) | d56 | {"universe.tiers.model"}
         for key, (leaf, risk, default) in RELAXED_KEYS.items():
             t = lookup(key)
             assert t.path == ("liquidity_screen", "relaxed", leaf)

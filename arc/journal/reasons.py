@@ -91,6 +91,9 @@ class ReasonCode(StrEnum):
     UNIVERSE_UNKNOWN_SYMBOL = "universe:unknown_symbol"
     UNIVERSE_ILLIQUID = "universe:illiquid"
     UNIVERSE_NEW_TICKER_CAP = "universe:over_new_ticker_cap"
+    # D56 (E13.4): an idea for a name in no tier (mentioned only) / below its tier's floor
+    UNIVERSE_NOT_IN_TIER = "universe:not_in_tier"
+    UNIVERSE_BELOW_TIER_FLOOR = "universe:below_tier_floor"
     # D51 (E12.1): the tiered universe resolver cut a name past the active-list cap
     UNIVERSE_OVER_ACTIVE_CAP = "universe:over_active_cap"
     # D51 (E12.3): the daily trending tier (universe.trending job)
@@ -308,6 +311,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.UNIVERSE_UNKNOWN_SYMBOL: "Unknown symbol",
     ReasonCode.UNIVERSE_ILLIQUID: "Options too illiquid",
     ReasonCode.UNIVERSE_NEW_TICKER_CAP: "Over the new-ticker cap",
+    ReasonCode.UNIVERSE_NOT_IN_TIER: "Outside the universe tiers (mentioned only)",
+    ReasonCode.UNIVERSE_BELOW_TIER_FLOOR: "Below its tier's confidence floor",
     ReasonCode.UNIVERSE_OVER_ACTIVE_CAP: "Over the active-list cap",
     ReasonCode.UNIVERSE_TRENDING_ADMITTED: "Added to the trending tier",
     ReasonCode.UNIVERSE_TRENDING_SCREEN_FAIL: "Trending, but options too illiquid",

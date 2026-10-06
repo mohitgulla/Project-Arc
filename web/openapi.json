@@ -13310,6 +13310,18 @@
       "UniverseDroppedRow": {
         "additionalProperties": false,
         "properties": {
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The name's rank in its tier (D56 resolves)",
+            "title": "Rank"
+          },
           "reason": {
             "description": "over_active_cap | over_tier_size | \u2026",
             "title": "Reason",
@@ -13411,6 +13423,12 @@
             },
             "title": "Market Reference",
             "type": "array"
+          },
+          "model": {
+            "default": "d51",
+            "description": "Tier layout the shown resolve used (d51 | d56); config/universe.yaml tiers.model when nothing is resolved",
+            "title": "Model",
+            "type": "string"
           },
           "note": {
             "anyOf": [
@@ -13531,7 +13549,7 @@
             "title": "Fetched At"
           },
           "name": {
-            "description": "core | momentum | trending | discovery (precedence order)",
+            "description": "core | momentum | trending | discovery (precedence order; d56 has no trending)",
             "title": "Name",
             "type": "string"
           },

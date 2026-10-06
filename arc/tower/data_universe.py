@@ -22,7 +22,6 @@ from arc.tower.data import _has_table, parse_ts
 from arc.universe.tiers import (
     ACTIVE_SUBJECT,
     MAX_CORE,
-    TIER_ORDER,
     ActiveUniverse,
     Tier,
     TierMember,
@@ -30,6 +29,9 @@ from arc.universe.tiers import (
     core_tickers,
     ignored_core_override,
     market_reference,
+    tier_order,
+    tier_sizes,
+    tiers_model,
 )
 from arc.utils.calendar import ET
 
@@ -69,12 +71,15 @@ class UniverseDroppedRow(BaseModel):
     ticker: str
     tier: str
     reason: str = Field(description="over_active_cap | over_tier_size | …")
+    rank: int | None = Field(None, description="The name's rank in its tier (D56 resolves)")
 
 
 class UniverseTierRow(BaseModel):
     model_config = _STRICT
 
-    name: str = Field(description="core | momentum | trending | discovery (precedence order)")
+    name: str = Field(
+        description="core | momentum | trending | discovery (precedence order; d56 has no trending)"
+    )
     offered: int = Field(description="Names the tier offered before dedupe and caps (raw_count)")
     active: int = Field(description="Names this tier holds in the active list")
     size_cap: int | None = Field(
@@ -101,6 +106,11 @@ class UniverseResponse(BaseModel):
     model_config = _STRICT
 
     as_of: _dt.datetime = Field(description="Server time of this read")
+    model: str = Field(
+        "d51",
+        description="Tier layout the shown resolve used (d51 | d56); config/universe.yaml "
+        "tiers.model when nothing is resolved",
+    )
     state: ResolveState = Field(
         description="today = resolved today; stale = latest resolve is older (consumers use the "
         "core list until the next one); none = never resolved (core list shown)"
@@ -171,7 +181,7 @@ def _active_row(m: TierMember) -> UniverseActiveRow:
     )
 
 
-def _core_fallback(settings: ArcSettings, day: _dt.date) -> ActiveUniverse:
+def _core_fallback(settings: ArcSettings, day: _dt.date, model: str) -> ActiveUniverse:
     """No resolve stored: the core list, as every consumer reads it (no write, no resolve)."""
     source = "config" if ignored_core_override(settings) else "settings"
     names = core_tickers(settings)
@@ -179,8 +189,14 @@ def _core_fallback(settings: ArcSettings, day: _dt.date) -> ActiveUniverse:
         TierMember(ticker=t, tier=Tier.CORE, rank=i, source=source, reason="core list", as_of=day)
         for i, t in enumerate(names, 1)
     ]
-    counts = {t.value: 0 for t in TIER_ORDER} | {Tier.CORE.value: len(members)}
-    return ActiveUniverse(as_of=day, members=members, counts=counts, raw_counts=dict(counts))
+    counts = {t.value: 0 for t in tier_order(model)} | {Tier.CORE.value: len(members)}
+    return ActiveUniverse(
+        model="d56" if model == "d56" else "d51",
+        as_of=day,
+        members=members,
+        counts=counts,
+        raw_counts=dict(counts),
+    )
 
 
 def load_universe(
@@ -205,7 +221,7 @@ def load_universe(
         valid = expires is None or expires > now
         state: ResolveState = "today" if active.as_of == today and valid else "stale"
     else:
-        active = _core_fallback(settings, today)
+        active = _core_fallback(settings, today, tiers_model(settings))
         state = "none"
     note = {
         "today": None,
@@ -219,20 +235,24 @@ def load_universe(
 
     sizes: dict[Tier, int | None] = {
         Tier.CORE: MAX_CORE,
-        Tier.MOMENTUM: settings.universe_momentum_size,
-        Tier.TRENDING: settings.universe_trending_size,
+        Tier.MOMENTUM: None,
+        Tier.TRENDING: None,
         Tier.DISCOVERY: None,
+        **tier_sizes(settings, active.model),
     }
     core_source = next((m.source for m in active.members if m.tier is Tier.CORE), "settings")
     fixed_source: dict[Tier, str | None] = {
         Tier.CORE: core_source,
         Tier.MOMENTUM: None,
         Tier.TRENDING: None,
-        Tier.DISCOVERY: "scalp",
+        Tier.DISCOVERY: "scout" if active.model == "d56" else "scalp",
     }
+    feed_tiers = (
+        (Tier.MOMENTUM, Tier.DISCOVERY) if active.model == "d56" else (Tier.MOMENTUM, Tier.TRENDING)
+    )
     tiers: list[UniverseTierRow] = []
-    for tier in TIER_ORDER:
-        feed = _feed(conn, tier) if has_ctx and tier in (Tier.MOMENTUM, Tier.TRENDING) else None
+    for tier in tier_order(active.model):
+        feed = _feed(conn, tier) if has_ctx and tier in feed_tiers else None
         fetched = feed.fetched_at.astimezone(ET) if feed is not None else None
         source = feed.source if feed is not None else fixed_source[tier]
         tiers.append(
@@ -267,6 +287,7 @@ def load_universe(
 
     return UniverseResponse(
         as_of=now,
+        model=active.model,
         state=state,
         resolved_for=active.as_of if state != "none" else None,
         resolved_at=resolved_at,
@@ -278,10 +299,10 @@ def load_universe(
         active=[_active_row(m) for m in active.members],
         tiers=tiers,
         dropped=[
-            UniverseDroppedRow(ticker=d.ticker, tier=d.tier.value, reason=d.reason)
+            UniverseDroppedRow(ticker=d.ticker, tier=d.tier.value, reason=d.reason, rank=d.rank)
             for d in active.dropped
         ],
-        market_reference=market_reference(settings),
+        market_reference=market_reference(settings, model=active.model),
         core_override_ignored=override,
         director_diversification=director_diversification,
     )

@@ -614,7 +614,7 @@ def _finnhub_run(ctx: JobContext, kind: str, *, recent_only: bool = False) -> Jo
         raise JobSkippedError(str(exc), notice=notice) from exc
 
     today = ctx.now.astimezone(ET).date()
-    from arc.universe.tiers import Tier, active_by_tier
+    from arc.universe.tiers import Tier, active_by_tier, tiers_model
 
     universe = IngestUniverse.from_settings(s, now=ctx.now, conn=ctx.conn)
     # E12.4 (D51): open underlyings -> today's candidates -> core -> momentum -> trending
@@ -623,7 +623,12 @@ def _finnhub_run(ctx: JobContext, kind: str, *, recent_only: bool = False) -> Jo
         tiers: dict[str, list[str]] = {"tickers": list(ctx.options["tickers"])}
     else:
         by_tier = active_by_tier(ctx.conn, s, ctx.now)
-        tiers = {t.value: by_tier[t] for t in (Tier.CORE, Tier.MOMENTUM, Tier.TRENDING)}
+        # D56: discovery (the Scout's list) is a tier the Scalp reads, like trending was
+        tiers = {
+            t.value: by_tier[t]
+            for t in (Tier.CORE, Tier.MOMENTUM, Tier.TRENDING, Tier.DISCOVERY)
+            if t is not Tier.DISCOVERY or tiers_model(s) == "d56"
+        }
     scope = ticker_scope(
         ctx.conn,
         tiers=tiers,
@@ -857,7 +862,7 @@ def run_momentum(
         size=size,
         user_agent=settings.edgar_user_agent,
         master=master,
-        etfs=ETF_UNDERLYINGS | set(cfg.tiers.market_reference),
+        etfs=ETF_UNDERLYINGS | set(cfg.tiers.reference()),
         get=get,
     )
 
@@ -1011,7 +1016,14 @@ def universe_trending_source(ctx: JobContext) -> JobResult:
     posts the daily diff as a notice, then re-resolves today's active list. A run
     that cannot build the tier raises: ``failed`` + alerted, nothing written, and the
     tier is empty today (yesterday's entry has expired).
+
+    D56 (E13.4): under ``universe.tiers.model: d56`` there is no trending tier; the run
+    is ``skipped`` (no fetch, no write). The job itself is removed in E13.15.
     """
+    from arc.universe.tiers import tiers_model
+
+    if tiers_model(ctx.settings) == "d56":
+        raise JobSkippedError("universe.tiers.model is d56: no trending tier")
     from arc.universe.trending import (
         build_payload,
         journal_decisions,
@@ -1266,6 +1278,7 @@ def _journal_universe_rejects(ctx: JobContext, result: ScalpRunResult) -> int:
         "unknown_symbol": ReasonCode.UNIVERSE_UNKNOWN_SYMBOL,
         "illiquid": ReasonCode.UNIVERSE_ILLIQUID,
         "over_new_ticker_cap": ReasonCode.UNIVERSE_NEW_TICKER_CAP,
+        "not_in_tier": ReasonCode.UNIVERSE_NOT_IN_TIER,  # D56: a mention, never a candidate
     }
     store = JournalStore(ctx.conn)
     n = 0
@@ -1342,6 +1355,60 @@ def _journal_floor_skips(ctx: JobContext, result: ScalpRunResult) -> int:
     return n
 
 
+def _journal_floor_rejects(ctx: JobContext, result: ScalpRunResult) -> int:
+    """D56 (E13.4): one rejected ``universe:below_tier_floor`` decision per idea below
+    its tier's confidence floor (payload ``confidence_floor_skipped: tier=<t> floor=<f>``).
+
+    Never written as a candidate. Once per ticker per ET day. Returns the count.
+    """
+    if not result.floor_rejected:
+        return 0
+    import datetime as dt
+
+    from arc.context.ttl import to_db
+    from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
+    from arc.journal.store import JournalStore
+
+    day = ctx.now.astimezone(ET).date()
+    start = dt.datetime(day.year, day.month, day.day, tzinfo=ET)
+    done = {
+        r[0]
+        for r in ctx.conn.execute(
+            "SELECT subject FROM decisions WHERE reason_code = ? AND at >= ? AND at < ?",
+            (
+                ReasonCode.UNIVERSE_BELOW_TIER_FLOOR.value,
+                to_db(start),
+                to_db(start + dt.timedelta(days=1)),
+            ),
+        ).fetchall()
+    }
+    store = JournalStore(ctx.conn)
+    n = 0
+    for ticker, (tier, conf, floor) in sorted(result.floor_rejected.items()):
+        if ticker in done:
+            continue
+        store.record(
+            persona=JournalPersona.SCALP,
+            stage=Stage.CANDIDATE,
+            subject=ticker,
+            choice=Choice.REJECTED,
+            reason_code=ReasonCode.UNIVERSE_BELOW_TIER_FLOOR,
+            reason_text=f"{tier} name below its tier floor ({conf:.2f} < {floor:.2f})",
+            confidence=conf,
+            at=ctx.now,
+            chain_run_id=ctx.chain_run_id,
+            run_id=ctx.run_id,
+            payload={
+                "confidence_floor_skipped": f"tier={tier} floor={floor:g}",
+                "tier": tier,
+                "confidence": conf,
+                "floor": floor,
+            },
+        )
+        n += 1
+    return n
+
+
 def scalp_persona(
     ctx: JobContext, llm: PersonaLLM | None = None, guard: UniverseGuard | None = None
 ) -> JobResult:
@@ -1367,6 +1434,7 @@ def scalp_persona(
             ctx.write("story", p.story_id, p, ttl=result.story_ttls.get(p.story_id))
     _journal_universe_rejects(ctx, result)
     _journal_floor_skips(ctx, result)
+    _journal_floor_rejects(ctx, result)
     written = [
         ctx.write(
             "candidate",
@@ -1401,6 +1469,7 @@ def scalp_persona(
             "failed_digest_batches": result.failed_digest_batches,
             "failed_batches": result.failed_batches,
             "new_tickers": len(result.new_tickers),
+            "mentions": len(result.mentions),
             **{f"source_{label}": read for label, read, _ in result.source_mix},
         },
         card=scalp_card(
@@ -1421,6 +1490,7 @@ def scalp_persona(
             filtered={
                 registry_label(ctx, k): n for k, n in sorted(result.filtered_by_source.items())
             },
+            mentions=result.mentions,
         ),
     )
 

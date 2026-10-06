@@ -500,7 +500,7 @@ class TestCli:
         )
         out = capsys.readouterr().out
         # D51: no store at the default path in tests -> the core list
-        assert "alpaca" in out and "thetadata" in out and "MARA" in out
+        assert "alpaca" in out and "thetadata" in out and "NFLX" in out  # last core name (D56)
 
     def test_make_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import argparse

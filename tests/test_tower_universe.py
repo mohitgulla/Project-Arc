@@ -225,7 +225,7 @@ def test_route_on_the_ops_fixture_is_get_only(tmp_path: Path) -> None:
     assert body.state == "today"
     assert len(body.active) == body.active_max == 50
     counts = {t.name: t.active for t in body.tiers}
-    assert counts == {"core": 25, "momentum": 15, "trending": 6, "discovery": 4}
+    assert counts == {"core": 20, "momentum": 15, "trending": 6, "discovery": 9}
     assert [(d.ticker, d.reason) for d in body.dropped] == [
         ("SNDK", DROP_OVER_ACTIVE_CAP),
         ("BBAI", DROP_OVER_ACTIVE_CAP),

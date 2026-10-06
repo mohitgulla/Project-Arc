@@ -55,7 +55,9 @@ promotion_stems: [exits, ranking, costs, account_profiles]
 # Values that count as "off" (control behaviour) for a new `Flag:` key.
 # "strict" (E12.5): the control of a strict | relaxed choice switch
 # (personas.director_diversification); it names the unchanged behaviour.
-flag_off_values: [false, null, "off", "none", "control", "strict"]
+# "d51" (E13.4): the control of the d51 | d56 tier-layout switch (universe.tiers.model);
+# d51 is the universe as it runs today (D51), d56 the treatment.
+flag_off_values: [false, null, "off", "none", "control", "strict", "d51"]
 
 # Minimum length of the `Lane: fast` reason, so "Lane: fast — x" does not pass.
 fast_reason_min_chars: 10

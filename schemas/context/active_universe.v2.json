@@ -3,6 +3,19 @@
     "DroppedMember": {
       "additionalProperties": false,
       "properties": {
+        "rank": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2 (E13.4): the name's rank in its tier",
+          "title": "Rank"
+        },
         "reason": {
           "title": "Reason",
           "type": "string"
@@ -85,7 +98,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "``active_universe`` context entry (subject ``active``): one per resolve.",
+  "description": "``active_universe`` context entry (subject ``active``): one per resolve.\n\nv2 (E13.4): ``model`` (the tier layout it was resolved under; v1 rows load as d51).",
   "properties": {
     "as_of": {
       "format": "date",
@@ -133,6 +146,15 @@
       },
       "title": "Members",
       "type": "array"
+    },
+    "model": {
+      "default": "d51",
+      "enum": [
+        "d51",
+        "d56"
+      ],
+      "title": "Model",
+      "type": "string"
     },
     "raw_counts": {
       "additionalProperties": {

@@ -5320,6 +5320,11 @@ export interface components {
         /** UniverseDroppedRow */
         UniverseDroppedRow: {
             /**
+             * Rank
+             * @description The name's rank in its tier (D56 resolves)
+             */
+            rank?: number | null;
+            /**
              * Reason
              * @description over_active_cap | over_tier_size | …
              */
@@ -5361,6 +5366,12 @@ export interface components {
             dropped: components["schemas"]["UniverseDroppedRow"][];
             /** Market Reference */
             market_reference: string[];
+            /**
+             * Model
+             * @description Tier layout the shown resolve used (d51 | d56); config/universe.yaml tiers.model when nothing is resolved
+             * @default d51
+             */
+            model: string;
             /** Note */
             note?: string | null;
             /**
@@ -5405,7 +5416,7 @@ export interface components {
             fetched_at: string | null;
             /**
              * Name
-             * @description core | momentum | trending | discovery (precedence order)
+             * @description core | momentum | trending | discovery (precedence order; d56 has no trending)
              */
             name: string;
             /**

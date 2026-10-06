@@ -3,7 +3,8 @@
  *
  * - Pinned summary (outside the scrolling content, never collapses):
  *   `Active 50/50 · Core 25 · Momentum 17 · Trending n · Discovery n` + the resolve's age.
- * - One section per tier (Core → Momentum → Trending → Discovery): ticker chips with rank;
+ * - One section per tier the API lists (D51: Core → Momentum → Trending → Discovery; D56,
+ *   E13.4: no Trending, `u.model === "d56"`): ticker chips with rank;
  *   tap/hover a chip for source, reason and `also in <tier>`. Tier header: source, last
  *   refresh age, `Partial` / `Expired` badges, offered/active/size counts.
  * - Dropped names with tier + reason; the market reference line (SPY QQQ, regime only).
@@ -22,6 +23,7 @@ import {
   memberDetail,
   membersOf,
   resolveLabel,
+  refreshLine,
   sortTiers,
   summaryLine,
   tierCounts,
@@ -191,7 +193,7 @@ export function OpsUniversePage() {
             )}
           </Card>
           <p className="text-caption text-muted [text-wrap:pretty]">
-            Read-only. The core list is the <Link className="arc-action" to="/ops/config">universe</Link> key; momentum and trending refresh on their own jobs.
+            Read-only. The core list is the <Link className="arc-action" to="/ops/config">universe</Link> key; {refreshLine(u.model)}
           </p>
         </>
       )}

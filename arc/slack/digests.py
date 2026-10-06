@@ -74,6 +74,7 @@ _REASONS = {
     "unknown_symbol": "unknown symbol",
     "illiquid": "failed liquidity screen",
     "over_new_ticker_cap": "over new-ticker cap",
+    "not_in_tier": "outside the universe (mentioned only)",
     "excluded": "excluded by Research",
     "over_budget": "ranked, not structured (budget)",
     "skipped": "skipped by Quant",
@@ -228,6 +229,7 @@ def scalp_card(
     stories: int | None = None,
     category_mix: Sequence[CategoryMix] = (),
     filtered: Mapping[str, int] | None = None,
+    mentions: Sequence[str] = (),
 ) -> CardView:
     """``[Scalp] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
@@ -239,8 +241,13 @@ def scalp_card(
     the story count; each candidate shows how many distinct sources back it.
     D55: *filtered* (source label -> docs a feed's title filter closed since the last
     Scalp, never read) is one ``Filtered`` line under the source mix.
+    D56 (E13.4): *mentions* (ideas for names in no tier, ``not_in_tier``) are listed
+    under *Outside the universe*, never as candidates, and not repeated under Rejected.
     """
     title = f"[Scalp] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
+    if mentions:  # D56: listed once, under Outside the universe
+        rejected = {k: n for k, n in rejected.items() if k != "not_in_tier"}
+        rejected_items = {k: v for k, v in (rejected_items or {}).items() if k != "not_in_tier"}
     n_rej = sum(rejected.values())
     new = set(new_tickers)
     blocks = _head(
@@ -249,6 +256,7 @@ def scalp_card(
         (f"{stories} stor{'y' if stories == 1 else 'ies'}" if stories is not None else ""),
         f"{len(new)} new (screened)" if new else "",
         f"{n_rej} rejected",
+        f"{len(mentions)} outside the universe" if mentions else "",
         f":warning: {failed_batches} failed batch{'es' if failed_batches != 1 else ''}"
         if failed_batches
         else "",
@@ -287,6 +295,14 @@ def scalp_card(
     if not ranked:
         blocks.append(B.divider())
         blocks.append(_section("Candidates", ["none"]))
+    if mentions:
+        blocks.append(B.divider())
+        blocks.append(
+            _section(
+                "Outside the universe (mentioned, not admitted)",
+                [B.clip(", ".join(B.esc(t) for t in mentions))],
+            )
+        )
     items = [(t, reason) for reason, ts in (rejected_items or {}).items() for t in ts]
     rej_rows = _drops(rejected, items)
     # E5.7 failed-check details; E5.5b: column 0, no indent.

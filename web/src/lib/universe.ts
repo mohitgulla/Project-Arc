@@ -36,6 +36,13 @@ export function membersOf(active: UniverseActive[], tier: string): UniverseActiv
   return active.filter((m) => m.tier === tier).sort((a, b) => a.rank - b.rank);
 }
 
+/** Footer: which tiers refresh on their own jobs (D56: no trending; discovery = Scout). */
+export function refreshLine(model: string | null | undefined): string {
+  return model === "d56"
+    ? "momentum refreshes on its own job; discovery is written by the Scout."
+    : "momentum and trending refresh on their own jobs.";
+}
+
 /** Plain words for a drop reason. */
 export const DROP_LABEL: Record<string, string> = {
   over_active_cap: "past the active-list cap",
