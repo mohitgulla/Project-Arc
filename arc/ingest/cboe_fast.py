@@ -36,7 +36,9 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from arc.context.kinds import (
     BookLevel,
@@ -56,11 +58,14 @@ __all__ = [
     "CBOE_QUOTE_URL",
     "INDEX_VOL_SYMBOLS",
     "SYMBOL_DATA_URL",
+    "TAPE_SOURCE",
     "CboeQuoteError",
     "ChainRow",
     "DelayedChain",
+    "ScalpTape",
     "SnapshotSkipError",
     "SymbolDataRow",
+    "TapeTicker",
     "aggregate_by_underlying",
     "build_tape",
     "detect_flips",
@@ -69,8 +74,12 @@ __all__ = [
     "parse_cboe_quote",
     "parse_delayed_chain",
     "parse_symbol_data_csv",
+    "scalp_tape",
+    "scalp_tape_from_store",
     "select_exchange_rows",
     "snapshot_ticker",
+    "tape_corroborates",
+    "tape_direction",
     "vix_line",
 ]
 
@@ -609,6 +618,148 @@ def build_tape(
 
 def tape_from_store(conn: Any, now: _dt.datetime, max_age: _dt.timedelta) -> str:
     """:func:`build_tape` over the newest stored options_fast entries at *now*."""
+    iv, snaps, ex, prev = _latest_parts(conn, now)
+    return build_tape(iv, snaps, ex, prev, now=now, max_age=max_age)
+
+
+# ---------------------------------------------------------------------------
+# E13.10: the Scalp's tape input (flag personas.scalp_options_tape)
+# ---------------------------------------------------------------------------
+
+#: The ``Candidate.sources`` token (and corroboration source key) the tape adds.
+TAPE_SOURCE = "options_fast:tape"
+
+TapeDirection = Literal["bullish", "bearish", "neutral", "unknown"]
+
+
+class TapeTicker(BaseModel):
+    """One ticker's fresh chain snapshot as the Scalp's tape reads it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pc_volume: float | None
+    atm_spread_pct: float | None
+    atm_oi: int | None
+    direction: TapeDirection
+
+
+class ScalpTape(BaseModel):
+    """The rendered options tape one Scalp run read (kept on the run manifest)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    as_of: str
+    vix: float | None
+    vix9d: float | None
+    vxn: float | None
+    flags: list[str]
+    tickers: dict[str, TapeTicker]
+    text: str = Field(max_length=MAX_TAPE_CHARS)
+
+    @property
+    def present(self) -> bool:
+        """A fresh tape was shown (the index vols were within ``max_age``)."""
+        return self.vix is not None
+
+
+def tape_direction(
+    pc_volume: float | None, *, bull: float = 0.7, bear: float = 1.3
+) -> TapeDirection:
+    """Session P/C volume -> direction: ``<= bull`` bullish, ``>= bear`` bearish."""
+    if pc_volume is None:
+        return "unknown"
+    if pc_volume <= bull:
+        return "bullish"
+    if pc_volume >= bear:
+        return "bearish"
+    return "neutral"
+
+
+def tape_corroborates(stance: str, direction: TapeDirection | None) -> bool:
+    """A ticker's tape corroborates a candidate only in the candidate's direction."""
+    return stance in ("bullish", "bearish") and direction == stance
+
+
+def _age_text(fetched_at: str | None, now: _dt.datetime) -> str:
+    if not fetched_at:
+        return "none stored"
+    try:
+        at = _dt.datetime.fromisoformat(fetched_at)
+    except ValueError:
+        return "unreadable"
+    at = at.replace(tzinfo=ET) if at.tzinfo is None else at
+    mins = int((now - at).total_seconds() // 60)
+    if mins < 0:
+        return "in the future"
+    return f"{mins // 60}h{mins % 60:02d}m" if mins >= 60 else f"{mins}m"
+
+
+def scalp_tape(
+    index_vols: IndexVolsPayload | None,
+    snapshots: Sequence[ChainSnapshotPayload],
+    exchange_volume: ExchangeVolumePayload | None,
+    previous: IndexVolsPayload | None,
+    *,
+    now: _dt.datetime,
+    max_age: _dt.timedelta,
+    max_chars: int = MAX_TAPE_CHARS,
+    pc_bull: float = 0.7,
+    pc_bear: float = 1.3,
+) -> ScalpTape:
+    """The Scalp's tape: :func:`build_tape` text plus the per-ticker directions.
+
+    Shown only when ``index_vols`` is within *max_age* of *now*; otherwise the one
+    line ``Options tape: no fresh info (age …)`` and no tickers (no corroboration).
+    """
+    if index_vols is None or not _fresh(index_vols.fetched_at, now, max_age):
+        age = _age_text(index_vols.fetched_at if index_vols else None, now)
+        return ScalpTape(
+            as_of=index_vols.fetched_at if index_vols else "",
+            vix=None,
+            vix9d=None,
+            vxn=None,
+            flags=[],
+            tickers={},
+            text=f"Options tape: no fresh info (age {age})",
+        )
+    px = {q.symbol: q.value for q in index_vols.quotes}
+    fresh = [s for s in snapshots if _fresh(s.fetched_at, now, max_age)]
+    return ScalpTape(
+        as_of=index_vols.fetched_at,
+        vix=px.get("VIX"),
+        vix9d=px.get("VIX9D"),
+        vxn=px.get("VXN"),
+        flags=list(index_vols.flags),
+        tickers={
+            s.ticker: TapeTicker(
+                pc_volume=s.put_call_volume,
+                atm_spread_pct=s.atm_spread_pct,
+                atm_oi=s.atm_oi,
+                direction=tape_direction(s.put_call_volume, bull=pc_bull, bear=pc_bear),
+            )
+            for s in sorted(fresh, key=lambda s: s.ticker)
+        },
+        text=build_tape(
+            index_vols,
+            fresh,
+            exchange_volume,
+            previous,
+            now=now,
+            max_age=max_age,
+            max_chars=max_chars,
+        ),
+    )
+
+
+def _latest_parts(
+    conn: Any, now: _dt.datetime
+) -> tuple[
+    IndexVolsPayload | None,
+    list[ChainSnapshotPayload],
+    ExchangeVolumePayload | None,
+    IndexVolsPayload | None,
+]:
+    """The newest stored options_fast entries visible at *now* (+ the previous VIX)."""
     from arc.context.store import ContextStore
     from arc.context.ttl import to_db
 
@@ -633,13 +784,38 @@ def tape_from_store(conn: Any, now: _dt.datetime, max_age: _dt.timedelta) -> str
         for (k, _), e in sorted(latest.items())
         if k == "chain_snapshot"
     ]
-    return build_tape(
+    return (
         IndexVolsPayload.model_validate(iv.payload) if iv else None,
         snaps,
         ExchangeVolumePayload.model_validate(ex.payload) if ex else None,
         prev,
+    )
+
+
+def scalp_tape_from_store(
+    conn: Any,
+    now: _dt.datetime,
+    max_age: _dt.timedelta,
+    *,
+    max_chars: int = MAX_TAPE_CHARS,
+    pc_bull: float = 0.7,
+    pc_bear: float = 1.3,
+) -> ScalpTape:
+    """:func:`scalp_tape` over the newest stored options_fast entries at *now*.
+
+    *now* is the Scalp tick's real time, never a stored ``fetched_at``.
+    """
+    iv, snaps, ex, prev = _latest_parts(conn, now)
+    return scalp_tape(
+        iv,
+        snaps,
+        ex,
+        prev,
         now=now,
         max_age=max_age,
+        max_chars=max_chars,
+        pc_bull=pc_bull,
+        pc_bear=pc_bear,
     )
 
 
@@ -651,7 +827,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m arc.ingest.cboe_fast")
     ap.add_argument("--tape", action="store_true", help="print the options tape block")
     ap.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
-    ap.add_argument("--now", default=None, help="ISO time (default: the newest index_vols)")
+    ap.add_argument("--now", default=None, help="ISO time (default: the newest index_vols write)")
     ap.add_argument("--config", default=None, help="routines YAML (category max_age)")
     args = ap.parse_args(argv)
     if not args.tape:
@@ -663,15 +839,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.now:
             now = _dt.datetime.fromisoformat(args.now).astimezone(ET)
         else:
+            # The newest index_vols write time (``valid_from`` = the writing tick's
+            # sub-second ``now``), not its ``fetched_at``: that one is truncated to the
+            # second, so querying at it hides every entry written later in that same
+            # second (E13.10).
+            from arc.context.ttl import from_db
+
             row = conn.execute(
-                "SELECT json_extract(payload, '$.fetched_at') FROM context_entries "
-                "WHERE kind = 'index_vols' ORDER BY created_at DESC LIMIT 1"
+                "SELECT max(valid_from) FROM context_entries WHERE kind = 'index_vols'"
             ).fetchone()
-            now = (
-                _dt.datetime.fromisoformat(row[0]).astimezone(ET)
-                if row and row[0]
-                else _dt.datetime.now(ET)
-            )
+            now = from_db(row[0]) if row and row[0] else _dt.datetime.now(ET)
         sys.stdout.write(tape_from_store(conn, now, td) + "\n")
     finally:
         conn.close()

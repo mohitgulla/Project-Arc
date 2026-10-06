@@ -871,6 +871,19 @@ class ArcSettings(BaseSettings):
         default=1500,
         description="D30: per-document text in the stage-1 digest prompt (3 docs per story).",
     )
+    # E13.10 (D56): the options tape in the Scalp prompt (personas.scalp_options_tape).
+    scalp_tape_max_chars: Annotated[int, Field(ge=200, le=1500)] = Field(
+        default=1500,
+        description="E13.10: the options tape block in the Scalp prompt is cut to this size.",
+    )
+    scalp_tape_pc_bull: Annotated[float, Field(gt=0.0, lt=1.0)] = Field(
+        default=0.7,
+        description="E13.10: session put/call volume at or below this reads bullish.",
+    )
+    scalp_tape_pc_bear: Annotated[float, Field(gt=1.0, le=10.0)] = Field(
+        default=1.3,
+        description="E13.10: session put/call volume at or above this reads bearish.",
+    )
     ingest_macro_horizon_days: Annotated[int, Field(ge=1, le=180)] = Field(
         default=45,
         description="E4.5: macro calendar (FOMC/BLS) looks this many days ahead.",

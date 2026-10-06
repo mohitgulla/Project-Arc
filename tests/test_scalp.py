@@ -700,3 +700,397 @@ def test_cli_scan_dry_run() -> None:
     # E12.4: core JPM (0.4) and AAPL (0.2) skip the confidence floor.
     assert {c["ticker"] for c in report["candidates"]} == {"NVDA", "XOM", "PLTR", "JPM", "AAPL"}
     assert all("rationale" not in c for c in report["candidates"])
+
+
+# ---------------------------------------------------------------------------
+# E13.10 (D56): options tape, two-category budget, out-of-tier mentions
+# ---------------------------------------------------------------------------
+
+
+def _tape_routines(on: bool) -> Any:
+    from arc.routines.config import load_routines
+
+    return load_routines(overrides={("personas", "scalp_options_tape"): "on" if on else "off"})
+
+
+def _store_tape(conn, at: dt.datetime, pcs: dict[str, float | None]) -> None:
+    """Seed the three options_fast kinds as the E13.6 source writes them at *at*."""
+    from arc.context.kinds import ChainSnapshotPayload, IndexVol, IndexVolsPayload
+    from arc.context.store import ContextStore
+
+    store = ContextStore(conn)
+    fetched = at.replace(microsecond=0).isoformat()
+    store.write(
+        kind="index_vols",
+        subject="market",
+        payload=IndexVolsPayload(
+            fetched_at=fetched,
+            quotes=[
+                IndexVol(symbol="VIX9D", value=16.5, as_of=fetched),
+                IndexVol(symbol="VIX", value=17.6, as_of=fetched),
+                IndexVol(symbol="VXN", value=21.0, as_of=fetched),
+            ],
+            ratio_9d_30d=0.9375,
+        ),
+        produced_by="options_fast",
+        ttl="1h",
+        valid_from=at,
+        now=at,
+    )
+    for t, pc in pcs.items():
+        calls = 10_000
+        store.write(
+            kind="chain_snapshot",
+            subject=t,
+            payload=ChainSnapshotPayload(
+                ticker=t,
+                fetched_at=fetched,
+                spot=100.0,
+                expiry="2026-11-20",
+                call_volume_td=calls,
+                put_volume_td=int(calls * pc) if pc is not None else 0,
+                put_call_volume=pc,
+                atm_spread_pct=0.02,
+                atm_oi=1234,
+                book=[],
+            ),
+            produced_by="options_fast",
+            ttl="1h",
+            valid_from=at,
+            now=at,
+        )
+
+
+class TestOptionsTape:
+    def test_direction_thresholds(self) -> None:
+        from arc.ingest.cboe_fast import tape_corroborates, tape_direction
+
+        assert tape_direction(None) == "unknown"
+        assert tape_direction(0.7) == "bullish"  # inclusive
+        assert tape_direction(0.71) == "neutral"
+        assert tape_direction(1.29) == "neutral"
+        assert tape_direction(1.3) == "bearish"  # inclusive
+        assert tape_direction(0.9, bull=1.0) == "bullish"
+        assert tape_corroborates("bullish", "bullish")
+        assert tape_corroborates("bearish", "bearish")
+        assert not tape_corroborates("bullish", "bearish")
+        assert not tape_corroborates("neutral", "neutral")  # never for a neutral stance
+        assert not tape_corroborates("bullish", None)
+
+    @given(pc=st.floats(min_value=0.0, max_value=10.0, allow_nan=False))
+    def test_direction_partition(self, pc: float) -> None:
+        from arc.ingest.cboe_fast import tape_direction
+
+        d = tape_direction(pc)
+        assert (d == "bullish") == (pc <= 0.7)
+        assert (d == "bearish") == (pc >= 1.3)
+
+    def test_tape_block_present(self, conn) -> None:
+        from arc.ingest.cboe_fast import scalp_tape_from_store
+
+        at = NOW.replace(microsecond=594_000)  # sub-second write, like a real tick
+        _store_tape(conn, at, {"AAPL": 0.5, "NVDA": 1.6, "XOM": None})
+        tape = scalp_tape_from_store(conn, at, dt.timedelta(minutes=30))
+        assert tape.present and (tape.vix, tape.vix9d, tape.vxn) == (17.6, 16.5, 21.0)
+        assert {t: v.direction for t, v in tape.tickers.items()} == {
+            "AAPL": "bullish",
+            "NVDA": "bearish",
+            "XOM": "unknown",
+        }
+        assert tape.text.startswith("VIX complex (Cboe ~15-min delayed")
+        assert "AAPL 100.00" in tape.text and len(tape.text) <= 1500
+
+    def test_tape_stale_and_absent(self, conn) -> None:
+        from arc.ingest.cboe_fast import scalp_tape_from_store
+
+        m30 = dt.timedelta(minutes=30)
+        none = scalp_tape_from_store(conn, NOW, m30)
+        assert none.text == "Options tape: no fresh info (age none stored)"
+        assert not none.present and none.tickers == {}
+        _store_tape(conn, NOW, {"AAPL": 0.5})
+        late = scalp_tape_from_store(conn, NOW + dt.timedelta(minutes=31), m30)
+        assert late.text == "Options tape: no fresh info (age 31m)"
+        assert late.tickers == {}  # stale tape never corroborates
+        evening = scalp_tape_from_store(conn, NOW + dt.timedelta(minutes=50), m30)
+        assert evening.text == "Options tape: no fresh info (age 50m)"
+        two_h = scalp_tape_from_store(conn, NOW + dt.timedelta(minutes=59), m30)
+        assert two_h.text.endswith("(age 59m)")
+
+    def test_age_text(self) -> None:
+        from arc.ingest.cboe_fast import _age_text  # noqa: PLC2701
+
+        assert _age_text("nope", NOW) == "unreadable"
+        assert _age_text((NOW + dt.timedelta(minutes=5)).isoformat(), NOW) == "in the future"
+        assert _age_text((NOW - dt.timedelta(minutes=125)).isoformat(), NOW) == "2h05m"
+        assert _age_text("2026-09-28T06:00:00", NOW) == "1h00m"  # naive = ET
+
+    def test_flag_off_prompt_unchanged_and_no_tape(self, conn, settings) -> None:
+        _seed(conn, 1)
+        _store_tape(conn, NOW, {"AAPL": 0.5})
+        llm = FixtureScalpLLM([_reply(_item(sources=["https://example.com/aapl/0"]))])
+        res = run_scalp(conn, settings, llm=llm, now=NOW, routines=_tape_routines(False))
+        assert res.tape is None and not res.tape_present and res.tape_tickers == 0
+        assert "Options tape" not in llm.prompts[0]
+        assert res.candidates[0].sources == ["https://example.com/aapl/0"]
+        assert res.tape_corroborated == {}
+
+    def test_flag_on_tape_in_prompt_and_corroboration(self, conn, settings) -> None:
+        from arc.ingest.cboe_fast import TAPE_SOURCE
+
+        _seed(conn, 2)
+        RawDocRepo(conn).insert(
+            source="rss",
+            url="https://example.com/nvda/0",
+            published_at=(NOW - dt.timedelta(hours=1)).isoformat(),
+            text="NVDA guidance cut on export rules",
+            tickers_hint=["NVDA"],
+            id="doc-nvda",
+        )
+        _store_tape(conn, NOW - dt.timedelta(minutes=5), {"AAPL": 0.5, "NVDA": 0.5})
+        llm = FixtureScalpLLM(
+            [
+                _reply(
+                    _item(sources=["https://example.com/aapl/0"]),  # bullish + P/C 0.5
+                    _item(
+                        ticker="NVDA", stance="bearish", sources=["https://example.com/nvda/0"]
+                    ),  # bearish vs a bullish tape: no corroboration
+                )
+            ]
+        )
+        res = run_scalp(
+            conn, settings, llm=llm, now=NOW, run_id="r-tape", routines=_tape_routines(True)
+        )
+        prompt = llm.prompts[0]
+        assert "## Options tape (Cboe, code-built)" in prompt
+        assert "never cite it in `sources`" in prompt
+        assert res.tape_present and res.tape_tickers == 2
+        assert res.tape_corroborated == {"AAPL": 0.5}
+        by = {c.ticker: c for c in res.candidates}
+        assert by["AAPL"].sources == ["https://example.com/aapl/0", TAPE_SOURCE]
+        assert by["AAPL"].corroboration == 2  # one doc source + the tape
+        assert TAPE_SOURCE not in by["NVDA"].sources and by["NVDA"].corroboration == 1
+        assert "AAPL" in res.candidate_ttls  # the tape token never sets a freshness TTL
+        # the tape read is recorded as a context snapshot for audit
+        kinds = conn.execute(
+            "SELECT kinds FROM context_snapshots WHERE run_id = 'r-tape'"
+        ).fetchall()
+        assert any("index_vols" in r[0] for r in kinds)
+        # the stored candidate row carries the tape token once
+        stored = CandidateRepo(conn).get_for_day("AAPL", DAY)
+        assert json.loads(stored["sources"]).count(TAPE_SOURCE) == 1
+
+    def test_flag_on_stale_tape_line(self, conn, settings) -> None:
+        _seed(conn, 1)
+        _store_tape(conn, NOW - dt.timedelta(minutes=45), {"AAPL": 0.5})
+        llm = FixtureScalpLLM([_reply(_item(sources=["https://example.com/aapl/0"]))])
+        res = run_scalp(conn, settings, llm=llm, now=NOW, routines=_tape_routines(True))
+        assert "Options tape: no fresh info (age 45m)" in llm.prompts[0]
+        assert not res.tape_present and res.tape_corroborated == {}
+        assert res.candidates[0].corroboration == 1
+
+    def test_tape_never_creates_or_removes(self, conn, settings) -> None:
+        _seed(conn, 1)
+        _store_tape(conn, NOW, {"AAPL": 0.5, "NVDA": 0.2, "TSLA": 2.0})
+        llm = FixtureScalpLLM([_reply()])  # the LLM proposes nothing
+        res = run_scalp(conn, settings, llm=llm, now=NOW, routines=_tape_routines(True))
+        assert res.candidates == [] and res.accepted == 0 and res.tape_corroborated == {}
+
+    def test_two_category_budget_tape_costs_no_docs(self, conn, settings) -> None:
+        """D56: the doc budget splits over market_news + company_data only; the tape
+        adds no docs and draws nothing from the budget."""
+        settings.scalp_doc_budget = 4
+        repo = RawDocRepo(conn)
+        for i in range(6):
+            repo.insert(
+                source="rss",
+                url=f"https://www.cnbc.com/b/{i}",  # cnbc_business: market_news
+                published_at=(NOW - dt.timedelta(minutes=10 + i)).isoformat(),
+                text=f"market story {i} alpha{i} beta{i}",
+                tickers_hint=["AAPL"],
+                id=f"mn-{i}",
+                source_key="rss:cnbc_business",
+            )
+            repo.insert(
+                source="rss",
+                url=f"https://www.cnbc.com/e/{i}",  # cnbc_earnings: company_data
+                published_at=(NOW - dt.timedelta(minutes=10 + i)).isoformat(),
+                text=f"earnings story {i} gamma{i} delta{i}",
+                tickers_hint=["AAPL"],
+                id=f"cd-{i}",
+                source_key="rss:cnbc_earnings",
+            )
+        _store_tape(conn, NOW, {"AAPL": 0.5})
+        off = run_scalp(
+            conn,
+            settings,
+            llm=FixtureScalpLLM([_reply()]),
+            now=NOW,
+            routines=_tape_routines(False),
+            run_id="off",
+        )
+        cats = {str(m.category) for m in off.category_mix}
+        assert cats <= {"market_news", "company_data"}  # no options category drawn
+        assert off.docs_scalped == 4 and off.over_budget == 8
+        on = run_scalp(
+            conn,
+            settings,
+            llm=FixtureScalpLLM([_reply()]),
+            now=NOW,
+            routines=_tape_routines(True),
+            run_id="on",
+        )
+        assert on.tape_present and on.docs_scalped == 4  # same doc budget with the tape
+
+    def test_out_of_tier_mentions(self, tmp_path) -> None:
+        """D56: an out-of-tier idea -> not_in_tier journal row + a mention, never a
+        candidate; the note and the card list it under Outside the universe."""
+        from arc.context.store import ContextStore
+        from arc.routines.config import RoutinesConfig
+        from arc.routines.handlers import JobContext, scalp_persona
+        from arc.universe.config import universe_config
+        from arc.universe.guard import UniverseGuard, UniverseMode
+        from arc.universe.master import SymbolInfo, SymbolMaster
+        from arc.universe.tiers import Tier
+
+        db = connect(tmp_path / "arc.db")
+        migrate(db)
+        repo = RawDocRepo(db)
+        repo.insert(
+            source="rss",
+            url=URL_A,
+            published_at=(NOW - dt.timedelta(minutes=30)).isoformat(),
+            text="AAPL and OUTX and ZZZ news",
+            tickers_hint=["AAPL", "OUTX"],
+            id="doc-a",
+            title="OUTX soars on a buyout rumour",
+        )
+        s = ArcSettings(env="paper", scalp_min_confidence=0.6)  # type: ignore[call-arg]
+        syms = ["AAPL", "OUTX", *(f"OT{i}" for i in range(12))]
+        guard = UniverseGuard(
+            mode=UniverseMode.SEED,
+            seed=frozenset({"AAPL"}),
+            config=universe_config(s),
+            master=SymbolMaster(
+                fetched_at=NOW,
+                symbols={
+                    x: SymbolInfo(symbol=x, sources=["sec"], options=True, tradable=True)
+                    for x in syms
+                },
+            ),
+            max_new=3,
+            today=NOW.date(),
+            dte_window=(30, 60),
+            tiers={"AAPL": Tier.CORE},
+            model="d56",
+            floors={Tier.CORE: 0.4},
+        )
+        items = [
+            _item(sources=[URL_A]),
+            _item(ticker="OUTX", stance="bullish", catalyst_type="news", sources=[URL_A]),
+            _item(ticker="OUTX", stance="bearish", sources=[URL_A]),  # dedupe by ticker
+            *(_item(ticker=f"OT{i}", stance="bearish", sources=[URL_A]) for i in range(12)),
+        ]
+
+        class _LLM:
+            model = "test"
+
+            def complete(self, _prompt: str) -> LLMResult:
+                return LLMResult(text=_reply(*items), model="test")
+
+        routines = RoutinesConfig.model_validate(
+            {"personas": {"scalp": {"schedule": ["07:00"], "writes": ["candidate", "note"]}}}
+        )
+        kind, spec = routines.step("scalp")
+        ctx = JobContext(
+            job="scalp",
+            kind=kind,
+            spec=spec,
+            run_id="run-m",
+            chain_run_id="chain-m",
+            scheduled_for=NOW,
+            now=NOW,
+            conn=db,
+            snapshot=ContextStore(db).snapshot(NOW),
+            routines=routines,
+            settings_factory=lambda: s,
+        )
+        res = scalp_persona(ctx, llm=_LLM(), guard=guard)
+
+        # never a candidate
+        stored = {r[0] for r in db.execute("SELECT ticker FROM candidates").fetchall()}
+        assert stored == {"AAPL"}
+        cands = db.execute(
+            "SELECT subject FROM context_entries WHERE kind = 'candidate'"
+        ).fetchall()
+        assert [r[0] for r in cands] == ["AAPL"]
+        # journaled not_in_tier (every rejected name, once per run)
+        rows = db.execute(
+            "SELECT subject FROM decisions WHERE reason_code = 'universe:not_in_tier'"
+        ).fetchall()
+        assert {r[0] for r in rows} == {"OUTX", *(f"OT{i}" for i in range(12))}
+        # mentions: first idea per ticker, at most 10, the story headline kept
+        assert res.metrics["mentions"] == 10
+        note = db.execute("SELECT payload FROM context_entries WHERE kind = 'note'").fetchone()
+        payload = json.loads(note[0])
+        assert payload["facts"] == {"mentions": 10}
+        line = payload["body"].splitlines()[-1]
+        assert line.startswith("Outside the universe: OUTX (bullish, news), OT0 (bearish, ")
+        assert len(line) <= 300
+        assert "Options tape" not in payload["body"]  # flag off: no tape line
+        card = json.dumps(res.card.blocks if res.card else [])
+        assert "Outside the universe (10): mentioned, not admitted" in card
+        assert "OUTX (bullish)" in card
+        assert "Options tape" not in card
+        db.close()
+
+    def test_mention_headline_and_line_cap(self) -> None:
+        from arc.ingest.scalp import ScalpMention, ScalpRunResult, _mention
+        from arc.routines.handlers import scalp_mentions_line
+
+        assert _mention({"ticker": "X"}, []) is None  # schema-invalid idea: no mention
+        res = ScalpRunResult(run_id="r", day=DAY, dry_run=False)
+        assert scalp_mentions_line(res) == ""
+        res.mentions = [
+            ScalpMention(
+                ticker=f"LONGNAME{i}",
+                stance=Stance.BULLISH,
+                catalyst_type=CatalystType.EARNINGS,
+                headline="h",
+            )
+            for i in range(10)
+        ]
+        line = scalp_mentions_line(res)
+        assert len(line) <= 300 and line.endswith("…")
+        assert "LONGNAME0 (bullish, earnings)" in line and line.endswith("), …")
+
+    def test_tape_line_and_card(self) -> None:
+        from arc.ingest.cboe_fast import ScalpTape, TapeTicker
+        from arc.ingest.scalp import ScalpRunResult
+        from arc.routines.handlers import scalp_tape_line
+        from arc.slack.digests import scalp_card
+
+        res = ScalpRunResult(run_id="r", day=DAY, dry_run=False)
+        assert scalp_tape_line(res) == ""
+        res.tape = ScalpTape(
+            as_of=NOW.isoformat(),
+            vix=17.6,
+            vix9d=16.5,
+            vxn=None,
+            flags=[],
+            tickers={
+                "AAPL": TapeTicker(
+                    pc_volume=0.5, atm_spread_pct=None, atm_oi=None, direction="bullish"
+                )
+            },
+            text="VIX complex ...",
+        )
+        res.tape_corroborated = {"AAPL": 0.5}
+        line = scalp_tape_line(res)
+        assert line == "Options tape: VIX 17.6 · 9D/30D 0.94 · 1 ticker · corroborated AAPL"
+        res.tape = res.tape.model_copy(update={"vix9d": None, "vix": None})
+        assert scalp_tape_line(res) == res.tape.text  # not present: the stale line
+        card = scalp_card(
+            docs=1, accepted=0, candidates=[], rejected={}, tape_line=line, mentions=["OUTX"]
+        )
+        text = json.dumps(card.blocks)
+        assert "Options tape: VIX 17.6" in text and "Outside the universe (1)" in text

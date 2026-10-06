@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
     from arc.context.kinds import ScoutReadPayload
     from arc.context.store import ContextEntry
+    from arc.ingest.scalp import ScalpMention
     from arc.ingest.sources import CategoryMix
     from arc.models import Candidate
     from arc.personas.schemas import (
@@ -231,7 +232,8 @@ def scalp_card(
     stories: int | None = None,
     category_mix: Sequence[CategoryMix] = (),
     filtered: Mapping[str, int] | None = None,
-    mentions: Sequence[str] = (),
+    mentions: Sequence[ScalpMention | str] = (),
+    tape_line: str = "",
 ) -> CardView:
     """``[Scalp] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
@@ -245,6 +247,9 @@ def scalp_card(
     Scalp, never read) is one ``Filtered`` line under the source mix.
     D56 (E13.4): *mentions* (ideas for names in no tier, ``not_in_tier``) are listed
     under *Outside the universe*, never as candidates, and not repeated under Rejected.
+    E13.10: *tape_line* (``Options tape: VIX 17.6 · 9D/30D 0.94 · n tickers``, flag
+    on only) sits under the source mix; mentions render ``Outside the universe (n):
+    X (bullish), Y (bearish)``.
     """
     title = f"[Scalp] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
     if mentions:  # D56: listed once, under Outside the universe
@@ -272,6 +277,8 @@ def scalp_card(
     if filtered and sum(filtered.values()):
         line = " · ".join(f"{B.esc(k)} {n}" for k, n in filtered.items() if n)
         blocks.append(_section("Filtered (title filter, not read)", [line]))
+    if tape_line:
+        blocks.append(B.summary(B.esc(tape_line)))
     # E5.5b: one section per candidate with dividers (like Research's ranked
     # list), so each row folds on its own. Lines start at column 0: no indent.
     ranked = sorted(candidates, key=lambda c: -c.confidence)
@@ -298,11 +305,15 @@ def scalp_card(
         blocks.append(B.divider())
         blocks.append(_section("Candidates", ["none"]))
     if mentions:
+        named = [
+            B.esc(m) if isinstance(m, str) else f"{B.esc(m.ticker)} ({m.stance.value})"
+            for m in mentions
+        ]
         blocks.append(B.divider())
         blocks.append(
             _section(
-                "Outside the universe (mentioned, not admitted)",
-                [B.clip(", ".join(B.esc(t) for t in mentions))],
+                f"Outside the universe ({len(mentions)}): mentioned, not admitted",
+                [B.clip(", ".join(named))],
             )
         )
     items = [(t, reason) for reason, ts in (rejected_items or {}).items() for t in ts]

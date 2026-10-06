@@ -86,6 +86,9 @@ class Choice(StrEnum):
 class ReasonCode(StrEnum):
     # candidate (what Research was offered)
     SCALP_CANDIDATE = "scalp_candidate"
+    # E13.10 (D56): the options tape's P/C direction matched the candidate's stance
+    # (personas.scalp_options_tape on): one more corroborating source, code-counted
+    TAPE_CORROBORATED = "tape_corroborated"
     # candidate: the Scalp's universe check (D28; arc.universe.guard)
     UNIVERSE_NOT_IN_UNIVERSE = "universe:not_in_universe"
     UNIVERSE_UNKNOWN_SYMBOL = "universe:unknown_symbol"
@@ -311,6 +314,7 @@ class Reviewer(StrEnum):
 # trail, E8.7b). One entry per ReasonCode; a test pins full coverage.
 REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.SCALP_CANDIDATE: "Scalp raised this idea",
+    ReasonCode.TAPE_CORROBORATED: "Options tape agreed with the stance",
     ReasonCode.UNIVERSE_NOT_IN_UNIVERSE: "Not in the tradable universe",
     ReasonCode.UNIVERSE_UNKNOWN_SYMBOL: "Unknown symbol",
     ReasonCode.UNIVERSE_ILLIQUID: "Options too illiquid",

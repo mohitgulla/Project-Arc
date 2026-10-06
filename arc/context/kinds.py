@@ -247,6 +247,9 @@ class NotePayload(BaseModel):
     about: list[str] = Field(
         default_factory=list, description="Context entry ids this note comments on"
     )
+    # v3 (E13.10): code-counted facts about the run the note describes (e.g. the
+    # Scalp's ``mentions`` count). Defaulted, so v2 rows still validate.
+    facts: dict[str, int] = Field(default_factory=dict, max_length=12)
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +731,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("position_review", PositionReviewPayload, schema_version=2),  # E6.4a: floor window
     KindSpec("portfolio_context", PortfolioContextPayload),  # E5.9 (D33)
     KindSpec("journal", JournalPayload),
-    KindSpec("note", NotePayload, schema_version=2),  # E13.1 (D56): scalp/research/broker/ops
+    KindSpec("note", NotePayload, schema_version=3),  # E13.10: facts (v2 E13.1: personas)
     # E4.5 (D30): story digests + options-trading data sources
     KindSpec("story", StoryPayload),
     KindSpec("vol_term", VolTermPayload),
