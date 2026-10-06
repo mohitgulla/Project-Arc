@@ -874,6 +874,7 @@ def test_yaml_comment_overview_matches_config() -> None:
     assert set(raw["personas"]) - {
         "finnhub_context", "director_diversification", "quant_risk_loop", "scout_feed",
         "scalp_options_tape",
+        "research_idea_pool", "research_compact_prompt",
     } == {
         "scout", "scalp", "scalp.overnight", "research", "monitor", "broker.reconcile", "scorecard",
         "broker",

@@ -117,6 +117,9 @@ class ReasonCode(StrEnum):
     RESEARCH_EXCLUDED = "research_excluded"  # E5.7: excluded with a stated reason
     MARKET_READ = "market_read"
     NO_CANDIDATES = "no_candidates"
+    # E13.8 (D56/D53/D54): the deterministic idea-pool cuts (before the Research call)
+    POOL_SCOUT_ONLY_CAP = "over_scout_only_cap"  # past funnel.research.max_scout_only_ideas
+    POOL_OVER_PROMPT_BUDGET = "over_prompt_budget"  # cut to fit research_prompt_max_chars
     # structure (Quant + scanner)
     CHOSEN_FROM_MENU = "chosen_from_menu"
     MENU_NOT_CHOSEN = "menu_not_chosen"
@@ -337,6 +340,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.RESEARCH_EXCLUDED: "Excluded by Research",
     ReasonCode.MARKET_READ: "Research's market read",
     ReasonCode.NO_CANDIDATES: "No candidates to review",
+    ReasonCode.POOL_SCOUT_ONLY_CAP: "Over the Scout-only idea cap",
+    ReasonCode.POOL_OVER_PROMPT_BUDGET: "Cut to fit the Research prompt budget",
     ReasonCode.CHOSEN_FROM_MENU: "Quant picked this structure from the menu",
     ReasonCode.MENU_NOT_CHOSEN: "Menu option not chosen",
     ReasonCode.NOT_IN_MENU: "Structure not in the scanner's menu",

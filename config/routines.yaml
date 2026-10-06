@@ -517,6 +517,8 @@ personas:
   quant_risk_loop: "off"        # E13.9 (D56): off | on — Risk verdicts + one quant.revise round (strategy lane; XP-7)
   scalp_options_tape: "off"     # E13.10 (D56): off | on — options_fast tape in the Scalp prompt, P/C corroboration (strategy lane; XP-8)
   scout_feed: "off"             # E13.7 (D56): off | on — the daily Scout below (strategy lane); off = scout skipped, no LLM call
+  research_idea_pool: scalp     # E13.8 (D56/D53): scalp | all — all = merged Scalp + Scout idea pool (strategy lane; XP-4)
+  research_compact_prompt: full # E13.8 (D56/D54): full | compact — compact one-line-per-idea prompt ≤ research_prompt_max_chars (strategy lane; XP-6)
   scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + 18:30 options_slow
     label: Scout
     about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"
@@ -568,7 +570,7 @@ personas:
     days: trading
     chain: auto                 # E13.9 chain_for(): quant.open, risk.open, [quant.revise if quant_risk_loop on], quant.propose, broker.execute (D34)
     reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, position_review, story,
-            earnings_history, insider_activity, analyst_recs, fundamentals]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on
+            earnings_history, insider_activity, analyst_recs, fundamentals, scout_read]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read renders only with research_compact_prompt compact
     writes: [shortlist, regime, note, portfolio_context]   # E5.9: portfolio_context + portfolio_view/thesis_check notes
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card

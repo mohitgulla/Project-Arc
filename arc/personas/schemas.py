@@ -139,6 +139,29 @@ class ResearchExclusion(BaseModel):
     reason: str = Field(..., min_length=1, description="One line: why this candidate is excluded")
 
 
+class PoolItem(BaseModel):
+    """One ticker of Research's idea pool (E13.8, D56/D53); code-built, text-free.
+
+    Built by :func:`arc.pipeline.research_pool.build_idea_pool` from the active
+    ``candidate`` entries (+ the Scout's ``scout_read`` calls) and recorded in the
+    Research prompt inputs, so ``arc journal replay`` rebuilds the same prompt.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str = Field(..., pattern=r"^[A-Z][A-Z0-9.]{0,9}$")
+    stance: Stance = Field(..., description="the higher-confidence feed's stance")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="max over feeds")
+    feeds: list[Literal["scalp", "scout"]] = Field(..., min_length=1)
+    origins: int = Field(..., ge=1, description="distinct sources/origins across feeds")
+    agreement: Literal["agree", "disagree", "single"]
+    tier: Literal["core", "momentum", "discovery", "none"] = "none"
+    candidate_ids: list[str] = Field(..., min_length=1)
+    # display-only facts carried from the candidate (no persona text)
+    catalyst_type: CatalystType | None = None
+    catalyst_date: str | None = Field(None, description="YYYY-MM-DD, if any")
+
+
 class ResearchPortfolioView(BaseModel):
     """Research's read of the open book (E5.9); ``notes`` is stored as a note."""
 

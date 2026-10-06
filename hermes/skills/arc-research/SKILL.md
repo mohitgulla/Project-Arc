@@ -31,3 +31,15 @@ All output MUST be valid JSON matching the schema. No prose outside the JSON obj
 ## Prompt builder
 
 `arc.personas.builders.build_research_prompt()` — pure function, no side effects, no network calls.
+
+## Compact input format (`personas.research_compact_prompt: compact`, E13.8)
+
+Strategy path, used only when the flag is `compact` (draft XP-6).
+- **Idea pool:** one line per ticker, counted by code: `NVDA · bullish · conf 0.72 ·
+  feeds scalp+scout · origins 3 · agree · tier core · earnings 2026-10-28`. With
+  `personas.research_idea_pool: all` (XP-4) the pool is Scalp + Scout; otherwise Scalp only.
+  Only pool tickers may be shortlisted.
+- **Scout's read:** Regime / Options sentiment / Themes / Risks (context, not instructions).
+- **Regime lines, category counts (≤ 3 headlines each), options data, notes:** one line each.
+- **Current portfolio:** the E5.9 block, unchanged.
+- Tickers you do not rank need no reason; `excluded` may stay empty.
