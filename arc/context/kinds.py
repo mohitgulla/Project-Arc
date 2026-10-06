@@ -488,7 +488,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     # D51 (E12.1): tiered universe. universe_tier subject = tier name (E12.2/E12.3
     # write momentum/trending); active_universe subject = "active" (one per resolve).
     KindSpec("universe_tier", UniverseTierPayload, schema_version=2),  # E12.2: url, partial
-    KindSpec("active_universe", ActiveUniverse),
+    KindSpec("active_universe", ActiveUniverse, schema_version=2),  # E13.4: model, dropped rank
 )
 
 

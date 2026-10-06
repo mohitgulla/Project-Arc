@@ -5,7 +5,7 @@
 - ``arc universe status``  cache path, age, counts, mode (never fetches).
 - ``arc universe check <TICKER>...``  would the Scalp admit these names?
   Master lookup + the live liquidity screen (read-only market data).
-- ``arc universe tiers [--db PATH]``  D51 tiers, dedupe, active list and drops,
+- ``arc universe tiers [--db PATH] [--model d51|d56]``  tiers, dedupe, active list and drops,
   resolved now from the store opened read-only (writes nothing).
 - ``arc universe momentum [--dry-run] [--db PATH] [--no-slack]``  E12.2: run the
   ``universe.momentum`` routine now (same as ``arc routines run universe.momentum``)
@@ -45,7 +45,7 @@ def add_universe_parser(sub: argparse._SubParsersAction) -> None:  # type: ignor
     )
     c.add_argument(
         "--profile",
-        choices=["strict", "relaxed"],
+        choices=["strict", "standard", "relaxed", "loose"],
         default=None,
         help=(
             "Screen every ticker with this liquidity profile, core/momentum included "
@@ -53,12 +53,18 @@ def add_universe_parser(sub: argparse._SubParsersAction) -> None:  # type: ignor
         ),
     )
     c.add_argument("--db", default=None, help="SQLite path for tier membership, read-only")
-    t = usub.add_parser("tiers", help="D51 tiers -> dedupe -> active list (read-only)")
+    t = usub.add_parser("tiers", help="Tiers -> dedupe -> active list (read-only)")
     t.add_argument("--db", default=None, help="SQLite path (default: data/arc.db), read-only")
     t.add_argument(
         "--now",
         default=None,
         help="Resolve as of this ISO time (ET if naive), e.g. a past session; default now",
+    )
+    t.add_argument(
+        "--model",
+        choices=["d51", "d56"],
+        default=None,
+        help="Preview under this tier layout (default: config/universe.yaml tiers.model)",
     )
     m = usub.add_parser("momentum", help="E12.2: run the monthly momentum tier job now")
     m.add_argument("--dry-run", action="store_true", help="Fetch and print only; write nothing")
@@ -95,6 +101,7 @@ def run_universe(args: argparse.Namespace) -> int:
     from arc.config import ArcSettings
     from arc.universe import load_symbol_master, refresh_symbol_master
     from arc.universe.config import universe_config
+    from arc.universe.guard import REJECT_NOT_IN_TIER
     from arc.universe.tiers import core_tickers
     from arc.utils.calendar import now_et
 
@@ -158,9 +165,14 @@ def run_universe(args: argparse.Namespace) -> int:
     rows = []
     for raw in args.tickers:
         t = raw.strip().upper()
-        tier = guard.tier_of(t).value
+        tier = guard.tier_label(t)
         row: dict[str, object] = {"ticker": t, "seed": guard.is_seed(t), "tier": tier}
-        if (reason := guard.known(t)) is not None:
+        reason = guard.known(t)
+        # D56: a name in no tier is never admitted, but a --profile what-if still screens it
+        out_of_tier = reason == REJECT_NOT_IN_TIER
+        if out_of_tier and args.profile is not None:
+            reason = None
+        if reason is not None:
             row |= {"admitted": False, "reject": reason, "detail": guard.details.get(t, "")}
         elif guard.is_seed(t) and args.profile is None:
             row |= {"admitted": True, "reject": None, "detail": f"{tier} (never screened)"}
@@ -168,11 +180,14 @@ def run_universe(args: argparse.Namespace) -> int:
             profile = args.profile or guard.screen_profile(t)
             res = guard.screen(t, profile)
             seed_note = f" ({tier}: admitted unscreened)" if guard.is_seed(t) else ""
+            if out_of_tier:
+                seed_note = " (in no tier: mentioned, never admitted)"
+            admitted = (res.passed or guard.is_seed(t)) and not out_of_tier
             row |= {
                 "profile": profile,
                 "screen_passed": res.passed,
-                "admitted": res.passed or guard.is_seed(t),
-                "reject": None if res.passed or guard.is_seed(t) else "illiquid",
+                "admitted": admitted,
+                "reject": None if admitted else (REJECT_NOT_IN_TIER if out_of_tier else "illiquid"),
                 "detail": f"{profile}: {res.detail()}{seed_note}",
                 "metrics": res.metrics.model_dump(mode="json"),
             }
@@ -225,7 +240,7 @@ def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetim
     """Resolve the active list now from the store (read-only) and print every stage."""
     from arc.control.effective import effective_settings
     from arc.store.db import connect_ro
-    from arc.universe.tiers import TIER_ORDER, build_active, market_reference
+    from arc.universe.tiers import build_active, market_reference, tier_order
 
     if args.now:
         import datetime as dt
@@ -241,20 +256,24 @@ def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetim
         return 1
     try:
         eff = effective_settings(conn, base=settings)
-        active, inputs = build_active(conn, eff, now)
+        active, inputs = build_active(conn, eff, now, model=args.model)
         stored = conn.execute(
             "SELECT payload, valid_from FROM context_entries WHERE kind = 'active_universe' "
             "AND status = 'active' ORDER BY valid_from DESC, rowid DESC LIMIT 1"
         ).fetchone()
     finally:
         conn.close()
-    tiers = {
+    feeds = {
         "core": inputs.core,
         "momentum": inputs.momentum,
         "trending": inputs.trending,
         "discovery": inputs.discoveries,
     }
+    order = tier_order(active.model)
+    tiers = {t.value: feeds[t.value] for t in order}
+    reference = market_reference(eff, model=active.model)
     out = {
+        "model": active.model,
         "as_of": active.as_of.isoformat(),
         "config_version": eff.config_version,
         "active_max": eff.universe_active_max,
@@ -269,14 +288,17 @@ def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetim
         "active_count": len(active.members),
         "counts": active.counts,
         "dropped": [d.model_dump(mode="json") for d in active.dropped],
-        "market_reference": market_reference(eff),
+        "market_reference": reference,
         "stored_active_at": stored["valid_from"] if stored else None,
     }
     if args.json:
         _out(out, True)
         return 0
-    lines = [f"as of {out['as_of']} · config v{out['config_version']} · cap {out['active_max']}"]
-    for tier in TIER_ORDER:
+    lines = [
+        f"as of {out['as_of']} · model {out['model']} · config v{out['config_version']} · "
+        f"cap {out['active_max']}"
+    ]
+    for tier in order:
         names = out["tiers"][tier.value]
         lines.append(f"{tier.value:<10} {len(names):>3}  {' '.join(names) or '-'}")
     if out["expired_tiers"]:
@@ -285,12 +307,13 @@ def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetim
         lines.append(f"dedupe     {sym} also in {', '.join(also)}")
     c = active.counts
     lines.append(
-        f"active     {len(active.members):>3}  core {c['core']} · momentum {c['momentum']} · "
-        f"trending {c['trending']} · discovery {c['discovery']}"
+        f"active     {len(active.members):>3}  "
+        + " · ".join(f"{t.value} {c.get(t.value, 0)}" for t in order)
     )
     lines.append(f"           {' '.join(active.tickers)}")
     for d in active.dropped:
-        lines.append(f"dropped    {d.ticker} ({d.tier.value}): {d.reason}")
+        rank = f" #{d.rank}" if d.rank is not None else ""
+        lines.append(f"dropped    {d.ticker} ({d.tier.value}{rank}): {d.reason}")
     lines.append(f"market reference (regime only): {' '.join(out['market_reference'])}")
     sys.stdout.write("\n".join(lines) + "\n")
     return 0

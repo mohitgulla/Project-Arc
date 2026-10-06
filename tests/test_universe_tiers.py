@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 REPO = Path(__file__).resolve().parents[1]
 NOW = dt.datetime(2026, 10, 5, 9, 0, tzinfo=ET)
 DAY = NOW.date()
-CORE_25 = [
+CORE_20 = [
     "NVDA",
     "AAPL",
     "MSFT",
@@ -67,14 +67,9 @@ CORE_25 = [
     "ORCL",
     "COIN",
     "PLTR",
-    "SOFI",
     "HOOD",
     "INTC",
-    "SMCI",
     "NFLX",
-    "UBER",
-    "BAC",
-    "MARA",
 ]
 # SPMO top holdings at 2026-10-04 as listed on the card: each needs a sector + industry.
 SPMO_TOP25 = [
@@ -153,20 +148,22 @@ def _candidate(conn: sqlite3.Connection, ticker: str, conf: float, corr: int = 1
 
 
 # ---------------------------------------------------------------------------
-# Config: core 25, market reference, registry, industries
+# Config: core 20 (D56), market reference, registry, industries
 # ---------------------------------------------------------------------------
 
 
 class TestCoreConfig:
-    def test_core_is_d51_list_and_matches_default(self) -> None:
+    def test_core_is_d56_list_and_matches_default(self) -> None:
         cfg = load_universe_config(REPO / "config" / "universe.yaml")
-        assert cfg.core == CORE_25 == DEFAULT_UNIVERSE
-        assert len(set(cfg.core)) == 25
+        assert cfg.core == CORE_20 == DEFAULT_UNIVERSE
+        assert len(set(cfg.core)) == 20
+        assert not {"SMCI", "MARA", "SOFI", "UBER", "BAC"} & set(cfg.core)
 
     def test_core_has_no_etfs_and_reference_is_spy_qqq(self) -> None:
         cfg = load_universe_config(REPO / "config" / "universe.yaml")
         assert not set(cfg.core) & KNOWN_ETFS
-        assert cfg.tiers.market_reference == ["SPY", "QQQ"]
+        assert cfg.tiers.market_reference is None  # the model default
+        assert cfg.tiers.reference() == ["SPY", "QQQ"]  # d51
         assert market_reference(_settings()) == ["SPY", "QQQ"]
 
     def test_tier_order_fixed(self) -> None:
@@ -192,7 +189,7 @@ class TestCoreConfig:
 
     def test_core_and_spmo_have_sector_and_one_industry(self) -> None:
         sectors, industries = load_sectors(), load_industries()
-        for t in {*CORE_25, *SPMO_TOP25}:
+        for t in {*CORE_20, *SPMO_TOP25}:
             assert t in sectors, t
             assert t in industries, t
 
@@ -209,7 +206,7 @@ class TestCoreOverride:
 
     def test_pre_d51_flat_override_is_ignored(self) -> None:
         flat = [f"T{i}" for i in range(MAX_CORE + 1)]
-        assert core_tickers(_settings(universe=flat)) == CORE_25
+        assert core_tickers(_settings(universe=flat)) == CORE_20
 
 
 # ---------------------------------------------------------------------------
@@ -335,10 +332,10 @@ def test_resolver_properties(
 class TestStore:
     def test_empty_store_is_core_only(self, db: sqlite3.Connection) -> None:
         a, inputs = build_active(db, _settings(), NOW)
-        assert a.tickers == CORE_25
+        assert a.tickers == CORE_20
         assert inputs.expired_tiers == []
-        assert active_tickers(db, _settings(), NOW) == CORE_25  # nothing stored yet
-        assert active_tickers(None, _settings(), NOW) == CORE_25
+        assert active_tickers(db, _settings(), NOW) == CORE_20  # nothing stored yet
+        assert active_tickers(None, _settings(), NOW) == CORE_20
 
     def test_feeds_discoveries_and_expiry(self, db: sqlite3.Connection) -> None:
         week_ago = NOW - dt.timedelta(days=7)
@@ -357,10 +354,10 @@ class TestStore:
         assert a.tier_tickers(Tier.DISCOVERY) == ["SNOW", "CRWD"]
         assert next(m for m in a.members if m.ticker == "NVDA").also_in == [Tier.MOMENTUM]
         # Scalp admission: core ∪ momentum skip the screen; trending/discovery do not
-        assert seed_tickers(db, _settings(), NOW) == [*CORE_25, "LRCX", "KLAC"]
+        assert seed_tickers(db, _settings(), NOW) == [*CORE_20, "LRCX", "KLAC"]
 
     def test_record_writes_entry_and_journals_overflow_once(self, db: sqlite3.Connection) -> None:
-        s = _settings(universe_active_max=26)
+        s = _settings(universe_active_max=21)
         _write_tier(db, Tier.MOMENTUM, ["LRCX", "KLAC", "AMAT"], at=NOW, ttl="8d")
         store = ContextStore(db)
 
@@ -388,13 +385,13 @@ class TestStore:
         assert json.loads(rows[0][2])["tier"] == "momentum"
         # consumers read the stored resolve
         later = NOW + dt.timedelta(hours=1)
-        assert active_tickers(db, s, later) == [*CORE_25, "LRCX"]
-        assert watch_tickers(db, s, later) == [*CORE_25, "LRCX"]
+        assert active_tickers(db, s, later) == [*CORE_20, "LRCX"]
+        assert watch_tickers(db, s, later) == [*CORE_20, "LRCX"]
         stored = store.query(as_of=later, kinds=["active_universe"], subjects=[ACTIVE_SUBJECT])
         assert len(stored) == 1  # supersede latest
         # tomorrow the stored list is stale: back to the core until the next resolve
         tomorrow = NOW + dt.timedelta(days=1)
-        assert active_tickers(db, s, tomorrow.replace(hour=4)) == CORE_25
+        assert active_tickers(db, s, tomorrow.replace(hour=4)) == CORE_20
 
     def test_watch_list_excludes_discoveries(self, db: sqlite3.Connection) -> None:
         _candidate(db, "CRWD", 0.7)
@@ -418,7 +415,7 @@ class TestIngestUniverse:
     ) -> None:
         s = _settings(universe_mode="strict")
         uni = IngestUniverse.from_settings(s, now=NOW, conn=db)
-        assert list(uni.seed) == CORE_25
+        assert list(uni.seed) == CORE_20
         assert uni.reference == ("SPY", "QQQ")
         assert not uni.is_seed("SPY")
         assert uni.tickers_in("SPY and NVDA rallied") == ["NVDA", "SPY"]
@@ -445,6 +442,7 @@ def test_cli_tiers_reads_store_read_only(
     ]
     assert out["dedupe"] == {"NVDA": ["momentum"]}
     assert out["market_reference"] == ["SPY", "QQQ"]
-    assert out["active_count"] == 27
+    assert out["active_count"] == 22
+    assert out["model"] == "d51"
     assert path.stat().st_mtime_ns == before  # wrote nothing
     assert main(["universe", "tiers", "--db", str(tmp_path / "missing.db")]) == 1

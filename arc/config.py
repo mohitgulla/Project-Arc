@@ -104,9 +104,9 @@ DEFAULT_YOUTUBE_CHANNELS: list[str] = [
 # Default core universe (D51; was the D9 flat seed list)
 # ---------------------------------------------------------------------------
 
-# D51 core tier: 25 stocks, no ETFs; the last 8 fit a $10k-$25k account. Must equal
-# config/universe.yaml `core:` (tests/test_universe_tiers.py pins it). SPY/QQQ are the
-# market reference (config/universe.yaml `tiers.market_reference`), not trade names.
+# D56 core tier: 20 stocks, no ETFs (D51's 25 minus SMCI, MARA, SOFI, UBER, BAC). Must
+# equal config/universe.yaml `core:` (tests/test_universe_tiers.py pins it). SPY/QQQ/IWM
+# are the market reference (config/universe.yaml `tiers.market_reference`), not trade names.
 DEFAULT_UNIVERSE: list[str] = [
     "NVDA",
     "AAPL",
@@ -125,14 +125,9 @@ DEFAULT_UNIVERSE: list[str] = [
     "ORCL",
     "COIN",
     "PLTR",
-    "SOFI",
     "HOOD",
     "INTC",
-    "SMCI",
     "NFLX",
-    "UBER",
-    "BAC",
-    "MARA",
 ]
 
 
@@ -915,7 +910,30 @@ class ArcSettings(BaseSettings):
     )
     universe_trending_size: Annotated[int, Field(ge=0, le=50)] = Field(
         default=25,
-        description="D51: trending tier size (daily rules-based list, E12.3).",
+        description="D51: trending tier size (daily rules-based list, E12.3). Unused under "
+        "universe.tiers.model d56 (no trending tier).",
+    )
+    # -- D56 (E13.4): three tiers, per-tier floors (read only under universe.tiers.model d56)
+    universe_momentum_size_d56: Annotated[int, Field(ge=0, le=50)] = Field(
+        default=20,
+        description="D56: momentum tier size (top N of the momentum feed; the feed itself "
+        "keeps its 25 rows). universe_momentum_size is the D51 size.",
+    )
+    universe_discovery_size: Annotated[int, Field(ge=0, le=50)] = Field(
+        default=20,
+        description="D56: discovery tier size (the Scout's YouTube calls, ranked).",
+    )
+    universe_floor_core: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.4,
+        description="D56: Scalp confidence floor for core names (scalp_min_confidence is D51's).",
+    )
+    universe_floor_momentum: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.5,
+        description="D56: Scalp confidence floor for momentum names.",
+    )
+    universe_floor_discovery: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.6,
+        description="D56: Scalp confidence floor for discovery names (owner: >= 0.6).",
     )
     universe_mode: UniverseMode = Field(
         default=UniverseMode.SEED,

@@ -8,6 +8,7 @@ import {
   marketReferenceLine,
   memberDetail,
   membersOf,
+  refreshLine,
   resolveLabel,
   sortTiers,
   summaryLine,
@@ -83,5 +84,12 @@ describe("universe page helpers", () => {
     expect(coreOverrideWarning(Array.from({ length: 60 }, (_, i) => `T${i}`))).toMatch(/^60 names > 30/);
     expect(coreOverrideWarning(["a", "A", "$a"])).toBeNull(); // deduped like the resolver
     expect(coreOverrideWarning("NVDA")).toBeNull();
+  });
+
+  it("names the refreshing jobs per tier model (E13.4)", () => {
+    expect(refreshLine("d51")).toBe("momentum and trending refresh on their own jobs.");
+    expect(refreshLine(undefined)).toBe("momentum and trending refresh on their own jobs.");
+    expect(refreshLine("d56")).toMatch(/discovery is written by the Scout/);
+    expect(refreshLine("d56")).not.toMatch(/trending/);
   });
 });

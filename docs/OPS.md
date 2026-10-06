@@ -789,7 +789,7 @@ read it (core until the first resolve of the day).
   stop words in bare form (`config/universe.yaml`).
 - A `universe` override longer than 30 names (pre-D51 flat list) is ignored in favour
   of the yaml core (logged `universe.core_override_ignored`). Reset it from Slack with
-  `!arc config universe <core 25>` so the Tower shows the core.
+  `!arc config universe <core 20>` so the Tower shows the core.
 
 In seed mode (`ARC_UNIVERSE_MODE=seed`, the default) core + momentum names are always
 accepted, unscreened and below the Sweep confidence floor too (journaled

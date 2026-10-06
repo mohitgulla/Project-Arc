@@ -1,9 +1,12 @@
-# Tiered universe (PLAN D51, revises D9/D28; card E12.1). Validated by arc.universe.config.
+# Tiered universe (PLAN D51, revises D9/D28; card E12.1; D56 card E13.4). Validated by
+# arc.universe.config.
 #
-# The trade universe is four tiers, deduped (a name keeps its highest tier:
+# tiers.model picks the layout (strategy flag `universe.tiers.model`, D44):
+#
+# d51 (the control). Four tiers, deduped (a name keeps its highest tier:
 # core > momentum > trending > discovery) and capped into one ACTIVE LIST each run
 # (arc.universe.tiers.resolve_active; `arc universe tiers` prints it):
-#   core       the 25 names below (the `universe` registry key; a Slack override of
+#   core       the 20 names below (the `universe` registry key; a Slack override of
 #              more than 30 names is a pre-D51 flat list and is ignored for this one)
 #   momentum   top 25 S&P 500 Momentum holdings, monthly (E12.2; context `universe_tier`)
 #   trending   up to 25 rules-based names, daily (E12.3; context `universe_tier`)
@@ -11,6 +14,17 @@
 # Sizes and the active cap (50) are runtime tunables: universe_momentum_size,
 # universe_trending_size, universe_active_max. Overflow is journaled
 # universe:over_active_cap, never dropped silently.
+#
+# d56 (owner 2026-10-05). Three tiers, core > momentum > discovery, no trending:
+#   core       the 20 names below; no screen; Scalp confidence floor 0.4
+#   momentum   top 20 of the momentum feed (universe_momentum_size_d56); standard
+#              screen; floor 0.5
+#   discovery  <= 20 names the Scout writes from YouTube calls (E13.7; empty until
+#              then; universe_discovery_size); loose screen; floor 0.6
+# Active list <= 50 filled core -> momentum -> discovery; overflow is cut from the
+# discovery tail first (journaled universe:over_active_cap). A Scalp idea for a name
+# in no tier is never admitted (not_in_tier): it is only mentioned. Floors are the
+# runtime tunables universe_floor_core / _momentum / _discovery.
 #
 # ARC_UNIVERSE_MODE picks the admission mode (no code change):
 #   seed    (default) core + momentum are always accepted (no screen, no Scalp
@@ -25,20 +39,29 @@
 # whatever the universe. The chain scanner's own liquidity filters (E2.3) still
 # reject bad contracts after this screen.
 
-# D51 core: 25 stocks, no ETFs. The last 8 (SOFI..MARA) fit a $10k-$25k account.
+# D56 core: 20 stocks, no ETFs (D51's 25 minus SMCI, MARA, SOFI, UBER, BAC).
 # Must equal arc.config.DEFAULT_UNIVERSE (tests pin it).
 core: [NVDA, AAPL, MSFT, AMZN, GOOGL, META, TSLA, AMD, AVGO, MU, JPM, XOM, UNH, BA, ORCL,
-       COIN, PLTR, SOFI, HOOD, INTC, SMCI, NFLX, UBER, BAC, MARA]
+       COIN, PLTR, HOOD, INTC, NFLX]
 
 tiers:
-  order: [core, momentum, trending, discovery]   # precedence; fixed (D51)
+  model: d51   # d51 | d56 (D56, E13.4). Flipping it is a promotion: E13.15.
+  # order is fixed per model (d51: core, momentum, trending, discovery; d56: core,
+  # momentum, discovery) and defaults to it.
   # Not trade names: Research writes their `regime` entries every run so the D33
   # market guard always has an SPY read. ETFs can still enter as trending/discoveries.
-  market_reference: [SPY, QQQ]
-  # E12.4: liquidity screen profile per screened tier (strict | relaxed). Core and
-  # momentum skip the screen and the Scalp confidence floor (never configured here).
+  # Unset = the model's list: d51 [SPY, QQQ], d56 [SPY, QQQ, IWM].
+  # market_reference: [SPY, QQQ, IWM]
+  # d51 / E12.4: liquidity screen profile per screened tier (strict | relaxed). Core
+  # and momentum skip the screen and the Scalp confidence floor.
   trending: {screen: relaxed}
   discovery: {screen: relaxed}
+  # d56: screen per tier (none | strict | standard | relaxed | loose). The floors are
+  # the universe_floor_<tier> tunables (0.4 / 0.5 / 0.6).
+  policy:
+    core: {screen: none}
+    momentum: {screen: standard}
+    discovery: {screen: loose}
 
 momentum:
   # E12.2 momentum tier: S&P 500 Momentum index constituents are not free, so the
@@ -68,8 +91,8 @@ symbol_master:
 liquidity_screen:
   # Deterministic, no LLM. Runs on non-seed Scalp candidates (D51: trending names and
   # discoveries; core + momentum are never screened) before they are written to
-  # context. Every check must pass; a missing number fails closed. Two profiles; each
-  # screened tier picks one under tiers.<tier>.screen. A pre-D51 flat block (keys
+  # context. Every check must pass; a missing number fails closed. Four profiles; each
+  # screened tier picks one (d51: tiers.<tier>.screen, d56: tiers.policy). A pre-D51 flat block (keys
   # directly under liquidity_screen) still loads, as the strict profile.
   # The screen only decides who gets looked at: the gate's spread check and the
   # scanner's contract filters still protect every order.
@@ -89,6 +112,22 @@ liquidity_screen:
     min_atm_open_interest: 150
     atm_strikes: 3
     max_atm_spread_pct: 0.20
+  standard:                       # D56 momentum tier (Slack: universe_screen_standard_*)
+    min_price: 7.5
+    min_adv_shares: 750000
+    adv_days: 20
+    adv_feed: sip
+    min_atm_open_interest: 250
+    atm_strikes: 3
+    max_atm_spread_pct: 0.15
+  loose:                          # D56 discovery tier (Slack: universe_screen_loose_*)
+    min_price: 3.0
+    min_adv_shares: 300000
+    adv_days: 20
+    adv_feed: sip
+    min_atm_open_interest: 100
+    atm_strikes: 3
+    max_atm_spread_pct: 0.25
   # The chain must have >= 1 expiry inside the active account profile's entry DTE window.
 
 extraction:

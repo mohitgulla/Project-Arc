@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 log = structlog.get_logger()
 
 __all__ = [
+    "D51_ORDER",
+    "D56_ORDER",
     "DEFAULT_UNIVERSE_CONFIG",
     "REPO_ROOT",
     "SCREEN_PROFILES",
@@ -28,12 +30,16 @@ __all__ = [
     "LiquidityScreens",
     "LiquidityThresholds",
     "MomentumConfig",
+    "PolicyTier",
     "ScreenProfile",
     "SymbolMasterConfig",
+    "TierPolicy",
     "TierScreen",
+    "TierScreenName",
     "TiersConfig",
     "UniverseConfig",
     "UniverseMode",
+    "UniverseModel",
     "load_universe_config",
     "universe_config",
 ]
@@ -71,8 +77,16 @@ class LiquidityThresholds(BaseModel):
     max_atm_spread_pct: float = Field(0.10, ge=0.0)
 
 
-ScreenProfile = Literal["strict", "relaxed"]
-SCREEN_PROFILES: tuple[ScreenProfile, ...] = ("strict", "relaxed")
+ScreenProfile = Literal["strict", "standard", "relaxed", "loose"]
+SCREEN_PROFILES: tuple[ScreenProfile, ...] = ("strict", "standard", "relaxed", "loose")
+#: D56: a tier's screen may also be ``none`` (core: never screened).
+TierScreenName = Literal["none", "strict", "standard", "relaxed", "loose"]
+UniverseModel = Literal["d51", "d56"]
+D51_ORDER: tuple[str, ...] = ("core", "momentum", "trending", "discovery")
+D56_ORDER: tuple[str, ...] = ("core", "momentum", "discovery")
+D51_MARKET_REFERENCE: tuple[str, ...] = ("SPY", "QQQ")
+D56_MARKET_REFERENCE: tuple[str, ...] = ("SPY", "QQQ", "IWM")
+PolicyTier = Literal["core", "momentum", "discovery"]
 
 
 def _relaxed_default() -> LiquidityThresholds:
@@ -82,18 +96,35 @@ def _relaxed_default() -> LiquidityThresholds:
     )
 
 
+def _standard_default() -> LiquidityThresholds:
+    """D56 standard screen (momentum tier)."""
+    return LiquidityThresholds(
+        min_price=7.5, min_adv_shares=750_000, min_atm_open_interest=250, max_atm_spread_pct=0.15
+    )
+
+
+def _loose_default() -> LiquidityThresholds:
+    """D56 loose screen (discovery tier)."""
+    return LiquidityThresholds(
+        min_price=3.0, min_adv_shares=300_000, min_atm_open_interest=100, max_atm_spread_pct=0.25
+    )
+
+
 class LiquidityScreens(BaseModel):
-    """Profile-keyed liquidity screen (D51): ``strict`` (the D28 values) and ``relaxed``.
+    """Profile-keyed liquidity screen: ``strict`` (the D28 values), ``relaxed`` (D51),
+    ``standard`` and ``loose`` (D56).
 
     Back-compatible: a pre-D51 flat block (threshold keys directly under
-    ``liquidity_screen``) is read as the ``strict`` profile, ``relaxed`` keeping its
+    ``liquidity_screen``) is read as the ``strict`` profile, the others keeping their
     defaults. Threshold keys mixed in next to the profile keys also go to ``strict``.
     """
 
     model_config = _FORBID
 
     strict: LiquidityThresholds = Field(default_factory=LiquidityThresholds)
+    standard: LiquidityThresholds = Field(default_factory=_standard_default)
     relaxed: LiquidityThresholds = Field(default_factory=_relaxed_default)
+    loose: LiquidityThresholds = Field(default_factory=_loose_default)
 
     @model_validator(mode="before")
     @classmethod
@@ -110,7 +141,11 @@ class LiquidityScreens(BaseModel):
         return {**rest, "strict": {**flat, **strict}}
 
     def profile(self, name: ScreenProfile) -> LiquidityThresholds:
-        return self.strict if name == "strict" else self.relaxed
+        if name not in SCREEN_PROFILES:
+            msg = f"unknown liquidity screen profile {name!r} (one of {SCREEN_PROFILES})"
+            raise ValueError(msg)
+        th: LiquidityThresholds = getattr(self, name)
+        return th
 
     @property
     def adv_feed(self) -> Literal["iex", "sip", "delayed_sip"]:
@@ -192,27 +227,65 @@ class MomentumConfig(BaseModel):
     retries: int = Field(2, ge=0, le=5)
 
 
-class TiersConfig(BaseModel):
-    """D51 tier layout. Sizes and the active cap are runtime tunables (ArcSettings
-    ``universe_*``); this block documents the order, holds the market reference and
-    the screen profile of the screened tiers (core + momentum are never screened)."""
+class TierPolicy(BaseModel):
+    """D56 admission screen of one tier. The tier's Scalp confidence floor is the
+    runtime tunable ``universe_floor_<tier>`` (ArcSettings), one source of truth."""
 
     model_config = _FORBID
 
-    order: list[Literal["core", "momentum", "trending", "discovery"]] = Field(
-        default_factory=lambda: ["core", "momentum", "trending", "discovery"]
-    )
-    market_reference: list[str] = Field(default_factory=lambda: ["SPY", "QQQ"])
-    trending: TierScreen = Field(default_factory=TierScreen)
-    discovery: TierScreen = Field(default_factory=TierScreen)
+    screen: TierScreenName
 
-    @field_validator("order")
+
+def _default_policy() -> dict[PolicyTier, TierPolicy]:
+    """D56 (owner 2026-10-05): core none, momentum standard, discovery loose."""
+    return {
+        "core": TierPolicy(screen="none"),
+        "momentum": TierPolicy(screen="standard"),
+        "discovery": TierPolicy(screen="loose"),
+    }
+
+
+class TiersConfig(BaseModel):
+    """Tier layout. ``model`` picks D51 (core / momentum / trending / discovery, the
+    control) or D56 (core / momentum / discovery, per-tier screens and floors).
+
+    Sizes and the active cap are runtime tunables (ArcSettings ``universe_*``); this
+    block documents the order, holds the market reference, the D51 screen profile of
+    the screened tiers and the D56 per-tier ``policy``. A pre-D56 block without
+    ``model`` loads as ``d51``.
+    """
+
+    model_config = _FORBID
+
+    model: UniverseModel = "d51"
+    order: list[Literal["core", "momentum", "trending", "discovery"]] = Field(default_factory=list)
+    # None = the model's default (d51: SPY QQQ; d56: SPY QQQ IWM); see `reference()`.
+    market_reference: list[str] | None = None
+    trending: TierScreen = Field(default_factory=TierScreen)  # d51 only
+    discovery: TierScreen = Field(default_factory=TierScreen)  # d51 only
+    policy: dict[PolicyTier, TierPolicy] = Field(default_factory=_default_policy)  # d56
+
+    def reference(self) -> list[str]:
+        """Market reference symbols: the configured list, else the model's default."""
+        if self.market_reference is not None:
+            return list(self.market_reference)
+        return list(D56_MARKET_REFERENCE if self.model == "d56" else D51_MARKET_REFERENCE)
+
+    @field_validator("policy", mode="after")
     @classmethod
-    def _fixed_order(cls, v: list[str]) -> list[str]:
-        if v != ["core", "momentum", "trending", "discovery"]:
-            msg = "tiers.order is fixed (D51): core, momentum, trending, discovery"
+    def _policy_complete(cls, v: dict[PolicyTier, TierPolicy]) -> dict[PolicyTier, TierPolicy]:
+        # a partial block (e.g. only `discovery:`) keeps the D56 defaults for the rest
+        return {**_default_policy(), **v}
+
+    @model_validator(mode="after")
+    def _fixed_order(self) -> TiersConfig:
+        want = list(D51_ORDER if self.model == "d51" else D56_ORDER)
+        if not self.order:
+            object.__setattr__(self, "order", want)
+        elif self.order != want:
+            msg = f"tiers.order is fixed for model {self.model}: {', '.join(want)}"
             raise ValueError(msg)
-        return v
+        return self
 
 
 class UniverseConfig(BaseModel):
@@ -226,10 +299,26 @@ class UniverseConfig(BaseModel):
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
     earnings: EarningsConfig = Field(default_factory=EarningsConfig)
 
-    def screen_for(self, tier: Literal["trending", "discovery"]) -> LiquidityThresholds:
-        """Thresholds of the profile configured for *tier* (``tiers.<tier>.screen``)."""
-        spec = self.tiers.trending if tier == "trending" else self.tiers.discovery
-        return self.liquidity_screen.profile(spec.screen)
+    def screen_for(self, tier: Literal["trending", "momentum", "discovery"]) -> LiquidityThresholds:
+        """Thresholds of the profile configured for *tier*: under D51
+        ``tiers.<tier>.screen`` (trending / discovery), under D56 ``tiers.policy``.
+        A D56 tier screened ``none`` (or the D51 momentum tier) raises ``ValueError``."""
+        name = self.tier_screen(tier)
+        if name == "none":
+            msg = f"tier {tier!r} is not screened under model {self.tiers.model}"
+            raise ValueError(msg)
+        return self.liquidity_screen.profile(name)
+
+    def tier_screen(self, tier: str) -> TierScreenName:
+        """The screen profile name of *tier* under the configured model (``none`` = no screen)."""
+        if self.tiers.model == "d56":
+            pol = self.tiers.policy.get(tier)  # type: ignore[call-overload]
+            return "none" if pol is None else pol.screen
+        if tier == "trending":
+            return self.tiers.trending.screen
+        if tier == "discovery":
+            return self.tiers.discovery.screen
+        return "none"  # D51: core + momentum are never screened
 
 
 def load_universe_config(

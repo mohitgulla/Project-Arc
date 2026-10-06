@@ -5,7 +5,7 @@ import { expectMinFontSize, expectNoOverflow, expectTouchTargets, PHONE_75, PHON
 const OPS_URL = process.env.ARC_E2E_OPS_URL ?? `http://127.0.0.1:${process.env.ARC_E2E_OPS_PORT ?? "4184"}`;
 
 // E12.6 (D51): the Universe page on the --ops fixture (scripts/tower_fixture_ops.py
-// add_universe: core 25 + momentum 15 + trending 6 + discovery 4 active, 2 over the cap,
+// add_universe: core 20 + momentum 15 + trending 6 + discovery 9 active, 2 over the cap,
 // a partial momentum feed and the 100-name pre-D51 `universe` override, which is ignored).
 const VIEWPORTS = [
   PHONE_75, // the owner's iPhone at 75 % zoom (520 CSS px)
@@ -31,14 +31,14 @@ for (const vp of VIEWPORTS) {
         await open(page, "/ops/universe", theme);
         const root = page.getByTestId("ops-universe");
         await expect(root.getByRole("heading", { level: 1, name: "Universe" })).toBeVisible();
-        await expect(root.getByTestId("uni-summary-line")).toHaveText("Active 50/50 · Core 25 · Momentum 15 · Trending 6 · Discovery 4");
+        await expect(root.getByTestId("uni-summary-line")).toHaveText("Active 50/50 · Core 20 · Momentum 15 · Trending 6 · Discovery 9");
         await expect(root.getByTestId("uni-state")).toHaveText("Resolved Today");
         await expect(root.getByTestId("uni-age")).toContainText(/as of \d+m ago/);
         // tier sections in precedence order, Title Case
         const titles = await root.getByTestId("uni-tier").locator("h2").allTextContents();
         expect(titles).toEqual(TIERS);
         const core = root.locator('[data-testid=uni-tier][data-tier="core"]');
-        await expect(core.getByTestId("uni-chip")).toHaveCount(25);
+        await expect(core.getByTestId("uni-chip")).toHaveCount(20);
         const mom = root.locator('[data-testid=uni-tier][data-tier="momentum"]');
         await expect(mom.getByTestId("uni-partial")).toHaveText("Partial");
         await expect(mom.getByTestId("uni-tier-counts")).toHaveText("offered 24 · active 15 / 25");

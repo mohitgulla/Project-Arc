@@ -17,6 +17,11 @@ Filters (deterministic, applied after the LLM):
 * **threshold** — confidence must be ``>= settings.scalp_min_confidence``. E12.4
   (D51): core and momentum tickers skip it (kept, and journaled by the scalp job
   as ``scalp_candidate`` with ``confidence_floor_skipped: tier=<tier>``).
+  D56 (``tiers.model: d56``, E13.4): each tier has its own floor
+  (``universe_floor_<tier>``: core 0.4, momentum 0.5, discovery 0.6); a candidate
+  below it is rejected ``below_threshold`` and journaled ``confidence_floor_skipped:
+  tier=<t> floor=<f>``. A name in no tier is ``not_in_tier``: never a candidate, only
+  listed in :attr:`ScalpRunResult.mentions`.
 * **sources** — only URLs of documents actually in the batch survive; a
   candidate with no grounded source is dropped (no hallucinated citations).
 
@@ -70,6 +75,7 @@ from arc.store.repos import CandidateRepo
 from arc.universe.guard import (
     REJECT_ILLIQUID,
     REJECT_NEW_TICKER_CAP,
+    REJECT_NOT_IN_TIER,
     REJECT_NOT_IN_UNIVERSE,
     REJECT_UNKNOWN_SYMBOL,
     UniverseGuard,
@@ -79,7 +85,7 @@ from arc.utils.calendar import ET, now_et
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable, Collection
+    from collections.abc import Callable, Collection, Mapping
 
     from arc.config import ArcSettings
     from arc.context.store import ContextSnapshot
@@ -97,7 +103,12 @@ REJECT_UNIVERSE = REJECT_NOT_IN_UNIVERSE  # strict mode (kept name for callers)
 REJECT_THRESHOLD = "below_threshold"
 REJECT_SOURCE = "no_grounded_source"
 # Re-exported for callers/tests (the universe keys live in arc.universe.guard).
-_UNIVERSE_REJECTS = (REJECT_ILLIQUID, REJECT_NEW_TICKER_CAP, REJECT_UNKNOWN_SYMBOL)
+_UNIVERSE_REJECTS = (
+    REJECT_ILLIQUID,
+    REJECT_NEW_TICKER_CAP,
+    REJECT_UNKNOWN_SYMBOL,
+    REJECT_NOT_IN_TIER,
+)
 
 _FEED_DELIMITER = "FEEDS>>>"
 _MAX_UNSCALPED_PER_RUN = 200
@@ -136,6 +147,10 @@ class ScalpRunResult:
     # E12.4: ticker -> (tier, confidence) of candidates accepted this run below
     # scalp_min_confidence because their tier (core / momentum) skips the floor.
     floor_skipped: dict[str, tuple[str, float]] = field(default_factory=dict)
+    # D56 (E13.4): ticker -> (tier, best confidence, floor) of ideas rejected below their
+    # tier's floor this run, and the names in no tier (mentions, never candidates).
+    floor_rejected: dict[str, tuple[str, float, float]] = field(default_factory=dict)
+    mentions: list[str] = field(default_factory=list)
     # E4.5 (D30): fair selection + story synthesis accounting (display + manifest).
     source_mix: list[tuple[str, int, int]] = field(default_factory=list)  # label, read, over
     over_budget: int = 0
@@ -283,7 +298,8 @@ def validate_scalp_candidate(
     *universe* is either a plain allow-list (strict behaviour) or a
     :class:`UniverseGuard` (D28): the symbol check runs first, the new-ticker cap
     and liquidity screen run last, only for otherwise-valid candidates. With a
-    guard, core and momentum tickers skip *min_confidence* (E12.4).
+    guard, core and momentum tickers skip *min_confidence* (E12.4). Under a D56 guard
+    *min_confidence* is unused: the ticker's tier floor applies (E13.4).
     """
     try:
         out = ScalpCandidateOut.model_validate(item)
@@ -297,7 +313,11 @@ def validate_scalp_candidate(
             return why
     elif ticker not in cast("Collection[str]", universe):
         return REJECT_UNIVERSE
-    if out.confidence < min_confidence and (
+    if guard is not None and guard.model == "d56":
+        floor = guard.floor_for(ticker)
+        if floor is not None and out.confidence < floor:
+            return REJECT_THRESHOLD
+    elif out.confidence < min_confidence and (
         guard is None or guard.skips_confidence_floor(ticker) is None
     ):
         return REJECT_THRESHOLD
@@ -322,6 +342,20 @@ def validate_scalp_candidate(
     if guard is not None and (why := guard.admit(ticker)) is not None:
         return why
     return cand
+
+
+def _note_floor_reject(
+    result: ScalpRunResult, guard: UniverseGuard, ticker: str, item: Any
+) -> None:
+    """D56: remember the best confidence of an idea rejected below its tier's floor."""
+    tier = guard.membership(ticker)
+    floor = guard.floor_for(ticker)
+    conf = item.get("confidence") if isinstance(item, dict) else None
+    if tier is None or floor is None or not isinstance(conf, int | float):
+        return
+    prev = result.floor_rejected.get(ticker)
+    if prev is None or float(conf) > prev[1]:
+        result.floor_rejected[ticker] = (tier.value, float(conf), floor)
 
 
 def render_doc(doc: _Doc, *, max_chars: int) -> str:
@@ -592,13 +626,26 @@ def candidates_for_scanner(
     *,
     min_confidence: float,
     floor_exempt: Collection[str] = (),
+    tier_floors: Mapping[str, float] | None = None,
 ) -> list[Candidate]:
     """The ONLY Scalp output downstream stages may consume.
 
     Returns typed ``Candidate`` models (no persona free text) for *day*
     at or above *min_confidence*, best first. Tickers in *floor_exempt* (E12.4:
     core + momentum) are returned whatever their confidence.
+
+    *tier_floors* (D56, ``ticker -> floor``) replaces both: only tier names at or
+    above their own tier's floor are returned (a name in no tier never is).
     """
+    if tier_floors is not None:
+        floors = {normalize_ticker(t): f for t, f in tier_floors.items()}
+        rows = CandidateRepo(conn).list_for_day(day, min_confidence=0.0)
+        out: list[Candidate] = []
+        for r in rows:
+            t = normalize_ticker(r["ticker"])
+            if t in floors and float(r["confidence"]) >= floors[t]:
+                out.append(_row_to_candidate(r))
+        return out
     exempt = {normalize_ticker(t) for t in floor_exempt}
     floor = 0.0 if exempt else min_confidence
     rows = CandidateRepo(conn).list_for_day(day, min_confidence=floor)
@@ -1108,6 +1155,8 @@ def run_scalp(
                 raw = item.get("ticker") if isinstance(item, dict) else None
                 label = normalize_ticker(str(raw or "?"))[:12] or "?"
                 result.rejected_items.setdefault(outcome, []).append(label)
+                if outcome == REJECT_THRESHOLD and guard.model == "d56":
+                    _note_floor_reject(result, guard, label, item)
                 if label in guard.details:
                     result.reject_details[label] = guard.details[label]
                 continue
@@ -1144,14 +1193,16 @@ def run_scalp(
         )
 
     result.new_tickers = list(guard.admitted_new)
+    result.mentions = list(guard.mentions)
     result.candidates = candidates_for_scanner(
         conn,
         day,
         min_confidence=settings.scalp_min_confidence,
-        floor_exempt=guard.floor_exempt(),
+        floor_exempt=guard.floor_exempt() if guard.model != "d56" else (),
+        tier_floors=guard.tier_floors() if guard.model == "d56" else None,
     )
     # E12.4: day-level candidates below the floor that stayed because of their tier
-    for c in result.candidates:
+    for c in result.candidates if guard.model != "d56" else ():
         tier = guard.skips_confidence_floor(c.ticker)
         if c.confidence < settings.scalp_min_confidence and tier is not None:
             result.floor_skipped[c.ticker] = (tier.value, c.confidence)

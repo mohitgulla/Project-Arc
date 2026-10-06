@@ -154,7 +154,7 @@ def test_scalp_watch_list_in_prompt(db: sqlite3.Connection) -> None:
     watch = watch_tickers(db, _settings(), NOW)
     prompt = build_prompt([], _settings(), NOW.date().isoformat(), universe=watch)
     assert "Watch list (core + momentum + trending)" in prompt
-    assert f"MARA, {EXTRA}." in prompt
+    assert f"NFLX, {EXTRA}." in prompt
     assert "not a preference" in prompt
 
 
