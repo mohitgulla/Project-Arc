@@ -1845,6 +1845,39 @@ captured 2026-10-06 ~10:50 ET). Context data only, never a gate input.
   --latest`, then `python -m arc.ingest.cboe_fast --tape --db <scratch>` (read-only)
   prints the rendered tape.
 
+### 5.30 Research inputs: idea pool + compact prompt (E13.8, D56/D53/D54, D44)
+
+    personas.research_idea_pool: scalp        # config/routines.yaml; scalp | all
+    personas.research_compact_prompt: full    # full | compact
+    funnel: {research: {max_scout_only_ideas: 20}}
+
+Both defaults are the control: Research ranks the Scalp's candidates with today's
+prompt byte for byte (`tests/test_research_prompt_compact.py` pins the E12.5 golden),
+and no pool input is recorded, so `arc journal replay` of older calls is unchanged.
+
+- **`all` (XP-4):** one pool of Scalp + Scout candidates, one line per ticker, built by
+  code (`arc/pipeline/research_pool.py`): feeds from the candidate's sources
+  (`youtube:<slug>` = Scout), origins = distinct sources + channels, `agree` /
+  `disagree` / `single` against the Scout read's call, confidence = max over feeds.
+  Scout-only ideas past `max_scout_only_ideas` are journaled `over_scout_only_cap`.
+  `not_a_candidate` drops only a ticker outside the pool. The Research card shows
+  `Pool: n (scalp a · scout b · both c)`; the `shortlist` (v4) keeps `pool_counts`.
+- **`compact` (XP-6):** one line per pool ticker and per regime, the Scout read
+  (≤ 2,500 chars), category counts with ≤ 3 headlines each, D30 data and notes as
+  lines, today's E5.9 portfolio block; no raw candidate/story/brief JSON and no
+  per-exclusion reasons. Budget: `research_prompt_max_chars` (80,000, settings only)
+  minus 7,200 reserved for the E13.17 exit block. Over it: headlines go first, then
+  the pool is cut to its top 40 by confidence (journaled `over_prompt_budget`); a
+  prompt still over logs `research.prompt_over_budget`. On the 2026-10-06 snapshot the
+  compact prompt was ~35k chars against 175k for `full`.
+
+Turn on with `!arc config personas.research_idea_pool all` /
+`personas.research_compact_prompt compact` (riskier, asks for a confirm), or run the
+draft A/Bs `config/experiments/live/xp4_research_idea_pool.yaml` /
+`xp6_research_compact_prompt.yaml` (not registered). `all` only differs from `scalp`
+when `personas.scout_feed: on` writes Scout candidates. Flipping a shipped default needs
+the experiment's `win` verdict.
+
 ### 7.1 Required status check: `check`
 
 `.github/workflows/ci.yml` job `check` (job id and `name:` both `check`) runs

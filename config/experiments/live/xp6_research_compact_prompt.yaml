@@ -1,0 +1,35 @@
+# E13.8 (D56, D54, D44): DRAFT forward A/B for the compact Research prompt.
+# Not registered: `arc experiment create` + `register` hash-lock it, so the owner
+# reviews the margin and sessions first. The owner may instead flip the flag directly
+# (`!arc config personas.research_compact_prompt compact`); this spec is the measured
+# alternative.
+#
+# Treatment = `personas.research_compact_prompt: compact`. Same inputs, smaller prompt:
+# one line per pool ticker and per regime entry, the Scout's read (Regime / Options
+# sentiment / Themes / Risks), category counts with at most 3 headlines each, D30 data
+# as lines, today's E5.9 portfolio block, prior notes one line each; no raw candidate,
+# story or brief JSON and no per-exclusion reason request. Budget
+# research_prompt_max_chars (80,000) minus the 7,200-char E13.17 exit-block reserve:
+# over it, headlines go first, then the pool is cut to its top 40 (journaled
+# `over_prompt_budget`). Control = today's full prompt byte for byte (~175k chars).
+# Promotion needs a committed `verdicts/XP-6.yaml` with `verdict: win` (docs/OPS.md 5.20).
+spec_version: 1
+id: XP-6
+title: Compact Research prompt (one line per idea)
+hypothesis: >
+  A compact Research prompt (about a fifth of today's size) keeps paired daily net P&L
+  non-inferior to the full prompt, without a worse Sortino or max drawdown, at lower
+  LLM cost and latency.
+area: entries
+kind: ab
+arms:
+  control:
+    overlay: {}
+  treatment:
+    overlay:
+      routines:
+        personas:
+          research_compact_prompt: compact
+non_inferiority_margin: 0.5
+proposed_by: owner
+backtest_ref: "none: Research prompt format change, not backtestable (E7.5 replays no LLM)"

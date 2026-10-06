@@ -357,6 +357,30 @@
       "default": null,
       "description": "Why the shortlist is empty: no_fit | too_volatile | unclear | budget | portfolio_full (none / null when something is ranked)"
     },
+    "pool_counts": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "propertyNames": {
+            "enum": [
+              "scalp",
+              "scout",
+              "both",
+              "scout_only_capped"
+            ]
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Idea pool size by feed, plus Scout-only ideas cut by the cap",
+      "title": "Pool Counts"
+    },
     "portfolio_view": {
       "anyOf": [
         {
