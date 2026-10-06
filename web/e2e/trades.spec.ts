@@ -213,8 +213,8 @@ test.describe("trades behaviour", () => {
     await open(page, "/trades?ticker=SPY&kind=open", "dark");
     await page.locator("tbody tr").first().click();
     const trail = page.getByTestId("sec-decisions");
-    // The Director's session read is a chain step (subject = the session, not SPY).
-    const chainStep = "Director's market read";
+    // Research's session read is a chain step (subject = the session, not SPY).
+    const chainStep = "Research's market read";
     await expect(trail).not.toContainText(chainStep);
     const toggle = page.getByTestId("chain-toggle");
     await expect(toggle).toHaveText(/Show chain context \(\d+\)/);

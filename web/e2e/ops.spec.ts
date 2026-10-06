@@ -29,7 +29,7 @@ async function open(page: Page, path: string, theme: (typeof THEMES)[number] = "
 }
 
 async function undeclaredRun(page: Page): Promise<string> {
-  const res = await page.request.get("/api/ops/runs?job=director&status=ok&size=200&day=today");
+  const res = await page.request.get("/api/ops/runs?job=research&status=ok&size=200&day=today");
   const body = (await res.json()) as { rows: Array<{ run_id: string }> };
   for (const r of body.rows) {
     const d = (await (await page.request.get(`/api/ops/runs/${r.run_id}`)).json()) as {
@@ -84,11 +84,11 @@ for (const vp of VIEWPORTS) {
         const runId = await undeclaredRun(page);
         await open(page, `/ops/runs/${runId}`, theme);
         await expect(page.getByTestId("run-detail")).toBeVisible();
-        await expect(page.getByTestId("run-summary")).toContainText("Director");
+        await expect(page.getByTestId("run-summary")).toContainText("Research");
         await expect(page.getByTestId("contract-mismatch")).toContainText("write proposal");
         await expect(page.getByTestId("contract").locator("tr[data-mismatch]")).toHaveCount(1);
         await expect(page.getByTestId("chain-steps")).toBeVisible();
-        await expect(page.getByTestId("persona-calls")).toContainText("Director");
+        await expect(page.getByTestId("persona-calls")).toContainText("Research");
         // E8.8e: the undeclared kind is always shown, in red, as a count chip
         await expect(page.getByTestId("ctx-wrote").locator("[data-testid=kind-count][data-undeclared]")).toHaveCount(1);
         // the log is collapsed: the tail renders only once opened
@@ -188,7 +188,7 @@ test.describe("ops behaviour", () => {
   test("a timeline slot opens its run; context links open the entry", async ({ page }) => {
     await open(page, "/ops");
     await page.getByTestId("loop-row").locator('[data-status="done"]').first().click();
-    await expect(page).toHaveURL(/\/ops\/runs\/run-ops-director-/);
+    await expect(page).toHaveURL(/\/ops\/runs\/run-ops-research-/);
     await page.locator('[data-testid=kind-count][data-kind="candidate"]').first().click();
     await page.getByRole("link", { name: /^candidate:/ }).first().click();
     await expect(page).toHaveURL(/\/ops\/context\//);
@@ -201,11 +201,11 @@ test.describe("ops behaviour", () => {
     await expect(tl.getByTestId("band").first()).toBeVisible();
     const bands = await tl.getByTestId("band").evaluateAll((els) => els.map((e) => e.getAttribute("data-band")));
     expect(bands[0]).toMatch(/^sources\./);
-    expect(bands.indexOf("sweep")).toBeLessThan(bands.indexOf("trading_loop"));
+    expect(bands.indexOf("scalp")).toBeLessThan(bands.indexOf("trading_loop"));
     expect(bands.indexOf("trading_loop")).toBeLessThan(bands.indexOf("position_management"));
     const loop = page.getByTestId("loop-row");
-    await expect(loop).toContainText("Director → Quant → Risk → Propose → Execute");
-    await expect(loop.getByTestId("persona-chip")).toHaveText("Director");
+    await expect(loop).toContainText("Research → Quant → Risk → Propose → Execute");
+    await expect(loop.getByTestId("persona-chip")).toHaveText("Research");
     await expect(tl.locator('[data-job="positions.evaluate"]')).toContainText("Investor exits");
     await loop.getByTestId("job-info").click();
     await expect(page.getByRole("dialog").or(page.locator("[role=tooltip]")).first()).toContainText("LLM yes");
@@ -274,7 +274,7 @@ test.describe("ops behaviour", () => {
   test("run detail is concise: ids hidden until Show ids, manifest collapsed", async ({ page }) => {
     await open(page, "/ops");
     await page.getByTestId("loop-row").locator('[data-status="done"]').first().click();
-    await expect(page).toHaveURL(/\/ops\/runs\/run-ops-director-/);
+    await expect(page).toHaveURL(/\/ops\/runs\/run-ops-research-/);
     await expect(page.getByTestId("context-id")).toHaveCount(0);
     await expect(page.getByTestId("manifest-group")).toHaveCount(0);
     const read = page.getByTestId("ctx-read");
@@ -331,9 +331,9 @@ test.describe("ops phone-75", { tag: PHONE_75_TAG }, () => {
     await expectNoOverflow(page);
   });
 
-  test("run detail of a director run is under 3,000 px tall at 520 px", async ({ page }) => {
+  test("run detail of a research run is under 3,000 px tall at 520 px", async ({ page }) => {
     await open(page, "/ops");
-    const res = await page.request.get("/api/ops/runs?job=director&status=ok&size=1&day=today");
+    const res = await page.request.get("/api/ops/runs?job=research&status=ok&size=1&day=today");
     const { rows } = (await res.json()) as { rows: Array<{ run_id: string }> };
     await open(page, `/ops/runs/${rows[0]!.run_id}`);
     await expect(page.getByTestId("run-summary")).toBeVisible();
