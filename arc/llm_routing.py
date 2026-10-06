@@ -36,14 +36,12 @@ DEFAULT_ROUTING_PATH = REPO_ROOT / "config" / "llm_routing.yaml"
 
 
 class Persona(StrEnum):
-    """The six personas of PLAN §2.4 (D12 names)."""
+    """The LLM personas of PLAN §2.4 (D56: Broker and Ops are deterministic, not here)."""
 
     SCALP = "scalp"
     RESEARCH = "research"
     QUANT = "quant"
     RISK = "risk"
-    INVESTOR = "investor"
-    AUDITOR = "auditor"
 
 
 class TierSpec(BaseModel):

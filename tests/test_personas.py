@@ -15,14 +15,10 @@ import pytest
 from pydantic import ValidationError
 
 from arc.personas.builders import (
-    AuditorInput,
-    InvestorInput,
     QuantInput,
     ResearchInput,
     RiskInput,
     ScalpInput,
-    build_auditor_prompt,
-    build_investor_prompt,
     build_quant_prompt,
     build_research_prompt,
     build_risk_prompt,
@@ -30,12 +26,12 @@ from arc.personas.builders import (
 )
 from arc.personas.schemas import (
     AnomalyReport,
-    AuditorOutput,
+    BrokerPlan,
     ImprovementStep,
-    InvestorOutput,
     LessonLearned,
     QuantOutput,
     QuantStructureOut,
+    ReconcileOutput,
     ResearchOutput,
     ResearchRankedItem,
     RiskAssessment,
@@ -154,27 +150,22 @@ SAMPLE_RISK_OUTPUT = {
     "advisory_notes": "Advisory: sizing is suggestion only. Gate will enforce hard limits.",
 }
 
-SAMPLE_EXECUTION_OUTPUT = {
-    "plans": [
-        {
-            "ticker": "AAPL",
-            "structure_type": "vertical_spread",
-            "order_type": "limit",
-            "initial_limit_price": 3.25,
-            "improvement_steps": [
-                {"step_number": 1, "price": 3.30, "wait_seconds": 30},
-                {"step_number": 2, "price": 3.35, "wait_seconds": 30},
-                {"step_number": 3, "price": 3.40, "wait_seconds": 30},
-            ],
-            "timeout_seconds": 120,
-            "contracts": 2,
-            "notes": "Starting at mid. Widening in 5c increments every 30s. Cancel after 2 min.",
-        },
+SAMPLE_BROKER_PLAN = {
+    "ticker": "AAPL",
+    "structure_type": "vertical_spread",
+    "order_type": "limit",
+    "initial_limit_price": 3.25,
+    "improvement_steps": [
+        {"step_number": 1, "price": 3.30, "wait_seconds": 30},
+        {"step_number": 2, "price": 3.35, "wait_seconds": 30},
+        {"step_number": 3, "price": 3.40, "wait_seconds": 30},
     ],
-    "market_conditions_note": "Normal spread conditions, liquidity adequate.",
+    "timeout_seconds": 120,
+    "contracts": 2,
+    "notes": "Starting at mid. Widening in 5c increments every 30s. Cancel after 2 min.",
 }
 
-SAMPLE_AUDITOR_OUTPUT = {
+SAMPLE_RECONCILE_OUTPUT = {
     "journal_date": "2026-09-27",
     "daily_pnl": 150.25,
     "open_positions": 3,
@@ -306,16 +297,14 @@ class TestRiskSchema:
 
 class TestExecutionSchema:
     def test_valid_output(self) -> None:
-        out = InvestorOutput.model_validate(SAMPLE_EXECUTION_OUTPUT)
-        assert len(out.plans) == 1
-        plan = out.plans[0]
+        plan = BrokerPlan.model_validate(SAMPLE_BROKER_PLAN)
         assert plan.order_type == "limit"
         assert len(plan.improvement_steps) == 3
 
     def test_roundtrip(self) -> None:
-        out = InvestorOutput.model_validate(SAMPLE_EXECUTION_OUTPUT)
+        out = BrokerPlan.model_validate(SAMPLE_BROKER_PLAN)
         data = json.loads(out.model_dump_json())
-        out2 = InvestorOutput.model_validate(data)
+        out2 = BrokerPlan.model_validate(data)
         assert out == out2
 
     def test_step_number_positive(self) -> None:
@@ -324,26 +313,26 @@ class TestExecutionSchema:
             ImprovementStep.model_validate(bad)
 
 
-class TestAuditorSchema:
+class TestReconcileSchema:
     def test_valid_output(self) -> None:
-        out = AuditorOutput.model_validate(SAMPLE_AUDITOR_OUTPUT)
+        out = ReconcileOutput.model_validate(SAMPLE_RECONCILE_OUTPUT)
         assert out.daily_pnl == 150.25
         assert out.reconciliation_status == "clean"
         assert len(out.anomalies) == 1
         assert len(out.lessons) == 1
 
     def test_roundtrip(self) -> None:
-        out = AuditorOutput.model_validate(SAMPLE_AUDITOR_OUTPUT)
+        out = ReconcileOutput.model_validate(SAMPLE_RECONCILE_OUTPUT)
         data = json.loads(out.model_dump_json())
-        out2 = AuditorOutput.model_validate(data)
+        out2 = ReconcileOutput.model_validate(data)
         assert out == out2
 
     def test_anomaly_validates(self) -> None:
-        a = AnomalyReport.model_validate(SAMPLE_AUDITOR_OUTPUT["anomalies"][0])
+        a = AnomalyReport.model_validate(SAMPLE_RECONCILE_OUTPUT["anomalies"][0])
         assert a.severity == "warning"
 
     def test_lesson_validates(self) -> None:
-        lesson = LessonLearned.model_validate(SAMPLE_AUDITOR_OUTPUT["lessons"][0])
+        lesson = LessonLearned.model_validate(SAMPLE_RECONCILE_OUTPUT["lessons"][0])
         assert lesson.topic == "Execution slippage"
 
 
@@ -403,28 +392,6 @@ class TestPromptBuilders:
         assert "Risk" in result
         assert "ADVISORY" in result
 
-    def test_execution_builder(self) -> None:
-        inp = InvestorInput(
-            proposal_json='{"proposal": "test"}',
-            current_quotes_json='{"quotes": []}',
-            scan_date="2026-09-27",
-        )
-        result = build_investor_prompt(inp)
-        assert isinstance(result, str)
-        assert "Investor" in result
-
-    def test_auditor_builder(self) -> None:
-        inp = AuditorInput(
-            fills_json='{"fills": []}',
-            positions_json='{"positions": []}',
-            broker_positions_json='{"positions": []}',
-            pnl_json='{"pnl": 0}',
-            journal_date="2026-09-27",
-        )
-        result = build_auditor_prompt(inp)
-        assert isinstance(result, str)
-        assert "Auditor" in result
-
     def test_scalp_builder_empty_feeds(self) -> None:
         """Builder handles empty feeds gracefully."""
         inp = ScalpInput(
@@ -468,26 +435,12 @@ class TestPromptBuilders:
             account_equity=100000.0,
             scan_date="2026-09-27",
         )
-        exec_inp = InvestorInput(
-            proposal_json="{}",
-            current_quotes_json="{}",
-            scan_date="2026-09-27",
-        )
-        auditor_inp = AuditorInput(
-            fills_json="{}",
-            positions_json="{}",
-            broker_positions_json="{}",
-            pnl_json="{}",
-            journal_date="2026-09-27",
-        )
 
         for name, builder, inp in [
             ("scalp", build_scalp_prompt, scalp_inp),
             ("research", build_research_prompt, research_inp),
             ("quant", build_quant_prompt, quant_inp),
             ("risk", build_risk_prompt, risk_inp),
-            ("investor", build_investor_prompt, exec_inp),
-            ("auditor", build_auditor_prompt, auditor_inp),
         ]:
             prompt = builder(inp)
             assert "broker" in prompt.lower() or "order" in prompt.lower(), (

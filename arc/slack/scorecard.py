@@ -1,6 +1,6 @@
 """Weekly paper scorecard card (E7.3) for #arc-investor, in the shared E5.5 layout.
 
-``[Auditor] Scorecard: Sep 28 – Oct 02 • P&L +$312 • 5 Closed`` then a summary
+``[Ops] Scorecard: Sep 28 – Oct 02 • P&L +$312 • 5 Closed`` then a summary
 line, a fact grid (one fact per line), the D19 early-exit and swap lines, the
 D23 model-vs-realised numbers, slippage, gate violations, calibration and the
 audit footer. Pure: a :class:`~arc.journal.scorecard.Scorecard` in, blocks out.
@@ -62,7 +62,7 @@ def scorecard_card(
 ) -> CardView:
     f, a, p, lim = sc.funnel, sc.funnel.approvals, sc.pnl, sc.order_budget
     title = (
-        f"[Auditor] Scorecard: {sc.label} • P&L {_usd(p.realised)} • {p.closed} Closed"
+        f"[Ops] Scorecard: {sc.label} • P&L {_usd(p.realised)} • {p.closed} Closed"
         f" • {f.fills} Fills"
     )
     summary = B.summary(

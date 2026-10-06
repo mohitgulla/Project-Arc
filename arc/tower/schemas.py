@@ -90,6 +90,6 @@ class MetaResponse(BaseModel):
     refresh_interval_s: int = Field(description="Default client poll interval")
     refresh_choices_s: list[int] = Field(default_factory=lambda: list(REFRESH_CHOICES))
     lookback_days: int
-    cadences: dict[str, Cadence] = Field(description="monitor, auditor, tick")
+    cadences: dict[str, Cadence] = Field(description="monitor, broker.reconcile, tick")
     gate_caps: GateCaps
     theme_default: Literal["system", "light", "dark"] = "system"

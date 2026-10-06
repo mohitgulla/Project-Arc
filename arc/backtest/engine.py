@@ -77,7 +77,7 @@ MULT = 100.0
 
 ExitPolicyMode = Literal["hold_to_expiry", "policy", "d19_rules"]
 # "d19_rules" (E6.4 card name) = "policy": the same config/exits.yaml rules the live
-# position evaluator (arc.positions) and the Investor's exits use.
+# position evaluator (arc.positions) and the Quant exit step use.
 _POLICY_MODES = ("policy", "d19_rules")
 
 # Backtest strategy kind → the structure kind whose ExitPolicy applies.

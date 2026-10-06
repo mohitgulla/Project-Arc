@@ -198,9 +198,9 @@ export function parseRiskNarrative(raw: string | null | undefined): RiskView {
   };
 }
 
-/** Thesis author: Research for opens, the Investor for exits (D22 persona attribution). */
+/** Thesis author: Research for opens, Quant for exits (D22 persona attribution; D56). */
 export function thesisPersona(kind: "open" | "close"): string {
-  return kind === "close" ? "Investor" : "Research";
+  return kind === "close" ? "Quant" : "Research";
 }
 
 // ---------------------------------------------------------------------------

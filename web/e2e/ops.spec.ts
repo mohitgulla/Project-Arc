@@ -206,7 +206,7 @@ test.describe("ops behaviour", () => {
     const loop = page.getByTestId("loop-row");
     await expect(loop).toContainText("Research → Quant → Risk → Propose → Execute");
     await expect(loop.getByTestId("persona-chip")).toHaveText("Research");
-    await expect(tl.locator('[data-job="positions.evaluate"]')).toContainText("Investor exits");
+    await expect(tl.locator('[data-job="positions.evaluate"]')).toContainText("Position marks");
     await loop.getByTestId("job-info").click();
     await expect(page.getByRole("dialog").or(page.locator("[role=tooltip]")).first()).toContainText("LLM yes");
   });

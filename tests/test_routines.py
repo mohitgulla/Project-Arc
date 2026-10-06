@@ -128,7 +128,7 @@ LOCAL_ROUTING = LLMRouting(
     personas={p: "local" for p in Persona},
 )
 
-ALL = ["rss", "scalp", "research", "quant", "risk", "propose", "auditor", "investor"]
+ALL = ["rss", "scalp", "research", "quant", "risk", "propose", "broker.reconcile", "broker"]
 
 
 @pytest.fixture
@@ -176,7 +176,7 @@ class TestConfig:
     def test_shipped_config_validates(self) -> None:
         c = load_routines(DEFAULT_ROUTINES_PATH)
         assert c.personas["scalp"].after_sources
-        assert c.personas["research"].chain == ["quant", "risk", "propose", "execute"]
+        assert c.personas["research"].chain == ["quant", "risk", "propose", "broker.execute"]
         # D31: the trading loop replaces the scalp.completed -> research trigger.
         assert c.triggers_for("scalp.completed") == []
         assert c.is_loop("research") and not c.is_loop("scalp")
@@ -190,7 +190,7 @@ class TestConfig:
         assert c.monitoring.stuck_after_for("research") == dt.timedelta(minutes=20)
         assert c.loop.max_idle == dt.timedelta(minutes=30)
         assert c.loop.max_runtime == dt.timedelta(minutes=4)
-        assert {r.run for r in c.triggers_for("approval")} == {"investor"}
+        assert {r.run for r in c.triggers_for("approval")} == {"broker"}
         yt = c.sources["youtube.briefs"]
         assert "youtube.stockedup" not in c.sources
         assert "category" not in yt.options and yt.options["lookback"] == "24h"  # D49
@@ -290,7 +290,7 @@ class TestConfig:
             triggers: [{on: quant.completed, run: auditor}]
             """
         )
-        assert c.triggers_for("quant.completed")[0].run == "auditor"
+        assert c.triggers_for("quant.completed")[0].run == "broker.reconcile"
 
     def test_step_and_context_policy_lookup(self) -> None:
         c = cfg(
@@ -537,7 +537,7 @@ class TestTick:
         d, rec, _ = make(conn, halted=True)
         d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
         d.tick(et(2026, 9, 28, 16, 30), since=et(2026, 9, 28, 16, 25))
-        assert rec.calls == ["rss", "rss", "auditor"]  # rss at 12:00 and 16:30
+        assert rec.calls == ["rss", "rss", "broker.reconcile"]  # rss at 12:00 and 16:30
         assert ("scalp", "skipped", "2026-09-28T16:00:00.000000Z") in runs(conn)
 
     def test_halt_blocks_triggered_persona(self, conn: sqlite3.Connection) -> None:
@@ -679,7 +679,7 @@ class TestTriggers:
         d.events.emit("approval", {"proposal_id": "p1"}, now=et(2026, 9, 28, 10, 1))
         d.tick(et(2026, 9, 28, 10, 5), since=et(2026, 9, 28, 10, 4))
         d.tick(et(2026, 9, 28, 10, 10), since=et(2026, 9, 28, 10, 9))
-        assert rec.calls.count("investor") == 1
+        assert rec.calls.count("broker") == 1
         row = conn.execute("SELECT consumed_by FROM routine_events").fetchone()
         assert len(json.loads(row["consumed_by"])) == 1
 
@@ -846,7 +846,7 @@ class TestConfigDriven:
         spec = JobSpec.model_validate({"every": "5m"})
         assert resolve_handler("lessons", spec) is not_implemented
         assert resolve_handler("scorecard", spec).__name__ == "scorecard_step"
-        assert resolve_handler("auditor", spec).__name__ == "auditor_step"
+        assert resolve_handler("broker.reconcile", spec).__name__ == "broker_reconcile_step"
         assert resolve_handler("quant", spec).__name__ == "quant_step"
         assert resolve_handler("rss", spec).__name__ == "rss_source"
         assert resolve_handler("edgar.filings", spec).__name__ == "edgar_source"
@@ -927,8 +927,8 @@ class TestHeartbeats:
         self, conn: sqlite3.Connection
     ) -> None:
         d, _, notes = make(conn)
-        d.run_manual("auditor", now=et(2026, 9, 28, 16, 30))
-        assert notes.posts[0][1] == "[Auditor] auditor ✓ auditor done"
+        d.run_manual("broker.reconcile", now=et(2026, 9, 28, 16, 30))
+        assert notes.posts[0][1] == "[Broker] broker.reconcile ✓ broker.reconcile done"
         assert notes.blocks == [None]
 
     def test_card_folds_pending_sources(self, conn: sqlite3.Connection) -> None:
@@ -947,10 +947,11 @@ class TestHeartbeats:
 
     def test_failures_keep_one_line_alert(self, conn: sqlite3.Connection) -> None:
         d, rec, notes = make(conn)
-        rec.fail.add("auditor")
-        (o,) = d.run_manual("auditor", now=et(2026, 9, 28, 16, 30))
+        rec.fail.add("broker.reconcile")
+        (o,) = d.run_manual("broker.reconcile", now=et(2026, 9, 28, 16, 30))
         assert notes.posts[0][1] == (
-            f":rotating_light: [Auditor] auditor FAILED: RuntimeError: auditor boom `{o.run_id}`"
+            ":rotating_light: [Broker] broker.reconcile FAILED: "
+            f"RuntimeError: broker.reconcile boom `{o.run_id}`"
         )
         assert notes.blocks == [None]
 
@@ -961,7 +962,7 @@ class TestHeartbeats:
 
     def test_shipped_config_cards_for_personas(self) -> None:
         r = load_routines(DEFAULT_ROUTINES_PATH)
-        for name in ("scalp", "research", "auditor", "investor", "quant", "risk"):
+        for name in ("scalp", "research", "broker.reconcile", "broker", "quant", "risk"):
             assert r.step(name)[1].notify == "card", name
         assert r.step("propose")[1].notify == "summary"  # E6.1 owns the proposal card
         assert all(s.notify in (None, "quiet") for s in r.sources.values())

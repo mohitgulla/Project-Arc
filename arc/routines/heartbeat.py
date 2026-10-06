@@ -49,8 +49,9 @@ _PERSONA_LABELS = {
     "research": "[Research]",
     "quant": "[Quant]",
     "risk": "[Risk]",
-    "investor": "[Investor]",
-    "auditor": "[Auditor]",
+    "broker": "[Broker]",
+    "ops": "[Ops]",
+    "scorecard": "[Ops]",  # D56 (E13.2): the weekly scorecard posts as [Ops]
 }
 
 

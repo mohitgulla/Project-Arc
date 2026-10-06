@@ -109,26 +109,6 @@ class RiskInput:
     entry_terms: EntryTerms | None = None  # E3.4a: configured window + delta bands
 
 
-@dataclass(frozen=True)
-class InvestorInput:
-    """Input context for the Investor prompt builder."""
-
-    proposal_json: str  # serialized Proposal (approved)
-    current_quotes_json: str  # live bid/ask for the legs
-    scan_date: str
-
-
-@dataclass(frozen=True)
-class AuditorInput:
-    """Input context for the Auditor prompt builder."""
-
-    fills_json: str  # today's fills
-    positions_json: str  # current positions
-    broker_positions_json: str  # broker-reported positions for reconciliation
-    pnl_json: str  # P&L snapshots
-    journal_date: str
-
-
 # ---------------------------------------------------------------------------
 # Context-store adapters (D16): persona inputs come from a ContextSnapshot
 # ---------------------------------------------------------------------------
@@ -934,7 +914,7 @@ def _portfolio_section(inp: ResearchInput) -> str:
         "concentrated | hedge_needed | reduce_risk, plus one or two lines) and one "
         "`thesis_checks` entry per open structure (intact | weakened | invalidated, with "
         "why) using today's candidates, regime and notes. Never suggest closing or "
-        "sizing here: Risk and the Investor act on your thesis checks.\n"
+        "sizing here: Risk and Quant act on your thesis checks.\n"
     )
 
 
@@ -1058,21 +1038,6 @@ def risk_input_from_context(
         event_risk_json=_dump(event_risk_from_context(snapshot)),
         entry_terms=_terms(entry_terms),
     )
-
-
-def investor_input_from_context(
-    snapshot: ContextSnapshot, *, proposal_id: str, current_quotes_json: str, scan_date: str
-) -> InvestorInput:
-    """Investor reads one approved ``proposal`` entry by id."""
-    for entry in snapshot.of_kind("proposal"):
-        if entry.id == proposal_id:
-            return InvestorInput(
-                proposal_json=_dump(entry.payload),
-                current_quotes_json=current_quotes_json,
-                scan_date=scan_date,
-            )
-    msg = f"snapshot {snapshot.id} has no active proposal {proposal_id!r}"
-    raise LookupError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -1534,133 +1499,6 @@ Respond with JSON matching the RiskOutput schema:
   ],
   "portfolio_summary": "...",
   "advisory_notes": "..."
-}}
-"""
-
-
-# ---------------------------------------------------------------------------
-# Investor
-# ---------------------------------------------------------------------------
-
-
-def build_investor_prompt(inp: InvestorInput) -> str:
-    """Build the Investor persona prompt.
-
-    Investor produces an order plan: limit at mid, improvement steps, timeout.
-    """
-    return f"""{_SYSTEM_PREAMBLE}
-## Role: Investor
-Slack label: [Investor]
-
-You receive an approved proposal and current quotes. Produce an execution plan:
-- Always use limit orders (no market orders in Phase 1).
-- Start at the mid-price.
-- Define bounded improvement steps (widen toward natural side).
-- Set a timeout after which the order is cancelled.
-
-## Forbidden actions
-- Do NOT submit any orders yourself — only produce the plan.
-- Do NOT modify the approved structure or sizing.
-- Do NOT access any tools beyond the provided data.
-
-## Inputs
-
-### Approved proposal
-{inp.proposal_json}
-
-### Current quotes (bid/ask for each leg)
-{inp.current_quotes_json}
-
-Date: {inp.scan_date}
-
-## Output format
-Respond with JSON matching the InvestorOutput schema:
-{{
-  "plans": [
-    {{
-      "ticker": "...",
-      "structure_type": "...",
-      "order_type": "limit",
-      "initial_limit_price": 3.25,
-      "improvement_steps": [
-        {{"step_number": 1, "price": 3.30, "wait_seconds": 30}},
-        {{"step_number": 2, "price": 3.35, "wait_seconds": 30}}
-      ],
-      "timeout_seconds": 120,
-      "contracts": 2,
-      "notes": "..."
-    }}
-  ],
-  "market_conditions_note": "..."
-}}
-"""
-
-
-# ---------------------------------------------------------------------------
-# Auditor
-# ---------------------------------------------------------------------------
-
-
-def build_auditor_prompt(inp: AuditorInput) -> str:
-    """Build the Auditor persona prompt.
-
-    Auditor reconciles broker vs local state, writes the daily journal,
-    flags anomalies, and extracts lessons.
-    """
-    return f"""{_SYSTEM_PREAMBLE}
-## Role: Auditor
-Slack label: [Auditor]
-
-You review today's fills, positions, and P&L. Reconcile broker-reported
-positions against local records. Flag anomalies. Write the daily journal
-and extract lessons for improving the system.
-
-## Forbidden actions
-- Do NOT call any broker API or place any orders.
-- Do NOT modify any positions or orders.
-- Do NOT access any external systems beyond the provided data.
-
-## Inputs
-
-### Today's fills
-{inp.fills_json}
-
-### Local positions
-{inp.positions_json}
-
-### Broker-reported positions
-{inp.broker_positions_json}
-
-### P&L snapshots
-{inp.pnl_json}
-
-Date: {inp.journal_date}
-
-## Output format
-Respond with JSON matching the AuditorOutput schema:
-{{
-  "journal_date": "{inp.journal_date}",
-  "daily_pnl": 150.25,
-  "open_positions": 3,
-  "closed_today": 1,
-  "fills_reviewed": 4,
-  "anomalies": [
-    {{
-      "category": "fill_discrepancy",
-      "severity": "warning",
-      "description": "...",
-      "affected_orders": ["ord_001"]
-    }}
-  ],
-  "lessons": [
-    {{
-      "topic": "...",
-      "observation": "...",
-      "recommendation": "..."
-    }}
-  ],
-  "journal_narrative": "...",
-  "reconciliation_status": "clean"
 }}
 """
 

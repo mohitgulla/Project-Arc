@@ -148,14 +148,14 @@ def test_defaults_and_shipped_config() -> None:
 def test_slot_interval_splits_by_cadence() -> None:
     r, ms = cfg(), MonitoringSettings()
     assert checks.slot_interval(r.personas["research"]) == dt.timedelta(minutes=5)
-    assert checks.slot_interval(r.personas["auditor"]) == dt.timedelta(days=1)
+    assert checks.slot_interval(r.personas["broker.reconcile"]) == dt.timedelta(days=1)
     two = RoutinesConfig.model_validate(
         {"sources": {"e": {"schedule": ["06:00", "18:00"]}}}
     ).sources["e"]
     assert checks.slot_interval(two) == dt.timedelta(hours=12)
     assert not checks.per_slot(r.personas["research"], ms)
     assert not checks.per_slot(r.sources["edgar"], ms)
-    assert checks.per_slot(r.personas["auditor"], ms) and checks.per_slot(two, ms)
+    assert checks.per_slot(r.personas["broker.reconcile"], ms) and checks.per_slot(two, ms)
 
 
 # ---------------------------------------------------------------------------
@@ -213,10 +213,12 @@ def test_resolve_without_judged_slots(conn: sqlite3.Connection) -> None:
 def test_daily_job_miss_is_still_one_per_slot_alert(conn: sqlite3.Connection) -> None:
     ticks(conn, et(16, 0), et(22, 45))
     n = alerts.RecordingOpsNotifier()
-    out = health(conn, cfg(), et(22, 45), n)  # auditor 16:30 + 6h ttl + 10m grace passed
+    out = health(conn, cfg(), et(22, 45), n)  # broker.reconcile 16:30 + 6h ttl + 10m grace passed
     missed = [a for a in out.opened if a.kind == "missed_window"]
-    assert [alerts.missed_job(a) for a in missed] == ["auditor"]
-    assert len(n.posts) == 1 and "auditor Mon 09-28 16:30 EDT missed its window" in n.posts[0]
+    assert [alerts.missed_job(a) for a in missed] == ["broker.reconcile"]
+    assert (
+        len(n.posts) == 1 and "broker.reconcile Mon 09-28 16:30 EDT missed its window" in n.posts[0]
+    )
     health(conn, cfg(), et(22, 50), n)
     assert len(n.posts) == 1
 
@@ -420,7 +422,7 @@ def test_slot_rollup_line(conn: sqlite3.Connection) -> None:
 
 
 def test_auditor_card_carries_the_slots_line(conn: sqlite3.Connection) -> None:
-    from arc.routines import auditor as aud
+    from arc.broker import reconcile_job as aud
 
     fill_research(conn, et(9, 40), et(15, 50), skip={et(10, 0)})
 

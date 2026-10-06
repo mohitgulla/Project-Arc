@@ -1,7 +1,7 @@
 """The one transaction-cost model (PLAN §6 item 6, §7 QFX lesson, D23).
 
 Shared by the backtester, the scanner's ``ev_proxy``, the E2.4 exit model, the
-Investor's live exits and the proposal card's Net EV. Its values come from
+Quant's live exits and the proposal card's Net EV. Its values come from
 ``config/costs.yaml`` (:func:`load_cost_model`); the class defaults keep the
 historical backtest assumptions (commission only, no pass-through fees) so an
 explicit ``CostModel()`` in a test or sensitivity grid means what it always did.

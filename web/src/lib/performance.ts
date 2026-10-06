@@ -214,9 +214,12 @@ export const PERSONA_LABEL: Record<string, string> = {
   quant_pop: "Quant PoP",
   quant: "Quant",
   risk: "Risk",
-  investor: "Investor",
+  broker: "Broker",
+  ops: "Ops",
   scalp: "Scalp",
-  auditor: "Auditor",
+  // D56 (E13.2): pre-rename rows the server did not map (legacy reason codes)
+  investor: "Broker",
+  auditor: "Broker",
 };
 
 export function personaLabel(p: string): string {

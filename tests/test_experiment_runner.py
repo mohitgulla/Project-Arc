@@ -125,7 +125,7 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
         jobs = [r["job"] for r in runs]
         # shared inputs: the Scalp ran once, in control; the arm never re-runs it
         assert "scalp" not in jobs
-        assert jobs == ["research", "quant", "risk", "propose", "execute"]
+        assert jobs == ["research", "quant", "risk", "propose", "broker.execute"]
         assert all(r["status"] == "ok" for r in runs)
         for r in runs[:3]:  # upstream of the fork: control's outputs, reused verbatim
             assert r["summary"].startswith(f"paired: reused {control_runs[r['job']]}")
@@ -473,7 +473,7 @@ def test_tick_spawns_arms_only_while_an_experiment_runs(
 
     spawned: list[list[str]] = []
     monkeypatch.setattr(
-        "arc.routines.investor.spawn_detached", lambda argv, env=None: spawned.append(argv) or 42
+        "arc.routines.spawn.spawn_detached", lambda argv, env=None: spawned.append(argv) or 42
     )
     conn = _db(control)
     env = RunEnv(db_path=str(control), config_path=None, lock_dir=str(tmp_path / "l"), slack=False)

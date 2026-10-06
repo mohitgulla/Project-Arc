@@ -1,16 +1,19 @@
-"""E6.4 intraday chain: ``positions.evaluate → investor.exits → risk.reallocate`` (D19).
+"""E6.4 intraday chain: ``positions.evaluate → quant.exits → risk.reallocate`` (D19).
+
+D56 (E13.2): ``positions.evaluate`` is labelled "Position marks" (persona Quant) and
+its exit step ``investor.exits`` is ``quant.exits``; behaviour is unchanged.
 
 Every step reads and writes through the context store and the audit DB (D16):
 no in-memory hand-offs. Nothing here submits an order: every close or swap
 open is a normal proposal (gate + ``arc2`` token + approval card), and only the
-Investor (:mod:`arc.routines.investor`) submits, via ``arc.execution``, after
+Broker (:mod:`arc.broker.ladder_job`) submits, via ``arc.execution``, after
 approval.
 
 ``positions.evaluate`` (deterministic)
     Marks every open structure, reviews it (:func:`arc.positions.evaluate.review_position`)
     and writes one ``position_review`` context entry per position.
 
-``investor.exits`` (deterministic)
+``quant.exits`` (deterministic)
     Turns review signals (stop, profit target, time-adjusted target, DTE exit,
     remaining-EV floor) into close proposals via
     :func:`arc.execution.exits.propose_close`: limit at mid over the D24 band, one
@@ -321,7 +324,7 @@ def _theta(priced: PricedStructure, st: Structure, today: _dt.date, r: float) ->
 
 
 # ---------------------------------------------------------------------------
-# investor.exits
+# quant.exits (was investor.exits)
 # ---------------------------------------------------------------------------
 
 
@@ -371,7 +374,7 @@ def exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
             thesis=f"Exit ({sig.kind.value}): {sig.detail}; structure {row['id']}",
             reason=sig.kind.value,
             reason_code=SIGNAL_CODES[sig.kind],
-            persona=JournalPersona.INVESTOR,
+            persona=JournalPersona.QUANT,
             close_now_net=rv.close_now_net,
             settings=settings,
             account=account,
@@ -955,6 +958,6 @@ def position_handlers(env: PipelineEnv) -> dict[str, Handler]:
     """Dispatcher overrides binding the E6.4 chain to one *env* (fixtures / dry runs)."""
     return {
         "positions.evaluate": lambda ctx: evaluate(ctx, env),
-        "investor.exits": lambda ctx: exits(ctx, env),
+        "quant.exits": lambda ctx: exits(ctx, env),
         "risk.reallocate": lambda ctx: reallocate(ctx, env),
     }

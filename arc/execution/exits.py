@@ -10,8 +10,8 @@ the closing order is proposed like an entry (:func:`propose_close`):
    halt, TTL, freshness, spread/NBBO/tick and band checks all still run; every
    leg must reduce a held position),
 3. a passed decision gets an ``arc2`` token, and the proposal (``kind='close'``)
-   goes to the approval sweep, which posts an ``[Investor] Exit`` card,
-4. once approved, the Investor works it through the band (:mod:`arc.routines.investor`).
+   goes to the approval sweep, which posts a ``[Quant] Exit`` card,
+4. once approved, the Broker works it through the band (:mod:`arc.broker.ladder_job`).
 
 At most one exit proposal per structure per ET day, and none while one is still
 pending or working. Stops are evaluated on end-of-day marks only (D23): marks
@@ -19,7 +19,7 @@ count as end of day from ``eod_marks_from`` (default 15:30 ET), so the last
 monitor runs of the session can still fire the stop while the market is open.
 No exits are proposed while trading is halted.
 
-E6.4: the intraday ``positions.evaluate → investor.exits → risk.reallocate`` chain
+E6.4: the intraday ``positions.evaluate → quant.exits → risk.reallocate`` chain
 (:mod:`arc.positions`) calls :func:`propose_close` for review signals (profit
 target, time-adjusted target, remaining-EV floor, stop, DTE) and for the close
 leg of a close-to-reallocate swap. :func:`propose_exits` is the E6.2 monitor path.
@@ -116,7 +116,7 @@ def check_close_quotes(
     """E6.2a: may this close be priced from *priced*'s leg quotes? ``(problems, alert)``.
 
     Runs :func:`arc.pipeline.market.close_quote_sanity` (the one check every close
-    path uses: monitor exits, Investor exits, swap closes and the live exec test),
+    path uses: monitor exits, Quant exits, swap closes and the live exec test),
     logs ``close.quotes`` with every leg's evidence either way, and counts
     consecutive failures per structure in ``routine_state``. On failure it writes an
     ``exit:quote_unusable`` journal row carrying every leg's quote. No retry here: the
@@ -253,7 +253,7 @@ def propose_close(
     is given (live paper runs resolve it up front and fail without it, E5.2b),
     then one transaction: proposal (``kind='close'``) + gate decision + the
     structure's pending exit + a journal row + the ``proposal`` context entry the
-    approval card renders from. Never submits: the Investor does, after approval.
+    approval card renders from. Never submits: the Broker does, after approval.
 
     E6.2a: first the leg quotes must pass :func:`check_close_quotes`. If they do
     not, nothing is proposed or minted (``proposal_hash=None``); the structure is
@@ -463,7 +463,7 @@ def propose_exits(
             ),
             reason=state.fired.value,
             reason_code=EXIT_CODES[state.fired],
-            persona=JournalPersona.INVESTOR,
+            persona=JournalPersona.QUANT,
             close_now_net=state.close_now_net,
             settings=settings,
             account=account,

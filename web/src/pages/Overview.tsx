@@ -57,7 +57,7 @@ function useCadences() {
   const c = meta.data?.cadences ?? {};
   return {
     monitor: c.monitor?.every_s,
-    auditor: c.auditor?.every_s,
+    reconcile: c["broker.reconcile"]?.every_s,
     tick: c.tick?.every_s,
     health: c.health?.every_s,
     caps: meta.data?.gate_caps,
@@ -222,7 +222,7 @@ function EquityCard({ o, range, cad, now }: { o: Overview; range: OverviewRange;
       }
       freshness={{
         at: e.value_at,
-        cadenceS: e.source === "intraday" ? cad.monitor : cad.auditor,
+        cadenceS: e.source === "intraday" ? cad.monitor : cad.reconcile,
         label: e.source === "intraday" ? "monitor mark" : "reconcile",
       }}
     >
@@ -254,11 +254,11 @@ function PnlCard({ o, cad }: { o: Overview; cad: ReturnType<typeof useCadences> 
   // Mixed sources (D48): the header badges the older of realized (reconcile) and unrealized
   // (monitor mark); the per-value dots below stay inline.
   const pnlFreshness = olderSource([
-    { at: d.realized_at, cadenceS: cad.auditor, label: "realized · reconcile" },
+    { at: d.realized_at, cadenceS: cad.reconcile, label: "realized · reconcile" },
     { at: d.unrealized_at, cadenceS: cad.monitor, label: "unrealized · monitor mark" },
   ]) ?? {
     at: d.as_of,
-    cadenceS: d.source === "intraday" ? cad.monitor : cad.auditor,
+    cadenceS: d.source === "intraday" ? cad.monitor : cad.reconcile,
     label: d.source === "intraday" ? "monitor mark" : "reconcile",
   };
   return (
@@ -279,7 +279,7 @@ function PnlCard({ o, cad }: { o: Overview; cad: ReturnType<typeof useCadences> 
       <dl className="grid grid-cols-2 gap-3" data-testid="pnl-split">
         {(
           [
-            ["Realized", realized, d.realized_at, cad.auditor, "reconcile"],
+            ["Realized", realized, d.realized_at, cad.reconcile, "reconcile"],
             ["Unrealized", unrealized, d.unrealized_at, cad.monitor, "monitor mark"],
           ] as const
         ).map(([label, v, at, cadence, src]) => (

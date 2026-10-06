@@ -28,8 +28,6 @@ EXPECTED = {
     Persona.QUANT: ("frontier", FRONTIER),
     Persona.RISK: ("frontier", FRONTIER),
     Persona.SCALP: ("cheap", CHEAP),
-    Persona.INVESTOR: ("cheap", CHEAP),
-    Persona.AUDITOR: ("cheap", CHEAP),
 }
 
 SKILLS_DIR = Path(__file__).resolve().parent.parent / "hermes" / "skills"
@@ -49,9 +47,7 @@ class TestDefaultRouting:
             "research",
             "quant",
             "risk",
-            "investor",
-            "auditor",
-        }
+        }  # D56 (E13.2): Broker and Ops are deterministic, not LLM personas
 
     @pytest.mark.parametrize(("persona", "expected"), list(EXPECTED.items()))
     def test_every_persona_resolves_to_its_tier_model(
@@ -95,7 +91,7 @@ class TestConfigDriven:
             f"model: {CHEAP}\n", "model: anthropic/claude-other\n"
         )
         s = ArcSettings(env="paper", llm_routing_file=_write(tmp_path, text))
-        for p in (Persona.SCALP, Persona.INVESTOR, Persona.AUDITOR):
+        for p in (Persona.SCALP,):
             assert resolve(p, s).model == "anthropic/claude-other"
         assert resolve(Persona.RESEARCH, s).model == FRONTIER
 
@@ -138,11 +134,11 @@ class TestConfigDriven:
 
 class TestValidation:
     def test_missing_persona(self) -> None:
-        with pytest.raises(ValidationError, match="personas without a tier: auditor"):
+        with pytest.raises(ValidationError, match="personas without a tier: scalp"):
             LLMRouting.model_validate(
                 {
                     "tiers": {"t": {"model": "anthropic/m"}},
-                    "personas": {p.value: "t" for p in Persona if p is not Persona.AUDITOR},
+                    "personas": {p.value: "t" for p in Persona if p is not Persona.SCALP},
                 }
             )
 

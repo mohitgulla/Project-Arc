@@ -30,7 +30,7 @@ All output MUST be valid JSON matching the schema. No prose outside the JSON obj
 
 ## Close-to-reallocate review (E6.4, D19)
 
-Chain step `risk.reallocate` (intraday, after `positions.evaluate` → `investor.exits`).
+Chain step `risk.reallocate` (intraday, after `positions.evaluate` → `quant.exits`).
 A deterministic scorer (`arc.positions.reallocate.score_swaps`) pairs open positions
 (`position_review`: remaining net EV per $ of buying power, remaining PoP) with new
 entries blocked **only** for capacity (gate `rejected_for`: `buying_power` =

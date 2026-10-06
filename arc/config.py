@@ -300,7 +300,7 @@ class ArcSettings(BaseSettings):
         default=60,
         description=(
             "D34: if more than this passed between the proposal's pricing and the ladder's "
-            "first attempt, the Investor re-prices at the current mid. A mid outside the "
+            "first attempt, the Broker re-prices at the current mid. A mid outside the "
             "gate-approved band is not sent (journal reason stale_band)."
         ),
     )

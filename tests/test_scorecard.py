@@ -399,7 +399,7 @@ def test_card_layout(conn: sqlite3.Connection) -> None:
     close_early(conn, sid, Decimal("0.80"), qty=1, at=_at(25, 14))
     sc = build_scorecard(conn, start=START, end=END, now=FRI)
     view = scorecard_card(sc, report_path="docs/RESEARCH/weekly/2026-09-21.md", run_id="run-1")
-    assert view.text.startswith("[Auditor] Scorecard: Sep 21 – Sep 27, 2026")
+    assert view.text.startswith("[Ops] Scorecard: Sep 21 – Sep 27, 2026")
     assert len(view.blocks) <= MAX_BLOCKS
     text = json.dumps(view.blocks)
     assert "Early exits vs hold to expiry (D19)" in text and "2026-09-21.md" in text
@@ -444,7 +444,7 @@ def test_routine_writes_report_and_card(conn: sqlite3.Connection, tmp_path: Path
     res = scorecard(ctx)
     out = tmp_path / "weekly" / "2026-09-21.md"
     assert out.read_text().startswith("# Paper scorecard: week of Sep 21 – Sep 27, 2026")
-    assert res.card is not None and "[Auditor] Scorecard" in res.card.text
+    assert res.card is not None and "[Ops] Scorecard" in res.card.text
     assert res.metrics["closed"] == 1 and res.metrics["report"] == str(out)
     assert [i.name for i in ctx.external_inputs] == ["scorecard"]
 

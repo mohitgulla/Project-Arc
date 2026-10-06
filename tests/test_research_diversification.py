@@ -66,7 +66,8 @@ REPO = Path(__file__).resolve().parent.parent
 # (diffed against origin/main 23be73a; no other byte changed).
 # E13.1 (D56) re-pinned it: "Director" -> "Research", "Sweep" -> "Scalp" in the role,
 # label and "candidates from" lines only (diffed against origin/main f1c1429).
-MAIN_RESEARCH_SHA = "8f7a8bc57582ba1dcb2c974c59091b6692173c1e3632bd09ea333010c19d3da9"
+# E13.2: re-pinned after a name-only diff ("Risk and the Investor" -> "Risk and Quant").
+MAIN_RESEARCH_SHA = "99cba9618473fe2eb21ba6410b6e5fe0d8480becf2312168f3c851e906ea573b"
 MAIN_RULES_SHA = "08bc85caa583b536a000ab72d9625df6eb64eeb595bc21ad341fc32e62c63265"
 RELAXED = ResearchDiversificationSettings(mode="relaxed")
 STRICT = ResearchDiversificationSettings()

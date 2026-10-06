@@ -32,7 +32,7 @@ __all__ = ["cadences", "router"]
 router = APIRouter(tags=["meta"], responses={503: {"model": ErrorResponse}})
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-CADENCE_JOBS = ("monitor", "auditor")
+CADENCE_JOBS = ("monitor", "broker.reconcile")
 _DAY = 86_400
 
 
@@ -73,7 +73,7 @@ def _every_s(spec: JobSpec) -> int:
 
 
 def cadences(routines: RoutinesConfig) -> dict[str, Cadence]:
-    """``monitor``, ``auditor`` and ``tick`` cadences with stale = 3 x cadence (§3, §7)."""
+    """``monitor``, ``broker.reconcile`` and ``tick`` cadences with stale = 3 x cadence (§3, §7)."""
     out: dict[str, Cadence] = {}
     for name in CADENCE_JOBS:
         found = routines.job(name)

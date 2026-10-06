@@ -29,7 +29,7 @@ Job keys (``sources.<name>`` / ``personas.<name>``):
   a write of any other kind fails the run, and a job with no ``writes`` may
   write nothing (fail-closed). ``[]`` declares a job that writes nothing.
 - ``handler: "module:function"`` — explicit handler; default resolves by job name.
-- ``halt_exempt: true`` — persona keeps running while halted (Auditor only).
+- ``halt_exempt: true`` — persona keeps running while halted (Broker reconcile, monitor).
 - ``notify: quiet | summary | card`` — heartbeat policy: sources default
   ``quiet`` (folded into the next persona post), personas and chain steps
   default ``card`` (E5.5 digest card; the one-liner when a job has no card).
@@ -105,7 +105,16 @@ TIMELINE_GROUPS: tuple[tuple[str, str], ...] = (
 #: data source (no D47 category; it never reaches a persona's category block).
 UNIVERSE_KINDS: frozenset[str] = frozenset({"universe_tier", "active_universe"})
 #: E8.8d: persona chips a job may declare (``persona:``); sources declare none.
-TIMELINE_PERSONAS: tuple[str, ...] = ("scalp", "research", "investor", "risk", "auditor", "monitor")
+#: D56 (E13.2): Investor/Auditor removed; Broker runs ladders + reconcile, Ops the scorecard.
+TIMELINE_PERSONAS: tuple[str, ...] = (
+    "scalp",
+    "research",
+    "quant",
+    "risk",
+    "broker",
+    "ops",
+    "monitor",
+)
 #: E8.8d: ``about:`` is one line; longer text belongs in docs, not the timeline ⓘ.
 ABOUT_MAX_CHARS = 160
 
@@ -428,7 +437,7 @@ class TickSettings(BaseModel):
     interval: _dt.timedelta = _dt.timedelta(minutes=5)
     max_lookback: _dt.timedelta = _dt.timedelta(days=7)
     max_trigger_depth: Annotated[int, Field(ge=1, le=20)] = 5
-    # E6.2e: a dispatched event whose Investor never claimed its run is released
+    # E6.2e: a dispatched event whose Broker never claimed its run is released
     # back to the drain this long after its dispatch (and flagged by monitoring).
     dispatch_grace: _dt.timedelta = _dt.timedelta(minutes=10)
     # D39: a background persona with `after_sources: true` waits at most this long for
@@ -563,26 +572,102 @@ PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context",)
 #: D56 (E13.1): pre-rename ``personas:`` keys accepted (logged) for one release.
 #: ``sweep.overnight`` follows its ``sweep`` prefix.
 LEGACY_PERSONA_KEYS: dict[str, str] = {"sweep": "scalp", "director": "research"}
+#: D56 (E13.2): renamed jobs and chain steps (exact names), accepted (logged) for one
+#: release as ``personas:`` / ``steps:`` keys and inside ``chain:`` lists.
+LEGACY_JOB_NAMES: dict[str, str] = {
+    "investor": "broker",
+    "auditor": "broker.reconcile",
+    "execute": "broker.execute",
+    "investor.exits": "quant.exits",
+}
+#: D56 (E13.2): old ``persona:`` timeline chips -> the new ones (``auditor`` is the
+#: reconcile's Broker; the scorecard's Ops chip is set in the YAML).
+LEGACY_PERSONA_CHIPS: dict[str, str] = {"investor": "broker", "auditor": "broker"}
+
+
+def _renamed(key: str) -> str | None:
+    if key in LEGACY_JOB_NAMES:
+        return LEGACY_JOB_NAMES[key]
+    head, dot, tail = key.partition(".")
+    new = LEGACY_PERSONA_KEYS.get(head)
+    return None if new is None else f"{new}{dot}{tail}"
+
+
+def current_job_name(name: str) -> str:
+    """D56: the current name of a job / step given under a pre-rename name (logged).
+
+    ``investor`` -> ``broker`` (e.g. a ladder spawned as ``arc routines run investor
+    --event …`` just before deploy), ``auditor`` -> ``broker.reconcile``,
+    ``sweep.overnight`` -> ``scalp.overnight``. Other names are returned unchanged.
+    """
+    new = _renamed(name)
+    if new is None:
+        return name
+    structlog.get_logger(__name__).warning(
+        "routines.deprecated_job_alias", job=name, renamed_to=new
+    )
+    return new
+
+
+def _legacy_step_names(steps: dict[str, Any]) -> dict[str, Any]:
+    """D56 (E13.2): rename legacy ``steps:`` keys (``execute`` -> ``broker.execute``)."""
+    out: dict[str, Any] = {}
+    for key, value in steps.items():
+        new = LEGACY_JOB_NAMES.get(key)
+        if new is None:
+            out[key] = value
+            continue
+        if new in steps:
+            msg = f"steps.{key} and steps.{new} both set; {key!r} was renamed (D56)"
+            raise ValueError(msg)
+        structlog.get_logger(__name__).warning(
+            "routines.deprecated_job_alias", job=key, renamed_to=new
+        )
+        out[new] = value
+    return out
 
 
 def _legacy_job_names(personas: dict[str, Any]) -> dict[str, Any]:
     """Rename D56 legacy ``personas:`` keys (``sweep*`` -> ``scalp*``, ``director`` ->
-    ``research``); a key present under both names is an error (input not mutated)."""
+    ``research``, ``investor`` -> ``broker``, ``auditor`` -> ``broker.reconcile``), their
+    ``chain:`` steps and ``persona:`` chips; a key present under both names is an error
+    (input not mutated)."""
+    log = structlog.get_logger(__name__)
     out: dict[str, Any] = {}
     for key, value in personas.items():
-        head, dot, tail = key.partition(".")
-        new = LEGACY_PERSONA_KEYS.get(head)
-        if new is None:
+        if isinstance(value, dict):
+            value = _legacy_job_body(key, value)  # noqa: PLW2901
+        renamed = _renamed(key)
+        if renamed is None:
             out[key] = value
             continue
-        renamed = f"{new}{dot}{tail}"
         if renamed in personas:
             msg = f"personas.{key} and personas.{renamed} both set; {key!r} was renamed (D56)"
             raise ValueError(msg)
-        structlog.get_logger(__name__).warning(
-            "routines.deprecated_job_alias", job=key, renamed_to=renamed
-        )
+        log.warning("routines.deprecated_job_alias", job=key, renamed_to=renamed)
         out[renamed] = value
+    return out
+
+
+def _legacy_job_body(key: str, body: dict[str, Any]) -> dict[str, Any]:
+    chain = body.get("chain")
+    chip = body.get("persona")
+    new_chain = (
+        [LEGACY_JOB_NAMES.get(s, s) if isinstance(s, str) else s for s in chain]
+        if isinstance(chain, list)
+        else chain
+    )
+    new_chip = LEGACY_PERSONA_CHIPS.get(chip, chip) if isinstance(chip, str) else chip
+    if new_chain == chain and new_chip == chip:
+        return body
+    structlog.get_logger(__name__).warning(
+        "routines.deprecated_job_alias", job=key, chain=new_chain, persona=new_chip
+    )
+    out = dict(body)
+    if "chain" in body:
+        out["chain"] = new_chain
+    if "persona" in body:
+        out["persona"] = new_chip
     return out
 
 
@@ -747,6 +832,15 @@ class RoutinesConfig(BaseModel):
         personas = dict(data["personas"])
         out = dict(data)
         personas = _legacy_job_names(personas)
+        if isinstance(out.get("steps"), dict):
+            out["steps"] = _legacy_step_names(dict(out["steps"]))
+        if isinstance(out.get("triggers"), list):
+            out["triggers"] = [
+                {**t, "run": current_job_name(t["run"])}
+                if isinstance(t, dict) and isinstance(t.get("run"), str) and _renamed(t["run"])
+                else t
+                for t in out["triggers"]
+            ]
         for flag in PERSONA_FLAGS:
             if flag not in personas:
                 continue

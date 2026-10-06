@@ -113,7 +113,7 @@ _TEST_ORDER_PREFIX = "arc-"
 # Personas whose reason codes the breakdown groups by (not gate/system/owner bookkeeping).
 # D54/D56: stored rows keep the name of their time: "scout" (pre-D54) and "sweep" (pre-D56)
 # are the Scalp, "director" is Research (arc.journal.legacy); "scout" after D54 is the
-# slow-feed Scout.
+# slow-feed Scout. Pre-E13.2 "investor" rows are Broker/Quant, "auditor" Broker/Ops.
 _PERSONAS = (
     "scalp",
     "sweep",
@@ -122,6 +122,8 @@ _PERSONAS = (
     "director",
     "quant",
     "risk",
+    "broker",
+    "ops",
     "investor",
     "auditor",
 )
