@@ -127,7 +127,7 @@ Shipped defaults in `config/routines.yaml`, all times ET:
 | 06:00-20:00 trading days | `rss` every 30m, `edgar` every 15m |
 | 09:30 trading days | pre-market chain `director -> quant -> risk -> propose` |
 | 09:30-16:00 trading days, every 30m | `monitor`: positions, net Greeks, expiries, daily-loss halt. Read-only, no LLM, halt-exempt |
-| 05:00 trading days | `youtube.briefs`: newest video per channel from the last 24 h (StockedUp, FX Evolution, Trade Brigade, Arete) → one `channel_brief` each, read by the Director (D45). YouTube docs never reach the Sweep |
+| 02:00 trading days | `youtube.briefs`: newest video per channel from the last 24 h (StockedUp, FX Evolution, Trade Brigade, Arete) → one `channel_brief` each, read by the Director (D45). YouTube docs never reach the Sweep |
 | 22:00 daily | `sweep.overnight` (fast sources only) |
 | 16:30 trading days | `auditor` |
 | 16:45 Fridays (`days: [fri]`) | `scorecard` (weekly) |

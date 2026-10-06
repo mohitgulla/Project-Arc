@@ -216,7 +216,7 @@ class TestConfig:
         found = shipped.job(JOB)
         assert found is not None
         spec = found[1]
-        assert spec.schedule == [dt.time(5, 0)]
+        assert spec.schedule == [dt.time(2, 0)]
         assert spec.days == "trading"
         assert spec.llm is True
         assert spec.lane == "background"

@@ -78,7 +78,7 @@ def _day_plan(cfg: RoutinesConfig, start: dt.datetime, end: dt.datetime) -> dict
 class TestShippedDefaults:
     def test_sources(self, shipped: RoutinesConfig) -> None:
         yt = shipped.sources["youtube.briefs"]
-        assert yt.cadence == "at 05:00 ET (trading)"  # D45: one pre-market brief run
+        assert yt.cadence == "at 02:00 ET (trading)"  # D45: one pre-market brief run
         assert shipped.sources["rss"].cadence == "every 15m 06:00-20:00 ET (trading)"  # D31
         assert shipped.sources["edgar"].cadence == "every 15m 06:00-20:00 ET (trading)"
         assert shipped.sources["earnings"].cadence == "at 06:00, 18:00 ET (trading)"
@@ -107,7 +107,7 @@ class TestShippedDefaults:
 
     def test_full_trading_day(self, shipped: RoutinesConfig) -> None:
         plan = _day_plan(shipped, et(2026, 9, 28, 0, 0), et(2026, 9, 29, 0, 0))  # Monday
-        assert plan["youtube.briefs"] == ["Mon 05:00"]  # D45: 02:00 PT, trading days only
+        assert plan["youtube.briefs"] == ["Mon 02:00"]  # D45: 23:00 PT, trading days only
         # D31: Sweep 09:00..16:00 every 30 min = 15 runs, plus the 22:00 overnight run.
         assert len(plan["sweep"]) == 15
         assert (plan["sweep"][0], plan["sweep"][-1]) == ("Mon 09:00", "Mon 16:00")
@@ -135,16 +135,16 @@ class TestShippedDefaults:
         assert weekend["sweep.overnight"] == ["Sat 22:00", "Sun 22:00"]
 
     def test_youtube_briefs_trading_days_only(self, shipped: RoutinesConfig) -> None:
-        """E4.6: 05:00 ET on a trading day; none on a Saturday or a market holiday."""
+        """E4.6: 02:00 ET on a trading day; none on a Saturday or a market holiday."""
         mon = _day_plan(shipped, et(2026, 9, 28, 0, 0), et(2026, 9, 29, 0, 0))
-        assert mon["youtube.briefs"] == ["Mon 05:00"]
+        assert mon["youtube.briefs"] == ["Mon 02:00"]
         sat = _day_plan(shipped, et(2026, 10, 3, 0, 0), et(2026, 10, 4, 0, 0))
         assert "youtube.briefs" not in sat
         thanksgiving = _day_plan(shipped, et(2026, 11, 26, 0, 0), et(2026, 11, 27, 0, 0))
         assert "youtube.briefs" not in thanksgiving
         assert "rss" not in thanksgiving  # same calendar as the other trading-day jobs
         friday_after = _day_plan(shipped, et(2026, 11, 27, 0, 0), et(2026, 11, 28, 0, 0))
-        assert friday_after["youtube.briefs"] == ["Fri 05:00"]  # early close is a trading day
+        assert friday_after["youtube.briefs"] == ["Fri 02:00"]  # early close is a trading day
 
     def test_sources_run_before_sweep_in_the_same_tick(self, shipped: RoutinesConfig) -> None:
         d = Dispatcher(connect(":memory:"), shipped, is_halted=lambda: False)

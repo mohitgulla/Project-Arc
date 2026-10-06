@@ -1,6 +1,6 @@
 """Daily YouTube channel briefs (E4.6, PLAN D45).
 
-One job (``youtube.briefs``, 05:00 ET on trading days) turns the newest qualifying
+One job (``youtube.briefs``, 02:00 ET on trading days) turns the newest qualifying
 video per configured channel from the last ``lookback`` (24 h) into at most one
 validated :class:`~arc.models.ChannelBrief` per channel::
 
