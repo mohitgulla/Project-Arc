@@ -441,7 +441,7 @@ class TestScanRecordedSpy:
         r = scan(
             spy,
             "SPY",
-            ScanParams(strategies=[ScanStrategy.BULL_PUT]),
+            ScanParams(strategies=[ScanStrategy.BULL_PUT], iv_min_obs=20),
             as_of=dt.date(2026, 9, 27),
             iv_history=hist,
         )
@@ -632,7 +632,7 @@ class TestCli:
         rc = main(
             [
                 "chains", "SPY", "--dte", "30-45", "--delta", "20", "--fixture", "spy",
-                "--iv-history-dir", str(tmp_path), "--top", "3", "--profile", "margin",
+                "--db", str(tmp_path / "arc.db"), "--top", "3", "--profile", "margin",
             ]
         )  # fmt: skip
         out = capsys.readouterr().out
@@ -646,7 +646,7 @@ class TestCli:
         from arc.cli import main
 
         args = ["chains", "SPY", "--fixture", str(SPY_CHAIN_FIXTURE), "--json"]
-        args += ["--iv-history-dir", str(tmp_path), "--record-iv", "--delta", "0.25"]
+        args += ["--db", str(tmp_path / "arc.db"), "--record-iv", "--delta", "0.25"]
         args += ["--strategy", "bear_call", "--rank-by", "ev", "--width", "3"]
         assert main(args) == 0
         payload = json.loads(capsys.readouterr().out)
@@ -654,9 +654,18 @@ class TestCli:
         assert res["params"]["target_delta"] == 0.25
         assert res["params"]["wing_width"] == 3.0
         assert {c["strategy"] for c in res["candidates"]} == {"bear_call"}
-        hist = load_iv_history(tmp_path, "SPY")
-        assert list(hist) == [dt.date(2026, 9, 27)]
-        assert hist[dt.date(2026, 9, 27)] == pytest.approx(res["iv"]["atm_iv"], abs=1e-6)
+        # E4.12: --record-iv writes the 30-DTE constant-maturity IV into iv_daily.
+        from arc.iv.store import FORWARD, IvStore
+        from arc.store.db import connect
+
+        (row,) = IvStore(connect(tmp_path / "arc.db")).rows("SPY", [FORWARD])
+        assert row.day == dt.date(2026, 9, 27) and row.method == "chain_cm30"
+        assert row.iv30 == pytest.approx(res["iv"]["atm_iv"], abs=0.03)
+        assert res["spot_basis"] == "mid"
+        # The next run reads that history back (1 observation: rank still n/a).
+        assert main([*args[:5], "--db", str(tmp_path / "arc.db")]) == 0
+        (res2,) = json.loads(capsys.readouterr().out)
+        assert res2["iv"]["observations"] == 1 and res2["iv"]["iv_rank"] is None
 
     @pytest.mark.parametrize(
         "bad", [["--dte", "45-30"], ["--dte", "x"], ["--delta", "abc"], ["--delta", "150"]]
@@ -832,7 +841,7 @@ class TestDebitStrategies:
         from arc.cli import main
 
         rc = main(
-            ["chains", "SPY", "--fixture", "spy", "--iv-history-dir", str(tmp_path), "--top", "3",
+            ["chains", "SPY", "--fixture", "spy", "--db", str(tmp_path / "arc.db"), "--top", "3",
              "--profile", "cash_debit"]
         )  # fmt: skip
         out = capsys.readouterr().out

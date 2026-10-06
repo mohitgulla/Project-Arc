@@ -628,13 +628,70 @@ class ArcSettings(BaseSettings):
         default=252,
         description="IV rank / percentile lookback in observations (~1 trading year).",
     )
-    scanner_iv_min_obs: Annotated[int, Field(ge=2)] = Field(
-        default=20,
-        description="Minimum IV observations before IV rank / percentile are reported.",
-    )
     scanner_iv_history_dir: Path = Field(
         default=Path("data/iv_history"),
-        description="Directory of per-ticker ATM IV history CSVs (date,atm_iv).",
+        description=(
+            "E4.12: legacy per-ticker ATM IV CSVs (date,atm_iv), read once by "
+            "`arc iv import-csv` into iv_daily; nothing writes here any more."
+        ),
+    )
+
+    # -- IV history (E4.12, D55) -------------------------------------------------
+    iv_min_obs_rank: Annotated[int, Field(ge=2)] = Field(
+        default=120,
+        description=(
+            "IV observations needed before IV rank / percentile are reported (regime, "
+            "scanner). A 20-observation rank is noise (D55)."
+        ),
+    )
+    iv_crosscheck_max_pts: Annotated[float, Field(gt=0, le=50)] = Field(
+        default=3.0,
+        description="iv.record: |our iv30 - Cboe iv30| above this (vol pts) opens an [Ops] alert.",
+    )
+    iv_crosscheck_max_names: Annotated[int, Field(ge=0, le=20)] = Field(
+        default=5,
+        description="iv.record: pool names cross-checked against Cboe besides SPY and QQQ.",
+    )
+    iv_ext_max_age_days: Annotated[int, Field(ge=1, le=31)] = Field(
+        default=8,
+        description=(
+            "An Option Strategist percentile older than this is not shown as "
+            "iv_percentile_ext (weekly file, Saturdays)."
+        ),
+    )
+    iv_dividend_yields: dict[str, Annotated[float, Field(ge=0, le=0.2)]] = Field(
+        default_factory=lambda: {
+            "SPY": 0.012,
+            "QQQ": 0.006,
+            "IWM": 0.012,
+            "DIA": 0.016,
+            "XLF": 0.015,
+            "XLE": 0.032,
+            "XLK": 0.007,
+            "XLV": 0.016,
+            "XLI": 0.014,
+            "XLY": 0.008,
+            "XLP": 0.026,
+            "XLU": 0.029,
+        },
+        description=(
+            "E4.12 backfill: continuous dividend yield per ETF for the Black-Scholes IV "
+            "inversion; any other ticker uses 0."
+        ),
+    )
+    spot_max_spread_pct: Annotated[float, Field(gt=0, le=1)] = Field(
+        default=0.05,
+        description=(
+            "E4.12 market_spot: a two-sided quote wider than this share of its mid gives way "
+            "to today's daily close (a zero side always does)."
+        ),
+    )
+    alpaca_data_calls_per_minute: Annotated[int, Field(ge=1, le=200)] = Field(
+        default=150,
+        description=(
+            "E4.12: shared cross-process budget for bulk Alpaca data pulls "
+            "(`arc iv backfill`); the free data plan allows 200/min."
+        ),
     )
 
     # -- Ingestion (E4.1) ----------------------------------------------------

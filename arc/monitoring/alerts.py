@@ -61,6 +61,7 @@ CONDITION_PREFIXES = (
     "remote_",
     "coverage:",
     "approvals_unposted",
+    "iv_crosscheck",
 )
 # Conditions that make routine slots miss: while open they absorb missed-window
 # alerts and (E8.2a) newly opened coverage alerts.
@@ -79,6 +80,7 @@ _RESOLVED_BY = (
     (MOMENTUM_COVERAGE, "momentum_coverage"),  # E12.2 (before the generic prefix)
     (COVERAGE_PREFIX, "slot_coverage"),
     ("approvals_unposted", "approvals_unposted"),
+    ("iv_crosscheck", "iv_crosscheck"),  # E4.12
 )
 # A slot whose window closed this long before an incident opened is still blamed on it
 # (``tick_stale`` opens ``tick_stale_after`` after the last tick; its ``since`` is exact).
@@ -224,6 +226,10 @@ def _resolve_line(alert: OpsAlert, results: dict[str, CheckResult]) -> str:
         ec = results.get("earnings_coverage")
         now = f" ({ec.summary})" if ec else ""
         return f"earnings calendar fresh again{now}"
+    if alert.key == "iv_crosscheck":
+        ic = results.get("iv_crosscheck")
+        now = f" ({ic.summary})" if ic else ""
+        return f"IV back within the Cboe cross-check threshold{now}"
     if alert.key == MOMENTUM_COVERAGE:
         mc = results.get("momentum_coverage")
         now = f" ({mc.summary})" if mc else ""

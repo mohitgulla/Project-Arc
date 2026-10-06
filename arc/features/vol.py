@@ -37,7 +37,8 @@ TRADING_DAYS_PER_YEAR = 252
 HV_SHORT = 20
 HV_LONG = 60
 IV_LOOKBACK = 252
-MIN_IV_HISTORY = 20
+#: E4.12 (D55): a 20-observation rank is noise; ArcSettings.iv_min_obs_rank overrides.
+MIN_IV_HISTORY = 120
 TARGET_DTE = 30
 
 
@@ -154,6 +155,16 @@ def atm_iv_from_chain(
     non-positive IV, and expiries on/before *as_of*, are ignored. Returns
     ``None`` if nothing usable remains.
     """
+    points = atm_term_points(chain, spot, as_of)
+    return constant_maturity_iv(points, target_dte=target_dte) if points else None
+
+
+def atm_term_points(
+    chain: Iterable[ChainContractLike], spot: float, as_of: dt.date
+) -> list[tuple[int, float]]:
+    """``(calendar DTE, ATM IV)`` per expiry, sorted by DTE (the first step of
+    :func:`atm_iv_from_chain`): the mean IV of every contract at the strike nearest
+    *spot*. Missing / non-positive IVs and expiries on/before *as_of* are ignored."""
     if spot <= 0:
         raise ValueError("spot must be positive")
     by_exp: dict[dt.date, list[tuple[float, float]]] = {}
@@ -162,22 +173,36 @@ def atm_iv_from_chain(
         if iv is None or not math.isfinite(iv) or iv <= 0 or c.expiration <= as_of:
             continue
         by_exp.setdefault(c.expiration, []).append((float(c.strike), float(iv)))
-    if not by_exp:
-        return None
-
     points: list[tuple[int, float]] = []
     for exp, rows in sorted(by_exp.items()):
         nearest = min(abs(k - spot) for k, _ in rows)
         ivs = [iv for k, iv in rows if abs(abs(k - spot) - nearest) <= 1e-9]
         points.append(((exp - as_of).days, float(np.mean(ivs))))
+    return points
 
-    below = [p for p in points if p[0] <= target_dte]
-    above = [p for p in points if p[0] >= target_dte]
-    if not below:
-        return above[0][1]
-    if not above:
-        return below[-1][1]
-    (d1, v1), (d2, v2) = below[-1], above[0]
+
+def bracketing_points(
+    points: list[tuple[int, float]], *, target_dte: int = TARGET_DTE
+) -> tuple[tuple[int, float] | None, tuple[int, float] | None]:
+    """The term points just below/at and just above/at *target_dte* (``None`` = no side)."""
+    pts = sorted(points)
+    below = [p for p in pts if p[0] <= target_dte]
+    above = [p for p in pts if p[0] >= target_dte]
+    return (below[-1] if below else None), (above[0] if above else None)
+
+
+def constant_maturity_iv(points: list[tuple[int, float]], *, target_dte: int = TARGET_DTE) -> float:
+    """IV at *target_dte* from ``(DTE, IV)`` term points: linear interpolation in total
+    variance (``iv^2 * T``) between the bracketing points, flat extrapolation outside."""
+    if not points:
+        raise ValueError("at least one term point is required")
+    lo, hi = bracketing_points(points, target_dte=target_dte)
+    if lo is None:
+        assert hi is not None
+        return hi[1]
+    if hi is None:
+        return lo[1]
+    (d1, v1), (d2, v2) = lo, hi
     if d1 == d2:
         return v1
     w1, w2 = v1 * v1 * d1, v2 * v2 * d2
@@ -207,6 +232,17 @@ class VolFeatures(BaseModel):
     iv_percentile: float | None = Field(None, ge=0.0, le=1.0)
     iv_lookback: int = IV_LOOKBACK
     iv_observations: int = Field(0, description="IV observations in the rank/percentile window")
+    # E4.12 (D55): only while our own history is under min_obs. An external
+    # percentile (Option Strategist weekly file), context only, never a gate input.
+    iv_percentile_ext: float | None = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="External IV percentile (only when iv_percentile is None)",
+    )
+    iv_percentile_ext_source: str | None = Field(
+        None, description="e.g. 'optionstrategist@2026-10-02' (external, approximate)"
+    )
     missing: list[str] = Field(default_factory=list)
 
 

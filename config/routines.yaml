@@ -263,6 +263,16 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: options_data
     writes: [unusual_options]
     lane: background            # D39: p90 61 s (chain snapshots)
+  iv.record:                    # E4.12 (D55): daily 30-DTE constant-maturity IV -> iv_daily (alpaca_cm30)
+    label: IV history
+    about: "Daily 30-day ATM implied vol per ticker (Alpaca chain, Cboe iv30 cross-check) for IV rank / percentile"
+    schedule: ["15:50"]         # before the close: two-sided quotes, so spot is a real mid
+    days: trading
+    ttl: 1h
+    category: options_data
+    feed: scout                 # D54: slow feed (once a day)
+    writes: []                  # stores iv_daily rows; the regime step reads them (no context kind)
+    lane: background            # one chain snapshot per ticker
   ex_dividend:                  # Alpaca corporate actions: early-assignment risk on short calls
     label: Ex-dividend
     about: "Upcoming ex-dividend dates: early-assignment risk on short calls"

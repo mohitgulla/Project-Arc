@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import sqlite3
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -110,8 +111,16 @@ def _add_scan_args(p: argparse.ArgumentParser) -> None:
         help="Recorded chain JSON (offline). 'spy' = the bundled SPY recording.",
     )
     p.add_argument("--as-of", type=dt.date.fromisoformat, default=None, help="YYYY-MM-DD")
-    p.add_argument("--iv-history-dir", default=None, help="Dir of <TICKER>.csv ATM IV history")
-    p.add_argument("--record-iv", action="store_true", help="Upsert today's ATM IV into history")
+    p.add_argument(
+        "--db",
+        default=None,
+        help="Audit DB for IV history (iv_daily, E4.12); default data/arc.db when it exists",
+    )
+    p.add_argument(
+        "--record-iv",
+        action="store_true",
+        help="Upsert today's 30-DTE IV (alpaca_cm30) into iv_daily (needs a store)",
+    )
     p.add_argument("--json", action="store_true", help="Emit the full result as JSON")
 
 
@@ -267,6 +276,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_universe_parser(sub)
 
+    from arc.iv.cli import add_iv_parser
+
+    add_iv_parser(sub)
+
     from arc.remote.cli import add_remote_parser
 
     add_remote_parser(sub)
@@ -369,11 +382,49 @@ def _fmt_candidate(c: ScanCandidate) -> str:
     )
 
 
+def _chains_iv_conn(args: argparse.Namespace) -> sqlite3.Connection | None:
+    """E4.12: the store holding iv_daily for ``arc chains`` (``None`` = no IV history).
+
+    ``--record-iv`` opens it read-write (migrated); otherwise a read-only view of an
+    existing store, never creating one.
+    """
+    from pathlib import Path
+
+    from arc.store.db import DEFAULT_DB_PATH, connect, connect_ro
+    from arc.store.migrate import migrate
+
+    path = Path(args.db) if args.db else DEFAULT_DB_PATH
+    if args.record_iv:
+        conn = connect(path)
+        migrate(conn)
+        return conn
+    if not path.is_file():
+        return None
+    try:
+        return connect_ro(path)
+    except (FileNotFoundError, sqlite3.Error):
+        return None
+
+
+def _record_chain_iv(
+    store: Any, provider: MarketDataProvider, ticker: str, as_of: Any, settings: Any
+) -> None:
+    from arc.iv.record import iv30_from_chain
+    from arc.utils.calendar import now_et
+
+    try:
+        row = iv30_from_chain(provider, ticker, as_of, max_spread_pct=settings.spot_max_spread_pct)
+    except LookupError as exc:
+        sys.stderr.write(f"arc chains: {ticker}: IV not recorded ({exc})\n")
+        return
+    store.upsert([row], now=now_et())
+
+
 def _chains(args: argparse.Namespace) -> int:
     from pathlib import Path
 
     from arc.config import get_settings
-    from arc.scanner import ScanParams, ScanStrategy, load_iv_history, record_iv, scan
+    from arc.scanner import ScanParams, ScanStrategy, scan
     from arc.utils.calendar import now_et
 
     # stdout carries the report; structured logs go to whatever sys.stderr is at write
@@ -419,7 +470,7 @@ def _chains(args: argparse.Namespace) -> int:
         sys.stderr.write(f"arc chains: {exc}\n")
         return 2
 
-    iv_dir = Path(args.iv_history_dir) if args.iv_history_dir else settings.scanner_iv_history_dir
+    iv_conn = _chains_iv_conn(args)
     results = []
     for ticker in args.tickers:
         if args.as_of is not None:
@@ -432,11 +483,13 @@ def _chains(args: argparse.Namespace) -> int:
                 return 2
         else:
             as_of = now_et().date()
-        res = scan(
-            provider, ticker, params, as_of=as_of, iv_history=load_iv_history(iv_dir, ticker)
-        )
-        if args.record_iv and res.iv.atm_iv is not None:
-            record_iv(iv_dir, ticker, as_of, res.iv.atm_iv)
+        from arc.iv.store import IvStore
+
+        store = IvStore(iv_conn) if iv_conn is not None else None
+        history = store.series(ticker, until=as_of) if store is not None else {}
+        res = scan(provider, ticker, params, as_of=as_of, iv_history=history)
+        if args.record_iv and store is not None:
+            _record_chain_iv(store, provider, ticker, as_of, settings)
         results.append(res)
 
     if args.json:
@@ -453,7 +506,7 @@ def _chains(args: argparse.Namespace) -> int:
         fr = r.filter_report
         exps = ", ".join(str(e) for e in r.expirations) or "none"
         lines.append(
-            f"{r.ticker} spot {r.spot:.2f}  as_of {r.as_of}  expirations {exps}  "
+            f"{r.ticker} spot {r.spot:.2f} ({r.spot_basis})  as_of {r.as_of}  expirations {exps}  "
             f"profile {settings.account_profile}"
         )
         lines.append(
@@ -744,6 +797,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_scorecard(args)
+    if args.command == "iv":
+        from arc.iv.cli import run_iv
+
+        _log_to_stderr()
+        return run_iv(args)
     if args.command == "history":
         from arc.data.history.cli import run_history
 

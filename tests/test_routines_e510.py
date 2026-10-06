@@ -190,6 +190,7 @@ class TestConfig:
             "finnhub.fundamentals",
             "finnhub.insider",
             "finnhub.recs",
+            "iv.record",
             "sweep",
             "sweep.overnight",
             "unusual_options",

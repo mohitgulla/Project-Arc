@@ -100,42 +100,42 @@ class TestHistoricalVol:
 class TestIvRankPercentile:
     def test_rank_known(self) -> None:
         iv = _series([0.10, 0.30, 0.20, 0.15] * 5 + [0.25])
-        assert iv_rank(iv, iv.index[-1]) == pytest.approx((0.25 - 0.10) / 0.20)
+        assert iv_rank(iv, iv.index[-1], min_obs=20) == pytest.approx((0.25 - 0.10) / 0.20)
 
     def test_percentile_known(self) -> None:
         iv = _series([0.10, 0.30, 0.20, 0.15] * 5 + [0.25])
         # Prior 20 obs: 0.10, 0.20, 0.15 are below 0.25 -> 15/20
-        assert iv_percentile(iv, iv.index[-1]) == pytest.approx(0.75)
+        assert iv_percentile(iv, iv.index[-1], min_obs=20) == pytest.approx(0.75)
 
     def test_extremes(self) -> None:
         iv = _series(list(np.linspace(0.1, 0.3, 30)))
-        assert iv_rank(iv, iv.index[-1]) == 1.0
-        assert iv_percentile(iv, iv.index[-1]) == 1.0
+        assert iv_rank(iv, iv.index[-1], min_obs=20) == 1.0
+        assert iv_percentile(iv, iv.index[-1], min_obs=20) == 1.0
         low = _series(list(np.linspace(0.3, 0.1, 30)))
-        assert iv_rank(low, low.index[-1]) == 0.0
-        assert iv_percentile(low, low.index[-1]) == 0.0
+        assert iv_rank(low, low.index[-1], min_obs=20) == 0.0
+        assert iv_percentile(low, low.index[-1], min_obs=20) == 0.0
 
     def test_flat_window(self) -> None:
         iv = _series([0.2] * 25)
-        assert iv_rank(iv, iv.index[-1]) == 0.5
-        assert iv_percentile(iv, iv.index[-1]) == 0.0
+        assert iv_rank(iv, iv.index[-1], min_obs=20) == 0.5
+        assert iv_percentile(iv, iv.index[-1], min_obs=20) == 0.0
 
     def test_lookback_window(self) -> None:
         # A spike older than the lookback must not affect the rank.
         iv = _series([0.9] + [0.1 + 0.001 * i for i in range(30)])
-        assert iv_rank(iv, iv.index[-1], lookback=25) == 1.0
-        assert iv_rank(iv, iv.index[-1], lookback=31) < 0.1
+        assert iv_rank(iv, iv.index[-1], lookback=25, min_obs=20) == 1.0
+        assert iv_rank(iv, iv.index[-1], lookback=31, min_obs=20) < 0.1
 
     def test_requires_today_and_min_obs(self) -> None:
         iv = _series([0.2] * 25)
         with pytest.raises(InsufficientHistoryError):
-            iv_rank(iv, iv.index[-1] + dt.timedelta(days=7))
+            iv_rank(iv, iv.index[-1] + dt.timedelta(days=7), min_obs=20)
         with pytest.raises(InsufficientHistoryError):
-            iv_rank(iv, iv.index[10])
+            iv_rank(iv, iv.index[10], min_obs=20)
         with pytest.raises(InsufficientHistoryError):
-            iv_percentile(iv, iv.index[10])
+            iv_percentile(iv, iv.index[10], min_obs=20)
         with pytest.raises(ValueError):
-            iv_rank(iv, iv.index[-1], lookback=1)
+            iv_rank(iv, iv.index[-1], lookback=1, min_obs=20)
         with pytest.raises(ValueError):
             iv_rank(_series([-0.1] * 25), dt.date(2024, 2, 5))
 
@@ -145,12 +145,12 @@ class TestIvRankPercentile:
         iv = _series(vals)
         cut = max(len(vals) - 1 - cut_back, 20)
         as_of = iv.index[cut]
-        r, p = iv_rank(iv, as_of), iv_percentile(iv, as_of)
+        r, p = iv_rank(iv, as_of, min_obs=20), iv_percentile(iv, as_of, min_obs=20)
         assert 0.0 <= r <= 1.0 and 0.0 <= p <= 1.0
         future = iv.copy()
         future.iloc[cut + 1 :] = 5.0
-        assert iv_rank(future, as_of) == r
-        assert iv_percentile(future, as_of) == p
+        assert iv_rank(future, as_of, min_obs=20) == r
+        assert iv_percentile(future, as_of, min_obs=20) == p
 
 
 # ---------------------------------------------------------------------------
@@ -227,12 +227,28 @@ class TestAtmIv:
 # ---------------------------------------------------------------------------
 
 
+class TestMinIvHistory:
+    def test_default_guard_is_120(self) -> None:
+        """E4.12 (D55): a 20-observation rank is noise; the default needs 120."""
+        iv = _series([0.10 + 0.001 * i for i in range(119)])
+        with pytest.raises(InsufficientHistoryError, match="120"):
+            iv_rank(iv, iv.index[-1])
+        iv = _series([0.10 + 0.001 * i for i in range(120)])
+        assert iv_rank(iv, iv.index[-1]) == 1.0
+
+    def test_short_history_leaves_rank_none(self) -> None:
+        closes = _series([100.0 + i for i in range(70)])
+        iv = _series([0.2] * 60)
+        f = compute_vol_features(closes, closes.index[-1], iv_history=iv)
+        assert f.iv_rank is None and f.iv_percentile is None and f.iv_percentile_ext is None
+
+
 class TestComputeVolFeatures:
     def test_full(self) -> None:
         closes = _alternating(80)
         as_of = closes.index[-1]
         iv = pd.Series(np.linspace(0.1, 0.3, 80), index=closes.index)
-        f = compute_vol_features(closes, as_of, iv_history=iv)
+        f = compute_vol_features(closes, as_of, iv_history=iv, min_iv_obs=20)
         assert f.missing == []
         assert f.hv20 == pytest.approx(historical_vol(closes, 20))
         assert f.iv == pytest.approx(0.3)
@@ -245,7 +261,7 @@ class TestComputeVolFeatures:
         closes = _alternating(80)
         as_of = closes.index[-1]
         iv = pd.Series(np.linspace(0.1, 0.3, 80), index=closes.index)
-        f = compute_vol_features(closes, as_of, iv_history=iv, current_iv=0.1)
+        f = compute_vol_features(closes, as_of, iv_history=iv, current_iv=0.1, min_iv_obs=20)
         assert f.iv == 0.1 and f.iv_rank == 0.0
 
     def test_current_iv_without_history(self) -> None:

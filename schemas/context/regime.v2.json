@@ -242,6 +242,34 @@
           "default": null,
           "title": "Iv Percentile"
         },
+        "iv_percentile_ext": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "External IV percentile (only when iv_percentile is None)",
+          "title": "Iv Percentile Ext"
+        },
+        "iv_percentile_ext_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "e.g. 'optionstrategist@2026-10-02' (external, approximate)",
+          "title": "Iv Percentile Ext Source"
+        },
         "iv_rank": {
           "anyOf": [
             {
