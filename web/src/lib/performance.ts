@@ -54,12 +54,15 @@ export const EXPLAIN = {
     sub: "Risk-adjusted return",
     tip: "Mean daily return ÷ its std dev × √252. Risk-free 0.",
   },
+  sortino: {
+    sub: "Return per unit of downside risk",
+    tip: "Mean daily return ÷ downside deviation (losing days only) × √252. Target 0; — with no losing day.",
+  },
   drawdown: {
     sub: "Worst peak-to-trough fall",
     tip: "Largest drop in daily closing equity from a prior peak.",
   },
   expectancy: {
-    sub: "Avg P&L per closed trade",
     tip: "Win rate × avg win + loss rate × avg loss. Fills only; a $0 scratch counts as a loss.",
   },
   costs: {

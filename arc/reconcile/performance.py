@@ -42,6 +42,7 @@ __all__ = [
     "performance_from",
     "period_return",
     "sharpe",
+    "sortino",
 ]
 
 
@@ -172,6 +173,22 @@ def sharpe(returns: list[float], *, periods: int = TRADING_DAYS) -> float | None
     if var <= 0:
         return None
     return mean / var**0.5 * periods**0.5
+
+
+def sortino(returns: list[float], *, periods: int = TRADING_DAYS) -> float | None:
+    """Annualised Sortino of daily *returns*: ``mean / downside deviation × √periods``.
+
+    Target and risk-free rate 0; downside deviation = ``sqrt(mean(min(r, 0)²))`` over all
+    returns (the same definition as :func:`arc.experiments.stats.sortino`). ``None`` with
+    fewer than two returns or no losing day (no downside to divide by).
+    """
+    n = len(returns)
+    if n < 2:
+        return None
+    downside = sum(min(r, 0.0) ** 2 for r in returns) / n
+    if downside <= 0:
+        return None
+    return sum(returns) / n / downside**0.5 * periods**0.5
 
 
 def period_return(

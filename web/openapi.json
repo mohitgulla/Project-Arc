@@ -2933,7 +2933,7 @@
           },
           "returns": {
             "default": 0,
-            "description": "Daily returns behind the Sharpe",
+            "description": "Daily returns behind the Sharpe and Sortino",
             "title": "Returns",
             "type": "integer"
           },
@@ -2947,6 +2947,17 @@
               }
             ],
             "title": "Sharpe"
+          },
+          "sortino": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sortino"
           },
           "start_equity": {
             "anyOf": [

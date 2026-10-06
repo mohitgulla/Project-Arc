@@ -55,6 +55,8 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("stacked-bars").locator("svg path").first()).toBeVisible();
         await expect(page.getByTestId("model-scatter").locator("svg .recharts-symbols").first()).toBeVisible();
         await expect(page.getByText("Sharpe (annualised)")).toBeVisible();
+        await expect(page.getByText("Sortino (annualised)")).toBeVisible();
+        await expect(page.getByText("Avg P&L per closed trade")).toHaveCount(0);
         await expect(page.getByText("Profit factor")).toBeVisible();
         await expect(page.getByTestId("breakdown-rows").locator(":scope > *").first()).toBeVisible();
         await expect(page.getByTestId("funnel").locator(":scope > li")).toHaveCount(5);

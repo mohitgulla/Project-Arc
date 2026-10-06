@@ -67,6 +67,7 @@ from arc.reconcile.performance import (
     drawdown,
     period_return,
     sharpe,
+    sortino,
 )
 from arc.tower.data import _has_table, _json
 from arc.utils.calendar import ET
@@ -313,7 +314,8 @@ class EquityCard(BaseModel):
     drawdown_trough: _dt.date | None = None
     drawdown_recovered: _dt.date | None = None
     sharpe: float | None = None
-    returns: int = Field(default=0, description="Daily returns behind the Sharpe")
+    sortino: float | None = None
+    returns: int = Field(default=0, description="Daily returns behind the Sharpe and Sortino")
 
 
 class CostBar(BaseModel):
@@ -686,6 +688,7 @@ def _equity(p: Period, series: list[DailyEquity]) -> EquityCard:
         drawdown_trough=dd.trough_day,
         drawdown_recovered=dd.recovered,
         sharpe=sharpe(rets),
+        sortino=sortino(rets),
         returns=len(rets),
     )
 

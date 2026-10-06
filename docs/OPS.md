@@ -402,7 +402,7 @@ manifests); it refuses to overwrite an existing file. Serve it with
   from the weekly scorecard's functions (`arc.journal.scorecard.closed_positions`,
   `execution_costs`, `funnel`, `model_vs_realised`, `calibration_points` +
   `arc.journal.attribution.calibration`), trade stats from `arc.journal.tradestats`, and
-  equity stats from `arc.reconcile.performance` (`daily_equity`, `drawdown`, `sharpe`,
+  equity stats from `arc.reconcile.performance` (`daily_equity`, `drawdown`, `sharpe`, `sortino`,
   `period_return`). The tower and the Friday scorecard agree by construction. **Paper
   test legs:** a trade whose open or close has an `arc-<hex>` client id (the broker
   smoke test, not an `arc2.` ladder attempt) is left out of every trade card, and its
@@ -418,6 +418,9 @@ manifests); it refuses to overwrite an existing file. Serve it with
     returns × √252. Risk-free rate 0; deposits/withdrawals are not netted out; needs ≥ 2
     returns with non-zero dispersion, else "—". The window includes the close before
     the period's first day.
+  - **Sortino**: mean ÷ downside deviation of the same daily returns × √252, where
+    downside deviation = √(mean of min(r, 0)²) over all returns (target 0, the
+    experiments' definition). Needs ≥ 2 returns and at least one losing day, else "—".
   - **Max drawdown**: largest fall of a daily closing equity from any earlier peak in the
     window, in $ and as a fraction of that peak; *recovered* = first later close at or
     above the peak.

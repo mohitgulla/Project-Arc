@@ -20,6 +20,7 @@ from arc.reconcile.performance import (
     drawdown,
     period_return,
     sharpe,
+    sortino,
 )
 from arc.utils.calendar import ET
 
@@ -154,6 +155,18 @@ def test_daily_returns_and_sharpe() -> None:
     assert sharpe(r) == pytest.approx(mean / sd * math.sqrt(TRADING_DAYS))
     assert sharpe([0.01]) is None
     assert sharpe([0.01, 0.01]) is None  # zero dispersion
+
+
+def test_sortino_uses_downside_deviation_only() -> None:
+    r = [0.01, -0.01, 0.03]
+    dd = math.sqrt((0.01**2) / 3)
+    assert sortino(r) == pytest.approx((sum(r) / 3) / dd * math.sqrt(TRADING_DAYS))
+    assert sortino([0.01]) is None
+    assert sortino([0.01, 0.02]) is None  # no losing day
+    # matches the experiments' definition when the downside clears its floor
+    from arc.experiments.stats import sortino as xp_sortino
+
+    assert sortino(r) == pytest.approx(xp_sortino(r))
 
 
 def test_period_return_uses_the_prior_close() -> None:
