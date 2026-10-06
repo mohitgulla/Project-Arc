@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from typing import Any
 
 
@@ -36,8 +37,18 @@ def fixture_prompts(routines: Any = None) -> dict[str, list[str]]:
     return {p: list(env.llms[p].prompts) for p in ("research", "quant", "risk")}  # type: ignore[attr-defined]
 
 
+_FLOAT = re.compile(r"-?\d+\.\d+(?:[eE][-+]?\d+)?")
+
+
 def digest(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
+    """sha256 of *text* with every decimal rounded to 6 significant digits.
+
+    The prompts carry computed greeks/PoP/EV; their last digits differ between the
+    macOS and Linux libm, so the raw bytes are platform-dependent. Rounding keeps any
+    real change (a moved strike, a new field, reworded text) while dropping ulp noise.
+    """
+    norm = _FLOAT.sub(lambda m: f"{float(m.group()):.6g}", text)
+    return hashlib.sha256(norm.encode()).hexdigest()
 
 
 if __name__ == "__main__":

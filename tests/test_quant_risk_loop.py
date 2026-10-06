@@ -2,7 +2,7 @@
 
 Flag off: the chain is today's under the new step names and the Quant/Risk prompts
 are byte-identical to origin/main (hashes from tests/quant_risk_golden.py run on main
-eedf709). Flag on: Risk gives each structure a verdict; rejects never reach a
+568cf0f). Flag on: Risk gives each structure a verdict; rejects never reach a
 proposal; one ``quant.revise`` round answers the revise requests from the same scanner
 menu; a step that needs more loop budget than is left is skipped
 (``step_skipped_deadline``) while later steps still run.
@@ -34,9 +34,9 @@ from tests import quant_risk_golden as golden
 if TYPE_CHECKING:
     import sqlite3
 
-# sha256 of tests/quant_risk_golden.py's prompts on origin/main eedf709 (pre-E13.9).
-MAIN_QUANT_SHA = "c7c9d5314e672b179219f1c126b897fbb7de339407d6a4e935094eb41f41caa3"
-MAIN_RISK_SHA = "bea8750d8f21c0d1082dbeb55e8d68d743786eb48ef362571f6303df80297f44"
+# sha256 of tests/quant_risk_golden.py's prompts on origin/main 568cf0f (pre-E13.9).
+MAIN_QUANT_SHA = "d8e037e77f52de90f454d803fc6ce3411f193452b6f25f5fc3e4c8a19e8b0046"
+MAIN_RISK_SHA = "d6afe8f741fdc0ef2f4312ed3dc1f44c858edc2d575426f9ff1873adc5a2da5b"
 
 OFF_CHAIN = ["quant.open", "risk.open", "quant.propose", "broker.execute"]
 ON_CHAIN = ["quant.open", "risk.open", "quant.revise", "quant.propose", "broker.execute"]
