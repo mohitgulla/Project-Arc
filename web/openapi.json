@@ -6812,7 +6812,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/Cadence"
             },
-            "description": "monitor, auditor, tick",
+            "description": "monitor, broker.reconcile, tick",
             "title": "Cadences",
             "type": "object"
           },
@@ -8025,7 +8025,7 @@
       },
       "Performance": {
         "additionalProperties": false,
-        "description": "Account Day/MTD/YTD performance from ``pnl_snapshots`` (E6.3, D28). $ and fractions.\n\nShared by the Auditor digest (:mod:`arc.slack.digests`) and the control tower.",
+        "description": "Account Day/MTD/YTD performance from ``pnl_snapshots`` (E6.3, D28). $ and fractions.\n\nShared by the Broker reconcile digest (:mod:`arc.slack.digests`) and the control tower.",
         "properties": {
           "day_pct": {
             "anyOf": [

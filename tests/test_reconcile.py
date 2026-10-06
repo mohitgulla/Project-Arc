@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from arc.broker.base import AccountInfo, BrokerOrderStatus, BrokerPosition, Fill
+from arc.broker.reconcile_job import broker_reconcile, reconcile_output
 from arc.config import ArcSettings
 from arc.context.store import ContextStore
 from arc.context.ttl import to_db
@@ -26,7 +27,6 @@ from arc.pipeline.market import _group_legs
 from arc.reconcile.attribution import BrokerLeg, StructureHolding, attribute, broker_legs
 from arc.reconcile.engine import RECONCILE_ACTOR, MismatchKind, reconcile
 from arc.reconcile.performance import DailyEquity, performance, performance_from
-from arc.routines.auditor import auditor, auditor_output
 from arc.routines.config import RoutinesConfig
 from arc.routines.handlers import JobContext
 from arc.store.db import connect
@@ -418,7 +418,7 @@ def test_test_prefixed_fill_is_fill_test_and_does_not_halt(conn: sqlite3.Connect
     assert ReasonCode.RECONCILE_CLEAN.value in codes
     assert codes.count(ReasonCode.RECONCILE_TEST_FILL.value) == 2
     assert ReasonCode.RECONCILE_MISMATCH.value not in codes
-    out = auditor_output(rep)
+    out = reconcile_output(rep)
     assert out.reconciliation_status == "clean"
     assert [a.severity for a in out.anomalies] == ["info", "info"]
 
@@ -622,13 +622,13 @@ def test_performance_reads_latest_snapshot_per_day(conn: sqlite3.Connection) -> 
 
 def _ctx(conn: sqlite3.Connection) -> JobContext:
     routines = RoutinesConfig.model_validate(
-        {"personas": {"auditor": {"schedule": ["16:30"], "llm": False, "notify": "card",
+        {"personas": {"broker.reconcile": {"schedule": ["16:30"], "llm": False, "notify": "card",
                                   "halt_exempt": True, "ttl": "6h",
                                   "writes": ["journal", "note"]}}}
     )  # fmt: skip
-    kind, step = routines.step("auditor")
+    kind, step = routines.step("broker.reconcile")
     return JobContext(
-        job="auditor", kind=kind, spec=step, run_id="run-a", chain_run_id=None,
+        job="broker.reconcile", kind=kind, spec=step, run_id="run-a", chain_run_id=None,
         scheduled_for=NOW, now=NOW, conn=conn, snapshot=ContextStore(conn).snapshot(NOW),
         routines=routines, settings_factory=lambda: settings(),
     )  # fmt: skip
@@ -640,16 +640,16 @@ def test_auditor_clean_card(conn: sqlite3.Connection) -> None:
     PnlSnapshotRepo(conn).insert(realized="0", unrealized="0", total="0",
                                  details_json=json.dumps({"day": "2026-09-25",
                                                           "equity": "100000"}))  # fmt: skip
-    res = auditor(_ctx(conn), broker=FakeBroker(positions=held_positions(st),
+    res = broker_reconcile(_ctx(conn), broker=FakeBroker(positions=held_positions(st),
                                                 fills=open_fills(st)))  # fmt: skip
     assert res.metrics["clean"] and not res.notice
-    assert res.card is not None and "[Auditor] Journal" in res.card.text
+    assert res.card is not None and "[Broker] Reconcile" in res.card.text
     assert "+$500" in res.card.text
 
 
 def test_auditor_mismatch_notice(conn: sqlite3.Connection) -> None:
     open_position(conn)
-    res = auditor(_ctx(conn), broker=FakeBroker())
+    res = broker_reconcile(_ctx(conn), broker=FakeBroker())
     assert res.metrics["halted"] and "HALTED" in res.notice and "!resume" in res.notice
     assert res.metrics["mismatches"] == 2  # position missing + fill missing
 
@@ -657,7 +657,7 @@ def test_auditor_mismatch_notice(conn: sqlite3.Connection) -> None:
 def test_auditor_output_maps_categories(conn: sqlite3.Connection) -> None:
     open_position(conn)
     rep = run(conn, FakeBroker(), halt=False)
-    out = auditor_output(rep)
+    out = reconcile_output(rep)
     assert out.reconciliation_status == "discrepancies_found"
     assert {a.category for a in out.anomalies} == {"position_mismatch", "fill_discrepancy"}
     assert all(a.severity == "critical" for a in out.anomalies)

@@ -11,7 +11,7 @@ One Hermes cron job calls :meth:`Dispatcher.tick` every 5 minutes. Each tick:
 3. Runs sources first, then personas, in slot order, so a persona with
    ``after_sources: true`` always sees the docs fetched in the same tick.
 4. While halted (``!halt``), every persona job except ``halt_exempt`` ones
-   (Auditor) is recorded as ``skipped``. Sources keep fetching.
+   (Broker reconcile) is recorded as ``skipped``. Sources keep fetching.
 5. Runs chains step by step under one ``chain_run_id``; each step records the
    snapshot it read. A failed step stops the chain and alerts; re-running the
    chain resumes from the failed step.
@@ -48,7 +48,7 @@ from arc.context.store import ContextSnapshot, ContextStore
 from arc.context.ttl import to_db
 from arc.monitoring.correlation import bind as bind_ids
 from arc.routines.conditions import evaluate_condition
-from arc.routines.config import JobKind, Lane, Notify
+from arc.routines.config import JobKind, Lane, Notify, current_job_name
 from arc.routines.handlers import (
     Handler,
     JobContext,
@@ -77,7 +77,7 @@ if TYPE_CHECKING:
     from arc.llm_routing import LLMRouting
     from arc.routines.config import JobSpec, RoutinesConfig, StepSpec
 
-    # D39: (argv, env) -> pid of a detached child (arc.routines.investor.spawn_detached).
+    # D39: (argv, env) -> pid of a detached child (arc.routines.spawn.spawn_detached).
     Spawner = Callable[[Sequence[str], Mapping[str, str] | None], int]
 
 log = structlog.get_logger(__name__)
@@ -89,7 +89,8 @@ _HALT_DEFERRED = "halt_deferred:{event}"
 # D39: the background child that owns a claimed run (one owner per run).
 _BG_OWNER = "bg_owner:{run}"
 # Chain steps whose name is not a persona, mapped to the persona whose model they use.
-_STEP_PERSONA = {"quant": "quant", "risk": "risk", "propose": "research", "execute": "investor"}
+# D56 (E13.2): broker.execute / quant.exits are deterministic (no persona model).
+_STEP_PERSONA = {"quant": "quant", "risk": "risk", "propose": "research"}
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +439,7 @@ class Dispatcher:
         )
         if claimed is None:
             return Outcome(d.job, d.slot, "duplicate", "already ran for this slot")
-        from arc.routines.investor import arc_command
+        from arc.routines.spawn import arc_command
 
         argv = arc_command(self.run_env, ["routines", "run-claimed", claimed.run_id])
         assert self._spawner is not None  # _background() checked it
@@ -620,6 +621,8 @@ class Dispatcher:
         parent_run_id: str | None = None,
     ) -> list[Outcome]:
         """Run *job* for *scheduled_for* (plus its chain), then fire triggers."""
+        if self.routines.job(job) is None:
+            job = current_job_name(job)  # D56: `investor` / `auditor` load as aliases
         found = self.routines.job(job)
         if found is None:
             msg = f"unknown job {job!r}"
@@ -1374,9 +1377,9 @@ class Dispatcher:
         return out
 
     def _reclaim_stranded(self, now: _dt.datetime) -> set[str]:
-        """E6.2e: release dispatched events whose Investor never claimed a run.
+        """E6.2e: release dispatched events whose Broker never claimed a run.
 
-        ``execute`` claims an approval event, then spawns the Investor; a child that
+        ``broker.execute`` claims an approval event, then spawns the Broker; a child that
         dies before :meth:`run_event` claims its run would strand the event forever
         (invisible to the drain, never consumed). After ``tick.dispatch_grace`` with
         no ``routine_runs.event_id`` row the claim is undone, so this tick's drain
@@ -1405,13 +1408,13 @@ class Dispatcher:
     ) -> list[Outcome]:
         """Fire every pending external event once (E6.2d dispatch-once semantics).
 
-        - An event the D34 ``execute`` step dispatched is never pending here: its
-          Investor subprocess owns it, until E6.2e reclaims it (*reclaimed*: its
-          Investor never started within ``tick.dispatch_grace``). A reclaimed
+        - An event the D34 ``broker.execute`` step dispatched is never pending here: its
+          Broker subprocess owns it, until E6.2e reclaims it (*reclaimed*: its
+          Broker never started within ``tick.dispatch_grace``). A reclaimed
           approval past its proposal's TTL lapses on the record instead of running.
         - An ``approval`` that arrives (or is still waiting) while halted is
           ``deferred`` until its proposal's ``expires_at``; after ``!resume`` inside
-          that TTL the Investor runs. Past it the event is consumed with a journal
+          that TTL the Broker runs. Past it the event is consumed with a journal
           row (``order:refused`` "approval lapsed under halt") and the card updated.
         - Each event-triggered run is keyed by the event id, so two events with the
           same ``created_at`` both run (never ``duplicate``).
@@ -1450,7 +1453,7 @@ class Dispatcher:
         Only approvals carry a deadline (the proposal TTL); other events keep the
         old behaviour (the halted job is recorded ``skipped`` and the event consumed).
         """
-        from arc.routines.investor import approval_deadline
+        from arc.broker.ladder_job import approval_deadline
 
         if ev.name != "approval":
             return None
@@ -1460,7 +1463,7 @@ class Dispatcher:
         phash = str(ev.payload.get("proposal_hash") or "")
         deadline = approval_deadline(self.conn, phash) if phash else None
         if deadline is None:
-            return None  # unknown proposal: let the Investor refuse it on the record
+            return None  # unknown proposal: let the Broker refuse it on the record
         key = _HALT_DEFERRED.format(event=ev.id)
         halted = self._is_halted()
         was_held = self.state.get(key) is not None
@@ -1483,7 +1486,7 @@ class Dispatcher:
 
     def _reclaimed_lapse(self, ev: RoutineEvent, now: _dt.datetime) -> list[Outcome] | None:
         """E6.2e: a reclaimed approval past its proposal TTL lapses; ``None`` = handle normally."""
-        from arc.routines.investor import LAPSED_NOT_STARTED, approval_deadline
+        from arc.broker.ladder_job import LAPSED_NOT_STARTED, approval_deadline
 
         if ev.name != "approval":
             return None
@@ -1507,7 +1510,7 @@ class Dispatcher:
 
         Journal row, card update, event consumed.
         """
-        from arc.routines.investor import LAPSED_UNDER_HALT, lapse_approval
+        from arc.broker.ladder_job import LAPSED_UNDER_HALT, lapse_approval
 
         why = reason or LAPSED_UNDER_HALT
         out: list[Outcome] = []
@@ -1561,13 +1564,13 @@ class Dispatcher:
     ) -> list[Outcome]:
         """``arc routines run <job> --event <id>``: run *job* for one queued event.
 
-        Used by the in-chain ``execute`` step to hand an auto-approved proposal to
-        an Investor subprocess. The run joins the chain (``chain_run_id``, next step
+        Used by the in-chain ``broker.execute`` step to hand an auto-approved proposal to
+        a Broker subprocess. The run joins the chain (``chain_run_id``, next step
         index) so ``arc context trace <chain>`` shows it, holds a per-event lock
         (``<job>:<event id>``) rather than the job's lock, and never the LLM lock, so
         ladders run in parallel with the next loop.
 
-        E6.2d: the event is normally already ``dispatched`` (claimed by ``execute``
+        E6.2d: the event is normally already ``dispatched`` (claimed by ``broker.execute``
         before the spawn); that is accepted. The run is keyed by the event id, so a
         second invocation for the same event is a ``duplicate`` and never a second
         ladder. A consumed event is refused. While halted (and *job* is not
@@ -1575,6 +1578,8 @@ class Dispatcher:
         drain, which defers it until ``!resume`` or its TTL. Otherwise the event is
         consumed by this run whatever the outcome.
         """
+        if self.routines.job(job) is None:
+            job = current_job_name(job)  # D56: `investor` / `auditor` load as aliases
         found = self.routines.job(job)
         if found is None:
             msg = f"unknown job {job!r}"
@@ -1620,6 +1625,8 @@ class Dispatcher:
         self, job: str, *, now: _dt.datetime, chain: bool = False, fresh: bool = False
     ) -> list[Outcome]:
         """``arc routines run <job> [--chain]``: resume today's failed chain, else run now."""
+        if self.routines.job(job) is None:
+            job = current_job_name(job)  # D56: `investor` / `auditor` load as aliases
         found = self.routines.job(job)
         if found is None:
             msg = f"unknown job {job!r}"

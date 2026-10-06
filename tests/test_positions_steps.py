@@ -1,4 +1,4 @@
-"""E6.4 chain on the bundled SPY recording: positions.evaluate -> investor.exits -> risk.reallocate.
+"""E6.4 chain on the bundled SPY recording: positions.evaluate -> quant.exits -> risk.reallocate.
 
 Checks that every close and every swap open is a proposal with a gate decision
 and an approval card, that nothing in the chain submits an order, that a swap's
@@ -126,7 +126,7 @@ SPECS: dict[str, dict[str, object]] = {
         "writes": ["position_review"],
         "llm": False,
     },  # fmt: skip
-    "investor.exits": {
+    "quant.exits": {
         "every": "30m",
         "reads": ["position_review"],
         "writes": ["proposal"],
@@ -137,7 +137,7 @@ SPECS: dict[str, dict[str, object]] = {
 
 
 def _run(conn: sqlite3.Connection, env: PipelineEnv, job: str, now: dt.datetime = NOW) -> Any:
-    fn = {"positions.evaluate": evaluate, "investor.exits": exits, "risk.reallocate": reallocate}
+    fn = {"positions.evaluate": evaluate, "quant.exits": exits, "risk.reallocate": reallocate}
     return fn[job](_ctx(conn, job, SPECS[job], now, settings()), env)
 
 
@@ -191,7 +191,7 @@ def test_evaluate_writes_reviews_and_exits_propose_through_gate_and_approval(
     assert [e.subject for e in reviews] == [sid]
     assert reviews[0].payload["remaining_pop"] is not None
 
-    out = _run(conn, env, "investor.exits")
+    out = _run(conn, env, "quant.exits")
     assert out.metrics == {"signals": 1, "proposed": 1, "gate_passed": 1, "quote_blocked": 0}
     assert "+98% of max gain at 35 DTE" in out.summary
     row = conn.execute("SELECT * FROM proposals WHERE kind = 'close'").fetchone()
@@ -208,7 +208,7 @@ def test_evaluate_writes_reviews_and_exits_propose_through_gate_and_approval(
     assert row["proposal_hash"] in rep.published
     assert conn.execute("SELECT COUNT(*) FROM executions").fetchone()[0] == 0
     # one exit per structure: a rerun while it is pending proposes nothing
-    assert _run(conn, env, "investor.exits").metrics["proposed"] == 0
+    assert _run(conn, env, "quant.exits").metrics["proposed"] == 0
 
 
 def test_control_panel_exit_override_reaches_position_manager(conn: sqlite3.Connection) -> None:
@@ -240,7 +240,7 @@ def test_exits_halted_proposes_nothing(conn: sqlite3.Connection) -> None:
     _open(conn, env, BULL_PUT, "-0.90")
     _run(conn, env, "positions.evaluate")
     HaltSwitch(HaltRepo(conn)).halt(reason="test", actor="owner", now=NOW)
-    out = _run(conn, env, "investor.exits")
+    out = _run(conn, env, "quant.exits")
     assert out.metrics["halted"] and out.metrics["proposed"] == 0
     assert conn.execute("SELECT COUNT(*) FROM proposals WHERE kind = 'close'").fetchone()[0] == 0
 
@@ -429,7 +429,7 @@ def test_live_run_without_gate_secret_fails_before_any_proposal(conn: sqlite3.Co
     env = _env_with(_held(BULL_PUT))
     _open(conn, env, BULL_PUT, "-0.90")
     _run(conn, env, "positions.evaluate")
-    ctx = _ctx(conn, "investor.exits", SPECS["investor.exits"], NOW, settings(gate_secret=None))
+    ctx = _ctx(conn, "quant.exits", SPECS["quant.exits"], NOW, settings(gate_secret=None))
     with pytest.raises(GateSecretMissingError):
         exits(ctx, env)
     assert conn.execute("SELECT COUNT(*) FROM proposals WHERE kind = 'close'").fetchone()[0] == 0
@@ -440,6 +440,6 @@ def test_dry_run_never_mints(conn: sqlite3.Connection) -> None:
     env.mint_tokens = False  # fixtures / --dry-run
     _open(conn, env, BULL_PUT, "-0.90")
     _run(conn, env, "positions.evaluate")
-    assert _run(conn, env, "investor.exits").metrics["gate_passed"] == 1
+    assert _run(conn, env, "quant.exits").metrics["gate_passed"] == 1
     (tok,) = conn.execute("SELECT token FROM gate_decisions").fetchone()
     assert tok is None

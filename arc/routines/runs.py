@@ -259,7 +259,7 @@ class RoutineEvent(BaseModel):
     """One ``routine_events`` row.
 
     Lifecycle (E6.2d): ``created`` → optionally ``dispatched`` (the D34 ``execute``
-    step claimed it for an Investor subprocess, so the tick's drain never fires
+    step claimed it for a Broker subprocess, so the tick's drain never fires
     it) → ``consumed`` (by exactly one run, or by a journaled refusal).
     """
 
@@ -315,7 +315,7 @@ class RoutineEventRepo:
         return ev
 
     def get(self, event_id: str) -> RoutineEvent | None:
-        """One event by id, consumed or not (D34: a spawned Investor reads its own)."""
+        """One event by id, consumed or not (D34: a spawned Broker reads its own)."""
         r = self.conn.execute("SELECT * FROM routine_events WHERE id = ?", (event_id,)).fetchone()
         return _event(r) if r is not None else None
 
@@ -365,7 +365,7 @@ class RoutineEventRepo:
         """Dispatched events whose run never started (E6.2e).
 
         Stranded = dispatched at or before *dispatched_before*, not consumed, and no
-        ``routine_runs`` row carries its id: the spawned Investor died (or never
+        ``routine_runs`` row carries its id: the spawned Broker died (or never
         started) before it could claim its run.
         """
         rows = self.conn.execute(

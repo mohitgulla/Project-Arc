@@ -34,6 +34,10 @@ class JournalPersona(StrEnum):
     RESEARCH = "research"
     QUANT = "quant"
     RISK = "risk"
+    BROKER = "broker"  # D56 (E13.2): order ladders + reconcile (deterministic)
+    OPS = "ops"  # D56 (E13.2): the weekly scorecard
+    # Read-only legacy members: pre-E13.2 rows read as BROKER/QUANT/OPS through
+    # arc.journal.legacy; nothing writes these any more.
     INVESTOR = "investor"
     AUDITOR = "auditor"
     GATE = "gate"
@@ -285,6 +289,8 @@ class RootCause(StrEnum):
 
 
 class Reviewer(StrEnum):
+    # Stored value kept (decision_reviews CHECK); D56 removed the Auditor persona, so
+    # this marks an automated (LLM) review.
     AUDITOR = "auditor"
     OWNER = "owner"
 

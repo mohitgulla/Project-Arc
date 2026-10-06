@@ -14,6 +14,12 @@ import pytest
 
 from arc.approvals.auto import auto_status, notice_text, set_auto
 from arc.approvals.service import AUTO_APPROVER, ApprovalService, LogCardPoster, approval_record
+from arc.broker.ladder_job import (
+    approval_events,
+    broker_command,
+    chain_proposals,
+    execute_step,
+)
 from arc.config import PER_ENV_SWITCHES, ArcEnv, ArcSettings
 from arc.control.effective import apply_changes
 from arc.control.registry import lookup
@@ -27,12 +33,6 @@ from arc.routines.config import RoutinesConfig, load_routines
 from arc.routines.dispatcher import Dispatcher
 from arc.routines.handlers import JobContext, JobResult, JobSkippedError, RunEnv
 from arc.routines.heartbeat import RecordingNotifier
-from arc.routines.investor import (
-    approval_events,
-    chain_proposals,
-    execute_step,
-    investor_command,
-)
 from arc.routines.runs import RoutineEventRepo, RoutineRunRepo
 from arc.store.db import connect
 from arc.store.migrate import migrate
@@ -504,14 +504,14 @@ def _ctx(
     routines = RoutinesConfig.model_validate(
         {
             "personas": {
-                "research": {"schedule": ["09:00"], "days": "trading", "chain": ["execute"]}
+                "research": {"schedule": ["09:00"], "days": "trading", "chain": ["broker.execute"]}
             },
-            "steps": {"execute": {"reads": ["proposal"], "writes": [], "llm": False}},
+            "steps": {"broker.execute": {"reads": ["proposal"], "writes": [], "llm": False}},
         }
     )
-    kind, step = routines.step("execute")
+    kind, step = routines.step("broker.execute")
     return JobContext(
-        job="execute",
+        job="broker.execute",
         kind=kind,
         spec=step,
         run_id="run-exec",
@@ -611,7 +611,7 @@ class TestExecuteStep:
         assert argv[3:] == [
             "routines",
             "run",
-            "investor",
+            "broker",
             "--event",
             evt,
             "--chain-run-id",
@@ -647,7 +647,7 @@ class TestExecuteStep:
         assert res.summary.startswith("halted:") and sp.argv == []
 
     def test_investor_command_shape(self) -> None:
-        argv = investor_command(
+        argv = broker_command(
             RunEnv(db_path="d.db", config_path="r.yaml", lock_dir="lk", slack=False),
             "evt-1",
             chain_run_id="c",
@@ -656,7 +656,7 @@ class TestExecuteStep:
         assert argv[3:] == [
             "routines",
             "run",
-            "investor",
+            "broker",
             "--event",
             "evt-1",
             "--chain-run-id",
@@ -687,9 +687,9 @@ class TestRunEvent:
         return Dispatcher(
             conn,
             RoutinesConfig.model_validate(
-                {"personas": {"investor": {"trigger": "approval", "llm": False}}}
+                {"personas": {"broker": {"trigger": "approval", "llm": False}}}
             ),
-            handlers={"investor": investor},
+            handlers={"broker": investor},
             notifier=RecordingNotifier(),
             is_halted=lambda: False,
         )
@@ -706,10 +706,10 @@ class TestRunEvent:
             now=NOW,
         )
         ev = RoutineEventRepo(conn).emit("approval", {"proposal_hash": "abc"}, now=NOW)
-        out = d.run_event("investor", ev, now=NOW + dt.timedelta(seconds=5), chain_run_id="chain-1")
+        out = d.run_event("broker", ev, now=NOW + dt.timedelta(seconds=5), chain_run_id="chain-1")
         assert [o.status for o in out] == ["ok"] and calls == ["abc"]
         run = RoutineRunRepo(conn).chain("chain-1")[-1]
-        assert run.job == "investor" and run.step_index == 1 and run.reason == "event:approval"
+        assert run.job == "broker" and run.step_index == 1 and run.reason == "event:approval"
         row = conn.execute("SELECT consumed_at, consumed_by FROM routine_events").fetchone()
         assert row["consumed_at"] and json.loads(row["consumed_by"]) == [run.run_id]
         # a later tick has nothing left to drain: the Investor never runs twice
@@ -735,7 +735,7 @@ class TestRunEvent:
                 [
                     "routines",
                     "run",
-                    "investor",
+                    "broker",
                     "--event",
                     "nope",
                     "--db",
@@ -753,7 +753,7 @@ class TestRunEvent:
             [
                 "routines",
                 "run",
-                "investor",
+                "broker",
                 "--event",
                 ev.id,
                 "--db",
@@ -766,4 +766,4 @@ class TestRunEvent:
             ]
         )
         out = capsys.readouterr().out
-        assert rc == 1 and '"job": "investor"' in out and '"status": "failed"' in out
+        assert rc == 1 and '"job": "broker"' in out and '"status": "failed"' in out

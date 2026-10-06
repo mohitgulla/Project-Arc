@@ -11,14 +11,14 @@ import pytest
 from arc.models import Candidate, CatalystType, Stance
 from arc.personas.schemas import (
     AnomalyReport,
-    AuditorOutput,
+    BrokerPlan,
     ImprovementStep,
-    InvestorPlan,
     LessonLearned,
     QuantGreeks,
     QuantLeg,
     QuantOutput,
     QuantStructureOut,
+    ReconcileOutput,
     ResearchOutput,
     ResearchRankedItem,
     RiskAssessment,
@@ -154,7 +154,7 @@ def assessment(**kw: Any) -> RiskAssessment:
     return RiskAssessment(**data)
 
 
-def plan(**kw: Any) -> InvestorPlan:
+def plan(**kw: Any) -> BrokerPlan:
     data: dict[str, Any] = {
         "ticker": "SPY",
         "structure_type": "iron_condor",
@@ -169,10 +169,10 @@ def plan(**kw: Any) -> InvestorPlan:
         "notes": "Start at mid.",
     }
     data.update(kw)
-    return InvestorPlan(**data)
+    return BrokerPlan(**data)
 
 
-def journal(**kw: Any) -> AuditorOutput:
+def journal(**kw: Any) -> ReconcileOutput:
     data: dict[str, Any] = {
         "journal_date": "2026-09-28",
         "daily_pnl": 312.0,
@@ -194,7 +194,7 @@ def journal(**kw: Any) -> AuditorOutput:
         "reconciliation_status": "clean",
     }
     data.update(kw)
-    return AuditorOutput(**data)
+    return ReconcileOutput(**data)
 
 
 # ---------------------------------------------------------------------------
@@ -584,14 +584,14 @@ class TestRisk:
 
 
 # ---------------------------------------------------------------------------
-# Investor
+# Broker orders
 # ---------------------------------------------------------------------------
 
 
-class TestInvestor:
+class TestBrokerOrder:
     def test_plan_only(self) -> None:
-        view = D.investor_card(plan(), run_id="r")
-        assert view.text == "[Investor] Order: SPY Iron Condor • x3 • Limit -1.25"
+        view = D.broker_card(plan(), run_id="r")
+        assert view.text == "[Broker] Order: SPY Iron Condor • x3 • Limit -1.25"
         text = _all(view)
         assert "Limit order · 3 attempts max · timeout 120s" in text
         assert (
@@ -600,7 +600,7 @@ class TestInvestor:
         ) in text
         assert "Each attempt" not in text
         assert "Result" not in text
-        assert "*[Investor] Notes*\nStart at mid." in text
+        assert "*[Broker] Notes*\nStart at mid." in text
         _assert_slack_limits(view)
 
     def test_fill_with_slippage(self) -> None:
@@ -612,7 +612,7 @@ class TestInvestor:
             steps_used=1,
             detail="Filled at step 1.",
         )
-        view = D.investor_card(plan(), res, chain_run_id="c")
+        view = D.broker_card(plan(), res, chain_run_id="c")
         assert view.text.endswith(" • Filled")
         text = _all(view)
         assert "*Result*\n:white_check_mark: filled" in text
@@ -625,7 +625,7 @@ class TestInvestor:
 
     def test_cancel_without_fill(self) -> None:
         res = D.ExecutionResult(status="cancelled", steps_used=2, detail=EVIL)
-        view = D.investor_card(plan(), res)
+        view = D.broker_card(plan(), res)
         text = _all(view)
         assert view.text.endswith(" • Cancelled")
         assert ":x: cancelled" in text and "*Filled*\n0 of 3" in text
@@ -640,11 +640,11 @@ class TestInvestor:
 
 
 # ---------------------------------------------------------------------------
-# Auditor
+# Broker reconcile
 # ---------------------------------------------------------------------------
 
 
-class TestAuditor:
+class TestBrokerReconcile:
     def test_journal(self) -> None:
         perf = D.Performance(
             day_pnl=312.0,
@@ -655,9 +655,9 @@ class TestAuditor:
             ytd_pct=-0.0025,
             equity=100_812.0,
         )
-        view = D.auditor_card(journal(), performance=perf, run_id="r")
-        assert view.blocks[0]["text"]["text"] == "[Auditor] Journal: Sep 28 • P&L +$312 (+0.3%)"
-        assert view.text == "[Auditor] Journal: Sep 28 • P&amp;L +$312 (+0.3%)"
+        view = D.reconcile_card(journal(), performance=perf, run_id="r")
+        assert view.blocks[0]["text"]["text"] == "[Broker] Reconcile: Sep 28 • P&L +$312 (+0.3%)"
+        assert view.text == "[Broker] Reconcile: Sep 28 • P&amp;L +$312 (+0.3%)"
         assert "anomal" not in view.text  # owner: anomalies only in the body
         text = _all(view)
         assert "Reconciliation :white_check_mark: *clean* · equity $100,812" in text
@@ -667,17 +667,17 @@ class TestAuditor:
             "*Anomalies (1)*\n• *Warning* · Fill discrepancy: Fill worse than mid. (orders o-1)"
         ) in text
         assert "• *Timing*: Mid moved.\n   → Wait less." in text
-        assert "*[Auditor] Journal*\nQuiet day." in text
+        assert "*[Broker] Journal*\nQuiet day." in text
         assert _footer(view) == "run `r`"
         _assert_slack_limits(view)
 
     def test_without_performance_shows_na(self) -> None:
-        view = D.auditor_card(journal())
-        assert view.text == "[Auditor] Journal: Sep 28 • P&amp;L +$312"
+        view = D.reconcile_card(journal())
+        assert view.text == "[Broker] Reconcile: Sep 28 • P&amp;L +$312"
         assert "MTD n/a\nYTD n/a" in _all(view)
 
     def test_loss_no_anomalies_discrepancy(self) -> None:
-        view = D.auditor_card(
+        view = D.reconcile_card(
             journal(
                 daily_pnl=-45.5,
                 anomalies=[],
@@ -687,7 +687,7 @@ class TestAuditor:
                 journal_narrative=EVIL,
             )
         )
-        assert view.blocks[0]["text"]["text"] == "[Auditor] Journal: bad • P&L -$46"
+        assert view.blocks[0]["text"]["text"] == "[Broker] Reconcile: bad • P&L -$46"
         text = _all(view)
         assert ":warning: *discrepancies found*" in text
         assert "Day -$46" in text
@@ -698,16 +698,16 @@ class TestAuditor:
         many = [
             AnomalyReport(category="other", severity="info", description=LONG) for _ in range(5)
         ]
-        view = D.auditor_card(journal(anomalies=many))
+        view = D.reconcile_card(journal(anomalies=many))
         assert "*Anomalies (5)*" in _all(view)
         _assert_slack_limits(view)
 
     def test_ops_slots_line(self) -> None:
         """E8.2a: the day's slot coverage is one line in an Ops section (no new post)."""
         line = "Slots: research 71/75, monitor 77/78 · missed 6 (list in tower Ops)"
-        text = _all(D.auditor_card(journal(), ops_line=line))
+        text = _all(D.reconcile_card(journal(), ops_line=line))
         assert f"*Ops*\n{line}" in text
-        assert "*Ops*" not in _all(D.auditor_card(journal()))
+        assert "*Ops*" not in _all(D.reconcile_card(journal()))
 
 
 def test_regime_names() -> None:

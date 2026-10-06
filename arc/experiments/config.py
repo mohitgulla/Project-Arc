@@ -123,7 +123,7 @@ class RunnerConfig(BaseModel):
     )
     tape_keep_days: int = Field(default=3, ge=1, le=30, description="market_tape retention")
     arm_jobs: list[str] = Field(
-        default_factory=lambda: ["monitor", "positions.evaluate", "auditor", "investor"],
+        default_factory=lambda: ["monitor", "positions.evaluate", "broker.reconcile", "broker"],
         description=(
             "Jobs an arm runs on its own store and account (position management, "
             "reconcile, ladders). Sources and the Scalp are shared from control; the loop "

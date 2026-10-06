@@ -5,7 +5,7 @@ own exit config:
 
 - the managed-exit Monte Carlo model (:mod:`arc.exits.model`), which puts numbers on
   the proposal card (E6.1a);
-- the Investor's live exit decisions (E6.2 base exits, E6.4 profit-taking and
+- the Quant exit step's live decisions (E6.2 base exits, E6.4 profit-taking and
   close-to-reallocate) through :func:`arc.exits.evaluate_position`;
 - the backtester's ``exit_policy="policy"`` mode (E7.2).
 

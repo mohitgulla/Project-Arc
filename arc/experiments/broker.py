@@ -1,7 +1,7 @@
 """The broker an Arc process may trade through, chosen by its store (E10.2, D44).
 
-Every trading entry point (the loop's ``PipelineEnv.live``, the Investor ladder,
-the reconcile/auditor, ``arc execute``, ``arc budget``) builds its broker here
+Every trading entry point (the loop's ``PipelineEnv.live``, the Broker ladder,
+the Broker reconcile, ``arc execute``, ``arc budget``) builds its broker here
 from the store connection it already holds:
 
 * a control store (no ``arm_identity``): the production paper broker,

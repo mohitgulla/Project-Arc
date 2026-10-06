@@ -411,9 +411,10 @@ export const OPS_CLOSED_BY_DEFAULT = ["Alerts", "Halts", "Runs"] as const;
 export const PERSONA_CHIP: Record<string, string> = {
   scalp: "Scalp",
   research: "Research",
-  investor: "Investor",
+  quant: "Quant",
   risk: "Risk",
-  auditor: "Auditor",
+  broker: "Broker",
+  ops: "Ops",
   monitor: "Monitor",
 };
 

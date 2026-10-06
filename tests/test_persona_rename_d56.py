@@ -123,7 +123,7 @@ def test_scalp_cutover_is_written_once() -> None:
     sql = (MIGRATIONS_DIR / _MIG).read_text()
     c.executescript(sql[sql.index("INSERT OR IGNORE INTO routine_state") :])
     assert legacy.cutover(c, legacy.SCALP_CUTOVER_KEY) == first
-    assert set(legacy.cutovers(c)) == {legacy.CUTOVER_KEY, legacy.SCALP_CUTOVER_KEY}
+    assert {legacy.CUTOVER_KEY, legacy.SCALP_CUTOVER_KEY} <= set(legacy.cutovers(c))
 
 
 # ---------------------------------------------------------------------------

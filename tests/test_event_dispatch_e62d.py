@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from arc.approvals.service import ApprovalService, LogCardPoster, PostedCard
+from arc.broker.ladder_job import LAPSED_UNDER_HALT, approval_events, execute_step
 from arc.config import ArcSettings
 from arc.execution.ladder import execute
 from arc.gate import HaltSwitch, proposal_hash
@@ -21,7 +22,6 @@ from arc.routines.config import RoutinesConfig, load_routines
 from arc.routines.dispatcher import Dispatcher
 from arc.routines.handlers import JobContext, JobResult, RunEnv
 from arc.routines.heartbeat import RecordingNotifier
-from arc.routines.investor import LAPSED_UNDER_HALT, approval_events, execute_step
 from arc.routines.runs import RoutineEventRepo, RoutineRunRepo
 from arc.store.db import connect
 from arc.store.migrate import migrate
@@ -86,12 +86,12 @@ class Spawner:
 CHAIN_YAML: dict[str, Any] = {
     "personas": {
         # 15:55: the fixture pipeline already holds the 16:00 slot for propose/execute.
-        "loop": {"schedule": ["15:55"], "days": "trading", "chain": ["propose", "execute"]},
-        "investor": {"trigger": "approval", "llm": False},
+        "loop": {"schedule": ["15:55"], "days": "trading", "chain": ["propose", "broker.execute"]},
+        "broker": {"trigger": "approval", "llm": False},
     },
     "steps": {
         "propose": {"writes": [], "llm": False},
-        "execute": {"reads": ["proposal"], "writes": [], "llm": False},
+        "broker.execute": {"reads": ["proposal"], "writes": [], "llm": False},
     },
 }
 
@@ -130,8 +130,8 @@ def _chain_dispatcher(
         handlers={
             "loop": research,
             "propose": propose,
-            "execute": execute_,
-            "investor": investor,
+            "broker.execute": execute_,
+            "broker": investor,
         },
         notifier=RecordingNotifier(),
         is_halted=lambda: False,
@@ -154,18 +154,18 @@ class TestDispatchOnce:
         d = _chain_dispatcher(pconn, sp, calls)
         report = d.tick(FIXTURE_NOW, since=FIXTURE_NOW - dt.timedelta(minutes=10))
         jobs = [(o.job, o.status) for o in report.outcomes]
-        assert ("execute", "ok") in jobs
-        assert all(o.job != "investor" for o in report.outcomes), jobs
+        assert ("broker.execute", "ok") in jobs
+        assert all(o.job != "broker" for o in report.outcomes), jobs
         assert calls == [] and len(sp.argv) == 1
         (argv,) = sp.argv
         evt_id = argv[argv.index("--event") + 1]
         ev = RoutineEventRepo(pconn).get(evt_id)
-        exec_run = next(o for o in report.outcomes if o.job == "execute")
+        exec_run = next(o for o in report.outcomes if o.job == "broker.execute")
         assert ev is not None and ev.dispatched_by == exec_run.run_id and ev.consumed_at is None
         # The spawned run owns it: it runs and consumes it, joined to the chain.
         chain = argv[argv.index("--chain-run-id") + 1]
         out = d.run_event(
-            "investor",
+            "broker",
             ev,
             now=FIXTURE_NOW + dt.timedelta(seconds=2),
             chain_run_id=chain,
@@ -179,14 +179,14 @@ class TestDispatchOnce:
         from arc.routines.cli import trace_runs
 
         steps = {s["job"]: s for s in trace_runs(pconn, chain)}
-        (dispatched,) = steps["execute"]["events"]
-        (ran_for,) = steps["investor"]["events"]
+        (dispatched,) = steps["broker.execute"]["events"]
+        (ran_for,) = steps["broker"]["events"]
         assert dispatched["role"] == "dispatched" and ran_for["role"] == "ran_for"
         assert ran_for["id"] == evt_id and ran_for["dispatched_by"] == exec_run.run_id
         assert ran_for["consumed_by"] == [out[0].run_id]
         # Later ticks and a replayed spawn never start a second ladder.
         d.tick(FIXTURE_NOW + dt.timedelta(minutes=5))
-        again = d.run_event("investor", ev, now=FIXTURE_NOW + dt.timedelta(minutes=6))
+        again = d.run_event("broker", ev, now=FIXTURE_NOW + dt.timedelta(minutes=6))
         assert [o.status for o in again] == ["duplicate"] and calls == [_phash(pconn)]
 
     @pytest.mark.parametrize("step_seconds", [1, 900])
@@ -229,15 +229,15 @@ class TestDispatchOnce:
             raise OSError("fork failed")
 
         d = _chain_dispatcher(pconn, Spawner(), calls)
-        d.handlers["execute"] = lambda ctx: execute_step(
+        d.handlers["broker.execute"] = lambda ctx: execute_step(
             ctx, spawn=boom, service=ApprovalService(ctx.conn, ctx.settings, LogCardPoster())
         )
         report = d.tick(FIXTURE_NOW, since=FIXTURE_NOW - dt.timedelta(minutes=10))
-        ex = next(o for o in report.outcomes if o.job == "execute")
+        ex = next(o for o in report.outcomes if o.job == "broker.execute")
         assert ex.metrics["spawn_failed"] == 1 and ex.metrics["dispatched"] == 0
         # Released in the same tick: the drain runs it (the fallback path), once.
         assert calls == [_phash(pconn)]
-        assert [o.status for o in report.outcomes if o.job == "investor"] == ["ok"]
+        assert [o.status for o in report.outcomes if o.job == "broker"] == ["ok"]
 
 
 # ---------------------------------------------------------------------------
@@ -294,9 +294,9 @@ def _investor_dispatcher(
     return Dispatcher(
         conn,
         RoutinesConfig.model_validate(
-            {"personas": {"investor": {"trigger": "approval", "llm": False}}}
+            {"personas": {"broker": {"trigger": "approval", "llm": False}}}
         ),
-        handlers={"investor": investor},
+        handlers={"broker": investor},
         notifier=RecordingNotifier(),
         is_halted=lambda: flag[0],
         settings_factory=lambda: margin(),
@@ -321,7 +321,7 @@ class TestOneRunPerEvent:
         events.emit("approval", {"proposal_hash": ha}, now=NOW)
         events.emit("approval", {"proposal_hash": hb}, now=NOW)  # identical created_at
         report = d.tick(NOW + dt.timedelta(minutes=1), since=NOW)
-        inv = [o for o in report.outcomes if o.job == "investor"]
+        inv = [o for o in report.outcomes if o.job == "broker"]
         assert [o.status for o in inv] == ["ok", "ok"], [(o.status, o.reason) for o in inv]
         assert sorted(calls) == sorted([ha, hb])
         rows = conn.execute("SELECT proposal_hash, status FROM executions").fetchall()
@@ -406,14 +406,14 @@ class TestHaltedApprovals:
         d = _investor_dispatcher(pconn, calls, halted=halted)
         t1 = FIXTURE_NOW + dt.timedelta(minutes=1)
         r1 = d.tick(t1, since=FIXTURE_NOW)
-        (o,) = [o for o in r1.outcomes if o.job == "investor"]
+        (o,) = [o for o in r1.outcomes if o.job == "broker"]
         assert o.status == "deferred" and "until !resume" in o.reason and calls == []
         assert len(RoutineEventRepo(pconn).pending(until=t1)) == 1  # still pending
         d.tick(t1 + dt.timedelta(minutes=5))  # still halted: still waiting
         assert calls == []
         halted[0] = False  # !resume, inside the 16:20 TTL
         r3 = d.tick(FIXTURE_NOW + dt.timedelta(minutes=12))
-        assert [o.status for o in r3.outcomes if o.job == "investor"] == ["ok"]
+        assert [o.status for o in r3.outcomes if o.job == "broker"] == ["ok"]
         assert calls == [ph]
         assert RoutineEventRepo(pconn).pending(until=FIXTURE_NOW + dt.timedelta(hours=1)) == []
         assert not pconn.execute("SELECT 1 FROM decisions WHERE reason_text = ?",
@@ -432,7 +432,7 @@ class TestHaltedApprovals:
         d.tick(FIXTURE_NOW + dt.timedelta(minutes=1), since=FIXTURE_NOW)
         late = FIXTURE_NOW + dt.timedelta(minutes=25)  # past the 16:20 TTL, still halted
         report = d.tick(late)
-        (o,) = [o for o in report.outcomes if o.job == "investor"]
+        (o,) = [o for o in report.outcomes if o.job == "broker"]
         assert o.status == "skipped" and o.reason == LAPSED_UNDER_HALT and calls == []
         row = pconn.execute(
             """SELECT persona, stage, choice, reason_code, reason_text, run_id FROM decisions
@@ -440,7 +440,7 @@ class TestHaltedApprovals:
             (ph,),
         ).fetchone()
         assert dict(row) == {
-            "persona": "investor",
+            "persona": "broker",
             "stage": "order",
             "choice": "rejected",
             "reason_code": "order:refused",
@@ -467,7 +467,7 @@ class TestHaltedApprovals:
         d.tick(FIXTURE_NOW + dt.timedelta(minutes=1), since=FIXTURE_NOW)
         halted[0] = False  # resumed, but only after 16:20
         r = d.tick(FIXTURE_NOW + dt.timedelta(minutes=30))
-        assert [o.status for o in r.outcomes if o.job == "investor"] == ["skipped"]
+        assert [o.status for o in r.outcomes if o.job == "broker"] == ["skipped"]
         assert calls == []
 
     def test_non_approval_event_unchanged_under_halt(self, conn: sqlite3.Connection) -> None:
@@ -502,19 +502,19 @@ class TestHaltedApprovals:
         # from the DB), and the same tick's drain then sees it too.
         halted = [False]
         d._is_halted = lambda: halted[0]
-        inner = d.handlers["execute"]
+        inner = d.handlers["broker.execute"]
 
         def execute_then_halted(ctx: JobContext) -> JobResult:
             res = inner(ctx)
             halted[0] = True
             return res
 
-        d.handlers["execute"] = execute_then_halted
+        d.handlers["broker.execute"] = execute_then_halted
         report = d.tick(FIXTURE_NOW, since=FIXTURE_NOW - dt.timedelta(minutes=10))
-        ex = next(o for o in report.outcomes if o.job == "execute")
+        ex = next(o for o in report.outcomes if o.job == "broker.execute")
         assert ex.summary.startswith("halted:") and "until !resume" in ex.summary
         assert sp.argv == [] and calls == []
-        assert [o.status for o in report.outcomes if o.job == "investor"] == ["deferred"]
+        assert [o.status for o in report.outcomes if o.job == "broker"] == ["deferred"]
         ph = _phash(pconn)
         (evt,) = approval_events(pconn, [ph]).values()  # pending, not dispatched
         ev = RoutineEventRepo(pconn).get(evt)
@@ -531,13 +531,13 @@ class TestHaltedApprovals:
         repo = RoutineEventRepo(conn)
         ev = repo.emit("approval", {"proposal_hash": proposal_hash(p)}, now=NOW)
         assert repo.dispatch(ev.id, by="run-exec", now=NOW)
-        out = d.run_event("investor", ev, now=NOW + dt.timedelta(seconds=1))
+        out = d.run_event("broker", ev, now=NOW + dt.timedelta(seconds=1))
         assert [o.status for o in out] == ["deferred"] and calls == []
         got = repo.get(ev.id)
         assert got is not None and got.dispatched_at is None and got.consumed_at is None
         halted[0] = False
         r = d.tick(NOW + dt.timedelta(minutes=2), since=NOW)
-        assert [o.status for o in r.outcomes if o.job == "investor"] == ["ok"]
+        assert [o.status for o in r.outcomes if o.job == "broker"] == ["ok"]
         assert calls == [proposal_hash(p)]
 
     def test_run_event_consumed_is_duplicate(self, conn: sqlite3.Connection) -> None:
@@ -546,7 +546,7 @@ class TestHaltedApprovals:
         repo = RoutineEventRepo(conn)
         ev = repo.emit("approval", {"proposal_hash": "x"}, now=NOW)
         repo.consume(ev.id, ["r0"], now=NOW)
-        assert [o.status for o in d.run_event("investor", ev, now=NOW)] == ["duplicate"]
+        assert [o.status for o in d.run_event("broker", ev, now=NOW)] == ["duplicate"]
         assert calls == []
 
 
@@ -703,7 +703,7 @@ def _dispatch_via_execute(
     assert report.reclaimed == 0
     (argv,) = sp.argv
     evt_id = argv[argv.index("--event") + 1]
-    exec_run = next(o for o in report.outcomes if o.job == "execute")
+    exec_run = next(o for o in report.outcomes if o.job == "broker.execute")
     ev = RoutineEventRepo(pconn).get(evt_id)
     assert ev is not None and ev.dispatched_at == FIXTURE_NOW and ev.consumed_at is None
     assert ev.dispatched_by == exec_run.run_id
@@ -728,7 +728,7 @@ class TestReclaimStranded:
         # Inside the grace: the child may still be starting, nothing happens.
         early = d.tick(FIXTURE_NOW + GRACE - dt.timedelta(minutes=1))
         assert early.reclaimed == 0 and calls == []
-        assert all(o.job != "investor" for o in early.outcomes)
+        assert all(o.job != "broker" for o in early.outcomes)
         ev = RoutineEventRepo(pconn).get(evt_id)
         assert ev is not None and ev.dispatched_at is not None and ev.consumed_at is None
         # At the grace: released and run on the normal path, exactly once.
@@ -738,7 +738,7 @@ class TestReclaimStranded:
         assert rec["event_id"] == evt_id and rec["dispatched_by"] == exec_run
         assert rec["age_s"] == GRACE.total_seconds()
         assert at.reclaimed == 1 and "reclaimed 1 stranded event(s)" in at.lines()[0]
-        inv = [o for o in at.outcomes if o.job == "investor"]
+        inv = [o for o in at.outcomes if o.job == "broker"]
         assert [o.status for o in inv] == ["ok"] and calls == [_phash(pconn)]
         ev = RoutineEventRepo(pconn).get(evt_id)
         assert ev is not None and ev.consumed_by == [inv[0].run_id]
@@ -754,7 +754,7 @@ class TestReclaimStranded:
         assert repo.dispatch(ev.id, by="run-exec", now=NOW)
         # The child claimed its run (a long ladder still running): leave it alone.
         RoutineRunRepo(conn).claim(
-            job="investor", scheduled_for=NOW, reason="event:approval", now=NOW, event_id=ev.id
+            job="broker", scheduled_for=NOW, reason="event:approval", now=NOW, event_id=ev.id
         )
         calls: list[str] = []
         d = _investor_dispatcher(conn, calls)
@@ -778,7 +778,7 @@ class TestReclaimStranded:
         self, pconn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import arc.approvals.slack as slack_mod
-        from arc.routines.investor import LAPSED_NOT_STARTED
+        from arc.broker.ladder_job import LAPSED_NOT_STARTED
 
         monkeypatch.setattr(slack_mod, "SlackCardPoster", RecordingSlackPoster)
         RecordingSlackPoster.updated = []
@@ -791,7 +791,7 @@ class TestReclaimStranded:
         late = FIXTURE_NOW + dt.timedelta(minutes=25)  # past the 16:20 TTL (and the grace)
         report = d.tick(late)
         assert report.reclaimed == 1
-        (o,) = [o for o in report.outcomes if o.job == "investor"]
+        (o,) = [o for o in report.outcomes if o.job == "broker"]
         assert o.status == "skipped" and o.reason == LAPSED_NOT_STARTED and calls == []
         row = pconn.execute(
             """SELECT persona, stage, choice, reason_code, reason_text, run_id FROM decisions
@@ -799,7 +799,7 @@ class TestReclaimStranded:
             (ph,),
         ).fetchone()
         assert dict(row) == {
-            "persona": "investor",
+            "persona": "broker",
             "stage": "order",
             "choice": "rejected",
             "reason_code": "order:refused",
@@ -823,7 +823,7 @@ class TestReclaimStranded:
         d._is_halted = lambda: halted[0]
         r = d.tick(FIXTURE_NOW + GRACE)
         assert r.reclaimed == 1
-        assert [o.status for o in r.outcomes if o.job == "investor"] == ["deferred"]
+        assert [o.status for o in r.outcomes if o.job == "broker"] == ["deferred"]
         halted[0] = False  # !resume inside the TTL
         d.tick(FIXTURE_NOW + GRACE + dt.timedelta(minutes=5))
         assert calls == [_phash(pconn)]
@@ -854,7 +854,7 @@ class TestStrandedEventsCheck:
         assert len(n.posts) == 1 and ev.id in n.posts[0]
         # Once a run claims it (or the tick reclaims it), it is no longer stranded.
         RoutineRunRepo(conn).claim(
-            job="investor", scheduled_for=NOW, reason="event:approval", now=NOW, event_id=ev.id
+            job="broker", scheduled_for=NOW, reason="event:approval", now=NOW, event_id=ev.id
         )
         assert checks.stranded_events(conn, routines, later).severity == "ok"
 
@@ -893,7 +893,7 @@ class TestEventsCli:
         repo.dispatch(done.id, by="run-x", now=NOW)
         repo.consume(done.id, ["r"], now=NOW)
         RoutineRunRepo(c).claim(
-            job="investor", scheduled_for=NOW, reason="e", now=NOW, event_id=running.id
+            job="broker", scheduled_for=NOW, reason="e", now=NOW, event_id=running.id
         )
         c.close()
         now = (NOW + dt.timedelta(minutes=12)).isoformat()

@@ -17,7 +17,7 @@ for every consumer). Three entry points:
 * :func:`arms_tick` (``arc experiment arms-tick``, spawned detached by the routines
   tick so it never lengthens control's tick): pairs every recent control loop chain
   not paired yet (``max_lag_seconds``), then runs the arm's own ``arm_jobs``
-  (position management, reconcile, Investor ladders) on its store.
+  (position management, reconcile, Broker ladders) on its store.
 
 Shared inputs: sources and the Scalp run once, in control. Before each paired
 chain, the active context entries the chain reads are synced from control's store,
@@ -79,10 +79,10 @@ STEP_TARGETS: dict[str, frozenset[str]] = {
     "quant": frozenset({"account_profiles", "exits", "costs"}),
     "risk": frozenset({"account_profiles"}),
     "propose": frozenset({"account_profiles", "exits", "costs", "ranking"}),
-    "execute": frozenset(),
+    "broker.execute": frozenset(),
 }
 # Steps that size, gate or trade against the arm's own account: always the arm's.
-ACCOUNT_STEPS: frozenset[str] = frozenset({"propose", "execute"})
+ACCOUNT_STEPS: frozenset[str] = frozenset({"propose", "broker.execute"})
 
 _STATE_ARM = "experiment_arm:{arm}"  # control routine_state -> arm store path
 

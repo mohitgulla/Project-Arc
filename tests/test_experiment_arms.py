@@ -34,7 +34,7 @@ ENV = {
     "ALPACA_EXP_API_KEY": "exp",
     "ALPACA_EXP_SECRET_KEY": "exp-s",
 }
-CHAIN = ["research", "quant", "risk", "propose", "execute"]
+CHAIN = ["research", "quant", "risk", "propose", "broker.execute"]
 
 
 def _db(path: Path | str = ":memory:") -> sqlite3.Connection:

@@ -92,7 +92,7 @@ class MismatchKind(StrEnum):
     FILL_TEST = "fill_test"
 
 
-# Auditor anomaly categories (AnomalyReport.category)
+# Reconcile anomaly categories (AnomalyReport.category)
 CATEGORY: dict[MismatchKind, str] = {
     MismatchKind.POSITION_MISSING: "position_mismatch",
     MismatchKind.POSITION_UNATTRIBUTED: "position_mismatch",
@@ -791,27 +791,27 @@ def reconcile(
         store = JournalStore(conn)
         for j in journal:
             store.record(
-                persona=JournalPersona.AUDITOR, stage=Stage.RECONCILE, subject=j["subject"],
+                persona=JournalPersona.BROKER, stage=Stage.RECONCILE, subject=j["subject"],
                 choice=j["choice"], reason_code=j["code"], reason_text=j["text"][:2000],
                 payload=j.get("payload"), at=now, run_id=run_id,
             )  # fmt: skip
         if report.clean:
             store.record(
-                persona=JournalPersona.AUDITOR, stage=Stage.RECONCILE, subject="session",
+                persona=JournalPersona.BROKER, stage=Stage.RECONCILE, subject="session",
                 choice=Choice.PASSED, reason_code=ReasonCode.RECONCILE_CLEAN,
                 reason_text=report.summary(), at=now, run_id=run_id,
                 payload={"pnl_snapshot_id": report.pnl_snapshot_id},
             )  # fmt: skip
         for m in report.mismatches:
             store.record(
-                persona=JournalPersona.AUDITOR, stage=Stage.RECONCILE, subject=m.subject,
+                persona=JournalPersona.BROKER, stage=Stage.RECONCILE, subject=m.subject,
                 choice=Choice.FAILED, reason_code=ReasonCode.RECONCILE_MISMATCH,
                 reason_text=m.detail[:2000], at=now, run_id=run_id,
                 payload={"kind": str(m.kind), "refs": m.refs},
             )  # fmt: skip
         for m in report.notices:
             store.record(
-                persona=JournalPersona.AUDITOR, stage=Stage.RECONCILE, subject=m.subject,
+                persona=JournalPersona.BROKER, stage=Stage.RECONCILE, subject=m.subject,
                 choice=Choice.NOTED, reason_code=ReasonCode.RECONCILE_TEST_FILL,
                 reason_text=m.detail[:2000], at=now, run_id=run_id,
                 payload={"kind": str(m.kind), "refs": m.refs},

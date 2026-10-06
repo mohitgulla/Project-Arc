@@ -9,7 +9,7 @@ underlying + net Greeks), and applies the E3.3 daily-loss auto-halt.
 
 It never submits anything. E6.2: it evaluates every open structure against the
 E2.4 exit policy (:mod:`arc.execution.exits`) and *proposes* the fired exits
-(gate + ``arc2`` token + approval card); the Investor executes them only after
+(gate + ``arc2`` token + approval card); the Broker executes them only after
 approval. Close-to-reallocate (D19) is E6.4. The shipped config sets
 ``exits: false`` (E6.4's ``positions.evaluate`` chain owns exit proposals); when
 on, ``propose_exits`` still proposes at most one exit per structure per day.

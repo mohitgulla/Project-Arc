@@ -70,9 +70,12 @@ def test_live_config_bands_in_owner_order(empty_db) -> None:
     assert s.loop.label == "Research → Quant → Risk → Propose → Execute"
     assert s.loop.persona == "research"
     rows = {r.job: r for r in [*s.rows, s.loop]}
-    assert rows["positions.evaluate"].label == "Investor exits"
+    assert rows["positions.evaluate"].label == "Position marks"
     assert rows["positions.evaluate"].band == "position_management"
-    assert rows["auditor"].band == "post_market" and rows["auditor"].persona == "auditor"
+    assert (
+        rows["broker.reconcile"].band == "post_market"
+        and rows["broker.reconcile"].persona == "broker"
+    )
     assert rows["rss"].band == f"sources.{CATEGORY_ORDER[0].value}" and rows["rss"].persona is None
     assert rows["rss"].categories[0] == SourceCategory.MARKET_NEWS.value
     assert rows["youtube.briefs"].band.startswith("sources.") and rows["youtube.briefs"].llm
@@ -141,10 +144,18 @@ def test_new_job_in_temp_yaml_lands_in_its_band(tmp_path, empty_db) -> None:
 )
 def test_display_keys_are_validated(tmp_path, key, value, match) -> None:
     data = _yaml()
-    data["personas"]["auditor"][key] = value
+    data["personas"]["broker.reconcile"][key] = value
     with pytest.raises(ValueError, match=match):
         load_routines(_write(tmp_path, data))
 
 
 def test_persona_choices_cover_the_chips() -> None:
-    assert set(TIMELINE_PERSONAS) == {"scalp", "research", "investor", "risk", "auditor", "monitor"}
+    assert set(TIMELINE_PERSONAS) == {
+        "scalp",
+        "research",
+        "quant",
+        "risk",
+        "broker",
+        "ops",
+        "monitor",
+    }

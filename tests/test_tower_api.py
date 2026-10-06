@@ -60,12 +60,12 @@ def test_meta_has_cadences_caps_and_env(client: TestClient) -> None:
     r = client.get("/api/meta")
     assert r.status_code == 200
     m = MetaResponse.model_validate(r.json())
-    assert set(m.cadences) == {"monitor", "auditor", "tick", "health"}
+    assert set(m.cadences) == {"monitor", "broker.reconcile", "tick", "health"}
     assert m.cadences["tick"].every_s == 600 and m.cadences["tick"].stale_after_s == 1800  # D52
     assert m.cadences["health"].every_s == 1800  # E8.8b status row: the LaunchAgent cadence
     mon = m.cadences["monitor"]
     assert mon.stale_after_s == 3 * mon.every_s and mon.window and mon.days == "trading"
-    assert m.cadences["auditor"].every_s == 86_400  # one run a day
+    assert m.cadences["broker.reconcile"].every_s == 86_400  # one run a day
     assert m.env == "paper" and m.account_profile
     assert m.gate_caps.portfolio_delta_cap == pytest.approx(0.30)
     assert m.refresh_interval_s == 60 and m.refresh_choices_s == [30, 60, 120]

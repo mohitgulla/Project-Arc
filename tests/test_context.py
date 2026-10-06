@@ -16,7 +16,6 @@ from arc.context.kinds import KINDS, validate_payload
 from arc.context.ttl import from_db, to_db
 from arc.models import ChannelBrief
 from arc.personas.builders import (
-    investor_input_from_context,
     quant_input_from_context,
     research_input_from_context,
     risk_input_from_context,
@@ -345,8 +344,6 @@ def test_prompt_inputs_come_from_snapshot(store: ContextStore) -> None:
         risk_input_from_context(
             snap, portfolio_json="{}", calendar_json="{}", account_equity=1.0, scan_date="x"
         )
-    with pytest.raises(LookupError):
-        investor_input_from_context(snap, proposal_id="p", current_quotes_json="{}", scan_date="x")
 
 
 def test_research_reads_prior_notes(store: ContextStore) -> None:

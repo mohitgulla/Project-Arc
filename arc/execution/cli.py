@@ -1,6 +1,6 @@
 """``arc execute``: work one approved proposal through its D24 price band (E6.2).
 
-The same path the Investor routine takes on an ``approval`` event, for a manual
+The same path the Broker job takes on an ``approval`` event, for a manual
 run: load the approved proposal and its gate decision, then
 :func:`arc.execution.ladder.execute` (every attempt via ``submit()``).
 
@@ -56,11 +56,11 @@ def _resolve(conn: object, prefix: str) -> str | None:
 
 def run_execute(args: argparse.Namespace, *, broker: BrokerAdapter | None = None) -> int:
     from arc.approvals.service import approval_record
+    from arc.broker.ladder_job import load_approved
     from arc.config import get_settings
     from arc.execution.ladder import ExecStatus, execute
     from arc.gate.halt import HaltSwitch
     from arc.gate.token import TokenError, gate_secret
-    from arc.routines.investor import load_approved
     from arc.store.db import connect
     from arc.store.migrate import migrate
     from arc.store.repos import HaltRepo

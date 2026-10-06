@@ -1,7 +1,7 @@
 # Transaction costs (PLAN D23; card E6.1a). Validated by arc.backtest.costs.CostModel.
 #
 # ONE cost model for the whole system: the proposal card's Net EV, the E2.4 exit
-# model (managed / hold-to-expiry Net EV), the Investor's live exits, the
+# model (managed / hold-to-expiry Net EV), the Quant exit step, the
 # scanner's ev_proxy and the backtester's defaults all load this file via
 # arc.backtest.costs.load_cost_model(). Changing a fee here needs no code change.
 #

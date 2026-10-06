@@ -195,7 +195,7 @@ class _Ctx:
     def journal(self, choice: Choice, code: ReasonCode, text: str, **payload: Any) -> None:
         with self.conn:
             JournalStore(self.conn).record(
-                persona=JournalPersona.INVESTOR,
+                persona=JournalPersona.BROKER,
                 stage=Stage.ORDER,
                 subject=self.ticker,
                 choice=choice,
@@ -572,7 +572,7 @@ def _apply_fill(c: _Ctx, out: ExecutionOutcome, *, kind: str, structure_id: str 
             _close_lots(c, row, pnl, now)
         with c.conn:
             JournalStore(c.conn).record(
-                persona=JournalPersona.INVESTOR,
+                persona=JournalPersona.BROKER,
                 stage=Stage.EXIT,
                 subject=c.ticker,
                 choice=Choice.FILLED,

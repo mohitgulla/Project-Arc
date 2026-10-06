@@ -1,7 +1,7 @@
 """``experiments.evaluate`` routine (E10.3, D44): the daily experiment evaluation.
 
 ``personas.experiments.evaluate`` in ``config/routines.yaml``: trading days after
-the Auditor's EOD reconcile (which writes the per-arm ``pnl_snapshots`` it reads).
+the Broker's EOD reconcile (which writes the per-arm ``pnl_snapshots`` it reads).
 Deterministic, no LLM, no broker. For every running experiment it stores an
 :class:`~arc.experiments.evaluate.ExperimentReport` and applies the verdict
 (stop on win / futility / invalid).

@@ -7,6 +7,13 @@ append-only, so rows keep the name their writer had at the time. Two renames hap
   ``scout`` was then reused for the slow-feed Scout persona (E5.13).
 * **D56 (E13.1, migration 024):** ``sweep`` became ``scalp`` and ``director``
   became ``research``.
+* **D56 (E13.2, migration 025):** the Investor and Auditor personas were removed.
+  Jobs: ``investor`` -> ``broker``, ``execute`` -> ``broker.execute``,
+  ``investor.exits`` -> ``quant.exits``, ``auditor`` -> ``broker.reconcile``.
+  Decisions: ``investor`` rows are the **Broker** except ``stage='exit'`` rows
+  (the position-review chain), which are **Quant**; ``auditor`` rows are the
+  Broker's reconcile (label ``Broker (reconcile)``). These hops match exact names
+  only (``investor.exits`` is its own hop, never ``broker.exits``).
 
 Readers map stored values through :data:`RENAME_CHAIN`, hop by hop. A hop applies
 when the value equals ``hop.old`` (or starts with ``hop.old + "."``, e.g.
@@ -38,6 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 __all__ = [
+    "BROKER_CUTOVER_KEY",
     "CUTOVER_KEY",
     "LEGACY_REASON_CODES",
     "RENAME_CHAIN",
@@ -65,12 +73,25 @@ class RenameHop(BaseModel):
     reason_codes: dict[str, str] = Field(
         default_factory=dict, description="Stored reason codes this rename renamed"
     )
+    exact: bool = Field(
+        default=False, description="Match the exact name only (no ``old.<suffix>`` names)"
+    )
+    persona: str | None = Field(
+        default=None,
+        description="Persona key when read as a decision's persona (default: ``new``)",
+    )
+    stages: dict[str, str] = Field(
+        default_factory=dict,
+        description="Persona key by decision stage, overriding ``persona`` (E13.2: exit -> quant)",
+    )
 
 
 #: D54 cutover (migration 022): ``scout`` -> ``sweep``.
 CUTOVER_KEY = "rename:scout_to_sweep"
 #: D56 cutover (migration 024): ``sweep`` -> ``scalp`` and ``director`` -> ``research``.
 SCALP_CUTOVER_KEY = "rename:sweep_to_scalp"
+#: D56 cutover (migration 025): Investor/Auditor removed (Broker, Quant exits, Ops).
+BROKER_CUTOVER_KEY = "rename:investor_to_broker"
 
 RENAME_CHAIN: tuple[RenameHop, ...] = (
     RenameHop(
@@ -93,6 +114,36 @@ RENAME_CHAIN: tuple[RenameHop, ...] = (
             "director_excluded": "research_excluded",
             "director_no_trade": "research_no_trade",
         },
+    ),
+    # E13.2: the exact-name hops come first so ``investor.exits`` never reads as
+    # ``broker.exits``.
+    RenameHop(
+        old="investor.exits",
+        new="quant.exits",
+        cutover_key=BROKER_CUTOVER_KEY,
+        exact=True,
+        persona="quant",
+    ),
+    RenameHop(
+        old="execute",
+        new="broker.execute",
+        cutover_key=BROKER_CUTOVER_KEY,
+        exact=True,
+        persona="broker",
+    ),
+    RenameHop(
+        old="investor",
+        new="broker",
+        cutover_key=BROKER_CUTOVER_KEY,
+        exact=True,
+        stages={"exit": "quant"},
+    ),
+    RenameHop(
+        old="auditor",
+        new="broker.reconcile",
+        cutover_key=BROKER_CUTOVER_KEY,
+        exact=True,
+        persona="broker",
     ),
 )
 
@@ -139,28 +190,65 @@ def _applies(hop: RenameHop, at: _dt.datetime | None, cuts: Mapping[str, _dt.dat
     return cut is None or at is None or at < cut
 
 
+def _matches(hop: RenameHop, name: str) -> bool:
+    return name == hop.old or (not hop.exact and name.startswith(f"{hop.old}."))
+
+
+def _new_matches(hop: RenameHop, name: str) -> bool:
+    return name == hop.new or (not hop.exact and name.startswith(f"{hop.new}."))
+
+
 def job_name(job: str, at: _dt.datetime | None, cuts: Mapping[str, _dt.datetime]) -> str:
     """A stored job / persona name -> its current one (``sweep.overnight`` -> ``scalp.overnight``).
 
     *cuts* is :func:`cutovers` of the store the row came from.
     """
     for hop in RENAME_CHAIN:
-        if (job == hop.old or job.startswith(f"{hop.old}.")) and _applies(hop, at, cuts):
+        if _matches(hop, job) and _applies(hop, at, cuts):
             job = hop.new + job[len(hop.old) :]
     return job
 
 
-def persona_key(value: str, at: _dt.datetime | None, cuts: Mapping[str, _dt.datetime]) -> str:
-    """The current persona key for a stored ``persona`` / ``produced_by`` value."""
-    return job_name(value, at, cuts)
+def persona_key(
+    value: str,
+    at: _dt.datetime | None,
+    cuts: Mapping[str, _dt.datetime],
+    *,
+    stage: str | None = None,
+) -> str:
+    """The current persona key for a stored ``persona`` / ``produced_by`` value.
+
+    E13.2: a hop with a persona mapping (``investor`` -> ``broker``, or ``quant`` for
+    a ``stage='exit'`` row; ``auditor`` -> ``broker``) ends the chain there, so the
+    result is always a :class:`~arc.journal.reasons.JournalPersona` value.
+    """
+    for hop in RENAME_CHAIN:
+        if not (_matches(hop, value) and _applies(hop, at, cuts)):
+            continue
+        if hop.stages or hop.persona is not None:
+            if stage is not None and stage in hop.stages:
+                return hop.stages[stage]
+            return hop.persona or hop.new
+        value = hop.new + value[len(hop.old) :]
+    return value
 
 
 def persona_label(
-    value: str, at: _dt.datetime | None, cuts: Mapping[str, _dt.datetime] | None = None
+    value: str,
+    at: _dt.datetime | None,
+    cuts: Mapping[str, _dt.datetime] | None = None,
+    *,
+    stage: str | None = None,
 ) -> str:
-    """Display label (``Scalp``, ``Research``, ``Scalp (digest)``) for a stored persona."""
-    key = persona_key(value, at, cuts or {})
-    head, _, tail = key.partition(".")
+    """Display label for a stored persona: ``Scalp``, ``Research``, ``Scalp (digest)``;
+    E13.2: ``investor`` -> ``Broker`` (``Quant`` for exit rows), ``auditor`` ->
+    ``Broker (reconcile)``."""
+    cuts = cuts or {}
+    key = persona_key(value, at, cuts, stage=stage)
+    job = job_name(value, at, cuts)
+    # The job name carries the sub-job (``broker.reconcile``) when it is the same persona.
+    name = job if job.partition(".")[0] == key.partition(".")[0] else key
+    head, _, tail = name.partition(".")
     label = head[:1].upper() + head[1:]
     return f"{label} ({tail})" if tail else label
 
@@ -176,7 +264,7 @@ def legacy_names(job: str) -> list[tuple[str, str]]:
     frontier = [job]
     for hop in reversed(RENAME_CHAIN):
         for name in list(frontier):
-            if name == hop.new or name.startswith(f"{hop.new}."):
+            if _new_matches(hop, name):
                 old = hop.old + name[len(hop.new) :]
                 out.append((old, hop.cutover_key))
                 frontier.append(old)

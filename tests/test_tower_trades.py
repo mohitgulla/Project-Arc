@@ -873,7 +873,7 @@ def test_detail_floor_exit_facts(fx_db: Path, tmp_path: Path) -> None:
         "entry_managed_net_ev": 69.07, "minutes_since_fill": 42.0, "signals": [],
     }  # fmt: skip
     JournalStore(c).record(
-        persona="investor", stage="exit", subject="AMD", choice="selected",
+        persona="quant", stage="exit", subject="AMD", choice="selected",
         reason_code=ReasonCode.EXIT_EV_FLOOR, proposal_hash=H("exit-amd"),
         payload={"structure_id": sid, "review": review}, at=NOW,
     )  # fmt: skip

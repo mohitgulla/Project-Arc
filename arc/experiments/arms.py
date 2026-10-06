@@ -6,7 +6,7 @@ paper account (``<keys_env>_API_KEY`` / ``_SECRET_KEY``) and the spec arm's conf
 overlay. A store *is* an arm store when it holds the one-row ``arm_identity``
 written by ``arc experiment start``; every component that builds a broker or
 settings from a store reads it, so a process pointed at an arm store (the tick's
-arm runner, a spawned Investor ladder, reconcile) can only trade the arm's account
+arm runner, a spawned Broker ladder, reconcile) can only trade the arm's account
 and only under the arm's overlay. A store without an identity is control.
 """
 

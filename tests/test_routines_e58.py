@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from arc.approvals.service import ApprovalService, LogCardPoster, PostedCard
+from arc.broker.ladder_job import execute_step
 from arc.context.store import ContextStore
 from arc.ingest.llm import LLMResult, ScalpLLMError
 from arc.ingest.scalp import load_fixture_docs
@@ -32,7 +33,6 @@ from arc.routines.config import RoutinesConfig, load_routines
 from arc.routines.dispatcher import LLM_LOCK, Dispatcher
 from arc.routines.handlers import RunEnv
 from arc.routines.heartbeat import RecordingNotifier
-from arc.routines.investor import execute_step
 from arc.routines.locks import LockManager
 from arc.routines.loop import (
     LoopInputs,
@@ -139,7 +139,7 @@ class TestNoChange:
         assert d.summary.startswith("no_change")
         assert third["quant"].status == "skipped" and third["risk"].status == "skipped"
         assert third["propose"].status == "skipped"
-        assert third["execute"].status == "ok", third["execute"].reason
+        assert third["broker.execute"].status == "ok", third["broker.execute"].reason
         assert _llm_calls(conn) == calls  # not one more LLM call
         # the journal explains the skip
         row = conn.execute(
@@ -321,7 +321,7 @@ class TestConfigOnlyCadence:
         _slot(disp, SLOT0 + dt.timedelta(minutes=10))
         third = _slot(disp, SLOT0 + dt.timedelta(minutes=20))
         assert third["research"].metrics["no_change"] is True
-        assert third["quant"].status == "skipped" and third["execute"].status == "ok"
+        assert third["quant"].status == "skipped" and third["broker.execute"].status == "ok"
 
 
 class TestDigest:
@@ -445,7 +445,7 @@ class TestOverlapAndDeadline:
         out = run_slow(SLOT0)
         assert out["research"].status == "ok"
         assert out["quant"].status == "skipped" and "timeout" in out["quant"].reason
-        assert out["execute"].status == "skipped"
+        assert out["broker.execute"].status == "skipped"
         alerts = [t for _, t in notes.posts if "exceeded" in t]
         assert len(alerts) == 1
         # second timeout on the same day: no second notice
@@ -492,7 +492,7 @@ def _disp_with_cards(
 
     def handlers() -> dict[str, Any]:
         h = dict(pipeline_handlers(PipelineEnv.fixtures()))
-        h["execute"] = lambda ctx: execute_step(ctx, spawn=lambda _argv: 0, service=service)
+        h["broker.execute"] = lambda ctx: execute_step(ctx, spawn=lambda _argv: 0, service=service)
         return h
 
     disp = Dispatcher(

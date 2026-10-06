@@ -55,8 +55,8 @@ class TestPersonaLabel:
             (Persona.RESEARCH, "[Research]"),
             (Persona.QUANT, "[Quant]"),
             (Persona.RISK, "[Risk]"),
-            (Persona.INVESTOR, "[Investor]"),
-            (Persona.AUDITOR, "[Auditor]"),
+            (Persona.BROKER, "[Broker]"),
+            (Persona.OPS, "[Ops]"),
         ],
     )
     def test_all_personas(self, persona: Persona, expected: str) -> None:

@@ -37,11 +37,11 @@ if TYPE_CHECKING:
     from arc.ingest.sources import CategoryMix
     from arc.models import Candidate
     from arc.personas.schemas import (
-        AuditorOutput,
-        InvestorPlan,
+        BrokerPlan,
         QuantLeg,
         QuantOutput,
         QuantStructureOut,
+        ReconcileOutput,
         ResearchOutput,
         RiskAssessment,
         RiskOutput,
@@ -51,9 +51,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ExecutionResult",
     "Performance",
-    "auditor_card",
     "research_card",
-    "investor_card",
     "quant_card",
     "regime_name",
     "risk_card",
@@ -767,12 +765,12 @@ def risk_card(
 
 
 # ---------------------------------------------------------------------------
-# Investor (E6.2 / E6.4)
+# Broker orders (E6.2 / E6.4; D56 E13.2)
 # ---------------------------------------------------------------------------
 
 
 class ExecutionResult(BaseModel):
-    """Outcome of one Investor order (E6.2). Prices are per share, debit > 0, credit < 0."""
+    """Outcome of one Broker order (E6.2). Prices are per share, debit > 0, credit < 0."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -801,16 +799,16 @@ _STATUS_ICON = {
 }
 
 
-def investor_card(
-    plan: InvestorPlan,
+def broker_card(
+    plan: BrokerPlan,
     result: ExecutionResult | None = None,
     *,
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Investor] Order: SPY Iron Condor • x3 • Limit -1.25`` (+ fill/cancel outcome)."""
+    """``[Broker] Order: SPY Iron Condor • x3 • Limit -1.25`` (+ fill/cancel outcome)."""
     title = (
-        f"[Investor] Order: {plan.ticker} {_title_case(plan.structure_type)} • "
+        f"[Broker] Order: {plan.ticker} {_title_case(plan.structure_type)} • "
         f"x{plan.contracts} • Limit {plan.initial_limit_price:+.2f}"
     )
     if result is not None:
@@ -856,12 +854,12 @@ def investor_card(
         blocks.extend(B.facts(pairs))
         if result.detail.strip():
             blocks.append(B.summary(B.clip(B.esc(result.detail.strip()))))
-    blocks.append(B.persona_section(Persona.INVESTOR, "Notes", plan.notes))
+    blocks.append(B.persona_section(Persona.BROKER, "Notes", plan.notes))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 
 
 # ---------------------------------------------------------------------------
-# Auditor
+# Broker reconcile (D56 E13.2)
 # ---------------------------------------------------------------------------
 
 
@@ -878,21 +876,21 @@ def _pnl(v: float | None, pct: float | None) -> str:
     return _money0(v) + (f" ({pct:+.1%})" if pct is not None else "")
 
 
-def auditor_card(
-    out: AuditorOutput,
+def reconcile_card(
+    out: ReconcileOutput,
     *,
     performance: Performance | None = None,
     run_id: str | None = None,
     chain_run_id: str | None = None,
     ops_line: str | None = None,
 ) -> CardView:
-    """``[Auditor] Journal: Sep 28 • P&L +$312 (+0.3%)``; anomalies live in the body.
+    """``[Broker] Reconcile: Sep 28 • P&L +$312 (+0.3%)``; anomalies live in the body.
 
     E8.2a: *ops_line* (``Slots: research 71/75, … · missed 6 (list in tower Ops)``)
     is the day's routine slot coverage, shown in an ``Ops`` section.
     """
     perf = performance or Performance(day_pnl=out.daily_pnl)
-    title = f"[Auditor] Journal: {_day(out.journal_date)} • P&L {_pnl(perf.day_pnl, perf.day_pct)}"
+    title = f"[Broker] Reconcile: {_day(out.journal_date)} • P&L {_pnl(perf.day_pnl, perf.day_pct)}"
     recon = out.reconciliation_status.strip() or "pending"
     icon = ":white_check_mark:" if recon == "clean" else ":warning:"
     n_anom = len(out.anomalies)
@@ -932,5 +930,5 @@ def auditor_card(
     blocks.append(_section("Lessons", lessons))
     if ops_line:
         blocks.append(_section("Ops", [B.esc(ops_line)]))
-    blocks.append(B.persona_section(Persona.AUDITOR, "Journal", out.journal_narrative))
+    blocks.append(B.persona_section(Persona.BROKER, "Journal", out.journal_narrative))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
