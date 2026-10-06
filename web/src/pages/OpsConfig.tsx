@@ -36,6 +36,7 @@ import {
   type ConfigKey,
   type ConfigSection,
 } from "../lib/opsConfig";
+import { CORE_KEY_LABEL, coreOverrideWarning } from "../lib/universe";
 import { useOps } from "../lib/useApi";
 import { CONTROL, Loading, Pill, et } from "./opsShared";
 
@@ -52,7 +53,7 @@ function sectionId(key: string): string {
 /** A dotted key that may break after each `.`, never truncated. */
 function KeyName({ k }: { k: string }) {
   return (
-    <span className="font-semibold text-title" data-testid="cfg-key-name">
+    <span className="font-semibold text-title [overflow-wrap:anywhere]" data-testid="cfg-key-name">
       {keySegments(k).map((seg, i) => (
         <span key={i}>
           {seg}
@@ -111,10 +112,17 @@ function KeyRow({ k, changes, names, now }: { k: ConfigKey; changes: ConfigChang
   const list = k.is_list ? asList(k.value) : null;
   const overridden = k.source === "override";
   const histId = `hist-${k.key}`;
+  const isCore = k.key === "universe";
+  const ignored = isCore ? coreOverrideWarning(k.value) : null;
   return (
     <li className="min-w-0 py-3" data-testid="cfg-key" data-key={k.key} data-list={list ? "true" : undefined}>
       <div className={list ? "min-w-0" : "flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-1"}>
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1" data-testid="cfg-key-cell">
+          {isCore && (
+            <span className="font-semibold text-title" data-testid="cfg-key-label">
+              {CORE_KEY_LABEL}
+            </span>
+          )}
           <KeyName k={k.key} />
           {overridden && <Pill tone="warn">override</Pill>}
           {k.env && <Pill tone="neutral">{k.env} only</Pill>}
@@ -122,6 +130,11 @@ function KeyRow({ k, changes, names, now }: { k: ConfigKey; changes: ConfigChang
             <span className="text-caption text-muted tabular-nums" data-testid="cfg-list-count">
               {listNoun(k.value_type, list.length)}
             </span>
+          )}
+          {isCore && (
+            <Link to="/ops/universe" className="arc-action arc-press inline-flex min-h-[32px] items-center max-tablet:min-h-[44px]" data-testid="cfg-universe-link">
+              Universe ↗
+            </Link>
           )}
         </div>
         {!list && (
@@ -134,6 +147,14 @@ function KeyRow({ k, changes, names, now }: { k: ConfigKey; changes: ConfigChang
         <div className="mt-1.5 min-w-0" data-testid="cfg-value">
           {list.length ? <ListChips items={list} testid="cfg-list" /> : <span className="text-caption text-muted">empty</span>}
         </div>
+      )}
+      {ignored && (
+        <p className="mt-1 text-caption text-warn [text-wrap:pretty]" data-testid="cfg-core-ignored">
+          Ignored: {ignored}{" "}
+          <Link to="/ops/universe" className="arc-action">
+            See the core list in use ↗
+          </Link>
+        </p>
       )}
       {k.description && <p className="mt-1 text-caption text-secondary [text-wrap:pretty]">{k.description}</p>}
       <div className="mt-1 grid gap-x-4 gap-y-0.5 text-caption min-[600px]:grid-cols-2 desktop:grid-cols-4">

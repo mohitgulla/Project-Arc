@@ -305,6 +305,23 @@ they are never dropped.
     show their `tower.actor_names` display name (`config/routines.yaml`; display only, an
     unknown id shows as is); source reads Slack / CLI.
   - Footer: read-only, edits happen in Slack (`!arc config set …`).
+  - E12.6: the `universe` row is labelled **Core Universe (≤ 30)** with a `Universe ↗` link;
+    an effective override of > 30 names shows an inline `--warn` line that it is ignored
+    (pre-D51 flat list) and links to the core list in use.
+- **Universe** (`/ops/universe`, `pages/OpsUniverse.tsx`, E12.6 / D51; `Universe ↗` on the
+  Ops Config card): what can Arc trade today, and why each name is there.
+  - Data: `GET /api/ops/universe` reads the **stored** `active_universe` resolve and the latest
+    `universe_tier` entry per feed tier (`arc/tower/data_universe.py`); it never re-resolves.
+    No resolve today → the latest one with its age and a `Not Resolved Today` note; none at
+    all → the core list (`Never Resolved`). Never a blank page.
+  - Pinned summary card: `Active 50/50 · Core 25 · Momentum 17 · Trending 0 · Discovery 8`,
+    the resolve state, its age and config version.
+  - One card per tier, Core → Momentum → Trending → Discovery: header = `offered · active /
+    size`, source, refresh age, data date, `Partial` / `Expired` pills; body = ticker chips
+    (`rank TICKER`, `+n` when deduped). Tap/hover a chip for `#rank in Tier · source`, the
+    reason (`SPMO weight 1.54% (row 18)`, `reddit #3 (+41 24h) …`) and `also in <tier>`.
+  - **Dropped** (ticker · tier · reason in words), then **Market Reference**
+    (`SPY QQQ (regime only, not traded)`) and the Director diversification mode.
 - **Run detail** (`/ops/runs/:runId`, `pages/RunDetail.tsx`, E8.8e) is concise:
   - Summary card: job label + persona chip (routines.yaml), status, duration, trigger,
     scheduled-for, config version, git sha (12, copy-on-tap), LLM cost + tokens, attempt,

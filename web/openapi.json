@@ -2147,6 +2147,35 @@
         "title": "ContractView",
         "type": "object"
       },
+      "CoreOverrideIgnored": {
+        "additionalProperties": false,
+        "properties": {
+          "core_in_use": {
+            "description": "The config/universe.yaml core list in use",
+            "items": {
+              "type": "string"
+            },
+            "title": "Core In Use",
+            "type": "array"
+          },
+          "count": {
+            "description": "Names in the `universe` override",
+            "title": "Count",
+            "type": "integer"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "count",
+          "note",
+          "core_in_use"
+        ],
+        "title": "CoreOverrideIgnored",
+        "type": "object"
+      },
       "CostBar": {
         "additionalProperties": false,
         "properties": {
@@ -13219,6 +13248,346 @@
         "title": "TriggerLevels",
         "type": "object"
       },
+      "UniverseActiveRow": {
+        "additionalProperties": false,
+        "properties": {
+          "also_in": {
+            "description": "Lower tiers that also list it",
+            "items": {
+              "type": "string"
+            },
+            "title": "Also In",
+            "type": "array"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "tier",
+          "rank",
+          "source",
+          "reason"
+        ],
+        "title": "UniverseActiveRow",
+        "type": "object"
+      },
+      "UniverseDroppedRow": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "description": "over_active_cap | over_tier_size | \u2026",
+            "title": "Reason",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "tier",
+          "reason"
+        ],
+        "title": "UniverseDroppedRow",
+        "type": "object"
+      },
+      "UniverseResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "items": {
+              "$ref": "#/components/schemas/UniverseActiveRow"
+            },
+            "title": "Active",
+            "type": "array"
+          },
+          "active_max": {
+            "description": "universe_active_max (effective)",
+            "title": "Active Max",
+            "type": "integer"
+          },
+          "age_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age S"
+          },
+          "as_of": {
+            "description": "Server time of this read",
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "config_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Config version the resolve ran under",
+            "title": "Config Version"
+          },
+          "core_override_ignored": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoreOverrideIgnored"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "director_diversification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "personas.director_diversification (E12.5): strict | relaxed",
+            "title": "Director Diversification"
+          },
+          "dropped": {
+            "items": {
+              "$ref": "#/components/schemas/UniverseDroppedRow"
+            },
+            "title": "Dropped",
+            "type": "array"
+          },
+          "market_reference": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Market Reference",
+            "type": "array"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the stored resolve was written",
+            "title": "Resolved At"
+          },
+          "resolved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved By"
+          },
+          "resolved_for": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The stored resolve's as_of day",
+            "title": "Resolved For"
+          },
+          "state": {
+            "description": "today = resolved today; stale = latest resolve is older (consumers use the core list until the next one); none = never resolved (core list shown)",
+            "enum": [
+              "today",
+              "stale",
+              "none"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tiers": {
+            "items": {
+              "$ref": "#/components/schemas/UniverseTierRow"
+            },
+            "title": "Tiers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "state",
+          "resolved_for",
+          "resolved_at",
+          "config_version",
+          "active_max",
+          "active",
+          "tiers",
+          "dropped",
+          "market_reference"
+        ],
+        "title": "UniverseResponse",
+        "type": "object"
+      },
+      "UniverseTierRow": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "description": "Names this tier holds in the active list",
+            "title": "Active",
+            "type": "integer"
+          },
+          "age_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age S"
+          },
+          "expired": {
+            "description": "The latest feed expired: read as empty by the resolve",
+            "title": "Expired",
+            "type": "boolean"
+          },
+          "fetched_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latest universe_tier entry's fetch time",
+            "title": "Fetched At"
+          },
+          "name": {
+            "description": "core | momentum | trending | discovery (precedence order)",
+            "title": "Name",
+            "type": "string"
+          },
+          "offered": {
+            "description": "Names the tier offered before dedupe and caps (raw_count)",
+            "title": "Offered",
+            "type": "integer"
+          },
+          "partial": {
+            "default": false,
+            "title": "Partial",
+            "type": "boolean"
+          },
+          "size_cap": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tier's size: core ceiling 30, momentum/trending sizes; null = no cut",
+            "title": "Size Cap"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Feed source (stockanalysis, reddit+\u2026, settings, scout)",
+            "title": "Source"
+          },
+          "source_as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source As Of"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "name",
+          "offered",
+          "active",
+          "size_cap",
+          "source",
+          "fetched_at",
+          "expired"
+        ],
+        "title": "UniverseTierRow",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -14232,6 +14601,38 @@
           }
         },
         "summary": "Sources",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/ops/universe": {
+      "get": {
+        "description": "E12.6 (D51): the stored active list by tier, tier feeds, drops, ignored override.",
+        "operationId": "universe_api_ops_universe_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UniverseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Universe",
         "tags": [
           "ops"
         ]

@@ -417,14 +417,17 @@ def test_cli_serve_print_command_and_missing_db(
 
 
 def test_cli_snapshot(db: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    # The CLI reads the wall clock (TowerConfig.clock); the fixture's violations are at
-    # NOW (2026-09-28), so a 7-day window aged them out on 2026-10-05 and main went red.
-    # A window wide enough to always include NOW keeps the test independent of today.
-    wide = ["--lookback-days", "36500"]
-    assert main(["tower", "snapshot", "--db", str(db), "--json", *wide]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["greeks"]["delta"] == 25.0 and payload["violation_counts"]
-    assert main(["tower", "snapshot", "--db", str(db)]) == 0
+    # Tests inject `now` (AGENTS.md): the CLI's TowerConfig reads the wall clock, so the
+    # fixture's violations (at NOW) would fall out of the 7-day window a week later.
+    from functools import partial
+
+    from arc.tower.api import TowerConfig
+
+    with mock.patch("arc.tower.api.TowerConfig", partial(TowerConfig, clock=lambda: NOW)):
+        assert main(["tower", "snapshot", "--db", str(db), "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["greeks"]["delta"] == 25.0 and payload["violation_counts"]
+        assert main(["tower", "snapshot", "--db", str(db)]) == 0
     out = capsys.readouterr().out
     assert "halted: YES (1 active)" in out and "1 open structure(s)" in out
     assert main(["tower", "snapshot", "--db", str(tmp_path / "x.db")]) == 2

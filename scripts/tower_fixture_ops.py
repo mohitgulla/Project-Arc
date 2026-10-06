@@ -505,6 +505,90 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
                    is_default=False, actor="U0C5KUMH28G", reason="widen the seed list",
                    source="cli", at=now - dt.timedelta(hours=20), status="applied",
                    direction="riskier")  # fmt: skip
+    add_universe(conn, now)
+
+
+#: E12.6: the tiered-universe fixture (trending names with E12.3-style reasons).
+MOMENTUM_FIXTURE: tuple[str, ...] = (
+    "MU", "AAPL", "NVDA", "AVGO", "PLTR", "ORCL", "GE", "LLY", "JPM", "NFLX",
+    "META", "GS", "APP", "RTX", "AXP", "CAT", "MS", "WMT", "HWM", "TJX",
+    "KKR", "VST", "CEG", "ANET",
+)  # fmt: skip
+TRENDING_FIXTURE: tuple[str, ...] = (
+    "RKLB", "NVDA", "ASTS", "OKLO", "APP", "IONQ", "SOUN", "HIMS",
+)  # fmt: skip
+DISCOVERY_FIXTURE: tuple[str, ...] = ("QCOM", "CRWV", "NBIS", "TEM", "SNDK", "BBAI")
+
+
+def add_universe(conn: sqlite3.Connection, now: dt.datetime) -> None:
+    """E12.6: a momentum feed (partial, Schwab-style), a trending feed and an
+    ``active_universe`` resolve over them via the real :func:`resolve_active`
+    (core 25 + momentum 15 + trending 6 + discovery 6 = 52 > 50, so 2 names are
+    ``over_active_cap``). The 100-name ``universe`` override above is ignored (> 30)."""
+    from arc.config import ArcSettings
+    from arc.context.store import ContextStore
+    from arc.context.ttl import Ttl
+    from arc.universe.tiers import (
+        Tier,
+        TierMember,
+        UniverseTierPayload,
+        resolve_active,
+        yaml_core,
+    )
+
+    today = now.date()
+    store = ContextStore(conn)
+    m_at = now - dt.timedelta(days=3, hours=2)
+    momentum = [
+        TierMember(ticker=t, tier=Tier.MOMENTUM, rank=i, source="stockanalysis",
+                   reason=f"SPMO weight {9.5 - i * 0.33:.2f}% (row {i})",
+                   as_of=today - dt.timedelta(days=4))
+        for i, t in enumerate(MOMENTUM_FIXTURE, 1)
+    ]  # fmt: skip
+    store.write(
+        kind="universe_tier", subject="momentum", produced_by="universe.momentum",
+        payload=UniverseTierPayload(
+            tier=Tier.MOMENTUM, members=momentum, fetched_at=m_at, source="stockanalysis",
+            source_as_of=today - dt.timedelta(days=4), digest="fixture",
+            url="https://stockanalysis.com/etf/spmo/holdings/", partial=True,
+        ),
+        ttl=Ttl(duration=dt.timedelta(days=35)), valid_from=m_at, now=m_at,
+    )  # fmt: skip
+    t_at = now - dt.timedelta(hours=3)
+    trending = [
+        TierMember(ticker=t, tier=Tier.TRENDING, rank=i, source="news+reddit+stocktwits",
+                   reason=f"reddit #{i} (+{40 - 4 * i} 24h), stocktwits, {5 - i % 3} news "
+                   f"sources · score {0.9 - 0.05 * i:.2f}", as_of=today)
+        for i, t in enumerate(TRENDING_FIXTURE, 1)
+    ]  # fmt: skip
+    store.write(
+        kind="universe_tier", subject="trending", produced_by="universe.trending",
+        payload=UniverseTierPayload(
+            tier=Tier.TRENDING, members=trending, fetched_at=t_at,
+            source="news+reddit+stocktwits", source_as_of=today, digest="fixture",
+        ),
+        ttl=Ttl(duration=dt.timedelta(hours=20)), valid_from=t_at, now=t_at,
+    )  # fmt: skip
+    core = [
+        TierMember(ticker=t, tier=Tier.CORE, rank=i, source="config", reason="core list",
+                   as_of=today)
+        for i, t in enumerate(yaml_core(ArcSettings()), 1)
+    ]  # fmt: skip
+    disc = [
+        TierMember(ticker=t, tier=Tier.DISCOVERY, rank=i, source="scout",
+                   reason=f"candidate confidence {0.8 - 0.05 * i:.2f}, corroboration {4 - i}",
+                   as_of=today)
+        for i, t in enumerate(DISCOVERY_FIXTURE, 1)
+    ]  # fmt: skip
+    active = resolve_active(
+        core=core, momentum=momentum, trending=trending, discoveries=disc, active_max=50,
+        tier_sizes={Tier.MOMENTUM: 25, Tier.TRENDING: 25}, as_of=today, config_version=4,
+    )  # fmt: skip
+    a_at = now - dt.timedelta(minutes=20)
+    store.write(
+        kind="active_universe", subject="active", produced_by="scout", payload=active,
+        ttl=Ttl(duration=dt.timedelta(hours=20)), valid_from=a_at, now=a_at,
+    )  # fmt: skip
 
 
 def write_log(db_path: Path, run_id: str, now: dt.datetime) -> Path:
