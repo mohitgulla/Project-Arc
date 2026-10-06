@@ -19,6 +19,9 @@ log = structlog.get_logger()
 # D54: the stored status of a doc the Sweep read keeps its pre-rename value (``scouted``)
 # so status counts stay comparable across the cutover; only identifiers were renamed.
 SWEPT_STATUS = "scouted"
+# D55 (E4.11): an RSS entry matched by its feed's title filter. Stored (audited, counted
+# on the Tower Sources page) but closed at insert, so the Sweep never reads it.
+FILTERED_STATUS = "filtered"
 
 
 def _uuid() -> str:
@@ -66,11 +69,15 @@ class RawDocRepo:
         channel_id: str | None = None,
         title: str | None = None,
         source_key: str | None = None,
+        closed_status: str | None = None,
     ) -> str | None:
         """Insert a raw doc, skipping duplicates. Returns id or None if duplicate.
 
         *source_key* is the E4.5 registry source (an RSS feed name). NULL = derived
         at read time by :meth:`arc.ingest.sources.SourceRegistry.key_for`.
+        *closed_status* (D55: ``filtered``) stores the doc already closed out of the
+        Sweep queue in the same statement (``swept_at`` set, ``sweep_run_id`` NULL until
+        the next Sweep run claims it for its count: :meth:`claim_filtered`).
         """
         h = hash_val or content_hash(source, url)
         if self.exists(h):
@@ -78,11 +85,14 @@ class RawDocRepo:
             return None
 
         row_id = id or _uuid()
+        now = _now_iso()
+        closed = closed_status is not None
         self.conn.execute(
             """INSERT INTO raw_docs
                (id, source, url, published_at, text, tickers_hint,
-                content_hash, ingested_at, run_id, channel_id, title, source_key)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                content_hash, ingested_at, run_id, channel_id, title, source_key,
+                swept_at, sweep_run_id, sweep_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row_id,
                 source,
@@ -91,15 +101,18 @@ class RawDocRepo:
                 text,
                 json.dumps(tickers_hint or []),
                 h,
-                _now_iso(),
+                now,
                 run_id,
                 channel_id,
                 title,
                 source_key,
+                now if closed else None,
+                None,
+                closed_status,
             ),
         )
         self.conn.commit()
-        log.info("rawdoc.stored", id=row_id, source=source, url=url)
+        log.info("rawdoc.stored", id=row_id, source=source, url=url, closed_status=closed_status)
         return row_id
 
     def get(self, doc_id: str) -> dict[str, Any] | None:
@@ -149,6 +162,26 @@ class RawDocRepo:
         queue is closed, so it never draws on ``sweep_doc_budget``.
         """
         self._close(doc_ids, run_id=run_id, status="slow_feed")
+
+    def claim_filtered(self, *, run_id: str) -> dict[str, int]:
+        """D55: stamp unclaimed ``filtered`` docs with this Sweep run; ``{source_key: n}``.
+
+        Each filtered doc is counted by exactly one Sweep run (the first after it was
+        stored), so the card's ``filtered`` count is "since the last Sweep".
+        """
+        rows = self.conn.execute(
+            """SELECT COALESCE(source_key, source) AS k, COUNT(*) AS n FROM raw_docs
+               WHERE sweep_status = ? AND sweep_run_id IS NULL GROUP BY k""",
+            (FILTERED_STATUS,),
+        ).fetchall()
+        if rows:
+            self.conn.execute(
+                """UPDATE raw_docs SET sweep_run_id = ?
+                   WHERE sweep_status = ? AND sweep_run_id IS NULL""",
+                (run_id, FILTERED_STATUS),
+            )
+            self.conn.commit()
+        return {str(r["k"]): int(r["n"]) for r in rows}
 
     def _close(self, doc_ids: list[str], *, run_id: str, status: str) -> None:
         now = _now_iso()

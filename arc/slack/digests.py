@@ -228,6 +228,7 @@ def sweep_card(
     source_mix: Sequence[tuple[str, int, int]] = (),
     stories: int | None = None,
     category_mix: Sequence[CategoryMix] = (),
+    filtered: Mapping[str, int] | None = None,
 ) -> CardView:
     """``[Sweep] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
@@ -237,6 +238,8 @@ def sweep_card(
     (``illiquid`` etc.) are grouped by reason under Rejected with the failed checks.
     D30 (E4.5): a *Source mix* fact (docs read per source, over-budget counts) and
     the story count; each candidate shows how many distinct sources back it.
+    D55: *filtered* (source label -> docs a feed's title filter closed since the last
+    Sweep, never read) is one ``Filtered`` line under the source mix.
     """
     title = f"[Sweep] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
     n_rej = sum(rejected.values())
@@ -257,6 +260,9 @@ def sweep_card(
         blocks.append(_section("Source mix", category_mix_lines(category_mix)))
     elif source_mix:
         blocks.append(_section("Source mix", [source_mix_line(source_mix)]))
+    if filtered and sum(filtered.values()):
+        line = " · ".join(f"{B.esc(k)} {n}" for k, n in filtered.items() if n)
+        blocks.append(_section("Filtered (title filter, not read)", [line]))
     # E5.5b: one section per candidate with dividers (like the Director's ranked
     # list), so each row folds on its own. Lines start at column 0: no indent.
     ranked = sorted(candidates, key=lambda c: -c.confidence)

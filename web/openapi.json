@@ -11049,6 +11049,12 @@
             "title": "Feed",
             "type": "string"
           },
+          "filtered_today": {
+            "default": 0,
+            "description": "D55: docs stored today but closed `filtered` by the feed's title filter (never read by the Sweep)",
+            "title": "Filtered Today",
+            "type": "integer"
+          },
           "job": {
             "title": "Job",
             "type": "string"

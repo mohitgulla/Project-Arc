@@ -200,12 +200,28 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     window: "06:00-20:00"
     days: trading
     writes: [raw_doc_ref]
-    feeds:                      # every feed declares its D47 category
-      - {name: wsj, label: WSJ, url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", hosts: [wsj.com], category: market_news}
-      - {name: cnbc, label: CNBC, url: "https://www.cnbc.com/id/20910258/device/rss/rss.html", category: market_news}
-      - {name: seekingalpha, label: SA, url: "https://seekingalpha.com/market_currents.xml", category: company_data}
-      - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets", category: market_news}
-      - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro_data}
+    # Every feed declares its D47 category and its D54 feed (all fast: `sweep`).
+    # D55 (E4.11): optional per-feed `title_exclude` / `title_include` regex lists
+    # (case-insensitive search on the entry title). A filtered entry is stored closed
+    # `sweep_status='filtered'` (counted on the Tower Sources page and the Sweep card),
+    # never read and never silently dropped. Not runtime-tunable (NOT_EXPOSED_PATHS).
+    # The retired `cnbc` key (CNBC Economy) stays readable as a label alias for one release.
+    feeds:
+      - {name: wsj, label: WSJ, url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", hosts: [wsj.com], category: market_news, feed: sweep}
+      - {name: wsj_business, label: WSJ Business, url: "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness", hosts: [wsj.com], category: company_data, feed: sweep}
+      - {name: cnbc_earnings, label: CNBC Earnings, url: "https://www.cnbc.com/id/15839135/device/rss/rss.html", category: company_data, feed: sweep}
+      - {name: cnbc_business, label: CNBC Business, url: "https://www.cnbc.com/id/10001147/device/rss/rss.html", category: market_news, feed: sweep}
+      - name: seekingalpha
+        label: SA
+        url: "https://seekingalpha.com/market_currents.xml"
+        category: company_data
+        feed: sweep
+        title_exclude:          # D55: fund/ETF dividend declarations (ex_dividend covers the universe)
+          - '\bdeclares\b.*\bdividend\b'
+          - '\b(increases|decreases|raises|cuts)\b.*\bdividend\b'
+          - '\bETF\b.*\b(distribution|dividend)\b'
+      - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets", category: market_news, feed: sweep}
+      - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro_data, feed: sweep}
   edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: company_data, label: EDGAR, writes: [raw_doc_ref], lane: background,
              about: "SEC filings (8-K, 10-Q, 10-K, Form 4) for the universe; stale filings are skipped"}   # D39: p90 75 s (377 s max on new filings)
   earnings:                     # Finnhub /calendar/earnings (ARC_FINNHUB_API_KEY; no key = skipped run)

@@ -756,6 +756,7 @@ function SourceRowItem({ src }: { src: SourceRow }) {
         </span>
         {src.skipped_budget_today > 0 && <span>{src.skipped_budget_today} skipped (budget)</span>}
         {(src.skipped_stale_today ?? 0) > 0 && <span>{src.skipped_stale_today} skipped (stale)</span>}
+        {(src.filtered_today ?? 0) > 0 && <span>{src.filtered_today} filtered (title)</span>}
         <span>
           errors {src.error_rate == null ? "—" : `${Math.round(src.error_rate * 100)}%`} of {src.runs_24h} runs (24 h)
         </span>

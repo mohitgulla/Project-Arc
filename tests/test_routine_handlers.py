@@ -94,7 +94,7 @@ def _stored_doc(conn: sqlite3.Connection, source: str, url: str) -> RawDoc:
 @pytest.mark.parametrize(
     ("job", "fn", "target", "options", "setting", "expected"),
     [
-        ("rss", rss_source, "arc.ingest.rss.fetch_rss", {"feeds": ["https://f/x"]},
+        ("rss", rss_source, "arc.ingest.rss.fetch_rss_feeds", {"feeds": ["https://f/x"]},
          "ingest_rss_feeds", ["https://f/x"]),
         ("edgar", edgar_source, "arc.ingest.edgar.fetch_edgar", {"tickers": ["aapl"]},
          None, None),
@@ -116,7 +116,10 @@ def test_source_handlers_write_doc_refs(
     source = job.split(".")[0]
     docs = [_stored_doc(conn, source, f"https://x/{i}") for i in range(2)]
     ctx = _ctx(conn, job, options)
-    with mock.patch(target, return_value=docs) as fetch:
+    from arc.ingest.rss import RssFetch
+
+    ret: object = RssFetch(docs=docs) if job == "rss" else docs  # D55: per-feed accounting
+    with mock.patch(target, return_value=ret) as fetch:
         result = fn(ctx)  # type: ignore[operator]
     assert result.metrics["new_docs"] == 2
     assert result.summary.startswith("2 new docs")
@@ -174,7 +177,9 @@ def test_data_tickers_include_open_underlyings(conn: sqlite3.Connection) -> None
 
 def test_source_without_options_uses_settings(conn: sqlite3.Connection) -> None:
     ctx = _ctx(conn, "rss")
-    with mock.patch("arc.ingest.rss.fetch_rss", return_value=[]) as fetch:
+    from arc.ingest.rss import RssFetch
+
+    with mock.patch("arc.ingest.rss.fetch_rss_feeds", return_value=RssFetch()) as fetch:
         result = rss_source(ctx)
     assert fetch.call_args.args[1] is ctx.settings
     assert result.summary == "0 new docs"
@@ -224,3 +229,29 @@ def test_settings_default_factory(conn: sqlite3.Connection) -> None:
     with mock.patch("arc.control.effective.effective_settings", return_value=ArcSettings()) as eff:
         assert ctx.settings is ctx.settings
     eff.assert_called_once_with(conn)
+
+
+def test_rss_reports_per_feed_new_and_filtered(conn: sqlite3.Connection) -> None:
+    """D55 (E4.11): the rss run's summary/metrics carry per-feed new + filtered counts."""
+    from collections import Counter
+
+    from arc.ingest.rss import RssFetch
+
+    feeds = [
+        {"name": "cnbc_earnings", "url": "https://c/e", "category": "company_data"},
+        {"name": "seekingalpha", "url": "https://s/x", "category": "company_data"},
+    ]
+    docs = [_stored_doc(conn, "rss", f"https://x/{i}") for i in range(3)]
+    ret = RssFetch(
+        docs=docs,
+        new=Counter({"cnbc_earnings": 2, "seekingalpha": 1}),
+        filtered=Counter({"seekingalpha": 4}),
+    )
+    ctx = _ctx(conn, "rss", {"feeds": feeds})
+    with mock.patch("arc.ingest.rss.fetch_rss_feeds", return_value=ret) as fetch:
+        result = rss_source(ctx)
+    assert set(fetch.call_args.kwargs["feed_specs"]) == {"https://c/e", "https://s/x"}
+    assert result.summary == "3 new docs (cnbc_earnings 2, seekingalpha 1), 4 filtered"
+    assert result.metrics["filtered"] == 4
+    assert result.metrics["new_cnbc_earnings"] == 2
+    assert result.metrics["filtered_seekingalpha"] == 4

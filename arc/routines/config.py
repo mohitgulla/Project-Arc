@@ -861,21 +861,26 @@ class RoutinesConfig(BaseModel):
         ``every:`` of 60 min or less. A source without ``feed:`` is the Sweep's.
         """
         raw = spec.options.get("feed")
-        if raw is None:
-            return
+        declared = [(raw, f"source {name!r}")] if raw is not None else []
+        for f in spec.options.get("feeds") or []:  # D55: each RSS feed declares its feed
+            if isinstance(f, dict) and f.get("feed") is not None:
+                declared.append(
+                    (f["feed"], f"source {name!r} feed {f.get('name') or f.get('url')!r}")
+                )
         fast = spec.every is not None and spec.every <= _FAST_FEED_MAX_EVERY
-        if raw == "sweep" and not fast:
-            msg = f"source {name!r}: feed sweep needs an intraday `every:` of at most 60m (D54)"
-            raise ValueError(msg)
-        if raw == "scout" and (fast or not spec.schedule):
-            msg = (
-                f"source {name!r}: feed scout needs a `schedule:` and no intraday "
-                "`every:` of 60m or less (D54)"
-            )
-            raise ValueError(msg)
-        if raw not in ("sweep", "scout"):
-            msg = f"source {name!r}: feed must be sweep | scout, got {raw!r} (D54)"
-            raise ValueError(msg)
+        for value, where in declared:
+            if value == "sweep" and not fast:
+                msg = f"{where}: feed sweep needs an intraday `every:` of at most 60m (D54)"
+                raise ValueError(msg)
+            if value == "scout" and (fast or not spec.schedule):
+                msg = (
+                    f"{where}: feed scout needs a `schedule:` and no intraday "
+                    "`every:` of 60m or less (D54)"
+                )
+                raise ValueError(msg)
+            if value not in ("sweep", "scout"):
+                msg = f"{where}: feed must be sweep | scout, got {value!r} (D54)"
+                raise ValueError(msg)
 
     @staticmethod
     def _check_source_category(name: str, spec: JobSpec) -> None:
