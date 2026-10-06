@@ -1716,12 +1716,14 @@ export interface components {
             return_pct?: number | null;
             /**
              * Returns
-             * @description Daily returns behind the Sharpe
+             * @description Daily returns behind the Sharpe and Sortino
              * @default 0
              */
             returns: number;
             /** Sharpe */
             sharpe?: number | null;
+            /** Sortino */
+            sortino?: number | null;
             /** Start Equity */
             start_equity?: number | null;
         };

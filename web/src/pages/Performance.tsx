@@ -184,6 +184,13 @@ function EquityCard({ p }: { p: Performance }) {
             value: ratio(e.sharpe),
             hint: `${e.returns ?? 0} daily returns`,
           },
+          {
+            label: "Sortino (annualised)",
+            sub: EXPLAIN.sortino.sub,
+            info: <InfoTip label="About Sortino">{EXPLAIN.sortino.tip}</InfoTip>,
+            value: ratio(e.sortino),
+            hint: `${e.returns ?? 0} daily returns`,
+          },
         ]}
       />
     </Card>
@@ -279,7 +286,6 @@ function WinLossCard({ p }: { p: Performance }) {
           },
           {
             label: "Expectancy",
-            sub: EXPLAIN.expectancy.sub,
             info: <InfoTip label="About expectancy">{EXPLAIN.expectancy.tip}</InfoTip>,
             value: money(s.expectancy),
           },

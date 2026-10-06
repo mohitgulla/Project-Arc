@@ -27,7 +27,7 @@ from arc.journal.scorecard import (
     model_vs_realised,
 )
 from arc.journal.tradestats import trade_stats
-from arc.reconcile.performance import daily_equity, daily_returns, drawdown, sharpe
+from arc.reconcile.performance import daily_equity, daily_returns, drawdown, sharpe, sortino
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.tower.api import create_app
@@ -249,6 +249,8 @@ def test_equity_card_matches_the_reconciled_series(conn: sqlite3.Connection, per
     assert e.max_drawdown_pct == pytest.approx(dd.pct)
     assert (e.drawdown_peak, e.drawdown_trough) == (dd.peak_day, dd.trough_day)
     assert e.sharpe == pytest.approx(sharpe(daily_returns(window)))
+    assert e.sortino is not None
+    assert e.sortino == pytest.approx(sortino(daily_returns(window)))
     assert e.start_equity == pytest.approx(float(window[0].equity))
     assert e.end_equity == pytest.approx(float(series[-1].equity))
     assert e.return_pct == pytest.approx(e.end_equity / e.start_equity - 1)
