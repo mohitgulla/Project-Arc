@@ -135,6 +135,8 @@ SCALP_CATEGORIES: frozenset[SourceCategory] = frozenset(
 KIND_CATEGORY: Mapping[str, SourceCategory] = {
     "vol_term": SourceCategory.OPTIONS_SLOW,
     "put_call": SourceCategory.OPTIONS_SLOW,
+    "options_daily": SourceCategory.OPTIONS_SLOW,  # E13.5 (D56)
+    "vx_curve": SourceCategory.OPTIONS_SLOW,
 }
 
 

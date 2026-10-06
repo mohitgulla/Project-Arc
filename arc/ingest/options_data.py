@@ -181,27 +181,17 @@ def fetch_vol_term(
 # Put/call ratios
 # ---------------------------------------------------------------------------
 
-_PC_NAMES = {
-    "TOTAL PUT/CALL RATIO": "total",
-    "EQUITY PUT/CALL RATIO": "equity",
-    "INDEX PUT/CALL RATIO": "index",
-    "EXCHANGE TRADED PRODUCTS PUT/CALL RATIO": "etp",
-    "SPX + SPXW PUT/CALL RATIO": "spx",
-    "CBOE VOLATILITY INDEX (VIX) PUT/CALL RATIO": "vix",
-}
-
 
 def parse_put_call(payload: Mapping[str, Any], day: _dt.date) -> PutCallPayload | None:
-    """Cboe daily-options JSON -> ratios; ``None`` when the day has no total ratio."""
-    vals: dict[str, float] = {}
-    for item in payload.get("ratios") or []:
-        key = _PC_NAMES.get(str(item.get("name", "")).strip().upper())
-        try:
-            v = float(str(item.get("value", "")).strip())
-        except ValueError:
-            continue
-        if key is not None and v > 0:
-            vals[key] = v
+    """Cboe daily-options JSON -> ratios; ``None`` when the day has no total ratio.
+
+    E13.5 (D56): a thin wrapper over :func:`arc.ingest.cboe_daily.daily_segments`, kept
+    one release for the ``put_call`` kind's d51 readers; removed in E13.15.
+    """
+    from arc.ingest.cboe_daily import daily_segments
+
+    ratios, _ = daily_segments(payload)
+    vals = {r.segment: r.ratio for r in ratios if r.ratio > 0}
     if "total" not in vals:
         return None
     return PutCallPayload(

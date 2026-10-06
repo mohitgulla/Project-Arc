@@ -120,6 +120,8 @@ ABOUT_MAX_CHARS = 160
 
 #: D54: a source refreshed at most this often (intraday ``every:``) is a fast (Scalp) feed.
 _FAST_FEED_MAX_EVERY = _dt.timedelta(minutes=60)
+#: E13.5: the per-session template of ``catch_up.until_written`` (``<kind>:{day}``).
+SESSION_DAY_TOKEN = "{day}"
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 _JOB_NAME = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$")
@@ -210,7 +212,16 @@ class ContextPolicy(BaseModel):
 class CatchUp(BaseModel):
     """Retry cadence of a slow job (E12.2): run on ``days`` slots that are not regular
     slots while no ``until_written`` (``kind:subject``) entry was written since the
-    job's latest regular slot (or ever, when no regular slot is within ``lookback``)."""
+    job's latest regular slot (or ever, when no regular slot is within ``lookback``).
+
+    E13.5 (D56): ``until_written: "<kind>:{day}"`` is per *session* instead. ``{day}``
+    is the session a slot reads (:func:`arc.ingest.cboe_daily.session_date`: today
+    from 16:30 ET on a session, else the previous session), and "written" means an
+    entry of ``kind`` whose payload ``as_of`` is that date. Every slot of the job
+    (regular or catch-up) is then dropped from the plan once its session is written,
+    so an evening + morning schedule runs the morning slot only when the evening one
+    did not write.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -238,12 +249,23 @@ class CatchUp(BaseModel):
         if kind not in KINDS:
             msg = f"catch_up.until_written: unknown context kind {kind!r}"
             raise ValueError(msg)
+        if "{" in subject and subject.strip() != SESSION_DAY_TOKEN:
+            msg = (
+                f"catch_up.until_written: the only template is '<kind>:{SESSION_DAY_TOKEN}', "
+                f"got {v!r}"
+            )
+            raise ValueError(msg)
         return v
 
     @property
     def target(self) -> tuple[str, str]:
         kind, _, subject = self.until_written.partition(":")
         return kind, subject.strip()
+
+    @property
+    def per_session(self) -> bool:
+        """E13.5: ``<kind>:{day}``, written once per session (payload ``as_of``)."""
+        return self.target[1] == SESSION_DAY_TOKEN
 
 
 def _weekday_list(v: Any) -> Any:
@@ -903,6 +925,19 @@ class FunnelConfig(BaseModel):
     research: FunnelResearch = Field(default_factory=FunnelResearch)
 
 
+class OptionsSlowSettings(BaseModel):
+    """E13.5 (D56): the ``options_slow:`` block (Cboe daily stats + CFE VX curve knobs)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # VX curve shape: |slope month1 -> month2| below this many percent = flat.
+    vx_flat_band: Annotated[float, Field(ge=0, le=10)] = 0.5
+    # Measurement only (not runtime-tunable): when > 0, an evening options_daily /
+    # vix_futures run that finds the session unpublished re-probes once a minute for
+    # up to this many minutes and records how long it waited (metric probe_wait_s).
+    publish_probe_minutes: Annotated[int, Field(ge=0, le=60)] = 0
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -931,6 +966,7 @@ class RoutinesConfig(BaseModel):
         default_factory=ResearchDiversificationSettings
     )
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)  # D56 (E13.3)
+    options_slow: OptionsSlowSettings = Field(default_factory=OptionsSlowSettings)  # E13.5
     # E13.9: the ``personas.quant_risk_loop`` flag (as ``enabled``).
     quant_risk_loop: QuantRiskLoopSettings = Field(default_factory=QuantRiskLoopSettings)
 

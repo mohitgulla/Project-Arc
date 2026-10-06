@@ -114,7 +114,7 @@ class DueJob:
     job: str
     kind: JobKind
     slot: _dt.datetime
-    action: str  # run | skip-halted | skip-missed
+    action: str  # run | skip-halted | skip-missed | skip-written (E13.5)
     collapsed: int = 0  # earlier missed slots folded into this one
     chain: tuple[str, ...] = ()
     note: str = ""
@@ -292,11 +292,34 @@ class Dispatcher:
             elif now > catchup_deadline(spec, slot):
                 note = f"missed; catch-up window ended {catchup_deadline(spec, slot):%a %H:%M}"
                 due.append(DueJob(name, kind, slot, "skip-missed", collapsed, chain, note))
+            elif (written := self._session_written(spec, slot)) is not None:
+                due.append(DueJob(name, kind, slot, "skip-written", collapsed, chain, written))
             else:
                 due.append(DueJob(name, kind, slot, "run", collapsed, chain))
         # Sources first (after_sources), then personas; each group in slot order.
         due.sort(key=lambda d: (d.kind is not JobKind.SOURCE, d.slot, d.job))
         return due
+
+    def _session_written(self, spec: JobSpec, slot: _dt.datetime) -> str | None:
+        """E13.5: for ``catch_up.until_written: "<kind>:{day}"``, the skip reason when an
+        entry of ``kind`` whose payload ``as_of`` is *slot*'s session is already
+        stored (any status: it was written). ``None`` = run the slot. Read-only."""
+        from arc.utils.calendar import completed_session
+
+        cu = spec.catch_up
+        if cu is None or not cu.per_session:
+            return None
+        kind, _ = cu.target
+        day = completed_session(slot).isoformat()
+        try:
+            row = self.conn.execute(
+                "SELECT 1 FROM context_entries WHERE kind = ? "
+                "AND json_extract(payload, '$.as_of') = ? LIMIT 1",
+                (kind, day),
+            ).fetchone()
+        except sqlite3.OperationalError:  # store not migrated: nothing written yet
+            row = None
+        return f"already written: {kind} for {day}" if row else None
 
     def _catch_up_slot(
         self, spec: JobSpec, start: _dt.datetime, now: _dt.datetime
@@ -311,6 +334,8 @@ class Dispatcher:
         retries = [s for s in catch_up_slots(spec, start, now) if now <= catchup_deadline(spec, s)]
         if not retries:
             return None
+        if cu.per_session:  # E13.5: written once per session (payload as_of)
+            return None if self._session_written(spec, retries[-1]) else retries[-1]
         kind, subject = cu.target
         regular = slots_between(spec, now - cu.lookback, now)
         try:
@@ -380,6 +405,8 @@ class Dispatcher:
         if d.action == "skip-halted":
             return "halted (persona)"
         if d.action == "skip-missed":
+            return d.note
+        if d.action == "skip-written":  # E13.5 per-session catch-up already satisfied
             return d.note
         if d.note:  # E12.2 catch-up slot
             return d.note
