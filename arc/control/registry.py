@@ -174,6 +174,9 @@ NEVER_TUNABLE: frozenset[str] = frozenset(
         "yaml_overrides",
         "scalp_hermes_bin",
         "ffmpeg_bin",
+        # E13.11 (D56): process topology; change by env var + PR, never at runtime.
+        "broker_venue",
+        "broker_transport",
     }
 )
 

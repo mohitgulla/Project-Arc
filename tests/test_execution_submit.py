@@ -372,3 +372,41 @@ def test_attempt_order_id() -> None:
     assert attempt_order_id(arc1, 0) == arc1
     with pytest.raises(TokenError):
         attempt_order_id(arc1, 1)
+
+
+# ---------------------------------------------------------------------------
+# E13.11 (D1/D56): a single-leg-only venue never receives a spread
+# ---------------------------------------------------------------------------
+
+
+class SingleLegBroker(FakeBroker):
+    supports_mleg = False
+
+
+def test_single_leg_venue_refuses_a_spread() -> None:
+    p = proposal()
+    broker = SingleLegBroker()
+    with pytest.raises(SubmitRefused) as e:
+        submit(p, gated(p), approved(p), broker=broker, config=cfg(), now=NOW, halt=switch())
+    assert e.value.code is RefusalCode.VENUE_SINGLE_LEG_ONLY
+    assert "2 legs" in e.value.detail
+    assert broker.orders == []
+
+
+def test_single_leg_venue_takes_a_single_leg() -> None:
+    from arc.structures import long_put
+
+    p = proposal(
+        structure=long_put("SPY", EXP, strike=565, premium="1.25", as_of=dt.date(2026, 10, 9)),
+        sizing=Sizing(contracts=1, notional=D("125"), pct_equity=0.001),
+    )
+    broker = SingleLegBroker()
+    out = submit(p, gated(p), approved(p), broker=broker, config=cfg(), now=NOW, halt=switch())
+    assert out == "brk-1"
+    assert len(broker.orders[0].legs) == 1
+
+
+def test_broker_without_supports_mleg_is_multi_leg() -> None:
+    p = proposal()
+    assert not hasattr(FakeBroker(), "supports_mleg")
+    assert go(p, gated(p), approved(p))[0] == "brk-1"

@@ -190,6 +190,12 @@ def test_hook_yaml_declares_fail_closed_pre_tool_call() -> None:
         "mcp__alpaca__close_position",
         "mcp__alpaca__close_all_positions",
         "mcp__alpaca__exercise_options_position",
+        # E13.11: Robinhood Agentic MCP — order tools and every tool on its server
+        "mcp__robinhood__place_option_order",
+        "mcp__robinhood__cancel_option_order",
+        "mcp__robinhood__exercise_option",
+        "mcp__robinhood__get_portfolio",
+        "mcp__Robinhood_Trading__review_option_order",
     ):
         assert m.fullmatch(tool), tool
     for tool in ("read_file", "mcp__alpaca__get_orders", "mcp__alpaca__cancel_order_by_id"):

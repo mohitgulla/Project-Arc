@@ -8,7 +8,7 @@ from __future__ import annotations
 import enum
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import structlog
 from pydantic import Field, PrivateAttr, SecretStr, field_validator, model_validator
@@ -157,6 +157,17 @@ class ArcSettings(BaseSettings):
     env: ArcEnv = Field(
         default=ArcEnv.PAPER,
         description="Execution environment: paper (default) or live.",
+    )
+    # E13.11 (D56): the broker registry key is (broker_venue, env, broker_transport).
+    # Only alpaca/paper/rest constructs; every other combination is refused by
+    # arc.broker.registry with BrokerNotAvailable before any credential read.
+    broker_venue: Literal["alpaca", "robinhood"] = Field(
+        default="alpaca",
+        description="Broker venue (ARC_BROKER_VENUE). Only alpaca is enabled (D1/D56).",
+    )
+    broker_transport: Literal["rest", "mcp"] = Field(
+        default="rest",
+        description="Order transport (ARC_BROKER_TRANSPORT). Only rest is enabled (D56).",
     )
 
     # -- Risk limits (PLAN.md §5) -------------------------------------------

@@ -5,6 +5,9 @@
 #     bound to exactly these legs, qty and limit price (limit/day orders only).
 #   - Alpaca MCP v2 `place_stock_order`, `place_crypto_order`, `replace_order_by_id`,
 #     `close_position`, `close_all_positions`, `exercise_options_position`: always blocked.
+#   - Robinhood Agentic MCP (E13.11, D1/D56, interface only): `cancel_option_order`,
+#     `exercise_option` always blocked, and every tool on a `*robinhood*` server
+#     (its `place_option_order` included) is blocked.
 #   - `terminal` commands that run `arc execute`: need `--token <valid gate token>`.
 #     All other terminal commands pass untouched.
 #
@@ -28,7 +31,7 @@ name: arc-gate
 description: Fail-closed gate on broker order tools; requires an Arc HMAC gate token.
 hermes_hooks:
   pre_tool_call:
-    - matcher: "terminal|mcp__.+__(place_option_order|place_stock_order|place_crypto_order|replace_order_by_id|close_position|close_all_positions|exercise_options_position)"
+    - matcher: "terminal|mcp__.+__(place_option_order|place_stock_order|place_crypto_order|replace_order_by_id|close_position|close_all_positions|exercise_options_position|cancel_option_order|exercise_option)|mcp__[^ ]*(?i:robinhood)[^ ]*__.+"
       command: "{ARC_REPO}/.venv/bin/python -E {ARC_REPO}/hermes/hooks/arc-gate/hook.py"
       timeout: 10
       fail_closed: true

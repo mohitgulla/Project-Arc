@@ -31,6 +31,11 @@ def add_reconcile_parser(sub: argparse._SubParsersAction) -> None:  # type: igno
     p.add_argument(
         "--no-settle", action="store_true", help="Do not fetch closes to settle expired structures"
     )
+    p.add_argument(
+        "--now",
+        default=None,
+        help="Reconcile as of this tz-aware ISO time (default: now), e.g. 2026-10-05T16:30-04:00",
+    )
 
 
 def run_reconcile(args: argparse.Namespace, *, broker: BrokerAdapter | None = None) -> int:
@@ -49,16 +54,33 @@ def run_reconcile(args: argparse.Namespace, *, broker: BrokerAdapter | None = No
     settings = effective_settings(conn, base=settings)  # D26 overrides
     settle = None
     if broker is None:
+        from arc.broker.registry import BrokerNotAvailable
         from arc.experiments.broker import trading_broker
 
-        broker = trading_broker(conn, settings)  # E10.2: an arm store's own account
+        try:
+            broker = trading_broker(conn, settings)  # E10.2: an arm store's own account
+        except BrokerNotAvailable as exc:  # E13.11: refused before any credential read
+            refusal = {"status": "refused", "detail": str(exc), "broker": exc.spec.label}
+            sys.stdout.write(json.dumps(refusal) + "\n")
+            return 2
         if not args.no_settle:
             from arc.broker.reconcile_job import settle_from_market
             from arc.data.alpaca import AlpacaMarketData
 
             settle = settle_from_market(AlpacaMarketData())
+    now = now_et()
+    if getattr(args, "now", None):
+        import datetime as dt
+
+        from arc.utils.calendar import ET
+
+        at = dt.datetime.fromisoformat(args.now)
+        if at.tzinfo is None:
+            sys.stderr.write("--now must carry a UTC offset\n")
+            return 2
+        now = at.astimezone(ET)
     report = reconcile(
-        conn, broker, settings=settings, now=now_et(), halt=not args.no_halt, settle_price=settle
+        conn, broker, settings=settings, now=now, halt=not args.no_halt, settle_price=settle
     )
     perf = performance(conn, report.day)
     out = report.model_dump(mode="json")

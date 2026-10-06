@@ -97,9 +97,14 @@ def run_execute(args: argparse.Namespace, *, broker: BrokerAdapter | None = None
         return 1
 
     if broker is None:
+        from arc.broker.registry import BrokerNotAvailable
         from arc.experiments.broker import trading_broker
 
-        broker = trading_broker(conn)  # E10.2: an arm store trades only its own account
+        try:  # E10.2: an arm store trades only its own account
+            broker = trading_broker(conn, settings)
+        except BrokerNotAvailable as exc:  # E13.11: refused before any credential read
+            _out({"status": "refused", "detail": str(exc)})
+            return 2
     out = execute(
         proposal,
         decision,

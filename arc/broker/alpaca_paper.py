@@ -16,6 +16,7 @@ import datetime as dt  # noqa: TC003 — used at runtime
 import os
 import uuid
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 import structlog
 from alpaca.trading.client import TradingClient
@@ -34,6 +35,9 @@ from arc.broker.base import (
     Fill,
     MlegOrder,
 )
+
+if TYPE_CHECKING:
+    from arc.broker.registry import BrokerInfo
 
 log = structlog.get_logger()
 
@@ -163,9 +167,28 @@ class AlpacaPaperBroker:
         *,
         api_key: str | None = None,
         secret_key: str | None = None,
+        account_label: str = "paper",
     ) -> None:
         _require_paper()
         self._client = client or _make_client(api_key, secret_key)
+        self._account_label = account_label
+
+    # -- identity (E13.11: registered as alpaca/paper/rest) -------------------
+
+    venue = "alpaca"
+    env = "paper"
+    supports_mleg = True
+
+    def info(self) -> BrokerInfo:
+        """Venue/env/transport and an account label (never the account number)."""
+        from arc.broker.registry import BrokerInfo, BrokerSpec
+
+        return BrokerInfo(
+            spec=BrokerSpec(venue="alpaca", env="paper", transport="rest"),
+            account_label=self._account_label,
+            supports_mleg=True,
+            supports_paper=True,
+        )
 
     # -- account -------------------------------------------------------------
 

@@ -37,7 +37,6 @@ import structlog
 from arc.context.ttl import from_db, to_db
 from arc.experiments.arms import (
     ArmIdentity,
-    arm_keys,
     arm_stores,
     read_identity,
     write_identity,
@@ -317,9 +316,14 @@ def live_flat_check(environ: Mapping[str, str] | None = None) -> Callable[[ArmRu
 
     def check(arm: ArmRunner) -> None:
         from arc.broker.alpaca_paper import AlpacaPaperBroker
+        from arc.broker.registry import resolve_broker
+        from arc.config import get_settings
 
-        key, secret = arm_keys(arm.keys_env, environ)
-        broker = AlpacaPaperBroker(api_key=key, secret_key=secret)
+        # the arm's own keys (arm_keys refuses ALPACA / ALPACA_TEST) via the registry
+        broker = resolve_broker(get_settings(), keys_env=arm.keys_env, environ=environ)
+        if not isinstance(broker, AlpacaPaperBroker):  # only alpaca/paper/rest constructs
+            msg = f"arm t0 check needs the Alpaca paper broker, got {type(broker).__name__}"
+            raise ArmStartError(msg)
         held = broker.positions()
         if held:
             msg = (
