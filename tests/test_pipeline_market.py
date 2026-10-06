@@ -315,7 +315,7 @@ def test_propose_skips_reprice_failed_on_missing_iv(monkeypatch: pytest.MonkeyPa
         conn, cfg, load_routines(), env, now=FIXTURE_NOW, notifier=RecordingNotifier()
     )
 
-    propose = next(o for o in report.outcomes if o.job == "propose")
+    propose = next(o for o in report.outcomes if o.job == "quant.propose")
     assert propose.status == "ok"
     assert not report.proposals  # never reached the gate
     assert f"reprice failed (no implied volatility for {leg}" in (propose.summary or "")

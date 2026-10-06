@@ -125,6 +125,11 @@ class ReasonCode(StrEnum):
     RISK_DECLINED = "risk_declined"
     UNKNOWN_STRUCTURE = "unknown_structure"
     NOT_ASSESSED = "not_assessed"
+    # E13.9 (D56): Quant <-> Risk open path (personas.quant_risk_loop: on)
+    RISK_REVISE = "risk_revise"  # Risk asked Quant for one revision
+    RISK_REJECT = "risk_reject"  # Risk rejected the structure; never proposed
+    QUANT_REVISED = "quant_revised"  # quant.revise re-chose the structure
+    QUANT_KEPT = "quant_kept"  # quant.revise kept the structure unchanged
     # propose (deterministic)
     PROPOSED = "proposed"
     ALREADY_PROPOSED = "already_proposed"
@@ -331,6 +336,10 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.RISK_DECLINED: "Risk declined it",
     ReasonCode.UNKNOWN_STRUCTURE: "Risk reviewed an unknown structure",
     ReasonCode.NOT_ASSESSED: "Risk did not review it",
+    ReasonCode.RISK_REVISE: "Risk asked Quant to revise it",
+    ReasonCode.RISK_REJECT: "Risk rejected it",
+    ReasonCode.QUANT_REVISED: "Quant revised it for Risk",
+    ReasonCode.QUANT_KEPT: "Quant kept it unchanged after Risk's ask",
     ReasonCode.PROPOSED: "Proposed",
     ReasonCode.ALREADY_PROPOSED: "Already proposed this run",
     ReasonCode.NO_STRUCTURE: "No structure to propose",

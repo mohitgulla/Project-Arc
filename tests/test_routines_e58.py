@@ -127,7 +127,11 @@ class TestNoChange:
         _seed_scalp(conn, routines)
         disp = _disp(conn, routines)
         first, second = _warm(disp)
-        assert {s for s, o in first.items() if o.status == "ok"} >= {"quant", "risk", "propose"}
+        assert {s for s, o in first.items() if o.status == "ok"} >= {
+            "quant.open",
+            "risk.open",
+            "quant.propose",
+        }
         calls = _llm_calls(conn)
         assert calls >= 6  # 2 x (research + quant + risk)
         digest = second["research"].metrics["loop_digest"]
@@ -137,8 +141,8 @@ class TestNoChange:
         assert d.status == "ok" and d.metrics["no_change"] is True, d.summary
         assert d.metrics["loop_digest"] == digest
         assert d.summary.startswith("no_change")
-        assert third["quant"].status == "skipped" and third["risk"].status == "skipped"
-        assert third["propose"].status == "skipped"
+        assert third["quant.open"].status == "skipped" and third["risk.open"].status == "skipped"
+        assert third["quant.propose"].status == "skipped"
         assert third["broker.execute"].status == "ok", third["broker.execute"].reason
         assert _llm_calls(conn) == calls  # not one more LLM call
         # the journal explains the skip
@@ -149,7 +153,7 @@ class TestNoChange:
         # the skipped steps are on the record with the reason
         runs = RoutineRunRepo(conn)
         skipped = [r for r in runs.history(limit=30) if r.status.value == "skipped"]
-        assert {r.job for r in skipped} == {"quant", "risk", "propose"}
+        assert {r.job for r in skipped} == {"quant.open", "risk.open", "quant.propose"}
         assert all("no_change" in (r.summary or "") for r in skipped)
         # the run manifest carries the digest that was compared
         (payload,) = conn.execute(
@@ -236,7 +240,7 @@ class TestNoChange:
             o.job: o for o in disp.run_job("research", at2, reason="schedule", now=at2, chain=True)
         }
         assert outs["research"].status == "failed" and "outage" in outs["research"].summary
-        assert "quant" not in outs  # the chain stopped at the failure
+        assert "quant.open" not in outs  # the chain stopped at the failure
         assert LoopState(conn).last_full_run() == SLOT0  # the failed slot did not advance it
         assert LoopState(conn).last_digest() == digest1
         # the failure is on the record as an llm_error persona call, not a completed evaluation
@@ -254,7 +258,11 @@ class TestNoChange:
         assert third["research"].metrics["no_change"] is False
         assert third["research"].metrics["loop_digest"] != digest1
         assert _llm_calls(conn) > calls_after_fail > calls
-        assert {s for s, o in third.items() if o.status == "ok"} >= {"quant", "risk", "propose"}
+        assert {s for s, o in third.items() if o.status == "ok"} >= {
+            "quant.open",
+            "risk.open",
+            "quant.propose",
+        }
         assert LoopState(conn).last_full_run() == SLOT0 + dt.timedelta(minutes=10)
         # and from here the same inputs do skip (the skip itself still works)
         fourth = _slot(disp, SLOT0 + dt.timedelta(minutes=15))
@@ -321,7 +329,7 @@ class TestConfigOnlyCadence:
         _slot(disp, SLOT0 + dt.timedelta(minutes=10))
         third = _slot(disp, SLOT0 + dt.timedelta(minutes=20))
         assert third["research"].metrics["no_change"] is True
-        assert third["quant"].status == "skipped" and third["broker.execute"].status == "ok"
+        assert third["quant.open"].status == "skipped" and third["broker.execute"].status == "ok"
 
 
 class TestDigest:
@@ -444,7 +452,7 @@ class TestOverlapAndDeadline:
 
         out = run_slow(SLOT0)
         assert out["research"].status == "ok"
-        assert out["quant"].status == "skipped" and "timeout" in out["quant"].reason
+        assert out["quant.open"].status == "skipped" and "timeout" in out["quant.open"].reason
         assert out["broker.execute"].status == "skipped"
         alerts = [t for _, t in notes.posts if "exceeded" in t]
         assert len(alerts) == 1
@@ -530,7 +538,8 @@ class TestRootPerLoop:
         # the proposal card (recorded by the poster), and [Routines] last.
         labels = [r.split(" ", 1)[0].lstrip("`\n") for r in replies]
         order = [lbl for lbl in labels if lbl in {"[Scalp]", "[Research]", "[Quant]", "[Risk]"}]
-        assert order == ["[Scalp]", "[Research]", "[Quant]", "[Risk]"], replies
+        # E13.9: quant.propose is the Quant's step (D56), so its summary is a [Quant] line.
+        assert order == ["[Scalp]", "[Research]", "[Quant]", "[Risk]", "[Quant]"], replies
         assert replies[0].startswith("[Scalp] scalp ✓ [Scalp] Context: ")
         assert "run " + slot_stamp(SLOT0) in replies[0]  # the Scalp run Research read
         scalp_blocks = notes.blocks[notes.threads.index(ts)]

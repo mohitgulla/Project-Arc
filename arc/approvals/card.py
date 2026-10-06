@@ -625,6 +625,9 @@ def _why(p: Proposal, t: DecisionTrail) -> list[dict[str, Any] | None]:
                 str(q["rationale"]),
             )
         )
+    rv = t.revision or {}
+    if rv.get("rationale"):  # E13.9: Quant re-chose the structure for Risk
+        out.append(B.persona_section(Persona.QUANT, "Revised for Risk", str(rv["rationale"])))
 
     r = t.risk or {}
     head = []
@@ -636,6 +639,9 @@ def _why(p: Proposal, t: DecisionTrail) -> list[dict[str, Any] | None]:
         head.append(f"Suggested {sug} → sized {n}" + (" (5% equity cap)" if n < sug else ""))
     if r.get("concentration_warning"):
         head.append(":warning: Concentration")
+    req = r.get("revise_request")
+    if r.get("verdict") == "revise" and isinstance(req, dict):  # E13.9
+        head.append(f"Asked Quant to revise ({B.esc(str(req.get('reason', '')))})")
     lines = [" · ".join(head)] if head else []
     for label, key in (("Calendar", "calendar_concerns"), ("Greek budget", "greek_budget_impact")):
         if r.get(key):

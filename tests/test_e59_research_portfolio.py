@@ -599,7 +599,7 @@ class TestProposeDedupe:
                 settings, routines, PipelineEnv.fixtures(), conn=conn,
                 now=FIXTURE_NOW + dt.timedelta(minutes=5 * k),
             )  # fmt: skip
-            po = _outcome(again, "propose")
+            po = _outcome(again, "quant.propose")
             assert po.metrics["proposals"] == 0 and po.metrics["dedupe"] == 1, po.summary
         rows = conn.execute("SELECT COUNT(*) FROM proposals WHERE kind='open'").fetchone()[0]
         assert rows == 1
@@ -658,7 +658,7 @@ class TestProposeDedupe:
             settings, routines, PipelineEnv.fixtures(), conn=conn,
             now=FIXTURE_NOW + dt.timedelta(minutes=5),
         )  # fmt: skip
-        assert _outcome(r, "propose").metrics["proposals"] == 1
+        assert _outcome(r, "quant.propose").metrics["proposals"] == 1
         assert _codes(conn, "propose")["dedupe_override"] == ["SPY"]
 
     def test_regime_change_overrides_cooldown(self, settings, routines) -> None:  # noqa: ANN001
@@ -669,7 +669,7 @@ class TestProposeDedupe:
             settings, routines, PipelineEnv.fixtures(), conn=conn,
             now=FIXTURE_NOW + dt.timedelta(minutes=5),
         )  # fmt: skip
-        assert _outcome(r, "propose").metrics["proposals"] == 1
+        assert _outcome(r, "quant.propose").metrics["proposals"] == 1
 
     def test_owner_rejection_holds_rejected_cooldown(self, settings, routines) -> None:  # noqa: ANN001
         conn, first = _run(settings, routines, PipelineEnv.fixtures())
@@ -691,7 +691,7 @@ class TestProposeDedupe:
             settings, routines, PipelineEnv.fixtures(), conn=conn,
             now=FIXTURE_NOW + dt.timedelta(minutes=5),
         )  # fmt: skip
-        assert _outcome(r, "propose").metrics["proposals"] == 0
+        assert _outcome(r, "quant.propose").metrics["proposals"] == 0
         assert _codes(conn, "propose")["dedupe_rejected"] == ["SPY"]
         # a system (TTL) expiry is only a `proposed` idea, not an owner rejection
         conn.execute("UPDATE approval_requests SET decided_by = 'arc:ttl'")

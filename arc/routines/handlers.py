@@ -57,9 +57,12 @@ class JobSkippedError(Exception):
     for a skip a human must act on (E4.1d: no earnings API key), deduped by the handler.
     """
 
-    def __init__(self, *args: object, notice: str = "") -> None:
+    def __init__(self, *args: object, notice: str = "", continue_chain: bool = False) -> None:
         super().__init__(*args)
         self.notice = notice
+        # E13.9: an optional chain step (quant.revise) skipping itself does not stop
+        # the chain; the next step runs as if it had succeeded.
+        self.continue_chain = continue_chain
 
 
 class ContractViolationError(RuntimeError):
@@ -1443,11 +1446,13 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "finnhub.fundamentals": "arc.routines.handlers:finnhub_fundamentals_source",
     "finnhub.earnings_history": "arc.routines.handlers:finnhub_earnings_history_source",
     "scalp": "arc.routines.handlers:scalp_persona",
-    # E5.2 pipeline chain: research → quant → risk → propose (arc/pipeline/steps.py)
+    # E5.2 pipeline chain: research → quant.open → risk.open → [quant.revise] →
+    # quant.propose (arc/pipeline/steps.py; E13.9 / D56 step names)
     "research": "arc.pipeline.steps:research_step",
-    "quant": "arc.pipeline.steps:quant_step",
-    "risk": "arc.pipeline.steps:risk_step",
-    "propose": "arc.pipeline.steps:propose_step",
+    "quant.open": "arc.pipeline.steps:quant_open_step",
+    "risk.open": "arc.pipeline.steps:risk_open_step",
+    "quant.revise": "arc.pipeline.steps:quant_revise_step",
+    "quant.propose": "arc.pipeline.steps:quant_propose_step",
     # E5.3 intraday monitor (read-only: positions, Greeks, expiries, daily-loss halt)
     "monitor": "arc.routines.monitor:monitor_step",
     # E6.2 / D56 Broker: works an approved proposal through its D24 price band
@@ -1476,6 +1481,10 @@ DEPRECATED_JOB_ALIASES: Mapping[str, str] = {
     "investor.exits": "quant.exits",
     "execute": "broker.execute",
     "auditor": "broker.reconcile",
+    # E13.9 (D56): open-path step renames
+    "quant": "quant.open",
+    "risk": "risk.open",
+    "propose": "quant.propose",
 }
 
 

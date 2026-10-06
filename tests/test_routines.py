@@ -128,7 +128,16 @@ LOCAL_ROUTING = LLMRouting(
     personas={p: "local" for p in Persona},
 )
 
-ALL = ["rss", "scalp", "research", "quant", "risk", "propose", "broker.reconcile", "broker"]
+ALL = [
+    "rss",
+    "scalp",
+    "research",
+    "quant.open",
+    "risk.open",
+    "quant.propose",
+    "broker.reconcile",
+    "broker",
+]
 
 
 @pytest.fixture
@@ -176,7 +185,12 @@ class TestConfig:
     def test_shipped_config_validates(self) -> None:
         c = load_routines(DEFAULT_ROUTINES_PATH)
         assert c.personas["scalp"].after_sources
-        assert c.personas["research"].chain == ["quant", "risk", "propose", "broker.execute"]
+        assert c.personas["research"].chain == [
+            "quant.open",
+            "risk.open",
+            "quant.propose",
+            "broker.execute",
+        ]
         # D31: the trading loop replaces the scalp.completed -> research trigger.
         assert c.triggers_for("scalp.completed") == []
         assert c.is_loop("research") and not c.is_loop("scalp")
@@ -270,7 +284,7 @@ class TestConfig:
     def test_writes_parse(self) -> None:
         c = cfg("personas: {d: {schedule: ['09:00'], writes: [shortlist, note]}}")
         assert c.personas["d"].writes == ["shortlist", "note"]
-        assert cfg("steps: {propose: {writes: []}}").steps["propose"].writes == []
+        assert cfg("steps: {propose: {writes: []}}").steps["quant.propose"].writes == []
         assert cfg("personas: {d: {schedule: ['09:00']}}").personas["d"].writes is None
 
     def test_unknown_write_kind_message(self) -> None:
@@ -290,7 +304,7 @@ class TestConfig:
             triggers: [{on: quant.completed, run: auditor}]
             """
         )
-        assert c.triggers_for("quant.completed")[0].run == "broker.reconcile"
+        assert c.triggers_for("quant.open.completed")[0].run == "broker.reconcile"
 
     def test_step_and_context_policy_lookup(self) -> None:
         c = cfg(
@@ -599,30 +613,30 @@ class TestChains:
     def test_chain_order_and_shared_chain_id(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
         d.tick(et(2026, 9, 28, 9, 0), since=et(2026, 9, 28, 8, 55))
-        assert rec.calls == ["rss", "research", "quant", "risk", "propose"]
+        assert rec.calls == ["rss", "research", "quant.open", "risk.open", "quant.propose"]
         rows = conn.execute(
             "SELECT job, chain_run_id, step_index FROM routine_runs"
             " WHERE chain_run_id IS NOT NULL ORDER BY step_index"
         ).fetchall()
-        assert [r["job"] for r in rows] == ["research", "quant", "risk", "propose"]
+        assert [r["job"] for r in rows] == ["research", "quant.open", "risk.open", "quant.propose"]
         assert len({r["chain_run_id"] for r in rows}) == 1
         # each step reads the context written by the previous one
         assert rec.snapshots["research"] == []
-        assert rec.snapshots["quant"] == ["shortlist"]
+        assert rec.snapshots["quant.open"] == ["shortlist"]
 
     def test_failed_step_stops_chain_then_resume(self, conn: sqlite3.Connection) -> None:
         d, rec, notes = make(conn)
-        rec.fail.add("risk")
+        rec.fail.add("risk.open")
         d.tick(et(2026, 9, 28, 9, 0), since=et(2026, 9, 28, 8, 55))
-        assert rec.calls == ["rss", "research", "quant", "risk"]
-        assert any("risk FAILED" in t for _, t in notes.posts)
+        assert rec.calls == ["rss", "research", "quant.open", "risk.open"]
+        assert any("risk.open FAILED" in t for _, t in notes.posts)
         chain_id = RoutineRunRepo(conn).latest_failed_chain("research", dt.date(2026, 9, 28))
         assert chain_id is not None
 
         rec.calls.clear()
         rec.fail.clear()
         outcomes = d.run_manual("research", now=et(2026, 9, 28, 9, 20), chain=True)
-        assert rec.calls == ["risk", "propose"]  # research + quant are not re-run
+        assert rec.calls == ["risk.open", "quant.propose"]  # research + quant are not re-run
         assert [o.status for o in outcomes] == ["ok", "ok", "ok", "ok"]
         steps = RoutineRunRepo(conn).chain(chain_id)
         assert [s.status for s in steps] == [RunStatus.OK] * 4
@@ -646,7 +660,7 @@ class TestChains:
         assert rec.calls == ["rss", "scalp"]  # after_sources
         rec.calls.clear()
         d.run_manual("research", now=et(2026, 9, 28, 13, 8), chain=True, fresh=True)
-        assert rec.calls == ["research", "quant", "risk", "propose"]
+        assert rec.calls == ["research", "quant.open", "risk.open", "quant.propose"]
         with pytest.raises(KeyError):
             d.run_manual("nobody", now=et(2026, 9, 28, 13, 9))
         with pytest.raises(KeyError):
@@ -660,7 +674,7 @@ class TestTriggers:
         d, rec, _ = make(conn)
         rec.metrics["scalp"] = {"new_candidates": 2}
         report = d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
-        assert rec.calls == ["rss", "scalp", "research", "quant", "risk", "propose"]
+        assert rec.calls == ["rss", "scalp", "research", "quant.open", "risk.open", "quant.propose"]
         research = next(o for o in report.outcomes if o.job == "research")
         assert research.reason == "event:scalp.completed"
 
@@ -711,7 +725,7 @@ class TestContextIntegration:
         repo = RoutineRunRepo(conn)
         by_job = {r.job: r for r in repo.history(limit=10)}
         store = ContextStore(conn)
-        quant = by_job["quant"]
+        quant = by_job["quant.open"]
         assert len(quant.inputs_snapshot) == 1
         snap = store.load_snapshot(quant.inputs_snapshot[0])
         assert [e.kind for e in snap.entries] == ["shortlist"]
@@ -732,10 +746,10 @@ class TestContextIntegration:
             "                 writes: [shortlist]}\n    steps:\n      quant: {reads: [candidate]}",
         )
         c = cfg(text)
-        assert c.steps["quant"].reads == ["candidate"]
+        assert c.steps["quant.open"].reads == ["candidate"]
         d, rec, _ = make(conn, text)
         d.tick(et(2026, 9, 28, 9, 0), since=et(2026, 9, 28, 8, 55))
-        assert rec.snapshots["quant"] == []  # shortlist exists but quant only reads candidates
+        assert rec.snapshots["quant.open"] == []  # shortlist exists but quant only reads candidates
 
     def test_entries_get_producer_ttl_from_config(self, conn: sqlite3.Connection) -> None:
         text = BASE_YAML + "\n    context_ttl: {shortlist: {ttl: 1 session}}\n"
@@ -847,7 +861,9 @@ class TestConfigDriven:
         assert resolve_handler("lessons", spec) is not_implemented
         assert resolve_handler("scorecard", spec).__name__ == "scorecard_step"
         assert resolve_handler("broker.reconcile", spec).__name__ == "broker_reconcile_step"
-        assert resolve_handler("quant", spec).__name__ == "quant_step"
+        assert resolve_handler("quant.open", spec).__name__ == "quant_open_step"
+        assert resolve_handler("quant", spec).__name__ == "quant_open_step"  # E13.9 alias
+        assert resolve_handler("propose", spec).__name__ == "quant_propose_step"
         assert resolve_handler("rss", spec).__name__ == "rss_source"
         assert resolve_handler("edgar.filings", spec).__name__ == "edgar_source"
         with pytest.raises(TypeError):
@@ -962,9 +978,9 @@ class TestHeartbeats:
 
     def test_shipped_config_cards_for_personas(self) -> None:
         r = load_routines(DEFAULT_ROUTINES_PATH)
-        for name in ("scalp", "research", "broker.reconcile", "broker", "quant", "risk"):
+        for name in ("scalp", "research", "broker.reconcile", "broker", "quant.open", "risk.open"):
             assert r.step(name)[1].notify == "card", name
-        assert r.step("propose")[1].notify == "summary"  # E6.1 owns the proposal card
+        assert r.step("quant.propose")[1].notify == "summary"  # E6.1 owns the proposal card
         assert all(s.notify in (None, "quiet") for s in r.sources.values())
 
     def test_pending_queue_is_bounded(self, conn: sqlite3.Connection) -> None:
@@ -1050,7 +1066,7 @@ class TestDryRunAndCli:
         # D45: no 12:00 YouTube slot any more (02:00 ET only).
         assert set(order[:-1]) == {"edgar", "rss", "research", "monitor"}
         assert order.index("research") < order.index("scalp")
-        assert "quant" in out and "may-run" not in out  # no trigger any more
+        assert "quant.open" in out and "may-run" not in out  # no trigger any more
 
     def test_cli_validate_list_history_context(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1061,7 +1077,11 @@ class TestDryRunAndCli:
         assert main(["routines", "validate", "--config", str(bad)]) == 1
         assert main(["routines", "list", "--now", "2026-09-28T11:00-04:00"]) == 0
         out = capsys.readouterr().out
-        assert "INVALID" in out and "research" in out and "quant → risk → propose" in out
+        assert (
+            "INVALID" in out
+            and "research" in out
+            and "quant.open → risk.open → quant.propose" in out
+        )
 
         db = str(tmp_path / "arc.db")
         with freeze_time("2026-09-28T13:00:00Z"):  # 09:00 ET

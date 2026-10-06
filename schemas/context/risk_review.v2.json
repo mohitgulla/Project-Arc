@@ -1,0 +1,198 @@
+{
+  "$defs": {
+    "RiskOpenAssessment": {
+      "description": "A Risk assessment with the E13.9 verdict (``accept`` when absent).",
+      "properties": {
+        "calendar_concerns": {
+          "description": "Earnings, holidays, or DTE concerns",
+          "title": "Calendar Concerns",
+          "type": "string"
+        },
+        "concentration_warning": {
+          "default": false,
+          "description": "True if adding this would exceed concentration limits",
+          "title": "Concentration Warning",
+          "type": "boolean"
+        },
+        "greek_budget_impact": {
+          "description": "How this trade impacts portfolio-level Greek budgets",
+          "title": "Greek Budget Impact",
+          "type": "string"
+        },
+        "max_loss_pct_equity": {
+          "description": "Max loss as fraction of equity",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Max Loss Pct Equity",
+          "type": "number"
+        },
+        "narrative": {
+          "description": "Full risk narrative for human review",
+          "title": "Narrative",
+          "type": "string"
+        },
+        "revise_request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskReviseRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required when verdict is revise; null otherwise"
+        },
+        "risk_rating": {
+          "description": "low | moderate | elevated | high",
+          "title": "Risk Rating",
+          "type": "string"
+        },
+        "sizing_suggestion": {
+          "description": "Advisory contract count suggestion (not authoritative \u2014 gate decides)",
+          "minimum": 0,
+          "title": "Sizing Suggestion",
+          "type": "integer"
+        },
+        "structure_type": {
+          "title": "Structure Type",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        },
+        "verdict": {
+          "default": "accept",
+          "description": "accept = trade as is; revise = ask Quant for one change (set revise_request); reject = do not trade it",
+          "enum": [
+            "accept",
+            "revise",
+            "reject"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "structure_type",
+        "risk_rating",
+        "greek_budget_impact",
+        "calendar_concerns",
+        "sizing_suggestion",
+        "max_loss_pct_equity",
+        "narrative"
+      ],
+      "title": "RiskOpenAssessment",
+      "type": "object"
+    },
+    "RiskReviseRequest": {
+      "additionalProperties": false,
+      "description": "What Risk wants Quant to change about one structure (advisory text + hints).",
+      "properties": {
+        "instruction": {
+          "description": "Advisory text for Quant",
+          "maxLength": 240,
+          "title": "Instruction",
+          "type": "string"
+        },
+        "max_contracts": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Contracts"
+        },
+        "preferred_structure_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preferred Structure Type"
+        },
+        "reason": {
+          "enum": [
+            "size",
+            "width",
+            "dte",
+            "strike",
+            "structure_type",
+            "concentration",
+            "calendar"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "target_dte": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Dte"
+        }
+      },
+      "required": [
+        "reason",
+        "instruction"
+      ],
+      "title": "RiskReviseRequest",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Risk persona advisory review (v2, E13.9: per-structure ``verdict``, default accept).",
+  "properties": {
+    "advisory_notes": {
+      "description": "Overall risk advisory for this session",
+      "title": "Advisory Notes",
+      "type": "string"
+    },
+    "assessments": {
+      "description": "One assessment per proposed structure",
+      "items": {
+        "$ref": "#/$defs/RiskOpenAssessment"
+      },
+      "title": "Assessments",
+      "type": "array"
+    },
+    "portfolio_summary": {
+      "description": "Current portfolio risk posture summary",
+      "title": "Portfolio Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "assessments",
+    "portfolio_summary",
+    "advisory_notes"
+  ],
+  "title": "RiskReviewPayload",
+  "type": "object"
+}

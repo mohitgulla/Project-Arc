@@ -44,6 +44,7 @@ Nothing here submits orders. Order submission is ``arc.execution.submit`` (E6).
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import json
 import math
@@ -79,11 +80,14 @@ from arc.journal.store import JournalStore, Recorder
 from arc.models import LegIntent, Proposal, QuantMetrics, Sizing, Stance
 from arc.personas.builders import (
     build_quant_prompt,
+    build_quant_revise_prompt,
     build_research_prompt,
+    build_risk_open_prompt,
     build_risk_prompt,
     build_risk_swap_prompt,
     category_specs_input,
     quant_input_from_context,
+    quant_revise_input_from_context,
     research_input_from_context,
     risk_input_from_context,
     risk_swap_input_from_context,
@@ -94,12 +98,15 @@ from arc.personas.schemas import (
     QuantGreeks,
     QuantLeg,
     QuantOutput,
+    QuantReviseOutput,
     QuantSkip,
     QuantStructureOut,
     ResearchExclusion,
     ResearchOutput,
     ResearchRankedItem,
     RiskAssessment,
+    RiskOpenAssessment,
+    RiskOpenOutput,
     RiskOutput,
     RiskSwapReview,
 )
@@ -165,12 +172,14 @@ __all__ = [
     "research",
     "research_step",
     "pipeline_handlers",
-    "propose",
-    "propose_step",
-    "quant",
-    "quant_step",
-    "risk",
-    "risk_step",
+    "quant_open",
+    "quant_open_step",
+    "quant_propose",
+    "quant_propose_step",
+    "quant_revise",
+    "quant_revise_step",
+    "risk_open",
+    "risk_open_step",
 ]
 
 SESSION_SUBJECT = "session"
@@ -290,17 +299,20 @@ PROMPT_BUILDERS: dict[str, tuple[Callable[..., Any], Callable[..., str], type[Ba
     "risk": (risk_input_from_context, build_risk_prompt, RiskOutput),
     # E6.4 risk.reallocate: the Risk persona's close-to-reallocate review (veto only)
     "risk_swap": (risk_swap_input_from_context, build_risk_swap_prompt, RiskSwapReview),
+    # E13.9 (personas.quant_risk_loop on): Risk with verdicts; Quant's one revision round
+    "risk_open": (risk_input_from_context, build_risk_open_prompt, RiskOpenOutput),
+    "quant_revise": (quant_revise_input_from_context, build_quant_revise_prompt, QuantReviseOutput),
 }
 
 # D56: category keys only a D49-era recorded ``categories`` input carries.
 D49_ONLY_CATEGORIES = frozenset({"macro_data", "options_data"})
 
 # prompt key → the persona whose LLM answers it (config/llm_routing.yaml)
-LLM_PERSONA = {"risk_swap": "risk"}
+LLM_PERSONA = {"risk_swap": "risk", "risk_open": "risk", "quant_revise": "quant"}
 
 
 # E3.4a: personas whose prompt states the configured entry window + delta bands.
-ENTRY_TERMS_PERSONAS = frozenset({"research", "quant", "risk"})
+ENTRY_TERMS_PERSONAS = frozenset({"research", "quant", "risk", "risk_open", "quant_revise"})
 
 
 def _replay_flags(persona: str, kwargs: dict[str, Any]) -> None:
@@ -1594,53 +1606,34 @@ def _quant_rules(no_chain: list[str], settings: ArcSettings | None = None) -> li
     ]
 
 
-def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
+@dataclasses.dataclass
+class _QuantMenus:
+    """The scanner menus Quant chooses from (E13.9: shared by quant.open and quant.revise)."""
+
+    summaries: dict[int, ExitSummary] = dataclasses.field(default_factory=dict)
+    menus: dict[str, dict[frozenset[tuple[str, str]], ScanCandidate]] = dataclasses.field(
+        default_factory=dict
+    )
+    chains: dict[str, Any] = dataclasses.field(default_factory=dict)
+    spots: dict[str, float] = dataclasses.field(default_factory=dict)
+    no_chain: list[str] = dataclasses.field(default_factory=list)
+    no_chain_why: dict[str, str] = dataclasses.field(default_factory=dict)
+    # (ticker, stance) the account profile cannot trade
+    no_profile: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+
+
+def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedItem]) -> _QuantMenus:
+    """Scan each item's chain into a menu (with the E2.4 exit model per structure)."""
     from arc.scanner import ScanParams, scan
 
     settings = ctx.settings
-    j = _journal(ctx, ctx.snapshot.id)
-    shortlist = _latest(ctx.snapshot, "shortlist", ShortlistPayload)
-    # E5.7: Research ranks everything; only the first `budget` get a structure.
-    over = shortlist.over_budget() if shortlist else []
-    over_budget = [i.ticker for i in over]
-    for item in over:
-        j.add(
-            JournalPersona.QUANT,
-            Stage.STRUCTURE,
-            item.ticker,
-            Choice.NO_TRADE,
-            ReasonCode.OVER_BUDGET,
-            reason_text=f"ranked #{item.rank}, beyond the Quant/Risk budget "
-            f"(pipeline_max_shortlist={shortlist.budget if shortlist else '?'})",
-            confidence=item.confidence,
-        )
-    if shortlist is None or not shortlist.shortlist:
-        j.add(
-            JournalPersona.QUANT,
-            Stage.STRUCTURE,
-            SESSION_SUBJECT,
-            Choice.NO_TRADE,
-            ReasonCode.NO_STRUCTURE,
-            reason_text="empty shortlist",
-        )
-        ctx.write(
-            "structures",
-            SESSION_SUBJECT,
-            StructuresPayload(structures=[], analysis_notes="empty shortlist"),
-        )
-        return JobResult(summary="empty shortlist; no structures", metrics={"structures": 0})
-
+    m = _QuantMenus()
+    summaries, menus, chains, spots = m.summaries, m.menus, m.chains, m.spots
+    no_chain, no_chain_why, no_profile = m.no_chain, m.no_chain_why, m.no_profile
     today = _today(ctx)
     iv_store = safe_iv_store(ctx.conn)  # E4.12: scanner IV rank from iv_daily
     exits = exit_config(settings)  # D26: exits.yaml + control-panel overrides
-    summaries: dict[int, ExitSummary] = {}
-    menus: dict[str, dict[frozenset[tuple[str, str]], ScanCandidate]] = {}
-    chains: dict[str, Any] = {}
-    spots: dict[str, float] = {}
-    no_chain: list[str] = []
-    no_chain_why: dict[str, str] = {}
-    no_profile: list[tuple[str, str]] = []  # (ticker, stance) the profile cannot trade
-    for item in shortlist.budgeted():
+    for item in items:
         strategies = _strategies(item.stance, settings)
         if not strategies:
             no_profile.append((item.ticker, item.stance))
@@ -1697,6 +1690,49 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "vrp = IV − forecast; rorc_day = managed net EV / (max loss × days held).",
             "menu": [_menu_entry(c, summaries.get(id(c))) for c in cands],
         }
+
+    return m
+
+
+def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
+    """``quant.open`` (was ``quant``): choose one structure per budgeted shortlist name."""
+    settings = ctx.settings
+    j = _journal(ctx, ctx.snapshot.id)
+    shortlist = _latest(ctx.snapshot, "shortlist", ShortlistPayload)
+    # E5.7: Research ranks everything; only the first `budget` get a structure.
+    over = shortlist.over_budget() if shortlist else []
+    over_budget = [i.ticker for i in over]
+    for item in over:
+        j.add(
+            JournalPersona.QUANT,
+            Stage.STRUCTURE,
+            item.ticker,
+            Choice.NO_TRADE,
+            ReasonCode.OVER_BUDGET,
+            reason_text=f"ranked #{item.rank}, beyond the Quant/Risk budget "
+            f"(pipeline_max_shortlist={shortlist.budget if shortlist else '?'})",
+            confidence=item.confidence,
+        )
+    if shortlist is None or not shortlist.shortlist:
+        j.add(
+            JournalPersona.QUANT,
+            Stage.STRUCTURE,
+            SESSION_SUBJECT,
+            Choice.NO_TRADE,
+            ReasonCode.NO_STRUCTURE,
+            reason_text="empty shortlist",
+        )
+        ctx.write(
+            "structures",
+            SESSION_SUBJECT,
+            StructuresPayload(structures=[], analysis_notes="empty shortlist"),
+        )
+        return JobResult(summary="empty shortlist; no structures", metrics={"structures": 0})
+
+    today = _today(ctx)
+    m = _quant_menus(ctx, env, shortlist.budgeted())
+    summaries, menus, chains, spots = m.summaries, m.menus, m.chains, m.spots
+    no_chain, no_chain_why, no_profile = m.no_chain, m.no_chain_why, m.no_profile
 
     def journal_no_chain(call_id: str | None = None) -> None:
         for t in no_chain:
@@ -1962,6 +1998,211 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
 
 # ---------------------------------------------------------------------------
+# Quant revision round (E13.9, personas.quant_risk_loop on)
+# ---------------------------------------------------------------------------
+
+
+def quant_revise(ctx: JobContext, env: PipelineEnv) -> JobResult:
+    """``quant.revise``: one round answering Risk's ``revise`` verdicts (E13.9).
+
+    Deterministic around one Quant call:
+
+    * skipped (chain continues) when the loop is off or no assessment is ``revise``;
+    * ``reject`` structures are dropped, ``accept`` ones pass through unchanged;
+    * Quant re-chooses from the same scanner menu only for the ``revise`` tickers, or
+      keeps its first structure (``kept``); anything else is dropped (a ticker outside
+      the revise set -> ``not_shortlisted``), so the output never exceeds revise + kept;
+    * the result is a new ``structures`` entry (``revision_of`` = the review's id) that
+      supersedes the first. Risk does not run again: the gate and approval do.
+    """
+    from arc.routines.handlers import JobSkippedError
+
+    settings = ctx.settings
+    if not ctx.routines.quant_risk_loop.enabled:
+        msg = "personas.quant_risk_loop is off"
+        raise JobSkippedError(msg, continue_chain=True)
+    review_entry = ctx.snapshot.latest("risk_review", SESSION_SUBJECT)
+    review = _latest(ctx.snapshot, "risk_review", RiskReviewPayload)
+    first = _latest(ctx.snapshot, "structures", StructuresPayload)
+    shortlist = _latest(ctx.snapshot, "shortlist", ShortlistPayload)
+    if review_entry is None or review is None or first is None or shortlist is None:
+        msg = "no revise requests (no risk review)"
+        raise JobSkippedError(msg, continue_chain=True)
+    if first.revision_of is not None:  # exactly one round, even on a re-run
+        msg = "already revised this chain"
+        raise JobSkippedError(msg, continue_chain=True)
+    verdict = {a.ticker: a.verdict for a in review.assessments}
+    revise_set = sorted(t for t, v in verdict.items() if v == "revise")
+    if not revise_set:
+        msg = "no revise requests"
+        raise JobSkippedError(msg, continue_chain=True)
+
+    j = _journal(ctx, ctx.snapshot.id)
+    firsts = {q.ticker: q for q in first.structures}
+    passthrough = [q for q in first.structures if verdict.get(q.ticker, "accept") == "accept"]
+    rejected_t = sorted(t for t, v in verdict.items() if v == "reject")
+    items = [i for i in shortlist.budgeted() if i.ticker in revise_set]
+    m = _quant_menus(ctx, env, items)
+    menus, summaries = m.menus, m.summaries
+    today = _today(ctx)
+    inputs = {
+        "chains_json": json.dumps(m.chains, indent=2, sort_keys=True),
+        "underlying_prices_json": json.dumps(m.spots, sort_keys=True),
+        "scan_date": today.isoformat(),
+        "entry_terms": entry_terms(settings).model_dump(mode="json"),
+        "rules": [
+            *_quant_rules(m.no_chain, settings),
+            "REVISION: return structures only for "
+            + ", ".join(revise_set)
+            + " (at most one each), or list a ticker in `kept` to keep your first structure.",
+        ],
+    }
+    reply, out = _ask(ctx, env, "quant_revise", ctx.snapshot, inputs, QuantReviseOutput)
+    dropped: Counter[str] = Counter()
+    revised: list[QuantStructureOut] = []
+    bad: list[tuple[QuantStructureOut, str]] = []
+    done: set[str] = set()
+    for q in out.structures:
+        t = q.ticker.strip().upper()
+        reason = None
+        match = None
+        if t not in revise_set or t not in menus:
+            reason = DROP_NOT_SHORTLISTED
+        elif t in done:
+            reason = DROP_DUPLICATE
+        else:
+            try:
+                match = menus[t].get(_legs_key(q.legs))
+            except ValueError:
+                match = None
+            if match is None:
+                reason = DROP_NOT_IN_MENU
+        if reason is not None or match is None:
+            dropped[reason or DROP_NOT_IN_MENU] += 1
+            bad.append((q, reason or DROP_NOT_IN_MENU))
+            continue
+        done.add(t)
+        revised.append(
+            _to_quant_structure(
+                t,
+                match,
+                confidence=q.confidence,
+                rationale=q.rationale,
+                exit_summary=summaries.get(id(match)),
+            )
+        )
+    kept_t = sorted({k.strip().upper() for k in out.kept} & set(revise_set) - done & set(firsts))
+    # A revise ticker Quant neither re-chose nor kept is dropped (no structure).
+    dropped_t = [t for t in revise_set if t not in done and t not in kept_t]
+    call_id = _record_ok(ctx, "quant_revise", reply, ctx.snapshot.id, dropped)
+
+    for q in revised:
+        before = firsts.get(q.ticker)
+        j.add(
+            JournalPersona.QUANT,
+            Stage.STRUCTURE,
+            q.ticker,
+            Choice.SELECTED,
+            ReasonCode.QUANT_REVISED,
+            reason_text=q.rationale,
+            confidence=q.confidence,
+            persona_call_id=call_id,
+            payload=q.model_dump(mode="json")
+            | {"replaces": None if before is None else before.model_dump(mode="json")},
+        )
+    for t in kept_t:
+        j.add(
+            JournalPersona.QUANT,
+            Stage.STRUCTURE,
+            t,
+            Choice.SELECTED,
+            ReasonCode.QUANT_KEPT,
+            reason_text="kept the first structure after Risk's revise request",
+            persona_call_id=call_id,
+        )
+    for t in dropped_t:
+        j.add(
+            JournalPersona.QUANT,
+            Stage.STRUCTURE,
+            t,
+            Choice.NO_TRADE,
+            ReasonCode.NOT_STRUCTURED,
+            reason_text="Quant neither revised nor kept this structure after Risk's request",
+            persona_call_id=call_id,
+        )
+    for q, reason in bad:
+        j.add(
+            JournalPersona.QUANT,
+            Stage.STRUCTURE,
+            q.ticker.strip().upper() or SESSION_SUBJECT,
+            Choice.REJECTED,
+            ReasonCode(reason),
+            reason_text=q.rationale,
+            confidence=q.confidence,
+            persona_call_id=call_id,
+            payload=q.model_dump(mode="json"),
+        )
+    structures = [
+        *passthrough,
+        *[firsts[t] for t in kept_t],
+        *revised,
+    ]
+    order = {i.ticker: n for n, i in enumerate(shortlist.shortlist)}
+    structures.sort(key=lambda q: order.get(q.ticker, len(order)))
+    payload = StructuresPayload(
+        structures=structures,
+        skipped=first.skipped,
+        not_structured=sorted({*first.not_structured, *dropped_t}),
+        over_budget=first.over_budget,
+        analysis_notes=out.analysis_notes,
+        revision_of=review_entry.id,
+        kept=kept_t,
+    )
+    entry = ctx.write("structures", SESSION_SUBJECT, payload)
+    _note(
+        ctx,
+        SESSION_SUBJECT,
+        persona="quant",
+        topic=NoteTopic.OBSERVATION,
+        title="Quant revision",
+        body=out.analysis_notes,
+        about=[entry.id],
+    )
+    desc = "; ".join(
+        f"{q.ticker} {q.structure_type} "
+        f"{'/'.join(f'{leg.strike:g}' for leg in q.legs)} {q.legs[0].expiry} "
+        f"net {q.net_debit_credit:+.2f} PoP {q.pop:.2f}"
+        for q in revised
+    )
+    return JobResult(
+        summary=(f"revised: {desc}" if desc else "nothing revised")
+        + (f"; kept: {', '.join(kept_t)}" if kept_t else "")
+        + (f"; dropped: {', '.join(dropped_t)}" if dropped_t else "")
+        + (f"; rejected by Risk: {', '.join(rejected_t)}" if rejected_t else "")
+        + (f"; invalid {dict(dropped)}" if dropped else ""),
+        metrics={
+            "revise_requests": len(revise_set),
+            "revised": len(revised),
+            "kept": len(kept_t),
+            "dropped": len(dropped_t),
+            "rejected": len(rejected_t),
+            "structures": len(structures),
+            **dropped,
+        },
+        card=quant_card(
+            payload,
+            dropped=dropped,
+            dropped_items=[(q.ticker.strip().upper() or "?", r) for q, r in bad],
+            no_chain=m.no_chain,
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+            revision=True,
+            kept=kept_t,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Risk
 # ---------------------------------------------------------------------------
 
@@ -1981,7 +2222,39 @@ def _risk_rules(settings: ArcSettings, caps: Mapping[tuple[str, str], int]) -> l
     ]
 
 
-def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
+#: E13.9: the verdict rules added to Risk's hard constraints with the loop on.
+_RISK_VERDICT_RULES = (
+    "Every assessment carries a verdict: accept, revise (with revise_request) or reject. "
+    "A rejected structure is never proposed; Quant answers revise requests once.",
+    "revise_request is required with verdict revise and must be null otherwise; its "
+    "instruction is at most 240 characters.",
+)
+
+
+def _open_assessment(a: RiskAssessment, loop_on: bool) -> RiskOpenAssessment:
+    """*a* as a verdict-carrying assessment; with the loop off always ``accept``."""
+    if not loop_on or not isinstance(a, RiskOpenAssessment):
+        return RiskOpenAssessment.model_validate(
+            RiskAssessment.model_validate(a, from_attributes=True).model_dump()
+        )
+    if a.verdict == "revise" and a.revise_request is None:
+        # A revise without a request gives Quant nothing to answer: treat as accept.
+        log.warning("pipeline.risk_revise_without_request", ticker=a.ticker)
+        return a.model_copy(update={"verdict": "accept"})
+    if a.verdict != "revise" and a.revise_request is not None:
+        return a.model_copy(update={"revise_request": None})
+    return a
+
+
+def _assessment_payload(a: RiskOpenAssessment, loop_on: bool) -> dict[str, Any]:
+    """Journal payload: the flag-off shape is exactly today's ``RiskAssessment`` dump."""
+    if loop_on:
+        return a.model_dump(mode="json")
+    return a.model_dump(mode="json", exclude={"verdict", "revise_request"})
+
+
+def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
+    """``risk.open`` (was ``risk``): review the structures; E13.9 verdicts when on."""
     settings = ctx.settings
     j = _journal(ctx, ctx.snapshot.id)
     structures = _latest(ctx.snapshot, "structures", StructuresPayload)
@@ -2047,7 +2320,14 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
         "rules": _risk_rules(settings, caps),
     }
-    reply, out = _ask(ctx, env, "risk", ctx.snapshot, inputs, RiskOutput)
+    # E13.9: with personas.quant_risk_loop on, Risk also gives a verdict per structure.
+    loop_on = ctx.routines.quant_risk_loop.enabled
+    prompt_key = "risk_open" if loop_on else "risk"
+    if loop_on:
+        inputs["rules"] = [*inputs["rules"], *_RISK_VERDICT_RULES]
+    reply, out = _ask(
+        ctx, env, prompt_key, ctx.snapshot, inputs, RiskOpenOutput if loop_on else RiskOutput
+    )
     wanted = {(s.ticker, s.structure_type) for s in structures.structures}
     dropped: Counter[str] = Counter()
     kept: list[RiskAssessment] = []
@@ -2068,8 +2348,8 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
             seen.add(key)
             kept.append(a.model_copy(update={"ticker": key[0], "structure_type": key[1]}))
 
-    accept(out.assessments)
-    call_id = _record_ok(ctx, "risk", reply, ctx.snapshot.id, dropped)
+    accept(list(out.assessments))
+    call_id = _record_ok(ctx, prompt_key, reply, ctx.snapshot.id, dropped)
     # E5.7: one repair re-ask for structures Risk left out; still missing → not_assessed.
     repaired: list[str] = []
     if wanted - seen:
@@ -2084,28 +2364,48 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
             ]
         }
         try:
-            r_reply, r_out = _ask(ctx, env, "risk", ctx.snapshot, repair_inputs, RiskOutput)
+            r_reply, r_out = _ask(
+                ctx,
+                env,
+                prompt_key,
+                ctx.snapshot,
+                repair_inputs,
+                RiskOpenOutput if loop_on else RiskOutput,
+            )
         except PersonaError as exc:
             log.warning("pipeline.risk_repair_failed", missing=first_missing, error=str(exc))
         else:
             before = set(seen)
             r_dropped_before = Counter(dropped)
-            accept(r_out.assessments)
+            accept(list(r_out.assessments))
             repaired = [f"{t} {k}" for t, k in sorted(seen - before)]
-            r_id = _record_ok(ctx, "risk", r_reply, ctx.snapshot.id, dropped - r_dropped_before)
+            r_id = _record_ok(ctx, prompt_key, r_reply, ctx.snapshot.id, dropped - r_dropped_before)
             log.info("pipeline.risk_repair", missing=first_missing, repaired=repaired, call=r_id)
             call_id = call_id or r_id
+    # E13.9: verdicts are applied in code. Flag off -> every assessment is `accept`
+    # (the RiskOutput reply has no verdict field), so nothing below changes.
+    kept = [_open_assessment(a, loop_on) for a in kept]
     for a in kept:
         declined = a.sizing_suggestion < 1
+        if a.verdict == "reject":
+            choice, code = Choice.REJECTED, ReasonCode.RISK_REJECT
+        elif a.verdict == "revise":
+            choice, code = Choice.NOTED, ReasonCode.RISK_REVISE
+        elif declined:
+            choice, code = Choice.NO_TRADE, ReasonCode.RISK_DECLINED
+        else:
+            choice, code = Choice.ASSESSED, ReasonCode.RISK_ASSESSED
+        req = a.revise_request
         j.add(
             JournalPersona.RISK,
             Stage.RISK_REVIEW,
             a.ticker,
-            Choice.NO_TRADE if declined else Choice.ASSESSED,
-            ReasonCode.RISK_DECLINED if declined else ReasonCode.RISK_ASSESSED,
-            reason_text=f"{a.risk_rating}: {a.narrative}",
+            choice,
+            code,
+            reason_text=f"{a.risk_rating}: {a.narrative}"
+            + (f" | revise ({req.reason}): {req.instruction}" if req is not None else ""),
             persona_call_id=call_id,
-            payload=a.model_dump(mode="json")
+            payload=_assessment_payload(a, loop_on)
             | {"cap_contracts": caps.get((a.ticker, a.structure_type))},
         )
     for a, reason in rejected:
@@ -2160,8 +2460,13 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
         for a in kept
     }
-    desc = "; ".join(f"{a.ticker} {a.risk_rating}, suggests {a.sizing_suggestion}" for a in kept)
+    desc = "; ".join(
+        f"{a.ticker} {a.risk_rating}, suggests {a.sizing_suggestion}"
+        + (f" [{a.verdict}]" if loop_on else "")
+        for a in kept
+    )
     missing_s = [f"{t} {k}" for t, k in missing]
+    verdicts = Counter(a.verdict for a in kept) if loop_on else Counter()
     return JobResult(
         summary=(desc or "no assessments")
         + (f"; not assessed: {', '.join(missing_s)}" if missing_s else "")
@@ -2172,6 +2477,7 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "not_assessed": len(missing_s),
             "repaired": len(repaired),
             **dropped,
+            **{f"verdict_{v}": n for v, n in verdicts.items()},
         },
         card=risk_card(
             payload,
@@ -2186,6 +2492,7 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
             not_assessed=missing_s,
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
+            verdicts=loop_on,
         ),
     )
 
@@ -2419,7 +2726,26 @@ def _market_context(
     )
 
 
-def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
+def _review_for(
+    assessed: Mapping[tuple[str, str], RiskOpenAssessment],
+    ticker: str,
+    structure_type: str,
+    *,
+    revised: bool,
+) -> RiskOpenAssessment | None:
+    """Risk's assessment for this structure (E13.9: a revised one by ticker).
+
+    Risk does not run again on a revision; its review of the ticker (the advisory
+    sizing and narrative) carries over to the structure Quant re-chose for it.
+    """
+    a = assessed.get((ticker, structure_type))
+    if a is not None or not revised:
+        return a
+    return next((v for (t, _), v in assessed.items() if t == ticker), None)
+
+
+def quant_propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
+    """``quant.propose`` (was ``propose``; D56: Quant owns it): size, gate, propose."""
     from arc.gate.halt import HaltSwitch, evaluate_with_halt
     from arc.gate.rules import proposal_hash
     from arc.store.repos import GateDecisionRepo, HaltRepo, ProposalRepo
@@ -2439,7 +2765,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     if not (shortlist and structures and review) or not structures.structures:
         with ctx.conn:
             j.add(
-                JournalPersona.SYSTEM,
+                JournalPersona.QUANT,
                 Stage.PROPOSE,
                 SESSION_SUBJECT,
                 Choice.NO_TRADE,
@@ -2460,6 +2786,9 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     cand_ids = {e.subject: e.payload.get("id") for e in ctx.snapshot.of_kind("candidate")}
     by_ticker = {s.ticker: s for s in reversed(structures.structures)}  # first (best) wins
     assessed = {(a.ticker, a.structure_type): a for a in review.assessments}
+    # E13.9: a structure from the quant.revise round is marked `revised` on its proposal.
+    revised = set() if structures.revision_of is None else {s.ticker for s in structures.structures}
+    revised -= set(structures.kept)
 
     info, positions = _account_inputs(ctx, env)
     fetched_at = ctx.clock()  # as_of = broker fetch time
@@ -2496,7 +2825,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
         skipped[key] += 1
         with ctx.conn:  # no other output for this ticker: commit the decision alone
             j.add(
-                JournalPersona.SYSTEM,
+                JournalPersona.QUANT,
                 Stage.PROPOSE,
                 t,
                 Choice.NO_TRADE,
@@ -2549,9 +2878,13 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             skip(t, "exists", ReasonCode.ALREADY_PROPOSED, "already proposed in this chain run")
             lines.append(f"{t}: already proposed in this chain run")
             continue
-        a = assessed.get((t, qs.structure_type))
+        a = _review_for(assessed, t, qs.structure_type, revised=t in revised)
         if a is None:
             skip(t, "no_risk_review", ReasonCode.NO_RISK_REVIEW, "no Risk assessment")
+            continue
+        if a.verdict == "reject":  # E13.9: Risk's reject is final (journalled by risk.open)
+            skipped["risk_reject"] += 1
+            lines.append(f"{t}: rejected by Risk")
             continue
         if not cand_ids.get(t):
             skip(t, "no_candidate", ReasonCode.NO_CANDIDATE_ID, "no Scalp candidate row")
@@ -2601,7 +2934,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
         if verdict.override is not None:
             with ctx.conn:
                 j.add(
-                    JournalPersona.SYSTEM,
+                    JournalPersona.QUANT,
                     Stage.PROPOSE,
                     t,
                     Choice.NOTED,
@@ -2766,7 +3099,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             commit=False,
         )
         j.add(
-            JournalPersona.SYSTEM,
+            JournalPersona.QUANT,
             Stage.PROPOSE,
             t,
             Choice.SELECTED,
@@ -2829,7 +3162,9 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
         ctx.write(
             "proposal",
             t,
-            ProposalPayload.model_validate(proposal.model_dump() | {"exit_model": exit_model}),
+            ProposalPayload.model_validate(
+                proposal.model_dump() | {"exit_model": exit_model, "revised": t in revised}
+            ),
         )
         proposals += 1
         strikes = "/".join(f"{parse_occ(leg.occ_symbol).strike.normalize():f}" for leg in st.legs)
@@ -2866,10 +3201,13 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
 _STEPS: dict[str, Callable[[JobContext, PipelineEnv], JobResult]] = {
     "research": research,
-    "quant": quant,
-    "risk": risk,
-    "propose": propose,
+    "quant.open": quant_open,
+    "risk.open": risk_open,
+    "quant.revise": quant_revise,
+    "quant.propose": quant_propose,
 }
+#: E13.9: pre-D56 step names, bound to the same functions for one release.
+_STEP_ALIASES = {"quant": "quant.open", "risk": "risk.open", "propose": "quant.propose"}
 
 
 class _LazyEnv:
@@ -2897,16 +3235,20 @@ def research_step(ctx: JobContext) -> JobResult:
     return research(ctx, _live_env(ctx))
 
 
-def quant_step(ctx: JobContext) -> JobResult:
-    return quant(ctx, _live_env(ctx))
+def quant_open_step(ctx: JobContext) -> JobResult:
+    return quant_open(ctx, _live_env(ctx))
 
 
-def risk_step(ctx: JobContext) -> JobResult:
-    return risk(ctx, _live_env(ctx))
+def risk_open_step(ctx: JobContext) -> JobResult:
+    return risk_open(ctx, _live_env(ctx))
 
 
-def propose_step(ctx: JobContext) -> JobResult:
-    return propose(ctx, _live_env(ctx))
+def quant_revise_step(ctx: JobContext) -> JobResult:
+    return quant_revise(ctx, _live_env(ctx))
+
+
+def quant_propose_step(ctx: JobContext) -> JobResult:
+    return quant_propose(ctx, _live_env(ctx))
 
 
 def pipeline_handlers(env: PipelineEnv) -> dict[str, Handler]:
@@ -2917,6 +3259,7 @@ def pipeline_handlers(env: PipelineEnv) -> dict[str, Handler]:
         return lambda ctx: fn(ctx, env)
 
     handlers: dict[str, Handler] = {name: bind(fn) for name, fn in _STEPS.items()}
+    handlers |= {old: handlers[new] for old, new in _STEP_ALIASES.items()}
     if env.scalp_llm is not None or env.universe_guard is not None:
         scalp_llm, make_guard = env.scalp_llm, env.universe_guard
 

@@ -18,6 +18,7 @@ the old one-line summary (:meth:`arc.routines.heartbeat.Heartbeats.summary`).
 from __future__ import annotations
 
 import datetime as _dt
+from collections import Counter
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
@@ -572,22 +573,28 @@ def quant_card(
     over_budget: Sequence[str] = (),
     run_id: str | None = None,
     chain_run_id: str | None = None,
+    revision: bool = False,
+    kept: Sequence[str] = (),
 ) -> CardView:
     """``[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78`` + legs per structure.
+
+    E13.9: ``revision=True`` is the ``quant.revise`` card (header ``[Quant (revised)]``);
+    ``kept`` lists the revise-requested tickers Quant kept unchanged.
 
     E5.7: every budgeted ticker is accounted for: a structure, a skip with its reason
     (``out.skipped``), "no structure, no reason" (``not_structured``) or no chain.
     ``over_budget`` = ranked by Research beyond the Quant/Risk budget.
     """
+    label = "[Quant (revised)]" if revision else "[Quant]"
     if out.structures:
         best = out.structures[0]
         more = f" +{len(out.structures) - 1} more" if len(out.structures) > 1 else ""
         title = (
-            f"[Quant] Structures: {best.ticker} {structure_name(best)}{more} • "
+            f"{label} Structures: {best.ticker} {structure_name(best)}{more} • "
             f"PoP {_pct(best.pop)} • EV {_money(best.ev_per_contract)}"
         )
     else:
-        title = "[Quant] Structures: none chosen"
+        title = f"{label} Structures: none chosen"
     n_drop = sum((dropped or {}).values()) + len(no_chain) + len(not_structured)
     skipped = [s for s in out.skipped if s.ticker not in set(no_chain)]
     blocks = _head(
@@ -596,6 +603,7 @@ def quant_card(
         f"{len(skipped)} skipped" if skipped else "",
         f"{n_drop} dropped" if n_drop else "",
         f"{len(over_budget)} over budget" if over_budget else "",
+        f"{len(kept)} kept" if kept else "",
     )
     for s in out.structures:
         net = s.net_debit_credit
@@ -659,6 +667,8 @@ def quant_card(
     counts = dict(dropped or {})
     if no_chain:
         counts["no_chain"] = len(no_chain)
+    if kept:
+        blocks.append(_section("Kept unchanged", [", ".join(B.esc(t) for t in kept)]))
     blocks.append(_section("Dropped", _drops(counts, items)))
     blocks.append(B.persona_section(Persona.QUANT, "Analysis", out.analysis_notes))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
@@ -680,8 +690,12 @@ def risk_card(
     not_assessed: Sequence[str] = (),
     run_id: str | None = None,
     chain_run_id: str | None = None,
+    verdicts: bool = False,
 ) -> CardView:
     """``[Risk] Review: SPY Moderate • 14 Contracts``; one section per assessment.
+
+    E13.9: ``verdicts=True`` (``personas.quant_risk_loop: on``) adds a verdict chip per
+    assessment (Accept / Revise: <reason> / Reject) and a count line in the header.
 
     ``sized`` is the deterministic D18 result per ``(ticker, structure_type)``
     (``min(suggestion, floor(cap × equity / max loss))``), so the card shows the size
@@ -703,9 +717,11 @@ def risk_card(
     else:
         title = "[Risk] Review: nothing assessed"
     warn = sum(a.concentration_warning for a in out.assessments)
+    tally = Counter(_verdict(a) for a in out.assessments) if verdicts else Counter()
     blocks = _head(
         title,
         f"*{len(out.assessments)}* assessed",
+        " · ".join(f"{n} {v}" for v, n in sorted(tally.items())) if tally else "",
         f":warning: {warn} concentration" if warn else "",
         f"{len(not_assessed)} not assessed" if not_assessed else "",
     )
@@ -741,6 +757,7 @@ def risk_card(
                         "Concentration",
                         ":warning: over limit" if a.concentration_warning else "OK",
                     ),
+                    *([("Verdict", _verdict_chip(a))] if verdicts else []),
                 ]
             )
         )
@@ -762,6 +779,20 @@ def risk_card(
     counts = dict(dropped or {})
     blocks.append(_section("Dropped / missing", _drops(counts, items)))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
+
+
+def _verdict(a: RiskAssessment) -> str:
+    return str(getattr(a, "verdict", "accept"))
+
+
+def _verdict_chip(a: RiskAssessment) -> str:
+    """E13.9: ``Accept`` / ``Revise: width — <instruction>`` / ``Reject``."""
+    v = _verdict(a)
+    req = getattr(a, "revise_request", None)
+    if v == "revise" and req is not None:
+        why = _title_case(str(req.reason))
+        return f"*Revise*: {B.esc(why)} — {B.esc(_clip_line(req.instruction))}"
+    return f"*{v.capitalize()}*"
 
 
 # ---------------------------------------------------------------------------

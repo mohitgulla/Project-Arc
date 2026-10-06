@@ -243,6 +243,8 @@ NOT_EXPOSED_PATHS: dict[str, str] = {
     # D56 (E13.3): the budget splits are fixed by the decision, not tunable.
     "funnel.scalp.doc_budget_split": "fixed by D56 (equal split)",
     "funnel.scout.video_budget_split": "fixed by D56 (equal split)",
+    # E13.9: the quant.revise cost guard (seconds of loop budget it needs to start).
+    "steps.quant.revise.min_remaining_s": "loop plumbing",
 }
 
 EXIT_KINDS: tuple[str, ...] = (
@@ -1470,6 +1472,22 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("strict", "relaxed"),
         aliases=("routines.personas.director_diversification", "director_diversification"),
     ),
+    # E13.9 (D56/D44): the Quant <-> Risk open path. Strategy lane: off is the control
+    # (quant.open -> risk.open -> quant.propose); on adds Risk verdicts and one
+    # quant.revise round. Experiment XP-7 tests it.
+    Tunable(
+        key="personas.quant_risk_loop",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E13.9: Risk gives each structure a verdict (accept / revise / reject); "
+        "rejects are dropped and one quant.revise round answers the revise requests "
+        "before quant.propose. Experiment XP-7 tests it.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "quant_risk_loop"),
+        choices=("off", "on"),
+        aliases=("routines.personas.quant_risk_loop", "quant_risk_loop"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -2218,7 +2236,7 @@ _SECTIONS = ("sources", "personas")
 # Top-level routines.yaml sections whose tunables are plain paths (not per job).
 _PLAIN_ROUTINE_SECTIONS = (("loop",), ("monitoring",), ("categories",), ("tower",), ("funnel",))
 # Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
-_PERSONA_SWITCHES = frozenset({("personas", "finnhub_context")})
+_PERSONA_SWITCHES = frozenset({("personas", "finnhub_context"), ("personas", "quant_risk_loop")})
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.
 _PERSONA_CHOICE_SWITCHES: dict[tuple[str, ...], str] = {
     ("personas", "director_diversification"): "strict",

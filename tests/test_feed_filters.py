@@ -163,6 +163,7 @@ class TestFeedSpecFilters:
             "sources.rss.feeds[].title_include",
             "funnel.scalp.doc_budget_split",  # D56: fixed splits
             "funnel.scout.video_budget_split",
+            "steps.quant.revise.min_remaining_s",  # E13.9: loop plumbing
         }
         with pytest.raises(TunableError):
             lookup("sources.rss.feeds.seekingalpha.title_exclude")

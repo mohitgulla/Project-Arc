@@ -86,11 +86,15 @@ class Spawner:
 CHAIN_YAML: dict[str, Any] = {
     "personas": {
         # 15:55: the fixture pipeline already holds the 16:00 slot for propose/execute.
-        "loop": {"schedule": ["15:55"], "days": "trading", "chain": ["propose", "broker.execute"]},
+        "loop": {
+            "schedule": ["15:55"],
+            "days": "trading",
+            "chain": ["quant.propose", "broker.execute"],
+        },
         "broker": {"trigger": "approval", "llm": False},
     },
     "steps": {
-        "propose": {"writes": [], "llm": False},
+        "quant.propose": {"writes": [], "llm": False},
         "broker.execute": {"reads": ["proposal"], "writes": [], "llm": False},
     },
 }
@@ -129,7 +133,7 @@ def _chain_dispatcher(
         RoutinesConfig.model_validate(CHAIN_YAML),
         handlers={
             "loop": research,
-            "propose": propose,
+            "quant.propose": propose,
             "broker.execute": execute_,
             "broker": investor,
         },
