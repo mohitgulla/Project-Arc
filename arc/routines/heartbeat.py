@@ -46,6 +46,7 @@ _MAX_PENDING_JOBS = 50
 _ROUTINES_LABEL = "[Routines]"
 _PERSONA_LABELS = {
     "scalp": "[Scalp]",
+    "scout": "[Scout]",  # E13.7 (D56)
     "research": "[Research]",
     "quant": "[Quant]",
     "risk": "[Risk]",

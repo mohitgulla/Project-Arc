@@ -95,6 +95,7 @@ DEFAULT_ROUTINES_PATH = REPO_ROOT / "config" / "routines.yaml"
 #: assigned by D47 category (one sub-band per category); ``other`` is the fallback.
 TIMELINE_GROUPS: tuple[tuple[str, str], ...] = (
     ("sources", "Sources"),
+    ("scout", "Scout"),  # E13.7 (D56): the daily slow-feed read
     ("scalp", "Scalp"),
     ("trading_loop", "Trading loop"),
     ("position_management", "Position management"),
@@ -107,6 +108,7 @@ UNIVERSE_KINDS: frozenset[str] = frozenset({"universe_tier", "active_universe"})
 #: E8.8d: persona chips a job may declare (``persona:``); sources declare none.
 #: D56 (E13.2): Investor/Auditor removed; Broker runs ladders + reconcile, Ops the scorecard.
 TIMELINE_PERSONAS: tuple[str, ...] = (
+    "scout",  # E13.7 (D56)
     "scalp",
     "research",
     "quant",
@@ -593,7 +595,7 @@ FINNHUB_FACT_KINDS: tuple[str, ...] = (
 )
 # Persona-level switches that live under ``personas:`` next to the jobs (a scalar,
 # not a job mapping). Each maps to the settings block whose ``enabled`` it sets.
-PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context", "quant_risk_loop")
+PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context", "quant_risk_loop", "scout_feed")
 
 #: D56 (E13.1): pre-rename ``personas:`` keys accepted (logged) for one release.
 #: ``sweep.overnight`` follows its ``sweep`` prefix.
@@ -883,6 +885,19 @@ class QuantRiskLoopSettings(BaseModel):
     enabled: bool = False
 
 
+class ScoutFeedSettings(BaseModel):
+    """E13.7 (D56): the daily Scout persona (default off; strategy lane flag).
+
+    ``enabled`` comes from ``personas.scout_feed: off | on`` (a flat sibling of the
+    ``personas.scout`` job mapping, which cannot share its name). Off = the ``scout``
+    job is skipped before any LLM call (``JobSkippedError``) and nothing is written.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+
+
 class FunnelScalp(BaseModel):
     """D56 ``funnel.scalp``: the Scalp's doc budget split (fixed by D56)."""
 
@@ -989,6 +1004,8 @@ class RoutinesConfig(BaseModel):
     options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
     # E13.9: the ``personas.quant_risk_loop`` flag (as ``enabled``).
     quant_risk_loop: QuantRiskLoopSettings = Field(default_factory=QuantRiskLoopSettings)
+    # E13.7: the ``personas.scout_feed`` flag (as ``enabled``).
+    scout_feed: ScoutFeedSettings = Field(default_factory=ScoutFeedSettings)
 
     @model_validator(mode="before")
     @classmethod

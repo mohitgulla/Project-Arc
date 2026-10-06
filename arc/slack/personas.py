@@ -9,6 +9,7 @@ class Persona(StrEnum):
     """Arc persona identifiers matching PLAN.md §2.4."""
 
     SCALP = "Scalp"
+    SCOUT = "Scout"  # E13.7 (D56): the daily slow-feed read
     RESEARCH = "Research"
     QUANT = "Quant"
     RISK = "Risk"

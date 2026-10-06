@@ -218,6 +218,9 @@ NOT_EXPOSED: dict[str, str] = {
     "yt_caption_cooldown_jitter": "ingestion plumbing",
     "whisper_model": "ingestion model",
     "scalp_timeout_seconds": "LLM plumbing",
+    "scout_video_chars": "LLM plumbing",
+    "scout_timeout_seconds": "LLM plumbing",
+    "scout_max_calls": "LLM plumbing",
     "scalp_batch_size": "LLM plumbing",
     "scalp_max_doc_chars": "LLM plumbing",
     "scalp_story_threshold": "D30 clustering internals",
@@ -1669,6 +1672,21 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("off", "on"),
         aliases=("routines.personas.quant_risk_loop", "quant_risk_loop"),
     ),
+    # E13.7 (D56/D44): the daily Scout persona. Strategy lane: off is the control (no
+    # Scout run, no discovery tier from it); on runs it at 06:00 ET.
+    Tunable(
+        key="personas.scout_feed",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E13.7: the daily Scout reads the YouTube briefs + options_slow at "
+        "06:00 ET, writes its read, the discovery tier (YouTube calls only) and Scout "
+        "candidates for Research. Off = the scout job is skipped, no LLM call.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "scout_feed"),
+        choices=("off", "on"),
+        aliases=("routines.personas.scout_feed", "scout_feed", "scout"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -2467,7 +2485,13 @@ _PLAIN_ROUTINE_SECTIONS = (
     ("options_slow",),  # E13.5
 )
 # Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
-_PERSONA_SWITCHES = frozenset({("personas", "finnhub_context"), ("personas", "quant_risk_loop")})
+_PERSONA_SWITCHES = frozenset(
+    {
+        ("personas", "finnhub_context"),
+        ("personas", "quant_risk_loop"),
+        ("personas", "scout_feed"),  # E13.7
+    }
+)
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.
 _PERSONA_CHOICE_SWITCHES: dict[tuple[str, ...], str] = {
     ("personas", "director_diversification"): "strict",

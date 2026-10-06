@@ -1,0 +1,273 @@
+{
+  "$defs": {
+    "CatalystType": {
+      "description": "Type of catalyst identified by the Scalp.",
+      "enum": [
+        "earnings",
+        "macro",
+        "sector",
+        "news",
+        "technical"
+      ],
+      "title": "CatalystType",
+      "type": "string"
+    },
+    "ScoutCategoryPresence": {
+      "additionalProperties": false,
+      "description": "Code-counted briefs of one YouTube category in a Scout run.",
+      "properties": {
+        "configured": {
+          "minimum": 0,
+          "title": "Configured",
+          "type": "integer"
+        },
+        "missing": {
+          "description": "Channel labels with no fresh brief",
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing",
+          "type": "array"
+        },
+        "present": {
+          "minimum": 0,
+          "title": "Present",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "present",
+        "configured"
+      ],
+      "title": "ScoutCategoryPresence",
+      "type": "object"
+    },
+    "ScoutInputsPresence": {
+      "additionalProperties": false,
+      "description": "What the Scout actually read, counted by code (not the LLM).",
+      "properties": {
+        "options_daily": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "as_of of the fresh entry; None = absent",
+          "title": "Options Daily"
+        },
+        "vol_term": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vol Term"
+        },
+        "vx_curve": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vx Curve"
+        },
+        "youtube_macro": {
+          "$ref": "#/$defs/ScoutCategoryPresence"
+        },
+        "youtube_micro": {
+          "$ref": "#/$defs/ScoutCategoryPresence"
+        }
+      },
+      "required": [
+        "youtube_macro",
+        "youtube_micro"
+      ],
+      "title": "ScoutInputsPresence",
+      "type": "object"
+    },
+    "ScoutTickerCall": {
+      "additionalProperties": false,
+      "description": "One Scout ticker call (E13.7, D56), backed by YouTube channel briefs only.",
+      "properties": {
+        "catalyst_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ISO-8601 date, if any",
+          "title": "Catalyst Date"
+        },
+        "catalyst_type": {
+          "$ref": "#/$defs/CatalystType"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "horizon": {
+          "enum": [
+            "days",
+            "weeks"
+          ],
+          "title": "Horizon",
+          "type": "string"
+        },
+        "origins": {
+          "description": "YouTube channel ids from this run's briefs, e.g. 'youtube:stockedup'",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "title": "Origins",
+          "type": "array"
+        },
+        "stance": {
+          "$ref": "#/$defs/Stance"
+        },
+        "thesis": {
+          "maxLength": 240,
+          "title": "Thesis",
+          "type": "string"
+        },
+        "ticker": {
+          "pattern": "^[A-Z][A-Z0-9.]{0,9}$",
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "stance",
+        "confidence",
+        "horizon",
+        "origins",
+        "thesis",
+        "catalyst_type"
+      ],
+      "title": "ScoutTickerCall",
+      "type": "object"
+    },
+    "Stance": {
+      "description": "Directional stance of a candidate.",
+      "enum": [
+        "bullish",
+        "bearish",
+        "neutral"
+      ],
+      "title": "Stance",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The Scout's structured daily read (E13.7, D56); ``scout_read`` kind.\n\n``discovery`` is the code-screened discovery tier written this run (<=\n``funnel.scout.max_discovery``); ``discovery_fill`` its length, alerted as\n``coverage:scout`` below ``funnel.scout.min_discovery_alert``.",
+  "properties": {
+    "as_of": {
+      "description": "ISO time (ET) of the run",
+      "title": "As Of",
+      "type": "string"
+    },
+    "discovery": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 25,
+      "title": "Discovery",
+      "type": "array"
+    },
+    "discovery_fill": {
+      "minimum": 0,
+      "title": "Discovery Fill",
+      "type": "integer"
+    },
+    "inputs": {
+      "$ref": "#/$defs/ScoutInputsPresence"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "options_sentiment": {
+      "maxLength": 600,
+      "title": "Options Sentiment",
+      "type": "string"
+    },
+    "prompt_sha": {
+      "title": "Prompt Sha",
+      "type": "string"
+    },
+    "regime": {
+      "maxLength": 600,
+      "title": "Regime",
+      "type": "string"
+    },
+    "risks": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 6,
+      "title": "Risks",
+      "type": "array"
+    },
+    "screened_out": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "ticker -> why it is not in discovery",
+      "title": "Screened Out",
+      "type": "object"
+    },
+    "session": {
+      "description": "Trading session the read is for (YYYY-MM-DD)",
+      "title": "Session",
+      "type": "string"
+    },
+    "themes": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Themes",
+      "type": "array"
+    },
+    "ticker_calls": {
+      "items": {
+        "$ref": "#/$defs/ScoutTickerCall"
+      },
+      "maxItems": 30,
+      "title": "Ticker Calls",
+      "type": "array"
+    }
+  },
+  "required": [
+    "as_of",
+    "session",
+    "regime",
+    "options_sentiment",
+    "inputs",
+    "discovery_fill",
+    "prompt_sha",
+    "model"
+  ],
+  "title": "ScoutReadPayload",
+  "type": "object"
+}

@@ -52,6 +52,7 @@ class TestPersonaLabel:
         ("persona", "expected"),
         [
             (Persona.SCALP, "[Scalp]"),
+            (Persona.SCOUT, "[Scout]"),
             (Persona.RESEARCH, "[Research]"),
             (Persona.QUANT, "[Quant]"),
             (Persona.RISK, "[Risk]"),

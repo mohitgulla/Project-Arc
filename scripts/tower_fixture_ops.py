@@ -266,6 +266,13 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
     ops = _Ops(conn, now, routines)
     today = now.date()
     since = dt.datetime.combine(today - dt.timedelta(days=1), dt.time(0), tzinfo=ET)
+    # E13.7: the D54 cutover (migration 022) is stamped at migrate time, after this
+    # fixture's clock, so its `scout` runs would read as pre-rename Scalp. Production's
+    # cutover (2026-10-06 01:20Z) predates every Scout run: pin it before the window.
+    conn.execute(
+        "UPDATE routine_state SET value = ? WHERE key = 'rename:scout_to_sweep'",
+        (to_db(since - dt.timedelta(days=30)),),
+    )
     outcomes = [o for o in plan(routines, since, now) if o.status == "planned"]
 
     # -- context entries of every kind (the run outputs below add more) ---------------

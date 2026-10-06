@@ -28,6 +28,7 @@ EXPECTED = {
     Persona.QUANT: ("frontier", FRONTIER),
     Persona.RISK: ("frontier", FRONTIER),
     Persona.SCALP: ("cheap", CHEAP),
+    Persona.SCOUT: ("cheap", CHEAP),  # E13.7
 }
 
 SKILLS_DIR = Path(__file__).resolve().parent.parent / "hermes" / "skills"
@@ -44,6 +45,7 @@ class TestDefaultRouting:
         assert set(Persona) == set(EXPECTED)
         assert {p.value for p in Persona} == {
             "scalp",
+            "scout",
             "research",
             "quant",
             "risk",
@@ -91,7 +93,7 @@ class TestConfigDriven:
             f"model: {CHEAP}\n", "model: anthropic/claude-other\n"
         )
         s = ArcSettings(env="paper", llm_routing_file=_write(tmp_path, text))
-        for p in (Persona.SCALP,):
+        for p in (Persona.SCALP, Persona.SCOUT):
             assert resolve(p, s).model == "anthropic/claude-other"
         assert resolve(Persona.RESEARCH, s).model == FRONTIER
 

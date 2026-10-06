@@ -14,6 +14,8 @@
 - :func:`stuck_runs`      a ``routine_runs`` row still ``running`` after ``stuck_after``.
 - :func:`earnings_coverage` E4.1d: ``coverage:earnings`` while no earnings doc is
   newer than ``earnings_stale_after`` and the universe has a non-ETF ticker.
+- :func:`scout_coverage` E13.7: ``coverage:scout`` while the Scout's latest discovery
+  fill is below ``funnel.scout.min_discovery_alert``.
 - :func:`momentum_coverage` E12.2: ``coverage:universe.momentum`` while the momentum
   tier's SPMO holdings as-of date is older than ``momentum.stale_after_days``.
 - :func:`iv_crosscheck`  E4.12: the latest recorded 30-DTE IV differs from Cboe's
@@ -709,6 +711,59 @@ def momentum_coverage(
         detail={"job": MOMENTUM_JOB, "as_of": as_of.isoformat() if as_of else None},
     )
     return CheckResult("momentum_coverage", "failed", f"stale ({seen})", (f,))
+
+
+SCOUT_JOB = "scout"
+
+
+def scout_coverage(
+    conn: sqlite3.Connection, routines: RoutinesConfig, now: _dt.datetime
+) -> CheckResult:
+    """E13.7 (D56, owner decision 1): ``coverage:scout`` while the latest ``scout_read``
+    wrote fewer discovery names than ``funnel.scout.min_discovery_alert``.
+
+    Under-fill is accepted (discovery comes from the YouTube calls only) and measured:
+    the condition clears on the next Scout run that meets the threshold. Not judged
+    while ``personas.scout_feed`` is off or before the first read.
+    """
+    import json
+
+    if SCOUT_JOB not in routines.jobs() or not routines.scout_feed.enabled:
+        return CheckResult("scout_coverage", "ok", "not judged: personas.scout_feed off")
+    try:
+        row = conn.execute(
+            "SELECT payload FROM context_entries WHERE kind = 'scout_read' "
+            "ORDER BY valid_from DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = None
+    if row is None:
+        return CheckResult("scout_coverage", "ok", "not judged: no scout_read yet")
+    payload = json.loads(row[0])
+    fill = int(payload.get("discovery_fill") or 0)
+    need = routines.funnel.scout.min_discovery_alert
+    cap = routines.funnel.scout.max_discovery
+    session = payload.get("session")
+    if fill >= need:
+        return CheckResult("scout_coverage", "ok", f"discovery {fill}/{cap} ({session})")
+    inp = payload.get("inputs") or {}
+    briefs = " · ".join(
+        f"{c.removeprefix('youtube_')} {(inp.get(c) or {}).get('present', 0)}/"
+        f"{(inp.get(c) or {}).get('configured', 0)}"
+        for c in ("youtube_macro", "youtube_micro")
+    )
+    f = Finding(
+        key=f"coverage:{SCOUT_JOB}",
+        kind="coverage",
+        severity="failed",
+        message=(
+            f"discovery tier under-filled: the Scout's {session} read kept {fill}/{cap} "
+            f"names, below {need} (briefs {briefs}; "
+            f"{len(payload.get('screened_out') or {})} screened out)"
+        ),
+        detail={"job": SCOUT_JOB, "fill": fill, "min": need, "session": session},
+    )
+    return CheckResult("scout_coverage", "failed", f"discovery {fill}/{cap} < {need}", (f,))
 
 
 IV_RECORD_JOB = "iv.record"
