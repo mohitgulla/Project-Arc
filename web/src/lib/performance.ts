@@ -217,6 +217,7 @@ export const PERSONA_LABEL: Record<string, string> = {
   broker: "Broker",
   ops: "Ops",
   scalp: "Scalp",
+  scout: "Scout",
   // D56 (E13.2): pre-rename rows the server did not map (legacy reason codes)
   investor: "Broker",
   auditor: "Broker",

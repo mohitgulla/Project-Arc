@@ -39,6 +39,7 @@ class Persona(StrEnum):
     """The LLM personas of PLAN §2.4 (D56: Broker and Ops are deterministic, not here)."""
 
     SCALP = "scalp"
+    SCOUT = "scout"  # E13.7 (D56): the daily slow-feed read
     RESEARCH = "research"
     QUANT = "quant"
     RISK = "risk"

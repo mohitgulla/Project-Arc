@@ -194,6 +194,7 @@ class TestConfig:
             "options_fast",  # E13.6: ~50 chain requests, ~45 s
             "scalp",
             "scalp.overnight",
+            "scout",  # E13.7: one daily cheap LLM call
             "youtube.briefs",
         ]  # fmt: skip  (E4.8: the Finnhub jobs wait on the shared 55/min budget)
         for job in ("research", "monitor", "positions.evaluate"):

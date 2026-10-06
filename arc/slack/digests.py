@@ -34,6 +34,7 @@ from arc.slack.personas import Persona
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from arc.context.kinds import ScoutReadPayload
     from arc.context.store import ContextEntry
     from arc.ingest.scalp import ScalpMention
     from arc.ingest.sources import CategoryMix
@@ -59,6 +60,7 @@ __all__ = [
     "risk_card",
     "scalp_card",
     "scalp_context_card",
+    "scout_card",
     "structure_name",
 ]
 
@@ -323,6 +325,73 @@ def scalp_card(
     if rejected_block is not None:
         blocks.append(B.divider())
         blocks.append(rejected_block)
+    return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
+
+
+def scout_card(
+    *,
+    read: ScoutReadPayload,
+    max_discovery: int,
+    min_discovery_alert: int,
+    candidates: int,
+    dropped_calls: Mapping[str, str] | None = None,
+    run_id: str | None = None,
+    chain_run_id: str | None = None,
+) -> CardView:
+    """``[Scout] Daily read: Discovery n/20`` (E13.7, minimal; E13.13 restyles).
+
+    *read* is the run's :class:`~arc.context.kinds.ScoutReadPayload`: the sections in
+    their fixed order, a ``Discovery: n/N`` fact, the code-counted inputs and a
+    one-line under-fill notice below ``funnel.scout.min_discovery_alert``.
+    """
+    fill = int(read.discovery_fill)
+    title = f"[Scout] Daily read: Discovery {fill}/{max_discovery}"
+    inp = read.inputs
+    briefs = (
+        f"briefs macro {inp.youtube_macro.present}/{inp.youtube_macro.configured} · "
+        f"micro {inp.youtube_micro.present}/{inp.youtube_micro.configured}"
+    )
+    blocks = _head(
+        title,
+        f"*Discovery: {fill}/{max_discovery}*",
+        f"{_plural(len(read.ticker_calls), 'ticker call')}",
+        f"{_plural(candidates, 'candidate')}",
+        briefs,
+    )
+    if fill < min_discovery_alert:
+        blocks.append(
+            _section(
+                "Under-filled",
+                [f":warning: discovery {fill} < {min_discovery_alert} (coverage:scout)"],
+            )
+        )
+    blocks.append(_section("Regime", [B.clip(B.esc(read.regime))]))
+    blocks.append(_section("Options sentiment", [B.clip(B.esc(read.options_sentiment))]))
+    if read.themes:
+        blocks.append(_section("Themes", [B.clip("\n".join(f"• {B.esc(t)}" for t in read.themes))]))
+    calls = [
+        f"*{B.esc(c.ticker)}* {c.stance.value} · {_pct(c.confidence)} · {c.horizon} · "
+        f"{B.esc(', '.join(o.removeprefix('youtube:') for o in c.origins))}"
+        for c in read.ticker_calls[:_MAX_SCALP_ROWS]
+    ]
+    if calls:
+        blocks.append(_section("Ticker calls", [B.clip("\n".join(calls))]))
+    blocks.append(
+        _section("Discovery", [B.clip(", ".join(B.esc(t) for t in read.discovery) or "none")])
+    )
+    if read.risks:
+        blocks.append(_section("Risks", [B.clip("\n".join(f"• {B.esc(r)}" for r in read.risks))]))
+    missing = [
+        *(f"{m} (macro)" for m in inp.youtube_macro.missing),
+        *(f"{m} (micro)" for m in inp.youtube_micro.missing),
+        *(k for k in ("options_daily", "vx_curve", "vol_term") if getattr(inp, k) is None),
+    ]
+    out = [f"{B.esc(t)}: {B.esc(r)}" for t, r in (read.screened_out or {}).items()]
+    out += [f"{B.esc(t)}: {B.esc(r)}" for t, r in (dropped_calls or {}).items()]
+    if out:
+        blocks.append(_section("Screened out", [B.clip("\n".join(out))]))
+    if missing:
+        blocks.append(B.summary(B.clip("No fresh input: " + ", ".join(B.esc(m) for m in missing))))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 
 

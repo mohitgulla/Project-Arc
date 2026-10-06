@@ -20,3 +20,4 @@ personas:
   quant:    frontier
   risk:     frontier
   scalp:    cheap
+  scout:    cheap   # E13.7 (D56): one call per trading day

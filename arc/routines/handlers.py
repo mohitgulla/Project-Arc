@@ -1880,6 +1880,397 @@ def scalp_persona(
     )
 
 
+# ---------------------------------------------------------------------------
+# E13.7 (D56): the daily Scout persona
+# ---------------------------------------------------------------------------
+
+SCOUT_JOB = "scout"
+
+
+def scout_persona(
+    ctx: JobContext, llm: PersonaLLM | None = None, guard: UniverseGuard | None = None
+) -> JobResult:
+    """Scout (E13.7, D56): snapshot → prompt → one cheap LLM call → code rules → writes.
+
+    Behind ``personas.scout_feed`` (off = skipped before any LLM call). Writes the
+    ``scout_read`` (subject ``session``), the ``discovery`` tier (only from the
+    YouTube calls, ``loose`` screen, ≤ ``funnel.scout.max_discovery``), re-resolves the
+    active list, then writes a ``candidate`` (``feed=scout``) per call at or above its
+    tier's floor. *llm* / *guard* override the Hermes backend and the universe guard
+    (tests). The persona call is recorded in ``persona_calls`` either way.
+    """
+    import time
+    from collections import Counter
+
+    from pydantic import ValidationError
+
+    from arc.context.kinds import (
+        CandidatePayload,
+        ScoutCategoryPresence,
+        ScoutInputsPresence,
+        ScoutReadPayload,
+    )
+    from arc.ingest.channels.daily import JOB as BRIEFS_JOB
+    from arc.ingest.channels.daily import configured_channels
+    from arc.ingest.llm import HermesScalpLLM, ScalpLLMError
+    from arc.ingest.scalp import extract_json_object, parse_catalyst_date, store_candidate
+    from arc.journal.models import PersonaCallMeta
+    from arc.models import Candidate
+    from arc.personas.schemas import ScoutOutput
+    from arc.personas.scout import (
+        build_scout_prompt,
+        category_max_ages,
+        discovery_members,
+        scout_input_from_context,
+        scout_rules,
+        validate_calls,
+    )
+    from arc.pipeline.market import ETF_UNDERLYINGS
+    from arc.pipeline.steps import _with_constraints
+    from arc.pipeline.store import PersonaCallRepo, sha256
+    from arc.slack.digests import scout_card
+    from arc.store.repos import CandidateRepo
+    from arc.universe.guard import UniverseGuard
+    from arc.universe.tiers import (
+        Tier,
+        TierMember,
+        UniverseTierPayload,
+        market_reference,
+        tier_floor,
+        tier_membership,
+    )
+
+    if not ctx.routines.scout_feed.enabled:
+        raise JobSkippedError("personas.scout_feed off")
+    funnel = ctx.routines.funnel.scout
+    settings = ctx.settings
+    found = ctx.routines.job(BRIEFS_JOB)
+    channels = configured_channels(found[1].options if found else None)
+    membership = tier_membership(ctx.conn, settings, ctx.now)
+    higher = {t: tier.value for t, tier in membership.items() if tier in (Tier.CORE, Tier.MOMENTUM)}
+    floor = settings.universe_floor_discovery
+    inp = scout_input_from_context(
+        ctx.snapshot,
+        channels=channels,
+        budget_chars=settings.scout_video_chars,
+        max_age=category_max_ages(ctx.routines),
+        max_discovery=funnel.max_discovery,
+        discovery_floor=floor,
+        higher_tier=sorted(higher),
+        now=ctx.now,
+    )
+    rules = scout_rules(inp)
+    prompt = _with_constraints(build_scout_prompt(inp), rules, ScoutOutput)
+    inputs = {"scout_input": inp.model_dump(mode="json"), "rules": rules}
+    ctx.record_input("scout_prompt", "context", prompt, as_of=ctx.now, count=len(inp.briefs))
+    backend: PersonaLLM = llm or HermesScalpLLM.from_settings(
+        settings, "scout", timeout_seconds=settings.scout_timeout_seconds
+    )
+    repo = PersonaCallRepo(ctx.conn)
+    started = time.monotonic()
+    model = str(getattr(backend, "model", "unknown"))
+    try:
+        reply = backend.complete(prompt)
+    except ScalpLLMError as exc:
+        repo.insert(
+            run_id=ctx.run_id,
+            persona="scout",
+            model=model,
+            snapshot_id=ctx.snapshot.id,
+            prompt=prompt,
+            raw_response=None,
+            status="llm_error",
+            error=str(exc),
+            at=ctx.now,
+            meta=PersonaCallMeta(
+                prompt_text=prompt,
+                prompt_inputs=inputs,
+                latency_ms=int((time.monotonic() - started) * 1000),
+            ),
+        )
+        msg = f"scout LLM call failed: {exc}"
+        raise RuntimeError(msg) from exc
+    meta = PersonaCallMeta(
+        prompt_text=prompt,
+        prompt_inputs=inputs,
+        input_tokens=reply.input_tokens,
+        output_tokens=reply.output_tokens,
+        latency_ms=int((time.monotonic() - started) * 1000),
+        cost_usd=reply.cost_usd,
+    )
+    try:
+        out = ScoutOutput.model_validate(extract_json_object(reply.text))
+    except (ValueError, ValidationError) as exc:
+        repo.insert(
+            run_id=ctx.run_id,
+            persona="scout",
+            model=reply.model,
+            snapshot_id=ctx.snapshot.id,
+            prompt=prompt,
+            raw_response=reply.text,
+            status="parse_error",
+            error=str(exc)[:2000],
+            at=ctx.now,
+            meta=meta,
+        )
+        msg = f"scout reply does not match ScoutOutput: {str(exc)[:300]}"
+        raise RuntimeError(msg) from exc
+
+    # -- code rules ---------------------------------------------------------
+    calls, dropped_calls = validate_calls(out, inp.origins, max_calls=settings.scout_max_calls)
+    if guard is None:
+        guard = UniverseGuard.from_settings(settings, now=ctx.now, conn=ctx.conn)
+    excluded = frozenset(ETF_UNDERLYINGS | set(market_reference(settings)))
+    disc = discovery_members(
+        out,
+        calls,
+        higher_tier=higher,
+        excluded=excluded,
+        floor=floor,
+        max_discovery=funnel.max_discovery,
+        screen=lambda sym: guard.screen(sym, "loose"),
+    )
+    dropped: Counter[str] = Counter(r.split(":", 1)[0] for r in dropped_calls.values())
+    dropped.update(r.split(":", 1)[0] for r in disc.screened_out.values())
+    PersonaCallRepo(ctx.conn).insert(
+        run_id=ctx.run_id,
+        persona="scout",
+        model=reply.model,
+        snapshot_id=ctx.snapshot.id,
+        prompt=prompt,
+        raw_response=reply.text,
+        status="ok",
+        dropped=dict(dropped),
+        at=ctx.now,
+        meta=meta,
+        commit=False,
+    )
+
+    def presence(cat: str) -> ScoutCategoryPresence:
+        return ScoutCategoryPresence(
+            present=len(inp.present.get(cat, [])),
+            configured=inp.configured.get(cat, 0),
+            missing=inp.missing.get(cat, []),
+        )
+
+    read = ScoutReadPayload(
+        as_of=ctx.now.astimezone(ET).isoformat(),
+        session=inp.session,
+        regime=out.regime,
+        options_sentiment=out.options_sentiment,
+        themes=out.themes,
+        risks=out.risks,
+        ticker_calls=calls,
+        inputs=ScoutInputsPresence(
+            youtube_macro=presence("youtube_macro"),
+            youtube_micro=presence("youtube_micro"),
+            options_daily=inp.options_as_of.get("options_daily"),
+            vx_curve=inp.options_as_of.get("vx_curve"),
+            vol_term=inp.options_as_of.get("vol_term"),
+        ),
+        discovery=disc.tickers,
+        discovery_fill=len(disc.tickers),
+        screened_out=disc.screened_out,
+        prompt_sha=sha256(prompt),
+        model=reply.model,
+    )
+    read_entry = ctx.write("scout_read", "session", read)
+
+    # -- discovery tier + active list --------------------------------------
+    today = ctx.now.astimezone(ET).date()
+    members = [
+        TierMember(
+            ticker=c.ticker,
+            tier=Tier.DISCOVERY,
+            rank=i,
+            source="scout",
+            reason=f"{c.stance.value} · {', '.join(c.origins)}",
+            as_of=today,
+        )
+        for i, c in enumerate(disc.members, 1)
+    ]
+    ctx.write(
+        "universe_tier",
+        Tier.DISCOVERY.value,
+        UniverseTierPayload(
+            tier=Tier.DISCOVERY,
+            members=members,
+            fetched_at=ctx.now,
+            source="scout",
+            digest=sha256(",".join(disc.tickers)),
+        ),
+    )
+    active = resolve_universe(ctx)
+
+    # -- candidates (feed=scout) -------------------------------------------
+    membership = tier_membership(ctx.conn, settings, ctx.now)  # discovery now written
+    cand_repo = CandidateRepo(ctx.conn)
+    written: list[str] = []
+    written_tickers: list[str] = []
+    below: dict[str, tuple[str, float, float]] = {}
+    for c in calls:
+        tier = membership.get(c.ticker)
+        if tier is None:
+            continue  # in no tier: the Scout's call is a mention only (D56)
+        tfloor = tier_floor(settings, tier) or floor
+        if c.confidence < tfloor:
+            below[c.ticker] = (tier.value, c.confidence, tfloor)
+            continue
+        cand = Candidate(
+            ticker=c.ticker,
+            stance=c.stance,
+            catalyst_type=c.catalyst_type,
+            catalyst_date=parse_catalyst_date(c.catalyst_date),
+            confidence=c.confidence,
+            sources=list(c.origins),
+            created_at=ctx.now,
+        )
+        stored = store_candidate(
+            cand_repo, cand, day=today.isoformat(), run_id=ctx.run_id, source_key_of=str
+        )
+        payload = CandidatePayload.model_validate(
+            {**stored.model_dump(), "feed": "scout", "origins": list(c.origins)}
+        )
+        written.append(ctx.write("candidate", c.ticker, payload).id)
+        written_tickers.append(c.ticker)
+    _scout_journal(ctx, read_entry.id, disc, calls, below, written_tickers=written_tickers)
+    _scout_note(ctx, out, inp.session, [read_entry.id, *written])
+    under = read.discovery_fill < funnel.min_discovery_alert
+    return JobResult(
+        summary=(
+            f"briefs macro {read.inputs.youtube_macro.present}/"
+            f"{read.inputs.youtube_macro.configured} · micro "
+            f"{read.inputs.youtube_micro.present}/{read.inputs.youtube_micro.configured} → "
+            f"{len(calls)} calls, discovery {read.discovery_fill}/{funnel.max_discovery}, "
+            f"{len(written)} candidates · active {len(active.members)}"
+            + (f" · under-filled (< {funnel.min_discovery_alert})" if under else "")
+        ),
+        metrics={
+            "ticker_calls": len(calls),
+            "dropped_calls": len(dropped_calls),
+            "discovery_fill": read.discovery_fill,
+            "max_discovery": funnel.max_discovery,
+            "min_discovery_alert": funnel.min_discovery_alert,
+            "under_filled": under,
+            "candidates": len(written),
+            "below_floor": len(below),
+            "briefs": len(inp.briefs),
+            "input_tokens": reply.input_tokens,
+            "output_tokens": reply.output_tokens,
+            "cost_usd": reply.cost_usd,
+            "active": len(active.members),
+        },
+        card=scout_card(
+            read=read,
+            max_discovery=funnel.max_discovery,
+            min_discovery_alert=funnel.min_discovery_alert,
+            candidates=len(written),
+            dropped_calls=dropped_calls,
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+        ),
+    )
+
+
+def _scout_journal(
+    ctx: JobContext,
+    read_id: str,
+    disc: Any,
+    calls: list[Any],
+    below: Mapping[str, tuple[str, float, float]],
+    *,
+    written_tickers: list[str],
+) -> int:
+    """E13.7: decisions for the Scout's discovery picks, screen drops, below-floor calls
+    and candidates (``stage=candidate``, ``persona=scout``). Never commits."""
+    from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
+    from arc.journal.store import Recorder
+
+    rec = Recorder(
+        ctx.conn,
+        at=ctx.now,
+        chain_run_id=ctx.chain_run_id,
+        run_id=ctx.run_id,
+        inputs_snapshot_id=ctx.snapshot.id,
+    )
+    by = {c.ticker: c for c in calls}
+    for rank, sym in enumerate(disc.tickers, 1):
+        rec.add(
+            JournalPersona.SCOUT,
+            Stage.CANDIDATE,
+            sym,
+            Choice.SELECTED,
+            ReasonCode.SCOUT_DISCOVERY,
+            reason_text=f"discovery #{rank} · {', '.join(by[sym].origins)}",
+            confidence=by[sym].confidence,
+            payload={"rank": rank, "origins": list(by[sym].origins), "scout_read": read_id},
+        )
+    for sym, code, detail in disc.journal:
+        rec.add(
+            JournalPersona.SCOUT,
+            Stage.CANDIDATE,
+            sym,
+            Choice.REJECTED,
+            ReasonCode.SCOUT_DISCOVERY_SCREENED_OUT,
+            reason_text=f"{code}: {detail}",
+            payload={code: detail, "scout_read": read_id},
+        )
+    for sym, (tier, conf, tfloor) in sorted(below.items()):
+        rec.add(
+            JournalPersona.SCOUT,
+            Stage.CANDIDATE,
+            sym,
+            Choice.REJECTED,
+            ReasonCode.UNIVERSE_BELOW_TIER_FLOOR,
+            reason_text=f"{tier} floor {tfloor:.2f}: confidence {conf:.2f}",
+            confidence=conf,
+            payload={"confidence_floor_skipped": f"tier={tier} floor={tfloor}", "feed": "scout"},
+        )
+    for sym in written_tickers:
+        c = by[sym]
+        rec.add(
+            JournalPersona.SCOUT,
+            Stage.CANDIDATE,
+            sym,
+            Choice.SELECTED,
+            ReasonCode.SCOUT_CANDIDATE,
+            reason_text=c.thesis,
+            confidence=c.confidence,
+            payload={"feed": "scout", "origins": list(c.origins), "horizon": c.horizon},
+        )
+    return len(rec.records)
+
+
+def _scout_note(ctx: JobContext, out: Any, session: str, about: list[str]) -> None:
+    """One ``regime_view`` note with the Scout's read (D27), for Research to read back."""
+    from pydantic import ValidationError
+
+    from arc.context.kinds import NotePayload, NoteTopic
+
+    body = "\n\n".join(
+        part
+        for part in (
+            f"Regime: {out.regime}",
+            f"Options sentiment: {out.options_sentiment}",
+            ("Themes:\n" + "\n".join(f"- {t}" for t in out.themes)) if out.themes else "",
+            ("Risks:\n" + "\n".join(f"- {r}" for r in out.risks)) if out.risks else "",
+        )
+        if part
+    )
+    try:
+        payload = NotePayload(
+            persona="scout",
+            topic=NoteTopic.REGIME_VIEW,
+            title=f"Scout daily read {session}",
+            body=body[:4000],
+            about=about,
+        )
+    except ValidationError as exc:
+        log.warning("pipeline.note_invalid", persona="scout", error=str(exc))
+        return
+    ctx.write("note", "market", payload)
+
+
 BUILTIN_HANDLERS: Mapping[str, str] = {
     "rss": "arc.routines.handlers:rss_source",
     "edgar": "arc.routines.handlers:edgar_source",
@@ -1904,6 +2295,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "finnhub.fundamentals": "arc.routines.handlers:finnhub_fundamentals_source",
     "finnhub.earnings_history": "arc.routines.handlers:finnhub_earnings_history_source",
     "scalp": "arc.routines.handlers:scalp_persona",
+    # E13.7 (D56): the daily Scout (personas.scout_feed; YouTube + options_slow)
+    "scout": "arc.routines.handlers:scout_persona",
     # E5.2 pipeline chain: research → quant.open → risk.open → [quant.revise] →
     # quant.propose (arc/pipeline/steps.py; E13.9 / D56 step names)
     "research": "arc.pipeline.steps:research_step",
