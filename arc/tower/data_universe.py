@@ -1,7 +1,7 @@
 """Universe page (E12.6, D51): what can Arc trade today, and why is each name there?
 
 Read-only. The page shows the **stored** resolve (the latest ``active_universe`` context
-entry, written by the Scout every 30 min and by the tier jobs) and the latest
+entry, written by the Sweep every 30 min and by the tier jobs) and the latest
 ``universe_tier`` entry per feed tier. It never re-resolves: the dedupe and cap logic
 lives in :func:`arc.universe.tiers.resolve_active` only.
 
@@ -80,7 +80,7 @@ class UniverseTierRow(BaseModel):
     size_cap: int | None = Field(
         description="The tier's size: core ceiling 30, momentum/trending sizes; null = no cut"
     )
-    source: str | None = Field(description="Feed source (stockanalysis, reddit+…, settings, scout)")
+    source: str | None = Field(description="Feed source (stockanalysis, reddit+…, settings, sweep)")
     url: str | None = None
     fetched_at: _dt.datetime | None = Field(description="Latest universe_tier entry's fetch time")
     age_s: int | None = None
@@ -210,7 +210,7 @@ def load_universe(
         "stale": (
             f"Not resolved today: latest resolve is for {active.as_of.isoformat()}"
             f"{'' if active.as_of != today else ' and has expired'}. Consumers use the core "
-            "list until the next resolve (Scout, every 30 min)."
+            "list until the next resolve (Sweep, every 30 min)."
         ),
         "none": "No resolve stored yet: consumers use the core list (shown here).",
     }[state]
@@ -226,7 +226,7 @@ def load_universe(
         Tier.CORE: core_source,
         Tier.MOMENTUM: None,
         Tier.TRENDING: None,
-        Tier.DISCOVERY: "scout",
+        Tier.DISCOVERY: "sweep",
     }
     tiers: list[UniverseTierRow] = []
     for tier in TIER_ORDER:

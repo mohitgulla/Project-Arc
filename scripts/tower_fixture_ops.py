@@ -575,7 +575,7 @@ def add_universe(conn: sqlite3.Connection, now: dt.datetime) -> None:
         for i, t in enumerate(yaml_core(ArcSettings()), 1)
     ]  # fmt: skip
     disc = [
-        TierMember(ticker=t, tier=Tier.DISCOVERY, rank=i, source="scout",
+        TierMember(ticker=t, tier=Tier.DISCOVERY, rank=i, source="sweep",
                    reason=f"candidate confidence {0.8 - 0.05 * i:.2f}, corroboration {4 - i}",
                    as_of=today)
         for i, t in enumerate(DISCOVERY_FIXTURE, 1)
@@ -586,7 +586,7 @@ def add_universe(conn: sqlite3.Connection, now: dt.datetime) -> None:
     )  # fmt: skip
     a_at = now - dt.timedelta(minutes=20)
     store.write(
-        kind="active_universe", subject="active", produced_by="scout", payload=active,
+        kind="active_universe", subject="active", produced_by="sweep", payload=active,
         ttl=Ttl(duration=dt.timedelta(hours=20)), valid_from=a_at, now=a_at,
     )  # fmt: skip
 

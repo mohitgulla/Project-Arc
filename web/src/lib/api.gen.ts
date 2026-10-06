@@ -5417,7 +5417,7 @@ export interface components {
             size_cap: number | null;
             /**
              * Source
-             * @description Feed source (stockanalysis, reddit+…, settings, scout)
+             * @description Feed source (stockanalysis, reddit+…, settings, sweep)
              */
             source: string | null;
             /** Source As Of */

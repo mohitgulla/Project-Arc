@@ -13549,7 +13549,7 @@
                 "type": "null"
               }
             ],
-            "description": "Feed source (stockanalysis, reddit+\u2026, settings, scout)",
+            "description": "Feed source (stockanalysis, reddit+\u2026, settings, sweep)",
             "title": "Source"
           },
           "source_as_of": {
