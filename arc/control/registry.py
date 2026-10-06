@@ -33,6 +33,7 @@ from arc.context.ttl import parse_duration
 __all__ = [
     "EXIT_KINDS",
     "NEVER_TUNABLE",
+    "NEVER_TUNABLE_PATHS",
     "NOT_EXPOSED",
     "NOT_EXPOSED_PATHS",
     "REGISTRY",
@@ -247,7 +248,15 @@ NOT_EXPOSED_PATHS: dict[str, str] = {
     "steps.quant.revise.min_remaining_s": "loop plumbing",
     # E13.5: measures the Cboe publish time; not a behaviour knob.
     "options_slow.publish_probe_minutes": "measurement only (Cboe publish-time probe)",
+    # E13.6: options_fast plumbing (request volume, label thresholds, size guard).
+    "sources.options_fast.symbol_data_markets": "request volume (one CSV per market)",
+    "sources.options_fast.strikes": "tape shape (3 strikes x call/put = the BookLevel cap)",
+    "options_fast.vix_flags.vix_gt_25": "tape label only (the gate's no_trade_vix_max rules)",
+    "options_fast.vix_flags.vix_gt_35": "tape label only (the gate's no_trade_vix_max rules)",
 }
+
+# routines.yaml paths that are never runtime-tunable (path/limit guards; change by PR).
+NEVER_TUNABLE_PATHS: frozenset[str] = frozenset({"options_fast.max_csv_bytes"})
 
 EXIT_KINDS: tuple[str, ...] = (
     "vertical_credit",
@@ -1873,6 +1882,27 @@ _OPTIONS_SLOW_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
+# E13.6 (D56): source-job options that are runtime-tunable (plain YAML paths under a
+# `sources:` job; read and written as is, not as a cadence).
+_SOURCE_OPTION_PATHS: frozenset[tuple[str, ...]] = frozenset(
+    {("sources", "options_fast", "max_tickers")}
+)
+_OPTIONS_FAST_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="sources.options_fast.max_tickers",
+        group=Group.ROUTINES,
+        type=_I,
+        description="E13.6: most tickers (active list, then open underlyings) whose Cboe "
+        "delayed chain the 30-min options tape snapshots (one request each).",
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("sources", "options_fast", "max_tickers"),
+        min=1,
+        max=60,
+        hard_ceiling=60,
+    ),
+)
+
 
 # D49: D47 category names renamed in place (old -> new). Their tunable keys stay as
 # aliases, so a change-log override on ``categories.company.weight`` applies to
@@ -2049,6 +2079,7 @@ REGISTRY: dict[str, Tunable] = {
         *_category_tunables(),
         *_FUNNEL_TUNABLES,
         *_OPTIONS_SLOW_TUNABLES,
+        *_OPTIONS_FAST_TUNABLES,
         *_EXPERIMENT_TUNABLES,
     )
 }
@@ -2101,7 +2132,11 @@ def lookup(key: str) -> Tunable:
     """The registry entry for *key* (or an alias); raises :class:`TunableError`."""
     k = key.strip()
     lowered = k.lower()
-    if lowered in NEVER_TUNABLE or lowered.startswith(("arc_", "gate", "secret")):
+    if (
+        lowered in NEVER_TUNABLE
+        or lowered in NEVER_TUNABLE_PATHS
+        or lowered.startswith(("arc_", "gate", "secret"))
+    ):
         msg = f"{k!r} is never tunable (ARC_ENV, gate code and secrets are fixed; D26)"
         raise TunableError(msg)
     k = _ALIASES.get(lowered, lowered)
@@ -2503,6 +2538,8 @@ def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
         if t.unit == "d" and isinstance(v, str):  # a monitoring duration ("7d")
             return int(round(parse_duration(v).total_seconds() / 86_400))
         return v
+    if t.target is Target.ROUTINES and t.path in _SOURCE_OPTION_PATHS:  # E13.6
+        return _get(raw, t.path)
     if t.target is Target.ROUTINES:
         _, spec = _routine(t, raw)
         if t.type is ValueType.BOOL:
@@ -2545,6 +2582,8 @@ def write_raw(t: Tunable, value: Any, raw: dict[str, Any]) -> list[tuple[tuple[s
             return [(t.path, f"{int(value)}m")]
         if t.unit == "d":
             return [(t.path, f"{int(value)}d")]
+        return [(t.path, value)]
+    if t.target is Target.ROUTINES and t.path in _SOURCE_OPTION_PATHS:  # E13.6
         return [(t.path, value)]
     if t.target is Target.ROUTINES:
         section, spec = _routine(t, raw)

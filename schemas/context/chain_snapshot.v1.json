@@ -1,0 +1,227 @@
+{
+  "$defs": {
+    "BookLevel": {
+      "additionalProperties": false,
+      "description": "Top-of-book of one near-ATM contract from the delayed chain.",
+      "properties": {
+        "ask": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ask"
+        },
+        "ask_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ask Size"
+        },
+        "bid": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Bid"
+        },
+        "bid_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Bid Size"
+        },
+        "expiry": {
+          "title": "Expiry",
+          "type": "string"
+        },
+        "iv": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Iv"
+        },
+        "occ_symbol": {
+          "title": "Occ Symbol",
+          "type": "string"
+        },
+        "open_interest": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Open Interest"
+        },
+        "option_type": {
+          "enum": [
+            "call",
+            "put"
+          ],
+          "title": "Option Type",
+          "type": "string"
+        },
+        "spread_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "(ask - bid) / mid; None if not two-sided",
+          "title": "Spread Pct"
+        },
+        "strike": {
+          "title": "Strike",
+          "type": "number"
+        },
+        "volume": {
+          "minimum": 0,
+          "title": "Volume",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "occ_symbol",
+        "option_type",
+        "strike",
+        "expiry",
+        "bid",
+        "ask",
+        "bid_size",
+        "ask_size",
+        "spread_pct",
+        "iv",
+        "open_interest",
+        "volume"
+      ],
+      "title": "BookLevel",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Per-ticker delayed chain snapshot (E13.6, D56); subject = ticker.\n\nVolumes are session-to-date over the whole chain; ``book`` is the 3 strikes\nnearest spot (call + put) on ``expiry``, the nearest expiry inside the entry\nDTE window.",
+  "properties": {
+    "atm_oi": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Atm Oi"
+    },
+    "atm_spread_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Atm Spread Pct"
+    },
+    "book": {
+      "items": {
+        "$ref": "#/$defs/BookLevel"
+      },
+      "maxItems": 6,
+      "title": "Book",
+      "type": "array"
+    },
+    "call_volume_td": {
+      "minimum": 0,
+      "title": "Call Volume Td",
+      "type": "integer"
+    },
+    "expiry": {
+      "title": "Expiry",
+      "type": "string"
+    },
+    "fetched_at": {
+      "title": "Fetched At",
+      "type": "string"
+    },
+    "put_call_volume": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Put Call Volume"
+    },
+    "put_volume_td": {
+      "minimum": 0,
+      "title": "Put Volume Td",
+      "type": "integer"
+    },
+    "source": {
+      "const": "cboe_delayed",
+      "default": "cboe_delayed",
+      "title": "Source",
+      "type": "string"
+    },
+    "spot": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Spot"
+    },
+    "ticker": {
+      "title": "Ticker",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ticker",
+    "fetched_at",
+    "spot",
+    "expiry",
+    "call_volume_td",
+    "put_volume_td",
+    "put_call_volume",
+    "atm_spread_pct",
+    "atm_oi",
+    "book"
+  ],
+  "title": "ChainSnapshotPayload",
+  "type": "object"
+}

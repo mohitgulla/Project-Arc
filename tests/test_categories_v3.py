@@ -103,6 +103,9 @@ def test_kind_map_and_reference_kinds() -> None:
         "put_call": SourceCategory.OPTIONS_SLOW,
         "options_daily": SourceCategory.OPTIONS_SLOW,  # E13.5
         "vx_curve": SourceCategory.OPTIONS_SLOW,
+        "index_vols": SourceCategory.OPTIONS_FAST,  # E13.6
+        "chain_snapshot": SourceCategory.OPTIONS_FAST,
+        "exchange_volume": SourceCategory.OPTIONS_FAST,
     }
     assert {"ex_dividend", "macro_calendar"} <= REFERENCE_KINDS
     assert not REFERENCE_KINDS & set(KIND_CATEGORY)

@@ -191,6 +191,7 @@ class TestConfig:
             "finnhub.insider",
             "finnhub.recs",
             "iv.record",
+            "options_fast",  # E13.6: ~50 chain requests, ~45 s
             "scalp",
             "scalp.overnight",
             "youtube.briefs",

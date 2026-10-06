@@ -1,0 +1,99 @@
+{
+  "$defs": {
+    "ExchangeVolumeRow": {
+      "additionalProperties": false,
+      "properties": {
+        "contracts": {
+          "minimum": 0,
+          "title": "Contracts",
+          "type": "integer"
+        },
+        "market": {
+          "enum": [
+            "opt",
+            "cone",
+            "ctwo",
+            "exo"
+          ],
+          "title": "Market",
+          "type": "string"
+        },
+        "matched": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Matched"
+        },
+        "routed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Routed"
+        },
+        "underlying": {
+          "title": "Underlying",
+          "type": "string"
+        },
+        "volume": {
+          "minimum": 0,
+          "title": "Volume",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "underlying",
+        "market",
+        "volume",
+        "matched",
+        "routed",
+        "contracts"
+      ],
+      "title": "ExchangeVolumeRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Cboe exchange ``symbol_data`` volume per underlying (E13.6, D56); subject = ``market``.\n\nActive-list names + the top 10 others by volume: Tower/Ops visibility only, never\na Scout input and never a discovery source (D56 owner decision 1).",
+  "properties": {
+    "fetched_at": {
+      "title": "Fetched At",
+      "type": "string"
+    },
+    "rows": {
+      "items": {
+        "$ref": "#/$defs/ExchangeVolumeRow"
+      },
+      "maxItems": 60,
+      "title": "Rows",
+      "type": "array"
+    },
+    "source": {
+      "const": "cboe_symbol_data",
+      "default": "cboe_symbol_data",
+      "title": "Source",
+      "type": "string"
+    },
+    "total_rows_parsed": {
+      "minimum": 0,
+      "title": "Total Rows Parsed",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "fetched_at",
+    "rows",
+    "total_rows_parsed"
+  ],
+  "title": "ExchangeVolumePayload",
+  "type": "object"
+}

@@ -137,6 +137,10 @@ KIND_CATEGORY: Mapping[str, SourceCategory] = {
     "put_call": SourceCategory.OPTIONS_SLOW,
     "options_daily": SourceCategory.OPTIONS_SLOW,  # E13.5 (D56)
     "vx_curve": SourceCategory.OPTIONS_SLOW,
+    # E13.6 (D56): options_fast (Scalp, 30-min RTH Cboe delayed quotes + symbol_data)
+    "index_vols": SourceCategory.OPTIONS_FAST,
+    "chain_snapshot": SourceCategory.OPTIONS_FAST,
+    "exchange_volume": SourceCategory.OPTIONS_FAST,
 }
 
 

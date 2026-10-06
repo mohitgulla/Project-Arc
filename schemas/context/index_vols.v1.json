@@ -1,0 +1,104 @@
+{
+  "$defs": {
+    "IndexVol": {
+      "additionalProperties": false,
+      "description": "One Cboe delayed index quote (~15 minutes delayed).",
+      "properties": {
+        "as_of": {
+          "description": "Quote time (ET ISO), ~15 minutes delayed",
+          "title": "As Of",
+          "type": "string"
+        },
+        "symbol": {
+          "enum": [
+            "VIX",
+            "VIX9D",
+            "VXN",
+            "VIX1D",
+            "VIX3M",
+            "VVIX"
+          ],
+          "title": "Symbol",
+          "type": "string"
+        },
+        "value": {
+          "exclusiveMinimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "symbol",
+        "value",
+        "as_of"
+      ],
+      "title": "IndexVol",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Intraday VIX complex + VXN (E13.6, D56); subject = ``market``.\n\n``ratio_9d_30d`` = VIX9D / VIX, ``ratio_30d_3m`` = VIX / VIX3M (> 1 = backwardation).\nFlips (a flag turning on or off) are derived against the previous entry when the\ntape is rendered (:func:`arc.ingest.cboe_fast.detect_flips`), not stored.",
+  "properties": {
+    "fetched_at": {
+      "title": "Fetched At",
+      "type": "string"
+    },
+    "flags": {
+      "items": {
+        "enum": [
+          "9d_over_30d",
+          "backwardation_30d_3m",
+          "vix_gt_25",
+          "vix_gt_35"
+        ],
+        "type": "string"
+      },
+      "title": "Flags",
+      "type": "array"
+    },
+    "quotes": {
+      "items": {
+        "$ref": "#/$defs/IndexVol"
+      },
+      "minItems": 1,
+      "title": "Quotes",
+      "type": "array"
+    },
+    "ratio_30d_3m": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ratio 30D 3M"
+    },
+    "ratio_9d_30d": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ratio 9D 30D"
+    },
+    "source": {
+      "const": "cboe_delayed",
+      "default": "cboe_delayed",
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "fetched_at",
+    "quotes"
+  ],
+  "title": "IndexVolsPayload",
+  "type": "object"
+}

@@ -461,6 +461,187 @@ def vix_futures_source(ctx: JobContext) -> JobResult:
     )
 
 
+def _options_fast_tickers(ctx: JobContext, cap: int) -> list[str]:
+    """E13.6: active list (D51/D56) ∪ open underlyings, active first, capped at *cap*.
+
+    ``tickers:`` option ``active_list`` (default) or an explicit list (tests, probes).
+    """
+    from arc.universe.tiers import active_tickers, open_underlyings
+
+    opt = ctx.options.get("tickers", "active_list")
+    base = (
+        active_tickers(ctx.conn, ctx.settings, ctx.now)
+        if opt in (None, "active_list")
+        else [str(t) for t in opt]
+    )
+    names = [t.strip().upper() for t in [*base, *open_underlyings(ctx.conn)] if t.strip()]
+    return list(dict.fromkeys(names))[:cap]
+
+
+def _cboe_get(max_bytes: int | None = None) -> Callable[[str], bytes]:  # pragma: no cover - live
+    from arc.ingest.options_data import http_get
+
+    def get(url: str) -> bytes:
+        return http_get(
+            url, "Mozilla/5.0 (Project Arc)", timeout=20.0, retries=1, max_bytes=max_bytes
+        )
+
+    return get
+
+
+def options_fast_source(
+    ctx: JobContext,
+    get: Callable[[str], bytes] | None = None,
+    sleep: Callable[[float], None] | None = None,
+) -> JobResult:
+    """E13.6 (D56): the 30-min options_fast tape, three isolated parts.
+
+    1. ``index_vols`` (subject market): Cboe delayed VIX / VIX9D / VXN / VIX1D / VIX3M / VVIX.
+    2. ``chain_snapshot`` (subject = ticker): one delayed chain per ticker in scope
+       (active list ∪ open underlyings, ``max_tickers``), serial with ``pace_s`` pacing.
+    3. ``exchange_volume`` (subject market): Cboe ``symbol_data`` CSV per market,
+       aggregated per underlying (active names + top 10 others).
+
+    A part that fails is listed in ``metrics.failed_parts``; the run is ``ok`` when at
+    least one part wrote, and fails (all three failed) otherwise.
+    """
+    import time
+
+    from arc.context.kinds import ExchangeVolumePayload
+    from arc.ingest import cboe_fast as cf
+
+    t0 = time.perf_counter()
+    cfg = ctx.routines.options_fast
+    csv_get = get or _cboe_get(cfg.max_csv_bytes)  # size guard while downloading
+    get = get or _cboe_get()
+    sleep = sleep or time.sleep
+    now = ctx.now.astimezone(ET)
+    fetched_at = now.replace(microsecond=0).isoformat()
+    max_tickers = int(ctx.options.get("max_tickers", 50))
+    strikes = int(ctx.options.get("strikes", 3))
+    pace = float(ctx.options.get("pace_s", 0.2))
+    markets = [str(m) for m in ctx.options.get("symbol_data_markets") or ["opt"]]
+    tickers = _options_fast_tickers(ctx, max_tickers)
+    failed: dict[str, str] = {}
+    metrics: dict[str, Any] = {"tickers_requested": len(tickers)}
+    parts: list[str] = []
+
+    # -- 1. index vols ---------------------------------------------------------
+    vols = None
+    errors: dict[str, str] = {}
+    try:
+        vols = cf.fetch_index_vols(
+            get,
+            now,
+            vix_gt_25=cfg.vix_flags.vix_gt_25,
+            vix_gt_35=cfg.vix_flags.vix_gt_35,
+            errors=errors,
+        )
+    except Exception as exc:  # noqa: BLE001 - per-part isolation (E13.6)
+        failed["index_vols"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+    if vols is not None:
+        ctx.record_input(
+            "index_vols",
+            "cboe_delayed",
+            vols.model_dump(mode="json"),
+            as_of=ctx.now,
+            count=len(vols.quotes),
+        )
+        ctx.write("index_vols", "market", vols)
+        parts.append(
+            f"VIX {vols.value('VIX'):.2f}" + (f" ({', '.join(vols.flags)})" if vols.flags else "")
+        )
+        metrics["vix"] = vols.value("VIX")
+    if errors:
+        metrics["index_vol_errors"] = errors
+
+    # -- 2. chain snapshots ----------------------------------------------------
+    dte_window = ctx.settings.entry_dte_window
+    skipped: dict[str, str] = {}
+    written: list[str] = []
+    snaps_digest: dict[str, Any] = {}
+    for i, ticker in enumerate(tickers):
+        if i:
+            sleep(pace)
+        try:
+            chain = cf.parse_delayed_chain(get(cf.CBOE_CHAIN_URL.format(ticker=ticker)))
+            snap = cf.snapshot_ticker(
+                chain,
+                ticker=ticker,
+                today=now.date(),
+                dte_window=dte_window,
+                fetched_at=fetched_at,
+                strikes=strikes,
+            )
+        except cf.SnapshotSkipError as exc:
+            skipped[ticker] = exc.reason
+            continue
+        except Exception as exc:  # noqa: BLE001 - one ticker never fails the part
+            skipped[ticker] = f"fetch_error:{type(exc).__name__}"
+            continue
+        ctx.write("chain_snapshot", ticker, snap)
+        written.append(ticker)
+        snaps_digest[ticker] = [snap.call_volume_td, snap.put_volume_td, snap.expiry]
+    ctx.record_input(
+        "chain_snapshot", "cboe_delayed", snaps_digest, as_of=ctx.now, count=len(written)
+    )
+    metrics["tickers_fetched"] = len(written)
+    if skipped:
+        metrics["tickers_skipped"] = skipped
+    if tickers and not written:
+        sample = ", ".join(f"{k} {v}" for k, v in list(skipped.items())[:3])
+        failed["chain_snapshot"] = f"0/{len(tickers)} tickers ({sample})"
+    elif not tickers:
+        failed["chain_snapshot"] = "no tickers in scope"
+    if written:
+        parts.append(f"{len(written)}/{len(tickers)} chains")
+
+    # -- 3. exchange symbol_data ----------------------------------------------
+    rows = []
+    total = 0
+    market_errors: dict[str, str] = {}
+    for mkt in markets:
+        try:
+            body = csv_get(cf.SYMBOL_DATA_URL.format(mkt=mkt))
+            if len(body) > cfg.max_csv_bytes:
+                msg = f"body {len(body)} bytes > max_csv_bytes {cfg.max_csv_bytes}"
+                raise ValueError(msg)
+            parsed = cf.parse_symbol_data_csv(body.decode("utf-8", "replace"))
+        except Exception as exc:  # noqa: BLE001 - per-market isolation
+            market_errors[mkt] = f"{type(exc).__name__}: {str(exc)[:160]}"
+            continue
+        total += len(parsed)
+        agg = cf.aggregate_by_underlying(parsed, mkt)
+        rows.extend(cf.select_exchange_rows(agg, tickers))
+    if markets and len(market_errors) == len(markets):
+        failed["exchange_volume"] = "; ".join(f"{k}: {v}" for k, v in market_errors.items())
+    else:
+        ev = ExchangeVolumePayload(fetched_at=fetched_at, rows=rows[:60], total_rows_parsed=total)
+        ctx.record_input(
+            "exchange_volume",
+            "cboe_symbol_data",
+            [[r.market, r.underlying, r.volume] for r in ev.rows],
+            as_of=ctx.now,
+            count=total,
+        )
+        ctx.write("exchange_volume", "market", ev)
+        parts.append(f"{total:,} exchange rows")
+        metrics["exchange_rows_parsed"] = total
+    if market_errors:
+        metrics["exchange_market_errors"] = market_errors
+
+    metrics["failed_parts"] = sorted(failed)
+    metrics["parts_ok"] = 3 - len(failed)
+    metrics["duration_s"] = round(time.perf_counter() - t0, 2)
+    if len(failed) == 3:
+        msg = "options_fast: all parts failed: " + "; ".join(f"{k}: {v}" for k, v in failed.items())
+        raise RuntimeError(msg)
+    summary = " · ".join(parts)
+    if failed:
+        summary += " · failed: " + ", ".join(sorted(failed))
+    return JobResult(summary=summary, metrics=metrics)
+
+
 def macro_calendar_source(ctx: JobContext) -> JobResult:
     """E4.5/E4.10: FOMC + BLS (CPI/PPI/NFP/JOLTS/ECI) + BEA (GDP/PCE) -> ``macro_calendar``."""
     from arc.ingest.options_data import fetch_macro_calendar
@@ -1592,6 +1773,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "put_call": "arc.routines.handlers:put_call_source",
     "options_daily": "arc.routines.handlers:options_daily_source",  # E13.5 (D56)
     "vix_futures": "arc.routines.handlers:vix_futures_source",
+    "options_fast": "arc.routines.handlers:options_fast_source",  # E13.6 (D56)
     "macro_calendar": "arc.routines.handlers:macro_calendar_source",
     "ex_dividend": "arc.routines.handlers:ex_dividend_source",
     "iv.record": "arc.routines.handlers:iv_record_source",  # E4.12 (D55) daily 30-DTE IV

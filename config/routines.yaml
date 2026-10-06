@@ -131,6 +131,10 @@ context_ttl:
   put_call:      {ttl: 1 session, supersede: latest}
   options_daily: {ttl: 1 session, supersede: latest}       # E13.5 (D56) options_slow; subject = market
   vx_curve:      {ttl: 1 session, supersede: latest}
+  # E13.6 (D56) options_fast: Cboe delayed tape, rewritten every 30 min in RTH.
+  index_vols:    {ttl: 1h, supersede: latest}               # subject = market
+  chain_snapshot: {ttl: 1h, supersede: latest}              # subject = ticker
+  exchange_volume: {ttl: 1h, supersede: latest}             # subject = market
   macro_calendar: {ttl: 7d, supersede: latest}             # long-lived: FOMC/BLS/BEA dates move rarely
   ex_dividend:   {ttl: 7d, supersede: latest}              # subject = ticker
   # E4.8 (D46): Finnhub per-ticker context; subject = ticker. Context only, never a gate input.
@@ -191,6 +195,14 @@ funnel:
 options_slow:
   vx_flat_band: 0.5
   publish_probe_minutes: 0
+
+# E13.6 (D56): options_fast knobs (the options_fast source below). Not runtime-tunable.
+# vix_flags: VIX levels that only LABEL the tape (vix_gt_25 / vix_gt_35); the gate's
+# no_trade_vix_max is the rule, these never block anything. max_csv_bytes: size guard
+# on one Cboe symbol_data CSV download (~1.7 MB on 2026-10-06).
+options_fast:
+  vix_flags: {vix_gt_25: 25, vix_gt_35: 35}
+  max_csv_bytes: 20000000
 
 # D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Scalp
 # source; each RSS feed is its own source. Every source job that writes context (or
@@ -315,6 +327,26 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: options_slow
     feed: scout
     writes: [vx_curve]
+  # E13.6 (D56): options_fast, the Scalp's 30-min options tape (Cboe ~15-min delayed).
+  # Three parts, each isolated (a failed part -> metrics.failed_parts; run ok if >= 1
+  # part wrote): index vols, one delayed chain per ticker (active list + open
+  # underlyings, serial, pace_s apart), exchange symbol_data CSVs. OPS 5.29.
+  options_fast:
+    label: Options tape
+    about: "Cboe delayed VIX complex + VXN, near-ATM chain snapshot per active ticker, exchange volume by underlying"
+    every: 30m
+    window: "09:00-16:00"
+    days: trading
+    ttl: 20m                    # like the Scalp: a slot missed by 20 min is skipped
+    lane: background            # ~50 chain requests (~45 s measured); never delays the tick
+    category: options_fast
+    feed: scalp
+    writes: [index_vols, chain_snapshot, exchange_volume]
+    tickers: active_list        # active list ∪ open underlyings, active first
+    max_tickers: 50
+    strikes: 3                  # strikes nearest spot (call + put each)
+    pace_s: 0.2
+    symbol_data_markets: [opt]  # opt | cone | ctwo | exo (one CSV each)
   macro_calendar:               # FOMC (federalreserve.gov) + BLS CPI/PPI/NFP/JOLTS/ECI + BEA GDP/PCE
     label: Macro calendar
     about: "FOMC decisions, BLS release dates (CPI, PPI, NFP, JOLTS, ECI) and BEA GDP / PCE"
