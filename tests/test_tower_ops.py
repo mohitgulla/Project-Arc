@@ -500,7 +500,7 @@ def test_sources_youtube_brief_status_from_manifest(tmp_path, routines) -> None:
     db = tmp_path / "arc.db"
     c = connect(db)
     migrate(c)
-    at = dt.datetime.combine(TODAY, dt.time(5, 0), tzinfo=ET)
+    at = dt.datetime.combine(TODAY, dt.time(2, 0), tzinfo=ET)
     from arc.context.ttl import to_db
 
     c.execute(

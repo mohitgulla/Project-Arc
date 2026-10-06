@@ -16,7 +16,7 @@
 # `reads` limits the recorded input snapshot. `arc context trace <run|chain>` shows both.
 #
 # A trading day at a glance (full simulated day: `arc routines tick --dry-run`), D31:
-#   05:00           youtube.briefs (D45/E4.6): newest video per channel (last 24 h) ->
+#   02:00           youtube.briefs (D45/E4.6; owner 2026-10-05, was 05:00): newest video per channel (last 24 h) ->
 #                   one channel_brief each, fresh for the day; Research reads them
 #   05:30           D51 active universe resolve; Mon: symbol master refresh (E5.7)
 #   06:00           earnings calendar; rss (15m) / edgar (15m) polling until 20:00
@@ -33,7 +33,7 @@
 #   16:45 Fri       weekly scorecard
 #   18:00           earnings calendar
 #   22:00 daily     overnight Scalp (after-close fast sources; Sunday 22:00 feeds Monday).
-#                   YouTube never reaches the Scalp (D45): briefs only, at 05:00.
+#                   YouTube never reaches the Scalp (D45): briefs only, at 02:00.
 #
 # lane (D39 / E5.10): `background` = the tick claims the slot, spawns a detached
 # `arc routines run-claimed <run_id>` and moves on, so a slow job never delays the
@@ -178,9 +178,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   youtube.briefs:               # D45/E4.6: one pre-market brief run, newest video per channel
     label: YouTube briefs
     about: "Newest video per channel (last 24 h) -> transcript -> one channel brief each, fresh for the day"
-    schedule: ["05:00"]         # 02:00 PT; every channel's previous-day upload is captioned by now
+    schedule: ["02:00"]         # 23:00 PT; uploads land ~15:00-18:00 ET, captioned by now
     days: trading
-    ttl: 3h                     # catch-up window; a missed morning is skipped after 08:00
+    ttl: 3h                     # catch-up window; a missed night is skipped after 05:00
     lane: background            # captions + 5 LLM extractions; never delays the tick
     llm: true                   # holds the global LLM lock (brief extraction)
     notify: quiet               # folded into the first persona post; a channel error posts a notice

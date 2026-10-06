@@ -186,7 +186,7 @@ class TestConfig:
         assert c.personas["research"].ttl.duration == dt.timedelta(minutes=5)
         assert c.personas["scalp"].every == dt.timedelta(minutes=30)
         assert c.personas["scalp.overnight"].schedule == [dt.time(22, 0)]
-        assert c.sources["youtube.briefs"].schedule == [dt.time(5, 0)]  # D45 / E4.6
+        assert c.sources["youtube.briefs"].schedule == [dt.time(2, 0)]  # D45 / E4.6 (02:00 ET)
         assert c.monitoring.stuck_after_for("research") == dt.timedelta(minutes=20)
         assert c.loop.max_idle == dt.timedelta(minutes=30)
         assert c.loop.max_runtime == dt.timedelta(minutes=4)
@@ -1046,7 +1046,7 @@ class TestDryRunAndCli:
         order = [ln.split()[3] for ln in out.splitlines() if ln.strip()[:2].rstrip(".").isdigit()]
         assert order[-1] == "scalp"
         # D31: 12:00 is a loop slot too; the loop runs before the Scalp of the same tick.
-        # D45: no 12:00 YouTube slot any more (05:00 ET only).
+        # D45: no 12:00 YouTube slot any more (02:00 ET only).
         assert set(order[:-1]) == {"edgar", "rss", "research", "monitor"}
         assert order.index("research") < order.index("scalp")
         assert "quant" in out and "may-run" not in out  # no trigger any more

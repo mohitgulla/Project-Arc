@@ -1444,11 +1444,11 @@ without stopping the experiment: `!arc set experiments.runner.enabled false`.
 
 and commit it (replaces the template's dry-run example).
 
-### 5.22 YouTube channel briefs: one 05:00 ET run, five channels (E4.6, D45; categories E4.9, D49)
+### 5.22 YouTube channel briefs: one 02:00 ET run, five channels (E4.6, D45; categories E4.9, D49)
 
-**What runs.** `youtube.briefs` in `config/routines.yaml`, 05:00 ET (02:00 PT) on
-trading days, background lane, holds the LLM lock, `ttl: 3h` (a missed morning is
-skipped after 08:00, never caught up). Every channel declares its category
+**What runs.** `youtube.briefs` in `config/routines.yaml`, 02:00 ET (23:00 PT the evening before) on
+trading days, background lane, holds the LLM lock, `ttl: 3h` (a missed night is
+skipped after 05:00, never caught up). Every channel declares its category
 (`youtube_macro` or `youtube_micro`, required; the job has no `category:`).
 Channels, in config order:
 

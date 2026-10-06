@@ -89,7 +89,7 @@ class AlpacaOptionsFeed(enum.StrEnum):
 # Default YouTube sources (D13)
 # ---------------------------------------------------------------------------
 
-# D13/D45 (E4.6): the four channels behind the daily 05:00 ET ``youtube.briefs`` job
+# D13/D45 (E4.6): the four channels behind the daily 02:00 ET ``youtube.briefs`` job
 # (config/routines.yaml is the source of truth; this list is the CLI default).
 # Channel ids, never @handles, so a rename can't break them.
 DEFAULT_YOUTUBE_CHANNELS: list[str] = [
