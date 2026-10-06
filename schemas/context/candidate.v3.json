@@ -24,7 +24,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Scalp candidate (E4.2).",
+  "description": "Candidate entry (E4.2 Scalp; v3, E13.7: also the Scout).\n\nv3 (D53/D56, text-free additions, both defaulted so v2 rows still validate):\n``feed`` names the persona that raised it; ``origins`` are the Scout's YouTube\nchannel ids (``youtube:<slug>``), validated by code against that run's briefs.",
   "properties": {
     "catalyst_date": {
       "anyOf": [
@@ -68,6 +68,15 @@
       "title": "Created At",
       "type": "string"
     },
+    "feed": {
+      "default": "scalp",
+      "enum": [
+        "scalp",
+        "scout"
+      ],
+      "title": "Feed",
+      "type": "string"
+    },
     "id": {
       "anyOf": [
         {
@@ -80,6 +89,14 @@
       "default": null,
       "description": "Audit-store row id once persisted",
       "title": "Id"
+    },
+    "origins": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 6,
+      "title": "Origins",
+      "type": "array"
     },
     "sources": {
       "items": {

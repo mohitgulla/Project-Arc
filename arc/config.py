@@ -820,6 +820,20 @@ class ArcSettings(BaseSettings):
         default=240,
         description="Timeout for a single Scalp LLM batch call.",
     )
+    # -- Scout daily read (E13.7, D56) ---------------------------------------
+    scout_video_chars: Annotated[int, Field(ge=1000, le=200_000)] = Field(
+        default=12_000,
+        description="Channel-brief chars per Scout prompt, split equally between "
+        "youtube_macro and youtube_micro, then among the channels present.",
+    )
+    scout_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
+        default=240,
+        description="Timeout for the Scout's one daily LLM call.",
+    )
+    scout_max_calls: Annotated[int, Field(ge=1, le=30)] = Field(
+        default=30,
+        description="Max ticker calls kept from one Scout reply (schema cap 30).",
+    )
     scalp_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.6,
         description="Candidates below this Scalp confidence are dropped.",

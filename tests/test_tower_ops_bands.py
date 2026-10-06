@@ -57,7 +57,8 @@ def test_live_config_bands_in_owner_order(empty_db) -> None:
     # bands follow TIMELINE_GROUPS, the sources sub-bands follow D47 CATEGORY_ORDER
     assert [b.group for b in s.bands] == sorted((b.group for b in s.bands), key=groups.index)
     # D56: reference data gets its own band after the six categories
-    assert keys[: keys.index("scalp")] == [
+    first_persona = keys.index("scout") if "scout" in keys else keys.index("scalp")  # E13.7
+    assert keys[:first_persona] == [
         f"sources.{c.value}" for c in CATEGORY_ORDER if f"sources.{c.value}" in keys
     ] + ["sources.reference"]
     labels = {b.key: b.label for b in s.bands}
@@ -155,6 +156,7 @@ def test_display_keys_are_validated(tmp_path, key, value, match) -> None:
 
 def test_persona_choices_cover_the_chips() -> None:
     assert set(TIMELINE_PERSONAS) == {
+        "scout",  # E13.7
         "scalp",
         "research",
         "quant",

@@ -39,10 +39,20 @@ if TYPE_CHECKING:
     from arc.ingest.llm import PersonaLLM
     from arc.universe.guard import UniverseGuard
 
-__all__ = ["FIXTURES_DIR", "FIXTURE_NOW", "FIXTURE_SETS", "PERSONAS", "PipelineEnv"]
+__all__ = [
+    "FIXTURES_DIR",
+    "FIXTURE_NOW",
+    "FIXTURE_SETS",
+    "LIVE_ONLY_PERSONAS",
+    "PERSONAS",
+    "PipelineEnv",
+]
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 PERSONAS = ("research", "quant", "risk")
+# E13.7: personas that get a live LLM backend but no canned fixture reply set (the
+# Scout runs on its own schedule, never inside `arc propose --fixtures`).
+LIVE_ONLY_PERSONAS = ("scout",)
 # Canned persona reply sets: "neutral" (SPY iron condor; the default) and
 # "bullish" (SPY bull call debit, for the D25 cash_debit profile).
 FIXTURE_SETS: dict[str, Path] = {"neutral": FIXTURES_DIR, "bullish": FIXTURES_DIR / "bullish"}
@@ -108,6 +118,10 @@ class PipelineEnv:
             )
             for p in PERSONAS
         }
+        # E13.7: the Scout's own timeout (one daily call over the briefs).
+        llms["scout"] = HermesScalpLLM.from_settings(
+            settings, "scout", timeout_seconds=settings.scout_timeout_seconds
+        )
         if broker:
             if conn is not None:
                 from arc.experiments.broker import trading_broker

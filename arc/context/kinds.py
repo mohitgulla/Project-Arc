@@ -27,6 +27,7 @@ from arc.personas.schemas import (
     ResearchOutput,
     RiskOpenAssessment,
     RiskOutput,
+    ScoutTickerCall,
 )
 from arc.positions.evaluate import PositionReview
 from arc.positions.portfolio import MarketGuard, PortfolioContext
@@ -60,9 +61,26 @@ class ChannelBriefPayload(ChannelBrief):
 
 
 class CandidatePayload(Candidate):
-    """Scalp candidate (E4.2)."""
+    """Candidate entry (E4.2 Scalp; v3, E13.7: also the Scout).
+
+    v3 (D53/D56, text-free additions, both defaulted so v2 rows still validate):
+    ``feed`` names the persona that raised it; ``origins`` are the Scout's YouTube
+    channel ids (``youtube:<slug>``), validated by code against that run's briefs.
+    """
 
     model_config = _FORBID
+
+    feed: Literal["scalp", "scout"] = "scalp"
+    origins: list[str] = Field(default_factory=list, max_length=6)
+
+    @field_validator("origins")
+    @classmethod
+    def _origin_ids(cls, v: list[str]) -> list[str]:
+        for o in v:
+            if not o or len(o) > 80 or any(ch.isspace() for ch in o):
+                msg = f"origin must be a single id token, got {o[:60]!r}"
+                raise ValueError(msg)
+        return v
 
 
 class RegimePayload(FeatureSnapshot):
@@ -629,6 +647,62 @@ class FundamentalsPayload(BaseModel):
     source: Literal["finnhub"] = "finnhub"
 
 
+# ---------------------------------------------------------------------------
+# E13.7 (D56): the Scout's daily read (subject = "session")
+# ---------------------------------------------------------------------------
+
+
+class ScoutCategoryPresence(BaseModel):
+    """Code-counted briefs of one YouTube category in a Scout run."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    present: int = Field(..., ge=0)
+    configured: int = Field(..., ge=0)
+    missing: list[str] = Field(
+        default_factory=list, description="Channel labels with no fresh brief"
+    )
+
+
+class ScoutInputsPresence(BaseModel):
+    """What the Scout actually read, counted by code (not the LLM)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    youtube_macro: ScoutCategoryPresence
+    youtube_micro: ScoutCategoryPresence
+    options_daily: str | None = Field(None, description="as_of of the fresh entry; None = absent")
+    vx_curve: str | None = None
+    vol_term: str | None = None
+
+
+class ScoutReadPayload(BaseModel):
+    """The Scout's structured daily read (E13.7, D56); ``scout_read`` kind.
+
+    ``discovery`` is the code-screened discovery tier written this run (<=
+    ``funnel.scout.max_discovery``); ``discovery_fill`` its length, alerted as
+    ``coverage:scout`` below ``funnel.scout.min_discovery_alert``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str = Field(..., description="ISO time (ET) of the run")
+    session: str = Field(..., description="Trading session the read is for (YYYY-MM-DD)")
+    regime: str = Field(..., max_length=600)
+    options_sentiment: str = Field(..., max_length=600)
+    themes: list[str] = Field(default_factory=list, max_length=8)
+    risks: list[str] = Field(default_factory=list, max_length=6)
+    ticker_calls: list[ScoutTickerCall] = Field(default_factory=list, max_length=30)
+    inputs: ScoutInputsPresence
+    discovery: list[str] = Field(default_factory=list, max_length=25)
+    discovery_fill: int = Field(..., ge=0)
+    screened_out: dict[str, str] = Field(
+        default_factory=dict, description="ticker -> why it is not in discovery"
+    )
+    prompt_sha: str
+    model: str
+
+
 @dataclass(frozen=True)
 class KindSpec:
     """A context kind: its payload model and current schema version."""
@@ -645,7 +719,7 @@ def _registry(*specs: KindSpec) -> Mapping[str, KindSpec]:
 KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("raw_doc_ref", RawDocRefPayload),
     KindSpec("channel_brief", ChannelBriefPayload),
-    KindSpec("candidate", CandidatePayload, schema_version=2),  # E4.5: corroboration
+    KindSpec("candidate", CandidatePayload, schema_version=3),  # E13.7: feed, origins
     KindSpec("regime", RegimePayload, schema_version=2),  # E4.12: iv_percentile_ext
     KindSpec("shortlist", ShortlistPayload, schema_version=3),  # E5.9: portfolio_view/no_trade
     KindSpec("structures", StructuresPayload, schema_version=3),  # E13.9: revision_of/kept
@@ -677,6 +751,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     # write momentum/trending); active_universe subject = "active" (one per resolve).
     KindSpec("universe_tier", UniverseTierPayload, schema_version=2),  # E12.2: url, partial
     KindSpec("active_universe", ActiveUniverse, schema_version=2),  # E13.4: model, dropped rank
+    # E13.7 (D56): the Scout's daily read; subject = "session"
+    KindSpec("scout_read", ScoutReadPayload),
 )
 
 

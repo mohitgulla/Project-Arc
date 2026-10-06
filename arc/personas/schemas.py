@@ -467,6 +467,52 @@ class ReconcileOutput(BaseModel):
     reconciliation_status: str = Field(..., description="clean | discrepancies_found | pending")
 
 
+class ScoutTickerCall(BaseModel):
+    """One Scout ticker call (E13.7, D56), backed by YouTube channel briefs only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str = Field(..., pattern=r"^[A-Z][A-Z0-9.]{0,9}$")
+    stance: Stance
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    horizon: Literal["days", "weeks"]
+    origins: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=6,
+        description="YouTube channel ids from this run's briefs, e.g. 'youtube:stockedup'",
+    )
+    thesis: str = Field(..., max_length=240)
+    catalyst_type: CatalystType
+    catalyst_date: str | None = Field(None, description="ISO-8601 date, if any")
+
+
+class ScoutOutput(BaseModel):
+    """Scout reply (E13.7, D56): the daily slow-feed read, sections in fixed order."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    regime: str = Field(..., max_length=600)
+    options_sentiment: str = Field(..., max_length=600)
+    themes: list[str] = Field(default_factory=list, max_length=8)
+    ticker_calls: list[ScoutTickerCall] = Field(default_factory=list, max_length=30)
+    discovery: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Ordered subset of ticker_calls tickers for the discovery tier, best first",
+    )
+    risks: list[str] = Field(default_factory=list, max_length=6)
+
+    @field_validator("themes")
+    @classmethod
+    def _theme_lines(cls, v: list[str]) -> list[str]:
+        for t in v:
+            if len(t) > 160:
+                msg = "each theme is one line of at most 160 characters"
+                raise ValueError(msg)
+        return v
+
+
 # D56 (E13.1): pre-rename names, re-exported for one release.
 SweepCandidateOut = ScalpCandidateOut
 SweepOutput = ScalpOutput

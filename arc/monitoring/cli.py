@@ -121,6 +121,7 @@ def run_checks(
         checks.slot_coverage(conn, routines, ms, now),
         checks.earnings_coverage(conn, routines, ms, now, _universe(conn, now)),
         checks.momentum_coverage(conn, routines, now, stale_after_days=_momentum_stale_days()),
+        checks.scout_coverage(conn, routines, now),  # E13.7
         checks.stuck_runs(conn, ms, now),
         checks.stranded_events(conn, routines, now),
         checks.approvals_unposted(conn, routines, now),

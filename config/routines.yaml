@@ -147,6 +147,7 @@ context_ttl:
   # this default. An expired tier reads as empty (logged universe.tier_expired).
   universe_tier: {ttl: 1 session, supersede: latest}
   active_universe: {ttl: 1 session, supersede: latest}   # subject = active; one per resolve
+  scout_read:    {ttl: 24h, supersede: latest}             # E13.7 (D56) the Scout's daily read; subject = session
 
 # D47/D49/D56 (E4.7, E4.9, E13.3): six source categories, weighted EQUALLY (not per source). A
 # source's `weight:` is its share INSIDE its category, so a new feed (or YouTube channel)
@@ -514,6 +515,21 @@ personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
   quant_risk_loop: "off"        # E13.9 (D56): off | on — Risk verdicts + one quant.revise round (strategy lane; XP-7)
+  scout_feed: "off"             # E13.7 (D56): off | on — the daily Scout below (strategy lane); off = scout skipped, no LLM call
+  scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + 18:30 options_slow
+    label: Scout
+    about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"
+    group: scout
+    persona: scout
+    schedule: ["06:00"]         # owner 2026-10-05 (was 08:30)
+    days: trading
+    after_sources: true
+    ttl: 1h                     # a missed 06:00 still runs until 07:00; later = skipped for the day
+    lane: background            # one cheap LLM call (~1-2 min); the tick never waits on it
+    llm: true
+    notify: card
+    reads: [channel_brief, options_daily, vx_curve, vol_term, universe_tier, active_universe]
+    writes: [scout_read, candidate, note, universe_tier, active_universe]   # universe_tier: discovery only; active_universe: re-resolve after
   scalp:                        # D31: every 30 min in session (15 runs), after the fast sources
     label: Scalp
     about: "Reads fresh news and filings; writes candidate ideas and story digests"
