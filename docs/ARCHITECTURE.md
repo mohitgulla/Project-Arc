@@ -22,9 +22,9 @@
                                                         v
                               Decision Processor [Human -- Slack Approve/Reject]
                                                         v
-                              Trade Execution [Investor persona -> BrokerAdapter.alpaca_paper]
+                              Trade Execution [Broker job (deterministic) -> BrokerAdapter.alpaca_paper]
                                                         v
-                              Auditor persona, SQLite audit, reconciliation --> back to Aggregator
+                              Broker reconcile, SQLite audit, reconciliation --> back to Aggregator
 ```
 
 ## Hard boundaries
@@ -86,9 +86,9 @@ shipped job and step to declare `writes`.
 | `risk` | `structures` | `risk_review`, `note` |
 | `propose` | `candidate`, `regime`, `shortlist`, `structures`, `risk_review` | `proposal` |
 | `monitor` | `proposal` | `proposal` (E6.2 exit proposals) |
-| `auditor` | all | `journal`, `note` |
+| `broker.reconcile` | all | `journal`, `note` |
 | `scorecard` | audit store (read-only) | nothing (writes the `docs/RESEARCH/weekly/<monday>.md` report, E7.3) |
-| `investor` | all | `note` |
+| `broker` | all | `note` |
 
 - **`note` kind.** `NotePayload` holds persona, topic (`thesis`, `regime_view`,
   `observation`, `risk_flag`, `lesson`, `execution`), horizon, stance, title, body,
@@ -129,7 +129,7 @@ Shipped defaults in `config/routines.yaml`, all times ET:
 | 09:30-16:00 trading days, every 30m | `monitor`: positions, net Greeks, expiries, daily-loss halt. Read-only, no LLM, halt-exempt |
 | 02:00 trading days | `youtube.briefs`: newest video per channel from the last 24 h (StockedUp, FX Evolution, Trade Brigade, Arete) → one `channel_brief` each, read by the Director (D45). YouTube docs never reach the Sweep |
 | 22:00 daily | `sweep.overnight` (fast sources only) |
-| 16:30 trading days | `auditor` |
+| 16:30 trading days | `broker.reconcile` |
 | 16:45 Fridays (`days: [fri]`) | `scorecard` (weekly) |
 
 - One Hermes cron job, `arc-routines-tick`, runs `*/10 * * * *` (on the clock, D52) with `--no-agent`. It runs

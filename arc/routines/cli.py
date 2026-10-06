@@ -191,7 +191,7 @@ def _dispatcher(
     # D39: only a live tick hands `lane: background` slots to detached children.
     spawner = None
     if background and not dry:
-        from arc.routines.investor import spawn_detached
+        from arc.routines.spawn import spawn_detached
 
         spawner = spawn_detached
     return _Dispatcher(
@@ -370,7 +370,7 @@ def _record_tick(
     E5.10: the detail also carries the tick's own wall time (``tick_duration_ms``) and
     its three slowest due jobs, for the slow-tick alert (E8.2a). E6.1b: ``approvals``
     counts this tick's approval sweep (``sweep_failed`` 0/1, card ``post_failed``,
-    ``reposted``), summed per day on the Auditor card's Ops section.
+    ``reposted``), summed per day on the Broker reconcile card's Ops section.
     """
     from collections import Counter
 

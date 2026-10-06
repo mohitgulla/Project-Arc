@@ -12,7 +12,7 @@ Resolution order for a job/step name (see :func:`resolve_handler`):
 3. the name's first dotted segment (``youtube.stockedup`` -> ``youtube``), so a
    new channel is a YAML-only change,
 4. otherwise :func:`not_implemented`, which records the run as ``skipped``
-   (persona handlers owned by later cards: E6.x Investor, Auditor).
+   (persona handlers owned by later cards).
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ class JobResult:
 
 @dataclass(frozen=True)
 class RunEnv:
-    """How this dispatcher process was started (D34: what a spawned Investor inherits).
+    """How this dispatcher process was started (D34: what a spawned Broker inherits).
 
     ``db_path`` / ``config_path`` / ``lock_dir`` are the CLI's ``--db`` /
     ``--config`` / ``--lock-dir`` (None = the defaults); ``slack`` is False under
@@ -1450,26 +1450,33 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "propose": "arc.pipeline.steps:propose_step",
     # E5.3 intraday monitor (read-only: positions, Greeks, expiries, daily-loss halt)
     "monitor": "arc.routines.monitor:monitor_step",
-    # E6.2 Investor: works an approved proposal through its D24 price band
-    "investor": "arc.routines.investor:investor_step",
+    # E6.2 / D56 Broker: works an approved proposal through its D24 price band
+    "broker": "arc.broker.ladder_job:broker_step",
     # D34 in-chain Execute: publish + auto-approve this chain's proposals, hand each
-    # to an Investor subprocess (own lock, not the LLM lock); a no-op when auto is off
-    "execute": "arc.routines.investor:execute_step",
-    # E6.3 Auditor: post-market reconcile (broker vs local), snapshots, tax lots, card
-    "auditor": "arc.routines.auditor:auditor_step",
-    # E6.4 position manager: review -> exits -> close-to-reallocate (arc/positions/steps.py)
+    # to a Broker subprocess (own lock, not the LLM lock); a no-op when auto is off
+    "broker.execute": "arc.broker.ladder_job:execute_step",
+    # E6.3 / D56 Broker reconcile: post-market broker vs local, snapshots, tax lots, card
+    "broker.reconcile": "arc.broker.reconcile_job:broker_reconcile_step",
+    # E6.4 position manager: marks -> exits -> close-to-reallocate (arc/positions/steps.py)
     "positions.evaluate": "arc.positions.steps:evaluate_step",
-    "investor.exits": "arc.positions.steps:exits_step",
+    "quant.exits": "arc.positions.steps:exits_step",
     "risk.reallocate": "arc.positions.steps:reallocate_step",
-    # E7.3 weekly paper scorecard (deterministic, from the audit store)
+    # E7.3 weekly paper scorecard (deterministic, from the audit store; posts as [Ops])
     "scorecard": "arc.routines.scorecard:scorecard_step",
     # E10.3 (D44): daily experiment evaluation after the EOD reconcile
     "experiments.evaluate": "arc.routines.experiments:experiments_evaluate_step",
 }
 
-#: D56 (E13.1): pre-rename job names still resolve, for one release, to the renamed
-#: handlers (a local ``routines.yaml`` or ``--job sweep`` keeps working; logged).
-DEPRECATED_JOB_ALIASES: Mapping[str, str] = {"sweep": "scalp", "director": "research"}
+#: D56 (E13.1/E13.2): pre-rename job names still resolve, for one release, to the
+#: renamed handlers (a local ``routines.yaml`` or ``--job sweep`` keeps working; logged).
+DEPRECATED_JOB_ALIASES: Mapping[str, str] = {
+    "sweep": "scalp",
+    "director": "research",
+    "investor": "broker",
+    "investor.exits": "quant.exits",
+    "execute": "broker.execute",
+    "auditor": "broker.reconcile",
+}
 
 
 def import_handler(path: str) -> Handler:

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from arc.approvals.service import approval_record
+from arc.broker.ladder_job import broker_execute, load_approved
 from arc.config import ArcSettings
 from arc.context.store import ContextStore
 from arc.execution.exits import exit_legs, propose_exits
@@ -23,7 +24,6 @@ from arc.gate.inputs import AccountSnapshot
 from arc.models import LegIntent, Structure
 from arc.routines.config import RoutinesConfig
 from arc.routines.handlers import JobContext, JobSkippedError
-from arc.routines.investor import investor, load_approved
 from arc.routines.runs import RoutineEvent
 from arc.store.db import connect
 from arc.store.execution import OpenStructureRepo
@@ -299,16 +299,16 @@ def _approve(conn: sqlite3.Connection, phash: str) -> None:
 
 def _ctx(conn: sqlite3.Connection, phash: str | None, now: dt.datetime) -> JobContext:
     routines = RoutinesConfig.model_validate(
-        {"personas": {"investor": {"trigger": "approval", "llm": False, "notify": "card"}}}
+        {"personas": {"broker": {"trigger": "approval", "llm": False, "notify": "card"}}}
     )
-    kind, step = routines.step("investor")
+    kind, step = routines.step("broker")
     ev = (
         RoutineEvent(id="e1", name="approval", payload={"proposal_hash": phash}, created_at=now)
         if phash
         else None
     )
     return JobContext(
-        job="investor", kind=kind, spec=step, run_id="run-i", chain_run_id=None,
+        job="broker", kind=kind, spec=step, run_id="run-i", chain_run_id=None,
         scheduled_for=now, now=now, conn=conn, snapshot=ContextStore(conn).snapshot(now),
         routines=routines, event=ev, settings_factory=lambda: settings(),
     )  # fmt: skip
@@ -324,7 +324,7 @@ def test_investor_closes_the_structure(conn: sqlite3.Connection) -> None:
 
     clock_t = [NOW + dt.timedelta(minutes=1)]
     b = ScriptedBroker([["filled"]], fills={0: (2, str(proposal.limit_price))})
-    res = investor(
+    res = broker_execute(
         _ctx(conn, phash, clock_t[0]),
         broker=b,
         clock=lambda: clock_t[0],
@@ -333,7 +333,7 @@ def test_investor_closes_the_structure(conn: sqlite3.Connection) -> None:
     )
     assert res.metrics["status"] == "filled" and res.metrics["steps_used"] == 0
     assert res.card is not None
-    assert "[Investor] Order: SPY Close Position • x2" in res.card.text
+    assert "[Broker] Order: SPY Close Position • x2" in res.card.text
     assert "Filled on attempt*\\n1 of" in str(res.card.blocks).replace("\n", "\\n")
     row = OpenStructureRepo(conn).get(sid)
     assert row is not None and row["status"] == "closed"
@@ -348,7 +348,7 @@ def test_investor_refuses_outside_rth(conn: sqlite3.Connection) -> None:
     (phash,) = propose(conn).proposed
     _approve(conn, phash)
     b = ScriptedBroker([["filled"]])
-    res = investor(
+    res = broker_execute(
         _ctx(conn, phash, NOW), broker=b, clock=lambda: NOW, sleep=lambda s: None,
         market_open=lambda t: False,
     )  # fmt: skip
@@ -357,7 +357,7 @@ def test_investor_refuses_outside_rth(conn: sqlite3.Connection) -> None:
 
 def test_investor_needs_an_event(conn: sqlite3.Connection) -> None:
     with pytest.raises(JobSkippedError):
-        investor(
+        broker_execute(
             _ctx(conn, None, NOW), broker=ScriptedBroker([]), clock=lambda: NOW,
             sleep=lambda s: None, market_open=lambda t: True,
         )  # fmt: skip
@@ -366,7 +366,7 @@ def test_investor_needs_an_event(conn: sqlite3.Connection) -> None:
 def test_investor_handler_registered() -> None:
     from arc.routines.handlers import BUILTIN_HANDLERS
 
-    assert BUILTIN_HANDLERS["investor"] == "arc.routines.investor:investor_step"
+    assert BUILTIN_HANDLERS["broker"] == "arc.broker.ladder_job:broker_step"
 
 
 # ---------------------------------------------------------------------------

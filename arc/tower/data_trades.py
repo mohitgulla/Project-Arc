@@ -1495,7 +1495,7 @@ def _decisions(conn: sqlite3.Connection, p: sqlite3.Row, chain: str | None) -> D
         DecisionItem(
             id=r["id"],
             at=parse_ts(r["at"]),
-            persona=legacy.persona_key(r["persona"], parse_ts(r["at"]), cut),
+            persona=legacy.persona_key(r["persona"], parse_ts(r["at"]), cut, stage=r["stage"]),
             stage=r["stage"],
             subject=r["subject"],
             choice=r["choice"],

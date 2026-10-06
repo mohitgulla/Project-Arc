@@ -307,7 +307,7 @@ class ContextStore:
         return snap
 
     def load_snapshot(self, snapshot_id: str) -> ContextSnapshot:
-        """Rebuild a recorded snapshot exactly (for Auditor and backtest replay)."""
+        """Rebuild a recorded snapshot exactly (for audit and backtest replay)."""
         row = self.conn.execute(
             "SELECT * FROM context_snapshots WHERE id = ?", (snapshot_id,)
         ).fetchone()

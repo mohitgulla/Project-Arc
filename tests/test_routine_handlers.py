@@ -171,7 +171,7 @@ def test_data_tickers_include_open_underlyings(conn: sqlite3.Connection) -> None
     from arc.routines.handlers import _data_tickers
 
     _open_structure(conn, "ZZOP")
-    got = _data_tickers(_ctx(conn, "unusual_options", {"tickers": ["nvda"]}))
+    got = _data_tickers(_ctx(conn, "ex_dividend", {"tickers": ["nvda"]}))
     assert got == ["NVDA", "ZZOP"]
 
 

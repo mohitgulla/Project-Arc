@@ -6,14 +6,10 @@ Public API:
 """
 
 from arc.personas.builders import (
-    AuditorInput,
-    InvestorInput,
     QuantInput,
     ResearchInput,
     RiskInput,
     ScalpInput,
-    build_auditor_prompt,
-    build_investor_prompt,
     build_quant_prompt,
     build_research_prompt,
     build_risk_prompt,
@@ -21,15 +17,14 @@ from arc.personas.builders import (
 )
 from arc.personas.schemas import (
     AnomalyReport,
-    AuditorOutput,
+    BrokerPlan,
     ImprovementStep,
-    InvestorOutput,
-    InvestorPlan,
     LessonLearned,
     QuantGreeks,
     QuantLeg,
     QuantOutput,
     QuantStructureOut,
+    ReconcileOutput,
     ResearchOutput,
     ResearchRankedItem,
     RiskAssessment,
@@ -41,17 +36,16 @@ from arc.personas.schemas import (
 __all__ = [
     # Schemas
     "AnomalyReport",
-    "AuditorOutput",
+    "BrokerPlan",
     "ResearchOutput",
     "ResearchRankedItem",
-    "InvestorOutput",
-    "InvestorPlan",
     "ImprovementStep",
     "LessonLearned",
     "QuantGreeks",
     "QuantLeg",
     "QuantOutput",
     "QuantStructureOut",
+    "ReconcileOutput",
     "RiskAssessment",
     "RiskOutput",
     "ScalpCandidateOut",
@@ -61,13 +55,9 @@ __all__ = [
     "build_research_prompt",
     "build_quant_prompt",
     "build_risk_prompt",
-    "build_investor_prompt",
-    "build_auditor_prompt",
     # Input types
     "ScalpInput",
     "ResearchInput",
     "QuantInput",
     "RiskInput",
-    "InvestorInput",
-    "AuditorInput",
 ]

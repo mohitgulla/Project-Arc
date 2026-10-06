@@ -3080,7 +3080,7 @@ export interface components {
             as_of: string;
             /**
              * Cadences
-             * @description monitor, auditor, tick
+             * @description monitor, broker.reconcile, tick
              */
             cadences: {
                 [key: string]: components["schemas"]["Cadence"];
@@ -3507,7 +3507,7 @@ export interface components {
          * Performance
          * @description Account Day/MTD/YTD performance from ``pnl_snapshots`` (E6.3, D28). $ and fractions.
          *
-         *     Shared by the Auditor digest (:mod:`arc.slack.digests`) and the control tower.
+         *     Shared by the Broker reconcile digest (:mod:`arc.slack.digests`) and the control tower.
          */
         Performance: {
             /** Day Pct */

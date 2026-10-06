@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from arc.routines.handlers import JobContext
 
 SLOT = FIXTURE_NOW.astimezone(ET)
-STEPS = ("positions.evaluate", "investor.exits", "risk.reallocate", "execute")
+STEPS = ("positions.evaluate", "quant.exits", "risk.reallocate", "broker.execute")
 
 
 def _conn() -> sqlite3.Connection:
@@ -104,9 +104,9 @@ def _disp(
         load_routines(overrides=overrides or {}),
         handlers={
             "positions.evaluate": evaluate,
-            "investor.exits": exits,
+            "quant.exits": exits,
             "risk.reallocate": reallocate,
-            "execute": execute,
+            "broker.execute": execute,
         },
         notifier=notes,
         settings_factory=lambda: settings,

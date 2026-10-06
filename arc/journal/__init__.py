@@ -6,7 +6,7 @@ with a stable :class:`~arc.journal.reasons.ReasonCode`), ``market_context``
 (quotes frozen at proposal time), ``outcomes`` (deterministic attribution) and
 ``decision_reviews`` (decision quality judged separately from outcome).
 
-The Auditor (LLM) may only append reviews that cite existing decision ids.
+An LLM reviewer may only append reviews that cite existing decision ids.
 """
 
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage

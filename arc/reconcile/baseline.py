@@ -4,7 +4,7 @@ Day P&L is ``equity − start_of_day_equity``. Every surface uses this module: t
 loop root and Research digest (``portfolio_context``), the gate's daily-loss
 rule and :meth:`arc.gate.halt.HaltSwitch.check_daily_loss` (via
 :func:`arc.pipeline.market.account_snapshot`), the monitor heartbeat, the EOD
-reconcile snapshot (and the Auditor journal reading it) and the control tower.
+reconcile snapshot (and the Broker reconcile journal reading it) and the control tower.
 
 Why not the broker's ``last_equity``: Alpaca values the book at official closing
 prices, while Arc's ``equity`` each tick (and its EOD reconcile mark) comes from

@@ -905,7 +905,7 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         Group.EXECUTION,
         _I,
         "D34: seconds between the proposal's pricing and the ladder's first attempt after "
-        "which the Investor re-prices at mid (a mid outside the gate band is not sent).",
+        "which the Broker re-prices at mid (a mid outside the gate band is not sent).",
         Risk.UP,
         field="execution_max_quote_age_seconds",
         unit="s",
@@ -1900,6 +1900,7 @@ def lookup(key: str) -> Tunable:
     k = _ALIASES.get(lowered, lowered)
     if k in REGISTRY:
         return REGISTRY[k]
+    k = _legacy_routine_key(k)
     pat = _pattern_tunable(k)
     if pat is not None:
         return pat
@@ -1907,9 +1908,25 @@ def lookup(key: str) -> Tunable:
     raise TunableError(msg)
 
 
+#: D56 (E13.2): ``routines.<old job>.*`` keys resolve to the renamed job for one release
+#: (``routines.investor.enabled`` -> ``routines.broker.enabled``).
+LEGACY_ROUTINE_JOBS: dict[str, str] = {
+    "investor": "broker",
+    "auditor": "broker.reconcile",
+}
+
+
+def _legacy_routine_key(key: str) -> str:
+    m = _ROUTINE_KEY_RE.match(key)
+    if m is None or m.group("job") not in LEGACY_ROUTINE_JOBS:
+        return key
+    return f"routines.{LEGACY_ROUTINE_JOBS[m.group('job')]}.{m.group('attr')}"
+
+
 def is_alias(key: str) -> bool:
     """True for an alias of a registry key (e.g. a D49-renamed ``categories.company.*``)."""
-    return key.strip().lower() in _ALIASES
+    lowered = key.strip().lower()
+    return lowered in _ALIASES or _legacy_routine_key(lowered) != lowered
 
 
 def keys_in_group(group: Group) -> list[Tunable]:

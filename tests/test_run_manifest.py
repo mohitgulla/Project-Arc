@@ -274,7 +274,13 @@ class TestTraceCli:
         capsys.readouterr()
         assert main(["context", "trace", chain, "--db", db, "--json"]) == 0
         steps = json.loads(capsys.readouterr().out)
-        assert [s["job"] for s in steps] == ["research", "quant", "risk", "propose", "execute"]
+        assert [s["job"] for s in steps] == [
+            "research",
+            "quant",
+            "risk",
+            "propose",
+            "broker.execute",
+        ]
         for s in steps:
             assert set(s) >= {"job", "run_id", "status", "declared", "read", "wrote",
                               "persona_calls", "manifest"}  # fmt: skip

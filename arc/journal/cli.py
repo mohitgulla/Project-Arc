@@ -222,8 +222,8 @@ def _scorecard(conn: sqlite3.Connection, args: argparse.Namespace, settings: Arc
     )
     settle = None
     if args.settle:
+        from arc.broker.reconcile_job import settle_from_market
         from arc.data.alpaca import AlpacaMarketData
-        from arc.routines.auditor import settle_from_market
 
         settle = settle_from_market(AlpacaMarketData())
     start, end = week_window(at)

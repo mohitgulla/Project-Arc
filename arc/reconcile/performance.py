@@ -1,4 +1,4 @@
-"""Day / MTD / YTD performance from ``pnl_snapshots`` (E6.3, D28 Auditor card).
+"""Day / MTD / YTD performance from ``pnl_snapshots`` (E6.3, D28 Broker reconcile card).
 
 Pure over the store: :func:`performance` reads the daily snapshots the
 reconciler writes (one per ET day, ``details_json.day``; a re-run the same day

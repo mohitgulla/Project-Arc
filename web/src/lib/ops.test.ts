@@ -296,7 +296,7 @@ describe("E8.8d timeline bands", () => {
       eRow("rss", "sources.market_news", { kind: "source", categories: ["market_news", "company_data"] }),
       eRow("edgar", "sources.company_data", { kind: "source" }),
       eRow("scalp", "scalp", { persona: "scalp" }),
-      eRow("positions.evaluate", "position_management", { persona: "investor", label: "Investor exits" }),
+      eRow("positions.evaluate", "position_management", { persona: "quant", label: "Position marks" }),
       eRow("mystery", "other"),
       eRow("orphan", "nowhere"), // no band from the API: falls under Other
     ],

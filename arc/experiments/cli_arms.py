@@ -222,8 +222,8 @@ class _FixtureBroker:
 
 def _arms_tick(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     from arc.experiments.runner import arms_tick
-    from arc.routines.investor import spawn_detached
     from arc.routines.locks import LockBusyError, LockManager
+    from arc.routines.spawn import spawn_detached
     from arc.utils.calendar import now_et
 
     now = _parse_now(args.now)
@@ -272,7 +272,7 @@ def spawn_arms_tick(conn: sqlite3.Connection, run_env: Any) -> int | None:
     """
     from arc.experiments.runner import runner_config
     from arc.experiments.tape import running_experiment
-    from arc.routines.investor import arc_command, spawn_detached
+    from arc.routines.spawn import arc_command, spawn_detached
 
     if running_experiment(conn) is None or not runner_config(conn).enabled:
         return None

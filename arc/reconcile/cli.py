@@ -1,6 +1,6 @@
 """``arc reconcile``: run the post-market reconciliation by hand (E6.3).
 
-Same code path as the Auditor routine (:func:`arc.reconcile.engine.reconcile`)
+Same code path as the Broker reconcile job (:func:`arc.reconcile.engine.reconcile`)
 against the Alpaca **paper** broker (read-only calls). Prints the report as
 JSON. Exit 0 when clean, 1 on any mismatch (a halt is raised unless
 ``--no-halt``).
@@ -53,8 +53,8 @@ def run_reconcile(args: argparse.Namespace, *, broker: BrokerAdapter | None = No
 
         broker = trading_broker(conn, settings)  # E10.2: an arm store's own account
         if not args.no_settle:
+            from arc.broker.reconcile_job import settle_from_market
             from arc.data.alpaca import AlpacaMarketData
-            from arc.routines.auditor import settle_from_market
 
             settle = settle_from_market(AlpacaMarketData())
     report = reconcile(

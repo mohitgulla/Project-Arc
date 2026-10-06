@@ -3,7 +3,7 @@
 # This file is the ONE place to change which model a persona runs on:
 # - change a whole tier: edit its `model` under `tiers`
 # - move one persona to another tier: edit its entry under `personas`
-# Every §2.4 persona must be listed, and every tier it names must exist.
+# Every §2.4 LLM persona must be listed (D56: Broker and Ops are deterministic), and every tier it names must exist.
 #
 # Model ids are `<provider>/<model>`; the provider prefix is passed to
 # `hermes -z --provider`. Both tiers run on the Anthropic subscription (D8).
@@ -20,5 +20,3 @@ personas:
   quant:    frontier
   risk:     frontier
   scalp:    cheap
-  investor: cheap
-  auditor:  cheap

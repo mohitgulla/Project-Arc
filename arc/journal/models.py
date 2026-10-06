@@ -156,7 +156,7 @@ class OutcomeRecord(BaseModel):
 
 
 class DecisionReview(BaseModel):
-    """Post-hoc review. The Auditor (LLM) may only write these, citing existing decisions."""
+    """Post-hoc review. An LLM reviewer may only write these, citing existing decisions."""
 
     model_config = _FORBID
 

@@ -1,8 +1,10 @@
-"""Auditor post-market routine (E6.3): reconcile, snapshot, alert, Auditor card.
+"""Broker post-market reconcile (E6.3): reconcile, snapshot, alert, reconcile card.
 
-``personas.auditor`` in ``config/routines.yaml`` (16:30 ET, ``halt_exempt``).
+D56 (E13.2): was the Auditor (``arc.routines.auditor``); the old job name ``auditor``
+loads as a logged alias. ``personas.broker.reconcile`` in ``config/routines.yaml``
+(16:30 ET, ``halt_exempt``).
 Deterministic: it runs :func:`arc.reconcile.engine.reconcile` against the paper
-broker (read-only calls only), then posts the ``[Auditor] Journal`` card with
+broker (read-only calls only), then posts the ``[Broker] Reconcile`` card with
 Day / MTD / YTD performance from ``pnl_snapshots`` (D28).
 
 Any mismatch has already raised a halt (``arc:reconcile``) inside ``reconcile``;
@@ -25,11 +27,16 @@ if TYPE_CHECKING:
 
     from arc.broker.base import BrokerAdapter
     from arc.data.base import MarketDataProvider
-    from arc.personas.schemas import AuditorOutput
+    from arc.personas.schemas import ReconcileOutput
     from arc.reconcile.engine import ReconcileReport
     from arc.routines.handlers import JobContext
 
-__all__ = ["auditor", "auditor_output", "auditor_step", "settle_from_market"]
+__all__ = [
+    "broker_reconcile",
+    "broker_reconcile_step",
+    "reconcile_output",
+    "settle_from_market",
+]
 
 log = structlog.get_logger(__name__)
 
@@ -44,7 +51,7 @@ def settle_from_market(market: MarketDataProvider) -> Callable[[str, _dt.date], 
             bars = market.history_bars(root, day, day)
         except Exception as exc:  # noqa: BLE001 - unknown settle keeps the structure open
             log.warning(
-                "auditor.settle_unavailable", root=root, day=day.isoformat(), error=str(exc)
+                "reconcile.settle_unavailable", root=root, day=day.isoformat(), error=str(exc)
             )
             return None
         from arc.utils.calendar import ET
@@ -55,9 +62,9 @@ def settle_from_market(market: MarketDataProvider) -> Callable[[str, _dt.date], 
     return settle
 
 
-def auditor_output(report: ReconcileReport) -> AuditorOutput:
-    """The Auditor card's data, straight from the reconciliation report (no LLM)."""
-    from arc.personas.schemas import AnomalyReport, AuditorOutput
+def reconcile_output(report: ReconcileReport) -> ReconcileOutput:
+    """The reconcile card's data, straight from the reconciliation report (no LLM)."""
+    from arc.personas.schemas import AnomalyReport, ReconcileOutput
     from arc.reconcile.engine import CATEGORY, MismatchKind
 
     anomalies = [
@@ -93,7 +100,7 @@ def auditor_output(report: ReconcileReport) -> AuditorOutput:
         lines.append(f"{report.lots_repriced} tax lot(s) set to broker fill prices.")
     if report.halted:
         lines.append("Trading is halted until the owner checks the mismatches and runs !resume.")
-    return AuditorOutput(
+    return ReconcileOutput(
         journal_date=report.day.isoformat(),
         daily_pnl=float(report.day_pnl) if report.day_pnl is not None else 0.0,
         open_positions=report.structures_open,
@@ -118,7 +125,7 @@ def _notice(report: ReconcileReport) -> str:
     return text + (f"\n• …and {more} more (arc journal show)" if more > 0 else "")
 
 
-def auditor(
+def broker_reconcile(
     ctx: JobContext,
     *,
     broker: BrokerAdapter,
@@ -126,7 +133,7 @@ def auditor(
 ) -> JobResult:
     from arc.reconcile.engine import reconcile
     from arc.reconcile.performance import performance
-    from arc.slack.digests import auditor_card
+    from arc.slack.digests import reconcile_card
 
     report = reconcile(
         ctx.conn,
@@ -137,12 +144,12 @@ def auditor(
         halt=bool(ctx.options.get("halt_on_mismatch", True)),
         settle_price=settle_price,
     )
-    out = auditor_output(report)
+    out = reconcile_output(report)
     ctx.write("journal", report.day.isoformat(), out)
     slots_line = _slots_line(ctx)
     approvals_line = _approvals_line(ctx)
     ops_line = "\n".join(x for x in (slots_line, approvals_line) if x) or None
-    card = auditor_card(
+    card = reconcile_card(
         out,
         performance=performance(ctx.conn, report.day),
         run_id=ctx.run_id,
@@ -176,7 +183,7 @@ def _slots_line(ctx: JobContext) -> str | None:
     try:
         return rollup_line(slot_rollup(ctx.conn, ctx.routines, ctx.now), ctx.routines)
     except Exception as exc:  # noqa: BLE001 - ops detail must not block the reconcile card
-        log.warning("auditor.slots_unavailable", error=str(exc))
+        log.warning("reconcile.slots_unavailable", error=str(exc))
         return None
 
 
@@ -187,11 +194,11 @@ def _approvals_line(ctx: JobContext) -> str | None:
     try:
         return approvals_line(ctx.conn, ctx.now)
     except Exception as exc:  # noqa: BLE001 - ops detail must not block the reconcile card
-        log.warning("auditor.approvals_unavailable", error=str(exc))
+        log.warning("reconcile.approvals_unavailable", error=str(exc))
         return None
 
 
-def auditor_step(ctx: JobContext) -> JobResult:
+def broker_reconcile_step(ctx: JobContext) -> JobResult:
     """Dispatcher entry point: Alpaca paper broker (read-only) + Alpaca bars for settles.
 
     E10.2: the store's broker (an arm store reconciles its own account, virtually).
@@ -199,7 +206,7 @@ def auditor_step(ctx: JobContext) -> JobResult:
     from arc.data.alpaca import AlpacaMarketData
     from arc.experiments.broker import trading_broker
 
-    return auditor(
+    return broker_reconcile(
         ctx,
         broker=trading_broker(ctx.conn, ctx.settings),
         settle_price=settle_from_market(AlpacaMarketData()),

@@ -742,7 +742,7 @@ def test_routine_declared_after_auditor_and_resolves() -> None:
     spec = rc.personas["experiments.evaluate"]
     assert spec.schedule == [dt.time(16, 40)] and spec.halt_exempt and spec.llm is False
     assert spec.writes == []
-    assert min(rc.personas["auditor"].schedule) < spec.schedule[0]
+    assert min(rc.personas["broker.reconcile"].schedule) < spec.schedule[0]
     assert resolve_handler("experiments.evaluate", spec).__name__ == "experiments_evaluate_step"
 
 

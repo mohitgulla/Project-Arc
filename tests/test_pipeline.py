@@ -214,7 +214,10 @@ class TestFixtureRun:
             ("quant", "ok"),
             ("risk", "ok"),
             ("propose", "ok"),
-            ("execute", "ok"),  # D34: no Slack in fixtures -> publishes nothing, dispatches nothing
+            (
+                "broker.execute",
+                "ok",
+            ),  # D34: no Slack in fixtures -> publishes nothing, dispatches nothing
         ]
         assert not report.failed
         # every chain step (research → execute) shares one chain_run_id

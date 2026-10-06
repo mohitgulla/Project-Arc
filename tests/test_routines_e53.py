@@ -90,15 +90,18 @@ class TestShippedDefaults:
         assert p["scalp"].after_sources and p["scalp.overnight"].after_sources
         assert p["scalp.overnight"].cadence == "at 22:00 ET (daily)"
         assert p["research"].cadence == "every 10m 09:40-15:50 ET (trading)"
-        assert p["research"].chain == ["quant", "risk", "propose", "execute"]
+        assert p["research"].chain == ["quant", "risk", "propose", "broker.execute"]
         assert p["research"].ttl is not None
         assert p["research"].ttl.duration == dt.timedelta(minutes=5)
         assert p["monitor"].cadence == "every 10m 09:30-16:00 ET (trading)"  # D35, D52
         assert p["monitor"].options["eod_marks_from"] == "15:50"
         assert p["monitor"].llm is False and p["monitor"].halt_exempt
-        assert p["auditor"].cadence == "at 16:30 ET (trading)" and p["auditor"].halt_exempt
+        assert (
+            p["broker.reconcile"].cadence == "at 16:30 ET (trading)"
+            and p["broker.reconcile"].halt_exempt
+        )
         assert p["scorecard"].cadence == "at 16:45 ET (fri)"
-        assert p["investor"].trigger == "approval"
+        assert p["broker"].trigger == "approval"
         assert shipped.triggers_for("scalp.completed") == []  # D31: the loop polls instead
         assert shipped.loop.job == "research" and shipped.is_loop("research")
 
@@ -123,8 +126,8 @@ class TestShippedDefaults:
         assert len(set(plan["monitor"])) == 40  # no slot planned twice
         assert (plan["monitor"][0], plan["monitor"][-1]) == ("Mon 09:30", "Mon 16:00")
         assert len(plan["positions.evaluate"]) == 13  # D52: 09:50..15:50 every 30 min (:20/:50)
-        assert plan["auditor"] == ["Mon 16:30"]
-        assert "scorecard" not in plan and "investor" not in plan
+        assert plan["broker.reconcile"] == ["Mon 16:30"]
+        assert "scorecard" not in plan and "broker" not in plan
 
     def test_friday_scorecard_and_weekend(self, shipped: RoutinesConfig) -> None:
         fri = _day_plan(shipped, et(2026, 10, 2, 0, 0), et(2026, 10, 3, 0, 0))
@@ -165,7 +168,7 @@ class TestShippedDefaults:
         assert at_open["research"] == "skip-halted"
         assert at_open["monitor"] == "run"
         post = d.plan(et(2026, 9, 28, 16, 30), since=et(2026, 9, 28, 16, 25), halted=True)
-        assert {x.job: x.action for x in post}["auditor"] == "run"
+        assert {x.job: x.action for x in post}["broker.reconcile"] == "run"
 
 
 # ---------------------------------------------------------------------------
@@ -869,7 +872,8 @@ def test_yaml_comment_overview_matches_config() -> None:
     raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
     assert raw["tick"]["interval"] == "10m"  # D52
     assert set(raw["personas"]) - {"finnhub_context", "director_diversification"} == {
-        "scalp", "scalp.overnight", "research", "monitor", "auditor", "scorecard", "investor",
+        "scalp", "scalp.overnight", "research", "monitor", "broker.reconcile", "scorecard",
+        "broker",
         "positions.evaluate", "experiments.evaluate",
     }  # fmt: skip
     # D31: the loop's cadence and window are config; the loop knobs are one block.

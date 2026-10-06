@@ -107,9 +107,9 @@ Open items requiring a decision are listed in §9 — all five original items ar
                                                          ▼
                               Decision Processor [Human — Slack clarify Approve/Reject]
                                                          ▼
-                              Trade Execution [Investor persona → BrokerAdapter.alpaca_paper]
+                              Trade Execution [Broker job (deterministic) → BrokerAdapter.alpaca_paper]
                                                          ▼
-                              Auditor persona · SQLite audit · reconciliation ─► back to Aggregator
+                              Broker reconcile · SQLite audit · reconciliation ─► back to Aggregator
 ```
 
 Hard boundaries (enforced in code, not prompts):
@@ -152,7 +152,7 @@ Project-Arc/
 │   │   └── static/           # SPA build output of `make web` (gitignored)
 │   └── cli.py                # `arc scan|chains|propose|gate|approve|execute|reconcile|report`
 ├── hermes/
-│   ├── skills/arc-*/SKILL.md # persona skills (Sweep, Director, Quant, Risk, Investor, Auditor; Scout = E5.13)
+│   ├── skills/arc-*/SKILL.md # persona skills (Scalp, Research, Quant, Risk; Scout = E5.13; Broker/Ops are deterministic, no skill)
 │   ├── hooks/arc-gate/       # pre_tool_call fail-closed hook
 │   └── routines/             # cron job definitions (pre-market, intraday, post-market)
 ├── schemas/context/          # committed JSON Schema per context kind, <kind>.v<N>.json (D27)
@@ -178,8 +178,9 @@ Project-Arc/
 | **Research** (Aggregator; renamed from Director in D56) | candidates + regime + portfolio | ranked shortlist + thesis per ticker | frontier | `[Research]` |
 | **Quant** (Risk/Reward) | shortlist + chains + Greeks | `Structure[]` with PoP/EV/cost, confidence | frontier | `[Quant]` |
 | **Risk** (Portfolio Alignment) | structures + portfolio + calendar | risk narrative, sizing suggestion (advisory only) | frontier | `[Risk]` |
-| **Investor** | approved proposal | order plan: limit at mid, improvement steps, timeout | cheap | `[Investor]` |
-| **Auditor** | fills, reconciliation, journal | daily journal, anomalies, lessons → skill notes | cheap | `[Auditor]` |
+| **Quant** (position marks / exits; E13.2) | open structures + marks | `position_review` (job `positions.evaluate`, "Position marks"), close proposals (`quant.exits`); deterministic | — | `[Quant]` |
+| **Broker** (D56, E13.2; was Investor + Auditor) | approved proposal; broker state after the close | ladder through the D24 band (`broker`, `broker.execute`); post-market reconcile + journal (`broker.reconcile`); deterministic | — | `[Broker]` |
+| **Ops** (D56, E13.2) | audit store | weekly paper scorecard (job `scorecard`); deterministic | — | `[Ops]` |
 
 AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits are enforced by the gate. AutoHedge's stock-centric `QUANT_ANALYSIS_PROMPT` is replaced by an options schema (IV/HV, IVR, regime, PoP, EV after spread cost).
 
@@ -192,7 +193,7 @@ AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits a
 ### 2.5 Slack design
 
 - **`#project-arc` (dev).** Every Kanban card gets one thread: creation post → worker progress comments → PR link → review verdict. Hermes' kanban notification subscriptions post into the same thread. Use `!cmd` prefix inside threads (Slack blocks slash commands there).
-- **`#arc-investor` (trading).** One thread per trading day (`💡 Mon Sep 28 · Session Notes`, switching at 24:00 ET; D37). Persona posts are labelled `[Scalp] [Scout] [Research] [Quant] [Risk] [Investor] [Auditor]` (D56: Scalp was Sweep, Research was Director; history keeps the old names and `arc.journal.legacy` maps them). Proposal cards render as Hermes `clarify` → Block Kit **Approve / Reject** buttons; TTL default 20 min; expiry = reject. `!halt` in any thread trips the kill switch; only the owner can `!resume`.
+- **`#arc-investor` (trading).** One thread per trading day (`💡 Mon Sep 28 · Session Notes`, switching at 24:00 ET; D37). Persona posts are labelled `[Scalp] [Scout] [Research] [Quant] [Risk] [Broker] [Ops]` (D56: Scalp was Sweep, Research was Director, Broker/Quant/Ops replace Investor and Auditor; history keeps the old names and `arc.journal.legacy` maps them). Proposal cards render as Hermes `clarify` → Block Kit **Approve / Reject** buttons; TTL default 20 min; expiry = reject. `!halt` in any thread trips the kill switch; only the owner can `!resume`.
 - No order is ever submitted from `#project-arc`.
 
 ### 2.6 Hermes orchestration
@@ -208,7 +209,7 @@ AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits a
     5. Fires `<job>.completed` triggers, whose `if:` expressions are evaluated safely over the run's metrics plus `session`.
     6. Drains queued external events (`arc routines emit approval|halt`).
   - **Idempotency.** `routine_runs` is unique on `(job, scheduled_for)` and on `(chain_run_id, step)`, so a doubled tick never re-runs a job. Retrying a failed chain resumes from its failed step.
-  - **Locks and halt.** There is a flock per job. The global `llm` lock is taken only by personas routed to a local model (`local: true` in `config/llm_routing.yaml`, D39; none today), so remote API personas run concurrently. `!halt` skips every persona except those marked `halt_exempt` (Auditor); sources keep fetching.
+  - **Locks and halt.** There is a flock per job. The global `llm` lock is taken only by personas routed to a local model (`local: true` in `config/llm_routing.yaml`, D39; none today), so remote API personas run concurrently. `!halt` skips every persona except those marked `halt_exempt` (Broker reconcile, monitor); sources keep fetching.
   - **Heartbeats.** Personas post one line to the #arc-investor day thread. Sources are quiet and get folded into the next persona line. Failures always alert.
   - **CLI.** `arc routines validate|list|tick [--dry-run]|run <job> [--chain]|run-claimed <run_id>|history|emit`, and `arc context show|schemas|trace`.
 - **MCP**: Alpaca MCP server v2 (`uvx alpaca-mcp-server`, `ALPACA_TOOLSETS` restricted to read-only in persona sessions); order submission goes through `arc.execution`, not MCP, in Phase 1.

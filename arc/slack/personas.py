@@ -12,8 +12,8 @@ class Persona(StrEnum):
     RESEARCH = "Research"
     QUANT = "Quant"
     RISK = "Risk"
-    INVESTOR = "Investor"
-    AUDITOR = "Auditor"
+    BROKER = "Broker"  # D56 (E13.2): order ladders and the post-market reconcile
+    OPS = "Ops"  # D56 (E13.2): the weekly scorecard
 
 
 def persona_label(persona: Persona) -> str:

@@ -826,7 +826,7 @@ class ApprovalService:
     def refresh_loop_root(self, proposal_hash: str) -> None:
         """D36: re-render the root line of the loop that proposed *proposal_hash*.
 
-        Called after a decision (approve / reject / expire) and by the Investor
+        Called after a decision (approve / reject / expire) and by the Broker
         after a fill; a no-op for proposals outside a loop with a root.
         """
         from arc.routines.loop import refresh_loop_root

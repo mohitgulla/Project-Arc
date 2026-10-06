@@ -1049,8 +1049,8 @@ def test_approvals_ops_line_sums_tick_heartbeats(conn: sqlite3.Connection) -> No
 
 
 def test_auditor_ops_section_carries_approvals_line(conn: sqlite3.Connection) -> None:
-    from arc.routines import auditor as aud
-    from arc.slack.digests import auditor_card
+    from arc.broker import reconcile_job as aud
+    from arc.slack.digests import reconcile_card
 
     t0 = et(2026, 9, 28, 10, 0)
     HeartbeatRepo(conn).record("tick", "ok", at=t0, detail={"approvals": {"sweep_failed": 3}})
@@ -1072,14 +1072,14 @@ def test_auditor_ops_section_carries_approvals_line(conn: sqlite3.Connection) ->
             pass
 
     assert aud._approvals_line(Broken()) is None  # type: ignore[arg-type]
-    text = json.dumps(auditor_card(_journal_out(), ops_line=f"Slots: missed 0\n{line}").blocks)
+    text = json.dumps(reconcile_card(_journal_out(), ops_line=f"Slots: missed 0\n{line}").blocks)
     assert "*Ops*" in text and "sweep failed 3" in text and "Slots: missed 0" in text
 
 
 def _journal_out():  # noqa: ANN202
-    from arc.personas.schemas import AuditorOutput
+    from arc.personas.schemas import ReconcileOutput
 
-    return AuditorOutput(
+    return ReconcileOutput(
         journal_date="2026-09-28",
         reconciliation_status="clean",
         daily_pnl=0.0,

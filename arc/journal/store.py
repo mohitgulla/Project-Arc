@@ -157,7 +157,9 @@ class JournalStore:
             id=row["id"],
             chain_run_id=row["chain_run_id"],
             run_id=row["run_id"],
-            persona=JournalPersona(legacy.persona_key(row["persona"], at, cuts)),
+            persona=JournalPersona(
+                legacy.persona_key(row["persona"], at, cuts, stage=row["stage"])
+            ),
             stage=Stage(row["stage"]),
             subject=row["subject"],
             choice=Choice(row["choice"]),
@@ -330,7 +332,7 @@ class JournalStore:
     def add_review(self, review: DecisionReview) -> str:
         """Append a review (own transaction). Every cited decision must exist.
 
-        This is the only journal write open to the Auditor (LLM): it can label
+        This is the only journal write open to an LLM reviewer: it can label
         decisions, never create or change them.
         """
         cites = list(dict.fromkeys(review.cites))

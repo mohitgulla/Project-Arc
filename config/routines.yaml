@@ -24,13 +24,13 @@
 #   09:30-16:00     intraday monitor every 10 min (D35/D52: positions, Greeks, marks + account
 #                   fields for the tower, expiries, halts; 40 slots, 16:00 inclusive)
 #   09:40-15:50     trading loop every 10 min (38 slots, D52): research -> quant -> risk ->
-#                   propose -> execute. ttl 5m: a missed slot is skipped, never caught up.
+#                   propose -> broker.execute. ttl 5m: a missed slot is skipped, never caught up.
 #                   One #arc-investor root line per slot, persona cards in its thread (D36).
-#   09:50-15:50     position manager every 30 min (:20/:50, D52): positions.evaluate -> investor.exits
+#   09:50-15:50     position marks every 30 min (:20/:50, D52): positions.evaluate -> quant.exits
 #                   -> risk.reallocate (early exits + close-to-reallocate swaps, E6.4)
-#   16:30           auditor (reconcile + journal)
+#   16:30           broker.reconcile (reconcile + journal)
 #   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop; E10.5 posts)
-#   16:45 Fri       weekly scorecard
+#   16:45 Fri       weekly scorecard ([Ops])
 #   18:00           earnings calendar
 #   22:00 daily     overnight Scalp (after-close fast sources; Sunday 22:00 feeds Monday).
 #                   YouTube never reaches the Scalp (D45): briefs only, at 02:00.
@@ -50,7 +50,7 @@ timezone: America/New_York
 tick:
   interval: 10m         # D52: the Hermes cron calls `arc routines tick` at */10 on the clock
   max_lookback: 7d      # never look further back than this for missed slots
-  dispatch_grace: 10m   # E6.2e: release a dispatched approval whose Investor never started
+  dispatch_grace: 10m   # E6.2e: release a dispatched approval whose Broker never started
   after_sources_wait: 5m   # D39: a background Scalp waits at most this for same-tick background sources
 
 heartbeat:
@@ -477,7 +477,7 @@ personas:
     every: 10m                  # D52 (owner 2026-10-05; was 5m)
     window: "09:40-15:50"       # 38 slots; skips the open's first 10 min
     days: trading
-    chain: [quant, risk, propose, execute]   # D34: execute = publish + auto-approve + hand off ladders
+    chain: [quant, risk, propose, broker.execute]   # D34: publish + auto-approve + hand off ladders
     reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, position_review, story,
             earnings_history, insider_activity, analyst_recs, fundamentals]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on
     writes: [shortlist, regime, note, portfolio_context]   # E5.9: portfolio_context + portfolio_view/thesis_check notes
@@ -500,50 +500,50 @@ personas:
     exits: false                # E6.4: the positions.evaluate chain below owns exit proposals
     eod_marks_from: "15:50"     # D35: marks from here count as end of day (stops EOD-only, D23)
   positions.evaluate:           # E6.4 (D19): review open positions -> exits -> close-to-reallocate
-    label: Investor exits
-    about: "Reviews open positions: take-profit and stop exits, then close-to-reallocate swaps"
+    label: Position marks         # D56 (E13.2), persona quant
+    about: "Marks open positions (deterministic); take-profit/stop exits; close-to-reallocate swaps"
     group: position_management
-    persona: investor
+    persona: quant
     every: 30m
     window: "09:50-15:50"       # D52: :20/:50 on the 10-min tick grid; never at the open's first quotes
     days: trading
     llm: false                  # the review is deterministic; risk.reallocate calls the LLM
-    chain: [investor.exits, risk.reallocate, execute]   # D34: auto-approved closes/swaps go out in-run
+    chain: [quant.exits, risk.reallocate, broker.execute]   # D34: auto-approved closes/swaps go out in-run
     notify: quiet               # folds into the next persona line; proposals post their own cards
     reads: [regime]             # realised-vol forecast for the remaining-EV paths
     writes: [position_review]
     eod_marks_from: "15:30"     # marks from here count as end of day (stops are EOD-only, D23)
-  auditor:                      # E6.3: post-market reconcile + snapshots + tax lots; mismatch -> halt + alert
-    label: Auditor reconcile
+  broker.reconcile:             # E6.3 / D56: post-market reconcile + snapshots + tax lots; mismatch -> halt + alert
+    label: Broker reconcile
     about: "Post-market broker vs store reconcile, snapshots and tax lots; a mismatch halts"
     group: post_market
-    persona: auditor
+    persona: broker
     schedule: ["16:30"]
     days: trading
     halt_exempt: true           # keeps running under !halt
     llm: false                  # deterministic: broker (read-only) vs local store
     ttl: 6h
-    notify: card                # [Auditor] Journal card: reconciliation + Day/MTD/YTD P&L (D28)
+    notify: card                # [Broker] Reconcile card: reconciliation + Day/MTD/YTD P&L (D28)
     halt_on_mismatch: true      # any mismatch raises an arc:reconcile halt until the owner !resume
     writes: [journal, note]     # note: lessons (E7.x); override TTL with context: when emitted
   scorecard:                    # E7.3 weekly paper scorecard -> #arc-investor + docs/RESEARCH/weekly/
     label: Weekly scorecard
     about: "Weekly paper scorecard to #arc-investor and docs/RESEARCH/weekly"
     group: post_market
-    persona: auditor
+    persona: ops                  # D56 (E13.2): was auditor
     schedule: ["16:45"]
     days: [fri]
     llm: false                  # deterministic: audit store (read-only) + Alpaca bars for D19 settles
     halt_exempt: true
     ttl: 6h
-    notify: card                # [Auditor] Scorecard card
+    notify: card                # [Ops] Scorecard card
     report_dir: docs/RESEARCH/weekly   # <monday>.md, relative to the repo root
     writes: []                  # reads the audit store; writes the Markdown report, no context
   experiments.evaluate:         # E10.3 (D44): mSPRT CI, Sortino non-inferiority, auto-stop
     label: Experiments
     about: "Daily A/B evaluation of running experiments (mSPRT CI, auto-stop)"
     group: post_market
-    schedule: ["16:40"]         # after the 16:30 auditor reconcile writes each arm's EOD pnl_snapshots
+    schedule: ["16:40"]         # after the 16:30 broker.reconcile writes each arm's EOD pnl_snapshots
     days: trading
     llm: false                  # deterministic: audit store only (no broker, no LLM)
     halt_exempt: true           # read-only evaluation; a halt must not skip it
@@ -551,14 +551,14 @@ personas:
     notify: quiet               # E10.5: posts its own [XP-n] line per running experiment
                                 #   and a stop card per stopped one (arc/slack/experiments.py)
     writes: []                  # experiment_reports + experiment_events, no context
-  investor:                     # E6.2: works an approved proposal through its D24 price band
-    label: Investor orders
+  broker:                       # E6.2 / D56: works an approved proposal through its D24 price band
+    label: Broker orders
     about: "Works an approved proposal through its price band (event-driven)"
     group: trading_loop
-    persona: investor
+    persona: broker
     trigger: approval           # event-driven, never scheduled
     llm: false                  # deterministic: gate token + approval -> arc.execution.submit()
-    notify: card                # [Investor] Order card with the ExecutionResult (E5.5)
+    notify: card                # [Broker] Order card with the ExecutionResult (E5.5)
     writes: [note]              # execution notes (placeholder; handler writes none yet)
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
@@ -566,14 +566,14 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   risk:    {reads: [structures, ex_dividend, macro_calendar], writes: [risk_review, note], notify: card}
   propose: {reads: [candidate, regime, shortlist, structures, risk_review], writes: [proposal], llm: false, notify: summary}  # E6.1 posts the proposal cards; E5.9 fingerprint dedupe
   # E6.4 chain steps (after positions.evaluate). Every close / swap open is a proposal: gate + approval.
-  investor.exits:  {reads: [position_review], writes: [proposal], llm: false, notify: summary}
+  quant.exits:     {reads: [position_review], writes: [proposal], llm: false, notify: summary}   # D56: was investor.exits
   risk.reallocate: {reads: [position_review, note], writes: [proposal], notify: summary}   # Risk vetoes swaps (LLM); E5.9 thesis_check notes are advisory input
   # D34: publishes this chain's proposal cards (auto-approved when `auto_approve` is on for
-  # ARC_ENV) and hands each approved one to an Investor subprocess (own lock, ~6 min ladder).
-  # With auto-approve off it reports "awaiting approval". The Investor run joins the chain.
+  # ARC_ENV) and hands each approved one to a Broker subprocess (own lock, ~6 min ladder).
+  # With auto-approve off it reports "awaiting approval". The Broker run joins the chain.
   # D31: `on_no_change: run` = the only step a no_change loop still runs (carries pending
   # approvals / ladders forward); every other chain step defaults to `skip`.
-  execute: {reads: [proposal], writes: [], llm: false, notify: summary, on_no_change: run}
+  broker.execute: {reads: [proposal], writes: [], llm: false, notify: summary, on_no_change: run}   # D56: was execute
 
 triggers: []                    # D31: no scalp.completed -> research trigger any more; the 10-min
                                 # loop picks new candidates up within one slot

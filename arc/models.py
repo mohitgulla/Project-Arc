@@ -483,7 +483,7 @@ class ChannelBrief(BaseModel):
 class Performance(BaseModel):
     """Account Day/MTD/YTD performance from ``pnl_snapshots`` (E6.3, D28). $ and fractions.
 
-    Shared by the Auditor digest (:mod:`arc.slack.digests`) and the control tower.
+    Shared by the Broker reconcile digest (:mod:`arc.slack.digests`) and the control tower.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

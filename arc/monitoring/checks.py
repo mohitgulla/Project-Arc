@@ -459,7 +459,7 @@ def tick_slow(
 
 
 # ---------------------------------------------------------------------------
-# Daily slot rollup (E8.2a: the Auditor journal card's Ops line)
+# Daily slot rollup (E8.2a: the Broker reconcile card's Ops line)
 # ---------------------------------------------------------------------------
 
 

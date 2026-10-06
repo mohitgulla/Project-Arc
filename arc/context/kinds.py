@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic field
 from arc.features.snapshot import FeatureSnapshot
 from arc.models import Candidate, CatalystType, ChannelBrief, Proposal, Stance
-from arc.personas.schemas import AuditorOutput, QuantOutput, ResearchOutput, RiskOutput
+from arc.personas.schemas import QuantOutput, ReconcileOutput, ResearchOutput, RiskOutput
 from arc.positions.evaluate import PositionReview
 from arc.positions.portfolio import MarketGuard, PortfolioContext
 from arc.universe.tiers import ActiveUniverse, UniverseTierPayload
@@ -139,8 +139,8 @@ class PortfolioContextPayload(PortfolioContext):
     model_config = _FORBID
 
 
-class JournalPayload(AuditorOutput):
-    """Auditor daily journal."""
+class JournalPayload(ReconcileOutput):
+    """Auditor daily journal."""  # D56: Broker reconcile journal; schema text pinned (v1)
 
     model_config = _FORBID
 
@@ -154,8 +154,8 @@ class NoteTopic(enum.StrEnum):
     THESIS_CHECK = "thesis_check"  # E5.9: is an open position's thesis still intact?
     OBSERVATION = "observation"  # informational: news theme, scan summary (Scalp)
     RISK_FLAG = "risk_flag"  # portfolio/calendar concern (Risk)
-    LESSON = "lesson"  # post-trade learning (Auditor)
-    EXECUTION = "execution"  # fill/market-conditions note (Investor)
+    LESSON = "lesson"  # post-trade learning (Broker reconcile / Ops)
+    EXECUTION = "execution"  # fill/market-conditions note (Broker)
 
 
 class NoteHorizon(enum.StrEnum):

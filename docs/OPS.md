@@ -32,7 +32,10 @@ PLAN.md §2.4 / D8 define two model tiers, both on the Anthropic subscription:
 | Tier | Personas | Model |
 |------|----------|-------|
 | **frontier** | Director, Quant, Risk | `anthropic/claude-opus-5.5` |
-| **cheap** | Sweep, Investor, Auditor | `anthropic/claude-opus-5` |
+| **cheap** | Scalp | `anthropic/claude-opus-5` |
+
+D56 (E13.2): the Broker (order ladders, post-market reconcile) and Ops (weekly scorecard)
+are deterministic jobs, not LLM personas, so they have no tier.
 
 ### 2.1 Where it is configured (one place)
 
@@ -48,8 +51,6 @@ personas:
   quant:    frontier
   risk:     frontier
   sweep:    cheap
-  investor: cheap
-  auditor:  cheap
 ```
 
 - Change a whole tier: edit its `model`.
@@ -74,9 +75,6 @@ names a model:
 - Director / Quant / Risk (`arc propose`, `PipelineEnv.live`):
   `HermesSweepLLM.from_settings(settings, persona, timeout_seconds=...)`, one
   backend per persona.
-- Investor / Auditor: use `arc.llm_routing.resolve("investor"|"auditor", settings)`
-  (or `HermesSweepLLM.from_settings(settings, "<persona>")`) when their
-  runners land.
 
 The model that actually answered is read back from the Hermes usage file and
 stored with each persona reply for audit.
@@ -89,8 +87,6 @@ stored with each persona reply for audit.
 | Director | 1 | ~4K in / ~2K out | frontier |
 | Quant | 1-3 | ~4K in / ~3K out | frontier |
 | Risk | 1 | ~3K in / ~2K out | frontier |
-| Investor | 0-2 | ~1K in / ~500 out | cheap |
-| Auditor | 1 | ~2K in / ~1K out | cheap |
 
 All calls draw on the subscription quota; the cheap tier keeps high-volume
 personas off the frontier model.
@@ -164,7 +160,7 @@ the plist with `--print`, and remove it with `--uninstall`.
 |---|---|---|
 | tick | There is no `tick` heartbeat for `tick_stale_after` (15m), or none ever. | `tick_stale` |
 | tick_slow (E8.2a) | In the last `coverage_window` (60m), at least `tick_slow_count` (2) ticks took longer than `tick_slow_after` (4m, from E5.10's `tick_duration_ms`), or the p90 gap between ticks is above 1.5 × `tick.interval` (7m30s). The message names the slowest job. | `tick_slow` |
-| routine_windows | Only for **slow-cadence** jobs (slots at least `per_slot_min_interval`, 60m, apart: Sweep overnight, auditor, earnings, the daily sources). A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
+| routine_windows | Only for **slow-cadence** jobs (slots at least `per_slot_min_interval`, 60m, apart: Sweep overnight, broker.reconcile, earnings, the daily sources). A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
 | slot_coverage (E8.2a) | For **fast** jobs (the 10-min loop, monitor, the 30-min Sweep, rss/edgar): the job ran fewer than `coverage_min` (80 %) of its slots judged in the last `coverage_window` (60m). Slots are judged the same way as routine_windows (collapse aware), and halted slots count in neither number. One alert per job, which names the likely cause from the tick heartbeats (slow ticks with the top job, or tick gaps). | `coverage:<job>` |
 | earnings_coverage (E4.1d) | The `earnings` source job is enabled, the effective universe has at least one non-ETF ticker, and no earnings-calendar doc was stored in the last `earnings_stale_after` (7d). The message names the last earnings run's status and error (e.g. `skipped: no_api_key`, `failed: HTTPError …`). Without the dates `next_earnings` is empty and short premium on stocks fails closed. Never folded into a tick incident. | `coverage:earnings` |
 | stuck_runs | A `routine_runs` row is still `running` after `stuck_after` (70m), or after its job's `stuck_after_jobs` override (`monitor: 10m`, E5.3a). | `stuck:<run_id>` |
@@ -208,7 +204,7 @@ per check run:
   monitor"). If the incident clears but the job still misses slots, the
   coverage alert is posted then, on its own.
 - Per-slot detail for the fast jobs is in the tower's Ops page and in one
-  line in the Auditor's 16:30 journal card (`Ops` section): `Slots: director
+  line in the Broker's 16:30 reconcile card (`Ops` section): `Slots: director
   71/75, monitor 77/78, sweep 15/15 · missed 6 (list in tower Ops)`.
 - Every threshold above lives under `monitoring:` in `config/routines.yaml` and
   can be changed from Slack (`!arc config set monitoring.coverage_min 70%`, §5.8).
@@ -292,7 +288,7 @@ After a Python change, `launchctl kickstart -k gui/$(id -u)/com.projectarc.tower
 Plus `/settings` (theme, density, refresh; client-side only) and `/kitchen-sink` (every
 design-system component in both themes). Shell data for every page: `/api/health`,
 `/api/meta` (version, git sha, `ARC_ENV`, account profile, `config_version`,
-`monitor`/`auditor`/`tick` cadences with stale thresholds, gate caps). `/api/docs` is the
+`monitor`/`broker.reconcile`/`tick` cadences with stale thresholds, gate caps). `/api/docs` is the
 OpenAPI browser. Every response carries `as_of` (ET); errors are `{error, detail, as_of}`
 (e.g. 503 `db_unavailable`, 503 `config_unavailable`).
 
@@ -324,7 +320,7 @@ with no code change:
 | Data | Stale after |
 |---|---|
 | Monitor marks (Greeks, intraday equity, broker legs) | 3 × `personas.monitor.every` (30 min at 10m); `greeks.stale_after_s` in the snapshot |
-| Auditor and other cadenced jobs in `/api/meta` | 3 × the job's cadence |
+| `broker.reconcile` and other cadenced jobs in `/api/meta` | 3 × the job's cadence |
 | Tick | 3 × the tick interval (30 min at 10m); the Ops health strip uses `monitoring.tick_stale_after` |
 | Health check heartbeat | 3 × the LaunchAgent's 30 min |
 
@@ -620,12 +616,12 @@ knobs (see `!arc config execution`). Raising the cap is the riskier direction (c
 ### 5.10 Auto-approve and in-chain Execute (E6.6, D34)
 
 `auto_approve` is one switch per environment, both **off** by default. When it is on for the
-running `ARC_ENV`, the chain step `execute` (right after `propose`, and after
+running `ARC_ENV`, the chain step `broker.execute` (right after `propose`, and after
 `risk.reallocate` in the position-manager chain) publishes that chain's proposal cards,
 approves them as `arc:auto-approve` (card marked `Auto-approved (paper|LIVE)`, no buttons),
-and hands each one to an Investor subprocess (`arc routines run investor --event <id>`,
+and hands each one to a Broker subprocess (`arc routines run broker --event <id>`,
 its own per-event lock, never the LLM lock), so the ladder starts in the same tick. When it
-is off, `execute` reports `awaiting approval (N cards)` and the click flow is unchanged.
+is off, `broker.execute` reports `awaiting approval (N cards)` and the click flow is unchanged.
 
 Not relaxed by the switch: the gate, the order budget (§5.9), the daily-loss halt, `!halt`,
 and the GateToken + ApprovalRecord requirement in `submit()`. The ApprovalRecord's approver
@@ -652,21 +648,21 @@ first line repeats the current state. The same keys are Slack-tunable
 
 Approval event lifecycle (E6.2d): every `approval` routine event is started exactly once,
 by exactly one path. `created` (the approval service writes it with the decision) →
-`dispatched` (only on the D34 path: `execute` claims the event, `dispatched_at` /
-`dispatched_by` = its run id, *before* it spawns the Investor subprocess; the tick's event
+`dispatched` (only on the D34 path: `broker.execute` claims the event, `dispatched_at` /
+`dispatched_by` = its run id, *before* it spawns the Broker subprocess; the tick's event
 drain never fires a dispatched event, so no ladder runs inline and the tick never waits
-on one) → `consumed` (`consumed_at` / `consumed_by` = the one Investor run, keyed by the
+on one) → `consumed` (`consumed_at` / `consumed_by` = the one Broker run, keyed by the
 event id, so two approvals in the same second both execute). A click approval skips
 `dispatched`: the next tick's drain runs it. If the spawn fails the claim is released and
 the same tick's drain runs it instead.
 
-Stranded dispatch (E6.2e): if the spawned Investor dies before it claims its run (no
+Stranded dispatch (E6.2e): if the spawned Broker dies before it claims its run (no
 `routine_runs.event_id` row), the tick reclaims the event once `dispatched_at` is older
 than `tick.dispatch_grace` (`config/routines.yaml`, default 10m): log
 `routines.event_reclaimed`, `reclaimed N stranded event(s)` in the tick report (and
 `reclaimed` in `--json` / the tick heartbeat). The drain then handles it normally: runs the
-Investor, defers it while halted, or, past the proposal TTL, consumes it with a skipped
-run, an `order:refused` journal row "approval lapsed: the Investor never started" and the
+Broker, defers it while halted, or, past the proposal TTL, consumes it with a skipped
+run, an `order:refused` journal row "approval lapsed: the Broker never started" and the
 card edited to "not executed". `arc health check` also reports each such event once
 (`stranded_events`, key `stranded:<event id>`), which matters when the tick itself is not
 running. `arc routines events [--json]` lists every dispatched, unconsumed event with its
@@ -675,10 +671,10 @@ age, its run (if one started) and `STRANDED` when it is past the grace with no r
 Card post failed (E6.1b): the approval request is committed before its card is posted, so
 a Slack error (`approvals.post_failed`) leaves a `pending` request with
 `channel = 'post_failed'` and no `message_ts`. Every later tick's sweep (never the
-in-chain `execute` publish, and only once the request is a minute old) re-renders the
+in-chain `broker.execute` publish, and only once the request is a minute old) re-renders the
 card for the same proposal hash and posts it once (`approvals.reposted`); a retry that
 fails again is one `approvals.repost_failed` line per sweep. The tick heartbeat detail
-carries `approvals: {sweep_failed, post_failed, reposted}` and the Auditor card's Ops
+carries `approvals: {sweep_failed, post_failed, reposted}` and the Broker reconcile card's Ops
 section shows the day's sums (`Approvals: sweep failed 0 · card posts failed 1 ·
 re-posted 1 · unposted 0`, hidden when all are zero). `arc health check` raises the
 `approvals_unposted` condition when a pending request older than one tick still has no
@@ -689,13 +685,13 @@ on purpose and are neither retried nor alerted.
 
 Halted: an approval that arrives (or is dispatched) while halted stays pending; the drain
 reports it `deferred` ("held until !resume or HH:MM ET") every tick. After `!resume`
-inside the proposal's TTL (`proposals.expires_at`) the Investor runs; past the TTL the
-event is consumed with a skipped investor run, a journal row (`order` / `order:refused`,
+inside the proposal's TTL (`proposals.expires_at`) the Broker runs; past the TTL the
+event is consumed with a skipped broker run, a journal row (`order` / `order:refused`,
 "approval lapsed under halt") and the card edited to "not executed". Nothing is sent.
 
-Trace: `arc context trace <chain_run_id>` prints an `event` line on the `execute` step
-(role `dispatched`) and on the Investor step (role `ran_for`) with
-`created=… dispatched=… by=<execute run> consumed=… by=<investor run>`; `--json` has the
+Trace: `arc context trace <chain_run_id>` prints an `event` line on the `broker.execute` step
+(role `dispatched`) and on the Broker step (role `ran_for`) with
+`created=… dispatched=… by=<broker.execute run> consumed=… by=<broker run>`; `--json` has the
 same under `events`. `sqlite3 data/arc.db "select id, dispatched_by, consumed_by from
 routine_events where consumed_at is null"` lists what is still waiting.
 
@@ -722,7 +718,7 @@ When a criterion fails, the card is posted **with** Approve/Reject buttons and a
 pending (click or `!approve` as usual; it expires on the normal TTL), and the journal gets a
 `system` / `approval` / `noted` row with `reason_code=auto_approve_gated`; its payload has
 `failing` (`min_closed_trades`, `negative_realised_ev`, `slippage_over_tolerance`,
-`slippage_unknown`) and every number. The chain's `execute` step reports
+`slippage_unknown`) and every number. The chain's `broker.execute` step reports
 `scorecard gate held N back` and the tick summary counts them. Closes (exits) are never
 gated: they reduce risk.
 
@@ -940,7 +936,7 @@ and `arc context show --kind unusual_options` still lists them until then.
 
 ### 5.12 Close quote check (E6.2a) and the live execution test
 
-Every close (monitor exits, Investor exits, the close leg of a swap) is priced
+Every close (monitor exits, Quant exits, the close leg of a swap) is priced
 from quotes that must pass `close_quote_sanity` first; otherwise nothing is
 proposed, no gate token is minted and no order is sent. The journal gets an
 `exit:quote_unusable` row with every leg's bid/ask/sizes/quote time/spread, and
@@ -995,7 +991,7 @@ next 09:30 chain was skipped both days.
 - Every test order's `client_order_id` starts with `test.` (the tests' broker
   wrapper adds it; `arc.execution.submit()` never does). If one still lands on
   the production account, reconcile reports it as a `fill_test` notice (journal
-  `reconcile:test_fill`, info line on the Auditor card) and does **not** halt. A
+  `reconcile:test_fill`, info line on the Broker reconcile card) and does **not** halt. A
   leg such an order left open is still `position_unattributed` and halts.
 - The D32 order budget counts orders per account, so test runs no longer use
   the production account's daily budget.
@@ -1109,7 +1105,7 @@ up within one slot.
   positions, day-P&L bucket of `loop.pnl_bucket_pct` % equity, pending orders,
   budget tier, suppressed ideas). Same digest as the last full run and less than
   `loop.max_idle` (30m) since it → `no_change`: Director/Quant/Risk/Propose are
-  skipped (no LLM call), `execute` still runs (`on_no_change: run` in `steps:`)
+  skipped (no LLM call), `broker.execute` still runs (`on_no_change: run` in `steps:`)
   so pending approvals and ladders carry on. Journal row `loop_no_change`; the
   run manifest carries `loop_inputs` (digest). A manual `arc propose` never skips.
   Only a Director run that *completed* its evaluation advances the loop's
@@ -1126,10 +1122,10 @@ up within one slot.
 
 The thread under it, in order: `[Sweep] Context: N Candidates • run <stamp>`
 (the candidate entries the Director read, with the Sweep run that wrote them),
-`[Director]`, `[Quant]`, `[Risk]`, the proposal card, `[Investor]` when a ladder
+`[Director]`, `[Quant]`, `[Risk]`, the proposal card, `[Broker]` when a ladder
 ran, and last a `[Routines] <chain> director=12ms … digest=…` code block. A
 `no_change` loop gets only the `[Routines]` reply. The root is re-rendered from the DB
-on approve / reject / expire and after the Investor's fill. `loop.post_hold_roots`
+on approve / reject / expire and after the Broker's fill. `loop.post_hold_roots`
 off drops the roots of skipped slots; `loop.slack_layout = day_thread` is the
 rollback to the single day thread (cards and heartbeats as before D36).
 
@@ -1290,7 +1286,7 @@ the same deep-merge format as the backtest overlays in `config/experiments/*.yam
 
 ### 5.18 Daily evaluation and verdict (E10.3, D44)
 
-The `experiments.evaluate` routine (trading days 16:40 ET, after the 16:30 auditor
+The `experiments.evaluate` routine (trading days 16:40 ET, after the 16:30 broker.reconcile
 reconcile; deterministic, halt-exempt) evaluates every running experiment and
 stores one `ExperimentReport` in the append-only `experiment_reports` table:
 
@@ -1692,7 +1688,7 @@ not a 30-day ATM constant maturity: compare our forward rows with Cboe `iv30`
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.
-See PLAN.md §2.4 for target: Sweep/Investor/Auditor (cheap tier) routed
+See PLAN.md §2.4 for target: Scalp (cheap tier) routed
 locally via llama.cpp or omlx server; that is a `tiers.cheap.model` edit in
 `config/llm_routing.yaml` once Hermes has a local provider.
 

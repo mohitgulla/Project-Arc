@@ -1,10 +1,13 @@
-"""Investor: execute an approved proposal (E6.2; ``personas.investor``, ``trigger: approval``).
+"""Broker: execute an approved proposal (E6.2; ``personas.broker``, ``trigger: approval``).
+
+D56 (E13.2): was the Investor (``arc.routines.investor``). Same code path; only the
+names changed. The old job names ``investor`` / ``execute`` load as logged aliases.
 
 The approval service queues a routine event ``approval`` with the proposal hash
 when a proposal is approved (by a click or auto-approve). The dispatcher runs
 this handler for it. Deterministic (``llm: false``): it loads what the gate and
 the approver saw, then hands everything to :func:`arc.execution.ladder.execute`,
-which calls ``submit()`` for every step. The Investor persona never talks to the
+which calls ``submit()`` for every step. The Broker job never talks to the
 broker any other way.
 
 Orders are only worked while the regular session is open: an approval that
@@ -12,12 +15,12 @@ lands outside RTH (e.g. a late click) is recorded as ``rejected`` (market
 closed) and never sent. An exit (``kind='close'``) closes the open structure
 it was proposed for.
 
-D34 in-chain Execute (:func:`execute_step`, chain step ``execute`` right after
+D34 in-chain Execute (:func:`execute_step`, chain step ``broker.execute`` right after
 ``propose`` / ``risk.reallocate``): publishes this chain's proposals through the
 approval service (the same path as the tick sweep, so cards, journal and
 ``approval_id`` are identical), and when ``auto_approve`` is on for the running
-environment, hands every auto-approved proposal to an Investor **subprocess**
-(``arc routines run investor --event <id>``) that joins the chain run but holds
+environment, hands every auto-approved proposal to a Broker **subprocess**
+(``arc routines run broker --event <id>``) that joins the chain run but holds
 its own per-event lock, never the LLM lock. A D24 ladder takes ~6 min; running it
 inline would block every loop. With auto-approve off the step is a no-op
 ("awaiting approval"). Freshness: the ladder re-prices at the current mid when the
@@ -28,8 +31,6 @@ proposal is older than ``execution_max_quote_age_seconds`` (pure band code,
 from __future__ import annotations
 
 import datetime as _dt
-import subprocess
-import sys
 import time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -37,10 +38,11 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from arc.routines.handlers import JobResult, JobSkippedError
+from arc.routines.spawn import arc_command, spawn_detached
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Sequence
 
     from arc.approvals.service import ApprovalService
     from arc.broker.base import BrokerAdapter
@@ -51,13 +53,16 @@ if TYPE_CHECKING:
     from arc.slack.blocks import CardView
 
 __all__ = [
+    "arc_command",
+    "broker_card",
+    "broker_command",
+    "broker_execute",
+    "broker_step",
     "execute_step",
-    "execution_card",
     "fresh_mid_of",
-    "investor",
-    "investor_step",
     "load_approved",
-    "spawn_investor",
+    "spawn_broker",
+    "spawn_detached",
 ]
 
 log = structlog.get_logger(__name__)
@@ -100,8 +105,8 @@ def load_approved(
 
 
 LAPSED_UNDER_HALT = "approval lapsed under halt"
-# E6.2e: a dispatched approval whose Investor never started, reclaimed past its TTL.
-LAPSED_NOT_STARTED = "approval lapsed: the Investor never started"
+# E6.2e: a dispatched approval whose Broker never started, reclaimed past its TTL.
+LAPSED_NOT_STARTED = "approval lapsed: the Broker never started"
 
 
 def approval_deadline(conn: sqlite3.Connection, proposal_hash: str) -> _dt.datetime | None:
@@ -150,7 +155,7 @@ def lapse_approval(
     ticker = row["ticker"] if row else None
     with conn:
         JournalStore(conn).record(
-            persona=JournalPersona.INVESTOR,
+            persona=JournalPersona.BROKER,
             stage=Stage.ORDER,
             subject=ticker or "session",
             choice=Choice.REJECTED,
@@ -166,8 +171,8 @@ def lapse_approval(
             proposal_hash, reason=reason, now=now
         )
     except Exception as exc:  # noqa: BLE001 - the refusal is journaled; the card edit is cosmetic
-        log.warning("investor.lapse_card_failed", proposal_hash=proposal_hash, error=str(exc))
-    log.info("investor.approval_lapsed", proposal_hash=proposal_hash, run_id=run_id, why=reason)
+        log.warning("broker.lapse_card_failed", proposal_hash=proposal_hash, error=str(exc))
+    log.info("broker.approval_lapsed", proposal_hash=proposal_hash, run_id=run_id, why=reason)
 
 
 def _refuse_closed(ctx: JobContext, phash: str, ticker: str | None, why: str) -> JobResult:
@@ -176,7 +181,7 @@ def _refuse_closed(ctx: JobContext, phash: str, ticker: str | None, why: str) ->
 
     with ctx.conn:
         JournalStore(ctx.conn).record(
-            persona=JournalPersona.INVESTOR,
+            persona=JournalPersona.BROKER,
             stage=Stage.ORDER,
             subject=ticker or "session",
             choice=Choice.REJECTED,
@@ -189,7 +194,7 @@ def _refuse_closed(ctx: JobContext, phash: str, ticker: str | None, why: str) ->
     return JobResult(summary=f"{ticker or phash[:12]}: not executed ({why})", metrics={"orders": 0})
 
 
-def execution_card(
+def broker_card(
     proposal: Proposal,
     out: ExecutionOutcome,
     *,
@@ -198,19 +203,20 @@ def execution_card(
     step_seconds: int,
     run_id: str | None = None,
 ) -> CardView:
-    """``[Investor] Order`` card (E5.5 layout) with the ladder's :class:`ExecutionResult`.
+    """``[Broker] Order`` card (E5.5 layout) with the ladder's :class:`ExecutionResult`.
 
     ``steps_used`` is the index of the filling attempt (0 = filled at mid), so the
     card reads "Filled on attempt k+1 of max_steps+1" (D28: attempts, not steps).
     """
-    from arc.personas.schemas import ImprovementStep, InvestorPlan
-    from arc.slack.digests import ExecutionResult, investor_card
+    from arc.personas.schemas import BrokerPlan, ImprovementStep
+    from arc.slack.digests import ExecutionResult
+    from arc.slack.digests import broker_card as render_card
 
     tick = Decimal("0.01")
     ladder = out.band.ladder(tick)
     sk = proposal.structure.kind
     structure = "close_position" if kind == "close" else (sk.value if sk else "custom")
-    plan = InvestorPlan(
+    plan = BrokerPlan(
         ticker=ticker,
         structure_type=structure,
         order_type="limit",
@@ -236,7 +242,7 @@ def execution_card(
         steps_used=out.steps_used or 0,
         detail=out.summary(),
     )
-    return investor_card(plan, result, run_id=run_id)
+    return render_card(plan, result, run_id=run_id)
 
 
 def priced_at_of(conn: sqlite3.Connection, proposal_hash: str) -> _dt.datetime | None:
@@ -269,7 +275,7 @@ def fresh_mid_of(
         try:
             priced = price_structure(market, legs, as_of=as_of, r=r, require_iv=False)
         except LookupError as exc:
-            log.warning("investor.reprice_no_quote", error=str(exc))
+            log.warning("broker.reprice_no_quote", error=str(exc))
             return None
         return Decimal(priced.structure.net_debit_credit)
 
@@ -279,7 +285,7 @@ def fresh_mid_of(
 def _refresh_root(ctx: JobContext, phash: str) -> None:
     """D36: after a fill (or a failed ladder) re-render the loop's root line.
 
-    The Investor runs in its own process with no card poster of its own; with
+    The Broker runs in its own process with no card poster of its own; with
     Slack on it edits through a :class:`SlackCardPoster`, otherwise the update
     goes to the log (nothing to edit).
     """
@@ -288,10 +294,10 @@ def _refresh_root(ctx: JobContext, phash: str) -> None:
     try:
         make_service(ctx.conn, ctx.settings, slack=ctx.run_env.slack).refresh_loop_root(phash)
     except Exception as exc:  # noqa: BLE001 - the fill is recorded; the root edit is best-effort
-        log.warning("investor.loop_root_refresh_failed", proposal_hash=phash, error=str(exc))
+        log.warning("broker.loop_root_refresh_failed", proposal_hash=phash, error=str(exc))
 
 
-def investor(
+def broker_execute(
     ctx: JobContext,
     *,
     broker: BrokerAdapter,
@@ -308,7 +314,7 @@ def investor(
     payload: dict[str, Any] = dict(ctx.event.payload) if ctx.event else {}
     phash = str(payload.get("proposal_hash") or "")
     if not phash:
-        msg = "no approval event (investor runs on `approval` only)"
+        msg = "no approval event (broker runs on `approval` only)"
         raise JobSkippedError(msg)
     proposal, decision, kind, ticker, sid = load_approved(ctx.conn, phash)
     if not market_open(clock()):
@@ -344,7 +350,7 @@ def investor(
     what = "exit" if kind == "close" else "entry"
     card = None
     if out.status is not ExecStatus.ALREADY:  # a replayed event posts nothing new
-        card = execution_card(
+        card = broker_card(
             proposal,
             out,
             ticker=ticker or out.ticker,
@@ -366,7 +372,7 @@ def investor(
     )
 
 
-def investor_step(ctx: JobContext) -> JobResult:
+def broker_step(ctx: JobContext) -> JobResult:
     """Dispatcher entry point: Alpaca paper broker, wall clock, real sleep.
 
     E10.2: the store's broker, so a ladder spawned on an arm store trades only the
@@ -376,7 +382,7 @@ def investor_step(ctx: JobContext) -> JobResult:
     from arc.experiments.broker import trading_broker
     from arc.utils.calendar import is_open, now_et
 
-    return investor(
+    return broker_execute(
         ctx,
         broker=trading_broker(ctx.conn, ctx.settings),
         clock=now_et,
@@ -425,68 +431,32 @@ def approval_events(conn: sqlite3.Connection, proposal_hashes: Sequence[str]) ->
     return out
 
 
-def arc_command(env: RunEnv, args: Sequence[str]) -> list[str]:
-    """``arc <args…>`` with this process's interpreter plus the run env's db/config/locks/slack.
-
-    Shared by every detached child: the D34 Investor ladder and the D39 background lane.
-    """
-    # Same interpreter as this process; `arc.cli:main` is the `arc` console script.
-    argv = [sys.executable, "-c", "from arc.cli import main; raise SystemExit(main())"]
-    argv += list(args)
-    if env.db_path:
-        argv += ["--db", env.db_path]
-    if env.config_path:
-        argv += ["--config", env.config_path]
-    if env.lock_dir:
-        argv += ["--lock-dir", env.lock_dir]
-    if not env.slack:
-        argv.append("--no-slack")
-    return argv
-
-
-def investor_command(
+def broker_command(
     env: RunEnv, event_id: str, *, chain_run_id: str, parent_run_id: str
 ) -> list[str]:
-    """The ``arc routines run investor --event`` argv a spawned ladder runs with."""
+    """The ``arc routines run broker --event`` argv a spawned ladder runs with."""
     return arc_command(
         env,
         [
-            "routines", "run", "investor", "--event", event_id,
+            "routines", "run", "broker", "--event", event_id,
             "--chain-run-id", chain_run_id, "--parent-run-id", parent_run_id,
         ],
     )  # fmt: skip
 
 
-def spawn_detached(argv: Sequence[str], env: Mapping[str, str] | None = None) -> int:
-    """Start an ``arc`` child detached (its own session); returns the pid.
-
-    D34 (Investor ladders) and D39 (the tick's background lane) both use this one
-    spawner. *env* defaults to this process's environment.
-    """
-    proc = subprocess.Popen(  # noqa: S603 - argv is built from our own constants
-        list(argv),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-        env=dict(env) if env is not None else None,
-    )
-    return proc.pid
-
-
-spawn_investor = spawn_detached  # D34 name, kept for callers and tests
+spawn_broker = spawn_detached  # D34 name (was spawn_investor), kept for callers and tests
 
 
 def execute_step(
     ctx: JobContext,
     *,
-    spawn: Callable[[Sequence[str]], int] = spawn_investor,
+    spawn: Callable[[Sequence[str]], int] = spawn_broker,
     service: ApprovalService | None = None,
 ) -> JobResult:
-    """Chain step ``execute`` (D34): publish + auto-approve, then hand off ladders.
+    """Chain step ``broker.execute`` (D34; was ``execute``): publish, auto-approve, hand off.
 
     Deterministic (``llm: false``). Returns at once; each ladder runs in its own
-    ``arc routines run investor --event <id>`` process joined to this chain.
+    ``arc routines run broker --event <id>`` process joined to this chain.
 
     Without Slack (``--no-slack`` / dry run) nothing is published, like the tick's
     sweep: a card published to the log would be stranded with no button to click.
@@ -498,7 +468,7 @@ def execute_step(
     from arc.store.repos import HaltRepo
 
     if not ctx.chain_run_id:
-        msg = "execute runs only as a chain step (after propose)"
+        msg = "broker.execute runs only as a chain step (after propose)"
         raise JobSkippedError(msg)
     hashes = chain_proposals(ctx.conn, ctx.chain_run_id)
     settings = ctx.settings
@@ -539,7 +509,7 @@ def execute_step(
         )
     if HaltSwitch(HaltRepo(ctx.conn)).is_halted():
         # E6.2d: the approval events stay pending (not dispatched). The tick's drain
-        # defers them while halted and runs the Investor after `!resume` if the
+        # defers them while halted and runs the Broker after `!resume` if the
         # proposal is still inside its TTL; past it they lapse with a journal row.
         return JobResult(
             summary=(
@@ -561,7 +531,7 @@ def execute_step(
         # other dispatcher) never runs the same ladder inline. Lost claim: skip.
         if not repo.dispatch(ev, by=ctx.run_id, now=ctx.now):
             continue
-        argv = investor_command(
+        argv = broker_command(
             ctx.run_env, ev, chain_run_id=ctx.chain_run_id, parent_run_id=ctx.run_id
         )
         try:
@@ -583,7 +553,7 @@ def execute_step(
     return JobResult(
         summary=(
             f"auto-approved {len(report.auto_approved)} ({env}); "
-            f"{len(pids)} ladder(s) dispatched to the Investor"
+            f"{len(pids)} ladder(s) dispatched to the Broker"
         ),
         metrics=metrics,
         notice=f"Auto-approve: {len(pids)} order ladder(s) started ({env})" if pids else "",

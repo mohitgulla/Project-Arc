@@ -1,6 +1,6 @@
 # Exit policy (PLAN D19, D23; card E2.4). Validated by arc.exits.policy.
 #
-# ONE place for exit rules. The proposal card (E6.1a), the Investor's live exits
+# ONE place for exit rules. The proposal card (E6.1a), the Quant exit step
 # (E6.2 base rules, E6.4 profit-taking / close-to-reallocate, via
 # arc.exits.evaluate_position) and the backtester (E7.2, exit_policy: policy)
 # all read this file. Changing a threshold here needs no code change.

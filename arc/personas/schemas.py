@@ -344,7 +344,7 @@ class RiskSwapReview(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Investor — order plan for approved proposals
+# Broker — order plan for approved proposals (D56: was the Investor; deterministic)
 # ---------------------------------------------------------------------------
 
 
@@ -356,8 +356,8 @@ class ImprovementStep(BaseModel):
     wait_seconds: int = Field(..., ge=0, description="Seconds to wait before moving to next step")
 
 
-class InvestorPlan(BaseModel):
-    """Investor plan for a single approved proposal."""
+class BrokerPlan(BaseModel):
+    """The Broker's ladder for a single approved proposal (rendered on the order card)."""
 
     ticker: str
     structure_type: str
@@ -371,17 +371,8 @@ class InvestorPlan(BaseModel):
     notes: str = Field(..., description="Execution notes and rationale")
 
 
-class InvestorOutput(BaseModel):
-    """Investor persona output: order plans for approved proposals."""
-
-    plans: list[InvestorPlan] = Field(..., description="One plan per approved proposal")
-    market_conditions_note: str = Field(
-        ..., description="Current market conditions relevant to execution"
-    )
-
-
 # ---------------------------------------------------------------------------
-# Auditor — daily journal, anomalies, lessons
+# Broker reconcile — daily journal, anomalies, lessons (D56: was the Auditor)
 # ---------------------------------------------------------------------------
 
 
@@ -405,8 +396,8 @@ class LessonLearned(BaseModel):
     recommendation: str
 
 
-class AuditorOutput(BaseModel):
-    """Auditor persona output: daily journal with anomalies and lessons."""
+class ReconcileOutput(BaseModel):
+    """Broker reconcile output: daily journal with anomalies and lessons (``journal`` kind)."""
 
     journal_date: str = Field(..., description="ISO-8601 date")
     daily_pnl: float = Field(..., description="Net daily P&L")
@@ -427,3 +418,6 @@ DirectorExclusion = ResearchExclusion
 DirectorPortfolioView = ResearchPortfolioView
 DirectorThesisCheck = ResearchThesisCheck
 DirectorOutput = ResearchOutput
+# D56 (E13.2): Investor / Auditor names, re-exported for one release.
+InvestorPlan = BrokerPlan
+AuditorOutput = ReconcileOutput

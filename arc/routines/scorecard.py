@@ -1,17 +1,17 @@
 """Weekly paper scorecard routine (E7.3): ``personas.scorecard`` in ``config/routines.yaml``.
 
-Fridays 16:45 ET (after the Auditor's reconcile). Deterministic, no LLM:
+Fridays 16:45 ET (after the Broker's reconcile). Deterministic, no LLM:
 
 1. :func:`arc.journal.scorecard.build_scorecard` over the ET week containing the
    run's logical time, read from the audit store;
 2. write the Markdown report to ``<report_dir>/<monday>.md`` (default
    ``docs/RESEARCH/weekly/``, relative to the repo root);
-3. return the ``[Auditor] Scorecard`` card, which the dispatcher posts to the
+3. return the ``[Ops] Scorecard`` card, which the dispatcher posts to the
    #arc-investor day thread (``notify: card``).
 
 The D19 hold-to-expiry shadow of early-closed positions needs the underlying's
 settlement close; the dispatcher entry point prices it from Alpaca bars (the
-Auditor's :func:`~arc.routines.auditor.settle_from_market`). Unknown settles stay
+Broker reconcile's :func:`~arc.broker.reconcile_job.settle_from_market`). Unknown settles stay
 ``pending`` in the report.
 """
 
@@ -125,8 +125,8 @@ def scorecard(
 
 def scorecard_step(ctx: JobContext) -> JobResult:
     """Dispatcher entry point: settles for the D19 shadow come from Alpaca daily bars."""
+    from arc.broker.reconcile_job import settle_from_market
     from arc.data.alpaca import AlpacaMarketData
-    from arc.routines.auditor import settle_from_market
 
     try:
         settle = settle_from_market(AlpacaMarketData())
