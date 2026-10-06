@@ -286,12 +286,22 @@ def _source_result(ctx: JobContext, docs: list[RawDoc]) -> JobResult:
     return JobResult(summary=f"{n} new doc{'s' if n != 1 else ''}", metrics={"new_docs": n})
 
 
+def registry_label(ctx: JobContext, key: str) -> str:
+    """Display label of registry source *key* (D55: retired keys keep their label)."""
+    from arc.ingest.sources import SourceRegistry
+
+    return SourceRegistry.from_routines(ctx.routines).spec_for(key).display
+
+
 def rss_source(ctx: JobContext) -> JobResult:
     """RSS feeds; each feed is its own D30 source (``source_key`` on every doc).
 
     D47: entries older than their feed's category ``max_age`` are never stored.
+    D55: entries a feed's ``title_exclude`` / ``title_include`` filters out are stored
+    closed ``filtered`` (no ``raw_doc_ref``); per-feed ``new`` / ``filtered`` counts
+    land in the run's metrics (``new_<feed>`` / ``filtered_<feed>``).
     """
-    from arc.ingest.rss import fetch_rss
+    from arc.ingest.rss import fetch_rss_feeds
     from arc.ingest.sources import FeedSpec, SourceRegistry
 
     settings = ctx.settings
@@ -303,8 +313,26 @@ def rss_source(ctx: JobContext) -> JobResult:
         keys = {f.url: f.key for f in feeds}
         reg = SourceRegistry.from_routines(ctx.routines)
         ages = {f.url: reg.max_age_for(f.key) for f in feeds if f.key in reg.sources}
-    docs = fetch_rss(ctx.conn, settings, source_keys=keys, max_ages=ages, now=ctx.now)
-    return _source_result(ctx, docs)
+    fetched = fetch_rss_feeds(
+        ctx.conn,
+        settings,
+        source_keys=keys,
+        max_ages=ages,
+        feed_specs={f.url: f for f in feeds},
+        now=ctx.now,
+    )
+    res = _source_result(ctx, fetched.docs)
+    n_filtered = sum(fetched.filtered.values())
+    per_feed = [f"{k} {fetched.new[k]}" for k in keys.values() if fetched.new[k]]
+    summary = res.summary
+    if per_feed:
+        summary += f" ({', '.join(per_feed)})"
+    if n_filtered:
+        summary += f", {n_filtered} filtered"
+    metrics: dict[str, Any] = {**res.metrics, "filtered": n_filtered}
+    metrics.update({f"new_{k}": n for k, n in fetched.new.items()})
+    metrics.update({f"filtered_{k}": n for k, n in fetched.filtered.items()})
+    return JobResult(summary=summary, metrics=metrics)
 
 
 def _data_result(ctx: JobContext, name: str, source: str, payload: object, n: int) -> None:
@@ -1397,6 +1425,7 @@ def sweep_persona(
             f"{result.docs_swept} docs ({len(result.stories)} stories) → "
             f"{result.accepted} accepted, {len(result.candidates)} candidates today"
             + (f", {result.over_budget} over budget" if result.over_budget else "")
+            + (f", {result.filtered} filtered" if result.filtered else "")
             + (f", {result.failed_batches} failed batches" if result.failed_batches else "")
         ),
         metrics={
@@ -1408,6 +1437,7 @@ def sweep_persona(
             "skipped_budget": result.skipped_budget,
             "skipped_stale": result.skipped_stale,
             "slow_feed": result.slow_feed,
+            "filtered": result.filtered,
             "digest_batches": result.digest_batches,
             "failed_digest_batches": result.failed_digest_batches,
             "failed_batches": result.failed_batches,
@@ -1429,6 +1459,9 @@ def sweep_persona(
             source_mix=result.source_mix,
             stories=len(result.stories),
             category_mix=result.category_mix,
+            filtered={
+                registry_label(ctx, k): n for k, n in sorted(result.filtered_by_source.items())
+            },
         ),
     )
 

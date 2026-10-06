@@ -34,6 +34,7 @@ __all__ = [
     "EXIT_KINDS",
     "NEVER_TUNABLE",
     "NOT_EXPOSED",
+    "NOT_EXPOSED_PATHS",
     "REGISTRY",
     "Direction",
     "Group",
@@ -236,6 +237,16 @@ NOT_EXPOSED: dict[str, str] = {
     "finnhub_cluster_days": "D46 insider detector internals (context data only)",
     "persona_timeout_seconds": "LLM plumbing",
     "pipeline_max_context_notes": "LLM context size",
+}
+
+# routines.yaml paths deliberately NOT runtime-tunable, with the reason (the YAML
+# counterpart of NOT_EXPOSED; ``lookup`` refuses them like any unknown key).
+NOT_EXPOSED_PATHS: dict[str, str] = {
+    # D55 (E4.11): per-feed regex lists live inside the `feeds:` list (no list-index
+    # paths) and there is no regex-list value type yet; a bad pattern would fail the
+    # whole rss job's config load. Changed by PR (strategy lane: `Lane: fast`).
+    "sources.rss.feeds[].title_exclude": "regex list inside the feeds list; change by PR",
+    "sources.rss.feeds[].title_include": "regex list inside the feeds list; change by PR",
 }
 
 EXIT_KINDS: tuple[str, ...] = (

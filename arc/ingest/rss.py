@@ -7,6 +7,8 @@ latest ``published_parsed`` timestamp per feed as the cursor.
 
 from __future__ import annotations
 
+from collections import Counter
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
@@ -18,7 +20,7 @@ import feedparser
 import requests
 import structlog
 
-from arc.ingest.store import IngestCursorRepo, RawDocRepo, content_hash
+from arc.ingest.store import FILTERED_STATUS, IngestCursorRepo, RawDocRepo, content_hash
 from arc.models import RawDoc
 from arc.universe.ingest import IngestUniverse
 
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
 
     from arc.config import ArcSettings
     from arc.context.ttl import Ttl
+    from arc.ingest.sources import FeedSpec
 
 log = structlog.get_logger()
 
@@ -90,35 +93,72 @@ def _extract_tickers(text: str, universe: list[str] | IngestUniverse) -> list[st
     return found
 
 
+@dataclass
+class RssFetch:
+    """One ``rss`` run: Sweep-readable new docs plus per-feed accounting.
+
+    ``new`` / ``filtered`` are keyed by the feed's registry key (else its URL).
+    ``filtered`` docs (D55) are stored closed ``sweep_status='filtered'`` and are
+    not in ``docs`` (no ``raw_doc_ref`` context, never Sweep-read).
+    """
+
+    docs: list[RawDoc] = field(default_factory=list)
+    new: Counter[str] = field(default_factory=Counter)
+    filtered: Counter[str] = field(default_factory=Counter)
+
+
 def fetch_rss(
     conn: sqlite3.Connection,
     settings: ArcSettings,
     *,
     source_keys: Mapping[str, str] | None = None,
     max_ages: Mapping[str, Ttl] | None = None,
+    feed_specs: Mapping[str, FeedSpec] | None = None,
     now: datetime | None = None,
 ) -> list[RawDoc]:
+    """Fetch all configured RSS feeds; returns the new Sweep-readable docs.
+
+    See :func:`fetch_rss_feeds` for the arguments and per-feed accounting.
+    """
+    return fetch_rss_feeds(
+        conn, settings, source_keys=source_keys, max_ages=max_ages, feed_specs=feed_specs, now=now
+    ).docs
+
+
+def fetch_rss_feeds(  # noqa: PLR0912, PLR0915 - one pass per feed and entry
+    conn: sqlite3.Connection,
+    settings: ArcSettings,
+    *,
+    source_keys: Mapping[str, str] | None = None,
+    max_ages: Mapping[str, Ttl] | None = None,
+    feed_specs: Mapping[str, FeedSpec] | None = None,
+    now: datetime | None = None,
+) -> RssFetch:
     """Fetch all configured RSS feeds and store new entries.
 
     *source_keys* maps a feed URL to its E4.5 registry name (``wsj_markets``); the
     name is stored on each doc so the Sweep's per-source budget can group by feed.
     *max_ages* (D47) maps a feed URL to its category's freshness window: an entry
     older than that at *now* is never stored (logged per feed as
-    ``ingest.skipped_stale``). Returns only newly stored documents (duplicates are
-    skipped).
+    ``ingest.skipped_stale``). *feed_specs* (D55) maps a feed URL to its
+    :class:`~arc.ingest.sources.FeedSpec`; an entry its ``title_exclude`` /
+    ``title_include`` filters out is stored closed ``sweep_status='filtered'``
+    (audited, never silently dropped, never read). Duplicates are skipped.
     """
     keys: Mapping[str, str] = source_keys or {}
     ages: Mapping[str, Ttl] = max_ages or {}
+    specs: Mapping[str, FeedSpec] = feed_specs or {}
     run_now = now or datetime.now(UTC)
     cursor_repo = IngestCursorRepo(conn)
     doc_repo = RawDocRepo(conn)
     feeds = settings.ingest_rss_feeds
+    out = RssFetch()
 
     if not feeds:
         log.warning("rss.no_feeds_configured")
-        return []
+        return out
 
-    results: list[RawDoc] = []
+    results = out.docs
     uni = IngestUniverse.from_settings(settings, now=now, conn=conn)
 
     for feed_url in feeds:
@@ -142,6 +182,8 @@ def fetch_rss(
 
         newest_dt = last_dt
         max_age = ages.get(feed_url)
+        spec = specs.get(feed_url)
+        label = keys.get(feed_url) or feed_url
         stale = 0
 
         for entry in parsed.entries:
@@ -161,6 +203,8 @@ def fetch_rss(
             text = _entry_text(entry)
             tickers = _extract_tickers(text, uni)
             h = content_hash(CONNECTOR, url)
+            title = str(entry.get("title") or "").strip() or None
+            filtered = spec is not None and spec.title_filtered(title)
 
             doc = RawDoc(
                 source=CONNECTOR,
@@ -178,11 +222,17 @@ def fetch_rss(
                 text=doc.text,
                 tickers_hint=doc.tickers_hint,
                 hash_val=h,
-                title=(str(entry.get("title") or "").strip() or None),
+                title=title,
                 source_key=keys.get(feed_url),
+                closed_status=FILTERED_STATUS if filtered else None,
             )
 
-            if doc_id is not None:
+            if doc_id is None:
+                continue
+            if filtered:  # D55: stored + audited, never read by the Sweep
+                out.filtered[label] += 1
+            else:
+                out.new[label] += 1
                 results.append(doc)
 
         if stale:
@@ -194,6 +244,7 @@ def fetch_rss(
             )
         if newest_dt > last_dt:
             cursor_repo.set(cursor_key, newest_dt.isoformat())
+        log.info("rss.feed_done", source=label, new=out.new[label], filtered=out.filtered[label])
 
-    log.info("rss.done", new_docs=len(results))
-    return results
+    log.info("rss.done", new_docs=len(results), filtered=sum(out.filtered.values()))
+    return out

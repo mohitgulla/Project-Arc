@@ -4465,6 +4465,12 @@ export interface components {
              * @enum {string}
              */
             feed: "sweep" | "scout";
+            /**
+             * Filtered Today
+             * @description D55: docs stored today but closed `filtered` by the feed's title filter (never read by the Sweep)
+             * @default 0
+             */
+            filtered_today: number;
             /** Job */
             job: string;
             /** Key */

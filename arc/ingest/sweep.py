@@ -144,6 +144,10 @@ class SweepRunResult:
     skipped_stale: int = 0
     # D54: docs of `feed: scout` sources (earnings calendar) closed out of the Sweep queue.
     slow_feed: int = 0
+    # D55 (E4.11): docs stored `filtered` by a feed's title filter since the last Sweep
+    # (claimed by this run); never read, counted here for the card and metrics.
+    filtered: int = 0
+    filtered_by_source: dict[str, int] = field(default_factory=dict)
     stale_by_source: dict[str, int] = field(default_factory=dict)
     category_mix: list[CategoryMix] = field(default_factory=list)
     # D47: context TTL per story id / candidate ticker (min(max_age of its sources) + 2h);
@@ -944,6 +948,9 @@ def run_sweep(
         doc_repo.mark_slow_feed(slow, run_id=run_id)
         result.slow_feed = len(slow)
         all_docs = [d for d in all_docs if not slow_feed(d)]
+    # D55: title-filtered docs were closed at insert; claim and count them (never read).
+    result.filtered_by_source = doc_repo.claim_filtered(run_id=run_id)
+    result.filtered = sum(result.filtered_by_source.values())
     # D47: a doc past its category's max_age is never read; close it skipped_stale.
     stale = stale_docs(all_docs, registry, now)
     if stale:
@@ -983,6 +990,7 @@ def run_sweep(
         over_budget=result.over_budget,
         skipped_budget=result.skipped_budget,
         skipped_stale=result.skipped_stale,
+        filtered=result.filtered,
         dry_run=dry_run,
     )
 

@@ -120,6 +120,33 @@ class FeedSpec(BaseModel):
     max_docs_per_run: int | None = Field(None, ge=0)
     hosts: list[str] = Field(default_factory=list)
     max_age: Ttl | None = None
+    # D54: the feed's Director feed (default: the job's ``feed:``, else ``sweep``).
+    feed: Feed | None = None
+    # D55 (E4.11): title regexes (case-insensitive ``re.search``). An entry whose title
+    # matches any ``title_exclude``, or (when ``title_include`` is set) none of
+    # ``title_include``, is stored closed ``sweep_status='filtered'`` (never read).
+    title_exclude: list[str] = Field(default_factory=list)
+    title_include: list[str] = Field(default_factory=list)
+
+    @field_validator("title_exclude", "title_include")
+    @classmethod
+    def _patterns(cls, v: list[str]) -> list[str]:
+        for p in v:
+            try:
+                re.compile(p)
+            except re.error as exc:
+                msg = f"invalid title filter pattern {p!r}: {exc}"
+                raise ValueError(msg) from exc
+        return v
+
+    def title_filtered(self, title: str | None) -> bool:
+        """D55: is an entry with *title* filtered out (stored ``filtered``, never read)?"""
+        text = title or ""
+        if any(re.search(p, text, flags=re.IGNORECASE) for p in self.title_exclude):
+            return True
+        return bool(self.title_include) and not any(
+            re.search(p, text, flags=re.IGNORECASE) for p in self.title_include
+        )
 
     @field_validator("name")
     @classmethod
@@ -174,6 +201,20 @@ class SourceSpec:
     @property
     def display(self) -> str:
         return self.label or self.key
+
+
+# D55 (E4.11): retired RSS feed keys, kept readable for one release so stored
+# ``raw_docs.source_key`` history keeps its label and category. Remove after E4.11+1.
+LEGACY_SOURCES: Mapping[str, SourceSpec] = {
+    "cnbc": SourceSpec(
+        key="cnbc",
+        job="rss",
+        category=SourceCategory.MARKET_NEWS,
+        label="CNBC",
+        hosts=("cnbc.com",),
+    ),
+}
+LEGACY_REPLACED_BY: Mapping[str, str] = {"cnbc": "cnbc_earnings, cnbc_business"}
 
 
 def _job_category(job: str, options: Mapping[str, Any]) -> SourceCategory | None:
@@ -249,7 +290,7 @@ class SourceRegistry:
                         hosts=feed.match_hosts,
                         max_age=feed.max_age or job_age,
                         age_basis=basis,
-                        feed=feed_of,
+                        feed=feed.feed or feed_of,
                     )
                 continue
             channels = opts.get("channels")
@@ -435,9 +476,17 @@ class SourceRegistry:
         return source
 
     def spec_for(self, key: str) -> SourceSpec:
-        """Spec for *key*; unknown keys (legacy / removed sources) get a default spec."""
+        """Spec for *key*; unknown keys (legacy / removed sources) get a default spec.
+
+        D55: a retired feed key in :data:`LEGACY_SOURCES` (``cnbc``) keeps its old label
+        and category for one release, so its ``raw_docs`` history still reads right.
+        """
         if key in self.sources:
             return self.sources[key]
+        legacy = LEGACY_SOURCES.get(key)
+        if legacy is not None:
+            log.debug("sources.legacy_alias", key=key, replaced_by=LEGACY_REPLACED_BY.get(key))
+            return legacy
         prefix = key.split(".", 1)[0]
         return SourceSpec(key=key, job=key, category=DEFAULT_CATEGORY.get(prefix, UNKNOWN_CATEGORY))
 

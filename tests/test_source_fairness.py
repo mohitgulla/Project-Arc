@@ -139,9 +139,18 @@ class TestRegistry:
     def test_shipped_config_has_named_feeds_and_categories(self) -> None:
         routines = load_routines(DEFAULT_ROUTINES_PATH)
         reg = SourceRegistry.from_routines(routines)
-        assert {"wsj", "cnbc", "seekingalpha", "nasdaq", "fed", "edgar", "earnings"} <= set(
-            reg.sources
-        )
+        assert {
+            "wsj",
+            "wsj_business",
+            "cnbc_earnings",
+            "cnbc_business",
+            "seekingalpha",
+            "nasdaq",
+            "fed",
+            "edgar",
+            "earnings",
+        } <= set(reg.sources)
+        assert "cnbc" not in reg.sources  # D55: CNBC Economy retired (label alias only)
         assert reg.sources["edgar"].category is SourceCategory.COMPANY_DATA
         assert reg.sources["earnings"].category is SourceCategory.COMPANY_DATA
         assert reg.sources["fed"].category is SourceCategory.MACRO_DATA

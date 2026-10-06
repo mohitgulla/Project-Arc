@@ -831,8 +831,8 @@ a source is a YAML edit only.
 
 | category | label | `max_age` | sources | read by |
 |---|---|---|---|---|
-| `market_news` | Market news | 6h | WSJ, CNBC, Nasdaq RSS | Sweep, Director |
-| `company_data` | Company data | 24h | Seeking Alpha, EDGAR, earnings, Finnhub kinds (D46) | Sweep, Director |
+| `market_news` | Market news | 6h | WSJ Markets, CNBC Business, Nasdaq RSS | Sweep, Director |
+| `company_data` | Company data | 24h | Seeking Alpha, CNBC Earnings, WSJ Business, EDGAR, earnings, Finnhub kinds (D46) | Sweep, Director |
 | `macro_data` | Macro data | 24h | Fed RSS, `macro_calendar` | Sweep, Director |
 | `options_data` | Options data | 12h | `vol_term`, `put_call`, `unusual_options`, `ex_dividend` | Director, Risk (typed context) |
 | `youtube_macro` | YouTube macro | 24h | FX Evolution, Bravos Research | Director (channel briefs, §5.22) |
@@ -866,6 +866,16 @@ a source is a YAML edit only.
   Docs still inside their window but past the `raw_doc_ref` TTL (5d) are closed
   `skipped_budget`. Never deleted. `story` and `candidate` entries expire at
   min(1 session, freshest source's `max_age` + 2h).
+- **Title filters (D55, E4.11).** An RSS feed may set `title_exclude` / `title_include`
+  regex lists (case-insensitive, on the entry title). A filtered entry is stored
+  already closed `raw_docs.sweep_status='filtered'` and never read; the next Sweep run
+  claims it (`sweep_run_id`) and counts it once (`filtered` metric, a *Filtered* line on
+  the Sweep card); the `rss` run reports `new_<feed>` / `filtered_<feed>` metrics and the
+  Tower Sources page shows `N filtered (title)` per feed today. Seeking Alpha ships with
+  three patterns for fund/ETF dividend declarations (~31% of its docs). The lists are
+  edited in `config/routines.yaml` by PR only (not `!arc config`). The retired `cnbc`
+  key (CNBC Economy, replaced by `cnbc_earnings` + `cnbc_business`) keeps its label
+  for old rows for one release.
 - **Source mix.** The Sweep card groups it by category: `*Market news* 50% · 6
   read: WSJ 1 · Nasdaq 5 (10 over budget)`, with `(N stale)` per source.
 - **Director.** Its prompt carries a code-built *Context by category* block: the 6

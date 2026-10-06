@@ -1409,6 +1409,11 @@ class SourceRow(BaseModel):
     skipped_stale_today: int = Field(
         default=0, description="D47: docs closed skipped_stale today (older than max_age)"
     )
+    filtered_today: int = Field(
+        default=0,
+        description="D55: docs stored today but closed `filtered` by the feed's title filter "
+        "(never read by the Sweep)",
+    )
     runs_24h: int
     failed_24h: int
     error_rate: float | None
@@ -1562,6 +1567,7 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
     docs: dict[str, int] = Counter()
     skipped: dict[str, int] = Counter()
     stale: dict[str, int] = Counter()
+    filtered: dict[str, int] = Counter()
     last_doc: dict[str, _dt.datetime] = {}
     has_key = "source_key" in {r[1] for r in conn.execute("PRAGMA table_info(raw_docs)")}
     extra = ", source_key, sweep_status" if has_key else ""
@@ -1582,6 +1588,8 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
                 skipped[key] += 1
             if has_key and r["sweep_status"] == "skipped_stale":
                 stale[key] += 1
+            if has_key and r["sweep_status"] == "filtered":
+                filtered[key] += 1
     runs = defaultdict(lambda: [0, 0])
     last_ok: dict[str, _dt.datetime] = {}
     last_status: dict[str, str] = {}
@@ -1659,6 +1667,7 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
                 docs_today=docs.get(s.key, 0),
                 skipped_budget_today=skipped.get(s.key, 0),
                 skipped_stale_today=stale.get(s.key, 0),
+                filtered_today=filtered.get(s.key, 0),
                 backoff=src_backoff,
                 brief=brief,
                 status=_row_status(
