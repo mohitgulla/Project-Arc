@@ -45,7 +45,7 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("env-slot")).toHaveText("Paper Trade");
         await expect(page.getByTestId("alerts-toggle")).toContainText("Alerts 1");
         await page.getByTestId("alerts-toggle").click();
-        await expect(strip).toContainText("sweep slot 12:00 ET missed");
+        await expect(strip).toContainText("scalp slot 12:00 ET missed");
         // Cards.
         for (const title of ["Equity", "P&L Today", "Positions", "Greeks vs Caps", "Today's Proposals", "Movers", "Recent Activity · 24 h"])
           await expect(page.getByRole("heading", { level: 2, name: title, exact: false }).first()).toBeVisible();

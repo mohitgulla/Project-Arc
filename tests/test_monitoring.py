@@ -59,7 +59,7 @@ YAML = """
     sources:
       rss: {every: 30m, window: "06:00-20:00", days: trading}
     personas:
-      director: {schedule: ["09:30"], days: trading, chain: [quant], ttl: 2h}
+      research: {schedule: ["09:30"], days: trading, chain: [quant], ttl: 2h}
     steps:
       quant: {}
 """
@@ -180,7 +180,7 @@ def test_tick_staleness(conn: sqlite3.Connection) -> None:
 def test_stuck_runs(conn: sqlite3.Connection) -> None:
     repo = RoutineRunRepo(conn)
     t0 = et(2026, 9, 28, 9, 0)
-    stuck = repo.claim(job="director", scheduled_for=t0, reason="schedule", now=t0)
+    stuck = repo.claim(job="research", scheduled_for=t0, reason="schedule", now=t0)
     fresh = repo.claim(
         job="rss", scheduled_for=t0, reason="schedule", now=t0 + dt.timedelta(hours=1)
     )
@@ -196,7 +196,7 @@ def test_stuck_runs_per_job_override(conn: sqlite3.Connection) -> None:
     """E5.3a: ``stuck_after_jobs.monitor: 10m`` flags a wedged 5-min monitor early."""
     ms = MonitoringSettings.model_validate({"stuck_after_jobs": {"monitor": "10m"}})
     assert ms.stuck_after_for("monitor") == dt.timedelta(minutes=10)
-    assert ms.stuck_after_for("director") == ms.stuck_after
+    assert ms.stuck_after_for("research") == ms.stuck_after
     repo = RoutineRunRepo(conn)
     t0 = et(2026, 9, 28, 10, 0)
     mon = repo.claim(job="monitor", scheduled_for=t0, reason="schedule", now=t0)
@@ -223,8 +223,8 @@ def test_shipped_monitor_stuck_after_is_two_slots() -> None:
     ms = load_routines().monitoring
     assert ms.stuck_after_for("monitor") == dt.timedelta(minutes=20)  # D52: 2 x 10-min slots
     # D31: the trading loop gets the same rule (loop.max_runtime is 4m)
-    assert ms.stuck_after_for("director") == dt.timedelta(minutes=20)
-    assert ms.stuck_after_for("sweep") == dt.timedelta(minutes=70)
+    assert ms.stuck_after_for("research") == dt.timedelta(minutes=20)
+    assert ms.stuck_after_for("scalp") == dt.timedelta(minutes=70)
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +249,7 @@ def _dispatcher(conn: sqlite3.Connection, routines: RoutinesConfig) -> Dispatche
     return Dispatcher(
         conn,
         routines,
-        handlers={n: rec(n) for n in ("rss", "director", "quant")},
+        handlers={n: rec(n) for n in ("rss", "research", "quant")},
         notifier=RecordingNotifier(),
         is_halted=lambda: False,
     )
@@ -270,13 +270,13 @@ def test_missed_window_when_ticks_stop(conn: sqlite3.Connection) -> None:
         d.tick(t)
         HeartbeatRepo(conn).record("tick", "ok", at=t)
         t += dt.timedelta(minutes=5)
-    # 11:00: director 09:30 is still within its 2h window (+10m grace) -> not judged.
+    # 11:00: research 09:30 is still within its 2h window (+10m grace) -> not judged.
     r = checks.missed_windows(conn, routines, MS, et(2026, 9, 28, 11, 0))
-    assert "director" not in json.dumps([f.detail for f in r.findings])
-    # 11:45: director 09:30 window closed 11:30, +10m grace passed -> missed.
+    assert "research" not in json.dumps([f.detail for f in r.findings])
+    # 11:45: research 09:30 window closed 11:30, +10m grace passed -> missed.
     r = checks.missed_windows(conn, routines, MS, et(2026, 9, 28, 11, 45))
     missed = {f.detail["job"] for f in r.findings}
-    assert "director" in missed
+    assert "research" in missed
     assert "rss" in missed  # 09:30.. rss slots too
     assert all(f.mode == checks.ONE_OFF for f in r.findings)
     assert r.severity == "failed"
@@ -292,11 +292,11 @@ def test_collapsed_and_recorded_missed_slots(conn: sqlite3.Connection) -> None:
     HeartbeatRepo(conn).record("tick", "ok", at=et(2026, 9, 28, 7, 10))
     r = checks.missed_windows(conn, routines, MS, et(2026, 9, 28, 7, 50))
     assert not [f for f in r.findings if f.detail["job"] == "rss"]
-    # Director 09:30 missed and recorded as skip-missed by a late tick at 12:00.
+    # Research 09:30 missed and recorded as skip-missed by a late tick at 12:00.
     d.tick(et(2026, 9, 28, 12, 0))
     r = checks.missed_windows(conn, routines, MS, et(2026, 9, 28, 12, 1))
-    director = [f for f in r.findings if f.detail["job"] == "director"]
-    assert director and "recorded as missed" in director[0].message
+    research = [f for f in r.findings if f.detail["job"] == "research"]
+    assert research and "recorded as missed" in research[0].message
 
 
 def test_missed_window_ignores_halt_skips(conn: sqlite3.Connection) -> None:
@@ -308,7 +308,7 @@ def test_missed_window_ignores_halt_skips(conn: sqlite3.Connection) -> None:
     d.tick(et(2026, 9, 28, 9, 0), since=et(2026, 9, 28, 8, 55))
     d.tick(et(2026, 9, 28, 9, 35))
     r = checks.missed_windows(conn, routines, MS, et(2026, 9, 28, 12, 0))
-    assert not [f for f in r.findings if f.detail["job"] == "director"]
+    assert not [f for f in r.findings if f.detail["job"] == "research"]
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +440,7 @@ def test_condition_alert_posts_once_then_resolves(conn: sqlite3.Connection) -> N
 def test_one_off_alert_posted_once(conn: sqlite3.Connection) -> None:
     n = alerts.RecordingOpsNotifier()
     f = checks.Finding(
-        key="missed:director:x", kind="missed_window", severity="failed", message="missed",
+        key="missed:research:x", kind="missed_window", severity="failed", message="missed",
         mode=checks.ONE_OFF,
     )  # fmt: skip
     res = [checks.CheckResult("routine_windows", "failed", "", (f,))]
@@ -528,13 +528,13 @@ def test_outage_posts_are_bounded(conn: sqlite3.Connection) -> None:
     opened, resolved = n.posts
     assert "last routines tick" in opened and "missed its window" not in opened
     assert "resolved: routines tick heartbeat is fresh again" in resolved
-    assert "routine slot(s) missed: rss ×" in resolved and "director ×1" in resolved
+    assert "routine slot(s) missed: rss ×" in resolved and "research ×1" in resolved
     # Every missed slot is still on record, folded into the incident and traceable.
     repo = AlertRepo(conn)
     incident = repo.find("tick_stale")[0]
     folded = repo.folded_into(incident.id)
     assert len(folded) >= 10
-    assert {alerts.missed_job(a) for a in folded} == {"rss", "director"}
+    assert {alerts.missed_job(a) for a in folded} == {"rss", "research"}
     assert all(a.posted_ts == "ts-2" for a in folded)
 
 
@@ -555,7 +555,7 @@ def test_first_check_after_long_outage_posts_once(conn: sqlite3.Connection) -> N
 
 
 def test_single_miss_with_healthy_ticks_alerts_once(conn: sqlite3.Connection) -> None:
-    # Ticks are healthy but director never runs (e.g. dropped from the tick's config).
+    # Ticks are healthy but research never runs (e.g. dropped from the tick's config).
     rss_only = cfg(
         """
         sources:
@@ -571,14 +571,14 @@ def test_single_miss_with_healthy_ticks_alerts_once(conn: sqlite3.Connection) ->
         _health(conn, cfg(), t, n)
         t += dt.timedelta(minutes=5)
     assert len(n.posts) == 1
-    assert "director" in n.posts[0] and "missed its window" in n.posts[0]
+    assert "research" in n.posts[0] and "missed its window" in n.posts[0]
     assert AlertRepo(conn).open_alerts() == []
 
 
 def test_missed_slots_collapse_to_one_line_per_job(conn: sqlite3.Connection) -> None:
     n = alerts.RecordingOpsNotifier()
     slots = [et(2026, 9, 28, h, 0) for h in (9, 10, 11)]
-    fs = (*[_missed("rss", s) for s in slots], _missed("director", slots[0]))
+    fs = (*[_missed("rss", s) for s in slots], _missed("research", slots[0]))
     alerts.apply(conn, [checks.CheckResult("routine_windows", "failed", "", fs)],
                  now=et(2026, 9, 28, 12, 0), correlation={}, notifier=n)  # fmt: skip
     (post,) = n.posts
@@ -586,7 +586,7 @@ def test_missed_slots_collapse_to_one_line_per_job(conn: sqlite3.Connection) -> 
     assert len(lines) == 2
     rss = next(x for x in lines if "rss:" in x)
     assert "3 slots missed" in rss and "09:00" in rss and "11:00" in rss
-    assert any("director 09:00 missed its window" in x for x in lines)
+    assert any("research 09:00 missed its window" in x for x in lines)
 
 
 def test_miss_judged_after_incident_resolved_replies_in_thread(conn: sqlite3.Connection) -> None:
@@ -597,19 +597,19 @@ def test_miss_judged_after_incident_resolved_replies_in_thread(conn: sqlite3.Con
                  correlation={}, notifier=n)  # fmt: skip
     assert len(n.posts) == 2
     # Window closed during the outage, grace ran out after it resolved: reply, not a root post.
-    late = _missed("director", et(2026, 9, 28, 9, 30), deadline=t0 + dt.timedelta(minutes=55))
+    late = _missed("research", et(2026, 9, 28, 9, 30), deadline=t0 + dt.timedelta(minutes=55))
     later = t0 + dt.timedelta(hours=1, minutes=10)
     out = alerts.apply(conn, [checks.CheckResult("routine_windows", "failed", "", (late,))],
                        now=later, correlation={}, notifier=n)  # fmt: skip
     assert len(n.posts) == 2
     assert n.replies == [("ts-1", out.replies[0][1])]
-    assert "1 routine slot(s) missed: director ×1" in n.replies[0][1]
+    assert "1 routine slot(s) missed: research ×1" in n.replies[0][1]
     assert AlertRepo(conn).find(late.key)[0].posted_ts == "ts-1"
     # A miss whose window closed well after the incident is a normal alert again.
-    fresh = _missed("director", et(2026, 9, 29, 9, 30), deadline=et(2026, 9, 29, 11, 30))
+    fresh = _missed("research", et(2026, 9, 29, 9, 30), deadline=et(2026, 9, 29, 11, 30))
     alerts.apply(conn, [checks.CheckResult("routine_windows", "failed", "", (fresh,))],
                  now=et(2026, 9, 29, 11, 45), correlation={}, notifier=n)  # fmt: skip
-    assert len(n.posts) == 3 and "director" in n.posts[2]
+    assert len(n.posts) == 3 and "research" in n.posts[2]
 
 
 def test_miss_after_unposted_incident_is_posted(conn: sqlite3.Connection) -> None:
@@ -747,10 +747,10 @@ def test_dispatcher_binds_run_ids(conn: sqlite3.Connection, tmp_path: Path) -> N
         seen.append(structlog.contextvars.get_contextvars())
         return JobResult(summary="ok")
 
-    d = Dispatcher(conn, cfg(), handlers={"rss": h, "director": h, "quant": h},
+    d = Dispatcher(conn, cfg(), handlers={"rss": h, "research": h, "quant": h},
                    notifier=RecordingNotifier(), is_halted=lambda: False)  # fmt: skip
-    d.run_manual("director", now=et(2026, 9, 28, 9, 30), chain=True)
-    assert seen[0]["job"] == "director" and seen[0]["run_id"].startswith("run-")
+    d.run_manual("research", now=et(2026, 9, 28, 9, 30), chain=True)
+    assert seen[0]["job"] == "research" and seen[0]["run_id"].startswith("run-")
     assert seen[0]["chain_run_id"].startswith("chain-") and seen[0]["step_index"] == 0
     assert seen[1]["job"] == "quant" and seen[1]["step_index"] == 1
     assert structlog.contextvars.get_contextvars() == {}

@@ -46,7 +46,7 @@ def _cfg(writes: str = "[shortlist, note]") -> RoutinesConfig:
 
     text = f"""
 personas:
-  director: {{schedule: ['09:00'], writes: {writes}, chain: [quant]}}
+  research: {{schedule: ['09:00'], writes: {writes}, chain: [quant]}}
 steps:
   quant: {{writes: [structures]}}
 """
@@ -67,7 +67,7 @@ def _dispatch(
     )
 
 
-def _director_ok(ctx: JobContext) -> JobResult:
+def _research_ok(ctx: JobContext) -> JobResult:
     ctx.record_input("chain:SPY", "fixture", {"bid": 1, "ask": 2}, as_of=ctx.now, count=2)
     ctx.write(
         "shortlist",
@@ -77,7 +77,7 @@ def _director_ok(ctx: JobContext) -> JobResult:
     ctx.write(
         "note",
         "market",
-        {"persona": "director", "topic": "regime_view", "title": "t", "body": "calm"},
+        {"persona": "research", "topic": "regime_view", "title": "t", "body": "calm"},
     )
     return JobResult(summary="ok", metrics={"picked": 0})
 
@@ -97,12 +97,12 @@ class TestManifestWritten:
     ) -> None:
         monkeypatch.setenv("ALPACA_API_SECRET_KEY", SECRET)
         monkeypatch.setenv("ARC_GATE_SECRET", SECRET)
-        d = _dispatch(conn, {"director": _director_ok, "quant": _quant_ok})
-        d.run_manual("director", now=NOW, chain=True)
-        (m,) = _manifests(conn, "director")
+        d = _dispatch(conn, {"research": _research_ok, "quant": _quant_ok})
+        d.run_manual("research", now=NOW, chain=True)
+        (m,) = _manifests(conn, "research")
         assert m.schema_version == MANIFEST_SCHEMA_VERSION
         assert m.status == "ok" and m.error_class is None
-        assert m.job == "director" and m.job_kind == "persona" and m.attempt == 1
+        assert m.job == "research" and m.job_kind == "persona" and m.attempt == 1
         assert m.declared_writes == ["shortlist", "note"]
         assert set(m.output_ids) == {"shortlist", "note"}
         assert m.metrics == {"picked": 0}
@@ -122,12 +122,12 @@ class TestManifestWritten:
         assert all(SECRET not in r["payload"] for r in row)
 
     def test_chain_step_links_parent_run(self, conn: sqlite3.Connection) -> None:
-        d = _dispatch(conn, {"director": _director_ok, "quant": _quant_ok})
-        d.run_manual("director", now=NOW, chain=True)
-        (director,) = _manifests(conn, "director")
+        d = _dispatch(conn, {"research": _research_ok, "quant": _quant_ok})
+        d.run_manual("research", now=NOW, chain=True)
+        (research,) = _manifests(conn, "research")
         (quant,) = _manifests(conn, "quant")
-        assert quant.chain_run_id == director.chain_run_id is not None
-        assert quant.parent_run_id == director.run_id
+        assert quant.chain_run_id == research.chain_run_id is not None
+        assert quant.parent_run_id == research.run_id
         assert quant.step_index == 1
         assert quant.declared_writes == ["structures"]
 
@@ -136,8 +136,8 @@ class TestManifestWritten:
             msg = "chain fetch timed out"
             raise TimeoutError(msg)
 
-        _dispatch(conn, {"director": boom, "quant": _quant_ok}).run_manual("director", now=NOW)
-        (m,) = _manifests(conn, "director")
+        _dispatch(conn, {"research": boom, "quant": _quant_ok}).run_manual("research", now=NOW)
+        (m,) = _manifests(conn, "research")
         assert m.status == "failed"
         assert m.error_class == "TimeoutError"
         assert m.error is not None and "timed out" in m.error
@@ -148,20 +148,20 @@ class TestManifestWritten:
             msg = "nothing to do"
             raise JobSkippedError(msg)
 
-        _dispatch(conn, {"director": skip, "quant": _quant_ok}).run_manual("director", now=NOW)
-        (m,) = _manifests(conn, "director")
+        _dispatch(conn, {"research": skip, "quant": _quant_ok}).run_manual("research", now=NOW)
+        (m,) = _manifests(conn, "research")
         assert m.status == "skipped" and m.error_class is None
 
     def test_halted_schedule_skip_has_manifest(self, conn: sqlite3.Connection) -> None:
         d = Dispatcher(
             conn,
             _cfg(),
-            handlers={"director": _director_ok, "quant": _quant_ok},
+            handlers={"research": _research_ok, "quant": _quant_ok},
             notifier=RecordingNotifier(),
             is_halted=lambda: True,
         )
         d.tick(NOW, since=NOW - dt.timedelta(minutes=5))
-        runs = RoutineRunRepo(conn).history(job="director")
+        runs = RoutineRunRepo(conn).history(job="research")
         assert runs and runs[0].status is RunStatus.SKIPPED
         (m,) = ManifestRepo(conn).for_run(runs[0].run_id)
         assert m.status == "skipped" and m.halted is True
@@ -178,20 +178,20 @@ class TestManifestWritten:
         d = Dispatcher(
             conn,
             _cfg(),
-            handlers={"director": _director_ok, "quant": _quant_ok},
+            handlers={"research": _research_ok, "quant": _quant_ok},
             notifier=notifier,
             is_halted=lambda: False,
         )
-        d.run_manual("director", now=NOW)
-        run = RoutineRunRepo(conn).history(job="director")[0]
+        d.run_manual("research", now=NOW)
+        run = RoutineRunRepo(conn).history(job="research")[0]
         assert run.status is RunStatus.OK
         assert any("run manifest not written" in text for _, text in notifier.posts)
 
 
 class TestAppendOnly:
     def test_update_and_delete_rejected(self, conn: sqlite3.Connection) -> None:
-        _dispatch(conn, {"director": _director_ok, "quant": _quant_ok}).run_manual(
-            "director", now=NOW
+        _dispatch(conn, {"research": _research_ok, "quant": _quant_ok}).run_manual(
+            "research", now=NOW
         )
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             conn.execute("UPDATE run_manifests SET status = 'ok'")
@@ -210,12 +210,12 @@ class TestLLMUsage:
         from arc.journal.models import PersonaCallMeta
         from arc.pipeline.store import PersonaCallRepo
 
-        def director(ctx: JobContext) -> JobResult:
+        def research(ctx: JobContext) -> JobResult:
             repo = PersonaCallRepo(ctx.conn)
             for i in range(2):
                 repo.insert(
                     run_id=ctx.run_id,
-                    persona="director",
+                    persona="research",
                     model="claude-test",
                     snapshot_id=None,
                     prompt=f"p{i}",
@@ -229,8 +229,8 @@ class TestLLMUsage:
                 )
             return JobResult(summary="ok")
 
-        _dispatch(conn, {"director": director, "quant": _quant_ok}).run_manual("director", now=NOW)
-        (m,) = _manifests(conn, "director")
+        _dispatch(conn, {"research": research, "quant": _quant_ok}).run_manual("research", now=NOW)
+        (m,) = _manifests(conn, "research")
         assert len(m.persona_call_ids) == 2
         assert m.models_served == ["claude-test"]
         assert (m.input_tokens, m.output_tokens, m.llm_latency_ms) == (20, 10, 200)
@@ -249,11 +249,11 @@ class TestHelpers:
         assert all(len(v) == 64 for v in hashes.values())
 
     def test_manifest_json_roundtrip(self, conn: sqlite3.Connection) -> None:
-        _dispatch(conn, {"director": _director_ok, "quant": _quant_ok}).run_manual(
-            "director", now=NOW
+        _dispatch(conn, {"research": _research_ok, "quant": _quant_ok}).run_manual(
+            "research", now=NOW
         )
         raw = conn.execute("SELECT payload FROM run_manifests").fetchone()["payload"]
-        assert RunManifest.model_validate(json.loads(raw)).job == "director"
+        assert RunManifest.model_validate(json.loads(raw)).job == "research"
 
 
 class TestTraceCli:
@@ -274,7 +274,7 @@ class TestTraceCli:
         capsys.readouterr()
         assert main(["context", "trace", chain, "--db", db, "--json"]) == 0
         steps = json.loads(capsys.readouterr().out)
-        assert [s["job"] for s in steps] == ["director", "quant", "risk", "propose", "execute"]
+        assert [s["job"] for s in steps] == ["research", "quant", "risk", "propose", "execute"]
         for s in steps:
             assert set(s) >= {"job", "run_id", "status", "declared", "read", "wrote",
                               "persona_calls", "manifest"}  # fmt: skip
@@ -316,16 +316,16 @@ class TestTraceCli:
     def test_logs_carry_run_id(self, conn: sqlite3.Connection) -> None:
         import structlog
 
-        def director(ctx: JobContext) -> JobResult:
+        def research(ctx: JobContext) -> JobResult:
             structlog.get_logger("t").info("handler.event")
-            return _director_ok(ctx)
+            return _research_ok(ctx)
 
         with structlog.testing.capture_logs(
             processors=[structlog.contextvars.merge_contextvars]
         ) as logs:
-            _dispatch(conn, {"director": director, "quant": _quant_ok}).run_manual(
-                "director", now=NOW
+            _dispatch(conn, {"research": research, "quant": _quant_ok}).run_manual(
+                "research", now=NOW
             )
         ev = next(e for e in logs if e["event"] == "handler.event")
-        run = RoutineRunRepo(conn).history(job="director")[0]
-        assert ev["run_id"] == run.run_id and ev["job"] == "director"
+        run = RoutineRunRepo(conn).history(job="research")[0]
+        assert ev["run_id"] == run.run_id and ev["job"] == "research"

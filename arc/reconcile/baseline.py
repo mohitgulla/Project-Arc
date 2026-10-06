@@ -1,7 +1,7 @@
 """Start-of-day equity ("prev close"), the one baseline for day P&L (E5.9b, D43).
 
 Day P&L is ``equity − start_of_day_equity``. Every surface uses this module: the
-loop root and the Director digest (``portfolio_context``), the gate's daily-loss
+loop root and Research digest (``portfolio_context``), the gate's daily-loss
 rule and :meth:`arc.gate.halt.HaltSwitch.check_daily_loss` (via
 :func:`arc.pipeline.market.account_snapshot`), the monitor heartbeat, the EOD
 reconcile snapshot (and the Auditor journal reading it) and the control tower.

@@ -1,13 +1,13 @@
-"""E5.9 (D33): portfolio-aware Director, idea dedupe, explicit no-trade, market guard.
+"""E5.9 (D33): portfolio-aware Research, idea dedupe, explicit no-trade, market guard.
 
 Deterministic tests on the bundled SPY recording + fixture personas:
 
 * the portfolio context is built from the audit DB (open structures) and rendered
-  into the Director prompt only when the book is not empty;
+  into Research prompt only when the book is not empty;
 * an open structure on a candidate in the same stance is dropped before Quant;
 * propose refuses a repeat fingerprint within the cooldowns, admits it after the
   cooldown, and re-admits it when spot moved or the regime changed;
-* an empty Director shortlist journals ``director_no_trade`` with the stated reason;
+* an empty Research shortlist journals ``research_no_trade`` with the stated reason;
 * the market guard stops the entry chain (VIX, backwardation, transitional regime,
   missing VIX) before the LLM is called; exits never go through it;
 * a 5-minute loop on one day proposes each distinct idea at most once.
@@ -30,8 +30,8 @@ from hypothesis import strategies as st
 from arc.config import ArcSettings
 from arc.context.store import ContextStore
 from arc.context.ttl import Ttl, to_db
-from arc.ingest.llm import FixtureSweepLLM
-from arc.ingest.sweep import load_fixture_docs
+from arc.ingest.llm import FixtureScalpLLM
+from arc.ingest.scalp import load_fixture_docs
 from arc.journal.reasons import ReasonCode
 from arc.models import LegIntent, Stance
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
@@ -88,8 +88,8 @@ def settings() -> ArcSettings:
     return _settings()
 
 
-def _director_reply(**over: Any) -> str:
-    d = json.loads((FIXTURES_DIR / "director.json").read_text())
+def _research_reply(**over: Any) -> str:
+    d = json.loads((FIXTURES_DIR / "research.json").read_text())
     d.update(over)
     return json.dumps(d)
 
@@ -298,7 +298,7 @@ class TestPortfolioContext:
         condor = by_id[sid]
         assert condor.kind == "iron_condor" and condor.stance is Stance.NEUTRAL
         assert condor.expiry_bucket == "22-45" and condor.sector == "broad_market"
-        assert condor.thesis.director == "range-bound into October"
+        assert condor.thesis.research == "range-bound into October"
         assert condor.review_source == "computed" and condor.mark_pnl_total is not None
         assert condor.max_loss_pct_equity == pytest.approx(
             condor.max_loss_total / 100_000, abs=1e-4
@@ -329,23 +329,23 @@ class TestPortfolioContext:
 
 
 # ---------------------------------------------------------------------------
-# Director stage
+# Research stage
 # ---------------------------------------------------------------------------
 
 
-class TestDirectorPortfolioAware:
+class TestResearchPortfolioAware:
     def test_empty_book_prompt_has_no_portfolio_block(self, settings, routines) -> None:  # noqa: ANN001
         env = PipelineEnv.fixtures()
         conn, report = _run(settings, routines, env)
         assert not report.failed
-        prompt = env.llms["director"].prompts[0]  # type: ignore[attr-defined]
+        prompt = env.llms["research"].prompts[0]  # type: ignore[attr-defined]
         assert "### Current portfolio\nEquity $100,000.00. 0 open option position(s)." in prompt
         assert "(open book; deterministic, E5.9)" not in prompt
         assert "Recently suggested" not in prompt
         sl = _shortlist(conn)
         assert sl["portfolio_view"] is None and sl["thesis_checks"] == []
         assert sl["no_trade_reason"] is None and sl["market_guard"]["opens_allowed"]
-        assert _outcome(report, "director").metrics["open_positions"] == 0
+        assert _outcome(report, "research").metrics["open_positions"] == 0
         # the context kind was written for audit even with an empty book
         pc = conn.execute(
             "SELECT payload FROM context_entries WHERE kind='portfolio_context'"
@@ -356,22 +356,22 @@ class TestDirectorPortfolioAware:
         conn = open_db(":memory:", copy=False)
         load_fixture_docs(conn)
         env = PipelineEnv.fixtures()
-        # SPY bullish, held; the bullish fixture Director ranks SPY bullish again
+        # SPY bullish, held; the bullish fixture Research ranks SPY bullish again
         sid = _open_structure(
             conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=2,
             thesis="range-bound into October",
         )  # fmt: skip
-        reply = _director_reply(
+        reply = _research_reply(
             portfolio_view={"verdict": "concentrated", "notes": "all SPY, add elsewhere"},
             thesis_checks=[
                 {"structure_id": sid, "status": "intact", "reason": "still range-bound"},
                 {"structure_id": "bogus", "status": "weakened", "reason": "ignored"},
             ],
         )
-        env.llms["director"] = FixtureSweepLLM([reply])
+        env.llms["research"] = FixtureScalpLLM([reply])
         conn, report = _run(settings, routines, env, conn=conn)
         assert not report.failed
-        prompt = env.llms["director"].prompts[0]  # type: ignore[attr-defined]
+        prompt = env.llms["research"].prompts[0]  # type: ignore[attr-defined]
         assert "### Current portfolio (open book; deterministic, E5.9)" in prompt
         assert sid in prompt and "portfolio_fit" in prompt
         assert "Recently suggested or held ideas" in prompt
@@ -382,7 +382,7 @@ class TestDirectorPortfolioAware:
         assert sl["portfolio_view"]["verdict"] == "concentrated"
         assert [c["structure_id"] for c in sl["thesis_checks"]] == [sid]
         assert sl["suppressed"] and sl["suppressed"][0].startswith("SPY bullish long_call")
-        d = _outcome(report, "director")
+        d = _outcome(report, "research")
         assert d.metrics["dedupe_executed"] == 1 and d.metrics["thesis_checks"] == 1
         codes = _codes(conn, "shortlist")
         assert "SPY" in codes["dedupe_executed"]
@@ -411,7 +411,7 @@ class TestDirectorPortfolioAware:
             conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=1,
             at=FIXTURE_NOW - dt.timedelta(days=2),
         )  # fmt: skip
-        d = json.loads((FIXTURES_DIR / "director.json").read_text())
+        d = json.loads((FIXTURES_DIR / "research.json").read_text())
         base = d["shortlist"][0]
         d["shortlist"] = [
             {**base, "ticker": "XOM", "stance": "bearish", "rank": 1,
@@ -419,14 +419,14 @@ class TestDirectorPortfolioAware:
             {**base, "ticker": "NVDA", "stance": "bullish", "rank": 2,
              "portfolio_fit": "adds_concentration"},  # bullish stance is flagged -> drop
             {**base, "ticker": "PLTR", "stance": "bullish", "rank": 3,
-             "portfolio_fit": "neutral"},  # the Director did not call it concentration
+             "portfolio_fit": "neutral"},  # Research did not call it concentration
         ]  # fmt: skip
         d["excluded"] = []
-        env.llms["director"] = FixtureSweepLLM([json.dumps(d)])
+        env.llms["research"] = FixtureScalpLLM([json.dumps(d)])
         conn, report = _run(settings, routines, env, conn=conn)
         sl = _shortlist(conn)
         assert [(i["ticker"], i["rank"]) for i in sl["shortlist"]] == [("XOM", 1), ("PLTR", 2)]
-        dm = _outcome(report, "director").metrics
+        dm = _outcome(report, "research").metrics
         assert dm["drop_concentration"] == 1 and "dedupe_executed" not in dm
         assert _codes(conn, "shortlist")["drop_concentration"] == ["NVDA"]
 
@@ -437,20 +437,20 @@ class TestDirectorPortfolioAware:
         _open_structure(conn, env, IRON_CONDOR, contracts=14)  # 4,682 max loss
         _open_structure(conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=2)
         # SPY is at its 5% cap; a bearish SPY pick (not held) is still refused
-        d = json.loads((FIXTURES_DIR / "director.json").read_text())
+        d = json.loads((FIXTURES_DIR / "research.json").read_text())
         d["shortlist"] = [{**d["shortlist"][0], "stance": "bearish"}]
         d["excluded"] = []
-        env.llms["director"] = FixtureSweepLLM([json.dumps(d)])
+        env.llms["research"] = FixtureScalpLLM([json.dumps(d)])
         conn, report = _run(settings, routines, env, conn=conn)
         assert _shortlist(conn)["shortlist"] == []
-        assert _outcome(report, "director").metrics["drop_at_cap"] == 1
+        assert _outcome(report, "research").metrics["drop_at_cap"] == 1
         assert _shortlist(conn)["no_trade_reason"] == "no_fit"
 
     def test_no_trade_reason_is_journalled(self, settings, routines) -> None:  # noqa: ANN001
         env = PipelineEnv.fixtures()
-        env.llms["director"] = FixtureSweepLLM(
+        env.llms["research"] = FixtureScalpLLM(
             [
-                _director_reply(
+                _research_reply(
                     shortlist=[],
                     excluded=[],
                     session_notes="nothing sets up",
@@ -460,14 +460,14 @@ class TestDirectorPortfolioAware:
         )
         notes = RecordingNotifier()
         conn, report = _run(settings, routines, env, notifier=notes)
-        d = _outcome(report, "director")
+        d = _outcome(report, "research")
         assert d.status == "ok" and "no trade (no_fit)" in d.summary
         assert _shortlist(conn)["no_trade_reason"] == "no_fit"
-        assert _codes(conn, "shortlist")["director_no_trade"] == ["session"]
+        assert _codes(conn, "shortlist")["research_no_trade"] == ["session"]
         assert "No trade: No Fit" in _posted(notes)
         assert not report.proposals
-        # the chain stopped after the Director: no Quant / Risk LLM calls
-        assert [o.job for o in report.outcomes] == ["sweep", "director"]
+        # the chain stopped after Research: no Quant / Risk LLM calls
+        assert [o.job for o in report.outcomes] == ["scalp", "research"]
         assert d.metrics["stop_chain"] is True
         assert env.llms["quant"].prompts == [] and env.llms["risk"].prompts == []  # type: ignore[attr-defined]
 
@@ -477,7 +477,7 @@ class TestDirectorPortfolioAware:
         routines,  # noqa: ANN001
     ) -> None:
         env = PipelineEnv.fixtures()
-        env.llms["director"] = FixtureSweepLLM([_director_reply(shortlist=[], excluded=[])])
+        env.llms["research"] = FixtureScalpLLM([_research_reply(shortlist=[], excluded=[])])
         conn, _ = _run(settings, routines, env)
         assert _shortlist(conn)["no_trade_reason"] == "no_fit"
 
@@ -562,16 +562,16 @@ class TestMarketGuard:
         env.vix_quote = lambda: (45.0, "2026-09-25T15:59:00-04:00")
         notes = RecordingNotifier()
         conn, report = _run(settings, routines, env, notifier=notes)
-        d = _outcome(report, "director")
+        d = _outcome(report, "research")
         assert d.status == "ok" and d.metrics["market_guard_blocked"] == 1
-        assert not env.llms["director"].prompts  # type: ignore[attr-defined]
+        assert not env.llms["research"].prompts  # type: ignore[attr-defined]
         assert _codes(conn, "shortlist")["market_unclear"] == ["session"]
         sl = _shortlist(conn)
         assert sl["shortlist"] == [] and sl["no_trade_reason"] == "unclear"
         assert not sl["market_guard"]["opens_allowed"]
         assert not report.proposals
         assert "No trade: market unclear" in _posted(notes)
-        assert [o.job for o in report.outcomes] == ["sweep", "director"]
+        assert [o.job for o in report.outcomes] == ["scalp", "research"]
         assert env.llms["quant"].prompts == [] and env.llms["risk"].prompts == []  # type: ignore[attr-defined]
 
     def test_exits_ignore_the_guard(self, settings: ArcSettings) -> None:
@@ -845,7 +845,7 @@ def test_fixture_book_portfolio_context(settings: ArcSettings) -> None:
     assert "expiry_cluster" in ag.flags and ag.by_expiry_bucket == {"22-45": 1.0}
     assert ag.total_max_loss == pytest.approx(sum(p.max_loss_total for p in pc.positions))
     assert ag.greeks_source == "as_opened"  # no priced portfolio passed: as-opened Greeks
-    assert {p.thesis.director for p in pc.positions} == {
+    assert {p.thesis.research for p in pc.positions} == {
         f"thesis for {i}" for i in ("fx-bull-put", "fx-call-debit", "fx-long-call")
     }
     kinds = sorted(p.kind or "" for p in pc.positions)

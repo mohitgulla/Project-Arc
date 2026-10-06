@@ -464,7 +464,7 @@ def _candidate(conn: sqlite3.Connection, ticker: str) -> None:
             "sources": ["https://x"],
             "created_at": NOW.isoformat(),
         },
-        produced_by="sweep",
+        produced_by="scalp",
         ttl=None,
         now=NOW - dt.timedelta(hours=1),
     )

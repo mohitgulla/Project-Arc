@@ -10947,7 +10947,7 @@
                 "type": "null"
               }
             ],
-            "description": "Share of the Sweep doc budget (SourceRegistry.category_weights); null for categories the Sweep never reads (typed context only)",
+            "description": "Share of the Scalp doc budget (SourceRegistry.category_weights); null for categories the Scalp never reads (typed context only)",
             "title": "Share"
           },
           "sources": {
@@ -11051,10 +11051,10 @@
             "type": "integer"
           },
           "feed": {
-            "default": "sweep",
-            "description": "D54: Director feed (sweep = fast, intraday; scout = slow, daily or slower)",
+            "default": "scalp",
+            "description": "D54: Research feed (scalp = fast, intraday; scout = slow, daily or slower)",
             "enum": [
-              "sweep",
+              "scalp",
               "scout"
             ],
             "title": "Feed",
@@ -11062,7 +11062,7 @@
           },
           "filtered_today": {
             "default": 0,
-            "description": "D55: docs stored today but closed `filtered` by the feed's title filter (never read by the Sweep)",
+            "description": "D55: docs stored today but closed `filtered` by the feed's title filter (never read by the Scalp)",
             "title": "Filtered Today",
             "type": "integer"
           },
@@ -11127,7 +11127,7 @@
                 "type": "null"
               }
             ],
-            "description": "Share of its category's Sweep budget (registry); null for typed-context sources (options data, YouTube), which never draw on the doc budget",
+            "description": "Share of its category's Scalp budget (registry); null for typed-context sources (options data, YouTube), which never draw on the doc budget",
             "title": "Share In Category"
           },
           "skipped_budget_today": {
@@ -13396,7 +13396,7 @@
               }
             ],
             "description": "personas.director_diversification (E12.5): strict | relaxed",
-            "title": "Director Diversification"
+            "title": "Research diversification"
           },
           "dropped": {
             "items": {
@@ -13566,7 +13566,7 @@
                 "type": "null"
               }
             ],
-            "description": "Feed source (stockanalysis, reddit+\u2026, settings, sweep)",
+            "description": "Feed source (stockanalysis, reddit+\u2026, settings, scalp)",
             "title": "Source"
           },
           "source_as_of": {

@@ -4422,7 +4422,7 @@ export interface components {
             newest_doc_at: string | null;
             /**
              * Share
-             * @description Share of the Sweep doc budget (SourceRegistry.category_weights); null for categories the Sweep never reads (typed context only)
+             * @description Share of the Scalp doc budget (SourceRegistry.category_weights); null for categories the Scalp never reads (typed context only)
              */
             share: number | null;
             /** Sources */
@@ -4462,14 +4462,14 @@ export interface components {
             failed_24h: number;
             /**
              * Feed
-             * @description D54: Director feed (sweep = fast, intraday; scout = slow, daily or slower)
-             * @default sweep
+             * @description D54: Research feed (scalp = fast, intraday; scout = slow, daily or slower)
+             * @default scalp
              * @enum {string}
              */
-            feed: "sweep" | "scout";
+            feed: "scalp" | "scout";
             /**
              * Filtered Today
-             * @description D55: docs stored today but closed `filtered` by the feed's title filter (never read by the Sweep)
+             * @description D55: docs stored today but closed `filtered` by the feed's title filter (never read by the Scalp)
              * @default 0
              */
             filtered_today: number;
@@ -4501,7 +4501,7 @@ export interface components {
             runs_24h: number;
             /**
              * Share In Category
-             * @description Share of its category's Sweep budget (registry); null for typed-context sources (options data, YouTube), which never draw on the doc budget
+             * @description Share of its category's Scalp budget (registry); null for typed-context sources (options data, YouTube), which never draw on the doc budget
              */
             share_in_category?: number | null;
             /** Skipped Budget Today */
@@ -5353,7 +5353,7 @@ export interface components {
             config_version: number | null;
             core_override_ignored?: components["schemas"]["CoreOverrideIgnored"] | null;
             /**
-             * Director Diversification
+             * Research diversification
              * @description personas.director_diversification (E12.5): strict | relaxed
              */
             director_diversification?: string | null;
@@ -5425,7 +5425,7 @@ export interface components {
             size_cap: number | null;
             /**
              * Source
-             * @description Feed source (stockanalysis, reddit+…, settings, sweep)
+             * @description Feed source (stockanalysis, reddit+…, settings, scalp)
              */
             source: string | null;
             /** Source As Of */

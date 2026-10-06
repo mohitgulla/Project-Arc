@@ -78,7 +78,7 @@ class CandidateRepo:
         row = self.conn.execute("SELECT * FROM candidates WHERE id = ?", (candidate_id,)).fetchone()
         return dict(row) if row else None
 
-    # -- Per ticker/day (E4.2 Sweep pipeline) --------------------------------
+    # -- Per ticker/day (E4.2 Scalp pipeline) --------------------------------
 
     def get_for_day(self, ticker: str, day: str) -> dict[str, Any] | None:
         """Return the merged candidate row for *ticker* on ET trading *day*."""

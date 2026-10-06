@@ -130,13 +130,13 @@ class TestJson:
         assert "transition_matrix" in payload["SPY"]["regime"]
         assert payload["SPY"]["vol"]["hv20"] is not None
 
-    def test_director_input_accepts_snapshot_json(self) -> None:
-        from arc.personas.builders import DirectorInput, build_director_prompt
+    def test_research_input_accepts_snapshot_json(self) -> None:
+        from arc.personas.builders import ResearchInput, build_research_prompt
 
         closes = _closes(120)
         js = snapshots_to_json([build_snapshot("SPY", closes, closes.index[-1])])
-        prompt = build_director_prompt(
-            DirectorInput(
+        prompt = build_research_prompt(
+            ResearchInput(
                 candidates_json="[]",
                 regime_features_json=js,
                 portfolio_summary="flat",

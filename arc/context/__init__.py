@@ -5,7 +5,7 @@ Usage::
     from arc.context import ContextStore
 
     store = ContextStore(conn)
-    store.write(kind="shortlist", subject="market", payload=out, produced_by="director",
+    store.write(kind="shortlist", subject="market", payload=out, produced_by="research",
                 ttl="1 session", run_id=run_id)
     snap = store.snapshot(now, kinds=["candidate", "regime"])   # recorded; snap.id -> run
 """

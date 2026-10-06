@@ -1,4 +1,7 @@
-"""E5.12 (D54): Scout -> Sweep rename — migration, aliases, legacy readers, slow feed."""
+"""E5.12 (D54): Scout -> Sweep rename — migration, aliases, legacy readers, slow feed.
+
+D56 (E13.1) renamed Sweep -> Scalp on top (migration 024, tests/test_persona_rename_d56.py);
+the D54 behaviour still holds, so these assert the names after the whole chain."""
 
 from __future__ import annotations
 
@@ -9,9 +12,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from arc.control.registry import is_alias, lookup
+from arc.ingest.scalp import _load_docs, select_docs
 from arc.ingest.sources import SourceCategory, SourceRegistry
 from arc.ingest.store import RawDocRepo
-from arc.ingest.sweep import _load_docs, select_docs
 from arc.journal import legacy
 from arc.pipeline.market import next_earnings
 from arc.positions.portfolio import PortfolioThesis
@@ -94,27 +97,29 @@ def test_migration_renames_identifiers_and_moves_cursors(tmp_path: Path) -> None
 
     applied = migrate(c)
     assert applied[0] == 22  # 022 is the next migration on a 021 store
+    assert 24 in applied  # then D56 renames the same identifiers again
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert "sweep_batches" in tables and "scout_batches" not in tables
-    assert {"sweep_status", "swept_at", "sweep_run_id"} <= _cols(c, "raw_docs")
+    assert "scalp_batches" in tables and not {"scout_batches", "sweep_batches"} & tables
+    assert {"scalp_status", "scalped_at", "scalp_run_id"} <= _cols(c, "raw_docs")
     assert not {"scout_status", "scouted_at", "scout_run_id"} & _cols(c, "raw_docs")
     assert c.execute("SELECT COUNT(*) FROM raw_docs").fetchone()[0] == before_docs
-    assert c.execute("SELECT COUNT(*) FROM sweep_batches").fetchone()[0] == before_batches
-    stages = sorted(r[0] for r in c.execute("SELECT stage FROM sweep_batches"))
-    assert stages == ["digest", "sweep"]
+    assert c.execute("SELECT COUNT(*) FROM scalp_batches").fetchone()[0] == before_batches
+    stages = sorted(r[0] for r in c.execute("SELECT stage FROM scalp_batches"))
+    assert stages == ["digest", "scalp"]
 
     state = dict(c.execute("SELECT key, value FROM routine_state").fetchall())
-    assert state["cursor:sweep"] == "2026-10-05T16:00:00.000000Z"
-    assert state["cursor:sweep.overnight"] == "2026-10-05T08:00:00.000000Z"
+    assert state["cursor:scalp"] == "2026-10-05T16:00:00.000000Z"
+    assert state["cursor:scalp.overnight"] == "2026-10-05T08:00:00.000000Z"
     assert "cursor:scout" not in state and "cursor:scout.overnight" not in state
     assert "missed:scout:2026-10-05T13:00" in state  # alert history stays
     cut = legacy.cutover(c)
     assert cut is not None and cut.tzinfo is not None
 
     # The swept doc is not re-queued; only the never-read one is pending.
-    assert [r["id"] for r in RawDocRepo(c).list_unswept(limit=None)] == ["d2"]
+    assert [r["id"] for r in RawDocRepo(c).list_unscalped(limit=None)] == ["d2"]
     indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='index'")}
-    assert "idx_raw_docs_unswept" in indexes and "idx_raw_docs_unscouted" not in indexes
+    assert "idx_raw_docs_unscalped" in indexes
+    assert not {"idx_raw_docs_unscouted", "idx_raw_docs_unswept"} & indexes
 
 
 def test_cutover_is_written_once(conn: sqlite3.Connection) -> None:
@@ -129,6 +134,8 @@ def test_cutover_is_written_once(conn: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 CUT = _dt.datetime(2026, 10, 5, 17, 0, tzinfo=ET)
+# Only the D54 cutover recorded: every "sweep" row predates D56 and reads as Scalp.
+CUTS = {legacy.CUTOVER_KEY: CUT}
 BEFORE = CUT - _dt.timedelta(minutes=30)
 AFTER = CUT + _dt.timedelta(minutes=30)
 
@@ -136,28 +143,28 @@ AFTER = CUT + _dt.timedelta(minutes=30)
 @pytest.mark.parametrize(
     ("value", "at", "label"),
     [
-        ("scout", BEFORE, "Sweep"),
-        ("scout.overnight", BEFORE, "Sweep (overnight)"),
+        ("scout", BEFORE, "Scalp"),
+        ("scout.overnight", BEFORE, "Scalp (overnight)"),
         ("scout", AFTER, "Scout"),
-        ("scout", None, "Sweep"),
-        ("sweep", AFTER, "Sweep"),
-        ("director", BEFORE, "Director"),
+        ("scout", None, "Scalp"),
+        ("sweep", AFTER, "Scalp"),
+        ("director", BEFORE, "Research"),
         ("scouting", BEFORE, "Scouting"),
     ],
 )
 def test_persona_label_both_sides_of_cutover(
     value: str, at: _dt.datetime | None, label: str
 ) -> None:
-    assert legacy.persona_label(value, at, CUT) == label
+    assert legacy.persona_label(value, at, CUTS) == label
 
 
-def test_no_cutover_means_all_scout_rows_are_sweep() -> None:
-    assert legacy.persona_label("scout", AFTER, None) == "Sweep"
-    assert legacy.job_name("scout.overnight", AFTER, None) == "sweep.overnight"
+def test_no_cutover_means_all_scout_rows_are_scalp() -> None:
+    assert legacy.persona_label("scout", AFTER, None) == "Scalp"
+    assert legacy.job_name("scout.overnight", AFTER, {}) == "scalp.overnight"
 
 
 def test_reason_code_legacy() -> None:
-    assert legacy.reason_code("scout_candidate") == "sweep_candidate"
+    assert legacy.reason_code("scout_candidate") == "scalp_candidate"
     assert legacy.reason_code("not_a_candidate") == "not_a_candidate"
 
 
@@ -173,19 +180,20 @@ def test_cutover_without_routine_state() -> None:
 @pytest.mark.parametrize("name", ["doc_budget", "min_confidence", "max_new_tickers"])
 def test_old_setting_names_resolve(name: str) -> None:
     assert is_alias(f"scout_{name}")
-    assert lookup(f"scout_{name}").key == lookup(f"sweep_{name}").key == f"sweep_{name}"
+    assert lookup(f"scout_{name}").key == lookup(f"scalp_{name}").key == f"scalp_{name}"
 
 
 def test_universe_earnings_scout_key_alias() -> None:
-    assert EarningsConfig.model_validate({"scout": "all"}).sweep == "all"
-    assert EarningsConfig.model_validate({"scout": "all", "sweep": "seed"}).sweep == "seed"
+    assert EarningsConfig.model_validate({"scout": "all"}).scalp == "all"
+    assert EarningsConfig.model_validate({"scout": "all", "scalp": "seed"}).scalp == "seed"
 
 
 def test_portfolio_thesis_reads_pre_rename_payload() -> None:
     t = PortfolioThesis.model_validate(
         {"director": "x", "scout_catalyst": "beat", "scout_confidence": 0.7}
     )
-    assert t.sweep_catalyst == "beat" and t.sweep_confidence == 0.7
+    assert t.scalp_catalyst == "beat" and t.scalp_confidence == 0.7
+    assert t.research == "x"
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +210,7 @@ def test_earnings_source_is_slow_feed(shipped: RoutinesConfig) -> None:
     assert SourceCategory.COMPANY_DATA in reg.category_weights()
 
 
-def test_sweep_budget_ignores_earnings_and_next_earnings_still_reads_them(
+def test_scalp_budget_ignores_earnings_and_next_earnings_still_reads_them(
     conn: sqlite3.Connection, shipped: RoutinesConfig
 ) -> None:
     repo = RawDocRepo(conn)
@@ -225,7 +233,7 @@ def test_sweep_budget_ignores_earnings_and_next_earnings_still_reads_them(
             source_key="rss.cnbc",
         )
     registry = SourceRegistry.from_routines(shipped)
-    docs = _load_docs(repo.list_unswept(limit=None), registry)
+    docs = _load_docs(repo.list_unscalped(limit=None), registry)
     selected, unselected, mix = select_docs(docs, registry, budget=120)
     assert {d.source for d in selected} == {"rss"}
     assert len(selected) == 5
@@ -238,8 +246,8 @@ def test_sweep_budget_ignores_earnings_and_next_earnings_still_reads_them(
     ("job", "feed", "ok"),
     [
         ("earnings", "scout", True),  # schedule 06:00/18:00
-        ("earnings", "sweep", False),  # no intraday every
-        ("rss", "sweep", True),  # every 15m
+        ("earnings", "scalp", False),  # no intraday every
+        ("rss", "scalp", True),  # every 15m
         ("rss", "scout", False),  # intraday <= 60m
         ("rss", "fast", False),
     ],

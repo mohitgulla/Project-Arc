@@ -17,13 +17,13 @@
 #
 # A trading day at a glance (full simulated day: `arc routines tick --dry-run`), D31:
 #   02:00           youtube.briefs (D45/E4.6; owner 2026-10-05, was 05:00): newest video per channel (last 24 h) ->
-#                   one channel_brief each, fresh for the day; the Director reads them
+#                   one channel_brief each, fresh for the day; Research reads them
 #   05:30           D51 active universe resolve; Mon: symbol master refresh (E5.7)
 #   06:00           earnings calendar; rss (15m) / edgar (15m) polling until 20:00
-#   09:00-16:00     Sweep every 30 min (15 in-session runs; after the fast sources)
+#   09:00-16:00     Scalp every 30 min (15 in-session runs; after the fast sources)
 #   09:30-16:00     intraday monitor every 10 min (D35/D52: positions, Greeks, marks + account
 #                   fields for the tower, expiries, halts; 40 slots, 16:00 inclusive)
-#   09:40-15:50     trading loop every 10 min (38 slots, D52): director -> quant -> risk ->
+#   09:40-15:50     trading loop every 10 min (38 slots, D52): research -> quant -> risk ->
 #                   propose -> execute. ttl 5m: a missed slot is skipped, never caught up.
 #                   One #arc-investor root line per slot, persona cards in its thread (D36).
 #   09:50-15:50     position manager every 30 min (:20/:50, D52): positions.evaluate -> investor.exits
@@ -32,13 +32,13 @@
 #   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop; E10.5 posts)
 #   16:45 Fri       weekly scorecard
 #   18:00           earnings calendar
-#   22:00 daily     overnight Sweep (after-close fast sources; Sunday 22:00 feeds Monday).
-#                   YouTube never reaches the Sweep (D45): briefs only, at 02:00.
+#   22:00 daily     overnight Scalp (after-close fast sources; Sunday 22:00 feeds Monday).
+#                   YouTube never reaches the Scalp (D45): briefs only, at 02:00.
 #
 # lane (D39 / E5.10): `background` = the tick claims the slot, spawns a detached
 # `arc routines run-claimed <run_id>` and moves on, so a slow job never delays the
 # 10-min loop. Chosen by measured p90 > 30 s (run_manifests, 3 days). A background
-# Sweep (after_sources) waits up to tick.after_sources_wait for the background
+# Scalp (after_sources) waits up to tick.after_sources_wait for the background
 # sources claimed in the same tick, then reads what is committed.
 #
 # notify (E5.5): sources default `quiet` (folded into the next persona post);
@@ -51,11 +51,11 @@ tick:
   interval: 10m         # D52: the Hermes cron calls `arc routines tick` at */10 on the clock
   max_lookback: 7d      # never look further back than this for missed slots
   dispatch_grace: 10m   # E6.2e: release a dispatched approval whose Investor never started
-  after_sources_wait: 5m   # D39: a background Sweep waits at most this for same-tick background sources
+  after_sources_wait: 5m   # D39: a background Scalp waits at most this for same-tick background sources
 
 heartbeat:
   # Posts before this time on a trading day go to that day's #arc-investor thread;
-  # "24:00" = the whole calendar day (the 22:00 Sweep stays in that day). Weekend/holiday
+  # "24:00" = the whole calendar day (the 22:00 Scalp stays in that day). Weekend/holiday
   # posts go to the NEXT session's.
   day_rollover: "24:00"
 
@@ -69,9 +69,9 @@ monitoring:
   stuck_after: 70m         # routine run still `running` (tick timeout is 55m)
   stuck_after_jobs:        # per-job override of stuck_after (E5.3a; E5.8 reuses it for the loop)
     monitor: 20m           # 10-min cadence (D52): two slots without finishing means it is wedged
-    director: 20m          # D31/D52 trading loop: same rule (loop.max_runtime is 4m)
+    research: 20m          # D31/D52 trading loop: same rule (loop.max_runtime is 4m)
   # E8.2a: one alert per missed slot only for slow jobs; fast jobs (10-min loop,
-  # monitor, sweep, rss) get one `coverage:<job>` condition per job instead.
+  # monitor, scalp, rss) get one `coverage:<job>` condition per job instead.
   per_slot_min_interval: 60m   # slots >= this far apart: one `missed_window` alert per slot
   coverage_window: 60m         # rolling window for `coverage:<job>` and `tick_slow`
   coverage_min: 0.8            # coverage:<job> fails below this share of slots run
@@ -94,9 +94,9 @@ monitoring:
     max_bytes: 5000000
     backups: 5
 
-# D31 / D36 / D52: the 10-min trading loop (the `director` persona and its chain).
+# D31 / D36 / D52: the 10-min trading loop (the `research` persona and its chain).
 loop:
-  job: director
+  job: research
   max_idle: 30m            # force one full LLM evaluation at least this often
   max_runtime: 4m          # chain deadline: no new step starts after it (run -> `timeout`)
   pnl_bucket_pct: 0.5      # P&L rounding (as % of equity) inside the no-change digest
@@ -146,15 +146,15 @@ context_ttl:
 # D47/D49 (E4.7, E4.9): six source categories, weighted EQUALLY (not per source). A
 # source's `weight:` is its share INSIDE its category, so a new feed (or YouTube channel)
 # splits its category's share instead of growing it. `max_age` is the category's
-# freshness window: the Sweep never reads an older doc (closed `skipped_stale`), the
-# rss/edgar connectors never store one, and Sweep story/candidate entries expire at
-# min(1 session, max_age + 2h). D49: the Director's "Context by category" block also
+# freshness window: the Scalp never reads an older doc (closed `skipped_stale`), the
+# rss/edgar connectors never store one, and Scalp story/candidate entries expire at
+# min(1 session, max_age + 2h). D49: Research's "Context by category" block also
 # lists a typed context entry (options data, macro calendar, briefs, Finnhub kinds) older
 # than its category's max_age as `stale (age)`, never as fresh (its context TTL is
 # unchanged). A source may set its own `max_age:` (none does). Weight 0-5 and max_age
 # 30m-7d are tunable from Slack (`!arc config set categories.<c>.weight|max_age`).
-# market_news, company_data and macro_data share the Sweep's `sweep_doc_budget`;
-# options_data and the two YouTube categories reach the Director as typed context only.
+# market_news, company_data and macro_data share the Scalp's `scalp_doc_budget`;
+# options_data and the two YouTube categories reach Research as typed context only.
 # Old names `company`, `macro` (and company_news/filings/calendar) load as logged
 # aliases for one release; `video` was split (each channel declares its category).
 categories:              # D49: equal weight per category; sources split their category's share
@@ -165,11 +165,11 @@ categories:              # D49: equal weight per category; sources split their c
   youtube_macro: {weight: 1, max_age: 24h, label: YouTube macro}
   youtube_micro: {weight: 1, max_age: 24h, label: YouTube micro}
 
-# D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Sweep
+# D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Scalp
 # source; each RSS feed is its own source. Every source job that writes context (or
 # every one of its feeds) declares `category:` (one of the six above; a missing or
 # unknown one fails config load). Other knobs: weight (default 1), max_docs_per_run,
-# label (shown in the Sweep card's source mix). The Sweep reads `sweep_doc_budget` docs
+# label (shown in the Scalp card's source mix). The Scalp reads `scalp_doc_budget` docs
 # per run, split equally across categories with fresh docs, then by weighted
 # round-robin inside a category; the rest wait, and are closed `skipped_budget` once
 # older than the raw_doc_ref TTL above.
@@ -195,33 +195,33 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
       - {slug: bravos, channel: UCOHxDwCcOzBaLkeTazanwcw, label: Bravos, category: youtube_macro, skip_shorts: true, title_exclude: []}   # D49: ~2 long-form/week, 10-22 min, ~15:00-18:00 ET
   rss:                          # owner pick 2026-09-28: broad market, single names, macro
     label: RSS news
-    about: "Polls the news feeds (WSJ, CNBC, Nasdaq, Seeking Alpha, Fed) and stores new articles for the Sweep"
-    every: 15m                  # D31: at least as often as the 30-min Sweep
+    about: "Polls the news feeds (WSJ, CNBC, Nasdaq, Seeking Alpha, Fed) and stores new articles for the Scalp"
+    every: 15m                  # D31: at least as often as the 30-min Scalp
     window: "06:00-20:00"
     days: trading
     writes: [raw_doc_ref]
-    # Every feed declares its D47 category and its D54 feed (all fast: `sweep`).
+    # Every feed declares its D47 category and its D54 feed (all fast: `scalp`).
     # D55 (E4.11): optional per-feed `title_exclude` / `title_include` regex lists
     # (case-insensitive search on the entry title). A filtered entry is stored closed
-    # `sweep_status='filtered'` (counted on the Tower Sources page and the Sweep card),
+    # `scalp_status='filtered'` (counted on the Tower Sources page and the Scalp card),
     # never read and never silently dropped. Not runtime-tunable (NOT_EXPOSED_PATHS).
     # The retired `cnbc` key (CNBC Economy) stays readable as a label alias for one release.
     feeds:
-      - {name: wsj, label: WSJ, url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", hosts: [wsj.com], category: market_news, feed: sweep}
-      - {name: wsj_business, label: WSJ Business, url: "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness", hosts: [wsj.com], category: company_data, feed: sweep}
-      - {name: cnbc_earnings, label: CNBC Earnings, url: "https://www.cnbc.com/id/15839135/device/rss/rss.html", category: company_data, feed: sweep}
-      - {name: cnbc_business, label: CNBC Business, url: "https://www.cnbc.com/id/10001147/device/rss/rss.html", category: market_news, feed: sweep}
+      - {name: wsj, label: WSJ, url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", hosts: [wsj.com], category: market_news, feed: scalp}
+      - {name: wsj_business, label: WSJ Business, url: "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness", hosts: [wsj.com], category: company_data, feed: scalp}
+      - {name: cnbc_earnings, label: CNBC Earnings, url: "https://www.cnbc.com/id/15839135/device/rss/rss.html", category: company_data, feed: scalp}
+      - {name: cnbc_business, label: CNBC Business, url: "https://www.cnbc.com/id/10001147/device/rss/rss.html", category: market_news, feed: scalp}
       - name: seekingalpha
         label: SA
         url: "https://seekingalpha.com/market_currents.xml"
         category: company_data
-        feed: sweep
+        feed: scalp
         title_exclude:          # D55: fund/ETF dividend declarations (ex_dividend covers the universe)
           - '\bdeclares\b.*\bdividend\b'
           - '\b(increases|decreases|raises|cuts)\b.*\bdividend\b'
           - '\bETF\b.*\b(distribution|dividend)\b'
-      - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets", category: market_news, feed: sweep}
-      - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro_data, feed: sweep}
+      - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets", category: market_news, feed: scalp}
+      - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro_data, feed: scalp}
   edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: company_data, label: EDGAR, writes: [raw_doc_ref], lane: background,
              about: "SEC filings (8-K, 10-Q, 10-K, Form 4) for the universe; stale filings are skipped"}   # D39: p90 75 s (377 s max on new filings)
   earnings:                     # Finnhub /calendar/earnings (ARC_FINNHUB_API_KEY; no key = skipped run)
@@ -232,7 +232,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     label: Earnings
     about: "Finnhub earnings calendar (7 days back, 30 ahead) for event risk"
     age_basis: ingested         # D47: calendar rows are always "the latest pull", never stale by date
-    feed: scout                 # D54: slow feed (06:00/18:00); the Sweep never reads these docs, next_earnings() still does
+    feed: scout                 # D54: slow feed (06:00/18:00); the Scalp never reads these docs, next_earnings() still does
     writes: [raw_doc_ref]
     # E4.1d: the free tier silently caps a call at row_cap rows (keeping the latest dates),
     # so the window (today - lookback_days .. today + horizon_days) is fetched in
@@ -367,9 +367,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     size: 25
   universe.trending:            # E12.3 / D51: daily rules-based top 25 (no Alpaca ranking input)
     label: Trending tier
-    about: "Daily top 25 popular names (news flow, Reddit, Stocktwits, Sweep); relaxed screen"
+    about: "Daily top 25 popular names (news flow, Reddit, Stocktwits, Scalp); relaxed screen"
     group: other
-    schedule: ["08:45"]         # before the open, after the overnight Sweep; `arc universe trending` = by hand
+    schedule: ["08:45"]         # before the open, after the overnight Scalp; `arc universe trending` = by hand
     days: trading
     ttl: 1h                     # a missed 08:45 slot still runs until 09:45
     # context_ttl default for universe_tier: 1 session, supersede latest. A failed run
@@ -384,7 +384,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
       # Equal weights: trend_score = sum of input scores / number of ENABLED inputs. An
       # input with no fresh data scores 0 for every name (never renormalised). Adding
       # or removing an input is config only; `type` picks the adapter
-      # (news | apewisdom | stocktwits | sweep). Alpaca is never a ranking input.
+      # (news | apewisdom | stocktwits | scalp). Alpaca is never a ranking input.
       inputs:
         news:                   # distinct raw_docs source_keys per ticker (EDGAR = 1)
           type: news
@@ -402,19 +402,19 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
           type: stocktwits
           label: Stocktwits trending
           urls: [https://api.stocktwits.com/api/2/trending/symbols.json]
-        sweep:                  # candidates rows, weighted by corroboration
-          type: sweep
-          label: Sweep corroboration
+        scalp:                  # candidates rows, weighted by corroboration
+          type: scalp
+          label: Scalp corroboration
           lookback_sessions: 3
           max_age: 3d
 
-# E4.8a (D46/D44): Finnhub per-ticker facts in the Sweep/Director prompts. The switch
+# E4.8a (D46/D44): Finnhub per-ticker facts in the Scalp/Research prompts. The switch
 # is `personas.finnhub_context` below (default off = prompts unchanged); these are its
 # knobs. Experiment XP-2 (config/experiments/live/xp2_finnhub_context.yaml) tests `on`.
 finnhub_context:
   max_chars_per_ticker: 300     # rendered facts line per ticker (hard budget)
-  sweep_max_tickers: 8          # Sweep: tickers its story digests name, first N
-  director_max_tickers: 10      # Director: the candidates it ranks, first N
+  scalp_max_tickers: 8          # Scalp: tickers its story digests name, first N
+  research_max_tickers: 10      # Research: the candidates it ranks, first N
   max_age_days:                 # a part fetched longer ago than this is omitted
     earnings_history: 8
     insider_activity: 2
@@ -422,7 +422,7 @@ finnhub_context:
     fundamentals: 8
   cap_buckets_musd: {mega: 200000, large: 10000, mid: 2000, small: 300}   # below small = micro
 
-# E12.5 (D51/D44): Director diversification. The switch is
+# E12.5 (D51/D44): Research diversification. The switch is
 # `personas.director_diversification` below (default strict = the E5.9 behaviour);
 # these knobs only apply in `relaxed`. Draft experiment XP-3
 # (config/experiments/live/xp3_relaxed_diversification.yaml) tests `relaxed`.
@@ -436,11 +436,11 @@ director_diversification:
 personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
-  sweep:                        # D31: every 30 min in session (15 runs), after the fast sources
-    label: Sweep
+  scalp:                        # D31: every 30 min in session (15 runs), after the fast sources
+    label: Scalp
     about: "Reads fresh news and filings; writes candidate ideas and story digests"
-    group: sweep
-    persona: sweep
+    group: scalp
+    persona: scalp
     every: 30m
     window: "09:00-16:00"
     days: trading
@@ -448,30 +448,30 @@ personas:
     ttl: 20m                    # a slot missed by 20 min is skipped (the next one is closer)
     notify: card
     writes: [candidate, note, story, active_universe]   # note: scan summary (D27); story: D30 stage-1 digests; active_universe: D51 resolve at start
-    lane: background            # D39: p90 441 s; the tick never waits on the Sweep
-  sweep.overnight:              # D15/D31: 22:00 after-close fast sources (no YouTube, D45)
-    label: Overnight Sweep
-    about: "After-close Sweep run over the evening news; feeds the next session"
-    group: sweep
-    persona: sweep
+    lane: background            # D39: p90 441 s; the tick never waits on the Scalp
+  scalp.overnight:              # D15/D31: 22:00 after-close fast sources (no YouTube, D45)
+    label: Overnight Scalp
+    about: "After-close Scalp run over the evening news; feeds the next session"
+    group: scalp
+    persona: scalp
     schedule: ["22:00"]
     days: daily
     after_sources: true
     ttl: 3h
     notify: card
     writes: [candidate, note, story, active_universe]
-    lane: background            # D39: same Sweep handler as above
-  director:                     # D31/D52: the 10-min trading loop (see `loop:` above)
-    label: "Director → Quant → Risk → Propose → Execute"
+    lane: background            # D39: same Scalp handler as above
+  research:                     # D31/D52: the 10-min trading loop (see `loop:` above)
+    label: "Research → Quant → Risk → Propose → Execute"
     about: "10-min trading loop: pick ideas, price structures, risk review, propose, auto-approve, execute"
     group: trading_loop
-    persona: director
+    persona: research
     every: 10m                  # D52 (owner 2026-10-05; was 5m)
     window: "09:40-15:50"       # 38 slots; skips the open's first 10 min
     days: trading
     chain: [quant, risk, propose, execute]   # D34: execute = publish + auto-approve + hand off ladders
     reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options, position_review, story,
-            earnings_history, insider_activity, analyst_recs, fundamentals]   # == DIRECTOR_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on
+            earnings_history, insider_activity, analyst_recs, fundamentals]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on
     writes: [shortlist, regime, note, portfolio_context]   # E5.9: portfolio_context + portfolio_view/thesis_check notes
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card
@@ -567,5 +567,5 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   # approvals / ladders forward); every other chain step defaults to `skip`.
   execute: {reads: [proposal], writes: [], llm: false, notify: summary, on_no_change: run}
 
-triggers: []                    # D31: no sweep.completed -> director trigger any more; the 10-min
+triggers: []                    # D31: no scalp.completed -> research trigger any more; the 10-min
                                 # loop picks new candidates up within one slot

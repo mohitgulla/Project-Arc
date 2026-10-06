@@ -197,40 +197,62 @@ class RoutineRunRepo:
         return _row(row) if row else None
 
     def chain(self, chain_run_id: str) -> list[RoutineRun]:
+        """A chain's runs by step. D56: pre-rename job names read as current ones."""
+        from arc.journal import legacy  # noqa: PLC0415 - avoid an import cycle
+
         rows = self.conn.execute(
             "SELECT * FROM routine_runs WHERE chain_run_id = ? ORDER BY step_index",
             (chain_run_id,),
         ).fetchall()
-        return [_row(r) for r in rows]
+        cuts = legacy.cutovers(self.conn)
+        return [
+            r.model_copy(update={"job": legacy.job_name(r.job, r.scheduled_for, cuts)})
+            for r in map(_row, rows)
+        ]
 
     def latest_failed_chain(self, root_job: str, day: _dt.date) -> str | None:
-        """chain_run_id of *root_job*'s most recent chain on ET *day* with a failed step."""
+        """chain_run_id of *root_job*'s most recent chain on ET *day* with a failed step.
+
+        D56: *root_job* also matches its pre-rename name (``director`` before the cutover).
+        """
+        from arc.journal.legacy import job_clause  # noqa: PLC0415 - avoid an import cycle
+
         start = _dt.datetime.combine(day, _dt.time.min, tzinfo=ET)
         end = start + _dt.timedelta(days=1)
+        clause, args = job_clause(self.conn, root_job, column="r.job", at_column="r.scheduled_for")
         row = self.conn.execute(
-            """SELECT r.chain_run_id FROM routine_runs r
-               WHERE r.job = ? AND r.step_index = 0 AND r.chain_run_id IS NOT NULL
+            f"""SELECT r.chain_run_id FROM routine_runs r
+               WHERE {clause} AND r.step_index = 0 AND r.chain_run_id IS NOT NULL
                  AND r.scheduled_for >= ? AND r.scheduled_for < ?
                  AND EXISTS (SELECT 1 FROM routine_runs s
                              WHERE s.chain_run_id = r.chain_run_id AND s.status = 'failed')
-               ORDER BY r.scheduled_for DESC LIMIT 1""",
-            (root_job, to_db(start), to_db(end)),
+               ORDER BY r.scheduled_for DESC LIMIT 1""",  # noqa: S608 - placeholders only
+            (*args, to_db(start), to_db(end)),
         ).fetchone()
         return row["chain_run_id"] if row else None
 
     def history(self, *, job: str | None = None, limit: int = 50) -> list[RoutineRun]:
+        """Newest runs first. D54/D56: rows written under a pre-rename name are listed
+        under the current one (``sweep`` -> ``scalp``, ``director`` -> ``research``)."""
+        from arc.journal import legacy  # noqa: PLC0415 - avoid an import cycle
+
         if job:
+            clause, args = legacy.job_clause(self.conn, job)
             rows = self.conn.execute(
-                """SELECT * FROM routine_runs WHERE job = ?
-                   ORDER BY scheduled_for DESC, step_index DESC LIMIT ?""",
-                (job, limit),
+                f"""SELECT * FROM routine_runs WHERE {clause}
+                   ORDER BY scheduled_for DESC, step_index DESC LIMIT ?""",  # noqa: S608
+                (*args, limit),
             ).fetchall()
         else:
             rows = self.conn.execute(
                 "SELECT * FROM routine_runs ORDER BY scheduled_for DESC, step_index DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-        return [_row(r) for r in rows]
+        cuts = legacy.cutovers(self.conn)
+        out = [_row(r) for r in rows]
+        return [
+            r.model_copy(update={"job": legacy.job_name(r.job, r.scheduled_for, cuts)}) for r in out
+        ]
 
 
 class RoutineEvent(BaseModel):

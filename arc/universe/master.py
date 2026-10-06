@@ -13,7 +13,7 @@ default ``data/symbol_master.json``) and refreshed weekly by the ``symbols``
 source job (or ``arc universe refresh``). Loading never needs the network when a
 cache exists: a cache older than ``refresh_days`` is still used and logged
 ``universe.symbol_master.stale`` (stale-file fallback). The ingest connectors and
-the Sweep load with ``fetch_if_missing=False``: no cache means the seed list only
+the Scalp load with ``fetch_if_missing=False``: no cache means the seed list only
 (non-seed names fail closed), never a network stall mid-run.
 
 Symbols are normalised to the Alpaca/OCC form: ``BRK-B`` (SEC) → ``BRK.B``.

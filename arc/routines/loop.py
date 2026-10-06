@@ -35,13 +35,13 @@ _PROPOSAL_CHAIN = "loop_proposal:{proposal_hash}"
 
 
 class LoopInputs(BaseModel):
-    """What the Director's input digest is made of (D31 change-aware skip).
+    """What Research's input digest is made of (D31 change-aware skip).
 
     Every field is deterministic and already rounded: candidate ids with their
     context versions, the regime entries, the portfolio view with P&L in
     ``pnl_bucket_pct``-of-equity buckets, pending orders, the order-budget tier
     and the dedupe-suppressed set. Two loops with the same digest would ask the
-    Director the same question.
+    Research the same question.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

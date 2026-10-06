@@ -74,15 +74,15 @@ BASE_YAML = """
     sources:
       rss: {every: 30m, window: "06:00-20:00", days: trading}
     personas:
-      sweep: {schedule: ["22:00", "12:00"], days: daily, after_sources: true, ttl: 3h}
-      director: {schedule: ["09:00"], days: trading, chain: [quant, risk, propose], ttl: 2h,
+      scalp: {schedule: ["22:00", "12:00"], days: daily, after_sources: true, ttl: 3h}
+      research: {schedule: ["09:00"], days: trading, chain: [quant, risk, propose], ttl: 2h,
                  writes: [shortlist]}
       auditor: {schedule: ["16:30"], days: trading, halt_exempt: true, ttl: 6h}
       investor: {trigger: approval}
     triggers:
-      - on: sweep.completed
+      - on: scalp.completed
         if: "new_candidates > 0 and session == 'open'"
-        run: director
+        run: research
 """
 
 
@@ -104,7 +104,7 @@ class Recorder:
                 raise RuntimeError(f"{name} boom")
             if name in self.skip:
                 raise JobSkippedError("not today")
-            if name == "director":
+            if name == "research":
                 ctx.write("shortlist", "market", _shortlist())
             return JobResult(summary=f"{name} done", metrics=self.metrics.get(name, {}))
 
@@ -128,7 +128,7 @@ LOCAL_ROUTING = LLMRouting(
     personas={p: "local" for p in Persona},
 )
 
-ALL = ["rss", "sweep", "director", "quant", "risk", "propose", "auditor", "investor"]
+ALL = ["rss", "scalp", "research", "quant", "risk", "propose", "auditor", "investor"]
 
 
 @pytest.fixture
@@ -175,19 +175,19 @@ def runs(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
 class TestConfig:
     def test_shipped_config_validates(self) -> None:
         c = load_routines(DEFAULT_ROUTINES_PATH)
-        assert c.personas["sweep"].after_sources
-        assert c.personas["director"].chain == ["quant", "risk", "propose", "execute"]
-        # D31: the trading loop replaces the sweep.completed -> director trigger.
-        assert c.triggers_for("sweep.completed") == []
-        assert c.is_loop("director") and not c.is_loop("sweep")
-        assert c.personas["director"].every == dt.timedelta(minutes=10)  # D52
-        assert str(c.personas["director"].window) == "09:40-15:50"
-        assert c.personas["director"].ttl is not None
-        assert c.personas["director"].ttl.duration == dt.timedelta(minutes=5)
-        assert c.personas["sweep"].every == dt.timedelta(minutes=30)
-        assert c.personas["sweep.overnight"].schedule == [dt.time(22, 0)]
+        assert c.personas["scalp"].after_sources
+        assert c.personas["research"].chain == ["quant", "risk", "propose", "execute"]
+        # D31: the trading loop replaces the scalp.completed -> research trigger.
+        assert c.triggers_for("scalp.completed") == []
+        assert c.is_loop("research") and not c.is_loop("scalp")
+        assert c.personas["research"].every == dt.timedelta(minutes=10)  # D52
+        assert str(c.personas["research"].window) == "09:40-15:50"
+        assert c.personas["research"].ttl is not None
+        assert c.personas["research"].ttl.duration == dt.timedelta(minutes=5)
+        assert c.personas["scalp"].every == dt.timedelta(minutes=30)
+        assert c.personas["scalp.overnight"].schedule == [dt.time(22, 0)]
         assert c.sources["youtube.briefs"].schedule == [dt.time(2, 0)]  # D45 / E4.6 (02:00 ET)
-        assert c.monitoring.stuck_after_for("director") == dt.timedelta(minutes=20)
+        assert c.monitoring.stuck_after_for("research") == dt.timedelta(minutes=20)
         assert c.loop.max_idle == dt.timedelta(minutes=30)
         assert c.loop.max_runtime == dt.timedelta(minutes=4)
         assert {r.run for r in c.triggers_for("approval")} == {"investor"}
@@ -214,14 +214,14 @@ class TestConfig:
               edgar:             {every: 15m, window: "06:00-20:00", days: trading}
               earnings:          {schedule: ["06:00", "18:00"], days: trading}
             personas:
-              sweep:    {schedule: ["22:00", "12:00"], days: daily, after_sources: true}
-              director: {schedule: ["09:00"], days: trading, chain: [quant, risk, propose]}
+              scalp:    {schedule: ["22:00", "12:00"], days: daily, after_sources: true}
+              research: {schedule: ["09:00"], days: trading, chain: [quant, risk, propose]}
               auditor:  {schedule: ["16:30"], days: trading}
               investor: {trigger: approval}
             triggers:
-              - on: sweep.completed
+              - on: scalp.completed
                 if: "new_candidates > 0 and session == 'open'"
-                run: director
+                run: research
             """
         )
         assert len(c.jobs()) == 8
@@ -285,7 +285,7 @@ class TestConfig:
         c = cfg(
             """
             personas:
-              director: {schedule: ["09:00"], chain: [quant]}
+              research: {schedule: ["09:00"], chain: [quant]}
               auditor: {schedule: ["16:30"]}
             triggers: [{on: quant.completed, run: auditor}]
             """
@@ -297,12 +297,12 @@ class TestConfig:
             """
             context_ttl: {shortlist: {ttl: 1 session}}
             personas:
-              director: {schedule: ["09:00"], chain: [propose]}
+              research: {schedule: ["09:00"], chain: [propose]}
             steps:
               propose: {context: {ttl: 20m, supersede: accumulate}, llm: false}
             """
         )
-        assert str(c.context_policy("shortlist", "director").ttl) == "1 session"
+        assert str(c.context_policy("shortlist", "research").ttl) == "1 session"
         assert str(c.context_policy("proposal", "propose").ttl) == "20m"
         assert c.context_policy("regime").ttl is None
         assert c.step("propose")[1].llm is False
@@ -479,7 +479,7 @@ class TestTick:
     def test_sources_run_before_after_sources_persona(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
         report = d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
-        assert rec.calls == ["rss", "sweep"]
+        assert rec.calls == ["rss", "scalp"]
         assert [o.status for o in report.outcomes] == ["ok", "ok"]
 
     def test_duplicate_tick_does_not_double_run(self, conn: sqlite3.Connection) -> None:
@@ -487,7 +487,7 @@ class TestTick:
         now = et(2026, 9, 28, 12, 0)
         d.tick(now, since=et(2026, 9, 28, 11, 55))
         report = d.tick(now, since=et(2026, 9, 28, 11, 55))  # e.g. cron fired twice
-        assert rec.calls == ["rss", "sweep"]
+        assert rec.calls == ["rss", "scalp"]
         assert {o.status for o in report.outcomes} == {"duplicate"}
         # and a second dispatcher on the same DB (overlapping process) agrees
         d2, rec2, _ = make(conn)
@@ -501,16 +501,16 @@ class TestTick:
         d.tick(et(2026, 9, 28, 12, 0))
         d.tick(et(2026, 9, 28, 12, 5))
         d.tick(et(2026, 9, 28, 12, 30))
-        assert rec.calls == ["rss", "sweep", "rss"]
+        assert rec.calls == ["rss", "scalp", "rss"]
 
     def test_catchup_runs_missed_job_once(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
         d.tick(et(2026, 9, 28, 8, 0))
         rec.calls.clear()
-        # Down from 08:00 to 10:40: 5 rss slots and director 09:00 were missed.
+        # Down from 08:00 to 10:40: 5 rss slots and research 09:00 were missed.
         report = d.tick(et(2026, 9, 28, 10, 40))
         assert rec.calls.count("rss") == 1
-        assert rec.calls.count("director") == 1
+        assert rec.calls.count("research") == 1
         rss = next(o for o in report.outcomes if o.job == "rss")
         assert rss.scheduled_for == et(2026, 9, 28, 10, 30)
         assert "collapsed" in rss.summary
@@ -520,11 +520,11 @@ class TestTick:
         d, rec, _ = make(conn)
         d.tick(et(2026, 9, 28, 8, 0))
         rec.calls.clear()
-        report = d.tick(et(2026, 9, 28, 11, 30))  # director ttl 2h -> window ended 11:00
-        assert "director" not in rec.calls
-        director = next(o for o in report.outcomes if o.job == "director")
-        assert director.status == "skipped" and "missed" in director.reason
-        assert ("director", "skipped", "2026-09-28T13:00:00.000000Z") in runs(conn)
+        report = d.tick(et(2026, 9, 28, 11, 30))  # research ttl 2h -> window ended 11:00
+        assert "research" not in rec.calls
+        research = next(o for o in report.outcomes if o.job == "research")
+        assert research.status == "skipped" and "missed" in research.reason
+        assert ("research", "skipped", "2026-09-28T13:00:00.000000Z") in runs(conn)
 
     def test_catchup_after_long_downtime_is_bounded(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
@@ -538,11 +538,11 @@ class TestTick:
         d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
         d.tick(et(2026, 9, 28, 16, 30), since=et(2026, 9, 28, 16, 25))
         assert rec.calls == ["rss", "rss", "auditor"]  # rss at 12:00 and 16:30
-        assert ("sweep", "skipped", "2026-09-28T16:00:00.000000Z") in runs(conn)
+        assert ("scalp", "skipped", "2026-09-28T16:00:00.000000Z") in runs(conn)
 
     def test_halt_blocks_triggered_persona(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
-        rec.metrics["sweep"] = {"new_candidates": 2}
+        rec.metrics["scalp"] = {"new_candidates": 2}
         d._halt_state["halted"] = False  # type: ignore[attr-defined]
         original = d._fire
 
@@ -552,8 +552,8 @@ class TestTick:
 
         d._fire = fire_halted  # type: ignore[method-assign]
         report = d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
-        assert "director" not in rec.calls
-        assert any(o.job == "director" and o.status == "skipped" for o in report.outcomes)
+        assert "research" not in rec.calls
+        assert any(o.job == "research" and o.status == "skipped" for o in report.outcomes)
 
     def test_failures_are_recorded_and_alerted(self, conn: sqlite3.Connection) -> None:
         d, rec, notes = make(conn)
@@ -561,18 +561,18 @@ class TestTick:
         report = d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
         rss = next(o for o in report.outcomes if o.job == "rss")
         assert rss.status == "failed" and "boom" in rss.summary
-        assert rec.calls == ["rss", "sweep"]  # one failed job doesn't stop the tick
+        assert rec.calls == ["rss", "scalp"]  # one failed job doesn't stop the tick
         assert any("FAILED" in text and "rss" in text for _, text in notes.posts)
         row = RoutineRunRepo(conn).get(rss.run_id or "")
         assert row is not None and row.error and "boom" in row.error
 
     def test_handler_skip_and_bad_return(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
-        rec.skip.add("sweep")
+        rec.skip.add("scalp")
         d.handlers["rss"] = lambda ctx: "nope"  # type: ignore[assignment,return-value]
         report = d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
         by_job = {o.job: o for o in report.outcomes}
-        assert by_job["sweep"].status == "skipped"
+        assert by_job["scalp"].status == "skipped"
         assert by_job["rss"].status == "failed" and "JobResult" in by_job["rss"].summary
 
     def test_unimplemented_persona_is_skipped_not_failed(self, conn: sqlite3.Connection) -> None:
@@ -599,35 +599,35 @@ class TestChains:
     def test_chain_order_and_shared_chain_id(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
         d.tick(et(2026, 9, 28, 9, 0), since=et(2026, 9, 28, 8, 55))
-        assert rec.calls == ["rss", "director", "quant", "risk", "propose"]
+        assert rec.calls == ["rss", "research", "quant", "risk", "propose"]
         rows = conn.execute(
             "SELECT job, chain_run_id, step_index FROM routine_runs"
             " WHERE chain_run_id IS NOT NULL ORDER BY step_index"
         ).fetchall()
-        assert [r["job"] for r in rows] == ["director", "quant", "risk", "propose"]
+        assert [r["job"] for r in rows] == ["research", "quant", "risk", "propose"]
         assert len({r["chain_run_id"] for r in rows}) == 1
         # each step reads the context written by the previous one
-        assert rec.snapshots["director"] == []
+        assert rec.snapshots["research"] == []
         assert rec.snapshots["quant"] == ["shortlist"]
 
     def test_failed_step_stops_chain_then_resume(self, conn: sqlite3.Connection) -> None:
         d, rec, notes = make(conn)
         rec.fail.add("risk")
         d.tick(et(2026, 9, 28, 9, 0), since=et(2026, 9, 28, 8, 55))
-        assert rec.calls == ["rss", "director", "quant", "risk"]
+        assert rec.calls == ["rss", "research", "quant", "risk"]
         assert any("risk FAILED" in t for _, t in notes.posts)
-        chain_id = RoutineRunRepo(conn).latest_failed_chain("director", dt.date(2026, 9, 28))
+        chain_id = RoutineRunRepo(conn).latest_failed_chain("research", dt.date(2026, 9, 28))
         assert chain_id is not None
 
         rec.calls.clear()
         rec.fail.clear()
-        outcomes = d.run_manual("director", now=et(2026, 9, 28, 9, 20), chain=True)
-        assert rec.calls == ["risk", "propose"]  # director + quant are not re-run
+        outcomes = d.run_manual("research", now=et(2026, 9, 28, 9, 20), chain=True)
+        assert rec.calls == ["risk", "propose"]  # research + quant are not re-run
         assert [o.status for o in outcomes] == ["ok", "ok", "ok", "ok"]
         steps = RoutineRunRepo(conn).chain(chain_id)
         assert [s.status for s in steps] == [RunStatus.OK] * 4
         assert steps[2].attempts == 2
-        assert RoutineRunRepo(conn).latest_failed_chain("director", dt.date(2026, 9, 28)) is None
+        assert RoutineRunRepo(conn).latest_failed_chain("research", dt.date(2026, 9, 28)) is None
 
     def test_resume_is_idempotent_per_step(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
@@ -642,11 +642,11 @@ class TestChains:
 
     def test_manual_run_and_errors(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
-        d.run_manual("sweep", now=et(2026, 9, 28, 13, 7))
-        assert rec.calls == ["rss", "sweep"]  # after_sources
+        d.run_manual("scalp", now=et(2026, 9, 28, 13, 7))
+        assert rec.calls == ["rss", "scalp"]  # after_sources
         rec.calls.clear()
-        d.run_manual("director", now=et(2026, 9, 28, 13, 8), chain=True, fresh=True)
-        assert rec.calls == ["director", "quant", "risk", "propose"]
+        d.run_manual("research", now=et(2026, 9, 28, 13, 8), chain=True, fresh=True)
+        assert rec.calls == ["research", "quant", "risk", "propose"]
         with pytest.raises(KeyError):
             d.run_manual("nobody", now=et(2026, 9, 28, 13, 9))
         with pytest.raises(KeyError):
@@ -656,23 +656,23 @@ class TestChains:
 
 
 class TestTriggers:
-    def test_trigger_condition_true_runs_director_chain(self, conn: sqlite3.Connection) -> None:
+    def test_trigger_condition_true_runs_research_chain(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
-        rec.metrics["sweep"] = {"new_candidates": 2}
+        rec.metrics["scalp"] = {"new_candidates": 2}
         report = d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
-        assert rec.calls == ["rss", "sweep", "director", "quant", "risk", "propose"]
-        director = next(o for o in report.outcomes if o.job == "director")
-        assert director.reason == "event:sweep.completed"
+        assert rec.calls == ["rss", "scalp", "research", "quant", "risk", "propose"]
+        research = next(o for o in report.outcomes if o.job == "research")
+        assert research.reason == "event:scalp.completed"
 
     def test_trigger_condition_false(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
-        rec.metrics["sweep"] = {"new_candidates": 0}
+        rec.metrics["scalp"] = {"new_candidates": 0}
         d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
-        assert "director" not in rec.calls
-        # candidates but market closed (22:00 run) -> no director
-        rec.metrics["sweep"] = {"new_candidates": 5}
+        assert "research" not in rec.calls
+        # candidates but market closed (22:00 run) -> no research
+        rec.metrics["scalp"] = {"new_candidates": 5}
         d.tick(et(2026, 9, 28, 22, 0), since=et(2026, 9, 28, 21, 55))
-        assert "director" not in rec.calls
+        assert "research" not in rec.calls
 
     def test_external_event_runs_investor_once(self, conn: sqlite3.Connection) -> None:
         d, rec, _ = make(conn)
@@ -715,10 +715,10 @@ class TestContextIntegration:
         assert len(quant.inputs_snapshot) == 1
         snap = store.load_snapshot(quant.inputs_snapshot[0])
         assert [e.kind for e in snap.entries] == ["shortlist"]
-        assert snap.entries[0].produced_by == "director"
-        director = by_job["director"]
-        assert director.outputs == [snap.entries[0].id]
-        assert snap.entries[0].chain_run_id == director.chain_run_id
+        assert snap.entries[0].produced_by == "research"
+        research = by_job["research"]
+        assert research.outputs == [snap.entries[0].id]
+        assert snap.entries[0].chain_run_id == research.chain_run_id
 
     def test_sources_do_not_record_snapshots(self, conn: sqlite3.Connection) -> None:
         d, _, _ = make(conn)
@@ -743,7 +743,7 @@ class TestContextIntegration:
         d.tick(et(2026, 9, 28, 9, 0), since=et(2026, 9, 28, 8, 55))
         entry = ContextStore(conn).query(as_of=et(2026, 9, 28, 9, 1), kinds=["shortlist"])[0]
         assert entry.expires_at == et(2026, 9, 28, 16, 0)
-        assert entry.produced_by == "director"
+        assert entry.produced_by == "research"
 
 
 class TestWriteContract:
@@ -751,17 +751,17 @@ class TestWriteContract:
 
     def _run(self, conn: sqlite3.Connection, writes: str | None) -> tuple[RoutineRun, list[Any]]:
         extra = f", writes: {writes}" if writes is not None else ""
-        text = f"personas:\n  director: {{schedule: ['09:00']{extra}}}\n"
+        text = f"personas:\n  research: {{schedule: ['09:00']{extra}}}\n"
         d = Dispatcher(
             conn,
             cfg(text),
-            handlers={"director": Recorder()("director")},
+            handlers={"research": Recorder()("research")},
             notifier=RecordingNotifier(),
             is_halted=lambda: False,
         )
         with structlog.testing.capture_logs() as logs:
-            d.run_manual("director", now=et(2026, 9, 28, 9, 0))
-        run = RoutineRunRepo(conn).history(job="director")[0]
+            d.run_manual("research", now=et(2026, 9, 28, 9, 0))
+        run = RoutineRunRepo(conn).history(job="research")[0]
         return run, logs
 
     def _shortlists(self, conn: sqlite3.Connection) -> int:
@@ -798,7 +798,7 @@ class TestWriteContract:
     def test_violation_logged(self, conn: sqlite3.Connection) -> None:
         _, logs = self._run(conn, "[candidate]")
         rejected = [e for e in logs if e["event"] == "context.write_rejected"]
-        assert rejected and rejected[0]["job"] == "director"
+        assert rejected and rejected[0]["job"] == "research"
         assert rejected[0]["kind"] == "shortlist" and rejected[0]["declared"] == ["candidate"]
         assert rejected[0]["log_level"] == "error"
 
@@ -811,10 +811,10 @@ class TestConfigDriven:
         missing = sorted(u for u in units if c.step(u)[1].writes is None)
         assert missing == [], f"declare `writes:` for {missing} in config/routines.yaml"
 
-    def test_director_reads_match_config(self) -> None:
-        from arc.pipeline.steps import DIRECTOR_READS
+    def test_research_reads_match_config(self) -> None:
+        from arc.pipeline.steps import RESEARCH_READS
 
-        assert load_routines(DEFAULT_ROUTINES_PATH).personas["director"].reads == DIRECTOR_READS
+        assert load_routines(DEFAULT_ROUTINES_PATH).personas["research"].reads == RESEARCH_READS
 
     def test_new_source_and_persona_need_no_code(self, conn: sqlite3.Connection) -> None:
         """Adding YAML entries is enough: built-in handlers resolve by name prefix."""
@@ -872,35 +872,35 @@ class TestHeartbeats:
         d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
         assert len(notes.posts) == 1
         text = notes.posts[0][1]
-        assert text.startswith("[Sweep] sweep ✓")
+        assert text.startswith("[Scalp] scalp ✓")
         assert "rss ×2 (last: rss done)" in text  # E5.3: repeated source runs fold into one
         assert notes.posts[0][0] == dt.date(2026, 9, 28)
 
     def test_labels(self) -> None:
-        assert label_for("director") == "[Director]"
+        assert label_for("research") == "[Research]"
         assert label_for("youtube.stockedup") == "[Routines]"
 
     @staticmethod
     def _card_dispatcher(
-        conn: sqlite3.Connection, sweep_notify: str | None
+        conn: sqlite3.Connection, scalp_notify: str | None
     ) -> tuple[Dispatcher, RecordingNotifier]:
         from arc.slack.blocks import CardView, header
 
-        extra = f", notify: {sweep_notify}" if sweep_notify else ""
+        extra = f", notify: {scalp_notify}" if scalp_notify else ""
         text = f"""
             sources:
               rss: {{every: 30m}}
             personas:
-              sweep: {{schedule: ["12:00"]{extra}}}
+              scalp: {{schedule: ["12:00"]{extra}}}
         """
-        view = CardView(text="[Sweep] Scan: 1 doc → 1 candidate", blocks=[header("card")])
+        view = CardView(text="[Scalp] Scan: 1 doc → 1 candidate", blocks=[header("card")])
         notes = RecordingNotifier()
         d = Dispatcher(
             conn,
             cfg(text),
             handlers={
                 "rss": lambda ctx: JobResult(summary="1 new doc"),
-                "sweep": lambda ctx: JobResult(summary="1 docs → 1 accepted", card=view),
+                "scalp": lambda ctx: JobResult(summary="1 docs → 1 accepted", card=view),
             },
             notifier=notes,
             is_halted=lambda: False,
@@ -916,11 +916,11 @@ class TestHeartbeats:
     ) -> None:
         """``notify:`` in routines.yaml alone switches card / one-liner / quiet (E5.5)."""
         d, notes = self._card_dispatcher(conn, notify)
-        d.run_manual("sweep", now=et(2026, 9, 28, 12, 0))
+        d.run_manual("scalp", now=et(2026, 9, 28, 12, 0))
         assert len(notes.posts) == posts
         if posts:
             # The fallback text is the unchanged one-liner in every mode.
-            assert notes.posts[0][1] == "[Sweep] sweep ✓ 1 docs → 1 accepted"
+            assert notes.posts[0][1] == "[Scalp] scalp ✓ 1 docs → 1 accepted"
             assert (notes.blocks[0] is not None) is has_blocks
 
     def test_card_default_without_a_card_falls_back_to_one_liner(
@@ -934,14 +934,14 @@ class TestHeartbeats:
     def test_card_folds_pending_sources(self, conn: sqlite3.Connection) -> None:
         d, notes = self._card_dispatcher(conn, None)
         Heartbeats(conn, notes).queue_source("rss", "3 new docs")
-        d.run_manual("sweep", now=et(2026, 9, 28, 12, 0))
+        d.run_manual("scalp", now=et(2026, 9, 28, 12, 0))
         blocks = notes.blocks[0]
         assert blocks is not None
-        # E5.5b: the folded line is a [Sweep] Session notes section before the
+        # E5.5b: the folded line is a [Scalp] Session notes section before the
         # footer; the footer stays last. The card fixture has no footer, so the
         # section is simply the last block here.
         assert blocks[-1]["text"]["text"] == (
-            "*[Sweep] Session notes*\nsources since last update: rss: 3 new docs"
+            "*[Scalp] Session notes*\nsources since last update: rss: 3 new docs"
         )
         assert notes.posts[0][1].endswith("\n> sources since last update: rss: 3 new docs")
 
@@ -961,7 +961,7 @@ class TestHeartbeats:
 
     def test_shipped_config_cards_for_personas(self) -> None:
         r = load_routines(DEFAULT_ROUTINES_PATH)
-        for name in ("sweep", "director", "auditor", "investor", "quant", "risk"):
+        for name in ("scalp", "research", "auditor", "investor", "quant", "risk"):
             assert r.step(name)[1].notify == "card", name
         assert r.step("propose")[1].notify == "summary"  # E6.1 owns the proposal card
         assert all(s.notify in (None, "quiet") for s in r.sources.values())
@@ -998,8 +998,8 @@ class TestHeartbeats:
 class TestLocks:
     def test_lock_busy_and_release(self, tmp_path: Path) -> None:
         a, b = LockManager(tmp_path), LockManager(tmp_path)
-        with a.hold("sweep", LLM_LOCK):
-            with pytest.raises(LockBusyError), b.hold("director", LLM_LOCK):
+        with a.hold("scalp", LLM_LOCK):
+            with pytest.raises(LockBusyError), b.hold("research", LLM_LOCK):
                 pass
             with b.hold("rss"):
                 pass
@@ -1022,10 +1022,10 @@ class TestLocks:
         with LockManager(tmp_path).hold(LLM_LOCK):
             report = d.tick(et(2026, 9, 28, 12, 0))
         assert rec.calls == ["rss"]
-        assert next(o for o in report.outcomes if o.job == "sweep").status == "deferred"
+        assert next(o for o in report.outcomes if o.job == "scalp").status == "deferred"
         assert [r[0] for r in runs(conn)] == ["rss"]
-        d.tick(et(2026, 9, 28, 12, 5))  # next tick, inside sweep's 3h window
-        assert rec.calls == ["rss", "sweep"]
+        d.tick(et(2026, 9, 28, 12, 5))  # next tick, inside scalp's 3h window
+        assert rec.calls == ["rss", "scalp"]
 
 
 class TestDryRunAndCli:
@@ -1034,7 +1034,7 @@ class TestDryRunAndCli:
         report = d.tick(et(2026, 9, 28, 12, 0), dry_run=True, since=et(2026, 9, 28, 11, 55))
         assert rec.calls == []
         assert runs(conn) == []
-        assert [o.job for o in report.outcomes] == ["rss", "sweep", "director"]
+        assert [o.job for o in report.outcomes] == ["rss", "scalp", "research"]
         assert report.outcomes[-1].status == "may-run"
         lines = report.lines()
         assert "dry-run" in lines[0]
@@ -1044,11 +1044,11 @@ class TestDryRunAndCli:
         out = capsys.readouterr().out
         assert rc == 0
         order = [ln.split()[3] for ln in out.splitlines() if ln.strip()[:2].rstrip(".").isdigit()]
-        assert order[-1] == "sweep"
-        # D31: 12:00 is a loop slot too; the loop runs before the Sweep of the same tick.
+        assert order[-1] == "scalp"
+        # D31: 12:00 is a loop slot too; the loop runs before the Scalp of the same tick.
         # D45: no 12:00 YouTube slot any more (02:00 ET only).
-        assert set(order[:-1]) == {"edgar", "rss", "director", "monitor"}
-        assert order.index("director") < order.index("sweep")
+        assert set(order[:-1]) == {"edgar", "rss", "research", "monitor"}
+        assert order.index("research") < order.index("scalp")
         assert "quant" in out and "may-run" not in out  # no trigger any more
 
     def test_cli_validate_list_history_context(
@@ -1060,7 +1060,7 @@ class TestDryRunAndCli:
         assert main(["routines", "validate", "--config", str(bad)]) == 1
         assert main(["routines", "list", "--now", "2026-09-28T11:00-04:00"]) == 0
         out = capsys.readouterr().out
-        assert "INVALID" in out and "director" in out and "quant → risk → propose" in out
+        assert "INVALID" in out and "research" in out and "quant → risk → propose" in out
 
         db = str(tmp_path / "arc.db")
         with freeze_time("2026-09-28T13:00:00Z"):  # 09:00 ET
@@ -1077,7 +1077,7 @@ class TestDryRunAndCli:
         db = str(tmp_path / "arc.db")
         cfg_path = tmp_path / "r.yaml"
         cfg_path.write_text(
-            "personas:\n  director: {schedule: ['09:00'], chain: [quant], writes: [shortlist]}\n"
+            "personas:\n  research: {schedule: ['09:00'], chain: [quant], writes: [shortlist]}\n"
             "steps:\n  quant: {writes: [structures, note]}\n"
         )
         base = ["--config", str(cfg_path), "--db", db]
@@ -1104,7 +1104,7 @@ class TestDryRunAndCli:
             [
                 "routines",
                 "run",
-                "director",
+                "research",
                 *base,
                 "--no-slack",
                 "--lock-dir",
@@ -1115,8 +1115,8 @@ class TestDryRunAndCli:
         )
         assert rc == 0
         assert main(["routines", "run", "ghost", *base, "--no-slack"]) == 2
-        assert main(["routines", "history", "--db", db, "--job", "director"]) == 0
-        assert "director" in capsys.readouterr().out
+        assert main(["routines", "history", "--db", db, "--job", "research"]) == 0
+        assert "research" in capsys.readouterr().out
 
     def test_cli_context_show(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         c = connect(tmp_path / "arc.db")
@@ -1126,7 +1126,7 @@ class TestDryRunAndCli:
             kind="shortlist",
             subject="market",
             payload={"shortlist": [], "market_regime": "risk_on", "session_notes": "x" * 200},
-            produced_by="director",
+            produced_by="research",
             now=et(2026, 9, 28, 9, 0),
         )
         snap = store.snapshot(et(2026, 9, 28, 9, 5))
@@ -1137,4 +1137,4 @@ class TestDryRunAndCli:
         assert main([*args, "--json"]) == 0
         assert json.loads(capsys.readouterr().out)[0]["kind"] == "shortlist"
         assert main(["context", "show", "--db", db, "--snapshot", snap.id]) == 0
-        assert "director" in capsys.readouterr().out
+        assert "research" in capsys.readouterr().out

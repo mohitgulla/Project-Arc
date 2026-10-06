@@ -1,6 +1,6 @@
-"""``arc propose``: run Sweep → Director → Quant → Risk → propose (+ gate) once, now.
+"""``arc propose``: run Scalp → Research → Quant → Risk → propose (+ gate) once, now.
 
-The steps are the D16 routine chain: the Sweep job, then the ``director`` job
+The steps are the D16 routine chain: the Scalp job, then the ``research`` job
 with its ``chain:`` from ``config/routines.yaml``. They go through the same
 :class:`~arc.routines.dispatcher.Dispatcher` the cron tick uses, so every run
 is recorded in ``routine_runs`` with its input snapshot ids and output context
@@ -15,7 +15,7 @@ Modes:
   ``--db`` it works on an **in-memory copy** of ``data/arc.db``, so it reads
   today's candidates but persists nothing.
 * ``--fixtures``: fully offline. It uses the recorded SPY chain, fixture raw
-  docs and canned Sweep/Director/Quant/Risk replies, in an in-memory DB unless
+  docs and canned Scalp/Research/Quant/Risk replies, in an in-memory DB unless
   ``--db`` is given. It implies no Slack and no broker.
 """
 
@@ -46,8 +46,8 @@ log = structlog.get_logger(__name__)
 
 __all__ = ["ProposeReport", "open_db", "run_propose"]
 
-ROOT_JOB = "director"
-SWEEP_JOB = "sweep"
+ROOT_JOB = "research"
+SCALP_JOB = "scalp"
 
 
 @dataclass
@@ -132,12 +132,12 @@ def run_propose(
     *,
     now: _dt.datetime,
     notifier: Notifier,
-    sweep: bool = True,
+    scalp: bool = True,
     locks: Any = None,
     mode: str = "live",
     clock: Callable[[], _dt.datetime] | None = None,
 ) -> ProposeReport:
-    """Run the Sweep job, then the Director chain, through the routine dispatcher.
+    """Run the Scalp job, then Research chain, through the routine dispatcher.
 
     *now* is the run's start (slot and ``day`` idempotency). *clock* is the wall
     clock steps use to judge data age and stamp gate/token/expiry (E5.2b); live
@@ -159,9 +159,9 @@ def run_propose(
     if routines.job(ROOT_JOB) is None:
         msg = f"routines config has no {ROOT_JOB!r} persona"
         raise KeyError(msg)
-    if sweep and routines.job(SWEEP_JOB) is not None:
-        # Triggers may start the Director chain (sweep.completed during RTH).
-        report.outcomes += disp.run_job(SWEEP_JOB, now, reason="manual:propose", now=now)
+    if scalp and routines.job(SCALP_JOB) is not None:
+        # Triggers may start Research chain (scalp.completed during RTH).
+        report.outcomes += disp.run_job(SCALP_JOB, now, reason="manual:propose", now=now)
     if not any(o.job == ROOT_JOB for o in report.outcomes):
         report.outcomes += disp.run_manual(ROOT_JOB, now=now, chain=True)
     report.proposals = proposals_for_day(conn, report.day)
@@ -185,11 +185,11 @@ def fixture_run(
 ) -> tuple[sqlite3.Connection, ProposeReport]:
     """``arc propose --fixtures``: offline end to end (seeded raw docs, canned personas).
 
-    ``fixture_set`` picks the canned Director/Quant/Risk replies
+    ``fixture_set`` picks the canned Research/Quant/Risk replies
     (:data:`~arc.pipeline.env.FIXTURE_SETS`): ``neutral`` (SPY iron condor) or
     ``bullish`` (SPY bull call debit, D25).
     """
-    from arc.ingest.sweep import load_fixture_docs
+    from arc.ingest.scalp import load_fixture_docs
     from arc.pipeline.env import FIXTURE_SETS
     from arc.routines.heartbeat import LogNotifier
 

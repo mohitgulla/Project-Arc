@@ -500,13 +500,13 @@ def build(
         actor="arc:reconcile", at=to_db(now - dt.timedelta(hours=1, minutes=10)),
     )  # fmt: skip
     alerts = AlertRepo(conn)
-    alerts.open("missed:sweep:12:00", "missed_window", "sweep slot 12:00 ET missed",
+    alerts.open("missed:scalp:12:00", "missed_window", "scalp slot 12:00 ET missed",
                 at=now - dt.timedelta(minutes=50))  # fmt: skip
     alerts.open("gateway", "gateway_down", "Hermes gateway not responding",
                 at=now - dt.timedelta(hours=6))  # fmt: skip
     alerts.resolve("gateway", at=now - dt.timedelta(hours=5, minutes=40))
     # E8.8b: a run of one-off missed slots (the owner's live "wall of missed_window"); Recent
-    # Activity groups them with the open sweep alert into one `missed_window ×12` row. One
+    # Activity groups them with the open scalp alert into one `missed_window ×12` row. One
     # more 30 h back sits outside the 24 h window, and one coverage alert gives a 9th row so
     # the 8-row cap shows.
     for k in range(11):

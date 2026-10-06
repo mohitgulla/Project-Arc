@@ -484,7 +484,7 @@ class TestServicePerEnv:
 
 EXEC_YAML = """
 personas:
-  director: {schedule: ["09:00"], days: trading, chain: [propose, execute], ttl: 2h}
+  research: {schedule: ["09:00"], days: trading, chain: [propose, execute], ttl: 2h}
   investor: {trigger: approval, llm: false}
 steps:
   propose: {writes: [proposal], llm: false}
@@ -504,7 +504,7 @@ def _ctx(
     routines = RoutinesConfig.model_validate(
         {
             "personas": {
-                "director": {"schedule": ["09:00"], "days": "trading", "chain": ["execute"]}
+                "research": {"schedule": ["09:00"], "days": "trading", "chain": ["execute"]}
             },
             "steps": {"execute": {"reads": ["proposal"], "writes": [], "llm": False}},
         }
@@ -529,7 +529,7 @@ def _ctx(
 def _join_chain(conn: sqlite3.Connection, chain: str = "chain-abc") -> None:
     """Re-label the fixture run's chain as *chain* (propose already belongs to it).
 
-    The fixture pipeline ran director -> ... -> propose -> execute as one chain; its
+    The fixture pipeline ran research -> ... -> propose -> execute as one chain; its
     execute step saw no Slack and published nothing, so the proposal is still fresh.
     """
     conn.execute(
@@ -698,7 +698,7 @@ class TestRunEvent:
         calls: list[str] = []
         d = self._disp(conn, calls)
         RoutineRunRepo(conn).claim(
-            job="director",
+            job="research",
             scheduled_for=NOW,
             reason="t",
             chain_run_id="chain-1",

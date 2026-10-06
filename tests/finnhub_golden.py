@@ -185,20 +185,20 @@ def snapshot(*, with_finnhub: bool = True) -> Any:
     return ContextSnapshot(id="snap-golden", as_of=_now(), entries=entries)
 
 
-def director_prompt(snap: Any, **extra: Any) -> str:
-    from arc.personas.builders import build_director_prompt, director_input_from_context
+def research_prompt(snap: Any, **extra: Any) -> str:
+    from arc.personas.builders import build_research_prompt, research_input_from_context
 
-    inp = director_input_from_context(
+    inp = research_input_from_context(
         snap, portfolio_summary="flat", scan_date="2026-10-06", **extra
     )
-    return build_director_prompt(inp)
+    return build_research_prompt(inp)
 
 
-def sweep_prompt(**extra: Any) -> str:
-    from arc.personas.builders import SweepInput, build_sweep_prompt
+def scalp_prompt(**extra: Any) -> str:
+    from arc.personas.builders import ScalpInput, build_scalp_prompt
 
-    return build_sweep_prompt(
-        SweepInput(
+    return build_scalp_prompt(
+        ScalpInput(
             universe=["SPY", "AAPL"],
             raw_feeds=["[story s1] category=company tickers=AAPL,NVDA\n  summary"],
             scan_date="2026-10-06",
@@ -217,5 +217,5 @@ def sha(text: str) -> str:
 
 if __name__ == "__main__":  # pragma: no cover - run by hand against origin/main
     sys.path.insert(0, sys.argv[1])
-    print("director", sha(director_prompt(snapshot())))
-    print("sweep", sha(sweep_prompt()))
+    print("research", sha(research_prompt(snapshot())))
+    print("scalp", sha(scalp_prompt()))

@@ -133,11 +133,11 @@ def _make_parser() -> argparse.ArgumentParser:
 
     for cmd in COMMANDS:
         if cmd == "scan":
-            p = sub.add_parser(cmd, help="Scan: summarise ingested docs into Candidates (Sweep)")
+            p = sub.add_parser(cmd, help="Scan: summarise ingested docs into Candidates (Scalp)")
             p.add_argument(
                 "--dry-run",
                 action="store_true",
-                help="Fixture docs + canned Sweep responses in an in-memory DB (no network).",
+                help="Fixture docs + canned Scalp responses in an in-memory DB (no network).",
             )
             p.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
         elif cmd == "chains":
@@ -177,7 +177,7 @@ def _make_parser() -> argparse.ArgumentParser:
             show.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
         elif cmd == "propose":
             p = sub.add_parser(
-                cmd, help="Run Sweep → Director → Quant → Risk → propose (+ gate) now (E5.2)"
+                cmd, help="Run Scalp → Research → Quant → Risk → propose (+ gate) now (E5.2)"
             )
             mode = p.add_mutually_exclusive_group()
             mode.add_argument(
@@ -209,7 +209,7 @@ def _make_parser() -> argparse.ArgumentParser:
                 default=None,
                 help="Account profile for this run (overrides ARC_ACCOUNT_PROFILE; D25).",
             )
-            p.add_argument("--no-sweep", action="store_true", help="Skip the Sweep job.")
+            p.add_argument("--no-scalp", action="store_true", help="Skip the Scalp job.")
             p.add_argument("--no-slack", action="store_true", help="Log heartbeats only.")
             p.add_argument("--json", action="store_true", help="Print the report as JSON.")
             p.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
@@ -523,7 +523,7 @@ def _chains(args: argparse.Namespace) -> int:
 
 def _scan(args: argparse.Namespace) -> int:
     from arc.config import get_settings
-    from arc.ingest.sweep import load_fixture_docs, run_sweep
+    from arc.ingest.scalp import load_fixture_docs, run_scalp
     from arc.store.db import connect
     from arc.store.migrate import migrate
 
@@ -539,22 +539,22 @@ def _scan(args: argparse.Namespace) -> int:
         # D47: fixture docs are fresh on the fixture clock, not the wall clock.
         from arc.pipeline.env import FIXTURE_NOW
 
-        result = run_sweep(conn, settings, dry_run=True, now=FIXTURE_NOW)
+        result = run_scalp(conn, settings, dry_run=True, now=FIXTURE_NOW)
     else:
-        result = run_sweep(conn, settings, dry_run=False)
+        result = run_scalp(conn, settings, dry_run=False)
     report = {
         "run_id": result.run_id,
         "day": result.day,
         "dry_run": result.dry_run,
         "batches": result.batches,
         "failed_batches": result.failed_batches,
-        "docs_swept": result.docs_swept,
+        "docs_scalped": result.docs_scalped,
         "accepted": result.accepted,
         "rejected": dict(result.rejected),
         "candidates": [c.model_dump(mode="json") for c in result.candidates],
     }
     sys.stdout.write(json.dumps(report, indent=2) + "\n")
-    return 1 if result.failed_batches and not result.docs_swept else 0
+    return 1 if result.failed_batches and not result.docs_scalped else 0
 
 
 def _market_price_lookup():  # noqa: ANN202 — Callable[[str], float | None] | None
@@ -586,7 +586,7 @@ def _ingest(args: argparse.Namespace) -> int:
         load_channel_fixture,
         process_new_videos,
     )
-    from arc.ingest.llm import HermesSweepLLM
+    from arc.ingest.llm import HermesScalpLLM
     from arc.ingest.youtube import fetch_youtube
     from arc.store.db import connect
     from arc.store.migrate import migrate
@@ -609,7 +609,7 @@ def _ingest(args: argparse.Namespace) -> int:
         )
         new_docs = len(docs)
         sources = [d.transcript_source for d in docs]
-        llm = HermesSweepLLM.from_settings(settings)
+        llm = HermesScalpLLM.from_settings(settings)
 
     report: dict[str, object] = {"dry_run": args.dry_run, "new_videos": new_docs}
     if not args.dry_run:
@@ -721,7 +721,7 @@ def _propose(args: argparse.Namespace) -> int:
             now=now_et(),
             clock=now_et,  # E5.2b: quotes/gate/token/expiry judged at step time
             notifier=notifier,
-            sweep=not args.no_sweep,
+            scalp=not args.no_scalp,
             locks=NullLocks() if args.dry_run else LockManager(args.lock_dir),
             mode="dry-run" if args.dry_run else "live",
         )

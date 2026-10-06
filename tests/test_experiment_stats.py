@@ -637,7 +637,7 @@ def test_provenance_and_calibration_gaps(conn: sqlite3.Connection) -> None:
         conn.execute(
             """INSERT INTO decisions (id, chain_run_id, persona, stage, subject, choice,
                    reason_code, at, arm_id)
-               VALUES (?, ?, 'director', 'shortlist', 'SPY', ?, 'director:selected', ?, ?)""",
+               VALUES (?, ?, 'research', 'shortlist', 'SPY', ?, 'research:selected', ?, ?)""",
             (uuid.uuid4().hex, chain, choice, to_db(fx.eod(days[0])), aid),
         )
     _outcome(conn, None, slippage=4.0, regime="bull", pnl="120", day=days[1])
@@ -661,13 +661,13 @@ def _manifest(
         """INSERT INTO routine_runs (run_id, job, chain_run_id, reason, scheduled_for,
                status, started_at)
            VALUES (?, ?, ?, 'schedule', ?, 'ok', ?)""",
-        (rid, f"director:{chain}", chain, to_db(fx.T0 + dt.timedelta(hours=2)),
+        (rid, f"research:{chain}", chain, to_db(fx.T0 + dt.timedelta(hours=2)),
          to_db(fx.T0 + dt.timedelta(hours=2))),
     )  # fmt: skip
     conn.execute(
         """INSERT INTO run_manifests (id, run_id, attempt, job, chain_run_id, status,
                schema_version, payload, created_at, arm_id)
-           VALUES (?, ?, 1, 'director', ?, 'ok', 1, ?, ?, ?)""",
+           VALUES (?, ?, 1, 'research', ?, 'ok', 1, ?, ?, ?)""",
         (uuid.uuid4().hex, rid, chain, json.dumps(payload),
          to_db(fx.T0 + dt.timedelta(hours=2)), aid),
     )  # fmt: skip

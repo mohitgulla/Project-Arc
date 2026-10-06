@@ -3,10 +3,10 @@
 Deterministic tests on the bundled fixtures:
 
 * a loop slot whose inputs match the last full run reports ``no_change``: no
-  Director/Quant/Risk LLM call, the chain's ``execute`` step still runs;
+  Research/Quant/Risk LLM call, the chain's ``execute`` step still runs;
 * after ``loop.max_idle`` the same inputs get a full run again;
 * a new candidate, a filled position or a P&L bucket change breaks the digest;
-* a loop slot that finds the previous loop (or a Sweep) holding a lock is
+* a loop slot that finds the previous loop (or a Scalp) holding a lock is
   recorded as ``skipped`` and never deferred / caught up;
 * the chain deadline: no step starts after ``loop.max_runtime``, the run is
   ``timeout``, and the notice goes out once per day;
@@ -23,8 +23,8 @@ import pytest
 
 from arc.approvals.service import ApprovalService, LogCardPoster, PostedCard
 from arc.context.store import ContextStore
-from arc.ingest.llm import LLMResult, SweepLLMError
-from arc.ingest.sweep import load_fixture_docs
+from arc.ingest.llm import LLMResult, ScalpLLMError
+from arc.ingest.scalp import load_fixture_docs
 from arc.llm_routing import LLMRouting, Persona, TierSpec
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
 from arc.pipeline.runner import open_db, pipeline_handlers
@@ -45,7 +45,7 @@ from arc.routines.loop import (
 from arc.routines.runs import RoutineRunRepo
 from arc.slack.loop import LoopRoot
 from arc.utils.calendar import ET
-from tests.test_e59_director_portfolio import _settings
+from tests.test_e59_research_portfolio import _settings
 
 if TYPE_CHECKING:
     import sqlite3
@@ -92,7 +92,7 @@ def _conn() -> sqlite3.Connection:
 def _slot(disp: Dispatcher, at: dt.datetime, *, reason: str = "schedule") -> dict[str, Any]:
     # A fresh fixture env per slot: the canned persona replies are consumed per env.
     disp.handlers = pipeline_handlers(PipelineEnv.fixtures())
-    outs = disp.run_job("director", at, reason=reason, now=at, chain=True)
+    outs = disp.run_job("research", at, reason=reason, now=at, chain=True)
     return {o.job: o for o in outs}
 
 
@@ -101,8 +101,8 @@ def _warm(disp: Dispatcher) -> tuple[dict[str, Any], dict[str, Any]]:
     now in the dedupe window, so from the third slot on the inputs are stable."""
     first = _slot(disp, SLOT0)
     second = _slot(disp, SLOT0 + dt.timedelta(minutes=5))
-    assert first["director"].metrics["no_change"] is False
-    assert second["director"].metrics["no_change"] is False
+    assert first["research"].metrics["no_change"] is False
+    assert second["research"].metrics["no_change"] is False
     return first, second
 
 
@@ -110,9 +110,9 @@ def _llm_calls(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM persona_calls").fetchone()[0]
 
 
-def _seed_sweep(conn: sqlite3.Connection, routines: RoutinesConfig) -> None:
+def _seed_scalp(conn: sqlite3.Connection, routines: RoutinesConfig) -> None:
     disp = _disp(conn, routines)
-    (out,) = disp.run_job("sweep", SLOT0, reason="manual", now=SLOT0)
+    (out,) = disp.run_job("scalp", SLOT0, reason="manual", now=SLOT0)
     assert out.status == "ok", out.reason
 
 
@@ -124,16 +124,16 @@ def _seed_sweep(conn: sqlite3.Connection, routines: RoutinesConfig) -> None:
 class TestNoChange:
     def test_same_inputs_skip_llm_but_run_execute(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         disp = _disp(conn, routines)
         first, second = _warm(disp)
         assert {s for s, o in first.items() if o.status == "ok"} >= {"quant", "risk", "propose"}
         calls = _llm_calls(conn)
-        assert calls >= 6  # 2 x (director + quant + risk)
-        digest = second["director"].metrics["loop_digest"]
+        assert calls >= 6  # 2 x (research + quant + risk)
+        digest = second["research"].metrics["loop_digest"]
 
         third = _slot(disp, SLOT0 + dt.timedelta(minutes=10))
-        d = third["director"]
+        d = third["research"]
         assert d.status == "ok" and d.metrics["no_change"] is True, d.summary
         assert d.metrics["loop_digest"] == digest
         assert d.summary.startswith("no_change")
@@ -159,22 +159,22 @@ class TestNoChange:
 
     def test_full_run_again_after_max_idle(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         disp = _disp(conn, routines)
         _warm(disp)
         before = _llm_calls(conn)
         late = SLOT0 + dt.timedelta(minutes=5) + routines.loop.max_idle
         out = _slot(disp, late)
-        assert out["director"].metrics["no_change"] is False
+        assert out["research"].metrics["no_change"] is False
         assert _llm_calls(conn) > before
         assert LoopState(conn).last_full_run() == late
 
     def test_new_candidate_changes_digest(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         disp = _disp(conn, routines)
         _, second = _warm(disp)
-        # a new Sweep candidate lands between slots
+        # a new Scalp candidate lands between slots
         store = ContextStore(conn)
         cand = store.snapshot(SLOT0, kinds=["candidate"]).latest("candidate", "SPY")
         assert cand is not None
@@ -184,58 +184,58 @@ class TestNoChange:
             kind="candidate",
             subject="QQQ",
             payload=payload,
-            produced_by="sweep",
+            produced_by="scalp",
             run_id="run-test",
             now=SLOT0 + dt.timedelta(minutes=6),
         )
         third = _slot(disp, SLOT0 + dt.timedelta(minutes=10))
-        assert third["director"].metrics["no_change"] is False
-        assert third["director"].metrics["loop_digest"] != second["director"].metrics["loop_digest"]
+        assert third["research"].metrics["no_change"] is False
+        assert third["research"].metrics["loop_digest"] != second["research"].metrics["loop_digest"]
 
     def test_manual_propose_never_skips(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         disp = _disp(conn, routines)
         _warm(disp)
         before = _llm_calls(conn)
         out = _slot(disp, SLOT0 + dt.timedelta(minutes=10), reason="manual")
-        assert out["director"].metrics["no_change"] is False
+        assert out["research"].metrics["no_change"] is False
         assert _llm_calls(conn) > before
 
-    def test_director_outside_the_loop_never_skips(self, routines: RoutinesConfig) -> None:
+    def test_research_outside_the_loop_never_skips(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         other = load_routines(overrides={("loop", "job"): "monitor"})
         disp = _disp(conn, other)
         _warm(disp)
         before = _llm_calls(conn)
         out = _slot(disp, SLOT0 + dt.timedelta(minutes=10))
-        assert out["director"].metrics["no_change"] is False
+        assert out["research"].metrics["no_change"] is False
         assert _llm_calls(conn) > before
 
-    def test_failed_director_does_not_mute_the_next_slot(self, routines: RoutinesConfig) -> None:
+    def test_failed_research_does_not_mute_the_next_slot(self, routines: RoutinesConfig) -> None:
         """Review round 1 repro: slot 1 evaluates; slot 2 brings new inputs (the SPY
-        proposal now in the dedupe window) but the Director's LLM raises; slot 3 has
+        proposal now in the dedupe window) but Research's LLM raises; slot 3 has
         the same inputs as slot 2. Slot 2 must not become ``last_full_run``, so slot 3
         is a full evaluation and not ``no_change`` with zero LLM calls."""
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         disp = _disp(conn, routines)
         first = _slot(disp, SLOT0)
-        assert first["director"].metrics["no_change"] is False
-        digest1 = first["director"].metrics["loop_digest"]
+        assert first["research"].metrics["no_change"] is False
+        digest1 = first["research"].metrics["loop_digest"]
         assert LoopState(conn).last_full_run() == SLOT0
         calls = _llm_calls(conn)
 
-        # slot 2: a slow, then failing fake Director LLM (transport outage)
+        # slot 2: a slow, then failing fake Research LLM (transport outage)
         env = PipelineEnv.fixtures()
-        env.llms["director"] = _BrokenLLM()
+        env.llms["research"] = _BrokenLLM()
         disp.handlers = pipeline_handlers(env)
         at2 = SLOT0 + dt.timedelta(minutes=5)
         outs = {
-            o.job: o for o in disp.run_job("director", at2, reason="schedule", now=at2, chain=True)
+            o.job: o for o in disp.run_job("research", at2, reason="schedule", now=at2, chain=True)
         }
-        assert outs["director"].status == "failed" and "outage" in outs["director"].summary
+        assert outs["research"].status == "failed" and "outage" in outs["research"].summary
         assert "quant" not in outs  # the chain stopped at the failure
         assert LoopState(conn).last_full_run() == SLOT0  # the failed slot did not advance it
         assert LoopState(conn).last_digest() == digest1
@@ -250,39 +250,39 @@ class TestNoChange:
 
         # slot 3: same inputs as slot 2; the LLM is back. A full run, not no_change.
         third = _slot(disp, SLOT0 + dt.timedelta(minutes=10))
-        assert third["director"].status == "ok"
-        assert third["director"].metrics["no_change"] is False
-        assert third["director"].metrics["loop_digest"] != digest1
+        assert third["research"].status == "ok"
+        assert third["research"].metrics["no_change"] is False
+        assert third["research"].metrics["loop_digest"] != digest1
         assert _llm_calls(conn) > calls_after_fail > calls
         assert {s for s, o in third.items() if o.status == "ok"} >= {"quant", "risk", "propose"}
         assert LoopState(conn).last_full_run() == SLOT0 + dt.timedelta(minutes=10)
         # and from here the same inputs do skip (the skip itself still works)
         fourth = _slot(disp, SLOT0 + dt.timedelta(minutes=15))
-        assert fourth["director"].metrics["no_change"] is True
+        assert fourth["research"].metrics["no_change"] is True
 
-    def test_failed_first_director_records_no_full_run(self, routines: RoutinesConfig) -> None:
+    def test_failed_first_research_records_no_full_run(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         disp = _disp(conn, routines)
         env = PipelineEnv.fixtures()
-        env.llms["director"] = _BrokenLLM()
+        env.llms["research"] = _BrokenLLM()
         disp.handlers = pipeline_handlers(env)
-        (out,) = disp.run_job("director", SLOT0, reason="schedule", now=SLOT0, chain=True)
+        (out,) = disp.run_job("research", SLOT0, reason="schedule", now=SLOT0, chain=True)
         assert out.status == "failed"
         assert LoopState(conn).last_full_run() is None and LoopState(conn).last_digest() is None
         nxt = _slot(disp, SLOT0 + dt.timedelta(minutes=5))
-        assert nxt["director"].status == "ok" and nxt["director"].metrics["no_change"] is False
+        assert nxt["research"].status == "ok" and nxt["research"].metrics["no_change"] is False
 
 
 class _BrokenLLM:
-    """A Director LLM that is slow and then fails (the card's "slow fake LLM")."""
+    """A Research LLM that is slow and then fails (the card's "slow fake LLM")."""
 
     model = "fake-broken"
 
     def complete(self, prompt: str) -> LLMResult:
         time.sleep(0.05)
         msg = "simulated LLM outage"
-        raise SweepLLMError(msg)
+        raise ScalpLLMError(msg)
 
 
 class TestConfigOnlyCadence:
@@ -300,7 +300,7 @@ class TestConfigOnlyCadence:
         slots: list[dt.datetime] = []
         prev, cur = start, start + dt.timedelta(minutes=5)
         while cur <= end:
-            slots += [j.slot for j in d.plan(cur, since=prev, halted=False) if j.job == "director"]
+            slots += [j.slot for j in d.plan(cur, since=prev, halted=False) if j.job == "research"]
             prev, cur = cur, cur + dt.timedelta(minutes=5)
         return slots
 
@@ -308,19 +308,19 @@ class TestConfigOnlyCadence:
         self, routines: RoutinesConfig
     ) -> None:
         assert len(self._day_plan(routines)) == 38  # shipped (D52): 10m, 09:40-15:50
-        ten = load_routines(overrides={("personas", "director", "every"): "10m"})
+        ten = load_routines(overrides={("personas", "research", "every"): "10m"})
         slots = self._day_plan(ten)
         assert len(slots) == 38  # 09:40, 09:50, …, 15:50
         assert slots[0].strftime("%H:%M") == "09:40" and slots[-1].strftime("%H:%M") == "15:50"
-        assert ten.is_loop("director") and ten.personas["director"].ttl is not None
+        assert ten.is_loop("research") and ten.personas["research"].ttl is not None
         # the loop semantics (no_change skip) still apply under the new cadence
         conn = _conn()
-        _seed_sweep(conn, ten)
+        _seed_scalp(conn, ten)
         disp = _disp(conn, ten)
         _slot(disp, SLOT0)
         _slot(disp, SLOT0 + dt.timedelta(minutes=10))
         third = _slot(disp, SLOT0 + dt.timedelta(minutes=20))
-        assert third["director"].metrics["no_change"] is True
+        assert third["research"].metrics["no_change"] is True
         assert third["quant"].status == "skipped" and third["execute"].status == "ok"
 
 
@@ -369,7 +369,7 @@ class TestOverlapAndDeadline:
         self, routines: RoutinesConfig, tmp_path: Path
     ) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         locks = LockManager(tmp_path)
         # D39: the LLM lock only matters for local models; route every persona locally.
         local = LLMRouting(
@@ -377,23 +377,23 @@ class TestOverlapAndDeadline:
             personas={p: "local" for p in Persona},
         )
         disp = _disp(conn, routines, locks=locks, routing=local)
-        with locks.hold("director"):
-            (out,) = disp.run_job("director", SLOT0, reason="schedule", now=SLOT0, chain=True)
+        with locks.hold("research"):
+            (out,) = disp.run_job("research", SLOT0, reason="schedule", now=SLOT0, chain=True)
         assert out.status == "skipped" and "previous loop running" in out.reason
         assert out.run_id is not None
         run = RoutineRunRepo(conn).get(out.run_id)
         assert run is not None and run.status.value == "skipped"
-        # the Sweep holding the LLM lock is the other case
+        # the Scalp holding the LLM lock is the other case
         with locks.hold(LLM_LOCK):
             (out2,) = disp.run_job(
-                "director", SLOT0 + dt.timedelta(minutes=5), reason="schedule",
+                "research", SLOT0 + dt.timedelta(minutes=5), reason="schedule",
                 now=SLOT0 + dt.timedelta(minutes=5), chain=True,
             )  # fmt: skip
         assert out2.status == "skipped" and "lock busy" in out2.reason
         # a manual run still defers (the caller retries), as before
-        with locks.hold("director"):
+        with locks.hold("research"):
             (out3,) = disp.run_job(
-                "director", SLOT0 + dt.timedelta(minutes=10), reason="manual",
+                "research", SLOT0 + dt.timedelta(minutes=10), reason="manual",
                 now=SLOT0 + dt.timedelta(minutes=10), chain=True,
             )  # fmt: skip
         assert out3.status == "deferred"
@@ -403,18 +403,18 @@ class TestOverlapAndDeadline:
     ) -> None:
         """A skipped loop slot is never caught up on the next tick."""
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         locks = LockManager(tmp_path)
         notes = RecordingNotifier()
         disp = _disp(conn, routines, locks=locks, notifier=notes)
         slot = SLOT0.replace(hour=9, minute=40)
-        with locks.hold("director"):
+        with locks.hold("research"):
             disp.tick(slot + dt.timedelta(seconds=30), since=slot - dt.timedelta(minutes=10))
-        runs = [r for r in RoutineRunRepo(conn).history(limit=50) if r.job == "director"]
+        runs = [r for r in RoutineRunRepo(conn).history(limit=50) if r.job == "research"]
         assert [r.status.value for r in runs] == ["skipped"]
         # next tick: only the next slot is planned, not the skipped one
         due = [
-            j for j in disp.plan(slot + dt.timedelta(minutes=10, seconds=30)) if j.job == "director"
+            j for j in disp.plan(slot + dt.timedelta(minutes=10, seconds=30)) if j.job == "research"
         ]
         assert [j.slot for j in due] == [slot + dt.timedelta(minutes=10)]  # D52: 10-min loop
 
@@ -422,28 +422,28 @@ class TestOverlapAndDeadline:
         self, routines: RoutinesConfig
     ) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         fast = load_routines(overrides=_loop_overrides(max_runtime="1s"))
         notes = RecordingNotifier()
         disp = _disp(conn, fast, notifier=notes)
 
         def run_slow(at: dt.datetime) -> dict[str, Any]:
             handlers = pipeline_handlers(PipelineEnv.fixtures())
-            real = handlers["director"]
+            real = handlers["research"]
 
-            def slow_director(ctx: Any) -> Any:  # the Director alone eats the budget
+            def slow_research(ctx: Any) -> Any:  # Research alone eats the budget
                 time.sleep(1.1)
                 return real(ctx)
 
-            handlers["director"] = slow_director
+            handlers["research"] = slow_research
             disp.handlers = handlers
             return {
                 o.job: o
-                for o in disp.run_job("director", at, reason="schedule", now=at, chain=True)
+                for o in disp.run_job("research", at, reason="schedule", now=at, chain=True)
             }
 
         out = run_slow(SLOT0)
-        assert out["director"].status == "ok"
+        assert out["research"].status == "ok"
         assert out["quant"].status == "skipped" and "timeout" in out["quant"].reason
         assert out["execute"].status == "skipped"
         alerts = [t for _, t in notes.posts if "exceeded" in t]
@@ -451,11 +451,11 @@ class TestOverlapAndDeadline:
         # second timeout on the same day: no second notice
         run_slow(SLOT0 + dt.timedelta(minutes=5))
         assert len([t for _, t in notes.posts if "exceeded" in t]) == 1
-        chain_id = out["director"].chain_run_id
+        chain_id = out["research"].chain_run_id
         assert chain_id is not None
         summary = LoopState(conn).chain_summary(chain_id)
         assert summary is not None and summary["timeout"] is True
-        assert set(summary["durations_ms"]) == {"director"}
+        assert set(summary["durations_ms"]) == {"research"}
 
 
 # ---------------------------------------------------------------------------
@@ -509,35 +509,35 @@ def _disp_with_cards(
 
 def _slot_cards(disp: Dispatcher, at: dt.datetime) -> dict[str, Any]:
     disp.handlers = disp._fresh_handlers()  # type: ignore[attr-defined]
-    outs = disp.run_job("director", at, reason="schedule", now=at, chain=True)
+    outs = disp.run_job("research", at, reason="schedule", now=at, chain=True)
     return {o.job: o for o in outs}
 
 
 class TestRootPerLoop:
     def test_root_then_cards_in_its_thread_then_metadata(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         disp, notes, poster, _ = _disp_with_cards(conn, routines)
         out = _slot_cards(disp, SLOT0)
-        chain = out["director"].chain_run_id
+        chain = out["research"].chain_run_id
         assert chain is not None
         ts = LoopState(conn).thread_ts(chain)
         assert ts is not None and ts in notes.roots
         # every persona post of this loop is a reply under the root, none in the day thread
         replies = notes.in_thread(ts)
         assert replies and notes.day_thread_posts() == []
-        # D36 thread order: [Sweep] context first, then the chain's persona cards,
+        # D36 thread order: [Scalp] context first, then the chain's persona cards,
         # the proposal card (recorded by the poster), and [Routines] last.
         labels = [r.split(" ", 1)[0].lstrip("`\n") for r in replies]
-        order = [lbl for lbl in labels if lbl in {"[Sweep]", "[Director]", "[Quant]", "[Risk]"}]
-        assert order == ["[Sweep]", "[Director]", "[Quant]", "[Risk]"], replies
-        assert replies[0].startswith("[Sweep] sweep ✓ [Sweep] Context: ")
-        assert "run " + slot_stamp(SLOT0) in replies[0]  # the Sweep run the Director read
-        sweep_blocks = notes.blocks[notes.threads.index(ts)]
-        assert sweep_blocks and sweep_blocks[0]["text"]["text"].startswith("[Sweep] Context: ")
-        assert any("SPY" in (b.get("text") or {}).get("text", "") for b in sweep_blocks)
+        order = [lbl for lbl in labels if lbl in {"[Scalp]", "[Research]", "[Quant]", "[Risk]"}]
+        assert order == ["[Scalp]", "[Research]", "[Quant]", "[Risk]"], replies
+        assert replies[0].startswith("[Scalp] scalp ✓ [Scalp] Context: ")
+        assert "run " + slot_stamp(SLOT0) in replies[0]  # the Scalp run Research read
+        scalp_blocks = notes.blocks[notes.threads.index(ts)]
+        assert scalp_blocks and scalp_blocks[0]["text"]["text"].startswith("[Scalp] Context: ")
+        assert any("SPY" in (b.get("text") or {}).get("text", "") for b in scalp_blocks)
         assert replies[-1].startswith("```\n[Routines] " + chain)
-        assert "director=" in replies[-1] and "digest=" in replies[-1]
+        assert "research=" in replies[-1] and "digest=" in replies[-1]
         # the proposal card went into the same thread
         assert poster.posted and poster.thread_of == [ts]
         # the root line: the slot stamp and the facts. Fixture proposals carry no gate
@@ -553,10 +553,10 @@ class TestRootPerLoop:
 
     def test_root_updates_on_approval_and_rejection(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         disp, notes, poster, svc = _disp_with_cards(conn, routines)
         out = _slot_cards(disp, SLOT0)
-        chain = out["director"].chain_run_id
+        chain = out["research"].chain_run_id
         assert chain is not None
         ts = LoopState(conn).thread_ts(chain)
         assert ts is not None
@@ -589,19 +589,19 @@ class TestRootPerLoop:
 
     def test_no_change_and_hold_roots(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         disp, notes, _, _ = _disp_with_cards(conn, routines)
         _slot_cards(disp, SLOT0)
         _slot_cards(disp, SLOT0 + dt.timedelta(minutes=5))
         out = _slot_cards(disp, SLOT0 + dt.timedelta(minutes=10))
-        assert out["director"].metrics["no_change"] is True
-        chain = out["director"].chain_run_id
+        assert out["research"].metrics["no_change"] is True
+        chain = out["research"].chain_run_id
         assert chain is not None
         ts = LoopState(conn).thread_ts(chain)
         assert ts is not None
         assert notes.roots[ts].endswith("• HOLD (no change)")
         assert notes.roots[ts].startswith(":heavy_multiplication_x: ")
-        # a no_change loop gets only the [Routines] reply in its thread (no Sweep / Director card)
+        # a no_change loop gets only the [Routines] reply in its thread (no Scalp / Research card)
         replies = notes.in_thread(ts)
         assert len(replies) == 1 and replies[0].startswith("```\n[Routines] " + chain)
         assert "no_change" in replies[0]
@@ -611,12 +611,12 @@ class TestRootPerLoop:
 
     def test_skipped_slot_posts_hold_root(self, routines: RoutinesConfig, tmp_path: Path) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         locks = LockManager(tmp_path)
         notes = RecordingNotifier()
         disp = _disp(conn, routines, locks=locks, notifier=notes)
-        with locks.hold("director"):
-            disp.run_job("director", SLOT0, reason="schedule", now=SLOT0, chain=True)
+        with locks.hold("research"):
+            disp.run_job("research", SLOT0, reason="schedule", now=SLOT0, chain=True)
         assert list(notes.roots.values()) == [
             f":heavy_multiplication_x: {slot_stamp(SLOT0)} • Portfolio: n/a • P&L: n/a"
             " • Orders: n/a • HOLD (skipped: previous loop running)"
@@ -625,9 +625,9 @@ class TestRootPerLoop:
         quiet = load_routines(overrides=_loop_overrides(post_hold_roots=False))
         notes2 = RecordingNotifier()
         disp2 = _disp(conn, quiet, locks=locks, notifier=notes2)
-        with locks.hold("director"):
+        with locks.hold("research"):
             disp2.run_job(
-                "director",
+                "research",
                 SLOT0 + dt.timedelta(minutes=5),
                 reason="schedule",
                 now=SLOT0 + dt.timedelta(minutes=5),
@@ -637,11 +637,11 @@ class TestRootPerLoop:
 
     def test_day_thread_layout_is_the_rollback(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         legacy = load_routines(overrides=_loop_overrides(slack_layout="day_thread"))
         disp, notes, poster, _ = _disp_with_cards(conn, legacy)
         out = _slot_cards(disp, SLOT0)
-        chain = out["director"].chain_run_id
+        chain = out["research"].chain_run_id
         assert chain is not None
         assert notes.roots == {} and LoopState(conn).thread_ts(chain) is None
         assert notes.day_thread_posts() and poster.thread_of == [None]
@@ -649,10 +649,10 @@ class TestRootPerLoop:
 
     def test_root_from_db_lists_fills(self, routines: RoutinesConfig) -> None:
         conn = _conn()
-        _seed_sweep(conn, routines)
+        _seed_scalp(conn, routines)
         disp, notes, poster, svc = _disp_with_cards(conn, routines)
         out = _slot_cards(disp, SLOT0)
-        chain = out["director"].chain_run_id
+        chain = out["research"].chain_run_id
         assert chain is not None
         phash = conn.execute("SELECT proposal_hash FROM approval_requests").fetchone()[0]
         conn.execute(

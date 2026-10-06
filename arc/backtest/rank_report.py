@@ -576,15 +576,15 @@ def _render(
             "(same-session data only); remaining marks are raw trade closes.\n"
         ),
         (
-            "- **Stance** (which structures are on the menu) is a deterministic Director "
+            "- **Stance** (which structures are on the menu) is a deterministic Research "
             "proxy: the 20-session trend label at the decision close (bull → bullish, "
             "bear → bearish, sideways → neutral) picks the profile's `stance_strategies`. "
             "`cash_debit` has no neutral structure, so it does not trade in sideways "
-            "sessions. The live Director uses more information; its stance quality is "
+            "sessions. The live Research uses more information; its stance quality is "
             "outside this test. Every ranker sees the same stance-filtered menu.\n"
             if bt.stance == "trend"
             else "- **No stance filter**: every profile structure is on every menu, so the "
-            "ranker also chooses direction (the live Director does that).\n"
+            "ranker also chooses direction (the live Research does that).\n"
         ),
         "- Daily EOD decisions and marks only: stops and take-profits are checked on closes, "
         "so intraday paths are not seen (matches the owner's relaxed, end-of-day stop "

@@ -1,33 +1,33 @@
-"""Sweep candidate pipeline (E4.2): RawDoc batches → validated ``Candidate`` rows.
+"""Scalp candidate pipeline (E4.2): RawDoc batches → validated ``Candidate`` rows.
 
 Flow per run::
 
-    raw_docs (unswept) ──batch──▶ Sweep prompt ──Hermes (cheap tier)──▶ raw JSON
-        ──▶ SweepOutput schema ──▶ per-candidate filters ──▶ merge per ticker/day
-        ──▶ candidates table                       (+ sweep_batches audit row)
+    raw_docs (unscalped) ──batch──▶ Scalp prompt ──Hermes (cheap tier)──▶ raw JSON
+        ──▶ ScalpOutput schema ──▶ per-candidate filters ──▶ merge per ticker/day
+        ──▶ candidates table                       (+ scalp_batches audit row)
 
 Filters (deterministic, applied after the LLM):
 
-* **schema** — each candidate must validate against ``SweepCandidateOut``.
+* **schema** — each candidate must validate against ``ScalpCandidateOut``.
 * **universe** (D28/D51, :class:`~arc.universe.guard.UniverseGuard`) — ``strict``:
   ticker must be in the active list. ``seed`` (default): core and momentum
   tickers always pass; any other ticker must be in the symbol master
   (``unknown_symbol``), optionable, under the per-run new-ticker cap
   (``over_new_ticker_cap``) and pass the liquidity screen (``illiquid``).
-* **threshold** — confidence must be ``>= settings.sweep_min_confidence``. E12.4
-  (D51): core and momentum tickers skip it (kept, and journaled by the sweep job
-  as ``sweep_candidate`` with ``confidence_floor_skipped: tier=<tier>``).
+* **threshold** — confidence must be ``>= settings.scalp_min_confidence``. E12.4
+  (D51): core and momentum tickers skip it (kept, and journaled by the scalp job
+  as ``scalp_candidate`` with ``confidence_floor_skipped: tier=<tier>``).
 * **sources** — only URLs of documents actually in the batch survive; a
   candidate with no grounded source is dropped (no hallucinated citations).
 
 The liquidity screen runs last (after threshold and sources), so market data is
 only fetched for candidates that would otherwise be accepted.
 
-Funnel discipline: the only thing downstream code (scanner, Director) may
+Funnel discipline: the only thing downstream code (scanner, Research) may
 read is :func:`candidates_for_scanner`, which returns ``Candidate`` models
 — enums, symbols, numbers, dates and source URLs. Persona free text
 (rationale, scan summary, the verbatim response) is stored in
-``sweep_batches`` for audit and never leaves it.
+``scalp_batches`` for audit and never leaves it.
 """
 
 from __future__ import annotations
@@ -45,9 +45,9 @@ from pydantic import ValidationError
 
 from arc.context.categories import LEGACY_VIDEO
 from arc.context.kinds import StoryEvidence, StoryPayload
-from arc.ingest.llm import FixtureSweepLLM, HermesSweepLLM, LLMResult, SweepLLMError
+from arc.ingest.llm import FixtureScalpLLM, HermesScalpLLM, LLMResult, ScalpLLMError
 from arc.ingest.sources import (
-    SWEEP_EXCLUDED,
+    SCALP_EXCLUDED,
     CategoryMix,
     Selection,
     SourceRegistry,
@@ -55,17 +55,17 @@ from arc.ingest.sources import (
     format_source_mix,
     select_fair,
 )
-from arc.ingest.store import RawDocRepo, SweepBatchRepo
+from arc.ingest.store import RawDocRepo, ScalpBatchRepo
 from arc.ingest.stories import ClusterDoc, Story, cluster_stories, form_type_of, headline_of
 from arc.models import Candidate, CatalystType, Stance
 from arc.personas.builders import (
+    ScalpInput,
     StoryDigestInput,
-    SweepInput,
+    build_scalp_prompt,
     build_story_digest_prompt,
-    build_sweep_prompt,
     ticker_facts_block,
 )
-from arc.personas.schemas import StoryDigestOutput, SweepCandidateOut, SweepOutput
+from arc.personas.schemas import ScalpCandidateOut, ScalpOutput, StoryDigestOutput
 from arc.store.repos import CandidateRepo
 from arc.universe.guard import (
     REJECT_ILLIQUID,
@@ -84,14 +84,14 @@ if TYPE_CHECKING:
     from arc.config import ArcSettings
     from arc.context.store import ContextSnapshot
     from arc.context.ttl import Ttl
-    from arc.ingest.llm import SweepLLM
+    from arc.ingest.llm import PersonaLLM
     from arc.routines.config import RoutinesConfig
 
 log = structlog.get_logger()
 
-FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "sweep"
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "scalp"
 
-# Rejection reasons (stable keys; stored in sweep_batches.rejected).
+# Rejection reasons (stable keys; stored in scalp_batches.rejected).
 REJECT_SCHEMA = "schema"
 REJECT_UNIVERSE = REJECT_NOT_IN_UNIVERSE  # strict mode (kept name for callers)
 REJECT_THRESHOLD = "below_threshold"
@@ -100,7 +100,7 @@ REJECT_SOURCE = "no_grounded_source"
 _UNIVERSE_REJECTS = (REJECT_ILLIQUID, REJECT_NEW_TICKER_CAP, REJECT_UNKNOWN_SYMBOL)
 
 _FEED_DELIMITER = "FEEDS>>>"
-_MAX_UNSWEPT_PER_RUN = 200
+_MAX_UNSCALPED_PER_RUN = 200
 
 
 # ---------------------------------------------------------------------------
@@ -109,24 +109,24 @@ _MAX_UNSWEPT_PER_RUN = 200
 
 
 @dataclass
-class SweepRunResult:
-    """Summary of a Sweep run. ``candidates`` is the post-merge state for the day."""
+class ScalpRunResult:
+    """Summary of a Scalp run. ``candidates`` is the post-merge state for the day."""
 
     run_id: str
     day: str
     dry_run: bool
     batches: int = 0
     failed_batches: int = 0
-    docs_swept: int = 0
+    docs_scalped: int = 0
     accepted: int = 0
     rejected: Counter[str] = field(default_factory=Counter)
     rejected_items: dict[str, list[str]] = field(default_factory=dict)  # reason -> tickers
     candidates: list[Candidate] = field(default_factory=list)
-    # ticker -> one-line Sweep rationale (highest-confidence accepted item this run).
+    # ticker -> one-line Scalp rationale (highest-confidence accepted item this run).
     # Display only (Slack digest); never copied onto ``Candidate`` (funnel discipline).
     rationales: dict[str, str] = field(default_factory=dict)
     # D27: each ok batch's ``scan_summary`` (+ the doc URLs it covered), written by the
-    # sweep job as one ``note`` (topic=observation). Never copied onto ``Candidate``.
+    # scalp job as one ``note`` (topic=observation). Never copied onto ``Candidate``.
     summaries: list[str] = field(default_factory=list)
     summary_sources: list[str] = field(default_factory=list)
     # D28: ticker -> why the universe guard rejected it (screen failures etc.), and the
@@ -134,17 +134,17 @@ class SweepRunResult:
     reject_details: dict[str, str] = field(default_factory=dict)
     new_tickers: list[str] = field(default_factory=list)
     # E12.4: ticker -> (tier, confidence) of candidates accepted this run below
-    # sweep_min_confidence because their tier (core / momentum) skips the floor.
+    # scalp_min_confidence because their tier (core / momentum) skips the floor.
     floor_skipped: dict[str, tuple[str, float]] = field(default_factory=dict)
     # E4.5 (D30): fair selection + story synthesis accounting (display + manifest).
     source_mix: list[tuple[str, int, int]] = field(default_factory=list)  # label, read, over
     over_budget: int = 0
     skipped_budget: int = 0
-    # D47 (E4.7): per-category freshness + grouped mix for the Sweep card.
+    # D47 (E4.7): per-category freshness + grouped mix for the Scalp card.
     skipped_stale: int = 0
-    # D54: docs of `feed: scout` sources (earnings calendar) closed out of the Sweep queue.
+    # D54: docs of `feed: scout` sources (earnings calendar) closed out of the Scalp queue.
     slow_feed: int = 0
-    # D55 (E4.11): docs stored `filtered` by a feed's title filter since the last Sweep
+    # D55 (E4.11): docs stored `filtered` by a feed's title filter since the last Scalp
     # (claimed by this run); never read, counted here for the card and metrics.
     filtered: int = 0
     filtered_by_source: dict[str, int] = field(default_factory=dict)
@@ -181,7 +181,7 @@ class _Doc:
     source_key: str = ""
     ingested_at: str = ""
     category: str = ""
-    feed: str = "sweep"  # D54: the source's declared feed
+    feed: str = "scalp"  # D54: the source's declared feed
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +270,7 @@ def merge_candidates(a: Candidate, b: Candidate) -> Candidate:
     )
 
 
-def validate_sweep_candidate(
+def validate_scalp_candidate(
     item: Any,
     *,
     universe: Collection[str] | UniverseGuard,
@@ -286,7 +286,7 @@ def validate_sweep_candidate(
     guard, core and momentum tickers skip *min_confidence* (E12.4).
     """
     try:
-        out = SweepCandidateOut.model_validate(item)
+        out = ScalpCandidateOut.model_validate(item)
     except ValidationError:
         return REJECT_SCHEMA
 
@@ -325,7 +325,7 @@ def validate_sweep_candidate(
 
 
 def render_doc(doc: _Doc, *, max_chars: int) -> str:
-    """Render one RawDoc for the Sweep prompt (truncated, delimiter-safe)."""
+    """Render one RawDoc for the Scalp prompt (truncated, delimiter-safe)."""
     text = doc.text.replace(_FEED_DELIMITER, "FEEDS>")
     if len(text) > max_chars:
         text = text[:max_chars] + " …[truncated]"
@@ -351,13 +351,13 @@ def build_prompt(
         from arc.universe.tiers import core_tickers
 
         universe = core_tickers(settings)
-    return build_sweep_prompt(
-        SweepInput(
+    return build_scalp_prompt(
+        ScalpInput(
             universe=list(universe),
-            raw_feeds=[render_doc(d, max_chars=settings.sweep_max_doc_chars) for d in docs],
+            raw_feeds=[render_doc(d, max_chars=settings.scalp_max_doc_chars) for d in docs],
             scan_date=day,
-            min_confidence=settings.sweep_min_confidence,
-            output_schema_json=json.dumps(SweepOutput.model_json_schema(), sort_keys=True),
+            min_confidence=settings.scalp_min_confidence,
+            output_schema_json=json.dumps(ScalpOutput.model_json_schema(), sort_keys=True),
             open_universe=open_universe,
         )
     )
@@ -394,7 +394,7 @@ def render_story(story: Story, docs: dict[str, _Doc], *, max_chars: int) -> str:
 
 
 def render_digest(p: StoryPayload) -> str:
-    """Stage-2 rendering of one story digest (what the Sweep reads instead of docs)."""
+    """Stage-2 rendering of one story digest (what the Scalp reads instead of docs)."""
     ev = "".join(f'\n  evidence: "{_safe(e.quote)}" ({e.url})' for e in p.evidence)
     cat = p.catalyst_type.value if p.catalyst_type else "-"
     return (
@@ -429,13 +429,13 @@ def build_stage2_prompt(
         from arc.universe.tiers import core_tickers
 
         universe = core_tickers(settings)
-    return build_sweep_prompt(
-        SweepInput(
+    return build_scalp_prompt(
+        ScalpInput(
             universe=list(universe),
             raw_feeds=[render_digest(p) for p in digests],
             scan_date=day,
-            min_confidence=settings.sweep_min_confidence,
-            output_schema_json=json.dumps(SweepOutput.model_json_schema(), sort_keys=True),
+            min_confidence=settings.scalp_min_confidence,
+            output_schema_json=json.dumps(ScalpOutput.model_json_schema(), sort_keys=True),
             open_universe=open_universe,
             digests=True,
             ticker_facts=ticker_facts,
@@ -443,7 +443,7 @@ def build_stage2_prompt(
     )
 
 
-def sweep_facts_tickers(digests: list[StoryPayload], max_tickers: int) -> list[str]:
+def scalp_facts_tickers(digests: list[StoryPayload], max_tickers: int) -> list[str]:
     """E4.8a: tickers the batch's story digests name, in story order, first *max_tickers*."""
     seen: dict[str, None] = {}
     for p in digests:
@@ -593,7 +593,7 @@ def candidates_for_scanner(
     min_confidence: float,
     floor_exempt: Collection[str] = (),
 ) -> list[Candidate]:
-    """The ONLY Sweep output downstream stages may consume.
+    """The ONLY Scalp output downstream stages may consume.
 
     Returns typed ``Candidate`` models (no persona free text) for *day*
     at or above *min_confidence*, best first. Tickers in *floor_exempt* (E12.4:
@@ -670,7 +670,7 @@ def _default_registry() -> SourceRegistry:
     try:
         return SourceRegistry.from_routines(load_routines())
     except (OSError, ValueError) as exc:  # pragma: no cover - broken config fails loudly elsewhere
-        log.warning("sweep.registry_unavailable", error=str(exc))
+        log.warning("scalp.registry_unavailable", error=str(exc))
         return SourceRegistry(sources={})
 
 
@@ -684,13 +684,13 @@ def _raw_doc_ttl(routines: RoutinesConfig | None) -> _dt.timedelta:
     return _dt.timedelta(days=5)
 
 
-def sweep_excluded(doc: _Doc) -> bool:
-    """D45/D47/D49: the Sweep never reads this doc (YouTube, options data: typed context)."""
-    return doc.category in {c.value for c in SWEEP_EXCLUDED} or doc.category == LEGACY_VIDEO
+def scalp_excluded(doc: _Doc) -> bool:
+    """D45/D47/D49: the Scalp never reads this doc (YouTube, options data: typed context)."""
+    return doc.category in {c.value for c in SCALP_EXCLUDED} or doc.category == LEGACY_VIDEO
 
 
 def slow_feed(doc: _Doc) -> bool:
-    """D54: the doc's source declares ``feed: scout`` (earnings calendar); never Sweep-read."""
+    """D54: the doc's source declares ``feed: scout`` (earnings calendar); never Scalp-read."""
     return doc.feed == "scout"
 
 
@@ -719,7 +719,7 @@ def stale_docs(docs: list[_Doc], registry: SourceRegistry, now: _dt.datetime) ->
 def _select(
     docs: list[_Doc], registry: SourceRegistry, budget: int
 ) -> tuple[list[_Doc], list[_Doc], Selection]:
-    docs = [d for d in docs if not (sweep_excluded(d) or slow_feed(d))]
+    docs = [d for d in docs if not (scalp_excluded(d) or slow_feed(d))]
     by_source: dict[str, list[_Doc]] = {}
     for d in sorted(docs, key=lambda d: (_parse_ts(d.published_at), d.id), reverse=True):
         by_source.setdefault(d.source_key, []).append(d)
@@ -761,7 +761,7 @@ def select_docs(
     """D30/D47 fair pick: ``(selected, unselected, source_mix)``; newest first per source.
 
     The budget is split equally across categories that have docs (D47), then across
-    the sources inside each category. Docs in a :data:`SWEEP_EXCLUDED` category are
+    the sources inside each category. Docs in a :data:`SCALP_EXCLUDED` category are
     never selected and are not counted as unselected either (the caller closes them
     as brief-only). Callers drop stale docs first (:func:`stale_docs`).
     """
@@ -786,8 +786,8 @@ def _cluster(docs: list[_Doc], settings: ArcSettings) -> list[Story]:
     ]
     return cluster_stories(
         cdocs,
-        threshold=settings.sweep_story_threshold,
-        window=_dt.timedelta(hours=settings.sweep_story_window_hours),
+        threshold=settings.scalp_story_threshold,
+        window=_dt.timedelta(hours=settings.scalp_story_window_hours),
     )
 
 
@@ -795,17 +795,17 @@ def _digest_stories(
     stories: list[Story],
     docs: dict[str, _Doc],
     *,
-    digest_llm: SweepLLM | None,
+    digest_llm: PersonaLLM | None,
     settings: ArcSettings,
     day: str,
     run_id: str,
-    batch_repo: SweepBatchRepo,
-    result: SweepRunResult,
+    batch_repo: ScalpBatchRepo,
+    result: ScalpRunResult,
 ) -> list[StoryPayload]:
     """Stage 1: one digest per story, batched per source category (cheap tier).
 
     Without *digest_llm* (dry-run / fixtures) or when a batch fails, stories get an
-    extractive digest (headline) so the Sweep still sees them; failures are audited.
+    extractive digest (headline) so the Scalp still sees them; failures are audited.
     """
     out: dict[str, StoryPayload] = {}
     if digest_llm is None:
@@ -813,20 +813,20 @@ def _digest_stories(
     by_cat: dict[str, list[Story]] = {}
     for s in stories:
         by_cat.setdefault(s.category, []).append(s)
-    size = settings.sweep_batch_size
+    size = settings.scalp_batch_size
     for cat in sorted(by_cat):
         group = by_cat[cat]
         for i in range(0, len(group), size):
             batch = group[i : i + size]
             doc_ids = [cd.id for s in batch for cd in s.docs]
             prompt = build_digest_prompt(
-                [render_story(s, docs, max_chars=settings.sweep_story_doc_chars) for s in batch],
+                [render_story(s, docs, max_chars=settings.scalp_story_doc_chars) for s in batch],
                 day,
             )
             result.digest_batches += 1
             try:
                 reply = digest_llm.complete(prompt)
-            except SweepLLMError as exc:
+            except ScalpLLMError as exc:
                 result.failed_digest_batches += 1
                 batch_repo.insert(
                     run_id=run_id,
@@ -838,7 +838,7 @@ def _digest_stories(
                     error=str(exc),
                     stage="digest",
                 )
-                log.warning("sweep.digest.llm_error", run_id=run_id, error=str(exc))
+                log.warning("scalp.digest.llm_error", run_id=run_id, error=str(exc))
                 continue
             result.add_usage(reply)
             try:
@@ -858,7 +858,7 @@ def _digest_stories(
                     output_tokens=reply.output_tokens,
                     cost_usd=reply.cost_usd,
                 )
-                log.warning("sweep.digest.parse_error", run_id=run_id, error=str(exc)[:200])
+                log.warning("scalp.digest.parse_error", run_id=run_id, error=str(exc)[:200])
                 continue
             wanted = {s.id: s for s in batch}
             for d in parsed.stories:
@@ -882,12 +882,12 @@ def _digest_stories(
     return [out.get(s.id) or story_payload(s, docs) for s in stories]
 
 
-def run_sweep(
+def run_scalp(
     conn: sqlite3.Connection,
     settings: ArcSettings,
     *,
-    llm: SweepLLM | None = None,
-    digest_llm: SweepLLM | None = None,
+    llm: PersonaLLM | None = None,
+    digest_llm: PersonaLLM | None = None,
     dry_run: bool = False,
     now: _dt.datetime | None = None,
     run_id: str | None = None,
@@ -895,20 +895,20 @@ def run_sweep(
     routines: RoutinesConfig | None = None,
     registry: SourceRegistry | None = None,
     on_story: Callable[[StoryPayload], None] | None = None,
-) -> SweepRunResult:
-    """Fair-select unswept docs, cluster them into stories, digest, then sweep (D30).
+) -> ScalpRunResult:
+    """Fair-select unscalped docs, cluster them into stories, digest, then scalp (D30).
 
     1. **Select** (:func:`select_docs`): docs older than their category's ``max_age``
-       are closed ``skipped_stale`` (D47). ``sweep_doc_budget`` docs are then split
+       are closed ``skipped_stale`` (D47). ``scalp_doc_budget`` docs are then split
        equally across categories that have fresh docs, then by weighted round-robin
        across the sources inside each, newest first per source. Docs left over wait
        for the next run; once older than the ``raw_doc_ref`` context TTL they are
        closed as ``skipped_budget`` with this run id.
     2. **Cluster** (:mod:`arc.ingest.stories`) near-duplicates into stories.
     3. **Stage 1** (*digest_llm*, cheap tier): one short digest per story, batched by
-       category. Default: the Sweep backend when live; extractive (no LLM) in
+       category. Default: the Scalp backend when live; extractive (no LLM) in
        dry-run or when *llm* is injected without a *digest_llm*.
-    4. **Stage 2** (*llm*): the Sweep reads digests, ``sweep_story_batch_size`` per
+    4. **Stage 2** (*llm*): the Scalp reads digests, ``scalp_story_batch_size`` per
        call; candidates are validated as before, and ``corroboration`` is set by
        code from distinct sources (:func:`count_corroboration`).
 
@@ -918,31 +918,31 @@ def run_sweep(
     """
     now = (now or now_et()).astimezone(ET)
     day = now.date().isoformat()
-    run_id = run_id or f"sweep-{uuid.uuid4().hex[:12]}"
+    run_id = run_id or f"scalp-{uuid.uuid4().hex[:12]}"
     if llm is None:
         if dry_run:
-            llm = FixtureSweepLLM.from_dir(FIXTURES_DIR / "responses")
+            llm = FixtureScalpLLM.from_dir(FIXTURES_DIR / "responses")
         else:
-            llm = HermesSweepLLM.from_settings(settings)
+            llm = HermesScalpLLM.from_settings(settings)
             digest_llm = digest_llm or llm
     if registry is None:
         registry = (
             SourceRegistry.from_routines(routines) if routines is not None else _default_registry()
         )
 
-    result = SweepRunResult(run_id=run_id, day=day, dry_run=dry_run)
+    result = ScalpRunResult(run_id=run_id, day=day, dry_run=dry_run)
     doc_repo = RawDocRepo(conn)
-    batch_repo = SweepBatchRepo(conn)
+    batch_repo = ScalpBatchRepo(conn)
     cand_repo = CandidateRepo(conn)
 
     # 1. fair selection
-    all_docs = _load_docs(doc_repo.list_unswept(limit=None), registry)
-    brief_only = [d.id for d in all_docs if sweep_excluded(d)]
+    all_docs = _load_docs(doc_repo.list_unscalped(limit=None), registry)
+    brief_only = [d.id for d in all_docs if scalp_excluded(d)]
     if brief_only:  # D45: video docs wait for nobody; close them out of the queue
         doc_repo.mark_brief_only(brief_only, run_id=run_id)
-        all_docs = [d for d in all_docs if not sweep_excluded(d)]
+        all_docs = [d for d in all_docs if not scalp_excluded(d)]
     # D54: slow-feed docs (earnings calendar) stay stored for next_earnings() / the Scout
-    # but never draw on sweep_doc_budget; close them out of the Sweep's queue.
+    # but never draw on scalp_doc_budget; close them out of the Scalp's queue.
     slow = [d.id for d in all_docs if slow_feed(d)]
     if slow:
         doc_repo.mark_slow_feed(slow, run_id=run_id)
@@ -959,7 +959,7 @@ def run_sweep(
         result.stale_by_source = dict(Counter(d.source_key for d in stale))
         stale_ids = {d.id for d in stale}
         all_docs = [d for d in all_docs if d.id not in stale_ids]
-    selected, unselected, selection = _select(all_docs, registry, settings.sweep_doc_budget)
+    selected, unselected, selection = _select(all_docs, registry, settings.scalp_doc_budget)
     result.source_mix = format_source_mix(selection, registry)
     result.category_mix = category_mix(selection, registry, stale=result.stale_by_source)
     result.over_budget = len(unselected)
@@ -982,10 +982,10 @@ def run_sweep(
     open_universe = guard.mode == "seed"
     watch = watch_tickers(conn, settings, now)  # D51: core + momentum + trending
     log.info(
-        "sweep.run.start",
+        "scalp.run.start",
         run_id=run_id,
         day=day,
-        unswept=len(all_docs),
+        unscalped=len(all_docs),
         selected=len(selected),
         over_budget=result.over_budget,
         skipped_budget=result.skipped_budget,
@@ -1014,18 +1014,18 @@ def run_sweep(
         if on_story is not None:
             on_story(p)
 
-    # 4. stage 2: the Sweep reads digests (E4.8a: + Finnhub facts when the flag is on)
+    # 4. stage 2: the Scalp reads digests (E4.8a: + Finnhub facts when the flag is on)
     facts_snap = _facts_snapshot(conn, routines, now, run_id) if digests else None
-    size = settings.sweep_story_batch_size
+    size = settings.scalp_story_batch_size
     for i in range(0, len(digests), size):
         batch = digests[i : i + size]
         doc_ids = [d for p in batch for d in p.doc_ids]
         facts = ""
         if facts_snap is not None and routines is not None:
             cfg = routines.finnhub_context
-            tickers = sweep_facts_tickers(batch, cfg.sweep_max_tickers)
+            tickers = scalp_facts_tickers(batch, cfg.scalp_max_tickers)
             facts = ticker_facts_block(
-                facts_snap, cfg.prompt_options(tickers, cfg.sweep_max_tickers)
+                facts_snap, cfg.prompt_options(tickers, cfg.scalp_max_tickers)
             )
         prompt = build_stage2_prompt(
             batch,
@@ -1039,8 +1039,8 @@ def run_sweep(
 
         try:
             reply = llm.complete(prompt)
-        except SweepLLMError as exc:
-            # Docs stay unswept so the next run retries them.
+        except ScalpLLMError as exc:
+            # Docs stay unscalped so the next run retries them.
             result.failed_batches += 1
             batch_repo.insert(
                 run_id=run_id,
@@ -1051,7 +1051,7 @@ def run_sweep(
                 status="llm_error",
                 error=str(exc),
             )
-            log.warning("sweep.batch.llm_error", run_id=run_id, error=str(exc))
+            log.warning("scalp.batch.llm_error", run_id=run_id, error=str(exc))
             continue
         result.add_usage(reply)
         usage = {
@@ -1077,7 +1077,7 @@ def run_sweep(
                 error=str(exc),
                 **usage,
             )
-            log.warning("sweep.batch.parse_error", run_id=run_id, error=str(exc))
+            log.warning("scalp.batch.parse_error", run_id=run_id, error=str(exc))
             continue
 
         allowed_sources = frozenset(u for p in batch for u in p.urls)
@@ -1088,10 +1088,10 @@ def run_sweep(
         rejected: Counter[str] = Counter()
         accepted = 0
         for item in items:
-            outcome = validate_sweep_candidate(
+            outcome = validate_scalp_candidate(
                 item,
                 universe=guard,
-                min_confidence=settings.sweep_min_confidence,
+                min_confidence=settings.scalp_min_confidence,
                 allowed_sources=allowed_sources,
                 created_at=now,
             )
@@ -1122,12 +1122,12 @@ def run_sweep(
             rejected=dict(rejected),
             **usage,
         )
-        doc_repo.mark_swept(doc_ids, run_id=run_id)
-        result.docs_swept += len(doc_ids)
+        doc_repo.mark_scalped(doc_ids, run_id=run_id)
+        result.docs_scalped += len(doc_ids)
         result.accepted += accepted
         result.rejected.update(rejected)
         log.info(
-            "sweep.batch.ok",
+            "scalp.batch.ok",
             run_id=run_id,
             stories=len(batch),
             docs=len(doc_ids),
@@ -1139,13 +1139,13 @@ def run_sweep(
     result.candidates = candidates_for_scanner(
         conn,
         day,
-        min_confidence=settings.sweep_min_confidence,
+        min_confidence=settings.scalp_min_confidence,
         floor_exempt=guard.floor_exempt(),
     )
     # E12.4: day-level candidates below the floor that stayed because of their tier
     for c in result.candidates:
         tier = guard.skips_confidence_floor(c.ticker)
-        if c.confidence < settings.sweep_min_confidence and tier is not None:
+        if c.confidence < settings.scalp_min_confidence and tier is not None:
             result.floor_skipped[c.ticker] = (tier.value, c.confidence)
     for cand in result.candidates:
         keys = [source_key_of(u) for u in cand.sources]
@@ -1153,7 +1153,7 @@ def run_sweep(
         if ttl is not None:
             result.candidate_ttls[cand.ticker] = ttl
     log.info(
-        "sweep.run.done",
+        "scalp.run.done",
         run_id=run_id,
         batches=result.batches,
         failed=result.failed_batches,
@@ -1171,3 +1171,8 @@ def run_sweep(
         cost_usd=result.cost_usd,
     )
     return result
+
+
+# D56 (E13.1): pre-rename names, re-exported for one release.
+SweepRunResult = ScalpRunResult
+run_sweep = run_scalp

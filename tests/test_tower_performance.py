@@ -369,7 +369,7 @@ def test_calibration_matches_the_scorecard(conn: sqlite3.Connection, perf) -> No
     assert [(r.persona, r.lo, r.n, r.hit_rate) for r in cal.rows] == [
         (b.persona, b.lo, b.n, b.hit_rate) for b in buckets
     ]
-    assert {r.persona for r in cal.rows} >= {"director", "quant_pop"}
+    assert {r.persona for r in cal.rows} >= {"research", "quant_pop"}
 
 
 def test_funnel_matches(conn: sqlite3.Connection, perf) -> None:  # noqa: ANN001

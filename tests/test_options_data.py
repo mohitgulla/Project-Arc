@@ -45,9 +45,9 @@ from arc.ingest.options_data import (
     vol_term_from_closes,
 )
 from arc.personas.builders import (
-    build_director_prompt,
+    build_research_prompt,
     build_risk_prompt,
-    director_input_from_context,
+    research_input_from_context,
     risk_input_from_context,
 )
 from arc.store.db import connect
@@ -557,7 +557,7 @@ class TestHandlers:
         }
         assert subjects == {"NVDA", "XOM"}
 
-    def test_director_and_risk_prompts_carry_the_data(self, conn, monkeypatch) -> None:
+    def test_research_and_risk_prompts_carry_the_data(self, conn, monkeypatch) -> None:
         payload, _ = fetch_macro_calendar(TODAY, 45, get=_fixture_get)
         vt = fetch_vol_term(get=_fixture_get)
         assert vt is not None
@@ -570,8 +570,8 @@ class TestHandlers:
         store.write(kind="ex_dividend", subject="XOM", payload=ex["XOM"], produced_by="x", now=NOW)
         _structures(store)
         snap = store.snapshot(NOW)
-        d = build_director_prompt(
-            director_input_from_context(snap, portfolio_summary="flat", scan_date="2026-09-29")
+        d = build_research_prompt(
+            research_input_from_context(snap, portfolio_summary="flat", scan_date="2026-09-29")
         )
         assert "Options market data" in d and '"structure": "contango"' in d and "jolts" in d
         r = build_risk_prompt(
@@ -582,11 +582,11 @@ class TestHandlers:
         assert "Event risk" in r and '"ex_date": "2026-10-02"' in r
 
     def test_prompts_unchanged_without_data(self, conn) -> None:
-        """No D30 data -> the Director/Risk prompts are byte-identical to pre-E4.5 (replay)."""
+        """No D30 data -> Research/Risk prompts are byte-identical to pre-E4.5 (replay)."""
         _structures(ContextStore(conn))
         snap = ContextStore(conn).snapshot(NOW)
-        d = build_director_prompt(
-            director_input_from_context(snap, portfolio_summary="flat", scan_date="2026-09-29")
+        d = build_research_prompt(
+            research_input_from_context(snap, portfolio_summary="flat", scan_date="2026-09-29")
         )
         assert "{inp.regime_features_json}" not in d
         assert "{}\n\n### Current portfolio" in d and "Options market data" not in d

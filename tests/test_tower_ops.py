@@ -262,13 +262,13 @@ def test_runs_filters_and_paging(conn) -> None:
     chain_id = next(r.chain_run_id for r in all_.rows if r.chain_run_id)
     chain = load_runs(conn, now=NOW, chain=chain_id)
     assert chain.total >= 2 and all(r.chain_run_id == chain_id for r in chain.rows)
-    assert "director" in chain.options.jobs
+    assert "research" in chain.options.jobs
 
 
 def test_runs_endpoint(client) -> None:
-    body = client.get("/api/ops/runs?status=failed,no_change&job=edgar,director&size=5").json()
+    body = client.get("/api/ops/runs?status=failed,no_change&job=edgar,research&size=5").json()
     assert body["size"] == 5
-    assert {r["job"] for r in body["rows"]} <= {"edgar", "director"}
+    assert {r["job"] for r in body["rows"]} <= {"edgar", "research"}
     assert client.get("/api/ops/runs?day=nope").status_code == 422
     assert client.get("/api/ops/runs?size=500").status_code == 422
 
@@ -466,7 +466,7 @@ def test_sources_categories_share_parity_with_registry(conn, routines) -> None:
             cat = next(c for c in CATEGORY_ORDER if c.value == x.category)
             assert x.share_in_category == pytest.approx(eff[x.key] / cat_w[cat], abs=1e-4)
             assert x.weight == pytest.approx(eff[x.key], abs=1e-4)
-    # shares inside a Sweep category sum to 1
+    # shares inside a Scalp category sum to 1
     for c in s.categories:
         if c.share is not None:
             inner = [x.share_in_category or 0 for x in s.sources if x.category == c.key]
@@ -540,7 +540,7 @@ def test_sources_youtube_brief_status_from_manifest(tmp_path, routines) -> None:
     assert yt["youtube.tradebrigade"].brief.text == "no video in 24h"  # type: ignore[union-attr]
     assert yt["youtube.arete"].status == "failed"
     video = next(c for c in s.categories if c.key == yt["youtube.arete"].category)
-    assert video.status == "failed" and video.share is None  # never in the Sweep budget
+    assert video.status == "failed" and video.share is None  # never in the Scalp budget
 
 
 def test_llm_usage(conn) -> None:
@@ -549,7 +549,7 @@ def test_llm_usage(conn) -> None:
     assert llm.today_cost == llm.series[-1].cost_usd > 0
     assert llm.yesterday_cost == llm.series[-2].cost_usd > 0
     assert llm.total_cost == pytest.approx(sum(d.cost_usd for d in llm.series))
-    assert {"director", "sweep", "sweep.digest"} <= set(llm.personas)
+    assert {"research", "scalp", "scalp.digest"} <= set(llm.personas)
     assert {g.persona for g in llm.today} <= set(llm.personas)
     assert sum(g.calls for g in llm.today) == llm.series[-1].calls
     costs = [g.cost_usd for g in llm.period]

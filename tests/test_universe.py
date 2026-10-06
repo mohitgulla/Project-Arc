@@ -311,7 +311,7 @@ class TestGuard:
         assert not g.screens  # strict never measures
 
     def test_new_ticker_cap(self) -> None:
-        g = _fixture_guard(sweep_max_new_tickers=0)
+        g = _fixture_guard(scalp_max_new_tickers=0)
         assert g.admit("PLTR") == REJECT_NEW_TICKER_CAP
         assert g.admit("NVDA") is None  # seed names never count
 

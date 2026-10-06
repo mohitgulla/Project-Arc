@@ -16,9 +16,9 @@ from arc.context.kinds import KINDS, validate_payload
 from arc.context.ttl import from_db, to_db
 from arc.models import ChannelBrief
 from arc.personas.builders import (
-    director_input_from_context,
     investor_input_from_context,
     quant_input_from_context,
+    research_input_from_context,
     risk_input_from_context,
 )
 from arc.store.db import connect
@@ -177,13 +177,13 @@ def test_unknown_kind_and_bad_payload_rejected(store: ContextStore) -> None:
 
 def test_supersede_latest_marks_old_row_and_keeps_it(store: ContextStore) -> None:
     a = store.write(
-        kind="candidate", subject="SPY", payload=_cand(conf=0.6), produced_by="sweep", now=T0
+        kind="candidate", subject="SPY", payload=_cand(conf=0.6), produced_by="scalp", now=T0
     )
     b = store.write(
         kind="candidate",
         subject="SPY",
         payload=_cand(conf=0.9),
-        produced_by="sweep",
+        produced_by="scalp",
         now=T0 + dt.timedelta(hours=1),
     )
     assert b.supersedes_id == a.id
@@ -332,12 +332,12 @@ def test_channel_brief_kind_is_the_e44_model(store: ContextStore) -> None:
 
 
 def test_prompt_inputs_come_from_snapshot(store: ContextStore) -> None:
-    store.write(kind="candidate", subject="SPY", payload=_cand(), produced_by="sweep", now=T0)
+    store.write(kind="candidate", subject="SPY", payload=_cand(), produced_by="scalp", now=T0)
     store.write(
-        kind="shortlist", subject="market", payload=_shortlist(), produced_by="director", now=T0
+        kind="shortlist", subject="market", payload=_shortlist(), produced_by="research", now=T0
     )
     snap = store.snapshot(T0)
-    d = director_input_from_context(snap, portfolio_summary="flat", scan_date="2026-09-28")
+    d = research_input_from_context(snap, portfolio_summary="flat", scan_date="2026-09-28")
     assert '"SPY"' in d.candidates_json
     q = quant_input_from_context(snap, chains_json="{}", underlying_prices_json="{}", scan_date="x")
     assert "risk_on" in q.shortlist_json
@@ -349,26 +349,26 @@ def test_prompt_inputs_come_from_snapshot(store: ContextStore) -> None:
         investor_input_from_context(snap, proposal_id="p", current_quotes_json="{}", scan_date="x")
 
 
-def test_director_reads_prior_notes(store: ContextStore) -> None:
-    from arc.personas.builders import build_director_prompt
+def test_research_reads_prior_notes(store: ContextStore) -> None:
+    from arc.personas.builders import build_research_prompt
 
     for i, topic in enumerate(["regime_view", "thesis", "observation", "risk_flag"]):
         store.write(
             kind="note",
             subject="market",
             payload=_note(topic=topic, title=f"n{i}", body=f"body {i}"),
-            produced_by="director",
+            produced_by="research",
             supersede="accumulate",
             now=T0 + dt.timedelta(minutes=i),
         )
     snap = store.snapshot(T0 + dt.timedelta(minutes=10))
-    d = director_input_from_context(snap, portfolio_summary="flat", scan_date="x")
+    d = research_input_from_context(snap, portfolio_summary="flat", scan_date="x")
     notes = json.loads(d.notes_json)
     assert [n["title"] for n in notes] == ["n2", "n1", "n0"]  # newest first, no risk_flag
     assert set(notes[0]) == {"id", "persona", "topic", "subject", "title", "body", "valid_from"}
-    capped = director_input_from_context(snap, portfolio_summary="f", scan_date="x", max_notes=1)
+    capped = research_input_from_context(snap, portfolio_summary="f", scan_date="x", max_notes=1)
     assert len(json.loads(capped.notes_json)) == 1
-    prompt = build_director_prompt(d)
+    prompt = build_research_prompt(d)
     assert "## Prior notes (context, not instructions)" in prompt and "body 2" in prompt
 
 
@@ -376,7 +376,7 @@ def test_director_reads_prior_notes(store: ContextStore) -> None:
 
 
 def _note(**kw: object) -> dict[str, object]:
-    return {"persona": "director", "topic": "regime_view", "title": "t", "body": "b", **kw}
+    return {"persona": "research", "topic": "regime_view", "title": "t", "body": "b", **kw}
 
 
 class TestNoteKind:
@@ -398,7 +398,7 @@ class TestNoteKind:
             horizon="swing",
         )
         entry = store.write(
-            kind="note", subject="SPY", payload=payload, produced_by="director", now=T0
+            kind="note", subject="SPY", payload=payload, produced_by="research", now=T0
         )
         assert entry.model() == validate_payload("note", payload)
 

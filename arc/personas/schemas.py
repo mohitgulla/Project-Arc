@@ -14,12 +14,12 @@ from arc.exits.model import ExitSummary
 from arc.models import CatalystType, Stance
 
 # ---------------------------------------------------------------------------
-# Sweep — surfaces Candidate objects from raw information sources
+# Scalp — surfaces Candidate objects from raw information sources
 # ---------------------------------------------------------------------------
 
 
-class SweepCandidateOut(BaseModel):
-    """A single candidate surfaced by Sweep."""
+class ScalpCandidateOut(BaseModel):
+    """A single candidate surfaced by Scalp."""
 
     ticker: str = Field(..., description="Underlying symbol, e.g. 'AAPL'")
     stance: Stance = Field(..., description="Directional stance: bullish | bearish | neutral")
@@ -35,15 +35,15 @@ class SweepCandidateOut(BaseModel):
     rationale: str = Field(..., description="One-paragraph explanation of the catalyst and stance")
 
 
-class SweepOutput(BaseModel):
-    """Sweep persona output: a list of trading candidates."""
+class ScalpOutput(BaseModel):
+    """Scalp persona output: a list of trading candidates."""
 
-    candidates: list[SweepCandidateOut] = Field(..., description="Candidates surfaced this scan")
+    candidates: list[ScalpCandidateOut] = Field(..., description="Candidates surfaced this scan")
     scan_summary: str = Field(..., description="Brief summary of what was scanned and key themes")
 
 
 # ---------------------------------------------------------------------------
-# Sweep stage 1 (E4.5, D30) — one short digest per story
+# Scalp stage 1 (E4.5, D30) — one short digest per story
 # ---------------------------------------------------------------------------
 
 
@@ -73,14 +73,14 @@ class StoryDigestOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Director — ranks and filters candidates, adds thesis
+# Research — ranks and filters candidates, adds thesis
 # ---------------------------------------------------------------------------
 
 
 _EVIDENCE_MAX_ITEMS = 3
 _EVIDENCE_MAX_CHARS = 160
 
-# E5.9 (D33): portfolio-aware Director vocabulary. Deterministic code reads these
+# E5.9 (D33): portfolio-aware Research vocabulary. Deterministic code reads these
 # values; the free text next to them goes to `note` context entries, never to the gate.
 type PortfolioFit = Literal["diversifies", "hedges", "adds_concentration", "neutral"]
 type PortfolioVerdict = Literal["balanced", "concentrated", "hedge_needed", "reduce_risk"]
@@ -90,12 +90,12 @@ type NoTradeReason = Literal[
 ]
 
 
-class DirectorRankedItem(BaseModel):
-    """A single ticker ranked by the Director."""
+class ResearchRankedItem(BaseModel):
+    """A single ticker ranked by Research."""
 
     ticker: str
     rank: int = Field(..., ge=1, description="1 = highest conviction")
-    thesis: str = Field(..., description="Director's thesis: why this ticker, what structure style")
+    thesis: str = Field(..., description="Research's thesis: why this ticker, what structure style")
     regime_context: str = Field(..., description="Current regime assessment for this underlying")
     suggested_structure_type: str = Field(
         ...,
@@ -130,8 +130,8 @@ class DirectorRankedItem(BaseModel):
         return items[:_EVIDENCE_MAX_ITEMS]
 
 
-class DirectorExclusion(BaseModel):
-    """A candidate the Director will not trade, with its one-line reason (E5.7)."""
+class ResearchExclusion(BaseModel):
+    """A candidate Research will not trade, with its one-line reason (E5.7)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -139,8 +139,8 @@ class DirectorExclusion(BaseModel):
     reason: str = Field(..., min_length=1, description="One line: why this candidate is excluded")
 
 
-class DirectorPortfolioView(BaseModel):
-    """The Director's read of the open book (E5.9); ``notes`` is stored as a note."""
+class ResearchPortfolioView(BaseModel):
+    """Research's read of the open book (E5.9); ``notes`` is stored as a note."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -148,7 +148,7 @@ class DirectorPortfolioView(BaseModel):
     notes: str = Field("", description="One or two lines on diversification and risk")
 
 
-class DirectorThesisCheck(BaseModel):
+class ResearchThesisCheck(BaseModel):
     """Is an open position's original thesis still intact? Advisory for E6.4 (E5.9)."""
 
     model_config = ConfigDict(extra="forbid")
@@ -158,14 +158,14 @@ class DirectorThesisCheck(BaseModel):
     reason: str = Field("", description="One line: what changed, or why it still holds")
 
 
-class DirectorOutput(BaseModel):
-    """Director persona output: every candidate ranked or excluded with a reason."""
+class ResearchOutput(BaseModel):
+    """Research persona output: every candidate ranked or excluded with a reason."""
 
-    shortlist: list[DirectorRankedItem] = Field(
+    shortlist: list[ResearchRankedItem] = Field(
         ...,
         description="Every candidate you would consider trading, best first (no cap)",
     )
-    excluded: list[DirectorExclusion] = Field(
+    excluded: list[ResearchExclusion] = Field(
         default_factory=list,
         description="Candidates not ranked, each with a one-line reason",
     )
@@ -174,14 +174,14 @@ class DirectorOutput(BaseModel):
         description="Overall market regime: risk_on | risk_off | transitional",
     )
     session_notes: str = Field(
-        ..., description="Director's summary of today's opportunity landscape"
+        ..., description="Research's summary of today's opportunity landscape"
     )
     # E5.9 (D33): portfolio assessment. Every field defaults, so the empty-book reply
     # (and every stored v2 shortlist) validates unchanged.
-    portfolio_view: DirectorPortfolioView | None = Field(
+    portfolio_view: ResearchPortfolioView | None = Field(
         None, description="Only when the book is not empty: verdict + notes"
     )
-    thesis_checks: list[DirectorThesisCheck] = Field(
+    thesis_checks: list[ResearchThesisCheck] = Field(
         default_factory=list,
         description="One per open structure when the book is not empty",
     )
@@ -417,3 +417,13 @@ class AuditorOutput(BaseModel):
     lessons: list[LessonLearned] = Field(default_factory=list)
     journal_narrative: str = Field(..., description="Full daily journal narrative")
     reconciliation_status: str = Field(..., description="clean | discrepancies_found | pending")
+
+
+# D56 (E13.1): pre-rename names, re-exported for one release.
+SweepCandidateOut = ScalpCandidateOut
+SweepOutput = ScalpOutput
+DirectorRankedItem = ResearchRankedItem
+DirectorExclusion = ResearchExclusion
+DirectorPortfolioView = ResearchPortfolioView
+DirectorThesisCheck = ResearchThesisCheck
+DirectorOutput = ResearchOutput

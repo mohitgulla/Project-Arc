@@ -99,9 +99,9 @@ CHAIN_YAML: dict[str, Any] = {
 def _chain_dispatcher(
     conn: sqlite3.Connection, spawner: Spawner, investor_calls: list[str]
 ) -> Dispatcher:
-    """director → propose → execute (D34), with the fixture proposal adopted by propose."""
+    """research → propose → execute (D34), with the fixture proposal adopted by propose."""
 
-    def director(ctx: JobContext) -> JobResult:
+    def research(ctx: JobContext) -> JobResult:
         return JobResult(summary="shortlist")
 
     def propose(ctx: JobContext) -> JobResult:
@@ -128,7 +128,7 @@ def _chain_dispatcher(
         conn,
         RoutinesConfig.model_validate(CHAIN_YAML),
         handlers={
-            "loop": director,
+            "loop": research,
             "propose": propose,
             "execute": execute_,
             "investor": investor,
@@ -332,14 +332,14 @@ class TestOneRunPerEvent:
 
     def test_scheduled_slot_key_still_unique(self, conn: sqlite3.Connection) -> None:
         runs = RoutineRunRepo(conn)
-        assert runs.claim(job="sweep", scheduled_for=NOW, reason="schedule", now=NOW)
-        assert runs.claim(job="sweep", scheduled_for=NOW, reason="schedule", now=NOW) is None
+        assert runs.claim(job="scalp", scheduled_for=NOW, reason="schedule", now=NOW)
+        assert runs.claim(job="scalp", scheduled_for=NOW, reason="schedule", now=NOW) is None
         # event runs neither collide with the slot nor with each other
-        assert runs.claim(job="sweep", scheduled_for=NOW, reason="e", now=NOW, event_id="e1")
-        assert runs.claim(job="sweep", scheduled_for=NOW, reason="e", now=NOW, event_id="e2")
-        assert runs.claim(job="sweep", scheduled_for=NOW, reason="e", event_id="e1") is None
-        assert runs.find("sweep", NOW).event_id is None  # type: ignore[union-attr]
-        assert runs.for_event("sweep", "e2") is not None
+        assert runs.claim(job="scalp", scheduled_for=NOW, reason="e", now=NOW, event_id="e1")
+        assert runs.claim(job="scalp", scheduled_for=NOW, reason="e", now=NOW, event_id="e2")
+        assert runs.claim(job="scalp", scheduled_for=NOW, reason="e", event_id="e1") is None
+        assert runs.find("scalp", NOW).event_id is None  # type: ignore[union-attr]
+        assert runs.for_event("scalp", "e2") is not None
 
     def test_migration_keeps_existing_runs(self) -> None:
         from arc.store.migrate import MIGRATIONS_DIR
@@ -353,7 +353,7 @@ class TestOneRunPerEvent:
         c.execute(
             """INSERT INTO routine_runs (run_id, job, reason, scheduled_for, status,
                config_version)
-               VALUES ('r1', 'sweep', 'schedule', '2026-10-09T14:00:00Z', 'ok', 3)"""
+               VALUES ('r1', 'scalp', 'schedule', '2026-10-09T14:00:00Z', 'ok', 3)"""
         )
         c.commit()
         c.executescript((MIGRATIONS_DIR / "018_event_runs.sql").read_text())
@@ -474,8 +474,8 @@ class TestHaltedApprovals:
         calls: list[str] = []
         d = Dispatcher(
             conn,
-            RoutinesConfig.model_validate({"personas": {"director": {"trigger": "news"}}}),
-            handlers={"director": lambda ctx: calls.append("d") or JobResult(summary="x")},
+            RoutinesConfig.model_validate({"personas": {"research": {"trigger": "news"}}}),
+            handlers={"research": lambda ctx: calls.append("d") or JobResult(summary="x")},
             notifier=RecordingNotifier(),
             is_halted=lambda: True,
         )

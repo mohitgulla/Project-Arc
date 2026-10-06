@@ -29,8 +29,9 @@ __all__ = [
 class JournalPersona(StrEnum):
     """Who made the decision (a persona, a deterministic component, or the owner)."""
 
-    SWEEP = "sweep"
-    DIRECTOR = "director"
+    SCALP = "scalp"
+    SCOUT = "scout"  # D54: the slow-feed Scout (E13.7); pre-D54 "scout" rows read as SCALP
+    RESEARCH = "research"
     QUANT = "quant"
     RISK = "risk"
     INVESTOR = "investor"
@@ -79,9 +80,9 @@ class Choice(StrEnum):
 
 
 class ReasonCode(StrEnum):
-    # candidate (what the Director was offered)
-    SWEEP_CANDIDATE = "sweep_candidate"
-    # candidate: the Sweep's universe check (D28; arc.universe.guard)
+    # candidate (what Research was offered)
+    SCALP_CANDIDATE = "scalp_candidate"
+    # candidate: the Scalp's universe check (D28; arc.universe.guard)
     UNIVERSE_NOT_IN_UNIVERSE = "universe:not_in_universe"
     UNIVERSE_UNKNOWN_SYMBOL = "universe:unknown_symbol"
     UNIVERSE_ILLIQUID = "universe:illiquid"
@@ -92,14 +93,14 @@ class ReasonCode(StrEnum):
     UNIVERSE_TRENDING_ADMITTED = "universe:trending_admitted"
     UNIVERSE_TRENDING_SCREEN_FAIL = "universe:trending_screen_fail"
     UNIVERSE_TRENDING_SINGLE_INPUT = "universe:trending_single_input"
-    # shortlist (Director)
+    # shortlist (Research)
     SHORTLISTED = "shortlisted"
     NOT_RANKED = "not_ranked"
     NOT_A_CANDIDATE = "not_a_candidate"
     DUPLICATE = "duplicate"
     INVALID_FIELD = "invalid_field"
-    OVER_LIMIT = "over_limit"  # pre-E5.7 rows only: the Director no longer has a cap
-    DIRECTOR_EXCLUDED = "director_excluded"  # E5.7: excluded with a stated reason
+    OVER_LIMIT = "over_limit"  # pre-E5.7 rows only: Research no longer has a cap
+    RESEARCH_EXCLUDED = "research_excluded"  # E5.7: excluded with a stated reason
     MARKET_READ = "market_read"
     NO_CANDIDATES = "no_candidates"
     # structure (Quant + scanner)
@@ -131,18 +132,18 @@ class ReasonCode(StrEnum):
     # daily options order budget (E6.5, D32)
     BUDGET_RESTRICTIVE = "budget_restrictive"
     ORDER_BUDGET_EXHAUSTED = "order_budget_exhausted"
-    # E5.9 (D33): portfolio-aware Director, idea dedupe, explicit no-trade
+    # E5.9 (D33): portfolio-aware Research, idea dedupe, explicit no-trade
     DROP_CONCENTRATION = "drop_concentration"  # adds_concentration over a flagged threshold
     DROP_AT_CAP = "drop_at_cap"  # underlying already at the per-underlying max-loss cap
     DEDUPE_EXECUTED = "dedupe_executed"  # same idea is open / closed within the cooldown
     DEDUPE_PROPOSED = "dedupe_proposed"  # same idea proposed within the cooldown
     DEDUPE_REJECTED = "dedupe_rejected"  # same idea rejected by the owner within the cooldown
     DEDUPE_OVERRIDE = "dedupe_override"  # re-admitted: spot moved or the regime changed
-    DIRECTOR_NO_TRADE = "director_no_trade"  # the Director chose an empty shortlist
+    RESEARCH_NO_TRADE = "research_no_trade"  # Research chose an empty shortlist
     MARKET_UNCLEAR = "market_unclear"  # VIX / term structure / regime guard: no new opens
     MARKET_DATA_MISSING = "market_data_missing"  # no VIX reading: fail closed for new opens
-    PORTFOLIO_VIEW = "portfolio_view"  # the Director's read of the open book (noted)
-    THESIS_CHECK = "thesis_check"  # the Director's check of an open position's thesis
+    PORTFOLIO_VIEW = "portfolio_view"  # Research's read of the open book (noted)
+    THESIS_CHECK = "thesis_check"  # Research's check of an open position's thesis
     # E5.8 (D31): the 5-min loop found the same inputs as the last full run
     LOOP_NO_CHANGE = "loop_no_change"
     # sizing (D18)
@@ -291,7 +292,7 @@ class Reviewer(StrEnum):
 # Plain-language label per reason code, for owner-facing views (the tower's decision
 # trail, E8.7b). One entry per ReasonCode; a test pins full coverage.
 REASON_LABELS: dict[ReasonCode, str] = {
-    ReasonCode.SWEEP_CANDIDATE: "Sweep raised this idea",
+    ReasonCode.SCALP_CANDIDATE: "Scalp raised this idea",
     ReasonCode.UNIVERSE_NOT_IN_UNIVERSE: "Not in the tradable universe",
     ReasonCode.UNIVERSE_UNKNOWN_SYMBOL: "Unknown symbol",
     ReasonCode.UNIVERSE_ILLIQUID: "Options too illiquid",
@@ -300,14 +301,14 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.UNIVERSE_TRENDING_ADMITTED: "Added to the trending tier",
     ReasonCode.UNIVERSE_TRENDING_SCREEN_FAIL: "Trending, but options too illiquid",
     ReasonCode.UNIVERSE_TRENDING_SINGLE_INPUT: "Trending on one input only",
-    ReasonCode.SHORTLISTED: "Shortlisted by the Director",
-    ReasonCode.NOT_RANKED: "Not ranked by the Director",
-    ReasonCode.NOT_A_CANDIDATE: "Not one of the Sweep's candidates",
+    ReasonCode.SHORTLISTED: "Shortlisted by Research",
+    ReasonCode.NOT_RANKED: "Not ranked by Research",
+    ReasonCode.NOT_A_CANDIDATE: "Not one of the Scalp's candidates",
     ReasonCode.DUPLICATE: "Duplicate entry",
     ReasonCode.INVALID_FIELD: "Invalid field in the persona output",
     ReasonCode.OVER_LIMIT: "Over the shortlist limit",
-    ReasonCode.DIRECTOR_EXCLUDED: "Excluded by the Director",
-    ReasonCode.MARKET_READ: "Director's market read",
+    ReasonCode.RESEARCH_EXCLUDED: "Excluded by Research",
+    ReasonCode.MARKET_READ: "Research's market read",
     ReasonCode.NO_CANDIDATES: "No candidates to review",
     ReasonCode.CHOSEN_FROM_MENU: "Quant picked this structure from the menu",
     ReasonCode.MENU_NOT_CHOSEN: "Menu option not chosen",
@@ -339,11 +340,11 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.DEDUPE_PROPOSED: "Same idea already proposed recently",
     ReasonCode.DEDUPE_REJECTED: "Same idea rejected by the owner recently",
     ReasonCode.DEDUPE_OVERRIDE: "Re-admitted: spot or regime moved",
-    ReasonCode.DIRECTOR_NO_TRADE: "Director chose no trade",
+    ReasonCode.RESEARCH_NO_TRADE: "Research chose no trade",
     ReasonCode.MARKET_UNCLEAR: "Market unclear: no new opens",
     ReasonCode.MARKET_DATA_MISSING: "Market data missing: no new opens",
-    ReasonCode.PORTFOLIO_VIEW: "Director's read of the open book",
-    ReasonCode.THESIS_CHECK: "Director checked an open position's thesis",
+    ReasonCode.PORTFOLIO_VIEW: "Research's read of the open book",
+    ReasonCode.THESIS_CHECK: "Research checked an open position's thesis",
     ReasonCode.LOOP_NO_CHANGE: "Loop skipped: inputs unchanged",
     ReasonCode.SIZING_OK: "Sized at Risk's suggestion",
     ReasonCode.SIZING_CAPPED: "Size capped at 5% of equity",
@@ -443,7 +444,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
 def reason_label(code: str) -> str:
     """Plain-language label for a stored ``reason_code`` (unknown codes: humanised).
 
-    D54: a pre-rename stored code (``scout_candidate``) reads as its Sweep label.
+    D54: a pre-rename stored code (``scout_candidate``) reads as its Scalp label.
     """
     from arc.journal.legacy import reason_code as _current  # noqa: PLC0415 - leaf helper
 

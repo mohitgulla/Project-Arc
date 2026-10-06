@@ -34,7 +34,7 @@ ENV = {
     "ALPACA_EXP_API_KEY": "exp",
     "ALPACA_EXP_SECRET_KEY": "exp-s",
 }
-CHAIN = ["director", "quant", "risk", "propose", "execute"]
+CHAIN = ["research", "quant", "risk", "propose", "execute"]
 
 
 def _db(path: Path | str = ":memory:") -> sqlite3.Connection:
@@ -213,8 +213,8 @@ def test_fork_step_is_first_step_the_overlay_touches() -> None:
     assert fork_step(CHAIN, {}) == "propose"  # A/A: reuse up to the account tail
     assert fork_step(CHAIN, {"exits": {"x": 1}}) == "quant"
     assert fork_step(CHAIN, {"ranking": {"x": 1}}) == "propose"
-    assert fork_step(CHAIN, {"account_profiles": {"x": 1}}) == "director"
-    assert fork_step(["director", "mystery", "propose"], {}) == "mystery"
+    assert fork_step(CHAIN, {"account_profiles": {"x": 1}}) == "research"
+    assert fork_step(["research", "mystery", "propose"], {}) == "mystery"
 
 
 def test_arm_store_reads_control_overrides_plus_overlay(tmp_path: Path) -> None:

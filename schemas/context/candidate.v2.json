@@ -1,7 +1,7 @@
 {
   "$defs": {
     "CatalystType": {
-      "description": "Type of catalyst identified by the Sweep.",
+      "description": "Type of catalyst identified by the Scalp.",
       "enum": [
         "earnings",
         "macro",
@@ -24,7 +24,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Sweep candidate (E4.2).",
+  "description": "Scalp candidate (E4.2).",
   "properties": {
     "catalyst_date": {
       "anyOf": [

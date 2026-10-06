@@ -10,7 +10,7 @@ Everything is derived from the trade index (no randomness), anchored on the fixt
 - per trade: candidate, open proposal (``regime`` column), ``market_contexts`` analytics
   (managed + static exit model, entry slippage, fee breakdown, account profile), gate
   pass, approval (owner or auto), filled open execution + order + fill, the chain
-  (``routine_runs``) with a Director ``shortlist`` pick and the Quant's ``proposed``
+  (``routine_runs``) with a Research ``shortlist`` pick and the Quant's ``proposed``
   decision (stated confidence / PoP for calibration);
 - the close: a close proposal + filled close execution + ``exit:closed`` decision with
   the realised P&L (the scorecard's source), or a reconcile expiry settlement with the
@@ -253,7 +253,7 @@ def _trade(  # noqa: PLR0915 - one linear trade script
                                "analytics": _analytics(i, contracts, pop, profile)}),
         "created_at": to_db(opened),
     })  # fmt: skip
-    _decision(conn, f"dec-{tag}-dir", chain_run_id=chain, persona="director", stage="shortlist",
+    _decision(conn, f"dec-{tag}-dir", chain_run_id=chain, persona="research", stage="shortlist",
               subject=root, choice="selected", reason_code="shortlisted",
               confidence=round(0.5 + 0.08 * (i % 5), 2),
               at=to_db(opened - dt.timedelta(minutes=4)))  # fmt: skip

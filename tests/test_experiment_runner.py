@@ -97,7 +97,7 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
     assert set(stores) == {"treatment", "shadow_control"}
     conn.close()
 
-    # control's loop (Sweep + Director chain), then each arm's paired copy
+    # control's loop (Scalp + Research chain), then each arm's paired copy
     assert (
         _arc("propose", "--fixtures", "--fixture-set", "bullish", "--profile", "cash_debit",
              "--db", str(control), "--no-slack", "--lock-dir", str(tmp_path / "locks"))
@@ -105,7 +105,7 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
     )  # fmt: skip
     conn = _db(control)
     chain = conn.execute(
-        "SELECT chain_run_id FROM routine_runs WHERE job = 'director' AND chain_run_id IS NOT NULL"
+        "SELECT chain_run_id FROM routine_runs WHERE job = 'research' AND chain_run_id IS NOT NULL"
     ).fetchone()[0]
     assert (
         _arc("experiment", "pair", chain, "--fixtures", "--fixture-set", "bullish",
@@ -123,9 +123,9 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
             "SELECT job, status, summary FROM routine_runs ORDER BY step_index"
         ).fetchall()
         jobs = [r["job"] for r in runs]
-        # shared inputs: the Sweep ran once, in control; the arm never re-runs it
-        assert "sweep" not in jobs
-        assert jobs == ["director", "quant", "risk", "propose", "execute"]
+        # shared inputs: the Scalp ran once, in control; the arm never re-runs it
+        assert "scalp" not in jobs
+        assert jobs == ["research", "quant", "risk", "propose", "execute"]
         assert all(r["status"] == "ok" for r in runs)
         for r in runs[:3]:  # upstream of the fork: control's outputs, reused verbatim
             assert r["summary"].startswith(f"paired: reused {control_runs[r['job']]}")
@@ -141,7 +141,7 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
             assert m["arm_id"] == f"XP-1:{name}"
             assert p["paired_chain_run_id"] == chain and p["fork_step"] == "propose"
             assert p["git_sha"]
-        # the Director's decisions are control's, under the arm's chain id
+        # Research's decisions are control's, under the arm's chain id
         assert (
             arm.execute(
                 "SELECT count(*) FROM decisions WHERE chain_run_id = ?", (f"{chain}.{name}",)
@@ -180,7 +180,7 @@ def test_pair_skips_a_stale_control_chain(control: Path, tmp_path: Path) -> None
                 "--no-slack", "--lock-dir", str(tmp_path / "locks")) == 0  # fmt: skip
     conn = _db(control)
     chain = conn.execute(
-        "SELECT chain_run_id FROM routine_runs WHERE job = 'director' AND chain_run_id IS NOT NULL"
+        "SELECT chain_run_id FROM routine_runs WHERE job = 'research' AND chain_run_id IS NOT NULL"
     ).fetchone()[0]
     arm = _db(arm_stores(conn)["treatment"])
     res = pair_chain(

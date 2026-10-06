@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.journal.floor_exit import FloorExitFacts, floor_exit_facts, floor_exit_line
+from arc.journal.legacy import cutovers
 from arc.journal.models import (
     DecisionRecord,
     DecisionReview,
@@ -440,7 +441,7 @@ def explain(conn: sqlite3.Connection, ref: str) -> ExplainReport:
     loose = [d for d in j.decisions(chain_run_id=chain) if d.proposal_hash is None] if chain else []
     if chain is None and ref.startswith("run-"):  # a run outside a chain (reconcile, monitor)
         loose = [
-            JournalStore._row(r)
+            JournalStore._row(r, cutovers(conn))
             for r in conn.execute(
                 "SELECT * FROM decisions WHERE run_id = ? AND proposal_hash IS NULL "
                 "ORDER BY at, rowid",

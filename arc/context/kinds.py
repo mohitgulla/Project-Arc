@@ -16,12 +16,12 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic field
 from arc.features.snapshot import FeatureSnapshot
 from arc.models import Candidate, CatalystType, ChannelBrief, Proposal, Stance
-from arc.personas.schemas import AuditorOutput, DirectorOutput, QuantOutput, RiskOutput
+from arc.personas.schemas import AuditorOutput, QuantOutput, ResearchOutput, RiskOutput
 from arc.positions.evaluate import PositionReview
 from arc.positions.portfolio import MarketGuard, PortfolioContext
 from arc.universe.tiers import ActiveUniverse, UniverseTierPayload
@@ -29,7 +29,7 @@ from arc.universe.tiers import ActiveUniverse, UniverseTierPayload
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from arc.personas.schemas import DirectorRankedItem
+    from arc.personas.schemas import ResearchRankedItem
 
 _FORBID = ConfigDict(extra="forbid")
 
@@ -54,7 +54,7 @@ class ChannelBriefPayload(ChannelBrief):
 
 
 class CandidatePayload(Candidate):
-    """Sweep candidate (E4.2)."""
+    """Scalp candidate (E4.2)."""
 
     model_config = _FORBID
 
@@ -65,12 +65,12 @@ class RegimePayload(FeatureSnapshot):
     model_config = _FORBID
 
 
-class ShortlistPayload(DirectorOutput):
-    """Director ranked shortlist (v2, E5.7: every ranked name, exclusions, evidence).
+class ShortlistPayload(ResearchOutput):
+    """Research ranked shortlist (v2, E5.7: every ranked name, exclusions, evidence).
 
     ``budget`` is the Quant/Risk budget (``pipeline_max_shortlist``) in force when the
-    Director ran: the first ``budget`` ranked tickers get a structure; the rest stay
-    on the card as "Ranked, not structured". Never shown to the Director.
+    Research ran: the first ``budget`` ranked tickers get a structure; the rest stay
+    on the card as "Ranked, not structured". Never shown to Research.
     """
 
     model_config = _FORBID
@@ -82,15 +82,15 @@ class ShortlistPayload(DirectorOutput):
     )
     suppressed: list[str] = Field(
         default_factory=list,
-        description="Ideas (ticker stance structure) the dedupe held back from the Director",
+        description="Ideas (ticker stance structure) the dedupe held back from Research",
     )
 
-    def budgeted(self) -> list[DirectorRankedItem]:
+    def budgeted(self) -> list[ResearchRankedItem]:
         """The ranked items inside the Quant/Risk budget (all of them when unset)."""
         ranked = sorted(self.shortlist, key=lambda i: i.rank)
         return ranked if self.budget is None else ranked[: self.budget]
 
-    def over_budget(self) -> list[DirectorRankedItem]:
+    def over_budget(self) -> list[ResearchRankedItem]:
         ranked = sorted(self.shortlist, key=lambda i: i.rank)
         return [] if self.budget is None else ranked[self.budget :]
 
@@ -134,7 +134,7 @@ class PositionReviewPayload(PositionReview):
 
 
 class PortfolioContextPayload(PortfolioContext):
-    """E5.9 (D33): the Director's deterministic view of the open book (subject ``session``)."""
+    """E5.9 (D33): Research's deterministic view of the open book (subject ``session``)."""
 
     model_config = _FORBID
 
@@ -148,11 +148,11 @@ class JournalPayload(AuditorOutput):
 class NoteTopic(enum.StrEnum):
     """What a :class:`NotePayload` is about (D27)."""
 
-    THESIS = "thesis"  # why a trade/ticker/idea (Director, Quant)
-    REGIME_VIEW = "regime_view"  # market/sector regime read (Director, Sweep)
-    PORTFOLIO_VIEW = "portfolio_view"  # E5.9: the Director's read of the open book
+    THESIS = "thesis"  # why a trade/ticker/idea (Research, Quant)
+    REGIME_VIEW = "regime_view"  # market/sector regime read (Research, Scalp)
+    PORTFOLIO_VIEW = "portfolio_view"  # E5.9: Research's read of the open book
     THESIS_CHECK = "thesis_check"  # E5.9: is an open position's thesis still intact?
-    OBSERVATION = "observation"  # informational: news theme, scan summary (Sweep)
+    OBSERVATION = "observation"  # informational: news theme, scan summary (Scalp)
     RISK_FLAG = "risk_flag"  # portfolio/calendar concern (Risk)
     LESSON = "lesson"  # post-trade learning (Auditor)
     EXECUTION = "execution"  # fill/market-conditions note (Investor)
@@ -183,13 +183,23 @@ class NotePayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    persona: Literal["sweep", "scout", "director", "quant", "risk", "investor", "auditor"] = Field(
+    persona: Literal[
+        "scalp", "scout", "research", "quant", "risk", "investor", "auditor", "broker", "ops"
+    ] = Field(
         ...,
         description=(
-            "Author. D54: 'scout' before the rename cutover is the Sweep (legacy rows); "
-            "after it, the slow-feed Scout persona (E5.13)."
+            "Author. D54: 'scout' before the rename cutover is the Scalp (legacy rows); "
+            "after it, the slow-feed Scout persona (E5.13). D56: stored v1 'sweep' / "
+            "'director' notes read as 'scalp' / 'research'."
         ),
     )
+
+    @field_validator("persona", mode="before")
+    @classmethod
+    def _legacy_persona(cls, v: object) -> object:
+        # D56 (E13.1): v1 notes were written as 'sweep' / 'director' (arc.journal.legacy).
+        return {"sweep": "scalp", "director": "research"}.get(v, v) if isinstance(v, str) else v
+
     topic: NoteTopic
     horizon: NoteHorizon = NoteHorizon.SESSION
     stance: Stance | None = None
@@ -478,7 +488,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("position_review", PositionReviewPayload, schema_version=2),  # E6.4a: floor window
     KindSpec("portfolio_context", PortfolioContextPayload),  # E5.9 (D33)
     KindSpec("journal", JournalPayload),
-    KindSpec("note", NotePayload),
+    KindSpec("note", NotePayload, schema_version=2),  # E13.1 (D56): scalp/research/broker/ops
     # E4.5 (D30): story digests + options-trading data sources
     KindSpec("story", StoryPayload),
     KindSpec("vol_term", VolTermPayload),

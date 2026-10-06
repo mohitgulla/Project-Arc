@@ -184,7 +184,7 @@ describe("run detail helpers", () => {
     const h = "0123456789abcdef0123456789abcdef01234567";
     expect(isHashLike(h)).toBe(true);
     expect(isHashLike("sha256:" + h)).toBe(true);
-    expect(isHashLike("director")).toBe(false);
+    expect(isHashLike("research")).toBe(false);
     expect(isHashLike("a b c d e f 0 1 2 3 4 5 6")).toBe(false);
     expect(shortHash(h)).toBe("0123456789…4567");
     expect(shortHash("short")).toBe("short");

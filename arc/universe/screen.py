@@ -1,4 +1,4 @@
-"""Deterministic liquidity screen for non-seed Sweep candidates (D28).
+"""Deterministic liquidity screen for non-seed Scalp candidates (D28).
 
 :func:`screen_liquidity` is a **pure function** of the measured
 :class:`LiquidityMetrics` and the :class:`LiquidityThresholds` from

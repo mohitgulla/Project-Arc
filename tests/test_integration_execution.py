@@ -182,7 +182,7 @@ def _gate_approve_execute(
         kind="proposal",
         subject="SPY",
         payload=proposal,
-        produced_by="director",
+        produced_by="research",
         ttl="1h",
         run_id=run_id,
         now=now,

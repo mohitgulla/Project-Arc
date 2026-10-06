@@ -33,7 +33,7 @@
     {
       "ticker": "BRK.B",
       "rank": 4,
-      "thesis": "Fixture: not among the offline Sweep candidates, so the pipeline drops it.",
+      "thesis": "Fixture: not among the offline Scalp candidates, so the pipeline drops it.",
       "regime_context": "Fixture: uptrend.",
       "suggested_structure_type": "vertical_spread",
       "stance": "bullish",
@@ -44,5 +44,5 @@
     {"ticker": "PLTR", "reason": "Fixture: new open-universe name on one source only; wait for a second source."}
   ],
   "market_regime": "risk_on",
-  "session_notes": "Fixture Director reply (offline run)."
+  "session_notes": "Fixture Research reply (offline run)."
 }

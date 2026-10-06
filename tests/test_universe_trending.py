@@ -43,9 +43,9 @@ from arc.universe.trending import (
     rank_normalise,
     rank_trending,
     run_trending,
+    scalp_input,
     screen_pool,
     stocktwits_input,
-    sweep_input,
 )
 from arc.utils.calendar import ET
 
@@ -287,7 +287,7 @@ class TestConfig:
         with pytest.raises(ValueError):
             TrendingInput.model_validate({"type": "alpaca_movers"})  # never a ranking input
         with pytest.raises(ValueError, match="lower-case"):
-            _tcfg(**{"Bad-Name": {"type": "sweep"}})
+            _tcfg(**{"Bad-Name": {"type": "scalp"}})
         assert TrendingInput(type="news", max_age="3d").max_age == dt.timedelta(days=3)
         with pytest.raises(TrendingError, match="missing `trending:`"):
             TrendingConfig.from_options({})
@@ -298,7 +298,7 @@ class TestConfig:
         assert kind.value == "source" and [t.strftime("%H:%M") for t in spec.schedule] == ["08:45"]
         assert str(r.context_policy("universe_tier", "universe.trending").ttl) == "1 session"
         cfg = TrendingConfig.from_options(spec.options)
-        assert list(cfg.enabled) == ["news", "reddit", "stocktwits", "sweep"]
+        assert list(cfg.enabled) == ["news", "reddit", "stocktwits", "scalp"]
         assert cfg.pool == 40 and cfg.min_inputs == 2
         assert cfg.inputs["reddit"].urls == [APE1, APE2]
         assert cfg.inputs["stocktwits"].urls == [ST_URL]
@@ -442,7 +442,7 @@ class TestStoreInputs:
     NEWS = TrendingInput(
         type="news", lookback_sessions=3, max_age="3d", exclude_sources=["earnings"]
     )
-    SWEEP = TrendingInput(type="sweep", lookback_sessions=3, max_age="3d")
+    SCALP = TrendingInput(type="scalp", lookback_sessions=3, max_age="3d")
 
     def test_news_distinct_sources_edgar_one_and_lookback(self, conn: sqlite3.Connection) -> None:
         _doc(conn, 1, "$NKE beats; LULU slips", et(2026, 10, 2, 10))
@@ -483,15 +483,15 @@ class TestStoreInputs:
         assert res.status == "stale" and "older than" in (res.error or "")
         assert res.scores() == {}
 
-    def test_sweep_weighted_by_corroboration(self, conn: sqlite3.Connection) -> None:
+    def test_scalp_weighted_by_corroboration(self, conn: sqlite3.Connection) -> None:
         _cand(conn, "NKE", dt.date(2026, 10, 2), 3)
         _cand(conn, "NKE", dt.date(2026, 10, 1), 0)  # counts as 1
         _cand(conn, "TSM", dt.date(2026, 10, 2), 2)
         _cand(conn, "VST", dt.date(2026, 9, 30), 9)  # outside 3 sessions
-        res = sweep_input("sweep", self.SWEEP, conn=conn, now=NOW)
+        res = scalp_input("scalp", self.SCALP, conn=conn, now=NOW)
         assert res.raw == {"NKE": 4.0, "TSM": 2.0}
-        assert res.detail["NKE"] == "sweep 2d (corr 4)"
-        empty = sweep_input("sweep", self.SWEEP, conn=conn, now=et(2026, 10, 20, 8))
+        assert res.detail["NKE"] == "scalp 2d (corr 4)"
+        empty = scalp_input("scalp", self.SCALP, conn=conn, now=et(2026, 10, 20, 8))
         assert empty.status in {"stale", "empty"} and not empty.live
 
 
@@ -547,19 +547,19 @@ class TestRun:
         res = _run(conn)
         assert all(i.live for i in res.inputs)
         assert {r.ticker for r in res.excluded} == {"NVDA", "MU", "SPY"}
-        # NKE: news+reddit+sweep; TSM: news+reddit+stocktwits; OKLO: news+reddit;
-        # PCVX: reddit+sweep (fails the screen); WULF: stocktwits only
+        # NKE: news+reddit+scalp; TSM: news+reddit+stocktwits; OKLO: news+reddit;
+        # PCVX: reddit+scalp (fails the screen); WULF: stocktwits only
         assert [r.ticker for r in res.single_input] == ["WULF"]
         assert set(res.tickers[:2]) == {"TSM", "NKE"} and "OKLO" in res.tickers
         assert "PCVX" not in res.tickers
         nke = next(r for r in res.members if r.ticker == "NKE")
-        assert nke.reason(res.order).startswith("2 news sources, reddit #1 (+4 24h), sweep 1d")
+        assert nke.reason(res.order).startswith("2 news sources, reddit #1 (+4 24h), scalp 1d")
         pay = build_payload(res, now=NOW)
         assert pay.tier is Tier.TRENDING and pay.partial is False
         src = {m.ticker: m.source for m in pay.members}
-        assert src["TSM"] == "news+reddit+stocktwits" and src["NKE"] == "news+reddit+sweep"
+        assert src["TSM"] == "news+reddit+stocktwits" and src["NKE"] == "news+reddit+scalp"
         assert "score" in pay.members[0].reason
-        assert pay.source == "rules:news+reddit+stocktwits+sweep"
+        assert pay.source == "rules:news+reddit+stocktwits+scalp"
 
     def test_one_failed_input_contributes_nothing(self, conn: sqlite3.Connection) -> None:
         _seed_store(conn)
@@ -586,7 +586,7 @@ class TestRun:
         inputs = dict(opts["inputs"])
         inputs.pop("stocktwits")
         inputs["reddit_p1"] = {"type": "apewisdom", "urls": [APE1]}
-        inputs["sweep"] = {**inputs["sweep"], "enabled": False}
+        inputs["scalp"] = {**inputs["scalp"], "enabled": False}
         cfg = TrendingConfig.model_validate({**opts, "inputs": inputs})
         assert list(cfg.enabled) == ["news", "reddit", "reddit_p1"]
         res = run_trending(
@@ -667,7 +667,7 @@ def test_handler_end_to_end(conn: sqlite3.Connection, wired: dict[str, bytes | E
     notifier = RecordingNotifier()
     [out] = _disp(conn, notifier).run_job("universe.trending", NOW, reason="manual", now=NOW)
     assert out.status == "ok", out.summary
-    assert out.metrics["inputs"] == dict.fromkeys(["news", "reddit", "stocktwits", "sweep"], "ok")
+    assert out.metrics["inputs"] == dict.fromkeys(["news", "reddit", "stocktwits", "scalp"], "ok")
     assert any("Trending tier:" in t and "first list" in t for _, t in notifier.posts)
     entry = ContextStore(conn).query(as_of=NOW, kinds=["universe_tier"], subjects=["trending"])[0]
     assert entry.expires_at is not None and entry.expires_at - NOW < dt.timedelta(days=1)

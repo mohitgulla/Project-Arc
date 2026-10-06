@@ -18,7 +18,7 @@
 # structure whose managed Net EV (E2.4, managed exits, after all costs) is
 # <= min_managed_net_ev, journalled `net_ev_floor`. Only that floor goes live; the
 # PoP and cost-ratio filters stay backtest-only. Reason: NFLX was proposed at
-# -$0.94/unit on 2026-10-01 and Director prose did not bind (Analyst A-1).
+# -$0.94/unit on 2026-10-01 and Research prose did not bind (Analyst A-1).
 #
 # `backtest` configures `arc backtest rank` (arc/backtest/ranking.py).
 

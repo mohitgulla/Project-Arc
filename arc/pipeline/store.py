@@ -24,7 +24,7 @@ def sha256(text: str) -> str:
 
 
 class PersonaCallRepo:
-    """``persona_calls``: one row per Director/Quant/Risk LLM call (verbatim reply kept).
+    """``persona_calls``: one row per Research/Quant/Risk LLM call (verbatim reply kept).
 
     Since E7.4 the row also keeps the full prompt, the non-context inputs needed
     to rebuild it (``arc journal replay``), token counts, latency and cost.

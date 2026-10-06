@@ -1,4 +1,4 @@
-"""Source registry + fair Sweep selection (E4.5 / D30, categories D47). Deterministic.
+"""Source registry + fair Scalp selection (E4.5 / D30, categories D47). Deterministic.
 
 Every ingest source is a named entry built from ``config/routines.yaml``:
 
@@ -14,19 +14,19 @@ Categories (D47, D49): every source belongs to one of six
 weighted equally** (``weight: 1`` each); a source's ``weight`` is its share *inside*
 its category, so adding a feed splits its category's share instead of growing it.
 
-Budget: ``sweep_doc_budget`` docs per Sweep run are shared by a **two-level weighted
+Budget: ``scalp_doc_budget`` docs per Scalp run are shared by a **two-level weighted
 deficit round-robin**: each pick goes first to the category furthest below its
 share (``picked / category weight`` smallest; ties by name), then, inside that
 category, to the source furthest below its share. Newest doc first within a source.
 A source that runs out of docs (or hits ``max_docs_per_run``) stops competing, and
 a category with no fresh docs left stops competing, so unused share flows to the
-others. Only :data:`~arc.context.categories.SWEEP_CATEGORIES` take part; options
-data and the two YouTube categories reach the Director as typed context (D45, D47,
+others. Only :data:`~arc.context.categories.SCALP_CATEGORIES` take part; options
+data and the two YouTube categories reach Research as typed context (D45, D47,
 D49). A YouTube channel declares its own category (``youtube_macro`` or
 ``youtube_micro``); channels split their category's share (:meth:`share_in_category`).
 
 Freshness: a doc older than its source's ``max_age`` (default: its category's) is
-never selected; the Sweep closes it ``skipped_stale``.
+never selected; the Scalp closes it ``skipped_stale``.
 
 Fairness invariant (property-tested): after selection, a category that still has
 unselected docs under its caps is never more than one pick behind any other
@@ -49,7 +49,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from arc.context.categories import (
     CATEGORY_ORDER,
     DEFAULT_CATEGORIES,
-    SWEEP_CATEGORIES,
+    SCALP_CATEGORIES,
     CategorySpec,
     SourceCategory,
     earliest_ttl,
@@ -66,7 +66,7 @@ if TYPE_CHECKING:
 log = structlog.get_logger()
 
 __all__ = [
-    "SWEEP_EXCLUDED",
+    "SCALP_EXCLUDED",
     "CategoryMix",
     "FeedSpec",
     "Selection",
@@ -81,20 +81,20 @@ DEFAULT_CATEGORY: Mapping[str, SourceCategory] = {
     "rss": SourceCategory.MARKET_NEWS,
     "edgar": SourceCategory.COMPANY_DATA,
     "earnings": SourceCategory.COMPANY_DATA,
-    # A removed channel's legacy rows (never Sweep-read either way, D45); a configured
+    # A removed channel's legacy rows (never Scalp-read either way, D45); a configured
     # channel always resolves through its own ``category:`` (D49).
     "youtube": SourceCategory.YOUTUBE_MICRO,
 }
 UNKNOWN_CATEGORY = SourceCategory.MARKET_NEWS
-# D45/D47: categories the 30-min Sweep never reads (typed context only). The registry
+# D45/D47: categories the 30-min Scalp never reads (typed context only). The registry
 # still lists their sources (labels, the Tower's sources page).
-SWEEP_EXCLUDED: frozenset[SourceCategory] = frozenset(set(SourceCategory) - SWEEP_CATEGORIES)
+SCALP_EXCLUDED: frozenset[SourceCategory] = frozenset(set(SourceCategory) - SCALP_CATEGORIES)
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_.]*$")
 STALE_GRACE = _dt.timedelta(hours=2)  # D47 context TTL: max_age + 2h (capped at the policy)
 
 AgeBasis = Literal["published", "ingested"]
-Feed = Literal["sweep", "scout"]
-FEEDS: tuple[Feed, ...] = ("sweep", "scout")
+Feed = Literal["scalp", "scout"]
+FEEDS: tuple[Feed, ...] = ("scalp", "scout")
 
 
 def registered_domain(host: str) -> str:
@@ -120,11 +120,11 @@ class FeedSpec(BaseModel):
     max_docs_per_run: int | None = Field(None, ge=0)
     hosts: list[str] = Field(default_factory=list)
     max_age: Ttl | None = None
-    # D54: the feed's Director feed (default: the job's ``feed:``, else ``sweep``).
+    # D54: the feed's Research feed (default: the job's ``feed:``, else ``scalp``).
     feed: Feed | None = None
     # D55 (E4.11): title regexes (case-insensitive ``re.search``). An entry whose title
     # matches any ``title_exclude``, or (when ``title_include`` is set) none of
-    # ``title_include``, is stored closed ``sweep_status='filtered'`` (never read).
+    # ``title_include``, is stored closed ``scalp_status='filtered'`` (never read).
     title_exclude: list[str] = Field(default_factory=list)
     title_include: list[str] = Field(default_factory=list)
 
@@ -194,9 +194,9 @@ class SourceSpec:
     channel: str | None = None  # youtube channel id / url
     max_age: Ttl | None = None  # per-source override; None = the category's
     age_basis: AgeBasis = "published"  # D47: earnings rows age from the latest pull
-    # D54: which Director feed the source belongs to (by refresh cadence). Only
-    # ``sweep`` sources are read by the 30-min Sweep and share ``sweep_doc_budget``.
-    feed: Feed = "sweep"
+    # D54: which Research feed the source belongs to (by refresh cadence). Only
+    # ``scalp`` sources are read by the 30-min Scalp and share ``scalp_doc_budget``.
+    feed: Feed = "scalp"
 
     @property
     def display(self) -> str:
@@ -236,12 +236,14 @@ def _age_basis(raw: Any) -> AgeBasis:
 
 
 def _feed(raw: Any) -> Feed:
-    """D54: a source's ``feed:`` (default ``sweep``; config load validates it vs cadence)."""
-    if raw is None or raw == "sweep":
-        return "sweep"
+    """D54: a source's ``feed:`` (default ``scalp``; config load validates it vs cadence).
+
+    D56: the pre-rename ``feed: sweep`` still reads as ``scalp`` for one release."""
+    if raw is None or raw in ("scalp", "sweep"):
+        return "scalp"
     if raw == "scout":
         return "scout"
-    msg = f"feed must be 'sweep' or 'scout', got {raw!r}"
+    msg = f"feed must be 'scalp' or 'scout', got {raw!r}"
     raise ValueError(msg)
 
 
@@ -338,12 +340,12 @@ class SourceRegistry:
                 feed=feed_of,
             )
         cats = {c: routines.category_spec(c) for c in SourceCategory}
-        sweep = routines.personas.get("sweep")
-        legacy = (sweep.options.get("category_weights") if sweep is not None else None) or {}
+        scalp = routines.personas.get("scalp")
+        legacy = (scalp.options.get("category_weights") if scalp is not None else None) or {}
         if legacy:  # pre-D47 knob, aliased for one release
             log.warning("sources.category_weights_alias", superseded_by="categories.<c>.weight")
             for raw_cat, w in legacy.items():
-                c = parse_category(raw_cat, where="personas.sweep.category_weights")
+                c = parse_category(raw_cat, where="personas.scalp.category_weights")
                 if float(w) < 0:
                     msg = "category_weights must be >= 0"
                     raise ValueError(msg)
@@ -361,18 +363,18 @@ class SourceRegistry:
     def category_weights(
         self, present: Iterable[SourceCategory] | None = None
     ) -> dict[SourceCategory, float]:
-        """D47 category share (sums to 1) over Sweep categories that *have docs*.
+        """D47 category share (sums to 1) over Scalp categories that *have docs*.
 
-        *present* = categories with fresh docs this run; default: every Sweep
+        *present* = categories with fresh docs this run; default: every Scalp
         category that has at least one registered source. A category absent from
         *present*, or with weight 0, gets no share (it flows to the others).
         """
         have = {
             s.category
             for s in self.sources.values()
-            if s.category in SWEEP_CATEGORIES and s.feed == "sweep"
+            if s.category in SCALP_CATEGORIES and s.feed == "scalp"
         }
-        cats = have if present is None else set(present) & SWEEP_CATEGORIES
+        cats = have if present is None else set(present) & SCALP_CATEGORIES
         raw = {c: self.category_spec(c).weight for c in cats}
         raw = {c: w for c, w in raw.items() if w > 0}
         total = sum(raw.values())
@@ -386,13 +388,13 @@ class SourceRegistry:
         """Category share × source share within the category (sums to 1).
 
         The single place category shares are computed (the Tower calls it too).
-        Only Sweep-readable sources get a weight; options data and video never
+        Only Scalp-readable sources get a weight; options data and video never
         take a share of the doc budget (D45, D47).
         """
         cat_w = self.category_weights(present)
         by_cat: dict[SourceCategory, list[SourceSpec]] = {}
         for s in self.sources.values():
-            if s.category in cat_w and s.feed == "sweep":  # D54: slow feed draws no budget
+            if s.category in cat_w and s.feed == "scalp":  # D54: slow feed draws no budget
                 by_cat.setdefault(s.category, []).append(s)
         out: dict[str, float] = {}
         for c, ss in by_cat.items():
@@ -585,7 +587,7 @@ def format_source_mix(
 
 @dataclass(frozen=True)
 class CategoryMix:
-    """D47 Sweep card row: one category's share and its sources' accounting.
+    """D47 Scalp card row: one category's share and its sources' accounting.
 
     ``sources`` = ``[(label, picked, over_budget, stale)]`` in registry order.
     """
@@ -603,7 +605,7 @@ def category_mix(
     *,
     stale: Mapping[str, int] | None = None,
 ) -> list[CategoryMix]:
-    """The Sweep card's grouped source mix (fixed category order, Sweep categories only).
+    """The Scalp card's grouped source mix (fixed category order, Scalp categories only).
 
     A source shows up when it had fresh docs or stale ones this run; a category
     shows up when any of its sources did.
@@ -621,7 +623,7 @@ def category_mix(
     keys += sorted(k for k in {*avail, *stale} if k not in keys)
     out: list[CategoryMix] = []
     for cat in CATEGORY_ORDER:
-        if cat not in SWEEP_CATEGORIES:
+        if cat not in SCALP_CATEGORIES:
             continue
         rows = [
             (

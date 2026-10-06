@@ -30,6 +30,7 @@ from arc.journal.reasons import STAGE_ORDER, Choice, JournalPersona, ReasonCode,
 
 if TYPE_CHECKING:
     import datetime as _dt
+    from collections.abc import Mapping
 
 __all__ = ["JournalStore", "Recorder", "ReviewCitationError"]
 
@@ -137,25 +138,26 @@ class JournalStore:
             sql += " AND at >= ?"
             params.append(to_db(since))
         rows = self.conn.execute(sql + " ORDER BY at, rowid", params).fetchall()
-        recs = [self._row(r) for r in rows]
+        cuts = legacy.cutovers(self.conn)
+        recs = [self._row(r, cuts) for r in rows]
         order = {s: i for i, s in enumerate(STAGE_ORDER)}
         return sorted(recs, key=lambda d: order[d.stage])  # stable: time order within a stage
 
     def get(self, decision_id: str) -> DecisionRecord | None:
         row = self.conn.execute("SELECT * FROM decisions WHERE id = ?", (decision_id,)).fetchone()
-        return self._row(row) if row else None
+        return self._row(row, legacy.cutovers(self.conn)) if row else None
 
     @staticmethod
-    def _row(row: sqlite3.Row) -> DecisionRecord:
+    def _row(row: sqlite3.Row, cuts: Mapping[str, _dt.datetime]) -> DecisionRecord:
         at = from_db(row["at"])
-        # D54: pre-rename rows say persona 'scout' / reason 'scout_candidate' (the Sweep).
-        # A journal row has no store handle here, so 'scout' always maps to the Sweep until
-        # the new Scout persona (E5.13) adds its own enum value and cutover-aware read.
+        # D54/D56: rows keep the persona / reason code of their time ("scout" before 022
+        # and "sweep" before 024 are the Scalp, "director" is Research); arc.journal.legacy
+        # maps them, so a "scout" row after the 022 cutover stays the slow-feed Scout.
         return DecisionRecord(
             id=row["id"],
             chain_run_id=row["chain_run_id"],
             run_id=row["run_id"],
-            persona=JournalPersona(legacy.persona_key(row["persona"], at, None)),
+            persona=JournalPersona(legacy.persona_key(row["persona"], at, cuts)),
             stage=Stage(row["stage"]),
             subject=row["subject"],
             choice=Choice(row["choice"]),
@@ -424,7 +426,11 @@ class JournalStore:
                WHERE r.chain_run_id = ? ORDER BY c.created_at, c.rowid""",
             (chain_run_id,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        cuts = legacy.cutovers(self.conn)  # D56: a pre-rename "director" call is Research
+        out = [dict(r) for r in rows]
+        for c in out:
+            c["persona"] = legacy.persona_key(str(c["persona"]), from_db(c["created_at"]), cuts)
+        return out
 
 
 class Recorder:

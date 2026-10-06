@@ -13,13 +13,13 @@ same fingerprint was recently
 
 Cooldowns are trading sessions (config) and are multiplied in the D32 restrictive
 tier. A **material change** re-admits the idea: spot moved at least
-``dedupe_reprice_move_pct`` since the last one, or the Director's market regime
+``dedupe_reprice_move_pct`` since the last one, or Research's market regime
 changed. Everything here is deterministic and reads only the audit DB.
 
 Two call sites (:mod:`arc.pipeline.steps`):
 
-* the Director stage, by ``(ticker, stance)`` prefix before the LLM call —
-  suppressed names are listed to the Director as "recently suggested / held" and
+* Research stage, by ``(ticker, stance)`` prefix before the LLM call —
+  suppressed names are listed to Research as "recently suggested / held" and
   names with an open structure in the same stance are removed outright;
 * propose, by the full fingerprint, as the final check.
 """
@@ -62,7 +62,7 @@ log = structlog.get_logger(__name__)
 _FORBID = ConfigDict(extra="forbid")
 _BUCKET_PCT = Decimal("0.01")
 
-# Structure kinds to the Director's structure-type vocabulary (steps.STRUCTURE_TYPES).
+# Structure kinds to Research's structure-type vocabulary (steps.STRUCTURE_TYPES).
 STRUCTURE_TYPE_OF_KIND: dict[StructureKind, str] = {
     StructureKind.LONG_CALL: "long_call",
     StructureKind.LONG_PUT: "long_put",
@@ -107,7 +107,7 @@ class IdeaFingerprint(BaseModel):
         )
 
     def prefix(self) -> str:
-        """The Director-stage key: ``ticker|stance``."""
+        """Research-stage key: ``ticker|stance``."""
         return f"{self.ticker}|{self.stance.value}"
 
     @classmethod

@@ -134,18 +134,23 @@ class ExtractionConfig(BaseModel):
 class EarningsConfig(BaseModel):
     model_config = _FORBID
 
-    sweep: Literal["seed", "all"] = "seed"
+    scalp: Literal["seed", "all"] = "seed"
 
     @model_validator(mode="before")
     @classmethod
     def _legacy_scout_key(cls, data: object) -> object:
-        """D54: ``earnings.scout`` (pre-rename) loads as ``earnings.sweep`` for one release."""
-        if isinstance(data, dict) and "scout" in data:
-            data = dict(data)
-            old = data.pop("scout")
-            if "sweep" not in data:
-                data["sweep"] = old
-            log.warning("universe.config_alias", old="earnings.scout", new="earnings.sweep")
+        """``earnings.scout`` (D54) and ``earnings.sweep`` (D56) load as ``earnings.scalp``."""
+        if isinstance(data, dict):
+            for old_key in ("sweep", "scout"):
+                if old_key not in data:
+                    continue
+                data = dict(data)
+                old = data.pop(old_key)
+                if "scalp" not in data:
+                    data["scalp"] = old
+                log.warning(
+                    "universe.config_alias", old=f"earnings.{old_key}", new="earnings.scalp"
+                )
         return data
 
 

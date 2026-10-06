@@ -16,12 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 from arc.utils.calendar import ET
 
 # ---------------------------------------------------------------------------
-# Candidate (from Sweep persona)
+# Candidate (from Scalp persona)
 # ---------------------------------------------------------------------------
 
 
 class CatalystType(StrEnum):
-    """Type of catalyst identified by the Sweep."""
+    """Type of catalyst identified by the Scalp."""
 
     EARNINGS = "earnings"
     MACRO = "macro"
@@ -39,9 +39,9 @@ class Stance(StrEnum):
 
 
 class Candidate(BaseModel):
-    """A trading candidate surfaced by the Sweep persona.
+    """A trading candidate surfaced by the Scalp persona.
 
-    Funnel discipline (E4.2): this is the only Sweep artefact that flows
+    Funnel discipline (E4.2): this is the only Scalp artefact that flows
     downstream to the scanner. It deliberately carries **no free text** —
     every field is an enum, a symbol, a number, a date or a source URL.
     Persona rationale stays in the audit store and never leaves it.
@@ -201,7 +201,7 @@ class Proposal(BaseModel):
         "credit). None means the structure's net_debit_credit (mid).",
     )
     earnings_play: bool = Field(
-        False, description="Director flagged this as a deliberate earnings play (PLAN §5)."
+        False, description="Research flagged this as a deliberate earnings play (PLAN §5)."
     )
     risk_concurs: bool = Field(
         False, description="Risk persona concurs with the earnings-play flag (PLAN §5)."

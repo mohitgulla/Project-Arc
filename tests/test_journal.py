@@ -135,13 +135,13 @@ def test_sizing_codes(kwargs: dict[str, Any], code: str) -> None:
 
 
 class TestPipelineRecords:
-    def test_director_selected_rejected_and_not_ranked(self, conn: sqlite3.Connection) -> None:
+    def test_research_selected_rejected_and_not_ranked(self, conn: sqlite3.Connection) -> None:
         rows = _codes(conn, Stage.SHORTLIST)
         assert ("SPY", "selected", "shortlisted") in rows
         assert ("NVDA", "selected", "shortlisted") in rows
         assert ("XOM", "selected", "shortlisted") in rows
         assert ("BRK.B", "rejected", "not_a_candidate") in rows
-        assert ("PLTR", "rejected", "director_excluded") in rows  # E5.7: with its reason
+        assert ("PLTR", "rejected", "research_excluded") in rows  # E5.7: with its reason
         assert ("session", "noted", "market_read") in rows
 
     def test_quant_records_every_menu_alternative(self, conn: sqlite3.Connection) -> None:
@@ -170,7 +170,7 @@ class TestPipelineRecords:
         assert chain and chain.startswith("chain-")
         decisions = j.decisions(chain_run_id=chain)
         assert all(d.inputs_snapshot_id for d in decisions if d.stage is not Stage.APPROVAL)
-        llm = [d for d in decisions if d.persona.value in ("director", "quant", "risk")]
+        llm = [d for d in decisions if d.persona.value in ("research", "quant", "risk")]
         call_ids = {c["id"] for c in j.persona_calls(chain)}
         assert llm and all(d.persona_call_id in call_ids for d in llm)
 
@@ -207,7 +207,7 @@ class TestPipelineRecords:
                 self.conn.commit()
 
         ctx = Ctx()
-        steps.director(ctx, None)  # type: ignore[arg-type]
+        steps.research(ctx, None)  # type: ignore[arg-type]
         (d,) = JournalStore(ctx.conn).decisions()
         assert (d.choice, d.reason_code) == (Choice.NO_TRADE, ReasonCode.NO_CANDIDATES)
 
@@ -439,11 +439,11 @@ def test_attribute_lifecycle(conn: sqlite3.Connection) -> None:
 
 
 def test_calibration_buckets() -> None:
-    pts = [("quant", 0.62, True), ("quant", 0.65, False), ("director", 0.9, False)]
+    pts = [("quant", 0.62, True), ("quant", 0.65, False), ("research", 0.9, False)]
     by = {(b.persona, b.lo): b for b in calibration(pts)}
     q = by[("quant", 0.6)]
     assert q.n == 2 and q.hit_rate == 0.5 and q.gap == pytest.approx(0.5 - 0.635)
-    assert by[("director", 0.8)].gap == pytest.approx(-0.9)
+    assert by[("research", 0.8)].gap == pytest.approx(-0.9)
     with pytest.raises(ValueError):
         calibration(pts, buckets=0)
 
@@ -502,7 +502,7 @@ def test_show_tree_orders_stages(conn: sqlite3.Connection) -> None:
 
 def test_replay_matches_recorded_prompts(conn: sqlite3.Connection) -> None:
     res = replay(conn, _phash(conn))
-    assert [r.persona for r in res] == ["director", "quant", "risk"]
+    assert [r.persona for r in res] == ["research", "quant", "risk"]
     assert all(r.ok for r in res), res
 
 
@@ -510,10 +510,10 @@ def test_replay_detects_a_changed_snapshot_input(conn: sqlite3.Connection) -> No
     conn.execute("DROP TRIGGER IF EXISTS persona_calls_no_update")
     conn.execute(
         "UPDATE persona_calls SET prompt_inputs = json_set(prompt_inputs, '$.scan_date', "
-        "'1999-01-01') WHERE persona = 'director'"
+        "'1999-01-01') WHERE persona = 'research'"
     )
     res = {r.persona: r for r in replay(conn, _phash(conn))}
-    assert not res["director"].ok and "MISMATCH" in res["director"].detail
+    assert not res["research"].ok and "MISMATCH" in res["research"].detail
 
 
 def test_gaps_without_history(conn: sqlite3.Connection, tmp_path: Path) -> None:
@@ -521,7 +521,7 @@ def test_gaps_without_history(conn: sqlite3.Connection, tmp_path: Path) -> None:
 
     rep = gaps(conn, pricer=ShadowPricer(tmp_path))
     assert rep.rejected["structure:menu_not_chosen"] == 6  # SPY 4 + NVDA 2 (skipped)
-    assert rep.rejected["shortlist:director_excluded"] == 1  # PLTR, with its reason
+    assert rep.rejected["shortlist:research_excluded"] == 1  # PLTR, with its reason
     assert rep.shadow.startswith("n/a")
     assert all(a.better_by is None for a in rep.alternatives)
     text = "\n".join(rep.lines())

@@ -239,7 +239,7 @@ def test_portfolio_context_day_pnl_and_digest_bucket(conn: sqlite3.Connection) -
     assert pc.account.day_pnl == pytest.approx(-5.86)
     assert pc.account.prev_close == float(THU_CLOSE)
     assert pc.account.prev_close_source == "arc_close"
-    # the Director digest bucket sees ~0, not a -1% move (bucket 0.5% of equity)
+    # Research digest bucket sees ~0, not a -1% move (bucket 0.5% of equity)
     assert pnl_bucket(pc.account.day_pnl, pc.account.equity, 0.5) == -1
     assert pnl_bucket(-1004.0, pc.account.equity, 0.5) == -2
 
@@ -277,7 +277,7 @@ def parity_db(tmp_path: Path) -> Path:
         c, _env(info), _settings(), info=info, now=FRI_0940, halted=False, budget_tier="normal"
     )
     ContextStore(c).write(
-        kind="portfolio_context", subject="session", payload=pc, produced_by="director",
+        kind="portfolio_context", subject="session", payload=pc, produced_by="research",
         chain_run_id="chain-1", now=FRI_0940,
     )  # fmt: skip
     c.close()

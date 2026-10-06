@@ -292,7 +292,7 @@ class StripIV:
 
 
 def test_propose_skips_reprice_failed_on_missing_iv(monkeypatch: pytest.MonkeyPatch) -> None:
-    from arc.ingest.sweep import load_fixture_docs
+    from arc.ingest.scalp import load_fixture_docs
     from arc.pipeline.runner import run_propose
     from arc.routines.heartbeat import RecordingNotifier
 

@@ -16,8 +16,8 @@ Deterministic, no LLM:
    and form, not one by one; D47 files them under the ``company`` category).
 
 A story's ``distinct_sources`` is the number of distinct registry source keys
-among its docs. Only this count may raise corroboration (the Sweep rule in
-:mod:`arc.ingest.sweep`); ten WSJ items about one story still count once.
+among its docs. Only this count may raise corroboration (the Scalp rule in
+:mod:`arc.ingest.scalp`); ten WSJ items about one story still count once.
 """
 
 from __future__ import annotations

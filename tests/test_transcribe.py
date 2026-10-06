@@ -30,7 +30,7 @@ from arc.ingest.youtube import fetch_youtube, transcript_source_of
 from arc.models import TranscriptSource
 from arc.store.migrate import migrate
 
-NOW = datetime(2026, 9, 28, 2, 0, tzinfo=UTC)  # 22:00 ET Sweep run
+NOW = datetime(2026, 9, 28, 2, 0, tzinfo=UTC)  # 22:00 ET Scalp run
 FFMPEG = "/fake/ffmpeg"
 
 

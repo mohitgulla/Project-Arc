@@ -9,7 +9,7 @@ One profile is read by everything that decides what may be traded:
 
 * the gate (rule ``account_profile``, :mod:`arc.gate.rules`) enforces it;
 * the scanner builds only the profile's strategies for a stance;
-* the Director / Quant / Risk prompts state it;
+* Research / Quant / Risk prompts state it;
 * the entry DTE window comes from it when it overrides the global one.
 
 Profile fields:
@@ -31,7 +31,7 @@ Profile fields:
     Optional per-profile entry DTE window; ``None`` falls back to the global
     ``ARC_DTE_MIN`` / ``ARC_DTE_MAX``.
 ``stance_strategies``
-    Scanner strategies per Director stance (bullish / bearish / neutral). An empty
+    Scanner strategies per Research stance (bullish / bearish / neutral). An empty
     list means the profile has no structure for that stance: no trade, journaled.
 ``day_trades``
     E10.2: the day-trade limit (``rule: none | pattern_day_trader``, ``min_equity``,
@@ -166,7 +166,7 @@ class AccountProfile(BaseModel):
         return self
 
     def strategies_for(self, stance: str) -> list[str]:
-        """Scanner strategy names for a Director stance; ``[]`` = no trade."""
+        """Scanner strategy names for a Research stance; ``[]`` = no trade."""
         return self.stance_strategies.for_stance(stance)
 
     def summary(self) -> str:

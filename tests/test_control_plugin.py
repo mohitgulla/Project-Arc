@@ -41,8 +41,8 @@ plugin = _load()
             ["set", "max_alloc_pct", "4%", "--reason", "trim risk"],
         ),
         (
-            'set routines.sweep.cadence "every 60m 09:00-16:00"',
-            ["set", "routines.sweep.cadence", "every 60m 09:00-16:00"],
+            'set routines.scalp.cadence "every 60m 09:00-16:00"',
+            ["set", "routines.scalp.cadence", "every 60m 09:00-16:00"],
         ),
         ("set universe +NVDA -TSLA", ["set", "universe", "+NVDA", "-TSLA"]),
         ("set max_alloc_pct", ["usage", "set <key> <value> [-- reason]"]),

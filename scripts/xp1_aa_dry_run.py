@@ -196,7 +196,7 @@ def run(
                  "--no-slack", "--lock-dir", str(scratch / "locks"), *db), "propose")  # fmt: skip
     conn = connect(control)
     chain = conn.execute(
-        """SELECT chain_run_id FROM routine_runs WHERE job = 'director'
+        """SELECT chain_run_id FROM routine_runs WHERE job = 'research'
            AND chain_run_id IS NOT NULL ORDER BY rowid DESC LIMIT 1"""
     ).fetchone()[0]
     arm = arm_stores(conn)["treatment"]

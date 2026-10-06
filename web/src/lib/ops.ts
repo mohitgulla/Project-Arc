@@ -409,8 +409,8 @@ export const OPS_CLOSED_BY_DEFAULT = ["Alerts", "Halts", "Runs"] as const;
 
 /** Persona chip text (routines.yaml `persona:`); sources carry none. */
 export const PERSONA_CHIP: Record<string, string> = {
-  sweep: "Sweep",
-  director: "Director",
+  scalp: "Scalp",
+  research: "Research",
   investor: "Investor",
   risk: "Risk",
   auditor: "Auditor",

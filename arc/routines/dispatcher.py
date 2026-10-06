@@ -89,7 +89,7 @@ _HALT_DEFERRED = "halt_deferred:{event}"
 # D39: the background child that owns a claimed run (one owner per run).
 _BG_OWNER = "bg_owner:{run}"
 # Chain steps whose name is not a persona, mapped to the persona whose model they use.
-_STEP_PERSONA = {"quant": "quant", "risk": "risk", "propose": "director", "execute": "investor"}
+_STEP_PERSONA = {"quant": "quant", "risk": "risk", "propose": "research", "execute": "investor"}
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +528,7 @@ class Dispatcher:
         Inline sources already finished (the tick runs sources first). Background
         sources claimed by the same tick (same ``started_at``) may still be running:
         wait for them, bounded by ``tick.after_sources_wait``, then go on with what is
-        committed. A slow source never holds the Sweep past that bound.
+        committed. A slow source never holds the Scalp past that bound.
         """
         wait_s = self.routines.tick.after_sources_wait.total_seconds()
         deadline = time.monotonic() + wait_s
@@ -576,7 +576,7 @@ class Dispatcher:
     def _local_llm(self, name: str) -> bool:
         """D39: does *name* (a job or chain step) call a local, on-device model?
 
-        The persona is the step's name (``sweep.overnight`` -> ``sweep``,
+        The persona is the step's name (``scalp.overnight`` -> ``scalp``,
         ``risk.reallocate`` -> ``risk``) or its chain-step owner (``quant``,
         ``propose`` ...). Fail-safe: an unreadable routing file, or a step with no
         persona while any tier is local, counts as local (takes the lock).
@@ -643,7 +643,7 @@ class Dispatcher:
         except LockBusyError as exc:
             if self.routines.is_loop(job) and reason == "schedule":
                 # D31 non-overlap: a loop slot never queues behind the previous loop
-                # (or a Sweep holding the LLM lock); it is recorded as skipped and
+                # (or a Scalp holding the LLM lock); it is recorded as skipped and
                 # the next slot gets a fresh look. No catch-up, no deferral counter.
                 return [self._skip_loop_slot(job, scheduled_for, exc, now)]
             log.info("routines.deferred", job=job, why=str(exc))
@@ -763,7 +763,7 @@ class Dispatcher:
         prev_run_id = parent_run_id
         existing = existing or {}
         # D31: the loop chain has a deadline. A step that is running when it passes
-        # may finish; no later step starts. `no_change` (the Director found the same
+        # may finish; no later step starts. `no_change` (Research found the same
         # inputs as last time) skips the LLM steps and runs the deterministic tail.
         is_loop = bool(chain_run_id) and reason == "schedule" and self.routines.is_loop(steps[0])
         deadline = time.monotonic() + self.routines.loop.max_runtime.total_seconds()
@@ -967,18 +967,18 @@ class Dispatcher:
             state.set_root(chain_run_id, root.model_dump(mode="json"))
         return ts
 
-    def _post_sweep_context(self, now: _dt.datetime, ctx: JobContext) -> str | None:
-        """D36 thread item 1: the ``[Sweep]`` card of the candidates the Director read.
+    def _post_scalp_context(self, now: _dt.datetime, ctx: JobContext) -> str | None:
+        """D36 thread item 1: the ``[Scalp]`` card of the candidates Research read.
 
-        Rendered from the Director run's recorded context snapshot (the same
-        ``candidate`` entries it was given), so the card names the Sweep run
-        and its time without re-posting the Sweep's own 30-min card.
+        Rendered from Research run's recorded context snapshot (the same
+        ``candidate`` entries it was given), so the card names the Scalp run
+        and its time without re-posting the Scalp's own 30-min card.
         """
-        from arc.slack.digests import sweep_context_card
+        from arc.slack.digests import scalp_context_card
 
         entries = ctx.snapshot.of_kind("candidate")
-        card = sweep_context_card(entries, chain_run_id=ctx.chain_run_id)
-        return self.heartbeats.summary(now, "sweep", card.text, blocks=card.blocks)
+        card = scalp_context_card(entries, chain_run_id=ctx.chain_run_id)
+        return self.heartbeats.summary(now, "scalp", card.text, blocks=card.blocks)
 
     def _max_runtime_label(self) -> str:
         secs = int(self.routines.loop.max_runtime.total_seconds())
@@ -1216,8 +1216,8 @@ class Dispatcher:
             log.info("routines.ok", job=run.job, run_id=run.run_id, outputs=len(ctx.outputs))
             return self._outcome(run, "ok", summary, metrics=result.metrics)
         if in_loop_thread and run.step_index == 0:
-            # D36 thread item 1: the Sweep context the Director read, before its own card.
-            posts.append(self._post_sweep_context(now, ctx))
+            # D36 thread item 1: the Scalp context Research read, before its own card.
+            posts.append(self._post_scalp_context(now, ctx))
         if notify is Notify.QUIET:
             new_docs = result.metrics.get("new_docs")
             self.heartbeats.queue_source(

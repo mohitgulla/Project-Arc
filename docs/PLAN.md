@@ -173,9 +173,9 @@ Project-Arc/
 
 | Persona | Input | Output (JSON schema) | Model tier | Slack label |
 |---|---|---|---|---|
-| **Sweep** (Information Retrieval, fast feed; D54) | raw RSS/EDGAR docs, every 30 min | `Candidate[]` | cheap | `[Sweep]` |
+| **Scalp** (Information Retrieval, fast feed; D54, renamed from Sweep in D56) | raw RSS/EDGAR docs, every 30 min | `Candidate[]` | cheap | `[Scalp]` |
 | **Scout** (slow feed; E5.13, D54) | typed kinds: YouTube briefs, options data, macro calendar, earnings calendar, Finnhub facts | `Candidate[]` (`feed=scout`) | cheap | `[Scout]` |
-| **Director** (Aggregator) | candidates + regime + portfolio | ranked shortlist + thesis per ticker | frontier | `[Director]` |
+| **Research** (Aggregator; renamed from Director in D56) | candidates + regime + portfolio | ranked shortlist + thesis per ticker | frontier | `[Research]` |
 | **Quant** (Risk/Reward) | shortlist + chains + Greeks | `Structure[]` with PoP/EV/cost, confidence | frontier | `[Quant]` |
 | **Risk** (Portfolio Alignment) | structures + portfolio + calendar | risk narrative, sizing suggestion (advisory only) | frontier | `[Risk]` |
 | **Investor** | approved proposal | order plan: limit at mid, improvement steps, timeout | cheap | `[Investor]` |
@@ -192,7 +192,7 @@ AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits a
 ### 2.5 Slack design
 
 - **`#project-arc` (dev).** Every Kanban card gets one thread: creation post → worker progress comments → PR link → review verdict. Hermes' kanban notification subscriptions post into the same thread. Use `!cmd` prefix inside threads (Slack blocks slash commands there).
-- **`#arc-investor` (trading).** One thread per trading day (`💡 Mon Sep 28 · Session Notes`, switching at 24:00 ET; D37). Persona posts are labelled `[Sweep] [Scout] [Director] [Quant] [Risk] [Investor] [Auditor]`. Proposal cards render as Hermes `clarify` → Block Kit **Approve / Reject** buttons; TTL default 20 min; expiry = reject. `!halt` in any thread trips the kill switch; only the owner can `!resume`.
+- **`#arc-investor` (trading).** One thread per trading day (`💡 Mon Sep 28 · Session Notes`, switching at 24:00 ET; D37). Persona posts are labelled `[Scalp] [Scout] [Research] [Quant] [Risk] [Investor] [Auditor]` (D56: Scalp was Sweep, Research was Director; history keeps the old names and `arc.journal.legacy` maps them). Proposal cards render as Hermes `clarify` → Block Kit **Approve / Reject** buttons; TTL default 20 min; expiry = reject. `!halt` in any thread trips the kill switch; only the owner can `!resume`.
 - No order is ever submitted from `#project-arc`.
 
 ### 2.6 Hermes orchestration

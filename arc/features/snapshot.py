@@ -1,10 +1,10 @@
-"""FeatureSnapshot: per-ticker, per-day structured inputs for Director / Quant.
+"""FeatureSnapshot: per-ticker, per-day structured inputs for Research / Quant.
 
 A snapshot bundles :class:`~arc.features.regime.RegimeFeatures` and
 :class:`~arc.features.vol.VolFeatures` for one underlying at one session
 close. It is pure data (pydantic, JSON-serialisable) and carries no prompt
 text; persona builders serialise it with :func:`snapshots_to_json` into
-``DirectorInput.regime_features_json``.
+``ResearchInput.regime_features_json``.
 
 Building a snapshot never looks past ``as_of``: every input series is
 truncated first, so the same call gives the same result whether it runs
@@ -129,6 +129,6 @@ def build_snapshot_from_bars(
 
 
 def snapshots_to_json(snapshots: Iterable[FeatureSnapshot], *, indent: int | None = 2) -> str:
-    """Serialise snapshots as a JSON object keyed by ticker (Director input)."""
+    """Serialise snapshots as a JSON object keyed by ticker (Research input)."""
     payload = {s.ticker: s.model_dump(mode="json") for s in snapshots}
     return json.dumps(payload, indent=indent, sort_keys=True)

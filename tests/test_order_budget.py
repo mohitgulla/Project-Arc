@@ -61,7 +61,7 @@ def test_defaults_match_d32() -> None:
     assert CFG.daily_max == HARD_CEILING == 200
     assert CFG.restrict_at == 100 and CFG.close_reserve == 25 and CFG.open_limit == 175
     r = CFG.restrictive
-    assert (r.director_max_shortlist, r.max_new_opens_per_loop) == (1, 1)
+    assert (r.research_max_shortlist, r.max_new_opens_per_loop) == (1, 1)
     assert (r.min_net_ev_multiplier, r.min_pop_delta_pp) == (1.5, 5.0)
     assert (r.max_improvement_steps, r.dedupe_cooldown_multiplier) == (2, 2.0)
     assert OrderBudgetConfig.from_settings(settings()) == CFG

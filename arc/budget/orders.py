@@ -109,7 +109,7 @@ class RestrictiveConfig(BaseModel):
 
     model_config = _FORBID
 
-    director_max_shortlist: int = Field(1, ge=0, le=10)
+    research_max_shortlist: int = Field(1, ge=0, le=10)
     max_new_opens_per_loop: int = Field(1, ge=0, le=10)
     min_net_ev_multiplier: float = Field(1.5, ge=1.0, le=10.0)
     min_pop_delta_pp: float = Field(5.0, ge=0.0, le=50.0)
@@ -152,7 +152,7 @@ class OrderBudgetConfig(BaseModel):
             restrict_at=settings.order_budget_restrict_at,
             close_reserve=settings.order_budget_close_reserve,
             restrictive=RestrictiveConfig(
-                director_max_shortlist=settings.order_budget_restrictive_director_max_shortlist,
+                research_max_shortlist=settings.order_budget_restrictive_research_max_shortlist,
                 max_new_opens_per_loop=settings.order_budget_restrictive_max_new_opens_per_loop,
                 min_net_ev_multiplier=settings.order_budget_restrictive_min_net_ev_multiplier,
                 min_pop_delta_pp=settings.order_budget_restrictive_min_pop_delta_pp,

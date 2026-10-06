@@ -12,7 +12,7 @@
 #                      margin: broker margin buying power (per-underlying cap still binds)
 #   allow_short_legs   none | covered_only (same type + expiry, long worth >= short) | any
 #   dte_min/dte_max    optional entry DTE window override (else ARC_DTE_MIN/ARC_DTE_MAX)
-#   stance_strategies  scanner strategies per Director stance; [] = no trade (journaled)
+#   stance_strategies  scanner strategies per Research stance; [] = no trade (journaled)
 #
 # Open owner question (E3.4 PR): does the real broker account allow debit spreads
 # without margin? If not, switch the default to cash_long_only.

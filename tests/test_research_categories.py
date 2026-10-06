@@ -1,4 +1,4 @@
-"""E4.7 (D47) / E4.9 (D49): the Director sees its context under the 6 category headers."""
+"""E4.7 (D47) / E4.9 (D49): Research sees its context under the 6 category headers."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ import pytest
 
 from arc.context.store import ContextEntry, ContextSnapshot
 from arc.personas.builders import (
-    build_director_prompt,
+    build_research_prompt,
     category_context_block,
     category_specs_input,
     d47_category_context_block,
-    director_input_from_context,
+    research_input_from_context,
 )
 from arc.routines.config import RoutinesConfig
 
@@ -191,10 +191,10 @@ class TestTypedKindFreshness:
         assert [e.kind for e in snap.entries] == ["vol_term"]
 
 
-def test_director_prompt_carries_the_category_section() -> None:
+def test_research_prompt_carries_the_category_section() -> None:
     snap = _snapshot([_story("macro_data", "Fed holds rates", dt.timedelta(hours=1), [])])
-    prompt = build_director_prompt(
-        director_input_from_context(
+    prompt = build_research_prompt(
+        research_input_from_context(
             snap,
             portfolio_summary="flat",
             scan_date="2026-09-28",
@@ -218,7 +218,7 @@ def test_no_context_at_all_adds_no_section() -> None:
 
 
 def test_pre_d49_inputs_replay_the_d47_block() -> None:
-    """A Director call recorded before D49 (no `categories` input) rebuilds byte for byte."""
+    """A Research call recorded before D49 (no `categories` input) rebuilds byte for byte."""
     old_channels = [{"slug": "stockedup", "label": "StockedUp"}, {"slug": "fxevo", "label": "FX"}]
     snap = _snapshot(
         [
@@ -231,8 +231,8 @@ def test_pre_d49_inputs_replay_the_d47_block() -> None:
     assert _headers(block) == ["Market news", "Company", "Macro", "Options data", "YouTube"]
     assert "Options data: vol_term 13h" in block.splitlines()  # D47: no typed staleness
     assert "YouTube: 1/2 channels (missing: FX)" in block.splitlines()
-    prompt = build_director_prompt(
-        director_input_from_context(
+    prompt = build_research_prompt(
+        research_input_from_context(
             snap,
             portfolio_summary="flat",
             scan_date="2026-09-28",

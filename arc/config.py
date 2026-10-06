@@ -363,8 +363,8 @@ class ArcSettings(BaseSettings):
             "use the rest up to daily_max."
         ),
     )
-    order_budget_restrictive_director_max_shortlist: Annotated[int, Field(ge=0, le=10)] = Field(
-        default=1, description="Restrictive tier: Director shortlist cap."
+    order_budget_restrictive_research_max_shortlist: Annotated[int, Field(ge=0, le=10)] = Field(
+        default=1, description="Restrictive tier: Research shortlist cap."
     )
     order_budget_restrictive_max_new_opens_per_loop: Annotated[int, Field(ge=0, le=10)] = Field(
         default=1, description="Restrictive tier: new open proposals per pipeline run."
@@ -390,7 +390,7 @@ class ArcSettings(BaseSettings):
     order_budget_restrictive_dedupe_cooldown_multiplier: Annotated[
         float, Field(ge=1.0, le=10.0)
     ] = Field(default=2.0, description="Restrictive tier: E5.9 dedupe cooldown multiplier.")
-    # -- Portfolio-aware Director, dedupe, no-trade guard (E5.9, D33) ----------
+    # -- Portfolio-aware Research, dedupe, no-trade guard (E5.9, D33) ----------
     dedupe_executed_cooldown_sessions: Annotated[int, Field(ge=0, le=60)] = Field(
         default=5,
         description=(
@@ -449,7 +449,7 @@ class ArcSettings(BaseSettings):
     )
     portfolio_context_max_positions: Annotated[int, Field(ge=1, le=50)] = Field(
         default=12,
-        description="D33: positions rendered in full in the Director prompt (largest first).",
+        description="D33: positions rendered in full in Research prompt (largest first).",
     )
     no_trade_vix_max: Annotated[float, Field(gt=0.0, le=200.0)] = Field(
         default=35.0,
@@ -697,7 +697,7 @@ class ArcSettings(BaseSettings):
     # -- Ingestion (E4.1) ----------------------------------------------------
     ingest_rss_feeds: list[str] = Field(
         default_factory=list,
-        description="RSS feed URLs for the Sweep connector.",
+        description="RSS feed URLs for the Scalp connector.",
     )
     ingest_rss_timeout_seconds: float = Field(
         default=20.0,
@@ -816,49 +816,49 @@ class ArcSettings(BaseSettings):
         ),
     )
 
-    # -- Sweep candidate pipeline (E4.2) -------------------------------------
-    sweep_hermes_bin: str = Field(
+    # -- Scalp candidate pipeline (E4.2) -------------------------------------
+    scalp_hermes_bin: str = Field(
         default="hermes",
-        description="Hermes CLI executable used for one-shot Sweep calls.",
+        description="Hermes CLI executable used for one-shot Scalp calls.",
     )
-    sweep_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
+    scalp_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
         default=240,
-        description="Timeout for a single Sweep LLM batch call.",
+        description="Timeout for a single Scalp LLM batch call.",
     )
-    sweep_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+    scalp_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.6,
-        description="Candidates below this Sweep confidence are dropped.",
+        description="Candidates below this Scalp confidence are dropped.",
     )
-    sweep_batch_size: Annotated[int, Field(ge=1, le=50)] = Field(
+    scalp_batch_size: Annotated[int, Field(ge=1, le=50)] = Field(
         default=8,
         description="Max stories digested per stage-1 (digest) LLM call (E4.5).",
     )
-    sweep_max_doc_chars: Annotated[int, Field(ge=200)] = Field(
+    scalp_max_doc_chars: Annotated[int, Field(ge=200)] = Field(
         default=4000,
-        description="Per-document text budget in the Sweep prompt (truncated beyond).",
+        description="Per-document text budget in the Scalp prompt (truncated beyond).",
     )
     # -- Source fairness + synthesis (E4.5, D30) --------------------------------
-    sweep_doc_budget: Annotated[int, Field(ge=1, le=1000)] = Field(
+    scalp_doc_budget: Annotated[int, Field(ge=1, le=1000)] = Field(
         default=120,
         description=(
-            "D30: docs the Sweep reads per run, shared across sources by weighted "
+            "D30: docs the Scalp reads per run, shared across sources by weighted "
             "round-robin (config/routines.yaml sources); the rest wait or are "
             "marked skipped_budget when their context TTL runs out."
         ),
     )
-    sweep_story_threshold: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
+    scalp_story_threshold: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.5,
         description="D30: token-set Jaccard of normalised headlines to cluster two docs.",
     )
-    sweep_story_window_hours: Annotated[float, Field(gt=0, le=168)] = Field(
+    scalp_story_window_hours: Annotated[float, Field(gt=0, le=168)] = Field(
         default=24.0,
         description="D30: docs cluster into one story only within this many hours.",
     )
-    sweep_story_batch_size: Annotated[int, Field(ge=1, le=200)] = Field(
+    scalp_story_batch_size: Annotated[int, Field(ge=1, le=200)] = Field(
         default=40,
-        description="D30: story digests per stage-2 Sweep LLM call.",
+        description="D30: story digests per stage-2 Scalp LLM call.",
     )
-    sweep_story_doc_chars: Annotated[int, Field(ge=100)] = Field(
+    scalp_story_doc_chars: Annotated[int, Field(ge=100)] = Field(
         default=1500,
         description="D30: per-document text in the stage-1 digest prompt (3 docs per story).",
     )
@@ -902,19 +902,19 @@ class ArcSettings(BaseSettings):
     # -- Pipeline runner (E5.2) -----------------------------------------------
     persona_timeout_seconds: Annotated[int, Field(ge=10)] = Field(
         default=600,
-        description="Timeout for a single Director/Quant/Risk LLM call.",
+        description="Timeout for a single Research/Quant/Risk LLM call.",
     )
     pipeline_max_shortlist: Annotated[int, Field(ge=1, le=20)] = Field(
         default=10,
         description=(
-            "Quant/Risk budget (D28): the first N Director-ranked tickers get a structure. "
-            "Never shown to the Director; ranked items beyond it stay on the card as "
+            "Quant/Risk budget (D28): the first N Research-ranked tickers get a structure. "
+            "Never shown to Research; ranked items beyond it stay on the card as "
             "'Ranked, not structured'."
         ),
     )
     pipeline_max_context_notes: Annotated[int, Field(ge=0, le=100)] = Field(
         default=20,
-        description="Max prior D27 notes (regime view/thesis/observation) shown to the Director.",
+        description="Max prior D27 notes (regime view/thesis/observation) shown to Research.",
     )
     pipeline_scan_top: Annotated[int, Field(ge=1, le=20)] = Field(
         default=5,
@@ -949,17 +949,17 @@ class ArcSettings(BaseSettings):
         default=UniverseMode.SEED,
         description=(
             "ARC_UNIVERSE_MODE: seed (default) = any symbol-master ticker that passes the "
-            "liquidity screen may become a Sweep candidate; strict = universe only."
+            "liquidity screen may become a Scalp candidate; strict = universe only."
         ),
     )
     universe_config_file: Path | None = Field(
         default=None,
         description="ARC_UNIVERSE_CONFIG_FILE; None -> config/universe.yaml.",
     )
-    sweep_max_new_tickers: Annotated[int, Field(ge=0, le=50)] = Field(
+    scalp_max_new_tickers: Annotated[int, Field(ge=0, le=50)] = Field(
         default=25,
         description=(
-            "Max discoveries (names in no D51 tier) the Sweep may accept per run (D28, "
+            "Max discoveries (names in no D51 tier) the Scalp may accept per run (D28, "
             "D51: 25); extra ones are rejected as over_new_ticker_cap."
         ),
     )

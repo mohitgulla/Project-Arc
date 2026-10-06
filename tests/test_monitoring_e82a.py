@@ -36,7 +36,7 @@ YAML = """
     sources:
       edgar: {every: 15m, window: "06:00-09:00", days: trading}
     personas:
-      director: {every: 5m, window: "09:40-15:50", days: trading, ttl: 5m}
+      research: {every: 5m, window: "09:40-15:50", days: trading, ttl: 5m}
       auditor: {schedule: ["16:30"], days: trading, ttl: 6h}
     monitoring:
       gateway: {enabled: false}
@@ -81,7 +81,7 @@ def ticks(conn: sqlite3.Connection, start: dt.datetime, end: dt.datetime, *,
         t += dt.timedelta(minutes=step)
 
 
-def director_slots(start: dt.datetime, end: dt.datetime) -> list[dt.datetime]:
+def research_slots(start: dt.datetime, end: dt.datetime) -> list[dt.datetime]:
     out, t = [], start
     while t <= end:
         out.append(t)
@@ -89,11 +89,11 @@ def director_slots(start: dt.datetime, end: dt.datetime) -> list[dt.datetime]:
     return out
 
 
-def fill_director(conn: sqlite3.Connection, start: dt.datetime, end: dt.datetime,
+def fill_research(conn: sqlite3.Connection, start: dt.datetime, end: dt.datetime,
                   skip: set[dt.datetime] = frozenset()) -> None:  # type: ignore[assignment]  # fmt: skip
-    for s in director_slots(start, end):
+    for s in research_slots(start, end):
         if s not in skip:
-            run(conn, "director", s)
+            run(conn, "research", s)
 
 
 def health(conn: sqlite3.Connection, routines: RoutinesConfig, now: dt.datetime,
@@ -108,7 +108,7 @@ def health(conn: sqlite3.Connection, routines: RoutinesConfig, now: dt.datetime,
     return alerts.apply(conn, results, now=now, correlation={"check_id": "h"}, notifier=n)
 
 
-# 11:00 judges director slots 09:50..10:45 (judge time = slot + 5m ttl + 10m grace).
+# 11:00 judges research slots 09:50..10:45 (judge time = slot + 5m ttl + 10m grace).
 NOW = et(11, 0)
 # Two 15-min tick gaps. Judging is collapse aware (as `missed_windows`): the last
 # slot of each gap counts as run because the next slot ran inside its window, so
@@ -119,7 +119,7 @@ MISSED = {et(10, 0), et(10, 5), et(10, 10), et(10, 30), et(10, 35), et(10, 40)}
 def _setup_four_of_twelve_missed(conn: sqlite3.Connection, *, ms: int = 30_000,
                                  slowest: list[dict[str, Any]] | None = None) -> None:  # fmt: skip
     ticks(conn, et(9, 0), NOW, ms=ms, slowest=slowest)
-    fill_director(conn, et(9, 40), et(10, 55), skip=MISSED)
+    fill_research(conn, et(9, 40), et(10, 55), skip=MISSED)
 
 
 # ---------------------------------------------------------------------------
@@ -147,13 +147,13 @@ def test_defaults_and_shipped_config() -> None:
 
 def test_slot_interval_splits_by_cadence() -> None:
     r, ms = cfg(), MonitoringSettings()
-    assert checks.slot_interval(r.personas["director"]) == dt.timedelta(minutes=5)
+    assert checks.slot_interval(r.personas["research"]) == dt.timedelta(minutes=5)
     assert checks.slot_interval(r.personas["auditor"]) == dt.timedelta(days=1)
     two = RoutinesConfig.model_validate(
         {"sources": {"e": {"schedule": ["06:00", "18:00"]}}}
     ).sources["e"]
     assert checks.slot_interval(two) == dt.timedelta(hours=12)
-    assert not checks.per_slot(r.personas["director"], ms)
+    assert not checks.per_slot(r.personas["research"], ms)
     assert not checks.per_slot(r.sources["edgar"], ms)
     assert checks.per_slot(r.personas["auditor"], ms) and checks.per_slot(two, ms)
 
@@ -167,19 +167,19 @@ def test_five_min_job_missing_4_of_12_is_one_coverage_alert(conn: sqlite3.Connec
     _setup_four_of_twelve_missed(conn)
     n = alerts.RecordingOpsNotifier()
     out = health(conn, cfg(), NOW, n)
-    assert [a.key for a in out.opened] == ["coverage:director"]
+    assert [a.key for a in out.opened] == ["coverage:research"]
     assert not [a for a in out.opened if a.kind == "missed_window"]
     (post,) = n.posts
-    assert "director ran 8/12 slots in the last 60 min (67%)" in post
+    assert "research ran 8/12 slots in the last 60 min (67%)" in post
     assert "likely cause: ticks on time" in post
     assert "missed its window" not in post
     # Still failing five minutes later: no repeat post, the alert stays open.
-    fill_director(conn, et(11, 0), et(11, 0))
+    fill_research(conn, et(11, 0), et(11, 0))
     health(conn, cfg(), NOW + dt.timedelta(minutes=5), n)
     assert len(n.posts) == 1
-    assert AlertRepo(conn).open_for("coverage:director") is not None
-    # The per-slot path is untouched for director: nothing recorded per slot.
-    assert not AlertRepo(conn).find("missed:director")
+    assert AlertRepo(conn).open_for("coverage:research") is not None
+    # The per-slot path is untouched for research: nothing recorded per slot.
+    assert not AlertRepo(conn).find("missed:research")
 
 
 def test_recovery_posts_one_resolve_with_ratio(conn: sqlite3.Connection) -> None:
@@ -188,12 +188,12 @@ def test_recovery_posts_one_resolve_with_ratio(conn: sqlite3.Connection) -> None
     health(conn, cfg(), NOW, n)
     # The next hour runs every slot: 12:15 judges 11:05..12:00 only.
     ticks(conn, NOW + dt.timedelta(minutes=5), et(12, 15))
-    fill_director(conn, et(11, 0), et(12, 10))
+    fill_research(conn, et(11, 0), et(12, 10))
     out = health(conn, cfg(), et(12, 15), n)
-    assert [a.key for a in out.resolved] == ["coverage:director"]
+    assert [a.key for a in out.resolved] == ["coverage:research"]
     assert len(n.posts) == 2
     assert (
-        "resolved: director slot coverage recovered: ran 12/12 slots in the last 60 min (100%)"
+        "resolved: research slot coverage recovered: ran 12/12 slots in the last 60 min (100%)"
         in n.posts[1]
     )
     health(conn, cfg(), et(12, 20), n)
@@ -204,10 +204,10 @@ def test_resolve_without_judged_slots(conn: sqlite3.Connection) -> None:
     _setup_four_of_twelve_missed(conn)
     n = alerts.RecordingOpsNotifier()
     health(conn, cfg(), NOW, n)
-    # After the session: no director slot judged in the window -> passes, generic text.
+    # After the session: no research slot judged in the window -> passes, generic text.
     ticks(conn, et(16, 0), et(17, 30))
     health(conn, cfg(), et(17, 30), n)
-    assert "director slot coverage recovered (no slots judged in the window)" in n.posts[-1]
+    assert "research slot coverage recovered (no slots judged in the window)" in n.posts[-1]
 
 
 def test_daily_job_miss_is_still_one_per_slot_alert(conn: sqlite3.Connection) -> None:
@@ -223,23 +223,23 @@ def test_daily_job_miss_is_still_one_per_slot_alert(conn: sqlite3.Connection) ->
 
 def test_halted_slots_are_excluded(conn: sqlite3.Connection) -> None:
     ticks(conn, et(9, 0), NOW)
-    for s in director_slots(et(9, 40), et(10, 55)):
+    for s in research_slots(et(9, 40), et(10, 55)):
         if s < et(10, 20):
-            run(conn, "director", s, "skipped", "halted (persona)")
+            run(conn, "research", s, "skipped", "halted (persona)")
         else:
-            run(conn, "director", s)
+            run(conn, "research", s)
     n = alerts.RecordingOpsNotifier()
     r = checks.slot_coverage(conn, cfg(), MonitoringSettings(), NOW)
     assert r.severity == "ok"
-    assert r.detail["jobs"]["director"] == {"ran": 6, "judged": 6, "halted": 6}
+    assert r.detail["jobs"]["research"] == {"ran": 6, "judged": 6, "halted": 6}
     # Per-slot judging agrees: halted is never a miss (shrink the threshold to judge it).
     per = checks.missed_windows(
         conn, cfg(), MonitoringSettings(per_slot_min_interval=dt.timedelta(minutes=5)), NOW
     )
-    assert not [f for f in per.findings if f.detail["job"] == "director"]
+    assert not [f for f in per.findings if f.detail["job"] == "research"]
     # A collapsed slot whose only later row is a halt skip is halted too.
     conn.execute("DELETE FROM routine_runs WHERE scheduled_for = ?", (to_db(et(9, 50)),))
-    assert checks._slot_attempted(conn, "director", et(9, 50), et(9, 55)) == checks.HALTED
+    assert checks._slot_attempted(conn, "research", et(9, 50), et(9, 55)) == checks.HALTED
     assert health(conn, cfg(), NOW, n).opened == []
 
 
@@ -253,7 +253,7 @@ def test_coverage_cause_falls_back_to_tick_gaps(conn: sqlite3.Connection) -> Non
     hb = HeartbeatRepo(conn)
     for t in (et(9, 0), et(10, 0), et(10, 3), et(10, 40), et(10, 58)):
         hb.record("tick", "ok", at=t)
-    fill_director(conn, et(9, 40), et(10, 55), skip=MISSED)
+    fill_research(conn, et(9, 40), et(10, 55), skip=MISSED)
     r = checks.slot_coverage(conn, cfg(), MonitoringSettings(), NOW)
     (f,) = r.findings
     assert f.message.endswith("likely cause: tick gaps up to 37 min")
@@ -283,7 +283,7 @@ def test_coverage_cause_falls_back_to_tick_gaps(conn: sqlite3.Connection) -> Non
 # tick_slow + folding
 # ---------------------------------------------------------------------------
 
-SLOW = [{"job": "sweep", "ms": 340_000}, {"job": "edgar", "ms": 20_000}]
+SLOW = [{"job": "scalp", "ms": 340_000}, {"job": "edgar", "ms": 20_000}]
 
 
 def test_tick_slow_check() -> None:
@@ -303,7 +303,7 @@ def test_tick_slow_check() -> None:
     assert "spacing" not in f.message.split("(")[0]  # durations alone tripped it
     assert f.key == "tick_slow"
     assert "2 of 9 ticks in the last 60 min took > 4m00s" in f.message
-    assert "max 8m03s" in f.message and "top job sweep 5m40s" in f.message
+    assert "max 8m03s" in f.message and "top job scalp 5m40s" in f.message
     # Spacing alone: p90 of the gaps > 1.5 x the 5-min interval.
     c2 = connect(":memory:")
     migrate(c2)
@@ -318,54 +318,54 @@ def test_tick_slow_open_folds_coverage(conn: sqlite3.Connection) -> None:
     n = alerts.RecordingOpsNotifier()
     out = health(conn, cfg(), NOW, n)
     assert [a.key for a in out.opened] == ["tick_slow"]
-    assert [a.key for a in out.folded] == ["coverage:director"]
+    assert [a.key for a in out.folded] == ["coverage:research"]
     (post,) = n.posts
     assert "routines ticks are slow" in post and "coverage" not in post
-    folded = AlertRepo(conn).open_for("coverage:director")
+    folded = AlertRepo(conn).open_for("coverage:research")
     assert folded is not None and folded.correlation[alerts.FOLDED_INTO] == out.opened[0].id
-    assert "likely cause: slow ticks (max 5m30s, sweep 5m40s)" in folded.message
+    assert "likely cause: slow ticks (max 5m30s, scalp 5m40s)" in folded.message
     # Both still failing: nothing new.
     health(conn, cfg(), NOW + dt.timedelta(minutes=1), n)
     assert len(n.posts) == 1
     # The hour after: fast ticks, every slot ran -> both clear, ONE post naming the fold.
     ticks(conn, NOW + dt.timedelta(minutes=5), et(12, 15))
-    fill_director(conn, et(11, 0), et(12, 10))
+    fill_research(conn, et(11, 0), et(12, 10))
     out = health(conn, cfg(), et(12, 15), n)
     assert [a.key for a in out.resolved] == ["tick_slow"]
     assert len(n.posts) == 2
     assert "resolved: routines ticks back within limits" in n.posts[1]
-    assert "low slot coverage: director" in n.posts[1]
-    assert AlertRepo(conn).open_for("coverage:director") is None
+    assert "low slot coverage: research" in n.posts[1]
+    assert AlertRepo(conn).open_for("coverage:research") is None
 
 
 def test_coverage_outliving_its_incident_is_posted(conn: sqlite3.Connection) -> None:
     _setup_four_of_twelve_missed(conn, ms=330_000, slowest=SLOW)
     n = alerts.RecordingOpsNotifier()
     health(conn, cfg(), NOW, n)
-    # Ticks fast again but director keeps missing: tick_slow resolves, coverage posts.
+    # Ticks fast again but research keeps missing: tick_slow resolves, coverage posts.
     ticks(conn, NOW + dt.timedelta(minutes=5), et(12, 15))
     out = health(conn, cfg(), et(12, 15), n)
     assert [a.key for a in out.resolved] == ["tick_slow"]
-    assert [a.key for a in out.opened] == ["coverage:director"]
+    assert [a.key for a in out.opened] == ["coverage:research"]
     assert len(n.posts) == 2
-    assert "director ran 0/12 slots" in n.posts[1] and "ticks on time" in n.posts[1]
-    rec = AlertRepo(conn).open_for("coverage:director")
+    assert "research ran 0/12 slots" in n.posts[1] and "ticks on time" in n.posts[1]
+    rec = AlertRepo(conn).open_for("coverage:research")
     assert rec is not None and alerts.FOLDED_INTO not in rec.correlation
     assert rec.correlation["unfolded_from"]
     # Its later recovery is a normal resolve line.
-    fill_director(conn, et(12, 15), et(13, 15))
+    fill_research(conn, et(12, 15), et(13, 15))
     ticks(conn, et(12, 20), et(13, 30))
     health(conn, cfg(), et(13, 30), n)
-    assert "director slot coverage recovered" in n.posts[-1]
+    assert "research slot coverage recovered" in n.posts[-1]
 
 
 def test_tick_stale_also_folds_coverage(conn: sqlite3.Connection) -> None:
     ticks(conn, et(9, 0), et(10, 10))
-    fill_director(conn, et(9, 40), et(10, 5))
+    fill_research(conn, et(9, 40), et(10, 5))
     n = alerts.RecordingOpsNotifier()
     out = health(conn, cfg(), NOW, n)  # last tick 50 min ago
     assert [a.key for a in out.opened] == ["tick_stale"]
-    assert [a.key for a in out.folded] == ["coverage:director"]
+    assert [a.key for a in out.folded] == ["coverage:research"]
     assert len(n.posts) == 1
 
 
@@ -374,7 +374,7 @@ def test_unchecked_coverage_and_tick_slow_stay_open(conn: sqlite3.Connection) ->
     n = alerts.RecordingOpsNotifier()
     health(conn, cfg(), NOW, n)
     alerts.apply(conn, [], now=et(12, 0), correlation={}, notifier=n)
-    assert {a.key for a in AlertRepo(conn).open_alerts()} == {"tick_slow", "coverage:director"}
+    assert {a.key for a in AlertRepo(conn).open_alerts()} == {"tick_slow", "coverage:research"}
 
 
 def test_trace_reads_both_alert_kinds(conn: sqlite3.Connection, tmp_path: Path,
@@ -385,9 +385,9 @@ def test_trace_reads_both_alert_kinds(conn: sqlite3.Connection, tmp_path: Path,
     c = connect(str(db))
     migrate(c)
     repo = AlertRepo(c)
-    old = repo.open("missed:director:2026-09-28T14:00:00.000000Z", "missed_window", "old miss",
+    old = repo.open("missed:research:2026-09-28T14:00:00.000000Z", "missed_window", "old miss",
                     at=et(10, 15), resolved=True)  # fmt: skip
-    new = repo.open("coverage:director", "coverage", "director ran 7/12", at=et(11, 0))
+    new = repo.open("coverage:research", "coverage", "research ran 7/12", at=et(11, 0))
     c.close()
     for alert in (old, new):
         assert main(["health", "trace", alert.id, "--db", str(db)]) == 0
@@ -401,20 +401,20 @@ def test_trace_reads_both_alert_kinds(conn: sqlite3.Connection, tmp_path: Path,
 
 def test_slot_rollup_line(conn: sqlite3.Connection) -> None:
     # Three-slot gaps: the last slot of each gap is collapsed into the next run.
-    fill_director(conn, et(9, 40), et(15, 50), skip={et(10, 0), et(10, 5), et(10, 10)})
+    fill_research(conn, et(9, 40), et(15, 50), skip={et(10, 0), et(10, 5), et(10, 10)})
     gap = {et(7, 0), et(7, 15), et(7, 30)}
     for s in [et(6, 0) + dt.timedelta(minutes=15 * i) for i in range(13)]:
         if s not in gap:
             run(conn, "edgar", s)
     covs = checks.slot_rollup(conn, cfg(), et(16, 30))  # auditor 16:30 not closed yet
     by = {c.job: c for c in covs}
-    assert set(by) == {"director", "edgar"}
-    assert by["director"].text == "73/75" and by["edgar"].text == "11/13"
+    assert set(by) == {"research", "edgar"}
+    assert by["research"].text == "73/75" and by["edgar"].text == "11/13"
     line = checks.rollup_line(covs, cfg())
-    assert line == "Slots: director 73/75, edgar 11/13 · missed 4 (list in tower Ops)"
+    assert line == "Slots: research 73/75, edgar 11/13 · missed 4 (list in tower Ops)"
     assert checks.rollup_line([], cfg()) is None
-    clean = [checks.Coverage("director", 75, 75)]
-    assert checks.rollup_line(clean, cfg()) == "Slots: director 75/75 · missed 0"
+    clean = [checks.Coverage("research", 75, 75)]
+    assert checks.rollup_line(clean, cfg()) == "Slots: research 75/75 · missed 0"
     only_src = [checks.Coverage("edgar", 4, 4)]
     assert checks.rollup_line(only_src, cfg()) == "Slots: missed 0"
 
@@ -422,14 +422,14 @@ def test_slot_rollup_line(conn: sqlite3.Connection) -> None:
 def test_auditor_card_carries_the_slots_line(conn: sqlite3.Connection) -> None:
     from arc.routines import auditor as aud
 
-    fill_director(conn, et(9, 40), et(15, 50), skip={et(10, 0)})
+    fill_research(conn, et(9, 40), et(15, 50), skip={et(10, 0)})
 
     class Ctx:
         def __init__(self) -> None:
             self.conn, self.routines, self.now = conn, cfg(), et(16, 30)
 
     line = aud._slots_line(Ctx())  # type: ignore[arg-type]
-    assert line is not None and line.startswith("Slots: director 75/75")
+    assert line is not None and line.startswith("Slots: research 75/75")
 
     class Broken(Ctx):
         @property
@@ -513,7 +513,7 @@ def test_control_override_changes_the_check(
     for t in (et(10, 52), et(10, 56)):
         hb.record("tick", "ok", at=t, detail={"tick_duration_ms": 330_000, "slowest_jobs": SLOW})
     early = {et(9, 50), et(9, 55), et(10, 0), et(10, 5)}
-    fill_director(conn, et(9, 40), et(10, 55), skip=early)
+    fill_research(conn, et(9, 40), et(10, 55), skip=early)
     assert _results(conn, config_file, NOW)[check].severity == before
     _set(conn, key, value)
     assert effective_routines(conn, config_file).monitoring != load_routines(config_file).monitoring

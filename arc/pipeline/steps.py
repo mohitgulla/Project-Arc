@@ -1,15 +1,15 @@
-"""E5.2 pipeline steps: Director → Quant → Risk → propose (+ gate), as routine handlers.
+"""E5.2 pipeline steps: Research → Quant → Risk → propose (+ gate), as routine handlers.
 
 Each step is a D16 routine handler. It reads the context snapshot the dispatcher
 recorded for its run and writes typed context entries through ``ctx.write``.
 Steps never hand results to each other in memory. The chain order lives in
-``config/routines.yaml`` (``director: chain: [quant, risk, propose]``).
+``config/routines.yaml`` (``research: chain: [quant, risk, propose]``).
 
 What each step does:
 
-``director`` (LLM, frontier tier)
+``research`` (LLM, frontier tier)
     Computes regime/vol features for today's candidates and writes them as
-    ``regime`` entries. It then records a second snapshot and asks the Director
+    ``regime`` entries. It then records a second snapshot and asks Research
     to rank candidates. Filters: the ticker must be one of the snapshot's
     candidates; the stance and structure type must be valid; at most
     ``pipeline_max_shortlist`` tickers. Writes ``shortlist``.
@@ -70,35 +70,35 @@ from arc.context.store import ContextStore
 from arc.control.effective import cost_model as cost_config
 from arc.control.effective import exit_config, ranking_config
 from arc.exits import ExitSummary, model_exits, realized_vol_forecast
-from arc.ingest.llm import SweepLLMError
-from arc.ingest.sweep import extract_json_object
+from arc.ingest.llm import ScalpLLMError
+from arc.ingest.scalp import extract_json_object
 from arc.iv.store import safe_store as safe_iv_store
 from arc.journal.models import LegQuote, MarketContext, PersonaCallMeta
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage, gate_reason
 from arc.journal.store import JournalStore, Recorder
 from arc.models import LegIntent, Proposal, QuantMetrics, Sizing, Stance
 from arc.personas.builders import (
-    build_director_prompt,
     build_quant_prompt,
+    build_research_prompt,
     build_risk_prompt,
     build_risk_swap_prompt,
     category_specs_input,
-    director_input_from_context,
     quant_input_from_context,
+    research_input_from_context,
     risk_input_from_context,
     risk_swap_input_from_context,
     ticker_facts_digest,
 )
 from arc.personas.entry_window import entry_terms, mentions_dte
 from arc.personas.schemas import (
-    DirectorExclusion,
-    DirectorOutput,
-    DirectorRankedItem,
     QuantGreeks,
     QuantLeg,
     QuantOutput,
     QuantSkip,
     QuantStructureOut,
+    ResearchExclusion,
+    ResearchOutput,
+    ResearchRankedItem,
     RiskAssessment,
     RiskOutput,
     RiskSwapReview,
@@ -137,7 +137,7 @@ from arc.routines.runs import RoutineRunRepo
 from arc.scanner.rank import live_net_ev_check
 from arc.sizing import size_contracts
 from arc.slack.blocks import esc
-from arc.slack.digests import director_card, quant_card, risk_card
+from arc.slack.digests import quant_card, research_card, risk_card
 from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
@@ -153,7 +153,7 @@ if TYPE_CHECKING:
     from arc.gate.inputs import Portfolio
     from arc.pipeline.env import PipelineEnv
     from arc.pipeline.market import PricedStructure
-    from arc.routines.config import DirectorDiversificationSettings
+    from arc.routines.config import ResearchDiversificationSettings
     from arc.routines.handlers import Handler, JobContext
     from arc.scanner import ScanCandidate
 
@@ -162,8 +162,8 @@ log = structlog.get_logger(__name__)
 __all__ = [
     "PersonaError",
     "build_prompt",
-    "director",
-    "director_step",
+    "research",
+    "research_step",
     "pipeline_handlers",
     "propose",
     "propose_step",
@@ -175,7 +175,7 @@ __all__ = [
 
 SESSION_SUBJECT = "session"
 STRUCTURE_TYPES = frozenset({"vertical_spread", "iron_condor", "long_call", "long_put"})
-DIRECTOR_READS = [
+RESEARCH_READS = [
     "candidate",
     "regime",
     "channel_brief",
@@ -191,8 +191,8 @@ DIRECTOR_READS = [
     "insider_activity",
     "analyst_recs",
     "fundamentals",
-]  # == routines.yaml director.reads (D30 adds the options-data kinds)
-# E5.9 drop reasons (Director stage; deterministic). Values == ReasonCode values.
+]  # == routines.yaml research.reads (D30 adds the options-data kinds)
+# E5.9 drop reasons (Research stage; deterministic). Values == ReasonCode values.
 DROP_CONCENTRATION = ReasonCode.DROP_CONCENTRATION.value
 DROP_AT_CAP = ReasonCode.DROP_AT_CAP.value
 DROP_DEDUPE = ReasonCode.DEDUPE_EXECUTED.value
@@ -205,7 +205,7 @@ DROP_NOT_IN_MENU = "not_in_menu"
 DROP_NOT_SHORTLISTED = "not_shortlisted"
 DROP_UNKNOWN_STRUCTURE = "unknown_structure"
 # E5.7 funnel outcomes (card keys; journal codes in arc.journal.reasons)
-FUNNEL_EXCLUDED = "excluded"  # Director excluded it, with a reason
+FUNNEL_EXCLUDED = "excluded"  # Research excluded it, with a reason
 FUNNEL_NOT_RANKED = "not_picked"  # neither ranked nor excluded (no reason given)
 FUNNEL_OVER_BUDGET = "over_budget"  # ranked beyond pipeline_max_shortlist
 FUNNEL_SKIPPED = "skipped"  # Quant skipped it, with a reason
@@ -214,7 +214,7 @@ FUNNEL_NOT_STRUCTURED = "not_structured"  # no structure and no reason from Quan
 
 class PersonaError(RuntimeError):
     """A persona call failed (transport or unparseable reply). The step fails and the
-    chain stops. ``arc routines run director --chain`` resumes from here."""
+    chain stops. ``arc routines run research --chain`` resumes from here."""
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +286,7 @@ def _with_constraints(prompt: str, rules: list[str], schema: type[BaseModel]) ->
 
 # persona → (context adapter, prompt builder, reply schema)
 PROMPT_BUILDERS: dict[str, tuple[Callable[..., Any], Callable[..., str], type[BaseModel]]] = {
-    "director": (director_input_from_context, build_director_prompt, DirectorOutput),
+    "research": (research_input_from_context, build_research_prompt, ResearchOutput),
     "quant": (quant_input_from_context, build_quant_prompt, QuantOutput),
     "risk": (risk_input_from_context, build_risk_prompt, RiskOutput),
     # E6.4 risk.reallocate: the Risk persona's close-to-reallocate review (veto only)
@@ -298,7 +298,7 @@ LLM_PERSONA = {"risk_swap": "risk"}
 
 
 # E3.4a: personas whose prompt states the configured entry window + delta bands.
-ENTRY_TERMS_PERSONAS = frozenset({"director", "quant", "risk"})
+ENTRY_TERMS_PERSONAS = frozenset({"research", "quant", "risk"})
 
 
 def build_prompt(
@@ -319,7 +319,7 @@ def build_prompt(
     """
     from_context, builder, schema = PROMPT_BUILDERS[persona]
     kwargs = {k: v for k, v in inputs.items() if k != "rules"}
-    if persona == "director" and "categories" not in kwargs:
+    if persona == "research" and "categories" not in kwargs:
         # Recorded before D49 (no categories input): rebuild the D47 five-category
         # block, so `arc journal replay` still matches the recorded sha.
         kwargs["d47_replay"] = True
@@ -365,7 +365,7 @@ def _ask[M: BaseModel](
     started = time.monotonic()
     try:
         reply = llm.complete(prompt)
-    except SweepLLMError as exc:
+    except ScalpLLMError as exc:
         repo.insert(
             run_id=ctx.run_id,
             persona=persona,
@@ -482,7 +482,7 @@ def _portfolio_summary(
 
 
 # ---------------------------------------------------------------------------
-# Director
+# Research
 # ---------------------------------------------------------------------------
 
 
@@ -560,19 +560,19 @@ def _live_iv30(
 
 
 def _filter_shortlist(
-    out: DirectorOutput, candidates: Mapping[str, Stance]
-) -> tuple[list[DirectorRankedItem], Counter[str], list[tuple[DirectorRankedItem, str]]]:
+    out: ResearchOutput, candidates: Mapping[str, Stance]
+) -> tuple[list[ResearchRankedItem], Counter[str], list[tuple[ResearchRankedItem, str]]]:
     """Kept items, drop counts, and each dropped item with its reason.
 
-    E5.7: no count cap here. The Director ranks every candidate it would trade;
+    E5.7: no count cap here. Research ranks every candidate it would trade;
     ``pipeline_max_shortlist`` is the Quant/Risk budget, applied by :func:`quant`.
     """
     dropped: Counter[str] = Counter()
-    rejected: list[tuple[DirectorRankedItem, str]] = []
-    kept: list[DirectorRankedItem] = []
+    rejected: list[tuple[ResearchRankedItem, str]] = []
+    kept: list[ResearchRankedItem] = []
     seen: set[str] = set()
 
-    def drop(item: DirectorRankedItem, reason: str) -> None:
+    def drop(item: ResearchRankedItem, reason: str) -> None:
         dropped[reason] += 1
         rejected.append((item, reason))
 
@@ -604,19 +604,19 @@ def _filter_shortlist(
 
 
 def _filter_excluded(
-    out: DirectorOutput, candidates: Mapping[str, Stance], ranked: set[str]
-) -> list[DirectorExclusion]:
-    """The Director's exclusions that name a real, un-ranked candidate (first wins)."""
-    kept: dict[str, DirectorExclusion] = {}
+    out: ResearchOutput, candidates: Mapping[str, Stance], ranked: set[str]
+) -> list[ResearchExclusion]:
+    """Research's exclusions that name a real, un-ranked candidate (first wins)."""
+    kept: dict[str, ResearchExclusion] = {}
     for ex in out.excluded:
         t = ex.ticker.strip().upper()
         if t in candidates and t not in ranked and t not in kept and ex.reason.strip():
-            kept[t] = DirectorExclusion(ticker=t, reason=ex.reason.strip()[:300])
+            kept[t] = ResearchExclusion(ticker=t, reason=ex.reason.strip()[:300])
     return list(kept.values())
 
 
-def _sweep_evidence(snapshot: ContextSnapshot) -> dict[str, str]:
-    """ticker -> one display line of the Sweep data behind a pick (digest card only)."""
+def _scalp_evidence(snapshot: ContextSnapshot) -> dict[str, str]:
+    """ticker -> one display line of the Scalp data behind a pick (digest card only)."""
     out: dict[str, str] = {}
     for e in snapshot.of_kind("candidate"):
         p = e.payload
@@ -627,7 +627,7 @@ def _sweep_evidence(snapshot: ContextSnapshot) -> dict[str, str]:
             except ValueError:
                 when = ""
         out[e.subject] = esc(
-            f"Sweep {p.get('stance', '?')} · {p.get('catalyst_type', '?')} catalyst{when} · "
+            f"Scalp {p.get('stance', '?')} · {p.get('catalyst_type', '?')} catalyst{when} · "
             f"{float(p.get('confidence', 0)):.0%} confidence"
         )
     return out
@@ -643,14 +643,14 @@ def _profile_rule(settings: ArcSettings) -> str:
     return line
 
 
-def _director_rules(
+def _research_rules(
     cands: Mapping[str, Stance],
     settings: ArcSettings | None = None,
     budget: BudgetView | None = None,
     portfolio: PortfolioContext | None = None,
-    diversification: DirectorDiversificationSettings | None = None,
+    diversification: ResearchDiversificationSettings | None = None,
 ) -> list[str]:
-    """Director constraints (E5.7: rank, don't gatekeep; no count cap in the prompt).
+    """Research constraints (E5.7: rank, don't gatekeep; no count cap in the prompt).
 
     D32: in the restrictive order-budget tier an advisory line is added; the
     deterministic cap is the lowered Quant/Risk budget (:func:`_shortlist_limit`).
@@ -706,11 +706,11 @@ def _shortlist_limit(settings: ArcSettings, budget: BudgetView) -> int:
     """Quant/Risk budget: the restrictive tier's lower cap once ``used >= restrict_at`` (D32)."""
     limit = settings.pipeline_max_shortlist
     if budget.tier.restricted:
-        limit = min(limit, settings.order_budget_restrictive_director_max_shortlist)
+        limit = min(limit, settings.order_budget_restrictive_research_max_shortlist)
     return limit
 
 
-def _director_no_opens(
+def _research_no_opens(
     ctx: JobContext,
     guard: MarketGuard,
     budget: BudgetView,
@@ -744,7 +744,7 @@ def _director_no_opens(
         metrics={"shortlist": 0, "market_guard_blocked": 1, **budget.metrics()},
         notice=notice,
         stop_chain=True,
-        card=director_card(
+        card=research_card(
             payload,
             candidates=len(cands),
             dropped=[],
@@ -802,11 +802,11 @@ def _held_and_recent(
     now: _dt.datetime,
     cfg: DedupeConfig,
 ) -> tuple[dict[str, str], list[str]]:
-    """Director-stage dedupe by ``ticker|stance``.
+    """Research-stage dedupe by ``ticker|stance``.
 
     Returns ``held`` (candidate ticker -> stance held by an OPEN structure; those
     picks are dropped outright) and the prompt lines for every recently suggested
-    idea on a candidate, so the Director sees why a name is off the table.
+    idea on a candidate, so Research sees why a name is off the table.
     """
     held: dict[str, str] = {}
     for p in pctx.positions:
@@ -834,19 +834,19 @@ def _held_and_recent(
 
 
 def _portfolio_filter(
-    kept: list[DirectorRankedItem],
+    kept: list[ResearchRankedItem],
     pctx: PortfolioContext,
     held: Mapping[str, str],
     settings: ArcSettings,
-    diversification: DirectorDiversificationSettings | None = None,
+    diversification: ResearchDiversificationSettings | None = None,
     *,
     industries: Mapping[str, str] | None = None,
-) -> tuple[list[DirectorRankedItem], Counter[str], list[tuple[DirectorRankedItem, str]]]:
-    """E5.9 deterministic Director-stage drops (portfolio + held ideas).
+) -> tuple[list[ResearchRankedItem], Counter[str], list[tuple[ResearchRankedItem, str]]]:
+    """E5.9 deterministic Research-stage drops (portfolio + held ideas).
 
     * ``dedupe``: an open structure already holds this ticker in this stance.
     * ``at_cap``: the underlying is at its per-underlying max-loss cap.
-    * ``adds_concentration``: the Director says the pick adds concentration and the
+    * ``adds_concentration``: Research says the pick adds concentration and the
       dimension it lands on (sector / stance / expiry) is already flagged.
 
     E12.5 (D51) ``relaxed`` diversification changes only the last rule: the pick is
@@ -861,8 +861,8 @@ def _portfolio_filter(
     relaxed = diversification is not None and diversification.is_relaxed
     max_names = diversification.max_names_per_industry if diversification is not None else 0
     dropped: Counter[str] = Counter()
-    rejected: list[tuple[DirectorRankedItem, str]] = []
-    out: list[DirectorRankedItem] = []
+    rejected: list[tuple[ResearchRankedItem, str]] = []
+    out: list[ResearchRankedItem] = []
     ag = pctx.aggregates
     sectors = {p.ticker: p.sector for p in pctx.positions}
     sector_map: dict[str, str] | None = None
@@ -917,7 +917,7 @@ def _portfolio_filter(
     return out, dropped, rejected
 
 
-def _no_trade_reason(out: DirectorOutput, kept: list[DirectorRankedItem]) -> str | None:
+def _no_trade_reason(out: ResearchOutput, kept: list[ResearchRankedItem]) -> str | None:
     """The explicit no-trade outcome (E5.9): only meaningful with an empty shortlist."""
     if kept:
         return None
@@ -925,7 +925,7 @@ def _no_trade_reason(out: DirectorOutput, kept: list[DirectorRankedItem]) -> str
     return r if r and r != "none" else "no_fit"
 
 
-def _valid_thesis_checks(out: DirectorOutput, pctx: PortfolioContext) -> list[Any]:
+def _valid_thesis_checks(out: ResearchOutput, pctx: PortfolioContext) -> list[Any]:
     ids = {p.structure_id for p in pctx.positions}
     seen: set[str] = set()
     checks = []
@@ -943,7 +943,7 @@ def _portfolio_notes(
     entry_id: str,
     call_id: str,
 ) -> None:
-    """E5.9: the Director's portfolio read and thesis checks as note context + journal."""
+    """E5.9: Research's portfolio read and thesis checks as note context + journal."""
     if pctx.empty:
         return
     j = _journal(ctx, ctx.snapshot.id)
@@ -952,14 +952,14 @@ def _portfolio_notes(
         _note(
             ctx,
             SESSION_SUBJECT,
-            persona="director",
+            persona="research",
             topic=NoteTopic.PORTFOLIO_VIEW,
             title=f"Portfolio: {pv.verdict}",
             body=f"{pv.verdict}: {pv.notes}".strip(": "),
             about=[entry_id],
         )
         j.add(
-            JournalPersona.DIRECTOR,
+            JournalPersona.RESEARCH,
             Stage.SHORTLIST,
             SESSION_SUBJECT,
             Choice.NOTED,
@@ -974,7 +974,7 @@ def _portfolio_notes(
         _note(
             ctx,
             c.structure_id,
-            persona="director",
+            persona="research",
             topic=NoteTopic.THESIS_CHECK,
             title=f"{pos.ticker} thesis {c.status}",
             body=f"{c.status}: {c.reason}".strip(": "),
@@ -982,7 +982,7 @@ def _portfolio_notes(
             stance=pos.stance,
         )
         j.add(
-            JournalPersona.DIRECTOR,
+            JournalPersona.RESEARCH,
             Stage.SHORTLIST,
             c.structure_id,
             Choice.NOTED,
@@ -1049,7 +1049,7 @@ def _loop_no_change(
     """D31 change-aware skip: same inputs as the last loop -> no LLM call.
 
     Only the loop persona (``routines.loop.job``) skips; a manual or scheduled
-    Director outside the loop always runs in full. The digest is recorded as an
+    Research outside the loop always runs in full. The digest is recorded as an
     external input of the run (D27), so the manifest shows what was compared.
     """
     loop = ctx.routines.loop
@@ -1070,7 +1070,7 @@ def _loop_no_change(
     state = LoopState(ctx.conn)
     if not state.should_skip(new_digest, ctx.now, loop.max_idle):
         # A full run: the digest and ``last_full_run`` are recorded only once the
-        # Director's evaluation has completed (see ``_loop_record_full_run``), so a
+        # Research's evaluation has completed (see ``_loop_record_full_run``), so a
         # failed LLM call never mutes the next ``max_idle`` of slots as ``no_change``.
         return None
     state.record_digest(new_digest, ctx.now, full_run=False)
@@ -1079,7 +1079,7 @@ def _loop_no_change(
     why = f"no_change: inputs unchanged since the last full loop ({age} ago)"
     j = _journal(ctx, snap.id)
     j.add(
-        JournalPersona.DIRECTOR,
+        JournalPersona.RESEARCH,
         Stage.SHORTLIST,
         SESSION_SUBJECT,
         Choice.NO_TRADE,
@@ -1101,10 +1101,10 @@ def _loop_no_change(
 
 
 def _loop_record_full_run(ctx: JobContext) -> None:
-    """D31: a completed Director evaluation is the loop's new ``last_full_run``.
+    """D31: a completed Research evaluation is the loop's new ``last_full_run``.
 
     Called only after the LLM reply was parsed and the shortlist written, so a
-    Director run that failed (LLM outage, schema error) leaves the previous
+    Research run that failed (LLM outage, schema error) leaves the previous
     ``last_full_run`` in place and the next slot evaluates in full again.
     """
     if not ctx.is_loop_run:
@@ -1114,8 +1114,8 @@ def _loop_record_full_run(ctx: JobContext) -> None:
         LoopState(ctx.conn).record_digest(digest, ctx.now, full_run=True)
 
 
-def _director_facts_tickers(ctx: JobContext, cand_entries: list[Any]) -> list[str]:
-    """E4.8a: the candidate tickers (highest confidence first) the Director gets facts
+def _research_facts_tickers(ctx: JobContext, cand_entries: list[Any]) -> list[str]:
+    """E4.8a: the candidate tickers (highest confidence first) Research gets facts
     for; ``[]`` when ``personas.finnhub_context`` is off."""
     cfg = ctx.routines.finnhub_context
     if not cfg.enabled:
@@ -1123,16 +1123,16 @@ def _director_facts_tickers(ctx: JobContext, cand_entries: list[Any]) -> list[st
     ranked = sorted(
         cand_entries, key=lambda e: (-float(e.payload.get("confidence") or 0.0), e.subject)
     )
-    return list(dict.fromkeys(e.subject for e in ranked))[: cfg.director_max_tickers]
+    return list(dict.fromkeys(e.subject for e in ranked))[: cfg.research_max_tickers]
 
 
-def _director_ticker_facts(ctx: JobContext, cand_entries: list[Any]) -> dict[str, Any] | None:
+def _research_ticker_facts(ctx: JobContext, cand_entries: list[Any]) -> dict[str, Any] | None:
     """E4.8a: the recorded ``ticker_facts`` prompt input, or None with the flag off."""
     cfg = ctx.routines.finnhub_context
     if not cfg.enabled:
         return None
-    tickers = _director_facts_tickers(ctx, cand_entries)
-    return cfg.prompt_options(tickers, cfg.director_max_tickers)
+    tickers = _research_facts_tickers(ctx, cand_entries)
+    return cfg.prompt_options(tickers, cfg.research_max_tickers)
 
 
 def _youtube_channels(ctx: JobContext) -> list[dict[str, str]]:
@@ -1143,19 +1143,19 @@ def _youtube_channels(ctx: JobContext) -> list[dict[str, str]]:
     return configured_channels(found[1].options if found else None)
 
 
-def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
+def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
     cand_entries = ctx.snapshot.of_kind("candidate")
     cands = {e.subject: Stance(e.payload["stance"]) for e in cand_entries}
     if not cands:
         j = _journal(ctx, ctx.snapshot.id)
         j.add(
-            JournalPersona.DIRECTOR,
+            JournalPersona.RESEARCH,
             Stage.SHORTLIST,
             SESSION_SUBJECT,
             Choice.NO_TRADE,
             ReasonCode.NO_CANDIDATES,
-            reason_text="no active Sweep candidates",
+            reason_text="no active Scalp candidates",
         )
         ctx.write(
             "shortlist",
@@ -1173,7 +1173,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         why = f"order budget {budget.tier.value}: {budget.budget.summary()}; no new opens"
         j = _journal(ctx, ctx.snapshot.id)
         j.add(
-            JournalPersona.DIRECTOR,
+            JournalPersona.RESEARCH,
             Stage.SHORTLIST,
             SESSION_SUBJECT,
             Choice.NO_TRADE,
@@ -1199,7 +1199,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
     regimes = _regime_entries(ctx, env, sorted(set(cands) | set(market_reference(settings))))
     # Re-read (and record) the context now that today's regime entries exist.
-    snap = ContextStore(ctx.conn).snapshot(ctx.now, kinds=DIRECTOR_READS, run_id=ctx.run_id)
+    snap = ContextStore(ctx.conn).snapshot(ctx.now, kinds=RESEARCH_READS, run_id=ctx.run_id)
     RoutineRunRepo(ctx.conn).set_inputs(ctx.run_id, [ctx.snapshot.id, snap.id])
 
     # E5.9 (D33): market-conditions guard, before any LLM spend. Missing VIX fails
@@ -1207,10 +1207,10 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     guard = market_guard(snap, settings, now=ctx.now, vix_quote=env.vix_quote)
     ctx.record_input("market_guard", "context", guard, as_of=ctx.now)
     if not guard.opens_allowed:
-        return _director_no_opens(ctx, guard, budget, notice, cands)
+        return _research_no_opens(ctx, guard, budget, notice, cands)
 
     summary, _ = _portfolio_summary(ctx, env, settings)
-    # E5.9 (D33): the open book as the Director sees it (deterministic, stored as context).
+    # E5.9 (D33): the open book as Research sees it (deterministic, stored as context).
     pctx = _portfolio_context(ctx, env, settings, budget)
     dedupe_cfg = DedupeConfig.from_settings(settings, budget.tier)
     priors = recent_ideas(ctx.conn, now=ctx.now, cfg=dedupe_cfg)
@@ -1221,11 +1221,11 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     # D31: change-aware skip. Same inputs as the previous loop and a full run not
     # yet due (loop.max_idle) -> no LLM call; the chain runs its deterministic tail.
     skip = _loop_no_change(
-        ctx, snap, pctx, priors, budget, facts_tickers=_director_facts_tickers(ctx, cand_entries)
+        ctx, snap, pctx, priors, budget, facts_tickers=_research_facts_tickers(ctx, cand_entries)
     )
     if skip is not None:
         return skip
-    # Quant/Risk budget (never shown to the Director); D32 lowers it in the restrictive tier.
+    # Quant/Risk budget (never shown to Research); D32 lowers it in the restrictive tier.
     qr_budget = _shortlist_limit(settings, budget)
     diversification = ctx.routines.director_diversification  # E12.5 (D51)
     inputs = {
@@ -1235,41 +1235,41 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "portfolio_block": "" if pctx.empty else render_portfolio_context(pctx, settings),
         "recent_ideas": "\n".join(recent_lines),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
-        "rules": _director_rules(cands, settings, budget, pctx, diversification),
+        "rules": _research_rules(cands, settings, budget, pctx, diversification),
         # E4.6 (D45): [{slug, label, category}] of the youtube.briefs job, for the n/N lines.
         "youtube_channels": _youtube_channels(ctx),
         # D49: the effective categories block (labels + max_age), so a replay judges
         # typed-context freshness against the windows this run used.
         "categories": category_specs_input(ctx.routines),
     }
-    facts = _director_ticker_facts(ctx, cand_entries)
+    facts = _research_ticker_facts(ctx, cand_entries)
     if facts is not None:  # E4.8a: absent when the flag is off (prompt unchanged)
         inputs["ticker_facts"] = facts
     if diversification.is_relaxed:  # E12.5: absent when strict (prompt unchanged)
         inputs["diversification"] = diversification.mode
-    reply, out = _ask(ctx, env, "director", snap, inputs, DirectorOutput)
+    reply, out = _ask(ctx, env, "research", snap, inputs, ResearchOutput)
     kept, dropped, rejected = _filter_shortlist(out, cands)
     kept, pdropped, prejected = _portfolio_filter(kept, pctx, held, settings, diversification)
     dropped.update(pdropped)
     rejected.extend(prejected)
     ranked = {i.ticker for i in kept}
     excluded = _filter_excluded(out, cands, ranked)
-    call_id = _record_ok(ctx, "director", reply, snap.id, dropped)
+    call_id = _record_ok(ctx, "research", reply, snap.id, dropped)
     no_trade = _no_trade_reason(out, kept)
 
     j = _journal(ctx, snap.id)
-    for e in snap.of_kind("candidate"):  # what the Director was offered
+    for e in snap.of_kind("candidate"):  # what Research was offered
         j.add(
-            JournalPersona.SWEEP,
+            JournalPersona.SCALP,
             Stage.CANDIDATE,
             e.subject,
             Choice.SELECTED,
-            ReasonCode.SWEEP_CANDIDATE,
+            ReasonCode.SCALP_CANDIDATE,
             confidence=e.payload.get("confidence"),
             payload=e.payload,
         )
     j.add(
-        JournalPersona.DIRECTOR,
+        JournalPersona.RESEARCH,
         Stage.SHORTLIST,
         SESSION_SUBJECT,
         Choice.NOTED,
@@ -1280,7 +1280,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
     for item in kept:
         j.add(
-            JournalPersona.DIRECTOR,
+            JournalPersona.RESEARCH,
             Stage.SHORTLIST,
             item.ticker,
             Choice.SELECTED,
@@ -1292,7 +1292,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
     for item, reason in rejected:
         j.add(
-            JournalPersona.DIRECTOR,
+            JournalPersona.RESEARCH,
             Stage.SHORTLIST,
             item.ticker.strip().upper() or SESSION_SUBJECT,
             Choice.REJECTED,
@@ -1304,11 +1304,11 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
     for ex in excluded:
         j.add(
-            JournalPersona.DIRECTOR,
+            JournalPersona.RESEARCH,
             Stage.SHORTLIST,
             ex.ticker,
             Choice.REJECTED,
-            ReasonCode.DIRECTOR_EXCLUDED,
+            ReasonCode.RESEARCH_EXCLUDED,
             reason_text=ex.reason,
             persona_call_id=call_id,
         )
@@ -1316,21 +1316,21 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     not_ranked = sorted(set(cands) - accounted)
     for t in not_ranked:
         j.add(
-            JournalPersona.DIRECTOR,
+            JournalPersona.RESEARCH,
             Stage.SHORTLIST,
             t,
             Choice.REJECTED,
             ReasonCode.NOT_RANKED,
-            reason_text="neither ranked nor excluded by the Director (no reason given)",
+            reason_text="neither ranked nor excluded by Research (no reason given)",
             persona_call_id=call_id,
         )
     if no_trade is not None:
         j.add(
-            JournalPersona.DIRECTOR,
+            JournalPersona.RESEARCH,
             Stage.SHORTLIST,
             SESSION_SUBJECT,
             Choice.NO_TRADE,
-            ReasonCode.DIRECTOR_NO_TRADE,
+            ReasonCode.RESEARCH_NO_TRADE,
             reason_text=f"{no_trade}: {out.session_notes}".strip(": "),
             persona_call_id=call_id,
             payload={"no_trade_reason": no_trade, "market_regime": out.market_regime},
@@ -1353,7 +1353,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     _note(
         ctx,
         SESSION_SUBJECT,
-        persona="director",
+        persona="research",
         topic=NoteTopic.REGIME_VIEW,
         title=f"Regime: {out.market_regime}",
         body=f"{out.market_regime}: {out.session_notes}".strip(": "),
@@ -1363,7 +1363,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         _note(
             ctx,
             item.ticker,
-            persona="director",
+            persona="research",
             topic=NoteTopic.THESIS,
             title=f"{item.ticker} {item.stance} thesis",
             body="\n\n".join(
@@ -1411,13 +1411,13 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
         },
         notice=notice,
         stop_chain=no_trade is not None,  # E5.9: no Quant/Risk LLM calls on an empty shortlist
-        card=director_card(
+        card=research_card(
             payload,
             candidates=len(cands),
             dropped=drop_items,
             funnel=funnel,
             budget=qr_budget,
-            evidence=_sweep_evidence(snap),
+            evidence=_scalp_evidence(snap),
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
         ),
@@ -1430,7 +1430,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
 
 def _strategies(stance: str, settings: ArcSettings) -> list[Any]:
-    """Scanner strategies for a Director stance under the active account profile (D25).
+    """Scanner strategies for a Research stance under the active account profile (D25).
 
     ``[]`` means the profile has no structure for the stance (e.g. neutral under
     ``cash_debit``): no trade.
@@ -1588,7 +1588,7 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
     j = _journal(ctx, ctx.snapshot.id)
     shortlist = _latest(ctx.snapshot, "shortlist", ShortlistPayload)
-    # E5.7: the Director ranks everything; only the first `budget` get a structure.
+    # E5.7: Research ranks everything; only the first `budget` get a structure.
     over = shortlist.over_budget() if shortlist else []
     over_budget = [i.ticker for i in over]
     for item in over:
@@ -2413,7 +2413,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     from arc.store.repos import GateDecisionRepo, HaltRepo, ProposalRepo
 
     settings = ctx.settings
-    # E5.2b: ``ctx.now`` is the chain start (before the Director/Quant/Risk LLM
+    # E5.2b: ``ctx.now`` is the chain start (before Research/Quant/Risk LLM
     # calls) and keys ``day`` idempotency only. Data age, the gate, the token and
     # the proposal's expiry use ``ctx.clock()``: read at step start, after the
     # account fetch, and again after each ticker's quotes are fetched.
@@ -2542,7 +2542,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             skip(t, "no_risk_review", ReasonCode.NO_RISK_REVIEW, "no Risk assessment")
             continue
         if not cand_ids.get(t):
-            skip(t, "no_candidate", ReasonCode.NO_CANDIDATE_ID, "no Sweep candidate row")
+            skip(t, "no_candidate", ReasonCode.NO_CANDIDATE_ID, "no Scalp candidate row")
             continue
         try:
             priced = price_structure(
@@ -2853,7 +2853,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
 # ---------------------------------------------------------------------------
 
 _STEPS: dict[str, Callable[[JobContext, PipelineEnv], JobResult]] = {
-    "director": director,
+    "research": research,
     "quant": quant,
     "risk": risk,
     "propose": propose,
@@ -2881,8 +2881,8 @@ def _live_env(ctx: JobContext) -> PipelineEnv:
     return cast("PipelineEnv", _LazyEnv(ctx))
 
 
-def director_step(ctx: JobContext) -> JobResult:
-    return director(ctx, _live_env(ctx))
+def research_step(ctx: JobContext) -> JobResult:
+    return research(ctx, _live_env(ctx))
 
 
 def quant_step(ctx: JobContext) -> JobResult:
@@ -2898,19 +2898,19 @@ def propose_step(ctx: JobContext) -> JobResult:
 
 
 def pipeline_handlers(env: PipelineEnv) -> dict[str, Handler]:
-    """Dispatcher overrides binding every E5.2 step (and the Sweep) to one *env*."""
-    from arc.routines.handlers import sweep_persona
+    """Dispatcher overrides binding every E5.2 step (and the Scalp) to one *env*."""
+    from arc.routines.handlers import scalp_persona
 
     def bind(fn: Callable[[JobContext, PipelineEnv], JobResult]) -> Handler:
         return lambda ctx: fn(ctx, env)
 
     handlers: dict[str, Handler] = {name: bind(fn) for name, fn in _STEPS.items()}
-    if env.sweep_llm is not None or env.universe_guard is not None:
-        sweep_llm, make_guard = env.sweep_llm, env.universe_guard
+    if env.scalp_llm is not None or env.universe_guard is not None:
+        scalp_llm, make_guard = env.scalp_llm, env.universe_guard
 
-        def sweep(ctx: JobContext) -> JobResult:
+        def scalp(ctx: JobContext) -> JobResult:
             guard = make_guard(ctx.settings, ctx.now) if make_guard is not None else None
-            return sweep_persona(ctx, llm=sweep_llm, guard=guard)
+            return scalp_persona(ctx, llm=scalp_llm, guard=guard)
 
-        handlers["sweep"] = sweep
+        handlers["scalp"] = scalp
     return handlers

@@ -198,9 +198,9 @@ export function parseRiskNarrative(raw: string | null | undefined): RiskView {
   };
 }
 
-/** Thesis author: the Director for opens, the Investor for exits (D22 persona attribution). */
+/** Thesis author: Research for opens, the Investor for exits (D22 persona attribution). */
 export function thesisPersona(kind: "open" | "close"): string {
-  return kind === "close" ? "Investor" : "Director";
+  return kind === "close" ? "Investor" : "Research";
 }
 
 // ---------------------------------------------------------------------------
