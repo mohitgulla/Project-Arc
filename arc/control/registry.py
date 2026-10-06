@@ -236,6 +236,7 @@ NOT_EXPOSED: dict[str, str] = {
     "finnhub_cluster_buyers": "D46 insider detector internals (context data only)",
     "finnhub_cluster_days": "D46 insider detector internals (context data only)",
     "persona_timeout_seconds": "LLM plumbing",
+    "research_prompt_max_chars": "LLM plumbing",
     "pipeline_max_context_notes": "LLM context size",
 }
 
@@ -1707,6 +1708,36 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("off", "on"),
         aliases=("routines.personas.scout_feed", "scout_feed", "scout"),
     ),
+    # E13.8 (D56/D53/D44): Research's idea pool. Strategy lane: scalp is the control
+    # (Scalp candidates only); all merges the Scout's candidates. Experiment XP-4.
+    Tunable(
+        key="personas.research_idea_pool",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E13.8: which ideas Research ranks. scalp = Scalp candidates only; "
+        "all = one merged pool of Scalp + Scout candidates (feeds, origins and stance "
+        "agreement counted by code; at most funnel.research.max_scout_only_ideas "
+        "Scout-only ideas). Experiment XP-4 tests it.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "research_idea_pool"),
+        choices=("scalp", "all"),
+        aliases=("routines.personas.research_idea_pool", "research_idea_pool"),
+    ),
+    # E13.8 (D56/D54/D44): Research prompt format. Strategy lane: full is the control.
+    Tunable(
+        key="personas.research_compact_prompt",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E13.8: Research prompt format. full = today's prompt; compact = one "
+        "line per idea, the Scout read, top-3 headlines per category and compact regime "
+        "lines (target research_prompt_max_chars). Experiment XP-6 tests it.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "research_compact_prompt"),
+        choices=("full", "compact"),
+        aliases=("routines.personas.research_compact_prompt", "research_compact_prompt"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -2516,6 +2547,8 @@ _PERSONA_SWITCHES = frozenset(
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.
 _PERSONA_CHOICE_SWITCHES: dict[tuple[str, ...], str] = {
     ("personas", "director_diversification"): "strict",
+    ("personas", "research_idea_pool"): "scalp",  # E13.8
+    ("personas", "research_compact_prompt"): "full",  # E13.8
 }
 
 

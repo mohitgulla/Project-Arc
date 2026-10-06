@@ -756,7 +756,47 @@ def _legacy_job_body(key: str, body: dict[str, Any]) -> dict[str, Any]:
 # ``mode`` of the same-named settings block. The first choice is the control.
 PERSONA_CHOICES: dict[str, tuple[str, ...]] = {
     "director_diversification": ("strict", "relaxed"),
+    # E13.8 (D56/D53/D54): Research's idea pool and prompt format (strategy lane)
+    "research_idea_pool": ("scalp", "all"),
+    "research_compact_prompt": ("full", "compact"),
 }
+
+
+class ResearchIdeaPoolSettings(BaseModel):
+    """E13.8 (D56, D53): which feeds' candidates Research ranks (default ``scalp``).
+
+    ``mode`` comes from ``personas.research_idea_pool: scalp | all``. ``scalp`` = today's
+    behaviour (Scalp candidates only; byte-identical prompt). ``all`` = the merged
+    Scalp + Scout idea pool (code-counted feeds, origins, stance agreement; at most
+    ``funnel.research.max_scout_only_ideas`` Scout-only ideas). Draft experiment XP-4.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["scalp", "all"] = "scalp"
+
+    @property
+    def merged(self) -> bool:
+        return self.mode == "all"
+
+
+class ResearchCompactPromptSettings(BaseModel):
+    """E13.8 (D56, D54): Research prompt format (default ``full``).
+
+    ``mode`` comes from ``personas.research_compact_prompt: full | compact``. ``full``
+    = today's prompt byte for byte; ``compact`` = one line per idea, compact regime /
+    market lines, the Scout read instead of raw brief JSON, top-3 headlines per
+    category, within ``research_prompt_max_chars`` minus the exit-block reserve.
+    Draft experiment XP-6.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["full", "compact"] = "full"
+
+    @property
+    def compact(self) -> bool:
+        return self.mode == "compact"
 
 
 class RelaxedConcentration(BaseModel):
@@ -1018,6 +1058,11 @@ class RoutinesConfig(BaseModel):
     # E12.5: knobs + the ``personas.director_diversification`` switch (as ``mode``).
     director_diversification: ResearchDiversificationSettings = Field(
         default_factory=ResearchDiversificationSettings
+    )
+    # E13.8: the ``personas.research_idea_pool`` / ``research_compact_prompt`` switches.
+    research_idea_pool: ResearchIdeaPoolSettings = Field(default_factory=ResearchIdeaPoolSettings)
+    research_compact_prompt: ResearchCompactPromptSettings = Field(
+        default_factory=ResearchCompactPromptSettings
     )
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)  # D56 (E13.3)
     options_slow: OptionsSlowSettings = Field(default_factory=OptionsSlowSettings)  # E13.5

@@ -137,6 +137,14 @@ from arc.pipeline.portfolio_context import (
     build_portfolio_context,
     render_portfolio_context,
 )
+from arc.pipeline.research_pool import (
+    EXIT_BLOCK_RESERVE_CHARS,
+    POOL_BUDGET_CUT,
+    POOL_MAX_LINES,
+    IdeaPool,
+    build_idea_pool,
+    cut_pool,
+)
 from arc.pipeline.store import PersonaCallRepo
 from arc.routines.handlers import JobResult
 from arc.routines.loop import LoopInputs, LoopState, pnl_bucket
@@ -149,7 +157,7 @@ from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
 
     from arc.backtest.costs import CostModel
     from arc.broker.base import AccountInfo, BrokerPosition
@@ -158,6 +166,7 @@ if TYPE_CHECKING:
     from arc.exits import ExitConfig, ExitModelResult
     from arc.gate.band import PriceBand
     from arc.gate.inputs import Portfolio
+    from arc.personas.schemas import PoolItem
     from arc.pipeline.env import PipelineEnv
     from arc.pipeline.market import PricedStructure
     from arc.routines.config import ResearchDiversificationSettings
@@ -199,6 +208,9 @@ RESEARCH_READS = [
     "insider_activity",
     "analyst_recs",
     "fundamentals",
+    # E13.8 (D56): the Scout's read; rendered only with research_compact_prompt compact,
+    # and its ticker calls set the pool's stance agreement (research_idea_pool: all)
+    "scout_read",
 ]  # == routines.yaml research.reads (D30 adds the options-data kinds)
 # E5.9 drop reasons (Research stage; deterministic). Values == ReasonCode values.
 DROP_CONCENTRATION = ReasonCode.DROP_CONCENTRATION.value
@@ -673,11 +685,15 @@ def _research_rules(
     budget: BudgetView | None = None,
     portfolio: PortfolioContext | None = None,
     diversification: ResearchDiversificationSettings | None = None,
+    *,
+    compact: bool = False,
 ) -> list[str]:
     """Research constraints (E5.7: rank, don't gatekeep; no count cap in the prompt).
 
     D32: in the restrictive order-budget tier an advisory line is added; the
     deterministic cap is the lowered Quant/Risk budget (:func:`_shortlist_limit`).
+    E13.8: *compact* (``research_compact_prompt: compact``) names the idea pool and
+    drops the per-exclusion reason request.
     """
     rules = [
         f"shortlist tickers MUST come from the candidates above: {', '.join(sorted(cands))}.",
@@ -692,6 +708,12 @@ def _research_rules(
         "iron_condor | long_call | long_put.",
         "An empty shortlist is a valid answer when nothing is worth trading.",
     ]
+    if compact:  # E13.8 (D54/D56): pool wording; Research does not list exclusions
+        rules[0] = (
+            f"shortlist tickers MUST come from the idea pool above: {', '.join(sorted(cands))}."
+        )
+        rules[1] = rules[1].replace("Rank every candidate", "Rank every pool ticker")
+        rules[2] = "Tickers you do not rank need no reason; leave `excluded` empty."
     if settings is not None:
         rules.append(_profile_rule(settings))
     if budget is not None and budget.tier.restricted:
@@ -1167,26 +1189,118 @@ def _youtube_channels(ctx: JobContext) -> list[dict[str, str]]:
     return configured_channels(found[1].options if found else None)
 
 
+def _pool_tiers(ctx: JobContext) -> dict[str, str]:
+    """E13.8: ``ticker -> tier`` for the pool lines (display only; ``{}`` on error)."""
+    from arc.universe.tiers import tier_membership
+
+    try:
+        return {
+            t: tier.value for t, tier in tier_membership(ctx.conn, ctx.settings, ctx.now).items()
+        }
+    except Exception as exc:  # noqa: BLE001 - a display column never fails Research
+        log.warning("research.pool_tiers_unavailable", error=str(exc)[:200])
+        return {}
+
+
+def _research_prompt_limit(settings: ArcSettings) -> int:
+    """E13.8: the compact prompt's budget net of E13.17's exit-block reserve."""
+    return settings.research_prompt_max_chars - EXIT_BLOCK_RESERVE_CHARS
+
+
+def _log_prompt_size(
+    snap: ContextSnapshot, inputs: Mapping[str, Any], settings: ArcSettings
+) -> int:
+    """Log ``research.prompt_over_budget`` when the prompt exceeds the budget."""
+    chars = len(build_prompt("research", snap, inputs))
+    limit = _research_prompt_limit(settings)
+    if chars > limit:
+        log.warning(
+            "research.prompt_over_budget",
+            chars=chars,
+            limit=limit,
+            max_chars=settings.research_prompt_max_chars,
+            compact=bool(inputs.get("compact")),
+        )
+    return chars
+
+
+def _fit_research_budget(
+    snap: ContextSnapshot,
+    inputs: dict[str, Any],
+    items: Sequence[PoolItem],
+    settings: ArcSettings,
+    rules_for: Callable[[Mapping[str, Stance]], list[str]],
+) -> tuple[dict[str, Any], list[PoolItem]]:
+    """E13.8 (D54): fit the compact prompt in ``research_prompt_max_chars`` - 7,200.
+
+    The pool is listed up to ``POOL_MAX_LINES``. Over budget: the headlines go first
+    (``max_headlines`` 0), then the pool is cut to its top ``POOL_BUDGET_CUT`` by
+    confidence. Returns the (re-recorded) inputs and the cut pool items, which the
+    step journals as ``over_prompt_budget``.
+    """
+    limit = _research_prompt_limit(settings)
+
+    def _with_pool(keep: list[PoolItem]) -> dict[str, Any]:
+        cands = {i.ticker: Stance(i.stance) for i in keep}
+        return {
+            **inputs,
+            "idea_pool": [i.model_dump(mode="json") for i in keep],
+            "candidate_tickers": sorted(cands),
+            "rules": rules_for(cands),
+        }
+
+    kept, cut = cut_pool(items, POOL_MAX_LINES)
+    out = _with_pool(kept) if cut else inputs
+    if len(build_prompt("research", snap, out)) <= limit:
+        return out, cut
+    out = {**out, "max_headlines": 0}
+    if len(build_prompt("research", snap, out)) <= limit:
+        return out, cut
+    kept, more = cut_pool(kept, POOL_BUDGET_CUT)
+    out = _with_pool(kept) | {"max_headlines": 0}
+    _log_prompt_size(snap, out, settings)
+    return out, [*cut, *more]
+
+
+def _no_candidates(ctx: JobContext) -> JobResult:
+    """Research with an empty idea pool: a journaled no-trade and an empty shortlist."""
+    j = _journal(ctx, ctx.snapshot.id)
+    j.add(
+        JournalPersona.RESEARCH,
+        Stage.SHORTLIST,
+        SESSION_SUBJECT,
+        Choice.NO_TRADE,
+        ReasonCode.NO_CANDIDATES,
+        reason_text="no active Scalp candidates",
+    )
+    ctx.write(
+        "shortlist",
+        SESSION_SUBJECT,
+        ShortlistPayload(shortlist=[], market_regime="unknown", session_notes="no candidates"),
+    )
+    return JobResult(summary="no active candidates; empty shortlist", metrics={"shortlist": 0})
+
+
 def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     settings = ctx.settings
-    cand_entries = ctx.snapshot.of_kind("candidate")
+    all_entries = ctx.snapshot.of_kind("candidate")
+    if not all_entries:
+        return _no_candidates(ctx)
+    # E13.8 (D56/D53): the idea pool. ``scalp`` (control) = the Scalp's candidates
+    # (every entry before the Scout exists); ``all`` = Scalp + Scout merged by ticker.
+    pool_cfg = ctx.routines.research_idea_pool
+    compact = ctx.routines.research_compact_prompt.compact
+    pool = build_idea_pool(
+        ctx.snapshot,
+        merged=pool_cfg.merged,
+        max_scout_only=ctx.routines.funnel.research.max_scout_only_ideas,
+        tiers=_pool_tiers(ctx) if (pool_cfg.merged or compact) else None,
+    )
+    pool_set = set(pool.tickers)
+    cand_entries = [e for e in all_entries if e.subject in pool_set]
     cands = {e.subject: Stance(e.payload["stance"]) for e in cand_entries}
     if not cands:
-        j = _journal(ctx, ctx.snapshot.id)
-        j.add(
-            JournalPersona.RESEARCH,
-            Stage.SHORTLIST,
-            SESSION_SUBJECT,
-            Choice.NO_TRADE,
-            ReasonCode.NO_CANDIDATES,
-            reason_text="no active Scalp candidates",
-        )
-        ctx.write(
-            "shortlist",
-            SESSION_SUBJECT,
-            ShortlistPayload(shortlist=[], market_regime="unknown", session_notes="no candidates"),
-        )
-        return JobResult(summary="no active candidates; empty shortlist", metrics={"shortlist": 0})
+        return _no_candidates(ctx)
 
     # D32: the day's order budget decides how much the entry chain may do.
     budget = read_budget(ctx, env, settings, now=ctx.clock())
@@ -1259,7 +1373,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "portfolio_block": "" if pctx.empty else render_portfolio_context(pctx, settings),
         "recent_ideas": "\n".join(recent_lines),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
-        "rules": _research_rules(cands, settings, budget, pctx, diversification),
+        "rules": _research_rules(cands, settings, budget, pctx, diversification, compact=compact),
         # E4.6 (D45): [{slug, label, category}] of the youtube.briefs job, for the n/N lines.
         "youtube_channels": _youtube_channels(ctx),
         # D49: the effective categories block (labels + max_age), so a replay judges
@@ -1271,6 +1385,28 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         inputs["ticker_facts"] = facts
     if diversification.is_relaxed:  # E12.5: absent when strict (prompt unchanged)
         inputs["diversification"] = diversification.mode
+    # E13.8: pool inputs, recorded only off the control (scalp + full: prompt unchanged)
+    if len(cand_entries) != len(all_entries):  # Scout-only entries left out (scalp)
+        inputs["candidate_tickers"] = sorted(cands)
+    if pool_cfg.merged or compact:
+        inputs["idea_pool"] = [i.model_dump(mode="json") for i in pool.items]
+        inputs["candidate_tickers"] = sorted(cands)
+    if pool_cfg.merged:
+        inputs["pool_merged"] = True
+    budget_cut: list[PoolItem] = []
+    if compact:
+        inputs["compact"] = True
+        inputs, budget_cut = _fit_research_budget(
+            snap,
+            inputs,
+            pool.items,
+            settings,
+            lambda c: _research_rules(c, settings, budget, pctx, diversification, compact=True),
+        )
+        for item in budget_cut:
+            cands.pop(item.ticker, None)
+    else:
+        _log_prompt_size(snap, inputs, settings)
     reply, out = _ask(ctx, env, "research", snap, inputs, ResearchOutput)
     kept, dropped, rejected = _filter_shortlist(out, cands)
     kept, pdropped, prejected = _portfolio_filter(kept, pctx, held, settings, diversification)
@@ -1282,15 +1418,33 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     no_trade = _no_trade_reason(out, kept)
 
     j = _journal(ctx, snap.id)
-    for e in snap.of_kind("candidate"):  # what Research was offered
+    pool_feeds = {i.ticker: i.feeds for i in pool.items}
+    for e in snap.of_kind("candidate"):  # what Research was offered (the pool)
+        if e.subject not in cands:
+            continue
+        scout_only = pool_feeds.get(e.subject) == ["scout"]
         j.add(
-            JournalPersona.SCALP,
+            JournalPersona.SCOUT if scout_only else JournalPersona.SCALP,
             Stage.CANDIDATE,
             e.subject,
             Choice.SELECTED,
-            ReasonCode.SCALP_CANDIDATE,
+            ReasonCode.SCOUT_CANDIDATE if scout_only else ReasonCode.SCALP_CANDIDATE,
             confidence=e.payload.get("confidence"),
             payload=e.payload,
+        )
+    # E13.8: pool cuts by code (Scout-only cap; compact prompt budget), never offered
+    for item, code in [
+        *[(i, ReasonCode.POOL_SCOUT_ONLY_CAP) for i in pool.capped],
+        *[(i, ReasonCode.POOL_OVER_PROMPT_BUDGET) for i in budget_cut],
+    ]:
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.REJECTED,
+            code,
+            confidence=item.confidence,
+            payload=item.model_dump(mode="json"),
         )
     j.add(
         JournalPersona.RESEARCH,
@@ -1370,6 +1524,11 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         no_trade_reason=no_trade,
         market_guard=guard,
         suppressed=[ln.removeprefix("- ") for ln in recent_lines],
+        pool_counts=(
+            IdeaPool([i for i in pool.items if i.ticker in cands], pool.capped).counts()
+            if (pool_cfg.merged or compact)
+            else None
+        ),
     )
     entry = ctx.write("shortlist", SESSION_SUBJECT, payload)
     _loop_record_full_run(ctx)

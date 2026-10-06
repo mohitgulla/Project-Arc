@@ -108,6 +108,11 @@ class ShortlistPayload(ResearchOutput):
         default_factory=list,
         description="Ideas (ticker stance structure) the dedupe held back from Research",
     )
+    # E13.8 (D56/D53), schema v4 (additive): the idea pool's make-up; None = the
+    # control (research_idea_pool scalp + research_compact_prompt full) or a v3 row.
+    pool_counts: dict[Literal["scalp", "scout", "both", "scout_only_capped"], int] | None = Field(
+        None, description="Idea pool size by feed, plus Scout-only ideas cut by the cap"
+    )
 
     def budgeted(self) -> list[ResearchRankedItem]:
         """The ranked items inside the Quant/Risk budget (all of them when unset)."""
@@ -724,7 +729,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload, schema_version=3),  # E13.7: feed, origins
     KindSpec("regime", RegimePayload, schema_version=2),  # E4.12: iv_percentile_ext
-    KindSpec("shortlist", ShortlistPayload, schema_version=3),  # E5.9: portfolio_view/no_trade
+    KindSpec("shortlist", ShortlistPayload, schema_version=4),  # E13.8: pool_counts
     KindSpec("structures", StructuresPayload, schema_version=3),  # E13.9: revision_of/kept
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
     KindSpec("proposal", ProposalPayload, schema_version=2),  # E13.9: revised

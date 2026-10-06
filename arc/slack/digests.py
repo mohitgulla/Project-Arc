@@ -85,6 +85,8 @@ _REASONS = {
     "below_threshold": "below confidence threshold",
     "no_grounded_source": "no grounded source",
     "not_a_candidate": "not a Scalp candidate",
+    "over_scout_only_cap": "over the Scout-only cap",
+    "over_prompt_budget": "cut for the prompt budget",
     "duplicate": "duplicate",
     "invalid_field": "invalid stance/structure",
     "over_limit": "over shortlist limit",
@@ -496,6 +498,14 @@ def research_card(
     pview = getattr(out, "portfolio_view", None)
     checks = list(getattr(out, "thesis_checks", []) or [])
     suppressed = list(getattr(out, "suppressed", []) or [])
+    pool = getattr(out, "pool_counts", None)  # E13.8: None under the control
+    pool_line = (
+        f"Pool: {pool.get('scalp', 0) + pool.get('scout', 0) + pool.get('both', 0)} "
+        f"(scalp {pool.get('scalp', 0)} · scout {pool.get('scout', 0)} · "
+        f"both {pool.get('both', 0)})"
+        if pool
+        else ""
+    )
     if guard is not None and not guard.opens_allowed:
         title = f"[Research] No trade: market unclear • Market {regime}"
     elif not ranked and no_trade:
@@ -505,6 +515,7 @@ def research_card(
     blocks = _head(
         title,
         f"*{len(ranked)}* ranked",
+        pool_line,
         f"{len(inside)} to Quant (budget {budget})" if beyond else "",
         f"{len(excluded)} excluded" if excluded else "",
         f"{len(dropped) + len(unranked)} dropped" if dropped or unranked else "",

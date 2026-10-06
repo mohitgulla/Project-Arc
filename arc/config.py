@@ -898,6 +898,14 @@ class ArcSettings(BaseSettings):
         default=600,
         description="Timeout for a single Research/Quant/Risk LLM call.",
     )
+    # E13.8 (D56/D54): the compact Research prompt's budget, of which
+    # arc.pipeline.research_pool.EXIT_BLOCK_RESERVE_CHARS (7,200) is kept for E13.17's
+    # exit block. Over it -> headlines trimmed, then the pool cut to its top 40.
+    research_prompt_max_chars: Annotated[int, Field(ge=20_000, le=400_000)] = Field(
+        default=80_000,
+        description="Target size of the compact Research prompt (chars); "
+        "personas.research_compact_prompt: compact only.",
+    )
     pipeline_max_shortlist: Annotated[int, Field(ge=1, le=20)] = Field(
         default=10,
         description=(
