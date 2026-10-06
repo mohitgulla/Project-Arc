@@ -6,7 +6,7 @@ See PLAN.md §2.2 (arc/data/) and §4 (E1.4).
 from __future__ import annotations
 
 import datetime as dt  # noqa: TC003 — used at runtime in pydantic models
-from typing import Protocol, runtime_checkable
+from typing import Literal, NamedTuple, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
@@ -152,3 +152,58 @@ def reference_price(
         return (q.bid + q.ask) / 2.0
     bars = provider.history_bars(symbol, today - dt.timedelta(days=REFERENCE_LOOKBACK_DAYS), today)
     return bars[-1].close if bars and bars[-1].close > 0 else None
+
+
+#: E4.12 (D55): a two-sided quote wider than this share of its mid is not trusted as spot
+#: when today's daily close exists (``ArcSettings.spot_max_spread_pct`` overrides it).
+DEFAULT_SPOT_MAX_SPREAD_PCT = 0.05
+
+SpotBasis = Literal["mid", "last_close"]
+
+
+class Spot(NamedTuple):
+    """Spot price of an underlying and where it came from (``None``/``None`` = no spot)."""
+
+    price: float | None
+    basis: SpotBasis | None
+
+
+def _bar_day(bar: HistoryBar) -> dt.date:
+    from arc.utils.calendar import ET
+
+    ts = bar.timestamp
+    return (ts.astimezone(ET) if ts.tzinfo is not None else ts).date()
+
+
+def market_spot(
+    provider: MarketDataProvider,
+    symbol: str,
+    today: dt.date,
+    *,
+    max_spread_pct: float = DEFAULT_SPOT_MAX_SPREAD_PCT,
+    quote: UnderlyingQuote | None = None,
+) -> Spot:
+    """Spot for pricing *symbol* on *today*: never a one-sided half-price mid (E4.12).
+
+    - both sides > 0 and spread <= ``max_spread_pct`` of the mid: the mid;
+    - both sides > 0 but wider: the latest daily close when that bar is from
+      *today* (after hours the close is the real price), else the mid;
+    - a zero side (off-hours ``ask=0``): the latest daily close (any recent day);
+    - nothing usable: ``Spot(None, None)``. Callers fail that ticker closed.
+
+    *quote* is an already fetched quote (saves a second request).
+    """
+    q = quote if quote is not None else provider.underlying_quote(symbol)
+    two_sided = q.bid > 0 and q.ask > 0
+    mid = (q.bid + q.ask) / 2.0 if two_sided else 0.0
+    if two_sided and (q.ask - q.bid) <= max_spread_pct * mid:
+        return Spot(mid, "mid")
+    bars = provider.history_bars(symbol, today - dt.timedelta(days=REFERENCE_LOOKBACK_DAYS), today)
+    last = bars[-1] if bars and bars[-1].close > 0 else None
+    if two_sided:
+        if last is not None and _bar_day(last) == today:
+            return Spot(last.close, "last_close")
+        return Spot(mid, "mid")
+    if last is not None:
+        return Spot(last.close, "last_close")
+    return Spot(None, None)

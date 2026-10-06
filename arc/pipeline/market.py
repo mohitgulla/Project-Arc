@@ -24,6 +24,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from arc.context.ttl import from_db
+from arc.data.base import DEFAULT_SPOT_MAX_SPREAD_PCT, market_spot
 from arc.gate.inputs import AccountSnapshot, ClosedLot, MarketSnapshot, Portfolio, Position, Quote
 from arc.models import Greeks, Leg, LegIntent
 from arc.scanner.iv import atm_iv
@@ -230,6 +231,7 @@ def build_portfolio(
     now: _dt.datetime,
     wash_sale_days: int,
     r: float,
+    spot_max_spread_pct: float = DEFAULT_SPOT_MAX_SPREAD_PCT,
 ) -> Portfolio:
     """Open option positions (max loss per underlying + net Greeks) plus recent closed lots.
 
@@ -252,7 +254,11 @@ def build_portfolio(
         open_positions.append(Position(underlying=root, max_loss=max_loss))
         exps = sorted({parse_occ(leg.occ_symbol).expiration for leg in legs})
         try:
-            spot = market.underlying_quote(root).mid
+            found = market_spot(market, root, today, max_spread_pct=spot_max_spread_pct)
+            if found.price is None:  # E4.12: never a half-price spot from a one-sided quote
+                msg = f"no usable spot for open {root} position (one-sided quote, no close)"
+                raise PortfolioError(msg)
+            spot = found.price
             chain = {
                 parse_occ(c.symbol).format(): c
                 for c in market.option_chain(root, exps[0], exps[-1])
@@ -537,8 +543,13 @@ def price_structure(
     as_of: _dt.date,
     r: float,
     require_iv: bool = True,
+    spot_max_spread_pct: float = DEFAULT_SPOT_MAX_SPREAD_PCT,
 ) -> PricedStructure:
     """Fetch the chain for the legs' expiry and rebuild the structure at current mids.
+
+    Spot comes from :func:`arc.data.base.market_spot` (E4.12): with no usable spot an
+    entry raises ``LookupError``; an exit (``require_iv=False``) is priced at mids with
+    ``spot=None`` and no Greeks.
 
     Raises ``LookupError`` if a leg is missing from the chain, has no usable quote,
     or (with ``require_iv``, the default) has no implied volatility (None, <= 0 or
@@ -555,7 +566,12 @@ def price_structure(
     exp = occs[0].expiration
     chain = {parse_occ(c.symbol).format(): c for c in market.option_chain(root, exp, exp)}
     uq = market.underlying_quote(root)
-    spot = uq.mid
+    found = market_spot(market, root, as_of, max_spread_pct=spot_max_spread_pct, quote=uq)
+    spot = found.price
+    if spot is None and require_iv:
+        # E4.12: fail closed rather than price off a one-sided (half-price) mid.
+        msg = f"no usable spot for {root} (one-sided quote and no recent close)"
+        raise LookupError(msg)
     out_legs: list[Leg] = []
     used: dict[str, OptionContract] = {}
     for occ, (_, side, ratio) in zip(occs, legs, strict=True):
@@ -577,13 +593,17 @@ def price_structure(
         for k, c in used.items()
         if c.implied_volatility and float(c.implied_volatility) > 0
     }
-    market_inputs = MarketInputs(spot=spot, r=r, ivs=ivs) if len(ivs) == len(used) else None
+    market_inputs = (
+        MarketInputs(spot=spot, r=r, ivs=ivs)
+        if spot is not None and len(ivs) == len(used)
+        else None
+    )
     chain_list = list(chain.values())
     return PricedStructure(
         analyze(out_legs, as_of=as_of, market=market_inputs),
         used,
         spot=spot,
-        atm_iv=atm_iv(chain_list, spot),
+        atm_iv=atm_iv(chain_list, spot) if spot is not None else None,
         spot_as_of=uq.timestamp,
         curve={k: curve_mid(chain_list, k) for k in used},
     )

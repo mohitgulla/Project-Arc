@@ -125,6 +125,54 @@ def test_price_structure_exit_path_tolerates_missing_iv() -> None:
     assert full.structure.greeks.vega != 0.0
 
 
+class OneSided(FakeMarket):
+    """E4.12: after-hours quote with ask=0 and (optionally) a daily close."""
+
+    def __init__(self, ivs: dict[str, float | None], close: float | None) -> None:
+        super().__init__(ivs)
+        self.close = close
+
+    def underlying_quote(self, symbol: str) -> UnderlyingQuote:
+        return UnderlyingQuote(symbol=symbol, bid=580.0, ask=0.0, mid=290.0, timestamp=NOW)
+
+    def history_bars(self, symbol, start, end, timeframe="1Day"):  # noqa: ANN001, ANN201
+        from arc.data.base import HistoryBar
+
+        if self.close is None:
+            return []
+        ts = dt.datetime.combine(AS_OF, dt.time(4), tzinfo=dt.UTC)
+        c = self.close
+        return [HistoryBar(timestamp=ts, open=c, high=c, low=c, close=c, volume=1.0)]
+
+
+def test_price_structure_one_sided_quote_uses_close_not_half_mid() -> None:
+    priced = price(OneSided({LP: 0.2, SP: 0.19}, close=581.5))
+    assert priced.spot == 581.5  # never the 290 half-price mid
+
+
+def test_price_structure_no_spot_fails_entry_but_not_exit() -> None:
+    with pytest.raises(LookupError, match="no usable spot"):
+        price(OneSided({LP: 0.2, SP: 0.19}, close=None))
+    exit_ = price(OneSided({LP: 0.2, SP: 0.19}, close=None), require_iv=False)
+    assert exit_.spot is None and exit_.atm_iv is None
+    assert exit_.structure.net_debit_credit == D("-0.85")
+    assert exit_.structure.greeks.vega == 0.0
+
+
+def test_build_portfolio_one_sided_quote() -> None:
+    conn = open_db(":memory:", copy=False)
+    pf = build_portfolio(
+        conn, positions(), OneSided({LP: 0.2, SP: 0.19}, close=580.0), now=NOW,
+        wash_sale_days=30, r=0.04,
+    )  # fmt: skip
+    assert pf.greeks.vega != 0.0
+    with pytest.raises(PortfolioError, match="no usable spot"):
+        build_portfolio(
+            conn, positions(), OneSided({LP: 0.2, SP: 0.19}, close=None), now=NOW,
+            wash_sale_days=30, r=0.04,
+        )  # fmt: skip
+
+
 def test_price_structure_missing_quote() -> None:
     m = FakeMarket({LP: 0.2, SP: 0.19})
     m.chain = [m.chain[0]]  # short leg not in the chain
