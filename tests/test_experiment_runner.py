@@ -97,7 +97,7 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
     assert set(stores) == {"treatment", "shadow_control"}
     conn.close()
 
-    # control's loop (Scout + Director chain), then each arm's paired copy
+    # control's loop (Sweep + Director chain), then each arm's paired copy
     assert (
         _arc("propose", "--fixtures", "--fixture-set", "bullish", "--profile", "cash_debit",
              "--db", str(control), "--no-slack", "--lock-dir", str(tmp_path / "locks"))
@@ -123,8 +123,8 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
             "SELECT job, status, summary FROM routine_runs ORDER BY step_index"
         ).fetchall()
         jobs = [r["job"] for r in runs]
-        # shared inputs: the Scout ran once, in control; the arm never re-runs it
-        assert "scout" not in jobs
+        # shared inputs: the Sweep ran once, in control; the arm never re-runs it
+        assert "sweep" not in jobs
         assert jobs == ["director", "quant", "risk", "propose", "execute"]
         assert all(r["status"] == "ok" for r in runs)
         for r in runs[:3]:  # upstream of the fork: control's outputs, reused verbatim

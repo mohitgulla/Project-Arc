@@ -170,7 +170,7 @@ NEVER_TUNABLE: frozenset[str] = frozenset(
         "owner_slack_user_id",
         "config_version",
         "yaml_overrides",
-        "scout_hermes_bin",
+        "sweep_hermes_bin",
         "ffmpeg_bin",
     }
 )
@@ -209,13 +209,13 @@ NOT_EXPOSED: dict[str, str] = {
     "yt_caption_cooldown_max_minutes": "ingestion plumbing",
     "yt_caption_cooldown_jitter": "ingestion plumbing",
     "whisper_model": "ingestion model",
-    "scout_timeout_seconds": "LLM plumbing",
-    "scout_batch_size": "LLM plumbing",
-    "scout_max_doc_chars": "LLM plumbing",
-    "scout_story_threshold": "D30 clustering internals",
-    "scout_story_window_hours": "D30 clustering internals",
-    "scout_story_batch_size": "LLM plumbing",
-    "scout_story_doc_chars": "LLM plumbing",
+    "sweep_timeout_seconds": "LLM plumbing",
+    "sweep_batch_size": "LLM plumbing",
+    "sweep_max_doc_chars": "LLM plumbing",
+    "sweep_story_threshold": "D30 clustering internals",
+    "sweep_story_window_hours": "D30 clustering internals",
+    "sweep_story_batch_size": "LLM plumbing",
+    "sweep_story_doc_chars": "LLM plumbing",
     "ingest_macro_horizon_days": "ingestion plumbing",
     "uoa_min_volume": "UOA detector internals (data, not a trading limit)",
     "uoa_vol_oi_ratio": "UOA detector internals (data, not a trading limit)",
@@ -400,25 +400,27 @@ _STATIC: tuple[Tunable, ...] = (
         choices=("strict", "seed"),
     ),
     _s(
-        "scout_max_new_tickers",
+        "sweep_max_new_tickers",
         Group.UNIVERSE,
         _I,
-        "D28/D51: max discoveries (names in no tier) the Scout may accept per run (seed mode).",
+        "D28/D51: max discoveries (names in no tier) the Sweep may accept per run (seed mode).",
         Risk.UP,
         min=0,
         max=25,
         hard_ceiling=25,
+        aliases=("scout_max_new_tickers",),  # D54: renamed from the Scout
     ),
     _s(
-        "scout_doc_budget",
+        "sweep_doc_budget",
         Group.UNIVERSE,
         _I,
-        "D30: docs the Scout reads per run, shared equally across sources (round-robin); "
+        "D30: docs the Sweep reads per run, shared equally across sources (round-robin); "
         "higher = more LLM tokens, never more trades.",
         Risk.NONE,
         min=20,
         max=400,
         hard_ceiling=400,
+        aliases=("scout_doc_budget",),  # D54: renamed from the Scout
     ),
     # E12.4 (D51): relaxed liquidity screen (trending + discoveries; config/universe.yaml).
     # Lower floors / a wider spread admit more names to be looked at; the gate's spread
@@ -722,14 +724,15 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         hard_ceiling=1,
     ),
     _s(
-        "scout_min_confidence",
+        "sweep_min_confidence",
         Group.ENTRIES,
         _F,
-        "Scout keeps a candidate only at or above this confidence (lower = more ideas).",
+        "Sweep keeps a candidate only at or above this confidence (lower = more ideas).",
         Risk.DOWN,
         min=0.30,
         max=0.95,
         hard_ceiling=0.30,
+        aliases=("scout_min_confidence",),  # D54: renamed from the Scout
     ),
     _s(
         "max_shortlist",
@@ -1417,14 +1420,14 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         path=("loop", "slack_layout"),
         choices=("root_per_loop", "day_thread"),
     ),
-    # E4.8a (D46/D44): Finnhub facts in the Scout/Director prompts. Strategy lane:
+    # E4.8a (D46/D44): Finnhub facts in the Sweep/Director prompts. Strategy lane:
     # the default stays off until an experiment (XP-2) returns a `win` verdict.
     Tunable(
         key="personas.finnhub_context",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
         description="E4.8a: show the Finnhub per-ticker facts (earnings surprises, insider, "
-        "analyst recs, fundamentals) to the Scout and the Director. Experiment XP-2 tests it.",
+        "analyst recs, fundamentals) to the Sweep and the Director. Experiment XP-2 tests it.",
         target=Target.ROUTINES,
         risk=Risk.ORDER,
         path=("personas", "finnhub_context"),

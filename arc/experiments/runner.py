@@ -19,7 +19,7 @@ for every consumer). Three entry points:
   not paired yet (``max_lag_seconds``), then runs the arm's own ``arm_jobs``
   (position management, reconcile, Investor ladders) on its store.
 
-Shared inputs: sources and the Scout run once, in control. Before each paired
+Shared inputs: sources and the Sweep run once, in control. Before each paired
 chain, the active context entries the chain reads are synced from control's store,
 except the kinds the arm's own jobs produce (e.g. ``position_review``).
 """

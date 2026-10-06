@@ -70,8 +70,8 @@ from arc.context.store import ContextStore
 from arc.control.effective import cost_model as cost_config
 from arc.control.effective import exit_config, ranking_config
 from arc.exits import ExitSummary, model_exits, realized_vol_forecast
-from arc.ingest.llm import ScoutLLMError
-from arc.ingest.scout import extract_json_object
+from arc.ingest.llm import SweepLLMError
+from arc.ingest.sweep import extract_json_object
 from arc.journal.models import LegQuote, MarketContext, PersonaCallMeta
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage, gate_reason
 from arc.journal.store import JournalStore, Recorder
@@ -364,7 +364,7 @@ def _ask[M: BaseModel](
     started = time.monotonic()
     try:
         reply = llm.complete(prompt)
-    except ScoutLLMError as exc:
+    except SweepLLMError as exc:
         repo.insert(
             run_id=ctx.run_id,
             persona=persona,
@@ -563,8 +563,8 @@ def _filter_excluded(
     return list(kept.values())
 
 
-def _scout_evidence(snapshot: ContextSnapshot) -> dict[str, str]:
-    """ticker -> one display line of the Scout data behind a pick (digest card only)."""
+def _sweep_evidence(snapshot: ContextSnapshot) -> dict[str, str]:
+    """ticker -> one display line of the Sweep data behind a pick (digest card only)."""
     out: dict[str, str] = {}
     for e in snapshot.of_kind("candidate"):
         p = e.payload
@@ -575,7 +575,7 @@ def _scout_evidence(snapshot: ContextSnapshot) -> dict[str, str]:
             except ValueError:
                 when = ""
         out[e.subject] = esc(
-            f"Scout {p.get('stance', '?')} · {p.get('catalyst_type', '?')} catalyst{when} · "
+            f"Sweep {p.get('stance', '?')} · {p.get('catalyst_type', '?')} catalyst{when} · "
             f"{float(p.get('confidence', 0)):.0%} confidence"
         )
     return out
@@ -1102,7 +1102,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             SESSION_SUBJECT,
             Choice.NO_TRADE,
             ReasonCode.NO_CANDIDATES,
-            reason_text="no active Scout candidates",
+            reason_text="no active Sweep candidates",
         )
         ctx.write(
             "shortlist",
@@ -1207,11 +1207,11 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
     j = _journal(ctx, snap.id)
     for e in snap.of_kind("candidate"):  # what the Director was offered
         j.add(
-            JournalPersona.SCOUT,
+            JournalPersona.SWEEP,
             Stage.CANDIDATE,
             e.subject,
             Choice.SELECTED,
-            ReasonCode.SCOUT_CANDIDATE,
+            ReasonCode.SWEEP_CANDIDATE,
             confidence=e.payload.get("confidence"),
             payload=e.payload,
         )
@@ -1364,7 +1364,7 @@ def director(ctx: JobContext, env: PipelineEnv) -> JobResult:
             dropped=drop_items,
             funnel=funnel,
             budget=qr_budget,
-            evidence=_scout_evidence(snap),
+            evidence=_sweep_evidence(snap),
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
         ),
@@ -2486,7 +2486,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
             skip(t, "no_risk_review", ReasonCode.NO_RISK_REVIEW, "no Risk assessment")
             continue
         if not cand_ids.get(t):
-            skip(t, "no_candidate", ReasonCode.NO_CANDIDATE_ID, "no Scout candidate row")
+            skip(t, "no_candidate", ReasonCode.NO_CANDIDATE_ID, "no Sweep candidate row")
             continue
         try:
             priced = price_structure(
@@ -2841,19 +2841,19 @@ def propose_step(ctx: JobContext) -> JobResult:
 
 
 def pipeline_handlers(env: PipelineEnv) -> dict[str, Handler]:
-    """Dispatcher overrides binding every E5.2 step (and the Scout) to one *env*."""
-    from arc.routines.handlers import scout_persona
+    """Dispatcher overrides binding every E5.2 step (and the Sweep) to one *env*."""
+    from arc.routines.handlers import sweep_persona
 
     def bind(fn: Callable[[JobContext, PipelineEnv], JobResult]) -> Handler:
         return lambda ctx: fn(ctx, env)
 
     handlers: dict[str, Handler] = {name: bind(fn) for name, fn in _STEPS.items()}
-    if env.scout_llm is not None or env.universe_guard is not None:
-        scout_llm, make_guard = env.scout_llm, env.universe_guard
+    if env.sweep_llm is not None or env.universe_guard is not None:
+        sweep_llm, make_guard = env.sweep_llm, env.universe_guard
 
-        def scout(ctx: JobContext) -> JobResult:
+        def sweep(ctx: JobContext) -> JobResult:
             guard = make_guard(ctx.settings, ctx.now) if make_guard is not None else None
-            return scout_persona(ctx, llm=scout_llm, guard=guard)
+            return sweep_persona(ctx, llm=sweep_llm, guard=guard)
 
-        handlers["scout"] = scout
+        handlers["sweep"] = sweep
     return handlers

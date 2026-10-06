@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.journal import legacy
 from arc.journal.attribution import calibration
 from arc.journal.reasons import reason_label
 from arc.journal.scorecard import (
@@ -109,7 +110,8 @@ DAILY_BARS_MAX_DAYS = 45
 WEEKLY_BARS_MAX_DAYS = 400
 _TEST_ORDER_PREFIX = "arc-"
 # Personas whose reason codes the breakdown groups by (not gate/system/owner bookkeeping).
-_PERSONAS = ("scout", "director", "quant", "risk", "investor", "auditor")
+# D54: "scout" = pre-rename Sweep rows (and, after the cutover, the slow-feed Scout).
+_PERSONAS = ("sweep", "scout", "director", "quant", "risk", "investor", "auditor")
 
 _FORBID = ConfigDict(extra="forbid", frozen=True)
 
@@ -549,7 +551,7 @@ def _attrs(conn: sqlite3.Connection, hashes: Iterable[str]) -> dict[str, dict[st
         marks = ",".join("?" * len(linked))
         codes = sorted(
             {
-                r[0]
+                legacy.reason_code(r[0])
                 for r in conn.execute(
                     f"""SELECT DISTINCT reason_code FROM decisions
                         WHERE proposal_hash IN ({marks})

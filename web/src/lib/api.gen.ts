@@ -4420,7 +4420,7 @@ export interface components {
             newest_doc_at: string | null;
             /**
              * Share
-             * @description Share of the Scout doc budget (SourceRegistry.category_weights); null for categories the Scout never reads (typed context only)
+             * @description Share of the Sweep doc budget (SourceRegistry.category_weights); null for categories the Sweep never reads (typed context only)
              */
             share: number | null;
             /** Sources */
@@ -4458,6 +4458,13 @@ export interface components {
             every_s: number | null;
             /** Failed 24H */
             failed_24h: number;
+            /**
+             * Feed
+             * @description D54: Director feed (sweep = fast, intraday; scout = slow, daily or slower)
+             * @default sweep
+             * @enum {string}
+             */
+            feed: "sweep" | "scout";
             /** Job */
             job: string;
             /** Key */
@@ -4486,7 +4493,7 @@ export interface components {
             runs_24h: number;
             /**
              * Share In Category
-             * @description Share of its category's Scout budget (registry); null for typed-context sources (options data, YouTube), which never draw on the doc budget
+             * @description Share of its category's Sweep budget (registry); null for typed-context sources (options data, YouTube), which never draw on the doc budget
              */
             share_in_category?: number | null;
             /** Skipped Budget Today */
@@ -5410,7 +5417,7 @@ export interface components {
             size_cap: number | null;
             /**
              * Source
-             * @description Feed source (stockanalysis, reddit+…, settings, scout)
+             * @description Feed source (stockanalysis, reddit+…, settings, sweep)
              */
             source: string | null;
             /** Source As Of */

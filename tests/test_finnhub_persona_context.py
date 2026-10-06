@@ -1,4 +1,4 @@
-"""E4.8a (D46, D44): Finnhub facts in the Scout/Director prompts, behind a default-off flag.
+"""E4.8a (D46, D44): Finnhub facts in the Sweep/Director prompts, behind a default-off flag.
 
 Pins: the flag defaults off and leaves both prompts byte-identical to origin/main's
 (golden hashes taken from main with tests/finnhub_golden.py); with it on, the facts
@@ -26,9 +26,9 @@ from arc.control.effective import effective_routines
 from arc.control.registry import REGISTRY, lookup, read_raw, write_raw
 from arc.control.service import ControlService
 from arc.experiments.overlay import arm_config_data, load_spec
-from arc.ingest.llm import FixtureScoutLLM
-from arc.ingest.scout import run_scout, scout_facts_tickers
+from arc.ingest.llm import FixtureSweepLLM
 from arc.ingest.store import RawDocRepo
+from arc.ingest.sweep import run_sweep, sweep_facts_tickers
 from arc.models import Candidate
 from arc.personas.builders import (
     TICKER_FACTS_NOTE,
@@ -57,10 +57,12 @@ from tests import finnhub_golden as g
 REPO = Path(__file__).resolve().parent.parent
 # sha256 of the prompts built by tests/finnhub_golden.py on origin/main 9834f58
 # (before E4.8a). Flag off must reproduce them byte for byte.
-MAIN_DIRECTOR_SHA = "6424390f6ba136d34f8fa940c2246cac8c936ffeb672b824f73018216efbc56d"
-# D51 (E12.1) re-pinned the Scout sha: the watch list is the 25-name core and the
+# E5.12 (D54) re-pinned both: "Scout" -> "Sweep" in the role/label/schema-name lines
+# only (diffed against origin/main 23be73a; no other byte changed).
+MAIN_DIRECTOR_SHA = "e290d9f21cfd776c0d6be1e403f27463baacef8270d6df76792c6168f41afe06"
+# D51 (E12.1) re-pinned the Sweep sha: the watch list is the 25-name core and the
 # task line says "Watch list (core + momentum + trending)" (a deliberate prompt change).
-MAIN_SCOUT_SHA = "f77cbd75bc2d531468a195a04546d877956dc0e6b1edc6e3272ff66800593294"
+MAIN_SWEEP_SHA = "0d5e2208d3ef23adbd3189c0cf944e42d98e3fbba256304df2b5385fe5f76def"
 ON = FinnhubContextSettings(enabled=True)
 TODAY = g._now().date()
 
@@ -165,9 +167,9 @@ def test_flag_off_director_prompt_is_byte_identical_to_main() -> None:
     assert g.sha(g.director_prompt(snap, ticker_facts=None)) == MAIN_DIRECTOR_SHA
 
 
-def test_flag_off_scout_prompt_is_byte_identical_to_main() -> None:
-    assert g.sha(g.scout_prompt()) == MAIN_SCOUT_SHA
-    assert g.sha(g.scout_prompt(ticker_facts="")) == MAIN_SCOUT_SHA
+def test_flag_off_sweep_prompt_is_byte_identical_to_main() -> None:
+    assert g.sha(g.sweep_prompt()) == MAIN_SWEEP_SHA
+    assert g.sha(g.sweep_prompt(ticker_facts="")) == MAIN_SWEEP_SHA
 
 
 def test_flag_off_build_prompt_path_records_no_facts_input() -> None:
@@ -202,9 +204,9 @@ def test_flag_on_director_prompt_shows_facts_for_the_given_tickers() -> None:
     assert len(line) <= 300
 
 
-def test_flag_on_scout_prompt_shows_the_block_after_the_feeds() -> None:
+def test_flag_on_sweep_prompt_shows_the_block_after_the_feeds() -> None:
     block = ticker_facts_block(g.snapshot(), _opts(["NVDA"]))
-    p = g.scout_prompt(ticker_facts=block)
+    p = g.sweep_prompt(ticker_facts=block)
     assert p.index("FEEDS>>>") < p.index("## Ticker facts (Finnhub, code-built)")
     assert "NVDA: EPS surprise" in p and "AAPL:" not in p
 
@@ -445,7 +447,7 @@ def test_director_facts_tickers_follow_candidates_and_the_flag() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scout wiring
+# Sweep wiring
 # ---------------------------------------------------------------------------
 
 
@@ -463,7 +465,7 @@ def _seed_docs(conn: Any, now: dt.datetime) -> None:
 
 
 @pytest.mark.parametrize("flag", ["off", "on"])
-def test_run_scout_adds_facts_only_with_the_flag_on(flag: str) -> None:
+def test_run_sweep_adds_facts_only_with_the_flag_on(flag: str) -> None:
     conn = connect(":memory:")
     migrate(conn)
     now = g._now()
@@ -474,9 +476,9 @@ def test_run_scout_adds_facts_only_with_the_flag_on(flag: str) -> None:
     _seed_docs(conn, now)
     routines = RoutinesConfig.model_validate({"personas": {"finnhub_context": flag}})
     cfg = ArcSettings(env="paper", universe=["AAPL", "NVDA"], universe_mode="strict",
-                      scout_min_confidence=0.6)  # fmt: skip
-    llm = FixtureScoutLLM([json.dumps({"candidates": [], "scan_summary": "s"})])
-    run_scout(conn, cfg, llm=llm, now=now, run_id="r1", routines=routines)
+                      sweep_min_confidence=0.6)  # fmt: skip
+    llm = FixtureSweepLLM([json.dumps({"candidates": [], "scan_summary": "s"})])
+    run_sweep(conn, cfg, llm=llm, now=now, run_id="r1", routines=routines)
     (prompt,) = llm.prompts
     if flag == "off":
         assert "Ticker facts" not in prompt
@@ -489,7 +491,7 @@ def test_run_scout_adds_facts_only_with_the_flag_on(flag: str) -> None:
         assert row[1] == "r1" and "fundamentals" in json.loads(row[0])
 
 
-def test_scout_facts_tickers_cap_and_order() -> None:
+def test_sweep_facts_tickers_cap_and_order() -> None:
     from arc.context.kinds import StoryPayload
 
     def story(i: int, tickers: list[str]) -> StoryPayload:
@@ -502,8 +504,8 @@ def test_scout_facts_tickers_cap_and_order() -> None:
         })  # fmt: skip
 
     batch = [story(1, ["nvda", "AAPL"]), story(2, ["AAPL", "MSFT", "TSLA"])]
-    assert scout_facts_tickers(batch, 3) == ["NVDA", "AAPL", "MSFT"]
-    assert scout_facts_tickers(batch, 0) == []
+    assert sweep_facts_tickers(batch, 3) == ["NVDA", "AAPL", "MSFT"]
+    assert sweep_facts_tickers(batch, 0) == []
 
 
 # ---------------------------------------------------------------------------

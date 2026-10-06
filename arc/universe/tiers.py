@@ -7,8 +7,8 @@ The trade universe is four tiers, deduped and capped into one **active list**:
 * ``momentum`` — top holdings of the S&P 500 Momentum index (E12.2), read from the
   latest valid ``universe_tier`` context entry with subject ``momentum``.
 * ``trending`` — daily rules-based list (E12.3), ``universe_tier`` subject ``trending``.
-* ``discovery`` — today's Scout candidates that are in no other tier (``candidates``
-  rows; every row was admitted by the Scout's universe guard).
+* ``discovery`` — today's Sweep candidates that are in no other tier (``candidates``
+  rows; every row was admitted by the Sweep's universe guard).
 
 :func:`resolve_active` is pure and deterministic: a name keeps its **highest** tier
 (core > momentum > trending > discovery) and records the others in ``also_in``;
@@ -375,7 +375,7 @@ def _discoveries(conn: sqlite3.Connection, day: _dt.date, exclude: set[str]) -> 
             ticker=sym,
             tier=Tier.DISCOVERY,
             rank=i,
-            source="scout",
+            source="sweep",
             reason=f"candidate confidence {conf:.2f}, corroboration {corr}",
             as_of=day,
         )
@@ -436,7 +436,7 @@ def record_active(
     payload)``) and journal each name cut past the cap as ``universe:over_active_cap``.
 
     Idempotent per day and ticker: a name already journaled today is not journaled
-    again by a later resolve (the Scout resolves every 30 min). Returns the number of
+    again by a later resolve (the Sweep resolves every 30 min). Returns the number of
     new journal rows.
     """
     from arc.context.ttl import to_db
@@ -533,7 +533,7 @@ def active_tickers(
 def watch_tickers(
     conn: sqlite3.Connection | None, settings: ArcSettings, now: _dt.datetime
 ) -> list[str]:
-    """The Scout's watch list: active core + momentum + trending (no discoveries)."""
+    """The Sweep's watch list: active core + momentum + trending (no discoveries)."""
     if conn is not None and (active := _stored_active(conn, now)) is not None:
         return active.tier_tickers(Tier.CORE, Tier.MOMENTUM, Tier.TRENDING)
     return core_tickers(settings)
@@ -542,11 +542,11 @@ def watch_tickers(
 def seed_tickers(
     conn: sqlite3.Connection | None, settings: ArcSettings, now: _dt.datetime
 ) -> list[str]:
-    """Names the Scout admits without the screen: core ∪ valid momentum members (D51)."""
+    """Names the Sweep admits without the screen: core ∪ valid momentum members (D51)."""
     return [t for t, tier in tier_membership(conn, settings, now).items() if tier in SEED_TIERS]
 
 
-#: D51 / E12.4: tiers admitted without the liquidity screen and the Scout confidence floor.
+#: D51 / E12.4: tiers admitted without the liquidity screen and the Sweep confidence floor.
 SEED_TIERS: frozenset[Tier] = frozenset({Tier.CORE, Tier.MOMENTUM})
 
 

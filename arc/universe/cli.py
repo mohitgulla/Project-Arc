@@ -3,7 +3,7 @@
 - ``arc universe refresh``  fetch SEC tickers ∪ Alpaca optionable assets and
   replace the local cache (what the weekly ``symbols`` routine runs).
 - ``arc universe status``  cache path, age, counts, mode (never fetches).
-- ``arc universe check <TICKER>...``  would the Scout admit these names?
+- ``arc universe check <TICKER>...``  would the Sweep admit these names?
   Master lookup + the live liquidity screen (read-only market data).
 - ``arc universe tiers [--db PATH]``  D51 tiers, dedupe, active list and drops,
   resolved now from the store opened read-only (writes nothing).
@@ -36,7 +36,7 @@ def add_universe_parser(sub: argparse._SubParsersAction) -> None:  # type: ignor
     usub = p.add_subparsers(dest="universe_command", required=True)
     usub.add_parser("refresh", help="Fetch SEC + Alpaca symbols and replace the local cache")
     usub.add_parser("status", help="Symbol master cache status (never fetches)")
-    c = usub.add_parser("check", help="Would the Scout admit these tickers? (live screen)")
+    c = usub.add_parser("check", help="Would the Sweep admit these tickers? (live screen)")
     c.add_argument("tickers", nargs="+", metavar="TICKER")
     c.add_argument(
         "--fixture",

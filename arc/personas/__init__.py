@@ -11,13 +11,13 @@ from arc.personas.builders import (
     InvestorInput,
     QuantInput,
     RiskInput,
-    ScoutInput,
+    SweepInput,
     build_auditor_prompt,
     build_director_prompt,
     build_investor_prompt,
     build_quant_prompt,
     build_risk_prompt,
-    build_scout_prompt,
+    build_sweep_prompt,
 )
 from arc.personas.schemas import (
     AnomalyReport,
@@ -34,8 +34,8 @@ from arc.personas.schemas import (
     QuantStructureOut,
     RiskAssessment,
     RiskOutput,
-    ScoutCandidateOut,
-    ScoutOutput,
+    SweepCandidateOut,
+    SweepOutput,
 )
 
 __all__ = [
@@ -54,17 +54,17 @@ __all__ = [
     "QuantStructureOut",
     "RiskAssessment",
     "RiskOutput",
-    "ScoutCandidateOut",
-    "ScoutOutput",
+    "SweepCandidateOut",
+    "SweepOutput",
     # Builders
-    "build_scout_prompt",
+    "build_sweep_prompt",
     "build_director_prompt",
     "build_quant_prompt",
     "build_risk_prompt",
     "build_investor_prompt",
     "build_auditor_prompt",
     # Input types
-    "ScoutInput",
+    "SweepInput",
     "DirectorInput",
     "QuantInput",
     "RiskInput",

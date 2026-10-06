@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 
 __all__ = ["INPUT_TYPES", "InputType", "TrendingConfig", "TrendingError", "TrendingInput"]
 
-InputType = Literal["news", "apewisdom", "stocktwits", "scout"]
-INPUT_TYPES: tuple[InputType, ...] = ("news", "apewisdom", "stocktwits", "scout")
+InputType = Literal["news", "apewisdom", "stocktwits", "sweep"]
+INPUT_TYPES: tuple[InputType, ...] = ("news", "apewisdom", "stocktwits", "sweep")
 _NETWORK: frozenset[str] = frozenset({"apewisdom", "stocktwits"})
 
 
@@ -45,9 +45,9 @@ class TrendingInput(BaseModel):
     type: InputType
     enabled: bool = True
     label: str = ""
-    # news / scout: how many sessions back (today, when a session, counts as one)
+    # news / sweep: how many sessions back (today, when a session, counts as one)
     lookback_sessions: int = Field(3, ge=1, le=20)
-    # news / scout: the input is stale (contributes nothing) when its newest row is
+    # news / sweep: the input is stale (contributes nothing) when its newest row is
     # older than this. Network inputs are fetched live, so it does not apply to them.
     max_age: _dt.timedelta | None = None
     # apewisdom / stocktwits: pages fetched (every page must answer, else the input fails)

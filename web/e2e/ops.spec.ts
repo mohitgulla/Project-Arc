@@ -201,7 +201,7 @@ test.describe("ops behaviour", () => {
     await expect(tl.getByTestId("band").first()).toBeVisible();
     const bands = await tl.getByTestId("band").evaluateAll((els) => els.map((e) => e.getAttribute("data-band")));
     expect(bands[0]).toMatch(/^sources\./);
-    expect(bands.indexOf("scout")).toBeLessThan(bands.indexOf("trading_loop"));
+    expect(bands.indexOf("sweep")).toBeLessThan(bands.indexOf("trading_loop"));
     expect(bands.indexOf("trading_loop")).toBeLessThan(bands.indexOf("position_management"));
     const loop = page.getByTestId("loop-row");
     await expect(loop).toContainText("Director → Quant → Risk → Propose → Execute");

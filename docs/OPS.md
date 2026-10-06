@@ -32,7 +32,7 @@ PLAN.md §2.4 / D8 define two model tiers, both on the Anthropic subscription:
 | Tier | Personas | Model |
 |------|----------|-------|
 | **frontier** | Director, Quant, Risk | `anthropic/claude-opus-5.5` |
-| **cheap** | Scout, Investor, Auditor | `anthropic/claude-opus-5` |
+| **cheap** | Sweep, Investor, Auditor | `anthropic/claude-opus-5` |
 
 ### 2.1 Where it is configured (one place)
 
@@ -47,7 +47,7 @@ personas:
   director: frontier
   quant:    frontier
   risk:     frontier
-  scout:    cheap
+  sweep:    cheap
   investor: cheap
   auditor:  cheap
 ```
@@ -66,16 +66,16 @@ persona resolves to the model above and that the persona SKILL.md
 ### 2.2 How call sites use it
 
 Personas run as Hermes one-shots (`hermes -z -m <model> --provider <provider>
---ignore-rules -t todo`) via `arc.ingest.llm.HermesScoutLLM`. No call site
+--ignore-rules -t todo`) via `arc.ingest.llm.HermesSweepLLM`. No call site
 names a model:
 
-- Scout (`arc ingest` / `run_scout`): `HermesScoutLLM.from_settings(settings)`
-  → persona `scout`.
+- Sweep (`arc ingest` / `run_sweep`): `HermesSweepLLM.from_settings(settings)`
+  → persona `sweep`.
 - Director / Quant / Risk (`arc propose`, `PipelineEnv.live`):
-  `HermesScoutLLM.from_settings(settings, persona, timeout_seconds=...)`, one
+  `HermesSweepLLM.from_settings(settings, persona, timeout_seconds=...)`, one
   backend per persona.
 - Investor / Auditor: use `arc.llm_routing.resolve("investor"|"auditor", settings)`
-  (or `HermesScoutLLM.from_settings(settings, "<persona>")`) when their
+  (or `HermesSweepLLM.from_settings(settings, "<persona>")`) when their
   runners land.
 
 The model that actually answered is read back from the Hermes usage file and
@@ -85,7 +85,7 @@ stored with each persona reply for audit.
 
 | Persona | Calls/run | Tokens/call (est.) | Tier |
 |---------|-----------|-------------------|------|
-| Scout | 1-5 | ~2K in / ~1K out | cheap |
+| Sweep | 1-5 | ~2K in / ~1K out | cheap |
 | Director | 1 | ~4K in / ~2K out | frontier |
 | Quant | 1-3 | ~4K in / ~3K out | frontier |
 | Risk | 1 | ~3K in / ~2K out | frontier |
@@ -164,8 +164,8 @@ the plist with `--print`, and remove it with `--uninstall`.
 |---|---|---|
 | tick | There is no `tick` heartbeat for `tick_stale_after` (15m), or none ever. | `tick_stale` |
 | tick_slow (E8.2a) | In the last `coverage_window` (60m), at least `tick_slow_count` (2) ticks took longer than `tick_slow_after` (4m, from E5.10's `tick_duration_ms`), or the p90 gap between ticks is above 1.5 × `tick.interval` (7m30s). The message names the slowest job. | `tick_slow` |
-| routine_windows | Only for **slow-cadence** jobs (slots at least `per_slot_min_interval`, 60m, apart: Scout overnight, auditor, earnings, the daily sources). A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
-| slot_coverage (E8.2a) | For **fast** jobs (the 10-min loop, monitor, the 30-min Scout, rss/edgar): the job ran fewer than `coverage_min` (80 %) of its slots judged in the last `coverage_window` (60m). Slots are judged the same way as routine_windows (collapse aware), and halted slots count in neither number. One alert per job, which names the likely cause from the tick heartbeats (slow ticks with the top job, or tick gaps). | `coverage:<job>` |
+| routine_windows | Only for **slow-cadence** jobs (slots at least `per_slot_min_interval`, 60m, apart: Sweep overnight, auditor, earnings, the daily sources). A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
+| slot_coverage (E8.2a) | For **fast** jobs (the 10-min loop, monitor, the 30-min Sweep, rss/edgar): the job ran fewer than `coverage_min` (80 %) of its slots judged in the last `coverage_window` (60m). Slots are judged the same way as routine_windows (collapse aware), and halted slots count in neither number. One alert per job, which names the likely cause from the tick heartbeats (slow ticks with the top job, or tick gaps). | `coverage:<job>` |
 | earnings_coverage (E4.1d) | The `earnings` source job is enabled, the effective universe has at least one non-ETF ticker, and no earnings-calendar doc was stored in the last `earnings_stale_after` (7d). The message names the last earnings run's status and error (e.g. `skipped: no_api_key`, `failed: HTTPError …`). Without the dates `next_earnings` is empty and short premium on stocks fails closed. Never folded into a tick incident. | `coverage:earnings` |
 | stuck_runs | A `routine_runs` row is still `running` after `stuck_after` (70m), or after its job's `stuck_after_jobs` override (`monitor: 10m`, E5.3a). | `stuck:<run_id>` |
 | gateway | `hermes gateway status` or `hermes cron status` shows a `✗`, exits non-zero, or times out. `⚠` warnings count as degraded: they are recorded but not alerted unless `gateway.alert_on_degraded: true`. | `gateway` |
@@ -190,7 +190,7 @@ per check run:
   missed slots of the same job in one post collapse into one line per job.
 - A fast job never gets one alert per slot (E8.2a). A degraded 10-min loop shows
   up as one `coverage:director` alert, e.g. "director ran 7/12 slots in the last
-  60 min (58%) · likely cause: slow ticks (max 8m03s, scout 5m40s)". It
+  60 min (58%) · likely cause: slow ticks (max 8m03s, sweep 5m40s)". It
   resolves with the recovered ratio: "director slot coverage recovered: ran
   12/12 slots in the last 60 min (100%)".
 - Outages don't flood the channel. While a `tick_stale`, `gateway` or `tick_slow` incident is
@@ -209,7 +209,7 @@ per check run:
   coverage alert is posted then, on its own.
 - Per-slot detail for the fast jobs is in the tower's Ops page and in one
   line in the Auditor's 16:30 journal card (`Ops` section): `Slots: director
-  71/75, monitor 77/78, scout 15/15 · missed 6 (list in tower Ops)`.
+  71/75, monitor 77/78, sweep 15/15 · missed 6 (list in tower Ops)`.
 - Every threshold above lives under `monitoring:` in `config/routines.yaml` and
   can be changed from Slack (`!arc config set monitoring.coverage_min 70%`, §5.8).
   Setting `monitoring.per_slot_min_interval` to 5 gives back the old
@@ -383,7 +383,7 @@ manifests); it refuses to overwrite an existing file. Serve it with
   whole filter, not just the current page. `/trades/<proposal_hash>` is the drill-down:
   header, payoff, quant, decision trail + persona calls, gate, approval, execution + order
   events + fills, position & exits (close-to-reallocate links), outcome & review, market
-  context + regime snapshot + Scout candidate, and the run manifest. The API routes are
+  context + regime snapshot + Sweep candidate, and the run manifest. The API routes are
   `GET /api/trades?<filters>&page&size&sort&dir`, `/api/trades/filters`,
   `/api/trades/{hash}` and `GET /api/search?q=` (ticker, hash prefix, run id, chain id,
   structure id; it backs the header search). Migration 017 adds only the indexes the
@@ -747,11 +747,11 @@ gate off again afterwards is respected.
 
 The trade universe is four tiers resolved into one **active list** (max
 `universe_active_max` 50): core (`universe`, 25 names in `config/universe.yaml`
-`core:`) > momentum (E12.2) > trending (E12.3) > today's Scout discoveries. A name
+`core:`) > momentum (E12.2) > trending (E12.3) > today's Sweep discoveries. A name
 keeps its highest tier; names past the cap are journaled `universe:over_active_cap`.
 SPY/QQQ are the `market_reference`: they always get a Director `regime` entry but are
 not trade names. The active list resolves at 05:30 ET each trading day (`symbols`
-job, context `active_universe`) and at the start of every Scout run; ingest, EDGAR,
+job, context `active_universe`) and at the start of every Sweep run; ingest, EDGAR,
 briefs, `unusual_options`/`ex_dividend`, Finnhub scope, monitoring and `arc history`
 read it (core until the first resolve of the day).
 
@@ -773,16 +773,16 @@ read it (core until the first resolve of the day).
   stale). No LLM, and Alpaca is never a ranking input. Four equally weighted inputs under
   `trending.inputs` in `config/routines.yaml`: news flow (distinct `raw_docs` sources over
   3 sessions; EDGAR counts once, for the filer), Reddit (ApeWisdom pages 1–2: mentions +
-  24 h rank gain), Stocktwits trending (crypto/non-US dropped) and Scout corroboration
+  24 h rank gain), Stocktwits trending (crypto/non-US dropped) and Sweep corroboration
   (`candidates` over 3 sessions). Each input is rank-normalised to (0, 1];
   `trend_score` = sum / number of enabled inputs (an input with no data scores 0, and
   the others are not renormalised). A name needs ≥ 2 inputs; core, momentum and
   SPY/QQQ are excluded first; the top 40 get the relaxed screen and the first 25 passes
   are the tier. Every admission / screen fail / single-input reject is journaled
   (`universe:trending_*`). Notice: `Trending tier: 22 names (+NKE −LULU) · inputs news,
-  reddit, stocktwits, scout`. By hand: `arc universe trending --dry-run [--no-screen]
+  reddit, stocktwits, sweep`. By hand: `arc universe trending --dry-run [--no-screen]
   [--json]` (read-only score table) or `arc universe trending [--db PATH] [--no-slack]`.
-  Adding/removing an input of a known type (`news | apewisdom | stocktwits | scout`) is a
+  Adding/removing an input of a known type (`news | apewisdom | stocktwits | sweep`) is a
   YAML edit.
 - **Ticker extraction (E12.3):** bare upper-case words of 2–3 letters count only for
   core + momentum names (`extraction.bare_min_len: 4`); `$SYM`, `(SYM)`, `(NYSE: SYM)`
@@ -793,28 +793,28 @@ read it (core until the first resolve of the day).
   `!arc config universe <core 25>` so the Tower shows the core.
 
 In seed mode (`ARC_UNIVERSE_MODE=seed`, the default) core + momentum names are always
-accepted, unscreened and below the Scout confidence floor too (journaled
-`scout_candidate` with `confidence_floor_skipped: tier=<tier>`). Trending names and
-discoveries reach the Scout only if they are in the symbol master and pass their
+accepted, unscreened and below the Sweep confidence floor too (journaled
+`sweep_candidate` with `confidence_floor_skipped: tier=<tier>`). Trending names and
+discoveries reach the Sweep only if they are in the symbol master and pass their
 tier's liquidity screen profile in `config/universe.yaml` (E12.4): `strict` (price ≥ 10,
 ADV ≥ 1M, near-ATM OI ≥ 500, ATM spread ≤ 10%) or `relaxed` (price ≥ 5, ADV ≥ 500k,
 near-ATM OI ≥ 150, ATM spread ≤ 20%), picked by `tiers.trending.screen` /
 `tiers.discovery.screen` (both `relaxed`). `ARC_UNIVERSE_MODE=strict` makes the active
 list the allow-list.
 
-1. First install (once, before the first seed-mode Scout run; needs the paper keys):
+1. First install (once, before the first seed-mode Sweep run; needs the paper keys):
    `set -a; source ~/.hermes/.env; set +a; arc universe refresh`
    (about 10k symbols; writes `data/symbol_master.json`). After that the `symbols`
    routine refetches it on Mondays 05:30 ET (or when missing/stale).
 2. Check it: `arc universe status` (exit 1 = missing cache; ingest then uses the seed
-   list only and the Scout rejects non-seed names as `unknown_symbol`).
+   list only and the Sweep rejects non-seed names as `unknown_symbol`).
 3. Would a name be admitted? `arc universe check PLTR HOOD` (read-only market data;
    tier membership from `--db`, default `data/arc.db`, read-only; `--fixture` =
    offline). `--profile relaxed|strict` screens every name with that profile, core
    and momentum included (a what-if; exit code = the screen result). The same checks
-   run in the Scout; rejects are journalled as `universe:<reason>` and shown on the
-   Scout card.
-4. Knobs: `scout_max_new_tickers` (discoveries per Scout run, default 25, ceiling 25;
+   run in the Sweep; rejects are journalled as `universe:<reason>` and shown on the
+   Sweep card.
+4. Knobs: `sweep_max_new_tickers` (discoveries per Sweep run, default 25, ceiling 25;
    trending names don't count), `universe_screen_relaxed_min_price` /
    `_min_adv_shares` / `_min_atm_open_interest` / `_max_atm_spread_pct` (Slack-tunable;
    looser is riskier and needs the confirm), `universe_mode`, `pipeline_max_shortlist`
@@ -822,7 +822,7 @@ list the allow-list.
 
 ### 5.11 Source fairness + options data (E4.5, D30; categories + freshness E4.7, D47; six categories E4.9, D49)
 
-Every Scout source is a named entry in `config/routines.yaml`: each RSS feed under
+Every Sweep source is a named entry in `config/routines.yaml`: each RSS feed under
 `sources.rss.feeds` (`name`, `url`, optional `label`, `category`, `weight`,
 `max_age`, `max_docs_per_run`, `hosts`), and `edgar` / `earnings` with a
 `category` and `label`. Every context-writing source **must** declare one of the 6
@@ -831,9 +831,9 @@ a source is a YAML edit only.
 
 | category | label | `max_age` | sources | read by |
 |---|---|---|---|---|
-| `market_news` | Market news | 6h | WSJ, CNBC, Nasdaq RSS | Scout, Director |
-| `company_data` | Company data | 24h | Seeking Alpha, EDGAR, earnings, Finnhub kinds (D46) | Scout, Director |
-| `macro_data` | Macro data | 24h | Fed RSS, `macro_calendar` | Scout, Director |
+| `market_news` | Market news | 6h | WSJ, CNBC, Nasdaq RSS | Sweep, Director |
+| `company_data` | Company data | 24h | Seeking Alpha, EDGAR, earnings, Finnhub kinds (D46) | Sweep, Director |
+| `macro_data` | Macro data | 24h | Fed RSS, `macro_calendar` | Sweep, Director |
 | `options_data` | Options data | 12h | `vol_term`, `put_call`, `unusual_options`, `ex_dividend` | Director, Risk (typed context) |
 | `youtube_macro` | YouTube macro | 24h | FX Evolution, Bravos Research | Director (channel briefs, §5.22) |
 | `youtube_micro` | YouTube micro | 24h | StockedUp, Trade Brigade, Arete Trading | Director (channel briefs, §5.22) |
@@ -854,19 +854,19 @@ a source is a YAML edit only.
   share *inside* its category, so a 4th market_news feed takes a quarter of
   market_news, and other categories don't move. YouTube channels split their own
   category the same way (2 macro channels = 1/2 each, 3 micro = 1/3 each).
-- **Budget.** Each Scout run reads `scout_doc_budget` docs (default 120, Slack-tunable
+- **Budget.** Each Sweep run reads `sweep_doc_budget` docs (default 120, Slack-tunable
   20-400), split equally across the categories that have fresh docs this run, then
   by source weight inside each category (weighted round-robin; a category or source
   with nothing left gives its share to the others). Newest first within a source.
   Docs over budget wait for the next run.
 - **Freshness.** A doc older than its category's `max_age` (published time;
-  `earnings` uses ingested time, `age_basis: ingested`) is never read: the Scout
-  closes it `raw_docs.scout_status='skipped_stale'` with the run id, and the `rss` /
+  `earnings` uses ingested time, `age_basis: ingested`) is never read: the Sweep
+  closes it `raw_docs.sweep_status='skipped_stale'` with the run id, and the `rss` /
   `edgar` connectors don't store it at all (`ingest.skipped_stale count= source=`).
   Docs still inside their window but past the `raw_doc_ref` TTL (5d) are closed
   `skipped_budget`. Never deleted. `story` and `candidate` entries expire at
   min(1 session, freshest source's `max_age` + 2h).
-- **Source mix.** The Scout card groups it by category: `*Market news* 50% · 6
+- **Source mix.** The Sweep card groups it by category: `*Market news* 50% · 6
   read: WSJ 1 · Nasdaq 5 (10 over budget)`, with `(N stale)` per source.
 - **Director.** Its prompt carries a code-built *Context by category* block: the 6
   headers in fixed order, each with a freshness line (`Market news: 14 stories,
@@ -884,16 +884,16 @@ a source is a YAML edit only.
   absent). Filings older than the company window are skipped before download, and
   the cursor is the newest accession seen, so a filing re-listed on the feed (or the
   backlog of a newly added ticker) is never ingested.
-- **Stories.** Near-duplicate headlines (Jaccard ≥ `scout_story_threshold` within
-  `scout_story_window_hours`) are one story; EDGAR filings group by filer + form.
+- **Stories.** Near-duplicate headlines (Jaccard ≥ `sweep_story_threshold` within
+  `sweep_story_window_hours`) are one story; EDGAR filings group by filer + form.
   Corroboration on a candidate = distinct *sources* behind its URLs, computed in code
   (`candidates.corroboration`); the LLM cannot raise it.
-- **Two stages.** Stage 1 digests stories in batches of `scout_batch_size` on the
-  Scout's (cheap) model; evidence quotes must appear verbatim in a doc, else dropped;
+- **Two stages.** Stage 1 digests stories in batches of `sweep_batch_size` on the
+  Sweep's (cheap) model; evidence quotes must appear verbatim in a doc, else dropped;
   a failed batch falls back to an extractive digest (headline + lead). Stage 2 reads
-  the digests, `scout_story_batch_size` (40) per Scout call. Both stages'
-  tokens/cost land in `scout_batches`
-  (`stage` = `digest` | `scout`) and the run manifest.
+  the digests, `sweep_story_batch_size` (40) per Sweep call. Both stages'
+  tokens/cost land in `sweep_batches`
+  (`stage` = `digest` | `sweep`) and the run manifest.
 - **Options data** (free, no key; typed context kinds, read by the Director and Risk):
 
   | Job | Source | Kind | When (ET) |
@@ -1055,27 +1055,27 @@ stance or underlying that is already flagged).
 
 Knobs live under `!arc config dedupe | portfolio | no_trade`.
 
-### 5.14 Two-speed routines: 30-min Scout, 10-min trading loop (E5.8, D31/D36/D52)
+### 5.14 Two-speed routines: 30-min Sweep, 10-min trading loop (E5.8, D31/D36/D52)
 
 **What runs (ET, trading days).** `config/routines.yaml` declares it; nothing
 fires without the `arc routines tick` cron (E5.3).
 
 | job | cadence | what |
 |---|---|---|
-| `rss`, `edgar` | every 15m 06:00-20:00 | sources, at least as often as the Scout |
-| `scout` | every 30m 09:00-16:00 (15 runs) | candidates from the last 30 min of sources; ttl 20m, no catch-up |
-| `scout.overnight` | 22:00 daily | the after-close pass over fast sources; ttl 3h (YouTube moved to `youtube.briefs`, §5.22) |
+| `rss`, `edgar` | every 15m 06:00-20:00 | sources, at least as often as the Sweep |
+| `sweep` | every 30m 09:00-16:00 (15 runs) | candidates from the last 30 min of sources; ttl 20m, no catch-up |
+| `sweep.overnight` | 22:00 daily | the after-close pass over fast sources; ttl 3h (YouTube moved to `youtube.briefs`, §5.22) |
 | `director` | every 10m 09:40-15:50 (38 slots, D52) | the trading loop: director → quant → risk → propose → execute; ttl 5m |
 | `monitor` | every 10m 09:30-16:00 (40 slots, D52) | positions, Greeks, marks (D35) |
 
-The `scout.completed → director` trigger is gone: the loop picks a new candidate
+The `sweep.completed → director` trigger is gone: the loop picks a new candidate
 up within one slot.
 
 **Loop rules (deterministic, in the dispatcher / Director, not the LLM):**
 
-- *No overlap.* A loop slot that finds the previous loop (or a Scout holding the
+- *No overlap.* A loop slot that finds the previous loop (or a Sweep holding the
   LLM lock) still running is recorded as `skipped` and never caught up. In one
-  tick the loop runs before the Scout (name order), so a Scout can't starve it.
+  tick the loop runs before the Sweep (name order), so a Sweep can't starve it.
 - *Deadline.* `loop.max_runtime` (4m). A step already running may finish; no
   later step starts (`timeout: loop exceeded 4m`). One Slack notice per day.
 - *Change-aware.* The Director digests its inputs (candidate ids, regime entries,
@@ -1097,8 +1097,8 @@ up within one slot.
 ✖ … • HOLD | HOLD (no change) | HOLD (timeout) | HOLD (skipped: previous loop running)
 ```
 
-The thread under it, in order: `[Scout] Context: N Candidates • run <stamp>`
-(the candidate entries the Director read, with the Scout run that wrote them),
+The thread under it, in order: `[Sweep] Context: N Candidates • run <stamp>`
+(the candidate entries the Director read, with the Sweep run that wrote them),
 `[Director]`, `[Quant]`, `[Risk]`, the proposal card, `[Investor]` when a ladder
 ran, and last a `[Routines] <chain> director=12ms … digest=…` code block. A
 `no_change` loop gets only the `[Routines]` reply. The root is re-rendered from the DB
@@ -1108,7 +1108,7 @@ rollback to the single day thread (cards and heartbeats as before D36).
 
 **Knobs** (`!arc config loop`): `loop.max_idle` (5-240 m, riskier up),
 `loop.max_runtime` (1-5 m, hard ceiling 5), `loop.pnl_bucket_pct`,
-`loop.post_hold_roots`, `loop.slack_layout`. Cadences: `routines.scout.cadence`,
+`loop.post_hold_roots`, `loop.slack_layout`. Cadences: `routines.sweep.cadence`,
 `routines.director.cadence` as before.
 
 **Check it:**
@@ -1116,7 +1116,7 @@ rollback to the single day thread (cards and heartbeats as before D36).
 ```
 arc routines validate
 arc routines tick --dry-run --since 2026-10-01T00:00-04:00 --now 2026-10-01T23:59-04:00 --step 5m --no-slack
-#  planned: director ×75, scout ×15, scout.overnight ×1, monitor ×79, rss ×57 …
+#  planned: director ×75, sweep ×15, sweep.overnight ×1, monitor ×79, rss ×57 …
 sqlite3 data/arc.db "select key, value from routine_state where key like 'loop%' order by key"
 ```
 
@@ -1310,7 +1310,7 @@ The treatment arm is the same trading loop on its own paper account
   moves only with its own fills/marks, buying power = min(broker, virtual −
   legacy), and under a cash profile only settled cash (T+1) counts. Control's
   account profile (debit-only, day-trade limit, D32 budget) applies unchanged.
-- Shared inputs: Scout/sources run once, in control. The arm reuses control's
+- Shared inputs: Sweep/sources run once, in control. The arm reuses control's
   steps before the fork step (the first step its overlay changes; never later
   than `propose`) and replays control's market tape (`market_tape`). Every arm
   manifest carries `paired_chain_run_id`, `fork_step`, `arm_id`, `git_sha`.
@@ -1458,7 +1458,7 @@ Channels, in config order:
    budget (`yt_max_audio_per_slot`, default 4) for the whole run, so a 429 on one
    channel sends the rest to audio instead of starting four cooldowns.
 5. The transcript is stored as a `raw_docs` row (`source_key youtube.<slug>`) and
-   closed `scout_status='brief_only'`: **the 30-min Scout never reads video**.
+   closed `sweep_status='brief_only'`: **the 30-min Sweep never reads video**.
 6. The channel profile (`arc/ingest/channels/<slug>/profile.yaml` + `GUIDELINES.md`)
    extracts a `ChannelBrief`; every item needs a verbatim quote, and sponsor/promo
    reads are stripped first. The brief expires 24 h after the run and supersedes the
@@ -1496,7 +1496,7 @@ dropped by reason, model, tokens, wall time, error).
 
 **What runs.** Four background-lane jobs on the free key `ARC_FINNHUB_API_KEY`
 (`~/.hermes/.env`). Each writes one typed context kind per ticker. They are never raw docs, so
-they never use the Scout's D30 budget, and the gate never reads them (import-linter contract):
+they never use the Sweep's D30 budget, and the gate never reads them (import-linter contract):
 
 | Job | Endpoint | Kind (TTL) | When (ET) |
 |---|---|---|---|
@@ -1543,7 +1543,7 @@ sqlite3 ~/.hermes/cache/scratch/fh.db \
 
 ### 5.24 Finnhub facts in the persona prompts (E4.8a, D46, D44)
 
-The four kinds above reach the Scout and the Director only when the switch is on:
+The four kinds above reach the Sweep and the Director only when the switch is on:
 
     personas.finnhub_context: "off"     # config/routines.yaml; off | on
 
@@ -1561,8 +1561,8 @@ in order to fit:
 
     AAPL: EPS surprise -0.9/+1.1/+4.2/+4.5% (3 beat/1 miss) [1d] | insider 90d net +$2.4M, cluster buy [1d] | analysts net -4 m/m, 64% bullish of 53 [1d] | beta 1.21, 5% off 52w high, …
 
-- **Which tickers:** the Scout gets the tickers its story digests in each batch name
-  (first `scout_max_tickers`, 8); the Director gets its candidates, highest confidence
+- **Which tickers:** the Sweep gets the tickers its story digests in each batch name
+  (first `sweep_max_tickers`, 8); the Director gets its candidates, highest confidence
   first (first `director_max_tickers`, 10).
 - **Missing or stale parts are omitted**, never zero-filled: an expired context entry
   is not in the snapshot, and a part whose fetch date (`as_of`) is older than
@@ -1606,7 +1606,7 @@ registered). Flipping the shipped default needs an XP-3 `win` verdict.
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.
-See PLAN.md §2.4 for target: Scout/Investor/Auditor (cheap tier) routed
+See PLAN.md §2.4 for target: Sweep/Investor/Auditor (cheap tier) routed
 locally via llama.cpp or omlx server; that is a `tiers.cheap.model` edit in
 `config/llm_routing.yaml` once Hermes has a local provider.
 

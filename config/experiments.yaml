@@ -32,7 +32,7 @@ experiments:
 
   # E10.2 arm runner (D44). While an experiment is `running`, every arm below runs the
   # trading loop again right after control's loop chain, on the SAME inputs: control's
-  # Scout/context entries and its recorded market reads (market_tape), forking at the
+  # Sweep/context entries and its recorded market reads (market_tape), forking at the
   # first chain step the arm's overlay changes. Each arm has its own paper account
   # (keys_env -> <prefix>_API_KEY/_SECRET_KEY; never ALPACA or ALPACA_TEST) and its own
   # store (budget, halts, reconcile, positions, ladders), and sizes from a virtual

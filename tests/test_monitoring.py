@@ -224,7 +224,7 @@ def test_shipped_monitor_stuck_after_is_two_slots() -> None:
     assert ms.stuck_after_for("monitor") == dt.timedelta(minutes=20)  # D52: 2 x 10-min slots
     # D31: the trading loop gets the same rule (loop.max_runtime is 4m)
     assert ms.stuck_after_for("director") == dt.timedelta(minutes=20)
-    assert ms.stuck_after_for("scout") == dt.timedelta(minutes=70)
+    assert ms.stuck_after_for("sweep") == dt.timedelta(minutes=70)
 
 
 # ---------------------------------------------------------------------------

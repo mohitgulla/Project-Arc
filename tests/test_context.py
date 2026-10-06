@@ -177,13 +177,13 @@ def test_unknown_kind_and_bad_payload_rejected(store: ContextStore) -> None:
 
 def test_supersede_latest_marks_old_row_and_keeps_it(store: ContextStore) -> None:
     a = store.write(
-        kind="candidate", subject="SPY", payload=_cand(conf=0.6), produced_by="scout", now=T0
+        kind="candidate", subject="SPY", payload=_cand(conf=0.6), produced_by="sweep", now=T0
     )
     b = store.write(
         kind="candidate",
         subject="SPY",
         payload=_cand(conf=0.9),
-        produced_by="scout",
+        produced_by="sweep",
         now=T0 + dt.timedelta(hours=1),
     )
     assert b.supersedes_id == a.id
@@ -332,7 +332,7 @@ def test_channel_brief_kind_is_the_e44_model(store: ContextStore) -> None:
 
 
 def test_prompt_inputs_come_from_snapshot(store: ContextStore) -> None:
-    store.write(kind="candidate", subject="SPY", payload=_cand(), produced_by="scout", now=T0)
+    store.write(kind="candidate", subject="SPY", payload=_cand(), produced_by="sweep", now=T0)
     store.write(
         kind="shortlist", subject="market", payload=_shortlist(), produced_by="director", now=T0
     )

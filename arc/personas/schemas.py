@@ -14,12 +14,12 @@ from arc.exits.model import ExitSummary
 from arc.models import CatalystType, Stance
 
 # ---------------------------------------------------------------------------
-# Scout — surfaces Candidate objects from raw information sources
+# Sweep — surfaces Candidate objects from raw information sources
 # ---------------------------------------------------------------------------
 
 
-class ScoutCandidateOut(BaseModel):
-    """A single candidate surfaced by Scout."""
+class SweepCandidateOut(BaseModel):
+    """A single candidate surfaced by Sweep."""
 
     ticker: str = Field(..., description="Underlying symbol, e.g. 'AAPL'")
     stance: Stance = Field(..., description="Directional stance: bullish | bearish | neutral")
@@ -35,15 +35,15 @@ class ScoutCandidateOut(BaseModel):
     rationale: str = Field(..., description="One-paragraph explanation of the catalyst and stance")
 
 
-class ScoutOutput(BaseModel):
-    """Scout persona output: a list of trading candidates."""
+class SweepOutput(BaseModel):
+    """Sweep persona output: a list of trading candidates."""
 
-    candidates: list[ScoutCandidateOut] = Field(..., description="Candidates surfaced this scan")
+    candidates: list[SweepCandidateOut] = Field(..., description="Candidates surfaced this scan")
     scan_summary: str = Field(..., description="Brief summary of what was scanned and key themes")
 
 
 # ---------------------------------------------------------------------------
-# Scout stage 1 (E4.5, D30) — one short digest per story
+# Sweep stage 1 (E4.5, D30) — one short digest per story
 # ---------------------------------------------------------------------------
 
 

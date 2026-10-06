@@ -283,7 +283,7 @@ def test_coverage_cause_falls_back_to_tick_gaps(conn: sqlite3.Connection) -> Non
 # tick_slow + folding
 # ---------------------------------------------------------------------------
 
-SLOW = [{"job": "scout", "ms": 340_000}, {"job": "edgar", "ms": 20_000}]
+SLOW = [{"job": "sweep", "ms": 340_000}, {"job": "edgar", "ms": 20_000}]
 
 
 def test_tick_slow_check() -> None:
@@ -303,7 +303,7 @@ def test_tick_slow_check() -> None:
     assert "spacing" not in f.message.split("(")[0]  # durations alone tripped it
     assert f.key == "tick_slow"
     assert "2 of 9 ticks in the last 60 min took > 4m00s" in f.message
-    assert "max 8m03s" in f.message and "top job scout 5m40s" in f.message
+    assert "max 8m03s" in f.message and "top job sweep 5m40s" in f.message
     # Spacing alone: p90 of the gaps > 1.5 x the 5-min interval.
     c2 = connect(":memory:")
     migrate(c2)
@@ -323,7 +323,7 @@ def test_tick_slow_open_folds_coverage(conn: sqlite3.Connection) -> None:
     assert "routines ticks are slow" in post and "coverage" not in post
     folded = AlertRepo(conn).open_for("coverage:director")
     assert folded is not None and folded.correlation[alerts.FOLDED_INTO] == out.opened[0].id
-    assert "likely cause: slow ticks (max 5m30s, scout 5m40s)" in folded.message
+    assert "likely cause: slow ticks (max 5m30s, sweep 5m40s)" in folded.message
     # Both still failing: nothing new.
     health(conn, cfg(), NOW + dt.timedelta(minutes=1), n)
     assert len(n.posts) == 1

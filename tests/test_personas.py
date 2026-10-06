@@ -20,13 +20,13 @@ from arc.personas.builders import (
     InvestorInput,
     QuantInput,
     RiskInput,
-    ScoutInput,
+    SweepInput,
     build_auditor_prompt,
     build_director_prompt,
     build_investor_prompt,
     build_quant_prompt,
     build_risk_prompt,
-    build_scout_prompt,
+    build_sweep_prompt,
 )
 from arc.personas.schemas import (
     AnomalyReport,
@@ -40,15 +40,15 @@ from arc.personas.schemas import (
     QuantStructureOut,
     RiskAssessment,
     RiskOutput,
-    ScoutCandidateOut,
-    ScoutOutput,
+    SweepCandidateOut,
+    SweepOutput,
 )
 
 # ---------------------------------------------------------------------------
 # Sample data fixtures
 # ---------------------------------------------------------------------------
 
-SAMPLE_SCOUT_OUTPUT = {
+SAMPLE_SWEEP_OUTPUT = {
     "candidates": [
         {
             "ticker": "AAPL",
@@ -208,28 +208,28 @@ SAMPLE_AUDITOR_OUTPUT = {
 # ---------------------------------------------------------------------------
 
 
-class TestScoutSchema:
+class TestSweepSchema:
     def test_valid_output(self) -> None:
-        out = ScoutOutput.model_validate(SAMPLE_SCOUT_OUTPUT)
+        out = SweepOutput.model_validate(SAMPLE_SWEEP_OUTPUT)
         assert len(out.candidates) == 2
         assert out.candidates[0].ticker == "AAPL"
         assert out.candidates[0].confidence == 0.8
 
     def test_roundtrip(self) -> None:
-        out = ScoutOutput.model_validate(SAMPLE_SCOUT_OUTPUT)
+        out = SweepOutput.model_validate(SAMPLE_SWEEP_OUTPUT)
         data = json.loads(out.model_dump_json())
-        out2 = ScoutOutput.model_validate(data)
+        out2 = SweepOutput.model_validate(data)
         assert out == out2
 
     def test_requires_sources(self) -> None:
-        bad = {**SAMPLE_SCOUT_OUTPUT["candidates"][0], "sources": []}
+        bad = {**SAMPLE_SWEEP_OUTPUT["candidates"][0], "sources": []}
         with pytest.raises(ValidationError, match="sources"):
-            ScoutCandidateOut.model_validate(bad)
+            SweepCandidateOut.model_validate(bad)
 
     def test_confidence_bounds(self) -> None:
-        bad = {**SAMPLE_SCOUT_OUTPUT["candidates"][0], "confidence": 1.5}
+        bad = {**SAMPLE_SWEEP_OUTPUT["candidates"][0], "confidence": 1.5}
         with pytest.raises(ValidationError, match="confidence"):
-            ScoutCandidateOut.model_validate(bad)
+            SweepCandidateOut.model_validate(bad)
 
 
 class TestDirectorSchema:
@@ -355,22 +355,22 @@ class TestAuditorSchema:
 class TestPromptBuilders:
     """Verify prompt builders are pure functions that return non-empty strings."""
 
-    def test_scout_builder(self) -> None:
-        inp = ScoutInput(
+    def test_sweep_builder(self) -> None:
+        inp = SweepInput(
             universe=["AAPL", "NVDA"],
             raw_feeds=["AAPL earnings beat expectations."],
             scan_date="2026-09-27",
         )
-        result = build_scout_prompt(inp)
+        result = build_sweep_prompt(inp)
         assert isinstance(result, str)
         assert len(result) > 100
-        assert "Scout" in result
+        assert "Sweep" in result
         assert "AAPL" in result
         assert "broker" in result.lower()  # forbidden actions mentioned
 
     def test_director_builder(self) -> None:
         inp = DirectorInput(
-            candidates_json=json.dumps(SAMPLE_SCOUT_OUTPUT),
+            candidates_json=json.dumps(SAMPLE_SWEEP_OUTPUT),
             regime_features_json='{"regime": "risk_on"}',
             portfolio_summary="3 open positions",
             scan_date="2026-09-27",
@@ -425,30 +425,30 @@ class TestPromptBuilders:
         assert isinstance(result, str)
         assert "Auditor" in result
 
-    def test_scout_builder_empty_feeds(self) -> None:
+    def test_sweep_builder_empty_feeds(self) -> None:
         """Builder handles empty feeds gracefully."""
-        inp = ScoutInput(
+        inp = SweepInput(
             universe=["SPY"],
             raw_feeds=[],
             scan_date="2026-09-27",
         )
-        result = build_scout_prompt(inp)
+        result = build_sweep_prompt(inp)
         assert "(no feeds)" in result
 
     def test_builders_are_deterministic(self) -> None:
         """Same input produces same output (pure function)."""
-        inp = ScoutInput(
+        inp = SweepInput(
             universe=["AAPL"],
             raw_feeds=["test feed"],
             scan_date="2026-09-27",
         )
-        r1 = build_scout_prompt(inp)
-        r2 = build_scout_prompt(inp)
+        r1 = build_sweep_prompt(inp)
+        r2 = build_sweep_prompt(inp)
         assert r1 == r2
 
     def test_all_prompts_mention_forbidden_broker(self) -> None:
         """Every persona prompt must mention broker prohibition."""
-        scout_inp = ScoutInput(universe=["SPY"], raw_feeds=["x"], scan_date="2026-09-27")
+        sweep_inp = SweepInput(universe=["SPY"], raw_feeds=["x"], scan_date="2026-09-27")
         director_inp = DirectorInput(
             candidates_json="{}",
             regime_features_json="{}",
@@ -482,7 +482,7 @@ class TestPromptBuilders:
         )
 
         for name, builder, inp in [
-            ("scout", build_scout_prompt, scout_inp),
+            ("sweep", build_sweep_prompt, sweep_inp),
             ("director", build_director_prompt, director_inp),
             ("quant", build_quant_prompt, quant_inp),
             ("risk", build_risk_prompt, risk_inp),

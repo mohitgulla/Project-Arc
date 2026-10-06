@@ -54,7 +54,7 @@ class ChannelBriefPayload(ChannelBrief):
 
 
 class CandidatePayload(Candidate):
-    """Scout candidate (E4.2)."""
+    """Sweep candidate (E4.2)."""
 
     model_config = _FORBID
 
@@ -149,10 +149,10 @@ class NoteTopic(enum.StrEnum):
     """What a :class:`NotePayload` is about (D27)."""
 
     THESIS = "thesis"  # why a trade/ticker/idea (Director, Quant)
-    REGIME_VIEW = "regime_view"  # market/sector regime read (Director, Scout)
+    REGIME_VIEW = "regime_view"  # market/sector regime read (Director, Sweep)
     PORTFOLIO_VIEW = "portfolio_view"  # E5.9: the Director's read of the open book
     THESIS_CHECK = "thesis_check"  # E5.9: is an open position's thesis still intact?
-    OBSERVATION = "observation"  # informational: news theme, scan summary (Scout)
+    OBSERVATION = "observation"  # informational: news theme, scan summary (Sweep)
     RISK_FLAG = "risk_flag"  # portfolio/calendar concern (Risk)
     LESSON = "lesson"  # post-trade learning (Auditor)
     EXECUTION = "execution"  # fill/market-conditions note (Investor)
@@ -183,7 +183,13 @@ class NotePayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    persona: Literal["scout", "director", "quant", "risk", "investor", "auditor"]
+    persona: Literal["sweep", "scout", "director", "quant", "risk", "investor", "auditor"] = Field(
+        ...,
+        description=(
+            "Author. D54: 'scout' before the rename cutover is the Sweep (legacy rows); "
+            "after it, the slow-feed Scout persona (E5.13)."
+        ),
+    )
     topic: NoteTopic
     horizon: NoteHorizon = NoteHorizon.SESSION
     stance: Stance | None = None

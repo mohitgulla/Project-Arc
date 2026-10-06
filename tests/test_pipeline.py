@@ -13,7 +13,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from arc.config import ArcSettings
-from arc.ingest.llm import FixtureScoutLLM, LLMResult, ScoutLLMError
+from arc.ingest.llm import FixtureSweepLLM, LLMResult, SweepLLMError
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
 from arc.pipeline.env import FIXTURES_DIR
 from arc.pipeline.market import (
@@ -178,7 +178,7 @@ class TestFixtureRun:
             for r in rows
         }
         assert {
-            ("market", "scout", "observation"),
+            ("market", "sweep", "observation"),
             ("session", "director", "regime_view"),
             ("SPY", "director", "thesis"),
             ("SPY", "quant", "thesis"),
@@ -189,8 +189,8 @@ class TestFixtureRun:
         for r in rows:
             about = json.loads(r["payload"])["about"]
             assert about and set(about) <= ids
-        scout_notes = [s for s in got if s[1] == "scout"]
-        assert len(scout_notes) == 1  # one per scout run, not per batch
+        sweep_notes = [s for s in got if s[1] == "sweep"]
+        assert len(sweep_notes) == 1  # one per sweep run, not per batch
 
     def test_long_note_is_truncated_not_failed(self) -> None:
         from unittest.mock import MagicMock
@@ -209,7 +209,7 @@ class TestFixtureRun:
     def test_end_to_end(self, settings: ArcSettings, routines) -> None:  # noqa: ANN001
         conn, report = fixture_run(settings, routines)
         assert [(o.job, o.status) for o in report.outcomes] == [
-            ("scout", "ok"),
+            ("sweep", "ok"),
             ("director", "ok"),
             ("quant", "ok"),
             ("risk", "ok"),
@@ -301,7 +301,7 @@ class TestFixtureRun:
         routines,
         monkeypatch: pytest.MonkeyPatch,  # noqa: ANN001
     ) -> None:
-        from arc.ingest.scout import load_fixture_docs
+        from arc.ingest.sweep import load_fixture_docs
         from arc.pipeline.runner import run_propose
         from arc.routines.heartbeat import LogNotifier
 
@@ -337,7 +337,7 @@ class _Boom:
     model = "boom"
 
     def complete(self, prompt: str) -> LLMResult:
-        raise ScoutLLMError("provider down")
+        raise SweepLLMError("provider down")
 
 
 class TestDigestCards:
@@ -348,7 +348,7 @@ class TestDigestCards:
         settings: ArcSettings,
         routines,  # noqa: ANN001
     ) -> None:
-        from arc.ingest.scout import load_fixture_docs
+        from arc.ingest.sweep import load_fixture_docs
         from arc.pipeline.runner import run_propose
         from arc.routines.heartbeat import RecordingNotifier
 
@@ -362,7 +362,7 @@ class TestDigestCards:
         texts = [t for _, t in notes.posts]
         headers = [b[0]["text"]["text"] if b else None for b in notes.blocks]
         assert headers == [
-            "[Scout] Scan: 11 Sources → 6 Candidates",  # E12.4: + core AAPL/JPM below the floor
+            "[Sweep] Scan: 10 Sources → 6 Candidates",  # D54: earnings doc = slow feed
             "[Director] Ranked: 3 / 6 • Market Risk ON",
             "[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
             "[Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
@@ -370,7 +370,7 @@ class TestDigestCards:
             None,  # execute (D34): summary only; the Investor posts the order card
         ]
         # Fallback text = the pre-E5.5 one-liners.
-        assert texts[0] == ("[Scout] scout ✓ 11 docs (11 stories) → 7 accepted, 6 candidates today")
+        assert texts[0] == ("[Sweep] sweep ✓ 10 docs (10 stories) → 7 accepted, 6 candidates today")
         assert texts[1] == (
             "[Director] director ✓ 6 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
             "XOM (bearish); excluded 1; dropped {'not_a_candidate': 1}"
@@ -384,26 +384,26 @@ class TestDigestCards:
             assert blocks is not None
             footer = blocks[-1]["elements"][0]["text"]
             assert footer == f"run `{o.run_id}` · chain `{chain}`"
-        scout = "\n".join(
+        sweep = "\n".join(
             b["text"]["text"] for b in notes.blocks[0] or [] if b["type"] == "section"
         )
         # E5.7 open universe: UFPT fails the screen, ZZZQ is not a listed symbol; the
         # failed checks are shown for the illiquid name. D51: PLTR is core now, so it is
         # admitted without the "new" tag.
-        assert "*PLTR*\nbullish · news · 90% confidence · 1 source\n" in scout
-        assert "PLTR*\nbullish · news · 90% confidence · 1 source · new" not in scout
+        assert "*PLTR*\nbullish · news · 90% confidence · 1 source\n" in sweep
+        assert "PLTR*\nbullish · news · 90% confidence · 1 source · new" not in sweep
         # D47: grouped by category, equal shares, sources inside each
         assert (
             "*Source mix*\n*Market news* 50% · 8 read: rss 8\n"
-            "*Company data* 50% · 3 read: EDGAR 2 · Earnings 1" in scout
+            "*Company data* 50% · 2 read: EDGAR 2" in sweep  # D54: earnings = slow feed
         )
-        assert "• failed liquidity screen (1): UFPT" in scout
-        assert "UFPT: relaxed screen: ADV 118k &lt; 500k; no expiry in the DTE window" in scout
-        assert "• unknown symbol (1): ZZZQ" in scout
-        assert "http" not in scout  # no source links
+        assert "• failed liquidity screen (1): UFPT" in sweep
+        assert "UFPT: relaxed screen: ADV 118k &lt; 500k; no expiry in the DTE window" in sweep
+        assert "• unknown symbol (1): ZZZQ" in sweep
+        assert "http" not in sweep  # no source links
         assert "before sizing" not in json.dumps(notes.blocks[2])
-        assert "Buyback plus raised data-center guidance." in scout  # Scout rationale line
-        assert "Evidence: Scout neutral · macro catalyst Oct 28 · 62% confidence" in json.dumps(
+        assert "Buyback plus raised data-center guidance." in sweep  # Sweep rationale line
+        assert "Evidence: Sweep neutral · macro catalyst Oct 28 · 62% confidence" in json.dumps(
             notes.blocks[1], ensure_ascii=False
         )
         director = json.dumps(notes.blocks[1], ensure_ascii=False)
@@ -413,7 +413,7 @@ class TestDigestCards:
         assert "Director evidence: 8-K: buyback $50B, Sep 24 · uptrend" in director
         assert "a fourth item is cut" not in director
         assert "*Excluded (1)*\\n• *PLTR*: Fixture: new open-universe name" in director
-        assert "not a Scout candidate (1): BRK.B" in director
+        assert "not a Sweep candidate (1): BRK.B" in director
         quant = json.dumps(notes.blocks[2], ensure_ascii=False)
         assert "*Skipped (1)*\\n• *NVDA*: Fixture: bull put credit is thin" in quant
         assert "no tradable chain (1): XOM" in quant
@@ -428,7 +428,7 @@ class TestFailures:
         return env
 
     def _run(self, settings: ArcSettings, routines, env: PipelineEnv):  # noqa: ANN001, ANN202
-        from arc.ingest.scout import load_fixture_docs
+        from arc.ingest.sweep import load_fixture_docs
         from arc.pipeline.runner import run_propose
         from arc.routines.heartbeat import RecordingNotifier
 
@@ -451,7 +451,7 @@ class TestFailures:
 
     def test_unparseable_reply_fails(self, settings: ArcSettings, routines) -> None:  # noqa: ANN001
         _, report = self._run(
-            settings, routines, self._env(director=FixtureScoutLLM(["not json at all"]))
+            settings, routines, self._env(director=FixtureSweepLLM(["not json at all"]))
         )
         assert {o.job: o.status for o in report.outcomes}["director"] == "failed"
 
@@ -459,7 +459,7 @@ class TestFailures:
         risk = json.loads((FIXTURES_DIR / "risk.json").read_text())
         risk["assessments"][0]["sizing_suggestion"] = 0
         _, report = self._run(
-            settings, routines, self._env(risk=FixtureScoutLLM([json.dumps(risk)]))
+            settings, routines, self._env(risk=FixtureSweepLLM([json.dumps(risk)]))
         )
         propose = next(o for o in report.outcomes if o.job == "propose")
         assert propose.status == "ok"
@@ -469,7 +469,7 @@ class TestFailures:
     def test_empty_shortlist(self, settings: ArcSettings, routines) -> None:  # noqa: ANN001
         d = {"shortlist": [], "market_regime": "risk_off", "session_notes": "nothing"}
         _, report = self._run(
-            settings, routines, self._env(director=FixtureScoutLLM([json.dumps(d)]))
+            settings, routines, self._env(director=FixtureSweepLLM([json.dumps(d)]))
         )
         assert all(o.status == "ok" for o in report.outcomes)
         assert not report.proposals
@@ -530,7 +530,7 @@ class TestFunnel:
         quant = json.loads((FIXTURES_DIR / "quant.json").read_text())
         quant["skipped"] = []
         conn, _ = self._run(
-            settings, routines, self._env(quant=FixtureScoutLLM([json.dumps(quant)]))
+            settings, routines, self._env(quant=FixtureSweepLLM([json.dumps(quant)]))
         )
         assert _latest_payload(conn, "structures")["not_structured"] == ["NVDA"]
         assert set(_decisions(conn, "structure", "not_structured")) == {"NVDA"}
@@ -542,7 +542,7 @@ class TestFunnel:
             {"ticker": "SPY", "reason": "ranked and excluded at once"},
         ]
         conn, _ = self._run(
-            settings, routines, self._env(director=FixtureScoutLLM([json.dumps(d)]))
+            settings, routines, self._env(director=FixtureSweepLLM([json.dumps(d)]))
         )
         sl = _latest_payload(conn, "shortlist")
         assert [e["ticker"] for e in sl["excluded"]] == ["PLTR"]
@@ -552,11 +552,11 @@ class TestFunnel:
         quant = json.loads((FIXTURES_DIR / "quant.json").read_text())
         risk = json.loads((FIXTURES_DIR / "risk.json").read_text())
         first = {**risk, "assessments": []}  # Risk forgets the SPY structure
-        risk_llm = FixtureScoutLLM([json.dumps(first), json.dumps(risk)])
+        risk_llm = FixtureSweepLLM([json.dumps(first), json.dumps(risk)])
         conn, report = self._run(
             settings,
             routines,
-            self._env(quant=FixtureScoutLLM([json.dumps(quant)]), risk=risk_llm),
+            self._env(quant=FixtureSweepLLM([json.dumps(quant)]), risk=risk_llm),
         )
         assert len(risk_llm.prompts) == 2
         assert (
@@ -572,7 +572,7 @@ class TestFunnel:
     def test_risk_still_missing_after_repair(self, settings, routines) -> None:  # noqa: ANN001
         risk = json.loads((FIXTURES_DIR / "risk.json").read_text())
         empty = json.dumps({**risk, "assessments": []})
-        risk_llm = FixtureScoutLLM([empty, empty])
+        risk_llm = FixtureSweepLLM([empty, empty])
         conn, report = self._run(settings, routines, self._env(risk=risk_llm))
         assert len(risk_llm.prompts) == 2  # exactly one re-ask
         outcome = next(o for o in report.outcomes if o.job == "risk")
@@ -607,7 +607,7 @@ def test_cli_live_propose_requires_gate_secret(
         raise AssertionError("must refuse before touching Alpaca/Hermes")
 
     monkeypatch.setattr(PipelineEnv, "live", _no_live_env)
-    assert main(["propose", "--no-scout"]) == 2
+    assert main(["propose", "--no-sweep"]) == 2
     assert "ARC_GATE_SECRET" in capsys.readouterr().err
 
 
@@ -638,7 +638,7 @@ def _latest_payload(conn, kind: str, subject: str | None = None) -> dict:  # noq
 
 def _recording_fixture_run(settings: ArcSettings, routines):  # noqa: ANN001, ANN202
     """fixture_run, but keeping each persona prompt (persona_calls stores only a hash)."""
-    from arc.ingest.scout import load_fixture_docs
+    from arc.ingest.sweep import load_fixture_docs
     from arc.pipeline.runner import run_propose
     from arc.routines.heartbeat import LogNotifier
 
@@ -765,7 +765,7 @@ class TestLiveProposeClock:
         mint: bool = False,
         account=None,  # noqa: ANN001
     ):  # noqa: ANN202
-        from arc.ingest.scout import load_fixture_docs
+        from arc.ingest.sweep import load_fixture_docs
         from arc.pipeline.runner import run_propose
         from arc.routines.heartbeat import RecordingNotifier
 
@@ -1017,7 +1017,7 @@ def test_propose_sizes_against_existing_exposure_and_keeps_realloc_source(
     """An open SPY position using the whole 5% budget -> no trade (budget_exhausted),
     recorded with what risk.reallocate needs to re-propose it after a close."""
     from arc.broker.base import BrokerPosition
-    from arc.ingest.scout import load_fixture_docs
+    from arc.ingest.sweep import load_fixture_docs
     from arc.pipeline.env import FIXTURE_SETS
     from arc.pipeline.runner import run_propose
     from arc.routines.heartbeat import LogNotifier

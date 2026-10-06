@@ -57,18 +57,18 @@ __all__ = [
     "quant_card",
     "regime_name",
     "risk_card",
-    "scout_card",
-    "scout_context_card",
+    "sweep_card",
+    "sweep_context_card",
     "structure_name",
 ]
 
 _MULT = 100  # option contract multiplier
-# Scout rows are two blocks each (divider + section); 20 keeps a card with the
+# Sweep rows are two blocks each (divider + section); 20 keeps a card with the
 # head, a "+N more" line, the Rejected list, folded Session notes and the footer
 # under Slack's 50-block cap.
-_MAX_SCOUT_ROWS = 20
+_MAX_SWEEP_ROWS = 20
 
-# Human text for stable drop/reject reason keys (arc.ingest.scout, arc.pipeline.steps).
+# Human text for stable drop/reject reason keys (arc.ingest.sweep, arc.pipeline.steps).
 _REASONS = {
     "schema": "invalid reply",
     "not_in_universe": "not in universe",
@@ -81,7 +81,7 @@ _REASONS = {
     "not_structured": "no structure, no reason",
     "below_threshold": "below confidence threshold",
     "no_grounded_source": "no grounded source",
-    "not_a_candidate": "not a Scout candidate",
+    "not_a_candidate": "not a Sweep candidate",
     "duplicate": "duplicate",
     "invalid_field": "invalid stance/structure",
     "over_limit": "over shortlist limit",
@@ -178,7 +178,7 @@ def _head(title: str, *summary: str) -> list[Block | None]:
 
 
 # ---------------------------------------------------------------------------
-# Scout
+# Sweep
 # ---------------------------------------------------------------------------
 
 
@@ -212,7 +212,7 @@ def category_mix_lines(mix: Sequence[CategoryMix]) -> list[str]:
     return out
 
 
-def scout_card(
+def sweep_card(
     *,
     docs: int,
     accepted: int,
@@ -229,16 +229,16 @@ def scout_card(
     stories: int | None = None,
     category_mix: Sequence[CategoryMix] = (),
 ) -> CardView:
-    """``[Scout] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
+    """``[Sweep] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
-    No source links (owner, E5.5 review): the row carries the Scout's one-line
+    No source links (owner, E5.5 review): the row carries the Sweep's one-line
     rationale and a source count; the URLs stay in the audit store. D28: non-seed
     tickers admitted by the liquidity screen are tagged ``new``; universe rejects
     (``illiquid`` etc.) are grouped by reason under Rejected with the failed checks.
     D30 (E4.5): a *Source mix* fact (docs read per source, over-budget counts) and
     the story count; each candidate shows how many distinct sources back it.
     """
-    title = f"[Scout] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
+    title = f"[Sweep] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
     n_rej = sum(rejected.values())
     new = set(new_tickers)
     blocks = _head(
@@ -260,7 +260,7 @@ def scout_card(
     # E5.5b: one section per candidate with dividers (like the Director's ranked
     # list), so each row folds on its own. Lines start at column 0: no indent.
     ranked = sorted(candidates, key=lambda c: -c.confidence)
-    for c in ranked[:_MAX_SCOUT_ROWS]:
+    for c in ranked[:_MAX_SWEEP_ROWS]:
         when = f" {c.catalyst_date:%b %d}" if c.catalyst_date else ""
         facts = (
             f"{c.stance.value} · {c.catalyst_type.value}{when} · {_pct(c.confidence)} confidence"
@@ -276,9 +276,9 @@ def scout_card(
         blocks.append(
             {"type": "section", "text": {"type": "mrkdwn", "text": B.clip("\n".join(lines))}}
         )
-    if len(ranked) > _MAX_SCOUT_ROWS:
-        rest = ", ".join(B.esc(c.ticker) for c in ranked[_MAX_SCOUT_ROWS:])
-        blocks.append(B.summary(B.clip(f"+{len(ranked) - _MAX_SCOUT_ROWS} more: {rest}")))
+    if len(ranked) > _MAX_SWEEP_ROWS:
+        rest = ", ".join(B.esc(c.ticker) for c in ranked[_MAX_SWEEP_ROWS:])
+        blocks.append(B.summary(B.clip(f"+{len(ranked) - _MAX_SWEEP_ROWS} more: {rest}")))
     if not ranked:
         blocks.append(B.divider())
         blocks.append(_section("Candidates", ["none"]))
@@ -294,16 +294,16 @@ def scout_card(
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 
 
-def scout_context_card(
+def sweep_context_card(
     entries: Sequence[ContextEntry],
     *,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """D36 thread item 1: the Scout candidates the Director read this loop.
+    """D36 thread item 1: the Sweep candidates the Director read this loop.
 
-    ``[Scout] Context: 3 Candidates • run 2026-09-28 09:30ET``: the run time is
-    the newest candidate entry's ``valid_from`` (the Scout run that wrote it),
-    one section per candidate (E5.5b layout), and the footer links the Scout
+    ``[Sweep] Context: 3 Candidates • run 2026-09-28 09:30ET``: the run time is
+    the newest candidate entry's ``valid_from`` (the Sweep run that wrote it),
+    one section per candidate (E5.5b layout), and the footer links the Sweep
     ``run`` that produced the newest entry plus the loop ``chain``. Built from
     the stored context entries only: no LLM, no re-scan.
     """
@@ -312,14 +312,14 @@ def scout_context_card(
     cands = sorted(entries, key=lambda e: -float(e.payload.get("confidence") or 0.0))
     newest = max(entries, key=lambda e: e.valid_from) if entries else None
     when = f" • run {slot_stamp(newest.valid_from)}" if newest else ""
-    title = f"[Scout] Context: {_plural(len(cands), 'Candidate')}{when}"
+    title = f"[Sweep] Context: {_plural(len(cands), 'Candidate')}{when}"
     runs = sorted({e.run_id for e in entries if e.run_id})
     blocks = _head(
         title,
         "what the Director read this loop",
-        f"{_plural(len(runs), 'Scout run')}" if len(runs) > 1 else "",
+        f"{_plural(len(runs), 'Sweep run')}" if len(runs) > 1 else "",
     )
-    for e in cands[:_MAX_SCOUT_ROWS]:
+    for e in cands[:_MAX_SWEEP_ROWS]:
         p = e.payload
         facts = f"{p.get('stance', '?')} · {p.get('catalyst_type', '?')}"
         raw_date = p.get("catalyst_date")
@@ -339,9 +339,9 @@ def scout_context_card(
                 "text": {"type": "mrkdwn", "text": B.clip(f"*{B.esc(e.subject)}*\n{B.esc(facts)}")},
             }
         )
-    if len(cands) > _MAX_SCOUT_ROWS:
-        rest = ", ".join(B.esc(e.subject) for e in cands[_MAX_SCOUT_ROWS:])
-        blocks.append(B.summary(B.clip(f"+{len(cands) - _MAX_SCOUT_ROWS} more: {rest}")))
+    if len(cands) > _MAX_SWEEP_ROWS:
+        rest = ", ".join(B.esc(e.subject) for e in cands[_MAX_SWEEP_ROWS:])
+        blocks.append(B.summary(B.clip(f"+{len(cands) - _MAX_SWEEP_ROWS} more: {rest}")))
     if not cands:
         blocks.append(B.divider())
         blocks.append(_section("Candidates", ["none"]))
@@ -380,7 +380,7 @@ def director_card(
     are listed under "Ranked, not structured". ``funnel`` is ``(ticker, key, reason)``
     for candidates the Director excluded (with its reason) or left unranked.
     ``dropped`` is ``(ticker, reason_key)`` for invalid shortlist entries.
-    ``evidence`` is ticker → a pre-escaped one-line summary of the upstream Scout
+    ``evidence`` is ticker → a pre-escaped one-line summary of the upstream Sweep
     data (stance, catalyst, confidence, sources) shown under the thesis.
     """
     regime = regime_name(out.market_regime)

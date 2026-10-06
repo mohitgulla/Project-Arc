@@ -94,7 +94,7 @@ DEFAULT_ROUTINES_PATH = REPO_ROOT / "config" / "routines.yaml"
 #: assigned by D47 category (one sub-band per category); ``other`` is the fallback.
 TIMELINE_GROUPS: tuple[tuple[str, str], ...] = (
     ("sources", "Sources"),
-    ("scout", "Scout"),
+    ("sweep", "Sweep"),
     ("trading_loop", "Trading loop"),
     ("position_management", "Position management"),
     ("post_market", "Post-market"),
@@ -104,9 +104,12 @@ TIMELINE_GROUPS: tuple[tuple[str, str], ...] = (
 #: data source (no D47 category; it never reaches a persona's category block).
 UNIVERSE_KINDS: frozenset[str] = frozenset({"universe_tier", "active_universe"})
 #: E8.8d: persona chips a job may declare (``persona:``); sources declare none.
-TIMELINE_PERSONAS: tuple[str, ...] = ("scout", "director", "investor", "risk", "auditor", "monitor")
+TIMELINE_PERSONAS: tuple[str, ...] = ("sweep", "director", "investor", "risk", "auditor", "monitor")
 #: E8.8d: ``about:`` is one line; longer text belongs in docs, not the timeline ⓘ.
 ABOUT_MAX_CHARS = 160
+
+#: D54: a source refreshed at most this often (intraday ``every:``) is a fast (Sweep) feed.
+_FAST_FEED_MAX_EVERY = _dt.timedelta(minutes=60)
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 _JOB_NAME = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$")
@@ -627,7 +630,7 @@ def parse_on_off(v: Any, *, where: str) -> bool:
 
 
 class FinnhubContextSettings(BaseModel):
-    """E4.8a: Finnhub facts in the Scout/Director prompts (default off, D44 experiment).
+    """E4.8a: Finnhub facts in the Sweep/Director prompts (default off, D44 experiment).
 
     ``enabled`` comes from ``personas.finnhub_context: off | on``; the other knobs
     are the ``finnhub_context:`` block. Off = the prompts are byte-identical to the
@@ -638,7 +641,7 @@ class FinnhubContextSettings(BaseModel):
 
     enabled: bool = False
     max_chars_per_ticker: Annotated[int, Field(ge=80, le=1000)] = 300
-    scout_max_tickers: Annotated[int, Field(ge=1, le=50)] = 8
+    sweep_max_tickers: Annotated[int, Field(ge=1, le=50)] = 8
     director_max_tickers: Annotated[int, Field(ge=1, le=50)] = 10
     # A part whose payload ``as_of`` is older than this many days is omitted (the
     # context TTL already expires the entry; this guards a stale fetch date).
@@ -797,6 +800,7 @@ class RoutinesConfig(BaseModel):
                 msg = f"source {name!r}: chain/after_sources/halt_exempt are persona-only"
                 raise ValueError(msg)
             self._check_source_category(name, spec)
+            self._check_source_feed(name, spec)
         for name, spec in self.personas.items():
             if name in spec.chain or len(set(spec.chain)) != len(spec.chain):
                 msg = f"persona {name!r}: chain repeats a step"
@@ -847,6 +851,31 @@ class RoutinesConfig(BaseModel):
 
     def _is_chain_step(self, name: str) -> bool:
         return any(name in p.chain for p in self.personas.values())
+
+    @staticmethod
+    def _check_source_feed(name: str, spec: JobSpec) -> None:
+        """D54: a declared ``feed:`` must match the source's refresh cadence.
+
+        ``sweep`` (fast feed) needs an intraday ``every:`` of at most 60 min; ``scout``
+        (slow feed) needs a ``schedule:`` (a few times a day or slower) and no intraday
+        ``every:`` of 60 min or less. A source without ``feed:`` is the Sweep's.
+        """
+        raw = spec.options.get("feed")
+        if raw is None:
+            return
+        fast = spec.every is not None and spec.every <= _FAST_FEED_MAX_EVERY
+        if raw == "sweep" and not fast:
+            msg = f"source {name!r}: feed sweep needs an intraday `every:` of at most 60m (D54)"
+            raise ValueError(msg)
+        if raw == "scout" and (fast or not spec.schedule):
+            msg = (
+                f"source {name!r}: feed scout needs a `schedule:` and no intraday "
+                "`every:` of 60m or less (D54)"
+            )
+            raise ValueError(msg)
+        if raw not in ("sweep", "scout"):
+            msg = f"source {name!r}: feed must be sweep | scout, got {raw!r} (D54)"
+            raise ValueError(msg)
 
     @staticmethod
     def _check_source_category(name: str, spec: JobSpec) -> None:

@@ -27,8 +27,8 @@ from arc.ingest.channels.daily import (
     configured_channels,
     pick_video,
 )
-from arc.ingest.llm import FixtureScoutLLM, LLMResult
-from arc.ingest.sources import SCOUT_EXCLUDED, SourceCategory, SourceRegistry
+from arc.ingest.llm import FixtureSweepLLM, LLMResult
+from arc.ingest.sources import SWEEP_EXCLUDED, SourceCategory, SourceRegistry
 from arc.ingest.youtube import TranscriptSource, YoutubeListError
 from arc.personas.builders import (
     build_director_prompt,
@@ -363,24 +363,24 @@ class TestConfig:
 
 
 # ---------------------------------------------------------------------------
-# Scout separation (rule: video never reaches the 30-min Scout)
+# Sweep separation (rule: video never reaches the 30-min Sweep)
 # ---------------------------------------------------------------------------
 
 
-class TestScoutSeparation:
-    def test_youtube_categories_have_no_scout_weight(self, shipped: RoutinesConfig) -> None:
+class TestSweepSeparation:
+    def test_youtube_categories_have_no_sweep_weight(self, shipped: RoutinesConfig) -> None:
         reg = SourceRegistry.from_routines(shipped)
-        assert SourceCategory.YOUTUBE_MACRO in SCOUT_EXCLUDED
-        assert SourceCategory.YOUTUBE_MICRO in SCOUT_EXCLUDED
+        assert SourceCategory.YOUTUBE_MACRO in SWEEP_EXCLUDED
+        assert SourceCategory.YOUTUBE_MICRO in SWEEP_EXCLUDED
         for slug in SLUGS:
             assert reg.sources[f"youtube.{slug}"].category.value == CATEGORY[slug]
         weights = reg.effective_weights()
         assert not any(k.startswith("youtube") for k in weights)
         assert sum(weights.values()) == pytest.approx(1.0)
 
-    def test_scout_closes_video_docs_as_brief_only(self, conn: sqlite3.Connection) -> None:
-        from arc.ingest.scout import load_fixture_docs, run_scout
+    def test_sweep_closes_video_docs_as_brief_only(self, conn: sqlite3.Connection) -> None:
         from arc.ingest.store import RawDocRepo
+        from arc.ingest.sweep import load_fixture_docs, run_sweep
 
         load_fixture_docs(conn)
         RawDocRepo(conn).insert(
@@ -391,18 +391,18 @@ class TestScoutSeparation:
             tickers_hint=["SPY"],
             source_key="youtube.stockedup",
         )
-        llm = FixtureScoutLLM([])
+        llm = FixtureSweepLLM([])
         settings = ArcSettings(_env_file=None, env="paper", universe_mode="strict")  # type: ignore[call-arg]
         from arc.pipeline.env import FIXTURE_NOW
 
-        res = run_scout(conn, settings, llm=llm, dry_run=True, now=FIXTURE_NOW)  # D47 clock
+        res = run_sweep(conn, settings, llm=llm, dry_run=True, now=FIXTURE_NOW)  # D47 clock
         statuses = {
-            r["url"]: r["scout_status"]
-            for r in conn.execute("SELECT url, scout_status FROM raw_docs WHERE source='youtube'")
+            r["url"]: r["sweep_status"]
+            for r in conn.execute("SELECT url, sweep_status FROM raw_docs WHERE source='youtube'")
         }
         assert statuses == {"https://www.youtube.com/watch?v=zzz": "brief_only"}
         assert all("SPY to 800 tomorrow" not in p for p in llm.prompts)
-        assert res.docs_scouted == 11
+        assert res.docs_swept == 10  # D54: the fixture's earnings doc is the slow feed
 
 
 # ---------------------------------------------------------------------------
@@ -519,9 +519,9 @@ class TestJob:
             b = briefs[f"youtube.{slug}"]
             assert b["channel_slug"] == slug
             assert b["calls"] or b["levels"] or b["risk_flags"]
-        # transcripts stored as brief-only raw docs, never queued for the Scout
+        # transcripts stored as brief-only raw docs, never queued for the Sweep
         rows = conn.execute(
-            "SELECT source_key, scout_status FROM raw_docs"
+            "SELECT source_key, sweep_status FROM raw_docs"
             " WHERE source = 'youtube' ORDER BY source_key"
         ).fetchall()
         assert [(r[0], r[1]) for r in rows] == sorted((f"youtube.{s}", "brief_only") for s in SLUGS)
@@ -928,13 +928,13 @@ def test_shared_session_429_sends_rest_to_audio_and_caps_audio(
 
 
 # ---------------------------------------------------------------------------
-# Rule 8: 4 video + 20 RSS pending -> the Scout selects 0 video docs
+# Rule 8: 4 video + 20 RSS pending -> the Sweep selects 0 video docs
 # ---------------------------------------------------------------------------
 
 
-def test_scout_selects_no_video_docs(conn: sqlite3.Connection, shipped: RoutinesConfig) -> None:
-    from arc.ingest.scout import _load_docs, select_docs
+def test_sweep_selects_no_video_docs(conn: sqlite3.Connection, shipped: RoutinesConfig) -> None:
     from arc.ingest.store import RawDocRepo
+    from arc.ingest.sweep import _load_docs, select_docs
 
     repo = RawDocRepo(conn)
     for i, slug in enumerate(SLUGS):
@@ -950,7 +950,7 @@ def test_scout_selects_no_video_docs(conn: sqlite3.Connection, shipped: Routines
             tickers_hint=["AAPL"], source_key="rss.cnbc",
         )  # fmt: skip
     registry = SourceRegistry.from_routines(shipped)
-    docs = _load_docs(repo.list_unscouted(limit=None), registry)
+    docs = _load_docs(repo.list_unswept(limit=None), registry)
     assert len(docs) == 20 + len(SLUGS)
     selected, unselected, _ = select_docs(docs, registry, budget=120)
     assert [d.source for d in selected].count("youtube") == 0

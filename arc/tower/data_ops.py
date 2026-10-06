@@ -22,7 +22,7 @@ Order budget (D32)        ``orders`` / ``order_events`` / ``executions`` via
 Context store             ``context_entries`` (active by kind, expiry, latest)
 Sources (D30)             :class:`arc.ingest.sources.SourceRegistry` + ``raw_docs`` +
                           source ``routine_runs`` + caption backoff state
-LLM usage                 ``persona_calls`` + ``scout_batches`` (tokens, cost)
+LLM usage                 ``persona_calls`` + ``sweep_batches`` (tokens, cost)
 Effective config (D26)    :class:`arc.control.service.ControlService` (read-only)
 ========================  ==========================================================
 """
@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arc.context.trace import trace_runs
 from arc.context.ttl import to_db
+from arc.journal import legacy
 from arc.tower.data import _has_table, _json, parse_ts
 from arc.utils.calendar import ET
 
@@ -147,15 +148,17 @@ class RunRow(BaseModel):
     route: str
 
 
-def _run_row(r: sqlite3.Row) -> RunRow:
+def _run_row(r: sqlite3.Row, cut: _dt.datetime | None = None) -> RunRow:
     started, finished = parse_ts(r["started_at"]), parse_ts(r["finished_at"])
+    scheduled = parse_ts(r["scheduled_for"])
     return RunRow(
         run_id=r["run_id"],
-        job=r["job"],
+        # D54: a pre-rename 'scout' run is the Sweep (arc.journal.legacy).
+        job=legacy.job_name(r["job"], scheduled, cut),
         status=r["status"],
         no_change=_is_no_change(r["summary"]),
         reason=r["reason"],
-        scheduled_for=parse_ts(r["scheduled_for"]),
+        scheduled_for=scheduled,
         started_at=started,
         finished_at=finished,
         duration_ms=_duration_ms(started, finished),
@@ -265,12 +268,13 @@ def load_session(
     roots: dict[tuple[str, str], RunRow] = {}
     steps: Counter[str] = Counter()
     unscheduled: list[RunRow] = []
+    cut = legacy.cutover(conn)
     for r in rows:
         if int(r["step_index"] or 0) > 0:
             if r["chain_run_id"]:
                 steps[r["chain_run_id"]] += 1
             continue
-        run = _run_row(r)
+        run = _run_row(r, cut)
         assert run.scheduled_for is not None
         roots[(run.job, to_db(run.scheduled_for))] = run
     loop_job = routines.loop.job
@@ -775,9 +779,20 @@ def load_runs(  # noqa: PLR0913 - one argument per filter
 ) -> RunListResponse:
     where: list[str] = []
     args: list[Any] = []
+    cut = legacy.cutover(conn)
     if jobs:
-        where.append(f"job IN ({','.join('?' * len(jobs))})")
+        jclause = f"job IN ({','.join('?' * len(jobs))})"
         args += jobs
+        # D54: a 'sweep*' filter also matches the pre-rename 'scout*' runs.
+        old = [f"scout{j[len('sweep') :]}" for j in jobs if j.split(".")[0] == "sweep"]
+        if old:
+            jclause += f" OR (job IN ({','.join('?' * len(old))})"
+            args += old
+            if cut is not None:
+                jclause += " AND scheduled_for < ?"
+                args.append(to_db(cut))
+            jclause += ")"
+        where.append(f"({jclause})")
     if statuses:
         parts: list[str] = []
         plain = [s for s in statuses if s != "no_change"]
@@ -808,13 +823,18 @@ def load_runs(  # noqa: PLR0913 - one argument per filter
         " ORDER BY scheduled_for DESC, step_index DESC, rowid DESC LIMIT ? OFFSET ?",
         [*args, size, (page - 1) * size],
     ).fetchall()
-    all_jobs = [r[0] for r in conn.execute("SELECT DISTINCT job FROM routine_runs ORDER BY job")]
+    all_jobs = sorted(
+        {
+            legacy.job_name(r[0], None if r[1] is None else parse_ts(r[1]), cut)
+            for r in conn.execute("SELECT job, MIN(scheduled_for) FROM routine_runs GROUP BY job")
+        }
+    )
     return RunListResponse(
         as_of=now,
         total=total,
         page=page,
         size=size,
-        rows=[_run_row(r) for r in rows],
+        rows=[_run_row(r, cut) for r in rows],
         options=RunFilterOptions(jobs=all_jobs),
     )
 
@@ -963,8 +983,9 @@ def _step(
             refs.append(LinkRef(id=str(i), label=str(i), route=route))
         outputs[str(kind)] = refs
     hashes = [str(h) for h in m.get("proposal_hashes") or []]
+    run = _run_row(row, legacy.cutover(conn))
     return StepView(
-        run=_run_row(row),
+        run=run,
         contract=ContractView(
             declared_reads=t["declared"]["reads"],
             declared_writes=t["declared"]["writes"],
@@ -1025,8 +1046,8 @@ def _step(
             for ts in m.get("notifications") or []
         ],
         manifest=t["manifest"],
-        label=(labels or {}).get(row["job"], (None, None))[0],
-        persona=(labels or {}).get(row["job"], (None, None))[1],
+        label=(labels or {}).get(run.job, (None, None))[0],
+        persona=(labels or {}).get(run.job, (None, None))[1],
     )
 
 
@@ -1267,7 +1288,13 @@ def load_context(
                 latest_id=latest["id"] if latest else None,
                 latest_subject=latest["subject"] if latest else None,
                 latest_at=parse_ts(latest["created_at"]) if latest else None,
-                latest_by=latest["produced_by"] if latest else None,
+                latest_by=(
+                    legacy.job_name(
+                        latest["produced_by"], parse_ts(latest["created_at"]), legacy.cutover(conn)
+                    )
+                    if latest
+                    else None
+                ),
                 expired_24h=expired.get(kind, 0),
             )
         )
@@ -1311,7 +1338,9 @@ def load_context_entry(
         kind=r["kind"],
         subject=r["subject"],
         status=r["status"],
-        produced_by=r["produced_by"],
+        produced_by=legacy.job_name(
+            r["produced_by"], parse_ts(r["created_at"]), legacy.cutover(conn)
+        ),
         run_id=r["run_id"],
         chain_run_id=r["chain_run_id"],
         created_at=parse_ts(r["created_at"]),
@@ -1358,10 +1387,14 @@ class SourceRow(BaseModel):
     label: str
     job: str
     category: str
+    feed: Literal["sweep", "scout"] = Field(
+        default="sweep",
+        description="D54: Director feed (sweep = fast, intraday; scout = slow, daily or slower)",
+    )
     weight: float = Field(description="Effective fairness weight (category × source share)")
     share_in_category: float | None = Field(
         default=None,
-        description="Share of its category's Scout budget (registry); null for typed-context "
+        description="Share of its category's Sweep budget (registry); null for typed-context "
         "sources (options data, YouTube), which never draw on the doc budget",
     )
     unit: Literal["docs", "entries"] = Field(
@@ -1397,8 +1430,8 @@ class SourceCategoryRow(BaseModel):
     label: str
     weight: float = Field(description="categories.<c>.weight (config)")
     share: float | None = Field(
-        description="Share of the Scout doc budget (SourceRegistry.category_weights); null "
-        "for categories the Scout never reads (typed context only)"
+        description="Share of the Sweep doc budget (SourceRegistry.category_weights); null "
+        "for categories the Sweep never reads (typed context only)"
     )
     max_age: str = Field(description="D47 freshness window")
     newest_doc_at: _dt.datetime | None
@@ -1517,7 +1550,7 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
     for a source. Typed-context sources (options data, macro calendar, Finnhub) are
     listed by job with their context entries as the activity count."""
     from arc.context.categories import CATEGORY_ORDER, normalize_category
-    from arc.ingest.sources import SourceRegistry
+    from arc.ingest.sources import SWEEP_CATEGORIES, SourceRegistry
 
     reg = SourceRegistry.from_routines(routines)
     weights = reg.effective_weights()
@@ -1531,7 +1564,7 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
     stale: dict[str, int] = Counter()
     last_doc: dict[str, _dt.datetime] = {}
     has_key = "source_key" in {r[1] for r in conn.execute("PRAGMA table_info(raw_docs)")}
-    extra = ", source_key, scout_status" if has_key else ""
+    extra = ", source_key, sweep_status" if has_key else ""
     cols = "source, url, channel_id, ingested_at" + extra
     for r in conn.execute(
         f"SELECT {cols} FROM raw_docs WHERE ingested_at >= ?",  # noqa: S608 - fixed columns
@@ -1545,9 +1578,9 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
             last_doc[key] = at
         if day_lo <= at < day_hi:
             docs[key] += 1
-            if has_key and r["scout_status"] == "skipped_budget":
+            if has_key and r["sweep_status"] == "skipped_budget":
                 skipped[key] += 1
-            if has_key and r["scout_status"] == "skipped_stale":
+            if has_key and r["sweep_status"] == "skipped_stale":
                 stale[key] += 1
     runs = defaultdict(lambda: [0, 0])
     last_ok: dict[str, _dt.datetime] = {}
@@ -1618,6 +1651,8 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
                 label=s.display,
                 job=s.job,
                 category=s.category.value,
+                # D54: video / options data are never Sweep-read, so they are slow feed
+                feed=s.feed if s.category in SWEEP_CATEGORIES else "scout",
                 weight=round(weights.get(s.key, 0.0), 4),
                 share_in_category=in_cat,
                 last_doc_at=last_doc.get(s.key),
@@ -1666,6 +1701,7 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
                 label=_label(job, spec),
                 job=job,
                 category=cat.value,
+                feed="scout",  # D54: typed context is never Sweep-read (slow feed)
                 weight=0.0,
                 share_in_category=None,
                 unit="entries",
@@ -1752,7 +1788,7 @@ class LlmResponse(BaseModel):
 
 
 def load_llm(conn: sqlite3.Connection, *, now: _dt.datetime, days: int = 30) -> LlmResponse:
-    """``persona_calls`` (Director/Quant/Risk/…) plus ``scout_batches`` (Scout, digest stage)
+    """``persona_calls`` (Director/Quant/Risk/…) plus ``sweep_batches`` (Sweep, digest stage)
     per ET day; cost is NULL for fixtures, counted as 0."""
     days = max(1, min(days, 365))
     today = now.astimezone(ET).date()
@@ -1780,18 +1816,18 @@ def load_llm(conn: sqlite3.Connection, *, now: _dt.datetime, days: int = 30) -> 
                     r["status"] != "ok",
                 )
             )
-    if _has_table(conn, "scout_batches"):
-        sb_cols = {c[1] for c in conn.execute("PRAGMA table_info(scout_batches)")}
+    if _has_table(conn, "sweep_batches"):
+        sb_cols = {c[1] for c in conn.execute("PRAGMA table_info(sweep_batches)")}
         if {"stage", "input_tokens", "cost_usd"} <= sb_cols:
             for r in conn.execute(
                 "SELECT stage, model, status, created_at, input_tokens, output_tokens, cost_usd"
-                " FROM scout_batches WHERE created_at >= ? AND created_at < ?",
+                " FROM sweep_batches WHERE created_at >= ? AND created_at < ?",
                 (to_db(lo), to_db(hi)),
             ):
                 at = parse_ts(r["created_at"])
                 if at is None:
                     continue
-                persona = "scout" if r["stage"] == "scout" else f"scout.{r['stage']}"
+                persona = "sweep" if r["stage"] == "sweep" else f"sweep.{r['stage']}"
                 calls.append(
                     (
                         at.date(),

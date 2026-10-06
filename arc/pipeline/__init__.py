@@ -1,7 +1,7 @@
 """E5.2 pipeline runner: candidate → structures → gate → proposal.
 
 * :mod:`arc.pipeline.steps`: the Director/Quant/Risk/propose routine handlers (D16).
-* :mod:`arc.pipeline.runner`: ``arc propose`` (Scout plus the Director chain, run now).
+* :mod:`arc.pipeline.runner`: ``arc propose`` (Sweep plus the Director chain, run now).
 * :mod:`arc.pipeline.market`: deterministic gate inputs (account, portfolio, quotes).
 * :mod:`arc.pipeline.env`: injected market data, account and persona LLMs (live or fixtures).
 

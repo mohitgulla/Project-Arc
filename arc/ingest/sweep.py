@@ -1,22 +1,22 @@
-"""Scout candidate pipeline (E4.2): RawDoc batches → validated ``Candidate`` rows.
+"""Sweep candidate pipeline (E4.2): RawDoc batches → validated ``Candidate`` rows.
 
 Flow per run::
 
-    raw_docs (unscouted) ──batch──▶ Scout prompt ──Hermes (cheap tier)──▶ raw JSON
-        ──▶ ScoutOutput schema ──▶ per-candidate filters ──▶ merge per ticker/day
-        ──▶ candidates table                       (+ scout_batches audit row)
+    raw_docs (unswept) ──batch──▶ Sweep prompt ──Hermes (cheap tier)──▶ raw JSON
+        ──▶ SweepOutput schema ──▶ per-candidate filters ──▶ merge per ticker/day
+        ──▶ candidates table                       (+ sweep_batches audit row)
 
 Filters (deterministic, applied after the LLM):
 
-* **schema** — each candidate must validate against ``ScoutCandidateOut``.
+* **schema** — each candidate must validate against ``SweepCandidateOut``.
 * **universe** (D28/D51, :class:`~arc.universe.guard.UniverseGuard`) — ``strict``:
   ticker must be in the active list. ``seed`` (default): core and momentum
   tickers always pass; any other ticker must be in the symbol master
   (``unknown_symbol``), optionable, under the per-run new-ticker cap
   (``over_new_ticker_cap``) and pass the liquidity screen (``illiquid``).
-* **threshold** — confidence must be ``>= settings.scout_min_confidence``. E12.4
-  (D51): core and momentum tickers skip it (kept, and journaled by the scout job
-  as ``scout_candidate`` with ``confidence_floor_skipped: tier=<tier>``).
+* **threshold** — confidence must be ``>= settings.sweep_min_confidence``. E12.4
+  (D51): core and momentum tickers skip it (kept, and journaled by the sweep job
+  as ``sweep_candidate`` with ``confidence_floor_skipped: tier=<tier>``).
 * **sources** — only URLs of documents actually in the batch survive; a
   candidate with no grounded source is dropped (no hallucinated citations).
 
@@ -27,7 +27,7 @@ Funnel discipline: the only thing downstream code (scanner, Director) may
 read is :func:`candidates_for_scanner`, which returns ``Candidate`` models
 — enums, symbols, numbers, dates and source URLs. Persona free text
 (rationale, scan summary, the verbatim response) is stored in
-``scout_batches`` for audit and never leaves it.
+``sweep_batches`` for audit and never leaves it.
 """
 
 from __future__ import annotations
@@ -45,9 +45,9 @@ from pydantic import ValidationError
 
 from arc.context.categories import LEGACY_VIDEO
 from arc.context.kinds import StoryEvidence, StoryPayload
-from arc.ingest.llm import FixtureScoutLLM, HermesScoutLLM, LLMResult, ScoutLLMError
+from arc.ingest.llm import FixtureSweepLLM, HermesSweepLLM, LLMResult, SweepLLMError
 from arc.ingest.sources import (
-    SCOUT_EXCLUDED,
+    SWEEP_EXCLUDED,
     CategoryMix,
     Selection,
     SourceRegistry,
@@ -55,17 +55,17 @@ from arc.ingest.sources import (
     format_source_mix,
     select_fair,
 )
-from arc.ingest.store import RawDocRepo, ScoutBatchRepo
+from arc.ingest.store import RawDocRepo, SweepBatchRepo
 from arc.ingest.stories import ClusterDoc, Story, cluster_stories, form_type_of, headline_of
 from arc.models import Candidate, CatalystType, Stance
 from arc.personas.builders import (
-    ScoutInput,
     StoryDigestInput,
-    build_scout_prompt,
+    SweepInput,
     build_story_digest_prompt,
+    build_sweep_prompt,
     ticker_facts_block,
 )
-from arc.personas.schemas import ScoutCandidateOut, ScoutOutput, StoryDigestOutput
+from arc.personas.schemas import StoryDigestOutput, SweepCandidateOut, SweepOutput
 from arc.store.repos import CandidateRepo
 from arc.universe.guard import (
     REJECT_ILLIQUID,
@@ -84,14 +84,14 @@ if TYPE_CHECKING:
     from arc.config import ArcSettings
     from arc.context.store import ContextSnapshot
     from arc.context.ttl import Ttl
-    from arc.ingest.llm import ScoutLLM
+    from arc.ingest.llm import SweepLLM
     from arc.routines.config import RoutinesConfig
 
 log = structlog.get_logger()
 
-FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "scout"
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "sweep"
 
-# Rejection reasons (stable keys; stored in scout_batches.rejected).
+# Rejection reasons (stable keys; stored in sweep_batches.rejected).
 REJECT_SCHEMA = "schema"
 REJECT_UNIVERSE = REJECT_NOT_IN_UNIVERSE  # strict mode (kept name for callers)
 REJECT_THRESHOLD = "below_threshold"
@@ -100,7 +100,7 @@ REJECT_SOURCE = "no_grounded_source"
 _UNIVERSE_REJECTS = (REJECT_ILLIQUID, REJECT_NEW_TICKER_CAP, REJECT_UNKNOWN_SYMBOL)
 
 _FEED_DELIMITER = "FEEDS>>>"
-_MAX_UNSCOUTED_PER_RUN = 200
+_MAX_UNSWEPT_PER_RUN = 200
 
 
 # ---------------------------------------------------------------------------
@@ -109,24 +109,24 @@ _MAX_UNSCOUTED_PER_RUN = 200
 
 
 @dataclass
-class ScoutRunResult:
-    """Summary of a Scout run. ``candidates`` is the post-merge state for the day."""
+class SweepRunResult:
+    """Summary of a Sweep run. ``candidates`` is the post-merge state for the day."""
 
     run_id: str
     day: str
     dry_run: bool
     batches: int = 0
     failed_batches: int = 0
-    docs_scouted: int = 0
+    docs_swept: int = 0
     accepted: int = 0
     rejected: Counter[str] = field(default_factory=Counter)
     rejected_items: dict[str, list[str]] = field(default_factory=dict)  # reason -> tickers
     candidates: list[Candidate] = field(default_factory=list)
-    # ticker -> one-line Scout rationale (highest-confidence accepted item this run).
+    # ticker -> one-line Sweep rationale (highest-confidence accepted item this run).
     # Display only (Slack digest); never copied onto ``Candidate`` (funnel discipline).
     rationales: dict[str, str] = field(default_factory=dict)
     # D27: each ok batch's ``scan_summary`` (+ the doc URLs it covered), written by the
-    # scout job as one ``note`` (topic=observation). Never copied onto ``Candidate``.
+    # sweep job as one ``note`` (topic=observation). Never copied onto ``Candidate``.
     summaries: list[str] = field(default_factory=list)
     summary_sources: list[str] = field(default_factory=list)
     # D28: ticker -> why the universe guard rejected it (screen failures etc.), and the
@@ -134,14 +134,16 @@ class ScoutRunResult:
     reject_details: dict[str, str] = field(default_factory=dict)
     new_tickers: list[str] = field(default_factory=list)
     # E12.4: ticker -> (tier, confidence) of candidates accepted this run below
-    # scout_min_confidence because their tier (core / momentum) skips the floor.
+    # sweep_min_confidence because their tier (core / momentum) skips the floor.
     floor_skipped: dict[str, tuple[str, float]] = field(default_factory=dict)
     # E4.5 (D30): fair selection + story synthesis accounting (display + manifest).
     source_mix: list[tuple[str, int, int]] = field(default_factory=list)  # label, read, over
     over_budget: int = 0
     skipped_budget: int = 0
-    # D47 (E4.7): per-category freshness + grouped mix for the Scout card.
+    # D47 (E4.7): per-category freshness + grouped mix for the Sweep card.
     skipped_stale: int = 0
+    # D54: docs of `feed: scout` sources (earnings calendar) closed out of the Sweep queue.
+    slow_feed: int = 0
     stale_by_source: dict[str, int] = field(default_factory=dict)
     category_mix: list[CategoryMix] = field(default_factory=list)
     # D47: context TTL per story id / candidate ticker (min(max_age of its sources) + 2h);
@@ -175,6 +177,7 @@ class _Doc:
     source_key: str = ""
     ingested_at: str = ""
     category: str = ""
+    feed: str = "sweep"  # D54: the source's declared feed
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +266,7 @@ def merge_candidates(a: Candidate, b: Candidate) -> Candidate:
     )
 
 
-def validate_scout_candidate(
+def validate_sweep_candidate(
     item: Any,
     *,
     universe: Collection[str] | UniverseGuard,
@@ -279,7 +282,7 @@ def validate_scout_candidate(
     guard, core and momentum tickers skip *min_confidence* (E12.4).
     """
     try:
-        out = ScoutCandidateOut.model_validate(item)
+        out = SweepCandidateOut.model_validate(item)
     except ValidationError:
         return REJECT_SCHEMA
 
@@ -318,7 +321,7 @@ def validate_scout_candidate(
 
 
 def render_doc(doc: _Doc, *, max_chars: int) -> str:
-    """Render one RawDoc for the Scout prompt (truncated, delimiter-safe)."""
+    """Render one RawDoc for the Sweep prompt (truncated, delimiter-safe)."""
     text = doc.text.replace(_FEED_DELIMITER, "FEEDS>")
     if len(text) > max_chars:
         text = text[:max_chars] + " …[truncated]"
@@ -344,13 +347,13 @@ def build_prompt(
         from arc.universe.tiers import core_tickers
 
         universe = core_tickers(settings)
-    return build_scout_prompt(
-        ScoutInput(
+    return build_sweep_prompt(
+        SweepInput(
             universe=list(universe),
-            raw_feeds=[render_doc(d, max_chars=settings.scout_max_doc_chars) for d in docs],
+            raw_feeds=[render_doc(d, max_chars=settings.sweep_max_doc_chars) for d in docs],
             scan_date=day,
-            min_confidence=settings.scout_min_confidence,
-            output_schema_json=json.dumps(ScoutOutput.model_json_schema(), sort_keys=True),
+            min_confidence=settings.sweep_min_confidence,
+            output_schema_json=json.dumps(SweepOutput.model_json_schema(), sort_keys=True),
             open_universe=open_universe,
         )
     )
@@ -387,7 +390,7 @@ def render_story(story: Story, docs: dict[str, _Doc], *, max_chars: int) -> str:
 
 
 def render_digest(p: StoryPayload) -> str:
-    """Stage-2 rendering of one story digest (what the Scout reads instead of docs)."""
+    """Stage-2 rendering of one story digest (what the Sweep reads instead of docs)."""
     ev = "".join(f'\n  evidence: "{_safe(e.quote)}" ({e.url})' for e in p.evidence)
     cat = p.catalyst_type.value if p.catalyst_type else "-"
     return (
@@ -422,13 +425,13 @@ def build_stage2_prompt(
         from arc.universe.tiers import core_tickers
 
         universe = core_tickers(settings)
-    return build_scout_prompt(
-        ScoutInput(
+    return build_sweep_prompt(
+        SweepInput(
             universe=list(universe),
             raw_feeds=[render_digest(p) for p in digests],
             scan_date=day,
-            min_confidence=settings.scout_min_confidence,
-            output_schema_json=json.dumps(ScoutOutput.model_json_schema(), sort_keys=True),
+            min_confidence=settings.sweep_min_confidence,
+            output_schema_json=json.dumps(SweepOutput.model_json_schema(), sort_keys=True),
             open_universe=open_universe,
             digests=True,
             ticker_facts=ticker_facts,
@@ -436,7 +439,7 @@ def build_stage2_prompt(
     )
 
 
-def scout_facts_tickers(digests: list[StoryPayload], max_tickers: int) -> list[str]:
+def sweep_facts_tickers(digests: list[StoryPayload], max_tickers: int) -> list[str]:
     """E4.8a: tickers the batch's story digests name, in story order, first *max_tickers*."""
     seen: dict[str, None] = {}
     for p in digests:
@@ -586,7 +589,7 @@ def candidates_for_scanner(
     min_confidence: float,
     floor_exempt: Collection[str] = (),
 ) -> list[Candidate]:
-    """The ONLY Scout output downstream stages may consume.
+    """The ONLY Sweep output downstream stages may consume.
 
     Returns typed ``Candidate`` models (no persona free text) for *day*
     at or above *min_confidence*, best first. Tickers in *floor_exempt* (E12.4:
@@ -631,6 +634,7 @@ def _load_docs(rows: list[dict[str, Any]], registry: SourceRegistry | None = Non
                 source_key=key,
                 ingested_at=r.get("ingested_at") or "",
                 category=reg.spec_for(key).category.value,
+                feed=reg.spec_for(key).feed,
             )
         )
     return out
@@ -662,7 +666,7 @@ def _default_registry() -> SourceRegistry:
     try:
         return SourceRegistry.from_routines(load_routines())
     except (OSError, ValueError) as exc:  # pragma: no cover - broken config fails loudly elsewhere
-        log.warning("scout.registry_unavailable", error=str(exc))
+        log.warning("sweep.registry_unavailable", error=str(exc))
         return SourceRegistry(sources={})
 
 
@@ -676,9 +680,14 @@ def _raw_doc_ttl(routines: RoutinesConfig | None) -> _dt.timedelta:
     return _dt.timedelta(days=5)
 
 
-def scout_excluded(doc: _Doc) -> bool:
-    """D45/D47/D49: the Scout never reads this doc (YouTube, options data: typed context)."""
-    return doc.category in {c.value for c in SCOUT_EXCLUDED} or doc.category == LEGACY_VIDEO
+def sweep_excluded(doc: _Doc) -> bool:
+    """D45/D47/D49: the Sweep never reads this doc (YouTube, options data: typed context)."""
+    return doc.category in {c.value for c in SWEEP_EXCLUDED} or doc.category == LEGACY_VIDEO
+
+
+def slow_feed(doc: _Doc) -> bool:
+    """D54: the doc's source declares ``feed: scout`` (earnings calendar); never Sweep-read."""
+    return doc.feed == "scout"
 
 
 def _doc_ts(raw: str) -> _dt.datetime | None:
@@ -706,7 +715,7 @@ def stale_docs(docs: list[_Doc], registry: SourceRegistry, now: _dt.datetime) ->
 def _select(
     docs: list[_Doc], registry: SourceRegistry, budget: int
 ) -> tuple[list[_Doc], list[_Doc], Selection]:
-    docs = [d for d in docs if not scout_excluded(d)]
+    docs = [d for d in docs if not (sweep_excluded(d) or slow_feed(d))]
     by_source: dict[str, list[_Doc]] = {}
     for d in sorted(docs, key=lambda d: (_parse_ts(d.published_at), d.id), reverse=True):
         by_source.setdefault(d.source_key, []).append(d)
@@ -748,7 +757,7 @@ def select_docs(
     """D30/D47 fair pick: ``(selected, unselected, source_mix)``; newest first per source.
 
     The budget is split equally across categories that have docs (D47), then across
-    the sources inside each category. Docs in a :data:`SCOUT_EXCLUDED` category are
+    the sources inside each category. Docs in a :data:`SWEEP_EXCLUDED` category are
     never selected and are not counted as unselected either (the caller closes them
     as brief-only). Callers drop stale docs first (:func:`stale_docs`).
     """
@@ -773,8 +782,8 @@ def _cluster(docs: list[_Doc], settings: ArcSettings) -> list[Story]:
     ]
     return cluster_stories(
         cdocs,
-        threshold=settings.scout_story_threshold,
-        window=_dt.timedelta(hours=settings.scout_story_window_hours),
+        threshold=settings.sweep_story_threshold,
+        window=_dt.timedelta(hours=settings.sweep_story_window_hours),
     )
 
 
@@ -782,17 +791,17 @@ def _digest_stories(
     stories: list[Story],
     docs: dict[str, _Doc],
     *,
-    digest_llm: ScoutLLM | None,
+    digest_llm: SweepLLM | None,
     settings: ArcSettings,
     day: str,
     run_id: str,
-    batch_repo: ScoutBatchRepo,
-    result: ScoutRunResult,
+    batch_repo: SweepBatchRepo,
+    result: SweepRunResult,
 ) -> list[StoryPayload]:
     """Stage 1: one digest per story, batched per source category (cheap tier).
 
     Without *digest_llm* (dry-run / fixtures) or when a batch fails, stories get an
-    extractive digest (headline) so the Scout still sees them; failures are audited.
+    extractive digest (headline) so the Sweep still sees them; failures are audited.
     """
     out: dict[str, StoryPayload] = {}
     if digest_llm is None:
@@ -800,20 +809,20 @@ def _digest_stories(
     by_cat: dict[str, list[Story]] = {}
     for s in stories:
         by_cat.setdefault(s.category, []).append(s)
-    size = settings.scout_batch_size
+    size = settings.sweep_batch_size
     for cat in sorted(by_cat):
         group = by_cat[cat]
         for i in range(0, len(group), size):
             batch = group[i : i + size]
             doc_ids = [cd.id for s in batch for cd in s.docs]
             prompt = build_digest_prompt(
-                [render_story(s, docs, max_chars=settings.scout_story_doc_chars) for s in batch],
+                [render_story(s, docs, max_chars=settings.sweep_story_doc_chars) for s in batch],
                 day,
             )
             result.digest_batches += 1
             try:
                 reply = digest_llm.complete(prompt)
-            except ScoutLLMError as exc:
+            except SweepLLMError as exc:
                 result.failed_digest_batches += 1
                 batch_repo.insert(
                     run_id=run_id,
@@ -825,7 +834,7 @@ def _digest_stories(
                     error=str(exc),
                     stage="digest",
                 )
-                log.warning("scout.digest.llm_error", run_id=run_id, error=str(exc))
+                log.warning("sweep.digest.llm_error", run_id=run_id, error=str(exc))
                 continue
             result.add_usage(reply)
             try:
@@ -845,7 +854,7 @@ def _digest_stories(
                     output_tokens=reply.output_tokens,
                     cost_usd=reply.cost_usd,
                 )
-                log.warning("scout.digest.parse_error", run_id=run_id, error=str(exc)[:200])
+                log.warning("sweep.digest.parse_error", run_id=run_id, error=str(exc)[:200])
                 continue
             wanted = {s.id: s for s in batch}
             for d in parsed.stories:
@@ -869,12 +878,12 @@ def _digest_stories(
     return [out.get(s.id) or story_payload(s, docs) for s in stories]
 
 
-def run_scout(
+def run_sweep(
     conn: sqlite3.Connection,
     settings: ArcSettings,
     *,
-    llm: ScoutLLM | None = None,
-    digest_llm: ScoutLLM | None = None,
+    llm: SweepLLM | None = None,
+    digest_llm: SweepLLM | None = None,
     dry_run: bool = False,
     now: _dt.datetime | None = None,
     run_id: str | None = None,
@@ -882,20 +891,20 @@ def run_scout(
     routines: RoutinesConfig | None = None,
     registry: SourceRegistry | None = None,
     on_story: Callable[[StoryPayload], None] | None = None,
-) -> ScoutRunResult:
-    """Fair-select unscouted docs, cluster them into stories, digest, then scout (D30).
+) -> SweepRunResult:
+    """Fair-select unswept docs, cluster them into stories, digest, then sweep (D30).
 
     1. **Select** (:func:`select_docs`): docs older than their category's ``max_age``
-       are closed ``skipped_stale`` (D47). ``scout_doc_budget`` docs are then split
+       are closed ``skipped_stale`` (D47). ``sweep_doc_budget`` docs are then split
        equally across categories that have fresh docs, then by weighted round-robin
        across the sources inside each, newest first per source. Docs left over wait
        for the next run; once older than the ``raw_doc_ref`` context TTL they are
        closed as ``skipped_budget`` with this run id.
     2. **Cluster** (:mod:`arc.ingest.stories`) near-duplicates into stories.
     3. **Stage 1** (*digest_llm*, cheap tier): one short digest per story, batched by
-       category. Default: the Scout backend when live; extractive (no LLM) in
+       category. Default: the Sweep backend when live; extractive (no LLM) in
        dry-run or when *llm* is injected without a *digest_llm*.
-    4. **Stage 2** (*llm*): the Scout reads digests, ``scout_story_batch_size`` per
+    4. **Stage 2** (*llm*): the Sweep reads digests, ``sweep_story_batch_size`` per
        call; candidates are validated as before, and ``corroboration`` is set by
        code from distinct sources (:func:`count_corroboration`).
 
@@ -905,29 +914,36 @@ def run_scout(
     """
     now = (now or now_et()).astimezone(ET)
     day = now.date().isoformat()
-    run_id = run_id or f"scout-{uuid.uuid4().hex[:12]}"
+    run_id = run_id or f"sweep-{uuid.uuid4().hex[:12]}"
     if llm is None:
         if dry_run:
-            llm = FixtureScoutLLM.from_dir(FIXTURES_DIR / "responses")
+            llm = FixtureSweepLLM.from_dir(FIXTURES_DIR / "responses")
         else:
-            llm = HermesScoutLLM.from_settings(settings)
+            llm = HermesSweepLLM.from_settings(settings)
             digest_llm = digest_llm or llm
     if registry is None:
         registry = (
             SourceRegistry.from_routines(routines) if routines is not None else _default_registry()
         )
 
-    result = ScoutRunResult(run_id=run_id, day=day, dry_run=dry_run)
+    result = SweepRunResult(run_id=run_id, day=day, dry_run=dry_run)
     doc_repo = RawDocRepo(conn)
-    batch_repo = ScoutBatchRepo(conn)
+    batch_repo = SweepBatchRepo(conn)
     cand_repo = CandidateRepo(conn)
 
     # 1. fair selection
-    all_docs = _load_docs(doc_repo.list_unscouted(limit=None), registry)
-    brief_only = [d.id for d in all_docs if scout_excluded(d)]
+    all_docs = _load_docs(doc_repo.list_unswept(limit=None), registry)
+    brief_only = [d.id for d in all_docs if sweep_excluded(d)]
     if brief_only:  # D45: video docs wait for nobody; close them out of the queue
         doc_repo.mark_brief_only(brief_only, run_id=run_id)
-        all_docs = [d for d in all_docs if not scout_excluded(d)]
+        all_docs = [d for d in all_docs if not sweep_excluded(d)]
+    # D54: slow-feed docs (earnings calendar) stay stored for next_earnings() / the Scout
+    # but never draw on sweep_doc_budget; close them out of the Sweep's queue.
+    slow = [d.id for d in all_docs if slow_feed(d)]
+    if slow:
+        doc_repo.mark_slow_feed(slow, run_id=run_id)
+        result.slow_feed = len(slow)
+        all_docs = [d for d in all_docs if not slow_feed(d)]
     # D47: a doc past its category's max_age is never read; close it skipped_stale.
     stale = stale_docs(all_docs, registry, now)
     if stale:
@@ -936,7 +952,7 @@ def run_scout(
         result.stale_by_source = dict(Counter(d.source_key for d in stale))
         stale_ids = {d.id for d in stale}
         all_docs = [d for d in all_docs if d.id not in stale_ids]
-    selected, unselected, selection = _select(all_docs, registry, settings.scout_doc_budget)
+    selected, unselected, selection = _select(all_docs, registry, settings.sweep_doc_budget)
     result.source_mix = format_source_mix(selection, registry)
     result.category_mix = category_mix(selection, registry, stale=result.stale_by_source)
     result.over_budget = len(unselected)
@@ -959,10 +975,10 @@ def run_scout(
     open_universe = guard.mode == "seed"
     watch = watch_tickers(conn, settings, now)  # D51: core + momentum + trending
     log.info(
-        "scout.run.start",
+        "sweep.run.start",
         run_id=run_id,
         day=day,
-        unscouted=len(all_docs),
+        unswept=len(all_docs),
         selected=len(selected),
         over_budget=result.over_budget,
         skipped_budget=result.skipped_budget,
@@ -990,18 +1006,18 @@ def run_scout(
         if on_story is not None:
             on_story(p)
 
-    # 4. stage 2: the Scout reads digests (E4.8a: + Finnhub facts when the flag is on)
+    # 4. stage 2: the Sweep reads digests (E4.8a: + Finnhub facts when the flag is on)
     facts_snap = _facts_snapshot(conn, routines, now, run_id) if digests else None
-    size = settings.scout_story_batch_size
+    size = settings.sweep_story_batch_size
     for i in range(0, len(digests), size):
         batch = digests[i : i + size]
         doc_ids = [d for p in batch for d in p.doc_ids]
         facts = ""
         if facts_snap is not None and routines is not None:
             cfg = routines.finnhub_context
-            tickers = scout_facts_tickers(batch, cfg.scout_max_tickers)
+            tickers = sweep_facts_tickers(batch, cfg.sweep_max_tickers)
             facts = ticker_facts_block(
-                facts_snap, cfg.prompt_options(tickers, cfg.scout_max_tickers)
+                facts_snap, cfg.prompt_options(tickers, cfg.sweep_max_tickers)
             )
         prompt = build_stage2_prompt(
             batch,
@@ -1015,8 +1031,8 @@ def run_scout(
 
         try:
             reply = llm.complete(prompt)
-        except ScoutLLMError as exc:
-            # Docs stay unscouted so the next run retries them.
+        except SweepLLMError as exc:
+            # Docs stay unswept so the next run retries them.
             result.failed_batches += 1
             batch_repo.insert(
                 run_id=run_id,
@@ -1027,7 +1043,7 @@ def run_scout(
                 status="llm_error",
                 error=str(exc),
             )
-            log.warning("scout.batch.llm_error", run_id=run_id, error=str(exc))
+            log.warning("sweep.batch.llm_error", run_id=run_id, error=str(exc))
             continue
         result.add_usage(reply)
         usage = {
@@ -1053,7 +1069,7 @@ def run_scout(
                 error=str(exc),
                 **usage,
             )
-            log.warning("scout.batch.parse_error", run_id=run_id, error=str(exc))
+            log.warning("sweep.batch.parse_error", run_id=run_id, error=str(exc))
             continue
 
         allowed_sources = frozenset(u for p in batch for u in p.urls)
@@ -1064,10 +1080,10 @@ def run_scout(
         rejected: Counter[str] = Counter()
         accepted = 0
         for item in items:
-            outcome = validate_scout_candidate(
+            outcome = validate_sweep_candidate(
                 item,
                 universe=guard,
-                min_confidence=settings.scout_min_confidence,
+                min_confidence=settings.sweep_min_confidence,
                 allowed_sources=allowed_sources,
                 created_at=now,
             )
@@ -1098,12 +1114,12 @@ def run_scout(
             rejected=dict(rejected),
             **usage,
         )
-        doc_repo.mark_scouted(doc_ids, run_id=run_id)
-        result.docs_scouted += len(doc_ids)
+        doc_repo.mark_swept(doc_ids, run_id=run_id)
+        result.docs_swept += len(doc_ids)
         result.accepted += accepted
         result.rejected.update(rejected)
         log.info(
-            "scout.batch.ok",
+            "sweep.batch.ok",
             run_id=run_id,
             stories=len(batch),
             docs=len(doc_ids),
@@ -1115,13 +1131,13 @@ def run_scout(
     result.candidates = candidates_for_scanner(
         conn,
         day,
-        min_confidence=settings.scout_min_confidence,
+        min_confidence=settings.sweep_min_confidence,
         floor_exempt=guard.floor_exempt(),
     )
     # E12.4: day-level candidates below the floor that stayed because of their tier
     for c in result.candidates:
         tier = guard.skips_confidence_floor(c.ticker)
-        if c.confidence < settings.scout_min_confidence and tier is not None:
+        if c.confidence < settings.sweep_min_confidence and tier is not None:
             result.floor_skipped[c.ticker] = (tier.value, c.confidence)
     for cand in result.candidates:
         keys = [source_key_of(u) for u in cand.sources]
@@ -1129,7 +1145,7 @@ def run_scout(
         if ttl is not None:
             result.candidate_ttls[cand.ticker] = ttl
     log.info(
-        "scout.run.done",
+        "sweep.run.done",
         run_id=run_id,
         batches=result.batches,
         failed=result.failed_batches,

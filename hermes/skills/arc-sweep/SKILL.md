@@ -1,11 +1,11 @@
 ---
-name: arc-scout
-description: "Arc Scout (Information Retrieval) persona"
+name: arc-sweep
+description: "Arc Sweep (Information Retrieval) persona"
 ---
 
-# Scout (Information Retrieval)
+# Sweep (Information Retrieval)
 
-**Slack label:** [Scout]
+**Slack label:** [Sweep]
 **Model tier:** cheap
 
 ## Role
@@ -18,7 +18,7 @@ Raw feeds from RSS, SEC EDGAR, earnings calendars, YouTube transcripts; configur
 
 ## Output schema (strict JSON)
 
-ScoutOutput (see arc/personas/schemas.py): candidates[] with ticker, stance, catalyst_type, catalyst_date, confidence, sources, rationale; plus scan_summary.
+SweepOutput (see arc/personas/schemas.py): candidates[] with ticker, stance, catalyst_type, catalyst_date, confidence, sources, rationale; plus scan_summary.
 
 All output MUST be valid JSON matching the schema. No prose outside the JSON object.
 
@@ -30,26 +30,26 @@ All output MUST be valid JSON matching the schema. No prose outside the JSON obj
 
 ## Prompt builder
 
-`arc.personas.builders.build_scout_prompt()` — pure function, no side effects, no network calls.
+`arc.personas.builders.build_sweep_prompt()` — pure function, no side effects, no network calls.
 
 ## Pipeline (E4.2)
 
-`arc.ingest.scout.run_scout()` batches unscouted `raw_docs` into this prompt and runs it through
+`arc.ingest.sweep.run_sweep()` batches unswept `raw_docs` into this prompt and runs it through
 Hermes one-shot (`hermes -z`, cheap tier: model from `config/llm_routing.yaml`, default
 `anthropic/claude-opus-5`, `--ignore-rules`, inert toolset). The reply is then filtered with no LLM involved:
 
-- schema: must validate as `ScoutCandidateOut`
+- schema: must validate as `SweepCandidateOut`
 - ticker must be in `ARC_UNIVERSE`
-- confidence must be at least `ARC_SCOUT_MIN_CONFIDENCE` (default 0.6)
+- confidence must be at least `ARC_SWEEP_MIN_CONFIDENCE` (default 0.6)
 - sources: only URLs of docs in the batch are kept; no grounded source means the candidate is dropped
 - merged per ticker per ET day: sources unioned; same stance keeps the max confidence; opposing
   stances subtract; a tie becomes neutral with confidence 0
 
 Funnel discipline: downstream stages read only `candidates_for_scanner()`, which returns typed
-`Candidate` models. Rationale, scan summary and the verbatim reply stay in `scout_batches` for
+`Candidate` models. Rationale, scan summary and the verbatim reply stay in `sweep_batches` for
 audit.
 
-Dry run: `arc scan --dry-run` uses fixture docs and canned replies in `arc/ingest/fixtures/scout/`
+Dry run: `arc scan --dry-run` uses fixture docs and canned replies in `arc/ingest/fixtures/sweep/`
 (no network).
 
 ## Channel briefs (E4.4)
@@ -59,7 +59,7 @@ Each YouTube channel has one processor: `arc/ingest/channels/<slug>/profile.yaml
 channel is a new directory; no code change. Unknown channels fall back to `channels/default/`.
 The newest transcript becomes a strict `ChannelBrief` (`arc/models.py`, `extra="forbid"`):
 market_bias, levels, calls, catalysts, risk_flags, tickers_mentioned. It uses the same Hermes
-one-shot backend as the pipeline above (`HermesScoutLLM`); there is no second client.
+one-shot backend as the pipeline above (`HermesSweepLLM`); there is no second client.
 
 Code enforces these rules, independent of the LLM:
 - sponsor/ad sentences (profile `sponsor_patterns`) are stripped before the prompt is built

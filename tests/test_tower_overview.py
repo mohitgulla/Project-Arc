@@ -346,7 +346,7 @@ def test_recent_activity_groups_alert_repeats(conn: sqlite3.Connection) -> None:
     g = missed[0]
     assert g.count == 12 and len(g.entries) == 12 and g.text == "missed_window ×12"
     assert g.at == max(e.at for e in g.entries) == g.entries[0].at
-    assert g.tone == "warn"  # the open scout alert is the worst tone in the group
+    assert g.tone == "warn"  # the open sweep alert is the worst tone in the group
     assert [e.at for e in g.entries] == sorted((e.at for e in g.entries), reverse=True)
     assert not any(a.text.startswith("Alert missed_window") for a in act)  # no loose repeats
     # single alerts of other kinds stay plain rows

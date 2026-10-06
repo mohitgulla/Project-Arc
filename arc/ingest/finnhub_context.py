@@ -1,7 +1,7 @@
 """Finnhub per-ticker context (E4.8 / D46): parsers, ticker scope and the fetch loop.
 
 Four free-tier data sets, each stored as a typed context kind keyed by ticker
-(never ``raw_doc_ref``, so they never use the Scout's D30 doc budget):
+(never ``raw_doc_ref``, so they never use the Sweep's D30 doc budget):
 
 =====================  ==============================  ===================
 kind                   endpoint                        cadence (routines)

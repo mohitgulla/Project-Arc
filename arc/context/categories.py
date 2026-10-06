@@ -34,7 +34,7 @@ __all__ = [
     "DEFAULT_CATEGORIES",
     "KIND_CATEGORY",
     "LEGACY_VIDEO",
-    "SCOUT_CATEGORIES",
+    "SWEEP_CATEGORIES",
     "YOUTUBE_CATEGORIES",
     "CategorySpec",
     "SourceCategory",
@@ -82,9 +82,9 @@ YOUTUBE_CATEGORIES: tuple[SourceCategory, ...] = (
     SourceCategory.YOUTUBE_MICRO,
 )
 
-# Categories whose docs share the Scout's ``scout_doc_budget`` (raw docs). Options
+# Categories whose docs share the Sweep's ``sweep_doc_budget`` (raw docs). Options
 # data and YouTube reach the Director as typed context only (D45, D47, D49).
-SCOUT_CATEGORIES: frozenset[SourceCategory] = frozenset(
+SWEEP_CATEGORIES: frozenset[SourceCategory] = frozenset(
     {SourceCategory.MARKET_NEWS, SourceCategory.COMPANY_DATA, SourceCategory.MACRO_DATA}
 )
 

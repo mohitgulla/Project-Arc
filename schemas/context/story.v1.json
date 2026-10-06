@@ -1,7 +1,7 @@
 {
   "$defs": {
     "CatalystType": {
-      "description": "Type of catalyst identified by the Scout.",
+      "description": "Type of catalyst identified by the Sweep.",
       "enum": [
         "earnings",
         "macro",

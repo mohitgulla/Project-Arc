@@ -1,12 +1,12 @@
-"""LLM backends for the Scout persona.
+"""LLM backends for the Sweep persona.
 
-The Scout runs on the cheap model tier through Hermes (PLAN §2.4, D8); the
+The Sweep runs on the cheap model tier through Hermes (PLAN §2.4, D8); the
 model for each persona comes from ``config/llm_routing.yaml`` via
-:mod:`arc.llm_routing`. ``HermesScoutLLM`` shells out to ``hermes -z`` (one-shot mode) with a
+:mod:`arc.llm_routing`. ``HermesSweepLLM`` shells out to ``hermes -z`` (one-shot mode) with a
 pinned model/provider, no project rules and a minimal toolset, so the
 persona has no broker access and no repository context.
 
-``FixtureScoutLLM`` replays canned responses for dry-run mode and tests;
+``FixtureSweepLLM`` replays canned responses for dry-run mode and tests;
 it never touches the network.
 """
 
@@ -40,13 +40,13 @@ _HERMES_TOOLSET = "todo"
 _STRIPPED_ENV_PREFIXES = ("HERMES_KANBAN_",)
 
 
-class ScoutLLMError(RuntimeError):
-    """The Scout LLM call failed (transport, timeout, non-zero exit)."""
+class SweepLLMError(RuntimeError):
+    """The Sweep LLM call failed (transport, timeout, non-zero exit)."""
 
 
 @dataclass(frozen=True)
 class LLMResult:
-    """Raw text returned by a Scout LLM call plus the model that produced it.
+    """Raw text returned by a Sweep LLM call plus the model that produced it.
 
     Usage fields come from ``hermes -z --usage-file`` and are ``None`` when
     unknown (fixtures). ``cost_usd`` is 0 on a subscription ("included") plan;
@@ -60,8 +60,8 @@ class LLMResult:
     cost_usd: float | None = None
 
 
-class ScoutLLM(Protocol):
-    """Anything that turns a Scout prompt into raw response text."""
+class SweepLLM(Protocol):
+    """Anything that turns a Sweep prompt into raw response text."""
 
     def complete(self, prompt: str) -> LLMResult: ...
 
@@ -75,14 +75,14 @@ _EMPTY_RESPONSE = json.dumps({"candidates": [], "scan_summary": "fixture respons
 
 
 @dataclass
-class FixtureScoutLLM:
+class FixtureSweepLLM:
     """Replays canned responses in order; returns an empty scan once exhausted."""
 
     responses: Sequence[str]
     prompts: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_dir(cls, path: Path) -> FixtureScoutLLM:
+    def from_dir(cls, path: Path) -> FixtureSweepLLM:
         """Load ``*.txt`` responses from *path*, sorted by filename."""
         return cls([p.read_text() for p in sorted(path.glob("*.txt"))])
 
@@ -107,8 +107,8 @@ def _child_env() -> dict[str, str]:
 
 
 @dataclass
-class HermesScoutLLM:
-    """Run the Scout prompt through ``hermes -z`` on the cheap model tier."""
+class HermesSweepLLM:
+    """Run the Sweep prompt through ``hermes -z`` on the cheap model tier."""
 
     model: str
     provider: str
@@ -120,10 +120,10 @@ class HermesScoutLLM:
     def from_settings(
         cls,
         settings: ArcSettings,
-        persona: str = "scout",
+        persona: str = "sweep",
         *,
         timeout_seconds: int | None = None,
-    ) -> HermesScoutLLM:
+    ) -> HermesSweepLLM:
         """Backend for *persona*; its model comes from ``config/llm_routing.yaml`` (E8.1)."""
         from arc.llm_routing import resolve
 
@@ -131,8 +131,8 @@ class HermesScoutLLM:
         return cls(
             model=route.model,
             provider=route.provider,
-            hermes_bin=settings.scout_hermes_bin,
-            timeout_seconds=timeout_seconds or settings.scout_timeout_seconds,
+            hermes_bin=settings.sweep_hermes_bin,
+            timeout_seconds=timeout_seconds or settings.sweep_timeout_seconds,
         )
 
     def command(self, prompt: str, usage_file: Path) -> list[str]:
@@ -152,7 +152,7 @@ class HermesScoutLLM:
         ]
 
     def complete(self, prompt: str) -> LLMResult:
-        with tempfile.TemporaryDirectory(prefix="arc-scout-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="arc-sweep-") as tmp:
             usage_file = Path(tmp) / "usage.json"
             try:
                 proc = self.runner(
@@ -165,17 +165,17 @@ class HermesScoutLLM:
                     check=False,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
-                raise ScoutLLMError(f"hermes call failed: {exc}") from exc
+                raise SweepLLMError(f"hermes call failed: {exc}") from exc
 
             usage = _read_usage(usage_file)
 
         if proc.returncode != 0 or usage.get("failed"):
             err = (proc.stderr or "").strip()[-500:]
-            raise ScoutLLMError(f"hermes exited {proc.returncode}: {err}")
+            raise SweepLLMError(f"hermes exited {proc.returncode}: {err}")
 
         model = str(usage.get("model") or self.model)
         log.info(
-            "scout.llm.done",
+            "sweep.llm.done",
             model=model,
             cost_usd=usage.get("estimated_cost_usd"),
             total_tokens=usage.get("total_tokens"),

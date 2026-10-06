@@ -10,11 +10,11 @@ description: "Arc Director (Aggregator) persona"
 
 ## Role
 
-Aggregate Scout candidates with regime features and portfolio state. Rank by conviction, assign thesis and suggested structure type per ticker.
+Aggregate Sweep candidates with regime features and portfolio state. Rank by conviction, assign thesis and suggested structure type per ticker.
 
 ## Inputs
 
-ScoutOutput (candidates), regime features (Markov state, IV/HV, IVR), current portfolio summary.
+SweepOutput (candidates), regime features (Markov state, IV/HV, IVR), current portfolio summary.
 
 ## Output schema (strict JSON)
 

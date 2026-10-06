@@ -16,6 +16,10 @@ import structlog
 
 log = structlog.get_logger()
 
+# D54: the stored status of a doc the Sweep read keeps its pre-rename value (``scouted``)
+# so status counts stay comparable across the cutover; only identifiers were renamed.
+SWEPT_STATUS = "scouted"
+
 
 def _uuid() -> str:
     return uuid.uuid4().hex[:16]
@@ -109,19 +113,19 @@ class RawDocRepo:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    # -- Scout bookkeeping (E4.2) --------------------------------------------
+    # -- Sweep bookkeeping (E4.2) --------------------------------------------
 
-    def list_unscouted(self, *, limit: int | None = 200) -> list[dict[str, Any]]:
-        """Docs the Scout has not closed yet (read or budget-skipped), oldest first."""
-        sql = "SELECT * FROM raw_docs WHERE scouted_at IS NULL ORDER BY published_at ASC, id ASC"
+    def list_unswept(self, *, limit: int | None = 200) -> list[dict[str, Any]]:
+        """Docs the Sweep has not closed yet (read or budget-skipped), oldest first."""
+        sql = "SELECT * FROM raw_docs WHERE swept_at IS NULL ORDER BY published_at ASC, id ASC"
         if limit is None:
             return [dict(r) for r in self.conn.execute(sql).fetchall()]
         rows = self.conn.execute(f"{sql} LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
-    def mark_scouted(self, doc_ids: list[str], *, run_id: str) -> None:
+    def mark_swept(self, doc_ids: list[str], *, run_id: str) -> None:
         """Mark docs as summarised so later runs skip them."""
-        self._close(doc_ids, run_id=run_id, status="scouted")
+        self._close(doc_ids, run_id=run_id, status=SWEPT_STATUS)
 
     def mark_skipped_budget(self, doc_ids: list[str], *, run_id: str) -> None:
         """E4.5: never selected by the per-source budget before its context TTL ran out.
@@ -138,10 +142,18 @@ class RawDocRepo:
         """D47 (E4.7): older than its category's ``max_age`` at run time; never read."""
         self._close(doc_ids, run_id=run_id, status="skipped_stale")
 
+    def mark_slow_feed(self, doc_ids: list[str], *, run_id: str) -> None:
+        """D54: a ``feed: scout`` source's doc (earnings calendar); never Sweep-read.
+
+        The row stays in ``raw_docs`` (``next_earnings()`` reads it); only the Sweep's
+        queue is closed, so it never draws on ``sweep_doc_budget``.
+        """
+        self._close(doc_ids, run_id=run_id, status="slow_feed")
+
     def _close(self, doc_ids: list[str], *, run_id: str, status: str) -> None:
         now = _now_iso()
         self.conn.executemany(
-            """UPDATE raw_docs SET scouted_at = ?, scout_run_id = ?, scout_status = ?
+            """UPDATE raw_docs SET swept_at = ?, sweep_run_id = ?, sweep_status = ?
                WHERE id = ?""",
             [(now, run_id, status, d) for d in doc_ids],
         )
@@ -163,12 +175,12 @@ class RawDocRepo:
 
 
 # ---------------------------------------------------------------------------
-# Scout batch audit repository (E4.2)
+# Sweep batch audit repository (E4.2)
 # ---------------------------------------------------------------------------
 
 
-class ScoutBatchRepo:
-    """Audit trail of every Scout LLM call.
+class SweepBatchRepo:
+    """Audit trail of every Sweep LLM call.
 
     Unstructured persona output (the verbatim response, including each
     candidate's rationale) is stored here and nowhere else.
@@ -189,14 +201,14 @@ class ScoutBatchRepo:
         error: str | None = None,
         accepted: int = 0,
         rejected: dict[str, int] | None = None,
-        stage: str = "scout",
+        stage: str = "sweep",
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cost_usd: float | None = None,
     ) -> str:
         row_id = _uuid()
         self.conn.execute(
-            """INSERT INTO scout_batches
+            """INSERT INTO sweep_batches
                (id, run_id, model, doc_ids, prompt_sha256, raw_response, status,
                 error, accepted, rejected, created_at, stage, input_tokens,
                 output_tokens, cost_usd)
@@ -224,7 +236,7 @@ class ScoutBatchRepo:
 
     def list_for_run(self, run_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            "SELECT * FROM scout_batches WHERE run_id = ? ORDER BY created_at, id", (run_id,)
+            "SELECT * FROM sweep_batches WHERE run_id = ? ORDER BY created_at, id", (run_id,)
         ).fetchall()
         return [dict(r) for r in rows]
 

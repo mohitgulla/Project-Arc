@@ -356,7 +356,7 @@ class TestStore:
         assert a.tier_tickers(Tier.TRENDING) == []
         assert a.tier_tickers(Tier.DISCOVERY) == ["SNOW", "CRWD"]
         assert next(m for m in a.members if m.ticker == "NVDA").also_in == [Tier.MOMENTUM]
-        # Scout admission: core ∪ momentum skip the screen; trending/discovery do not
+        # Sweep admission: core ∪ momentum skip the screen; trending/discovery do not
         assert seed_tickers(db, _settings(), NOW) == [*CORE_25, "LRCX", "KLAC"]
 
     def test_record_writes_entry_and_journals_overflow_once(self, db: sqlite3.Connection) -> None:

@@ -2,7 +2,7 @@
 
 ``settings.universe`` is a **seed/watch list** (``ARC_UNIVERSE_MODE=seed``, the
 default): seed tickers are always scanned and always accepted. Any other
-US-listed ticker the sources surface may become a Scout candidate if it is in the
+US-listed ticker the sources surface may become a Sweep candidate if it is in the
 local :mod:`symbol master <arc.universe.master>` and passes the deterministic
 :mod:`liquidity screen <arc.universe.screen>`. ``ARC_UNIVERSE_MODE=strict``
 restores the allow-list. Knobs live in ``config/universe.yaml``.

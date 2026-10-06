@@ -29,7 +29,7 @@ __all__ = [
 class JournalPersona(StrEnum):
     """Who made the decision (a persona, a deterministic component, or the owner)."""
 
-    SCOUT = "scout"
+    SWEEP = "sweep"
     DIRECTOR = "director"
     QUANT = "quant"
     RISK = "risk"
@@ -80,8 +80,8 @@ class Choice(StrEnum):
 
 class ReasonCode(StrEnum):
     # candidate (what the Director was offered)
-    SCOUT_CANDIDATE = "scout_candidate"
-    # candidate: the Scout's universe check (D28; arc.universe.guard)
+    SWEEP_CANDIDATE = "sweep_candidate"
+    # candidate: the Sweep's universe check (D28; arc.universe.guard)
     UNIVERSE_NOT_IN_UNIVERSE = "universe:not_in_universe"
     UNIVERSE_UNKNOWN_SYMBOL = "universe:unknown_symbol"
     UNIVERSE_ILLIQUID = "universe:illiquid"
@@ -291,7 +291,7 @@ class Reviewer(StrEnum):
 # Plain-language label per reason code, for owner-facing views (the tower's decision
 # trail, E8.7b). One entry per ReasonCode; a test pins full coverage.
 REASON_LABELS: dict[ReasonCode, str] = {
-    ReasonCode.SCOUT_CANDIDATE: "Scout raised this idea",
+    ReasonCode.SWEEP_CANDIDATE: "Sweep raised this idea",
     ReasonCode.UNIVERSE_NOT_IN_UNIVERSE: "Not in the tradable universe",
     ReasonCode.UNIVERSE_UNKNOWN_SYMBOL: "Unknown symbol",
     ReasonCode.UNIVERSE_ILLIQUID: "Options too illiquid",
@@ -302,7 +302,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.UNIVERSE_TRENDING_SINGLE_INPUT: "Trending on one input only",
     ReasonCode.SHORTLISTED: "Shortlisted by the Director",
     ReasonCode.NOT_RANKED: "Not ranked by the Director",
-    ReasonCode.NOT_A_CANDIDATE: "Not one of the Scout's candidates",
+    ReasonCode.NOT_A_CANDIDATE: "Not one of the Sweep's candidates",
     ReasonCode.DUPLICATE: "Duplicate entry",
     ReasonCode.INVALID_FIELD: "Invalid field in the persona output",
     ReasonCode.OVER_LIMIT: "Over the shortlist limit",
@@ -441,9 +441,14 @@ REASON_LABELS: dict[ReasonCode, str] = {
 
 
 def reason_label(code: str) -> str:
-    """Plain-language label for a stored ``reason_code`` (unknown codes: humanised)."""
+    """Plain-language label for a stored ``reason_code`` (unknown codes: humanised).
+
+    D54: a pre-rename stored code (``scout_candidate``) reads as its Sweep label.
+    """
+    from arc.journal.legacy import reason_code as _current  # noqa: PLC0415 - leaf helper
+
     try:
-        return REASON_LABELS[ReasonCode(code)]
+        return REASON_LABELS[ReasonCode(_current(code))]
     except (ValueError, KeyError):
         text = code.replace("_", " ").replace(":", ": ")
         return text[:1].upper() + text[1:]

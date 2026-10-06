@@ -212,7 +212,7 @@ export const PERSONA_LABEL: Record<string, string> = {
   quant: "Quant",
   risk: "Risk",
   investor: "Investor",
-  scout: "Scout",
+  sweep: "Sweep",
   auditor: "Auditor",
 };
 
