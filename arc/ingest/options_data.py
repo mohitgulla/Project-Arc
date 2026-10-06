@@ -82,17 +82,22 @@ def http_get(
     retries: int = 0,
     backoff_s: float = 2.0,
     sleep: Callable[[float], None] = time.sleep,
+    max_bytes: int | None = None,
 ) -> bytes:
     """GET *url* with *user_agent*; raises on HTTP errors.
 
     ``retries`` (default 0) re-tries connection errors, timeouts and 5xx responses
     with a linear backoff (``backoff_s`` × attempt). A 4xx is never retried.
+    ``max_bytes`` (E13.6): a body larger than this raises ``ValueError`` (size guard).
     """
     attempt = 0
     while True:
         try:
             resp = requests.get(url, headers={"User-Agent": user_agent}, timeout=timeout)
             resp.raise_for_status()
+            if max_bytes is not None and len(resp.content) > max_bytes:
+                msg = f"{url}: body {len(resp.content)} bytes > max_bytes {max_bytes}"
+                raise ValueError(msg)
             return resp.content
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else 0

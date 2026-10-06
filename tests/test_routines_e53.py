@@ -157,7 +157,7 @@ class TestShippedDefaults:
         # The loop runs before the Scalp (name order), so a 30-min Scalp holding the
         # LLM lock never makes the same tick's loop slot skip; the next slot reads it.
         order = [x.job for x in d.plan(et(2026, 9, 28, 10, 0), since=et(2026, 9, 28, 9, 55))]
-        assert order == ["edgar", "rss", "monitor", "research", "scalp"]
+        assert order == ["edgar", "options_fast", "rss", "monitor", "research", "scalp"]
 
     def test_halt_skips_chain_but_not_monitor_auditor(self, shipped: RoutinesConfig) -> None:
         d = Dispatcher(connect(":memory:"), shipped, is_halted=lambda: True)

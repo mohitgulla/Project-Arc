@@ -165,6 +165,10 @@ class TestFeedSpecFilters:
             "funnel.scout.video_budget_split",
             "steps.quant.revise.min_remaining_s",  # E13.9: loop plumbing
             "options_slow.publish_probe_minutes",  # E13.5: measurement only
+            "sources.options_fast.symbol_data_markets",  # E13.6: request volume
+            "sources.options_fast.strikes",
+            "options_fast.vix_flags.vix_gt_25",  # E13.6: tape labels only
+            "options_fast.vix_flags.vix_gt_35",
         }
         with pytest.raises(TunableError):
             lookup("sources.rss.feeds.seekingalpha.title_exclude")

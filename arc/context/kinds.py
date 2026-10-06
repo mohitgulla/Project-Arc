@@ -380,6 +380,112 @@ class VxCurvePayload(BaseModel):
     url: str
 
 
+# E13.6 (D56): options_fast, Cboe ~15-min delayed quotes (index vols, per-ticker chain
+# top-of-book) + the exchange symbol_data volume CSVs. Context only, never gate inputs.
+IndexVolSymbol = Literal["VIX", "VIX9D", "VXN", "VIX1D", "VIX3M", "VVIX"]
+IndexVolFlag = Literal["9d_over_30d", "backwardation_30d_3m", "vix_gt_25", "vix_gt_35"]
+SymbolDataMarket = Literal["opt", "cone", "ctwo", "exo"]
+
+
+class IndexVol(BaseModel):
+    """One Cboe delayed index quote (~15 minutes delayed)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    symbol: IndexVolSymbol
+    value: float = Field(..., gt=0)
+    as_of: str = Field(..., description="Quote time (ET ISO), ~15 minutes delayed")
+
+
+class IndexVolsPayload(BaseModel):
+    """Intraday VIX complex + VXN (E13.6, D56); subject = ``market``.
+
+    ``ratio_9d_30d`` = VIX9D / VIX, ``ratio_30d_3m`` = VIX / VIX3M (> 1 = backwardation).
+    Flips (a flag turning on or off) are derived against the previous entry when the
+    tape is rendered (:func:`arc.ingest.cboe_fast.detect_flips`), not stored.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    fetched_at: str
+    quotes: list[IndexVol] = Field(..., min_length=1)
+    ratio_9d_30d: float | None = None
+    ratio_30d_3m: float | None = None
+    flags: list[IndexVolFlag] = Field(default_factory=list)
+    source: Literal["cboe_delayed"] = "cboe_delayed"
+
+    def value(self, symbol: str) -> float | None:
+        return next((q.value for q in self.quotes if q.symbol == symbol), None)
+
+
+class BookLevel(BaseModel):
+    """Top-of-book of one near-ATM contract from the delayed chain."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    occ_symbol: str
+    option_type: Literal["call", "put"]
+    strike: float
+    expiry: str
+    bid: float | None
+    ask: float | None
+    bid_size: int | None
+    ask_size: int | None
+    spread_pct: float | None = Field(..., description="(ask - bid) / mid; None if not two-sided")
+    iv: float | None
+    open_interest: int | None
+    volume: int = Field(..., ge=0)
+
+
+class ChainSnapshotPayload(BaseModel):
+    """Per-ticker delayed chain snapshot (E13.6, D56); subject = ticker.
+
+    Volumes are session-to-date over the whole chain; ``book`` is the 3 strikes
+    nearest spot (call + put) on ``expiry``, the nearest expiry inside the entry
+    DTE window.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ticker: str
+    fetched_at: str
+    spot: float | None
+    expiry: str
+    call_volume_td: int = Field(..., ge=0)
+    put_volume_td: int = Field(..., ge=0)
+    put_call_volume: float | None
+    atm_spread_pct: float | None
+    atm_oi: int | None
+    book: list[BookLevel] = Field(..., max_length=6)
+    source: Literal["cboe_delayed"] = "cboe_delayed"
+
+
+class ExchangeVolumeRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    underlying: str
+    market: SymbolDataMarket
+    volume: int = Field(..., ge=0)
+    matched: int | None
+    routed: int | None
+    contracts: int = Field(..., ge=0)
+
+
+class ExchangeVolumePayload(BaseModel):
+    """Cboe exchange ``symbol_data`` volume per underlying (E13.6, D56); subject = ``market``.
+
+    Active-list names + the top 10 others by volume: Tower/Ops visibility only, never
+    a Scout input and never a discovery source (D56 owner decision 1).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    fetched_at: str
+    rows: list[ExchangeVolumeRow] = Field(..., max_length=60)
+    total_rows_parsed: int = Field(..., ge=0)
+    source: Literal["cboe_symbol_data"] = "cboe_symbol_data"
+
+
 class MacroEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -556,6 +662,10 @@ KINDS: Mapping[str, KindSpec] = _registry(
     # E13.5 (D56): options_slow (Cboe daily stats + CFE VX settlement curve; subject market)
     KindSpec("options_daily", OptionsDailyPayload),
     KindSpec("vx_curve", VxCurvePayload),
+    # E13.6 (D56): options_fast (Cboe delayed quotes + exchange symbol_data, 30-min RTH)
+    KindSpec("index_vols", IndexVolsPayload),  # subject market
+    KindSpec("chain_snapshot", ChainSnapshotPayload),  # subject = ticker
+    KindSpec("exchange_volume", ExchangeVolumePayload),  # subject market
     KindSpec("macro_calendar", MacroCalendarPayload),
     KindSpec("ex_dividend", ExDividendPayload),
     # E4.8 (D46): Finnhub per-ticker context (subject = ticker)

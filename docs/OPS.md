@@ -1768,6 +1768,51 @@ fixtures: `arc/ingest/fixtures/cboe/` (session 2026-10-05).
 - Check: `arc routines run options_daily --db <scratch> --now <date>T18:30-04:00
   --no-slack`, then `arc context show --db <scratch> --kind options_daily --latest`.
 
+### 5.29 Cboe options tape: `options_fast` (E13.6, D56)
+
+One `options_fast` source (`feed: scalp`, every 30m 09:00-16:00 ET on trading days,
+`lane: background`, `ttl: 20m`) with three isolated parts. Code:
+`arc/ingest/cboe_fast.py` (seeded from the archived E4.13 `options_tape.py`);
+fixtures: `arc/ingest/fixtures/cboe/` (`_VIX*.json`, `NVDA.json`, `symbol_data_opt.csv`,
+captured 2026-10-06 ~10:50 ET). Context data only, never a gate input.
+
+| Part | Endpoint (free, no key, D3; UA `Mozilla/5.0 (Project Arc)`) | Kind (subject) |
+|---|---|---|
+| Index vols | `https://cdn.cboe.com/api/global/delayed_quotes/quotes/_<SYM>.json` for VIX, VIX9D, VXN, VIX1D, VIX3M, VVIX | `index_vols` (`market`): values + quote time, `ratio_9d_30d`, `ratio_30d_3m`, `flags` |
+| Chain snapshot | `https://cdn.cboe.com/api/global/delayed_quotes/options/<T>.json`, one per ticker, serial, `pace_s` 0.2 | `chain_snapshot` (ticker): session call/put volume, P/C, nearest expiry in the entry DTE window, 3 strikes nearest spot (call + put top of book, sizes, IV, OI), ATM spread/OI |
+| Exchange volume | `https://www.cboe.com/us/options/market_statistics/symbol_data/csv/?mkt=<opt\|cone\|ctwo\|exo>` (default `[opt]`) | `exchange_volume` (`market`): per-underlying volume / matched / routed on Cboe's own book, active names + top 10 others (max 60 rows) |
+
+- **Data is ~15 minutes delayed** (Cboe's free delayed feed). `as_of` on every index
+  quote is Cboe's `last_trade_time`; the tape line prints it (`10:39 ET`).
+- **Scope:** active list (D51/D56) ∪ open underlyings, active first, capped at
+  `max_tickers` (50; runtime-tunable 1-60, `arc config set
+  sources.options_fast.max_tickers <n>`). Measured 2026-10-06 11:17 ET: 50 chains +
+  6 quotes + the `opt` CSV in 45 s (~0.7 s per chain + 0.2 s pacing), in the background lane.
+- **Flags:** `9d_over_30d` (VIX9D > VIX), `backwardation_30d_3m` (VIX > VIX3M),
+  `vix_gt_25`, `vix_gt_35` (`options_fast.vix_flags`; labels only, the gate's
+  `no_trade_vix_max` is the rule). Strictly above; a missing quote gives no ratio and
+  no flag. The tape marks flips vs the previous `index_vols` entry with ⚑.
+- **Skips per ticker** land in `metrics.tickers_skipped`: `spot_missing`,
+  `no_expiry_in_window`, `fetch_error:<Exception>`. A part with no output is in
+  `metrics.failed_parts`; the run is `ok` while at least one part wrote and fails only
+  when all three failed (VIX itself unreadable, 0 chains, every CSV down).
+- **Size guard:** `options_fast.max_csv_bytes` (20 MB; never tunable) caps one
+  `symbol_data` download (the `opt` CSV was ~1.7 MB on 2026-10-06).
+- **Freshness:** the Scalp's tape treats any part older than the `options_fast`
+  category `max_age` (30m) as stale; nothing fresh → `Options tape: no fresh options
+  tape (…)`, never a failure. The Scalp reads the tape only from E13.10.
+- **Not called:** the BZX book (`/json/bzx/book/<T>`) and `futures/VX.json` answer
+  403; depth is the per-contract top of book from the delayed chain.
+- **Terms:** Cboe delayed quotes and market statistics are for personal,
+  non-commercial use. Arc stores them for its own decisions and shows them only on
+  internal surfaces; no redistribution.
+- `exchange_volume` is Tower/Ops visibility only: not a Scout input and not a
+  discovery source (D56 owner decision 1). `vol_term` stays `market_guard`'s VIX source.
+- Check: `arc routines run options_fast --db <scratch> --now <today>T15:30-04:00
+  --no-slack`, `arc context show --db <scratch> --kind chain_snapshot --subject NVDA
+  --latest`, then `python -m arc.ingest.cboe_fast --tape --db <scratch>` (read-only)
+  prints the rendered tape.
+
 ### 7.1 Required status check: `check`
 
 `.github/workflows/ci.yml` job `check` (job id and `name:` both `check`) runs

@@ -938,6 +938,25 @@ class OptionsSlowSettings(BaseModel):
     publish_probe_minutes: Annotated[int, Field(ge=0, le=60)] = 0
 
 
+class OptionsFastVixFlags(BaseModel):
+    """E13.6: VIX levels that label the tape (``vix_gt_25`` / ``vix_gt_35``); labels only."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    vix_gt_25: Annotated[float, Field(gt=0, le=100)] = 25.0
+    vix_gt_35: Annotated[float, Field(gt=0, le=100)] = 35.0
+
+
+class OptionsFastSettings(BaseModel):
+    """E13.6 (D56): the ``options_fast:`` block (Cboe delayed tape knobs). Not tunable."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    vix_flags: OptionsFastVixFlags = Field(default_factory=OptionsFastVixFlags)
+    # Size guard on one symbol_data CSV download (~1.7 MB measured 2026-10-06).
+    max_csv_bytes: Annotated[int, Field(ge=1_000_000, le=100_000_000)] = 20_000_000
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -967,6 +986,7 @@ class RoutinesConfig(BaseModel):
     )
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)  # D56 (E13.3)
     options_slow: OptionsSlowSettings = Field(default_factory=OptionsSlowSettings)  # E13.5
+    options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
     # E13.9: the ``personas.quant_risk_loop`` flag (as ``enabled``).
     quant_risk_loop: QuantRiskLoopSettings = Field(default_factory=QuantRiskLoopSettings)
 
