@@ -35,6 +35,18 @@ Risk does not review the revision; the gate and approval still do. Steps:
 `quant.open` (was `quant`), `quant.revise`, `quant.propose` (was `propose`, code only,
 attributed to Quant).
 
+## Exit cases (E13.17, D56; only with `personas.exit_path: shadow | research`)
+
+Chain step `quant.exit` runs right after Research. Code builds one exit case per open
+position Research flagged `review`, or whose position review fired a discretionary
+signal (profit target, time-adjusted target, remaining EV floor), or that pairs with a
+capacity-rejected new trade (D19 swap). Positions with a stop / DTE exit / expiry signal
+or an exit already pending never get a case. The case's numbers (remaining EV hold vs
+managed, close-now net, stop state, theta/day, BP freed, IV rank, events) are computed
+by code; you give only `QuantExitOutput.cases[]`: `structure_id`, `recommendation`
+hold | close, `rationale` (≤ 400 chars). A case you omit is `hold`; rolling is not an
+option. Shadow: cases are journaled only, nothing is proposed (E13.18 adds `risk.exit`).
+
 ## Forbidden actions
 
 - Do NOT call any broker API or place any orders.

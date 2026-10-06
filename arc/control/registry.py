@@ -240,6 +240,9 @@ NOT_EXPOSED: dict[str, str] = {
     "finnhub_cluster_days": "D46 insider detector internals (context data only)",
     "persona_timeout_seconds": "LLM plumbing",
     "research_prompt_max_chars": "LLM plumbing",
+    "exit_block_max_chars_per_position": "LLM plumbing",
+    "quant_exit_max_cases": "LLM plumbing",
+    "quant_exit_case_max_chars": "LLM plumbing",
     "pipeline_max_context_notes": "LLM context size",
 }
 
@@ -1741,6 +1744,24 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("full", "compact"),
         aliases=("routines.personas.research_compact_prompt", "research_compact_prompt"),
     ),
+    # E13.17 (D56/D44): who manages discretionary exits. Strategy lane: deterministic
+    # is the control (today's positions chain only); shadow adds Research's exit
+    # watchlist + quant.exit cases, written and journaled, nothing proposed.
+    Tunable(
+        key="personas.exit_path",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E13.17: deterministic = today's exits (positions chain only); shadow = "
+        "Research also writes an exit watchlist and quant.exit builds exit cases (hold / "
+        "close judgement), journaled only, nothing proposed; research behaves as shadow "
+        "until E13.18 adds risk.exit and the close path. Mandatory exits (stop, DTE, "
+        "expiry) stay deterministic.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "exit_path"),
+        choices=("deterministic", "shadow", "research"),
+        aliases=("routines.personas.exit_path", "exit_path"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -2552,6 +2573,7 @@ _PERSONA_CHOICE_SWITCHES: dict[tuple[str, ...], str] = {
     ("personas", "director_diversification"): "strict",
     ("personas", "research_idea_pool"): "scalp",  # E13.8
     ("personas", "research_compact_prompt"): "full",  # E13.8
+    ("personas", "exit_path"): "deterministic",  # E13.17
 }
 
 

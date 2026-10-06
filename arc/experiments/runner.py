@@ -77,6 +77,8 @@ _QUANT_RISK_LOOP = "routines.personas.quant_risk_loop"
 # the arm's overlay is re-run by the arm, and so is everything after it.
 STEP_TARGETS: dict[str, frozenset[str]] = {
     "research": frozenset({"account_profiles", "routines"}),
+    # E13.17: exit cases read the exit policy + realloc settings; shadow only (no orders).
+    "quant.exit": frozenset({"account_profiles", "exits", "routines"}),
     "quant.open": frozenset({"account_profiles", "exits", "costs"}),
     # E13.9: the quant_risk_loop flag changes Risk's prompt (verdicts), so an arm that
     # flips it forks at risk.open, not later: control's review carries no verdicts.

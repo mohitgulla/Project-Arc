@@ -1,0 +1,446 @@
+{
+  "$defs": {
+    "ExitCaseFacts": {
+      "additionalProperties": false,
+      "description": "The case's numbers, code-built from ``position_review`` + ``PositionFacts``.\n\nMoney is $ per structure unit unless noted (``pnl_total`` / ``buying_power_freed``\nare for all contracts).",
+      "properties": {
+        "buying_power": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Buying Power"
+        },
+        "buying_power_freed": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "buying_power \u00d7 contracts",
+          "title": "Buying Power Freed"
+        },
+        "close_now_net": {
+          "title": "Close Now Net",
+          "type": "number"
+        },
+        "contracts": {
+          "title": "Contracts",
+          "type": "integer"
+        },
+        "credit": {
+          "title": "Credit",
+          "type": "boolean"
+        },
+        "dte": {
+          "title": "Dte",
+          "type": "integer"
+        },
+        "ex_dividend": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ex Dividend"
+        },
+        "iv_rank": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iv Rank"
+        },
+        "next_earnings": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Earnings"
+        },
+        "pct_of_debit": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pct Of Debit"
+        },
+        "pct_of_max_gain": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pct Of Max Gain"
+        },
+        "pct_of_max_loss": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pct Of Max Loss"
+        },
+        "pnl_total": {
+          "title": "Pnl Total",
+          "type": "number"
+        },
+        "remaining_ev_hold": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "PositionReview.remaining_ev (hold under the policy \u2212 close now)",
+          "title": "Remaining Ev Hold"
+        },
+        "remaining_ev_managed": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "PositionReview.entry_managed_net_ev (proposal-time managed Net EV)",
+          "title": "Remaining Ev Managed"
+        },
+        "remaining_ev_per_bp": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remaining Ev Per Bp"
+        },
+        "remaining_pop": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remaining Pop"
+        },
+        "stop_state": {
+          "$ref": "#/$defs/StopState"
+        },
+        "take_profit_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Take Profit Pct"
+        },
+        "thesis_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThesisStatus3"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "theta_per_day": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Theta Per Day"
+        }
+      },
+      "required": [
+        "dte",
+        "contracts",
+        "credit",
+        "pnl_total",
+        "stop_state",
+        "close_now_net"
+      ],
+      "title": "ExitCaseFacts",
+      "type": "object"
+    },
+    "ExitSwap": {
+      "additionalProperties": false,
+      "description": "A D19 close-to-reallocate pairing (``SwapSuggestion`` fields, gate-free copy).\n\n``arc.positions.reallocate.SwapSuggestion`` types ``rejected_for`` with the gate's\n``CapacityRejection``; context payloads must not import ``arc.gate``, so the case\nstores the same numbers with the reason as its string value.",
+      "properties": {
+        "close_structure_id": {
+          "title": "Close Structure Id",
+          "type": "string"
+        },
+        "close_ticker": {
+          "title": "Close Ticker",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "edge": {
+          "title": "Edge",
+          "type": "number"
+        },
+        "min_edge_required": {
+          "title": "Min Edge Required",
+          "type": "number"
+        },
+        "new_ev_per_bp": {
+          "title": "New Ev Per Bp",
+          "type": "number"
+        },
+        "new_pop": {
+          "title": "New Pop",
+          "type": "number"
+        },
+        "open_remaining_ev_per_bp": {
+          "title": "Open Remaining Ev Per Bp",
+          "type": "number"
+        },
+        "open_remaining_pop": {
+          "title": "Open Remaining Pop",
+          "type": "number"
+        },
+        "open_ticker": {
+          "title": "Open Ticker",
+          "type": "string"
+        },
+        "rejected_for": {
+          "title": "Rejected For",
+          "type": "string"
+        },
+        "source_ref": {
+          "title": "Source Ref",
+          "type": "string"
+        },
+        "switching_cost_per_bp": {
+          "title": "Switching Cost Per Bp",
+          "type": "number"
+        }
+      },
+      "required": [
+        "close_structure_id",
+        "close_ticker",
+        "source_ref",
+        "open_ticker",
+        "rejected_for",
+        "new_ev_per_bp",
+        "open_remaining_ev_per_bp",
+        "switching_cost_per_bp",
+        "edge",
+        "min_edge_required",
+        "new_pop",
+        "open_remaining_pop",
+        "detail"
+      ],
+      "title": "ExitSwap",
+      "type": "object"
+    },
+    "ExitTrigger": {
+      "additionalProperties": false,
+      "description": "Why a position has an exit case.",
+      "properties": {
+        "detail": {
+          "maxLength": 200,
+          "title": "Detail",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/TriggerKind"
+        }
+      },
+      "required": [
+        "kind",
+        "detail"
+      ],
+      "title": "ExitTrigger",
+      "type": "object"
+    },
+    "StopState": {
+      "enum": [
+        "armed_eod",
+        "armed",
+        "off"
+      ],
+      "type": "string"
+    },
+    "ThesisStatus3": {
+      "enum": [
+        "intact",
+        "weakened",
+        "broken"
+      ],
+      "type": "string"
+    },
+    "TriggerKind": {
+      "enum": [
+        "research_review",
+        "profit_target",
+        "time_adjusted_target",
+        "remaining_ev_floor",
+        "reallocate"
+      ],
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One exit case Quant judged (E13.17, D56); kind ``exit_case``, subject = structure id.",
+  "properties": {
+    "facts": {
+      "$ref": "#/$defs/ExitCaseFacts"
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Kind"
+    },
+    "options": {
+      "items": {
+        "enum": [
+          "hold",
+          "close"
+        ],
+        "type": "string"
+      },
+      "title": "Options",
+      "type": "array"
+    },
+    "rationale": {
+      "maxLength": 400,
+      "title": "Rationale",
+      "type": "string"
+    },
+    "recommendation": {
+      "description": "Quant's call (LLM), code-checked; a missing judgement = hold",
+      "enum": [
+        "hold",
+        "close"
+      ],
+      "title": "Recommendation",
+      "type": "string"
+    },
+    "review_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "exit_watchlist entry id this answers",
+      "title": "Review Id"
+    },
+    "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "structure_id": {
+      "title": "Structure Id",
+      "type": "string"
+    },
+    "swap": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExitSwap"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Set when a capacity rejection pairs with this position"
+    },
+    "ticker": {
+      "title": "Ticker",
+      "type": "string"
+    },
+    "triggers": {
+      "items": {
+        "$ref": "#/$defs/ExitTrigger"
+      },
+      "minItems": 1,
+      "title": "Triggers",
+      "type": "array"
+    }
+  },
+  "required": [
+    "structure_id",
+    "ticker",
+    "triggers",
+    "facts",
+    "recommendation",
+    "rationale"
+  ],
+  "title": "ExitCasePayload",
+  "type": "object"
+}

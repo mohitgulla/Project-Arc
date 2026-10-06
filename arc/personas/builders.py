@@ -99,6 +99,10 @@ class ResearchInput:
     regime_lines: str = ""  # one line per ticker (compact prompt only)
     market_lines: str = ""  # vol term / put-call / macro calendar lines (compact only)
     notes_lines: str = ""  # prior notes, one line each (compact prompt only)
+    # E13.17 (D56): personas.exit_path != deterministic. "" = the E5.9 thesis-check
+    # wording (byte-identical prompt off the exit path).
+    exit_block: str = ""  # one position line + one facts line per open structure
+    exit_rules: tuple[str, ...] = ()  # policy lines shown with the exit watch
 
 
 @dataclass(frozen=True)
@@ -178,6 +182,8 @@ def research_input_from_context(
     candidate_tickers: Sequence[str] | None = None,
     compact: bool = False,
     max_headlines: int | None = None,
+    exit_block: str = "",
+    exit_rules: Sequence[str] = (),
 ) -> ResearchInput:
     """Research reads every active ``candidate`` and ``regime`` entry, plus up to
     *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
@@ -210,6 +216,10 @@ def research_input_from_context(
     active entry, as before); *compact* (``research_compact_prompt: compact``) swaps
     the JSON blocks for one-line renderings and adds the ``scout_read``;
     *max_headlines* is the per-category headline count after budget trimming.
+
+    E13.17 (D56): *exit_block* / *exit_rules* (``personas.exit_path`` !=
+    ``deterministic``, recorded by the step) add the exit-watch section; empty keeps
+    the prompt byte for byte.
     """
     entries = snapshot.of_kind("candidate")
     if candidate_tickers is not None:
@@ -257,6 +267,8 @@ def research_input_from_context(
             regime_lines="\n".join(regime_line(t, regime[t]) for t in sorted(regime)),
             market_lines=market_lines(market_data_from_context(snapshot)),
             notes_lines="\n".join(note_line(n) for n in notes_out),
+            exit_block=exit_block,
+            exit_rules=tuple(exit_rules),
         )
     return ResearchInput(
         candidates_json=_dump({"candidates": candidates}),
@@ -293,6 +305,8 @@ def research_input_from_context(
         diversification=diversification,
         pool_block=pool_block,
         pool_merged=pool_merged,
+        exit_block=exit_block,
+        exit_rules=tuple(exit_rules),
     )
 
 
@@ -1258,6 +1272,26 @@ def _portfolio_section(inp: ResearchInput) -> str:
             "adds_concentration (piles onto a flagged sector, stance or expiry, or a name "
             "already held), or neutral. "
         )
+    if inp.exit_block.strip():
+        return (
+            "### Current portfolio (open book; deterministic, E5.9)\n"
+            f"{scrub_carried_text(relabel_buckets(inp.portfolio_block))}\n\n"
+            "### Open positions (exit watch; facts by code, E13.17)\n"
+            f"{scrub_carried_text(inp.exit_block)}\n\n"
+            "Assess every candidate against this book: `portfolio_fit` = diversifies "
+            "(new sector / stance / expiry), hedges (offsets a flagged skew), "
+            f"{fit}Give `portfolio_view` (verdict: balanced | "
+            "concentrated | hedge_needed | reduce_risk, plus one or two lines) and one "
+            "`exit_watchlist` item per open structure: `structure_id`, `ticker`, "
+            "`action` (hold | review), `thesis_status` (intact | weakened | broken), up to "
+            "4 short `evidence` facts citing a story id, the Scout or a fact above, and a "
+            "one-line `reason`. Say `review` when the thesis is weakened or broken, or the "
+            "facts say the remaining edge is small; Quant then judges hold or close. "
+            + "\n".join(f"- {r}" for r in inp.exit_rules)
+            + ("\n" if inp.exit_rules else "")
+            + "Never size or propose an order here: stops, DTE exits and expiry are "
+            "closed by code.\n"
+        )
     return (
         "### Current portfolio (open book; deterministic, E5.9)\n"
         f"{scrub_carried_text(relabel_buckets(inp.portfolio_block))}\n\n"
@@ -1269,6 +1303,13 @@ def _portfolio_section(inp: ResearchInput) -> str:
         "why) using today's candidates, regime and notes. Never suggest closing or "
         "sizing here: Risk and Quant act on your thesis checks.\n"
     )
+
+
+def _book_fields(inp: ResearchInput) -> str:
+    """Closing reminder of the per-book reply fields (E13.17: exit watchlist)."""
+    if inp.exit_block.strip() and inp.portfolio_block.strip():
+        return "`portfolio_view` and `exit_watchlist` (see above)."
+    return "`portfolio_view` and `thesis_checks` (see above)."
 
 
 def _recent_ideas_section(inp: ResearchInput) -> str:
@@ -1743,7 +1784,7 @@ Respond with JSON matching the ResearchOutput schema:
 }}
 When the shortlist is empty, set `no_trade_reason` to one of no_fit | too_volatile |
 unclear | budget | portfolio_full and explain in `session_notes`. With open positions,
-also fill `portfolio_fit` per pick, `portfolio_view` and `thesis_checks` (see above).
+also fill `portfolio_fit` per pick, {_book_fields(inp)}
 """
 
 
@@ -1827,7 +1868,7 @@ Respond with JSON matching the ResearchOutput schema:
 }}
 When the shortlist is empty, set `no_trade_reason` to one of no_fit | too_volatile |
 unclear | budget | portfolio_full and explain in `session_notes`. With open positions,
-also fill `portfolio_fit` per pick, `portfolio_view` and `thesis_checks` (see above).
+also fill `portfolio_fit` per pick, {_book_fields(inp)}
 """
 
 
@@ -1979,6 +2020,73 @@ Respond with JSON matching the RiskSwapReview schema:
     {{"swap_id": "...", "approve": true, "narrative": "..."}}
   ],
   "advisory_notes": "..."
+}}
+"""
+
+
+# ---------------------------------------------------------------------------
+# E13.17 (D56): Quant exit cases (personas.exit_path shadow | research)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class QuantExitInput:
+    """Input context for ``quant.exit``: code-built exit cases, judgement wanted."""
+
+    cases_block: str  # one clipped block per case (<= quant_exit_case_max_chars each)
+    policy_summary: str  # ExitPolicy.summary() lines
+    scan_date: str
+
+
+def quant_exit_input_from_context(
+    snapshot: ContextSnapshot,  # noqa: ARG001 - adapter signature (PROMPT_BUILDERS)
+    *,
+    cases_block: str,
+    policy_summary: str,
+    scan_date: str,
+) -> QuantExitInput:
+    """The cases are rendered by the step (recorded), so a replay rebuilds the prompt."""
+    return QuantExitInput(
+        cases_block=cases_block, policy_summary=policy_summary, scan_date=scan_date
+    )
+
+
+def build_quant_exit_prompt(inp: QuantExitInput) -> str:
+    """Build the Quant exit-case prompt (judgement only: hold or close)."""
+    return f"""{_SYSTEM_PREAMBLE}
+{_ADVISORY_DISCLAIMER}
+## Role: Quant (Exit cases)
+Slack label: [Quant]
+
+Research flagged these open positions for review, or the deterministic position
+review fired a discretionary signal (profit target, time-adjusted target, remaining
+EV floor), or a capacity-rejected new trade pairs with the position. The numbers
+below are computed by code; do not recompute them. For each case say `hold` or
+`close` with a short rationale that names the numbers you weighed (remaining EV of
+holding vs closing now, the thesis status, theta, events before expiry, buying
+power freed). Stops, DTE exits and expiry are closed by code and never appear here.
+
+## Forbidden actions
+- Do NOT call any broker API or place any orders.
+- Do NOT size, price or roll a position (rolling is not an option).
+- Do NOT override or bypass the risk gate.
+
+## Inputs
+
+### Exit policy (deterministic)
+{inp.policy_summary or "none"}
+
+### Exit cases (deterministic facts; one block per position)
+{scrub_carried_text(inp.cases_block)}
+
+Date: {inp.scan_date}
+
+## Output format
+Respond with JSON matching the QuantExitOutput schema, one entry per case:
+{{
+  "cases": [
+    {{"structure_id": "...", "recommendation": "hold", "rationale": "..."}}
+  ]
 }}
 """
 

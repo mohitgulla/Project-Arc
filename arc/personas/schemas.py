@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from arc.exits.model import ExitSummary
 from arc.models import CatalystType, Stance
+from arc.positions.exit_case import ThesisStatus3
 
 # ---------------------------------------------------------------------------
 # Scalp — surfaces Candidate objects from raw information sources
@@ -181,6 +182,49 @@ class ResearchThesisCheck(BaseModel):
     reason: str = Field("", description="One line: what changed, or why it still holds")
 
 
+# E13.17 (D56): Research-managed exits. Three-state thesis status of the exit
+# watchlist (defined in arc.positions.exit_case); ``broken`` maps to the E5.9
+# ``invalidated`` when the legacy ``thesis_check`` note is written.
+_WATCH_EVIDENCE_MAX_ITEMS = 4
+_WATCH_EVIDENCE_MAX_CHARS = 160
+
+
+class ExitWatchItem(BaseModel):
+    """One open position on Research's exit watchlist (E13.17, D56).
+
+    ``review`` asks Quant for an exit case; ``hold`` keeps the position. Advisory only:
+    a watchlist item never creates a proposal, and mandatory exits (stop, DTE exit,
+    expiry) stay deterministic.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    structure_id: str
+    ticker: str
+    action: Literal["hold", "review"]
+    thesis_status: ThesisStatus3
+    evidence: list[str] = Field(
+        default_factory=list,
+        max_length=_WATCH_EVIDENCE_MAX_ITEMS,
+        description="Up to 4 short facts (each <= 160 chars); cite a story/scout/fact id",
+    )
+    reason: str = Field("", max_length=240)
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _trim_evidence(cls, v: object) -> object:
+        """Deterministic trim: at most 4 non-empty items of <= 160 chars each."""
+        if not isinstance(v, list):
+            return v
+        items = [str(x).strip()[:_WATCH_EVIDENCE_MAX_CHARS] for x in v if str(x).strip()]
+        return items[:_WATCH_EVIDENCE_MAX_ITEMS]
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _trim_reason(cls, v: object) -> object:
+        return str(v).strip()[:240] if isinstance(v, str) else v
+
+
 class ResearchOutput(BaseModel):
     """Research persona output: every candidate ranked or excluded with a reason."""
 
@@ -214,6 +258,20 @@ class ResearchOutput(BaseModel):
             "Why the shortlist is empty: no_fit | too_volatile | unclear | budget | "
             "portfolio_full (none / null when something is ranked)"
         ),
+    )
+
+
+class ResearchExitOutput(ResearchOutput):
+    """Research reply under ``personas.exit_path`` != ``deterministic`` (E13.17, D56).
+
+    A subclass (not a new field on :class:`ResearchOutput`) so the off path's prompt,
+    which embeds the reply schema, stays byte-identical. ``exit_watchlist`` replaces
+    ``thesis_checks`` (kept for the off path and stored shortlists).
+    """
+
+    exit_watchlist: list[ExitWatchItem] = Field(
+        default_factory=list,
+        description="One per open structure (exit watch): hold | review, thesis status, evidence",
     )
 
 
@@ -421,6 +479,36 @@ class RiskSwapReview(BaseModel):
 
     verdicts: list[SwapVerdict] = Field(default_factory=list)
     advisory_notes: str = Field("", description="Overall note on reallocating now")
+
+
+class QuantExitJudgement(BaseModel):
+    """Quant's call on one exit case (E13.17, D56): hold or close, with why.
+
+    The numbers come from code (``position_review`` + position facts); this is the
+    judgement only. Roll is not an option in D56 (open decision 13).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    structure_id: str = Field(..., description="The case's structure_id, copied verbatim")
+    recommendation: Literal["hold", "close"]
+    rationale: str = Field(..., max_length=400)
+
+    @field_validator("rationale", mode="before")
+    @classmethod
+    def _trim_rationale(cls, v: object) -> object:
+        return str(v).strip()[:400] if isinstance(v, str) else v
+
+
+class QuantExitOutput(BaseModel):
+    """Quant's reply on ``quant.exit`` (E13.17): one judgement per exit case.
+
+    A case missing from ``cases`` fails closed to ``hold``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    cases: list[QuantExitJudgement] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

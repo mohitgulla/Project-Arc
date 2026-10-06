@@ -2304,6 +2304,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "risk.open": "arc.pipeline.steps:risk_open_step",
     "quant.revise": "arc.pipeline.steps:quant_revise_step",
     "quant.propose": "arc.pipeline.steps:quant_propose_step",
+    # E13.17 (D56): exit cases judged by Quant (personas.exit_path shadow | research)
+    "quant.exit": "arc.pipeline.steps:quant_exit_step",
     # E5.3 intraday monitor (read-only: positions, Greeks, expiries, daily-loss halt)
     "monitor": "arc.routines.monitor:monitor_step",
     # E6.2 / D56 Broker: works an approved proposal through its D24 price band

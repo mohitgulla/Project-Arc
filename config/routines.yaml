@@ -148,6 +148,8 @@ context_ttl:
   universe_tier: {ttl: 1 session, supersede: latest}
   active_universe: {ttl: 1 session, supersede: latest}   # subject = active; one per resolve
   scout_read:    {ttl: 24h, supersede: latest}             # E13.7 (D56) the Scout's daily read; subject = session
+  exit_watchlist: {ttl: 30m, supersede: latest}          # E13.17 (D56) Research exit watch; subject = session
+  exit_case:     {ttl: 30m, supersede: latest}             # E13.17 (D56) Quant exit case; subject = open structure id
 
 # D47/D49/D56 (E4.7, E4.9, E13.3): six source categories, weighted EQUALLY (not per source). A
 # source's `weight:` is its share INSIDE its category, so a new feed (or YouTube channel)
@@ -519,6 +521,7 @@ personas:
   scout_feed: "off"             # E13.7 (D56): off | on — the daily Scout below (strategy lane); off = scout skipped, no LLM call
   research_idea_pool: scalp     # E13.8 (D56/D53): scalp | all — all = merged Scalp + Scout idea pool (strategy lane; XP-4)
   research_compact_prompt: full # E13.8 (D56/D54): full | compact — compact one-line-per-idea prompt ≤ research_prompt_max_chars (strategy lane; XP-6)
+  exit_path: deterministic      # E13.17 (D56): deterministic | shadow | research — Research exit watchlist + quant.exit cases (strategy lane; shadow = journaled only; research = shadow until E13.18)
   scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + 18:30 options_slow
     label: Scout
     about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"
@@ -568,10 +571,10 @@ personas:
     every: 10m                  # D52 (owner 2026-10-05; was 5m)
     window: "09:40-15:50"       # 38 slots; skips the open's first 10 min
     days: trading
-    chain: auto                 # E13.9 chain_for(): quant.open, risk.open, [quant.revise if quant_risk_loop on], quant.propose, broker.execute (D34)
+    chain: auto                 # E13.9 chain_for(): [quant.exit if exit_path shadow|research], quant.open, risk.open, [quant.revise if quant_risk_loop on], quant.propose, broker.execute (D34)
     reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, position_review, story,
-            earnings_history, insider_activity, analyst_recs, fundamentals, scout_read]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read renders only with research_compact_prompt compact
-    writes: [shortlist, regime, note, portfolio_context]   # E5.9: portfolio_context + portfolio_view/thesis_check notes
+            earnings_history, insider_activity, analyst_recs, fundamentals, scout_read, ex_dividend]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read renders only with research_compact_prompt compact; E13.17 ex_dividend feeds the exit-watch facts (exit_path only)
+    writes: [shortlist, regime, note, portfolio_context, exit_watchlist, position_review]   # E5.9: portfolio_context + portfolio_view/thesis_check notes; E13.17 (exit_path != deterministic): exit_watchlist + the reviews Research saw
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card
   monitor:                      # intraday: positions, net Greeks, expiries, daily-loss halt (read-only)
@@ -660,6 +663,10 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   # `revise`, on a no-change loop, or with < 90 s of loop.max_runtime left.
   quant.revise:  {reads: [shortlist, regime, structures, risk_review], writes: [structures, note], notify: card, on_no_change: skip, min_remaining_s: 90}
   quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review], writes: [proposal], llm: false, notify: summary}  # was propose; E6.1 posts the proposal cards; E5.9 fingerprint dedupe
+  # E13.17 (D56) exit path, personas.exit_path shadow | research only: Quant judges one exit
+  # case per position Research flagged `review`, with a discretionary signal, or paired with
+  # a capacity rejection. Shadow = written + journaled, nothing proposed (E13.18 adds risk.exit).
+  quant.exit:    {reads: [position_review, exit_watchlist, portfolio_context, regime, ex_dividend, story, scout_read], writes: [exit_case, note], notify: card, on_no_change: skip}
   # E6.4 chain steps (after positions.evaluate). Every close / swap open is a proposal: gate + approval.
   quant.exits:     {reads: [position_review], writes: [proposal], llm: false, notify: summary}   # D56: was investor.exits
   risk.reallocate: {reads: [position_review, note], writes: [proposal], notify: summary}   # Risk vetoes swaps (LLM); E5.9 thesis_check notes are advisory input

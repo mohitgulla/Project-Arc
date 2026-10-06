@@ -29,6 +29,7 @@ __all__ = [
     "PortfolioFlag",
     "PortfolioPosition",
     "PortfolioThesis",
+    "PositionFacts",
     "bucket_display",
     "expiry_bucket",
     "relabel_buckets",
@@ -129,6 +130,31 @@ class PortfolioThesis(BaseModel):
         return out
 
 
+class PositionFacts(BaseModel):
+    """Code-built research facts for one open position (E13.17, D56).
+
+    Only built under ``personas.exit_path`` != ``deterministic`` (Research's exit
+    watch). The last six fields come straight from the position's
+    :class:`~arc.positions.evaluate.PositionReview`; the rest from the context store.
+    """
+
+    model_config = _FORBID
+
+    iv_rank: float | None = Field(None, description="regime entry vol.iv_rank (0..1)")
+    next_earnings: str | None = Field(None, description="YYYY-MM-DD; None = unknown / ETF")
+    ex_dividend: str | None = Field(None, description="ex_dividend ex_date, YYYY-MM-DD")
+    stories_fresh: int = Field(0, ge=0, description="active story entries naming the ticker")
+    newest_story: str | None = Field(None, description="headline of the newest such story")
+    newest_story_id: str | None = None
+    scout_mention: Stance | None = Field(None, description="scout_read ticker call stance")
+    review_signals: list[str] = Field(default_factory=list)
+    theta_per_day: float | None = None
+    remaining_ev: float | None = None
+    remaining_ev_per_bp: float | None = None
+    remaining_pop: float | None = None
+    take_profit_pct: float | None = None
+
+
 class PortfolioPosition(BaseModel):
     """One open structure as Research sees it (money in $ for all contracts)."""
 
@@ -156,6 +182,8 @@ class PortfolioPosition(BaseModel):
     signals: list[str] = Field(default_factory=list, description="Fired exit signals (kinds)")
     review_source: Literal["position_review", "computed", "none"] = "none"
     opened_at: str
+    # E13.17 (D56): research facts for the exit watch (None off the exit path).
+    facts: PositionFacts | None = None
 
 
 class GreekUsage(BaseModel):

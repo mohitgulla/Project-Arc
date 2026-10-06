@@ -43,3 +43,17 @@ Strategy path, used only when the flag is `compact` (draft XP-6).
 - **Regime lines, category counts (≤ 3 headlines each), options data, notes:** one line each.
 - **Current portfolio:** the E5.9 block, unchanged.
 - Tickers you do not rank need no reason; `excluded` may stay empty.
+
+## Exit watch (`personas.exit_path: shadow | research`, E13.17)
+
+Strategy path, used only when the flag is not `deterministic` (today's prompt otherwise).
+- **Input:** "Open positions (exit watch)": per open structure one position line (kind,
+  stance, contracts, DTE, P&L, thesis) and one facts line built by code (IV rank,
+  next earnings, ex-dividend, fresh stories with the newest id, the Scout's call,
+  fired signals, remaining EV and EV/BP, PoP, theta/day, take-profit). ≤ 600 chars each.
+- **Output:** `exit_watchlist` (`ResearchExitOutput`) replaces `thesis_checks`: one item
+  per structure — `action` hold | review, `thesis_status` intact | weakened | broken,
+  ≤ 4 short `evidence` facts citing a story id, the Scout or a fact, one-line `reason`.
+- `review` asks Quant for an exit case; it never creates an order. Stops, DTE exits and
+  expiry are closed by code. A structure you skip is held (`exit:watch_missing`).
+

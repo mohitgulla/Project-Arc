@@ -34,6 +34,7 @@ from arc.positions.portfolio import (
     PortfolioFlag,
     PortfolioPosition,
     PortfolioThesis,
+    PositionFacts,
     bucket_display,
     expiry_bucket,
 )
@@ -60,8 +61,11 @@ __all__ = [
     "PortfolioPosition",
     "build_portfolio_context",
     "empty_portfolio_line",
+    "exit_block_entries",
     "load_industries",
     "load_sectors",
+    "position_facts",
+    "render_exit_block",
     "render_portfolio_context",
 ]
 
@@ -135,6 +139,73 @@ def _thesis(conn: sqlite3.Connection, row: Mapping[str, Any]) -> PortfolioThesis
         scalp_catalyst_date=cand["catalyst_date"] if cand else None,
         scalp_stance=Stance(cand["stance"]) if cand else None,
         scalp_confidence=float(cand["confidence"]) if cand else None,
+    )
+
+
+def _story_mentions(snapshot: ContextSnapshot, ticker: str) -> list[tuple[str, str, str]]:
+    """``(last_published, story_id, headline)`` for active stories naming *ticker*."""
+    out: list[tuple[str, str, str]] = []
+    for e in snapshot.of_kind("story"):
+        p = e.payload
+        if ticker in (p.get("tickers") or []):
+            out.append(
+                (
+                    str(p.get("last_published") or ""),
+                    str(p.get("story_id") or e.subject),
+                    str(p.get("headline") or ""),
+                )
+            )
+    return sorted(out, reverse=True)
+
+
+def position_facts(
+    ticker: str,
+    review: PositionReview | None,
+    snapshot: ContextSnapshot | None,
+    earnings: Mapping[str, _dt.date | None],
+    today: _dt.date,
+) -> PositionFacts:
+    """E13.17 (D56): code-built research facts for one open position (pure).
+
+    IV rank from the ticker's ``regime`` entry, next earnings from the earnings
+    connector (``None`` = ETF or unknown), the ``ex_dividend`` date when on or after
+    *today*, fresh stories naming the ticker, the Scout's call, and the review numbers.
+    """
+    iv_rank: float | None = None
+    ex_div: str | None = None
+    stories: list[tuple[str, str, str]] = []
+    scout: Stance | None = None
+    if snapshot is not None:
+        regime = snapshot.latest("regime", ticker)
+        if regime is not None:
+            raw = (regime.payload.get("vol") or {}).get("iv_rank")
+            iv_rank = float(raw) if isinstance(raw, int | float) else None
+        div = snapshot.latest("ex_dividend", ticker)
+        if div is not None:
+            ex_date = str(div.payload.get("ex_date") or "")
+            ex_div = ex_date if ex_date and ex_date >= today.isoformat() else None
+        stories = _story_mentions(snapshot, ticker)
+        read = snapshot.latest("scout_read", PORTFOLIO_SUBJECT)
+        if read is not None:
+            for call in read.payload.get("ticker_calls") or []:
+                if call.get("ticker") == ticker:
+                    scout = Stance(call["stance"])
+                    break
+    nxt = earnings.get(ticker)
+    return PositionFacts(
+        iv_rank=iv_rank,
+        next_earnings=nxt.isoformat() if nxt else None,
+        ex_dividend=ex_div,
+        stories_fresh=len(stories),
+        newest_story=stories[0][2][:200] if stories else None,
+        newest_story_id=stories[0][1] if stories else None,
+        scout_mention=scout,
+        review_signals=[s.kind.value for s in review.signals] if review else [],
+        theta_per_day=review.theta_per_day if review else None,
+        remaining_ev=review.remaining_ev if review else None,
+        remaining_ev_per_bp=review.remaining_ev_per_bp if review else None,
+        remaining_pop=review.remaining_pop if review else None,
+        take_profit_pct=review.take_profit_pct if review else None,
     )
 
 
@@ -219,6 +290,9 @@ def build_portfolio_context(
     sectors: Mapping[str, str] | None = None,
     review_max_age: _dt.timedelta = _dt.timedelta(minutes=30),
     diversification: ResearchDiversificationSettings | None = None,
+    facts: bool = False,
+    facts_snapshot: ContextSnapshot | None = None,
+    reviews_out: dict[str, PositionReview] | None = None,
 ) -> PortfolioContext:
     """Assemble Research's portfolio view from the audit DB and the market.
 
@@ -228,6 +302,12 @@ def build_portfolio_context(
 
     E12.5: *diversification* in ``relaxed`` mode flags sector / stance / expiry
     concentration at its relaxed thresholds (never below the strict settings).
+
+    E13.17: *facts* (``personas.exit_path`` != ``deterministic``) adds each position's
+    :class:`PositionFacts` (IV rank, next earnings, ex-dividend, fresh stories, Scout
+    mention, review numbers), read from *facts_snapshot* (default *snapshot*).
+    *reviews_out* (when given) collects the ``computed`` reviews (no fresh stored
+    one), keyed by structure id, for the caller to store as ``position_review``.
     """
     from arc.pipeline.market import account_baseline
     from arc.reconcile.baseline import day_pnl
@@ -274,6 +354,12 @@ def build_portfolio_context(
     warnings: list[str] = []
     opened_greeks = Greeks()
     open_pnl = 0.0
+    earnings: Mapping[str, _dt.date | None] = {}
+    if facts:
+        from arc.pipeline.market import next_earnings
+
+        earnings = next_earnings(conn, sorted({str(r["ticker"]) for r in rows}), today)
+    fsnap = facts_snapshot if facts_snapshot is not None else snapshot
     for row in rows:
         st = Structure.model_validate_json(row["structure_json"])
         n = int(row["contracts"])
@@ -285,6 +371,8 @@ def build_portfolio_context(
             source = "computed" if review is not None else "none"
         if review is None:
             warnings.append(f"{row['ticker']} {row['id']}: no marks (P&L unknown)")
+        elif source == "computed" and reviews_out is not None:
+            reviews_out[str(row["id"])] = review
         thesis = _thesis(conn, row)
         stance = thesis.scalp_stance or structure_stance(st)
         max_loss_total = float(st.max_loss or 0) * n
@@ -322,6 +410,11 @@ def build_portfolio_context(
                 signals=[s.kind.value for s in review.signals] if review else [],
                 review_source=source,
                 opened_at=str(row["opened_at"]),
+                facts=(
+                    position_facts(str(row["ticker"]), review, fsnap, earnings, today)
+                    if facts
+                    else None
+                ),
             )
         )
     account = account.model_copy(update={"open_pnl_total": round(open_pnl, 2)})
@@ -452,6 +545,63 @@ def expiry_cluster_text(ag: PortfolioAggregates) -> str:
         + ". Spread expiries within the configured entry window; the buckets measure "
         "concentration and are not an entry rule."
     )
+
+
+def _clip(text: str, n: int) -> str:
+    return text if len(text) <= n else text[: max(n - 1, 0)] + "…"
+
+
+def exit_block_entries(pc: PortfolioContext, settings: ArcSettings) -> list[tuple[str, str]]:
+    """E13.17: ``(structure_id, text)`` per position of the exit-watch block.
+
+    Each text is one position line + one facts line, hard-clipped to
+    ``exit_block_max_chars_per_position`` (the facts line is cut first, then the
+    position line), for at most ``portfolio_context_max_positions`` positions.
+    """
+    cap = settings.exit_block_max_chars_per_position
+    out: list[tuple[str, str]] = []
+    for p in pc.positions[: settings.portfolio_context_max_positions]:
+        th = p.thesis.research.strip() or "(no thesis on record)"
+        head = (
+            f"- {p.structure_id} {p.ticker} {p.kind or 'structure'} {p.stance.value} "
+            f"x{p.contracts} {p.dte} DTE; P&L {_money(p.mark_pnl_total)} "
+            f"({_pct(p.pct_of_max_gain)} of max gain); "
+            + ("exit pending; " if p.exit_pending else "")
+            + f"thesis: {th}"
+        )
+        f = p.facts
+        if f is None:
+            facts = "  facts: none"
+        else:
+            bits = [
+                f"IV rank {f.iv_rank:.2f}" if f.iv_rank is not None else "IV rank n/a",
+                f"earnings {f.next_earnings or 'none/unknown'}",
+                f"ex-div {f.ex_dividend}" if f.ex_dividend else "ex-div none",
+                f"stories {f.stories_fresh}"
+                + (f' (newest [{f.newest_story_id}] "{f.newest_story}")' if f.newest_story else ""),
+                f"Scout {f.scout_mention.value}" if f.scout_mention else "Scout none",
+                f"signals {','.join(f.review_signals) or 'none'}",
+                f"remaining EV {_money(f.remaining_ev)}/unit",
+                f"EV/BP {f.remaining_ev_per_bp:.3f}"
+                if f.remaining_ev_per_bp is not None
+                else "EV/BP n/a",
+                f"PoP {_pct(f.remaining_pop)}",
+                f"theta/day {f.theta_per_day:+.2f}" if f.theta_per_day is not None else "",
+                f"TP {_pct(f.take_profit_pct)}",
+            ]
+            facts = "  facts: " + "; ".join(b for b in bits if b)
+        head = _clip(head, cap)
+        room = cap - len(head) - 1
+        text = head + ("\n" + _clip(facts, room) if room > 10 else "")
+        out.append((p.structure_id, text))
+    return out
+
+
+def render_exit_block(pc: PortfolioContext, settings: ArcSettings) -> str:
+    """E13.17: Research's "Open positions (exit watch)" block (``""`` when flat)."""
+    if pc.empty:
+        return ""
+    return "\n".join(text for _, text in exit_block_entries(pc, settings))
 
 
 def render_portfolio_context(

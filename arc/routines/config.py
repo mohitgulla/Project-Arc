@@ -622,19 +622,27 @@ LEGACY_JOB_NAMES: dict[str, str] = {
 #: names for the whole D56 split are ``quant.open``, ``risk.open``, ``quant.revise``,
 #: ``quant.propose`` (opens) and ``quant.exit``, ``risk.exit`` (E13.17/E13.18).
 AUTO_CHAIN_JOBS: tuple[str, ...] = ("research", "positions.evaluate")
+#: E13.17 (D56): ``personas.exit_path`` values that build exit cases (``quant.exit``).
+EXIT_PATH_CASES: frozenset[str] = frozenset({"shadow", "research"})
 
 
-def chain_for(job: str, flags: Mapping[str, bool]) -> list[str]:
+def chain_for(
+    job: str, flags: Mapping[str, bool], choices: Mapping[str, str] | None = None
+) -> list[str]:
     """The chain of *job* under ``chain: auto`` for these persona *flags* (pure).
 
     ``research``: ``quant_risk_loop`` off -> ``quant.open, risk.open, quant.propose,
     broker.execute`` (today's chain under the new names); on -> one ``quant.revise``
-    round between Risk and ``quant.propose``. ``positions.evaluate`` keeps today's exit
-    chain (E13.17/E13.18 add the ``exit_path`` rows).
+    round between Risk and ``quant.propose``. E13.17: *choices* ``exit_path`` shadow |
+    research inserts ``quant.exit`` right after the loop job (deterministic = no
+    step). ``positions.evaluate`` keeps today's exit chain (E13.18 adds its
+    ``exit_path`` rows).
     """
+    exit_path = (choices or {}).get("exit_path", "deterministic")
     if job == "research":
+        exits = ["quant.exit"] if exit_path in EXIT_PATH_CASES else []
         revise = ["quant.revise"] if flags.get("quant_risk_loop", False) else []
-        return ["quant.open", "risk.open", *revise, "quant.propose", "broker.execute"]
+        return [*exits, "quant.open", "risk.open", *revise, "quant.propose", "broker.execute"]
     if job == "positions.evaluate":
         return ["quant.exits", "risk.reallocate", "broker.execute"]
     msg = f"chain: auto is only defined for {', '.join(AUTO_CHAIN_JOBS)}, not {job!r}"
@@ -759,6 +767,8 @@ PERSONA_CHOICES: dict[str, tuple[str, ...]] = {
     # E13.8 (D56/D53/D54): Research's idea pool and prompt format (strategy lane)
     "research_idea_pool": ("scalp", "all"),
     "research_compact_prompt": ("full", "compact"),
+    # E13.17 (D56): who manages discretionary exits (strategy lane)
+    "exit_path": ("deterministic", "shadow", "research"),
 }
 
 
@@ -778,6 +788,26 @@ class ResearchIdeaPoolSettings(BaseModel):
     @property
     def merged(self) -> bool:
         return self.mode == "all"
+
+
+class ExitPathSettings(BaseModel):
+    """E13.17 (D56): who manages discretionary exits (default ``deterministic``).
+
+    ``mode`` comes from ``personas.exit_path: deterministic | shadow | research``.
+    ``deterministic`` = today (the positions chain only; Research's prompt byte for
+    byte). ``shadow`` = Research also writes an ``exit_watchlist`` and ``quant.exit``
+    builds ``exit_case`` entries (journaled, nothing proposed). ``research`` behaves as
+    ``shadow`` until E13.18 adds ``risk.exit`` and the close path.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["deterministic", "shadow", "research"] = "deterministic"
+
+    @property
+    def watch(self) -> bool:
+        """Research writes the exit watchlist and ``quant.exit`` builds cases."""
+        return self.mode in EXIT_PATH_CASES
 
 
 class ResearchCompactPromptSettings(BaseModel):
@@ -1064,6 +1094,8 @@ class RoutinesConfig(BaseModel):
     research_compact_prompt: ResearchCompactPromptSettings = Field(
         default_factory=ResearchCompactPromptSettings
     )
+    # E13.17: the ``personas.exit_path`` switch (as ``mode``).
+    exit_path: ExitPathSettings = Field(default_factory=ExitPathSettings)
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)  # D56 (E13.3)
     options_slow: OptionsSlowSettings = Field(default_factory=OptionsSlowSettings)  # E13.5
     options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
@@ -1129,10 +1161,15 @@ class RoutinesConfig(BaseModel):
             for f in PERSONA_FLAGS
             if isinstance(out.get(f) or {}, dict)
         }
+        choices = {
+            f: str((out.get(f) or {}).get("mode"))
+            for f in PERSONA_CHOICES
+            if isinstance(out.get(f), dict) and (out.get(f) or {}).get("mode") is not None
+        }
         for name in AUTO_CHAIN_JOBS:
             body = personas.get(name)
             if isinstance(body, dict) and body.get("chain") == "auto":
-                personas[name] = {**body, "chain": chain_for(name, flags)}
+                personas[name] = {**body, "chain": chain_for(name, flags, choices)}
         out["personas"] = personas
         return out
 
