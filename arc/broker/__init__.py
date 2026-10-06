@@ -3,7 +3,9 @@
 Usage::
 
     from arc.broker.base import BrokerAdapter, MlegOrder
-    from arc.broker.alpaca_paper import AlpacaPaperBroker
+    from arc.broker.registry import resolve_broker
+
+    broker = resolve_broker(settings)  # alpaca/paper/rest; anything else refuses
 """
 
 from arc.broker.base import (

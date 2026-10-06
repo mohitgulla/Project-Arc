@@ -361,3 +361,28 @@ def test_find_arc_execute_reports_args() -> None:
     assert find_arc_execute("arc execute --token T && ls") == [["execute", "--token", "T"]]
     assert find_arc_execute("python -m pytest") == []
     assert find_arc_execute("python -m") == []
+
+
+# ---------------------------------------------------------------------------
+# E13.11 (D1/D56): Robinhood Agentic MCP tools are always blocked
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("tool", sorted(H.ROBINHOOD_ORDER_TOOLS | {"get_portfolio"}))
+@pytest.mark.parametrize("server", ["robinhood", "Robinhood_Trading", "rh-robinhood"])
+def test_robinhood_mcp_tools_always_blocked(server: str, tool: str) -> None:
+    name = f"mcp__{server}__{tool}"
+    assert H.is_robinhood_tool(name)
+    v = check(name, mleg_args(token_for(proposal())))  # even a valid Alpaca token
+    assert not v.allow
+    assert "Robinhood is not an enabled venue" in v.message
+
+
+def test_robinhood_order_tools_blocked_on_any_server() -> None:
+    for tool in ("cancel_option_order", "exercise_option"):
+        assert tool in BLOCKED_TOOLS
+        assert not check(f"mcp__other__{tool}", {}).allow
+    assert not H.is_robinhood_tool("mcp__alpaca__place_option_order")
+    assert not H.is_robinhood_tool("robinhood_place_option_order")  # not an MCP name
+    # Alpaca's gated order path is unchanged
+    assert check(TOOL, mleg_args(token_for(proposal()))).allow

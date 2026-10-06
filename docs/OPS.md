@@ -113,6 +113,38 @@ personas off the frontier model.
 `ARC_ENV` defaults to `paper`. The `live` credential file does not exist.
 Never set `ARC_ENV=live` in Phase 1.
 
+### 3.3 Broker venues (E13.11, D56)
+
+Every trading entry point builds its broker through `arc/broker/registry.py`
+(`resolve_broker(settings)`, or `trading_broker(conn)` for a store, which passes an
+experiment arm's `keys_env`). The registry key is
+`(ARC_BROKER_VENUE, ARC_ENV, ARC_BROKER_TRANSPORT)`:
+
+| Venue / env / transport | Adapter | Status |
+|---|---|---|
+| `alpaca/paper/rest` (default) | `AlpacaPaperBroker` | the only one that constructs |
+| `alpaca/live/rest` | `AlpacaLiveStub` | fail-closed stub |
+| `alpaca/*/mcp` | `McpStub` | fail-closed stub (Alpaca MCP stays read-only in persona sessions) |
+| `robinhood/live/rest`, `robinhood/live/mcp` | `RobinhoodStub` | fail-closed stub, interface only |
+| anything else (e.g. `robinhood/paper/*`) | none | refused, not registered |
+
+- A stub reads nothing (no env var, file or network). Building one logs
+  `broker.stub_constructed` (WARNING) and raises `BrokerNotAvailable`
+  ("`<venue>/<env>/<transport> not enabled (D1/D56); paper only`") before any
+  credential read; `arc reconcile` / `arc execute` print it as `status: refused`
+  and exit 2.
+- `ARC_BROKER_VENUE` (`alpaca` | `robinhood`) and `ARC_BROKER_TRANSPORT`
+  (`rest` | `mcp`) are NEVER_TUNABLE: process topology, changed only by env var + PR.
+- `ARC_ENV=live` still requires `~/.arc/live.env` to exist; nothing reads it, and
+  `alpaca/live` is a stub.
+- **Robinhood (D1):** the adapter is a separate future initiative, not a D56 card.
+  Constraints on record: no paper mode, single-leg only, localhost-only OAuth.
+  `arc.execution.submit()` refuses any proposal with more than one leg on an
+  adapter with `supports_mleg = False` (`RefusalCode.VENUE_SINGLE_LEG_ONLY`), so a
+  future Robinhood adapter can never receive a spread. The arc-gate hook blocks
+  every tool on a `*robinhood*` MCP server plus `cancel_option_order` /
+  `exercise_option` on any server.
+
 ---
 
 ## 4. Hermes Configuration Summary

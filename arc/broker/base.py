@@ -145,6 +145,18 @@ class BrokerAdapter(Protocol):
         Every option order (single-leg ``us_option`` or mleg) the broker lists
         since *since*, any status. The D32 order budget cross-checks the local
         count against it; adapters without it are counted locally only.
+    info() -> arc.broker.registry.BrokerInfo
+        Venue/env/transport, an account label (never an account id) and
+        whether the venue takes multi-leg orders / has a paper mode (E13.11).
+    venue: str, env: str (read-only)
+        ``"alpaca"``/``"robinhood"`` and ``"paper"``/``"live"`` (E13.11).
+    supports_mleg: bool (read-only)
+        ``False`` for a single-leg-only venue (Robinhood, D1);
+        ``arc.execution.submit()`` then refuses any proposal with more than one
+        leg (``RefusalCode.VENUE_SINGLE_LEG_ONLY``). Missing = ``True``.
+
+    Adapters are built by :mod:`arc.broker.registry` (``resolve_broker``), never
+    by constructing a venue class in trading code.
     """
 
     def account(self) -> AccountInfo: ...

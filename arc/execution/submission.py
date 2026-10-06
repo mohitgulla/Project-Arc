@@ -75,6 +75,7 @@ class RefusalCode(StrEnum):
     NOT_APPROVED = "not_approved"
     APPROVAL_TIME = "approval_time_invalid"
     BAD_TIME = "bad_time"
+    VENUE_SINGLE_LEG_ONLY = "venue_single_leg_only"
 
 
 class SubmitRefused(Exception):
@@ -131,6 +132,7 @@ def _check(
     halt: HaltSwitch | None,
     step: int,
     limit_price: Decimal | None,
+    supports_mleg: bool = True,
 ) -> MlegOrder:
     if now.tzinfo is None or now.utcoffset() is None:
         raise SubmitRefused(RefusalCode.BAD_TIME, "`now` must be timezone-aware")
@@ -142,6 +144,12 @@ def _check(
         raise SubmitRefused(RefusalCode.HALTED, str(exc)) from exc
     if config.env is not ArcEnv.PAPER:
         raise SubmitRefused(RefusalCode.NOT_PAPER, f"ARC_ENV={config.env} (Phase 1 is paper only)")
+    # E13.11 (D1/D56): a single-leg-only venue (Robinhood) never receives a spread.
+    if not supports_mleg and len(proposal.structure.legs) > 1:
+        raise SubmitRefused(
+            RefusalCode.VENUE_SINGLE_LEG_ONLY,
+            f"broker venue is single-leg only; proposal has {len(proposal.structure.legs)} legs",
+        )
 
     ph = proposal_hash(proposal)
     if decision is None:
@@ -195,8 +203,10 @@ def submit(
     """Submit attempt ``step`` of ``proposal`` as one limit order; return the broker order id.
 
     Raises :class:`SubmitRefused` (and never touches ``broker``) when trading is
-    halted (``halt`` is required: ``None`` refuses), or unless the gate token and
-    the approval both check out for this exact proposal, step and price.
+    halted (``halt`` is required: ``None`` refuses), when the broker is single-leg
+    only (``supports_mleg is False``) and the proposal has more than one leg, or
+    unless the gate token and the approval both check out for this exact
+    proposal, step and price.
     """
     try:
         order = _check(
@@ -208,6 +218,7 @@ def submit(
             halt=halt,
             step=step,
             limit_price=limit_price,
+            supports_mleg=getattr(broker, "supports_mleg", True) is not False,
         )
     except SubmitRefused as exc:
         log.warning("execution.submit_refused", code=str(exc.code), detail=exc.detail, step=step)

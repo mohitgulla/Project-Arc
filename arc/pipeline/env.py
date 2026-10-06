@@ -128,9 +128,9 @@ class PipelineEnv:
 
                 paper: BrokerAdapter = trading_broker(conn, settings)
             else:
-                from arc.broker.alpaca_paper import AlpacaPaperBroker
+                from arc.broker.registry import resolve_broker
 
-                paper = AlpacaPaperBroker()
+                paper = resolve_broker(settings)  # E13.11: alpaca/paper/rest only
             account: Callable[[], AccountInfo] = paper.account
             positions: Callable[[], list[BrokerPosition]] = paper.positions
             adapter: BrokerAdapter | None = paper

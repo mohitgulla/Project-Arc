@@ -5,8 +5,10 @@ the Broker reconcile, ``arc execute``, ``arc budget``) builds its broker here
 from the store connection it already holds:
 
 * a control store (no ``arm_identity``): the production paper broker,
-  ``AlpacaPaperBroker()`` on ``ALPACA_API_KEY`` exactly as before;
-* an experiment arm store: ``AlpacaPaperBroker`` on the arm's own keys
+  ``resolve_broker(settings)`` (E13.11: ``alpaca/paper/rest`` on ``ALPACA_API_KEY``
+  exactly as before; any other venue/env/transport raises ``BrokerNotAvailable``);
+* an experiment arm store: ``resolve_broker(settings, keys_env=<arm keys_env>)``,
+  ``AlpacaPaperBroker`` on the arm's own keys
   (``<keys_env>_API_KEY``; :func:`arc.experiments.arms.arm_keys` refuses
   ``ALPACA`` / ``ALPACA_TEST`` and a key equal to either), wrapped in
   :class:`~arc.experiments.virtual.VirtualBroker` so ``account()`` is the arm's
@@ -35,14 +37,6 @@ if TYPE_CHECKING:
 __all__ = ["BrokerFactory", "arm_t0", "trading_broker"]
 
 BrokerFactory = Callable[[str | None, str | None], "BrokerAdapter"]
-
-
-def _alpaca(api_key: str | None, secret_key: str | None) -> BrokerAdapter:
-    from arc.broker.alpaca_paper import AlpacaPaperBroker
-
-    if api_key is None:
-        return AlpacaPaperBroker()
-    return AlpacaPaperBroker(api_key=api_key, secret_key=secret_key)
 
 
 def arm_t0(conn: sqlite3.Connection, arm_id: str) -> _dt.datetime:
@@ -82,12 +76,24 @@ def trading_broker(
     the production default keys. *settings* is the store's effective settings
     (its account profile decides cash settlement); computed when omitted.
     """
-    make = factory or _alpaca
     ident = read_identity(conn)
-    if ident is None:
-        return make(None, None)
-    key, secret = arm_keys(ident.keys_env, environ)
-    vb = virtual_broker(conn, ident, make(key, secret), settings=settings, now=now)
+    if factory is None:
+        from arc.broker.registry import resolve_broker
+        from arc.config import get_settings
+
+        # Venue, env and transport are NEVER_TUNABLE, so the base settings decide them.
+        s = settings if settings is not None else get_settings()
+        if ident is None:
+            return resolve_broker(s)
+        inner = resolve_broker(
+            s, keys_env=ident.keys_env, environ=environ, account_label=f"exp:{ident.arm_id}"
+        )
+    elif ident is None:
+        return factory(None, None)
+    else:
+        key, secret = arm_keys(ident.keys_env, environ)
+        inner = factory(key, secret)
+    vb = virtual_broker(conn, ident, inner, settings=settings, now=now)
     return cast("BrokerAdapter", vb)  # the real broker's methods via __getattr__
 
 

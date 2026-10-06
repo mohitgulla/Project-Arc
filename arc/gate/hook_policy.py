@@ -21,6 +21,12 @@ Tool coverage (Alpaca MCP server v2 names, any ``mcp__<server>__`` prefix):
   always blocked. None can be bound to a gated options payload (stock/crypto
   are out of scope, a replace carries no legs, close/exercise are unpriced).
   Phase-1 orders go through ``arc.execution.submit()`` (PLAN §2.6).
+- Robinhood Agentic MCP (E13.11, D1/D56: interface only, never registered in a
+  persona session): its order tools ``place_option_order``,
+  ``cancel_option_order``, ``exercise_option`` and ``place_stock_order`` are
+  always blocked, and *any* tool on a server whose name contains ``robinhood``
+  is blocked (a Robinhood ``place_option_order`` is never gated: its legs are
+  instrument UUIDs, not OCC symbols, and the venue is not enabled).
 - ``terminal``: blocked only when the command runs ``arc execute`` without a
   ``--token`` that verifies (signature + expiry; ``submit()`` then checks the
   proposal and order binding). Every other command is allowed.
@@ -47,8 +53,10 @@ if TYPE_CHECKING:
 __all__ = [
     "BLOCKED_TOOLS",
     "GATED_TOOLS",
+    "ROBINHOOD_ORDER_TOOLS",
     "HookVerdict",
     "base_tool_name",
+    "is_robinhood_tool",
     "check_tool_call",
     "find_arc_execute",
 ]
@@ -62,10 +70,18 @@ BLOCKED_TOOLS = frozenset(
         "close_position",
         "close_all_positions",
         "exercise_options_position",
+        # E13.11: Robinhood Agentic MCP order tools (place_option_order is gated
+        # for Alpaca and refused for a Robinhood server below).
+        "cancel_option_order",
+        "exercise_option",
     }
 )
+ROBINHOOD_ORDER_TOOLS = frozenset(
+    {"place_option_order", "cancel_option_order", "exercise_option", "place_stock_order"}
+)
 _TERMINAL = "terminal"
-_MCP_NAME = re.compile(r"^mcp__.+?__(?P<tool>[A-Za-z0-9_-]+)$")
+_MCP_NAME = re.compile(r"^mcp__(?P<server>.+?)__(?P<tool>[A-Za-z0-9_-]+)$")
+_ROBINHOOD = "robinhood"
 _ARC_EXECUTE_LOOSE = re.compile(r"\barc(?:\.cli)?\b.*\bexecute\b", re.DOTALL)
 _SEPARATORS = frozenset({";", "&", "&&", "|", "||", "(", ")", "\n"})
 
@@ -88,6 +104,12 @@ def base_tool_name(tool_name: str) -> str:
     """``mcp__alpaca__place_option_order`` -> ``place_option_order``; others unchanged."""
     m = _MCP_NAME.fullmatch(tool_name)
     return m["tool"] if m else tool_name
+
+
+def is_robinhood_tool(tool_name: str) -> bool:
+    """``mcp__<server>__<tool>`` whose server name mentions Robinhood (any case)."""
+    m = _MCP_NAME.fullmatch(tool_name)
+    return m is not None and _ROBINHOOD in m["server"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +326,11 @@ def _check(
     if tool_name == _TERMINAL:
         return _check_terminal(tool_input, secret, now)
     base = base_tool_name(tool_name)
+    if is_robinhood_tool(tool_name):
+        return _block(
+            f"{tool_name}: Robinhood is not an enabled venue (D1/D56, interface only); "
+            "no Robinhood MCP tool is ever allowed from an agent session"
+        )
     if base in BLOCKED_TOOLS:
         return _block(
             f"{base} is never allowed from an agent session; orders go through "
