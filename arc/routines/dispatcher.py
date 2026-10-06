@@ -90,7 +90,16 @@ _HALT_DEFERRED = "halt_deferred:{event}"
 _BG_OWNER = "bg_owner:{run}"
 # Chain steps whose name is not a persona, mapped to the persona whose model they use.
 # D56 (E13.2): broker.execute / quant.exits are deterministic (no persona model).
-_STEP_PERSONA = {"quant": "quant", "risk": "risk", "propose": "research"}
+_STEP_PERSONA = {
+    "quant": "quant",
+    "risk": "risk",
+    "propose": "research",
+    # E13.9 (D56): the open-path step names (quant.propose runs no LLM)
+    "quant.open": "quant",
+    "quant.revise": "quant",
+    "risk.open": "risk",
+    "quant.propose": "quant",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -820,6 +829,32 @@ class Dispatcher:
                         )
                     )
                     continue
+                # E13.9: a step that needs more of the loop budget than is left
+                # (``min_remaining_s``, e.g. quant.revise's extra LLM call) is skipped;
+                # later steps still run (generic; reused by E13.18's exit path).
+                left = deadline - time.monotonic()
+                need = step_spec.min_remaining_s
+                if is_loop and index and need is not None and left < need:
+                    log.info(
+                        "routines.step_skipped_deadline",
+                        job=step,
+                        chain_run_id=chain_run_id,
+                        needs_s=need,
+                        left_s=round(left, 1),
+                    )
+                    outcomes.append(
+                        self._record_skipped_step(
+                            step,
+                            scheduled_for,
+                            reason=f"chain:{steps[0]}",
+                            chain_run_id=chain_run_id,
+                            step_index=index,
+                            summary=f"step_skipped_deadline: needs {need}s of the "
+                            f"{self._max_runtime_label()} loop budget, {max(left, 0):.0f}s left",
+                            now=now,
+                        )
+                    )
+                    continue
                 if is_loop and no_change and index and step_spec.on_no_change == "skip":
                     outcomes.append(
                         self._record_skipped_step(
@@ -873,7 +908,15 @@ class Dispatcher:
                 if index == 0 and outcome.metrics.get("no_change"):
                     no_change = True
                     self._loop_no_change = True
-                stop = outcome.status != "ok" or bool(outcome.metrics.get("stop_chain"))
+                # E13.9: an optional step that skips itself (``JobSkippedError(...,
+                # continue_chain=True)``, e.g. quant.revise with nothing to revise)
+                # lets the chain go on.
+                optional_skip = outcome.status == "skipped" and bool(
+                    outcome.metrics.get("continue_chain")
+                )
+                stop = (outcome.status != "ok" and not optional_skip) or bool(
+                    outcome.metrics.get("stop_chain")
+                )
                 if stop:
                     if chain_run_id and index + 1 < len(steps):
                         log.warning(
@@ -1183,7 +1226,12 @@ class Dispatcher:
             log.info("routines.step_skipped", job=run.job, why=str(exc))
             if exc.notice:
                 trace.notifications.append(self.heartbeats.notice(now, run.job, exc.notice))
-            return self._outcome(run, "skipped", str(exc))
+            return self._outcome(
+                run,
+                "skipped",
+                str(exc),
+                metrics={"continue_chain": True} if exc.continue_chain else None,
+            )
         except Exception as exc:  # noqa: BLE001 - a job failure is recorded, never raised
             trace.exc = exc
             error = f"{type(exc).__name__}: {exc}"

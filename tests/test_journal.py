@@ -170,7 +170,12 @@ class TestPipelineRecords:
         assert chain and chain.startswith("chain-")
         decisions = j.decisions(chain_run_id=chain)
         assert all(d.inputs_snapshot_id for d in decisions if d.stage is not Stage.APPROVAL)
-        llm = [d for d in decisions if d.persona.value in ("research", "quant", "risk")]
+        # E13.9: quant.propose rows are the Quant's but code-made (no persona call)
+        llm = [
+            d
+            for d in decisions
+            if d.persona.value in ("research", "quant", "risk") and d.stage is not Stage.PROPOSE
+        ]
         call_ids = {c["id"] for c in j.persona_calls(chain)}
         assert llm and all(d.persona_call_id in call_ids for d in llm)
 

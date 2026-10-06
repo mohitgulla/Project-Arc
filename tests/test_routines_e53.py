@@ -90,7 +90,7 @@ class TestShippedDefaults:
         assert p["scalp"].after_sources and p["scalp.overnight"].after_sources
         assert p["scalp.overnight"].cadence == "at 22:00 ET (daily)"
         assert p["research"].cadence == "every 10m 09:40-15:50 ET (trading)"
-        assert p["research"].chain == ["quant", "risk", "propose", "broker.execute"]
+        assert p["research"].chain == ["quant.open", "risk.open", "quant.propose", "broker.execute"]
         assert p["research"].ttl is not None
         assert p["research"].ttl.duration == dt.timedelta(minutes=5)
         assert p["monitor"].cadence == "every 10m 09:30-16:00 ET (trading)"  # D35, D52
@@ -695,7 +695,7 @@ class TestSimulateCli:
         assert rc == 0
         assert "tick Sun 2026-09-27 22:00 EDT" in out
         assert "tick Mon 2026-09-28 09:40 EDT" in out
-        assert "↳ Mon 09:40 propose" in out  # D31: first loop slot
+        assert "↳ Mon 09:40 quant.propose" in out  # D31: first loop slot
         assert "Mon 09:30 research" not in out
         assert out.rstrip().endswith("had work")
 
@@ -871,7 +871,9 @@ class TestTickScript:
 def test_yaml_comment_overview_matches_config() -> None:
     raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
     assert raw["tick"]["interval"] == "10m"  # D52
-    assert set(raw["personas"]) - {"finnhub_context", "director_diversification"} == {
+    assert set(raw["personas"]) - {
+        "finnhub_context", "director_diversification", "quant_risk_loop",
+    } == {
         "scalp", "scalp.overnight", "research", "monitor", "broker.reconcile", "scorecard",
         "broker",
         "positions.evaluate", "experiments.evaluate",

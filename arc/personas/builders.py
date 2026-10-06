@@ -1194,13 +1194,75 @@ def risk_input_from_context(
 ) -> RiskInput:
     """Risk reads the latest active ``structures`` (+ D30 event risk when present)."""
     return RiskInput(
-        structures_json=_dump(_latest_payload(snapshot, "structures")),
+        structures_json=_dump(_structures_for_prompt(_latest_payload(snapshot, "structures"))),
         portfolio_json=portfolio_json,
         calendar_json=calendar_json,
         account_equity=account_equity,
         scan_date=scan_date,
         event_risk_json=_dump(event_risk_from_context(snapshot)),
         entry_terms=_terms(entry_terms),
+    )
+
+
+#: E13.9: ``structures`` v3 keys that only a ``quant.revise`` entry fills. At their
+#: defaults they are left out of prompts, so a v3 entry renders like a v2 one.
+_STRUCTURES_V3_DEFAULTS: dict[str, object] = {"revision_of": None, "kept": []}
+
+
+def _structures_for_prompt(payload: Mapping[str, object]) -> dict[str, object]:
+    return {
+        k: v
+        for k, v in payload.items()
+        if not (k in _STRUCTURES_V3_DEFAULTS and v == _STRUCTURES_V3_DEFAULTS[k])
+    }
+
+
+@dataclass(frozen=True)
+class QuantReviseInput:
+    """Input context for the E13.9 ``quant.revise`` prompt (Quant prompt + Risk's asks)."""
+
+    quant: QuantInput
+    first_structures_json: str  # the structures Risk reviewed (quant.open's entry)
+    revise_json: str  # [{ticker, structure_type, risk_rating, narrative, revise_request}]
+    rejected: tuple[str, ...]  # tickers Risk rejected (dropped; never re-proposed)
+
+
+def quant_revise_input_from_context(
+    snapshot: ContextSnapshot,
+    *,
+    chains_json: str,
+    underlying_prices_json: str,
+    scan_date: str,
+    entry_terms: EntryTerms | Mapping[str, Any] | None = None,
+) -> QuantReviseInput:
+    """Quant's revise round reads the shortlist, its first structures and Risk's review."""
+    review = _latest_payload(snapshot, "risk_review")
+    assessments = [a for a in review.get("assessments", []) if isinstance(a, dict)]  # type: ignore[union-attr]
+    revise = [
+        {
+            "ticker": a.get("ticker"),
+            "structure_type": a.get("structure_type"),
+            "risk_rating": a.get("risk_rating"),
+            "narrative": a.get("narrative"),
+            "revise_request": a.get("revise_request"),
+        }
+        for a in assessments
+        if a.get("verdict") == "revise"
+    ]
+    rejected = tuple(str(a.get("ticker")) for a in assessments if a.get("verdict") == "reject")
+    return QuantReviseInput(
+        quant=quant_input_from_context(
+            snapshot,
+            chains_json=chains_json,
+            underlying_prices_json=underlying_prices_json,
+            scan_date=scan_date,
+            entry_terms=entry_terms,
+        ),
+        first_structures_json=_dump(
+            _structures_for_prompt(_latest_payload(snapshot, "structures"))
+        ),
+        revise_json=_dump(revise),
+        rejected=rejected,
     )
 
 
@@ -1665,6 +1727,65 @@ Respond with JSON matching the RiskOutput schema:
   "advisory_notes": "..."
 }}
 """
+
+
+# ---------------------------------------------------------------------------
+# E13.9 (D56): Quant <-> Risk open path (personas.quant_risk_loop: on)
+# ---------------------------------------------------------------------------
+
+RISK_VERDICT_BLOCK = """\
+## Verdict per structure (Quant <-> Risk open path)
+Give every assessment a `verdict`:
+- `accept`: trade it as proposed (sizing_suggestion still advisory).
+- `revise`: ask Quant for ONE change and set `revise_request` {reason, instruction
+  (<= 240 chars), optional max_contracts, target_dte [min, max],
+  preferred_structure_type}. reason is one of size | width | dte | strike |
+  structure_type | concentration | calendar. Quant answers once, from the same
+  scanner menu; you do not review the revision again (the gate still does).
+- `reject`: do not trade it. It is dropped before proposals.
+Prefer `revise` over `reject` when a different strike, width or expiry from the
+menu would fix your concern.
+"""
+
+
+def build_risk_open_prompt(inp: RiskInput) -> str:
+    """The Risk prompt with the E13.9 verdict block (flag on only)."""
+    base = build_risk_prompt(inp)
+    head, sep, tail = base.partition("## Forbidden actions")
+    out = f"{head}{RISK_VERDICT_BLOCK}\n{sep}{tail}".replace(
+        "matching the RiskOutput schema", "matching the RiskOpenOutput schema"
+    )
+    return out.replace(
+        '      "narrative": "..."\n    }',
+        '      "narrative": "...",\n      "verdict": "accept",\n'
+        '      "revise_request": null\n    }',
+    )
+
+
+def build_quant_revise_prompt(inp: QuantReviseInput) -> str:
+    """The Quant prompt plus a "Risk requested changes" block (E13.9 ``quant.revise``)."""
+    base = build_quant_prompt(inp.quant)
+    rejected = ", ".join(inp.rejected) or "none"
+    block = f"""## Risk requested changes (one revision round)
+Risk reviewed your first structures and asked for changes to the ones below.
+For each, either choose ONE replacement structure from that ticker's menu that
+answers the request, or keep your first structure unchanged and list the ticker in
+`kept` (say why in analysis_notes). Return structures ONLY for these tickers.
+Rejected by Risk (dropped, do not re-propose): {rejected}.
+
+### Your first structures (as Risk reviewed them)
+{scrub_carried_text(inp.first_structures_json)}
+
+### Revise requests
+{scrub_carried_text(inp.revise_json)}
+
+"""
+    head, sep, tail = base.partition("## Output format")
+    tail = tail.replace("matching the QuantOutput schema", "matching the QuantReviseOutput schema")
+    return f"{head}{block}{sep}{tail}".replace(
+        '  "skipped": [{"ticker": "...", "reason": "..."}],',
+        '  "skipped": [{"ticker": "...", "reason": "..."}],\n  "kept": ["..."],',
+    )
 
 
 # D56 (E13.1): pre-rename names, re-exported for one release.

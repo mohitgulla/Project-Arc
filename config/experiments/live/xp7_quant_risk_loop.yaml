@@ -1,0 +1,32 @@
+# E13.9 (D56, D44): DRAFT forward A/B for the Quant <-> Risk open path.
+# Not registered: `arc experiment create` + `register` hash-lock it, so the owner
+# reviews the margin and sessions first.
+#
+# Treatment = `personas.quant_risk_loop: on`. In a paired run the arm reuses control's
+# Research and quant.open outputs (shared input) and forks at risk.open: Risk gives each
+# structure a verdict (accept / revise / reject), rejects are dropped, and one
+# quant.revise round answers the revise requests before quant.propose.
+# Promotion (flipping the default in config/routines.yaml) needs a committed
+# `verdicts/XP-7.yaml` with `verdict: win` (docs/OPS.md 5.20).
+spec_version: 1
+id: XP-7
+title: Quant <-> Risk open path (Risk verdicts + one Quant revision)
+hypothesis: >
+  Letting Risk reject or send back a structure (one bounded Quant revision from the
+  same scanner menu) removes poorly sized or badly timed opens, raising paired daily
+  net P&L without a worse Sortino.
+area: entries
+kind: ab
+arms:
+  control:
+    overlay: {}
+  treatment:
+    overlay:
+      routines:
+        personas:
+          quant_risk_loop: "on"
+non_inferiority_margin: 0.5
+proposed_by: owner
+# The E7.5 backtester replays no LLM, so a persona-flow change has no backtest;
+# the forward run is the only test.
+backtest_ref: "none: persona flow change, not backtestable (E7.5 replays no LLM)"

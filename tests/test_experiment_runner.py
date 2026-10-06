@@ -125,12 +125,12 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
         jobs = [r["job"] for r in runs]
         # shared inputs: the Scalp ran once, in control; the arm never re-runs it
         assert "scalp" not in jobs
-        assert jobs == ["research", "quant", "risk", "propose", "broker.execute"]
+        assert jobs == ["research", "quant.open", "risk.open", "quant.propose", "broker.execute"]
         assert all(r["status"] == "ok" for r in runs)
         for r in runs[:3]:  # upstream of the fork: control's outputs, reused verbatim
             assert r["summary"].startswith(f"paired: reused {control_runs[r['job']]}")
         pair = arm.execute("SELECT * FROM arm_pairs").fetchone()
-        assert pair["status"] == "ok" and pair["fork_step"] == "propose"
+        assert pair["status"] == "ok" and pair["fork_step"] == "quant.propose"
         assert pair["arm_chain_run_id"] == f"{chain}.{name}"
         manifests = arm.execute(
             "SELECT arm_id, payload FROM run_manifests ORDER BY created_at"
@@ -139,7 +139,7 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
         for m in manifests:
             p = json.loads(m["payload"])
             assert m["arm_id"] == f"XP-1:{name}"
-            assert p["paired_chain_run_id"] == chain and p["fork_step"] == "propose"
+            assert p["paired_chain_run_id"] == chain and p["fork_step"] == "quant.propose"
             assert p["git_sha"]
         # Research's decisions are control's, under the arm's chain id
         assert (
@@ -156,7 +156,10 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
         == 0
     )  # fmt: skip
     arm = _db(stores["treatment"])
-    assert arm.execute("SELECT count(*) FROM routine_runs WHERE job = 'propose'").fetchone()[0] == 1
+    assert (
+        arm.execute("SELECT count(*) FROM routine_runs WHERE job = 'quant.propose'").fetchone()[0]
+        == 1
+    )
     arm.close()
 
 

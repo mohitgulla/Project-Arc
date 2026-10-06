@@ -950,7 +950,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Full trade proposal (pre-gate), plus the E2.4 exit model for the card.\n\n``exit_model`` is context only: it is not part of :class:`Proposal`, so it never\nenters the gate's proposal hash.",
+  "description": "Full trade proposal (pre-gate), plus the E2.4 exit model for the card.\n\n``exit_model`` is context only: it is not part of :class:`Proposal`, so it never\nenters the gate's proposal hash. ``revised`` (E13.9) marks a structure that came\nout of the ``quant.revise`` round; context only, never hashed.",
   "properties": {
     "candidate_id": {
       "title": "Candidate Id",
@@ -997,6 +997,11 @@
     },
     "quant": {
       "$ref": "#/$defs/QuantMetrics"
+    },
+    "revised": {
+      "default": false,
+      "title": "Revised",
+      "type": "boolean"
     },
     "risk_concurs": {
       "default": false,

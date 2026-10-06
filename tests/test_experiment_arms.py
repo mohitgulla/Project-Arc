@@ -34,7 +34,7 @@ ENV = {
     "ALPACA_EXP_API_KEY": "exp",
     "ALPACA_EXP_SECRET_KEY": "exp-s",
 }
-CHAIN = ["research", "quant", "risk", "propose", "broker.execute"]
+CHAIN = ["research", "quant.open", "risk.open", "quant.propose", "broker.execute"]
 
 
 def _db(path: Path | str = ":memory:") -> sqlite3.Connection:
@@ -210,11 +210,13 @@ def test_trading_broker_chosen_by_store(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_fork_step_is_first_step_the_overlay_touches() -> None:
-    assert fork_step(CHAIN, {}) == "propose"  # A/A: reuse up to the account tail
-    assert fork_step(CHAIN, {"exits": {"x": 1}}) == "quant"
-    assert fork_step(CHAIN, {"ranking": {"x": 1}}) == "propose"
+    assert fork_step(CHAIN, {}) == "quant.propose"  # A/A: reuse up to the account tail
+    assert fork_step(CHAIN, {"exits": {"x": 1}}) == "quant.open"
+    assert fork_step(CHAIN, {"ranking": {"x": 1}}) == "quant.propose"
     assert fork_step(CHAIN, {"account_profiles": {"x": 1}}) == "research"
     assert fork_step(["research", "mystery", "propose"], {}) == "mystery"
+    # E13.9: pre-D56 step names resolve to the current ones
+    assert fork_step(["research", "quant", "risk", "propose"], {}) == "quant.propose"
 
 
 def test_arm_store_reads_control_overrides_plus_overlay(tmp_path: Path) -> None:

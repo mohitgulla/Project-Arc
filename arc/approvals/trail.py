@@ -44,6 +44,8 @@ class DecisionTrail:
     shortlist_size: int = 0
     market_regime: str = ""
     quant: dict[str, Any] | None = None  # QuantStructureOut
+    # E13.9: the quant.revise structure (+ ``replaces``) when Quant revised for Risk
+    revision: dict[str, Any] | None = None
     risk: dict[str, Any] | None = None  # RiskAssessment
     features: dict[str, Any] | None = None  # regime/vol subset of a FeatureSnapshot
     analytics: ProposalAnalytics | None = None  # E6.1a: stored with the MarketContext
@@ -87,7 +89,21 @@ def load_trail(conn: sqlite3.Connection, proposal_hash: str, ticker: str) -> Dec
             shortlist_size=len(shortlisted),
             market_regime=str(read.payload.get("market_regime", "")) if read else "",
             quant=_first(decisions, Stage.STRUCTURE, t, {Choice.SELECTED}),
-            risk=_first(decisions, Stage.RISK_REVIEW, t, {Choice.ASSESSED, Choice.NO_TRADE}),
+            revision=next(
+                (
+                    d.payload
+                    for d in decisions
+                    if d.reason_code is ReasonCode.QUANT_REVISED and d.subject == t and d.payload
+                ),
+                None,
+            ),
+            # E13.9: a `revise` verdict is journalled NOTED (the proposal is the revision)
+            risk=_first(
+                decisions,
+                Stage.RISK_REVIEW,
+                t,
+                {Choice.ASSESSED, Choice.NO_TRADE, Choice.NOTED},
+            ),
             features=_features(mc),
             analytics=mc.analytics if mc else None,
         )

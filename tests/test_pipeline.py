@@ -211,9 +211,9 @@ class TestFixtureRun:
         assert [(o.job, o.status) for o in report.outcomes] == [
             ("scalp", "ok"),
             ("research", "ok"),
-            ("quant", "ok"),
-            ("risk", "ok"),
-            ("propose", "ok"),
+            ("quant.open", "ok"),
+            ("risk.open", "ok"),
+            ("quant.propose", "ok"),
             (
                 "broker.execute",
                 "ok",
@@ -275,7 +275,7 @@ class TestFixtureRun:
         later = FIXTURE_NOW + _dt.timedelta(minutes=5)
         conn, report = fixture_run(settings, routines, db=db, now=later)
         assert len(report.proposals) == 1
-        propose = next(o for o in report.outcomes if o.job == "propose")
+        propose = next(o for o in report.outcomes if o.job == "quant.propose")
         assert "repeat idea" in (propose.summary or "")
         assert propose.metrics["dedupe"] == 1
         assert len(proposals_for_day(conn, "2026-09-25")) == 1
@@ -378,9 +378,12 @@ class TestDigestCards:
             "[Research] research ✓ 6 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
             "XOM (bearish); excluded 1; dropped {'not_a_candidate': 1}"
         )
-        assert texts[2].startswith("[Quant] quant ✓ SPY iron_condor 740/745/798/803 2026-10-30")
+        assert texts[2].startswith(
+            "[Quant] quant.open ✓ SPY iron_condor 740/745/798/803 2026-10-30"
+        )
         assert (
-            texts[3] == "[Risk] risk ✓ SPY moderate, suggests 20; dropped {'unknown_structure': 1}"
+            texts[3]
+            == "[Risk] risk.open ✓ SPY moderate, suggests 20; dropped {'unknown_structure': 1}"
         )
         # Footer links each chain post to its run and chain (E7.4 journal).
         for o, blocks in zip(report.outcomes[1:4], notes.blocks[1:4], strict=True):
@@ -445,8 +448,8 @@ class TestFailures:
         conn, report = self._run(settings, routines, self._env(quant=_Boom()))
         status = {o.job: o.status for o in report.outcomes}
         assert status["research"] == "ok"
-        assert status["quant"] == "failed"
-        assert "risk" not in status and "propose" not in status
+        assert status["quant.open"] == "failed"
+        assert "risk.open" not in status and "quant.propose" not in status
         assert report.failed
         assert not report.proposals
         rows = conn.execute("SELECT status FROM persona_calls WHERE persona='quant'").fetchall()
@@ -464,7 +467,7 @@ class TestFailures:
         _, report = self._run(
             settings, routines, self._env(risk=FixtureScalpLLM([json.dumps(risk)]))
         )
-        propose = next(o for o in report.outcomes if o.job == "propose")
+        propose = next(o for o in report.outcomes if o.job == "quant.propose")
         assert propose.status == "ok"
         assert "suggested 0" in (propose.summary or "")
         assert not report.proposals
@@ -498,7 +501,7 @@ class TestFunnel:
         env = self._env()
         conn, report = self._run(settings, routines, env)
         status = {o.job: o for o in report.outcomes}
-        assert status["quant"].status == "ok"
+        assert status["quant.open"].status == "ok"
         # Research saw every candidate; no budget in its prompt, all three ranked
         research_prompt = env.llms["research"].prompts[0]  # type: ignore[attr-defined]
         assert "pipeline_max_shortlist" not in research_prompt
@@ -514,7 +517,7 @@ class TestFunnel:
         rows = _decisions(conn, "structure", "over_budget")
         assert set(rows) == {"NVDA", "XOM"}
         assert "ranked #2, beyond the Quant/Risk budget" in rows["NVDA"]
-        assert status["quant"].metrics["over_budget"] == 2
+        assert status["quant.open"].metrics["over_budget"] == 2
         assert [p["ticker"] for p in report.proposals] == ["SPY"]
 
     def test_every_budgeted_ticker_is_accounted_for(self, settings, routines) -> None:  # noqa: ANN001
@@ -566,7 +569,7 @@ class TestFunnel:
             "REPAIR: your previous reply had no assessment for SPY iron_condor"
             in (risk_llm.prompts[1])
         )
-        outcome = next(o for o in report.outcomes if o.job == "risk")
+        outcome = next(o for o in report.outcomes if o.job == "risk.open")
         assert outcome.metrics["repaired"] == 1 and outcome.metrics["not_assessed"] == 0
         n = conn.execute("SELECT COUNT(*) FROM persona_calls WHERE persona='risk'").fetchone()[0]
         assert n == 2
@@ -578,7 +581,7 @@ class TestFunnel:
         risk_llm = FixtureScalpLLM([empty, empty])
         conn, report = self._run(settings, routines, self._env(risk=risk_llm))
         assert len(risk_llm.prompts) == 2  # exactly one re-ask
-        outcome = next(o for o in report.outcomes if o.job == "risk")
+        outcome = next(o for o in report.outcomes if o.job == "risk.open")
         assert outcome.metrics["not_assessed"] == 1
         missing = _decisions(conn, "risk_review", "not_assessed")
         assert "after one repair re-ask" in missing["SPY"]
@@ -850,7 +853,7 @@ class TestLiveProposeClock:
 
     def test_live_env_without_secret_fails_run(self, settings: ArcSettings, routines) -> None:  # noqa: ANN001
         conn, report, notes = self._run(settings, routines, now=FIXTURE_NOW, mint=True)
-        propose = next(o for o in report.outcomes if o.job == "propose")
+        propose = next(o for o in report.outcomes if o.job == "quant.propose")
         assert propose.status == "failed"
         assert "GateSecretMissingError" in propose.summary
         assert "ARC_GATE_SECRET" in propose.summary
@@ -892,7 +895,7 @@ def test_tick_exit_code_nonzero_when_propose_fails_for_missing_secret(
             r = TickReport(now=now, since=since, dry_run=dry_run, halted=False)
             r.outcomes.append(
                 Outcome(
-                    "propose",
+                    "quant.propose",
                     now,
                     "failed",
                     "GateSecretMissingError: live propose cannot mint a gate token",

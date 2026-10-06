@@ -14,6 +14,9 @@ append-only, so rows keep the name their writer had at the time. Two renames hap
   (the position-review chain), which are **Quant**; ``auditor`` rows are the
   Broker's reconcile (label ``Broker (reconcile)``). These hops match exact names
   only (``investor.exits`` is its own hop, never ``broker.exits``).
+* **D56 (E13.9, no migration):** chain steps ``quant`` -> ``quant.open``, ``risk`` ->
+  ``risk.open``, ``propose`` -> ``quant.propose``. These hops are ``job_only``: a
+  decision's ``persona='quant'`` is still the Quant, never ``quant.open``.
 
 Readers map stored values through :data:`RENAME_CHAIN`, hop by hop. A hop applies
 when the value equals ``hop.old`` (or starts with ``hop.old + "."``, e.g.
@@ -84,6 +87,11 @@ class RenameHop(BaseModel):
         default_factory=dict,
         description="Persona key by decision stage, overriding ``persona`` (E13.2: exit -> quant)",
     )
+    job_only: bool = Field(
+        default=False,
+        description="A step rename only: never applied to a stored persona value "
+        "(E13.9: ``quant`` the step became ``quant.open``; ``quant`` the persona stays)",
+    )
 
 
 #: D54 cutover (migration 022): ``scout`` -> ``sweep``.
@@ -92,6 +100,9 @@ CUTOVER_KEY = "rename:scout_to_sweep"
 SCALP_CUTOVER_KEY = "rename:sweep_to_scalp"
 #: D56 cutover (migration 025): Investor/Auditor removed (Broker, Quant exits, Ops).
 BROKER_CUTOVER_KEY = "rename:investor_to_broker"
+#: E13.9 (D56): open-path step renames. No migration records this key, so the hops
+#: apply to every stored row: the old step names are never reused as job names.
+OPEN_PATH_CUTOVER_KEY = "rename:open_path_steps"
 
 RENAME_CHAIN: tuple[RenameHop, ...] = (
     RenameHop(
@@ -144,6 +155,16 @@ RENAME_CHAIN: tuple[RenameHop, ...] = (
         cutover_key=BROKER_CUTOVER_KEY,
         exact=True,
         persona="broker",
+    ),
+    # E13.9: chain steps quant -> quant.open, risk -> risk.open, propose -> quant.propose
+    # (routine_runs.job / context produced_by only; decision personas are unchanged).
+    *(
+        RenameHop(old=old, new=new, cutover_key=OPEN_PATH_CUTOVER_KEY, exact=True, job_only=True)
+        for old, new in (
+            ("quant", "quant.open"),
+            ("risk", "risk.open"),
+            ("propose", "quant.propose"),
+        )
     ),
 )
 
@@ -198,12 +219,21 @@ def _new_matches(hop: RenameHop, name: str) -> bool:
     return name == hop.new or (not hop.exact and name.startswith(f"{hop.new}."))
 
 
-def job_name(job: str, at: _dt.datetime | None, cuts: Mapping[str, _dt.datetime]) -> str:
+def job_name(
+    job: str,
+    at: _dt.datetime | None,
+    cuts: Mapping[str, _dt.datetime],
+    *,
+    steps: bool = True,
+) -> str:
     """A stored job / persona name -> its current one (``sweep.overnight`` -> ``scalp.overnight``).
 
-    *cuts* is :func:`cutovers` of the store the row came from.
+    *cuts* is :func:`cutovers` of the store the row came from. ``steps=False`` skips
+    the E13.9 step-only hops (for a value that names a persona, not a job).
     """
     for hop in RENAME_CHAIN:
+        if hop.job_only and not steps:
+            continue
         if _matches(hop, job) and _applies(hop, at, cuts):
             job = hop.new + job[len(hop.old) :]
     return job
@@ -223,7 +253,7 @@ def persona_key(
     result is always a :class:`~arc.journal.reasons.JournalPersona` value.
     """
     for hop in RENAME_CHAIN:
-        if not (_matches(hop, value) and _applies(hop, at, cuts)):
+        if hop.job_only or not (_matches(hop, value) and _applies(hop, at, cuts)):
             continue
         if hop.stages or hop.persona is not None:
             if stage is not None and stage in hop.stages:
@@ -245,7 +275,7 @@ def persona_label(
     ``Broker (reconcile)``."""
     cuts = cuts or {}
     key = persona_key(value, at, cuts, stage=stage)
-    job = job_name(value, at, cuts)
+    job = job_name(value, at, cuts, steps=False)
     # The job name carries the sub-job (``broker.reconcile``) when it is the same persona.
     name = job if job.partition(".")[0] == key.partition(".")[0] else key
     head, _, tail = name.partition(".")

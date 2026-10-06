@@ -348,12 +348,19 @@
     }
   },
   "additionalProperties": false,
-  "description": "Quant structures with analytics (v2, E5.7: every budgeted ticker accounted for).\n\n``skipped`` holds the Quant's own skips plus the deterministic ones (no chain,\naccount profile). ``not_structured`` = budgeted tickers with a menu that got\nneither a structure nor a reason. ``over_budget`` = ranked beyond the budget.",
+  "description": "Quant structures with analytics (v2, E5.7: every budgeted ticker accounted for).\n\n``skipped`` holds the Quant's own skips plus the deterministic ones (no chain,\naccount profile). ``not_structured`` = budgeted tickers with a menu that got\nneither a structure nor a reason. ``over_budget`` = ranked beyond the budget.\n\nv3 (E13.9, additive): a ``quant.revise`` entry sets ``revision_of`` (the\n``risk_review`` entry id it answers) and ``kept`` (revise-requested tickers\nre-emitted unchanged); it supersedes the first ``structures`` entry.",
   "properties": {
     "analysis_notes": {
       "description": "Quant's overall analysis summary",
       "title": "Analysis Notes",
       "type": "string"
+    },
+    "kept": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Kept",
+      "type": "array"
     },
     "not_structured": {
       "items": {
@@ -368,6 +375,18 @@
       },
       "title": "Over Budget",
       "type": "array"
+    },
+    "revision_of": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revision Of"
     },
     "skipped": {
       "description": "Shortlisted tickers with no structure, each with a one-line reason",

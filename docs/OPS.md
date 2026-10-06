@@ -1700,6 +1700,36 @@ Main must stay green. On 2026-09-29 it was red from 17:34 to 18:49Z while three 
 (#59, #60, #61) merged on top of it, because a test stamped rows with the wall clock
 and nothing stopped a merge onto a red main.
 
+### 5.27 Quant <-> Risk open path: `personas.quant_risk_loop` (E13.9, D56, D44)
+
+The open chain's steps are `quant.open` -> `risk.open` -> [`quant.revise`] ->
+`quant.propose` -> `broker.execute` (was `quant`, `risk`, `propose`; the old names
+still resolve as logged aliases in `routines.yaml`, handlers, triggers and
+`monitoring.stuck_after_jobs`, and `arc.journal.legacy` maps stored `routine_runs.job`
+rows). `personas.research.chain: auto` is resolved at load by `chain_for()`:
+
+    personas.quant_risk_loop: "off"     # config/routines.yaml; off | on
+
+- **Off (shipped default):** today's chain under the new names; the Quant and Risk
+  prompts are byte-identical to the pre-E13.9 ones (golden hashes in
+  `tests/test_quant_risk_loop.py`). `quant.propose` rows in the journal are now
+  `persona='quant'` (were `system`).
+- **On:** Risk gives each structure a verdict (`accept` / `revise` with a
+  `revise_request` / `reject`). Rejects never reach a proposal (journal
+  `risk_reject`). When any verdict is `revise`, one `quant.revise` round re-chooses
+  from the same scanner menu or keeps the first structure (`quant_revised` /
+  `quant_kept`); its `structures` entry (`revision_of` = the review id) supersedes the
+  first. Risk does not run again; the gate and approval do. The Slack Risk card shows
+  verdict chips and the Quant card a `[Quant (revised)]` header.
+- **Cost guard:** `steps.quant.revise.min_remaining_s: 90`. The dispatcher skips any
+  loop step whose `min_remaining_s` exceeds the `loop.max_runtime` budget left
+  (`step_skipped_deadline`); later steps still run. `quant.revise` also skips itself
+  (chain continues) with nothing to revise, and on a no-change loop slot.
+- Strategy lane: flips only on an XP-7 `win` verdict
+  (`config/experiments/live/xp7_quant_risk_loop.yaml`, draft; a paired arm forks at
+  `risk.open`). `!arc set personas.quant_risk_loop on` turns it on for paper without a
+  PR (asks for a confirm).
+
 ### 7.1 Required status check: `check`
 
 `.github/workflows/ci.yml` job `check` (job id and `name:` both `check`) runs

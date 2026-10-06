@@ -324,6 +324,63 @@ class RiskOutput(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# E13.9 (D56): Quant <-> Risk open path. Risk returns a verdict per structure;
+# one bounded `quant.revise` round answers the `revise` ones.
+#
+# The verdict fields live on subclasses so the flag-off Risk/Quant prompts (whose
+# JSON Schema block is rendered from RiskOutput / QuantOutput) stay byte-identical.
+# ---------------------------------------------------------------------------
+
+RiskVerdict = Literal["accept", "revise", "reject"]
+ReviseReason = Literal[
+    "size", "width", "dte", "strike", "structure_type", "concentration", "calendar"
+]
+
+
+class RiskReviseRequest(BaseModel):
+    """What Risk wants Quant to change about one structure (advisory text + hints)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: ReviseReason
+    instruction: str = Field(..., max_length=240, description="Advisory text for Quant")
+    max_contracts: int | None = Field(None, ge=0)
+    target_dte: tuple[int, int] | None = None
+    preferred_structure_type: str | None = None
+
+
+class RiskOpenAssessment(RiskAssessment):
+    """A Risk assessment with the E13.9 verdict (``accept`` when absent)."""
+
+    verdict: RiskVerdict = Field(
+        "accept",
+        description="accept = trade as is; revise = ask Quant for one change "
+        "(set revise_request); reject = do not trade it",
+    )
+    revise_request: RiskReviseRequest | None = Field(
+        None, description="Required when verdict is revise; null otherwise"
+    )
+
+
+class RiskOpenOutput(RiskOutput):
+    """Risk output on the E13.9 open path (``personas.quant_risk_loop: on``)."""
+
+    assessments: list[RiskOpenAssessment] = Field(  # type: ignore[assignment]
+        ..., description="One assessment (with a verdict) per proposed structure"
+    )
+
+
+class QuantReviseOutput(QuantOutput):
+    """Quant's reply in the one ``quant.revise`` round (E13.9)."""
+
+    kept: list[str] = Field(
+        default_factory=list,
+        description="Tickers Risk asked to revise that you keep unchanged (one-line "
+        "reason in analysis_notes)",
+    )
+
+
 class SwapVerdict(BaseModel):
     """Risk's verdict on one close-to-reallocate suggestion (E6.4, D19)."""
 

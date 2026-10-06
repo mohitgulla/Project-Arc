@@ -108,10 +108,10 @@ def test_normal_tier_proposes_and_stamps_manifest(settings: ArcSettings) -> None
     report = run(conn, settings)
     assert not report.failed and len(report.proposals) == 1
     m = manifests(conn)
-    for routine in ("research", "propose"):
+    for routine in ("research", "quant.propose"):
         assert m[routine]["order_budget"] == {"used": 0, "limit": 200, "tier": "normal"}
     # the run recorded the budget as an external input, with its count
-    inputs = [i for i in m["propose"]["external_inputs"] if i["name"] == "order_budget"]
+    inputs = [i for i in m["quant.propose"]["external_inputs"] if i["name"] == "order_budget"]
     assert inputs and inputs[0]["source"] == "db" and inputs[0]["count"] == 0
     assert ("no_trade", "order_budget_exhausted") not in decisions(conn)
 
@@ -125,7 +125,7 @@ def test_restrictive_tier_caps_the_run(settings: ArcSettings) -> None:
     report, prompts = run_recording(conn, settings)
     assert not report.failed
     m = manifests(conn)
-    assert m["propose"]["order_budget"] == {"used": 100, "limit": 200, "tier": "restrictive"}
+    assert m["quant.propose"]["order_budget"] == {"used": 100, "limit": 200, "tier": "restrictive"}
     # Research saw the tier in its rules (advisory); E5.7: no count cap in the prompt
     assert "order budget tier: restrictive (100/200)" in prompts["research"]
     assert "At most" not in prompts["research"]
@@ -200,7 +200,7 @@ def test_config_only_change_moves_restrict_at(monkeypatch: pytest.MonkeyPatch) -
     load_fixture_docs(conn)
     seed_orders(conn, 20)
     run(conn, s)
-    assert manifests(conn)["propose"]["order_budget"]["tier"] == "restrictive"
+    assert manifests(conn)["quant.propose"]["order_budget"]["tier"] == "restrictive"
 
 
 def test_control_panel_override_reaches_the_budget(settings: ArcSettings) -> None:

@@ -305,6 +305,9 @@ class StepSpec(BaseModel):
     # `skip` (default) records a skipped run; `run` executes it anyway (e.g. `execute`,
     # which carries pending approvals and ladders forward).
     on_no_change: Literal["skip", "run"] = "skip"
+    # E13.9: a loop chain step needing this many seconds of the ``loop.max_runtime``
+    # budget is skipped (``step_skipped_deadline``) when less is left; later steps run.
+    min_remaining_s: Annotated[int, Field(ge=0)] | None = None
 
     @field_validator("reads", "writes")
     @classmethod
@@ -340,6 +343,7 @@ class JobSpec(StepSpec):
     window: Window | None = None
     trigger: str | None = None
     days: Days | list[Weekday] = Days.DAILY
+    # ``auto`` (E13.9) = resolved at load by :func:`chain_for` from the persona flags.
     chain: list[str] = Field(default_factory=list)
     after_sources: bool = False
     ttl: Ttl | None = None
@@ -567,7 +571,7 @@ FINNHUB_FACT_KINDS: tuple[str, ...] = (
 )
 # Persona-level switches that live under ``personas:`` next to the jobs (a scalar,
 # not a job mapping). Each maps to the settings block whose ``enabled`` it sets.
-PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context",)
+PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context", "quant_risk_loop")
 
 #: D56 (E13.1): pre-rename ``personas:`` keys accepted (logged) for one release.
 #: ``sweep.overnight`` follows its ``sweep`` prefix.
@@ -579,7 +583,35 @@ LEGACY_JOB_NAMES: dict[str, str] = {
     "auditor": "broker.reconcile",
     "execute": "broker.execute",
     "investor.exits": "quant.exits",
+    # E13.9 (D56): the open-path step names
+    "quant": "quant.open",
+    "risk": "risk.open",
+    "propose": "quant.propose",
 }
+
+#: E13.9 (D56): ``chain: auto`` resolution, by job and persona flag. The fixed step
+#: names for the whole D56 split are ``quant.open``, ``risk.open``, ``quant.revise``,
+#: ``quant.propose`` (opens) and ``quant.exit``, ``risk.exit`` (E13.17/E13.18).
+AUTO_CHAIN_JOBS: tuple[str, ...] = ("research", "positions.evaluate")
+
+
+def chain_for(job: str, flags: Mapping[str, bool]) -> list[str]:
+    """The chain of *job* under ``chain: auto`` for these persona *flags* (pure).
+
+    ``research``: ``quant_risk_loop`` off -> ``quant.open, risk.open, quant.propose,
+    broker.execute`` (today's chain under the new names); on -> one ``quant.revise``
+    round between Risk and ``quant.propose``. ``positions.evaluate`` keeps today's exit
+    chain (E13.17/E13.18 add the ``exit_path`` rows).
+    """
+    if job == "research":
+        revise = ["quant.revise"] if flags.get("quant_risk_loop", False) else []
+        return ["quant.open", "risk.open", *revise, "quant.propose", "broker.execute"]
+    if job == "positions.evaluate":
+        return ["quant.exits", "risk.reallocate", "broker.execute"]
+    msg = f"chain: auto is only defined for {', '.join(AUTO_CHAIN_JOBS)}, not {job!r}"
+    raise ValueError(msg)
+
+
 #: D56 (E13.2): old ``persona:`` timeline chips -> the new ones (``auditor`` is the
 #: reconcile's Broker; the scorecard's Ops chip is set in the YAML).
 LEGACY_PERSONA_CHIPS: dict[str, str] = {"investor": "broker", "auditor": "broker"}
@@ -607,6 +639,26 @@ def current_job_name(name: str) -> str:
         "routines.deprecated_job_alias", job=name, renamed_to=new
     )
     return new
+
+
+def _legacy_event(event: str) -> str:
+    """``<old job>.completed`` -> ``<current job>.completed`` (E13.9); else unchanged."""
+    if not event.endswith(".completed"):
+        return event
+    job = event.removesuffix(".completed")
+    if _renamed(job) is None:
+        return event
+    return f"{current_job_name(job)}.completed"
+
+
+def _legacy_trigger_on(rule: Any) -> Any:
+    """A trigger rule with its ``on`` event renamed (``on`` or the YAML-1.1 ``True`` key)."""
+    if not isinstance(rule, dict):
+        return rule
+    for key in ("on", True):
+        if isinstance(rule.get(key), str) and _legacy_event(rule[key]) != rule[key]:
+            return {**rule, key: _legacy_event(rule[key])}
+    return rule
 
 
 def _legacy_step_names(steps: dict[str, Any]) -> dict[str, Any]:
@@ -795,6 +847,20 @@ class FinnhubContextSettings(BaseModel):
         }
 
 
+class QuantRiskLoopSettings(BaseModel):
+    """E13.9 (D56): the Quant <-> Risk open path (default off, D44 experiment XP-7).
+
+    ``enabled`` comes from ``personas.quant_risk_loop: off | on``. Off = today's chain
+    (``quant.open -> risk.open -> quant.propose``) with byte-identical prompts; on = Risk
+    gives each structure a verdict and one ``quant.revise`` round answers the
+    ``revise`` ones (``chain: auto`` picks the chain via :func:`chain_for`).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+
+
 class FunnelScalp(BaseModel):
     """D56 ``funnel.scalp``: the Scalp's doc budget split (fixed by D56)."""
 
@@ -865,16 +931,16 @@ class RoutinesConfig(BaseModel):
         default_factory=ResearchDiversificationSettings
     )
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)  # D56 (E13.3)
+    # E13.9: the ``personas.quant_risk_loop`` flag (as ``enabled``).
+    quant_risk_loop: QuantRiskLoopSettings = Field(default_factory=QuantRiskLoopSettings)
 
     @model_validator(mode="before")
     @classmethod
     def _persona_flags(cls, data: Any) -> Any:
         """Lift scalar ``personas.<flag>`` switches out of the job map (input not mutated)."""
-        if not isinstance(data, dict) or not isinstance(data.get("personas"), dict):
+        if not isinstance(data, dict):
             return data
-        personas = dict(data["personas"])
         out = dict(data)
-        personas = _legacy_job_names(personas)
         if isinstance(out.get("steps"), dict):
             out["steps"] = _legacy_step_names(dict(out["steps"]))
         if isinstance(out.get("triggers"), list):
@@ -884,6 +950,20 @@ class RoutinesConfig(BaseModel):
                 else t
                 for t in out["triggers"]
             ]
+            # E13.9: `on: quant.completed` -> `on: quant.open.completed` (one release).
+            # A bare YAML `on:` key loads as boolean True (see TriggerRule._yaml_on).
+            out["triggers"] = [_legacy_trigger_on(t) for t in out["triggers"]]
+        mon = out.get("monitoring")
+        if isinstance(mon, dict) and isinstance(mon.get("stuck_after_jobs"), dict):
+            out["monitoring"] = {
+                **mon,
+                "stuck_after_jobs": {
+                    current_job_name(k): v for k, v in mon["stuck_after_jobs"].items()
+                },
+            }
+        if not isinstance(data.get("personas"), dict):
+            return out
+        personas = _legacy_job_names(dict(data["personas"]))
         for flag in PERSONA_FLAGS:
             if flag not in personas:
                 continue
@@ -904,6 +984,15 @@ class RoutinesConfig(BaseModel):
                 raise ValueError(msg)
             block["mode"] = parse_choice(raw, choices, where=f"personas.{flag}")
             out[flag] = block
+        flags = {
+            f: bool((out.get(f) or {}).get("enabled", False))
+            for f in PERSONA_FLAGS
+            if isinstance(out.get(f) or {}, dict)
+        }
+        for name in AUTO_CHAIN_JOBS:
+            body = personas.get(name)
+            if isinstance(body, dict) and body.get("chain") == "auto":
+                personas[name] = {**body, "chain": chain_for(name, flags)}
         out["personas"] = personas
         return out
 
@@ -1173,6 +1262,11 @@ class RoutinesConfig(BaseModel):
         found = self.job(name)
         if found is not None:
             return found
+        if name not in self.steps and name in LEGACY_JOB_NAMES:  # E13.9: `quant` etc.
+            name = current_job_name(name)
+            found = self.job(name)
+            if found is not None:
+                return found
         return JobKind.PERSONA, self.steps.get(name, StepSpec())
 
     def all_triggers(self) -> list[TriggerRule]:

@@ -158,7 +158,7 @@ def test_shipped_yaml_classification(shipped: RoutinesConfig) -> None:
     assert fed["category"] == "market_news"
     assert "unusual_options" not in (shipped.personas["research"].reads or [])
     # Risk still reads the reference kinds it vetoes on
-    assert {"ex_dividend", "macro_calendar"} <= set(shipped.steps["risk"].reads or [])
+    assert {"ex_dividend", "macro_calendar"} <= set(shipped.steps["risk.open"].reads or [])
 
 
 def test_funnel_block_defaults_and_bounds(shipped: RoutinesConfig) -> None:

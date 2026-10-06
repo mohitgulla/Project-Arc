@@ -59,9 +59,9 @@ YAML = """
     sources:
       rss: {every: 30m, window: "06:00-20:00", days: trading}
     personas:
-      research: {schedule: ["09:30"], days: trading, chain: [quant], ttl: 2h}
+      research: {schedule: ["09:30"], days: trading, chain: [quant.open], ttl: 2h}
     steps:
-      quant: {}
+      quant.open: {}
 """
 
 
@@ -216,7 +216,7 @@ def test_stuck_after_jobs_validation() -> None:
     with pytest.raises(ValidationError, match="unknown job 'nope'"):
         cfg(YAML + "    monitoring: {stuck_after_jobs: {nope: 10m}}\n")
     ok = cfg(YAML + "    monitoring: {stuck_after_jobs: {quant: 10m, rss: 5m}}\n")  # step + job
-    assert ok.monitoring.stuck_after_for("quant") == dt.timedelta(minutes=10)
+    assert ok.monitoring.stuck_after_for("quant.open") == dt.timedelta(minutes=10)  # E13.9 alias
 
 
 def test_shipped_monitor_stuck_after_is_two_slots() -> None:
@@ -249,7 +249,7 @@ def _dispatcher(conn: sqlite3.Connection, routines: RoutinesConfig) -> Dispatche
     return Dispatcher(
         conn,
         routines,
-        handlers={n: rec(n) for n in ("rss", "research", "quant")},
+        handlers={n: rec(n) for n in ("rss", "research", "quant.open")},
         notifier=RecordingNotifier(),
         is_halted=lambda: False,
     )
@@ -747,12 +747,12 @@ def test_dispatcher_binds_run_ids(conn: sqlite3.Connection, tmp_path: Path) -> N
         seen.append(structlog.contextvars.get_contextvars())
         return JobResult(summary="ok")
 
-    d = Dispatcher(conn, cfg(), handlers={"rss": h, "research": h, "quant": h},
+    d = Dispatcher(conn, cfg(), handlers={"rss": h, "research": h, "quant.open": h},
                    notifier=RecordingNotifier(), is_halted=lambda: False)  # fmt: skip
     d.run_manual("research", now=et(2026, 9, 28, 9, 30), chain=True)
     assert seen[0]["job"] == "research" and seen[0]["run_id"].startswith("run-")
     assert seen[0]["chain_run_id"].startswith("chain-") and seen[0]["step_index"] == 0
-    assert seen[1]["job"] == "quant" and seen[1]["step_index"] == 1
+    assert seen[1]["job"] == "quant.open" and seen[1]["step_index"] == 1
     assert structlog.contextvars.get_contextvars() == {}
 
 

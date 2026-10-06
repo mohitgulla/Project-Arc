@@ -332,7 +332,7 @@ class TestPipeline:
         settings = _settings("margin")
         env = PipelineEnv.fixtures()
         conn, report = _run(settings, env)
-        assert {o.job: o.status for o in report.outcomes}["risk"] == "ok"
+        assert {o.job: o.status for o in report.outcomes}["risk.open"] == "ok"
         for persona in ("research", "quant", "risk"):
             prompt = env.llms[persona].prompts[0]  # type: ignore[attr-defined]
             assert DTE_RANGE.findall(prompt) == [("30", "45")], persona
@@ -349,7 +349,7 @@ class TestPipeline:
         settings = _settings("cash_debit")
         env = PipelineEnv.fixtures(FIXTURE_SETS["bullish"])
         _, report = _run(settings, env)
-        assert {o.job: o.status for o in report.outcomes}["quant"] == "ok"
+        assert {o.job: o.status for o in report.outcomes}["quant.open"] == "ok"
         for persona in ("research", "quant"):
             prompt = env.llms[persona].prompts[0]  # type: ignore[attr-defined]
             assert DTE_RANGE.findall(prompt) == [("30", "60")], persona

@@ -70,19 +70,27 @@ __all__ = [
 
 log = structlog.get_logger(__name__)
 
+_QUANT_RISK_LOOP = "routines.personas.quant_risk_loop"
+
 # Which overlay targets (config file stems) each loop step's behaviour depends on,
 # from what the step reads through arc.control.effective (exit_config / cost_model /
 # ranking_config / the profile spec / routines options). A step whose targets meet
 # the arm's overlay is re-run by the arm, and so is everything after it.
 STEP_TARGETS: dict[str, frozenset[str]] = {
     "research": frozenset({"account_profiles", "routines"}),
-    "quant": frozenset({"account_profiles", "exits", "costs"}),
-    "risk": frozenset({"account_profiles"}),
-    "propose": frozenset({"account_profiles", "exits", "costs", "ranking"}),
+    "quant.open": frozenset({"account_profiles", "exits", "costs"}),
+    # E13.9: the quant_risk_loop flag changes Risk's prompt (verdicts), so an arm that
+    # flips it forks at risk.open, not later: control's review carries no verdicts.
+    "risk.open": frozenset({"account_profiles", _QUANT_RISK_LOOP}),
+    "quant.revise": frozenset({"account_profiles", "exits", "costs", _QUANT_RISK_LOOP}),
+    "quant.propose": frozenset({"account_profiles", "exits", "costs", "ranking"}),
     "broker.execute": frozenset(),
 }
 # Steps that size, gate or trade against the arm's own account: always the arm's.
-ACCOUNT_STEPS: frozenset[str] = frozenset({"propose", "broker.execute"})
+ACCOUNT_STEPS: frozenset[str] = frozenset({"quant.propose", "broker.execute"})
+# E13.9: routines overlay keys narrower than "routines" (a persona flag that only the
+# open path reads); an overlay touching only these does not re-run Research.
+_NARROW_ROUTINES_KEYS = {("personas", "quant_risk_loop"): _QUANT_RISK_LOOP}
 
 _STATE_ARM = "experiment_arm:{arm}"  # control routine_state -> arm store path
 
@@ -141,14 +149,36 @@ def runner_config(conn: sqlite3.Connection) -> RunnerConfig:
 
 
 def fork_step(chain: list[str], overlay: Mapping[str, Any]) -> str:
-    """The first chain step the arm runs itself (see the module doc)."""
-    targets = {t for t, data in overlay.items() if data}
+    """The first chain step the arm runs itself (see the module doc).
+
+    Pre-D56 step names (``quant``, ``risk``, ``propose``) resolve to the current ones.
+    """
+    from arc.routines.config import LEGACY_JOB_NAMES
+
+    targets = _overlay_targets(overlay)
+    chain = [LEGACY_JOB_NAMES.get(s, s) for s in chain]
     for step in chain:
         if step in ACCOUNT_STEPS or STEP_TARGETS.get(step, frozenset()) & targets:
             return step
         if step not in STEP_TARGETS:  # an unknown step: never assume it is unaffected
             return step
     return chain[-1]
+
+
+def _overlay_targets(overlay: Mapping[str, Any]) -> set[str]:
+    """The overlay's targets; a routines overlay of only narrow keys names those keys."""
+    targets = {t for t, data in overlay.items() if data}
+    routines = overlay.get("routines")
+    if isinstance(routines, dict) and routines:
+        paths = {
+            (top, key)
+            for top, sub in routines.items()
+            for key in (sub if isinstance(sub, dict) else {None: None})
+        }
+        if paths and paths <= set(_NARROW_ROUTINES_KEYS):
+            targets.discard("routines")
+            targets |= {_NARROW_ROUTINES_KEYS[p] for p in paths}
+    return targets
 
 
 def arm_routines(routines: RoutinesConfig, arm_jobs: list[str]) -> RoutinesConfig:
@@ -420,7 +450,9 @@ def _reuse_upstream(
     from arc.routines.runs import RoutineRunRepo, RunStatus
 
     runs = RoutineRunRepo(arm)
-    by_job = {r.job: r for r in control_rows}
+    from arc.routines.config import LEGACY_JOB_NAMES
+
+    by_job = {LEGACY_JOB_NAMES.get(r.job, r.job): r for r in control_rows}
     reused: dict[str, Any] = {}
     root = control_rows[0]
     for index, job in enumerate(upstream):
@@ -519,6 +551,7 @@ def pair_chain(
     check_lag: bool = True,
 ) -> PairResult:
     """Run the arm's copy of control's chain *control_chain_run_id* (see the module doc)."""
+    from arc.routines.config import LEGACY_JOB_NAMES
     from arc.routines.dispatcher import Dispatcher
     from arc.routines.locks import LockManager, NullLocks
     from arc.routines.runs import RoutineRunRepo
@@ -537,7 +570,7 @@ def pair_chain(
     if found is None or not found[1].chain:
         res.reason = f"{root.job} has no chain"
         return res
-    chain = [root.job, *found[1].chain]
+    chain = [LEGACY_JOB_NAMES.get(s, s) for s in (root.job, *found[1].chain)]
     done = arm.execute(
         "SELECT status FROM arm_pairs WHERE arm_id = ? AND control_chain_run_id = ?",
         (ident.arm_id, control_chain_run_id),
@@ -551,7 +584,7 @@ def pair_chain(
         _record_pair(arm, res, lag=lag, now=now)
         log.info("experiments.pair_skipped", **res.as_json())
         return res
-    status = {r.job: r.status.value for r in rows}
+    status = {LEGACY_JOB_NAMES.get(r.job, r.job): r.status.value for r in rows}
     fork = fork_step(chain, ident.overlay)
     upstream = chain[: chain.index(fork)]
     not_ok = [j for j in upstream if status.get(j) != "ok"]

@@ -444,6 +444,7 @@ director_diversification:
 personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
+  quant_risk_loop: "off"        # E13.9 (D56): off | on — Risk verdicts + one quant.revise round (strategy lane; XP-7)
   scalp:                        # D31: every 30 min in session (15 runs), after the fast sources
     label: Scalp
     about: "Reads fresh news and filings; writes candidate ideas and story digests"
@@ -477,7 +478,7 @@ personas:
     every: 10m                  # D52 (owner 2026-10-05; was 5m)
     window: "09:40-15:50"       # 38 slots; skips the open's first 10 min
     days: trading
-    chain: [quant, risk, propose, broker.execute]   # D34: publish + auto-approve + hand off ladders
+    chain: auto                 # E13.9 chain_for(): quant.open, risk.open, [quant.revise if quant_risk_loop on], quant.propose, broker.execute (D34)
     reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, position_review, story,
             earnings_history, insider_activity, analyst_recs, fundamentals]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on
     writes: [shortlist, regime, note, portfolio_context]   # E5.9: portfolio_context + portfolio_view/thesis_check notes
@@ -562,9 +563,13 @@ personas:
     writes: [note]              # execution notes (placeholder; handler writes none yet)
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
-  quant:   {reads: [shortlist, regime], writes: [structures, note], notify: card}
-  risk:    {reads: [structures, ex_dividend, macro_calendar], writes: [risk_review, note], notify: card}
-  propose: {reads: [candidate, regime, shortlist, structures, risk_review], writes: [proposal], llm: false, notify: summary}  # E6.1 posts the proposal cards; E5.9 fingerprint dedupe
+  # E13.9 (D56) open path; old names quant/risk/propose resolve as logged aliases.
+  quant.open:    {reads: [shortlist, regime], writes: [structures, note], notify: card}
+  risk.open:     {reads: [structures, ex_dividend, macro_calendar], writes: [risk_review, note], notify: card}
+  # personas.quant_risk_loop on only: one revision round; skipped when no structure is
+  # `revise`, on a no-change loop, or with < 90 s of loop.max_runtime left.
+  quant.revise:  {reads: [shortlist, regime, structures, risk_review], writes: [structures, note], notify: card, on_no_change: skip, min_remaining_s: 90}
+  quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review], writes: [proposal], llm: false, notify: summary}  # was propose; E6.1 posts the proposal cards; E5.9 fingerprint dedupe
   # E6.4 chain steps (after positions.evaluate). Every close / swap open is a proposal: gate + approval.
   quant.exits:     {reads: [position_review], writes: [proposal], llm: false, notify: summary}   # D56: was investor.exits
   risk.reallocate: {reads: [position_review, note], writes: [proposal], notify: summary}   # Risk vetoes swaps (LLM); E5.9 thesis_check notes are advisory input

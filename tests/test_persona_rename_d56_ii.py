@@ -324,7 +324,7 @@ def test_old_routine_keys_resolve(old: str, new: str) -> None:
 
 
 def test_experiment_runner_step_names(shipped: RoutinesConfig) -> None:
-    assert frozenset({"propose", "broker.execute"}) == ACCOUNT_STEPS
+    assert frozenset({"quant.propose", "broker.execute"}) == ACCOUNT_STEPS
     assert "broker.execute" in STEP_TARGETS and "execute" not in STEP_TARGETS
     jobs = RunnerConfig().arm_jobs
     assert jobs == ["monitor", "positions.evaluate", "broker.reconcile", "broker"]

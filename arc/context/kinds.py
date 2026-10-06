@@ -21,7 +21,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic field
 from arc.features.snapshot import FeatureSnapshot
 from arc.models import Candidate, CatalystType, ChannelBrief, Proposal, Stance
-from arc.personas.schemas import QuantOutput, ReconcileOutput, ResearchOutput, RiskOutput
+from arc.personas.schemas import (
+    QuantOutput,
+    ReconcileOutput,
+    ResearchOutput,
+    RiskOpenAssessment,
+    RiskOutput,
+)
 from arc.positions.evaluate import PositionReview
 from arc.positions.portfolio import MarketGuard, PortfolioContext
 from arc.universe.tiers import ActiveUniverse, UniverseTierPayload
@@ -101,30 +107,42 @@ class StructuresPayload(QuantOutput):
     ``skipped`` holds the Quant's own skips plus the deterministic ones (no chain,
     account profile). ``not_structured`` = budgeted tickers with a menu that got
     neither a structure nor a reason. ``over_budget`` = ranked beyond the budget.
+
+    v3 (E13.9, additive): a ``quant.revise`` entry sets ``revision_of`` (the
+    ``risk_review`` entry id it answers) and ``kept`` (revise-requested tickers
+    re-emitted unchanged); it supersedes the first ``structures`` entry.
     """
 
     model_config = _FORBID
 
     not_structured: list[str] = Field(default_factory=list)
     over_budget: list[str] = Field(default_factory=list)
+    revision_of: str | None = None
+    kept: list[str] = Field(default_factory=list)
 
 
 class RiskReviewPayload(RiskOutput):
-    """Risk persona advisory review."""
+    """Risk persona advisory review (v2, E13.9: per-structure ``verdict``, default accept)."""
 
     model_config = _FORBID
+
+    assessments: list[RiskOpenAssessment] = Field(  # type: ignore[assignment]
+        ..., description="One assessment per proposed structure"
+    )
 
 
 class ProposalPayload(Proposal):
     """Full trade proposal (pre-gate), plus the E2.4 exit model for the card.
 
     ``exit_model`` is context only: it is not part of :class:`Proposal`, so it never
-    enters the gate's proposal hash.
+    enters the gate's proposal hash. ``revised`` (E13.9) marks a structure that came
+    out of the ``quant.revise`` round; context only, never hashed.
     """
 
     model_config = _FORBID
 
     exit_model: ExitModelResult | None = None
+    revised: bool = False
 
 
 class PositionReviewPayload(PositionReview):
@@ -449,9 +467,9 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("candidate", CandidatePayload, schema_version=2),  # E4.5: corroboration
     KindSpec("regime", RegimePayload, schema_version=2),  # E4.12: iv_percentile_ext
     KindSpec("shortlist", ShortlistPayload, schema_version=3),  # E5.9: portfolio_view/no_trade
-    KindSpec("structures", StructuresPayload, schema_version=2),  # E5.7: skipped/not_structured
-    KindSpec("risk_review", RiskReviewPayload),
-    KindSpec("proposal", ProposalPayload),
+    KindSpec("structures", StructuresPayload, schema_version=3),  # E13.9: revision_of/kept
+    KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
+    KindSpec("proposal", ProposalPayload, schema_version=2),  # E13.9: revised
     KindSpec("position_review", PositionReviewPayload, schema_version=2),  # E6.4a: floor window
     KindSpec("portfolio_context", PortfolioContextPayload),  # E5.9 (D33)
     KindSpec("journal", JournalPayload),

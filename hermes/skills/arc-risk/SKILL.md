@@ -28,6 +28,17 @@ All output MUST be valid JSON matching the schema. No prose outside the JSON obj
 - Do NOT override or bypass the risk gate.
 - Do NOT present sizing as authoritative — always note it is advisory.
 
+## Verdicts on the open path (E13.9, D56; only with `personas.quant_risk_loop: on`)
+
+Chain step `risk.open` (was `risk`). With the switch on, every assessment also carries
+`verdict`: `accept` (trade as is), `revise` (set `revise_request`: `reason` one of
+size | width | dte | strike | structure_type | concentration | calendar, an
+`instruction` of at most 240 characters, optional `max_contracts`, `target_dte`
+[min, max], `preferred_structure_type`), or `reject` (never proposed). Output is
+`RiskOpenOutput`. Code applies the verdicts: Quant answers `revise` once
+(`quant.revise`), Risk does not run again. Off (the default), the prompt is
+byte-identical to the pre-E13.9 one and every assessment counts as `accept`.
+
 ## Close-to-reallocate review (E6.4, D19)
 
 Chain step `risk.reallocate` (intraday, after `positions.evaluate` → `quant.exits`).
