@@ -245,6 +245,8 @@ NOT_EXPOSED_PATHS: dict[str, str] = {
     "funnel.scout.video_budget_split": "fixed by D56 (equal split)",
     # E13.9: the quant.revise cost guard (seconds of loop budget it needs to start).
     "steps.quant.revise.min_remaining_s": "loop plumbing",
+    # E13.5: measures the Cboe publish time; not a behaviour knob.
+    "options_slow.publish_probe_minutes": "measurement only (Cboe publish-time probe)",
 }
 
 EXIT_KINDS: tuple[str, ...] = (
@@ -1855,6 +1857,22 @@ _FUNNEL_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
+# E13.5 (D56): the `options_slow:` block in routines.yaml (Cboe daily stats + VX curve).
+_OPTIONS_SLOW_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="options_slow.vx_flat_band",
+        group=Group.ROUTINES,
+        type=_F,
+        description="E13.5: the VX futures curve reads 'flat' when the month1 -> month2 "
+        "slope is within this many percent (context data only, never a gate input).",
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("options_slow", "vx_flat_band"),
+        min=0.0,
+        max=10.0,
+    ),
+)
+
 
 # D49: D47 category names renamed in place (old -> new). Their tunable keys stay as
 # aliases, so a change-log override on ``categories.company.weight`` applies to
@@ -2030,6 +2048,7 @@ REGISTRY: dict[str, Tunable] = {
         *_TOWER_TUNABLES,
         *_category_tunables(),
         *_FUNNEL_TUNABLES,
+        *_OPTIONS_SLOW_TUNABLES,
         *_EXPERIMENT_TUNABLES,
     )
 }
@@ -2404,7 +2423,14 @@ def format_value(t: Tunable, v: Any) -> str:
 DEFAULT_STOP_VALUE = 0.75  # D23 relaxed stop, used when a stop is created from 'none'
 _SECTIONS = ("sources", "personas")
 # Top-level routines.yaml sections whose tunables are plain paths (not per job).
-_PLAIN_ROUTINE_SECTIONS = (("loop",), ("monitoring",), ("categories",), ("tower",), ("funnel",))
+_PLAIN_ROUTINE_SECTIONS = (
+    ("loop",),
+    ("monitoring",),
+    ("categories",),
+    ("tower",),
+    ("funnel",),
+    ("options_slow",),  # E13.5
+)
 # Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
 _PERSONA_SWITCHES = frozenset({("personas", "finnhub_context"), ("personas", "quant_risk_loop")})
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.

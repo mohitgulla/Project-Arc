@@ -305,6 +305,81 @@ class PutCallPayload(BaseModel):
     source: str = "cboe"
 
 
+# E13.5 (D56): options_slow, Cboe daily market statistics + CFE VX settlements.
+PcSegment = Literal["total", "index", "etp", "equity", "vix", "spx"]
+OiProduct = Literal["all", "index", "etp", "equity", "vix", "spx"]
+
+
+class PcRatio(BaseModel):
+    """One Cboe put/call segment for a session, with that product's call/put volume."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    segment: PcSegment
+    ratio: float = Field(..., ge=0)
+    call_volume: int | None = Field(None, ge=0)
+    put_volume: int | None = Field(None, ge=0)
+
+
+class ProductOi(BaseModel):
+    """Open interest (and volume) per Cboe product group for a session."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    product: OiProduct
+    call_oi: int = Field(..., ge=0)
+    put_oi: int = Field(..., ge=0)
+    total_oi: int = Field(..., ge=0)
+    volume: int | None = Field(None, ge=0)
+
+
+class OptionsDailyPayload(BaseModel):
+    """Cboe daily options market statistics (E13.5, D56); subject = ``market``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str = Field(..., description="Session date of the statistics (YYYY-MM-DD)")
+    fetched_at: str = Field(..., description="ISO time (ET) of the fetch")
+    ratios: list[PcRatio] = Field(..., min_length=1)
+    open_interest: list[ProductOi] = Field(default_factory=list)
+    source: Literal["cboe"] = "cboe"
+    url: str
+
+
+class VxPoint(BaseModel):
+    """One CFE VX futures settlement (monthly, or a weekly flagged ``weekly``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    symbol: str = Field(..., description='CFE symbol, e.g. "VX/V6" (monthly) or "VX40/V6"')
+    expiry: str = Field(..., description="Expiration date (YYYY-MM-DD)")
+    settle: float = Field(..., gt=0)
+    weekly: bool = False
+
+
+class VxCurvePayload(BaseModel):
+    """CFE VX futures settlement curve (E13.5, D56); subject = ``market``.
+
+    ``front`` / ``second`` / ``back`` are the 1st, 2nd and last *monthly* settles;
+    ``shape`` is ``flat`` when ``|slope_1_2_pct|`` is below ``options_slow.vx_flat_band``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str = Field(..., description="Settlement (session) date (YYYY-MM-DD)")
+    fetched_at: str = Field(..., description="ISO time (ET) of the fetch")
+    points: list[VxPoint] = Field(
+        ..., min_length=2, description="Monthlies first by expiry, then weeklies by expiry"
+    )
+    front: float = Field(..., gt=0)
+    second: float = Field(..., gt=0)
+    back: float = Field(..., gt=0)
+    slope_1_2_pct: float = Field(..., description="(second / front - 1) * 100")
+    shape: Literal["contango", "flat", "backwardation"]
+    source: Literal["cboe_cfe"] = "cboe_cfe"
+    url: str
+
+
 class MacroEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -478,6 +553,9 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("story", StoryPayload),
     KindSpec("vol_term", VolTermPayload),
     KindSpec("put_call", PutCallPayload),
+    # E13.5 (D56): options_slow (Cboe daily stats + CFE VX settlement curve; subject market)
+    KindSpec("options_daily", OptionsDailyPayload),
+    KindSpec("vx_curve", VxCurvePayload),
     KindSpec("macro_calendar", MacroCalendarPayload),
     KindSpec("ex_dividend", ExDividendPayload),
     # E4.8 (D46): Finnhub per-ticker context (subject = ticker)

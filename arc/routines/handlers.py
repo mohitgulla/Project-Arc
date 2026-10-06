@@ -378,6 +378,89 @@ def put_call_source(ctx: JobContext) -> JobResult:
     )
 
 
+def _probe_sleep(seconds: float) -> None:  # pragma: no cover - patched in tests
+    import time
+
+    time.sleep(seconds)
+
+
+def _options_slow_fetch(
+    ctx: JobContext, fetch: Callable[[_dt.date], BaseModel]
+) -> tuple[BaseModel, int]:
+    """E13.5: fetch the session a slot reads -> ``(payload, probe wait in seconds)``.
+
+    A not-yet-published session is a skip on the evening slot (the session is today)
+    and a failure on the morning catch-up (the session is an earlier day: Cboe
+    should have published hours ago). ``options_slow.publish_probe_minutes`` > 0
+    (measurement only) re-probes an unpublished evening session once a minute for
+    that long before skipping.
+    """
+    from arc.ingest.cboe_daily import NotPublishedError, session_date
+
+    slot = ctx.scheduled_for.astimezone(ET)
+    day = session_date(slot)
+    evening = day == slot.date()
+    probe = ctx.routines.options_slow.publish_probe_minutes if evening else 0
+    waited = 0
+    while True:
+        try:
+            return fetch(day), waited * 60
+        except NotPublishedError as exc:
+            if waited < probe:
+                _probe_sleep(60)
+                waited += 1
+                continue
+            if evening:
+                msg = f"not published yet: {exc}"
+                raise JobSkippedError(msg) from exc
+            msg = f"catch-up: Cboe still has not published {day.isoformat()}: {exc}"
+            raise RuntimeError(msg) from exc
+
+
+def options_daily_source(ctx: JobContext) -> JobResult:
+    """E13.5 (D56): Cboe daily options statistics -> one ``options_daily`` entry."""
+    from arc.context.kinds import OptionsDailyPayload
+    from arc.ingest.cboe_daily import fetch_daily_options
+
+    payload, waited = _options_slow_fetch(ctx, lambda d: fetch_daily_options(d, now=ctx.clock()))
+    assert isinstance(payload, OptionsDailyPayload)
+    _data_result(ctx, "options_daily", "cboe", payload.model_dump(mode="json"), len(payload.ratios))
+    ctx.write("options_daily", "market", payload)
+    ratio = {r.segment: r.ratio for r in payload.ratios}
+    parts = [f"{seg} {ratio[seg]:.2f}" for seg in ("total", "equity", "spx") if seg in ratio]
+    metrics: dict[str, Any] = {f"pc_{k}": v for k, v in ratio.items()}
+    metrics["probe_wait_s"] = waited
+    return JobResult(
+        summary=f"P/C {' · '.join(parts)} · {len(payload.open_interest)} OI rows · {payload.as_of}",
+        metrics=metrics,
+    )
+
+
+def vix_futures_source(ctx: JobContext) -> JobResult:
+    """E13.5 (D56): CFE VX futures settlements -> one ``vx_curve`` entry."""
+    from arc.context.kinds import VxCurvePayload
+    from arc.ingest.cboe_daily import fetch_vx_settlements
+
+    band = ctx.routines.options_slow.vx_flat_band
+    payload, waited = _options_slow_fetch(
+        ctx, lambda d: fetch_vx_settlements(d, now=ctx.clock(), flat_band=band)
+    )
+    assert isinstance(payload, VxCurvePayload)
+    _data_result(ctx, "vx_curve", "cboe_cfe", payload.model_dump(mode="json"), len(payload.points))
+    ctx.write("vx_curve", "market", payload)
+    return JobResult(
+        summary=(
+            f"VX {payload.front:.2f} / {payload.second:.2f} … {payload.back:.2f} · "
+            f"{payload.slope_1_2_pct:+.2f}% ({payload.shape}) · {payload.as_of}"
+        ),
+        metrics={
+            "front": payload.front,
+            "slope_1_2_pct": payload.slope_1_2_pct,
+            "probe_wait_s": waited,
+        },
+    )
+
+
 def macro_calendar_source(ctx: JobContext) -> JobResult:
     """E4.5/E4.10: FOMC + BLS (CPI/PPI/NFP/JOLTS/ECI) + BEA (GDP/PCE) -> ``macro_calendar``."""
     from arc.ingest.options_data import fetch_macro_calendar
@@ -1507,6 +1590,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     # E4.5 / D30 options-trading data (no LLM; typed context kinds)
     "vol_term": "arc.routines.handlers:vol_term_source",
     "put_call": "arc.routines.handlers:put_call_source",
+    "options_daily": "arc.routines.handlers:options_daily_source",  # E13.5 (D56)
+    "vix_futures": "arc.routines.handlers:vix_futures_source",
     "macro_calendar": "arc.routines.handlers:macro_calendar_source",
     "ex_dividend": "arc.routines.handlers:ex_dividend_source",
     "iv.record": "arc.routines.handlers:iv_record_source",  # E4.12 (D55) daily 30-DTE IV

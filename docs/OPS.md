@@ -1730,6 +1730,44 @@ rows). `personas.research.chain: auto` is resolved at load by `chain_for()`:
   `risk.open`). `!arc set personas.quant_risk_loop on` turns it on for paper without a
   PR (asks for a confirm).
 
+### 5.28 Cboe options data: `options_daily` + `vix_futures` (E13.5, D56)
+
+Two `options_slow` sources (`feed: scout`) write typed context, subject `market`,
+never raw docs and never gate inputs. Code: `arc/ingest/cboe_daily.py`; recorded
+fixtures: `arc/ingest/fixtures/cboe/` (session 2026-10-05).
+
+| Job | Endpoint (free, no key, D3) | Kind |
+|---|---|---|
+| `options_daily` | `https://cdn.cboe.com/data/us/options/market_statistics/daily/<YYYY-MM-DD>_daily_options` (JSON) | `options_daily`: P/C ratio x6 (total, index, ETP, equity, VIX, SPX+SPXW) with call/put volume, plus call/put/total OI and volume per product |
+| `vix_futures` | `https://www.cboe.com/us/futures/market_statistics/settlement/csv?dt=<YYYY-MM-DD>` (CSV) | `vx_curve`: VX monthlies then weeklies (`weekly: true`), front / second / back monthly settle, `slope_1_2_pct`, `shape` |
+
+- **Session read:** a slot at/after 16:30 ET on a session reads that session; earlier
+  slots read the previous session (`arc.utils.calendar.completed_session`).
+- **Schedule:** `["18:30", "08:15"]` trading days, `catch_up: {until_written:
+  "<kind>:{day}"}`. Any slot whose session already has an entry (payload `as_of`)
+  is planned `skip-written` (`already written: options_daily for 2026-10-05`), so
+  08:15 runs only when the evening slot did not write. Not published (CDN 403/404,
+  empty body, or a header-only CSV) = `skipped` at 18:30, `failed` at 08:15.
+- **Shape:** `flat` when `|slope_1_2_pct| < options_slow.vx_flat_band` (0.5, tunable
+  0-10, Risk none); else `contango` / `backwardation`. Weeklies never set front /
+  second / back.
+- **Measured publish time** (CDN `Last-Modified` of `_daily_options`, 2026-10-06):
+  21:08-22:50 ET over 8 sessions (09-24 21:34, 09-25 21:34, 09-28 21:43, 09-29 21:47,
+  09-30 21:39, 10-01 21:14, 10-02 22:50, 10-05 21:08). Today's file is a 403 until
+  then and the VX CSV is header-only. So the 18:30 slot normally skips and the 08:15
+  catch-up writes the previous session; that is the expected steady state until the
+  evening slot moves after ~23:00. To re-measure, set
+  `options_slow.publish_probe_minutes` (0-60, measurement only, not runtime-tunable):
+  an evening run then re-probes once a minute and records `probe_wait_s`.
+- **Terms:** Cboe market statistics are published for personal, non-commercial use.
+  Arc stores them for its own decisions and shows them only on internal surfaces
+  (Slack workspace, Tailscale-only Tower); no redistribution or republication.
+- `put_call` (E4.5) still writes the `put_call` kind via a thin wrapper over the new
+  parser for d51 readers; E13.15 removes it. `vol_term` (VIX index closes) stays as
+  `market_guard`'s VIX source.
+- Check: `arc routines run options_daily --db <scratch> --now <date>T18:30-04:00
+  --no-slack`, then `arc context show --db <scratch> --kind options_daily --latest`.
+
 ### 7.1 Required status check: `check`
 
 `.github/workflows/ci.yml` job `check` (job id and `name:` both `check`) runs

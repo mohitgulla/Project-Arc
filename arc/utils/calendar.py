@@ -126,6 +126,23 @@ def sessions_between(start: _dt.date, end: _dt.date) -> list[_dt.date]:
     return [ts.date() for ts in sessions]
 
 
+#: E13.5: end-of-day statistics for a session exist from this ET time (after the close).
+EOD_STATS_CUTOFF = _dt.time(16, 30)
+
+
+def completed_session(now: _dt.datetime, cutoff: _dt.time = EOD_STATS_CUTOFF) -> _dt.date:
+    """The latest session whose end-of-day data a job at *now* should read.
+
+    Today (ET) when today is a session and *now* is at/after *cutoff*; otherwise the
+    previous trading session (holiday-aware).
+    """
+    at = now.astimezone(ET)
+    today = at.date()
+    if is_session(today) and at.time() >= cutoff:
+        return today
+    return previous_session(today)
+
+
 # ---------------------------------------------------------------------------
 # Early closes
 # ---------------------------------------------------------------------------

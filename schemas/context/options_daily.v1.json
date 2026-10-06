@@ -1,0 +1,160 @@
+{
+  "$defs": {
+    "PcRatio": {
+      "additionalProperties": false,
+      "description": "One Cboe put/call segment for a session, with that product's call/put volume.",
+      "properties": {
+        "call_volume": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Call Volume"
+        },
+        "put_volume": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Put Volume"
+        },
+        "ratio": {
+          "minimum": 0,
+          "title": "Ratio",
+          "type": "number"
+        },
+        "segment": {
+          "enum": [
+            "total",
+            "index",
+            "etp",
+            "equity",
+            "vix",
+            "spx"
+          ],
+          "title": "Segment",
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment",
+        "ratio"
+      ],
+      "title": "PcRatio",
+      "type": "object"
+    },
+    "ProductOi": {
+      "additionalProperties": false,
+      "description": "Open interest (and volume) per Cboe product group for a session.",
+      "properties": {
+        "call_oi": {
+          "minimum": 0,
+          "title": "Call Oi",
+          "type": "integer"
+        },
+        "product": {
+          "enum": [
+            "all",
+            "index",
+            "etp",
+            "equity",
+            "vix",
+            "spx"
+          ],
+          "title": "Product",
+          "type": "string"
+        },
+        "put_oi": {
+          "minimum": 0,
+          "title": "Put Oi",
+          "type": "integer"
+        },
+        "total_oi": {
+          "minimum": 0,
+          "title": "Total Oi",
+          "type": "integer"
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Volume"
+        }
+      },
+      "required": [
+        "product",
+        "call_oi",
+        "put_oi",
+        "total_oi"
+      ],
+      "title": "ProductOi",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Cboe daily options market statistics (E13.5, D56); subject = ``market``.",
+  "properties": {
+    "as_of": {
+      "description": "Session date of the statistics (YYYY-MM-DD)",
+      "title": "As Of",
+      "type": "string"
+    },
+    "fetched_at": {
+      "description": "ISO time (ET) of the fetch",
+      "title": "Fetched At",
+      "type": "string"
+    },
+    "open_interest": {
+      "items": {
+        "$ref": "#/$defs/ProductOi"
+      },
+      "title": "Open Interest",
+      "type": "array"
+    },
+    "ratios": {
+      "items": {
+        "$ref": "#/$defs/PcRatio"
+      },
+      "minItems": 1,
+      "title": "Ratios",
+      "type": "array"
+    },
+    "source": {
+      "const": "cboe",
+      "default": "cboe",
+      "title": "Source",
+      "type": "string"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "as_of",
+    "fetched_at",
+    "ratios",
+    "url"
+  ],
+  "title": "OptionsDailyPayload",
+  "type": "object"
+}

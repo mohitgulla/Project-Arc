@@ -129,6 +129,8 @@ context_ttl:
   story:         {ttl: 1 session, supersede: latest}       # D30 stage-1 digest; subject = story id
   vol_term:      {ttl: 1 session, supersede: latest}       # D30 options data; subject = market
   put_call:      {ttl: 1 session, supersede: latest}
+  options_daily: {ttl: 1 session, supersede: latest}       # E13.5 (D56) options_slow; subject = market
+  vx_curve:      {ttl: 1 session, supersede: latest}
   macro_calendar: {ttl: 7d, supersede: latest}             # long-lived: FOMC/BLS/BEA dates move rarely
   ex_dividend:   {ttl: 7d, supersede: latest}              # subject = ticker
   # E4.8 (D46): Finnhub per-ticker context; subject = ticker. Context only, never a gate input.
@@ -179,6 +181,16 @@ funnel:
   scalp:    {doc_budget_split: equal}            # scalp_doc_budget: market_news | company_data
   scout:    {max_discovery: 20, video_budget_split: equal, min_discovery_alert: 5}
   research: {max_scout_only_ideas: 20}
+
+# E13.5 (D56): options_slow knobs (options_daily + vix_futures sources below).
+# vx_flat_band (0-10, tunable: `!arc config set options_slow.vx_flat_band`): the VX
+# curve is `flat` when |month1 -> month2 slope| is below this many percent.
+# publish_probe_minutes (0-60, measurement only, not runtime-tunable): when > 0, an
+# evening run that finds today's session unpublished re-probes once a minute for up to
+# this long and records the wait (metric probe_wait_s). 0 = skip at once.
+options_slow:
+  vx_flat_band: 0.5
+  publish_probe_minutes: 0
 
 # D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Scalp
 # source; each RSS feed is its own source. Every source job that writes context (or
@@ -277,7 +289,32 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     ttl: 6h
     category: options_slow
     feed: scout                 # D56: previous session's ratios (Scout's slow feed)
-    writes: [put_call]
+    writes: [put_call]          # superseded by options_daily (E13.5); enabled: false under d56, removed in E13.15
+  # E13.5 (D56): options_slow. Evening run after the Cboe publish (~21:00-22:50 ET
+  # measured, OPS 5.28) and an 08:15 catch-up. Both slots read one session: 18:30
+  # reads today's, 08:15 the previous session's. catch_up `<kind>:{day}` drops any
+  # slot whose session is already written (payload as_of), so 08:15 runs only when the
+  # evening slot did not write. Not published = skipped at 18:30, failed at 08:15.
+  options_daily:                # Cboe daily options statistics: P/C x6 + volume/OI per product
+    label: Cboe daily options
+    about: "Cboe put/call ratios (total, index, ETP, equity, VIX, SPX) and volume + open interest per product"
+    schedule: ["18:30", "08:15"]
+    days: trading
+    ttl: 2h
+    catch_up: {days: trading, until_written: "options_daily:{day}"}
+    category: options_slow
+    feed: scout
+    writes: [options_daily]
+  vix_futures:                  # CFE VX futures settlement curve (monthlies + weeklies)
+    label: VX futures curve
+    about: "CFE VX futures settlements: front / second / back month, slope and contango or backwardation"
+    schedule: ["18:30", "08:15"]
+    days: trading
+    ttl: 2h
+    catch_up: {days: trading, until_written: "vx_curve:{day}"}
+    category: options_slow
+    feed: scout
+    writes: [vx_curve]
   macro_calendar:               # FOMC (federalreserve.gov) + BLS CPI/PPI/NFP/JOLTS/ECI + BEA GDP/PCE
     label: Macro calendar
     about: "FOMC decisions, BLS release dates (CPI, PPI, NFP, JOLTS, ECI) and BEA GDP / PCE"

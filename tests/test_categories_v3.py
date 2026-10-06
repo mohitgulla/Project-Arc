@@ -101,6 +101,8 @@ def test_kind_map_and_reference_kinds() -> None:
     assert dict(KIND_CATEGORY) == {
         "vol_term": SourceCategory.OPTIONS_SLOW,
         "put_call": SourceCategory.OPTIONS_SLOW,
+        "options_daily": SourceCategory.OPTIONS_SLOW,  # E13.5
+        "vx_curve": SourceCategory.OPTIONS_SLOW,
     }
     assert {"ex_dividend", "macro_calendar"} <= REFERENCE_KINDS
     assert not REFERENCE_KINDS & set(KIND_CATEGORY)

@@ -1,0 +1,112 @@
+{
+  "$defs": {
+    "VxPoint": {
+      "additionalProperties": false,
+      "description": "One CFE VX futures settlement (monthly, or a weekly flagged ``weekly``).",
+      "properties": {
+        "expiry": {
+          "description": "Expiration date (YYYY-MM-DD)",
+          "title": "Expiry",
+          "type": "string"
+        },
+        "settle": {
+          "exclusiveMinimum": 0,
+          "title": "Settle",
+          "type": "number"
+        },
+        "symbol": {
+          "description": "CFE symbol, e.g. \"VX/V6\" (monthly) or \"VX40/V6\"",
+          "title": "Symbol",
+          "type": "string"
+        },
+        "weekly": {
+          "default": false,
+          "title": "Weekly",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "symbol",
+        "expiry",
+        "settle"
+      ],
+      "title": "VxPoint",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "CFE VX futures settlement curve (E13.5, D56); subject = ``market``.\n\n``front`` / ``second`` / ``back`` are the 1st, 2nd and last *monthly* settles;\n``shape`` is ``flat`` when ``|slope_1_2_pct|`` is below ``options_slow.vx_flat_band``.",
+  "properties": {
+    "as_of": {
+      "description": "Settlement (session) date (YYYY-MM-DD)",
+      "title": "As Of",
+      "type": "string"
+    },
+    "back": {
+      "exclusiveMinimum": 0,
+      "title": "Back",
+      "type": "number"
+    },
+    "fetched_at": {
+      "description": "ISO time (ET) of the fetch",
+      "title": "Fetched At",
+      "type": "string"
+    },
+    "front": {
+      "exclusiveMinimum": 0,
+      "title": "Front",
+      "type": "number"
+    },
+    "points": {
+      "description": "Monthlies first by expiry, then weeklies by expiry",
+      "items": {
+        "$ref": "#/$defs/VxPoint"
+      },
+      "minItems": 2,
+      "title": "Points",
+      "type": "array"
+    },
+    "second": {
+      "exclusiveMinimum": 0,
+      "title": "Second",
+      "type": "number"
+    },
+    "shape": {
+      "enum": [
+        "contango",
+        "flat",
+        "backwardation"
+      ],
+      "title": "Shape",
+      "type": "string"
+    },
+    "slope_1_2_pct": {
+      "description": "(second / front - 1) * 100",
+      "title": "Slope 1 2 Pct",
+      "type": "number"
+    },
+    "source": {
+      "const": "cboe_cfe",
+      "default": "cboe_cfe",
+      "title": "Source",
+      "type": "string"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "as_of",
+    "fetched_at",
+    "points",
+    "front",
+    "second",
+    "back",
+    "slope_1_2_pct",
+    "shape",
+    "url"
+  ],
+  "title": "VxCurvePayload",
+  "type": "object"
+}
