@@ -1172,7 +1172,7 @@ def youtube_briefs(
     fetch_info: Callable[[str], Mapping[str, Any]] | None = None,
     price_lookup: Any = _UNSET,
 ) -> JobResult:
-    """E4.6 (D45): the daily 05:00 ET YouTube brief run, all channels in one job.
+    """E4.6 (D45): the daily 02:00 ET YouTube brief run, all channels in one job.
 
     Per channel: newest qualifying video in ``lookback`` -> transcript -> brief ->
     ``channel_brief`` context entry (subject ``youtube.<slug>``, the job's

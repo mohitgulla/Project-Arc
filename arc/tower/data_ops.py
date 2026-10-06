@@ -81,7 +81,7 @@ __all__ = [
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 
 #: The session timeline's visible span (ET), per the card.
-TIMELINE_START = _dt.time(5, 0)  # E8.8d: the pre-market jobs (YouTube briefs 05:00) show
+TIMELINE_START = _dt.time(2, 0)  # E8.8d: the pre-market jobs (YouTube briefs 02:00) show
 TIMELINE_END = _dt.time(22, 0)
 ALERT_LOOKBACK = _dt.timedelta(days=7)
 EXPIRED_LOOKBACK = _dt.timedelta(hours=24)
