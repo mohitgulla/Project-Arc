@@ -441,6 +441,68 @@ def unusual_options_source(ctx: JobContext, market: MarketDataProvider | None = 
     )
 
 
+def iv_record_source(
+    ctx: JobContext,
+    market: MarketDataProvider | None = None,
+    cboe_get: Callable[[str], bytes] | None = None,
+) -> JobResult:
+    """E4.12 (D55): today's 30-DTE IV per ticker -> ``iv_daily`` (``alpaca_cm30``),
+    cross-checked against Cboe ``iv30`` for SPY, QQQ and a few pool names.
+
+    No context kind is written (``writes: []``): the regime step reads ``iv_daily``.
+    A cross-check breach is flagged on the row; the monitor's ``iv_crosscheck`` check
+    opens the [Ops] alert. Diffs are in the run's ``metrics.crosscheck``.
+    """
+    from arc.iv.record import record_day
+
+    s = ctx.settings
+    if market is None:  # pragma: no cover - live Alpaca (integration)
+        from arc.data.alpaca import AlpacaMarketData
+
+        market = AlpacaMarketData()
+    if cboe_get is None:  # pragma: no cover - live Cboe
+        from arc.ingest.options_data import http_get
+
+        def cboe_get(url: str) -> bytes:
+            return http_get(url, "Mozilla/5.0 (Project Arc)", timeout=20.0, retries=1)
+
+    tickers = _data_tickers(ctx)
+    res = record_day(
+        ctx.conn,
+        market,
+        tickers,
+        ctx.now.astimezone(ET).date(),
+        now=ctx.now,
+        max_spread_pct=s.spot_max_spread_pct,
+        cboe_get=cboe_get,
+        crosscheck_max_pts=s.iv_crosscheck_max_pts,
+        crosscheck_max_names=s.iv_crosscheck_max_names,
+    )
+    _data_result(
+        ctx,
+        "iv_daily",
+        "alpaca",
+        [{"ticker": r.ticker, "iv30": r.iv30, "spot": r.spot} for r in res.rows],
+        len(res.rows),
+    )
+    if not res.rows and res.errors:
+        msg = f"no IV recorded ({len(res.errors)} errors, e.g. {next(iter(res.errors.items()))})"
+        raise RuntimeError(msg)
+    checks = " · ".join(
+        f"{c.ticker} {c.ours * 100:.1f}/{'n/a' if c.cboe is None else f'{c.cboe * 100:.1f}'}"
+        for c in res.checks
+    )
+    return JobResult(
+        summary=(
+            f"{len(res.rows)} tickers recorded"
+            + (f" · {len(res.errors)} errors" if res.errors else "")
+            + (f" · ours/Cboe iv30 {checks}" if checks else "")
+            + (f" · BREACH {', '.join(c.ticker for c in res.breaches)}" if res.breaches else "")
+        ),
+        metrics=res.metrics(),
+    )
+
+
 def ex_dividend_source(ctx: JobContext) -> JobResult:
     """E4.5: next cash-dividend ex-date per ticker (Alpaca corporate actions)."""
     from arc.ingest.options_data import fetch_ex_dividends
@@ -1386,6 +1448,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "macro_calendar": "arc.routines.handlers:macro_calendar_source",
     "unusual_options": "arc.routines.handlers:unusual_options_source",
     "ex_dividend": "arc.routines.handlers:ex_dividend_source",
+    "iv.record": "arc.routines.handlers:iv_record_source",  # E4.12 (D55) daily 30-DTE IV
     # E4.8 (D46): Finnhub per-ticker context (typed kinds, shared 55/min budget)
     "finnhub.insider": "arc.routines.handlers:finnhub_insider_source",
     "finnhub.recs": "arc.routines.handlers:finnhub_recs_source",

@@ -131,6 +131,7 @@ def _book(ctx: JobContext, env: PipelineEnv) -> tuple[Any, AccountSnapshot, Port
         now=ctx.now,
         wash_sale_days=settings.wash_sale_days,
         r=settings.scanner_risk_free_rate,
+        spot_max_spread_pct=settings.spot_max_spread_pct,
     )
     switch = HaltSwitch(HaltRepo(ctx.conn))
     # D32: closes are charged against the full daily cap (the gate's order_budget rule).
@@ -604,6 +605,7 @@ def _open_leg(
             [(o, LegIntent(s), int(n)) for o, s, n in src["legs"]],
             as_of=_today(ctx),
             r=settings.scanner_risk_free_rate,
+            spot_max_spread_pct=settings.spot_max_spread_pct,
         )
     except (LookupError, ValueError) as exc:
         _cancel(ctx, sw, f"open could not be re-priced ({exc})")

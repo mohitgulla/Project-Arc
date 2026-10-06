@@ -16,6 +16,8 @@
   newer than ``earnings_stale_after`` and the universe has a non-ETF ticker.
 - :func:`momentum_coverage` E12.2: ``coverage:universe.momentum`` while the momentum
   tier's SPMO holdings as-of date is older than ``momentum.stale_after_days``.
+- :func:`iv_crosscheck`  E4.12: the latest recorded 30-DTE IV differs from Cboe's
+  ``iv30`` by more than ``iv_crosscheck_max_pts`` for some name.
 - :func:`stranded_events` E6.2e: a dispatched event with no run after ``tick.dispatch_grace``.
 - :func:`approvals_unposted` E6.1b: a pending approval request older than one tick
   with no Slack card (its post failed and keeps failing).
@@ -704,6 +706,65 @@ def momentum_coverage(
         detail={"job": MOMENTUM_JOB, "as_of": as_of.isoformat() if as_of else None},
     )
     return CheckResult("momentum_coverage", "failed", f"stale ({seen})", (f,))
+
+
+IV_RECORD_JOB = "iv.record"
+IV_CROSSCHECK = "iv_crosscheck"
+
+
+def iv_crosscheck(
+    conn: sqlite3.Connection, routines: RoutinesConfig, now: _dt.datetime
+) -> CheckResult:
+    """E4.12 (D55): ``iv_crosscheck`` while the latest ``alpaca_cm30`` day has a row whose
+    30-DTE IV differs from Cboe's ``iv30`` by more than ``iv_crosscheck_max_pts``.
+
+    ``iv.record`` flags the row (``detail.breach``); the alert resolves when the next
+    recorded day is back within the threshold. Context data only: nothing is halted.
+    """
+    import json
+
+    if IV_RECORD_JOB not in routines.jobs():
+        return CheckResult(IV_CROSSCHECK, "ok", "not judged: iv.record disabled")
+    try:
+        row = conn.execute("SELECT MAX(day) FROM iv_daily WHERE source = 'alpaca_cm30'").fetchone()
+    except sqlite3.OperationalError:
+        row = None
+    if not row or row[0] is None:
+        return CheckResult(IV_CROSSCHECK, "ok", "not judged: no recorded IV yet")
+    day = str(row[0])
+    rows = conn.execute(
+        "SELECT ticker, iv30, detail FROM iv_daily WHERE source = 'alpaca_cm30' AND day = ?",
+        (day,),
+    ).fetchall()
+    checked: list[tuple[str, float, float, float]] = []
+    for t, iv, raw in rows:
+        d = json.loads(raw or "{}")
+        if d.get("cboe_iv30") is None:
+            continue
+        checked.append(
+            (str(t), float(iv), float(d["cboe_iv30"]), float(d.get("crosscheck_max_pts") or 0))
+        )
+    bad = [c for c in checked if c[3] > 0 and abs(c[1] - c[2]) * 100 > c[3]]
+    summary = f"{day}: {len(checked)} names vs Cboe iv30" + (
+        f", {len(bad)} beyond threshold" if bad else ", all within threshold"
+    )
+    if not bad:
+        return CheckResult(IV_CROSSCHECK, "ok", summary)
+    worst = ", ".join(
+        f"{t} ours {a * 100:.1f} vs Cboe {b * 100:.1f} ({(a - b) * 100:+.1f} pts)"
+        for t, a, b, _ in sorted(bad, key=lambda c: -abs(c[1] - c[2]))[:4]
+    )
+    f = Finding(
+        key=IV_CROSSCHECK,
+        kind="iv_crosscheck",
+        severity="degraded",
+        message=(
+            f"IV cross-check on {day}: {worst}; limit {bad[0][3]:g} vol pts. IV rank in "
+            "the regime context may be off (context only, never a gate input)"
+        ),
+        detail={"day": day, "tickers": [c[0] for c in bad]},
+    )
+    return CheckResult(IV_CROSSCHECK, "degraded", summary, (f,))
 
 
 def stranded_events(

@@ -124,6 +124,7 @@ def run_checks(
         checks.stuck_runs(conn, ms, now),
         checks.stranded_events(conn, routines, now),
         checks.approvals_unposted(conn, routines, now),
+        checks.iv_crosscheck(conn, routines, now),
     ]
     if ms.gateway.enabled and not args.no_gateway:
         if gateway_runner is None:

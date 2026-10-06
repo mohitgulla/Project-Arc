@@ -72,6 +72,7 @@ from arc.control.effective import exit_config, ranking_config
 from arc.exits import ExitSummary, model_exits, realized_vol_forecast
 from arc.ingest.llm import SweepLLMError
 from arc.ingest.sweep import extract_json_object
+from arc.iv.store import safe_store as safe_iv_store
 from arc.journal.models import LegQuote, MarketContext, PersonaCallMeta
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage, gate_reason
 from arc.journal.store import JournalStore, Recorder
@@ -486,10 +487,22 @@ def _portfolio_summary(
 
 
 def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> list[str]:
-    """Write today's regime/vol features for *tickers* lacking one; return tickers written."""
-    from arc.features.snapshot import build_snapshot_from_bars
+    """Write today's regime/vol features for *tickers* lacking one; return tickers written.
 
+    E4.12 (D55): IV comes from ``iv_daily`` (our series: ``alpaca_cm30`` then
+    ``alpaca_backfill``) plus today's 30-DTE IV from the live chain (a stored row for
+    today wins). Rank/percentile need ``iv_min_obs_rank`` observations; under that, a
+    fresh Option Strategist percentile is shown as ``iv_percentile_ext`` (labelled,
+    context only, never a gate input).
+    """
+    import pandas as pd
+
+    from arc.features.snapshot import build_snapshot_from_bars
+    from arc.iv.store import safe_store
+
+    settings = ctx.settings
     today = _today(ctx)
+    store = safe_store(ctx.conn)
     written: list[str] = []
     for t in tickers:
         have = ctx.snapshot.latest("regime", t)
@@ -498,13 +511,52 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
         try:
             bars = env.market.history_bars(t, today - _dt.timedelta(days=400), today)
             ctx.record_input(f"bars:{t}", _source(env), bars, as_of=ctx.now, count=len(bars))
-            snap = build_snapshot_from_bars(t, bars, today)
+            series = store.series(t, until=today) if store is not None else {}
+            current = None if today in series else _live_iv30(env, t, today, settings)
+            snap = build_snapshot_from_bars(
+                t,
+                bars,
+                today,
+                iv_history=pd.Series(series, dtype=float) if series else None,
+                current_iv=current,
+                min_iv_obs=settings.iv_min_obs_rank,
+            )
+            if store is not None and snap.vol.iv_percentile is None:
+                ext = store.latest_external(t, until=today)
+                if (
+                    ext is not None
+                    and ext.ext_percentile is not None
+                    and (today - ext.day).days <= settings.iv_ext_max_age_days
+                ):
+                    vol = snap.vol.model_copy(
+                        update={
+                            "iv_percentile_ext": ext.ext_percentile,
+                            "iv_percentile_ext_source": f"optionstrategist@{ext.day}",
+                        }
+                    )
+                    snap = snap.model_copy(update={"vol": vol})
         except Exception as exc:  # noqa: BLE001 - features are context, not a gate input
             log.warning("pipeline.regime_failed", ticker=t, error=str(exc))
             continue
         ctx.write("regime", t, RegimePayload.model_validate(snap.model_dump()))
         written.append(t)
     return written
+
+
+def _live_iv30(
+    env: PipelineEnv, ticker: str, today: _dt.date, settings: ArcSettings
+) -> float | None:
+    """Today's 30-DTE ATM IV from the live chain (``None`` on any data failure)."""
+    from arc.iv.record import iv30_from_chain
+
+    try:
+        row = iv30_from_chain(
+            env.market, ticker, today, max_spread_pct=settings.spot_max_spread_pct
+        )
+    except Exception as exc:  # noqa: BLE001 - IV is context; a missing chain is a None
+        log.info("pipeline.regime_iv_unavailable", ticker=ticker, error=str(exc)[:200])
+        return None
+    return row.iv30
 
 
 def _filter_shortlist(
@@ -723,6 +775,7 @@ def _portfolio_context(
             now=ctx.now,
             wash_sale_days=settings.wash_sale_days,
             r=settings.scanner_risk_free_rate,
+            spot_max_spread_pct=settings.spot_max_spread_pct,
         )
     except PortfolioError as exc:  # Greeks fall back to as-opened; propose re-checks
         log.warning("pipeline.portfolio_context_unvalued", error=str(exc))
@@ -1530,7 +1583,7 @@ def _quant_rules(no_chain: list[str], settings: ArcSettings | None = None) -> li
 
 
 def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
-    from arc.scanner import ScanParams, load_iv_history, scan
+    from arc.scanner import ScanParams, scan
 
     settings = ctx.settings
     j = _journal(ctx, ctx.snapshot.id)
@@ -1566,6 +1619,7 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
         return JobResult(summary="empty shortlist; no structures", metrics={"structures": 0})
 
     today = _today(ctx)
+    iv_store = safe_iv_store(ctx.conn)  # E4.12: scanner IV rank from iv_daily
     exits = exit_config(settings)  # D26: exits.yaml + control-panel overrides
     summaries: dict[int, ExitSummary] = {}
     menus: dict[str, dict[frozenset[tuple[str, str]], ScanCandidate]] = {}
@@ -1590,7 +1644,7 @@ def quant(ctx: JobContext, env: PipelineEnv) -> JobResult:
             params = ScanParams.from_settings(
                 settings, strategies=strategies, top=settings.pipeline_scan_top
             )
-            history = load_iv_history(env.iv_history_dir, item.ticker) if env.iv_history_dir else {}
+            history = iv_store.series(item.ticker, until=today) if iv_store is not None else {}
             res = scan(env.market, item.ticker, params, as_of=today, iv_history=history)
             ctx.record_input(
                 f"chain:{item.ticker}",
@@ -1947,6 +2001,7 @@ def risk(ctx: JobContext, env: PipelineEnv) -> JobResult:
             now=ctx.now,
             wash_sale_days=settings.wash_sale_days,
             r=settings.scanner_risk_free_rate,
+            spot_max_spread_pct=settings.spot_max_spread_pct,
         )
     except PortfolioError as exc:
         msg = f"portfolio unavailable: {exc}"
@@ -2413,6 +2468,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
         now=now,
         wash_sale_days=settings.wash_sale_days,
         r=settings.scanner_risk_free_rate,
+        spot_max_spread_pct=settings.spot_max_spread_pct,
     )
     earnings = next_earnings(ctx.conn, list(by_ticker), _today(ctx))
     switch = HaltSwitch(HaltRepo(ctx.conn))
@@ -2494,6 +2550,7 @@ def propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 [(leg.occ_symbol, LegIntent(leg.side), leg.ratio) for leg in qs.legs],
                 as_of=_today(ctx),
                 r=settings.scanner_risk_free_rate,
+                spot_max_spread_pct=settings.spot_max_spread_pct,
             )
         except (LookupError, ValueError) as exc:
             log.warning("pipeline.reprice_failed", ticker=t, error=str(exc))

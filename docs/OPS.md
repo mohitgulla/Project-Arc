@@ -1603,6 +1603,65 @@ personas.director_diversification relaxed` (riskier, asks for a confirm), or run
 draft A/B `config/experiments/live/xp3_relaxed_diversification.yaml` (XP-3, not
 registered). Flipping the shipped default needs an XP-3 `win` verdict.
 
+### 5.26 IV history: `iv_daily`, `iv.record`, backfill, Option Strategist (E4.12, D55)
+
+**Spot.** Every spot used for pricing comes from `arc.data.base.market_spot`: the
+quote mid when both sides are > 0 and the spread is at most `spot_max_spread_pct`
+(5 %), else today's daily close (a wide quote), else the last close (one-sided, e.g.
+after hours `ask=0`, which used to halve TSLA to 171 and read 77 % IV). No spot at
+all fails closed for entries (`NoSpotError` / `LookupError` / `PortfolioError`);
+exits still price at mids without Greeks. `arc chains` prints `spot … (mid|last_close)`.
+
+**Table.** `iv_daily(ticker, day, source)` holds one 30-DTE constant-maturity ATM IV
+per row (decimal). Sources:
+
+| source | written by | use |
+|---|---|---|
+| `alpaca_cm30` | `iv.record` (15:50 ET, trading days), `arc chains --record-iv`, `arc iv import-csv` | our series (preferred per day) |
+| `alpaca_backfill` | `arc iv backfill` | our series where no forward row exists |
+| `optionstrategist` | `arc iv import-optionstrategist` (by hand) | cross-check + labelled fallback percentile only, never in the series |
+
+Skipped backfill days sit in `iv_skips` with a reason (re-runs skip them; delete the
+rows to retry). IV rank/percentile need `iv_min_obs_rank` (120) observations over the
+252-day lookback; below that the regime context shows `iv_percentile_ext` with its
+`iv_percentile_ext_source` (`optionstrategist@<date>`, at most `iv_ext_max_age_days` 8
+old). IV is context only: `arc.gate` may not import `arc.iv` (import-linter).
+
+**Daily record + [Ops] alert.** `iv.record` (background lane, `writes: []`) records
+today's active list + open underlyings + candidates + SPY/QQQ and checks SPY, QQQ and
+up to `iv_crosscheck_max_names` (5) names against Cboe's `iv30`. A gap over
+`iv_crosscheck_max_pts` (3 vol pts) flags the row; the monitor's `iv_crosscheck`
+check opens one `[Ops]` alert (degraded, nothing halted) and resolves it on the
+next recorded day within the threshold. The run summary lists `ours/Cboe` per name.
+
+**Backfill (owner-approved one-off on the live DB; rehearse on a copy first).**
+
+    sqlite3 data/arc.db ".backup /tmp/arc-iv.db"
+    .venv/bin/arc iv backfill --tickers watch --since 2024-03-01 --db /tmp/arc-iv.db
+    .venv/bin/arc iv backfill --tickers watch --since 2024-03-01        # live, resumable
+
+`watch` = today's watch list + open underlyings + SPY/QQQ. Per day: the underlying
+close, the expiries bracketing 30 DTE (nearest traded within six per side), the
+nearest strike to the close whose call and put both traded (within 3 %), BS inversion
+of the two closes (`scanner_risk_free_rate`, `iv_dividend_yields` for ETFs),
+total-variance interpolation to 30 DTE. Requests share the
+`routine_state[alpaca_data:calls]` budget (`alpaca_data_calls_per_minute`, 150).
+About 25 s and 110 requests per ticker-year. Bars are last trades, not mids, and
+not simultaneous with the stock close: about ±2 vol pts of daily noise.
+
+**Option Strategist (ad hoc, internal use only — D55).** McMillan's free weekly file
+(Saturdays). Never scheduled, never redistributed or quoted outside Arc.
+
+    .venv/bin/arc iv import-optionstrategist [--file saved.html] [--db …]
+    .venv/bin/arc iv validate [--tickers watch|all|A,B] [--no-hv] [--db …]
+    .venv/bin/arc iv status [--db …]
+
+`validate` compares on the latest OS date: our iv30 vs OS `cur_iv`, our 252-obs
+percentile vs OS percentile (plus ours over OS's own `Days` window), our HV20 vs OS
+`hv20`, with the E4.12 pass bar. OS `cur_iv` is McMillan's composite implied vol,
+not a 30-day ATM constant maturity: compare our forward rows with Cboe `iv30`
+(same definition) for method checks; OS is the level/percentile sanity check.
+
 ## 6. Local Models (E8.4)
 
 Placeholder — populated by card E8.4 when the 128 GB Mac Studio arrives.

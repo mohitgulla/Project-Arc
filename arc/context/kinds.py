@@ -470,7 +470,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("raw_doc_ref", RawDocRefPayload),
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload, schema_version=2),  # E4.5: corroboration
-    KindSpec("regime", RegimePayload),
+    KindSpec("regime", RegimePayload, schema_version=2),  # E4.12: iv_percentile_ext
     KindSpec("shortlist", ShortlistPayload, schema_version=3),  # E5.9: portfolio_view/no_trade
     KindSpec("structures", StructuresPayload, schema_version=2),  # E5.7: skipped/not_structured
     KindSpec("risk_review", RiskReviewPayload),

@@ -64,7 +64,6 @@ class PipelineEnv:
     sweep_llm: SweepLLM | None = None  # None = run_sweep's own default (Hermes cheap tier)
     offline: bool = False
     mint_tokens: bool = False  # issue gate tokens on PASS (live paper runs only)
-    iv_history_dir: Path | None = None
     notes: list[str] = field(default_factory=list)
     # D32: the broker whose order list cross-checks the daily order budget (live only).
     broker: BrokerAdapter | None = None
@@ -133,7 +132,6 @@ class PipelineEnv:
             account=account,
             positions=positions,
             llms=llms,
-            iv_history_dir=settings.scanner_iv_history_dir,
             mint_tokens=broker,
             broker=adapter,
         )

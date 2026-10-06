@@ -107,6 +107,23 @@ forbidden_modules = [
     "arc.approvals",
     "arc.routines",
     "arc.cli",
+    "arc.iv",  # E4.12 (D55): IV history is context only, never a gate input
+]
+
+# E4.12 / D55: IV history reads market data only; it never trades or calls an LLM.
+[[tool.importlinter.contracts]]
+name = "arc.iv is context data: no broker, execution, approvals, gate or LLM"
+type = "forbidden"
+source_modules = ["arc.iv"]
+forbidden_modules = [
+    "anthropic",
+    "openai",
+    "arc.broker",
+    "arc.execution",
+    "arc.approvals",
+    "arc.personas.builders",
+    "arc.gate",
+    "arc.slack",
 ]
 
 # E4.8 / D46: Finnhub per-ticker context is context only; the gate never reads it.

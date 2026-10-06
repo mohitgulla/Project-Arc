@@ -27,7 +27,7 @@ from arc.features._series import (
     truncate,
 )
 from arc.features.regime import RegimeFeatures, estimate_regime
-from arc.features.vol import VolFeatures, compute_vol_features
+from arc.features.vol import MIN_IV_HISTORY, VolFeatures, compute_vol_features
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -66,6 +66,7 @@ def build_snapshot(
     iv_history: pd.Series | None = None,
     current_iv: float | None = None,
     regime_kwargs: Mapping[str, object] | None = None,
+    min_iv_obs: int = MIN_IV_HISTORY,
 ) -> FeatureSnapshot:
     """Build a :class:`FeatureSnapshot` from a daily close series (and optional IV)."""
     series = to_daily_series(closes, name="close")
@@ -78,7 +79,9 @@ def build_snapshot(
     except InsufficientHistoryError as exc:
         warnings.append(f"regime: {exc}")
 
-    vol = compute_vol_features(series, as_of, iv_history=iv_history, current_iv=current_iv)
+    vol = compute_vol_features(
+        series, as_of, iv_history=iv_history, current_iv=current_iv, min_iv_obs=min_iv_obs
+    )
     warnings.extend(f"vol: {m}" for m in vol.missing)
 
     last_close = float(upto.iloc[-1]) if len(upto) else None
@@ -111,6 +114,7 @@ def build_snapshot_from_bars(
     iv_history: pd.Series | None = None,
     current_iv: float | None = None,
     regime_kwargs: Mapping[str, object] | None = None,
+    min_iv_obs: int = MIN_IV_HISTORY,
 ) -> FeatureSnapshot:
     """:func:`build_snapshot` from OHLCV bars (e.g. ``MarketDataProvider.history_bars``)."""
     return build_snapshot(
@@ -120,6 +124,7 @@ def build_snapshot_from_bars(
         iv_history=iv_history,
         current_iv=current_iv,
         regime_kwargs=regime_kwargs,
+        min_iv_obs=min_iv_obs,
     )
 
 

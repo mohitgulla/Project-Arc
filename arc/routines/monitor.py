@@ -216,6 +216,7 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
             now=now,
             wash_sale_days=settings.wash_sale_days,
             r=settings.scanner_risk_free_rate,
+            spot_max_spread_pct=settings.spot_max_spread_pct,
         )
     except PortfolioError as exc:
         notices.append(f"cannot value open positions: {exc}")

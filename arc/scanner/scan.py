@@ -164,7 +164,8 @@ class ScanParams(BaseModel):
     risk_free_rate: float = 0.04
     rules: LiquidityRules = Field(default_factory=LiquidityRules)
     iv_lookback: int = Field(252, ge=2)
-    iv_min_obs: int = Field(20, ge=2)
+    iv_min_obs: int = Field(120, ge=2)
+    spot_max_spread_pct: float = Field(0.05, gt=0.0, le=1.0)
     cost: CostModel = Field(
         default_factory=load_cost_model,
         description="Entry cost model for ev_proxy / cost (config/costs.yaml, shared, D23)",
@@ -227,7 +228,8 @@ class ScanParams(BaseModel):
             "risk_free_rate": settings.scanner_risk_free_rate,
             "rules": LiquidityRules.from_settings(settings),
             "iv_lookback": settings.scanner_iv_lookback,
-            "iv_min_obs": settings.scanner_iv_min_obs,
+            "iv_min_obs": settings.iv_min_obs_rank,
+            "spot_max_spread_pct": settings.spot_max_spread_pct,
         }
         if profile_strategies:
             base["strategies"] = profile_strategies
@@ -272,12 +274,17 @@ class ScanCandidate(BaseModel):
     )
 
 
+class NoSpotError(LookupError):
+    """E4.12: the underlying has no usable spot (fail the ticker closed)."""
+
+
 class ScanResult(BaseModel):
     """Everything :func:`scan` found for one underlying."""
 
     ticker: str
     as_of: dt.date
     spot: float
+    spot_basis: str = Field("mid", description="E4.12: mid | last_close (see market_spot)")
     params: ScanParams
     expirations: list[dt.date]
     iv: IvStats
@@ -633,9 +640,14 @@ def scan(
     iv_history: Mapping[dt.date, float] | None = None,
 ) -> ScanResult:
     """Scan *ticker*'s chain and return ranked candidates for ``params.strategies``."""
+    from arc.data.base import market_spot
+
     ticker = ticker.upper()
-    quote = provider.underlying_quote(ticker)
-    spot = quote.mid
+    found = market_spot(provider, ticker, as_of, max_spread_pct=params.spot_max_spread_pct)
+    if found.price is None:  # E4.12: never price off a one-sided / missing quote
+        msg = f"{ticker}: no usable spot (one-sided quote and no recent daily close)"
+        raise NoSpotError(msg)
+    spot = found.price
     exp_start = as_of + dt.timedelta(days=params.dte_min)
     exp_end = as_of + dt.timedelta(days=params.dte_max)
     chain = [
@@ -764,6 +776,7 @@ def scan(
         ticker=ticker,
         as_of=as_of,
         spot=spot,
+        spot_basis=found.basis or "mid",
         params=params,
         expirations=expirations,
         iv=iv,
