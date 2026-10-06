@@ -328,6 +328,28 @@
       "title": "Excluded",
       "type": "array"
     },
+    "exit_watchlist_counts": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "propertyNames": {
+            "enum": [
+              "hold",
+              "review"
+            ]
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Research's exit watchlist: positions to hold / to review",
+      "title": "Exit Watchlist Counts"
+    },
     "market_guard": {
       "anyOf": [
         {

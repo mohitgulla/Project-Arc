@@ -59,6 +59,8 @@ from pydantic import BaseModel, ValidationError
 
 from arc.context.kinds import (
     Evidence,
+    ExitCasePayload,
+    ExitWatchlistPayload,
     NotePayload,
     NoteTopic,
     ProposalPayload,
@@ -77,8 +79,9 @@ from arc.iv.store import safe_store as safe_iv_store
 from arc.journal.models import LegQuote, MarketContext, PersonaCallMeta
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage, gate_reason
 from arc.journal.store import JournalStore, Recorder
-from arc.models import LegIntent, Proposal, QuantMetrics, Sizing, Stance
+from arc.models import LegIntent, Proposal, QuantMetrics, Sizing, Stance, StructureKind
 from arc.personas.builders import (
+    build_quant_exit_prompt,
     build_quant_prompt,
     build_quant_revise_prompt,
     build_research_prompt,
@@ -86,6 +89,7 @@ from arc.personas.builders import (
     build_risk_prompt,
     build_risk_swap_prompt,
     category_specs_input,
+    quant_exit_input_from_context,
     quant_input_from_context,
     quant_revise_input_from_context,
     research_input_from_context,
@@ -95,6 +99,8 @@ from arc.personas.builders import (
 )
 from arc.personas.entry_window import entry_terms, mentions_dte
 from arc.personas.schemas import (
+    ExitWatchItem,
+    QuantExitOutput,
     QuantGreeks,
     QuantLeg,
     QuantOutput,
@@ -102,8 +108,10 @@ from arc.personas.schemas import (
     QuantSkip,
     QuantStructureOut,
     ResearchExclusion,
+    ResearchExitOutput,
     ResearchOutput,
     ResearchRankedItem,
+    ResearchThesisCheck,
     RiskAssessment,
     RiskOpenAssessment,
     RiskOpenOutput,
@@ -135,6 +143,7 @@ from arc.pipeline.market_guard import MarketGuard, market_guard
 from arc.pipeline.portfolio_context import (
     PortfolioContext,
     build_portfolio_context,
+    render_exit_block,
     render_portfolio_context,
 )
 from arc.pipeline.research_pool import (
@@ -169,6 +178,8 @@ if TYPE_CHECKING:
     from arc.personas.schemas import PoolItem
     from arc.pipeline.env import PipelineEnv
     from arc.pipeline.market import PricedStructure
+    from arc.positions.evaluate import PositionReview
+    from arc.positions.exit_case import ExitCase
     from arc.routines.config import ResearchDiversificationSettings
     from arc.routines.handlers import Handler, JobContext
     from arc.scanner import ScanCandidate
@@ -187,6 +198,7 @@ __all__ = [
     "quant_propose_step",
     "quant_revise",
     "quant_revise_step",
+    "quant_exit_step",
     "risk_open",
     "risk_open_step",
 ]
@@ -211,6 +223,8 @@ RESEARCH_READS = [
     # E13.8 (D56): the Scout's read; rendered only with research_compact_prompt compact,
     # and its ticker calls set the pool's stance agreement (research_idea_pool: all)
     "scout_read",
+    # E13.17 (D56): ex-dividend dates for the exit-watch facts (personas.exit_path only)
+    "ex_dividend",
 ]  # == routines.yaml research.reads (D30 adds the options-data kinds)
 # E5.9 drop reasons (Research stage; deterministic). Values == ReasonCode values.
 DROP_CONCENTRATION = ReasonCode.DROP_CONCENTRATION.value
@@ -314,13 +328,20 @@ PROMPT_BUILDERS: dict[str, tuple[Callable[..., Any], Callable[..., str], type[Ba
     # E13.9 (personas.quant_risk_loop on): Risk with verdicts; Quant's one revision round
     "risk_open": (risk_input_from_context, build_risk_open_prompt, RiskOpenOutput),
     "quant_revise": (quant_revise_input_from_context, build_quant_revise_prompt, QuantReviseOutput),
+    # E13.17 (D56): Quant's hold/close judgement on code-built exit cases
+    "quant_exit": (quant_exit_input_from_context, build_quant_exit_prompt, QuantExitOutput),
 }
 
 # D56: category keys only a D49-era recorded ``categories`` input carries.
 D49_ONLY_CATEGORIES = frozenset({"macro_data", "options_data"})
 
 # prompt key → the persona whose LLM answers it (config/llm_routing.yaml)
-LLM_PERSONA = {"risk_swap": "risk", "risk_open": "risk", "quant_revise": "quant"}
+LLM_PERSONA = {
+    "risk_swap": "risk",
+    "risk_open": "risk",
+    "quant_revise": "quant",
+    "quant_exit": "quant",
+}
 
 
 # E3.4a: personas whose prompt states the configured entry window + delta bands.
@@ -359,6 +380,9 @@ def build_prompt(
     from_context, builder, schema = PROMPT_BUILDERS[persona]
     kwargs = {k: v for k, v in inputs.items() if k != "rules"}
     _replay_flags(persona, kwargs)
+    if persona == "research" and kwargs.get("exit_block"):
+        # E13.17: the exit path's reply schema adds `exit_watchlist` (recorded input).
+        schema = ResearchExitOutput
     if (
         settings is not None
         and persona in ENTRY_TERMS_PERSONAS
@@ -687,13 +711,15 @@ def _research_rules(
     diversification: ResearchDiversificationSettings | None = None,
     *,
     compact: bool = False,
+    exit_watch: bool = False,
 ) -> list[str]:
     """Research constraints (E5.7: rank, don't gatekeep; no count cap in the prompt).
 
     D32: in the restrictive order-budget tier an advisory line is added; the
     deterministic cap is the lowered Quant/Risk budget (:func:`_shortlist_limit`).
     E13.8: *compact* (``research_compact_prompt: compact``) names the idea pool and
-    drops the per-exclusion reason request.
+    drops the per-exclusion reason request. E13.17: *exit_watch*
+    (``personas.exit_path`` != ``deterministic``) asks for the exit watchlist.
     """
     rules = [
         f"shortlist tickers MUST come from the candidates above: {', '.join(sorted(cands))}.",
@@ -740,11 +766,19 @@ def _research_rules(
             f"neutral); {drops} Names at their per-underlying max-loss cap "
             f"({', '.join(ag.at_cap_underlyings) or 'none'}) cannot be opened."
         )
-        rules.append(
-            "portfolio_view.verdict: balanced | concentrated | hedge_needed | reduce_risk; "
-            "one thesis_checks entry per open structure_id "
-            f"({', '.join(p.structure_id for p in portfolio.positions[:12])})."
-        )
+        ids = ", ".join(p.structure_id for p in portfolio.positions[:12])
+        if exit_watch:  # E13.17: the exit watchlist replaces thesis_checks
+            rules.append(
+                "portfolio_view.verdict: balanced | concentrated | hedge_needed | reduce_risk; "
+                f"one exit_watchlist item per open structure_id ({ids}); action hold | "
+                "review; thesis_status intact | weakened | broken; evidence <= 4 items of "
+                "<= 160 chars each; reason <= 240 chars."
+            )
+        else:
+            rules.append(
+                "portfolio_view.verdict: balanced | concentrated | hedge_needed | reduce_risk; "
+                f"one thesis_checks entry per open structure_id ({ids})."
+            )
     return rules
 
 
@@ -804,13 +838,25 @@ def _research_no_opens(
 
 
 def _portfolio_context(
-    ctx: JobContext, env: PipelineEnv, settings: ArcSettings, budget: BudgetView
+    ctx: JobContext,
+    env: PipelineEnv,
+    settings: ArcSettings,
+    budget: BudgetView,
+    *,
+    snap: ContextSnapshot | None = None,
 ) -> PortfolioContext:
-    """Build, record and store the E5.9 portfolio context for this run."""
+    """Build, record and store the E5.9 portfolio context for this run.
+
+    E13.17: under ``personas.exit_path`` != ``deterministic`` each position carries
+    its :class:`PositionFacts` (read from *snap*, the refreshed Research snapshot),
+    and the reviews computed here are written as ``position_review`` (subject =
+    structure id) so ``quant.exit`` reads the marks Research saw.
+    """
     from arc.gate.halt import HaltSwitch
     from arc.pipeline.market import PortfolioError, build_portfolio
     from arc.store.repos import HaltRepo
 
+    watch = ctx.routines.exit_path.watch
     info, positions = _account_inputs(ctx, env)
     portfolio = None
     try:
@@ -825,6 +871,7 @@ def _portfolio_context(
         )
     except PortfolioError as exc:  # Greeks fall back to as-opened; propose re-checks
         log.warning("pipeline.portfolio_context_unvalued", error=str(exc))
+    computed: dict[str, PositionReview] = {}
     pctx = build_portfolio_context(
         ctx.conn,
         env,
@@ -836,7 +883,12 @@ def _portfolio_context(
         portfolio=portfolio,
         snapshot=ctx.snapshot,
         diversification=ctx.routines.director_diversification,
+        facts=watch,
+        facts_snapshot=snap if watch else None,
+        reviews_out=computed if watch else None,
     )
+    for sid in sorted(computed):
+        ctx.write("position_review", sid, computed[sid])
     ctx.write("portfolio_context", SESSION_SUBJECT, pctx)
     return pctx
 
@@ -1037,6 +1089,123 @@ def _portfolio_notes(
             persona_call_id=call_id,
             payload=c.model_dump(mode="json"),
         )
+
+
+def _held_tickers(conn: sqlite3.Connection) -> set[str]:
+    """Tickers of open structures (E13.17: IV rank for the exit-watch facts)."""
+    rows = conn.execute("SELECT DISTINCT ticker FROM open_structures WHERE status = 'open'")
+    return {str(r[0]) for r in rows}
+
+
+def _exit_watch_rules(ctx: JobContext) -> list[str]:
+    """E13.17: the exit-policy lines Research sees with the exit watch (deterministic)."""
+    exits = exit_config(ctx.settings)
+    return [
+        f"Exit policy: {exits.policy_for(None).summary()}",
+        "Mandatory exits (stop, DTE exit, expiry) are closed by code; `review` asks "
+        "Quant to judge hold or close (rolling is not an option).",
+    ]
+
+
+def _valid_watch_items(out: ResearchOutput, pctx: PortfolioContext) -> list[ExitWatchItem]:
+    """E13.17: Research's watch items for open structures, one per structure (first wins).
+
+    The ticker is taken from the open book, never from the reply.
+    """
+    if not isinstance(out, ResearchExitOutput):
+        return []
+    by_id = {p.structure_id: p for p in pctx.positions}
+    seen: set[str] = set()
+    items: list[ExitWatchItem] = []
+    for w in out.exit_watchlist:
+        pos = by_id.get(w.structure_id)
+        if pos is None or w.structure_id in seen:
+            continue
+        seen.add(w.structure_id)
+        items.append(w.model_copy(update={"ticker": pos.ticker}))
+    return items
+
+
+def _watch_thesis_checks(items: Sequence[ExitWatchItem]) -> list[ResearchThesisCheck]:
+    """E13.17: the legacy E5.9 thesis checks from watch items (``broken`` -> ``invalidated``)."""
+    return [
+        ResearchThesisCheck(
+            structure_id=w.structure_id,
+            status="invalidated" if w.thesis_status == "broken" else w.thesis_status,
+            reason=w.reason,
+        )
+        for w in items
+    ]
+
+
+def _watch_inputs(pctx: PortfolioContext) -> dict[str, int]:
+    """Code-counted inputs Research had for the exit watch."""
+    facts = [p.facts for p in pctx.positions if p.facts is not None]
+    return {
+        "stories": sum(f.stories_fresh for f in facts),
+        "scout_mentions": sum(1 for f in facts if f.scout_mention is not None),
+        "iv_rank_known": sum(1 for f in facts if f.iv_rank is not None),
+        "earnings_known": sum(1 for f in facts if f.next_earnings is not None),
+        "ex_div_known": sum(1 for f in facts if f.ex_dividend is not None),
+    }
+
+
+def _exit_watchlist(
+    ctx: JobContext,
+    items: list[ExitWatchItem],
+    pctx: PortfolioContext,
+    call_id: str,
+) -> ExitWatchlistPayload | None:
+    """E13.17: store Research's exit watchlist and journal one row per open position.
+
+    Advisory only: nothing here creates a proposal.
+    """
+    if pctx.empty:
+        return None
+    have = {w.structure_id for w in items}
+    missing = [p.structure_id for p in pctx.positions if p.structure_id not in have]
+    payload = ExitWatchlistPayload(
+        as_of=ctx.now.isoformat(),
+        items=items,
+        positions_seen=len(pctx.positions),
+        missing=missing,
+        inputs=_watch_inputs(pctx),
+    )
+    ctx.write("exit_watchlist", SESSION_SUBJECT, payload)
+    j = _journal(ctx, ctx.snapshot.id)
+    for w in items:
+        review = w.action == "review"
+        _note(
+            ctx,
+            w.structure_id,
+            persona="research",
+            topic=NoteTopic.EXIT_WATCH,
+            title=f"{w.ticker} exit watch: {w.action} ({w.thesis_status})",
+            body="\n".join([w.reason, *(f"- {e}" for e in w.evidence)]),
+            about=[],
+        )
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.EXIT,
+            w.structure_id,
+            Choice.NOTED,
+            ReasonCode.EXIT_WATCH_REVIEW if review else ReasonCode.EXIT_WATCH_HOLD,
+            reason_text=f"{w.ticker}: {w.thesis_status}: {w.reason}".strip(": "),
+            persona_call_id=call_id,
+            payload=w.model_dump(mode="json"),
+        )
+    by_id = {p.structure_id: p for p in pctx.positions}
+    for sid in missing:
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.EXIT,
+            sid,
+            Choice.NOTED,
+            ReasonCode.EXIT_WATCH_MISSING,
+            reason_text=f"{by_id[sid].ticker}: no exit watch item from Research; hold",
+            persona_call_id=call_id,
+        )
+    return payload
 
 
 def _loop_inputs(
@@ -1240,6 +1409,11 @@ def _fit_research_budget(
     """
     limit = _research_prompt_limit(settings)
 
+    def _size(out: Mapping[str, Any]) -> int:
+        # E13.17's exit block lives in the reserve: measure the prompt without it.
+        rest = {k: v for k, v in out.items() if k not in ("exit_block", "exit_rules")}
+        return len(build_prompt("research", snap, rest))
+
     def _with_pool(keep: list[PoolItem]) -> dict[str, Any]:
         cands = {i.ticker: Stance(i.stance) for i in keep}
         return {
@@ -1251,10 +1425,10 @@ def _fit_research_budget(
 
     kept, cut = cut_pool(items, POOL_MAX_LINES)
     out = _with_pool(kept) if cut else inputs
-    if len(build_prompt("research", snap, out)) <= limit:
+    if _size(out) <= limit:
         return out, cut
     out = {**out, "max_headlines": 0}
-    if len(build_prompt("research", snap, out)) <= limit:
+    if _size(out) <= limit:
         return out, cut
     kept, more = cut_pool(kept, POOL_BUDGET_CUT)
     out = _with_pool(kept) | {"max_headlines": 0}
@@ -1335,7 +1509,16 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     # D33 guard reads SPY even when SPY is not a candidate (it left the core list).
     from arc.universe.tiers import market_reference
 
-    regimes = _regime_entries(ctx, env, sorted(set(cands) | set(market_reference(settings))))
+    regimes = _regime_entries(
+        ctx,
+        env,
+        sorted(
+            set(cands)
+            | set(market_reference(settings))
+            # E13.17: IV rank for every open position's exit-watch facts
+            | (_held_tickers(ctx.conn) if ctx.routines.exit_path.watch else set())
+        ),
+    )
     # Re-read (and record) the context now that today's regime entries exist.
     snap = ContextStore(ctx.conn).snapshot(ctx.now, kinds=RESEARCH_READS, run_id=ctx.run_id)
     RoutineRunRepo(ctx.conn).set_inputs(ctx.run_id, [ctx.snapshot.id, snap.id])
@@ -1349,7 +1532,9 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
     summary, _ = _portfolio_summary(ctx, env, settings)
     # E5.9 (D33): the open book as Research sees it (deterministic, stored as context).
-    pctx = _portfolio_context(ctx, env, settings, budget)
+    # E13.17: personas.exit_path != deterministic adds the per-position facts.
+    exit_watch = ctx.routines.exit_path.watch
+    pctx = _portfolio_context(ctx, env, settings, budget, snap=snap)
     dedupe_cfg = DedupeConfig.from_settings(settings, budget.tier)
     priors = recent_ideas(ctx.conn, now=ctx.now, cfg=dedupe_cfg)
     ctx.record_input(
@@ -1373,7 +1558,9 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "portfolio_block": "" if pctx.empty else render_portfolio_context(pctx, settings),
         "recent_ideas": "\n".join(recent_lines),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
-        "rules": _research_rules(cands, settings, budget, pctx, diversification, compact=compact),
+        "rules": _research_rules(
+            cands, settings, budget, pctx, diversification, compact=compact, exit_watch=exit_watch
+        ),
         # E4.6 (D45): [{slug, label, category}] of the youtube.briefs job, for the n/N lines.
         "youtube_channels": _youtube_channels(ctx),
         # D49: the effective categories block (labels + max_age), so a replay judges
@@ -1393,6 +1580,9 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         inputs["candidate_tickers"] = sorted(cands)
     if pool_cfg.merged:
         inputs["pool_merged"] = True
+    if exit_watch and not pctx.empty:  # E13.17: absent off the exit path (prompt unchanged)
+        inputs["exit_block"] = render_exit_block(pctx, settings)
+        inputs["exit_rules"] = _exit_watch_rules(ctx)
     budget_cut: list[PoolItem] = []
     if compact:
         inputs["compact"] = True
@@ -1401,13 +1591,16 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             inputs,
             pool.items,
             settings,
-            lambda c: _research_rules(c, settings, budget, pctx, diversification, compact=True),
+            lambda c: _research_rules(
+                c, settings, budget, pctx, diversification, compact=True, exit_watch=exit_watch
+            ),
         )
         for item in budget_cut:
             cands.pop(item.ticker, None)
     else:
         _log_prompt_size(snap, inputs, settings)
-    reply, out = _ask(ctx, env, "research", snap, inputs, ResearchOutput)
+    schema: type[ResearchOutput] = ResearchExitOutput if "exit_block" in inputs else ResearchOutput
+    reply, out = _ask(ctx, env, "research", snap, inputs, schema)
     kept, dropped, rejected = _filter_shortlist(out, cands)
     kept, pdropped, prejected = _portfolio_filter(kept, pctx, held, settings, diversification)
     dropped.update(pdropped)
@@ -1513,6 +1706,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             persona_call_id=call_id,
             payload={"no_trade_reason": no_trade, "market_regime": out.market_regime},
         )
+    watch_items = _valid_watch_items(out, pctx) if "exit_block" in inputs else []
     payload = ShortlistPayload(
         shortlist=kept,
         excluded=excluded,
@@ -1520,7 +1714,11 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         session_notes=out.session_notes,
         budget=qr_budget,
         portfolio_view=out.portfolio_view if not pctx.empty else None,
-        thesis_checks=_valid_thesis_checks(out, pctx),
+        thesis_checks=(
+            _watch_thesis_checks(watch_items)
+            if "exit_block" in inputs
+            else _valid_thesis_checks(out, pctx)
+        ),
         no_trade_reason=no_trade,
         market_guard=guard,
         suppressed=[ln.removeprefix("- ") for ln in recent_lines],
@@ -1529,10 +1727,20 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             if (pool_cfg.merged or compact)
             else None
         ),
+        exit_watchlist_counts=(
+            {
+                "hold": len(pctx.positions) - sum(w.action == "review" for w in watch_items),
+                "review": sum(w.action == "review" for w in watch_items),
+            }
+            if "exit_block" in inputs
+            else None
+        ),
     )
     entry = ctx.write("shortlist", SESSION_SUBJECT, payload)
     _loop_record_full_run(ctx)
     _portfolio_notes(ctx, payload, pctx, entry.id, call_id)
+    if "exit_block" in inputs:
+        _exit_watchlist(ctx, watch_items, pctx, call_id)
     _note(
         ctx,
         SESSION_SUBJECT,
@@ -1587,13 +1795,21 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "open_positions": len(pctx.positions),
             "suppressed": len(recent_lines),
             "thesis_checks": len(payload.thesis_checks),
+            **(
+                {"exit_watch_review": (payload.exit_watchlist_counts or {}).get("review", 0)}
+                if payload.exit_watchlist_counts is not None
+                else {}
+            ),
             "no_change": False,
             "loop_digest": _loop_digest_of(ctx),
             **dropped,
             **budget.metrics(),
         },
         notice=notice,
-        stop_chain=no_trade is not None,  # E5.9: no Quant/Risk LLM calls on an empty shortlist
+        # E5.9: no Quant/Risk LLM calls on an empty shortlist. E13.17: with an exit
+        # watchlist written the chain goes on so quant.exit runs (the open steps see the
+        # empty shortlist and return without an LLM call).
+        stop_chain=no_trade is not None and payload.exit_watchlist_counts is None,
         card=research_card(
             payload,
             candidates=len(cands),
@@ -3355,6 +3571,255 @@ def quant_propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
 
 # ---------------------------------------------------------------------------
+# quant.exit (E13.17 / D56): exit cases, shadow only until E13.18
+# ---------------------------------------------------------------------------
+
+_NO_JUDGEMENT = "no judgement (fail closed to hold)"
+
+
+def _case_block(case: ExitCase, cap: int) -> str:
+    """One exit case for the Quant prompt (≤ *cap* chars; facts as compact JSON)."""
+    trig = "; ".join(f"{t.kind}: {t.detail}" for t in case.triggers)
+    facts = json.dumps(case.facts.model_dump(mode="json", exclude_none=True), sort_keys=True)
+    swap = ""
+    if case.swap is not None:
+        s = case.swap
+        swap = (
+            f"\n  swap: close for {s.open_ticker} (edge {s.edge:.3f}/BP vs "
+            f"min {s.min_edge_required:.3f}; new PoP {s.new_pop:.2f})"
+        )
+    text = (
+        f"- structure_id {case.structure_id} {case.ticker} {case.kind or 'structure'}\n"
+        f"  triggers: {trig}\n  facts: {facts}{swap}"
+    )
+    return text if len(text) <= cap else text[: cap - 1] + "…"
+
+
+def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
+    """``quant.exit``: Quant's hold/close judgement on code-built exit cases (E13.17).
+
+    Runs only under ``personas.exit_path`` shadow | research (``chain_for`` adds the
+    step). Deterministic around one Quant call:
+
+    * a position with a mandatory signal (stop / DTE exit / expiry), a pending exit or
+      an exit already proposed today gets no case (``exit:case_skipped``);
+    * triggers: Research's watch item says ``review``, a discretionary signal fired,
+      or the position pairs with today's capacity rejections (D19 ``score_swaps``);
+    * at most ``quant_exit_max_cases`` cases (watch reviews first), each prompt block
+      ≤ ``quant_exit_case_max_chars``; a case Quant omits is ``hold``;
+    * writes one ``exit_case`` per case + journal rows. **Nothing is proposed** (shadow;
+      ``research`` behaves the same until E13.18 adds ``risk.exit`` and the close path).
+    """
+    from arc.positions.evaluate import PositionReview as _Review
+    from arc.positions.exit_case import (
+        ExitCaseFacts,
+        ExitSwap,
+        case_skip_reason,
+        triggers_for,
+    )
+    from arc.positions.reallocate import ReallocRules, pair_swaps
+    from arc.positions.steps import capacity_candidates
+    from arc.routines.handlers import JobSkippedError
+    from arc.slack.digests import quant_exit_card
+    from arc.store.execution import OpenStructureRepo
+    from arc.store.swaps import SwapRepo
+
+    settings = ctx.settings
+    mode = ctx.routines.exit_path.mode
+    if not ctx.routines.exit_path.watch:
+        msg = "personas.exit_path is deterministic"
+        raise JobSkippedError(msg, continue_chain=True)
+    rows = {str(r["id"]): r for r in OpenStructureRepo(ctx.conn).list_open()}
+    if not rows:
+        msg = "no open positions"
+        raise JobSkippedError(msg, continue_chain=True)
+    reviews: dict[str, PositionReview] = {}
+    for e in ctx.snapshot.of_kind("position_review"):
+        r = _Review.model_validate(e.payload)
+        if r.structure_id in rows:
+            reviews[r.structure_id] = r
+    wl_entry = ctx.snapshot.latest("exit_watchlist", SESSION_SUBJECT)
+    watch = (
+        {w.structure_id: w for w in ExitWatchlistPayload.model_validate(wl_entry.payload).items}
+        if wl_entry is not None
+        else {}
+    )
+    pc_entry = ctx.snapshot.latest("portfolio_context", SESSION_SUBJECT)
+    held = PortfolioContext.model_validate(pc_entry.payload).positions if pc_entry else []
+    facts = {p.structure_id: p.facts for p in held}
+    today = _today(ctx)
+    day = today.isoformat()
+    swaps = SwapRepo(ctx.conn)
+    capacity, _ = capacity_candidates(ctx.conn, day, taken=swaps.sources())
+    count, per_ticker = swaps.churn(day)
+    rules = ReallocRules(
+        min_edge=settings.realloc_min_edge,
+        pop_tolerance=settings.realloc_pop_tolerance,
+        max_per_day=settings.realloc_max_swaps_per_day,
+        max_per_ticker_per_day=settings.realloc_max_swaps_per_ticker_per_day,
+    )
+    skip: dict[str, str] = {}
+    eligible: list[PositionReview] = []
+    for sid in sorted(reviews):
+        why = case_skip_reason(reviews[sid], today_exit=rows[sid].get("exit_day") == day)
+        if why is not None:
+            skip[sid] = why
+        else:
+            eligible.append(reviews[sid])
+    paired = {
+        sid: ExitSwap.of(sw)
+        for sid, sw in pair_swaps(
+            eligible, capacity, rules, swaps_today=count, ticker_swaps_today=per_ticker
+        ).items()
+    }
+    exits = exit_config(settings)
+    pending: list[ExitCase] = []
+    for r in eligible:
+        w = watch.get(r.structure_id)
+        trig = triggers_for(r, w, paired.get(r.structure_id))
+        if not trig:
+            skip[r.structure_id] = "no_trigger"
+            continue
+        kind = rows[r.structure_id].get("kind") or r.kind
+        try:
+            policy = exits.policy_for(StructureKind(kind)) if kind else exits.policy_for(None)
+        except ValueError:
+            policy = exits.policy_for(None)
+        case = ExitCasePayload(
+            structure_id=r.structure_id,
+            ticker=r.ticker,
+            kind=r.kind,
+            triggers=trig,
+            facts=ExitCaseFacts.from_review(
+                r,
+                facts.get(r.structure_id),
+                policy=policy,
+                thesis_status=w.thesis_status if w is not None else None,
+            ),
+            swap=paired.get(r.structure_id),
+            recommendation="hold",
+            rationale=_NO_JUDGEMENT,
+            review_id=wl_entry.id if w is not None and wl_entry is not None else None,
+        )
+        pending.append(case)
+    # Research reviews first, then by structure id (stable); cap the case count.
+    pending.sort(key=lambda c: (c.triggers[0].kind != "research_review", c.structure_id))
+    over = pending[settings.quant_exit_max_cases :]
+    cases = pending[: settings.quant_exit_max_cases]
+    j = _journal(ctx, ctx.snapshot.id)
+    for sid, why in sorted(skip.items()):
+        j.add(
+            JournalPersona.QUANT,
+            Stage.EXIT,
+            sid,
+            Choice.NOTED,
+            ReasonCode.EXIT_CASE_SKIPPED,
+            reason_text=why,
+            payload={"detail": why},
+        )
+    for c in over:
+        j.add(
+            JournalPersona.QUANT,
+            Stage.EXIT,
+            c.structure_id,
+            Choice.NOTED,
+            ReasonCode.EXIT_CASE_SKIPPED,
+            reason_text="over_case_limit",
+            payload={"detail": "over_case_limit", "limit": settings.quant_exit_max_cases},
+        )
+    skipped = Counter(skip.values())
+    if not cases:
+        ctx.conn.commit()
+        msg = "no exit cases"
+        raise JobSkippedError(msg, continue_chain=True)
+    cap = settings.quant_exit_case_max_chars
+    inputs = {
+        "cases_block": "\n".join(_case_block(c, cap) for c in cases),
+        "policy_summary": "\n".join(
+            sorted({exits.policy_for(None).summary(), *(_policy_line(exits, c) for c in cases)})
+        ),
+        "scan_date": day,
+        "rules": [
+            "Return exactly one entry per case structure_id: "
+            + ", ".join(c.structure_id for c in cases)
+            + "; recommendation hold | close; rationale <= 400 chars.",
+        ],
+    }
+    call_id: str | None = None
+    got: dict[str, tuple[str, str]] = {}
+    failed: str | None = None
+    try:
+        reply, out = _ask(ctx, env, "quant_exit", ctx.snapshot, inputs, QuantExitOutput)
+    except PersonaError as exc:  # shadow never fails the open chain: every case holds
+        log.warning("pipeline.quant_exit_failed", error=str(exc))
+        failed = str(exc)[:200]
+    else:
+        call_id = _record_ok(ctx, "quant_exit", reply, ctx.snapshot.id, Counter())
+        for jd in out.cases:
+            if jd.structure_id in {c.structure_id for c in cases} and jd.structure_id not in got:
+                got[jd.structure_id] = (jd.recommendation, jd.rationale)
+    no_call = f"Quant call failed (fail closed to hold): {failed}"[:400] if failed else ""
+    default = ("hold", no_call or _NO_JUDGEMENT)
+    judged: list[ExitCasePayload] = []
+    for c in cases:
+        rec, why = got.get(c.structure_id, default)
+        c2 = c.model_copy(update={"recommendation": rec, "rationale": why})
+        judged.append(c2)
+        ctx.write("exit_case", c2.structure_id, c2)
+        j.add(
+            JournalPersona.QUANT,
+            Stage.EXIT,
+            c2.structure_id,
+            Choice.NOTED,
+            ReasonCode.EXIT_CASE_BUILT,
+            reason_text=f"{c2.ticker}: {rec}: {why}",
+            persona_call_id=call_id,
+            payload=c2.model_dump(mode="json") | {"mode": mode, "proposed": False},
+        )
+        _note(
+            ctx,
+            c2.structure_id,
+            persona="quant",
+            topic=NoteTopic.EXIT_WATCH,
+            title=f"{c2.ticker} exit case: {rec}",
+            body=why,
+            about=[],
+        )
+    ctx.conn.commit()
+    closes = sum(c.recommendation == "close" for c in judged)
+    return JobResult(
+        summary=(
+            f"{len(judged)} exit case(s) judged ({closes} close); shadow: nothing proposed"
+            + (f"; {sum(skipped.values())} skipped" if skipped else "")
+        ),
+        metrics={
+            "exit_cases": len(judged),
+            "exit_close": closes,
+            "exit_hold": len(judged) - closes,
+            "exit_over_limit": len(over),
+            "exit_missing_judgement": sum(c.structure_id not in got for c in cases),
+            "exit_llm_failed": failed is not None,
+            **{f"exit_skipped_{k}": n for k, n in sorted(skipped.items())},
+        },
+        card=quant_exit_card(
+            judged,
+            shadow=True,
+            skipped=dict(skipped),
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+        ),
+    )
+
+
+def _policy_line(exits: ExitConfig, case: ExitCase) -> str:
+    try:
+        kind = StructureKind(case.kind) if case.kind else None
+    except ValueError:
+        kind = None
+    return f"{case.kind or 'default'}: {exits.policy_for(kind).summary()}"
+
+
+# ---------------------------------------------------------------------------
 # Handler entry points
 # ---------------------------------------------------------------------------
 
@@ -3364,6 +3829,7 @@ _STEPS: dict[str, Callable[[JobContext, PipelineEnv], JobResult]] = {
     "risk.open": risk_open,
     "quant.revise": quant_revise,
     "quant.propose": quant_propose,
+    "quant.exit": quant_exit,
 }
 #: E13.9: pre-D56 step names, bound to the same functions for one release.
 _STEP_ALIASES = {"quant": "quant.open", "risk": "risk.open", "propose": "quant.propose"}
@@ -3408,6 +3874,10 @@ def quant_revise_step(ctx: JobContext) -> JobResult:
 
 def quant_propose_step(ctx: JobContext) -> JobResult:
     return quant_propose(ctx, _live_env(ctx))
+
+
+def quant_exit_step(ctx: JobContext) -> JobResult:
+    return quant_exit(ctx, _live_env(ctx))
 
 
 def pipeline_handlers(env: PipelineEnv) -> dict[str, Handler]:

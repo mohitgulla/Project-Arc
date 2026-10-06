@@ -318,6 +318,17 @@
           "title": "Expiry Bucket",
           "type": "string"
         },
+        "facts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PositionFacts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "greeks": {
           "$ref": "#/$defs/Greeks",
           "description": "Contribution, all contracts"
@@ -520,6 +531,164 @@
       "title": "PortfolioThesis",
       "type": "object"
     },
+    "PositionFacts": {
+      "additionalProperties": false,
+      "description": "Code-built research facts for one open position (E13.17, D56).\n\nOnly built under ``personas.exit_path`` != ``deterministic`` (Research's exit\nwatch). The last six fields come straight from the position's\n:class:`~arc.positions.evaluate.PositionReview`; the rest from the context store.",
+      "properties": {
+        "ex_dividend": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ex_dividend ex_date, YYYY-MM-DD",
+          "title": "Ex Dividend"
+        },
+        "iv_rank": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "regime entry vol.iv_rank (0..1)",
+          "title": "Iv Rank"
+        },
+        "newest_story": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "headline of the newest such story",
+          "title": "Newest Story"
+        },
+        "newest_story_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Newest Story Id"
+        },
+        "next_earnings": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "YYYY-MM-DD; None = unknown / ETF",
+          "title": "Next Earnings"
+        },
+        "remaining_ev": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remaining Ev"
+        },
+        "remaining_ev_per_bp": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remaining Ev Per Bp"
+        },
+        "remaining_pop": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remaining Pop"
+        },
+        "review_signals": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Review Signals",
+          "type": "array"
+        },
+        "scout_mention": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Stance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "scout_read ticker call stance"
+        },
+        "stories_fresh": {
+          "default": 0,
+          "description": "active story entries naming the ticker",
+          "minimum": 0,
+          "title": "Stories Fresh",
+          "type": "integer"
+        },
+        "take_profit_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Take Profit Pct"
+        },
+        "theta_per_day": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Theta Per Day"
+        }
+      },
+      "title": "PositionFacts",
+      "type": "object"
+    },
     "Stance": {
       "description": "Directional stance of a candidate.",
       "enum": [
@@ -532,7 +701,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "E5.9 (D33): Research's deterministic view of the open book (subject ``session``).",
+  "description": "E5.9 (D33): Research's deterministic view of the open book (subject ``session``).\n\nv2 (E13.17, additive): each position may carry ``facts`` (exit path only).",
   "properties": {
     "account": {
       "$ref": "#/$defs/PortfolioAccount"

@@ -1878,6 +1878,32 @@ draft A/Bs `config/experiments/live/xp4_research_idea_pool.yaml` /
 when `personas.scout_feed: on` writes Scout candidates. Flipping a shipped default needs
 the experiment's `win` verdict.
 
+### 5.31 Research-managed exits I: exit watchlist + exit cases (E13.17, D56, D44)
+
+    personas.exit_path: deterministic     # config/routines.yaml; deterministic | shadow | research
+
+`deterministic` (default) is today: Research's prompt is byte for byte unchanged, no
+`exit_watchlist` is written and the chain has no `quant.exit` step.
+
+- **`shadow`:** each Research loop adds an "Open positions (exit watch)" block (one
+  position line + one code-built facts line per structure, ≤ 600 chars each,
+  `exit_block_max_chars_per_position`) and asks for an `exit_watchlist` instead of
+  `thesis_checks`. Code drops unknown ids, keeps one item per structure, takes the ticker
+  from the book and journals `exit:watch_hold` / `exit:watch_review` /
+  `exit:watch_missing`. The reviews Research saw are written as `position_review`.
+  `quant.exit` (first step after Research) builds one `exit_case` per position with a
+  trigger (Research `review`, a discretionary signal, or a D19 swap pairing) — never for
+  stop / DTE exit / expiry or a pending exit (`exit:case_skipped`) — at most
+  `quant_exit_max_cases` (8), ≤ 900 chars each, and asks Quant hold | close. A missing
+  judgement or a failed call holds. **Nothing is proposed**; the positions chain is
+  untouched. The `[Quant] Exit cases` card lists ticker · trigger · call · remaining EV.
+- **`research`:** behaves as `shadow` until E13.18 adds `risk.exit` and the close path.
+
+Turn on with `!arc config personas.exit_path shadow` (riskier, asks for a confirm).
+Check: `arc routines tick --dry-run --now <today>T10:40-04:00` shows `quant.exit` only
+under shadow/research; `arc context show --kind exit_watchlist --latest` /
+`--kind exit_case`; `arc journal show` (stage `exit`).
+
 ### 7.1 Required status check: `check`
 
 `.github/workflows/ci.yml` job `check` (job id and `name:` both `check`) runs

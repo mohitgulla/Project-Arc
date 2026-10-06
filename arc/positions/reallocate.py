@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CapacityCandidate",
+    "pair_swaps",
     "PairOutcome",
     "ReallocRules",
     "ScoredPair",
@@ -241,3 +242,25 @@ def score_swaps(
         for t in tickers:
             per_ticker[t] += 1
     return suggestions, out
+
+
+def pair_swaps(
+    reviews: Sequence[PositionReview],
+    capacity: Sequence[CapacityCandidate],
+    rules: ReallocRules,
+    *,
+    swaps_today: int = 0,
+    ticker_swaps_today: Mapping[str, int] | None = None,
+) -> dict[str, SwapSuggestion]:
+    """E13.17: ``structure_id -> SwapSuggestion`` for positions that pair with one of
+    today's capacity rejections (:func:`score_swaps`, same D19 edge/PoP/churn rules).
+
+    Lives here, not in :mod:`arc.positions.exit_case`, so the exit-case models (a
+    context payload) stay free of ``arc.gate``.
+    """
+    if not capacity:
+        return {}
+    suggestions, _ = score_swaps(
+        reviews, capacity, rules, swaps_today=swaps_today, ticker_swaps_today=ticker_swaps_today
+    )
+    return {s.close_structure_id: s for s in suggestions}

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
         RiskAssessment,
         RiskOutput,
     )
+    from arc.positions.exit_case import ExitCase
     from arc.sizing import SizingResult
 
 __all__ = [
@@ -56,6 +57,7 @@ __all__ = [
     "Performance",
     "research_card",
     "quant_card",
+    "quant_exit_card",
     "regime_name",
     "risk_card",
     "scalp_card",
@@ -890,6 +892,52 @@ def risk_card(
 
 def _verdict(a: RiskAssessment) -> str:
     return str(getattr(a, "verdict", "accept"))
+
+
+# ---------------------------------------------------------------------------
+# Quant exit cases (E13.17 / D56; E13.13 styles it)
+# ---------------------------------------------------------------------------
+
+_TRIGGER_LABEL = {
+    "research_review": "Research review",
+    "profit_target": "Profit target",
+    "time_adjusted_target": "Time-adjusted target",
+    "remaining_ev_floor": "Remaining EV floor",
+    "reallocate": "Reallocate",
+}
+
+
+def quant_exit_card(
+    cases: Sequence[ExitCase],
+    *,
+    shadow: bool = True,
+    skipped: Mapping[str, int] | None = None,
+    run_id: str | None = None,
+    chain_run_id: str | None = None,
+) -> CardView:
+    """``[Quant] Exit cases: 2 judged • 1 close``; one line per case.
+
+    Minimal (E13.17): ticker · trigger(s) · recommendation · remaining EV. Under
+    ``shadow`` the header says nothing is proposed.
+    """
+    closes = sum(c.recommendation == "close" for c in cases)
+    title = f"[Quant] Exit cases: {len(cases)} judged • {closes} close"
+    skip_txt = " · ".join(
+        f"{n} skipped ({k.replace('_', ' ')})" for k, n in sorted((skipped or {}).items())
+    )
+    blocks = _head(title, "Shadow: journaled only, nothing proposed" if shadow else "", skip_txt)
+    for c in cases:
+        trig = ", ".join(_TRIGGER_LABEL.get(t.kind, t.kind) for t in c.triggers)
+        ev = c.facts.remaining_ev_hold
+        line = (
+            f"*{B.esc(c.ticker)}* `{B.esc(c.structure_id)}` · {B.esc(trig)} · "
+            f"*{c.recommendation.capitalize()}* · remaining EV {_money(ev, signed=True)}"
+        )
+        blocks.append(B.divider())
+        blocks.append(
+            B.persona_section(Persona.QUANT, line, B.esc(_clip_line(c.rationale)), escape=False)
+        )
+    return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 
 
 def _verdict_chip(a: RiskAssessment) -> str:

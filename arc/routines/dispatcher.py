@@ -99,6 +99,8 @@ _STEP_PERSONA = {
     "quant.revise": "quant",
     "risk.open": "risk",
     "quant.propose": "quant",
+    # E13.17 (D56): exit cases (personas.exit_path shadow | research)
+    "quant.exit": "quant",
 }
 
 

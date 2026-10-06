@@ -237,6 +237,12 @@ class ReasonCode(StrEnum):
     EXIT_TIME_ADJUSTED = "exit:time_adjusted_target"
     EXIT_EV_FLOOR = "exit:remaining_ev_floor"
     EXIT_REALLOCATE = "exit:reallocate"
+    # E13.17 (D56): Research-managed exits (personas.exit_path shadow | research)
+    EXIT_WATCH_HOLD = "exit:watch_hold"  # Research: keep holding (noted)
+    EXIT_WATCH_REVIEW = "exit:watch_review"  # Research: ask Quant for an exit case
+    EXIT_WATCH_MISSING = "exit:watch_missing"  # no watch item for an open position: hold
+    EXIT_CASE_BUILT = "exit:case_built"  # Quant judged an exit case (hold | close)
+    EXIT_CASE_SKIPPED = "exit:case_skipped"  # mandatory_pending | exit_pending | no_trigger
     # reallocate (E6.4: close-to-reallocate swaps; one row per scored pair / swap step)
     REALLOC_SUGGESTED = "realloc:suggested"
     REALLOC_EDGE_BELOW_MIN = "realloc:edge_below_min"
@@ -445,6 +451,11 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.EXIT_TIME_ADJUSTED: "Exit: time-adjusted profit target",
     ReasonCode.EXIT_EV_FLOOR: "Exit: remaining EV below the floor",
     ReasonCode.EXIT_REALLOCATE: "Exit: close to reallocate",
+    ReasonCode.EXIT_WATCH_HOLD: "Exit watch: Research holds",
+    ReasonCode.EXIT_WATCH_REVIEW: "Exit watch: Research asks for a review",
+    ReasonCode.EXIT_WATCH_MISSING: "Exit watch: no Research item (hold)",
+    ReasonCode.EXIT_CASE_BUILT: "Exit case judged by Quant",
+    ReasonCode.EXIT_CASE_SKIPPED: "Exit case skipped",
     ReasonCode.REALLOC_SUGGESTED: "Swap suggested",
     ReasonCode.REALLOC_EDGE_BELOW_MIN: "Swap edge below the minimum",
     ReasonCode.REALLOC_POP_BELOW_OPEN: "Swap PoP below the open position's",

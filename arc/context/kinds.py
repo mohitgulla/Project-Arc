@@ -22,6 +22,7 @@ from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic field
 from arc.features.snapshot import FeatureSnapshot
 from arc.models import Candidate, CatalystType, ChannelBrief, Proposal, Stance
 from arc.personas.schemas import (
+    ExitWatchItem,
     QuantOutput,
     ReconcileOutput,
     ResearchOutput,
@@ -30,6 +31,7 @@ from arc.personas.schemas import (
     ScoutTickerCall,
 )
 from arc.positions.evaluate import PositionReview
+from arc.positions.exit_case import ExitCase
 from arc.positions.portfolio import MarketGuard, PortfolioContext
 from arc.universe.tiers import ActiveUniverse, UniverseTierPayload
 
@@ -113,6 +115,11 @@ class ShortlistPayload(ResearchOutput):
     pool_counts: dict[Literal["scalp", "scout", "both", "scout_only_capped"], int] | None = Field(
         None, description="Idea pool size by feed, plus Scout-only ideas cut by the cap"
     )
+    # E13.17 (D56), schema v5 (additive): the exit watchlist's hold / review counts;
+    # None = personas.exit_path deterministic (no watchlist) or an older row.
+    exit_watchlist_counts: dict[Literal["hold", "review"], int] | None = Field(
+        None, description="Research's exit watchlist: positions to hold / to review"
+    )
 
     def budgeted(self) -> list[ResearchRankedItem]:
         """The ranked items inside the Quant/Risk budget (all of them when unset)."""
@@ -175,7 +182,37 @@ class PositionReviewPayload(PositionReview):
 
 
 class PortfolioContextPayload(PortfolioContext):
-    """E5.9 (D33): Research's deterministic view of the open book (subject ``session``)."""
+    """E5.9 (D33): Research's deterministic view of the open book (subject ``session``).
+
+    v2 (E13.17, additive): each position may carry ``facts`` (exit path only).
+    """
+
+    model_config = _FORBID
+
+
+class ExitWatchlistPayload(BaseModel):
+    """Research's exit watchlist (E13.17, D56); kind ``exit_watchlist``, subject ``session``.
+
+    ``items`` are the code-validated watch items (unknown structure ids dropped, one
+    per structure, a missing position defaults to ``hold``). ``inputs`` counts what
+    Research had to go on, by code: stories, scout_mentions, iv_rank_known,
+    earnings_known, ex_div_known. Advisory: it never creates a proposal.
+    """
+
+    model_config = _FORBID
+
+    as_of: str
+    items: list[ExitWatchItem] = Field(default_factory=list)
+    positions_seen: int = Field(..., ge=0)
+    missing: list[str] = Field(
+        default_factory=list, description="Open structure ids Research gave no item for"
+    )
+    inputs: dict[str, int] = Field(default_factory=dict)
+    schema_version: int = 1
+
+
+class ExitCasePayload(ExitCase):
+    """One exit case Quant judged (E13.17, D56); kind ``exit_case``, subject = structure id."""
 
     model_config = _FORBID
 
@@ -193,6 +230,7 @@ class NoteTopic(enum.StrEnum):
     REGIME_VIEW = "regime_view"  # market/sector regime read (Research, Scalp)
     PORTFOLIO_VIEW = "portfolio_view"  # E5.9: Research's read of the open book
     THESIS_CHECK = "thesis_check"  # E5.9: is an open position's thesis still intact?
+    EXIT_WATCH = "exit_watch"  # E13.17: Research's exit watchlist read (session)
     OBSERVATION = "observation"  # informational: news theme, scan summary (Scalp)
     RISK_FLAG = "risk_flag"  # portfolio/calendar concern (Risk)
     LESSON = "lesson"  # post-trade learning (Broker reconcile / Ops)
@@ -729,14 +767,14 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload, schema_version=3),  # E13.7: feed, origins
     KindSpec("regime", RegimePayload, schema_version=2),  # E4.12: iv_percentile_ext
-    KindSpec("shortlist", ShortlistPayload, schema_version=4),  # E13.8: pool_counts
+    KindSpec("shortlist", ShortlistPayload, schema_version=5),  # E13.17: exit_watchlist_counts
     KindSpec("structures", StructuresPayload, schema_version=3),  # E13.9: revision_of/kept
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
     KindSpec("proposal", ProposalPayload, schema_version=2),  # E13.9: revised
     KindSpec("position_review", PositionReviewPayload, schema_version=2),  # E6.4a: floor window
-    KindSpec("portfolio_context", PortfolioContextPayload),  # E5.9 (D33)
+    KindSpec("portfolio_context", PortfolioContextPayload, schema_version=2),  # E13.17: facts
     KindSpec("journal", JournalPayload),
-    KindSpec("note", NotePayload, schema_version=3),  # E13.10: facts (v2 E13.1: personas)
+    KindSpec("note", NotePayload, schema_version=4),  # E13.17: exit_watch topic (v3 E13.10 facts)
     # E4.5 (D30): story digests + options-trading data sources
     KindSpec("story", StoryPayload),
     KindSpec("vol_term", VolTermPayload),
@@ -761,6 +799,10 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("active_universe", ActiveUniverse, schema_version=2),  # E13.4: model, dropped rank
     # E13.7 (D56): the Scout's daily read; subject = "session"
     KindSpec("scout_read", ScoutReadPayload),
+    # E13.17 (D56): Research-managed exits. exit_watchlist subject = "session";
+    # exit_case subject = open structure id.
+    KindSpec("exit_watchlist", ExitWatchlistPayload),
+    KindSpec("exit_case", ExitCasePayload),
 )
 
 

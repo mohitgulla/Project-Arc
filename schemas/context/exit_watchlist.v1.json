@@ -1,0 +1,106 @@
+{
+  "$defs": {
+    "ExitWatchItem": {
+      "additionalProperties": false,
+      "description": "One open position on Research's exit watchlist (E13.17, D56).\n\n``review`` asks Quant for an exit case; ``hold`` keeps the position. Advisory only:\na watchlist item never creates a proposal, and mandatory exits (stop, DTE exit,\nexpiry) stay deterministic.",
+      "properties": {
+        "action": {
+          "enum": [
+            "hold",
+            "review"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "evidence": {
+          "description": "Up to 4 short facts (each <= 160 chars); cite a story/scout/fact id",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "reason": {
+          "default": "",
+          "maxLength": 240,
+          "title": "Reason",
+          "type": "string"
+        },
+        "structure_id": {
+          "title": "Structure Id",
+          "type": "string"
+        },
+        "thesis_status": {
+          "$ref": "#/$defs/ThesisStatus3"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "structure_id",
+        "ticker",
+        "action",
+        "thesis_status"
+      ],
+      "title": "ExitWatchItem",
+      "type": "object"
+    },
+    "ThesisStatus3": {
+      "enum": [
+        "intact",
+        "weakened",
+        "broken"
+      ],
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Research's exit watchlist (E13.17, D56); kind ``exit_watchlist``, subject ``session``.\n\n``items`` are the code-validated watch items (unknown structure ids dropped, one\nper structure, a missing position defaults to ``hold``). ``inputs`` counts what\nResearch had to go on, by code: stories, scout_mentions, iv_rank_known,\nearnings_known, ex_div_known. Advisory: it never creates a proposal.",
+  "properties": {
+    "as_of": {
+      "title": "As Of",
+      "type": "string"
+    },
+    "inputs": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Inputs",
+      "type": "object"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/ExitWatchItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "missing": {
+      "description": "Open structure ids Research gave no item for",
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing",
+      "type": "array"
+    },
+    "positions_seen": {
+      "minimum": 0,
+      "title": "Positions Seen",
+      "type": "integer"
+    },
+    "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "as_of",
+    "positions_seen"
+  ],
+  "title": "ExitWatchlistPayload",
+  "type": "object"
+}

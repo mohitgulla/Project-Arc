@@ -917,6 +917,19 @@ class ArcSettings(BaseSettings):
         description="Target size of the compact Research prompt (chars); "
         "personas.research_compact_prompt: compact only.",
     )
+    # E13.17 (D56): Research-managed exits (personas.exit_path shadow | research only).
+    exit_block_max_chars_per_position: Annotated[int, Field(ge=200, le=2_000)] = Field(
+        default=600,
+        description="Research exit-watch block: hard clip per open position (chars).",
+    )
+    quant_exit_max_cases: Annotated[int, Field(ge=1, le=20)] = Field(
+        default=8,
+        description="quant.exit: at most this many exit cases per call (most triggers first).",
+    )
+    quant_exit_case_max_chars: Annotated[int, Field(ge=300, le=3_000)] = Field(
+        default=900,
+        description="quant.exit prompt: hard clip per exit case (chars).",
+    )
     pipeline_max_shortlist: Annotated[int, Field(ge=1, le=20)] = Field(
         default=10,
         description=(
