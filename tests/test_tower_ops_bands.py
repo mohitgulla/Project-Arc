@@ -56,7 +56,7 @@ def test_live_config_bands_in_owner_order(empty_db) -> None:
     groups = [g for g, _ in TIMELINE_GROUPS]
     # bands follow TIMELINE_GROUPS, the sources sub-bands follow D47 CATEGORY_ORDER
     assert [b.group for b in s.bands] == sorted((b.group for b in s.bands), key=groups.index)
-    assert keys[: keys.index("sweep")] == [
+    assert keys[: keys.index("scalp")] == [
         f"sources.{c.value}" for c in CATEGORY_ORDER if f"sources.{c.value}" in keys
     ]
     labels = {b.key: b.label for b in s.bands}
@@ -67,8 +67,8 @@ def test_live_config_bands_in_owner_order(empty_db) -> None:
     assert labels["trading_loop"] == "Trading loop"
     # the loop row is in its band, labelled with its chain
     assert s.loop is not None and s.loop.band == "trading_loop"
-    assert s.loop.label == "Director → Quant → Risk → Propose → Execute"
-    assert s.loop.persona == "director"
+    assert s.loop.label == "Research → Quant → Risk → Propose → Execute"
+    assert s.loop.persona == "research"
     rows = {r.job: r for r in [*s.rows, s.loop]}
     assert rows["positions.evaluate"].label == "Investor exits"
     assert rows["positions.evaluate"].band == "position_management"
@@ -76,7 +76,7 @@ def test_live_config_bands_in_owner_order(empty_db) -> None:
     assert rows["rss"].band == f"sources.{CATEGORY_ORDER[0].value}" and rows["rss"].persona is None
     assert rows["rss"].categories[0] == SourceCategory.MARKET_NEWS.value
     assert rows["youtube.briefs"].band.startswith("sources.") and rows["youtube.briefs"].llm
-    assert rows["sweep"].band == "sweep" and rows["sweep"].llm
+    assert rows["scalp"].band == "scalp" and rows["scalp"].llm
     # every band's jobs are exactly the rows tagged with it
     for b in s.bands:
         assert b.jobs == [j for j in rows if rows[j].band == b.key] or set(b.jobs) == {
@@ -89,7 +89,7 @@ def test_every_scheduled_live_job_has_label_and_about(empty_db) -> None:
     s = load_session(empty_db, load_routines(), now=NOW, day=TODAY)
     for r in [*s.rows, s.loop]:
         assert r is not None
-        assert r.label != r.job or r.job in {"sweep", "director"}, r.job
+        assert r.label != r.job or r.job in {"scalp", "research"}, r.job
         assert r.about, r.job
         # universe maintenance (symbols, E12.2 momentum, E12.3 trending) sits in "other"
         assert r.band != "other" or r.job == "symbols" or r.job.startswith("universe."), r.job
@@ -147,4 +147,4 @@ def test_display_keys_are_validated(tmp_path, key, value, match) -> None:
 
 
 def test_persona_choices_cover_the_chips() -> None:
-    assert set(TIMELINE_PERSONAS) == {"sweep", "director", "investor", "risk", "auditor", "monitor"}
+    assert set(TIMELINE_PERSONAS) == {"scalp", "research", "investor", "risk", "auditor", "monitor"}

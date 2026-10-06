@@ -82,7 +82,7 @@ class ArcSlackClient:
         Parameters
         ----------
         persona:
-            If provided, the message text is prefixed with ``[Sweep]`` etc.
+            If provided, the message text is prefixed with ``[Scalp]`` etc.
         """
         if persona is not None:
             text = f"{persona_label(persona)} {text}"

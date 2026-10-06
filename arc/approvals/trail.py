@@ -4,7 +4,7 @@ The proposal card shows *why* a trade exists, not only *what* it is. Since E7.4
 the trail is a read of the decision journal (:mod:`arc.journal`) for the chain
 run that produced the proposal, so the card shows exactly what was journaled:
 
-- **Director** — rank in the shortlist, stance, confidence, regime read, thesis
+- **Research** — rank in the shortlist, stance, confidence, regime read, thesis
 - **Quant**    — confidence and rationale for the chosen structure
 - **Risk**     — rating, advisory sizing vs. the D18 cap, concerns, narrative
 - **Market**   — regime + volatility frozen with the proposal (MarketContext)
@@ -40,7 +40,7 @@ log = structlog.get_logger(__name__)
 @dataclass(frozen=True)
 class DecisionTrail:
     chain_run_id: str | None = None
-    director: dict[str, Any] | None = None  # DirectorRankedItem
+    research: dict[str, Any] | None = None  # ResearchRankedItem
     shortlist_size: int = 0
     market_regime: str = ""
     quant: dict[str, Any] | None = None  # QuantStructureOut
@@ -83,7 +83,7 @@ def load_trail(conn: sqlite3.Connection, proposal_hash: str, ticker: str) -> Dec
         mc = journal.market_context(proposal_hash)
         return DecisionTrail(
             chain_run_id=chain,
-            director=_first(decisions, Stage.SHORTLIST, t, {Choice.SELECTED}),
+            research=_first(decisions, Stage.SHORTLIST, t, {Choice.SELECTED}),
             shortlist_size=len(shortlisted),
             market_regime=str(read.payload.get("market_regime", "")) if read else "",
             quant=_first(decisions, Stage.STRUCTURE, t, {Choice.SELECTED}),

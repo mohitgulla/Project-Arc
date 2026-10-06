@@ -1,6 +1,6 @@
 """E3.4a (Analyst A-4): one entry DTE window, read from config, in every entry persona prompt.
 
-- Director / Quant / Risk prompts state the profile's window and delta bands, once.
+- Research / Quant / Risk prompts state the profile's window and delta bands, once.
 - No literal DTE range or delta band in ``arc/personas``.
 - The expiry-cluster flag and the portfolio block never put a bucket label next to "DTE".
 - Persona prose carried between prompts (notes, shortlist, structures) cannot restate
@@ -20,13 +20,13 @@ import structlog
 
 from arc.config import ArcSettings
 from arc.context.store import ContextStore
-from arc.ingest.llm import FixtureSweepLLM
+from arc.ingest.llm import FixtureScalpLLM
 from arc.personas.builders import (
-    DirectorInput,
     QuantInput,
+    ResearchInput,
     RiskInput,
-    build_director_prompt,
     build_quant_prompt,
+    build_research_prompt,
     build_risk_prompt,
 )
 from arc.personas.entry_window import (
@@ -65,8 +65,8 @@ def _no_gate_secret(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _prompts(terms: EntryTerms) -> dict[str, str]:
     return {
-        "director": build_director_prompt(
-            DirectorInput(
+        "research": build_research_prompt(
+            ResearchInput(
                 candidates_json="{}",
                 regime_features_json="{}",
                 portfolio_summary="flat",
@@ -141,20 +141,20 @@ class TestEntryTerms:
 
 
 class TestPrompts:
-    @pytest.mark.parametrize("persona", ["director", "quant", "risk"])
+    @pytest.mark.parametrize("persona", ["research", "quant", "risk"])
     def test_cash_debit_one_range_30_60(self, persona: str) -> None:
         p = _prompts(entry_terms(_settings("cash_debit")))[persona]
         assert DTE_RANGE.findall(p) == [("30", "60")]
         assert "30-45" not in p and "22-45" not in p and "16-30" not in p
-        if persona != "director":
+        if persona != "research":
             assert "debit-vertical short legs 20-35 delta" in p
             assert "long legs 40-70 delta" in p
 
-    @pytest.mark.parametrize("persona", ["director", "quant", "risk"])
+    @pytest.mark.parametrize("persona", ["research", "quant", "risk"])
     def test_margin_one_range_30_45(self, persona: str) -> None:
         p = _prompts(entry_terms(_settings("margin")))[persona]
         assert DTE_RANGE.findall(p) == [("30", "45")]
-        if persona != "director":
+        if persona != "research":
             assert "short strikes 16-30 delta" in p
 
     def test_quant_says_menu_is_in_window(self) -> None:
@@ -162,8 +162,8 @@ class TestPrompts:
         assert "Every menu structure is inside the 30-60 DTE entry window" in p
         assert "do not reject or skip a menu item on DTE" in p
 
-    def test_director_says_window_is_fixed(self) -> None:
-        p = _prompts(entry_terms(_settings("cash_debit")))["director"]
+    def test_research_says_window_is_fixed(self) -> None:
+        p = _prompts(entry_terms(_settings("cash_debit")))["research"]
         assert "fixed by config" in p and "may not be narrowed" in p
         assert "spread expiries within the entry window" in p
 
@@ -242,7 +242,7 @@ class TestExpiryBuckets:
             build_portfolio_context,
             render_portfolio_context,
         )
-        from tests.test_e59_director_portfolio import (
+        from tests.test_e59_research_portfolio import (
             IRON_CONDOR,
             LONG_CALL,
             _env,
@@ -277,7 +277,7 @@ class TestScrub:
             "prefer 22-45 DTE expiries to ease the 46+ cluster",
             "Rules: debit-only, 22-45 DTE, non-negative managed EV",
             "price the Nov 06 chain (36 DTE, inside 22-45) after NFP",
-            "fail the Director's two rules: hold 22-45 days",
+            "fail Research's two rules: hold 22-45 days",
             "short strikes at 16-30 delta (220 area)",
             "0.249 delta, inside the 16-30 band",
             "Every structure offered is 50 DTE, past the 30-45 target",
@@ -315,7 +315,7 @@ class TestScrub:
 
 
 def _run(settings: ArcSettings, env: PipelineEnv):  # noqa: ANN202
-    from arc.ingest.sweep import load_fixture_docs
+    from arc.ingest.scalp import load_fixture_docs
     from arc.pipeline.runner import run_propose
     from arc.routines.heartbeat import RecordingNotifier
 
@@ -333,7 +333,7 @@ class TestPipeline:
         env = PipelineEnv.fixtures()
         conn, report = _run(settings, env)
         assert {o.job: o.status for o in report.outcomes}["risk"] == "ok"
-        for persona in ("director", "quant", "risk"):
+        for persona in ("research", "quant", "risk"):
             prompt = env.llms[persona].prompts[0]  # type: ignore[attr-defined]
             assert DTE_RANGE.findall(prompt) == [("30", "45")], persona
             row = conn.execute(
@@ -350,7 +350,7 @@ class TestPipeline:
         env = PipelineEnv.fixtures(FIXTURE_SETS["bullish"])
         _, report = _run(settings, env)
         assert {o.job: o.status for o in report.outcomes}["quant"] == "ok"
-        for persona in ("director", "quant"):
+        for persona in ("research", "quant"):
             prompt = env.llms[persona].prompts[0]  # type: ignore[attr-defined]
             assert DTE_RANGE.findall(prompt) == [("30", "60")], persona
             assert "30-45" not in prompt
@@ -368,7 +368,7 @@ class TestPipeline:
         assert results and all(r.ok for r in results), results
 
     def test_rebuild_pre_e34a_inputs_with_drifted_prose(self) -> None:
-        """A 10-01-shaped Director call (no entry_terms, legacy bucket labels, an improvised
+        """A 10-01-shaped Research call (no entry_terms, legacy bucket labels, an improvised
         22-45 rule in a prior note) rebuilds with 30-60 and no 22-45 under cash_debit."""
         conn = open_db(":memory:", copy=False)
         store = ContextStore(conn)
@@ -379,7 +379,7 @@ class TestPipeline:
                 "persona": "quant",
                 "topic": "observation",
                 "title": "no trade",
-                "body": "No trade. The Director's gate requires debit-only, 22-45 DTE, short "
+                "body": "No trade. Research's gate requires debit-only, 22-45 DTE, short "
                 "strikes at 16-30 delta. Every structure is 50 DTE, outside the window.",
             },
             produced_by="quant",
@@ -396,7 +396,7 @@ class TestPipeline:
             "recent_ideas": "",
             "rules": ["prefer 22-45 DTE expiries to ease the 46+ cluster"],
         }
-        p = build_prompt("director", snap, inputs, settings=_settings("cash_debit"))
+        p = build_prompt("research", snap, inputs, settings=_settings("cash_debit"))
         assert "30-60 DTE" in p
         body = p.split("## Hard constraints")[0]
         assert "22-45" not in body and "16-30" not in body and "46+" not in body
@@ -408,7 +408,7 @@ class TestPipeline:
             if sk["ticker"] == "NVDA":
                 sk["reason"] = "50 DTE, outside the window"
         env = PipelineEnv.fixtures()
-        env.llms["quant"] = FixtureSweepLLM([json.dumps(quant)])
+        env.llms["quant"] = FixtureScalpLLM([json.dumps(quant)])
         with structlog.testing.capture_logs() as logs:
             conn, _ = _run(_settings("margin"), env)
         hits = [e for e in logs if e["event"] == "quant.dte_rule_outside_config"]

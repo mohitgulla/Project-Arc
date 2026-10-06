@@ -1,4 +1,4 @@
-"""Market-conditions guard (E5.9, D33): deterministic, runs before the Director LLM.
+"""Market-conditions guard (E5.9, D33): deterministic, runs before Research LLM.
 
 New opens are blocked (``market_unclear``) when
 

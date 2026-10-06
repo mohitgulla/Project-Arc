@@ -19,7 +19,7 @@ for every consumer). Three entry points:
   not paired yet (``max_lag_seconds``), then runs the arm's own ``arm_jobs``
   (position management, reconcile, Investor ladders) on its store.
 
-Shared inputs: sources and the Sweep run once, in control. Before each paired
+Shared inputs: sources and the Scalp run once, in control. Before each paired
 chain, the active context entries the chain reads are synced from control's store,
 except the kinds the arm's own jobs produce (e.g. ``position_review``).
 """
@@ -75,7 +75,7 @@ log = structlog.get_logger(__name__)
 # ranking_config / the profile spec / routines options). A step whose targets meet
 # the arm's overlay is re-run by the arm, and so is everything after it.
 STEP_TARGETS: dict[str, frozenset[str]] = {
-    "director": frozenset({"account_profiles", "routines"}),
+    "research": frozenset({"account_profiles", "routines"}),
     "quant": frozenset({"account_profiles", "exits", "costs"}),
     "risk": frozenset({"account_profiles"}),
     "propose": frozenset({"account_profiles", "exits", "costs", "ranking"}),
@@ -618,12 +618,15 @@ def pair_chain(
 def _recent_loop_chains(
     control: sqlite3.Connection, loop_job: str, *, since: _dt.datetime
 ) -> list[str]:
+    from arc.journal.legacy import job_clause  # noqa: PLC0415 - D56: pre-rename 'director'
+
+    clause, args = job_clause(control, loop_job)
     rows = control.execute(
-        """SELECT chain_run_id FROM routine_runs
-           WHERE job = ? AND step_index = 0 AND chain_run_id IS NOT NULL
+        f"""SELECT chain_run_id FROM routine_runs
+           WHERE {clause} AND step_index = 0 AND chain_run_id IS NOT NULL
              AND scheduled_for >= ? AND status IN ('ok', 'failed')
-           ORDER BY scheduled_for""",
-        (loop_job, to_db(since)),
+           ORDER BY scheduled_for""",  # noqa: S608 - placeholders only
+        (*args, to_db(since)),
     ).fetchall()
     return [r[0] for r in rows]
 

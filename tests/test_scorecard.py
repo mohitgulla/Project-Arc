@@ -375,9 +375,9 @@ def test_calibration_uses_shared_points(conn: sqlite3.Connection) -> None:
     sc = build_scorecard(conn, start=START, end=END, now=FRI)
     phash = _open_row(conn)["proposal_hash"]
     pts = calibration_points(conn, [(phash, True)])
-    assert {p for p, _, _ in pts} == {"quant_pop", "director", "quant"}
+    assert {p for p, _, _ in pts} == {"quant_pop", "research", "quant"}
     assert sc.calibration_trades == 1
-    assert {r.persona for r in sc.calibration} == {"quant_pop", "director", "quant"}
+    assert {r.persona for r in sc.calibration} == {"quant_pop", "research", "quant"}
     assert all(r.hit_rate == 1.0 for r in sc.calibration)
 
 

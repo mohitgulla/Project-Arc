@@ -4,7 +4,7 @@ Two builders:
 
 * :meth:`PipelineEnv.live`: Alpaca market data, the Alpaca **paper** account
   (read-only: ``account()``/``positions()``; nothing here submits orders), and
-  Hermes for Director/Quant/Risk, each on the model its tier in
+  Hermes for Research/Quant/Risk, each on the model its tier in
   ``config/llm_routing.yaml`` names (PLAN §2.4, E8.1). Only a
   live run with the broker (not --dry-run) mints gate tokens.
 * :meth:`PipelineEnv.fixtures`: fully offline. It uses the recorded SPY, NVDA, XOM,
@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from arc.broker.base import AccountInfo, BrokerPosition
-from arc.ingest.llm import FixtureSweepLLM, HermesSweepLLM
+from arc.ingest.llm import FixtureScalpLLM, HermesScalpLLM
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -36,13 +36,13 @@ if TYPE_CHECKING:
     from arc.broker.base import BrokerAdapter
     from arc.config import ArcSettings
     from arc.data.base import MarketDataProvider
-    from arc.ingest.llm import SweepLLM
+    from arc.ingest.llm import PersonaLLM
     from arc.universe.guard import UniverseGuard
 
 __all__ = ["FIXTURES_DIR", "FIXTURE_NOW", "FIXTURE_SETS", "PERSONAS", "PipelineEnv"]
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
-PERSONAS = ("director", "quant", "risk")
+PERSONAS = ("research", "quant", "risk")
 # Canned persona reply sets: "neutral" (SPY iron condor; the default) and
 # "bullish" (SPY bull call debit, for the D25 cash_debit profile).
 FIXTURE_SETS: dict[str, Path] = {"neutral": FIXTURES_DIR, "bullish": FIXTURES_DIR / "bullish"}
@@ -60,14 +60,14 @@ class PipelineEnv:
     market: MarketDataProvider
     account: Callable[[], AccountInfo]
     positions: Callable[[], list[BrokerPosition]]
-    llms: dict[str, SweepLLM]
-    sweep_llm: SweepLLM | None = None  # None = run_sweep's own default (Hermes cheap tier)
+    llms: dict[str, PersonaLLM]
+    scalp_llm: PersonaLLM | None = None  # None = run_scalp's own default (Hermes cheap tier)
     offline: bool = False
     mint_tokens: bool = False  # issue gate tokens on PASS (live paper runs only)
     notes: list[str] = field(default_factory=list)
     # D32: the broker whose order list cross-checks the daily order budget (live only).
     broker: BrokerAdapter | None = None
-    # D28: builds the Sweep's universe guard (None = from settings, live Alpaca data).
+    # D28: builds the Scalp's universe guard (None = from settings, live Alpaca data).
     # Fixtures pass one backed by the recordings and a fixture symbol master.
     universe_guard: Callable[[ArcSettings, _dt.datetime], UniverseGuard] | None = None
     # E5.9 / D33: a VIX reading for the market-conditions guard when no `vol_term`
@@ -76,7 +76,7 @@ class PipelineEnv:
     # exercise the guard instead of failing closed on missing data.
     vix_quote: Callable[[], tuple[float, str] | None] | None = None
 
-    def llm(self, persona: str) -> SweepLLM:
+    def llm(self, persona: str) -> PersonaLLM:
         return self.llms[persona]
 
     # -- builders ------------------------------------------------------------
@@ -102,8 +102,8 @@ class PipelineEnv:
         from arc.data.alpaca import AlpacaMarketData
 
         # Each persona's model comes from config/llm_routing.yaml (E8.1).
-        llms: dict[str, SweepLLM] = {
-            p: HermesSweepLLM.from_settings(
+        llms: dict[str, PersonaLLM] = {
+            p: HermesScalpLLM.from_settings(
                 settings, p, timeout_seconds=settings.persona_timeout_seconds
             )
             for p in PERSONAS
@@ -138,18 +138,18 @@ class PipelineEnv:
 
     @classmethod
     def fixtures(cls, directory: Path | None = None) -> PipelineEnv:
-        """Offline: recorded chains, fixture account, canned Sweep + persona replies.
+        """Offline: recorded chains, fixture account, canned Scalp + persona replies.
 
         The market is the E5.7 multi-name recording set (SPY, NVDA, XOM, PLTR, UFPT);
-        the Sweep's universe guard uses a fixture symbol master and that same market,
+        the Scalp's universe guard uses a fixture symbol master and that same market,
         so the liquidity screen runs offline on recorded data.
         """
         from arc.data.recorded import MULTI_NAME_FIXTURES, RecordedMarketData
-        from arc.ingest.sweep import FIXTURES_DIR as SWEEP_FIXTURES
+        from arc.ingest.scalp import FIXTURES_DIR as SCALP_FIXTURES
 
         directory = directory or FIXTURES_DIR
-        llms: dict[str, SweepLLM] = {
-            p: FixtureSweepLLM([(directory / f"{p}.json").read_text()]) for p in PERSONAS
+        llms: dict[str, PersonaLLM] = {
+            p: FixtureScalpLLM([(directory / f"{p}.json").read_text()]) for p in PERSONAS
         }
         market = RecordedMarketData.from_files(*MULTI_NAME_FIXTURES)
         return cls(
@@ -157,7 +157,7 @@ class PipelineEnv:
             account=fixture_account,
             positions=list,
             llms=llms,
-            sweep_llm=FixtureSweepLLM.from_dir(SWEEP_FIXTURES / "responses"),
+            scalp_llm=FixtureScalpLLM.from_dir(SCALP_FIXTURES / "responses"),
             offline=True,
             universe_guard=lambda s, now: fixture_universe_guard(s, now, market),
             vix_quote=fixture_vix,

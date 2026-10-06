@@ -10,7 +10,7 @@ list is today's D51 active list (:func:`arc.universe.tiers.active_tickers`):
   (:func:`arc.universe.extract.extract_tickers`);
 * in ``strict`` mode only the seed list matches, as before.
 
-The result is only a *hint* (``raw_docs.tickers_hint``) for the Sweep; the Sweep's
+The result is only a *hint* (``raw_docs.tickers_hint``) for the Scalp; the Scalp's
 own :class:`~arc.universe.guard.UniverseGuard` decides what becomes a candidate.
 """
 

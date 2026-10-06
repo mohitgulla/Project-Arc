@@ -85,7 +85,7 @@ class EntryTerms(BaseModel):
             f"- Strike bands the scanner applied: {self.bands_text()}."
         )
 
-    def director_line(self) -> str:
+    def research_line(self) -> str:
         return (
             f"Entry window: {self.window} (account profile `{self.account_profile}`), fixed "
             "by config for every menu the Quant prices; it may not be narrowed, widened or "
@@ -156,7 +156,7 @@ def mentions_dte(text: str) -> bool:
 def scrub_carried_text(text: str) -> str:
     """Replace persona-written DTE / delta ranges in carried-over prose.
 
-    Earlier persona output (notes, the shortlist, Quant structures, Sweep
+    Earlier persona output (notes, the shortlist, Quant structures, Scalp
     rationales) is context, not instructions: a window a persona improvised
     ("prefer N-M DTE", "short strikes at N-M delta") must not reach the next
     prompt as a rule, so each such range is rewritten to ``configured-range``

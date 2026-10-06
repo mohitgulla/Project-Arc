@@ -46,14 +46,14 @@ const END = "2026-09-30T22:00:00-04:00";
 
 function slot(status: Slot["status"], at = "2026-09-30T10:00:00-04:00", run: Partial<NonNullable<Slot["run"]>> | null = null): Slot {
   return {
-    job: "director",
+    job: "research",
     at,
     status,
     chain_steps: 0,
     run: run
       ? {
           run_id: "run-1",
-          job: "director",
+          job: "research",
           status: "ok",
           no_change: false,
           reason: "schedule",
@@ -92,9 +92,9 @@ describe("timeline geometry", () => {
 
 describe("slots", () => {
   it("hover text carries job, time, status, duration and outcome", () => {
-    expect(slotTitle(slot("future"))).toBe("director 10:00 ET · Scheduled");
+    expect(slotTitle(slot("future"))).toBe("research 10:00 ET · Scheduled");
     const s = { ...slot("done", undefined, {}), chain_steps: 4 };
-    expect(slotTitle(s)).toBe("director 10:00 ET · Done · 1 min 35 s · 4 chain steps — shortlist 1");
+    expect(slotTitle(s)).toBe("research 10:00 ET · Done · 1 min 35 s · 4 chain steps — shortlist 1");
     expect(slotTitle(slot("failed", undefined, { status: "failed", error: "HTTPError: 503" }))).toContain("— HTTPError: 503");
   });
 
@@ -107,7 +107,7 @@ describe("slots", () => {
   });
 
   it("splits the loop row into full vs no_change runs", () => {
-    const row = { job: "director", label: "director", kind: "loop", cadence: "", slots: [slot("done"), slot("no_change"), slot("no_change"), slot("failed"), slot("future")] } as TimelineRow;
+    const row = { job: "research", label: "research", kind: "loop", cadence: "", slots: [slot("done"), slot("no_change"), slot("no_change"), slot("failed"), slot("future")] } as TimelineRow;
     expect(loopSplit(row)).toEqual({ full: 1, noChange: 2, failed: 1 });
     expect(loopSplit(null)).toEqual({ full: 0, noChange: 0, failed: 0 });
   });
@@ -130,8 +130,8 @@ describe("formatting", () => {
   });
 
   it("labels personas", () => {
-    expect(personaLabel("director")).toBe("Director");
-    expect(personaLabel("sweep.digest")).toBe("Sweep (digest)");
+    expect(personaLabel("research")).toBe("Research");
+    expect(personaLabel("scalp.digest")).toBe("Scalp (digest)");
   });
 });
 
@@ -144,9 +144,9 @@ describe("day + run filters", () => {
   });
 
   it("round-trips run filters into the API query", () => {
-    const q = runQuery(new URLSearchParams("job=director,edgar&status=no_change&rday=today&chain=c1&page=3"));
-    expect(q).toEqual({ job: ["director", "edgar"], status: ["no_change"], day: "today", chain: "c1", page: 3 });
-    expect(runApiQuery(q)).toEqual({ page: 3, size: 50, job: "director,edgar", status: "no_change", day: "today", chain: "c1" });
+    const q = runQuery(new URLSearchParams("job=research,edgar&status=no_change&rday=today&chain=c1&page=3"));
+    expect(q).toEqual({ job: ["research", "edgar"], status: ["no_change"], day: "today", chain: "c1", page: 3 });
+    expect(runApiQuery(q)).toEqual({ page: 3, size: 50, job: "research,edgar", status: "no_change", day: "today", chain: "c1" });
     expect(runApiQuery(runQuery(new URLSearchParams("page=-2")))).toEqual({ page: 1, size: 50 });
   });
 
@@ -163,7 +163,7 @@ describe("run detail", () => {
   it("groups the manifest in the manifest's own order, formatting units", () => {
     const g = manifestGroups({
       run_id: "run-1",
-      job: "director",
+      job: "research",
       duration_ms: 95_000,
       status: "ok",
       git_sha: "0123456789abcdef0123",
@@ -211,26 +211,26 @@ describe("run detail", () => {
 describe("llm, config", () => {
   it("stacks LLM cost by persona per day", () => {
     const llm = {
-      personas: ["director", "sweep"],
+      personas: ["research", "scalp"],
       series: [
-        { day: "2026-09-29", calls: 2, input_tokens: 1, output_tokens: 1, cost_usd: 0.3, by_persona: { director: 0.1, sweep: 0.2 }, by_model: {} },
-        { day: "2026-09-30", calls: 1, input_tokens: 1, output_tokens: 1, cost_usd: 0.1, by_persona: { director: 0.1 }, by_model: {} },
+        { day: "2026-09-29", calls: 2, input_tokens: 1, output_tokens: 1, cost_usd: 0.3, by_persona: { research: 0.1, scalp: 0.2 }, by_model: {} },
+        { day: "2026-09-30", calls: 1, input_tokens: 1, output_tokens: 1, cost_usd: 0.1, by_persona: { research: 0.1 }, by_model: {} },
       ],
     } as unknown as Llm;
     const b = llmBars(llm);
     expect(b.data).toEqual([
-      { label: "09-29", director: 0.1, sweep: 0.2 },
-      { label: "09-30", director: 0.1, sweep: 0 },
+      { label: "09-29", research: 0.1, scalp: 0.2 },
+      { label: "09-30", research: 0.1, scalp: 0 },
     ]);
-    expect(b.series.map((s) => s.label)).toEqual(["Director", "Sweep"]);
+    expect(b.series.map((s) => s.label)).toEqual(["Research", "Scalp"]);
   });
 
   it("groups config keys with overrides first", () => {
     const k = (key: string, group: string, source: "yaml" | "override") => ({ key, group, source }) as OpsConfig["keys"][number];
-    const g = configGroups([k("a", "risk", "yaml"), k("b", "risk", "override"), k("c", "sweep", "yaml")]);
+    const g = configGroups([k("a", "risk", "yaml"), k("b", "risk", "override"), k("c", "scalp", "yaml")]);
     expect(g.map((x) => [x.group, x.keys.map((y) => y.key)])).toEqual([
       ["risk", ["b", "a"]],
-      ["sweep", ["c"]],
+      ["scalp", ["c"]],
     ]);
   });
 });
@@ -291,11 +291,11 @@ describe("E8.8d timeline bands", () => {
   // The API assigns bands from routines.yaml (category for sources, group: for the rest,
   // fallback other); the UI joins rows to bands in the API's order.
   const session = {
-    loop: eRow("director", "trading_loop", { persona: "director", label: "Director → Quant → Risk → Propose → Execute" }),
+    loop: eRow("research", "trading_loop", { persona: "research", label: "Research → Quant → Risk → Propose → Execute" }),
     rows: [
       eRow("rss", "sources.market_news", { kind: "source", categories: ["market_news", "company_data"] }),
       eRow("edgar", "sources.company_data", { kind: "source" }),
-      eRow("sweep", "sweep", { persona: "sweep" }),
+      eRow("scalp", "scalp", { persona: "scalp" }),
       eRow("positions.evaluate", "position_management", { persona: "investor", label: "Investor exits" }),
       eRow("mystery", "other"),
       eRow("orphan", "nowhere"), // no band from the API: falls under Other
@@ -303,8 +303,8 @@ describe("E8.8d timeline bands", () => {
     bands: [
       band("sources.market_news", "Market news", "sources", "Sources", ["rss"]),
       band("sources.company_data", "Company data", "sources", "Sources", ["edgar"]),
-      band("sweep", "Sweep", "sweep", "Sweep", ["sweep"]),
-      band("trading_loop", "Trading loop", "trading_loop", "Trading loop", ["director"]),
+      band("scalp", "Scalp", "scalp", "Scalp", ["scalp"]),
+      band("trading_loop", "Trading loop", "trading_loop", "Trading loop", ["research"]),
       band("position_management", "Position management", "position_management", "Position management", ["positions.evaluate"]),
       band("other", "Other", "other", "Other", ["mystery"]),
     ],
@@ -315,12 +315,12 @@ describe("E8.8d timeline bands", () => {
     expect(v.map((b) => b.band.key)).toEqual([
       "sources.market_news",
       "sources.company_data",
-      "sweep",
+      "scalp",
       "trading_loop",
       "position_management",
       "other",
     ]);
-    expect(v.find((b) => b.band.key === "trading_loop")!.rows.map((r) => r.job)).toEqual(["director"]);
+    expect(v.find((b) => b.band.key === "trading_loop")!.rows.map((r) => r.job)).toEqual(["research"]);
   });
 
   it("marks category sub-bands under the Sources group, once", () => {
@@ -329,7 +329,7 @@ describe("E8.8d timeline bands", () => {
       ["sources.market_news", true],
       ["sources.company_data", false],
     ]);
-    expect(v.find((b) => b.band.key === "sweep")!.sub).toBe(false);
+    expect(v.find((b) => b.band.key === "scalp")!.sub).toBe(false);
   });
 
   it("falls back to Other for rows without a band", () => {
@@ -347,13 +347,13 @@ describe("E8.8d timeline bands", () => {
 
   it("rolls a band up over settled slots and opens it on a problem", () => {
     const rows = [
-      eRow("a", "sweep", { slots: [eSlot("done", "06:00"), eSlot("no_change", "07:00"), eSlot("missed", "08:00"), eSlot("future", "16:00")] }),
-      eRow("b", "sweep", { slots: [eSlot("done", "06:30")] }),
+      eRow("a", "scalp", { slots: [eSlot("done", "06:00"), eSlot("no_change", "07:00"), eSlot("missed", "08:00"), eSlot("future", "16:00")] }),
+      eRow("b", "scalp", { slots: [eSlot("done", "06:30")] }),
     ];
     expect(bandRollup(rows)).toBe("3/4 ok · 1 missed");
     expect(bandHasProblem(rows)).toBe(true);
     expect(bandHasProblem([rows[1]!])).toBe(false);
-    expect(bandRollup([eRow("c", "sweep", { slots: [eSlot("future", "21:00")] })])).toBe("next 21:00");
+    expect(bandRollup([eRow("c", "scalp", { slots: [eSlot("future", "21:00")] })])).toBe("next 21:00");
   });
 
   it("summarises a job row and lists its ⓘ facts", () => {
@@ -365,7 +365,7 @@ describe("E8.8d timeline bands", () => {
     });
     expect(rowSummary(r)).toBe("1/5 done · 1 failed · 1 missed · next 10:30");
     expect(rowFacts(r)).toEqual(["every 30m", "window 09:00-16:00", "LLM no", "writes nothing"]);
-    expect(rowFacts(eRow("sweep", "sweep", { llm: true, writes: ["story"] }))).toEqual(["every 30m", "LLM yes", "writes story"]);
+    expect(rowFacts(eRow("scalp", "scalp", { llm: true, writes: ["story"] }))).toEqual(["every 30m", "LLM yes", "writes story"]);
   });
 });
 

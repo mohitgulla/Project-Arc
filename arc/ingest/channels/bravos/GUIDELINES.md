@@ -10,7 +10,7 @@ tax"), long historical analogues (2000, 2008, 2022), charts of margin debt, mone
 moving averages, then the team's view of where the market goes over the **coming weeks to
 months**. It closes with a paid-strategy pitch, which is stripped before you see the transcript.
 
-Bravos almost never names a price level or a single-stock entry. Its value to the Director is
+Bravos almost never names a price level or a single-stock entry. Its value to Research is
 the **regime view**: is the market's momentum intact, what macro force could break it, and when.
 
 ## What to extract

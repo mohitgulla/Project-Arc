@@ -11,12 +11,12 @@ from pydantic import ValidationError
 from arc.config import ArcSettings
 from arc.control.registry import NOT_EXPOSED_PATHS, TunableError, lookup
 from arc.ingest import rss
-from arc.ingest.llm import FixtureSweepLLM
+from arc.ingest.llm import FixtureScalpLLM
+from arc.ingest.scalp import run_scalp
 from arc.ingest.sources import FeedSpec, SourceCategory, SourceRegistry
 from arc.ingest.store import FILTERED_STATUS, RawDocRepo
-from arc.ingest.sweep import run_sweep
 from arc.routines.config import DEFAULT_ROUTINES_PATH, RoutinesConfig, load_routines
-from arc.slack.digests import sweep_card
+from arc.slack.digests import scalp_card
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.utils.calendar import ET
@@ -66,7 +66,7 @@ class TestShippedFeeds:
             "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness"
         )
         assert feeds["seekingalpha"].url == "https://seekingalpha.com/market_currents.xml"
-        assert all(f.feed == "sweep" for f in feeds.values())  # D54: every feed declares it
+        assert all(f.feed == "scalp" for f in feeds.values())  # D54: every feed declares it
 
     def test_registry_labels_and_categories(self) -> None:
         reg = SourceRegistry.from_routines(load_routines(DEFAULT_ROUTINES_PATH))
@@ -146,7 +146,7 @@ class TestFeedSpecFilters:
         with pytest.raises(ValidationError, match="feed 'a'.*feed scout needs"):
             RoutinesConfig.model_validate(raw)
         raw["sources"]["rss"]["feeds"][0]["feed"] = "bogus"
-        with pytest.raises(ValidationError, match="feed must be sweep"):
+        with pytest.raises(ValidationError, match="feed must be scalp"):
             RoutinesConfig.model_validate(raw)
 
     def test_retired_cnbc_key_keeps_its_label(self) -> None:
@@ -214,17 +214,17 @@ class TestConnector:
             "https://seekingalpha.com/news/6",
         ]
         rows = conn.execute(
-            "SELECT title, sweep_status, swept_at IS NOT NULL AS closed, sweep_run_id"
+            "SELECT title, scalp_status, scalped_at IS NOT NULL AS closed, scalp_run_id"
             " FROM raw_docs ORDER BY url"
         ).fetchall()
         assert len(rows) == 7  # never silently dropped
         by_title = {r["title"]: r for r in rows}
         for t in DIVIDEND_TITLES:
-            assert by_title[t]["sweep_status"] == FILTERED_STATUS
+            assert by_title[t]["scalp_status"] == FILTERED_STATUS
             assert by_title[t]["closed"] == 1
-            assert by_title[t]["sweep_run_id"] is None  # claimed by the next Sweep
+            assert by_title[t]["scalp_run_id"] is None  # claimed by the next Scalp
         for t in KEPT_TITLES[:2]:
-            assert by_title[t]["sweep_status"] is None and by_title[t]["closed"] == 0
+            assert by_title[t]["scalp_status"] is None and by_title[t]["closed"] == 0
 
     def test_refetch_is_deduplicated(self, conn, monkeypatch) -> None:
         _fetch(conn, monkeypatch, DIVIDEND_TITLES)
@@ -259,20 +259,20 @@ class TestConnector:
 
 
 # ---------------------------------------------------------------------------
-# Sweep: filtered docs counted once, never read
+# Scalp: filtered docs counted once, never read
 # ---------------------------------------------------------------------------
 
 
-def _sweep_settings() -> ArcSettings:
+def _scalp_settings() -> ArcSettings:
     return ArcSettings(
         env="paper",
         universe=["AAPL", "NVDA", "SPY"],
         universe_mode="strict",
-        sweep_doc_budget=120,
+        scalp_doc_budget=120,
     )  # type: ignore[call-arg]
 
 
-class TestSweepCountsFiltered:
+class TestScalpCountsFiltered:
     def test_filtered_counted_not_read(self, conn) -> None:
         repo = RawDocRepo(conn)
         for i, t in enumerate(DIVIDEND_TITLES):
@@ -285,27 +285,27 @@ class TestSweepCountsFiltered:
                 source_key="seekingalpha",
                 closed_status=FILTERED_STATUS,
             )
-        llm = FixtureSweepLLM([])
+        llm = FixtureScalpLLM([])
         reg = SourceRegistry.from_routines(load_routines(DEFAULT_ROUTINES_PATH))
-        res = run_sweep(conn, _sweep_settings(), llm=llm, now=NOW, run_id="s1", registry=reg)
+        res = run_scalp(conn, _scalp_settings(), llm=llm, now=NOW, run_id="s1", registry=reg)
         assert res.filtered == 5 and res.filtered_by_source == {"seekingalpha": 5}
-        assert res.docs_swept == 0 and llm.prompts == []
-        assert {r[0] for r in conn.execute("SELECT sweep_run_id FROM raw_docs")} == {"s1"}
+        assert res.docs_scalped == 0 and llm.prompts == []
+        assert {r[0] for r in conn.execute("SELECT scalp_run_id FROM raw_docs")} == {"s1"}
         # each filtered doc is counted by exactly one run
-        res2 = run_sweep(conn, _sweep_settings(), llm=llm, now=NOW, run_id="s2", registry=reg)
+        res2 = run_scalp(conn, _scalp_settings(), llm=llm, now=NOW, run_id="s2", registry=reg)
         assert res2.filtered == 0
-        statuses = {r[0] for r in conn.execute("SELECT sweep_status FROM raw_docs")}
+        statuses = {r[0] for r in conn.execute("SELECT scalp_status FROM raw_docs")}
         assert statuses == {FILTERED_STATUS}
 
     def test_card_shows_filtered_line(self) -> None:
-        view = sweep_card(
+        view = scalp_card(
             docs=3, accepted=0, candidates=[], rejected={}, filtered={"SA": 5, "WSJ": 0}
         )
         text = str(view.blocks)
         assert "Filtered (title filter, not read)" in text and "SA 5" in text
         assert "WSJ 0" not in text
         assert "Filtered" not in str(
-            sweep_card(docs=3, accepted=0, candidates=[], rejected={}).blocks
+            scalp_card(docs=3, accepted=0, candidates=[], rejected={}).blocks
         )
 
 

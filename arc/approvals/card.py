@@ -584,7 +584,7 @@ def _market_line(t: DecisionTrail) -> str:
         if (hv := _pct(vol.get("hv20"))) is not None:
             parts.append(f"HV20 {hv}")
     if t.market_regime:
-        parts.append(f"Director market read *{B.esc(t.market_regime)}*")
+        parts.append(f"Research market read *{B.esc(t.market_regime)}*")
     return " · ".join(parts)
 
 
@@ -595,7 +595,7 @@ def _why(p: Proposal, t: DecisionTrail) -> list[dict[str, Any] | None]:
     if market:
         out.append(B.summary(f":bar_chart: {market}"))
 
-    d = t.director or {}
+    d = t.research or {}
     meta = []
     if d.get("rank"):
         meta.append(f"rank {d['rank']} of {t.shortlist_size}")
@@ -608,7 +608,7 @@ def _why(p: Proposal, t: DecisionTrail) -> list[dict[str, Any] | None]:
         thesis += f"\nRegime: {B.esc(str(d['regime_context']))}"
     out.append(
         B.persona_section(
-            Persona.DIRECTOR,
+            Persona.RESEARCH,
             "Thesis" + (f" ({', '.join(meta)})" if meta else ""),
             thesis,
             escape=False,

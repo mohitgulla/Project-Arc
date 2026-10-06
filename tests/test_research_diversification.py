@@ -1,6 +1,6 @@
-"""E12.5 (D51, D44): relaxed Director diversification behind a default-strict flag.
+"""E12.5 (D51, D44): relaxed Research diversification behind a default-strict flag.
 
-Pins: ``strict`` (the default) leaves the Director prompt and rules byte-identical to
+Pins: ``strict`` (the default) leaves Research prompt and rules byte-identical to
 origin/main's (hashes from tests/diversification_golden.py run against main); with
 ``relaxed`` the prompt carries the owner's wording, a flagged-sector
 ``adds_concentration`` pick drops only once the industry already holds
@@ -23,23 +23,23 @@ from arc.control.effective import effective_routines
 from arc.control.registry import REGISTRY, lookup, read_raw, write_raw
 from arc.control.service import ControlService
 from arc.experiments.overlay import arm_config_data, load_spec
-from arc.ingest.llm import FixtureSweepLLM
-from arc.ingest.sweep import load_fixture_docs
+from arc.ingest.llm import FixtureScalpLLM
+from arc.ingest.scalp import load_fixture_docs
 from arc.personas.builders import RELAXED_DIVERSIFICATION_FIT
-from arc.personas.schemas import DirectorRankedItem
+from arc.personas.schemas import ResearchRankedItem
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
 from arc.pipeline.portfolio_context import build_portfolio_context, load_industries
 from arc.pipeline.runner import open_db
 from arc.pipeline.steps import (
     DROP_CONCENTRATION,
     DROP_DEDUPE,
-    _director_rules,
     _portfolio_filter,
+    _research_rules,
     build_prompt,
 )
 from arc.routines.config import (
     DEFAULT_ROUTINES_PATH,
-    DirectorDiversificationSettings,
+    ResearchDiversificationSettings,
     RoutinesConfig,
     load_routines,
 )
@@ -48,7 +48,7 @@ from arc.store.migrate import migrate
 from arc.utils.calendar import ET
 from tests import diversification_golden as dg
 from tests import finnhub_golden as g
-from tests.test_e59_director_portfolio import (
+from tests.test_e59_research_portfolio import (
     FIXTURES_DIR,
     IRON_CONDOR,
     LONG_CALL,
@@ -64,10 +64,12 @@ REPO = Path(__file__).resolve().parent.parent
 # sha256 of tests/diversification_golden.py's outputs on origin/main 58969a5 (pre-E12.5).
 # E5.12 (D54) re-pinned the Director sha: "Scout" -> "Sweep" in two label lines only
 # (diffed against origin/main 23be73a; no other byte changed).
-MAIN_DIRECTOR_SHA = "f31dc95c9485740125e1ecb67dbbf6688e1d36722b7654af16632f1dddf32979"
+# E13.1 (D56) re-pinned it: "Director" -> "Research", "Sweep" -> "Scalp" in the role,
+# label and "candidates from" lines only (diffed against origin/main f1c1429).
+MAIN_RESEARCH_SHA = "8f7a8bc57582ba1dcb2c974c59091b6692173c1e3632bd09ea333010c19d3da9"
 MAIN_RULES_SHA = "08bc85caa583b536a000ab72d9625df6eb64eeb595bc21ad341fc32e62c63265"
-RELAXED = DirectorDiversificationSettings(mode="relaxed")
-STRICT = DirectorDiversificationSettings()
+RELAXED = ResearchDiversificationSettings(mode="relaxed")
+STRICT = ResearchDiversificationSettings()
 INDUSTRIES = {"NVDA": "semis", "AMD": "semis", "AVGO": "semis", "MU": "memory_storage"}
 
 
@@ -76,7 +78,7 @@ def _settings() -> ArcSettings:
 
 
 def _item(ticker: str, stance: str = "bullish", fit: str | None = "adds_concentration") -> Any:
-    return DirectorRankedItem(
+    return ResearchRankedItem(
         ticker=ticker,
         rank=1,
         thesis="t",
@@ -197,8 +199,8 @@ def test_every_core_semis_name_has_an_industry() -> None:
 
 def test_strict_prompt_and_rules_are_byte_identical_to_main() -> None:
     snap = g.snapshot(with_finnhub=False)
-    assert dg.sha(dg.director_prompt(snap)) == MAIN_DIRECTOR_SHA
-    assert dg.sha(dg.director_prompt(snap, diversification="strict")) == MAIN_DIRECTOR_SHA
+    assert dg.sha(dg.research_prompt(snap)) == MAIN_RESEARCH_SHA
+    assert dg.sha(dg.research_prompt(snap, diversification="strict")) == MAIN_RESEARCH_SHA
     assert dg.sha("\n".join(dg.strict_rules())) == MAIN_RULES_SHA
     pctx = dg.portfolio_context(
         [("NVDA", "technology", "bullish", 420.0)], flagged_sectors=[], flagged_stances=[]
@@ -206,15 +208,15 @@ def test_strict_prompt_and_rules_are_byte_identical_to_main() -> None:
     from arc.models import Stance
 
     cands = {"AMD": Stance.BULLISH}
-    assert _director_rules(cands, _settings(), None, pctx, STRICT) == _director_rules(
+    assert _research_rules(cands, _settings(), None, pctx, STRICT) == _research_rules(
         cands, _settings(), None, pctx
     )
 
 
 def test_relaxed_prompt_swaps_only_the_concentration_wording() -> None:
     snap = g.snapshot(with_finnhub=False)
-    strict = dg.director_prompt(snap)
-    relaxed = dg.director_prompt(snap, diversification="relaxed")
+    strict = dg.research_prompt(snap)
+    relaxed = dg.research_prompt(snap, diversification="relaxed")
     assert relaxed != strict
     assert "is not, by itself, a reason to exclude" in relaxed
     assert "Rank two names in the same industry when each has its own catalyst" in relaxed
@@ -228,8 +230,8 @@ def test_relaxed_prompt_swaps_only_the_concentration_wording() -> None:
 
 def test_empty_book_prompt_is_the_same_in_both_modes() -> None:
     snap = g.snapshot(with_finnhub=False)
-    a = g.director_prompt(snap)
-    assert g.director_prompt(snap, diversification="relaxed") == a
+    a = g.research_prompt(snap)
+    assert g.research_prompt(snap, diversification="relaxed") == a
 
 
 def test_relaxed_rules_state_the_industry_cap() -> None:
@@ -240,7 +242,7 @@ def test_relaxed_rules_state_the_industry_cap() -> None:
         flagged_sectors=["technology"],
         flagged_stances=[],
     )
-    rules = "\n".join(_director_rules({"AMD": Stance.BULLISH}, _settings(), None, pctx, RELAXED))
+    rules = "\n".join(_research_rules({"AMD": Stance.BULLISH}, _settings(), None, pctx, RELAXED))
     assert "once the book holds 2 names in that industry" in rules
     assert "flagged sector/stance/expiry" not in rules
 
@@ -255,10 +257,10 @@ def test_replay_rebuilds_the_relaxed_prompt_from_recorded_inputs() -> None:
         "diversification": "relaxed",
         "rules": ["r"],
     }
-    p = build_prompt("director", snap, inputs)
+    p = build_prompt("research", snap, inputs)
     assert RELAXED_DIVERSIFICATION_FIT in p
     strict = build_prompt(
-        "director", snap, {k: v for k, v in inputs.items() if k != "diversification"}
+        "research", snap, {k: v for k, v in inputs.items() if k != "diversification"}
     )
     assert RELAXED_DIVERSIFICATION_FIT not in strict
 
@@ -315,7 +317,7 @@ def test_relaxed_unflagged_sector_never_drops_even_past_the_industry_cap() -> No
 
 def test_relaxed_held_ticker_still_drops_and_dedupe_is_unchanged() -> None:
     pctx = _semis_book(flagged_sectors=[], flagged_stances=[])
-    # NVDA held bearish-side pick flagged by the Director: already-held name drops
+    # NVDA held bearish-side pick flagged by Research: already-held name drops
     out, dropped, _ = _portfolio_filter(
         [_item("NVDA", stance="bearish")], pctx, {}, _settings(), RELAXED, industries=INDUSTRIES
     )
@@ -361,7 +363,7 @@ def test_relaxed_loads_the_shipped_industry_map_by_default() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Portfolio context thresholds + the director step end to end
+# Portfolio context thresholds + the research step end to end
 # ---------------------------------------------------------------------------
 
 
@@ -391,7 +393,7 @@ def test_relaxed_thresholds_reach_the_portfolio_context() -> None:
     assert build_portfolio_context(conn, env, settings, diversification=STRICT, **kw) == strict
 
 
-def _director_run(mode: str) -> tuple[Any, Any]:
+def _research_run(mode: str) -> tuple[Any, Any]:
     conn = open_db(":memory:", copy=False)
     load_fixture_docs(conn)
     env = PipelineEnv.fixtures()
@@ -400,28 +402,28 @@ def _director_run(mode: str) -> tuple[Any, Any]:
         conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=1,
         at=FIXTURE_NOW - dt.timedelta(days=2),
     )  # fmt: skip
-    d = json.loads((FIXTURES_DIR / "director.json").read_text())
+    d = json.loads((FIXTURES_DIR / "research.json").read_text())
     base = d["shortlist"][0]
     d["shortlist"] = [
         {**base, "ticker": "NVDA", "stance": "bullish", "rank": 1,
          "portfolio_fit": "adds_concentration"},  # only the bullish stance is flagged
     ]  # fmt: skip
     d["excluded"] = []
-    env.llms["director"] = FixtureSweepLLM([json.dumps(d)])
+    env.llms["research"] = FixtureScalpLLM([json.dumps(d)])
     routines = load_routines()
     routines = routines.model_copy(
-        update={"director_diversification": DirectorDiversificationSettings(mode=mode)}  # type: ignore[arg-type]
+        update={"director_diversification": ResearchDiversificationSettings(mode=mode)}  # type: ignore[arg-type]
     )
     conn, report = _run(_settings(), routines, env, conn=conn)
     return conn, report
 
 
 @pytest.mark.parametrize("mode", ["strict", "relaxed"])
-def test_director_step_applies_the_mode(mode: str) -> None:
-    conn, report = _director_run(mode)
+def test_research_step_applies_the_mode(mode: str) -> None:
+    conn, report = _research_run(mode)
     tickers = [i["ticker"] for i in _shortlist(conn)["shortlist"]]
     row = conn.execute(
-        "SELECT prompt_inputs FROM persona_calls WHERE persona='director' ORDER BY rowid DESC"
+        "SELECT prompt_inputs FROM persona_calls WHERE persona='research' ORDER BY rowid DESC"
     ).fetchone()
     inputs = json.loads(row[0])
     if mode == "strict":
@@ -429,6 +431,6 @@ def test_director_step_applies_the_mode(mode: str) -> None:
         assert "diversification" not in inputs  # strict records nothing (replay unchanged)
     else:
         assert tickers == ["NVDA"]
-        assert "drop_concentration" not in _outcome(report, "director").metrics
+        assert "drop_concentration" not in _outcome(report, "research").metrics
         assert inputs["diversification"] == "relaxed"
         assert any("names in that industry" in r for r in inputs["rules"])

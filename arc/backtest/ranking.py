@@ -212,7 +212,7 @@ class BacktestSettings(BaseModel):
     stance: Literal["none", "trend"] = Field(
         "trend",
         description="none = every profile structure is on every menu; trend = a deterministic "
-        "Director proxy: the 20-session trend label at the decision close (bull/bear/sideways) "
+        "Research proxy: the 20-session trend label at the decision close (bull/bear/sideways) "
         "picks the profile's stance_strategies (bullish/bearish/neutral)",
     )
     slippage_grid: list[float] = Field(default_factory=lambda: [0.0, 0.25, 0.5])

@@ -1,6 +1,6 @@
-"""The Sweep's universe check (D28): seed list, symbol master, new-ticker cap, liquidity screen.
+"""The Scalp's universe check (D28): seed list, symbol master, new-ticker cap, liquidity screen.
 
-One :class:`UniverseGuard` per Sweep run. It answers two questions:
+One :class:`UniverseGuard` per Scalp run. It answers two questions:
 
 * :meth:`UniverseGuard.known` — may the ticker be named at all? ``strict``: it is
   in the active list. ``seed``: it is a seed (D51: core or momentum) or in the
@@ -9,12 +9,12 @@ One :class:`UniverseGuard` per Sweep run. It answers two questions:
   candidate be written to context? Seed tickers (D51: core + momentum) always
   pass. A trending-tier name must be optionable and pass the screen profile of
   ``tiers.trending.screen``. Any other name (a discovery) must be optionable, fit
-  under the per-run ``sweep_max_new_tickers`` cap, and pass the
+  under the per-run ``scalp_max_new_tickers`` cap, and pass the
   ``tiers.discovery.screen`` profile (E12.4: both default ``relaxed``). Screen
   results are cached per ticker and profile for the run, so one ticker is
   measured once however many batches name it.
 * :meth:`UniverseGuard.skips_confidence_floor` — E12.4: core + momentum names are
-  kept below ``sweep_min_confidence``.
+  kept below ``scalp_min_confidence``.
 
 The guard never touches the gate: gate caps apply per underlying whatever the
 universe (PLAN §5).
@@ -54,11 +54,11 @@ __all__ = [
     "UniverseGuard",
 ]
 
-# Sweep rejection keys (stable; stored in sweep_batches.rejected, shown on the card).
+# Scalp rejection keys (stable; stored in scalp_batches.rejected, shown on the card).
 REJECT_NOT_IN_UNIVERSE = "not_in_universe"  # strict mode: not in the seed list
 REJECT_UNKNOWN_SYMBOL = "unknown_symbol"  # seed mode: not in the symbol master
 REJECT_ILLIQUID = "illiquid"  # failed the liquidity screen (or no listed options)
-REJECT_NEW_TICKER_CAP = "over_new_ticker_cap"  # more non-seed names than sweep_max_new_tickers
+REJECT_NEW_TICKER_CAP = "over_new_ticker_cap"  # more non-seed names than scalp_max_new_tickers
 
 
 @dataclass
@@ -110,7 +110,7 @@ class UniverseGuard:
         cfg = config or universe_config(settings)
         mode = UniverseMode(settings.universe_mode)
         if master is None and mode is UniverseMode.SEED and load_master:
-            # Never fetches here (a Sweep run must not stall on the SEC file): the
+            # Never fetches here (a Scalp run must not stall on the SEC file): the
             # weekly `symbols` job / `arc universe refresh` fills the cache. With no
             # cache, non-seed names fail closed as unknown_symbol.
             master = load_symbol_master(
@@ -128,7 +128,7 @@ class UniverseGuard:
             seed=frozenset(normalize_symbol(t) for t in seed),
             config=cfg,
             master=master,
-            max_new=settings.sweep_max_new_tickers,
+            max_new=settings.scalp_max_new_tickers,
             today=now.date(),
             dte_window=settings.entry_dte_window,
             market_factory=market_factory,
@@ -168,12 +168,12 @@ class UniverseGuard:
 
     def skips_confidence_floor(self, ticker: str) -> Tier | None:
         """E12.4: the tier (core / momentum) whose names are kept below
-        ``sweep_min_confidence``, else ``None`` (the floor applies)."""
+        ``scalp_min_confidence``, else ``None`` (the floor applies)."""
         tier = self.tier_of(ticker)
         return tier if tier in SEED_TIERS else None
 
     def floor_exempt(self) -> frozenset[str]:
-        """E12.4: every core + momentum ticker (kept below ``sweep_min_confidence``)."""
+        """E12.4: every core + momentum ticker (kept below ``scalp_min_confidence``)."""
         return frozenset(t for t, tier in self.tiers.items() if tier in SEED_TIERS)
 
     def screen_profile(self, ticker: str) -> ScreenProfile:

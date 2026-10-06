@@ -44,7 +44,7 @@ from arc.ingest.channels.briefs import (
     process_new_videos,
     video_from_row,
 )
-from arc.ingest.llm import FixtureSweepLLM, LLMResult, SweepLLMError
+from arc.ingest.llm import FixtureScalpLLM, LLMResult, ScalpLLMError
 from arc.models import (
     BriefCall,
     BriefCatalyst,
@@ -814,14 +814,14 @@ class TestRegistry:
 
 class _FailingLLM:
     def complete(self, prompt: str) -> LLMResult:
-        raise SweepLLMError("boom")
+        raise ScalpLLMError("boom")
 
 
 class TestProcessor:
     def test_prompt_contains_guidelines_and_clean_transcript(
         self, stockedup: ChannelProcessor
     ) -> None:
-        llm = FixtureSweepLLM([json.dumps(_payload())])
+        llm = FixtureScalpLLM([json.dumps(_payload())])
         res = stockedup.process(_video(), llm, universe=["SPY", "NVDA"])
         prompt = llm.prompts[0]
         assert stockedup.profile.guidelines_version in prompt
@@ -837,12 +837,12 @@ class TestProcessor:
 
     def test_unparsable_reply_raises(self, stockedup: ChannelProcessor) -> None:
         with pytest.raises(BriefParseError):
-            stockedup.process(_video(), FixtureSweepLLM(["no json here"]), universe=[])
+            stockedup.process(_video(), FixtureScalpLLM(["no json here"]), universe=[])
         with pytest.raises(BriefParseError):
-            stockedup.process(_video(), FixtureSweepLLM(["{bad json}"]), universe=[])
+            stockedup.process(_video(), FixtureScalpLLM(["{bad json}"]), universe=[])
 
     def test_llm_error_propagates(self, stockedup: ChannelProcessor) -> None:
-        with pytest.raises(SweepLLMError):
+        with pytest.raises(ScalpLLMError):
             stockedup.process(_video(), _FailingLLM(), universe=[])
 
 
@@ -872,7 +872,7 @@ class TestRunner:
     ) -> None:
         _insert_video(db, "old", dt.datetime(2026, 9, 24, 18, tzinfo=ET))
         _insert_video(db, "new", dt.datetime(2026, 9, 25, 18, tzinfo=ET))
-        llm = FixtureSweepLLM([json.dumps(_payload())])
+        llm = FixtureScalpLLM([json.dumps(_payload())])
         now = dt.datetime(2026, 9, 26, 9, tzinfo=ET)
         run = process_new_videos(db, settings, llm, now=now)
         assert run.processed == 1 and run.stored == {STATUS_ACTIVE: 1}
@@ -882,7 +882,7 @@ class TestRunner:
         assert [c.ticker for c in run.candidates] == ["NVDA"]
 
         # Second run: nothing new.
-        again = process_new_videos(db, settings, FixtureSweepLLM([]), now=now)
+        again = process_new_videos(db, settings, FixtureScalpLLM([]), now=now)
         assert again.processed == 0 and again.skipped == 1
 
     def test_next_video_supersedes(self, db: sqlite3.Connection, settings: ArcSettings) -> None:
@@ -890,12 +890,12 @@ class TestRunner:
         process_new_videos(
             db,
             settings,
-            FixtureSweepLLM([json.dumps(_payload())]),
+            FixtureScalpLLM([json.dumps(_payload())]),
             now=dt.datetime(2026, 9, 26, tzinfo=ET),
         )
         _insert_video(db, "mon", dt.datetime(2026, 9, 28, 18, tzinfo=ET))
         now = dt.datetime(2026, 9, 28, 19, tzinfo=ET)
-        process_new_videos(db, settings, FixtureSweepLLM([json.dumps(_payload())]), now=now)
+        process_new_videos(db, settings, FixtureScalpLLM([json.dumps(_payload())]), now=now)
         assert [b.video_id for b in active_briefs(db, now)] == ["mon"]
         statuses = dict(db.execute("SELECT video_id, status FROM channel_briefs").fetchall())
         assert statuses == {"fri": STATUS_SUPERSEDED, "mon": STATUS_ACTIVE}
@@ -907,9 +907,9 @@ class TestRunner:
         now = dt.datetime(2026, 9, 26, tzinfo=ET)
         run = process_new_videos(db, settings, _FailingLLM(), now=now)
         assert run.failed == 1 and run.processed == 0
-        run = process_new_videos(db, settings, FixtureSweepLLM(["not json"]), now=now)
+        run = process_new_videos(db, settings, FixtureScalpLLM(["not json"]), now=now)
         assert run.failed == 1
-        run = process_new_videos(db, settings, FixtureSweepLLM([json.dumps(_payload())]), now=now)
+        run = process_new_videos(db, settings, FixtureScalpLLM([json.dumps(_payload())]), now=now)
         assert run.processed == 1
 
     def test_unknown_channel_uses_default_processor(
@@ -923,7 +923,7 @@ class TestRunner:
             prefix="[Other] [T] ",
         )
         now = dt.datetime(2026, 9, 26, tzinfo=ET)
-        run = process_new_videos(db, settings, FixtureSweepLLM([json.dumps(_payload())]), now=now)
+        run = process_new_videos(db, settings, FixtureScalpLLM([json.dumps(_payload())]), now=now)
         assert run.results[0].brief.channel_slug == "default"
         assert run.candidates[0].confidence == pytest.approx(0.8 * 0.3)
 
@@ -932,7 +932,7 @@ class TestRunner:
     ) -> None:
         _insert_video(db, "legacy", dt.datetime(2026, 9, 25, 18, tzinfo=ET), channel_id=None)
         now = dt.datetime(2026, 9, 26, tzinfo=ET)
-        run = process_new_videos(db, settings, FixtureSweepLLM([json.dumps(_payload())]), now=now)
+        run = process_new_videos(db, settings, FixtureScalpLLM([json.dumps(_payload())]), now=now)
         assert run.results[0].brief.channel_slug == "stockedup"
         assert run.results[0].brief.title == "Outlook"
 

@@ -16,11 +16,11 @@ import structlog
 
 log = structlog.get_logger()
 
-# D54: the stored status of a doc the Sweep read keeps its pre-rename value (``scouted``)
+# D54: the stored status of a doc the Scalp read keeps its pre-rename value (``scouted``)
 # so status counts stay comparable across the cutover; only identifiers were renamed.
-SWEPT_STATUS = "scouted"
+SCALPED_STATUS = "scouted"
 # D55 (E4.11): an RSS entry matched by its feed's title filter. Stored (audited, counted
-# on the Tower Sources page) but closed at insert, so the Sweep never reads it.
+# on the Tower Sources page) but closed at insert, so the Scalp never reads it.
 FILTERED_STATUS = "filtered"
 
 
@@ -76,8 +76,8 @@ class RawDocRepo:
         *source_key* is the E4.5 registry source (an RSS feed name). NULL = derived
         at read time by :meth:`arc.ingest.sources.SourceRegistry.key_for`.
         *closed_status* (D55: ``filtered``) stores the doc already closed out of the
-        Sweep queue in the same statement (``swept_at`` set, ``sweep_run_id`` NULL until
-        the next Sweep run claims it for its count: :meth:`claim_filtered`).
+        Scalp queue in the same statement (``scalped_at`` set, ``scalp_run_id`` NULL until
+        the next Scalp run claims it for its count: :meth:`claim_filtered`).
         """
         h = hash_val or content_hash(source, url)
         if self.exists(h):
@@ -91,7 +91,7 @@ class RawDocRepo:
             """INSERT INTO raw_docs
                (id, source, url, published_at, text, tickers_hint,
                 content_hash, ingested_at, run_id, channel_id, title, source_key,
-                swept_at, sweep_run_id, sweep_status)
+                scalped_at, scalp_run_id, scalp_status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row_id,
@@ -126,19 +126,19 @@ class RawDocRepo:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    # -- Sweep bookkeeping (E4.2) --------------------------------------------
+    # -- Scalp bookkeeping (E4.2) --------------------------------------------
 
-    def list_unswept(self, *, limit: int | None = 200) -> list[dict[str, Any]]:
-        """Docs the Sweep has not closed yet (read or budget-skipped), oldest first."""
-        sql = "SELECT * FROM raw_docs WHERE swept_at IS NULL ORDER BY published_at ASC, id ASC"
+    def list_unscalped(self, *, limit: int | None = 200) -> list[dict[str, Any]]:
+        """Docs the Scalp has not closed yet (read or budget-skipped), oldest first."""
+        sql = "SELECT * FROM raw_docs WHERE scalped_at IS NULL ORDER BY published_at ASC, id ASC"
         if limit is None:
             return [dict(r) for r in self.conn.execute(sql).fetchall()]
         rows = self.conn.execute(f"{sql} LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
-    def mark_swept(self, doc_ids: list[str], *, run_id: str) -> None:
+    def mark_scalped(self, doc_ids: list[str], *, run_id: str) -> None:
         """Mark docs as summarised so later runs skip them."""
-        self._close(doc_ids, run_id=run_id, status=SWEPT_STATUS)
+        self._close(doc_ids, run_id=run_id, status=SCALPED_STATUS)
 
     def mark_skipped_budget(self, doc_ids: list[str], *, run_id: str) -> None:
         """E4.5: never selected by the per-source budget before its context TTL ran out.
@@ -156,28 +156,28 @@ class RawDocRepo:
         self._close(doc_ids, run_id=run_id, status="skipped_stale")
 
     def mark_slow_feed(self, doc_ids: list[str], *, run_id: str) -> None:
-        """D54: a ``feed: scout`` source's doc (earnings calendar); never Sweep-read.
+        """D54: a ``feed: scout`` source's doc (earnings calendar); never Scalp-read.
 
-        The row stays in ``raw_docs`` (``next_earnings()`` reads it); only the Sweep's
-        queue is closed, so it never draws on ``sweep_doc_budget``.
+        The row stays in ``raw_docs`` (``next_earnings()`` reads it); only the Scalp's
+        queue is closed, so it never draws on ``scalp_doc_budget``.
         """
         self._close(doc_ids, run_id=run_id, status="slow_feed")
 
     def claim_filtered(self, *, run_id: str) -> dict[str, int]:
-        """D55: stamp unclaimed ``filtered`` docs with this Sweep run; ``{source_key: n}``.
+        """D55: stamp unclaimed ``filtered`` docs with this Scalp run; ``{source_key: n}``.
 
-        Each filtered doc is counted by exactly one Sweep run (the first after it was
-        stored), so the card's ``filtered`` count is "since the last Sweep".
+        Each filtered doc is counted by exactly one Scalp run (the first after it was
+        stored), so the card's ``filtered`` count is "since the last Scalp".
         """
         rows = self.conn.execute(
             """SELECT COALESCE(source_key, source) AS k, COUNT(*) AS n FROM raw_docs
-               WHERE sweep_status = ? AND sweep_run_id IS NULL GROUP BY k""",
+               WHERE scalp_status = ? AND scalp_run_id IS NULL GROUP BY k""",
             (FILTERED_STATUS,),
         ).fetchall()
         if rows:
             self.conn.execute(
-                """UPDATE raw_docs SET sweep_run_id = ?
-                   WHERE sweep_status = ? AND sweep_run_id IS NULL""",
+                """UPDATE raw_docs SET scalp_run_id = ?
+                   WHERE scalp_status = ? AND scalp_run_id IS NULL""",
                 (run_id, FILTERED_STATUS),
             )
             self.conn.commit()
@@ -186,7 +186,7 @@ class RawDocRepo:
     def _close(self, doc_ids: list[str], *, run_id: str, status: str) -> None:
         now = _now_iso()
         self.conn.executemany(
-            """UPDATE raw_docs SET swept_at = ?, sweep_run_id = ?, sweep_status = ?
+            """UPDATE raw_docs SET scalped_at = ?, scalp_run_id = ?, scalp_status = ?
                WHERE id = ?""",
             [(now, run_id, status, d) for d in doc_ids],
         )
@@ -208,12 +208,12 @@ class RawDocRepo:
 
 
 # ---------------------------------------------------------------------------
-# Sweep batch audit repository (E4.2)
+# Scalp batch audit repository (E4.2)
 # ---------------------------------------------------------------------------
 
 
-class SweepBatchRepo:
-    """Audit trail of every Sweep LLM call.
+class ScalpBatchRepo:
+    """Audit trail of every Scalp LLM call.
 
     Unstructured persona output (the verbatim response, including each
     candidate's rationale) is stored here and nowhere else.
@@ -234,14 +234,14 @@ class SweepBatchRepo:
         error: str | None = None,
         accepted: int = 0,
         rejected: dict[str, int] | None = None,
-        stage: str = "sweep",
+        stage: str = "scalp",
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cost_usd: float | None = None,
     ) -> str:
         row_id = _uuid()
         self.conn.execute(
-            """INSERT INTO sweep_batches
+            """INSERT INTO scalp_batches
                (id, run_id, model, doc_ids, prompt_sha256, raw_response, status,
                 error, accepted, rejected, created_at, stage, input_tokens,
                 output_tokens, cost_usd)
@@ -269,7 +269,7 @@ class SweepBatchRepo:
 
     def list_for_run(self, run_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            "SELECT * FROM sweep_batches WHERE run_id = ? ORDER BY created_at, id", (run_id,)
+            "SELECT * FROM scalp_batches WHERE run_id = ? ORDER BY created_at, id", (run_id,)
         ).fetchall()
         return [dict(r) for r in rows]
 

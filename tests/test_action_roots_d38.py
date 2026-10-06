@@ -1,6 +1,6 @@
 """D38: the position manager's closes get the loop's one-line root (``SELL: IWM``).
 
-Before D38 only the Director's trading loop opened a root in #arc-investor, so a
+Before D38 only Research's trading loop opened a root in #arc-investor, so a
 close proposed and filled by ``positions.evaluate`` never showed as SELL. Now an
 action chain opens the same root once it has a proposal, and posts nothing when
 it is quiet.
@@ -22,7 +22,7 @@ from arc.routines.heartbeat import RecordingNotifier
 from arc.routines.loop import LoopState, refresh_loop_root
 from arc.slack.loop import slot_stamp
 from arc.utils.calendar import ET
-from tests.test_e59_director_portfolio import _settings
+from tests.test_e59_research_portfolio import _settings
 
 if TYPE_CHECKING:
     import sqlite3
@@ -39,7 +39,7 @@ def _conn() -> sqlite3.Connection:
         conn.execute(
             """INSERT INTO context_entries (id, kind, subject, payload, schema_version,
                produced_by, run_id, chain_run_id, created_at, valid_from, expires_at, status)
-               VALUES ('pc1', 'portfolio_context', 'session', ?, 1, 'director', 'r0', 'chain-loop',
+               VALUES ('pc1', 'portfolio_context', 'session', ?, 1, 'research', 'r0', 'chain-loop',
                        '2026-09-28T13:00:00Z', '2026-09-28T13:00:00Z', '2099-01-01T00:00:00Z',
                        'active')""",
             (json.dumps({"account": {"equity": 100250.0, "day_pnl": 250.0}}),),

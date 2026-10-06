@@ -672,7 +672,7 @@ def check_earnings_blackout(
 ) -> list[Violation]:
     """No net-credit (short premium) structure held through earnings.
 
-    Exempt only if the Director flagged an earnings play *and* Risk concurs.
+    Exempt only if Research flagged an earnings play *and* Risk concurs.
     Unknown earnings date (underlying missing from the snapshot) fails closed.
     """
     if not config.earnings_blackout or d.net_price >= 0:

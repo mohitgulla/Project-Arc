@@ -3,9 +3,9 @@
 Called by :func:`scripts.tower_fixture_db.build` after the E8.7a rows exist. Adds, for
 the SPY open (the "full" trade), every section the Trades detail shows:
 
-- a Sweep candidate with sources, a chain (``routine_runs``) with a D27 run manifest,
-  three persona calls (Director / Quant / Risk) and the decision trail through gate,
-  approval and order fill, plus chain-level Director market reads;
+- a Scalp candidate with sources, a chain (``routine_runs``) with a D27 run manifest,
+  three persona calls (Research / Quant / Risk) and the decision trail through gate,
+  approval and order fill, plus chain-level Research market reads;
 - a full ``MarketContext`` (leg quotes, analytics priced by the real exit model and cost
   model) and a ``regime`` context entry in the decisions' input snapshot;
 - order state-machine events;
@@ -199,8 +199,8 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
     at = spy_opened
     chain = "chain-fx-spy"
     runs = {
-        "sweep": "run-fx-sweep",
-        "director": "run-fx-director",
+        "scalp": "run-fx-scalp",
+        "research": "run-fx-research",
         "quant": "run-fx-quant",
         "risk": "run-fx-risk",
     }
@@ -208,7 +208,7 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
         started = at - dt.timedelta(minutes=12 - 3 * i)
         _ins(conn, "routine_runs", {
             "run_id": rid, "job": job, "chain_run_id": chain, "step_index": i,
-            "reason": "schedule" if i == 0 else f"chain:{runs['sweep']}",
+            "reason": "schedule" if i == 0 else f"chain:{runs['scalp']}",
             "scheduled_for": to_db(started), "started_at": to_db(started),
             "finished_at": to_db(started + dt.timedelta(minutes=2)), "status": "ok",
             "attempts": 1, "inputs_snapshot": json.dumps(["snap-fx-spy"]), "outputs": "[]",
@@ -229,7 +229,7 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
         (
             json.dumps(["https://www.sec.gov/Archives/edgar/data/fixture-8k.htm",
                         "wsj:markets/fixture-story", "youtube:fixture-outlook"]),
-            runs["sweep"], (at.date() + dt.timedelta(days=9)).isoformat(), cid,
+            runs["scalp"], (at.date() + dt.timedelta(days=9)).isoformat(), cid,
         ),
     )  # fmt: skip
     # regime context entry + the input snapshot the personas read
@@ -257,12 +257,12 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
     _ins(conn, "context_snapshots", {
         "id": "snap-fx-spy", "as_of": to_db(at - dt.timedelta(minutes=12)), "kinds": "[]",
         "subjects": json.dumps(["SPY"]), "entry_ids": json.dumps(["ctx-fx-regime-spy"]),
-        "run_id": runs["director"], "created_at": to_db(at - dt.timedelta(minutes=12)),
+        "run_id": runs["research"], "created_at": to_db(at - dt.timedelta(minutes=12)),
     })  # fmt: skip
     # persona calls
     calls: dict[str, str] = {}
     for i, (persona, model, tin, tout, ms, usd) in enumerate([
-        ("director", "claude-opus-5.5", 18400, 2100, 21400, 0.4335),
+        ("research", "claude-opus-5.5", 18400, 2100, 21400, 0.4335),
         ("quant", "claude-sonnet-5", 9600, 1500, 11800, 0.0513),
         ("risk", "claude-sonnet-5", 7200, 900, 8300, 0.0351),
     ]):  # fmt: skip
@@ -290,18 +290,18 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
         n += 1
         return _decision(conn, n, at=t + dt.timedelta(minutes=minutes), **{**common, **kw})
 
-    dec(0, persona="sweep", stage="candidate", subject="SPY", choice="selected",
-        code="sweep_candidate", text="Three sources point to a breakout above 660.",
-        run=runs["sweep"], confidence=0.7)  # fmt: skip
-    dec(3, persona="director", stage="shortlist", subject="market", choice="noted",
+    dec(0, persona="scalp", stage="candidate", subject="SPY", choice="selected",
+        code="scalp_candidate", text="Three sources point to a breakout above 660.",
+        run=runs["scalp"], confidence=0.7)  # fmt: skip
+    dec(3, persona="research", stage="shortlist", subject="market", choice="noted",
         code="market_read", text="Risk-on tape; vol cheap vs realised.",
-        run=runs["director"], call=calls["director"])  # fmt: skip
-    dec(3.1, persona="director", stage="shortlist", subject="SPY", choice="selected",
+        run=runs["research"], call=calls["research"])  # fmt: skip
+    dec(3.1, persona="research", stage="shortlist", subject="SPY", choice="selected",
         code="shortlisted", text="Rank 1: cleanest trend, liquid chain.",
-        run=runs["director"], call=calls["director"], confidence=0.72)  # fmt: skip
-    dec(3.2, persona="director", stage="shortlist", subject="XLU", choice="rejected",
+        run=runs["research"], call=calls["research"], confidence=0.72)  # fmt: skip
+    dec(3.2, persona="research", stage="shortlist", subject="XLU", choice="rejected",
         code="not_ranked", text="Not this ticker: must not appear in SPY's trail.",
-        run=runs["director"], call=calls["director"])  # fmt: skip
+        run=runs["research"], call=calls["research"])  # fmt: skip
     dec(6, persona="quant", stage="structure", subject="SPY", choice="selected",
         code="chosen_from_menu", text="Debit call vertical 660/670: best net EV per $ risked.",
         run=runs["quant"], call=calls["quant"], h=spy_hash, confidence=0.66)  # fmt: skip
@@ -342,7 +342,7 @@ def add_trade_rows(  # noqa: PLR0915 - one linear fixture script
 
     manifest = RunManifest(
         run_id=runs["risk"], job="risk", job_kind="persona", chain_run_id=chain, step_index=3,
-        attempt=1, reason=f"chain:{runs['sweep']}", scheduled_for=at - dt.timedelta(minutes=3),
+        attempt=1, reason=f"chain:{runs['scalp']}", scheduled_for=at - dt.timedelta(minutes=3),
         tick_now=at - dt.timedelta(minutes=3), started_at=at - dt.timedelta(minutes=3),
         finished_at=at - dt.timedelta(minutes=1), duration_ms=120_000, market_session="open",
         trading_day=at.date(), status="ok", arc_env="paper", account_profile="cash_debit",

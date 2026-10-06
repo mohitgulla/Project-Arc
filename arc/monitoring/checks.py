@@ -41,7 +41,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from arc.context.ttl import from_db, to_db
-from arc.journal.legacy import cutover as legacy_cutover
+from arc.journal.legacy import cutovers as legacy_cutovers
+from arc.journal.legacy import legacy_names
 from arc.monitoring.store import HeartbeatRepo
 from arc.routines.schedule import catchup_deadline, slots_between
 from arc.utils.calendar import ET
@@ -62,7 +63,7 @@ CONDITION = "condition"
 
 @dataclass(frozen=True)
 class Finding:
-    key: str  # dedupe key, e.g. missed:director:2026-09-28T13:30:00.000000Z
+    key: str  # dedupe key, e.g. missed:research:2026-09-28T13:30:00.000000Z
     kind: str  # missed_window | coverage | tick_slow | tick_stale | stuck_run | gateway_*
     severity: Severity
     message: str
@@ -108,13 +109,15 @@ def _slot_attempted(
     persona was halted is ``"halted"``: intended, never a miss, and not counted
     by the coverage check (E8.2a).
     """
-    # D54: slots before the rename were recorded under the old job name ('scout*'); after
-    # the cutover 'scout' is the slow-feed persona, never a Sweep slot.
+    # D54/D56: slots before a rename were recorded under the old job name ('scout*' then
+    # 'sweep*' for the Scalp, 'director' for Research); after the D54 cutover 'scout' is
+    # the slow-feed persona, never a Scalp slot.
     names = [job]
-    if job.split(".")[0] == "sweep":
-        cut = legacy_cutover(conn)
+    cuts = legacy_cutovers(conn)
+    for old, key in legacy_names(job):
+        cut = cuts.get(key)
         if cut is None or slot < cut:
-            names.append(f"scout{job[len('sweep') :]}")
+            names.append(old)
     marks = ",".join("?" * len(names))
     rows = conn.execute(
         f"""SELECT scheduled_for, status, summary FROM routine_runs
@@ -483,7 +486,7 @@ def slot_rollup(
 
 
 def rollup_line(covs: list[Coverage], routines: RoutinesConfig, *, max_jobs: int = 6) -> str | None:
-    """``Slots: director 71/75, monitor 77/78, sweep 15/15 · missed 6 (list in tower Ops)``.
+    """``Slots: research 71/75, monitor 77/78, scalp 15/15 · missed 6 (list in tower Ops)``.
 
     Personas first (most slots first), then any source that missed a slot; the
     missed total covers every job.

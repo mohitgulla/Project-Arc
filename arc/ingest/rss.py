@@ -95,11 +95,11 @@ def _extract_tickers(text: str, universe: list[str] | IngestUniverse) -> list[st
 
 @dataclass
 class RssFetch:
-    """One ``rss`` run: Sweep-readable new docs plus per-feed accounting.
+    """One ``rss`` run: Scalp-readable new docs plus per-feed accounting.
 
     ``new`` / ``filtered`` are keyed by the feed's registry key (else its URL).
-    ``filtered`` docs (D55) are stored closed ``sweep_status='filtered'`` and are
-    not in ``docs`` (no ``raw_doc_ref`` context, never Sweep-read).
+    ``filtered`` docs (D55) are stored closed ``scalp_status='filtered'`` and are
+    not in ``docs`` (no ``raw_doc_ref`` context, never Scalp-read).
     """
 
     docs: list[RawDoc] = field(default_factory=list)
@@ -116,7 +116,7 @@ def fetch_rss(
     feed_specs: Mapping[str, FeedSpec] | None = None,
     now: datetime | None = None,
 ) -> list[RawDoc]:
-    """Fetch all configured RSS feeds; returns the new Sweep-readable docs.
+    """Fetch all configured RSS feeds; returns the new Scalp-readable docs.
 
     See :func:`fetch_rss_feeds` for the arguments and per-feed accounting.
     """
@@ -137,12 +137,12 @@ def fetch_rss_feeds(  # noqa: PLR0912, PLR0915 - one pass per feed and entry
     """Fetch all configured RSS feeds and store new entries.
 
     *source_keys* maps a feed URL to its E4.5 registry name (``wsj_markets``); the
-    name is stored on each doc so the Sweep's per-source budget can group by feed.
+    name is stored on each doc so the Scalp's per-source budget can group by feed.
     *max_ages* (D47) maps a feed URL to its category's freshness window: an entry
     older than that at *now* is never stored (logged per feed as
     ``ingest.skipped_stale``). *feed_specs* (D55) maps a feed URL to its
     :class:`~arc.ingest.sources.FeedSpec`; an entry its ``title_exclude`` /
-    ``title_include`` filters out is stored closed ``sweep_status='filtered'``
+    ``title_include`` filters out is stored closed ``scalp_status='filtered'``
     (audited, never silently dropped, never read). Duplicates are skipped.
     """
     keys: Mapping[str, str] = source_keys or {}
@@ -229,7 +229,7 @@ def fetch_rss_feeds(  # noqa: PLR0912, PLR0915 - one pass per feed and entry
 
             if doc_id is None:
                 continue
-            if filtered:  # D55: stored + audited, never read by the Sweep
+            if filtered:  # D55: stored + audited, never read by the Scalp
                 out.filtered[label] += 1
             else:
                 out.new[label] += 1

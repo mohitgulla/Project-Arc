@@ -1,4 +1,4 @@
-"""Built-in routine handlers (E5.4): sources write raw_doc_ref, Sweep writes candidates."""
+"""Built-in routine handlers (E5.4): sources write raw_doc_ref, Scalp writes candidates."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import pytest
 
 from arc.config import ArcSettings
 from arc.context import ContextStore
+from arc.ingest.scalp import ScalpRunResult
 from arc.ingest.store import RawDocRepo, content_hash
-from arc.ingest.sweep import SweepRunResult
 from arc.models import Candidate, RawDoc
 from arc.routines.config import JobKind, RoutinesConfig
 from arc.routines.handlers import (
@@ -19,7 +19,7 @@ from arc.routines.handlers import (
     earnings_source,
     edgar_source,
     rss_source,
-    sweep_persona,
+    scalp_persona,
     youtube_source,
 )
 from arc.store.db import connect
@@ -53,8 +53,8 @@ def _ctx(
                 }
             }
         }
-        if job != "sweep"
-        else {"personas": {"sweep": {"schedule": ["12:00"], "writes": ["candidate", "note"]}}}
+        if job != "scalp"
+        else {"personas": {"scalp": {"schedule": ["12:00"], "writes": ["candidate", "note"]}}}
     )
     kind, spec = routines.step(job)
     return JobContext(
@@ -185,7 +185,7 @@ def test_source_without_options_uses_settings(conn: sqlite3.Connection) -> None:
     assert result.summary == "0 new docs"
 
 
-def test_sweep_persona_writes_candidates_and_metrics(conn: sqlite3.Connection) -> None:
+def test_scalp_persona_writes_candidates_and_metrics(conn: sqlite3.Connection) -> None:
     cand = Candidate.model_validate(
         {
             "ticker": "SPY",
@@ -197,20 +197,20 @@ def test_sweep_persona_writes_candidates_and_metrics(conn: sqlite3.Connection) -
             "created_at": NOW,
         }
     )
-    result = SweepRunResult(
+    result = ScalpRunResult(
         run_id="run-1",
         day="2026-09-28",
         dry_run=False,
         batches=1,
-        docs_swept=4,
+        docs_scalped=4,
         accepted=1,
         candidates=[cand],
         failed_batches=1,
     )
-    ctx = _ctx(conn, "sweep")
+    ctx = _ctx(conn, "scalp")
     assert ctx.kind is JobKind.PERSONA
-    with mock.patch("arc.ingest.sweep.run_sweep", return_value=result) as run:
-        out = sweep_persona(ctx)
+    with mock.patch("arc.ingest.scalp.run_scalp", return_value=result) as run:
+        out = scalp_persona(ctx)
     kwargs = run.call_args.kwargs
     assert kwargs["now"] == NOW and kwargs["run_id"] == "run-1"
     assert kwargs["routines"] is ctx.routines  # D30: the registry comes from the same config
@@ -219,7 +219,7 @@ def test_sweep_persona_writes_candidates_and_metrics(conn: sqlite3.Connection) -
     assert "1 failed batches" in out.summary
     entries = ContextStore(conn).query(as_of=NOW, kinds=["candidate"])
     assert [e.subject for e in entries] == ["SPY"]
-    assert entries[0].produced_by == "sweep"
+    assert entries[0].produced_by == "scalp"
 
 
 def test_settings_default_factory(conn: sqlite3.Connection) -> None:

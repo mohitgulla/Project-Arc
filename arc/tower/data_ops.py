@@ -22,7 +22,7 @@ Order budget (D32)        ``orders`` / ``order_events`` / ``executions`` via
 Context store             ``context_entries`` (active by kind, expiry, latest)
 Sources (D30)             :class:`arc.ingest.sources.SourceRegistry` + ``raw_docs`` +
                           source ``routine_runs`` + caption backoff state
-LLM usage                 ``persona_calls`` + ``sweep_batches`` (tokens, cost)
+LLM usage                 ``persona_calls`` + ``scalp_batches`` (tokens, cost)
 Effective config (D26)    :class:`arc.control.service.ControlService` (read-only)
 ========================  ==========================================================
 """
@@ -44,6 +44,8 @@ from arc.tower.data import _has_table, _json, parse_ts
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from arc.config import ArcSettings
     from arc.routines.config import JobSpec, RoutinesConfig
 
@@ -148,13 +150,13 @@ class RunRow(BaseModel):
     route: str
 
 
-def _run_row(r: sqlite3.Row, cut: _dt.datetime | None = None) -> RunRow:
+def _run_row(r: sqlite3.Row, cut: Mapping[str, _dt.datetime] | None = None) -> RunRow:
     started, finished = parse_ts(r["started_at"]), parse_ts(r["finished_at"])
     scheduled = parse_ts(r["scheduled_for"])
     return RunRow(
         run_id=r["run_id"],
-        # D54: a pre-rename 'scout' run is the Sweep (arc.journal.legacy).
-        job=legacy.job_name(r["job"], scheduled, cut),
+        # D54/D56: a pre-rename run reads under its current name (arc.journal.legacy).
+        job=legacy.job_name(r["job"], scheduled, cut or {}),
         status=r["status"],
         no_change=_is_no_change(r["summary"]),
         reason=r["reason"],
@@ -268,7 +270,7 @@ def load_session(
     roots: dict[tuple[str, str], RunRow] = {}
     steps: Counter[str] = Counter()
     unscheduled: list[RunRow] = []
-    cut = legacy.cutover(conn)
+    cut = legacy.cutovers(conn)
     for r in rows:
         if int(r["step_index"] or 0) > 0:
             if r["chain_run_id"]:
@@ -779,19 +781,20 @@ def load_runs(  # noqa: PLR0913 - one argument per filter
 ) -> RunListResponse:
     where: list[str] = []
     args: list[Any] = []
-    cut = legacy.cutover(conn)
+    cut = legacy.cutovers(conn)
     if jobs:
         jclause = f"job IN ({','.join('?' * len(jobs))})"
         args += jobs
-        # D54: a 'sweep*' filter also matches the pre-rename 'scout*' runs.
-        old = [f"scout{j[len('sweep') :]}" for j in jobs if j.split(".")[0] == "sweep"]
-        if old:
-            jclause += f" OR (job IN ({','.join('?' * len(old))})"
-            args += old
-            if cut is not None:
-                jclause += " AND scheduled_for < ?"
-                args.append(to_db(cut))
-            jclause += ")"
+        # D54/D56: a 'scalp*' filter also matches the pre-rename 'sweep*' / 'scout*'
+        # runs, and 'research' the 'director' runs (each before its own cutover).
+        for j in jobs:
+            for old, key in legacy.legacy_names(j):
+                jclause += " OR (job = ?"
+                args.append(old)
+                if key in cut:
+                    jclause += " AND scheduled_for < ?"
+                    args.append(to_db(cut[key]))
+                jclause += ")"
         where.append(f"({jclause})")
     if statuses:
         parts: list[str] = []
@@ -983,7 +986,7 @@ def _step(
             refs.append(LinkRef(id=str(i), label=str(i), route=route))
         outputs[str(kind)] = refs
     hashes = [str(h) for h in m.get("proposal_hashes") or []]
-    run = _run_row(row, legacy.cutover(conn))
+    run = _run_row(row, legacy.cutovers(conn))
     return StepView(
         run=run,
         contract=ContractView(
@@ -1290,7 +1293,7 @@ def load_context(
                 latest_at=parse_ts(latest["created_at"]) if latest else None,
                 latest_by=(
                     legacy.job_name(
-                        latest["produced_by"], parse_ts(latest["created_at"]), legacy.cutover(conn)
+                        latest["produced_by"], parse_ts(latest["created_at"]), legacy.cutovers(conn)
                     )
                     if latest
                     else None
@@ -1339,7 +1342,7 @@ def load_context_entry(
         subject=r["subject"],
         status=r["status"],
         produced_by=legacy.job_name(
-            r["produced_by"], parse_ts(r["created_at"]), legacy.cutover(conn)
+            r["produced_by"], parse_ts(r["created_at"]), legacy.cutovers(conn)
         ),
         run_id=r["run_id"],
         chain_run_id=r["chain_run_id"],
@@ -1387,14 +1390,14 @@ class SourceRow(BaseModel):
     label: str
     job: str
     category: str
-    feed: Literal["sweep", "scout"] = Field(
-        default="sweep",
-        description="D54: Director feed (sweep = fast, intraday; scout = slow, daily or slower)",
+    feed: Literal["scalp", "scout"] = Field(
+        default="scalp",
+        description="D54: Research feed (scalp = fast, intraday; scout = slow, daily or slower)",
     )
     weight: float = Field(description="Effective fairness weight (category × source share)")
     share_in_category: float | None = Field(
         default=None,
-        description="Share of its category's Sweep budget (registry); null for typed-context "
+        description="Share of its category's Scalp budget (registry); null for typed-context "
         "sources (options data, YouTube), which never draw on the doc budget",
     )
     unit: Literal["docs", "entries"] = Field(
@@ -1412,7 +1415,7 @@ class SourceRow(BaseModel):
     filtered_today: int = Field(
         default=0,
         description="D55: docs stored today but closed `filtered` by the feed's title filter "
-        "(never read by the Sweep)",
+        "(never read by the Scalp)",
     )
     runs_24h: int
     failed_24h: int
@@ -1435,8 +1438,8 @@ class SourceCategoryRow(BaseModel):
     label: str
     weight: float = Field(description="categories.<c>.weight (config)")
     share: float | None = Field(
-        description="Share of the Sweep doc budget (SourceRegistry.category_weights); null "
-        "for categories the Sweep never reads (typed context only)"
+        description="Share of the Scalp doc budget (SourceRegistry.category_weights); null "
+        "for categories the Scalp never reads (typed context only)"
     )
     max_age: str = Field(description="D47 freshness window")
     newest_doc_at: _dt.datetime | None
@@ -1555,7 +1558,7 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
     for a source. Typed-context sources (options data, macro calendar, Finnhub) are
     listed by job with their context entries as the activity count."""
     from arc.context.categories import CATEGORY_ORDER, normalize_category
-    from arc.ingest.sources import SWEEP_CATEGORIES, SourceRegistry
+    from arc.ingest.sources import SCALP_CATEGORIES, SourceRegistry
 
     reg = SourceRegistry.from_routines(routines)
     weights = reg.effective_weights()
@@ -1570,7 +1573,7 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
     filtered: dict[str, int] = Counter()
     last_doc: dict[str, _dt.datetime] = {}
     has_key = "source_key" in {r[1] for r in conn.execute("PRAGMA table_info(raw_docs)")}
-    extra = ", source_key, sweep_status" if has_key else ""
+    extra = ", source_key, scalp_status" if has_key else ""
     cols = "source, url, channel_id, ingested_at" + extra
     for r in conn.execute(
         f"SELECT {cols} FROM raw_docs WHERE ingested_at >= ?",  # noqa: S608 - fixed columns
@@ -1584,11 +1587,11 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
             last_doc[key] = at
         if day_lo <= at < day_hi:
             docs[key] += 1
-            if has_key and r["sweep_status"] == "skipped_budget":
+            if has_key and r["scalp_status"] == "skipped_budget":
                 skipped[key] += 1
-            if has_key and r["sweep_status"] == "skipped_stale":
+            if has_key and r["scalp_status"] == "skipped_stale":
                 stale[key] += 1
-            if has_key and r["sweep_status"] == "filtered":
+            if has_key and r["scalp_status"] == "filtered":
                 filtered[key] += 1
     runs = defaultdict(lambda: [0, 0])
     last_ok: dict[str, _dt.datetime] = {}
@@ -1659,8 +1662,8 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
                 label=s.display,
                 job=s.job,
                 category=s.category.value,
-                # D54: video / options data are never Sweep-read, so they are slow feed
-                feed=s.feed if s.category in SWEEP_CATEGORIES else "scout",
+                # D54: video / options data are never Scalp-read, so they are slow feed
+                feed=s.feed if s.category in SCALP_CATEGORIES else "scout",
                 weight=round(weights.get(s.key, 0.0), 4),
                 share_in_category=in_cat,
                 last_doc_at=last_doc.get(s.key),
@@ -1710,7 +1713,7 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
                 label=_label(job, spec),
                 job=job,
                 category=cat.value,
-                feed="scout",  # D54: typed context is never Sweep-read (slow feed)
+                feed="scout",  # D54: typed context is never Scalp-read (slow feed)
                 weight=0.0,
                 share_in_category=None,
                 unit="entries",
@@ -1797,7 +1800,7 @@ class LlmResponse(BaseModel):
 
 
 def load_llm(conn: sqlite3.Connection, *, now: _dt.datetime, days: int = 30) -> LlmResponse:
-    """``persona_calls`` (Director/Quant/Risk/…) plus ``sweep_batches`` (Sweep, digest stage)
+    """``persona_calls`` (Research/Quant/Risk/…) plus ``scalp_batches`` (Scalp, digest stage)
     per ET day; cost is NULL for fixtures, counted as 0."""
     days = max(1, min(days, 365))
     today = now.astimezone(ET).date()
@@ -1805,6 +1808,7 @@ def load_llm(conn: sqlite3.Connection, *, now: _dt.datetime, days: int = 30) -> 
     lo, _ = _day_bounds(first)
     _, hi = _day_bounds(today)
     calls: list[tuple[_dt.date, str, str, int, int, float, bool]] = []
+    cuts = legacy.cutovers(conn)  # D56: pre-rename "director" calls read as Research
     if _has_table(conn, "persona_calls"):
         for r in conn.execute(
             "SELECT persona, model, status, created_at, input_tokens, output_tokens, cost_usd"
@@ -1817,7 +1821,7 @@ def load_llm(conn: sqlite3.Connection, *, now: _dt.datetime, days: int = 30) -> 
             calls.append(
                 (
                     at.date(),
-                    r["persona"],
+                    legacy.persona_key(r["persona"], at, cuts),
                     r["model"],
                     int(r["input_tokens"] or 0),
                     int(r["output_tokens"] or 0),
@@ -1825,18 +1829,18 @@ def load_llm(conn: sqlite3.Connection, *, now: _dt.datetime, days: int = 30) -> 
                     r["status"] != "ok",
                 )
             )
-    if _has_table(conn, "sweep_batches"):
-        sb_cols = {c[1] for c in conn.execute("PRAGMA table_info(sweep_batches)")}
+    if _has_table(conn, "scalp_batches"):
+        sb_cols = {c[1] for c in conn.execute("PRAGMA table_info(scalp_batches)")}
         if {"stage", "input_tokens", "cost_usd"} <= sb_cols:
             for r in conn.execute(
                 "SELECT stage, model, status, created_at, input_tokens, output_tokens, cost_usd"
-                " FROM sweep_batches WHERE created_at >= ? AND created_at < ?",
+                " FROM scalp_batches WHERE created_at >= ? AND created_at < ?",
                 (to_db(lo), to_db(hi)),
             ):
                 at = parse_ts(r["created_at"])
                 if at is None:
                     continue
-                persona = "sweep" if r["stage"] == "sweep" else f"sweep.{r['stage']}"
+                persona = "scalp" if r["stage"] == "scalp" else f"scalp.{r['stage']}"
                 calls.append(
                     (
                         at.date(),

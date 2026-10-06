@@ -27,13 +27,13 @@ from arc.ingest.channels.daily import (
     configured_channels,
     pick_video,
 )
-from arc.ingest.llm import FixtureSweepLLM, LLMResult
-from arc.ingest.sources import SWEEP_EXCLUDED, SourceCategory, SourceRegistry
+from arc.ingest.llm import FixtureScalpLLM, LLMResult
+from arc.ingest.sources import SCALP_EXCLUDED, SourceCategory, SourceRegistry
 from arc.ingest.youtube import TranscriptSource, YoutubeListError
 from arc.personas.builders import (
-    build_director_prompt,
+    build_research_prompt,
     channel_brief_block,
-    director_input_from_context,
+    research_input_from_context,
 )
 from arc.routines.config import RoutinesConfig, load_routines
 from arc.routines.handlers import JobContext, youtube_briefs
@@ -363,24 +363,24 @@ class TestConfig:
 
 
 # ---------------------------------------------------------------------------
-# Sweep separation (rule: video never reaches the 30-min Sweep)
+# Scalp separation (rule: video never reaches the 30-min Scalp)
 # ---------------------------------------------------------------------------
 
 
-class TestSweepSeparation:
-    def test_youtube_categories_have_no_sweep_weight(self, shipped: RoutinesConfig) -> None:
+class TestScalpSeparation:
+    def test_youtube_categories_have_no_scalp_weight(self, shipped: RoutinesConfig) -> None:
         reg = SourceRegistry.from_routines(shipped)
-        assert SourceCategory.YOUTUBE_MACRO in SWEEP_EXCLUDED
-        assert SourceCategory.YOUTUBE_MICRO in SWEEP_EXCLUDED
+        assert SourceCategory.YOUTUBE_MACRO in SCALP_EXCLUDED
+        assert SourceCategory.YOUTUBE_MICRO in SCALP_EXCLUDED
         for slug in SLUGS:
             assert reg.sources[f"youtube.{slug}"].category.value == CATEGORY[slug]
         weights = reg.effective_weights()
         assert not any(k.startswith("youtube") for k in weights)
         assert sum(weights.values()) == pytest.approx(1.0)
 
-    def test_sweep_closes_video_docs_as_brief_only(self, conn: sqlite3.Connection) -> None:
+    def test_scalp_closes_video_docs_as_brief_only(self, conn: sqlite3.Connection) -> None:
+        from arc.ingest.scalp import load_fixture_docs, run_scalp
         from arc.ingest.store import RawDocRepo
-        from arc.ingest.sweep import load_fixture_docs, run_sweep
 
         load_fixture_docs(conn)
         RawDocRepo(conn).insert(
@@ -391,18 +391,18 @@ class TestSweepSeparation:
             tickers_hint=["SPY"],
             source_key="youtube.stockedup",
         )
-        llm = FixtureSweepLLM([])
+        llm = FixtureScalpLLM([])
         settings = ArcSettings(_env_file=None, env="paper", universe_mode="strict")  # type: ignore[call-arg]
         from arc.pipeline.env import FIXTURE_NOW
 
-        res = run_sweep(conn, settings, llm=llm, dry_run=True, now=FIXTURE_NOW)  # D47 clock
+        res = run_scalp(conn, settings, llm=llm, dry_run=True, now=FIXTURE_NOW)  # D47 clock
         statuses = {
-            r["url"]: r["sweep_status"]
-            for r in conn.execute("SELECT url, sweep_status FROM raw_docs WHERE source='youtube'")
+            r["url"]: r["scalp_status"]
+            for r in conn.execute("SELECT url, scalp_status FROM raw_docs WHERE source='youtube'")
         }
         assert statuses == {"https://www.youtube.com/watch?v=zzz": "brief_only"}
         assert all("SPY to 800 tomorrow" not in p for p in llm.prompts)
-        assert res.docs_swept == 10  # D54: the fixture's earnings doc is the slow feed
+        assert res.docs_scalped == 10  # D54: the fixture's earnings doc is the slow feed
 
 
 # ---------------------------------------------------------------------------
@@ -519,9 +519,9 @@ class TestJob:
             b = briefs[f"youtube.{slug}"]
             assert b["channel_slug"] == slug
             assert b["calls"] or b["levels"] or b["risk_flags"]
-        # transcripts stored as brief-only raw docs, never queued for the Sweep
+        # transcripts stored as brief-only raw docs, never queued for the Scalp
         rows = conn.execute(
-            "SELECT source_key, sweep_status FROM raw_docs"
+            "SELECT source_key, scalp_status FROM raw_docs"
             " WHERE source = 'youtube' ORDER BY source_key"
         ).fetchall()
         assert [(r[0], r[1]) for r in rows] == sorted((f"youtube.{s}", "brief_only") for s in SLUGS)
@@ -663,7 +663,7 @@ def test_new_channel_fixture_is_grounded_and_promo_stripped(slug: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Director view (code-built presence + agreement)
+# Research view (code-built presence + agreement)
 # ---------------------------------------------------------------------------
 
 CHANNELS = [
@@ -675,7 +675,7 @@ CHANNELS = [
 ]
 
 
-class TestDirectorView:
+class TestResearchView:
     def test_presence_line(self) -> None:
         assert brief_presence_line(["stockedup", "arete"], CHANNELS) == (
             "YouTube briefs: 2/5 channels (missing: FX, TradeBrigade, Bravos)"
@@ -724,7 +724,7 @@ class TestDirectorView:
             "SPY bullish: 1/2 channels (FX)",
         ]
 
-    def test_director_prompt_has_the_briefs(
+    def test_research_prompt_has_the_briefs(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
         old = RUN_AT - dt.timedelta(hours=30)
@@ -737,10 +737,10 @@ class TestDirectorView:
             "YouTube macro briefs: 1/2 channels (missing: Bravos)",
             "YouTube micro briefs: 3/3 channels",
         ]
-        inp = director_input_from_context(
+        inp = research_input_from_context(
             snap, portfolio_summary="flat", scan_date="2026-10-05", youtube_channels=channels
         )
-        prompt = build_director_prompt(inp)
+        prompt = build_research_prompt(inp)
         assert "### YouTube channel briefs" in prompt
         assert "YouTube macro briefs: 1/2 channels (missing: Bravos)" in prompt
         assert "YouTube micro briefs: 3/3 channels" in prompt
@@ -749,8 +749,8 @@ class TestDirectorView:
         assert "YouTube macro: 1/2 channels (missing: Bravos)" in prompt
         assert "YouTube micro: 3/3 channels" in prompt
         # no channels configured -> no section at all
-        assert "YouTube channel briefs" not in build_director_prompt(
-            director_input_from_context(snap, portfolio_summary="flat", scan_date="2026-10-05")
+        assert "YouTube channel briefs" not in build_research_prompt(
+            research_input_from_context(snap, portfolio_summary="flat", scan_date="2026-10-05")
         )
 
     def test_brief_from_unconfigured_channel_ignored(
@@ -928,13 +928,13 @@ def test_shared_session_429_sends_rest_to_audio_and_caps_audio(
 
 
 # ---------------------------------------------------------------------------
-# Rule 8: 4 video + 20 RSS pending -> the Sweep selects 0 video docs
+# Rule 8: 4 video + 20 RSS pending -> the Scalp selects 0 video docs
 # ---------------------------------------------------------------------------
 
 
-def test_sweep_selects_no_video_docs(conn: sqlite3.Connection, shipped: RoutinesConfig) -> None:
+def test_scalp_selects_no_video_docs(conn: sqlite3.Connection, shipped: RoutinesConfig) -> None:
+    from arc.ingest.scalp import _load_docs, select_docs
     from arc.ingest.store import RawDocRepo
-    from arc.ingest.sweep import _load_docs, select_docs
 
     repo = RawDocRepo(conn)
     for i, slug in enumerate(SLUGS):
@@ -950,7 +950,7 @@ def test_sweep_selects_no_video_docs(conn: sqlite3.Connection, shipped: Routines
             tickers_hint=["AAPL"], source_key="rss.cnbc",
         )  # fmt: skip
     registry = SourceRegistry.from_routines(shipped)
-    docs = _load_docs(repo.list_unswept(limit=None), registry)
+    docs = _load_docs(repo.list_unscalped(limit=None), registry)
     assert len(docs) == 20 + len(SLUGS)
     selected, unselected, _ = select_docs(docs, registry, budget=120)
     assert [d.source for d in selected].count("youtube") == 0

@@ -1490,7 +1490,7 @@ def _decisions(conn: sqlite3.Connection, p: sqlite3.Row, chain: str | None) -> D
            ORDER BY at, rid""",
         (h, chain, chain, p["ticker"] or ""),
     ).fetchall()
-    cut = legacy.cutover(conn)  # D54: pre-rename "scout" rows are the Sweep
+    cut = legacy.cutovers(conn)  # D54: pre-rename "scout" rows are the Scalp
     items = [
         DecisionItem(
             id=r["id"],

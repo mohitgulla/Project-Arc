@@ -19,7 +19,7 @@ sectors:
   utilities: [XLU]
   real_estate: [XLRE]
 
-# D51 (E12.1): one level below sector, for the relaxed Director diversification
+# D51 (E12.1): one level below sector, for the relaxed Research diversification
 # (E12.5: two names in the same industry may both be ranked). Every core name and
 # every SPMO top-25 name has exactly one industry (tests/test_universe_tiers.py).
 # A name missing here has industry "unknown".

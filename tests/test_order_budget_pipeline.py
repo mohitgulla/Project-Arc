@@ -12,7 +12,7 @@ from arc.budget import Tier, current_budget
 from arc.config import ArcSettings
 from arc.context.store import ContextStore
 from arc.context.ttl import to_db
-from arc.ingest.sweep import load_fixture_docs
+from arc.ingest.scalp import load_fixture_docs
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
 from arc.pipeline.env import FIXTURE_SETS
 from arc.pipeline.runner import open_db, run_propose
@@ -108,7 +108,7 @@ def test_normal_tier_proposes_and_stamps_manifest(settings: ArcSettings) -> None
     report = run(conn, settings)
     assert not report.failed and len(report.proposals) == 1
     m = manifests(conn)
-    for routine in ("director", "propose"):
+    for routine in ("research", "propose"):
         assert m[routine]["order_budget"] == {"used": 0, "limit": 200, "tier": "normal"}
     # the run recorded the budget as an external input, with its count
     inputs = [i for i in m["propose"]["external_inputs"] if i["name"] == "order_budget"]
@@ -126,9 +126,9 @@ def test_restrictive_tier_caps_the_run(settings: ArcSettings) -> None:
     assert not report.failed
     m = manifests(conn)
     assert m["propose"]["order_budget"] == {"used": 100, "limit": 200, "tier": "restrictive"}
-    # the Director saw the tier in its rules (advisory); E5.7: no count cap in the prompt
-    assert "order budget tier: restrictive (100/200)" in prompts["director"]
-    assert "At most" not in prompts["director"]
+    # Research saw the tier in its rules (advisory); E5.7: no count cap in the prompt
+    assert "order budget tier: restrictive (100/200)" in prompts["research"]
+    assert "At most" not in prompts["research"]
     # the deterministic cap: the Quant/Risk budget drops to 1 in the restrictive tier
     sl = ContextStore(conn).snapshot(FIXTURE_NOW, kinds=("shortlist",)).of_kind("shortlist")
     assert sl and sl[-1].payload["budget"] == 1
@@ -147,12 +147,12 @@ def test_opens_exhausted_short_circuits_before_llm_spend(settings: ArcSettings) 
     seed_orders(conn, 175)
     report = run(conn, settings)
     assert not report.failed and report.proposals == []
-    # the Director never called its LLM: no persona call recorded for it
-    n = conn.execute("SELECT COUNT(*) FROM persona_calls WHERE persona = 'director'").fetchone()[0]
+    # Research never called its LLM: no persona call recorded for it
+    n = conn.execute("SELECT COUNT(*) FROM persona_calls WHERE persona = 'research'").fetchone()[0]
     assert n == 0
     assert ("no_trade", "order_budget_exhausted") in decisions(conn)
     m = manifests(conn)
-    assert m["director"]["order_budget"] == {"used": 175, "limit": 200, "tier": "opens_exhausted"}
+    assert m["research"]["order_budget"] == {"used": 175, "limit": 200, "tier": "opens_exhausted"}
     # a second run the same day posts no second notice (once per day per tier)
     from arc.routines.runs import RoutineStateRepo
 
@@ -223,7 +223,7 @@ def test_control_panel_override_reaches_the_budget(settings: ArcSettings) -> Non
     seed_orders(conn, 105)  # 130 - 25 reserve = 105 -> opens exhausted
     report = run(conn, eff)
     assert report.proposals == []
-    assert manifests(conn)["director"]["order_budget"] == {
+    assert manifests(conn)["research"]["order_budget"] == {
         "used": 105,
         "limit": 130,
         "tier": "opens_exhausted",

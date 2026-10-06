@@ -1,4 +1,4 @@
-"""E4.8a (D46, D44): Finnhub facts in the Sweep/Director prompts, behind a default-off flag.
+"""E4.8a (D46, D44): Finnhub facts in the Scalp/Research prompts, behind a default-off flag.
 
 Pins: the flag defaults off and leaves both prompts byte-identical to origin/main's
 (golden hashes taken from main with tests/finnhub_golden.py); with it on, the facts
@@ -26,9 +26,9 @@ from arc.control.effective import effective_routines
 from arc.control.registry import REGISTRY, lookup, read_raw, write_raw
 from arc.control.service import ControlService
 from arc.experiments.overlay import arm_config_data, load_spec
-from arc.ingest.llm import FixtureSweepLLM
+from arc.ingest.llm import FixtureScalpLLM
+from arc.ingest.scalp import run_scalp, scalp_facts_tickers
 from arc.ingest.store import RawDocRepo
-from arc.ingest.sweep import run_sweep, sweep_facts_tickers
 from arc.models import Candidate
 from arc.personas.builders import (
     TICKER_FACTS_NOTE,
@@ -59,17 +59,19 @@ REPO = Path(__file__).resolve().parent.parent
 # (before E4.8a). Flag off must reproduce them byte for byte.
 # E5.12 (D54) re-pinned both: "Scout" -> "Sweep" in the role/label/schema-name lines
 # only (diffed against origin/main 23be73a; no other byte changed).
-MAIN_DIRECTOR_SHA = "e290d9f21cfd776c0d6be1e403f27463baacef8270d6df76792c6168f41afe06"
-# D51 (E12.1) re-pinned the Sweep sha: the watch list is the 25-name core and the
+# E13.1 (D56) re-pinned both: "Sweep" -> "Scalp" and "Director" -> "Research" in the
+# role/label/schema-name lines only (diffed against origin/main f1c1429; no other byte).
+MAIN_RESEARCH_SHA = "0e4ddd78d4c1651a599b8621180165e53bf3885f4499187414e1c85d7d356fbe"
+# D51 (E12.1) re-pinned the Scalp sha: the watch list is the 25-name core and the
 # task line says "Watch list (core + momentum + trending)" (a deliberate prompt change).
-MAIN_SWEEP_SHA = "0d5e2208d3ef23adbd3189c0cf944e42d98e3fbba256304df2b5385fe5f76def"
+MAIN_SCALP_SHA = "dd8297ccf25a1af882ee2770f8e91ed22494a17f3428c3bc3c4a33d45c93107d"
 ON = FinnhubContextSettings(enabled=True)
 TODAY = g._now().date()
 
 
 def _opts(tickers: list[str], **kw: Any) -> dict[str, Any]:
     cfg = FinnhubContextSettings(enabled=True, **kw)
-    return cfg.prompt_options(tickers, cfg.director_max_tickers)
+    return cfg.prompt_options(tickers, cfg.research_max_tickers)
 
 
 # ---------------------------------------------------------------------------
@@ -161,23 +163,23 @@ def test_xp2_draft_spec_turns_only_the_flag_on() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_flag_off_director_prompt_is_byte_identical_to_main() -> None:
+def test_flag_off_research_prompt_is_byte_identical_to_main() -> None:
     snap = g.snapshot()  # Finnhub entries present in the snapshot, flag off
-    assert g.sha(g.director_prompt(snap)) == MAIN_DIRECTOR_SHA
-    assert g.sha(g.director_prompt(snap, ticker_facts=None)) == MAIN_DIRECTOR_SHA
+    assert g.sha(g.research_prompt(snap)) == MAIN_RESEARCH_SHA
+    assert g.sha(g.research_prompt(snap, ticker_facts=None)) == MAIN_RESEARCH_SHA
 
 
-def test_flag_off_sweep_prompt_is_byte_identical_to_main() -> None:
-    assert g.sha(g.sweep_prompt()) == MAIN_SWEEP_SHA
-    assert g.sha(g.sweep_prompt(ticker_facts="")) == MAIN_SWEEP_SHA
+def test_flag_off_scalp_prompt_is_byte_identical_to_main() -> None:
+    assert g.sha(g.scalp_prompt()) == MAIN_SCALP_SHA
+    assert g.sha(g.scalp_prompt(ticker_facts="")) == MAIN_SCALP_SHA
 
 
 def test_flag_off_build_prompt_path_records_no_facts_input() -> None:
     from arc.pipeline.steps import build_prompt
 
     inputs = {"portfolio_summary": "flat", "scan_date": "2026-10-06", "rules": ["r"]}
-    off = build_prompt("director", g.snapshot(), inputs)
-    on = build_prompt("director", g.snapshot(), {**inputs, "ticker_facts": _opts(["AAPL"])})
+    off = build_prompt("research", g.snapshot(), inputs)
+    on = build_prompt("research", g.snapshot(), {**inputs, "ticker_facts": _opts(["AAPL"])})
     assert "Ticker facts" not in off
     assert "Ticker facts" in on and "AAPL: EPS surprise" in on
 
@@ -187,8 +189,8 @@ def test_flag_off_build_prompt_path_records_no_facts_input() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_flag_on_director_prompt_shows_facts_for_the_given_tickers() -> None:
-    p = g.director_prompt(g.snapshot(), ticker_facts=_opts(["AAPL"]))
+def test_flag_on_research_prompt_shows_facts_for_the_given_tickers() -> None:
+    p = g.research_prompt(g.snapshot(), ticker_facts=_opts(["AAPL"]))
     assert "### Ticker facts (Finnhub, code-built)" in p
     assert TICKER_FACTS_NOTE in p
     assert "weak evidence" in TICKER_FACTS_NOTE and "not signals" in TICKER_FACTS_NOTE
@@ -204,9 +206,9 @@ def test_flag_on_director_prompt_shows_facts_for_the_given_tickers() -> None:
     assert len(line) <= 300
 
 
-def test_flag_on_sweep_prompt_shows_the_block_after_the_feeds() -> None:
+def test_flag_on_scalp_prompt_shows_the_block_after_the_feeds() -> None:
     block = ticker_facts_block(g.snapshot(), _opts(["NVDA"]))
-    p = g.sweep_prompt(ticker_facts=block)
+    p = g.scalp_prompt(ticker_facts=block)
     assert p.index("FEEDS>>>") < p.index("## Ticker facts (Finnhub, code-built)")
     assert "NVDA: EPS surprise" in p and "AAPL:" not in p
 
@@ -427,27 +429,27 @@ def test_digest_moves_on_as_of_only() -> None:
     assert ticker_facts_digest(newer, ["MSFT"]) != ticker_facts_digest(_snap_with({}), ["MSFT"])
 
 
-def test_director_facts_tickers_follow_candidates_and_the_flag() -> None:
+def test_research_facts_tickers_follow_candidates_and_the_flag() -> None:
     from types import SimpleNamespace
 
-    from arc.pipeline.steps import _director_facts_tickers, _director_ticker_facts
+    from arc.pipeline.steps import _research_facts_tickers, _research_ticker_facts
 
     cands = [e for e in g.snapshot().entries if e.kind == "candidate"]
     off = SimpleNamespace(routines=load_routines(DEFAULT_ROUTINES_PATH))
-    assert _director_facts_tickers(off, cands) == []  # type: ignore[arg-type]
-    assert _director_ticker_facts(off, cands) is None  # type: ignore[arg-type]
+    assert _research_facts_tickers(off, cands) == []  # type: ignore[arg-type]
+    assert _research_ticker_facts(off, cands) is None  # type: ignore[arg-type]
     on_cfg = RoutinesConfig.model_validate(
-        {"personas": {"finnhub_context": "on"}, "finnhub_context": {"director_max_tickers": 1}}
+        {"personas": {"finnhub_context": "on"}, "finnhub_context": {"research_max_tickers": 1}}
     )
     on = SimpleNamespace(routines=on_cfg)
-    assert _director_facts_tickers(on, cands) == ["AAPL"]  # type: ignore[arg-type]  # conf 0.8 > 0.7
-    opts = _director_ticker_facts(on, cands)  # type: ignore[arg-type]
+    assert _research_facts_tickers(on, cands) == ["AAPL"]  # type: ignore[arg-type]  # conf 0.8 > 0.7
+    opts = _research_ticker_facts(on, cands)  # type: ignore[arg-type]
     assert opts is not None and opts["tickers"] == ["AAPL"] and opts["max_chars"] == 300
     json.dumps(opts)  # recorded as a prompt input (journal replay)
 
 
 # ---------------------------------------------------------------------------
-# Sweep wiring
+# Scalp wiring
 # ---------------------------------------------------------------------------
 
 
@@ -465,7 +467,7 @@ def _seed_docs(conn: Any, now: dt.datetime) -> None:
 
 
 @pytest.mark.parametrize("flag", ["off", "on"])
-def test_run_sweep_adds_facts_only_with_the_flag_on(flag: str) -> None:
+def test_run_scalp_adds_facts_only_with_the_flag_on(flag: str) -> None:
     conn = connect(":memory:")
     migrate(conn)
     now = g._now()
@@ -476,9 +478,9 @@ def test_run_sweep_adds_facts_only_with_the_flag_on(flag: str) -> None:
     _seed_docs(conn, now)
     routines = RoutinesConfig.model_validate({"personas": {"finnhub_context": flag}})
     cfg = ArcSettings(env="paper", universe=["AAPL", "NVDA"], universe_mode="strict",
-                      sweep_min_confidence=0.6)  # fmt: skip
-    llm = FixtureSweepLLM([json.dumps({"candidates": [], "scan_summary": "s"})])
-    run_sweep(conn, cfg, llm=llm, now=now, run_id="r1", routines=routines)
+                      scalp_min_confidence=0.6)  # fmt: skip
+    llm = FixtureScalpLLM([json.dumps({"candidates": [], "scan_summary": "s"})])
+    run_scalp(conn, cfg, llm=llm, now=now, run_id="r1", routines=routines)
     (prompt,) = llm.prompts
     if flag == "off":
         assert "Ticker facts" not in prompt
@@ -491,7 +493,7 @@ def test_run_sweep_adds_facts_only_with_the_flag_on(flag: str) -> None:
         assert row[1] == "r1" and "fundamentals" in json.loads(row[0])
 
 
-def test_sweep_facts_tickers_cap_and_order() -> None:
+def test_scalp_facts_tickers_cap_and_order() -> None:
     from arc.context.kinds import StoryPayload
 
     def story(i: int, tickers: list[str]) -> StoryPayload:
@@ -504,8 +506,8 @@ def test_sweep_facts_tickers_cap_and_order() -> None:
         })  # fmt: skip
 
     batch = [story(1, ["nvda", "AAPL"]), story(2, ["AAPL", "MSFT", "TSLA"])]
-    assert sweep_facts_tickers(batch, 3) == ["NVDA", "AAPL", "MSFT"]
-    assert sweep_facts_tickers(batch, 0) == []
+    assert scalp_facts_tickers(batch, 3) == ["NVDA", "AAPL", "MSFT"]
+    assert scalp_facts_tickers(batch, 0) == []
 
 
 # ---------------------------------------------------------------------------

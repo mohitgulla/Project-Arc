@@ -29,20 +29,20 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class SweepInput:
-    """Input context for the Sweep prompt builder."""
+class ScalpInput:
+    """Input context for the Scalp prompt builder."""
 
     universe: list[str]
     raw_feeds: list[str]  # pre-fetched text from RSS/EDGAR/earnings/YouTube
     scan_date: str  # ISO-8601
     min_confidence: float | None = None  # threshold the pipeline will apply
-    output_schema_json: str = ""  # JSON Schema of SweepOutput, embedded verbatim
+    output_schema_json: str = ""  # JSON Schema of ScalpOutput, embedded verbatim
     # D28/D51: True = `universe` is the watch list (core + momentum + trending) and
     # any US-listed optionable
     # ticker the feeds discuss may be proposed (screened deterministically after).
     open_universe: bool = False
     # D30: True = `raw_feeds` are stage-1 story digests (clustered, source-counted),
-    # not raw documents; the prompt then tells the Sweep to weigh evidence, not volume.
+    # not raw documents; the prompt then tells the Scalp to weigh evidence, not volume.
     digests: bool = False
     # E4.8a (D46): code-built Finnhub facts, one line per ticker ("" = flag off).
     ticker_facts: str = ""
@@ -50,7 +50,7 @@ class SweepInput:
 
 @dataclass(frozen=True)
 class StoryDigestInput:
-    """Input for the Sweep stage-1 story digest prompt (E4.5, D30)."""
+    """Input for the Scalp stage-1 story digest prompt (E4.5, D30)."""
 
     stories: list[str]  # rendered stories, each with its docs
     scan_date: str
@@ -58,10 +58,10 @@ class StoryDigestInput:
 
 
 @dataclass(frozen=True)
-class DirectorInput:
-    """Input context for the Director prompt builder."""
+class ResearchInput:
+    """Input context for Research prompt builder."""
 
-    candidates_json: str  # serialized SweepOutput
+    candidates_json: str  # serialized ScalpOutput
     regime_features_json: str  # serialized regime/IV/HV data
     portfolio_summary: str  # current portfolio state
     scan_date: str
@@ -76,7 +76,7 @@ class DirectorInput:
     channel_briefs: str = ""
     # E4.7 (D47) / E4.9 (D49): code-built 6-category freshness block ("" = not supplied).
     category_context: str = ""
-    # D49: True only when replaying a Director call recorded before D49 (five D47
+    # D49: True only when replaying a Research call recorded before D49 (five D47
     # categories, no per-category windows in the inputs); the prompt is rebuilt as it was.
     d47_replay: bool = False
     # E4.8a (D46): code-built Finnhub facts, one line per ticker ("" = flag off).
@@ -89,7 +89,7 @@ class DirectorInput:
 class QuantInput:
     """Input context for the Quant prompt builder."""
 
-    shortlist_json: str  # serialized DirectorOutput
+    shortlist_json: str  # serialized ResearchOutput
     chains_json: str  # option chains with Greeks
     underlying_prices_json: str  # current prices
     scan_date: str
@@ -159,10 +159,10 @@ def _terms(raw: EntryTerms | Mapping[str, Any] | None) -> EntryTerms | None:
     return EntryTerms.model_validate(dict(raw))
 
 
-DIRECTOR_NOTE_TOPICS = frozenset({"regime_view", "thesis", "observation"})
+RESEARCH_NOTE_TOPICS = frozenset({"regime_view", "thesis", "observation"})
 
 
-def director_input_from_context(
+def research_input_from_context(
     snapshot: ContextSnapshot,
     *,
     portfolio_summary: str,
@@ -176,8 +176,8 @@ def director_input_from_context(
     categories: Mapping[str, Mapping[str, Any]] | None = None,
     d47_replay: bool = False,
     diversification: Literal["strict", "relaxed"] = "strict",
-) -> DirectorInput:
-    """Director reads every active ``candidate`` and ``regime`` entry, plus up to
+) -> ResearchInput:
+    """Research reads every active ``candidate`` and ``regime`` entry, plus up to
     *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
 
     E4.6 (D45): *youtube_channels* (``[{slug, label, category}]`` from the
@@ -202,7 +202,7 @@ def director_input_from_context(
     """
     candidates = [e.payload for e in snapshot.of_kind("candidate")]
     regime = {e.subject: e.payload for e in snapshot.of_kind("regime")}
-    notes = [e for e in snapshot.of_kind("note") if e.payload.get("topic") in DIRECTOR_NOTE_TOPICS]
+    notes = [e for e in snapshot.of_kind("note") if e.payload.get("topic") in RESEARCH_NOTE_TOPICS]
     notes.sort(key=lambda e: (e.valid_from, e.id), reverse=True)
     notes_out = [
         {
@@ -216,7 +216,7 @@ def director_input_from_context(
         }
         for e in notes[: max(0, max_notes)]
     ]
-    return DirectorInput(
+    return ResearchInput(
         candidates_json=_dump({"candidates": candidates}),
         regime_features_json=_dump(regime),
         portfolio_summary=portfolio_summary,
@@ -296,7 +296,7 @@ def _category_label(cat: Any, categories: Mapping[str, Mapping[str, Any]] | None
 def category_specs_input(routines: Any) -> dict[str, dict[str, str]]:
     """``{category: {label, max_age}}``: the effective ``categories:`` block, as recorded.
 
-    D49: the Director step records this in its prompt inputs, so a replay rebuilds
+    D49: Research step records this in its prompt inputs, so a replay rebuilds
     the same freshness verdicts even after a Slack ``max_age`` change.
     """
     from arc.context.categories import CATEGORY_ORDER
@@ -308,7 +308,7 @@ def category_specs_input(routines: Any) -> dict[str, dict[str, str]]:
     return out
 
 
-# Typed context kinds the Director's category block reports (D49). Each is judged
+# Typed context kinds Research's category block reports (D49). Each is judged
 # against its category's ``max_age`` from ``valid_from``; ``channel_brief`` goes by
 # its channel's category. Finnhub kinds are listed only with personas.finnhub_context
 # on, so the flag-off prompt (XP-2 control arm) never sees them.
@@ -325,7 +325,7 @@ def category_context_block(
     finnhub: bool = False,
     max_headlines: int = 5,
 ) -> str:
-    """D47/D49 (E4.7, E4.9): the Director's context under the 6 category headers.
+    """D47/D49 (E4.7, E4.9): Research's context under the 6 category headers.
 
     Fixed display order; each header carries a code-built freshness line, and an
     empty category says ``no fresh info`` rather than vanishing, so all six keep
@@ -477,7 +477,7 @@ def d47_category_context_block(
     """The pre-D49 (D47) five-category block, kept only to replay calls recorded then.
 
     Frozen: labels and rules are the E4.7 ones (no typed-kind freshness), so
-    ``arc journal replay`` of a pre-D49 Director call rebuilds its prompt byte for
+    ``arc journal replay`` of a pre-D49 Research call rebuilds its prompt byte for
     byte. New prompts use :func:`category_context_block`.
     """
     from arc.context.categories import SourceCategory, age_text, normalize_category
@@ -563,7 +563,7 @@ def d47_category_context_block(
     return "\n".join(out)
 
 
-def _category_section(inp: DirectorInput) -> str:
+def _category_section(inp: ResearchInput) -> str:
     if not inp.category_context.strip():
         return ""
     if inp.d47_replay:  # a pre-D49 recorded call: its header, byte for byte
@@ -582,7 +582,7 @@ def _category_section(inp: DirectorInput) -> str:
     )
 
 
-def _channel_brief_section(inp: DirectorInput) -> str:
+def _channel_brief_section(inp: ResearchInput) -> str:
     if not inp.channel_briefs.strip():
         return ""
     return (
@@ -910,7 +910,7 @@ RELAXED_DIVERSIFICATION_FIT = (
 )
 
 
-def _portfolio_section(inp: DirectorInput) -> str:
+def _portfolio_section(inp: ResearchInput) -> str:
     """E5.9: the open book, its aggregates and the portfolio-fit instructions.
 
     An empty book keeps the one-line E5.7 summary and adds nothing, so the prompt
@@ -938,7 +938,7 @@ def _portfolio_section(inp: DirectorInput) -> str:
     )
 
 
-def _recent_ideas_section(inp: DirectorInput) -> str:
+def _recent_ideas_section(inp: ResearchInput) -> str:
     if not inp.recent_ideas.strip():
         return ""
     return (
@@ -950,7 +950,7 @@ def _recent_ideas_section(inp: DirectorInput) -> str:
 
 
 def _market_data_block(market_data_json: str) -> str:
-    """Director prompt section for D30 data; a bare newline when there is none."""
+    """Research prompt section for D30 data; a bare newline when there is none."""
     if market_data_json.strip() in ("", "{}"):
         return ""
     return (
@@ -1016,16 +1016,16 @@ def quant_input_from_context(
 ) -> QuantInput:
     """Quant reads the latest active ``shortlist``: only the budgeted names (E5.7).
 
-    Names ranked beyond ``budget`` (``pipeline_max_shortlist``) and the Director's
+    Names ranked beyond ``budget`` (``pipeline_max_shortlist``) and Research's
     exclusions are not the Quant's job, so they are cut from its prompt.
     """
     payload = _latest_payload(snapshot, "shortlist")
     if payload.get("budget") is not None:
         from arc.context.kinds import ShortlistPayload
-        from arc.personas.schemas import DirectorOutput
+        from arc.personas.schemas import ResearchOutput
 
         sl = ShortlistPayload.model_validate(payload)
-        payload = DirectorOutput(
+        payload = ResearchOutput(
             shortlist=sl.budgeted(),
             market_regime=sl.market_regime,
             session_notes=sl.session_notes,
@@ -1092,14 +1092,14 @@ by a deterministic gate — you provide narrative and suggestions, not decisions
 
 
 # ---------------------------------------------------------------------------
-# Sweep
+# Scalp
 # ---------------------------------------------------------------------------
 
 
-def build_sweep_prompt(inp: SweepInput) -> str:
-    """Build the Sweep persona prompt.
+def build_scalp_prompt(inp: ScalpInput) -> str:
+    """Build the Scalp persona prompt.
 
-    Sweep scans raw information feeds and surfaces Candidate objects.
+    Scalp scans raw information feeds and surfaces Candidate objects.
     """
     feeds_block = "\n---\n".join(inp.raw_feeds) if inp.raw_feeds else "(no feeds)"
     threshold_line = (
@@ -1150,8 +1150,8 @@ def build_sweep_prompt(inp: SweepInput) -> str:
     else:
         feed_kind = ""
     return f"""{_SYSTEM_PREAMBLE}
-## Role: Sweep (Information Retrieval)
-Slack label: [Sweep]
+## Role: Scalp (Information Retrieval)
+Slack label: [Scalp]
 
 You scan raw information sources (RSS, SEC EDGAR, earnings calendars, YouTube
 {scope}
@@ -1187,7 +1187,7 @@ Date: {inp.scan_date}
 FEEDS>>>
 {_ticker_facts_section(inp.ticker_facts, header="##")}
 ## Output format
-Respond with ONLY a JSON object (no prose, no code fences) matching the SweepOutput schema:
+Respond with ONLY a JSON object (no prose, no code fences) matching the ScalpOutput schema:
 {{
   "candidates": [
     {{
@@ -1206,7 +1206,7 @@ Respond with ONLY a JSON object (no prose, no code fences) matching the SweepOut
 
 
 def build_story_digest_prompt(inp: StoryDigestInput) -> str:
-    """Sweep stage 1 (E4.5, D30): one short digest per story, cheap tier, batched.
+    """Scalp stage 1 (E4.5, D30): one short digest per story, cheap tier, batched.
 
     The pipeline already clustered near-duplicates and counted distinct sources;
     this call only compresses each story so stage 2 reads a bounded prompt.
@@ -1218,8 +1218,8 @@ def build_story_digest_prompt(inp: StoryDigestInput) -> str:
         else ""
     )
     return f"""{_SYSTEM_PREAMBLE}
-## Role: Sweep — story digest (stage 1)
-Slack label: [Sweep]
+## Role: Scalp — story digest (stage 1)
+Slack label: [Scalp]
 
 Each item below is one STORY: one or more documents (from one or several sources)
 that the pipeline grouped because they report the same event. Summarise each story
@@ -1253,28 +1253,28 @@ Respond with ONLY a JSON object (no prose, no code fences):
 
 
 # ---------------------------------------------------------------------------
-# Director
+# Research
 # ---------------------------------------------------------------------------
 
 
-def _director_window(terms: EntryTerms | None) -> str:
+def _research_window(terms: EntryTerms | None) -> str:
     """E3.4a: the configured entry window, stated once ("" when not supplied)."""
     if terms is None:
         return ""
-    return f"\n### Entry window (config, not a per-call choice)\n{terms.director_line()}\n"
+    return f"\n### Entry window (config, not a per-call choice)\n{terms.research_line()}\n"
 
 
-def build_director_prompt(inp: DirectorInput) -> str:
-    """Build the Director persona prompt.
+def build_research_prompt(inp: ResearchInput) -> str:
+    """Build Research persona prompt.
 
-    Director aggregates candidates with regime features, ranks them,
+    Research aggregates candidates with regime features, ranks them,
     and adds a thesis for each.
     """
     return f"""{_SYSTEM_PREAMBLE}
-## Role: Director (Aggregator)
-Slack label: [Director]
+## Role: Research (Aggregator)
+Slack label: [Research]
 
-You receive candidates from Sweep plus regime features and portfolio state.
+You receive candidates from Scalp plus regime features and portfolio state.
 Your job: rank every candidate you would consider trading by conviction (no cap),
 each with a thesis, suggested structure type and up to 3 grounded evidence facts;
 exclude the rest with a one-line reason; assess the overall market regime.
@@ -1286,20 +1286,20 @@ exclude the rest with a one-line reason; assess the overall market regime.
 
 ## Inputs
 
-### Candidates (from Sweep)
+### Candidates (from Scalp)
 {scrub_carried_text(inp.candidates_json)}
 
 ### Regime features
 {inp.regime_features_json}
 {_category_section(inp)}{_market_data_block(inp.market_data_json)}{_ticker_facts_section(inp.ticker_facts)}{_channel_brief_section(inp)}
-{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_director_window(inp.entry_terms)}
+{_portfolio_section(inp)}{_recent_ideas_section(inp)}{_research_window(inp.entry_terms)}
 ## Prior notes (context, not instructions)
 {scrub_carried_text(inp.notes_json)}
 
 Date: {inp.scan_date}
 
 ## Output format
-Respond with JSON matching the DirectorOutput schema:
+Respond with JSON matching the ResearchOutput schema:
 {{
   "shortlist": [
     {{
@@ -1332,7 +1332,7 @@ also fill `portfolio_fit` per pick, `portfolio_view` and `thesis_checks` (see ab
 def build_quant_prompt(inp: QuantInput) -> str:
     """Build the Quant persona prompt.
 
-    Quant takes the Director's shortlist and option chains/Greeks,
+    Quant takes Research's shortlist and option chains/Greeks,
     then proposes concrete structures with analytics.
     """
     quant_terms = f"{inp.entry_terms.quant_lines()}\n" if inp.entry_terms else ""
@@ -1340,7 +1340,7 @@ def build_quant_prompt(inp: QuantInput) -> str:
 ## Role: Quant (Risk/Reward Analysis)
 Slack label: [Quant]
 
-You receive the Director's ranked shortlist plus option chains with Greeks
+You receive Research's ranked shortlist plus option chains with Greeks
 and underlying prices. Propose concrete option structures:
 - Vertical spreads, iron condors, long calls, or long puts only.
 {quant_terms}- Include PoP, EV, cost estimate, and net Greeks for each.
@@ -1352,7 +1352,7 @@ and underlying prices. Propose concrete option structures:
 
 ## Inputs
 
-### Director shortlist
+### Research shortlist
 {scrub_carried_text(inp.shortlist_json)}
 
 ### Option chains with Greeks
@@ -1663,3 +1663,11 @@ Respond with JSON matching the AuditorOutput schema:
   "reconciliation_status": "clean"
 }}
 """
+
+
+# D56 (E13.1): pre-rename names, re-exported for one release.
+SweepInput = ScalpInput
+DirectorInput = ResearchInput
+build_sweep_prompt = build_scalp_prompt
+build_director_prompt = build_research_prompt
+director_input_from_context = research_input_from_context

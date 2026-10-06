@@ -133,8 +133,8 @@ def test_unknown_change_key_is_tolerated() -> None:
 
 def test_run_detail_carries_label_and_persona(fx_db) -> None:
     with TestClient(create_app(fx_db, clock=lambda: NOW)) as client:
-        rows = client.get("/api/ops/runs?job=director&size=1").json()["rows"]
+        rows = client.get("/api/ops/runs?job=research&size=1").json()["rows"]
         body = client.get(f"/api/ops/runs/{rows[0]['run_id']}").json()
-    assert body["step"]["persona"] == "director"
-    assert body["step"]["label"] and body["step"]["label"] != "director"
+    assert body["step"]["persona"] == "research"
+    assert body["step"]["label"] and body["step"]["label"] != "research"
     assert all("label" in s for s in body["chain"])

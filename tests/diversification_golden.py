@@ -1,6 +1,6 @@
-"""E12.5 golden helper: a Director prompt with a non-empty book, plus its rules.
+"""E12.5 golden helper: a Research prompt with a non-empty book, plus its rules.
 
-Imported by tests/test_director_diversification.py and run stand-alone against an
+Imported by tests/test_research_diversification.py and run stand-alone against an
 origin/main checkout (``python tests/diversification_golden.py <repo>``) to pin the
 strict-mode hashes. Uses only APIs that exist on main before E12.5.
 """
@@ -27,17 +27,17 @@ PORTFOLIO_BLOCK = (
 )
 
 
-def director_prompt(snap: Any, **extra: Any) -> str:
-    from arc.personas.builders import build_director_prompt, director_input_from_context
+def research_prompt(snap: Any, **extra: Any) -> str:
+    from arc.personas.builders import build_research_prompt, research_input_from_context
 
-    inp = director_input_from_context(
+    inp = research_input_from_context(
         snap,
         portfolio_summary="2 open",
         scan_date="2026-10-06",
         portfolio_block=PORTFOLIO_BLOCK,
         **extra,
     )
-    return build_director_prompt(inp)
+    return build_research_prompt(inp)
 
 
 def portfolio_context(
@@ -109,7 +109,7 @@ def portfolio_context(
 def strict_rules() -> list[str]:
     from arc.config import ArcSettings
     from arc.models import Stance
-    from arc.pipeline.steps import _director_rules
+    from arc.pipeline.steps import _research_rules
 
     pctx = portfolio_context(
         [("NVDA", "technology", "bullish", 420.0), ("MU", "technology", "bullish", 180.0)],
@@ -117,7 +117,7 @@ def strict_rules() -> list[str]:
         flagged_stances=["bullish"],
     )
     settings = ArcSettings(_env_file=None)  # type: ignore[call-arg]
-    return _director_rules({"AMD": Stance.BULLISH}, settings, None, pctx)
+    return _research_rules({"AMD": Stance.BULLISH}, settings, None, pctx)
 
 
 def sha(text: str) -> str:
@@ -128,5 +128,5 @@ if __name__ == "__main__":  # pragma: no cover - run by hand against origin/main
     sys.path.insert(0, sys.argv[1])
     from tests import finnhub_golden as g
 
-    print("director", sha(director_prompt(g.snapshot(with_finnhub=False))))
+    print("research", sha(research_prompt(g.snapshot(with_finnhub=False))))
     print("rules", sha("\n".join(strict_rules())))

@@ -111,8 +111,20 @@ DAILY_BARS_MAX_DAYS = 45
 WEEKLY_BARS_MAX_DAYS = 400
 _TEST_ORDER_PREFIX = "arc-"
 # Personas whose reason codes the breakdown groups by (not gate/system/owner bookkeeping).
-# D54: "scout" = pre-rename Sweep rows (and, after the cutover, the slow-feed Scout).
-_PERSONAS = ("sweep", "scout", "director", "quant", "risk", "investor", "auditor")
+# D54/D56: stored rows keep the name of their time: "scout" (pre-D54) and "sweep" (pre-D56)
+# are the Scalp, "director" is Research (arc.journal.legacy); "scout" after D54 is the
+# slow-feed Scout.
+_PERSONAS = (
+    "scalp",
+    "sweep",
+    "scout",
+    "research",
+    "director",
+    "quant",
+    "risk",
+    "investor",
+    "auditor",
+)
 
 _FORBID = ConfigDict(extra="forbid", frozen=True)
 

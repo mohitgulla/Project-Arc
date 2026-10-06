@@ -51,8 +51,8 @@ class TestPersonaLabel:
     @pytest.mark.parametrize(
         ("persona", "expected"),
         [
-            (Persona.SWEEP, "[Sweep]"),
-            (Persona.DIRECTOR, "[Director]"),
+            (Persona.SCALP, "[Scalp]"),
+            (Persona.RESEARCH, "[Research]"),
             (Persona.QUANT, "[Quant]"),
             (Persona.RISK, "[Risk]"),
             (Persona.INVESTOR, "[Investor]"),
@@ -230,10 +230,10 @@ class TestArcSlackClient:
             channel="C123",
             thread_ts="1234.5678",
             text="scanning RSS feeds",
-            persona=Persona.SWEEP,
+            persona=Persona.SCALP,
         )
         call_kwargs = fake.chat_postMessage.call_args.kwargs
-        assert call_kwargs["text"].startswith("[Sweep]")
+        assert call_kwargs["text"].startswith("[Scalp]")
 
     def test_update(self) -> None:
         arc, fake = self._make()

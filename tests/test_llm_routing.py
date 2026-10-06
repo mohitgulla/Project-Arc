@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from arc.config import ArcSettings
-from arc.ingest.llm import HermesSweepLLM
+from arc.ingest.llm import HermesScalpLLM
 from arc.llm_routing import (
     DEFAULT_ROUTING_PATH,
     LLMRouting,
@@ -24,10 +24,10 @@ CHEAP = "anthropic/claude-opus-5"
 
 # PLAN §2.4 / D8: every persona, its tier and model.
 EXPECTED = {
-    Persona.DIRECTOR: ("frontier", FRONTIER),
+    Persona.RESEARCH: ("frontier", FRONTIER),
     Persona.QUANT: ("frontier", FRONTIER),
     Persona.RISK: ("frontier", FRONTIER),
-    Persona.SWEEP: ("cheap", CHEAP),
+    Persona.SCALP: ("cheap", CHEAP),
     Persona.INVESTOR: ("cheap", CHEAP),
     Persona.AUDITOR: ("cheap", CHEAP),
 }
@@ -45,8 +45,8 @@ class TestDefaultRouting:
     def test_covers_exactly_the_plan_personas(self) -> None:
         assert set(Persona) == set(EXPECTED)
         assert {p.value for p in Persona} == {
-            "sweep",
-            "director",
+            "scalp",
+            "research",
             "quant",
             "risk",
             "investor",
@@ -95,9 +95,9 @@ class TestConfigDriven:
             f"model: {CHEAP}\n", "model: anthropic/claude-other\n"
         )
         s = ArcSettings(env="paper", llm_routing_file=_write(tmp_path, text))
-        for p in (Persona.SWEEP, Persona.INVESTOR, Persona.AUDITOR):
+        for p in (Persona.SCALP, Persona.INVESTOR, Persona.AUDITOR):
             assert resolve(p, s).model == "anthropic/claude-other"
-        assert resolve(Persona.DIRECTOR, s).model == FRONTIER
+        assert resolve(Persona.RESEARCH, s).model == FRONTIER
 
     def test_persona_change_moves_one_persona(self, tmp_path: Path) -> None:
         text = DEFAULT_ROUTING_PATH.read_text().replace("quant:    frontier", "quant:    cheap")
@@ -111,16 +111,16 @@ class TestConfigDriven:
         )
         monkeypatch.setenv("ARC_LLM_ROUTING_FILE", str(_write(tmp_path, text)))
         s = ArcSettings(env="paper")
-        assert resolve("director", s).model == "anthropic/claude-x"
+        assert resolve("research", s).model == "anthropic/claude-x"
 
-    def test_sweep_backend_uses_routing(self, tmp_path: Path) -> None:
+    def test_scalp_backend_uses_routing(self, tmp_path: Path) -> None:
         text = DEFAULT_ROUTING_PATH.read_text().replace(
             f"model: {CHEAP}\n", "model: anthropic/claude-cheap-x\n"
         )
         s = ArcSettings(env="paper", llm_routing_file=_write(tmp_path, text))
-        llm = HermesSweepLLM.from_settings(s)
+        llm = HermesScalpLLM.from_settings(s)
         assert (llm.model, llm.provider) == ("anthropic/claude-cheap-x", "anthropic")
-        assert llm.timeout_seconds == s.sweep_timeout_seconds
+        assert llm.timeout_seconds == s.scalp_timeout_seconds
 
     def test_pipeline_personas_get_their_own_route(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import arc.data.alpaca as alpaca_mod
@@ -130,7 +130,7 @@ class TestConfigDriven:
         env = PipelineEnv.live(s, broker=False)
         for p in PERSONAS:
             llm = env.llm(p)
-            assert isinstance(llm, HermesSweepLLM)
+            assert isinstance(llm, HermesScalpLLM)
             assert llm.model == EXPECTED[Persona(p)][1]
             assert llm.provider == "anthropic"
             assert llm.timeout_seconds == s.persona_timeout_seconds

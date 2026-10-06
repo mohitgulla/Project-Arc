@@ -1,6 +1,6 @@
 """Shared Block Kit layout for every persona post in #arc-investor.
 
-One visual grammar for all personas (Sweep, Director, Quant, Risk, Investor,
+One visual grammar for all personas (Scalp, Research, Quant, Risk, Investor,
 Auditor), so a reviewer reads every card the same way:
 
 - ``header``      one plain-text title line, e.g.

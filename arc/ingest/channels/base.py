@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
     from pathlib import Path
 
-    from arc.ingest.llm import LLMResult, SweepLLM
+    from arc.ingest.llm import LLMResult, PersonaLLM
 
 log = structlog.get_logger()
 
@@ -414,7 +414,7 @@ class ChannelProcessor:
         published = video.published_at.astimezone(ET).isoformat()
         transcript = clean_transcript.replace("TRANSCRIPT>>>", "TRANSCRIPT>")
         return (
-            f"You are the Sweep extracting a structured brief from one {p.display_name} video.\n"
+            f"You are the Scalp extracting a structured brief from one {p.display_name} video.\n"
             f"Channel cadence: {p.cadence.value}; horizon: {p.horizon.value}.\n"
             f"Video: {video.title!r} published {published} (America/New_York).\n"
             f"The brief applies to the trading session on {session.isoformat()}.\n"
@@ -436,7 +436,7 @@ class ChannelProcessor:
     def process(
         self,
         video: VideoDoc,
-        llm: SweepLLM,
+        llm: PersonaLLM,
         *,
         universe: Iterable[str],
         price_lookup: Callable[[str], float | None] | None = None,
@@ -444,7 +444,7 @@ class ChannelProcessor:
     ) -> ProcessResult:
         """Run the LLM on *video* and return a validated brief plus drop log.
 
-        Raises ``SweepLLMError`` (transport) or ``BriefParseError`` (no JSON);
+        Raises ``ScalpLLMError`` (transport) or ``BriefParseError`` (no JSON);
         callers leave the video unprocessed so the next run retries it.
         """
         clean, removed = strip_sponsor_segments(video.transcript, self.sponsor_patterns)

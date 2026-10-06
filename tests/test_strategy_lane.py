@@ -57,7 +57,7 @@ def _exits_delta(old: Any, new: Any) -> dict[str, Any]:
         "arc/sizing.py",
         "arc/pipeline/steps.py",
         "arc/personas/builders.py",
-        "hermes/skills/arc-director/SKILL.md",
+        "hermes/skills/arc-research/SKILL.md",
         "config/exits.yaml",
         "config/ranking.yaml",
         "config/account_profiles.yaml",

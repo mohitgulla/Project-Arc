@@ -184,17 +184,17 @@ class TestLayout:
         p = _proposal(conn)
         ph = proposal_hash(p)
         trail = load_trail(conn, _phash(conn), "SPY")
-        assert trail.chain_run_id and trail.director and trail.quant and trail.risk
+        assert trail.chain_run_id and trail.research and trail.quant and trail.risk
         text = _text(render_card(p, None, proposal_hash=ph, actionable=False, trail=trail).blocks)
         assert (
-            "*[Director] Thesis (rank 1 of 3, neutral, confidence 70%)*" in text
+            "*[Research] Thesis (rank 1 of 3, neutral, confidence 70%)*" in text
         )  # E5.7: SPY, NVDA, XOM
         assert "Regime: Fixture: low realised vol" in text
         assert "*[Quant] Structure choice (confidence 70%)*" in text
         assert "*[Risk] Review*" in text and "Rating *moderate*" in text
         assert "Suggested 20 → sized 14 (5% equity cap)" in text
         assert "Calendar: Fixture: FOMC Oct 28" in text
-        assert "Regime *sideways*" in text and "Director market read *risk_on*" in text
+        assert "Regime *sideways*" in text and "Research market read *risk_on*" in text
         assert f"chain `{trail.chain_run_id}`" in text
 
     def test_missing_trail_still_renders(self, conn: sqlite3.Connection) -> None:
@@ -202,7 +202,7 @@ class TestLayout:
         ph = proposal_hash(p)
         assert load_trail(conn, "no-such-hash", "SPY").chain_run_id is None
         text = _text(render_card(p, None, proposal_hash=ph, actionable=False).blocks)
-        assert "*[Director] Thesis*" in text and "*[Risk] Review*" in text
+        assert "*[Research] Thesis*" in text and "*[Risk] Review*" in text
 
     def test_published_card_carries_trail(
         self, svc: ApprovalService, poster: RecordingPoster
@@ -969,7 +969,7 @@ def test_slack_poster_uses_shared_day_thread(
 
     web = FakeWeb()
     client = ArcSlackClient(client=web)  # type: ignore[arg-type]
-    SlackDayThreadNotifier(conn, client).post(_dt.date(2026, 9, 25), "[Sweep] hello")
+    SlackDayThreadNotifier(conn, client).post(_dt.date(2026, 9, 25), "[Scalp] hello")
     svc = ApprovalService(conn, arc_settings, SlackCardPoster(conn, client))
     svc.publish_pending(NOW)
     kinds = [k for k, _ in web.calls]

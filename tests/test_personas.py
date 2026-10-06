@@ -16,39 +16,39 @@ from pydantic import ValidationError
 
 from arc.personas.builders import (
     AuditorInput,
-    DirectorInput,
     InvestorInput,
     QuantInput,
+    ResearchInput,
     RiskInput,
-    SweepInput,
+    ScalpInput,
     build_auditor_prompt,
-    build_director_prompt,
     build_investor_prompt,
     build_quant_prompt,
+    build_research_prompt,
     build_risk_prompt,
-    build_sweep_prompt,
+    build_scalp_prompt,
 )
 from arc.personas.schemas import (
     AnomalyReport,
     AuditorOutput,
-    DirectorOutput,
-    DirectorRankedItem,
     ImprovementStep,
     InvestorOutput,
     LessonLearned,
     QuantOutput,
     QuantStructureOut,
+    ResearchOutput,
+    ResearchRankedItem,
     RiskAssessment,
     RiskOutput,
-    SweepCandidateOut,
-    SweepOutput,
+    ScalpCandidateOut,
+    ScalpOutput,
 )
 
 # ---------------------------------------------------------------------------
 # Sample data fixtures
 # ---------------------------------------------------------------------------
 
-SAMPLE_SWEEP_OUTPUT = {
+SAMPLE_SCALP_OUTPUT = {
     "candidates": [
         {
             "ticker": "AAPL",
@@ -75,7 +75,7 @@ SAMPLE_SWEEP_OUTPUT = {
     ),
 }
 
-SAMPLE_DIRECTOR_OUTPUT = {
+SAMPLE_RESEARCH_OUTPUT = {
     "shortlist": [
         {
             "ticker": "AAPL",
@@ -208,47 +208,47 @@ SAMPLE_AUDITOR_OUTPUT = {
 # ---------------------------------------------------------------------------
 
 
-class TestSweepSchema:
+class TestScalpSchema:
     def test_valid_output(self) -> None:
-        out = SweepOutput.model_validate(SAMPLE_SWEEP_OUTPUT)
+        out = ScalpOutput.model_validate(SAMPLE_SCALP_OUTPUT)
         assert len(out.candidates) == 2
         assert out.candidates[0].ticker == "AAPL"
         assert out.candidates[0].confidence == 0.8
 
     def test_roundtrip(self) -> None:
-        out = SweepOutput.model_validate(SAMPLE_SWEEP_OUTPUT)
+        out = ScalpOutput.model_validate(SAMPLE_SCALP_OUTPUT)
         data = json.loads(out.model_dump_json())
-        out2 = SweepOutput.model_validate(data)
+        out2 = ScalpOutput.model_validate(data)
         assert out == out2
 
     def test_requires_sources(self) -> None:
-        bad = {**SAMPLE_SWEEP_OUTPUT["candidates"][0], "sources": []}
+        bad = {**SAMPLE_SCALP_OUTPUT["candidates"][0], "sources": []}
         with pytest.raises(ValidationError, match="sources"):
-            SweepCandidateOut.model_validate(bad)
+            ScalpCandidateOut.model_validate(bad)
 
     def test_confidence_bounds(self) -> None:
-        bad = {**SAMPLE_SWEEP_OUTPUT["candidates"][0], "confidence": 1.5}
+        bad = {**SAMPLE_SCALP_OUTPUT["candidates"][0], "confidence": 1.5}
         with pytest.raises(ValidationError, match="confidence"):
-            SweepCandidateOut.model_validate(bad)
+            ScalpCandidateOut.model_validate(bad)
 
 
-class TestDirectorSchema:
+class TestResearchSchema:
     def test_valid_output(self) -> None:
-        out = DirectorOutput.model_validate(SAMPLE_DIRECTOR_OUTPUT)
+        out = ResearchOutput.model_validate(SAMPLE_RESEARCH_OUTPUT)
         assert len(out.shortlist) == 1
         assert out.shortlist[0].rank == 1
         assert out.market_regime == "risk_on"
 
     def test_roundtrip(self) -> None:
-        out = DirectorOutput.model_validate(SAMPLE_DIRECTOR_OUTPUT)
+        out = ResearchOutput.model_validate(SAMPLE_RESEARCH_OUTPUT)
         data = json.loads(out.model_dump_json())
-        out2 = DirectorOutput.model_validate(data)
+        out2 = ResearchOutput.model_validate(data)
         assert out == out2
 
     def test_rank_must_be_positive(self) -> None:
-        bad = {**SAMPLE_DIRECTOR_OUTPUT["shortlist"][0], "rank": 0}
+        bad = {**SAMPLE_RESEARCH_OUTPUT["shortlist"][0], "rank": 0}
         with pytest.raises(ValidationError, match="rank"):
-            DirectorRankedItem.model_validate(bad)
+            ResearchRankedItem.model_validate(bad)
 
 
 class TestQuantSchema:
@@ -355,33 +355,33 @@ class TestAuditorSchema:
 class TestPromptBuilders:
     """Verify prompt builders are pure functions that return non-empty strings."""
 
-    def test_sweep_builder(self) -> None:
-        inp = SweepInput(
+    def test_scalp_builder(self) -> None:
+        inp = ScalpInput(
             universe=["AAPL", "NVDA"],
             raw_feeds=["AAPL earnings beat expectations."],
             scan_date="2026-09-27",
         )
-        result = build_sweep_prompt(inp)
+        result = build_scalp_prompt(inp)
         assert isinstance(result, str)
         assert len(result) > 100
-        assert "Sweep" in result
+        assert "Scalp" in result
         assert "AAPL" in result
         assert "broker" in result.lower()  # forbidden actions mentioned
 
-    def test_director_builder(self) -> None:
-        inp = DirectorInput(
-            candidates_json=json.dumps(SAMPLE_SWEEP_OUTPUT),
+    def test_research_builder(self) -> None:
+        inp = ResearchInput(
+            candidates_json=json.dumps(SAMPLE_SCALP_OUTPUT),
             regime_features_json='{"regime": "risk_on"}',
             portfolio_summary="3 open positions",
             scan_date="2026-09-27",
         )
-        result = build_director_prompt(inp)
+        result = build_research_prompt(inp)
         assert isinstance(result, str)
-        assert "Director" in result
+        assert "Research" in result
 
     def test_quant_builder(self) -> None:
         inp = QuantInput(
-            shortlist_json=json.dumps(SAMPLE_DIRECTOR_OUTPUT),
+            shortlist_json=json.dumps(SAMPLE_RESEARCH_OUTPUT),
             chains_json='{"AAPL": []}',
             underlying_prices_json='{"AAPL": 205.0}',
             scan_date="2026-09-27",
@@ -425,31 +425,31 @@ class TestPromptBuilders:
         assert isinstance(result, str)
         assert "Auditor" in result
 
-    def test_sweep_builder_empty_feeds(self) -> None:
+    def test_scalp_builder_empty_feeds(self) -> None:
         """Builder handles empty feeds gracefully."""
-        inp = SweepInput(
+        inp = ScalpInput(
             universe=["SPY"],
             raw_feeds=[],
             scan_date="2026-09-27",
         )
-        result = build_sweep_prompt(inp)
+        result = build_scalp_prompt(inp)
         assert "(no feeds)" in result
 
     def test_builders_are_deterministic(self) -> None:
         """Same input produces same output (pure function)."""
-        inp = SweepInput(
+        inp = ScalpInput(
             universe=["AAPL"],
             raw_feeds=["test feed"],
             scan_date="2026-09-27",
         )
-        r1 = build_sweep_prompt(inp)
-        r2 = build_sweep_prompt(inp)
+        r1 = build_scalp_prompt(inp)
+        r2 = build_scalp_prompt(inp)
         assert r1 == r2
 
     def test_all_prompts_mention_forbidden_broker(self) -> None:
         """Every persona prompt must mention broker prohibition."""
-        sweep_inp = SweepInput(universe=["SPY"], raw_feeds=["x"], scan_date="2026-09-27")
-        director_inp = DirectorInput(
+        scalp_inp = ScalpInput(universe=["SPY"], raw_feeds=["x"], scan_date="2026-09-27")
+        research_inp = ResearchInput(
             candidates_json="{}",
             regime_features_json="{}",
             portfolio_summary="",
@@ -482,8 +482,8 @@ class TestPromptBuilders:
         )
 
         for name, builder, inp in [
-            ("sweep", build_sweep_prompt, sweep_inp),
-            ("director", build_director_prompt, director_inp),
+            ("scalp", build_scalp_prompt, scalp_inp),
+            ("research", build_research_prompt, research_inp),
             ("quant", build_quant_prompt, quant_inp),
             ("risk", build_risk_prompt, risk_inp),
             ("investor", build_investor_prompt, exec_inp),

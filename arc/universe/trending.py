@@ -15,7 +15,7 @@ admission liquidity screen. Each configured input (``config/routines.yaml``
   rank-normalised mentions and 24 h rank gain.
 * ``stocktwits`` — Stocktwits trending symbols (``trending_score``); crypto and
   non-US symbols dropped.
-* ``sweep`` — the Sweep's ``candidates`` rows over the last ``lookback_sessions``
+* ``scalp`` — the Scalp's ``candidates`` rows over the last ``lookback_sessions``
   sessions, each weighted by its ``corroboration`` (at least 1).
 
 Rules (:func:`rank_trending`, pure):
@@ -367,16 +367,16 @@ def news_input(
     return _stale(res, spec, now)
 
 
-def sweep_input(
+def scalp_input(
     name: str, spec: TrendingInput, *, conn: sqlite3.Connection, now: _dt.datetime
 ) -> InputResult:
-    """Sweep candidates over the lookback, each row weighted by its corroboration."""
+    """Scalp candidates over the lookback, each row weighted by its corroboration."""
     from arc.utils.calendar import ET
 
     days = [
         d.isoformat() for d in _sessions_back(now.astimezone(ET).date(), spec.lookback_sessions)
     ]
-    res = InputResult(name=name, type="sweep", status="ok")
+    res = InputResult(name=name, type="scalp", status="ok")
     try:
         rows = conn.execute(
             "SELECT ticker, corroboration, COALESCE(updated_at, created_at) FROM candidates "
@@ -384,7 +384,7 @@ def sweep_input(
             days,
         ).fetchall()
     except sqlite3.OperationalError as exc:
-        return InputResult(name=name, type="sweep", status="failed", error=str(exc))
+        return InputResult(name=name, type="scalp", status="failed", error=str(exc))
     weight: dict[str, float] = {}
     n_rows: dict[str, int] = {}
     for r in rows:
@@ -398,7 +398,7 @@ def sweep_input(
         weight[sym] = weight.get(sym, 0.0) + max(1, int(r[1] or 0))
         n_rows[sym] = n_rows.get(sym, 0) + 1
     res.raw = weight
-    res.detail = {s: f"sweep {n_rows[s]}d (corr {int(w)})" for s, w in weight.items()}
+    res.detail = {s: f"scalp {n_rows[s]}d (corr {int(w)})" for s, w in weight.items()}
     return _stale(res, spec, now)
 
 
@@ -487,8 +487,8 @@ def gather_inputs(
     for name, spec in cfg.enabled.items():
         if spec.type == "news":
             res = news_input(name, spec, conn=conn, now=now, tickers_in=tickers_in, key_for=key_for)
-        elif spec.type == "sweep":
-            res = sweep_input(name, spec, conn=conn, now=now)
+        elif spec.type == "scalp":
+            res = scalp_input(name, spec, conn=conn, now=now)
         elif spec.type == "apewisdom":
             res = apewisdom_input(name, spec, get=get, now=now)
         else:

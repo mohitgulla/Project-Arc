@@ -330,7 +330,7 @@ def test_detail_decision_trail(conn: sqlite3.Connection) -> None:
     assert call.persona == "risk" and call.model == "claude-sonnet-5"
     assert call.input_tokens == 7200 and call.cost_usd == pytest.approx(0.0351)
     assert call.prompt_text and len(call.prompt_sha256) == 64
-    assert set(t.persona_calls) == {"pc-fx-director", "pc-fx-quant", "pc-fx-risk"}
+    assert set(t.persona_calls) == {"pc-fx-research", "pc-fx-quant", "pc-fx-risk"}
 
 
 def test_detail_gate_two_violations_and_token_hidden(conn: sqlite3.Connection) -> None:

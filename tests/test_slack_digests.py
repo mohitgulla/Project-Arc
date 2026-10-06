@@ -12,8 +12,6 @@ from arc.models import Candidate, CatalystType, Stance
 from arc.personas.schemas import (
     AnomalyReport,
     AuditorOutput,
-    DirectorOutput,
-    DirectorRankedItem,
     ImprovementStep,
     InvestorPlan,
     LessonLearned,
@@ -21,6 +19,8 @@ from arc.personas.schemas import (
     QuantLeg,
     QuantOutput,
     QuantStructureOut,
+    ResearchOutput,
+    ResearchRankedItem,
     RiskAssessment,
     RiskOutput,
 )
@@ -88,7 +88,7 @@ def cand(ticker: str = "NVDA", **kw: Any) -> Candidate:
     return Candidate(**data)
 
 
-def ranked(ticker: str = "SPY", **kw: Any) -> DirectorRankedItem:
+def ranked(ticker: str = "SPY", **kw: Any) -> ResearchRankedItem:
     data: dict[str, Any] = {
         "ticker": ticker,
         "rank": 1,
@@ -99,7 +99,7 @@ def ranked(ticker: str = "SPY", **kw: Any) -> DirectorRankedItem:
         "confidence": 0.7,
     }
     data.update(kw)
-    return DirectorRankedItem(**data)
+    return ResearchRankedItem(**data)
 
 
 def leg(strike: float, side: str, kind: str, expiry: str = "2026-10-30") -> QuantLeg:
@@ -198,13 +198,13 @@ def journal(**kw: Any) -> AuditorOutput:
 
 
 # ---------------------------------------------------------------------------
-# Sweep
+# Scalp
 # ---------------------------------------------------------------------------
 
 
-class TestSweep:
+class TestScalp:
     def test_title_rows_rejects_and_footer(self) -> None:
-        view = D.sweep_card(
+        view = D.scalp_card(
             docs=12,
             accepted=3,
             candidates=[cand(), cand("XOM", stance=Stance.BEARISH, catalyst_date=None)],
@@ -215,7 +215,7 @@ class TestSweep:
             chain_run_id="chain-1",
         )
         assert (
-            view.text == view.blocks[0]["text"]["text"] == "[Sweep] Scan: 12 Sources → 2 Candidates"
+            view.text == view.blocks[0]["text"]["text"] == "[Scalp] Scan: 12 Sources → 2 Candidates"
         )
         text = _all(view)
         assert "*3* accepted this run · 3 rejected" in text
@@ -236,16 +236,16 @@ class TestSweep:
         )
         assert "•" not in sections[0] and "•" not in sections[1]
         assert "source" not in text.lower().replace("sources →", "")
-        assert "http" not in text  # owner: no source links on the Sweep card
+        assert "http" not in text  # owner: no source links on the Scalp card
         assert "• not in universe (2): PLTR, AAPL" in text
         assert "• invalid reply (1): TSLA" in text
         assert _footer(view) == "run `run-1` · chain `chain-1`"
         _assert_slack_limits(view)
 
     def test_empty_run_and_failed_batches(self) -> None:
-        view = D.sweep_card(docs=1, accepted=0, candidates=[], rejected={}, failed_batches=2)
+        view = D.scalp_card(docs=1, accepted=0, candidates=[], rejected={}, failed_batches=2)
         text = _all(view)
-        assert view.text == "[Sweep] Scan: 1 Source → 0 Candidates"
+        assert view.text == "[Scalp] Scan: 1 Source → 0 Candidates"
         assert "*Candidates*\nnone" in text
         assert ":warning: 2 failed batches" in text
         assert "Rejected" not in text
@@ -254,7 +254,7 @@ class TestSweep:
 
     def test_source_mix_story_count_and_corroboration(self) -> None:
         """D30: source mix fact with over-budget counts, story count, distinct sources."""
-        view = D.sweep_card(
+        view = D.scalp_card(
             docs=70,
             accepted=1,
             candidates=[cand(corroboration=3)],
@@ -271,14 +271,14 @@ class TestSweep:
         assert "75% confidence · 3 sources" in text
         _assert_slack_limits(view)
         one = _all(
-            D.sweep_card(
+            D.scalp_card(
                 docs=1, accepted=0, candidates=[cand(corroboration=1)], rejected={}, stories=1
             )
         )
         assert "1 story" in one and "· 1 source" in one
 
     def test_escapes_rationale_and_rejected_names(self) -> None:
-        view = D.sweep_card(
+        view = D.scalp_card(
             docs=1,
             accepted=1,
             candidates=[
@@ -296,7 +296,7 @@ class TestSweep:
         # E5.5b: one section per candidate, so a long list is clipped to rows
         # plus a "+N more" line, and the whole card stays under 50 blocks.
         many = [cand(f"T{i}", sources=[f"https://example.com/{'z' * 80}/{i}"]) for i in range(80)]
-        view = D.sweep_card(docs=80, accepted=80, candidates=many, rejected={"schema": 1})
+        view = D.scalp_card(docs=80, accepted=80, candidates=many, rejected={"schema": 1})
         _assert_slack_limits(view)
         contexts = [b["elements"][0]["text"] for b in view.blocks if b["type"] == "context"]
         assert any(t.startswith("+60 more: T20, T21") for t in contexts)
@@ -305,13 +305,13 @@ class TestSweep:
 
     def test_ten_candidates_fit_without_clipping(self) -> None:
         many = [cand(f"T{i}") for i in range(10)]
-        view = D.sweep_card(docs=10, accepted=10, candidates=many, rejected={})
+        view = D.scalp_card(docs=10, accepted=10, candidates=many, rejected={})
         _assert_slack_limits(view)
         assert "more" not in _all(view)
         assert sum(b["type"] == "divider" for b in view.blocks) == 10
 
     def test_long_rationale_is_clipped(self) -> None:
-        view = D.sweep_card(
+        view = D.scalp_card(
             docs=1, accepted=1, candidates=[cand()], rejected={}, rationales={"NVDA": LONG}
         )
         _assert_slack_limits(view)
@@ -319,13 +319,13 @@ class TestSweep:
 
 
 # ---------------------------------------------------------------------------
-# Director
+# Research
 # ---------------------------------------------------------------------------
 
 
-class TestDirector:
+class TestResearch:
     def test_picks_and_dropped(self) -> None:
-        out = DirectorOutput(
+        out = ResearchOutput(
             shortlist=[
                 ranked(),
                 ranked(
@@ -335,32 +335,32 @@ class TestDirector:
             market_regime="risk_on",
             session_notes="Two setups.",
         )
-        view = D.director_card(
+        view = D.research_card(
             out,
             candidates=5,
             dropped=[("AAPL", "not_a_candidate"), ("XOM", "not_picked"), ("TSLA", "not_picked")],
-            evidence={"SPY": "Sweep neutral · macro catalyst Oct 28"},
+            evidence={"SPY": "Scalp neutral · macro catalyst Oct 28"},
             run_id="r",
             chain_run_id="c",
         )
-        assert view.text == "[Director] Ranked: 2 / 5 • Market Risk ON"
+        assert view.text == "[Research] Ranked: 2 / 5 • Market Risk ON"
         text = _all(view)
         assert (
             "*SPY*\nRank 1 · Neutral · 70% confidence · Iron Condor\n"
             "Thesis: Range-bound into FOMC.\nRegime: Low realised vol.\n"
-            "Evidence: Sweep neutral · macro"
+            "Evidence: Scalp neutral · macro"
         ) in text
         assert "Rank 2 · Bullish · 70% confidence · Vertical Spread" in text
-        assert "[Director] SPY" not in text and "_Regime:_" not in text
-        assert "• not a Sweep candidate (1): AAPL" in text
-        assert "• not ranked or excluded by Director (2): XOM, TSLA" in text
-        assert "*[Director] Session notes*\nTwo setups." in text
+        assert "[Research] SPY" not in text and "_Regime:_" not in text
+        assert "• not a Scalp candidate (1): AAPL" in text
+        assert "• not ranked or excluded by Research (2): XOM, TSLA" in text
+        assert "*[Research] Session notes*\nTwo setups." in text
         assert _footer(view) == "run `r` · chain `c`"
         _assert_slack_limits(view)
 
     def test_budget_splits_ranked_list(self) -> None:
         """E5.7: every ranked name is shown; past the budget they are listed, not carded."""
-        out = DirectorOutput(
+        out = ResearchOutput(
             shortlist=[
                 ranked(evidence=["8-K buyback", "IV rank 18"]),
                 ranked("NVDA", rank=2, stance="bullish"),
@@ -370,25 +370,25 @@ class TestDirector:
             market_regime="risk_on",
             session_notes="",
         )
-        view = D.director_card(
+        view = D.research_card(
             out,
             candidates=4,
             funnel=[("XOM", "excluded", "Crude already priced.")],
             budget=2,
         )
-        assert view.text == "[Director] Ranked: 3 / 4 • Market Risk ON"
+        assert view.text == "[Research] Ranked: 3 / 4 • Market Risk ON"
         text = _all(view)
         assert "*SPY*\nRank 1" in text and "*NVDA*\nRank 2" in text
         assert "*PLTR*\nRank 3" not in text
         assert "Ranked, not structured (1, over the budget of 2)" in text
         assert "#3 *PLTR* · Bullish · 70% · Contract win." in text
-        assert "Director evidence: 8-K buyback · IV rank 18" in text
+        assert "Research evidence: 8-K buyback · IV rank 18" in text
         assert "XOM" in text and "Crude already priced." in text
         _assert_slack_limits(view)
 
     def test_empty_shortlist_and_escaping(self) -> None:
-        out = DirectorOutput(shortlist=[], market_regime=EVIL, session_notes=EVIL)
-        view = D.director_card(out, candidates=0)
+        out = ResearchOutput(shortlist=[], market_regime=EVIL, session_notes=EVIL)
+        view = D.research_card(out, candidates=0)
         text = _all(view)
         assert "nothing worth trading today" in text
         assert EVIL_ESC in text and "<!channel>" not in text
@@ -397,8 +397,8 @@ class TestDirector:
         assert view.blocks[0]["text"]["type"] == "plain_text"
 
     def test_long_thesis_is_clipped(self) -> None:
-        out = DirectorOutput(shortlist=[ranked(thesis=LONG)], market_regime="", session_notes=LONG)
-        view = D.director_card(out, candidates=1)
+        out = ResearchOutput(shortlist=[ranked(thesis=LONG)], market_regime="", session_notes=LONG)
+        view = D.research_card(out, candidates=1)
         assert view.text.endswith("Market Unknown")
         _assert_slack_limits(view)
 
@@ -704,7 +704,7 @@ class TestAuditor:
 
     def test_ops_slots_line(self) -> None:
         """E8.2a: the day's slot coverage is one line in an Ops section (no new post)."""
-        line = "Slots: director 71/75, monitor 77/78 · missed 6 (list in tower Ops)"
+        line = "Slots: research 71/75, monitor 77/78 · missed 6 (list in tower Ops)"
         text = _all(D.auditor_card(journal(), ops_line=line))
         assert f"*Ops*\n{line}" in text
         assert "*Ops*" not in _all(D.auditor_card(journal()))

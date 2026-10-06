@@ -16,9 +16,9 @@ tiers:
     model: anthropic/claude-opus-5
 
 personas:
-  director: frontier
+  research: frontier
   quant:    frontier
   risk:     frontier
-  sweep:    cheap
+  scalp:    cheap
   investor: cheap
   auditor:  cheap

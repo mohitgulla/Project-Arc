@@ -1,12 +1,12 @@
-"""LLM backends for the Sweep persona.
+"""LLM backends for the Scalp persona.
 
-The Sweep runs on the cheap model tier through Hermes (PLAN §2.4, D8); the
+The Scalp runs on the cheap model tier through Hermes (PLAN §2.4, D8); the
 model for each persona comes from ``config/llm_routing.yaml`` via
-:mod:`arc.llm_routing`. ``HermesSweepLLM`` shells out to ``hermes -z`` (one-shot mode) with a
+:mod:`arc.llm_routing`. ``HermesScalpLLM`` shells out to ``hermes -z`` (one-shot mode) with a
 pinned model/provider, no project rules and a minimal toolset, so the
 persona has no broker access and no repository context.
 
-``FixtureSweepLLM`` replays canned responses for dry-run mode and tests;
+``FixtureScalpLLM`` replays canned responses for dry-run mode and tests;
 it never touches the network.
 """
 
@@ -40,13 +40,13 @@ _HERMES_TOOLSET = "todo"
 _STRIPPED_ENV_PREFIXES = ("HERMES_KANBAN_",)
 
 
-class SweepLLMError(RuntimeError):
-    """The Sweep LLM call failed (transport, timeout, non-zero exit)."""
+class ScalpLLMError(RuntimeError):
+    """The Scalp LLM call failed (transport, timeout, non-zero exit)."""
 
 
 @dataclass(frozen=True)
 class LLMResult:
-    """Raw text returned by a Sweep LLM call plus the model that produced it.
+    """Raw text returned by a Scalp LLM call plus the model that produced it.
 
     Usage fields come from ``hermes -z --usage-file`` and are ``None`` when
     unknown (fixtures). ``cost_usd`` is 0 on a subscription ("included") plan;
@@ -60,10 +60,15 @@ class LLMResult:
     cost_usd: float | None = None
 
 
-class SweepLLM(Protocol):
-    """Anything that turns a Sweep prompt into raw response text."""
+class PersonaLLM(Protocol):
+    """Anything that turns a persona prompt (Scalp, Scout briefs) into raw response text."""
 
     def complete(self, prompt: str) -> LLMResult: ...
+
+
+#: D56 (E13.1): pre-rename names, kept for one release.
+SweepLLM = PersonaLLM
+ScalpLLM = PersonaLLM
 
 
 # ---------------------------------------------------------------------------
@@ -75,14 +80,14 @@ _EMPTY_RESPONSE = json.dumps({"candidates": [], "scan_summary": "fixture respons
 
 
 @dataclass
-class FixtureSweepLLM:
+class FixtureScalpLLM:
     """Replays canned responses in order; returns an empty scan once exhausted."""
 
     responses: Sequence[str]
     prompts: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_dir(cls, path: Path) -> FixtureSweepLLM:
+    def from_dir(cls, path: Path) -> FixtureScalpLLM:
         """Load ``*.txt`` responses from *path*, sorted by filename."""
         return cls([p.read_text() for p in sorted(path.glob("*.txt"))])
 
@@ -107,8 +112,8 @@ def _child_env() -> dict[str, str]:
 
 
 @dataclass
-class HermesSweepLLM:
-    """Run the Sweep prompt through ``hermes -z`` on the cheap model tier."""
+class HermesScalpLLM:
+    """Run the Scalp prompt through ``hermes -z`` on the cheap model tier."""
 
     model: str
     provider: str
@@ -120,10 +125,10 @@ class HermesSweepLLM:
     def from_settings(
         cls,
         settings: ArcSettings,
-        persona: str = "sweep",
+        persona: str = "scalp",
         *,
         timeout_seconds: int | None = None,
-    ) -> HermesSweepLLM:
+    ) -> HermesScalpLLM:
         """Backend for *persona*; its model comes from ``config/llm_routing.yaml`` (E8.1)."""
         from arc.llm_routing import resolve
 
@@ -131,8 +136,8 @@ class HermesSweepLLM:
         return cls(
             model=route.model,
             provider=route.provider,
-            hermes_bin=settings.sweep_hermes_bin,
-            timeout_seconds=timeout_seconds or settings.sweep_timeout_seconds,
+            hermes_bin=settings.scalp_hermes_bin,
+            timeout_seconds=timeout_seconds or settings.scalp_timeout_seconds,
         )
 
     def command(self, prompt: str, usage_file: Path) -> list[str]:
@@ -152,7 +157,7 @@ class HermesSweepLLM:
         ]
 
     def complete(self, prompt: str) -> LLMResult:
-        with tempfile.TemporaryDirectory(prefix="arc-sweep-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="arc-scalp-") as tmp:
             usage_file = Path(tmp) / "usage.json"
             try:
                 proc = self.runner(
@@ -165,17 +170,17 @@ class HermesSweepLLM:
                     check=False,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
-                raise SweepLLMError(f"hermes call failed: {exc}") from exc
+                raise ScalpLLMError(f"hermes call failed: {exc}") from exc
 
             usage = _read_usage(usage_file)
 
         if proc.returncode != 0 or usage.get("failed"):
             err = (proc.stderr or "").strip()[-500:]
-            raise SweepLLMError(f"hermes exited {proc.returncode}: {err}")
+            raise ScalpLLMError(f"hermes exited {proc.returncode}: {err}")
 
         model = str(usage.get("model") or self.model)
         log.info(
-            "sweep.llm.done",
+            "scalp.llm.done",
             model=model,
             cost_usd=usage.get("estimated_cost_usd"),
             total_tokens=usage.get("total_tokens"),

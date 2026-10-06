@@ -38,11 +38,11 @@ if TYPE_CHECKING:
     from arc.models import Candidate
     from arc.personas.schemas import (
         AuditorOutput,
-        DirectorOutput,
         InvestorPlan,
         QuantLeg,
         QuantOutput,
         QuantStructureOut,
+        ResearchOutput,
         RiskAssessment,
         RiskOutput,
     )
@@ -52,43 +52,43 @@ __all__ = [
     "ExecutionResult",
     "Performance",
     "auditor_card",
-    "director_card",
+    "research_card",
     "investor_card",
     "quant_card",
     "regime_name",
     "risk_card",
-    "sweep_card",
-    "sweep_context_card",
+    "scalp_card",
+    "scalp_context_card",
     "structure_name",
 ]
 
 _MULT = 100  # option contract multiplier
-# Sweep rows are two blocks each (divider + section); 20 keeps a card with the
+# Scalp rows are two blocks each (divider + section); 20 keeps a card with the
 # head, a "+N more" line, the Rejected list, folded Session notes and the footer
 # under Slack's 50-block cap.
-_MAX_SWEEP_ROWS = 20
+_MAX_SCALP_ROWS = 20
 
-# Human text for stable drop/reject reason keys (arc.ingest.sweep, arc.pipeline.steps).
+# Human text for stable drop/reject reason keys (arc.ingest.scalp, arc.pipeline.steps).
 _REASONS = {
     "schema": "invalid reply",
     "not_in_universe": "not in universe",
     "unknown_symbol": "unknown symbol",
     "illiquid": "failed liquidity screen",
     "over_new_ticker_cap": "over new-ticker cap",
-    "excluded": "excluded by Director",
+    "excluded": "excluded by Research",
     "over_budget": "ranked, not structured (budget)",
     "skipped": "skipped by Quant",
     "not_structured": "no structure, no reason",
     "below_threshold": "below confidence threshold",
     "no_grounded_source": "no grounded source",
-    "not_a_candidate": "not a Sweep candidate",
+    "not_a_candidate": "not a Scalp candidate",
     "duplicate": "duplicate",
     "invalid_field": "invalid stance/structure",
     "over_limit": "over shortlist limit",
     "not_in_menu": "not in the scanner menu",
     "not_shortlisted": "not shortlisted",
     "unknown_structure": "structure Quant did not propose",
-    "not_picked": "not ranked or excluded by Director",
+    "not_picked": "not ranked or excluded by Research",
     "no_chain": "no tradable chain",
     "not_assessed": "not assessed by Risk",
 }
@@ -178,7 +178,7 @@ def _head(title: str, *summary: str) -> list[Block | None]:
 
 
 # ---------------------------------------------------------------------------
-# Sweep
+# Scalp
 # ---------------------------------------------------------------------------
 
 
@@ -212,7 +212,7 @@ def category_mix_lines(mix: Sequence[CategoryMix]) -> list[str]:
     return out
 
 
-def sweep_card(
+def scalp_card(
     *,
     docs: int,
     accepted: int,
@@ -230,18 +230,18 @@ def sweep_card(
     category_mix: Sequence[CategoryMix] = (),
     filtered: Mapping[str, int] | None = None,
 ) -> CardView:
-    """``[Sweep] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
+    """``[Scalp] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
-    No source links (owner, E5.5 review): the row carries the Sweep's one-line
+    No source links (owner, E5.5 review): the row carries the Scalp's one-line
     rationale and a source count; the URLs stay in the audit store. D28: non-seed
     tickers admitted by the liquidity screen are tagged ``new``; universe rejects
     (``illiquid`` etc.) are grouped by reason under Rejected with the failed checks.
     D30 (E4.5): a *Source mix* fact (docs read per source, over-budget counts) and
     the story count; each candidate shows how many distinct sources back it.
     D55: *filtered* (source label -> docs a feed's title filter closed since the last
-    Sweep, never read) is one ``Filtered`` line under the source mix.
+    Scalp, never read) is one ``Filtered`` line under the source mix.
     """
-    title = f"[Sweep] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
+    title = f"[Scalp] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
     n_rej = sum(rejected.values())
     new = set(new_tickers)
     blocks = _head(
@@ -263,10 +263,10 @@ def sweep_card(
     if filtered and sum(filtered.values()):
         line = " · ".join(f"{B.esc(k)} {n}" for k, n in filtered.items() if n)
         blocks.append(_section("Filtered (title filter, not read)", [line]))
-    # E5.5b: one section per candidate with dividers (like the Director's ranked
+    # E5.5b: one section per candidate with dividers (like Research's ranked
     # list), so each row folds on its own. Lines start at column 0: no indent.
     ranked = sorted(candidates, key=lambda c: -c.confidence)
-    for c in ranked[:_MAX_SWEEP_ROWS]:
+    for c in ranked[:_MAX_SCALP_ROWS]:
         when = f" {c.catalyst_date:%b %d}" if c.catalyst_date else ""
         facts = (
             f"{c.stance.value} · {c.catalyst_type.value}{when} · {_pct(c.confidence)} confidence"
@@ -282,9 +282,9 @@ def sweep_card(
         blocks.append(
             {"type": "section", "text": {"type": "mrkdwn", "text": B.clip("\n".join(lines))}}
         )
-    if len(ranked) > _MAX_SWEEP_ROWS:
-        rest = ", ".join(B.esc(c.ticker) for c in ranked[_MAX_SWEEP_ROWS:])
-        blocks.append(B.summary(B.clip(f"+{len(ranked) - _MAX_SWEEP_ROWS} more: {rest}")))
+    if len(ranked) > _MAX_SCALP_ROWS:
+        rest = ", ".join(B.esc(c.ticker) for c in ranked[_MAX_SCALP_ROWS:])
+        blocks.append(B.summary(B.clip(f"+{len(ranked) - _MAX_SCALP_ROWS} more: {rest}")))
     if not ranked:
         blocks.append(B.divider())
         blocks.append(_section("Candidates", ["none"]))
@@ -300,16 +300,16 @@ def sweep_card(
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 
 
-def sweep_context_card(
+def scalp_context_card(
     entries: Sequence[ContextEntry],
     *,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """D36 thread item 1: the Sweep candidates the Director read this loop.
+    """D36 thread item 1: the Scalp candidates Research read this loop.
 
-    ``[Sweep] Context: 3 Candidates • run 2026-09-28 09:30ET``: the run time is
-    the newest candidate entry's ``valid_from`` (the Sweep run that wrote it),
-    one section per candidate (E5.5b layout), and the footer links the Sweep
+    ``[Scalp] Context: 3 Candidates • run 2026-09-28 09:30ET``: the run time is
+    the newest candidate entry's ``valid_from`` (the Scalp run that wrote it),
+    one section per candidate (E5.5b layout), and the footer links the Scalp
     ``run`` that produced the newest entry plus the loop ``chain``. Built from
     the stored context entries only: no LLM, no re-scan.
     """
@@ -318,14 +318,14 @@ def sweep_context_card(
     cands = sorted(entries, key=lambda e: -float(e.payload.get("confidence") or 0.0))
     newest = max(entries, key=lambda e: e.valid_from) if entries else None
     when = f" • run {slot_stamp(newest.valid_from)}" if newest else ""
-    title = f"[Sweep] Context: {_plural(len(cands), 'Candidate')}{when}"
+    title = f"[Scalp] Context: {_plural(len(cands), 'Candidate')}{when}"
     runs = sorted({e.run_id for e in entries if e.run_id})
     blocks = _head(
         title,
-        "what the Director read this loop",
-        f"{_plural(len(runs), 'Sweep run')}" if len(runs) > 1 else "",
+        "what Research read this loop",
+        f"{_plural(len(runs), 'Scalp run')}" if len(runs) > 1 else "",
     )
-    for e in cands[:_MAX_SWEEP_ROWS]:
+    for e in cands[:_MAX_SCALP_ROWS]:
         p = e.payload
         facts = f"{p.get('stance', '?')} · {p.get('catalyst_type', '?')}"
         raw_date = p.get("catalyst_date")
@@ -345,9 +345,9 @@ def sweep_context_card(
                 "text": {"type": "mrkdwn", "text": B.clip(f"*{B.esc(e.subject)}*\n{B.esc(facts)}")},
             }
         )
-    if len(cands) > _MAX_SWEEP_ROWS:
-        rest = ", ".join(B.esc(e.subject) for e in cands[_MAX_SWEEP_ROWS:])
-        blocks.append(B.summary(B.clip(f"+{len(cands) - _MAX_SWEEP_ROWS} more: {rest}")))
+    if len(cands) > _MAX_SCALP_ROWS:
+        rest = ", ".join(B.esc(e.subject) for e in cands[_MAX_SCALP_ROWS:])
+        blocks.append(B.summary(B.clip(f"+{len(cands) - _MAX_SCALP_ROWS} more: {rest}")))
     if not cands:
         blocks.append(B.divider())
         blocks.append(_section("Candidates", ["none"]))
@@ -355,7 +355,7 @@ def sweep_context_card(
 
 
 # ---------------------------------------------------------------------------
-# Director
+# Research
 # ---------------------------------------------------------------------------
 
 
@@ -368,8 +368,8 @@ def regime_name(raw: str) -> str:
     return _REGIME_NAMES.get(key, _title_case(key))
 
 
-def director_card(
-    out: DirectorOutput,
+def research_card(
+    out: ResearchOutput,
     *,
     candidates: int,
     dropped: Sequence[tuple[str, str]] = (),
@@ -379,14 +379,14 @@ def director_card(
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Director] Ranked: 12 / 30 • Market Risk ON``; a section per budgeted pick.
+    """``[Research] Ranked: 12 / 30 • Market Risk ON``; a section per budgeted pick.
 
-    E5.7: the Director ranks every candidate it would trade. The first ``budget``
+    E5.7: Research ranks every candidate it would trade. The first ``budget``
     (the Quant/Risk budget, ``pipeline_max_shortlist``) get full sections; the rest
     are listed under "Ranked, not structured". ``funnel`` is ``(ticker, key, reason)``
-    for candidates the Director excluded (with its reason) or left unranked.
+    for candidates Research excluded (with its reason) or left unranked.
     ``dropped`` is ``(ticker, reason_key)`` for invalid shortlist entries.
-    ``evidence`` is ticker → a pre-escaped one-line summary of the upstream Sweep
+    ``evidence`` is ticker → a pre-escaped one-line summary of the upstream Scalp
     data (stance, catalyst, confidence, sources) shown under the thesis.
     """
     regime = regime_name(out.market_regime)
@@ -402,11 +402,11 @@ def director_card(
     checks = list(getattr(out, "thesis_checks", []) or [])
     suppressed = list(getattr(out, "suppressed", []) or [])
     if guard is not None and not guard.opens_allowed:
-        title = f"[Director] No trade: market unclear • Market {regime}"
+        title = f"[Research] No trade: market unclear • Market {regime}"
     elif not ranked and no_trade:
-        title = f"[Director] No trade: {_title_case(no_trade)} • Market {regime}"
+        title = f"[Research] No trade: {_title_case(no_trade)} • Market {regime}"
     else:
-        title = f"[Director] Ranked: {len(ranked)} / {candidates} • Market {regime}"
+        title = f"[Research] Ranked: {len(ranked)} / {candidates} • Market {regime}"
     blocks = _head(
         title,
         f"*{len(ranked)}* ranked",
@@ -449,7 +449,7 @@ def director_card(
         if ev:
             lines.append(f"Evidence: {ev}")
         if item.evidence:
-            lines.append("Director evidence: " + " · ".join(B.esc(e) for e in item.evidence))
+            lines.append("Research evidence: " + " · ".join(B.esc(e) for e in item.evidence))
         blocks.append(
             {"type": "section", "text": {"type": "mrkdwn", "text": B.clip("\n".join(lines))}}
         )
@@ -505,7 +505,7 @@ def director_card(
     if items:
         blocks.append(B.divider())
     blocks.append(_section("Dropped", _drops(counts, items)))
-    blocks.append(B.persona_section(Persona.DIRECTOR, "Session notes", out.session_notes))
+    blocks.append(B.persona_section(Persona.RESEARCH, "Session notes", out.session_notes))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 
 
@@ -579,7 +579,7 @@ def quant_card(
 
     E5.7: every budgeted ticker is accounted for: a structure, a skip with its reason
     (``out.skipped``), "no structure, no reason" (``not_structured``) or no chain.
-    ``over_budget`` = ranked by the Director beyond the Quant/Risk budget.
+    ``over_budget`` = ranked by Research beyond the Quant/Risk budget.
     """
     if out.structures:
         best = out.structures[0]
@@ -888,7 +888,7 @@ def auditor_card(
 ) -> CardView:
     """``[Auditor] Journal: Sep 28 • P&L +$312 (+0.3%)``; anomalies live in the body.
 
-    E8.2a: *ops_line* (``Slots: director 71/75, … · missed 6 (list in tower Ops)``)
+    E8.2a: *ops_line* (``Slots: research 71/75, … · missed 6 (list in tower Ops)``)
     is the day's routine slot coverage, shown in an ``Ops`` section.
     """
     perf = performance or Performance(day_pnl=out.daily_pnl)

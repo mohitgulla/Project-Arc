@@ -1,11 +1,11 @@
-"""Portfolio context for the Director (E5.9, D33): deterministic, no LLM.
+"""Portfolio context for Research (E5.9, D33): deterministic, no LLM.
 
 :func:`build_portfolio_context` turns the account, the open structures and the
 market marks into one typed :class:`PortfolioContext`, written to the context
 store as kind ``portfolio_context`` (subject ``session``, TTL 10 min, supersede
 latest). :func:`render_portfolio_context` is the bounded prompt block the
-Director reads. With an empty book ``PortfolioContext.empty`` is true and the
-rendered block is one line, so the Director prompt is today's prompt.
+Research reads. With an empty book ``PortfolioContext.empty`` is true and the
+rendered block is one line, so Research prompt is today's prompt.
 
 P&L, remaining EV and exit signals come from E6.4's ``position_review`` when a
 fresh one exists in the snapshot; otherwise the same evaluator
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from arc.context.store import ContextSnapshot
     from arc.gate.inputs import Portfolio
     from arc.pipeline.env import PipelineEnv
-    from arc.routines.config import DirectorDiversificationSettings
+    from arc.routines.config import ResearchDiversificationSettings
 
 __all__ = [
     "DEFAULT_SECTORS_PATH",
@@ -130,11 +130,11 @@ def _thesis(conn: sqlite3.Connection, row: Mapping[str, Any]) -> PortfolioThesis
         (row["candidate_id"],),
     ).fetchone()
     return PortfolioThesis(
-        director=str(prop["thesis"]) if prop else "",
-        sweep_catalyst=str(cand["catalyst_type"]) if cand else None,
-        sweep_catalyst_date=cand["catalyst_date"] if cand else None,
-        sweep_stance=Stance(cand["stance"]) if cand else None,
-        sweep_confidence=float(cand["confidence"]) if cand else None,
+        research=str(prop["thesis"]) if prop else "",
+        scalp_catalyst=str(cand["catalyst_type"]) if cand else None,
+        scalp_catalyst_date=cand["catalyst_date"] if cand else None,
+        scalp_stance=Stance(cand["stance"]) if cand else None,
+        scalp_confidence=float(cand["confidence"]) if cand else None,
     )
 
 
@@ -218,9 +218,9 @@ def build_portfolio_context(
     snapshot: ContextSnapshot | None = None,
     sectors: Mapping[str, str] | None = None,
     review_max_age: _dt.timedelta = _dt.timedelta(minutes=30),
-    diversification: DirectorDiversificationSettings | None = None,
+    diversification: ResearchDiversificationSettings | None = None,
 ) -> PortfolioContext:
-    """Assemble the Director's portfolio view from the audit DB and the market.
+    """Assemble Research's portfolio view from the audit DB and the market.
 
     *portfolio* is the gate ``Portfolio`` (:func:`arc.pipeline.market.build_portfolio`)
     when the caller could value the book; its net Greeks are used. Otherwise Greeks
@@ -286,7 +286,7 @@ def build_portfolio_context(
         if review is None:
             warnings.append(f"{row['ticker']} {row['id']}: no marks (P&L unknown)")
         thesis = _thesis(conn, row)
-        stance = thesis.sweep_stance or structure_stance(st)
+        stance = thesis.scalp_stance or structure_stance(st)
         max_loss_total = float(st.max_loss or 0) * n
         g = _scale(st.greeks, n)
         opened_greeks = Greeks(
@@ -411,7 +411,7 @@ def build_portfolio_context(
 
 
 def empty_portfolio_line(info: AccountInfo, settings: ArcSettings) -> str:
-    """The one portfolio line an empty book puts in the Director prompt."""
+    """The one portfolio line an empty book puts in Research prompt."""
     return (
         f"Portfolio: no open positions. Equity ${_f(info.equity):,.2f}. Max "
         f"{settings.max_open_positions} positions, {settings.max_alloc_pct:.0%} of equity max "
@@ -439,7 +439,7 @@ def expiry_cluster_text(ag: PortfolioAggregates) -> str:
     """The ``expiry_cluster`` flag line: the concentration, never a DTE range.
 
     The configured window itself is stated once, in the prompt's entry-window
-    section (:meth:`arc.personas.entry_window.EntryTerms.director_line`).
+    section (:meth:`arc.personas.entry_window.EntryTerms.research_line`).
     """
     parts = [
         f"{ag.by_expiry_bucket.get(b, 0.0):.0%} of open max loss expires in one bucket "
@@ -457,7 +457,7 @@ def expiry_cluster_text(ag: PortfolioAggregates) -> str:
 def render_portfolio_context(
     pc: PortfolioContext, settings: ArcSettings, *, max_positions: int | None = None
 ) -> str:
-    """The Director's prompt block: the account line, top-N positions, aggregates."""
+    """Research's prompt block: the account line, top-N positions, aggregates."""
     a = pc.account
     if pc.empty or pc.aggregates is None:
         return (
@@ -483,9 +483,9 @@ def render_portfolio_context(
     ]
     for p in pc.positions[:limit]:
         th = p.thesis
-        thesis = th.director.strip() or "(no thesis on record)"
-        cat = f"{th.sweep_catalyst}" + (
-            f" {th.sweep_catalyst_date}" if th.sweep_catalyst_date else ""
+        thesis = th.research.strip() or "(no thesis on record)"
+        cat = f"{th.scalp_catalyst}" + (
+            f" {th.scalp_catalyst_date}" if th.scalp_catalyst_date else ""
         )
         lines.append(
             f"- {p.structure_id} {p.ticker} {p.kind or 'structure'} {p.stance.value} "
@@ -504,8 +504,8 @@ def render_portfolio_context(
             + (f"; signals: {', '.join(p.signals)}" if p.signals else "")
             + f"\n  Thesis: {thesis}"
             + (
-                f" [Sweep: {th.sweep_stance.value if th.sweep_stance else '?'} {cat}]"
-                if th.sweep_catalyst
+                f" [Scalp: {th.scalp_stance.value if th.scalp_stance else '?'} {cat}]"
+                if th.scalp_catalyst
                 else ""
             )
         )

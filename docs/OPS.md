@@ -864,14 +864,14 @@ a source is a YAML edit only.
   Docs over budget wait for the next run.
 - **Freshness.** A doc older than its category's `max_age` (published time;
   `earnings` uses ingested time, `age_basis: ingested`) is never read: the Sweep
-  closes it `raw_docs.sweep_status='skipped_stale'` with the run id, and the `rss` /
+  closes it `raw_docs.scalp_status='skipped_stale'` with the run id, and the `rss` /
   `edgar` connectors don't store it at all (`ingest.skipped_stale count= source=`).
   Docs still inside their window but past the `raw_doc_ref` TTL (5d) are closed
   `skipped_budget`. Never deleted. `story` and `candidate` entries expire at
   min(1 session, freshest source's `max_age` + 2h).
 - **Title filters (D55, E4.11).** An RSS feed may set `title_exclude` / `title_include`
   regex lists (case-insensitive, on the entry title). A filtered entry is stored
-  already closed `raw_docs.sweep_status='filtered'` and never read; the next Sweep run
+  already closed `raw_docs.scalp_status='filtered'` and never read; the next Sweep run
   claims it (`sweep_run_id`) and counts it once (`filtered` metric, a *Filtered* line on
   the Sweep card); the `rss` run reports `new_<feed>` / `filtered_<feed>` metrics and the
   Tower Sources page shows `N filtered (title)` per feed today. Seeking Alpha ships with
@@ -905,7 +905,7 @@ a source is a YAML edit only.
   Sweep's (cheap) model; evidence quotes must appear verbatim in a doc, else dropped;
   a failed batch falls back to an extractive digest (headline + lead). Stage 2 reads
   the digests, `sweep_story_batch_size` (40) per Sweep call. Both stages'
-  tokens/cost land in `sweep_batches`
+  tokens/cost land in `scalp_batches`
   (`stage` = `digest` | `sweep`) and the run manifest.
 - **Options data** (free, no key; typed context kinds, read by the Director and Risk):
 
@@ -1068,7 +1068,7 @@ stance or underlying that is already flagged).
 
 Knobs live under `!arc config dedupe | portfolio | no_trade`.
 
-### 5.14 Two-speed routines: 30-min Sweep, 10-min trading loop (E5.8, D31/D36/D52)
+### 5.14 Two-speed routines: 30-min Scalp, 10-min trading loop (E5.8, D31/D36/D52; Scalp was Sweep until D56)
 
 **What runs (ET, trading days).** `config/routines.yaml` declares it; nothing
 fires without the `arc routines tick` cron (E5.3).
@@ -1471,7 +1471,7 @@ Channels, in config order:
    budget (`yt_max_audio_per_slot`, default 4) for the whole run, so a 429 on one
    channel sends the rest to audio instead of starting four cooldowns.
 5. The transcript is stored as a `raw_docs` row (`source_key youtube.<slug>`) and
-   closed `sweep_status='brief_only'`: **the 30-min Sweep never reads video**.
+   closed `scalp_status='brief_only'`: **the 30-min Sweep never reads video**.
 6. The channel profile (`arc/ingest/channels/<slug>/profile.yaml` + `GUIDELINES.md`)
    extracts a `ChannelBrief`; every item needs a verbatim quote, and sponsor/promo
    reads are stripped first. The brief expires 24 h after the run and supersedes the

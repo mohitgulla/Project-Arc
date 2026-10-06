@@ -392,7 +392,7 @@ def investor_step(ctx: JobContext) -> JobResult:
 def chain_proposals(conn: sqlite3.Connection, chain_run_id: str) -> list[str]:
     """Proposal hashes written by any run of *chain_run_id*, highest rank first.
 
-    Rank = the propose step's order (``proposals.rowid``): the Director's shortlist
+    Rank = the propose step's order (``proposals.rowid``): Research's shortlist
     is ranked, and propose inserts in that order.
     """
     rows = conn.execute(

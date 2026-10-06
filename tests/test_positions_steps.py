@@ -21,7 +21,7 @@ from arc.approvals.service import ApprovalService, LogCardPoster
 from arc.broker.base import BrokerPosition
 from arc.config import ArcSettings
 from arc.context.store import ContextStore
-from arc.ingest.llm import FixtureSweepLLM, SweepLLMError
+from arc.ingest.llm import FixtureScalpLLM, ScalpLLMError
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.journal.store import JournalStore
 from arc.models import LegIntent
@@ -148,7 +148,7 @@ def _env_with(positions: list[BrokerPosition], risk_reply: str | None = None) ->
     env.account = lambda: info.model_copy(update={"cash": cash, "buying_power": cash})
     env.mint_tokens = True  # a live paper run: PASS mints an arc2 token
     if risk_reply is not None:
-        env.llms["risk"] = FixtureSweepLLM([risk_reply])
+        env.llms["risk"] = FixtureScalpLLM([risk_reply])
     return env
 
 
@@ -380,7 +380,7 @@ def test_missing_verdict_and_llm_failure_fail_closed(conn: sqlite3.Connection) -
         model = "down"
 
         def complete(self, prompt: str) -> Any:
-            raise SweepLLMError("offline")
+            raise ScalpLLMError("offline")
 
     c2 = connect(":memory:")
     migrate(c2)

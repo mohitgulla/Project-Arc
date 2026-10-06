@@ -18,7 +18,7 @@ import type { TradeDetail, TradeStage } from "./trades";
 const GS =
   "This is a defined-risk bear put debit vertical (long 930P / short 855P, Nov 20). Debit and max loss are $3,125.50 per contract, max gain is $4,374.50, and the breakeven is 898.75. " +
   "The gate formula allows floor(8% x $101,185 / $3,125.50) = 2, and the structure cap is also 2. I advise 1 contract, about 3.1% of equity at risk. " +
-  "Reasons: (1) GS earnings timing is unknown and almost certainly inside the window. (2) Quant confidence is only 0.45, below the Director's 0.48 bar. " +
+  "Reasons: (1) GS earnings timing is unknown and almost certainly inside the window. (2) Quant confidence is only 0.45, below Research's 0.48 bar. " +
   "(3) EV depends on the bear drift continuing, with a 0.29 stop probability against a 0.43 take-profit probability. (4) Execution cost is 828 bps, so a poor fill erodes the +$514 managed EV. " +
   "(5) DTE is outside the mandate. With 1 lot, combined book max loss is about $7,782 (MU $4,656.50 + GS $3,125.50), about 7.7% of equity. " +
   "Managed metrics are acceptable: PoP 0.567, managed EV +$513.73, rorc_day 0.0052, expected hold about 31 days. Work the order at or inside mid. " +

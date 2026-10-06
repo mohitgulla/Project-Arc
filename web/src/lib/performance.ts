@@ -210,12 +210,12 @@ export function calibrationLabel(stated: number, hit: number): string {
 }
 
 export const PERSONA_LABEL: Record<string, string> = {
-  director: "Director",
+  research: "Research",
   quant_pop: "Quant PoP",
   quant: "Quant",
   risk: "Risk",
   investor: "Investor",
-  sweep: "Sweep",
+  scalp: "Scalp",
   auditor: "Auditor",
 };
 

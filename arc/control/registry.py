@@ -171,7 +171,7 @@ NEVER_TUNABLE: frozenset[str] = frozenset(
         "owner_slack_user_id",
         "config_version",
         "yaml_overrides",
-        "sweep_hermes_bin",
+        "scalp_hermes_bin",
         "ffmpeg_bin",
     }
 )
@@ -216,13 +216,13 @@ NOT_EXPOSED: dict[str, str] = {
     "yt_caption_cooldown_max_minutes": "ingestion plumbing",
     "yt_caption_cooldown_jitter": "ingestion plumbing",
     "whisper_model": "ingestion model",
-    "sweep_timeout_seconds": "LLM plumbing",
-    "sweep_batch_size": "LLM plumbing",
-    "sweep_max_doc_chars": "LLM plumbing",
-    "sweep_story_threshold": "D30 clustering internals",
-    "sweep_story_window_hours": "D30 clustering internals",
-    "sweep_story_batch_size": "LLM plumbing",
-    "sweep_story_doc_chars": "LLM plumbing",
+    "scalp_timeout_seconds": "LLM plumbing",
+    "scalp_batch_size": "LLM plumbing",
+    "scalp_max_doc_chars": "LLM plumbing",
+    "scalp_story_threshold": "D30 clustering internals",
+    "scalp_story_window_hours": "D30 clustering internals",
+    "scalp_story_batch_size": "LLM plumbing",
+    "scalp_story_doc_chars": "LLM plumbing",
     "ingest_macro_horizon_days": "ingestion plumbing",
     "uoa_min_volume": "UOA detector internals (data, not a trading limit)",
     "uoa_vol_oi_ratio": "UOA detector internals (data, not a trading limit)",
@@ -417,27 +417,30 @@ _STATIC: tuple[Tunable, ...] = (
         choices=("strict", "seed"),
     ),
     _s(
-        "sweep_max_new_tickers",
+        "scalp_max_new_tickers",
         Group.UNIVERSE,
         _I,
-        "D28/D51: max discoveries (names in no tier) the Sweep may accept per run (seed mode).",
+        "D28/D51: max discoveries (names in no tier) the Scalp may accept per run (seed mode).",
         Risk.UP,
         min=0,
         max=25,
         hard_ceiling=25,
-        aliases=("scout_max_new_tickers",),  # D54: renamed from the Scout
+        aliases=(
+            "sweep_max_new_tickers",
+            "scout_max_new_tickers",
+        ),  # D56: was sweep_*; D54: was scout_*
     ),
     _s(
-        "sweep_doc_budget",
+        "scalp_doc_budget",
         Group.UNIVERSE,
         _I,
-        "D30: docs the Sweep reads per run, shared equally across sources (round-robin); "
+        "D30: docs the Scalp reads per run, shared equally across sources (round-robin); "
         "higher = more LLM tokens, never more trades.",
         Risk.NONE,
         min=20,
         max=400,
         hard_ceiling=400,
-        aliases=("scout_doc_budget",),  # D54: renamed from the Scout
+        aliases=("sweep_doc_budget", "scout_doc_budget"),  # D56: was sweep_*; D54: was scout_*
     ),
     # E12.4 (D51): relaxed liquidity screen (trending + discoveries; config/universe.yaml).
     # Lower floors / a wider spread admit more names to be looked at; the gate's spread
@@ -741,21 +744,24 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         hard_ceiling=1,
     ),
     _s(
-        "sweep_min_confidence",
+        "scalp_min_confidence",
         Group.ENTRIES,
         _F,
-        "Sweep keeps a candidate only at or above this confidence (lower = more ideas).",
+        "Scalp keeps a candidate only at or above this confidence (lower = more ideas).",
         Risk.DOWN,
         min=0.30,
         max=0.95,
         hard_ceiling=0.30,
-        aliases=("scout_min_confidence",),  # D54: renamed from the Scout
+        aliases=(
+            "sweep_min_confidence",
+            "scout_min_confidence",
+        ),  # D56: was sweep_*; D54: was scout_*
     ),
     _s(
         "max_shortlist",
         Group.ENTRIES,
         _I,
-        "Quant/Risk budget: the first N Director-ranked tickers get a structure (D28).",
+        "Quant/Risk budget: the first N Research-ranked tickers get a structure (D28).",
         Risk.UP,
         field="pipeline_max_shortlist",
         min=1,
@@ -1020,15 +1026,16 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         hard_ceiling=0,
     ),
     _s(
-        "order_budget.restrictive.director_max_shortlist",
+        "order_budget.restrictive.research_max_shortlist",
         Group.EXECUTION,
         _I,
-        "Restrictive tier: Director shortlist cap.",
+        "Restrictive tier: Research shortlist cap.",
         Risk.UP,
-        field="order_budget_restrictive_director_max_shortlist",
+        field="order_budget_restrictive_research_max_shortlist",
         min=0,
         max=10,
         hard_ceiling=10,
+        aliases=("order_budget.restrictive.director_max_shortlist",),  # D56: was director_*
     ),
     _s(
         "order_budget.restrictive.max_new_opens_per_loop",
@@ -1086,7 +1093,7 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         max=10.0,
         hard_ceiling=1.0,
     ),
-    # -- portfolio-aware Director, dedupe, no-trade guard (E5.9, D33) ----------
+    # -- portfolio-aware Research, dedupe, no-trade guard (E5.9, D33) ----------
     _s(
         "dedupe.executed_cooldown",
         Group.ENTRIES,
@@ -1182,7 +1189,7 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         "portfolio.context_max_positions",
         Group.ENTRIES,
         _I,
-        "D33: open positions rendered in full for the Director (largest first).",
+        "D33: open positions rendered in full for Research (largest first).",
         Risk.NONE,
         field="portfolio_context_max_positions",
         min=1,
@@ -1437,27 +1444,27 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         path=("loop", "slack_layout"),
         choices=("root_per_loop", "day_thread"),
     ),
-    # E4.8a (D46/D44): Finnhub facts in the Sweep/Director prompts. Strategy lane:
+    # E4.8a (D46/D44): Finnhub facts in the Scalp/Research prompts. Strategy lane:
     # the default stays off until an experiment (XP-2) returns a `win` verdict.
     Tunable(
         key="personas.finnhub_context",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
         description="E4.8a: show the Finnhub per-ticker facts (earnings surprises, insider, "
-        "analyst recs, fundamentals) to the Sweep and the Director. Experiment XP-2 tests it.",
+        "analyst recs, fundamentals) to the Scalp and Research. Experiment XP-2 tests it.",
         target=Target.ROUTINES,
         risk=Risk.ORDER,
         path=("personas", "finnhub_context"),
         choices=("off", "on"),
         aliases=("routines.personas.finnhub_context", "finnhub_context"),
     ),
-    # E12.5 (D51/D44): Director diversification. Strategy lane: strict is the
+    # E12.5 (D51/D44): Research diversification. Strategy lane: strict is the
     # control; relaxed lets two same-industry names rank and loosens the drops.
     Tunable(
         key="personas.director_diversification",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
-        description="E12.5: how strictly the Director diversifies. strict = E5.9 drops; "
+        description="E12.5: how strictly Research diversifies. strict = E5.9 drops; "
         "relaxed = two names per industry may rank, adds_concentration drops only on a "
         "flagged sector once the industry holds director_diversification."
         "max_names_per_industry names, looser flag thresholds. Experiment XP-3 tests it.",

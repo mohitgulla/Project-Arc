@@ -19,7 +19,7 @@ Policy:
   reported. ``coverage:<job>`` alerts that open during an incident are folded the
   same way (recorded, open, not posted; their resolve is silent while the
   incident is open). The incident's resolve line summarises them ("N slot(s)
-  missed: rss ×12, edgar ×3; low coverage: director, monitor"). Misses
+  missed: rss ×12, edgar ×3; low coverage: research, monitor"). Misses
   judged after the incident resolved (window closed during it, grace ran out
   later) go as one thread reply under the incident's post.
 - Findings with ``alert=False`` (gateway warnings by default) are only kept in
@@ -174,7 +174,7 @@ def missed_job(alert: OpsAlert) -> str:
 
 
 def summarize_missed(missed: list[OpsAlert]) -> str:
-    """``N slot(s) missed: rss ×12, edgar ×3; low coverage: director`` (most-missed first).
+    """``N slot(s) missed: rss ×12, edgar ×3; low coverage: research`` (most-missed first).
 
     E8.2a: folded ``coverage:<job>`` conditions are listed by job after the misses.
     """

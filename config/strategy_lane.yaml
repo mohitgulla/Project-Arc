@@ -25,9 +25,9 @@ strategy_paths:
   - arc/exits/*                       # exit policy + managed-exit model
   - arc/scanner/*                     # chain scan, filters, ranking
   - arc/sizing.py
-  - arc/pipeline/steps.py             # Director/Quant/Risk/propose selection + menu ranking
+  - arc/pipeline/steps.py             # Research/Quant/Risk/propose selection + menu ranking
   - arc/pipeline/dedupe.py            # idea dedupe (which ideas reach Quant)
-  - arc/pipeline/portfolio_context.py # what the Director sees when it selects
+  - arc/pipeline/portfolio_context.py # what Research sees when it selects
   - arc/personas/builders.py          # persona prompts
   - arc/personas/entry_window.py      # entry window / delta bands told to personas
   - hermes/skills/arc-*/SKILL.md      # persona skill prompts

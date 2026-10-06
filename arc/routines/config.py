@@ -61,6 +61,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
+import structlog
 import yaml
 from pydantic import (
     BaseModel,
@@ -94,7 +95,7 @@ DEFAULT_ROUTINES_PATH = REPO_ROOT / "config" / "routines.yaml"
 #: assigned by D47 category (one sub-band per category); ``other`` is the fallback.
 TIMELINE_GROUPS: tuple[tuple[str, str], ...] = (
     ("sources", "Sources"),
-    ("sweep", "Sweep"),
+    ("scalp", "Scalp"),
     ("trading_loop", "Trading loop"),
     ("position_management", "Position management"),
     ("post_market", "Post-market"),
@@ -104,11 +105,11 @@ TIMELINE_GROUPS: tuple[tuple[str, str], ...] = (
 #: data source (no D47 category; it never reaches a persona's category block).
 UNIVERSE_KINDS: frozenset[str] = frozenset({"universe_tier", "active_universe"})
 #: E8.8d: persona chips a job may declare (``persona:``); sources declare none.
-TIMELINE_PERSONAS: tuple[str, ...] = ("sweep", "director", "investor", "risk", "auditor", "monitor")
+TIMELINE_PERSONAS: tuple[str, ...] = ("scalp", "research", "investor", "risk", "auditor", "monitor")
 #: E8.8d: ``about:`` is one line; longer text belongs in docs, not the timeline ⓘ.
 ABOUT_MAX_CHARS = 160
 
-#: D54: a source refreshed at most this often (intraday ``every:``) is a fast (Sweep) feed.
+#: D54: a source refreshed at most this often (intraday ``every:``) is a fast (Scalp) feed.
 _FAST_FEED_MAX_EVERY = _dt.timedelta(minutes=60)
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -495,7 +496,7 @@ class LoopSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    job: str = "director"
+    job: str = "research"
     max_idle: _dt.timedelta = _dt.timedelta(minutes=30)
     max_runtime: _dt.timedelta = _dt.timedelta(minutes=4)
     pnl_bucket_pct: Annotated[float, Field(gt=0, le=10)] = 0.5
@@ -558,6 +559,33 @@ FINNHUB_FACT_KINDS: tuple[str, ...] = (
 # Persona-level switches that live under ``personas:`` next to the jobs (a scalar,
 # not a job mapping). Each maps to the settings block whose ``enabled`` it sets.
 PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context",)
+
+#: D56 (E13.1): pre-rename ``personas:`` keys accepted (logged) for one release.
+#: ``sweep.overnight`` follows its ``sweep`` prefix.
+LEGACY_PERSONA_KEYS: dict[str, str] = {"sweep": "scalp", "director": "research"}
+
+
+def _legacy_job_names(personas: dict[str, Any]) -> dict[str, Any]:
+    """Rename D56 legacy ``personas:`` keys (``sweep*`` -> ``scalp*``, ``director`` ->
+    ``research``); a key present under both names is an error (input not mutated)."""
+    out: dict[str, Any] = {}
+    for key, value in personas.items():
+        head, dot, tail = key.partition(".")
+        new = LEGACY_PERSONA_KEYS.get(head)
+        if new is None:
+            out[key] = value
+            continue
+        renamed = f"{new}{dot}{tail}"
+        if renamed in personas:
+            msg = f"personas.{key} and personas.{renamed} both set; {key!r} was renamed (D56)"
+            raise ValueError(msg)
+        structlog.get_logger(__name__).warning(
+            "routines.deprecated_job_alias", job=key, renamed_to=renamed
+        )
+        out[renamed] = value
+    return out
+
+
 # Persona-level choice switches (E12.5): ``personas.<name>: <choice>`` sets the
 # ``mode`` of the same-named settings block. The first choice is the control.
 PERSONA_CHOICES: dict[str, tuple[str, ...]] = {
@@ -579,8 +607,8 @@ class RelaxedConcentration(BaseModel):
     expiry_max_pct: Annotated[float, Field(gt=0.0, le=1.0)] = 0.70
 
 
-class DirectorDiversificationSettings(BaseModel):
-    """E12.5 (D51, D44): how strictly the Director stage diversifies the book.
+class ResearchDiversificationSettings(BaseModel):
+    """E12.5 (D51, D44): how strictly Research stage diversifies the book.
 
     ``mode`` comes from ``personas.director_diversification: strict | relaxed``
     (default ``strict`` = the E5.9 behaviour, byte-identical prompts). ``relaxed``:
@@ -630,7 +658,7 @@ def parse_on_off(v: Any, *, where: str) -> bool:
 
 
 class FinnhubContextSettings(BaseModel):
-    """E4.8a: Finnhub facts in the Sweep/Director prompts (default off, D44 experiment).
+    """E4.8a: Finnhub facts in the Scalp/Research prompts (default off, D44 experiment).
 
     ``enabled`` comes from ``personas.finnhub_context: off | on``; the other knobs
     are the ``finnhub_context:`` block. Off = the prompts are byte-identical to the
@@ -641,8 +669,8 @@ class FinnhubContextSettings(BaseModel):
 
     enabled: bool = False
     max_chars_per_ticker: Annotated[int, Field(ge=80, le=1000)] = 300
-    sweep_max_tickers: Annotated[int, Field(ge=1, le=50)] = 8
-    director_max_tickers: Annotated[int, Field(ge=1, le=50)] = 10
+    scalp_max_tickers: Annotated[int, Field(ge=1, le=50)] = 8
+    research_max_tickers: Annotated[int, Field(ge=1, le=50)] = 10
     # A part whose payload ``as_of`` is older than this many days is omitted (the
     # context TTL already expires the entry; this guards a stale fetch date).
     max_age_days: dict[str, Annotated[int, Field(ge=1, le=60)]] = Field(
@@ -706,8 +734,8 @@ class RoutinesConfig(BaseModel):
     # E4.8a: knobs + the ``personas.finnhub_context`` flag (as ``enabled``).
     finnhub_context: FinnhubContextSettings = Field(default_factory=FinnhubContextSettings)
     # E12.5: knobs + the ``personas.director_diversification`` switch (as ``mode``).
-    director_diversification: DirectorDiversificationSettings = Field(
-        default_factory=DirectorDiversificationSettings
+    director_diversification: ResearchDiversificationSettings = Field(
+        default_factory=ResearchDiversificationSettings
     )
 
     @model_validator(mode="before")
@@ -718,6 +746,7 @@ class RoutinesConfig(BaseModel):
             return data
         personas = dict(data["personas"])
         out = dict(data)
+        personas = _legacy_job_names(personas)
         for flag in PERSONA_FLAGS:
             if flag not in personas:
                 continue
@@ -856,9 +885,9 @@ class RoutinesConfig(BaseModel):
     def _check_source_feed(name: str, spec: JobSpec) -> None:
         """D54: a declared ``feed:`` must match the source's refresh cadence.
 
-        ``sweep`` (fast feed) needs an intraday ``every:`` of at most 60 min; ``scout``
+        ``scalp`` (fast feed) needs an intraday ``every:`` of at most 60 min; ``scout``
         (slow feed) needs a ``schedule:`` (a few times a day or slower) and no intraday
-        ``every:`` of 60 min or less. A source without ``feed:`` is the Sweep's.
+        ``every:`` of 60 min or less. A source without ``feed:`` is the Scalp's.
         """
         raw = spec.options.get("feed")
         declared = [(raw, f"source {name!r}")] if raw is not None else []
@@ -869,8 +898,10 @@ class RoutinesConfig(BaseModel):
                 )
         fast = spec.every is not None and spec.every <= _FAST_FEED_MAX_EVERY
         for value, where in declared:
-            if value == "sweep" and not fast:
-                msg = f"{where}: feed sweep needs an intraday `every:` of at most 60m (D54)"
+            if value == "sweep":  # D56: pre-rename name of the fast feed (one release)
+                value = "scalp"  # noqa: PLW2901
+            if value == "scalp" and not fast:
+                msg = f"{where}: feed scalp needs an intraday `every:` of at most 60m (D54)"
                 raise ValueError(msg)
             if value == "scout" and (fast or not spec.schedule):
                 msg = (
@@ -878,8 +909,8 @@ class RoutinesConfig(BaseModel):
                     "`every:` of 60m or less (D54)"
                 )
                 raise ValueError(msg)
-            if value not in ("sweep", "scout"):
-                msg = f"{where}: feed must be sweep | scout, got {value!r} (D54)"
+            if value not in ("scalp", "scout"):
+                msg = f"{where}: feed must be scalp | scout, got {value!r} (D54)"
                 raise ValueError(msg)
 
     @staticmethod

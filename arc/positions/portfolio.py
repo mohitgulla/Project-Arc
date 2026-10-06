@@ -104,26 +104,33 @@ class PortfolioAccount(BaseModel):
 class PortfolioThesis(BaseModel):
     model_config = _FORBID
 
-    director: str = Field("", description="The Director's thesis when the position was proposed")
-    sweep_catalyst: str | None = None
-    sweep_catalyst_date: str | None = None
-    sweep_stance: Stance | None = None
-    sweep_confidence: float | None = None
+    research: str = Field("", description="Research's thesis when the position was proposed")
+    scalp_catalyst: str | None = None
+    scalp_catalyst_date: str | None = None
+    scalp_stance: Stance | None = None
+    scalp_confidence: float | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def _legacy_scout_keys(cls, data: object) -> object:
-        """D54: payloads stored before the rename carry ``scout_*`` keys (the Sweep)."""
-        if isinstance(data, dict) and any(str(k).startswith("scout_") for k in data):
-            return {
-                (f"sweep_{k[len('scout_') :]}" if str(k).startswith("scout_") else k): v
-                for k, v in data.items()
-            }
-        return data
+    def _legacy_keys(cls, data: object) -> object:
+        """Payloads stored before a rename carry ``scout_*`` (D54) or ``sweep_*`` /
+        ``director`` (D56) keys; they read as ``scalp_*`` / ``research``."""
+        if not isinstance(data, dict):
+            return data
+        out: dict[object, object] = {}
+        for k, v in data.items():
+            key = str(k)
+            for old in ("scout_", "sweep_"):
+                if key.startswith(old):
+                    key = f"scalp_{key[len(old) :]}"
+            if key == "director":
+                key = "research"
+            out[key] = v
+        return out
 
 
 class PortfolioPosition(BaseModel):
-    """One open structure as the Director sees it (money in $ for all contracts)."""
+    """One open structure as Research sees it (money in $ for all contracts)."""
 
     model_config = _FORBID
 
@@ -185,7 +192,7 @@ class PortfolioAggregates(BaseModel):
 
 
 class PortfolioContext(BaseModel):
-    """The Director's view of the book (E5.9). ``empty`` = behave as today."""
+    """Research's view of the book (E5.9). ``empty`` = behave as today."""
 
     model_config = _FORBID
 
@@ -213,7 +220,7 @@ class VixReading(BaseModel):
 
 
 class MarketGuard(BaseModel):
-    """What the guard decided and why (journaled, shown on the Director card)."""
+    """What the guard decided and why (journaled, shown on Research card)."""
 
     model_config = _FORBID
 

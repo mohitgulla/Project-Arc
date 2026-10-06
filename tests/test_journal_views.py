@@ -189,7 +189,7 @@ def test_explain_full_tree_for_closed_proposal(conn: sqlite3.Connection) -> None
     assert doc.proposal_hash == ph and doc.status == "closed" and doc.ticker == "SPY"
     assert rep.chain_run_id and rep.chain_run_id.startswith("chain-")
     # persona prompts' sha256 + replies
-    assert [c.persona for c in doc.persona_calls] == ["director", "quant", "risk"]
+    assert [c.persona for c in doc.persona_calls] == ["research", "quant", "risk"]
     assert all(len(c.prompt_sha256) == 64 and c.raw_response for c in doc.persona_calls)
     # gate verdict + violations, token withheld
     assert doc.gate is not None and doc.gate.passed and doc.gate.violations == []
@@ -247,7 +247,7 @@ def test_explain_by_run_and_chain_id(conn: sqlite3.Connection) -> None:
     by_chain = explain(conn, p["chain_run_id"])
     assert [d.proposal_hash for d in by_run.proposals] == [p["proposal_hash"]]
     assert by_run.chain_run_id == by_chain.chain_run_id == p["chain_run_id"]
-    # decisions of the chain not tied to a proposal (e.g. the Director's drops) are kept
+    # decisions of the chain not tied to a proposal (e.g. Research's drops) are kept
     assert any(d.stage is Stage.SHORTLIST for d in by_chain.chain_decisions)
     with pytest.raises(LookupError):
         explain(conn, "run-does-not-exist")
@@ -289,7 +289,7 @@ def test_attribution_flags_low_sample(conn: sqlite3.Connection) -> None:
     assert b.key == {
         "kind": "iron_condor",
         "regime": "risk_on",
-        "persona_model": "director=fixture,quant=fixture,risk=fixture",
+        "persona_model": "quant=fixture,research=fixture,risk=fixture",
     }
     assert b.n == 1 and b.low_sample is True and rep.min_sample == MIN_SAMPLE == 30
     assert b.realised_pnl == pytest.approx(float(t["pnl"]))

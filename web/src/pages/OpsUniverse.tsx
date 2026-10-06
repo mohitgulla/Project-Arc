@@ -186,7 +186,7 @@ export function OpsUniversePage() {
             </p>
             {u.director_diversification && (
               <p className="mt-1 text-caption text-muted" data-testid="uni-diversification">
-                Director diversification: {tierLabel(u.director_diversification)}
+                Research diversification: {tierLabel(u.director_diversification)}
               </p>
             )}
           </Card>

@@ -814,7 +814,7 @@ function SourcesCard({ s, now }: { s?: Sources; now: number }) {
       freshness={{ at: s?.as_of, label: "loaded" }}
       headerExtra={
         <InfoTip label="About sources">
-          One block per D47 category, each an equal share of the Sweep&apos;s doc budget; a row&apos;s share is inside its category.
+          One block per D47 category, each an equal share of the Scalp&apos;s doc budget; a row&apos;s share is inside its category.
         </InfoTip>
       }
     >

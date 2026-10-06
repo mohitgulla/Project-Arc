@@ -111,15 +111,17 @@
       "default": "session"
     },
     "persona": {
-      "description": "Author. D54: 'scout' before the rename cutover is the Sweep (legacy rows); after it, the slow-feed Scout persona (E5.13).",
+      "description": "Author. D54: 'scout' before the rename cutover is the Scalp (legacy rows); after it, the slow-feed Scout persona (E5.13). D56: stored v1 'sweep' / 'director' notes read as 'scalp' / 'research'.",
       "enum": [
-        "sweep",
+        "scalp",
         "scout",
-        "director",
+        "research",
         "quant",
         "risk",
         "investor",
-        "auditor"
+        "auditor",
+        "broker",
+        "ops"
       ],
       "title": "Persona",
       "type": "string"

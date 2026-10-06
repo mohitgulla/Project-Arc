@@ -288,7 +288,7 @@
     },
     "PortfolioPosition": {
       "additionalProperties": false,
-      "description": "One open structure as the Director sees it (money in $ for all contracts).",
+      "description": "One open structure as Research sees it (money in $ for all contracts).",
       "properties": {
         "contracts": {
           "title": "Contracts",
@@ -463,13 +463,13 @@
     "PortfolioThesis": {
       "additionalProperties": false,
       "properties": {
-        "director": {
+        "research": {
           "default": "",
-          "description": "The Director's thesis when the position was proposed",
-          "title": "Director",
+          "description": "Research's thesis when the position was proposed",
+          "title": "Research",
           "type": "string"
         },
-        "sweep_catalyst": {
+        "scalp_catalyst": {
           "anyOf": [
             {
               "type": "string"
@@ -479,9 +479,9 @@
             }
           ],
           "default": null,
-          "title": "Sweep Catalyst"
+          "title": "Scalp Catalyst"
         },
-        "sweep_catalyst_date": {
+        "scalp_catalyst_date": {
           "anyOf": [
             {
               "type": "string"
@@ -491,9 +491,9 @@
             }
           ],
           "default": null,
-          "title": "Sweep Catalyst Date"
+          "title": "Scalp Catalyst Date"
         },
-        "sweep_confidence": {
+        "scalp_confidence": {
           "anyOf": [
             {
               "type": "number"
@@ -503,9 +503,9 @@
             }
           ],
           "default": null,
-          "title": "Sweep Confidence"
+          "title": "Scalp Confidence"
         },
-        "sweep_stance": {
+        "scalp_stance": {
           "anyOf": [
             {
               "$ref": "#/$defs/Stance"
@@ -532,7 +532,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "E5.9 (D33): the Director's deterministic view of the open book (subject ``session``).",
+  "description": "E5.9 (D33): Research's deterministic view of the open book (subject ``session``).",
   "properties": {
     "account": {
       "$ref": "#/$defs/PortfolioAccount"

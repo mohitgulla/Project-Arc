@@ -958,7 +958,7 @@
     },
     "earnings_play": {
       "default": false,
-      "description": "Director flagged this as a deliberate earnings play (PLAN \u00a75).",
+      "description": "Research flagged this as a deliberate earnings play (PLAN \u00a75).",
       "title": "Earnings Play",
       "type": "boolean"
     },

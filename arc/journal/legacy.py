@@ -1,17 +1,27 @@
-"""D54 (E5.12): read pre-rename history written under the old name ``scout``.
+"""D54 / D56: read history written under a persona's earlier names.
 
-The 30-min doc reader was called the Scout until the D54 rename; it is now the
-**Sweep**, and ``scout`` names the new slow-feed persona (E5.13). The journal,
-``context_entries`` and ``routine_runs`` are append-only, so rows written before the
-rename keep ``persona='scout'`` / ``produced_by='scout'`` / ``job='scout'`` and
-``reason_code='scout_candidate'``. Every reader that shows history maps them here:
+The journal, ``context_entries``, ``routine_runs`` and ``persona_calls`` are
+append-only, so rows keep the name their writer had at the time. Two renames happened:
 
-* ``scout`` / ``scout.overnight`` **before** the cutover instant -> the Sweep;
-  at or after it ``scout`` is the new Scout persona and is left alone.
-* ``scout_candidate`` is always the Sweep (the new Scout uses ``scout_feed_candidate``).
+* **D54 (E5.12, migration 022):** the 30-min doc reader ``scout`` became ``sweep``;
+  ``scout`` was then reused for the slow-feed Scout persona (E5.13).
+* **D56 (E13.1, migration 024):** ``sweep`` became ``scalp`` and ``director``
+  became ``research``.
 
-The cutover instant is written once by migration ``022_scout_to_sweep.sql`` into
-``routine_state`` under :data:`CUTOVER_KEY`. Pure functions plus one read; no writes.
+Readers map stored values through :data:`RENAME_CHAIN`, hop by hop. A hop applies
+when the value equals ``hop.old`` (or starts with ``hop.old + "."``, e.g.
+``sweep.overnight``) and the row predates that hop's cutover, or no cutover is
+recorded (a store not yet migrated holds only pre-rename rows). So a ``scout`` row
+from before 022 reads as **Scalp** (scout -> sweep -> scalp), a ``scout`` row after
+022 stays the slow-feed **Scout**, and ``director`` reads as **Research** (the name
+is never reused).
+
+Reason codes compose across hops the same way (``scout_candidate`` ->
+``sweep_candidate`` -> ``scalp_candidate``). No code is ever reused, so they ignore
+the cutovers.
+
+Each cutover instant is written once by its migration into ``routine_state``.
+Pure functions plus reads; no writes.
 """
 
 from __future__ import annotations
@@ -19,36 +29,93 @@ from __future__ import annotations
 import sqlite3
 from typing import TYPE_CHECKING
 
-from arc.context.ttl import from_db
+from pydantic import BaseModel, ConfigDict, Field
+
+from arc.context.ttl import from_db, to_db
 
 if TYPE_CHECKING:
     import datetime as _dt
+    from collections.abc import Mapping
 
 __all__ = [
     "CUTOVER_KEY",
     "LEGACY_REASON_CODES",
+    "RENAME_CHAIN",
+    "SCALP_CUTOVER_KEY",
+    "RenameHop",
     "cutover",
+    "cutovers",
+    "job_clause",
     "job_name",
+    "legacy_names",
     "persona_key",
     "persona_label",
     "reason_code",
 ]
 
+
+class RenameHop(BaseModel):
+    """One persona rename: ``old`` rows written before the cutover instant are ``new``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    old: str = Field(description="Stored name before the rename (e.g. 'sweep')")
+    new: str = Field(description="Name after the rename (e.g. 'scalp')")
+    cutover_key: str = Field(description="routine_state key holding the rename instant")
+    reason_codes: dict[str, str] = Field(
+        default_factory=dict, description="Stored reason codes this rename renamed"
+    )
+
+
+#: D54 cutover (migration 022): ``scout`` -> ``sweep``.
 CUTOVER_KEY = "rename:scout_to_sweep"
+#: D56 cutover (migration 024): ``sweep`` -> ``scalp`` and ``director`` -> ``research``.
+SCALP_CUTOVER_KEY = "rename:sweep_to_scalp"
 
-_OLD = "scout"
-_NEW = "sweep"
+RENAME_CHAIN: tuple[RenameHop, ...] = (
+    RenameHop(
+        old="scout",
+        new="sweep",
+        cutover_key=CUTOVER_KEY,
+        reason_codes={"scout_candidate": "sweep_candidate"},
+    ),
+    RenameHop(
+        old="sweep",
+        new="scalp",
+        cutover_key=SCALP_CUTOVER_KEY,
+        reason_codes={"sweep_candidate": "scalp_candidate"},
+    ),
+    RenameHop(
+        old="director",
+        new="research",
+        cutover_key=SCALP_CUTOVER_KEY,
+        reason_codes={
+            "director_excluded": "research_excluded",
+            "director_no_trade": "research_no_trade",
+        },
+    ),
+)
 
-#: Stored reason codes renamed by D54 (always the Sweep, on either side of the cutover).
-LEGACY_REASON_CODES: dict[str, str] = {"scout_candidate": "sweep_candidate"}
+
+def _compose_reason_codes() -> dict[str, str]:
+    """Every stored code a hop renamed -> the code it reads as today (hops composed)."""
+    step = {old: new for hop in RENAME_CHAIN for old, new in hop.reason_codes.items()}
+    out: dict[str, str] = {}
+    for old, new in step.items():
+        while new in step:
+            new = step[new]
+        out[old] = new
+    return out
 
 
-def cutover(conn: sqlite3.Connection) -> _dt.datetime | None:
-    """The rename instant (ET-aware), or ``None`` on a store without it."""
+#: Stored reason codes renamed by D54/D56 -> the current code.
+LEGACY_REASON_CODES: dict[str, str] = _compose_reason_codes()
+
+
+def cutover(conn: sqlite3.Connection, key: str = CUTOVER_KEY) -> _dt.datetime | None:
+    """One rename instant (ET-aware), or ``None`` on a store without it."""
     try:
-        row = conn.execute(
-            "SELECT value FROM routine_state WHERE key = ?", (CUTOVER_KEY,)
-        ).fetchone()
+        row = conn.execute("SELECT value FROM routine_state WHERE key = ?", (key,)).fetchone()
     except sqlite3.OperationalError:  # no routine_state table (minimal fixture stores)
         return None
     if row is None or not row[0]:
@@ -56,36 +123,84 @@ def cutover(conn: sqlite3.Connection) -> _dt.datetime | None:
     return from_db(str(row[0]))
 
 
-def _is_legacy(at: _dt.datetime | None, cut: _dt.datetime | None) -> bool:
-    # No cutover recorded (pre-migration copy) or no timestamp: every ``scout`` row is
-    # pre-rename history, since the new Scout cannot exist without the migration.
+def cutovers(conn: sqlite3.Connection) -> dict[str, _dt.datetime]:
+    """Every recorded rename instant of :data:`RENAME_CHAIN`, by ``routine_state`` key."""
+    out: dict[str, _dt.datetime] = {}
+    for key in dict.fromkeys(h.cutover_key for h in RENAME_CHAIN):
+        at = cutover(conn, key)
+        if at is not None:
+            out[key] = at
+    return out
+
+
+def _applies(hop: RenameHop, at: _dt.datetime | None, cuts: Mapping[str, _dt.datetime]) -> bool:
+    # No cutover recorded (pre-migration copy) or no timestamp: the row predates it.
+    cut = cuts.get(hop.cutover_key)
     return cut is None or at is None or at < cut
 
 
-def job_name(job: str, at: _dt.datetime | None, cut: _dt.datetime | None) -> str:
-    """``scout`` / ``scout.<x>`` before the cutover -> ``sweep`` / ``sweep.<x>``."""
-    if (job == _OLD or job.startswith(f"{_OLD}.")) and _is_legacy(at, cut):
-        return _NEW + job[len(_OLD) :]
+def job_name(job: str, at: _dt.datetime | None, cuts: Mapping[str, _dt.datetime]) -> str:
+    """A stored job / persona name -> its current one (``sweep.overnight`` -> ``scalp.overnight``).
+
+    *cuts* is :func:`cutovers` of the store the row came from.
+    """
+    for hop in RENAME_CHAIN:
+        if (job == hop.old or job.startswith(f"{hop.old}.")) and _applies(hop, at, cuts):
+            job = hop.new + job[len(hop.old) :]
     return job
 
 
-def persona_key(value: str, at: _dt.datetime | None, cut: _dt.datetime | None) -> str:
+def persona_key(value: str, at: _dt.datetime | None, cuts: Mapping[str, _dt.datetime]) -> str:
     """The current persona key for a stored ``persona`` / ``produced_by`` value."""
-    return job_name(value, at, cut)
+    return job_name(value, at, cuts)
 
 
-def persona_label(value: str, at: _dt.datetime | None, cut: _dt.datetime | None = None) -> str:
-    """Display label (``Sweep``, ``Director``, ``Sweep (digest)``) for a stored persona.
-
-    ``scout`` rows before *cut* (or with no cutover recorded) read as **Sweep**; after it
-    they belong to the new Scout persona and read as **Scout**.
-    """
-    key = persona_key(value, at, cut)
+def persona_label(
+    value: str, at: _dt.datetime | None, cuts: Mapping[str, _dt.datetime] | None = None
+) -> str:
+    """Display label (``Scalp``, ``Research``, ``Scalp (digest)``) for a stored persona."""
+    key = persona_key(value, at, cuts or {})
     head, _, tail = key.partition(".")
     label = head[:1].upper() + head[1:]
     return f"{label} ({tail})" if tail else label
 
 
+def legacy_names(job: str) -> list[tuple[str, str]]:
+    """Stored names that read as the current *job*, each with the cutover bounding it.
+
+    ``scalp.overnight`` -> ``[("sweep.overnight", SCALP_CUTOVER_KEY),
+    ("scout.overnight", CUTOVER_KEY)]``. A reader that filters on the current name
+    also matches those rows when they predate that cutover (cf. :func:`job_name`).
+    """
+    out: list[tuple[str, str]] = []
+    frontier = [job]
+    for hop in reversed(RENAME_CHAIN):
+        for name in list(frontier):
+            if name == hop.new or name.startswith(f"{hop.new}."):
+                old = hop.old + name[len(hop.new) :]
+                out.append((old, hop.cutover_key))
+                frontier.append(old)
+    return out
+
+
+def job_clause(
+    conn: sqlite3.Connection, job: str, *, column: str = "job", at_column: str = "scheduled_for"
+) -> tuple[str, list[str]]:
+    """SQL ``(column = ? OR (column = ? AND at_column < ?) ...)`` matching *job* and its
+    stored pre-rename names (each before its cutover, cf. :func:`legacy_names`)."""
+    cuts = cutovers(conn)
+    sql = f"{column} = ?"
+    args: list[str] = [job]
+    for old, key in legacy_names(job):
+        sql += f" OR ({column} = ?"
+        args.append(old)
+        if key in cuts:
+            sql += f" AND {at_column} < ?"
+            args.append(to_db(cuts[key]))
+        sql += ")"
+    return f"({sql})", args
+
+
 def reason_code(code: str) -> str:
-    """Current reason code for a stored one (``scout_candidate`` -> ``sweep_candidate``)."""
+    """Current reason code for a stored one (``scout_candidate`` -> ``scalp_candidate``)."""
     return LEGACY_REASON_CODES.get(code, code)

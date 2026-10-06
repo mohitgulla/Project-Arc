@@ -147,8 +147,8 @@ def test_brief_bridge_uses_given_active_list() -> None:
     assert "universe" in brief_to_candidates.__kwdefaults__
 
 
-def test_sweep_watch_list_in_prompt(db: sqlite3.Connection) -> None:
-    from arc.ingest.sweep import build_prompt
+def test_scalp_watch_list_in_prompt(db: sqlite3.Connection) -> None:
+    from arc.ingest.scalp import build_prompt
     from arc.universe.tiers import watch_tickers
 
     watch = watch_tickers(db, _settings(), NOW)
