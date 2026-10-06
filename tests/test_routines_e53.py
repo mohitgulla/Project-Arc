@@ -872,7 +872,7 @@ def test_yaml_comment_overview_matches_config() -> None:
     raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
     assert raw["tick"]["interval"] == "10m"  # D52
     assert set(raw["personas"]) - {
-        "finnhub_context", "director_diversification", "quant_risk_loop",
+        "finnhub_context", "director_diversification", "quant_risk_loop", "scalp_options_tape",
     } == {
         "scalp", "scalp.overnight", "research", "monitor", "broker.reconcile", "scorecard",
         "broker",

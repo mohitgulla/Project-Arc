@@ -1508,8 +1508,47 @@ def youtube_briefs(
     )
 
 
+_MENTIONS_LINE_CHARS = 300
+
+
+def scalp_mentions_line(result: ScalpRunResult) -> str:
+    """D56: ``Outside the universe: X (bullish, earnings), Y (bearish)`` (<= 300 chars)."""
+    if not result.mentions:
+        return ""
+    parts = [
+        f"{m.ticker} ({m.stance.value}"
+        + (f", {m.catalyst_type.value})" if m.catalyst_type else ")")
+        for m in result.mentions
+    ]
+    line = "Outside the universe: " + ", ".join(parts)
+    while len(line) > _MENTIONS_LINE_CHARS and len(parts) > 1:
+        parts.pop()  # drop whole items, never cut one in half
+        line = "Outside the universe: " + ", ".join(parts) + ", …"
+    return line[:_MENTIONS_LINE_CHARS]
+
+
+def scalp_tape_line(result: ScalpRunResult) -> str:
+    """E13.10: one line on the options tape this run read ("" with the flag off)."""
+    tape = result.tape
+    if tape is None:
+        return ""
+    if not tape.present:
+        return tape.text  # "Options tape: no fresh info (age …)"
+    vix = f"VIX {tape.vix:.1f}" if tape.vix is not None else "VIX n/a"
+    ratio = f" · 9D/30D {tape.vix9d / tape.vix:.2f}" if tape.vix9d is not None and tape.vix else ""
+    n = len(tape.tickers)
+    line = f"Options tape: {vix}{ratio} · {n} ticker{'s' if n != 1 else ''}"
+    if result.tape_corroborated:
+        line += f" · corroborated {', '.join(sorted(result.tape_corroborated))}"
+    return line
+
+
 def _scalp_note(ctx: JobContext, result: ScalpRunResult, about: list[str]) -> None:
-    """One ``observation`` note per scalp run from the batches' ``scan_summary`` (D27)."""
+    """One ``observation`` note per scalp run from the batches' ``scan_summary`` (D27).
+
+    E13.10: plus one options-tape line (flag on) and the D56 out-of-tier mentions line;
+    ``facts["mentions"]`` carries the mention count.
+    """
     from pydantic import ValidationError
 
     from arc.context.kinds import Evidence, NotePayload, NoteTopic
@@ -1517,14 +1556,24 @@ def _scalp_note(ctx: JobContext, result: ScalpRunResult, about: list[str]) -> No
     if not result.summaries:
         return
     urls = list(dict.fromkeys(result.summary_sources))[:20]
+    extra = [x for x in (scalp_tape_line(result), scalp_mentions_line(result)) if x]
+    tail = ("\n\n" + "\n".join(extra)) if extra else ""
+    body = "\n\n".join(result.summaries)[: 4000 - len(tail)] + tail
+    facts: dict[str, int] = {}
+    if result.mentions:
+        facts["mentions"] = len(result.mentions)
+    if result.tape is not None:
+        facts["tape_tickers"] = result.tape_tickers
+        facts["tape_corroborated"] = len(result.tape_corroborated)
     try:
         payload = NotePayload(
             persona="scalp",
             topic=NoteTopic.OBSERVATION,
             title=f"Scan summary ({result.docs_scalped} docs)",
-            body="\n\n".join(result.summaries)[:4000],
+            body=body,
             about=about,
             evidence=[Evidence(ref=u) for u in urls],
+            facts=facts,
         )
     except ValidationError as exc:
         log.warning("pipeline.note_invalid", persona="scalp", error=str(exc))
@@ -1560,6 +1609,59 @@ def _journal_universe_rejects(ctx: JobContext, result: ScalpRunResult) -> int:
                 run_id=ctx.run_id,
             )
             n += 1
+    return n
+
+
+def _journal_tape_corroborations(ctx: JobContext, result: ScalpRunResult) -> int:
+    """E13.10: one ``tape_corroborated`` decision per candidate the options tape
+    corroborated, once per ticker per ET day. Returns the count."""
+    if not result.tape_corroborated:
+        return 0
+    import datetime as dt
+
+    from arc.context.ttl import to_db
+    from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
+    from arc.journal.store import JournalStore
+
+    day = ctx.now.astimezone(ET).date()
+    start = dt.datetime(day.year, day.month, day.day, tzinfo=ET)
+    done = {
+        r[0]
+        for r in ctx.conn.execute(
+            "SELECT subject FROM decisions WHERE reason_code = ? AND at >= ? AND at < ?",
+            (
+                ReasonCode.TAPE_CORROBORATED.value,
+                to_db(start),
+                to_db(start + dt.timedelta(days=1)),
+            ),
+        ).fetchall()
+    }
+    store = JournalStore(ctx.conn)
+    tape = result.tape
+    n = 0
+    for ticker, pc in sorted(result.tape_corroborated.items()):
+        if ticker in done or tape is None:
+            continue
+        t = tape.tickers[ticker]
+        store.record(
+            persona=JournalPersona.SCALP,
+            stage=Stage.CANDIDATE,
+            subject=ticker,
+            choice=Choice.SELECTED,
+            reason_code=ReasonCode.TAPE_CORROBORATED,
+            reason_text=f"session P/C {pc:.2f} reads {t.direction}" if pc is not None else "",
+            at=ctx.now,
+            chain_run_id=ctx.chain_run_id,
+            run_id=ctx.run_id,
+            payload={
+                "direction": t.direction,
+                "pc_volume": pc,
+                "atm_spread_pct": t.atm_spread_pct,
+                "atm_oi": t.atm_oi,
+                "tape_as_of": tape.as_of,
+            },
+        )
+        n += 1
     return n
 
 
@@ -1699,6 +1801,15 @@ def scalp_persona(
     _journal_universe_rejects(ctx, result)
     _journal_floor_skips(ctx, result)
     _journal_floor_rejects(ctx, result)
+    _journal_tape_corroborations(ctx, result)
+    if result.tape is not None:  # E13.10: the tape this run read (text + numbers)
+        ctx.record_input(
+            "options_tape",
+            "options_fast",
+            result.tape.model_dump(),
+            as_of=ctx.now,
+            count=result.tape_tickers,
+        )
     written = [
         ctx.write(
             "candidate",
@@ -1734,6 +1845,15 @@ def scalp_persona(
             "failed_batches": result.failed_batches,
             "new_tickers": len(result.new_tickers),
             "mentions": len(result.mentions),
+            **(
+                {
+                    "tape_present": result.tape_present,
+                    "tape_tickers": result.tape_tickers,
+                    "tape_corroborated": len(result.tape_corroborated),
+                }
+                if result.tape is not None
+                else {}
+            ),
             **{f"source_{label}": read for label, read, _ in result.source_mix},
         },
         card=scalp_card(
@@ -1755,6 +1875,7 @@ def scalp_persona(
                 registry_label(ctx, k): n for k, n in sorted(result.filtered_by_source.items())
             },
             mentions=result.mentions,
+            tape_line=scalp_tape_line(result),
         ),
     )
 

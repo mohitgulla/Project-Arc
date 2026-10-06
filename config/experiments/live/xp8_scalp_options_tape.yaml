@@ -1,0 +1,38 @@
+# E13.10 (D56, D44): DRAFT forward A/B for the options_fast tape in the Scalp prompt.
+# Not registered: `arc experiment create` + `register` hash-lock it, so the owner
+# reviews the margin and sessions first.
+#
+# Treatment = `personas.scalp_options_tape: on`. The Scalp's stage-2 prompt also shows
+# the code-built Cboe tape (VIX complex, per-ticker session P/C volume, ATM spread and
+# OI), outside the doc budget, and a candidate whose stance matches its ticker's P/C
+# direction (<= 0.7 bullish, >= 1.3 bearish) gets one more corroborating source
+# (`options_fast:tape`). The tape never creates or removes a candidate.
+#
+# OPEN BEFORE REGISTERING: today the arm runner shares the Scalp's output with every
+# arm (sources and the Scalp run once, in control; arc/experiments/runner.py), so a
+# Scalp-only overlay does not yet change what the treatment arm reads. The arm must
+# run its own Scalp (or the control must run the flag) before this test means anything.
+# Promotion (flipping the default in config/routines.yaml) needs a committed
+# `verdicts/XP-8.yaml` with `verdict: win` (docs/OPS.md 5.20).
+spec_version: 1
+id: XP-8
+title: Options tape in the Scalp prompt (P/C corroboration)
+hypothesis: >
+  Showing the Scalp the intraday options tape and counting a same-direction put/call
+  read as corroboration surfaces ideas the options market already agrees with,
+  raising paired daily net P&L without a worse Sortino.
+area: entries
+kind: ab
+arms:
+  control:
+    overlay: {}
+  treatment:
+    overlay:
+      routines:
+        personas:
+          scalp_options_tape: "on"
+non_inferiority_margin: 0.5
+proposed_by: owner
+# The E7.5 backtester replays no LLM, so a persona-prompt change has no backtest;
+# the forward run is the only test.
+backtest_ref: "none: persona prompt change, not backtestable (E7.5 replays no LLM)"

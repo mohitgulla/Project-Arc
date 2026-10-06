@@ -46,6 +46,9 @@ class ScalpInput:
     digests: bool = False
     # E4.8a (D46): code-built Finnhub facts, one line per ticker ("" = flag off).
     ticker_facts: str = ""
+    # E13.10 (D56): the code-built options_fast tape ("" = personas.scalp_options_tape
+    # off: the prompt is then byte-identical to the pre-E13.10 one).
+    options_tape: str = ""
 
 
 @dataclass(frozen=True)
@@ -1017,6 +1020,21 @@ def ticker_facts_digest(snapshot: ContextSnapshot, tickers: Sequence[str]) -> li
     return sorted(out)
 
 
+#: E13.10 (D56): how the Scalp may use the options tape (corroboration only).
+OPTIONS_TAPE_NOTE = (
+    "Cboe delayed data (~15 min), built by code, not a feed item: never cite it in "
+    "`sources`. Use it only to weigh a story-backed idea (session put/call volume, ATM "
+    "spread and OI per ticker; the VIX complex for the market). The tape alone is never "
+    "a reason to raise a candidate."
+)
+
+
+def _options_tape_section(block: str) -> str:
+    if not block.strip():
+        return ""
+    return f"\n## Options tape (Cboe, code-built)\n{OPTIONS_TAPE_NOTE}\n{block}\n"
+
+
 def _ticker_facts_section(block: str, *, header: str = "###") -> str:
     if not block.strip():
         return ""
@@ -1376,7 +1394,7 @@ Date: {inp.scan_date}
 <<<FEEDS
 {feeds_block}
 FEEDS>>>
-{_ticker_facts_section(inp.ticker_facts, header="##")}
+{_ticker_facts_section(inp.ticker_facts, header="##")}{_options_tape_section(inp.options_tape)}
 ## Output format
 Respond with ONLY a JSON object (no prose, no code fences) matching the ScalpOutput schema:
 {{

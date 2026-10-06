@@ -593,7 +593,7 @@ FINNHUB_FACT_KINDS: tuple[str, ...] = (
 )
 # Persona-level switches that live under ``personas:`` next to the jobs (a scalar,
 # not a job mapping). Each maps to the settings block whose ``enabled`` it sets.
-PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context", "quant_risk_loop")
+PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context", "quant_risk_loop", "scalp_options_tape")
 
 #: D56 (E13.1): pre-rename ``personas:`` keys accepted (logged) for one release.
 #: ``sweep.overnight`` follows its ``sweep`` prefix.
@@ -883,6 +883,21 @@ class QuantRiskLoopSettings(BaseModel):
     enabled: bool = False
 
 
+class ScalpOptionsTapeSettings(BaseModel):
+    """E13.10 (D56): the options_fast tape in the Scalp prompt (default off, XP-8).
+
+    ``enabled`` comes from ``personas.scalp_options_tape: off | on``. Off = today's
+    stage-2 prompt, byte-identical; on = the code-built tape (``index_vols``,
+    ``chain_snapshot``, ``exchange_volume``) is shown outside the doc budget and a
+    candidate whose stance matches its ticker's P/C direction gets one corroborating
+    source (``options_fast:tape``).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+
+
 class FunnelScalp(BaseModel):
     """D56 ``funnel.scalp``: the Scalp's doc budget split (fixed by D56)."""
 
@@ -989,6 +1004,8 @@ class RoutinesConfig(BaseModel):
     options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
     # E13.9: the ``personas.quant_risk_loop`` flag (as ``enabled``).
     quant_risk_loop: QuantRiskLoopSettings = Field(default_factory=QuantRiskLoopSettings)
+    # E13.10: the ``personas.scalp_options_tape`` flag (as ``enabled``).
+    scalp_options_tape: ScalpOptionsTapeSettings = Field(default_factory=ScalpOptionsTapeSettings)
 
     @model_validator(mode="before")
     @classmethod

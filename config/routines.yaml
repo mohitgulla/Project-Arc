@@ -514,6 +514,7 @@ personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
   quant_risk_loop: "off"        # E13.9 (D56): off | on — Risk verdicts + one quant.revise round (strategy lane; XP-7)
+  scalp_options_tape: "off"     # E13.10 (D56): off | on — options_fast tape in the Scalp prompt, P/C corroboration (strategy lane; XP-8)
   scalp:                        # D31: every 30 min in session (15 runs), after the fast sources
     label: Scalp
     about: "Reads fresh news and filings; writes candidate ideas and story digests"
@@ -525,6 +526,7 @@ personas:
     after_sources: true
     ttl: 20m                    # a slot missed by 20 min is skipped (the next one is closer)
     notify: card
+    reads: [index_vols, chain_snapshot, exchange_volume]   # E13.10: the options tape (used only with personas.scalp_options_tape on)
     writes: [candidate, note, story, active_universe]   # note: scan summary (D27); story: D30 stage-1 digests; active_universe: D51 resolve at start
     lane: background            # D39: p90 441 s; the tick never waits on the Scalp
   scalp.overnight:              # D15/D31: 22:00 after-close fast sources (no YouTube, D45)
@@ -537,6 +539,7 @@ personas:
     after_sources: true
     ttl: 3h
     notify: card
+    reads: [index_vols, chain_snapshot, exchange_volume]   # E13.10: at 22:00 the tape is stale -> "no fresh info" line
     writes: [candidate, note, story, active_universe]
     lane: background            # D39: same Scalp handler as above
   research:                     # D31/D52: the 10-min trading loop (see `loop:` above)

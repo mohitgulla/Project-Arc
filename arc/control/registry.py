@@ -224,6 +224,9 @@ NOT_EXPOSED: dict[str, str] = {
     "scalp_story_window_hours": "D30 clustering internals",
     "scalp_story_batch_size": "LLM plumbing",
     "scalp_story_doc_chars": "LLM plumbing",
+    "scalp_tape_max_chars": "E13.10 prompt size (the tape is capped at 1500 chars)",
+    "scalp_tape_pc_bull": "E13.10 tape direction threshold; change by PR (strategy lane)",
+    "scalp_tape_pc_bear": "E13.10 tape direction threshold; change by PR (strategy lane)",
     "ingest_macro_horizon_days": "ingestion plumbing",
     "ex_dividend_horizon_days": "ingestion plumbing",
     "finnhub_insider_window_days": "D46 insider detector internals (context data only)",
@@ -1669,6 +1672,23 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("off", "on"),
         aliases=("routines.personas.quant_risk_loop", "quant_risk_loop"),
     ),
+    # E13.10 (D56/D44): the options_fast tape in the Scalp prompt. Strategy lane: off
+    # is the control (today's prompt); on shows the tape and lets a same-direction P/C
+    # read add one corroborating source. Experiment XP-8 tests it.
+    Tunable(
+        key="personas.scalp_options_tape",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E13.10: the Scalp also reads the Cboe options tape (VIX complex, "
+        "per-ticker P/C volume, ATM spread and OI), outside the doc budget; a candidate "
+        "whose stance matches its ticker's P/C direction gets one more corroborating "
+        "source. Experiment XP-8 tests it.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "scalp_options_tape"),
+        choices=("off", "on"),
+        aliases=("routines.personas.scalp_options_tape", "scalp_options_tape"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -2467,7 +2487,13 @@ _PLAIN_ROUTINE_SECTIONS = (
     ("options_slow",),  # E13.5
 )
 # Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
-_PERSONA_SWITCHES = frozenset({("personas", "finnhub_context"), ("personas", "quant_risk_loop")})
+_PERSONA_SWITCHES = frozenset(
+    {
+        ("personas", "finnhub_context"),
+        ("personas", "quant_risk_loop"),
+        ("personas", "scalp_options_tape"),
+    }
+)
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.
 _PERSONA_CHOICE_SWITCHES: dict[tuple[str, ...], str] = {
     ("personas", "director_diversification"): "strict",

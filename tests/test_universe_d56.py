@@ -556,7 +556,7 @@ class TestGuard:
         assert res.rejected == {REJECT_THRESHOLD: 1, REJECT_NOT_IN_TIER: 1}
         assert res.floor_rejected == {"RKLB": ("discovery", 0.59, 0.6)}
         assert res.floor_skipped == {}
-        assert res.mentions == ["OUTX"]
+        assert [m.ticker for m in res.mentions] == ["OUTX"]
         stored = {r[0] for r in tiers.execute("SELECT ticker FROM candidates").fetchall()}
         assert stored == {"NVDA", "LRCX"}  # no candidate row for a mention
 
@@ -569,7 +569,7 @@ class TestGuard:
             mentions=res.mentions,
         )
         text = json.dumps(card.blocks)
-        assert "Outside the universe (mentioned, not admitted)" in text
+        assert "Outside the universe (1): mentioned, not admitted" in text
         assert "1 outside the universe" in text
         assert "1 rejected" in text  # the mention is not counted twice
 

@@ -45,12 +45,33 @@ Hermes one-shot (`hermes -z`, cheap tier: model from `config/llm_routing.yaml`, 
 - merged per ticker per ET day: sources unioned; same stance keeps the max confidence; opposing
   stances subtract; a tie becomes neutral with confidence 0
 
+Out-of-tier ideas (D56 owner decision 2): a ticker in no tier (core / momentum / discovery)
+is never a candidate. It is journaled `universe:not_in_tier` and listed only as a *mention*
+(at most 10 per run) in the scan note and under "Outside the universe" on the Slack card.
+
 Funnel discipline: downstream stages read only `candidates_for_scanner()`, which returns typed
 `Candidate` models. Rationale, scan summary and the verbatim reply stay in `scalp_batches` for
 audit.
 
 Dry run: `arc scan --dry-run` uses fixture docs and canned replies in `arc/ingest/fixtures/scalp/`
 (no network).
+
+## Options tape (E13.10, D56; only with `personas.scalp_options_tape: on`)
+
+Stage 2 also reads a code-built `## Options tape (Cboe, code-built)` block: the Cboe delayed
+VIX complex (VIX1D/9D/VIX/3M/VVIX/VXN, ratios, flags) and one line per fresh ticker chain
+snapshot (session volume, P/C volume, ATM spread, ATM OI). It is built from the
+`index_vols`, `chain_snapshot` and `exchange_volume` kinds and costs no docs from the
+budget. Use it only to weigh an idea the stories already support; never cite it in
+`sources` and never raise a candidate from the tape alone. If `index_vols` is older
+than `categories.options_fast.max_age` (30m) the block is one line
+`Options tape: no fresh info (age …)`.
+
+Code, not the LLM, applies it: a ticker's session P/C volume <= 0.7 reads bullish,
+>= 1.3 bearish, else neutral. An accepted candidate whose stance matches gets the
+`options_fast:tape` source (one more distinct source in `corroboration`) and a
+`tape_corroborated` journal row. The tape never creates or removes a candidate. Flag off:
+the prompt is byte-identical to the pre-E13.10 one.
 
 ## Channel briefs (E4.4)
 

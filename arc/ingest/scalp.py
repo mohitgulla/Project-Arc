@@ -25,6 +25,12 @@ Filters (deterministic, applied after the LLM):
 * **sources** — only URLs of documents actually in the batch survive; a
   candidate with no grounded source is dropped (no hallucinated citations).
 
+Options tape (E13.10, ``personas.scalp_options_tape: on``): stage 2 also reads the
+code-built Cboe tape (:func:`arc.ingest.cboe_fast.scalp_tape`), outside the doc budget.
+It never creates or removes a candidate: an accepted candidate whose stance matches
+its ticker's P/C direction gets the :data:`~arc.ingest.cboe_fast.TAPE_SOURCE` token,
+which counts as one more distinct source in ``corroboration``.
+
 The liquidity screen runs last (after threshold and sources), so market data is
 only fetched for candidates that would otherwise be accepted.
 
@@ -46,10 +52,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arc.context.categories import LEGACY_VIDEO, REFERENCE, SCALP_CATEGORIES
 from arc.context.kinds import StoryEvidence, StoryPayload
+from arc.ingest.cboe_fast import TAPE_SOURCE, ScalpTape, tape_corroborates
 from arc.ingest.llm import FixtureScalpLLM, HermesScalpLLM, LLMResult, ScalpLLMError
 from arc.ingest.sources import (
     SCALP_EXCLUDED,
@@ -112,11 +119,24 @@ _UNIVERSE_REJECTS = (
 
 _FEED_DELIMITER = "FEEDS>>>"
 _MAX_UNSCALPED_PER_RUN = 200
+MAX_MENTIONS = 10  # D56: out-of-tier ideas listed per run (deduped by ticker)
 
 
 # ---------------------------------------------------------------------------
 # Results
 # ---------------------------------------------------------------------------
+
+
+class ScalpMention(BaseModel):
+    """An out-of-tier idea kept as text only (D56 owner decision 2): never a candidate,
+    never read by Research's pool, never a Scout input. Note and card only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str
+    stance: Stance
+    catalyst_type: CatalystType | None = None
+    headline: str = Field(default="", max_length=120)  # the story title that raised it
 
 
 @dataclass
@@ -150,7 +170,11 @@ class ScalpRunResult:
     # D56 (E13.4): ticker -> (tier, best confidence, floor) of ideas rejected below their
     # tier's floor this run, and the names in no tier (mentions, never candidates).
     floor_rejected: dict[str, tuple[str, float, float]] = field(default_factory=dict)
-    mentions: list[str] = field(default_factory=list)
+    mentions: list[ScalpMention] = field(default_factory=list)  # <= MAX_MENTIONS
+    # E13.10 (personas.scalp_options_tape on): the tape stage 2 read (None = flag off)
+    # and ticker -> P/C volume of candidates it corroborated this run.
+    tape: ScalpTape | None = None
+    tape_corroborated: dict[str, float | None] = field(default_factory=dict)
     # E4.5 (D30): fair selection + story synthesis accounting (display + manifest).
     source_mix: list[tuple[str, int, int]] = field(default_factory=list)  # label, read, over
     over_budget: int = 0
@@ -176,6 +200,15 @@ class ScalpRunResult:
     output_tokens: int | None = None
     cost_usd: float | None = None
     _rationale_conf: dict[str, float] = field(default_factory=dict, repr=False)
+
+    @property
+    def tape_present(self) -> bool:
+        """A fresh tape was in the prompt (flag on and index vols within max_age)."""
+        return self.tape is not None and self.tape.present
+
+    @property
+    def tape_tickers(self) -> int:
+        return len(self.tape.tickers) if self.tape is not None else 0
 
     def add_usage(self, reply: LLMResult) -> None:
         for name in ("input_tokens", "output_tokens", "cost_usd"):
@@ -457,8 +490,13 @@ def build_stage2_prompt(
     open_universe: bool,
     ticker_facts: str = "",
     universe: list[str] | None = None,
+    tape: str | None = None,
 ) -> str:
-    """*universe* = the watch list (D51: core + momentum + trending); default the core."""
+    """*universe* = the watch list (D51: core + momentum + trending); default the core.
+
+    *tape* (E13.10) is the options tape block; ``None`` (flag off) leaves the prompt
+    byte-identical to the pre-E13.10 one.
+    """
     if universe is None:
         from arc.universe.tiers import core_tickers
 
@@ -473,6 +511,7 @@ def build_stage2_prompt(
             open_universe=open_universe,
             digests=True,
             ticker_facts=ticker_facts,
+            options_tape=tape or "",
         )
     )
 
@@ -498,6 +537,68 @@ def _facts_snapshot(
     from arc.routines.config import FINNHUB_FACT_KINDS
 
     return ContextStore(conn).snapshot(now, kinds=[*FINNHUB_FACT_KINDS, "regime"], run_id=run_id)
+
+
+def _options_tape(
+    conn: sqlite3.Connection,
+    settings: ArcSettings,
+    routines: RoutinesConfig | None,
+    now: _dt.datetime,
+    run_id: str,
+) -> ScalpTape | None:
+    """E13.10: the options tape at the tick's *now*, or None with the flag off.
+
+    The read is recorded as a context snapshot (audit). *now* is the real tick time,
+    never a stored ``fetched_at`` (that one is truncated to the second).
+    """
+    if routines is None or not routines.scalp_options_tape.enabled:
+        return None
+    from arc.context.categories import SourceCategory
+    from arc.context.store import ContextStore
+    from arc.ingest.cboe_fast import scalp_tape_from_store
+
+    kinds = ["index_vols", "chain_snapshot", "exchange_volume"]
+    ContextStore(conn).snapshot(now, kinds=kinds, run_id=run_id)
+    max_age = routines.category_spec(SourceCategory.OPTIONS_FAST).max_age.duration
+    return scalp_tape_from_store(
+        conn,
+        now,
+        max_age or _dt.timedelta(minutes=30),
+        max_chars=settings.scalp_tape_max_chars,
+        pc_bull=settings.scalp_tape_pc_bull,
+        pc_bear=settings.scalp_tape_pc_bear,
+    )
+
+
+def with_tape_source(c: Candidate, tape: ScalpTape | None) -> Candidate:
+    """E13.10: add :data:`TAPE_SOURCE` when the ticker's tape direction matches the
+    candidate's stance (additive only: never creates or removes a candidate)."""
+    if tape is None or TAPE_SOURCE in c.sources:
+        return c
+    t = tape.tickers.get(c.ticker)
+    if t is None or not tape_corroborates(c.stance.value, t.direction):
+        return c
+    return c.model_copy(update={"sources": [*c.sources, TAPE_SOURCE]})
+
+
+def _mention(item: Any, batch: list[StoryPayload]) -> ScalpMention | None:
+    """D56: the out-of-tier idea as a :class:`ScalpMention` (headline of its story)."""
+    try:
+        out = ScalpCandidateOut.model_validate(item)
+    except ValidationError:
+        return None
+    ticker = normalize_ticker(out.ticker)
+    cited = {s.strip() for s in out.sources}
+    story = next((p for p in batch if cited & set(p.urls)), None) or next(
+        (p for p in batch if ticker in {normalize_ticker(t) for t in p.tickers}), None
+    )
+    headline = " ".join((story.headline if story else "").split())
+    return ScalpMention(
+        ticker=ticker,
+        stance=out.stance,
+        catalyst_type=out.catalyst_type,
+        headline=headline[:119] + "…" if len(headline) > 120 else headline,
+    )
 
 
 def _norm_ws(text: str) -> str:
@@ -1027,6 +1128,8 @@ def run_scalp(
     key_by_url = {d.url: d.source_key for d in all_docs}
 
     def source_key_of(url: str) -> str:
+        if url == TAPE_SOURCE:  # E13.10: the tape is its own source (never a doc)
+            return TAPE_SOURCE
         if url in key_by_url:
             return key_by_url[url]
         row = doc_repo.source_keys_for_urls([url]).get(url)
@@ -1071,6 +1174,8 @@ def run_scalp(
 
     # 4. stage 2: the Scalp reads digests (E4.8a: + Finnhub facts when the flag is on)
     facts_snap = _facts_snapshot(conn, routines, now, run_id) if digests else None
+    tape = _options_tape(conn, settings, routines, now, run_id) if digests else None
+    result.tape = tape
     size = settings.scalp_story_batch_size
     for i in range(0, len(digests), size):
         batch = digests[i : i + size]
@@ -1089,6 +1194,7 @@ def run_scalp(
             open_universe=open_universe,
             ticker_facts=facts,
             universe=watch,
+            tape=tape.text if tape is not None else None,
         )
         result.batches += 1
 
@@ -1157,9 +1263,20 @@ def run_scalp(
                 result.rejected_items.setdefault(outcome, []).append(label)
                 if outcome == REJECT_THRESHOLD and guard.model == "d56":
                     _note_floor_reject(result, guard, label, item)
+                if (
+                    outcome == REJECT_NOT_IN_TIER
+                    and len(result.mentions) < MAX_MENTIONS
+                    and label not in {m.ticker for m in result.mentions}
+                    and (m := _mention(item, batch)) is not None
+                ):
+                    result.mentions.append(m)
                 if label in guard.details:
                     result.reject_details[label] = guard.details[label]
                 continue
+            tagged = with_tape_source(outcome, tape)
+            if tagged is not outcome and tape is not None:
+                result.tape_corroborated[outcome.ticker] = tape.tickers[outcome.ticker].pc_volume
+            outcome = tagged
             store_candidate(cand_repo, outcome, day=day, run_id=run_id, source_key_of=source_key_of)
             accepted += 1
             why = item.get("rationale") if isinstance(item, dict) else None
@@ -1193,7 +1310,6 @@ def run_scalp(
         )
 
     result.new_tickers = list(guard.admitted_new)
-    result.mentions = list(guard.mentions)
     result.candidates = candidates_for_scanner(
         conn,
         day,
@@ -1207,7 +1323,8 @@ def run_scalp(
         if c.confidence < settings.scalp_min_confidence and tier is not None:
             result.floor_skipped[c.ticker] = (tier.value, c.confidence)
     for cand in result.candidates:
-        keys = [source_key_of(u) for u in cand.sources]
+        # E13.10: the tape token is not a doc source; it never sets a freshness TTL.
+        keys = [source_key_of(u) for u in cand.sources if u != TAPE_SOURCE]
         ttl = registry.freshness_ttl(keys, None, now)
         if ttl is not None:
             result.candidate_ttls[cand.ticker] = ttl
@@ -1223,6 +1340,9 @@ def run_scalp(
         candidates=len(result.candidates),
         universe_mode=str(guard.mode),
         new_tickers=result.new_tickers,
+        mentions=[m.ticker for m in result.mentions],
+        tape_present=result.tape_present,
+        tape_corroborated=sorted(result.tape_corroborated),
         rejected=dict(result.rejected),
         source_mix=result.source_mix,
         input_tokens=result.input_tokens,
