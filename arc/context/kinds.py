@@ -307,39 +307,6 @@ class MacroCalendarPayload(BaseModel):
     events: list[MacroEvent] = Field(default_factory=list)
 
 
-class UnusualContract(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    symbol: str
-    expiry: str
-    strike: float
-    option_type: Literal["call", "put"]
-    volume: int = Field(..., ge=0)
-    open_interest: int | None = Field(None, ge=0)
-    vol_oi: float | None = Field(None, ge=0)
-
-
-class UnusualOptionsPayload(BaseModel):
-    """Self-computed unusual options activity for one underlying (Alpaca snapshots)."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    ticker: str
-    as_of: str
-    call_volume: int = Field(..., ge=0)
-    put_volume: int = Field(..., ge=0)
-    total_volume: int = Field(..., ge=0)
-    avg_volume: float | None = Field(None, description="Mean daily total over prior sessions")
-    history_days: int = Field(0, ge=0)
-    volume_ratio: float | None = Field(None, description="total_volume / avg_volume")
-    put_call_volume: float | None = None
-    hot_volume_share: float = Field(
-        0.0, ge=0, le=1, description="Share of total volume in lines with vol/OI over threshold"
-    )
-    flags: list[Literal["volume_spike", "vol_oi"]] = Field(default_factory=list)
-    contracts: list[UnusualContract] = Field(default_factory=list, max_length=10)
-
-
 class ExDividendPayload(BaseModel):
     """Next cash dividend for one underlying (early-assignment risk on short calls)."""
 
@@ -494,7 +461,6 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("vol_term", VolTermPayload),
     KindSpec("put_call", PutCallPayload),
     KindSpec("macro_calendar", MacroCalendarPayload),
-    KindSpec("unusual_options", UnusualOptionsPayload),
     KindSpec("ex_dividend", ExDividendPayload),
     # E4.8 (D46): Finnhub per-ticker context (subject = ticker)
     KindSpec("earnings_history", EarningsHistoryPayload),

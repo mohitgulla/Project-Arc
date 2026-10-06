@@ -425,50 +425,6 @@ def _data_tickers(ctx: JobContext) -> list[str]:
     return list(dict.fromkeys([*tickers, *open_underlyings(ctx.conn), *(str(r[0]) for r in rows)]))
 
 
-def unusual_options_source(ctx: JobContext, market: MarketDataProvider | None = None) -> JobResult:
-    """E4.5: self-computed unusual options activity per ticker (Alpaca chain snapshot)."""
-    from arc.ingest.options_data import UoaThresholds, scan_unusual
-
-    s = ctx.settings
-    if market is None:  # pragma: no cover - live Alpaca (integration)
-        from arc.data.alpaca import AlpacaMarketData
-
-        market = AlpacaMarketData()
-    provider: MarketDataProvider = market
-    t = UoaThresholds(
-        min_volume=s.uoa_min_volume,
-        vol_oi_ratio=s.uoa_vol_oi_ratio,
-        volume_spike_ratio=s.uoa_volume_spike_ratio,
-        min_dte=s.uoa_min_dte,
-        min_open_interest=s.uoa_min_open_interest,
-        min_hot_share=s.uoa_min_hot_share,
-    )
-    tickers = _data_tickers(ctx)
-    payloads, errors = scan_unusual(
-        ctx.conn,
-        provider,
-        tickers,
-        ctx.now.astimezone(ET).date(),
-        t,
-        max_dte=s.uoa_max_dte,
-        now=ctx.now.isoformat(),
-    )
-    _data_result(
-        ctx, "option_chains", "alpaca", [p.model_dump(mode="json") for p in payloads], len(payloads)
-    )
-    flagged = [p for p in payloads if p.flags]
-    for p in payloads:
-        ctx.write("unusual_options", p.ticker, p)
-    return JobResult(
-        summary=(
-            f"{len(payloads)} tickers · {len(flagged)} unusual"
-            + (f" ({', '.join(p.ticker for p in flagged[:8])})" if flagged else "")
-            + (f" · {len(errors)} chain errors" if errors else "")
-        ),
-        metrics={"tickers": len(payloads), "unusual": len(flagged), "errors": len(errors)},
-    )
-
-
 def iv_record_source(
     ctx: JobContext,
     market: MarketDataProvider | None = None,
@@ -1479,7 +1435,6 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "vol_term": "arc.routines.handlers:vol_term_source",
     "put_call": "arc.routines.handlers:put_call_source",
     "macro_calendar": "arc.routines.handlers:macro_calendar_source",
-    "unusual_options": "arc.routines.handlers:unusual_options_source",
     "ex_dividend": "arc.routines.handlers:ex_dividend_source",
     "iv.record": "arc.routines.handlers:iv_record_source",  # E4.12 (D55) daily 30-DTE IV
     # E4.8 (D46): Finnhub per-ticker context (typed kinds, shared 55/min budget)

@@ -8,8 +8,10 @@ Every ingest source is a named entry built from ``config/routines.yaml``:
   ``{name, url, category, weight, max_docs_per_run, label, hosts, max_age}`` (a plain
   URL string still loads, but then the job itself must declare ``category``).
 
-Categories (D47, D49): every source belongs to one of six
-:class:`~arc.context.categories.SourceCategory` values, declared in the top-level
+Categories (D47, D49, D56): every source belongs to one of six
+:class:`~arc.context.categories.SourceCategory` values, or is **reference data**
+(D56: ``reference: true``, e.g. the earnings calendar; listed for labels and the
+Tower, never weighted, never Scalp-read). Categories are declared in the top-level
 ``categories:`` block with a ``weight`` and a freshness ``max_age``. **Categories are
 weighted equally** (``weight: 1`` each); a source's ``weight`` is its share *inside*
 its category, so adding a feed splits its category's share instead of growing it.
@@ -20,10 +22,11 @@ share (``picked / category weight`` smallest; ties by name), then, inside that
 category, to the source furthest below its share. Newest doc first within a source.
 A source that runs out of docs (or hits ``max_docs_per_run``) stops competing, and
 a category with no fresh docs left stops competing, so unused share flows to the
-others. Only :data:`~arc.context.categories.SCALP_CATEGORIES` take part; options
-data and the two YouTube categories reach Research as typed context (D45, D47,
-D49). A YouTube channel declares its own category (``youtube_macro`` or
-``youtube_micro``); channels split their category's share (:meth:`share_in_category`).
+others. Only :data:`~arc.context.categories.SCALP_CATEGORIES` take part (D56:
+market_news and company_data, split equally); options data and the two YouTube
+categories reach the personas as typed context (D45, D47, D49, D56). A YouTube
+channel declares its own category (``youtube_macro`` or ``youtube_micro``);
+channels split their category's share (:meth:`share_in_category`).
 
 Freshness: a doc older than its source's ``max_age`` (default: its category's) is
 never selected; the Scalp closes it ``skipped_stale``.
@@ -49,6 +52,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from arc.context.categories import (
     CATEGORY_ORDER,
     DEFAULT_CATEGORIES,
+    REFERENCE,
     SCALP_CATEGORIES,
     CategorySpec,
     SourceCategory,
@@ -66,6 +70,7 @@ if TYPE_CHECKING:
 log = structlog.get_logger()
 
 __all__ = [
+    "REFERENCE_MAX_AGE",
     "SCALP_EXCLUDED",
     "CategoryMix",
     "FeedSpec",
@@ -86,6 +91,9 @@ DEFAULT_CATEGORY: Mapping[str, SourceCategory] = {
     "youtube": SourceCategory.YOUTUBE_MICRO,
 }
 UNKNOWN_CATEGORY = SourceCategory.MARKET_NEWS
+# D56: freshness window of a reference-data source with no ``max_age:`` of its own
+# (the earnings calendar ages from its latest pull; it is never Scalp-read).
+REFERENCE_MAX_AGE = Ttl(duration=_dt.timedelta(hours=24))
 # D45/D47: categories the 30-min Scalp never reads (typed context only). The registry
 # still lists their sources (labels, the Tower's sources page).
 SCALP_EXCLUDED: frozenset[SourceCategory] = frozenset(set(SourceCategory) - SCALP_CATEGORIES)
@@ -185,7 +193,7 @@ class SourceSpec:
 
     key: str
     job: str
-    category: SourceCategory
+    category: SourceCategory | None  # None = D56 reference data (``reference: true``)
     weight: float = 1.0
     max_docs_per_run: int | None = None
     label: str = ""
@@ -201,6 +209,16 @@ class SourceSpec:
     @property
     def display(self) -> str:
         return self.label or self.key
+
+    @property
+    def reference(self) -> bool:
+        """D56: reference data (no category; never weighted, never Scalp-read)."""
+        return self.category is None
+
+    @property
+    def category_key(self) -> str:
+        """The category value, or ``reference`` for reference data (D56)."""
+        return REFERENCE if self.category is None else self.category.value
 
 
 # D55 (E4.11): retired RSS feed keys, kept readable for one release so stored
@@ -266,6 +284,7 @@ class SourceRegistry:
                 continue
             opts = spec.options
             category = _job_category(job, opts)
+            reference = opts.get("reference") is True  # D56: no category, never weighted
             job_age = _ttl_opt(opts.get("max_age"))
             basis = _age_basis(opts.get("age_basis"))
             feed_of = _feed(opts.get("feed"))
@@ -316,7 +335,7 @@ class SourceRegistry:
                         feed=feed_of,
                     )
                 continue
-            if category is None:
+            if category is None and not reference:
                 msg = f"source {job!r}: no category (D47)"
                 raise ValueError(msg)
             if job in out:
@@ -408,18 +427,26 @@ class SourceRegistry:
 
         D49: two ``youtube_macro`` channels get 0.5 each, three ``youtube_micro``
         channels 1/3 each, so a new channel splits its category's share. Unknown
-        keys get 0.
+        keys and reference data (D56) get 0.
         """
         spec = self.sources.get(key)
-        if spec is None:
+        if spec is None or spec.category is None:
             return 0.0
         total = sum(s.weight for s in self.sources.values() if s.category is spec.category)
         return spec.weight / total if total > 0 else 0.0
 
     def max_age_for(self, key: str) -> Ttl:
-        """D47 freshness window of a source: its own ``max_age`` else its category's."""
+        """D47 freshness window of a source: its own ``max_age`` else its category's.
+
+        D56: a reference-data source without its own window uses
+        :data:`REFERENCE_MAX_AGE`.
+        """
         spec = self.spec_for(key)
-        return spec.max_age or self.category_spec(spec.category).max_age
+        if spec.max_age is not None:
+            return spec.max_age
+        if spec.category is None:
+            return REFERENCE_MAX_AGE
+        return self.category_spec(spec.category).max_age
 
     def is_stale(
         self,

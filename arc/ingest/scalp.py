@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any, cast
 import structlog
 from pydantic import ValidationError
 
-from arc.context.categories import LEGACY_VIDEO
+from arc.context.categories import LEGACY_VIDEO, REFERENCE, SCALP_CATEGORIES
 from arc.context.kinds import StoryEvidence, StoryPayload
 from arc.ingest.llm import FixtureScalpLLM, HermesScalpLLM, LLMResult, ScalpLLMError
 from arc.ingest.sources import (
@@ -637,7 +637,7 @@ def _load_docs(rows: list[dict[str, Any]], registry: SourceRegistry | None = Non
                 title=r.get("title"),
                 source_key=key,
                 ingested_at=r.get("ingested_at") or "",
-                category=reg.spec_for(key).category.value,
+                category=reg.spec_for(key).category_key,
                 feed=reg.spec_for(key).feed,
             )
         )
@@ -690,8 +690,11 @@ def scalp_excluded(doc: _Doc) -> bool:
 
 
 def slow_feed(doc: _Doc) -> bool:
-    """D54: the doc's source declares ``feed: scout`` (earnings calendar); never Scalp-read."""
-    return doc.feed == "scout"
+    """D54: the doc's source declares ``feed: scout`` (earnings calendar); never Scalp-read.
+
+    D56: reference data (``reference: true``) is never Scalp-read either, whatever its feed.
+    """
+    return doc.feed == "scout" or doc.category == REFERENCE
 
 
 def _doc_ts(raw: str) -> _dt.datetime | None:
@@ -726,8 +729,10 @@ def _select(
     cat_of = {k: registry.spec_for(k).category for k in by_source}
     # D47: only categories that have docs this run share the budget; inside each,
     # the registry's per-source weights (normalised per category by select_fair).
-    present = set(cat_of.values())
+    # D56: the budget splits equally across at most the two Scalp categories.
+    present = {c for c in cat_of.values() if c is not None}
     cat_w = registry.category_weights(present)
+    assert set(cat_w) <= SCALP_CATEGORIES and len(SCALP_CATEGORIES) == 2
     weights = registry.effective_weights(present)
     caps = {k: registry.spec_for(k).max_docs_per_run for k in by_source}
     # A category weighted 0 never reads (its docs wait, then close skipped_budget).
@@ -737,7 +742,7 @@ def _select(
         weights,
         budget,
         caps=caps,
-        categories={k: cat_of[k].value for k in readable},
+        categories={k: registry.spec_for(k).category_key for k in readable},
         category_weights={c.value: w for c, w in cat_w.items()},
     )
     if len(readable) != len(by_source):  # zero-weight categories: available, never picked
@@ -746,7 +751,10 @@ def _select(
             picked=sel.picked,
             available={k: len(v) for k, v in by_source.items()},
             weights=sel.weights,
-            category_of={**sel.category_of, **{k: cat_of[k].value for k in by_source}},
+            category_of={
+                **sel.category_of,
+                **{k: registry.spec_for(k).category_key for k in by_source},
+            },
             category_weights=sel.category_weights,
         )
     chosen = set(sel.selected)

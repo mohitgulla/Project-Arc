@@ -183,7 +183,6 @@ RESEARCH_READS = [
     "vol_term",
     "put_call",
     "macro_calendar",
-    "unusual_options",
     "position_review",  # E5.9: fresh E6.4 reviews feed the portfolio context
     "story",  # E4.7 (D47): per-category freshness lines (counts + headlines, by code)
     # E4.8a (D46): Finnhub per-ticker facts; rendered only with personas.finnhub_context on
@@ -293,12 +292,28 @@ PROMPT_BUILDERS: dict[str, tuple[Callable[..., Any], Callable[..., str], type[Ba
     "risk_swap": (risk_swap_input_from_context, build_risk_swap_prompt, RiskSwapReview),
 }
 
+# D56: category keys only a D49-era recorded ``categories`` input carries.
+D49_ONLY_CATEGORIES = frozenset({"macro_data", "options_data"})
+
 # prompt key → the persona whose LLM answers it (config/llm_routing.yaml)
 LLM_PERSONA = {"risk_swap": "risk"}
 
 
 # E3.4a: personas whose prompt states the configured entry window + delta bands.
 ENTRY_TERMS_PERSONAS = frozenset({"research", "quant", "risk"})
+
+
+def _replay_flags(persona: str, kwargs: dict[str, Any]) -> None:
+    """Mark a recorded Research input from an older category generation (in place)."""
+    if persona != "research":
+        return
+    if "categories" not in kwargs:
+        # Recorded before D49 (no categories input): rebuild the D47 five-category
+        # block, so `arc journal replay` still matches the recorded sha.
+        kwargs["d47_replay"] = True
+    elif set(kwargs["categories"] or {}) & D49_ONLY_CATEGORIES:
+        # D56: recorded under the D49 six (macro_data / options_data): rebuild that block.
+        kwargs["d49_replay"] = True
 
 
 def build_prompt(
@@ -319,10 +334,7 @@ def build_prompt(
     """
     from_context, builder, schema = PROMPT_BUILDERS[persona]
     kwargs = {k: v for k, v in inputs.items() if k != "rules"}
-    if persona == "research" and "categories" not in kwargs:
-        # Recorded before D49 (no categories input): rebuild the D47 five-category
-        # block, so `arc journal replay` still matches the recorded sha.
-        kwargs["d47_replay"] = True
+    _replay_flags(persona, kwargs)
     if (
         settings is not None
         and persona in ENTRY_TERMS_PERSONAS

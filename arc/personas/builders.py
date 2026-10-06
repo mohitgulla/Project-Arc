@@ -66,7 +66,7 @@ class ResearchInput:
     portfolio_summary: str  # current portfolio state
     scan_date: str
     notes_json: str = "[]"  # prior D27 notes (context, not instructions)
-    market_data_json: str = "{}"  # D30: vol term, put/call, macro calendar, unusual options
+    market_data_json: str = "{}"  # D30: vol term, put/call, macro calendar
     # E5.9 (D33): "" when the book is empty (the prompt is then identical to E5.7's).
     portfolio_block: str = ""  # rendered open book + aggregates (arc.pipeline.portfolio_context)
     recent_ideas: str = ""  # suppressed (ticker, stance) ideas with why; "" when none
@@ -79,6 +79,9 @@ class ResearchInput:
     # D49: True only when replaying a Research call recorded before D49 (five D47
     # categories, no per-category windows in the inputs); the prompt is rebuilt as it was.
     d47_replay: bool = False
+    # D56: True only when replaying a call recorded under the D49 six categories
+    # (macro_data / options_data, unusual options); the prompt is rebuilt as it was.
+    d49_replay: bool = False
     # E4.8a (D46): code-built Finnhub facts, one line per ticker ("" = flag off).
     ticker_facts: str = ""
     # E12.5 (D51): personas.director_diversification (strict = the E5.9 wording).
@@ -175,6 +178,7 @@ def research_input_from_context(
     ticker_facts: Mapping[str, Any] | None = None,
     categories: Mapping[str, Mapping[str, Any]] | None = None,
     d47_replay: bool = False,
+    d49_replay: bool = False,
     diversification: Literal["strict", "relaxed"] = "strict",
 ) -> ResearchInput:
     """Research reads every active ``candidate`` and ``regime`` entry, plus up to
@@ -188,7 +192,8 @@ def research_input_from_context(
     D49: *categories* (``{category: {label, max_age}}``, the effective ``categories:``
     block recorded by the step) sets each category's label and freshness window in
     the *Context by category* block; ``None`` = the defaults. *d47_replay* rebuilds a
-    pre-D49 recorded call's five-category block byte for byte.
+    pre-D49 recorded call's five-category block byte for byte; *d49_replay* (D56)
+    rebuilds a D49-era call (macro_data / options_data, unusual options) the same way.
 
     E5.9: *portfolio_block* (the open book) and *recent_ideas* (dedupe-suppressed
     names) are rendered by the step and passed through, so a journal replay rebuilds
@@ -222,7 +227,9 @@ def research_input_from_context(
         portfolio_summary=portfolio_summary,
         scan_date=scan_date,
         notes_json=_dump(notes_out),
-        market_data_json=_dump(market_data_from_context(snapshot)),
+        market_data_json=_dump(
+            market_data_from_context(snapshot, unusual=d47_replay or d49_replay)
+        ),
         portfolio_block=portfolio_block,
         recent_ideas=recent_ideas,
         entry_terms=_terms(entry_terms),
@@ -230,14 +237,21 @@ def research_input_from_context(
         category_context=(
             d47_category_context_block(snapshot, youtube_channels or [])
             if d47_replay
-            else category_context_block(
+            else d49_category_context_block(
                 snapshot,
                 youtube_channels or [],
                 categories=categories,
                 finnhub=ticker_facts is not None,
             )
+            if d49_replay
+            else category_context_block(
+                snapshot,
+                youtube_channels or [],
+                categories=categories,
+            )
         ),
         d47_replay=d47_replay,
+        d49_replay=d49_replay,
         ticker_facts=ticker_facts_block(snapshot, ticker_facts),
         diversification=diversification,
     )
@@ -308,13 +322,98 @@ def category_specs_input(routines: Any) -> dict[str, dict[str, str]]:
     return out
 
 
-# Typed context kinds Research's category block reports (D49). Each is judged
-# against its category's ``max_age`` from ``valid_from``; ``channel_brief`` goes by
-# its channel's category. Finnhub kinds are listed only with personas.finnhub_context
-# on, so the flag-off prompt (XP-2 control arm) never sees them.
-_MARKET_KINDS = {"macro_data": ("macro_calendar",), "options_data": ("vol_term", "put_call")}
-_TICKER_KINDS = {"options_data": ("unusual_options", "ex_dividend")}
+# D56: typed context kinds the "Context by category" block reports, per category.
+# Each is judged against its category's ``max_age`` from ``valid_from``;
+# ``channel_brief`` goes by its channel's category. Reference data (ex_dividend,
+# macro_calendar, Finnhub kinds) is not a category and is never listed here.
+_MARKET_KINDS: Mapping[str, tuple[str, ...]] = {"options_slow": ("vol_term", "put_call")}
+
+# D49 (frozen for replay, D56): the six D49 categories and the typed kinds they listed.
+_D49_ORDER = (
+    "market_news",
+    "company_data",
+    "macro_data",
+    "options_data",
+    "youtube_macro",
+    "youtube_micro",
+)
+_D49_DEFAULTS: Mapping[str, tuple[str, str]] = {
+    "market_news": ("6h", "Market news"),
+    "company_data": ("24h", "Company data"),
+    "macro_data": ("24h", "Macro data"),
+    "options_data": ("12h", "Options data"),
+    "youtube_macro": ("24h", "YouTube macro"),
+    "youtube_micro": ("24h", "YouTube micro"),
+}
+_D49_MARKET_KINDS: Mapping[str, tuple[str, ...]] = {
+    "macro_data": ("macro_calendar",),
+    "options_data": ("vol_term", "put_call"),
+}
+_D49_TICKER_KINDS: Mapping[str, tuple[str, ...]] = {
+    "options_data": ("unusual_options", "ex_dividend")
+}
+_D49_ALIASES: Mapping[str, str] = {
+    "company": "company_data",
+    "macro": "macro_data",
+    "company_news": "company_data",
+    "filings": "company_data",
+    "calendar": "company_data",
+}
 _FINNHUB_KINDS = ("earnings_history", "insider_activity", "analyst_recs", "fundamentals")
+_YOUTUBE_KEYS = ("youtube_macro", "youtube_micro")
+
+
+@dataclass(frozen=True)
+class _BlockSpec:
+    """One generation of the "Context by category" block (D49 frozen, D56 live)."""
+
+    order: tuple[str, ...]
+    defaults: Mapping[str, tuple[Any, str]]  # key -> (max_age Ttl or text, label)
+    market_kinds: Mapping[str, tuple[str, ...]]
+    ticker_kinds: Mapping[str, tuple[str, ...]]
+    typed_only: frozenset[str]  # categories with no stories (typed facts only)
+    d49: bool  # stored story categories read through the frozen D49 names
+    finnhub_category: str | None = None  # where Finnhub kinds list (D49 only)
+
+    def normalize(self, raw: Any) -> str | None:
+        """A stored story ``category`` -> this generation's key (``None``: not shown)."""
+        if self.d49:
+            return _d49_normalize(raw)
+        from arc.context.categories import normalize_category
+
+        cat = normalize_category(raw)
+        return None if cat is None else cat.value
+
+
+def _d49_normalize(raw: Any) -> str | None:
+    text = str(raw or "").strip().lower()
+    if text in _D49_ORDER:
+        return text
+    return _D49_ALIASES.get(text)
+
+
+def _d56_spec() -> _BlockSpec:
+    from arc.context.categories import CATEGORY_ORDER, DEFAULT_CATEGORIES
+
+    return _BlockSpec(
+        order=tuple(c.value for c in CATEGORY_ORDER),
+        defaults={c.value: (s.max_age, s.label) for c, s in DEFAULT_CATEGORIES.items()},
+        market_kinds=_MARKET_KINDS,
+        ticker_kinds={},
+        typed_only=frozenset({"options_fast", "options_slow"}),
+        d49=False,
+    )
+
+
+_D49_SPEC = _BlockSpec(
+    order=_D49_ORDER,
+    defaults=_D49_DEFAULTS,
+    market_kinds=_D49_MARKET_KINDS,
+    ticker_kinds=_D49_TICKER_KINDS,
+    typed_only=frozenset({"options_data"}),
+    d49=True,
+    finnhub_category="company_data",
+)
 
 
 def category_context_block(
@@ -322,45 +421,83 @@ def category_context_block(
     channels: Sequence[Mapping[str, Any]] = (),
     *,
     categories: Mapping[str, Mapping[str, Any]] | None = None,
+    max_headlines: int = 5,
+) -> str:
+    """D47/D49/D56 (E4.7, E4.9, E13.3): Research's context under the 6 category headers.
+
+    Fixed display order (market_news, company_data, options_fast, options_slow,
+    youtube_macro, youtube_micro); each header carries a code-built freshness line,
+    and an empty category says ``no fresh info`` rather than vanishing, so all six
+    keep equal standing in front of the LLM. Ages are measured from
+    ``snapshot.as_of`` (no wall clock).
+
+    A typed entry (vol_term, put_call, channel_brief) older than its category's
+    ``max_age`` (from ``valid_from``) is listed as ``<kind> stale (age)`` and does not
+    count as fresh; a category with nothing fresh reads ``no fresh info``. The context
+    TTL is untouched (the entries stay readable for audit). Reference data (D56) is
+    never listed. *categories* = :func:`category_specs_input` (``None``: the defaults).
+    """
+    return _category_block(
+        snapshot,
+        channels,
+        spec=_d56_spec(),
+        categories=categories,
+        finnhub=False,
+        max_headlines=max_headlines,
+    )
+
+
+def d49_category_context_block(
+    snapshot: ContextSnapshot,
+    channels: Sequence[Mapping[str, Any]] = (),
+    *,
+    categories: Mapping[str, Mapping[str, Any]] | None = None,
     finnhub: bool = False,
     max_headlines: int = 5,
 ) -> str:
-    """D47/D49 (E4.7, E4.9): Research's context under the 6 category headers.
+    """The D49 six-category block (macro_data, options_data), kept only for replay.
 
-    Fixed display order; each header carries a code-built freshness line, and an
-    empty category says ``no fresh info`` rather than vanishing, so all six keep
-    equal standing in front of the LLM. Ages are measured from ``snapshot.as_of``
-    (no wall clock).
-
-    D49: a typed entry (vol_term, put_call, unusual_options, ex_dividend,
-    macro_calendar, channel_brief; Finnhub kinds when *finnhub*) older than its
-    category's ``max_age`` (from ``valid_from``) is listed as ``<kind> stale (age)``
-    and does not count as fresh; a category with nothing fresh reads ``no fresh
-    info``. The context TTL is untouched (the entries stay readable for audit).
-    *categories* = :func:`category_specs_input` (``None``: the defaults).
+    Frozen (D56): labels, kinds and rules are the E4.9 ones, so ``arc journal replay``
+    of a Research call recorded between D49 and D56 rebuilds its prompt byte for
+    byte. New prompts use :func:`category_context_block`.
     """
-    from arc.context.categories import (
-        CATEGORY_ORDER,
-        DEFAULT_CATEGORIES,
-        SourceCategory,
-        age_text,
-        channel_category,
-        is_stale,
-        normalize_category,
+    return _category_block(
+        snapshot,
+        channels,
+        spec=_D49_SPEC,
+        categories=categories,
+        finnhub=finnhub,
+        max_headlines=max_headlines,
     )
+
+
+def _category_block(  # noqa: PLR0915 - one renderer for both frozen generations
+    snapshot: ContextSnapshot,
+    channels: Sequence[Mapping[str, Any]],
+    *,
+    spec: _BlockSpec,
+    categories: Mapping[str, Mapping[str, Any]] | None,
+    finnhub: bool,
+    max_headlines: int,
+) -> str:
+    from arc.context.categories import SourceCategory, age_text, channel_category, is_stale
     from arc.context.ttl import Ttl
     from arc.ingest.channels.daily import brief_presence_line, category_channels
 
     now = snapshot.as_of
     seen = False  # any entry at all (an empty snapshot adds no section: replay-safe)
 
-    def _window(cat: SourceCategory) -> Ttl:
-        raw = ((categories or {}).get(cat.value) or {}).get("max_age")
-        return Ttl.model_validate(raw) if raw else DEFAULT_CATEGORIES[cat].max_age
+    def _window(cat: str) -> Ttl:
+        raw = ((categories or {}).get(cat) or {}).get("max_age")
+        return Ttl.model_validate(raw or spec.defaults[cat][0])
 
-    stories: dict[SourceCategory, list[dict[str, Any]]] = {c: [] for c in CATEGORY_ORDER}
+    def _label(cat: str) -> str:
+        got = ((categories or {}).get(cat) or {}).get("label")
+        return str(got or spec.defaults[cat][1])
+
+    stories: dict[str, list[dict[str, Any]]] = {c: [] for c in spec.order}
     for e in snapshot.of_kind("story"):
-        cat = normalize_category(e.payload.get("category"))
+        cat = spec.normalize(e.payload.get("category"))
         if cat is not None:
             stories[cat].append(e.payload)
             seen = True
@@ -374,7 +511,7 @@ def category_context_block(
             ts = ts.replace(tzinfo=_dt.UTC)
         return age_text(now - ts)
 
-    def _typed(cat: SourceCategory, entries: list[Any], kind: str, unit: str = "") -> list[str]:
+    def _typed(cat: str, entries: list[Any], kind: str, unit: str = "") -> list[str]:
         """``kind 5h`` / ``kind 3 flagged, newest 1h`` (fresh), else ``kind stale (13h)``.
 
         *unit* set = a per-ticker kind, shown with its fresh count.
@@ -390,25 +527,25 @@ def category_context_block(
             return [f"{kind} {len(fresh)} {unit}, newest {age}" if unit else f"{kind} {age}"]
         return [f"{kind} stale ({age_text(now - max(e.valid_from for e in entries))})"]
 
-    def _facts(cat: SourceCategory) -> list[str]:
+    def _facts(cat: str) -> list[str]:
         out: list[str] = []
-        for kind in _MARKET_KINDS.get(cat.value, ()):
+        for kind in spec.market_kinds.get(cat, ()):
             e = snapshot.latest(kind, "market")
             out += _typed(cat, [e] if e is not None else [], kind)
-        for kind in _TICKER_KINDS.get(cat.value, ()):
+        for kind in spec.ticker_kinds.get(cat, ()):
             es = snapshot.of_kind(kind)
             if kind == "unusual_options":
                 es = [e for e in es if e.payload.get("flags")]
                 out += _typed(cat, es, kind, "flagged")
             else:
                 out += _typed(cat, es, kind, "tickers")
-        if finnhub and cat is SourceCategory.COMPANY_DATA:
+        if finnhub and cat == spec.finnhub_category:
             for kind in _FINNHUB_KINDS:
                 out += _typed(cat, snapshot.of_kind(kind), kind, "tickers")
         return out
 
-    def _line(cat: SourceCategory, facts: list[str]) -> str:
-        label = _category_label(cat, categories)
+    def _line(cat: str, facts: list[str]) -> str:
+        label = _label(cat)
         fresh = [f for f in facts if " stale (" not in f]
         if fresh:
             return f"{label}: {', '.join(facts)}"
@@ -416,7 +553,7 @@ def category_context_block(
             return f"{label}: no fresh info ({', '.join(facts)})"
         return f"{label}: no fresh info"
 
-    def _news(cat: SourceCategory) -> list[str]:
+    def _news(cat: str) -> list[str]:
         items = sorted(stories[cat], key=lambda p: str(p.get("last_published", "")), reverse=True)
         facts: list[str] = []
         if items:
@@ -432,14 +569,15 @@ def category_context_block(
 
     briefs = snapshot.of_kind("channel_brief")
 
-    def _youtube(cat: SourceCategory) -> str:
+    def _youtube(cat: str) -> str:
         nonlocal seen
-        label = _category_label(cat, categories)
-        chs = category_channels(channels, cat)
+        label = _label(cat)
+        yt = SourceCategory(cat)
+        chs = category_channels(channels, yt)
         if not chs:
             return f"{label}: no fresh info"
         window = _window(cat)
-        mine = [e for e in briefs if channel_category(e.payload.get("channel_slug"), chs) is cat]
+        mine = [e for e in briefs if channel_category(e.payload.get("channel_slug"), chs) is yt]
         seen = seen or bool(mine)
         fresh = [e for e in mine if not is_stale(e.valid_from, window, now)]
         stale_by: dict[str, Any] = {}
@@ -448,7 +586,7 @@ def category_context_block(
                 slug = str(e.payload.get("channel_slug"))
                 stale_by[slug] = max(stale_by.get(slug, e.valid_from), e.valid_from)
         present = [str(e.payload.get("channel_slug")) for e in fresh]
-        line = brief_presence_line(present, chs, cat).split(" briefs: ", 1)[1]
+        line = brief_presence_line(present, chs, yt).split(" briefs: ", 1)[1]
         labels = {c["slug"]: c.get("label") or c["slug"] for c in chs}
         extra = "".join(
             f", {labels.get(s, s)} stale ({age_text(now - t)})" for s, t in stale_by.items()
@@ -456,10 +594,10 @@ def category_context_block(
         return f"{label}: {line}{extra}" if present else f"{label}: no fresh info ({line}{extra})"
 
     out: list[str] = []
-    for cat in CATEGORY_ORDER:
-        if cat in (SourceCategory.YOUTUBE_MACRO, SourceCategory.YOUTUBE_MICRO):
+    for cat in spec.order:
+        if cat in _YOUTUBE_KEYS:
             out.append(_youtube(cat))
-        elif cat is SourceCategory.OPTIONS_DATA:
+        elif cat in spec.typed_only:
             out.append(_line(cat, _facts(cat)))
         else:
             out += _news(cat)
@@ -480,7 +618,7 @@ def d47_category_context_block(
     ``arc journal replay`` of a pre-D49 Research call rebuilds its prompt byte for
     byte. New prompts use :func:`category_context_block`.
     """
-    from arc.context.categories import SourceCategory, age_text, normalize_category
+    from arc.context.categories import age_text
     from arc.ingest.channels.daily import brief_presence_line
 
     order = ("market_news", "company", "macro", "options_data", "video")
@@ -492,15 +630,15 @@ def d47_category_context_block(
         "video": "YouTube",
     }
     to_old = {
-        SourceCategory.MARKET_NEWS: "market_news",
-        SourceCategory.COMPANY_DATA: "company",
-        SourceCategory.MACRO_DATA: "macro",
-        SourceCategory.OPTIONS_DATA: "options_data",
+        "market_news": "market_news",
+        "company_data": "company",
+        "macro_data": "macro",
+        "options_data": "options_data",
     }
     now = snapshot.as_of
     stories: dict[str, list[dict[str, Any]]] = {c: [] for c in order}
     for e in snapshot.of_kind("story"):
-        cat = normalize_category(e.payload.get("category"))
+        cat = _d49_normalize(e.payload.get("category"))
         if cat is not None and cat in to_old:
             stories[to_old[cat]].append(e.payload)
 
@@ -573,8 +711,16 @@ def _category_section(inp: ResearchInput) -> str:
             "Weigh the five categories equally. `no fresh info` means nothing new in that "
             "category's freshness window: no information, not a neutral vote.\n"
         )
+    if inp.d49_replay:  # a D49-era recorded call (macro_data / options_data): its header
+        return (
+            "\n### Context by category (D49: 6 equal-weight categories; counts and ages by code)\n"
+            f"{inp.category_context}\n"
+            "Weigh the six categories equally. `no fresh info` means nothing new in that "
+            "category's freshness window: no information, not a neutral vote. An item marked "
+            "`stale (age)` is older than its category's window: do not treat it as current.\n"
+        )
     return (
-        "\n### Context by category (D49: 6 equal-weight categories; counts and ages by code)\n"
+        "\n### Context by category (D56: 6 equal-weight categories; counts and ages by code)\n"
         f"{inp.category_context}\n"
         "Weigh the six categories equally. `no fresh info` means nothing new in that "
         "category's freshness window: no information, not a neutral vote. An item marked "
@@ -897,7 +1043,8 @@ def _ticker_facts_section(block: str, *, header: str = "###") -> str:
     return f"\n{header} Ticker facts (Finnhub, code-built)\n{TICKER_FACTS_NOTE}\n{block}\n"
 
 
-MAX_UNUSUAL_IN_PROMPT = 15
+# D30 (frozen for replay, D56): flagged unusual options listed in a pre-D56 prompt.
+_D49_MAX_UNUSUAL_IN_PROMPT = 15
 
 
 # E12.5 (D51): the relaxed-diversification portfolio-fit wording (owner text).
@@ -949,13 +1096,26 @@ def _recent_ideas_section(inp: ResearchInput) -> str:
     )
 
 
-def _market_data_block(market_data_json: str) -> str:
-    """Research prompt section for D30 data; a bare newline when there is none."""
+def _market_data_section(inp: ResearchInput) -> str:
+    return _market_data_block(inp.market_data_json, legacy=inp.d47_replay or inp.d49_replay)
+
+
+def _market_data_block(market_data_json: str, *, legacy: bool = False) -> str:
+    """Research prompt section for D30 data; a bare newline when there is none.
+
+    *legacy* (a pre-D56 replay) keeps the header that named unusual options activity.
+    """
     if market_data_json.strip() in ("", "{}"):
         return ""
+    if legacy:
+        return (
+            "\n### Options market data (Cboe vol term + put/call, FOMC/BLS calendar, "
+            "unusual options activity; deterministic, D30)\n"
+            f"{market_data_json}\n"
+        )
     return (
-        "\n### Options market data (Cboe vol term + put/call, FOMC/BLS calendar, "
-        "unusual options activity; deterministic, D30)\n"
+        "\n### Options market data (Cboe vol term + put/call, FOMC/BLS calendar; "
+        "deterministic, D30)\n"
         f"{market_data_json}\n"
     )
 
@@ -971,17 +1131,21 @@ def _event_risk_block(event_risk_json: str) -> str:
     )
 
 
-def market_data_from_context(snapshot: ContextSnapshot) -> dict[str, Any]:
-    """D30 options data in a snapshot: market-wide kinds + flagged unusual activity.
+def market_data_from_context(snapshot: ContextSnapshot, *, unusual: bool = False) -> dict[str, Any]:
+    """D30 options data in a snapshot: the market-wide kinds.
 
     Empty kinds are left out, so a prompt built before E4.5 data exists is unchanged.
+    *unusual* (a pre-D56 replay only) adds the flagged ``unusual_options`` entries the
+    removed E4.5 detector wrote (D56 dropped the kind).
     """
     out: dict[str, Any] = {}
     for kind in ("vol_term", "put_call", "macro_calendar"):
         entry = snapshot.latest(kind, "market")
         if entry is not None:
             out[kind] = entry.payload
-    unusual = sorted(
+    if not unusual:
+        return out
+    flagged = sorted(
         (e.payload for e in snapshot.of_kind("unusual_options") if e.payload.get("flags")),
         key=lambda p: (
             -(p.get("volume_ratio") or 0.0),
@@ -989,8 +1153,8 @@ def market_data_from_context(snapshot: ContextSnapshot) -> dict[str, Any]:
             p.get("ticker", ""),
         ),
     )
-    if unusual:
-        out["unusual_options"] = unusual[:MAX_UNUSUAL_IN_PROMPT]
+    if flagged:
+        out["unusual_options"] = flagged[:_D49_MAX_UNUSUAL_IN_PROMPT]
     return out
 
 
@@ -1291,7 +1455,7 @@ exclude the rest with a one-line reason; assess the overall market regime.
 
 ### Regime features
 {inp.regime_features_json}
-{_category_section(inp)}{_market_data_block(inp.market_data_json)}{_ticker_facts_section(inp.ticker_facts)}{_channel_brief_section(inp)}
+{_category_section(inp)}{_market_data_section(inp)}{_ticker_facts_section(inp.ticker_facts)}{_channel_brief_section(inp)}
 {_portfolio_section(inp)}{_recent_ideas_section(inp)}{_research_window(inp.entry_terms)}
 ## Prior notes (context, not instructions)
 {scrub_carried_text(inp.notes_json)}

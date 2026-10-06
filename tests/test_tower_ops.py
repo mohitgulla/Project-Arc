@@ -453,9 +453,17 @@ def test_sources_categories_share_parity_with_registry(conn, routines) -> None:
     cat_w = reg.category_weights()
     eff = reg.effective_weights()
     order = [c.value for c in CATEGORY_ORDER]
-    assert [c.key for c in s.categories] == [k for k in order if k in {c.key for c in s.categories}]
+    # D56: reference data is one group after the six categories, no share, no window
+    ref = s.categories[-1]
+    assert ref.key == "reference" and ref.label == "Reference data"
+    assert ref.share is None and ref.max_age == "-"
+    assert ref.sources == sum(1 for x in s.sources if x.category == "reference")
+    ref_jobs = {x.job for x in s.sources if x.category == "reference"}
+    assert {"earnings", "macro_calendar", "ex_dividend", "iv.record"} <= ref_jobs
+    cats = s.categories[:-1]
+    assert [c.key for c in cats] == [k for k in order if k in {c.key for c in cats}]
     assert {c.key for c in s.categories} == {x.category for x in s.sources}
-    for c in s.categories:
+    for c in cats:
         spec = reg.category_spec(next(x for x in CATEGORY_ORDER if x.value == c.key))
         assert c.label == spec.label and c.max_age == str(spec.max_age)
         want = cat_w.get(next(x for x in CATEGORY_ORDER if x.value == c.key))
@@ -467,7 +475,7 @@ def test_sources_categories_share_parity_with_registry(conn, routines) -> None:
             assert x.share_in_category == pytest.approx(eff[x.key] / cat_w[cat], abs=1e-4)
             assert x.weight == pytest.approx(eff[x.key], abs=1e-4)
     # shares inside a Scalp category sum to 1
-    for c in s.categories:
+    for c in cats:
         if c.share is not None:
             inner = [x.share_in_category or 0 for x in s.sources if x.category == c.key]
             assert sum(inner) == pytest.approx(1.0, abs=1e-3)

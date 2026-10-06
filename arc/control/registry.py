@@ -224,13 +224,6 @@ NOT_EXPOSED: dict[str, str] = {
     "scalp_story_batch_size": "LLM plumbing",
     "scalp_story_doc_chars": "LLM plumbing",
     "ingest_macro_horizon_days": "ingestion plumbing",
-    "uoa_min_volume": "UOA detector internals (data, not a trading limit)",
-    "uoa_vol_oi_ratio": "UOA detector internals (data, not a trading limit)",
-    "uoa_volume_spike_ratio": "UOA detector internals (data, not a trading limit)",
-    "uoa_max_dte": "UOA detector internals (data, not a trading limit)",
-    "uoa_min_dte": "UOA detector internals (data, not a trading limit)",
-    "uoa_min_open_interest": "UOA detector internals (data, not a trading limit)",
-    "uoa_min_hot_share": "UOA detector internals (data, not a trading limit)",
     "ex_dividend_horizon_days": "ingestion plumbing",
     "finnhub_insider_window_days": "D46 insider detector internals (context data only)",
     "finnhub_cluster_buyers": "D46 insider detector internals (context data only)",
@@ -247,6 +240,9 @@ NOT_EXPOSED_PATHS: dict[str, str] = {
     # whole rss job's config load. Changed by PR (strategy lane: `Lane: fast`).
     "sources.rss.feeds[].title_exclude": "regex list inside the feeds list; change by PR",
     "sources.rss.feeds[].title_include": "regex list inside the feeds list; change by PR",
+    # D56 (E13.3): the budget splits are fixed by the decision, not tunable.
+    "funnel.scalp.doc_budget_split": "fixed by D56 (equal split)",
+    "funnel.scout.video_budget_split": "fixed by D56 (equal split)",
 }
 
 EXIT_KINDS: tuple[str, ...] = (
@@ -1580,12 +1576,13 @@ _TOWER_TUNABLES: tuple[Tunable, ...] = (
 
 
 def _category_tunables() -> tuple[Tunable, ...]:
-    """D47/D49 (E4.7, E4.9): each source category's weight and freshness window.
+    """D47/D49/D56 (E4.7, E4.9, E13.3): each source category's weight and freshness window.
 
-    All six categories have a duration window since D49 (``options_data`` 12h, no
-    session special case). The D47 keys of renamed categories (``company``,
-    ``macro``) are aliases of the new keys, so a stored override on an old key
-    applies to the renamed category (:data:`CATEGORY_KEY_RENAMES`).
+    All six categories have a duration window (D56: options_fast 30m, options_slow
+    24h). The D47 key of the renamed ``company`` category is an alias of the new key,
+    so a stored override on it applies to ``company_data``
+    (:data:`CATEGORY_KEY_RENAMES`). Keys of removed categories are orphaned
+    (:data:`ORPHANED_KEY_PREFIXES`).
     """
     from arc.context.categories import SourceCategory
 
@@ -1629,11 +1626,70 @@ def _category_tunables() -> tuple[Tunable, ...]:
     return tuple(out)
 
 
+# D56 (E13.3, folds E5.14's config half): the `funnel:` block in routines.yaml. Read
+# by the Scout (E13.7), the coverage:scout alert and the Tower funnel report (E13.14).
+_FUNNEL_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="funnel.scout.max_discovery",
+        group=Group.ROUTINES,
+        type=_I,
+        description="D56: most names the Scout may admit to the discovery tier per day.",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("funnel", "scout", "max_discovery"),
+        min=0,
+        max=25,
+        hard_ceiling=25,
+    ),
+    Tunable(
+        key="funnel.scout.min_discovery_alert",
+        group=Group.ROUTINES,
+        type=_I,
+        description="D56: the coverage:scout ops alert fires when the Scout admits fewer "
+        "discovery names than this.",
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("funnel", "scout", "min_discovery_alert"),
+        min=0,
+        max=20,
+    ),
+    Tunable(
+        key="funnel.research.max_scout_only_ideas",
+        group=Group.ROUTINES,
+        type=_I,
+        description="D56: most Scout-only ideas (no Scalp story) Research weighs per loop.",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        path=("funnel", "research", "max_scout_only_ideas"),
+        min=0,
+        max=50,
+        hard_ceiling=50,
+    ),
+)
+
+
 # D49: D47 category names renamed in place (old -> new). Their tunable keys stay as
 # aliases, so a change-log override on ``categories.company.weight`` applies to
 # ``categories.company_data.weight``. ``video`` was split, so its keys have no single
 # successor: an override on them is reported and dropped (control.override_unknown_key).
-CATEGORY_KEY_RENAMES: dict[str, str] = {"company": "company_data", "macro": "macro_data"}
+CATEGORY_KEY_RENAMES: dict[str, str] = {"company": "company_data"}
+
+# D56 (E13.3): keys of removed categories and the removed UOA detector. A stored
+# override on one has no successor: it is logged as ``config.override_orphaned`` and
+# ignored (``macro_data`` / ``macro`` split into market_news + reference data;
+# ``options_data`` became options_fast + options_slow; ``uoa_*`` left with the kind).
+ORPHANED_KEY_PREFIXES: tuple[str, ...] = (
+    "categories.macro_data.",
+    "categories.macro.",
+    "categories.options_data.",
+    "uoa_",
+    "settings.uoa_",
+)
+
+
+def is_orphaned(key: str) -> bool:
+    """D56: *key* belongs to a removed category or the removed UOA detector."""
+    return key.startswith(ORPHANED_KEY_PREFIXES)
 
 
 def _exp(key: str, desc: str, risk: Risk, path: tuple[str, ...], **kw: Any) -> Tunable:
@@ -1785,6 +1841,7 @@ REGISTRY: dict[str, Tunable] = {
         *_MONITORING_TUNABLES,
         *_TOWER_TUNABLES,
         *_category_tunables(),
+        *_FUNNEL_TUNABLES,
         *_EXPERIMENT_TUNABLES,
     )
 }
@@ -2142,7 +2199,7 @@ def format_value(t: Tunable, v: Any) -> str:
 DEFAULT_STOP_VALUE = 0.75  # D23 relaxed stop, used when a stop is created from 'none'
 _SECTIONS = ("sources", "personas")
 # Top-level routines.yaml sections whose tunables are plain paths (not per job).
-_PLAIN_ROUTINE_SECTIONS = (("loop",), ("monitoring",), ("categories",), ("tower",))
+_PLAIN_ROUTINE_SECTIONS = (("loop",), ("monitoring",), ("categories",), ("tower",), ("funnel",))
 # Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
 _PERSONA_SWITCHES = frozenset({("personas", "finnhub_context")})
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.
