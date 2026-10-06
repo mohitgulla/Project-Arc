@@ -1,7 +1,10 @@
-"""Source categories (D47, D49): six equal-weight categories with a freshness window each.
+"""Source categories (D47, D49, D56): six equal-weight categories with a freshness window each.
 
-Every ingest source belongs to exactly one :class:`SourceCategory`. The categories,
-not the individual sources, are weighted equally; a source shares its category's
+Every ingest source belongs to exactly one :class:`SourceCategory`, or is **reference
+data** (D56: ``reference: true``; ex-dividend, macro calendar, earnings calendar,
+Finnhub kinds, ``iv_daily``), which existing readers (Risk step, gate blackout,
+regime) use unchanged and which is never shown as a category. The categories, not
+the individual sources, are weighted equally; a source shares its category's
 weight with the other sources in it (``weight:`` on a source = its share *inside*
 the category). Each category declares a freshness ``max_age``; a source inherits it
 unless it sets its own ``max_age:``.
@@ -34,6 +37,8 @@ __all__ = [
     "DEFAULT_CATEGORIES",
     "KIND_CATEGORY",
     "LEGACY_VIDEO",
+    "REFERENCE",
+    "REFERENCE_KINDS",
     "SCALP_CATEGORIES",
     "YOUTUBE_CATEGORIES",
     "CategorySpec",
@@ -43,6 +48,7 @@ __all__ = [
     "channel_category",
     "earliest_ttl",
     "is_stale",
+    "kind_category",
     "normalize_category",
     "parse_category",
     "parse_youtube_category",
@@ -50,12 +56,12 @@ __all__ = [
 
 
 class SourceCategory(enum.StrEnum):
-    """D49: exactly six categories, in the fixed display order."""
+    """D56: exactly six categories, in the fixed display order."""
 
     MARKET_NEWS = "market_news"
     COMPANY_DATA = "company_data"
-    MACRO_DATA = "macro_data"
-    OPTIONS_DATA = "options_data"
+    OPTIONS_FAST = "options_fast"
+    OPTIONS_SLOW = "options_slow"
     YOUTUBE_MACRO = "youtube_macro"
     YOUTUBE_MICRO = "youtube_micro"
 
@@ -63,14 +69,47 @@ class SourceCategory(enum.StrEnum):
 CATEGORY_ORDER: tuple[SourceCategory, ...] = tuple(SourceCategory)
 
 # Old names, accepted for one release (logged as ``sources.category_alias``) so open
-# branches and YAML keep loading: the pre-D47 names and the D47 names D49 renamed.
-CATEGORY_ALIASES: Mapping[str, SourceCategory] = {
+# branches and YAML keep loading: the pre-D47 names, the D47 names D49 renamed and
+# the D49 names D56 replaced. ``None`` = no single successor: config refuses the name
+# with a pointed message (:data:`REMOVED_CATEGORY_HINTS`) and a stored value reads
+# as no category.
+CATEGORY_ALIASES: Mapping[str, SourceCategory | None] = {
     "company": SourceCategory.COMPANY_DATA,
-    "macro": SourceCategory.MACRO_DATA,
     "company_news": SourceCategory.COMPANY_DATA,
     "filings": SourceCategory.COMPANY_DATA,
     "calendar": SourceCategory.COMPANY_DATA,
+    "options_data": SourceCategory.OPTIONS_SLOW,  # D56: the daily Cboe snapshots
+    "macro_data": None,
+    "macro": None,
 }
+
+# D56: why a name with no successor was removed (the config error says what to do).
+REMOVED_CATEGORY_HINTS: Mapping[str, str] = {
+    "macro_data": (
+        "was removed (D56): the Fed feed is `category: market_news`; macro_calendar is "
+        "reference data (`reference: true`, no category)"
+    ),
+    "macro": (
+        "was removed (D56): the Fed feed is `category: market_news`; macro_calendar is "
+        "reference data (`reference: true`, no category)"
+    ),
+}
+
+# D56: reference data is not a category. Sources declare ``reference: true`` instead
+# of ``category:``; their kinds keep their own ``context_ttl`` and their readers
+# (Risk step, gate blackout via ``next_earnings()`` on raw_docs source='earnings',
+# regime via the ``iv_daily`` table) are unchanged.
+REFERENCE = "reference"
+REFERENCE_KINDS: frozenset[str] = frozenset(
+    {
+        "ex_dividend",
+        "macro_calendar",
+        "earnings_history",
+        "insider_activity",
+        "analyst_recs",
+        "fundamentals",
+    }
+)
 
 # D47's ``video`` was split in two (D49). It cannot map to one category, so config
 # refuses it (each channel declares its own); stored rows resolve it by channel.
@@ -82,27 +121,28 @@ YOUTUBE_CATEGORIES: tuple[SourceCategory, ...] = (
     SourceCategory.YOUTUBE_MICRO,
 )
 
-# Categories whose docs share the Scalp's ``scalp_doc_budget`` (raw docs). Options
-# data and YouTube reach Research as typed context only (D45, D47, D49).
+# Categories whose docs share the Scalp's ``scalp_doc_budget`` (raw docs), split
+# equally between them (D56: exactly these two). Options data and YouTube reach the
+# personas as typed context only (D45, D47, D49, D56).
 SCALP_CATEGORIES: frozenset[SourceCategory] = frozenset(
-    {SourceCategory.MARKET_NEWS, SourceCategory.COMPANY_DATA, SourceCategory.MACRO_DATA}
+    {SourceCategory.MARKET_NEWS, SourceCategory.COMPANY_DATA}
 )
 
 # Typed context kinds (never raw docs) and the category they report under.
 # ``channel_brief`` is not here: a brief's category is its channel's (see
-# :func:`channel_category`), since D49 splits YouTube in two.
+# :func:`channel_category`), since D49 splits YouTube in two. Reference kinds
+# (:data:`REFERENCE_KINDS`) have no category (D56).
 KIND_CATEGORY: Mapping[str, SourceCategory] = {
-    "vol_term": SourceCategory.OPTIONS_DATA,
-    "put_call": SourceCategory.OPTIONS_DATA,
-    "unusual_options": SourceCategory.OPTIONS_DATA,
-    "ex_dividend": SourceCategory.OPTIONS_DATA,
-    "macro_calendar": SourceCategory.MACRO_DATA,
-    # D46 Finnhub per-ticker kinds (E4.8).
-    "earnings_history": SourceCategory.COMPANY_DATA,
-    "insider_activity": SourceCategory.COMPANY_DATA,
-    "analyst_recs": SourceCategory.COMPANY_DATA,
-    "fundamentals": SourceCategory.COMPANY_DATA,
+    "vol_term": SourceCategory.OPTIONS_SLOW,
+    "put_call": SourceCategory.OPTIONS_SLOW,
 }
+
+
+def kind_category(kind: str) -> str | None:
+    """A typed kind's category value, ``reference`` for reference data, else ``None``."""
+    if kind in KIND_CATEGORY:
+        return KIND_CATEGORY[kind].value
+    return REFERENCE if kind in REFERENCE_KINDS else None
 
 
 def _video_refused(where: str) -> ValueError:
@@ -115,10 +155,17 @@ def _video_refused(where: str) -> ValueError:
     return ValueError(msg)
 
 
-def parse_category(raw: Any, *, where: str = "") -> SourceCategory:
-    """Strict config parse: a D49 name or a logged old alias; anything else raises.
+def _removed(text: str, where: str) -> ValueError:
+    at = f" ({where})" if where else ""
+    return ValueError(f"source category {text!r}{at} {REMOVED_CATEGORY_HINTS[text]}")
 
-    ``video`` raises with a pointer to the per-channel ``category:`` (D49).
+
+def parse_category(raw: Any, *, where: str = "") -> SourceCategory:
+    """Strict config parse: a D56 name or a logged old alias; anything else raises.
+
+    ``video`` raises with a pointer to the per-channel ``category:`` (D49);
+    ``macro_data`` / ``macro`` raise with a pointer to ``market_news`` and
+    ``reference: true`` (D56).
     """
     if isinstance(raw, SourceCategory):
         return raw
@@ -129,6 +176,8 @@ def parse_category(raw: Any, *, where: str = "") -> SourceCategory:
         pass
     if text in CATEGORY_ALIASES:
         new = CATEGORY_ALIASES[text]
+        if new is None:
+            raise _removed(text, where)
         log.warning("sources.category_alias", old=text, new=new.value, where=where)
         return new
     if text == LEGACY_VIDEO:
@@ -183,9 +232,9 @@ def normalize_category(
 ) -> SourceCategory | None:
     """Lenient read of a *stored* category value (old rows); never logs or raises.
 
-    Old names map through :data:`CATEGORY_ALIASES`; a stored ``video`` resolves by
-    *channel* (slug or ``youtube.<slug>``) against the configured *channels*, else
-    ``None``.
+    Old names map through :data:`CATEGORY_ALIASES` (a removed name such as
+    ``macro_data`` reads as ``None``); a stored ``video`` resolves by *channel* (slug
+    or ``youtube.<slug>``) against the configured *channels*, else ``None``.
     """
     text = str(raw or "").strip().lower()
     if text in SourceCategory.__members__.values():
@@ -216,9 +265,9 @@ def _spec(max_age: str, label: str) -> CategorySpec:
 
 DEFAULT_CATEGORIES: Mapping[SourceCategory, CategorySpec] = {
     SourceCategory.MARKET_NEWS: _spec("6h", "Market news"),
-    SourceCategory.COMPANY_DATA: _spec("24h", "Company data"),
-    SourceCategory.MACRO_DATA: _spec("24h", "Macro data"),
-    SourceCategory.OPTIONS_DATA: _spec("12h", "Options data"),
+    SourceCategory.COMPANY_DATA: _spec("12h", "Company data"),
+    SourceCategory.OPTIONS_FAST: _spec("30m", "Options fast"),
+    SourceCategory.OPTIONS_SLOW: _spec("24h", "Options slow"),
     SourceCategory.YOUTUBE_MACRO: _spec("24h", "YouTube macro"),
     SourceCategory.YOUTUBE_MICRO: _spec("24h", "YouTube micro"),
 }

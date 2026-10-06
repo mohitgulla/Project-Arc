@@ -193,7 +193,6 @@ class TestConfig:
             "iv.record",
             "scalp",
             "scalp.overnight",
-            "unusual_options",
             "youtube.briefs",
         ]  # fmt: skip  (E4.8: the Finnhub jobs wait on the shared 55/min budget)
         for job in ("research", "monitor", "positions.evaluate"):

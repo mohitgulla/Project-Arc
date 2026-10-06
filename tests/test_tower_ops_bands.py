@@ -56,14 +56,16 @@ def test_live_config_bands_in_owner_order(empty_db) -> None:
     groups = [g for g, _ in TIMELINE_GROUPS]
     # bands follow TIMELINE_GROUPS, the sources sub-bands follow D47 CATEGORY_ORDER
     assert [b.group for b in s.bands] == sorted((b.group for b in s.bands), key=groups.index)
+    # D56: reference data gets its own band after the six categories
     assert keys[: keys.index("scalp")] == [
         f"sources.{c.value}" for c in CATEGORY_ORDER if f"sources.{c.value}" in keys
-    ]
+    ] + ["sources.reference"]
     labels = {b.key: b.label for b in s.bands}
     routines = load_routines()
     for c in CATEGORY_ORDER:  # labels come from categories.<c>.label (D47/D49 rename-safe)
         if f"sources.{c.value}" in labels:
             assert labels[f"sources.{c.value}"] == routines.category_spec(c).label
+    assert labels["sources.reference"] == "Reference data"
     assert labels["trading_loop"] == "Trading loop"
     # the loop row is in its band, labelled with its chain
     assert s.loop is not None and s.loop.band == "trading_loop"
@@ -80,6 +82,8 @@ def test_live_config_bands_in_owner_order(empty_db) -> None:
     assert rows["rss"].categories[0] == SourceCategory.MARKET_NEWS.value
     assert rows["youtube.briefs"].band.startswith("sources.") and rows["youtube.briefs"].llm
     assert rows["scalp"].band == "scalp" and rows["scalp"].llm
+    for job in ("earnings", "macro_calendar", "ex_dividend", "iv.record"):
+        assert rows[job].band == "sources.reference", job
     # every band's jobs are exactly the rows tagged with it
     for b in s.bands:
         assert b.jobs == [j for j in rows if rows[j].band == b.key] or set(b.jobs) == {
@@ -104,7 +108,7 @@ def test_new_job_in_temp_yaml_lands_in_its_band(tmp_path, empty_db) -> None:
     data["sources"]["cboe.skew"] = {
         "schedule": ["09:05"],
         "days": "daily",
-        "category": "options_data",
+        "category": "options_slow",
         "label": "Cboe SKEW",
         "about": "Daily SKEW index close",
         "writes": [],
@@ -122,14 +126,14 @@ def test_new_job_in_temp_yaml_lands_in_its_band(tmp_path, empty_db) -> None:
     cfg = load_routines(_write(tmp_path, data))
     s = load_session(empty_db, cfg, now=NOW, day=TODAY)
     rows = {r.job: r for r in s.rows}
-    assert rows["cboe.skew"].band == "sources.options_data"
+    assert rows["cboe.skew"].band == "sources.options_slow"
     assert rows["cboe.skew"].label == "Cboe SKEW" and rows["cboe.skew"].persona is None
     assert rows["risk.review"].band == "position_management"
     assert rows["risk.review"].persona == "risk"
     assert rows["mystery"].band == "other" and rows["mystery"].label == "mystery"
     assert rows["mystery"].persona is None
     assert s.bands[-1].key == "other" and "mystery" in s.bands[-1].jobs
-    band = next(b for b in s.bands if b.key == "sources.options_data")
+    band = next(b for b in s.bands if b.key == "sources.options_slow")
     assert "cboe.skew" in band.jobs
 
 

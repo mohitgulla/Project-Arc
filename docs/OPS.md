@@ -751,7 +751,7 @@ keeps its highest tier; names past the cap are journaled `universe:over_active_c
 SPY/QQQ are the `market_reference`: they always get a Director `regime` entry but are
 not trade names. The active list resolves at 05:30 ET each trading day (`symbols`
 job, context `active_universe`) and at the start of every Sweep run; ingest, EDGAR,
-briefs, `unusual_options`/`ex_dividend`, Finnhub scope, monitoring and `arc history`
+briefs, `ex_dividend`, Finnhub scope, monitoring and `arc history`
 read it (core until the first resolve of the day).
 
 - See it: `arc universe tiers [--json] [--db PATH] [--now ISO]` (read-only).
@@ -824,37 +824,52 @@ list the allow-list.
 Every Sweep source is a named entry in `config/routines.yaml`: each RSS feed under
 `sources.rss.feeds` (`name`, `url`, optional `label`, `category`, `weight`,
 `max_age`, `max_docs_per_run`, `hosts`), and `edgar` / `earnings` with a
-`category` and `label`. Every context-writing source **must** declare one of the 6
-categories; a missing or unknown category fails config load. Adding or re-weighting
-a source is a YAML edit only.
+`category` and `label`. Every context-writing source **must** declare exactly one of
+the 6 categories or `reference: true` (D56); neither, both, or an unknown category
+fails config load. Adding or re-weighting a source is a YAML edit only.
 
 | category | label | `max_age` | sources | read by |
 |---|---|---|---|---|
-| `market_news` | Market news | 6h | WSJ Markets, CNBC Business, Nasdaq RSS | Sweep, Director |
-| `company_data` | Company data | 24h | Seeking Alpha, CNBC Earnings, WSJ Business, EDGAR, earnings, Finnhub kinds (D46) | Sweep, Director |
-| `macro_data` | Macro data | 24h | Fed RSS, `macro_calendar` | Sweep, Director |
-| `options_data` | Options data | 12h | `vol_term`, `put_call`, `unusual_options`, `ex_dividend` | Director, Risk (typed context) |
-| `youtube_macro` | YouTube macro | 24h | FX Evolution, Bravos Research | Director (channel briefs, §5.22) |
-| `youtube_micro` | YouTube micro | 24h | StockedUp, Trade Brigade, Arete Trading | Director (channel briefs, §5.22) |
+| `market_news` | Market news | 6h | WSJ Markets, CNBC Business, Nasdaq RSS, Fed RSS (D56) | Scalp, Research |
+| `company_data` | Company data | 12h | Seeking Alpha, CNBC Earnings, WSJ Business, EDGAR | Scalp, Research |
+| `options_fast` | Options fast | 30m | none yet (E13.6 adds the 30-min RTH source) | Scalp (typed context) |
+| `options_slow` | Options slow | 24h | `vol_term`, `put_call` (`feed: scout`) | Scout, Research (typed context) |
+| `youtube_macro` | YouTube macro | 24h | FX Evolution, Bravos Research | Scout, Research (channel briefs, §5.22) |
+| `youtube_micro` | YouTube micro | 24h | StockedUp, Trade Brigade, Arete Trading | Scout, Research (channel briefs, §5.22) |
 
-- **Renames (D49).** `company` → `company_data`, `macro` → `macro_data`; those and
-  the pre-D47 names `company_news`, `filings`, `calendar` still load for one release
-  (logged `sources.category_alias old= new=`). `video` was split in two, so
+**Reference data (D56)** is not a category: `ex_dividend`, `macro_calendar`, the
+`earnings` calendar, the `finnhub.*` kinds and `iv.record` (`iv_daily`). Those jobs
+declare `reference: true`, have no weight, are never Scalp-read, keep their own
+`context_ttl`, and feed the Risk step (`steps.risk.reads`), the gate's earnings
+blackout (`next_earnings()` on `raw_docs source='earnings'`) and the regime step
+unchanged. The Tower Sources page lists them under one *Reference data* group after
+the six categories. `unusual_options` was removed (D56): stored rows expire by TTL,
+and `arc context show --kind unusual_options` still lists them until then.
+
+- **Renames (D49, D56).** `company` → `company_data` and `options_data` →
+  `options_slow`; those and the pre-D47 names `company_news`, `filings`, `calendar`
+  still load for one release (logged `sources.category_alias old= new=`).
+  `macro_data` / `macro` were removed (D56) and fail config load with a pointer: the
+  Fed feed is `market_news`, `macro_calendar` is reference data. A change-log
+  override on `categories.macro_data.*`, `categories.options_data.*` or `uoa_*` is
+  logged `config.override_orphaned` and ignored. `video` was split in two, so
   `category: video` fails config load with a pointer: set `category: youtube_macro |
   youtube_micro` on each `youtube.briefs` channel. Stored rows that still say
   `company` / `macro` / `video` are read through `normalize_category` (a `video`
-  brief resolves by its channel slug). A change-log override on an old key
+  brief resolves by its channel slug; a stored `macro_data` story has no category).
+  A change-log override on an old key
   (`categories.company.weight`) applies to the renamed key; one on
   `categories.video.*` is dropped with `control.override_unknown_key`.
 - **Categories.** The top-level `categories:` block sets each category's `weight`
   (all 1 = equal) and freshness `max_age` (table above). Both are Slack-tunable:
   `!arc config set categories.<c>.weight 0-5` and `categories.<c>.max_age <minutes>`
-  (30-10080, every category including `options_data`). A source's `weight` is its
+  (30-10080, every category). A source's `weight` is its
   share *inside* its category, so a 4th market_news feed takes a quarter of
   market_news, and other categories don't move. YouTube channels split their own
   category the same way (2 macro channels = 1/2 each, 3 micro = 1/3 each).
-- **Budget.** Each Sweep run reads `sweep_doc_budget` docs (default 120, Slack-tunable
-  20-400), split equally across the categories that have fresh docs this run, then
+- **Budget.** Each Scalp run reads `scalp_doc_budget` docs (default 120, Slack-tunable
+  20-400), split equally across its two doc categories (`market_news`,
+  `company_data`; D56 `funnel.scalp.doc_budget_split: equal`) that have fresh docs, then
   by source weight inside each category (weighted round-robin; a category or source
   with nothing left gives its share to the others). Newest first within a source.
   Docs over budget wait for the next run.
@@ -879,16 +894,18 @@ a source is a YAML edit only.
   read: WSJ 1 · Nasdaq 5 (10 over budget)`, with `(N stale)` per source.
 - **Director.** Its prompt carries a code-built *Context by category* block: the 6
   headers in fixed order, each with a freshness line (`Market news: 14 stories,
-  newest 22m`, `Options data: vol_term 5h, put_call 8h`, `YouTube macro: 1/2
-  channels (missing: Bravos)`); an empty category reads `no fresh info`.
+  newest 22m`, `Options slow: vol_term 5h, put_call 8h`, `YouTube macro: 1/2
+  channels (missing: Bravos)`); an empty category reads `no fresh info`. Reference
+  data is never listed there.
 - **Typed-kind freshness (D49).** The category `max_age` also applies to typed
-  context (vol_term, put_call, unusual_options, ex_dividend, macro_calendar,
-  channel_brief, Finnhub kinds), measured from `valid_from`. An older entry is
-  listed as `stale (age)`, e.g. `Options data: no fresh info (vol_term stale
+  context (vol_term, put_call, channel_brief), measured from `valid_from`. An older
+  entry is listed as `stale (age)`, e.g. `Options slow: no fresh info (vol_term stale
   (13h))`; a category with nothing fresh reads `no fresh info`. The context TTL is
   unchanged, so stale entries stay readable for audit and the Tower. A Director call
   recorded before D49 (no `categories` input) replays with the old 5-category block,
-  byte for byte (`arc journal replay`).
+  and one recorded under D49 (`macro_data` / `options_data` in its `categories`
+  input) with the D49 six-category block and unusual options, byte for byte
+  (`arc journal replay`).
 - **EDGAR.** `published_at` is the filing's `acceptanceDateTime` (filing date if
   absent). Filings older than the company window are skipped before download, and
   the cursor is the newest accession seen, so a filing re-listed on the feed (or the
@@ -903,22 +920,19 @@ a source is a YAML edit only.
   the digests, `sweep_story_batch_size` (40) per Sweep call. Both stages'
   tokens/cost land in `scalp_batches`
   (`stage` = `digest` | `sweep`) and the run manifest.
-- **Options data** (free, no key; typed context kinds, read by the Director and Risk):
+- **Options and reference data** (free, no key; typed context kinds):
 
-  | Job | Source | Kind | When (ET) |
-  |---|---|---|---|
-  | `vol_term` | Cboe VIX9D/VIX/VIX3M/VVIX daily history | `vol_term` (contango/backwardation) | 09:00, 16:45 |
-  | `put_call` | Cboe daily market statistics | `put_call` | 09:00 |
-  | `macro_calendar` | federalreserve.gov FOMC page + BLS release ICS + BEA release ICS | `macro_calendar` | 05:45 |
-  | `unusual_options` | Alpaca chain snapshots (self-computed) | `unusual_options` per ticker | 12:30, 15:45 |
-  | `ex_dividend` | Alpaca corporate actions | `ex_dividend` per ticker | 06:15 |
+  | Job | Source | Kind | Category | When (ET) |
+  |---|---|---|---|---|
+  | `vol_term` | Cboe VIX9D/VIX/VIX3M/VVIX daily history | `vol_term` (contango/backwardation) | `options_slow` | 09:00, 16:45 |
+  | `put_call` | Cboe daily market statistics | `put_call` | `options_slow` | 09:00 |
+  | `macro_calendar` | federalreserve.gov FOMC page + BLS release ICS + BEA release ICS | `macro_calendar` | reference | 05:45 |
+  | `ex_dividend` | Alpaca corporate actions | `ex_dividend` per ticker | reference | 06:15 |
 
   BLS rejects a User-Agent without a contact email (403): it is sent
-  `ARC_EDGAR_USER_AGENT`, same as EDGAR. UOA flags a ticker when its option volume is
-  ≥ `uoa_volume_spike_ratio` × its 20-session average (needs 5+ sessions of
-  `options_volume_daily` history, which the job builds itself), or when lines with
-  vol/OI ≥ `uoa_vol_oi_ratio` (≥ `uoa_min_dte` DTE, OI ≥ `uoa_min_open_interest`)
-  carry ≥ `uoa_min_hot_share` of its volume.
+  `ARC_EDGAR_USER_AGENT`, same as EDGAR. The self-computed unusual options detector
+  (`unusual_options`, `uoa_*` settings) was removed in D56; `options_volume_daily`
+  keeps its history rows but nothing writes them.
 
 ### 5.12 Close quote check (E6.2a) and the live execution test
 

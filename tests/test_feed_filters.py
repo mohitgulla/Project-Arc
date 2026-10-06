@@ -161,6 +161,8 @@ class TestFeedSpecFilters:
         assert set(NOT_EXPOSED_PATHS) == {
             "sources.rss.feeds[].title_exclude",
             "sources.rss.feeds[].title_include",
+            "funnel.scalp.doc_budget_split",  # D56: fixed splits
+            "funnel.scout.video_budget_split",
         }
         with pytest.raises(TunableError):
             lookup("sources.rss.feeds.seekingalpha.title_exclude")

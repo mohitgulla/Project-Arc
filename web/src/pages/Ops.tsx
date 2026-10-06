@@ -792,7 +792,10 @@ function SourceCategoryBlock({ cat, rows, now, phone }: { cat: SourceCategory; r
         <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${DOT[tone]}`} />
         <span className="font-semibold text-title">{cat.label}</span>
         <span className="text-caption text-secondary tabular-nums">
-          {sharePct(cat.share)} · max_age {cat.max_age} · newest {cat.newest_doc_at ? formatAge(cat.newest_doc_at, now) : "—"}
+          {/* D56: reference data has no share and no freshness window (max_age "-") */}
+          {cat.max_age === "-"
+            ? `reference · newest ${cat.newest_doc_at ? formatAge(cat.newest_doc_at, now) : "—"}`
+            : `${sharePct(cat.share)} · max_age ${cat.max_age} · newest ${cat.newest_doc_at ? formatAge(cat.newest_doc_at, now) : "—"}`}
         </span>
         <span className="sr-only">status {cat.status}</span>
       </button>

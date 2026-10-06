@@ -22,12 +22,10 @@ from hypothesis import strategies as st
 
 from arc.context.kinds import MacroEvent
 from arc.context.store import ContextStore
-from arc.data.base import OptionContract
 from arc.ingest.options_data import (
     BLS_UA,
     BROWSER_UA,
     CBOE_DAILY_URL,
-    UoaThresholds,
     fetch_macro_calendar,
     fetch_put_call,
     fetch_vol_term,
@@ -38,10 +36,6 @@ from arc.ingest.options_data import (
     parse_cboe_history,
     parse_fomc_calendar,
     parse_put_call,
-    prior_volumes,
-    record_volume,
-    scan_unusual,
-    unusual_activity,
     vol_term_from_closes,
 )
 from arc.personas.builders import (
@@ -347,114 +341,6 @@ class TestBea:
 
 
 # ---------------------------------------------------------------------------
-# Unusual options activity
-# ---------------------------------------------------------------------------
-
-
-def _c(
-    symbol: str,
-    kind: str,
-    vol: int,
-    oi: int | None,
-    strike: float = 100.0,
-    expiry: dt.date = dt.date(2026, 10, 16),
-) -> OptionContract:
-    return OptionContract(
-        symbol=symbol,
-        underlying="NVDA",
-        expiration=expiry,
-        strike=strike,
-        option_type=kind,
-        volume=vol,
-        open_interest=oi,
-    )
-
-
-T = UoaThresholds(min_volume=500, vol_oi_ratio=2.0, volume_spike_ratio=2.0)
-
-
-class TestUnusualOptions:
-    def test_vol_oi_and_spike_flags(self) -> None:
-        chain = [
-            _c("C1", "call", 5000, 1000),  # vol/oi 5 -> hot
-            _c("C2", "call", 800, 1000),  # 0.8 -> not hot
-            _c("P1", "put", 400, 10),  # below min volume
-            _c("P2", "put", 600, None),  # OI unknown -> can't judge, not listed
-            _c("P3", "put", 3000, 1500),  # vol/oi 2.0 -> hot (boundary)
-        ]
-        p = unusual_activity("NVDA", chain, [1500] * 20, TODAY, T)
-        assert (p.call_volume, p.put_volume, p.total_volume) == (5800, 4000, 9800)
-        assert p.avg_volume == 1500.0 and p.volume_ratio == pytest.approx(9800 / 1500, rel=1e-3)
-        assert p.flags == ["volume_spike", "vol_oi"]
-        assert [u.symbol for u in p.contracts] == ["C1", "P3"]
-
-    def test_live_noise_is_not_flagged(self) -> None:
-        """Live 2026-09-29: 18/20 tickers flagged, driven by 0-2 DTE lines and OI of 1."""
-        chain = [
-            _c("ZERO", "call", 16689, 16, expiry=TODAY + dt.timedelta(days=1)),  # 0DTE churn
-            _c("EMPTY", "put", 868, 1),  # 868x on a line with OI 1
-        ]
-        p = unusual_activity("SPY", chain, [], TODAY, T)
-        assert p.flags == [] and p.contracts == []
-        loose = UoaThresholds(min_dte=0, min_open_interest=1)
-        assert [u.symbol for u in unusual_activity("SPY", chain, [], TODAY, loose).contracts] == [
-            "ZERO",
-            "EMPTY",
-        ]
-
-    def test_hot_lines_must_be_a_real_share_of_volume(self) -> None:
-        """Live: SPY had 3k hot contracts out of 4M (0.08%); BAC 21k of 50k (42%)."""
-        deep = [_c("HOT", "put", 3263, 133), _c("BULK", "call", 4_000_000, 10_000_000)]
-        p = unusual_activity("SPY", deep, [], TODAY, T)
-        assert p.flags == [] and [u.symbol for u in p.contracts] == ["HOT"]
-        assert p.hot_volume_share == pytest.approx(3263 / 4_003_263, abs=1e-4)
-        thin = [_c("HOT", "put", 21470, 4144), _c("BULK", "call", 29000, 90000)]
-        assert unusual_activity("BAC", thin, [], TODAY, T).flags == ["vol_oi"]
-
-    def test_spike_needs_history(self) -> None:
-        p = unusual_activity("NVDA", [_c("C", "call", 10000, 100000)], [100, 100], TODAY, T)
-        assert p.volume_ratio == 100.0 and "volume_spike" not in p.flags  # < 5 sessions
-
-    @given(st.lists(st.tuples(st.integers(0, 5000), st.integers(0, 5000)), max_size=30))
-    def test_totals_add_up(self, rows: list[tuple[int, int]]) -> None:
-        chain = [_c(f"S{i}", "call" if i % 2 else "put", v, oi) for i, (v, oi) in enumerate(rows)]
-        p = unusual_activity("X", chain, [], TODAY, T)
-        assert p.call_volume + p.put_volume == p.total_volume == sum(v for v, _ in rows)
-        assert len(p.contracts) <= T.max_contracts
-
-    def test_scan_persists_volume_for_the_20_day_average(self, conn) -> None:
-        for i in range(1, 21):
-            record_volume(conn, "NVDA", TODAY - dt.timedelta(days=i), 700, 300, now="t")
-
-        class _Market:
-            def option_chain(self, underlying: str, a: dt.date, b: dt.date) -> list[OptionContract]:
-                if underlying == "BAD":
-                    raise RuntimeError("no chain")
-                return [_c("C1", "call", 4000, 500), _c("P1", "put", 1000, 5000)]
-
-        payloads, errors = scan_unusual(
-            conn,
-            _Market(),
-            ["NVDA", "BAD"],
-            TODAY,
-            T,
-            max_dte=45,
-            now="t",  # type: ignore[arg-type]
-        )
-        assert errors.keys() == {"BAD"}
-        [p] = payloads
-        assert p.history_days == 20 and p.avg_volume == 1000.0 and p.volume_ratio == 5.0
-        assert prior_volumes(conn, "NVDA", TODAY + dt.timedelta(days=1), 1) == [5000]
-        # re-running the same day updates, never duplicates
-        scan_unusual(conn, _Market(), ["NVDA"], TODAY, T, max_dte=45, now="t2")  # type: ignore[arg-type]
-        n = conn.execute(
-            "SELECT count(*) FROM options_volume_daily WHERE ticker='NVDA' AND day=?",
-            (TODAY.isoformat(),),
-        ).fetchone()[0]
-        assert n == 1
-
-
-# ---------------------------------------------------------------------------
 # Ex-dividend
 # ---------------------------------------------------------------------------
 
@@ -492,7 +378,7 @@ def _ctx(conn, job: str, writes: list[str], **opts: Any):
     routines = RoutinesConfig.model_validate(
         {
             "sources": {
-                job: {"schedule": ["09:00"], "writes": writes, "category": "options_data", **opts}
+                job: {"schedule": ["09:00"], "writes": writes, "category": "options_slow", **opts}
             }
         }
     )
@@ -542,20 +428,6 @@ class TestHandlers:
         assert "contango" in r1.summary and "0.88" in r2.summary and "next JOLTS" in r3.summary
         kinds = {e.kind for e in ContextStore(conn).query(as_of=NOW)}
         assert kinds == {"vol_term", "put_call", "macro_calendar"}
-
-    def test_unusual_options_handler(self, conn) -> None:
-        from arc.routines.handlers import unusual_options_source
-
-        class _Market:
-            def option_chain(self, u: str, a: dt.date, b: dt.date) -> list[OptionContract]:
-                return [_c(f"{u}C", "call", 3000, 100)]
-
-        out = unusual_options_source(_ctx(conn, "unusual_options", ["unusual_options"]), _Market())  # type: ignore[arg-type]
-        assert out.metrics == {"tickers": 2, "unusual": 2, "errors": 0}
-        subjects = {
-            e.subject for e in ContextStore(conn).query(as_of=NOW, kinds=["unusual_options"])
-        }
-        assert subjects == {"NVDA", "XOM"}
 
     def test_research_and_risk_prompts_carry_the_data(self, conn, monkeypatch) -> None:
         payload, _ = fetch_macro_calendar(TODAY, 45, get=_fixture_get)

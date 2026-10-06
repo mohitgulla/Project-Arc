@@ -364,11 +364,15 @@ def _display(name: str, kind: str, spec: JobSpec, routines: RoutinesConfig) -> d
     A source's band is its D47 category (the first in display order when its feeds span
     several); a persona's is its ``group:``. Anything unmapped lands in ``other``.
     """
+    from arc.context.categories import REFERENCE
+
     opts = spec.options
     cats = _source_categories(spec) if kind == "source" else []
-    group = str(opts.get("group") or ("sources" if cats else "other"))
-    band = f"sources.{cats[0]}" if group == "sources" and cats else group
-    if group == "sources" and not cats:
+    # D56: reference data (no category) gets its own band after the six categories
+    band_cats = [REFERENCE] if kind == "source" and not cats and opts.get("reference") else cats
+    group = str(opts.get("group") or ("sources" if band_cats else "other"))
+    band = f"sources.{band_cats[0]}" if group == "sources" and band_cats else group
+    if group == "sources" and not band_cats:
         group = band = "other"
     llm = spec.llm if spec.llm is not None else kind == "persona"
     return {
@@ -391,7 +395,7 @@ def _bands(
     The loop row stays out of ``rows`` (``SessionResponse.loop``) but is a member of its
     band, so the UI can place it under "Trading loop".
     """
-    from arc.context.categories import CATEGORY_ORDER
+    from arc.context.categories import CATEGORY_ORDER, REFERENCE
     from arc.routines.config import TIMELINE_GROUPS
 
     group_label = dict(TIMELINE_GROUPS)
@@ -402,6 +406,7 @@ def _bands(
                 (f"sources.{c.value}", routines.category_spec(c).label or c.value, g)
                 for c in CATEGORY_ORDER
             ]
+            order.append((f"sources.{REFERENCE}", REFERENCE_LABEL, g))  # D56
         else:
             order.append((g, glabel, g))
     rank = {key: i for i, (key, _, _) in enumerate(order)}
@@ -1429,6 +1434,10 @@ class SourceRow(BaseModel):
     status: SourceStatus = Field(default="ok", description="Row pill (worst condition)")
 
 
+#: D56: the Sources page group for reference-data sources (not a category).
+REFERENCE_LABEL = "Reference data"
+
+
 class SourceCategoryRow(BaseModel):
     """E8.8d: one D47 category block header."""
 
@@ -1556,8 +1565,12 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
     """Sources by D47 category. Shares come from :class:`SourceRegistry` (never
     recomputed here): ``category_weights()`` for a category, ``effective_weights()``
     for a source. Typed-context sources (options data, macro calendar, Finnhub) are
-    listed by job with their context entries as the activity count."""
-    from arc.context.categories import CATEGORY_ORDER, normalize_category
+    listed by job with their context entries as the activity count.
+
+    D56: reference-data sources (``reference: true``: earnings calendar, macro
+    calendar, ex-dividend, IV history, Finnhub) are listed last under one
+    ``Reference data`` group (key ``reference``, no share, no freshness window)."""
+    from arc.context.categories import CATEGORY_ORDER, REFERENCE, normalize_category
     from arc.ingest.sources import SCALP_CATEGORIES, SourceRegistry
 
     reg = SourceRegistry.from_routines(routines)
@@ -1661,8 +1674,8 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
                 key=s.key,
                 label=s.display,
                 job=s.job,
-                category=s.category.value,
-                # D54: video / options data are never Scalp-read, so they are slow feed
+                category=s.category_key,
+                # D54: video / options data / reference data are never Scalp-read (slow feed)
                 feed=s.feed if s.category in SCALP_CATEGORIES else "scout",
                 weight=round(weights.get(s.key, 0.0), 4),
                 share_in_category=in_cat,
@@ -1704,7 +1717,7 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
         if not spec.enabled or job in in_registry:
             continue
         cat = normalize_category(spec.options.get("category"))
-        if cat is None:
+        if cat is None and not routines.is_reference(job):
             continue
         common = _common(job)
         out.append(
@@ -1712,7 +1725,7 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
                 key=job,
                 label=_label(job, spec),
                 job=job,
-                category=cat.value,
+                category=cat.value if cat is not None else REFERENCE,
                 feed="scout",  # D54: typed context is never Scalp-read (slow feed)
                 weight=0.0,
                 share_in_category=None,
@@ -1750,6 +1763,21 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
                 newest_doc_at=max(stamps) if stamps else None,
                 status=max((r.status for r in rows), key=lambda s: SOURCE_STATUS_RANK[s]),
                 sources=len(rows),
+            )
+        )
+    ref_rows = [r for r in out if r.category == REFERENCE]
+    if ref_rows:  # D56: reference data is one group after the six categories
+        stamps = [r.last_doc_at for r in ref_rows if r.last_doc_at is not None]
+        categories.append(
+            SourceCategoryRow(
+                key=REFERENCE,
+                label=REFERENCE_LABEL,
+                weight=0.0,
+                share=None,
+                max_age="-",
+                newest_doc_at=max(stamps) if stamps else None,
+                status=max((r.status for r in ref_rows), key=lambda s: SOURCE_STATUS_RANK[s]),
+                sources=len(ref_rows),
             )
         )
     return SourcesResponse(as_of=now, categories=categories, sources=out)

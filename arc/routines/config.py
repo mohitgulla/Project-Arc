@@ -795,6 +795,48 @@ class FinnhubContextSettings(BaseModel):
         }
 
 
+class FunnelScalp(BaseModel):
+    """D56 ``funnel.scalp``: the Scalp's doc budget split (fixed by D56)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    doc_budget_split: Literal["equal"] = "equal"
+
+
+class FunnelScout(BaseModel):
+    """D56 ``funnel.scout``: discovery tier size, video budget split, under-fill alert."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_discovery: Annotated[int, Field(ge=0, le=25)] = 20
+    video_budget_split: Literal["equal"] = "equal"
+    # owner decision 1 (D56): the ``coverage:scout`` alert fires below this many names
+    min_discovery_alert: Annotated[int, Field(ge=0, le=20)] = 5
+
+
+class FunnelResearch(BaseModel):
+    """D56 ``funnel.research``: Scout-only ideas Research may weigh per loop."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_scout_only_ideas: Annotated[int, Field(ge=0, le=50)] = 20
+
+
+class FunnelConfig(BaseModel):
+    """D56 (E13.3, folds E5.14's config half): the ``funnel:`` block.
+
+    Config only in E13.3: the Scout (E13.7), the coverage alert and the Tower funnel
+    report (E13.14) read it. No ``most_active_input`` and no ``discovery_backfill``
+    (owner decisions 1 and 2: discovery comes from the Scout's YouTube calls only).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    scalp: FunnelScalp = Field(default_factory=FunnelScalp)
+    scout: FunnelScout = Field(default_factory=FunnelScout)
+    research: FunnelResearch = Field(default_factory=FunnelResearch)
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -822,6 +864,7 @@ class RoutinesConfig(BaseModel):
     director_diversification: ResearchDiversificationSettings = Field(
         default_factory=ResearchDiversificationSettings
     )
+    funnel: FunnelConfig = Field(default_factory=FunnelConfig)  # D56 (E13.3)
 
     @model_validator(mode="before")
     @classmethod
@@ -880,10 +923,10 @@ class RoutinesConfig(BaseModel):
             raise ValueError(msg)
         out: dict[SourceCategory, Any] = dict(DEFAULT_CATEGORIES)
         for key, spec in v.items():
-            try:  # D49 renames (company, macro) load as logged aliases; `video` refuses
+            try:  # renamed names load as logged aliases; `video`/`macro_data` refuse
                 cat = parse_category(key, where="categories")
             except ValueError as exc:
-                if "split in two" in str(exc):
+                if "split in two" in str(exc) or "was removed" in str(exc):
                     raise
                 names = " | ".join(c.value for c in SourceCategory)
                 msg = f"categories: unknown category {key!r}; expected {names}"
@@ -1009,15 +1052,31 @@ class RoutinesConfig(BaseModel):
 
     @staticmethod
     def _check_source_category(name: str, spec: JobSpec) -> None:
-        """D47: a source that writes context declares its category (job or every feed).
+        """D47/D56: a source that writes context declares its category or ``reference: true``.
 
-        Unknown names fail; pre-D47 names load as logged aliases for one release.
-        A per-source ``max_age:`` override must be a valid TTL.
+        Exactly one of the two (job or every feed): neither or both fails. Unknown
+        names fail; old names load as logged aliases for one release. A per-source
+        ``max_age:`` override must be a valid TTL.
         """
         opts = spec.options
         if "max_age" in opts:
             Ttl.model_validate(opts["max_age"])
         job_cat = opts.get("category")
+        reference = opts.get("reference")
+        if reference is not None and not isinstance(reference, bool):
+            msg = f"source {name!r}: `reference:` must be true or false, got {reference!r}"
+            raise ValueError(msg)
+        if reference and job_cat is not None:
+            msg = (
+                f"source {name!r}: declares both `category:` and `reference: true`; "
+                "a source is either in a category or reference data, never both (D56)"
+            )
+            raise ValueError(msg)
+        if reference and (opts.get("feeds") or opts.get("channels")):
+            msg = f"source {name!r}: `reference: true` is a job-level flag (no feeds/channels; D56)"
+            raise ValueError(msg)
+        if reference:
+            return
         if job_cat is not None:
             parse_category(job_cat, where=f"sources.{name}")
         channels = opts.get("channels")
@@ -1054,15 +1113,24 @@ class RoutinesConfig(BaseModel):
             return
         names = " | ".join(c.value for c in SourceCategory)
         what = f"feeds {uncategorised}" if feeds else "the job"
-        msg = f"source {name!r}: {what} must declare `category:` ({names}); D47"
+        msg = (
+            f"source {name!r}: {what} must declare `category:` ({names}) "
+            "or `reference: true` (D47, D56)"
+        )
         raise ValueError(msg)
 
     def category_spec(self, category: SourceCategory) -> CategorySpec:
         """The ``categories:`` entry for *category* (default when not configured)."""
         return self.categories.get(category) or DEFAULT_CATEGORIES[category]
 
+    def is_reference(self, job: str) -> bool:
+        """D56: source *job* is reference data (``reference: true``, no category)."""
+        spec = self.sources.get(job)
+        return bool(spec is not None and spec.options.get("reference") is True)
+
     def source_category(self, job: str) -> SourceCategory | None:
-        """Category declared by source *job* (``None`` for an undeclared/feed-only job)."""
+        """Category declared by source *job* (``None`` for an undeclared/feed-only job
+        or reference data)."""
         spec = self.sources.get(job)
         raw = spec.options.get("category") if spec is not None else None
         return parse_category(raw, where=f"sources.{job}") if raw is not None else None

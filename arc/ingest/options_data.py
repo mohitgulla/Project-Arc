@@ -13,9 +13,6 @@ context entries (kinds in :mod:`arc.context.kinds`); nothing here calls an LLM.
   page) and BLS release dates for CPI / PPI / Employment Situation / JOLTS / ECI
   (the BLS release-schedule ICS), plus BEA GDP estimates and Personal Income and
   Outlays (PCE) from the BEA release-schedule ICS.
-* :func:`unusual_activity` — per-underlying options volume vs its own 20-session
-  average (``options_volume_daily``) and per-contract volume / open interest,
-  from the Alpaca chain snapshot the scanner already uses. No new provider.
 * :func:`fetch_ex_dividends` — next cash dividend ex-date per ticker (Alpaca
   corporate actions): early-assignment risk on short calls.
 """
@@ -27,7 +24,6 @@ import datetime as _dt
 import io
 import re
 import time
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -38,17 +34,13 @@ from arc.context.kinds import (
     MacroCalendarPayload,
     MacroEvent,
     PutCallPayload,
-    UnusualContract,
-    UnusualOptionsPayload,
     VolTermPayload,
 )
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
-    import sqlite3
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
-    from arc.data.base import MarketDataProvider, OptionContract
 
 log = structlog.get_logger()
 
@@ -64,7 +56,6 @@ __all__ = [
     "parse_cboe_history",
     "parse_fomc_calendar",
     "parse_put_call",
-    "unusual_activity",
     "vol_term_from_closes",
 ]
 
@@ -517,133 +508,6 @@ def fetch_macro_calendar(
         counts[name] = len(got)
         events.extend(got)
     return macro_calendar(events, today, horizon_days), counts
-
-
-# ---------------------------------------------------------------------------
-# Unusual options activity (self-computed)
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class UoaThresholds:
-    min_volume: int = 500
-    vol_oi_ratio: float = 2.0
-    volume_spike_ratio: float = 2.0
-    min_dte: int = 3
-    min_open_interest: int = 100
-    min_hot_share: float = 0.02
-    history_days: int = 20
-    max_contracts: int = 5
-
-
-def record_volume(
-    conn: sqlite3.Connection, ticker: str, day: _dt.date, calls: int, puts: int, *, now: str
-) -> None:
-    conn.execute(
-        """INSERT INTO options_volume_daily (ticker, day, call_volume, put_volume, updated_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(ticker, day) DO UPDATE SET call_volume = excluded.call_volume,
-               put_volume = excluded.put_volume, updated_at = excluded.updated_at""",
-        (ticker, day.isoformat(), calls, puts, now),
-    )
-    conn.commit()
-
-
-def prior_volumes(conn: sqlite3.Connection, ticker: str, day: _dt.date, n: int) -> list[int]:
-    rows = conn.execute(
-        """SELECT call_volume + put_volume FROM options_volume_daily
-           WHERE ticker = ? AND day < ? ORDER BY day DESC LIMIT ?""",
-        (ticker, day.isoformat(), n),
-    ).fetchall()
-    return [int(r[0]) for r in rows]
-
-
-def unusual_activity(
-    ticker: str,
-    contracts: Sequence[OptionContract],
-    history: Sequence[int],
-    day: _dt.date,
-    t: UoaThresholds,
-) -> UnusualOptionsPayload:
-    """Deterministic UOA read for one underlying (pure; *history* = prior daily totals)."""
-    calls = sum(c.volume or 0 for c in contracts if c.option_type == "call")
-    puts = sum(c.volume or 0 for c in contracts if c.option_type == "put")
-    total = calls + puts
-    avg = sum(history) / len(history) if history else None
-    ratio = round(total / avg, 3) if avg else None
-    flags: list[str] = []
-    if ratio is not None and len(history) >= 5 and ratio >= t.volume_spike_ratio:
-        flags.append("volume_spike")
-    hot: list[UnusualContract] = []
-    for c in contracts:
-        vol = c.volume or 0
-        if vol < t.min_volume:
-            continue
-        if (c.expiration - day).days < t.min_dte:
-            continue  # 0-2 DTE churn is routine day-trading flow, not positioning
-        oi = c.open_interest
-        if oi is None or oi < t.min_open_interest:
-            continue  # vol/OI on a near-empty line (OI 1 -> "750x") is meaningless
-        voi = round(vol / oi, 3)
-        if voi >= t.vol_oi_ratio:
-            hot.append(
-                UnusualContract(
-                    symbol=c.symbol,
-                    expiry=c.expiration.isoformat(),
-                    strike=c.strike,
-                    option_type="call" if c.option_type == "call" else "put",
-                    volume=vol,
-                    open_interest=oi,
-                    vol_oi=voi,
-                )
-            )
-    hot.sort(key=lambda u: (u.vol_oi is None, -(u.vol_oi or 0.0), -u.volume, u.symbol))
-    # Every deep chain has a few hot weekly lines; the flag needs them to be a real
-    # share of the underlying's option volume (SPY 0.08% = noise, BAC 42% = signal).
-    hot_share = round(sum(u.volume for u in hot) / total, 4) if total else 0.0
-    if hot and hot_share >= t.min_hot_share:
-        flags.append("vol_oi")
-    return UnusualOptionsPayload(
-        ticker=ticker,
-        as_of=day.isoformat(),
-        call_volume=calls,
-        put_volume=puts,
-        total_volume=total,
-        avg_volume=round(avg, 1) if avg is not None else None,
-        history_days=len(history),
-        volume_ratio=ratio,
-        put_call_volume=round(puts / calls, 3) if calls else None,
-        hot_volume_share=hot_share,
-        flags=flags,  # type: ignore[arg-type]
-        contracts=hot[: t.max_contracts],
-    )
-
-
-def scan_unusual(
-    conn: sqlite3.Connection,
-    market: MarketDataProvider,
-    tickers: Iterable[str],
-    today: _dt.date,
-    t: UoaThresholds,
-    *,
-    max_dte: int,
-    now: str,
-) -> tuple[list[UnusualOptionsPayload], dict[str, str]]:
-    """Fetch each chain, persist today's volume, return payloads and per-ticker errors."""
-    out: list[UnusualOptionsPayload] = []
-    errors: dict[str, str] = {}
-    for ticker in tickers:
-        try:
-            chain = market.option_chain(ticker, today, today + _dt.timedelta(days=max_dte))
-        except Exception as exc:  # noqa: BLE001 - one bad ticker never stops the scan
-            errors[ticker] = str(exc)[:200]
-            log.warning("uoa.chain_error", ticker=ticker, error=str(exc)[:200])
-            continue
-        history = prior_volumes(conn, ticker, today, t.history_days)
-        payload = unusual_activity(ticker, chain, history, today, t)
-        record_volume(conn, ticker, today, payload.call_volume, payload.put_volume, now=now)
-        out.append(payload)
-    return out, errors
 
 
 # ---------------------------------------------------------------------------

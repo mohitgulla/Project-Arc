@@ -121,6 +121,9 @@ def add_context_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     s.add_argument("--subject", action="append", default=[], help="Filter by subject (repeatable)")
     s.add_argument("--as-of", default=None, help="ISO time (default: now ET)")
     s.add_argument("--snapshot", default=None, help="Show a recorded snapshot by id")
+    s.add_argument(
+        "--latest", action="store_true", help="Only the newest entry per kind and subject"
+    )
     s.add_argument("--json", action="store_true")
     sc = csub.add_parser(
         "schemas", help="Committed JSON Schemas of every context kind (schemas/context/)"
@@ -653,14 +656,38 @@ def run_context(args: argparse.Namespace) -> int:
     conn = _conn(args)
     if getattr(args, "context_command", "show") == "trace":
         return _run_trace(conn, args)
+    from arc.context.categories import kind_category
+    from arc.context.kinds import KINDS
+
     store = ContextStore(conn)
+    # D56: a kind no longer registered (e.g. ``unusual_options``) may still have stored
+    # rows until they expire; filter by name in Python instead of refusing the kind.
+    retired = [k for k in args.kind if k not in KINDS]
     if args.snapshot:
         entries = store.load_snapshot(args.snapshot).entries
     else:
-        entries = store.query(as_of=_parse_now(args.as_of), kinds=args.kind, subjects=args.subject)
+        entries = store.query(
+            as_of=_parse_now(args.as_of),
+            kinds=[] if retired else args.kind,
+            subjects=args.subject,
+        )
+    if args.kind:
+        entries = [e for e in entries if e.kind in args.kind]
+    if args.latest:
+        newest: dict[tuple[str, str], Any] = {}
+        for e in entries:  # oldest first, so the last one wins
+            newest[(e.kind, e.subject)] = e
+        entries = list(newest.values())
     if args.json:
-        _write(json.dumps([e.model_dump(mode="json") for e in entries], indent=2))
+        _write(
+            json.dumps(
+                [{**e.model_dump(mode="json"), "category": kind_category(e.kind)} for e in entries],
+                indent=2,
+            )
+        )
         return 0
+    for k in retired:
+        _write(f"(kind {k!r} is not registered; stored rows are listed until they expire)")
     if not entries:
         _write("(no active context entries)")
     for e in entries:
@@ -668,9 +695,10 @@ def run_context(args: argparse.Namespace) -> int:
         payload = json.dumps(e.payload, sort_keys=True)
         if len(payload) > 100:
             payload = payload[:97] + "..."
+        cat = kind_category(e.kind)
         _write(
             f"{e.valid_from:%Y-%m-%d %H:%M} {e.kind:<13} {e.subject:<18} by={e.produced_by:<18}"
-            f" exp={expires:<11} {e.id} {payload}"
+            f" exp={expires:<11} {e.id}" + (f" category: {cat}" if cat else "") + f" {payload}"
         )
     return 0
 

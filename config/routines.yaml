@@ -130,7 +130,6 @@ context_ttl:
   vol_term:      {ttl: 1 session, supersede: latest}       # D30 options data; subject = market
   put_call:      {ttl: 1 session, supersede: latest}
   macro_calendar: {ttl: 7d, supersede: latest}             # long-lived: FOMC/BLS/BEA dates move rarely
-  unusual_options: {ttl: 1 session, supersede: latest}     # subject = ticker
   ex_dividend:   {ttl: 7d, supersede: latest}              # subject = ticker
   # E4.8 (D46): Finnhub per-ticker context; subject = ticker. Context only, never a gate input.
   earnings_history: {ttl: 8d, supersede: latest}
@@ -143,33 +142,49 @@ context_ttl:
   universe_tier: {ttl: 1 session, supersede: latest}
   active_universe: {ttl: 1 session, supersede: latest}   # subject = active; one per resolve
 
-# D47/D49 (E4.7, E4.9): six source categories, weighted EQUALLY (not per source). A
+# D47/D49/D56 (E4.7, E4.9, E13.3): six source categories, weighted EQUALLY (not per source). A
 # source's `weight:` is its share INSIDE its category, so a new feed (or YouTube channel)
 # splits its category's share instead of growing it. `max_age` is the category's
 # freshness window: the Scalp never reads an older doc (closed `skipped_stale`), the
 # rss/edgar connectors never store one, and Scalp story/candidate entries expire at
 # min(1 session, max_age + 2h). D49: Research's "Context by category" block also
-# lists a typed context entry (options data, macro calendar, briefs, Finnhub kinds) older
-# than its category's max_age as `stale (age)`, never as fresh (its context TTL is
-# unchanged). A source may set its own `max_age:` (none does). Weight 0-5 and max_age
-# 30m-7d are tunable from Slack (`!arc config set categories.<c>.weight|max_age`).
-# market_news, company_data and macro_data share the Scalp's `scalp_doc_budget`;
-# options_data and the two YouTube categories reach Research as typed context only.
-# Old names `company`, `macro` (and company_news/filings/calendar) load as logged
-# aliases for one release; `video` was split (each channel declares its category).
-categories:              # D49: equal weight per category; sources split their category's share
+# lists a typed context entry (options data, briefs) older than its category's max_age
+# as `stale (age)`, never as fresh (its context TTL is unchanged). A source may set its
+# own `max_age:` (none does). Weight 0-5 and max_age 30m-7d are tunable from Slack
+# (`!arc config set categories.<c>.weight|max_age`).
+# D56: market_news and company_data split the Scalp's `scalp_doc_budget` equally;
+# options_fast (Scalp, 30m) and options_slow + the two YouTube categories (Scout) reach
+# the personas as typed context only. Old names `company` (and company_news/filings/
+# calendar) and `options_data` (-> options_slow) load as logged aliases for one
+# release; `macro_data`/`macro` and `video` are refused with a pointer.
+# REFERENCE DATA (D56) is not a category: ex_dividend, macro_calendar, the earnings
+# calendar, the Finnhub kinds and iv_daily. Those sources declare `reference: true`
+# (never `category:`), keep their own context_ttl and feed the Risk step, the gate's
+# earnings blackout and the regime step unchanged.
+categories:              # D56: equal weight per category; sources split their category's share
   market_news:   {weight: 1, max_age: 6h,  label: Market news}
-  company_data:  {weight: 1, max_age: 24h, label: Company data}
-  macro_data:    {weight: 1, max_age: 24h, label: Macro data}
-  options_data:  {weight: 1, max_age: 12h, label: Options data}    # daily snapshots; 12h covers the session from the 09:00 fetch
+  company_data:  {weight: 1, max_age: 12h, label: Company data}
+  options_fast:  {weight: 1, max_age: 30m, label: Options fast}    # Scalp, 30-min RTH (E13.6 source)
+  options_slow:  {weight: 1, max_age: 24h, label: Options slow}    # Scout, daily Cboe snapshots
   youtube_macro: {weight: 1, max_age: 24h, label: YouTube macro}
   youtube_micro: {weight: 1, max_age: 24h, label: YouTube micro}
 
+# D56 (E13.3, folds E5.14's config half): the idea funnel. Config only for now: the
+# Scout (E13.7), the coverage:scout alert and the Tower funnel report (E13.14) read
+# it. Discovery comes from the Scout's YouTube calls only (owner decisions 1 and 2:
+# no most-active input, no Scalp backfill). The two `*_split` values are fixed by
+# D56; max_discovery (0-25), min_discovery_alert (0-20) and max_scout_only_ideas are
+# tunable (`!arc config set funnel.<persona>.<key>`).
+funnel:
+  scalp:    {doc_budget_split: equal}            # scalp_doc_budget: market_news | company_data
+  scout:    {max_discovery: 20, video_budget_split: equal, min_discovery_alert: 5}
+  research: {max_scout_only_ideas: 20}
+
 # D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Scalp
 # source; each RSS feed is its own source. Every source job that writes context (or
-# every one of its feeds) declares `category:` (one of the six above; a missing or
-# unknown one fails config load). Other knobs: weight (default 1), max_docs_per_run,
-# label (shown in the Scalp card's source mix). The Scalp reads `scalp_doc_budget` docs
+# every one of its feeds) declares exactly one of `category:` (one of the six above) or
+# `reference: true` (D56); neither, both, or an unknown category fails config load.
+# Other knobs: weight (default 1), max_docs_per_run, label (shown in the Scalp card's source mix). The Scalp reads `scalp_doc_budget` docs
 # per run, split equally across categories with fresh docs, then by weighted
 # round-robin inside a category; the rest wait, and are closed `skipped_budget` once
 # older than the raw_doc_ref TTL above.
@@ -221,14 +236,14 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
           - '\b(increases|decreases|raises|cuts)\b.*\bdividend\b'
           - '\bETF\b.*\b(distribution|dividend)\b'
       - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets", category: market_news, feed: scalp}
-      - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: macro_data, feed: scalp}
+      - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: market_news, feed: scalp}   # D56: was macro_data
   edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: company_data, label: EDGAR, writes: [raw_doc_ref], lane: background,
              about: "SEC filings (8-K, 10-Q, 10-K, Form 4) for the universe; stale filings are skipped"}   # D39: p90 75 s (377 s max on new filings)
   earnings:                     # Finnhub /calendar/earnings (ARC_FINNHUB_API_KEY; no key = skipped run)
     schedule: ["06:00", "18:00"]
     days: trading
     ttl: 6h
-    category: company_data
+    reference: true             # D56: reference data (gate earnings blackout via next_earnings())
     label: Earnings
     about: "Finnhub earnings calendar (7 days back, 30 ahead) for event risk"
     age_basis: ingested         # D47: calendar rows are always "the latest pull", never stale by date
@@ -251,7 +266,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: trading
     ttl: 6h
     flat_band: 0.02             # |VIX3M/VIX - 1| below this = flat
-    category: options_data
+    category: options_slow
+    feed: scout                 # D56: daily Cboe closes (Scout's slow feed)
     writes: [vol_term]
   put_call:                     # Cboe daily market statistics (previous session's ratios)
     label: Put/call ratio
@@ -259,7 +275,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     schedule: ["09:00"]
     days: trading
     ttl: 6h
-    category: options_data
+    category: options_slow
+    feed: scout                 # D56: previous session's ratios (Scout's slow feed)
     writes: [put_call]
   macro_calendar:               # FOMC (federalreserve.gov) + BLS CPI/PPI/NFP/JOLTS/ECI + BEA GDP/PCE
     label: Macro calendar
@@ -268,24 +285,15 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: weekdays
     ttl: 24h
     horizon_days: 45
-    category: macro_data
+    reference: true             # D56: reference data (Risk event risk), not a category
     writes: [macro_calendar]
-  unusual_options:              # self-computed from Alpaca chain snapshots: active list + open underlyings + today's candidates
-    label: Unusual options
-    about: "Unusual options volume computed from Alpaca chain snapshots"
-    schedule: ["12:30", "15:45"]
-    days: trading
-    ttl: 2h
-    category: options_data
-    writes: [unusual_options]
-    lane: background            # D39: p90 61 s (chain snapshots)
   iv.record:                    # E4.12 (D55): daily 30-DTE constant-maturity IV -> iv_daily (alpaca_cm30)
     label: IV history
     about: "Daily 30-day ATM implied vol per ticker (Alpaca chain, Cboe iv30 cross-check) for IV rank / percentile"
     schedule: ["15:50"]         # before the close: two-sided quotes, so spot is a real mid
     days: trading
     ttl: 1h
-    category: options_data
+    reference: true             # D56: reference data (iv_daily; the regime step reads it)
     feed: scout                 # D54: slow feed (once a day)
     writes: []                  # stores iv_daily rows; the regime step reads them (no context kind)
     lane: background            # one chain snapshot per ticker
@@ -296,7 +304,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: trading
     ttl: 12h
     horizon_days: 45
-    category: options_data
+    reference: true             # D56: reference data (Risk: short-call early assignment)
     writes: [ex_dividend]
   # E4.8 (D46): Finnhub per-ticker context (free key, typed kinds, never raw docs). One
   # shared budget of finnhub_calls_per_minute (55 of the key's 60/min) across processes,
@@ -310,7 +318,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: trading
     ttl: 3h
     lane: background
-    category: company_data      # D47: Finnhub per-ticker kinds
+    reference: true             # D56: Finnhub per-ticker kinds are reference data
     writes: [insider_activity]
   finnhub.recs:                 # /stock/recommendation: monthly data, weekly fetch
     label: Finnhub analyst recs
@@ -319,7 +327,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: [mon]
     ttl: 24h                    # a missed Monday still runs that day
     lane: background
-    category: company_data      # D47: Finnhub per-ticker kinds
+    reference: true             # D56: Finnhub per-ticker kinds are reference data
     writes: [analyst_recs]
   finnhub.fundamentals:         # /stock/metric?metric=all, trimmed to the D46 field set
     label: Finnhub fundamentals
@@ -328,7 +336,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: [mon]
     ttl: 24h
     lane: background
-    category: company_data      # D47: Finnhub per-ticker kinds
+    reference: true             # D56: Finnhub per-ticker kinds are reference data
     writes: [fundamentals]
   finnhub.earnings_history:     # /stock/earnings: EPS surprises
     label: Finnhub EPS surprises
@@ -337,7 +345,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     days: trading
     ttl: 3h
     lane: background
-    category: company_data      # D47: Finnhub per-ticker kinds
+    reference: true             # D56: Finnhub per-ticker kinds are reference data
     writes: [earnings_history]
     full_days: [mon]            # whole scope on these days (or when the last full run is >= full_every_days old)
     full_every_days: 7
@@ -470,7 +478,7 @@ personas:
     window: "09:40-15:50"       # 38 slots; skips the open's first 10 min
     days: trading
     chain: [quant, risk, propose, broker.execute]   # D34: publish + auto-approve + hand off ladders
-    reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, unusual_options, position_review, story,
+    reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, position_review, story,
             earnings_history, insider_activity, analyst_recs, fundamentals]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on
     writes: [shortlist, regime, note, portfolio_context]   # E5.9: portfolio_context + portfolio_view/thesis_check notes
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
