@@ -14,6 +14,9 @@ import datetime as dt
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest import mock
+
+import pytest
 
 from arc.context.kinds import ScoutReadPayload
 from arc.context.store import ContextStore
@@ -48,6 +51,13 @@ if TYPE_CHECKING:
     import sqlite3
 
 FIXTURES = Path(__file__).parent / "fixtures" / "scout"
+
+
+@pytest.fixture(autouse=True)
+def _stop_patches() -> Any:
+    """``_guard`` starts a ``measure_liquidity`` patch: stop it so no later test sees it."""
+    yield
+    mock.patch.stopall()
 
 
 def _write_buzz(conn: sqlite3.Connection, *, age: dt.timedelta = dt.timedelta(minutes=20)) -> None:
