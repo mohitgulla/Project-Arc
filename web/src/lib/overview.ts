@@ -298,12 +298,12 @@ export function usedOfCap(used: string, cap: string | null): string {
 export type ExitPathStrip = Schemas["ExitPathStrip"];
 export type ExitTone = "pos" | "neg" | "warn" | "neutral";
 
-/** The exit-path columns and strip show only when the Research exit path runs. */
+/** The exit-path columns and strip (always on since E13.15; `deterministic` = an old fixture). */
 export function exitPathVisible(strip: ExitPathStrip | null | undefined): boolean {
   return !!strip && strip.mode !== "deterministic";
 }
 
-/** `Shadow · 1 mandatory pending · 2 cases today · 1 close proposed · 1 hold` */
+/** `Research · 1 mandatory pending · 2 cases today · 1 close proposed · 1 hold` */
 export function exitPathStripText(s: ExitPathStrip): string {
   const mode = s.mode.charAt(0).toUpperCase() + s.mode.slice(1);
   return [

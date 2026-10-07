@@ -367,7 +367,7 @@ class JobSpec(StepSpec):
     window: Window | None = None
     trigger: str | None = None
     days: Days | list[Weekday] = Days.DAILY
-    # ``auto`` (E13.9) = resolved at load by :func:`chain_for` from the persona flags.
+    # ``auto`` (E13.9) = resolved at load to the fixed :data:`AUTO_CHAINS` entry.
     chain: list[str] = Field(default_factory=list)
     after_sources: bool = False
     ttl: Ttl | None = None
@@ -595,253 +595,45 @@ FINNHUB_FACT_KINDS: tuple[str, ...] = (
 )
 # Persona-level switches that live under ``personas:`` next to the jobs (a scalar,
 # not a job mapping). Each maps to the settings block whose ``enabled`` it sets.
-PERSONA_FLAGS: tuple[str, ...] = (
-    "finnhub_context",
-    "quant_risk_loop",
-    "scout_feed",
-    "scalp_options_tape",
+PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context",)
+#: E13.15 (D56 cutover): switches removed with their off paths. Each is always on
+#: now (quant_risk_loop on, scalp_options_tape on, scout_feed on, research_idea_pool
+#: all, research_compact_prompt compact, exit_path research); a leftover key in a
+#: local routines.yaml is ignored with a log.
+REMOVED_PERSONA_SWITCHES: frozenset[str] = frozenset(
+    {
+        "quant_risk_loop",
+        "scalp_options_tape",
+        "scout_feed",
+        "research_idea_pool",
+        "research_compact_prompt",
+        "exit_path",
+    }
 )
 
-#: D56 (E13.1): pre-rename ``personas:`` keys accepted (logged) for one release.
-#: ``sweep.overnight`` follows its ``sweep`` prefix.
-LEGACY_PERSONA_KEYS: dict[str, str] = {"sweep": "scalp", "director": "research"}
-#: D56 (E13.2): renamed jobs and chain steps (exact names), accepted (logged) for one
-#: release as ``personas:`` / ``steps:`` keys and inside ``chain:`` lists.
-LEGACY_JOB_NAMES: dict[str, str] = {
-    "investor": "broker",
-    "auditor": "broker.reconcile",
-    "execute": "broker.execute",
-    "investor.exits": "quant.exits",
-    # E13.9 (D56): the open-path step names
-    "quant": "quant.open",
-    "risk": "risk.open",
-    "propose": "quant.propose",
+#: E13.15 (D56): the fixed chains ``chain: auto`` resolves to. Exits run before
+#: opens in the trading loop (a close frees buying power; ``exits.mandatory`` is the
+#: deterministic floor); ``positions.evaluate`` is marks plus the mandatory floor.
+AUTO_CHAINS: dict[str, tuple[str, ...]] = {
+    "research": (
+        "exits.mandatory",
+        "quant.exit",
+        "risk.exit",
+        "quant.open",
+        "risk.open",
+        "quant.revise",
+        "quant.propose",
+        "broker.execute",
+    ),
+    "positions.evaluate": ("exits.mandatory", "broker.execute"),
 }
-
-#: E13.9 (D56): ``chain: auto`` resolution, by job and persona flag. The fixed step
-#: names for the whole D56 split are ``quant.open``, ``risk.open``, ``quant.revise``,
-#: ``quant.propose`` (opens) and ``quant.exit``, ``risk.exit`` (E13.17/E13.18).
-AUTO_CHAIN_JOBS: tuple[str, ...] = ("research", "positions.evaluate")
-#: E13.17 (D56): ``personas.exit_path`` values that build exit cases (``quant.exit``).
-EXIT_PATH_CASES: frozenset[str] = frozenset({"shadow", "research"})
-
-
-def chain_for(
-    job: str, flags: Mapping[str, bool], choices: Mapping[str, str] | None = None
-) -> list[str]:
-    """The chain of *job* under ``chain: auto`` for these persona *flags* (pure).
-
-    ``research``: ``quant_risk_loop`` off -> ``quant.open, risk.open, quant.propose,
-    broker.execute`` (today's chain under the new names); on -> one ``quant.revise``
-    round between Risk and ``quant.propose``. E13.17: *choices* ``exit_path`` shadow
-    inserts ``quant.exit`` right after the loop job (deterministic = no step).
-
-    E13.18 ``exit_path: research``: ``exits.mandatory, quant.exit, risk.exit`` run
-    first (exits before opens: a close frees buying power and a deadline cuts new
-    risk, not risk management); ``positions.evaluate`` becomes marks plus
-    ``exits.mandatory`` only (``quant.exits`` / ``risk.reallocate`` do not run).
-    """
-    exit_path = (choices or {}).get("exit_path", "deterministic")
-    if job == "research":
-        exits: list[str] = []
-        if exit_path == "research":
-            exits = ["exits.mandatory", "quant.exit", "risk.exit"]
-        elif exit_path in EXIT_PATH_CASES:
-            exits = ["quant.exit"]
-        revise = ["quant.revise"] if flags.get("quant_risk_loop", False) else []
-        return [*exits, "quant.open", "risk.open", *revise, "quant.propose", "broker.execute"]
-    if job == "positions.evaluate":
-        if exit_path == "research":
-            return ["exits.mandatory", "broker.execute"]
-        return ["quant.exits", "risk.reallocate", "broker.execute"]
-    msg = f"chain: auto is only defined for {', '.join(AUTO_CHAIN_JOBS)}, not {job!r}"
-    raise ValueError(msg)
-
-
-#: D56 (E13.2): old ``persona:`` timeline chips -> the new ones (``auditor`` is the
-#: reconcile's Broker; the scorecard's Ops chip is set in the YAML).
-LEGACY_PERSONA_CHIPS: dict[str, str] = {"investor": "broker", "auditor": "broker"}
-
-
-def _renamed(key: str) -> str | None:
-    if key in LEGACY_JOB_NAMES:
-        return LEGACY_JOB_NAMES[key]
-    head, dot, tail = key.partition(".")
-    new = LEGACY_PERSONA_KEYS.get(head)
-    return None if new is None else f"{new}{dot}{tail}"
-
-
-def current_job_name(name: str) -> str:
-    """D56: the current name of a job / step given under a pre-rename name (logged).
-
-    ``investor`` -> ``broker`` (e.g. a ladder spawned as ``arc routines run investor
-    --event …`` just before deploy), ``auditor`` -> ``broker.reconcile``,
-    ``sweep.overnight`` -> ``scalp.overnight``. Other names are returned unchanged.
-    """
-    new = _renamed(name)
-    if new is None:
-        return name
-    structlog.get_logger(__name__).warning(
-        "routines.deprecated_job_alias", job=name, renamed_to=new
-    )
-    return new
-
-
-def _legacy_event(event: str) -> str:
-    """``<old job>.completed`` -> ``<current job>.completed`` (E13.9); else unchanged."""
-    if not event.endswith(".completed"):
-        return event
-    job = event.removesuffix(".completed")
-    if _renamed(job) is None:
-        return event
-    return f"{current_job_name(job)}.completed"
-
-
-def _legacy_trigger_on(rule: Any) -> Any:
-    """A trigger rule with its ``on`` event renamed (``on`` or the YAML-1.1 ``True`` key)."""
-    if not isinstance(rule, dict):
-        return rule
-    for key in ("on", True):
-        if isinstance(rule.get(key), str) and _legacy_event(rule[key]) != rule[key]:
-            return {**rule, key: _legacy_event(rule[key])}
-    return rule
-
-
-def _legacy_step_names(steps: dict[str, Any]) -> dict[str, Any]:
-    """D56 (E13.2): rename legacy ``steps:`` keys (``execute`` -> ``broker.execute``)."""
-    out: dict[str, Any] = {}
-    for key, value in steps.items():
-        new = LEGACY_JOB_NAMES.get(key)
-        if new is None:
-            out[key] = value
-            continue
-        if new in steps:
-            msg = f"steps.{key} and steps.{new} both set; {key!r} was renamed (D56)"
-            raise ValueError(msg)
-        structlog.get_logger(__name__).warning(
-            "routines.deprecated_job_alias", job=key, renamed_to=new
-        )
-        out[new] = value
-    return out
-
-
-def _legacy_job_names(personas: dict[str, Any]) -> dict[str, Any]:
-    """Rename D56 legacy ``personas:`` keys (``sweep*`` -> ``scalp*``, ``director`` ->
-    ``research``, ``investor`` -> ``broker``, ``auditor`` -> ``broker.reconcile``), their
-    ``chain:`` steps and ``persona:`` chips; a key present under both names is an error
-    (input not mutated)."""
-    log = structlog.get_logger(__name__)
-    out: dict[str, Any] = {}
-    for key, value in personas.items():
-        if isinstance(value, dict):
-            value = _legacy_job_body(key, value)  # noqa: PLW2901
-        renamed = _renamed(key)
-        if renamed is None:
-            out[key] = value
-            continue
-        if renamed in personas:
-            msg = f"personas.{key} and personas.{renamed} both set; {key!r} was renamed (D56)"
-            raise ValueError(msg)
-        log.warning("routines.deprecated_job_alias", job=key, renamed_to=renamed)
-        out[renamed] = value
-    return out
-
-
-def _legacy_job_body(key: str, body: dict[str, Any]) -> dict[str, Any]:
-    chain = body.get("chain")
-    chip = body.get("persona")
-    new_chain = (
-        [LEGACY_JOB_NAMES.get(s, s) if isinstance(s, str) else s for s in chain]
-        if isinstance(chain, list)
-        else chain
-    )
-    new_chip = LEGACY_PERSONA_CHIPS.get(chip, chip) if isinstance(chip, str) else chip
-    if new_chain == chain and new_chip == chip:
-        return body
-    structlog.get_logger(__name__).warning(
-        "routines.deprecated_job_alias", job=key, chain=new_chain, persona=new_chip
-    )
-    out = dict(body)
-    if "chain" in body:
-        out["chain"] = new_chain
-    if "persona" in body:
-        out["persona"] = new_chip
-    return out
 
 
 # Persona-level choice switches (E12.5): ``personas.<name>: <choice>`` sets the
 # ``mode`` of the same-named settings block. The first choice is the control.
 PERSONA_CHOICES: dict[str, tuple[str, ...]] = {
     "director_diversification": ("strict", "relaxed"),
-    # E13.8 (D56/D53/D54): Research's idea pool and prompt format (strategy lane)
-    "research_idea_pool": ("scalp", "all"),
-    "research_compact_prompt": ("full", "compact"),
-    # E13.17 (D56): who manages discretionary exits (strategy lane)
-    "exit_path": ("deterministic", "shadow", "research"),
 }
-
-
-class ResearchIdeaPoolSettings(BaseModel):
-    """E13.8 (D56, D53): which feeds' candidates Research ranks (default ``scalp``).
-
-    ``mode`` comes from ``personas.research_idea_pool: scalp | all``. ``scalp`` = today's
-    behaviour (Scalp candidates only; byte-identical prompt). ``all`` = the merged
-    Scalp + Scout idea pool (code-counted feeds, origins, stance agreement; at most
-    ``funnel.research.max_scout_only_ideas`` Scout-only ideas). Draft experiment XP-4.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    mode: Literal["scalp", "all"] = "scalp"
-
-    @property
-    def merged(self) -> bool:
-        return self.mode == "all"
-
-
-class ExitPathSettings(BaseModel):
-    """E13.17 (D56): who manages discretionary exits (default ``deterministic``).
-
-    ``mode`` comes from ``personas.exit_path: deterministic | shadow | research``.
-    ``deterministic`` = today (the positions chain only; Research's prompt byte for
-    byte). ``shadow`` = Research also writes an ``exit_watchlist`` and ``quant.exit``
-    builds ``exit_case`` entries (journaled, nothing proposed). ``research`` (E13.18)
-    adds ``exits.mandatory`` (deterministic floor), ``risk.exit`` (close | hold) and the
-    close branch in ``quant.propose``; ``quant.exits`` / ``risk.reallocate`` stop.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    mode: Literal["deterministic", "shadow", "research"] = "deterministic"
-
-    @property
-    def watch(self) -> bool:
-        """Research writes the exit watchlist and ``quant.exit`` builds cases."""
-        return self.mode in EXIT_PATH_CASES
-
-    @property
-    def managed(self) -> bool:
-        """E13.18: Research/Quant/Risk manage discretionary exits (closes proposed)."""
-        return self.mode == "research"
-
-
-class ResearchCompactPromptSettings(BaseModel):
-    """E13.8 (D56, D54): Research prompt format (default ``full``).
-
-    ``mode`` comes from ``personas.research_compact_prompt: full | compact``. ``full``
-    = today's prompt byte for byte; ``compact`` = one line per idea, compact regime /
-    market lines, the Scout read instead of raw brief JSON, top-3 headlines per
-    category, within ``research_prompt_max_chars`` minus the exit-block reserve.
-    Draft experiment XP-6.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    mode: Literal["full", "compact"] = "full"
-
-    @property
-    def compact(self) -> bool:
-        return self.mode == "compact"
 
 
 class RelaxedConcentration(BaseModel):
@@ -961,48 +753,6 @@ class FinnhubContextSettings(BaseModel):
         }
 
 
-class QuantRiskLoopSettings(BaseModel):
-    """E13.9 (D56): the Quant <-> Risk open path (default off, D44 experiment XP-7).
-
-    ``enabled`` comes from ``personas.quant_risk_loop: off | on``. Off = today's chain
-    (``quant.open -> risk.open -> quant.propose``) with byte-identical prompts; on = Risk
-    gives each structure a verdict and one ``quant.revise`` round answers the
-    ``revise`` ones (``chain: auto`` picks the chain via :func:`chain_for`).
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    enabled: bool = False
-
-
-class ScalpOptionsTapeSettings(BaseModel):
-    """E13.10 (D56): the options_fast tape in the Scalp prompt (default off, XP-8).
-
-    ``enabled`` comes from ``personas.scalp_options_tape: off | on``. Off = today's
-    stage-2 prompt, byte-identical; on = the code-built tape (``index_vols``,
-    ``chain_snapshot``, ``exchange_volume``) is shown outside the doc budget and a
-    candidate whose stance matches its ticker's P/C direction gets one corroborating
-    source (``options_fast:tape``).
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    enabled: bool = False
-
-
-class ScoutFeedSettings(BaseModel):
-    """E13.7 (D56): the daily Scout persona (default off; strategy lane flag).
-
-    ``enabled`` comes from ``personas.scout_feed: off | on`` (a flat sibling of the
-    ``personas.scout`` job mapping, which cannot share its name). Off = the ``scout``
-    job is skipped before any LLM call (``JobSkippedError``) and nothing is written.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    enabled: bool = False
-
-
 class FunnelScalp(BaseModel):
     """D56 ``funnel.scalp``: the Scalp's doc budget split (fixed by D56)."""
 
@@ -1104,22 +854,9 @@ class RoutinesConfig(BaseModel):
     director_diversification: ResearchDiversificationSettings = Field(
         default_factory=ResearchDiversificationSettings
     )
-    # E13.8: the ``personas.research_idea_pool`` / ``research_compact_prompt`` switches.
-    research_idea_pool: ResearchIdeaPoolSettings = Field(default_factory=ResearchIdeaPoolSettings)
-    research_compact_prompt: ResearchCompactPromptSettings = Field(
-        default_factory=ResearchCompactPromptSettings
-    )
-    # E13.17: the ``personas.exit_path`` switch (as ``mode``).
-    exit_path: ExitPathSettings = Field(default_factory=ExitPathSettings)
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)  # D56 (E13.3)
     options_slow: OptionsSlowSettings = Field(default_factory=OptionsSlowSettings)  # E13.5
     options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
-    # E13.9: the ``personas.quant_risk_loop`` flag (as ``enabled``).
-    quant_risk_loop: QuantRiskLoopSettings = Field(default_factory=QuantRiskLoopSettings)
-    # E13.10: the ``personas.scalp_options_tape`` flag (as ``enabled``).
-    scalp_options_tape: ScalpOptionsTapeSettings = Field(default_factory=ScalpOptionsTapeSettings)
-    # E13.7: the ``personas.scout_feed`` flag (as ``enabled``).
-    scout_feed: ScoutFeedSettings = Field(default_factory=ScoutFeedSettings)
 
     @model_validator(mode="before")
     @classmethod
@@ -1128,29 +865,14 @@ class RoutinesConfig(BaseModel):
         if not isinstance(data, dict):
             return data
         out = dict(data)
-        if isinstance(out.get("steps"), dict):
-            out["steps"] = _legacy_step_names(dict(out["steps"]))
-        if isinstance(out.get("triggers"), list):
-            out["triggers"] = [
-                {**t, "run": current_job_name(t["run"])}
-                if isinstance(t, dict) and isinstance(t.get("run"), str) and _renamed(t["run"])
-                else t
-                for t in out["triggers"]
-            ]
-            # E13.9: `on: quant.completed` -> `on: quant.open.completed` (one release).
-            # A bare YAML `on:` key loads as boolean True (see TriggerRule._yaml_on).
-            out["triggers"] = [_legacy_trigger_on(t) for t in out["triggers"]]
-        mon = out.get("monitoring")
-        if isinstance(mon, dict) and isinstance(mon.get("stuck_after_jobs"), dict):
-            out["monitoring"] = {
-                **mon,
-                "stuck_after_jobs": {
-                    current_job_name(k): v for k, v in mon["stuck_after_jobs"].items()
-                },
-            }
         if not isinstance(data.get("personas"), dict):
             return out
-        personas = _legacy_job_names(dict(data["personas"]))
+        personas = dict(data["personas"])
+        for flag in sorted(REMOVED_PERSONA_SWITCHES & set(personas)):
+            structlog.get_logger(__name__).warning(
+                "routines.removed_switch_ignored", switch=f"personas.{flag}", value=personas[flag]
+            )
+            del personas[flag]
         for flag in PERSONA_FLAGS:
             if flag not in personas:
                 continue
@@ -1171,20 +893,10 @@ class RoutinesConfig(BaseModel):
                 raise ValueError(msg)
             block["mode"] = parse_choice(raw, choices, where=f"personas.{flag}")
             out[flag] = block
-        flags = {
-            f: bool((out.get(f) or {}).get("enabled", False))
-            for f in PERSONA_FLAGS
-            if isinstance(out.get(f) or {}, dict)
-        }
-        choices = {
-            f: str((out.get(f) or {}).get("mode"))
-            for f in PERSONA_CHOICES
-            if isinstance(out.get(f), dict) and (out.get(f) or {}).get("mode") is not None
-        }
-        for name in AUTO_CHAIN_JOBS:
+        for name, chain in AUTO_CHAINS.items():
             body = personas.get(name)
             if isinstance(body, dict) and body.get("chain") == "auto":
-                personas[name] = {**body, "chain": chain_for(name, flags, choices)}
+                personas[name] = {**body, "chain": list(chain)}
         out["personas"] = personas
         return out
 
@@ -1272,10 +984,6 @@ class RoutinesConfig(BaseModel):
                 raise ValueError(msg)
         for name, spec in [*self.sources.items(), *self.personas.items()]:
             _check_display_keys(name, spec)
-            if "trending" in spec.options:  # E12.3: validate the input registry at load
-                from arc.universe.trending_config import TrendingConfig
-
-                TrendingConfig.model_validate(spec.options["trending"])
         known_jobs = set(names)
         if "loop" in self.model_fields_set and self.loop.job not in self.personas:
             msg = f"loop.job: unknown persona {self.loop.job!r}"
@@ -1316,8 +1024,6 @@ class RoutinesConfig(BaseModel):
                 )
         fast = spec.every is not None and spec.every <= _FAST_FEED_MAX_EVERY
         for value, where in declared:
-            if value == "sweep":  # D56: pre-rename name of the fast feed (one release)
-                value = "scalp"  # noqa: PLW2901
             if value == "scalp" and not fast:
                 msg = f"{where}: feed scalp needs an intraday `every:` of at most 60m (D54)"
                 raise ValueError(msg)
@@ -1454,11 +1160,6 @@ class RoutinesConfig(BaseModel):
         found = self.job(name)
         if found is not None:
             return found
-        if name not in self.steps and name in LEGACY_JOB_NAMES:  # E13.9: `quant` etc.
-            name = current_job_name(name)
-            found = self.job(name)
-            if found is not None:
-                return found
         return JobKind.PERSONA, self.steps.get(name, StepSpec())
 
     def all_triggers(self) -> list[TriggerRule]:

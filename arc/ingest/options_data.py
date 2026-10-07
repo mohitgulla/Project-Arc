@@ -7,8 +7,6 @@ context entries (kinds in :mod:`arc.context.kinds`); nothing here calls an LLM.
 * :func:`fetch_vol_term` — Cboe daily closes for VIX9D / VIX / VIX3M / VVIX
   (``cdn.cboe.com`` history CSVs). ``structure`` is ``contango`` when
   VIX3M/VIX >= 1 + ``band``, ``backwardation`` when <= 1 - ``band``, else flat.
-* :func:`fetch_put_call` — Cboe daily market statistics (total / equity / index /
-  ETP / SPX / VIX put-call ratios) for the latest session that has data.
 * :func:`fetch_macro_calendar` — FOMC decision days (federalreserve.gov calendar
   page) and BLS release dates for CPI / PPI / Employment Situation / JOLTS / ECI
   (the BLS release-schedule ICS), plus BEA GDP estimates and Personal Income and
@@ -33,7 +31,6 @@ from arc.context.kinds import (
     ExDividendPayload,
     MacroCalendarPayload,
     MacroEvent,
-    PutCallPayload,
     VolTermPayload,
 )
 from arc.utils.calendar import ET
@@ -49,13 +46,11 @@ __all__ = [
     "BLS_UA",
     "fetch_ex_dividends",
     "fetch_macro_calendar",
-    "fetch_put_call",
     "fetch_vol_term",
     "parse_bea_ics",
     "parse_bls_ics",
     "parse_cboe_history",
     "parse_fomc_calendar",
-    "parse_put_call",
     "vol_term_from_closes",
 ]
 
@@ -180,58 +175,6 @@ def fetch_vol_term(
             continue
         closes[index] = parse_cboe_history(body.decode("utf-8", "replace"))
     return vol_term_from_closes(closes, band=band)
-
-
-# ---------------------------------------------------------------------------
-# Put/call ratios
-# ---------------------------------------------------------------------------
-
-
-def parse_put_call(payload: Mapping[str, Any], day: _dt.date) -> PutCallPayload | None:
-    """Cboe daily-options JSON -> ratios; ``None`` when the day has no total ratio.
-
-    E13.5 (D56): a thin wrapper over :func:`arc.ingest.cboe_daily.daily_segments`, kept
-    one release for the ``put_call`` kind's d51 readers; removed in E13.15.
-    """
-    from arc.ingest.cboe_daily import daily_segments
-
-    ratios, _ = daily_segments(payload)
-    vals = {r.segment: r.ratio for r in ratios if r.ratio > 0}
-    if "total" not in vals:
-        return None
-    return PutCallPayload(
-        as_of=day.isoformat(),
-        total=vals["total"],
-        equity=vals.get("equity"),
-        index=vals.get("index"),
-        etp=vals.get("etp"),
-        spx=vals.get("spx"),
-        vix=vals.get("vix"),
-    )
-
-
-def fetch_put_call(
-    today: _dt.date,
-    *,
-    get: Callable[[str, str], bytes] | None = None,
-    lookback_days: int = 7,
-) -> PutCallPayload | None:
-    """Latest session (today back to *lookback_days*) with published ratios."""
-    import json
-
-    for back in range(lookback_days + 1):
-        day = today - _dt.timedelta(days=back)
-        if day.weekday() >= 5:
-            continue
-        try:
-            body = (get or http_get)(CBOE_DAILY_URL.format(day=day.isoformat()), BROWSER_UA)
-            parsed = parse_put_call(json.loads(body), day)
-        except (requests.RequestException, ValueError) as exc:
-            log.debug("put_call.miss", day=day.isoformat(), error=str(exc))
-            continue
-        if parsed is not None:
-            return parsed
-    return None
 
 
 # ---------------------------------------------------------------------------

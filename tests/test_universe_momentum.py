@@ -591,7 +591,9 @@ def test_handler_end_to_end(conn: sqlite3.Connection, pages: dict[str, bytes | E
     active_list, _ = build_active(conn, _settings(), NOW)
     tiers = {m.ticker: m.tier for m in active_list.members}
     assert all(tiers[t] is Tier.CORE for t in CORE_OVERLAP)
-    assert sum(1 for t in tiers.values() if t is Tier.MOMENTUM) == 24 - len(CORE_OVERLAP)
+    # D56: the tier is the feed's top 20 (universe_momentum_size_d56), cut before dedupe;
+    # all 7 core overlaps are in that top 20
+    assert sum(1 for t in tiers.values() if t is Tier.MOMENTUM) == 20 - len(CORE_OVERLAP)
     assert previous_members(conn) == [
         m.ticker
         for m in UniverseTierPayload.model_validate_json(

@@ -363,22 +363,6 @@ def vol_term_source(ctx: JobContext) -> JobResult:
     )
 
 
-def put_call_source(ctx: JobContext) -> JobResult:
-    """E4.5: Cboe daily put/call ratios -> one ``put_call`` entry."""
-    from arc.ingest.options_data import fetch_put_call
-
-    payload = fetch_put_call(ctx.now.astimezone(ET).date())
-    if payload is None:
-        msg = "no Cboe put/call ratios in the last week"
-        raise JobSkippedError(msg)
-    _data_result(ctx, "put_call", "cboe", payload.model_dump(mode="json"), 1)
-    ctx.write("put_call", "market", payload)
-    return JobResult(
-        summary=f"put/call total {payload.total} · equity {payload.equity} · {payload.as_of}",
-        metrics={"total": payload.total or 0.0, "equity": payload.equity or 0.0},
-    )
-
-
 def _probe_sleep(seconds: float) -> None:  # pragma: no cover - patched in tests
     import time
 
@@ -879,21 +863,16 @@ def _finnhub_run(ctx: JobContext, kind: str, *, recent_only: bool = False) -> Jo
         raise JobSkippedError(str(exc), notice=notice) from exc
 
     today = ctx.now.astimezone(ET).date()
-    from arc.universe.tiers import Tier, active_by_tier, tiers_model
+    from arc.universe.tiers import TIER_ORDER, active_by_tier
 
     universe = IngestUniverse.from_settings(s, now=ctx.now, conn=ctx.conn)
-    # E12.4 (D51): open underlyings -> today's candidates -> core -> momentum -> trending
+    # E12.4: open underlyings -> today's candidates -> core -> momentum -> discovery
     # (today's active list by tier); a `tickers` job option replaces the tier part.
     if ctx.options.get("tickers"):
         tiers: dict[str, list[str]] = {"tickers": list(ctx.options["tickers"])}
     else:
         by_tier = active_by_tier(ctx.conn, s, ctx.now)
-        # D56: discovery (the Scout's list) is a tier the Scalp reads, like trending was
-        tiers = {
-            t.value: by_tier[t]
-            for t in (Tier.CORE, Tier.MOMENTUM, Tier.TRENDING, Tier.DISCOVERY)
-            if t is not Tier.DISCOVERY or tiers_model(s) == "d56"
-        }
+        tiers = {t.value: by_tier.get(t, []) for t in TIER_ORDER}
     scope = ticker_scope(
         ctx.conn,
         tiers=tiers,
@@ -1091,13 +1070,15 @@ def symbols_source(ctx: JobContext) -> JobResult:
     c = active.counts
     parts.append(
         f"active {len(active.members)} (core {c['core']} · momentum {c['momentum']} · "
-        f"trending {c['trending']} · discovery {c['discovery']})"
+        f"discovery {c['discovery']})"
     )
     metrics |= {"active": len(active.members), **{f"tier_{k}": v for k, v in c.items()}}
     return JobResult(summary=" · ".join(parts), metrics=metrics)
 
 
 MOMENTUM_SOURCES_DEFAULT = ("stockanalysis", "schwab")
+#: E12.2: rows the momentum feed keeps (the tier takes its top universe_momentum_size_d56).
+MOMENTUM_FEED_SIZE = 25
 
 
 def run_momentum(
@@ -1120,7 +1101,7 @@ def run_momentum(
         cfg.symbol_master, user_agent=settings.edgar_user_agent, now=now, fetch_if_missing=False
     )
     order = [str(s) for s in options.get("source_order", MOMENTUM_SOURCES_DEFAULT)]
-    size = int(options.get("size", settings.universe_momentum_size))
+    size = int(options.get("size", MOMENTUM_FEED_SIZE))
     return fetch_momentum(
         cfg.momentum,
         source_order=order,
@@ -1187,155 +1168,6 @@ def universe_momentum_source(ctx: JobContext) -> JobResult:
             "removed": removed,
             "dropped": [f"{s}:{r}" for s, r in fetch.dropped],
             "source_errors": fetch.errors,
-            "active": len(active.members),
-        },
-    )
-
-
-def trending_get(cfg: Any, user_agent: str) -> Callable[[str], bytes]:
-    """E12.3: HTTP GET for the trending network inputs (connection errors / 5xx
-    retried, never 4xx). Lives here, not in ``arc.universe.trending``, so the config
-    validator importing that module stays free of HTTP clients (tower contract)."""
-    from arc.ingest.options_data import http_get
-
-    def get(url: str) -> bytes:
-        return http_get(url, user_agent, timeout=cfg.timeout_s, retries=cfg.retries)
-
-    return get
-
-
-def run_trending_tier(
-    *,
-    conn: sqlite3.Connection,
-    settings: ArcSettings,
-    routines: RoutinesConfig,
-    options: Mapping[str, Any],
-    now: _dt.datetime,
-    get: Callable[[str], bytes] | None = None,
-    screen: bool = True,
-    market_factory: Callable[[], Any] | None = None,
-) -> Any:
-    """E12.3: gather + rank + screen the trending tier (no write). ``TrendingResult``.
-
-    Raises :class:`arc.universe.trending.TrendingError` when the tier cannot be built.
-    """
-    from arc.ingest.sources import SourceRegistry
-    from arc.universe import load_symbol_master
-    from arc.universe.config import universe_config
-    from arc.universe.guard import UniverseGuard
-    from arc.universe.ingest import IngestUniverse
-    from arc.universe.tiers import Tier, market_reference, tier_membership
-    from arc.universe.trending import TrendingConfig, run_trending
-
-    tcfg = TrendingConfig.from_options(options)
-    ucfg = universe_config(settings)
-    master = load_symbol_master(
-        ucfg.symbol_master, user_agent=settings.edgar_user_agent, now=now, fetch_if_missing=False
-    )
-    exclude: dict[str, str] = {}
-    for t, tier in tier_membership(conn, settings, now).items():
-        if tier in (Tier.CORE, Tier.MOMENTUM):
-            exclude[t] = tier.value
-    if tcfg.exclude_market_reference:
-        for t in market_reference(settings):
-            exclude.setdefault(t, "market_reference")
-    # a share class of an excluded name (GOOG for core GOOGL) is the same company
-    for alias, target in ucfg.momentum.share_class_aliases.items():
-        if target in exclude:
-            exclude.setdefault(alias, exclude[target])
-    ingest = IngestUniverse.from_settings(settings, now=now, master=master, conn=conn)
-    registry = SourceRegistry.from_routines(routines)
-    guard_screen: Callable[[str], Any] | None = None
-    if screen:
-        guard = UniverseGuard.from_settings(
-            settings,
-            now=now,
-            master=master,
-            config=ucfg,
-            conn=conn,
-            market_factory=market_factory,
-        )
-        profile = ucfg.tiers.trending.screen
-        guard_screen = lambda sym: guard.screen(sym, profile)  # noqa: E731
-
-    size = int(options.get("size", settings.universe_trending_size))
-    return run_trending(
-        tcfg,
-        conn=conn,
-        now=now,
-        master=master,
-        size=size,
-        exclude=exclude,
-        get=get or trending_get(tcfg, settings.edgar_user_agent),
-        tickers_in=ingest.tickers_in,
-        key_for=registry.key_for,
-        screen=guard_screen,
-    )
-
-
-def universe_trending_source(ctx: JobContext) -> JobResult:
-    """E12.3 / D51: daily rules-based trending top N -> ``universe_tier`` (trending).
-
-    Records each input (URL, digest, count) in the run manifest, journals every
-    admission / screen fail / single-input reject, writes the tier entry (1 session),
-    posts the daily diff as a notice, then re-resolves today's active list. A run
-    that cannot build the tier raises: ``failed`` + alerted, nothing written, and the
-    tier is empty today (yesterday's entry has expired).
-
-    D56 (E13.4): under ``universe.tiers.model: d56`` there is no trending tier; the run
-    is ``skipped`` (no fetch, no write). The job itself is removed in E13.15.
-    """
-    from arc.universe.tiers import tiers_model
-
-    if tiers_model(ctx.settings) == "d56":
-        raise JobSkippedError("universe.tiers.model is d56: no trending tier")
-    from arc.universe.trending import (
-        build_payload,
-        journal_decisions,
-        notice_line,
-        previous_members,
-    )
-
-    res = run_trending_tier(
-        conn=ctx.conn,
-        settings=ctx.settings,
-        routines=ctx.routines,
-        options=ctx.options,
-        now=ctx.now,
-    )
-    for i in res.inputs:
-        ctx.record_input(
-            f"trending.{i.name}",
-            " ".join(i.urls) or i.type,
-            sorted(i.raw),
-            as_of=i.newest,
-            count=i.count,
-            digest=i.digest or None,
-        )
-    previous = previous_members(ctx.conn)
-    line = notice_line(res, previous)
-    journaled = journal_decisions(
-        ctx.conn, res, at=ctx.now, run_id=ctx.run_id, chain_run_id=ctx.chain_run_id
-    )
-    ctx.write("universe_tier", "trending", build_payload(res, now=ctx.now))
-    active = resolve_universe(ctx)
-    prev = set(previous or [])
-    return JobResult(
-        summary=f"{line} · active {len(active.members)}",
-        notice=line,
-        metrics={
-            "names": len(res.members),
-            "tickers": res.tickers,
-            "added": [t for t in res.tickers if t not in prev],
-            "removed": [t for t in (previous or []) if t not in set(res.tickers)],
-            "ranked": len(res.ranked),
-            "pool": len(res.pool),
-            "screen_fail": sum(1 for r in res.pool if r.screen_passed is False),
-            "single_input": len(res.single_input),
-            "excluded": len(res.excluded),
-            "inputs": {i.name: i.status for i in res.inputs},
-            "input_errors": res.failed_inputs,
-            "journaled": journaled,
             "active": len(active.members),
         },
     )
@@ -1601,7 +1433,6 @@ def _journal_universe_rejects(ctx: JobContext, result: ScalpRunResult) -> int:
         "not_in_universe": ReasonCode.UNIVERSE_NOT_IN_UNIVERSE,
         "unknown_symbol": ReasonCode.UNIVERSE_UNKNOWN_SYMBOL,
         "illiquid": ReasonCode.UNIVERSE_ILLIQUID,
-        "over_new_ticker_cap": ReasonCode.UNIVERSE_NEW_TICKER_CAP,
         "not_in_tier": ReasonCode.UNIVERSE_NOT_IN_TIER,  # D56: a mention, never a candidate
     }
     store = JournalStore(ctx.conn)
@@ -1670,62 +1501,6 @@ def _journal_tape_corroborations(ctx: JobContext, result: ScalpRunResult) -> int
                 "atm_spread_pct": t.atm_spread_pct,
                 "atm_oi": t.atm_oi,
                 "tape_as_of": tape.as_of,
-            },
-        )
-        n += 1
-    return n
-
-
-def _journal_floor_skips(ctx: JobContext, result: ScalpRunResult) -> int:
-    """E12.4: one ``scalp_candidate`` decision per core/momentum candidate kept below
-    ``scalp_min_confidence`` (payload ``confidence_floor_skipped: tier=<tier>``).
-
-    Once per ticker per ET day (the Scalp runs every 30 min). Returns the count.
-    """
-    if not result.floor_skipped:
-        return 0
-    import datetime as dt
-
-    from arc.context.ttl import to_db
-    from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
-    from arc.journal.store import JournalStore
-
-    day = ctx.now.astimezone(ET).date()
-    start = dt.datetime(day.year, day.month, day.day, tzinfo=ET)
-    done = {
-        r[0]
-        for r in ctx.conn.execute(
-            "SELECT subject FROM decisions WHERE reason_code = ? AND at >= ? AND at < ?"
-            " AND payload LIKE '%confidence_floor_skipped%'",
-            (
-                ReasonCode.SCALP_CANDIDATE.value,
-                to_db(start),
-                to_db(start + dt.timedelta(days=1)),
-            ),
-        ).fetchall()
-    }
-    store = JournalStore(ctx.conn)
-    n = 0
-    floor = ctx.settings.scalp_min_confidence
-    for ticker, (tier, conf) in sorted(result.floor_skipped.items()):
-        if ticker in done:
-            continue
-        store.record(
-            persona=JournalPersona.SCALP,
-            stage=Stage.CANDIDATE,
-            subject=ticker,
-            choice=Choice.SELECTED,
-            reason_code=ReasonCode.SCALP_CANDIDATE,
-            reason_text=f"{tier} name kept below the confidence floor ({conf:.2f} < {floor:.2f})",
-            confidence=conf,
-            at=ctx.now,
-            chain_run_id=ctx.chain_run_id,
-            run_id=ctx.run_id,
-            payload={
-                "confidence_floor_skipped": f"tier={tier}",
-                "tier": tier,
-                "confidence": conf,
-                "min_confidence": floor,
             },
         )
         n += 1
@@ -1810,7 +1585,6 @@ def scalp_persona(
         for p in result.stories:
             ctx.write("story", p.story_id, p, ttl=result.story_ttls.get(p.story_id))
     _journal_universe_rejects(ctx, result)
-    _journal_floor_skips(ctx, result)
     _journal_floor_rejects(ctx, result)
     _journal_tape_corroborations(ctx, result)
     if result.tape is not None:  # E13.10: the tape this run read (text + numbers)
@@ -1854,7 +1628,6 @@ def scalp_persona(
             "digest_batches": result.digest_batches,
             "failed_digest_batches": result.failed_digest_batches,
             "failed_batches": result.failed_batches,
-            "new_tickers": len(result.new_tickers),
             "mentions": len(result.mentions),
             **(
                 {
@@ -1878,7 +1651,6 @@ def scalp_persona(
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
             reject_details=result.reject_details,
-            new_tickers=result.new_tickers,
             source_mix=result.source_mix,
             stories=len(result.stories),
             category_mix=result.category_mix,
@@ -1903,8 +1675,7 @@ def scout_persona(
 ) -> JobResult:
     """Scout (E13.7, D56): snapshot → prompt → one cheap LLM call → code rules → writes.
 
-    Behind ``personas.scout_feed`` (off = skipped before any LLM call). Writes the
-    ``scout_read`` (subject ``session``), the ``discovery`` tier (only from the
+    Writes the ``scout_read`` (subject ``session``), the ``discovery`` tier (only from the
     YouTube calls, ``loose`` screen, ≤ ``funnel.scout.max_discovery``), re-resolves the
     active list, then writes a ``candidate`` (``feed=scout``) per call at or above its
     tier's floor. *llm* / *guard* override the Hermes backend and the universe guard
@@ -1951,8 +1722,6 @@ def scout_persona(
         tier_membership,
     )
 
-    if not ctx.routines.scout_feed.enabled:
-        raise JobSkippedError("personas.scout_feed off")
     funnel = ctx.routines.funnel.scout
     settings = ctx.settings
     found = ctx.routines.job(BRIEFS_JOB)
@@ -2295,12 +2064,10 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "earnings": "arc.routines.handlers:earnings_source",
     "symbols": "arc.routines.handlers:symbols_source",  # E5.7 weekly symbol master
     "universe.momentum": "arc.routines.handlers:universe_momentum_source",  # E12.2 monthly
-    "universe.trending": "arc.routines.handlers:universe_trending_source",  # E12.3 daily
     "youtube": "arc.routines.handlers:youtube_source",
     "youtube.briefs": "arc.routines.handlers:youtube_briefs",  # E4.6 daily briefs (D45)
     # E4.5 / D30 options-trading data (no LLM; typed context kinds)
     "vol_term": "arc.routines.handlers:vol_term_source",
-    "put_call": "arc.routines.handlers:put_call_source",
     "options_daily": "arc.routines.handlers:options_daily_source",  # E13.5 (D56)
     "vix_futures": "arc.routines.handlers:vix_futures_source",
     "options_fast": "arc.routines.handlers:options_fast_source",  # E13.6 (D56)
@@ -2313,7 +2080,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "finnhub.fundamentals": "arc.routines.handlers:finnhub_fundamentals_source",
     "finnhub.earnings_history": "arc.routines.handlers:finnhub_earnings_history_source",
     "scalp": "arc.routines.handlers:scalp_persona",
-    # E13.7 (D56): the daily Scout (personas.scout_feed; YouTube + options_slow)
+    # E13.7 (D56): the daily Scout (YouTube + options_slow)
     "scout": "arc.routines.handlers:scout_persona",
     # E5.2 pipeline chain: research → quant.open → risk.open → [quant.revise] →
     # quant.propose (arc/pipeline/steps.py; E13.9 / D56 step names)
@@ -2322,9 +2089,9 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "risk.open": "arc.pipeline.steps:risk_open_step",
     "quant.revise": "arc.pipeline.steps:quant_revise_step",
     "quant.propose": "arc.pipeline.steps:quant_propose_step",
-    # E13.17 (D56): exit cases judged by Quant (personas.exit_path shadow | research)
+    # E13.17 (D56): exit cases judged by Quant
     "quant.exit": "arc.pipeline.steps:quant_exit_step",
-    # E13.18 (D56): Risk's close | hold review of the exit cases (exit_path research)
+    # E13.18 (D56): Risk's close | hold review of the exit cases
     "risk.exit": "arc.pipeline.steps:risk_exit_step",
     # E5.3 intraday monitor (read-only: positions, Greeks, expiries, daily-loss halt)
     "monitor": "arc.routines.monitor:monitor_step",
@@ -2335,31 +2102,14 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "broker.execute": "arc.broker.ladder_job:execute_step",
     # E6.3 / D56 Broker reconcile: post-market broker vs local, snapshots, tax lots, card
     "broker.reconcile": "arc.broker.reconcile_job:broker_reconcile_step",
-    # E6.4 position manager: marks -> exits -> close-to-reallocate (arc/positions/steps.py)
+    # E6.4 position manager: marks -> mandatory exits (arc/positions/steps.py)
     "positions.evaluate": "arc.positions.steps:evaluate_step",
-    "quant.exits": "arc.positions.steps:exits_step",
-    "risk.reallocate": "arc.positions.steps:reallocate_step",
     # E13.18 (D56): the deterministic mandatory-exit floor (stop / DTE exit / expiry)
     "exits.mandatory": "arc.positions.steps:exits_mandatory_step",
     # E7.3 weekly paper scorecard (deterministic, from the audit store; posts as [Ops])
     "scorecard": "arc.routines.scorecard:scorecard_step",
     # E10.3 (D44): daily experiment evaluation after the EOD reconcile
     "experiments.evaluate": "arc.routines.experiments:experiments_evaluate_step",
-}
-
-#: D56 (E13.1/E13.2): pre-rename job names still resolve, for one release, to the
-#: renamed handlers (a local ``routines.yaml`` or ``--job sweep`` keeps working; logged).
-DEPRECATED_JOB_ALIASES: Mapping[str, str] = {
-    "sweep": "scalp",
-    "director": "research",
-    "investor": "broker",
-    "investor.exits": "quant.exits",
-    "execute": "broker.execute",
-    "auditor": "broker.reconcile",
-    # E13.9 (D56): open-path step renames
-    "quant": "quant.open",
-    "risk": "risk.open",
-    "propose": "quant.propose",
 }
 
 
@@ -2391,8 +2141,4 @@ def resolve_handler(
             return overrides[key]
         if key in BUILTIN_HANDLERS:
             return import_handler(BUILTIN_HANDLERS[key])
-        if key in DEPRECATED_JOB_ALIASES:
-            new = DEPRECATED_JOB_ALIASES[key]
-            log.warning("routines.deprecated_job_alias", job=name, alias=key, renamed_to=new)
-            return import_handler(BUILTIN_HANDLERS[new])
     return not_implemented

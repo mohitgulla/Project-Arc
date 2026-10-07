@@ -11,7 +11,6 @@ Outlays, and 7 regional/territory/trade releases that must be dropped).
 from __future__ import annotations
 
 import datetime as dt
-import json
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +24,7 @@ from arc.context.store import ContextStore
 from arc.ingest.options_data import (
     BLS_UA,
     BROWSER_UA,
-    CBOE_DAILY_URL,
     fetch_macro_calendar,
-    fetch_put_call,
     fetch_vol_term,
     macro_calendar,
     next_ex_dividends,
@@ -35,7 +32,6 @@ from arc.ingest.options_data import (
     parse_bls_ics,
     parse_cboe_history,
     parse_fomc_calendar,
-    parse_put_call,
     vol_term_from_closes,
 )
 from arc.personas.builders import (
@@ -110,34 +106,6 @@ class TestVolTerm:
     def test_parse_skips_bad_rows(self) -> None:
         text = "DATE,OPEN,HIGH,LOW,CLOSE\n09/25/2026,1,1,1,15.5\nbad,1,1,1,x\n09/26/2026,1,1,1,0\n"
         assert parse_cboe_history(text) == {dt.date(2026, 9, 25): 15.5}
-
-
-# ---------------------------------------------------------------------------
-# Put/call
-# ---------------------------------------------------------------------------
-
-
-class TestPutCall:
-    def test_recorded_daily_statistics(self) -> None:
-        p = parse_put_call(json.loads((FIX / "2026-09-28_daily_options.json").read_text()), TODAY)
-        assert p is not None
-        assert (p.total, p.equity, p.index, p.etp, p.vix) == (0.88, 0.58, 0.97, 1.15, 0.48)
-
-    def test_walks_back_to_latest_published_session(self) -> None:
-        """09-29 is not published yet at 09:00 ET: the fetch falls back to 09-28."""
-        p = fetch_put_call(TODAY, get=_fixture_get)
-        assert p is not None and p.as_of == "2026-09-28"
-        assert CBOE_DAILY_URL.format(day="x").endswith("x_daily_options")
-
-    def test_none_when_nothing_in_lookback(self) -> None:
-        def get(url: str, ua: str) -> bytes:
-            raise requests.HTTPError("404")
-
-        assert fetch_put_call(TODAY, get=get) is None
-        assert (
-            parse_put_call({"ratios": [{"name": "INDEX PUT/CALL RATIO", "value": "1"}]}, TODAY)
-            is None
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -414,20 +382,18 @@ class TestHandlers:
         import arc.ingest.options_data as od
         from arc.routines.handlers import (
             macro_calendar_source,
-            put_call_source,
             vol_term_source,
         )
 
         monkeypatch.setattr(od, "http_get", _fixture_get)  # every fetcher resolves it per call
 
         r1 = vol_term_source(_ctx(conn, "vol_term", ["vol_term"]))
-        r2 = put_call_source(_ctx(conn, "put_call", ["put_call"]))
         r3 = macro_calendar_source(
             _ctx(conn, "macro_calendar", ["macro_calendar"], horizon_days=45)
         )
-        assert "contango" in r1.summary and "0.88" in r2.summary and "next JOLTS" in r3.summary
+        assert "contango" in r1.summary and "next JOLTS" in r3.summary
         kinds = {e.kind for e in ContextStore(conn).query(as_of=NOW)}
-        assert kinds == {"vol_term", "put_call", "macro_calendar"}
+        assert kinds == {"vol_term", "macro_calendar"}
 
     def test_research_and_risk_prompts_carry_the_data(self, conn, monkeypatch) -> None:
         payload, _ = fetch_macro_calendar(TODAY, 45, get=_fixture_get)

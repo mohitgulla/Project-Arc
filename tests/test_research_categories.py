@@ -98,7 +98,6 @@ def test_six_headers_in_order_empty_one_says_no_fresh_info() -> None:
             _story("market_news", "Oil slips", dt.timedelta(hours=2), []),
             _story("filings", "NVDA 8-K buyback", dt.timedelta(hours=3), ["NVDA"]),  # alias
             _e("vol_term", "market", {}, dt.timedelta(hours=5)),
-            _e("put_call", "market", {}, dt.timedelta(hours=8)),
             _e("ex_dividend", "KO", {}, dt.timedelta(hours=1)),  # D56: reference data
             _e("macro_calendar", "market", {}, dt.timedelta(hours=1)),  # D56: reference data
             _brief("stockedup", dt.timedelta(hours=4)),
@@ -111,7 +110,7 @@ def test_six_headers_in_order_empty_one_says_no_fresh_info() -> None:
     assert lines[1] == "- Stocks rally on jobs [SPY]"
     assert "Company data: 1 story, newest 3h" in lines
     assert "Options fast: no fresh info" in lines  # empty: shown, never dropped
-    assert "Options slow: vol_term 5h, put_call 8h" in lines
+    assert "Options slow: vol_term 5h" in lines
     assert "ex_dividend" not in block and "macro_calendar" not in block
     # D49: presence per YouTube category; the denominator is that category's channels
     assert "YouTube macro: no fresh info (0/2 channels (missing: FX Evolution, Bravos))" in lines
@@ -190,7 +189,6 @@ def test_d49_six_headers_in_order_empty_one_says_no_fresh_info() -> None:
             _story("market_news", "Oil slips", dt.timedelta(hours=2), []),
             _story("filings", "NVDA 8-K buyback", dt.timedelta(hours=3), ["NVDA"]),  # alias
             _e("vol_term", "market", {}, dt.timedelta(hours=5)),
-            _e("put_call", "market", {}, dt.timedelta(hours=8)),
             _e("unusual_options", "AAPL", {"flags": ["volume"]}, dt.timedelta(hours=1)),
             _brief("stockedup", dt.timedelta(hours=4)),
         ]
@@ -202,7 +200,7 @@ def test_d49_six_headers_in_order_empty_one_says_no_fresh_info() -> None:
     assert lines[1] == "- Stocks rally on jobs [SPY]"
     assert "Company data: 1 story, newest 3h" in lines
     assert "Macro data: no fresh info" in lines  # empty: shown, never dropped
-    assert "Options data: vol_term 5h, put_call 8h, unusual_options 1 flagged, newest 1h" in lines
+    assert "Options data: vol_term 5h, unusual_options 1 flagged, newest 1h" in lines
     # D49: presence per YouTube category; the denominator is that category's channels
     assert "YouTube macro: no fresh info (0/2 channels (missing: FX Evolution, Bravos))" in lines
     assert "YouTube micro: 1/1 channels" in lines
@@ -234,16 +232,6 @@ class TestD49TypedKindFreshness:
         assert (
             "Options data: vol_term 3h" in d49_category_context_block(snap, CHANNELS).splitlines()
         )
-
-    def test_one_fresh_kind_keeps_the_category_fresh_and_lists_the_stale_one(self) -> None:
-        snap = _snapshot(
-            [
-                _e("vol_term", "market", {}, dt.timedelta(hours=2)),
-                _e("put_call", "market", {}, dt.timedelta(hours=14)),
-            ]
-        )
-        lines = d49_category_context_block(snap, CHANNELS).splitlines()
-        assert "Options data: vol_term 2h, put_call stale (14h)" in lines
 
     def test_stale_ticker_kinds_count_only_fresh_entries(self) -> None:
         snap = _snapshot(

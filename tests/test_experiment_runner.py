@@ -125,12 +125,18 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
         jobs = [r["job"] for r in runs]
         # shared inputs: the Scalp ran once, in control; the arm never re-runs it
         assert "scalp" not in jobs
-        assert jobs == ["research", "quant.open", "risk.open", "quant.propose", "broker.execute"]
-        assert all(r["status"] == "ok" for r in runs)
-        for r in runs[:3]:  # upstream of the fork: control's outputs, reused verbatim
+        assert jobs == [
+            "research", "exits.mandatory", "quant.exit", "risk.exit", "quant.open",
+            "risk.open", "quant.revise", "quant.propose", "broker.execute",
+        ]  # fmt: skip
+        assert all(r["status"] in ("ok", "skipped") for r in runs)
+        # E13.15: exits.mandatory reads the arm's own book, so the fork is right after
+        # Research; only Research's outputs are control's, reused verbatim
+        fork = "exits.mandatory"
+        for r in runs[: jobs.index(fork)]:
             assert r["summary"].startswith(f"paired: reused {control_runs[r['job']]}")
         pair = arm.execute("SELECT * FROM arm_pairs").fetchone()
-        assert pair["status"] == "ok" and pair["fork_step"] == "quant.propose"
+        assert pair["status"] == "ok" and pair["fork_step"] == fork
         assert pair["arm_chain_run_id"] == f"{chain}.{name}"
         manifests = arm.execute(
             "SELECT arm_id, payload FROM run_manifests ORDER BY created_at"
@@ -139,7 +145,7 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
         for m in manifests:
             p = json.loads(m["payload"])
             assert m["arm_id"] == f"XP-1:{name}"
-            assert p["paired_chain_run_id"] == chain and p["fork_step"] == "quant.propose"
+            assert p["paired_chain_run_id"] == chain and p["fork_step"] == fork
             assert p["git_sha"]
         # Research's decisions are control's, under the arm's chain id
         assert (

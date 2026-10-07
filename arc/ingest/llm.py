@@ -66,11 +66,6 @@ class PersonaLLM(Protocol):
     def complete(self, prompt: str) -> LLMResult: ...
 
 
-#: D56 (E13.1): pre-rename names, kept for one release.
-SweepLLM = PersonaLLM
-ScalpLLM = PersonaLLM
-
-
 # ---------------------------------------------------------------------------
 # Fixture backend (dry-run / tests)
 # ---------------------------------------------------------------------------

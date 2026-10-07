@@ -158,7 +158,7 @@ def _with(extra: dict[str, Any]) -> dict[str, Any]:
     return {**BASE_EXITS, "pipeline": {**BASE_EXITS["pipeline"], **extra}}
 
 
-@pytest.mark.parametrize("off", [False, None, "off", "none", "control", "strict", "d51"])
+@pytest.mark.parametrize("off", [False, None, "off", "none", "control", "strict"])
 def test_new_flag_defaulting_off_passes(off: Any) -> None:
     deltas = _exits_delta(BASE_EXITS, _with({"skip_iv_crush": off}))
     r = _eval(

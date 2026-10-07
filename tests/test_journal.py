@@ -507,7 +507,7 @@ def test_show_tree_orders_stages(conn: sqlite3.Connection) -> None:
 
 def test_replay_matches_recorded_prompts(conn: sqlite3.Connection) -> None:
     res = replay(conn, _phash(conn))
-    assert [r.persona for r in res] == ["research", "quant", "risk"]
+    assert [r.persona for r in res] == ["research", "quant", "risk_open"]
     assert all(r.ok for r in res), res
 
 

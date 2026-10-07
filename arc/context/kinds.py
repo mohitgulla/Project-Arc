@@ -111,13 +111,13 @@ class ShortlistPayload(ResearchOutput):
         default_factory=list,
         description="Ideas (ticker stance structure) the dedupe held back from Research",
     )
-    # E13.8 (D56/D53), schema v4 (additive): the idea pool's make-up; None = the
-    # control (research_idea_pool scalp + research_compact_prompt full) or a v3 row.
+    # E13.8 (D56/D53), schema v4 (additive): the idea pool's make-up; None = a
+    # pre-cutover (Scalp-only pool, full prompt) or v3 row.
     pool_counts: dict[Literal["scalp", "scout", "both", "scout_only_capped"], int] | None = Field(
         None, description="Idea pool size by feed, plus Scout-only ideas cut by the cap"
     )
     # E13.17 (D56), schema v5 (additive): the exit watchlist's hold / review counts;
-    # None = personas.exit_path deterministic (no watchlist) or an older row.
+    # None = a pre-cutover (deterministic exits, no watchlist) or older row.
     exit_watchlist_counts: dict[Literal["hold", "review"], int] | None = Field(
         None, description="Research's exit watchlist: positions to hold / to review"
     )
@@ -415,21 +415,6 @@ class VolTermPayload(BaseModel):
     ratio_3m_1m: float | None = Field(None, description="VIX3M / VIX (> 1 = contango)")
     ratio_9d_1m: float | None = Field(None, description="VIX9D / VIX (> 1 = front stress)")
     structure: Literal["contango", "flat", "backwardation"]
-    source: str = "cboe"
-
-
-class PutCallPayload(BaseModel):
-    """Cboe daily put/call ratios (options sentiment)."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    as_of: str
-    total: float | None = None
-    equity: float | None = None
-    index: float | None = None
-    etp: float | None = None
-    spx: float | None = None
-    vix: float | None = None
     source: str = "cboe"
 
 
@@ -842,7 +827,6 @@ KINDS: Mapping[str, KindSpec] = _registry(
     # E4.5 (D30): story digests + options-trading data sources
     KindSpec("story", StoryPayload),
     KindSpec("vol_term", VolTermPayload),
-    KindSpec("put_call", PutCallPayload),
     # E13.5 (D56): options_slow (Cboe daily stats + CFE VX settlement curve; subject market)
     KindSpec("options_daily", OptionsDailyPayload),
     KindSpec("vx_curve", VxCurvePayload),

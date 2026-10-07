@@ -23,6 +23,7 @@ from arc.universe.tiers import (
     ACTIVE_SUBJECT,
     DROP_OVER_ACTIVE_CAP,
     MAX_CORE,
+    TIER_ORDER,
     ActiveUniverse,
     Tier,
     TierMember,
@@ -30,9 +31,7 @@ from arc.universe.tiers import (
     core_tickers,
     ignored_core_override,
     market_reference,
-    tier_order,
     tier_sizes,
-    tiers_model,
 )
 from arc.utils.calendar import ET
 
@@ -79,15 +78,13 @@ class UniverseDroppedRow(BaseModel):
 class UniverseTierRow(BaseModel):
     model_config = _STRICT
 
-    name: str = Field(
-        description="core | momentum | trending | discovery (precedence order; d56 has no trending)"
-    )
+    name: str = Field(description="core | momentum | discovery (precedence order)")
     offered: int = Field(description="Names the tier offered before dedupe and caps (raw_count)")
     active: int = Field(description="Names this tier holds in the active list")
     size_cap: int | None = Field(
-        description="The tier's size: core ceiling 30, momentum/trending sizes; null = no cut"
+        description="The tier's size: core ceiling 30, momentum/discovery sizes; null = no cut"
     )
-    source: str | None = Field(description="Feed source (stockanalysis, reddit+…, settings, scalp)")
+    source: str | None = Field(description="Feed source (stockanalysis, settings, config, scout)")
     url: str | None = None
     fetched_at: _dt.datetime | None = Field(description="Latest universe_tier entry's fetch time")
     age_s: int | None = None
@@ -109,9 +106,9 @@ class UniverseResponse(BaseModel):
 
     as_of: _dt.datetime = Field(description="Server time of this read")
     model: Literal["d51", "d56"] = Field(
-        "d51",
-        description="Tier layout the shown resolve used (d51 | d56); config/universe.yaml "
-        "tiers.model when nothing is resolved",
+        "d56",
+        description="Tier layout the shown resolve used: d56 (E13.15: the only layout); a "
+        "stored pre-cutover resolve reads d51 until the next resolve",
     )
     state: ResolveState = Field(
         description="today = resolved today; stale = latest resolve is older (consumers use the "
@@ -135,7 +132,7 @@ class UniverseResponse(BaseModel):
     discovery_fill: int | None = Field(
         None,
         description="E13.14 (D56): names the Scout's discovery feed listed today (0 = none "
-        "yet); null under d51",
+        "yet); null for a stored pre-cutover (d51) resolve",
     )
     core_override_ignored: CoreOverrideIgnored | None = None
     director_diversification: str | None = Field(
@@ -219,7 +216,7 @@ def _active_row(m: TierMember) -> UniverseActiveRow:
     )
 
 
-def _core_fallback(settings: ArcSettings, day: _dt.date, model: str) -> ActiveUniverse:
+def _core_fallback(settings: ArcSettings, day: _dt.date) -> ActiveUniverse:
     """No resolve stored: the core list, as every consumer reads it (no write, no resolve)."""
     source = "config" if ignored_core_override(settings) else "settings"
     names = core_tickers(settings)
@@ -227,9 +224,9 @@ def _core_fallback(settings: ArcSettings, day: _dt.date, model: str) -> ActiveUn
         TierMember(ticker=t, tier=Tier.CORE, rank=i, source=source, reason="core list", as_of=day)
         for i, t in enumerate(names, 1)
     ]
-    counts = {t.value: 0 for t in tier_order(model)} | {Tier.CORE.value: len(members)}
+    counts = {t.value: 0 for t in TIER_ORDER} | {Tier.CORE.value: len(members)}
     return ActiveUniverse(
-        model="d56" if model == "d56" else "d51",
+        model="d56",
         as_of=day,
         members=members,
         counts=counts,
@@ -259,7 +256,7 @@ def load_universe(
         valid = expires is None or expires > now
         state: ResolveState = "today" if active.as_of == today and valid else "stale"
     else:
-        active = _core_fallback(settings, today, tiers_model(settings))
+        active = _core_fallback(settings, today)
         state = "none"
     note = {
         "today": None,
@@ -271,25 +268,16 @@ def load_universe(
         "none": "No resolve stored yet: consumers use the core list (shown here).",
     }[state]
 
-    sizes: dict[Tier, int | None] = {
-        Tier.CORE: MAX_CORE,
-        Tier.MOMENTUM: None,
-        Tier.TRENDING: None,
-        Tier.DISCOVERY: None,
-        **tier_sizes(settings, active.model),
-    }
+    sizes: dict[Tier, int | None] = {Tier.CORE: MAX_CORE, **tier_sizes(settings)}
     core_source = next((m.source for m in active.members if m.tier is Tier.CORE), "settings")
     fixed_source: dict[Tier, str | None] = {
         Tier.CORE: core_source,
         Tier.MOMENTUM: None,
-        Tier.TRENDING: None,
-        Tier.DISCOVERY: "scout" if active.model == "d56" else "scalp",
+        Tier.DISCOVERY: "scout",
     }
-    feed_tiers = (
-        (Tier.MOMENTUM, Tier.DISCOVERY) if active.model == "d56" else (Tier.MOMENTUM, Tier.TRENDING)
-    )
+    feed_tiers = (Tier.MOMENTUM, Tier.DISCOVERY)
     tiers: list[UniverseTierRow] = []
-    for tier in tier_order(active.model):
+    for tier in TIER_ORDER:
         feed = _feed(conn, tier) if has_ctx and tier in feed_tiers else None
         fetched = feed.fetched_at.astimezone(ET) if feed is not None else None
         source = feed.source if feed is not None else fixed_source[tier]
@@ -346,7 +334,7 @@ def load_universe(
         active=[_active_row(m) for m in active.members],
         tiers=tiers,
         dropped=dropped,
-        market_reference=market_reference(settings, model=active.model),
+        market_reference=market_reference(settings),
         tail_cuts=[d for d in dropped if d.reason == DROP_OVER_ACTIVE_CAP],
         discovery_fill=fill,
         core_override_ignored=override,

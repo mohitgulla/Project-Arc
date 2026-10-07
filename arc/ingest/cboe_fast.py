@@ -623,7 +623,7 @@ def tape_from_store(conn: Any, now: _dt.datetime, max_age: _dt.timedelta) -> str
 
 
 # ---------------------------------------------------------------------------
-# E13.10: the Scalp's tape input (flag personas.scalp_options_tape)
+# E13.10: the Scalp's tape input (always on since E13.15)
 # ---------------------------------------------------------------------------
 
 #: The ``Candidate.sources`` token (and corroboration source key) the tape adds.

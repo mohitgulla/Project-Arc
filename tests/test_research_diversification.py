@@ -68,7 +68,9 @@ REPO = Path(__file__).resolve().parent.parent
 # label and "candidates from" lines only (diffed against origin/main f1c1429).
 # E13.2: re-pinned after a name-only diff ("Risk and the Investor" -> "Risk and Quant").
 MAIN_RESEARCH_SHA = "99cba9618473fe2eb21ba6410b6e5fe0d8480becf2312168f3c851e906ea573b"
-MAIN_RULES_SHA = "08bc85caa583b536a000ab72d9625df6eb64eeb595bc21ad341fc32e62c63265"
+# E13.15: re-pinned; the rules are the compact (idea-pool) wording only now, the
+# one ``research_compact_prompt: compact`` shipped (the full-prompt rules were removed).
+MAIN_RULES_SHA = "e87a08b86218c919a624f92a6f3445193a5b7a1325d476e1dc36f44985359c94"
 RELAXED = ResearchDiversificationSettings(mode="relaxed")
 STRICT = ResearchDiversificationSettings()
 INDUSTRIES = {"NVDA": "semis", "AMD": "semis", "AVGO": "semis", "MU": "memory_storage"}

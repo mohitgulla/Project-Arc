@@ -20,7 +20,7 @@ import pytest
 from arc.config import DEFAULT_UNIVERSE, ArcSettings
 from arc.context.kinds import KINDS, CandidatePayload, ScoutReadPayload
 from arc.context.store import ContextStore
-from arc.control.registry import REGISTRY, Risk, lookup
+from arc.control.registry import REGISTRY, TunableError, lookup
 from arc.ingest.llm import LLMResult, ScalpLLMError
 from arc.journal.reasons import REASON_LABELS, ReasonCode
 from arc.llm_routing import Persona
@@ -45,7 +45,6 @@ from arc.routines.handlers import (
     BUILTIN_HANDLERS,
     ContractViolationError,
     JobContext,
-    JobSkippedError,
     scout_persona,
 )
 from arc.slack.digests import scout_card
@@ -201,8 +200,8 @@ def _routines(*, on: bool = True, writes: list[str] | None = None) -> RoutinesCo
         {
             "sources": {"youtube.briefs": {"schedule": ["02:00"], **BRIEFS_OPTIONS}},
             "personas": {
-                "scout_feed": "on" if on else "off",
                 "scout": {
+                    "enabled": on,
                     "schedule": ["06:00"],
                     "persona": "scout",
                     "llm": True,
@@ -494,12 +493,11 @@ class TestValidation:
 
 
 class TestHandler:
-    def test_off_switch_skips_before_any_llm_call(self, db: sqlite3.Connection) -> None:
-        llm = FakeLLM()
-        with pytest.raises(JobSkippedError, match="scout_feed off"):
-            scout_persona(_ctx(db, _routines(on=False), _settings()), llm=llm)
-        assert llm.prompts == []
-        assert db.execute("SELECT COUNT(*) FROM persona_calls").fetchone()[0] == 0
+    def test_no_switch_left(self) -> None:
+        """E13.15: ``personas.scout_feed`` is gone; the job's own ``enabled`` remains."""
+        from arc.control.registry import is_orphaned
+
+        assert is_orphaned("personas.scout_feed") and "scout_feed" not in PERSONA_FLAGS
 
     def test_full_run(self, db: sqlite3.Connection) -> None:
         _seed(db)
@@ -622,7 +620,6 @@ class TestHandler:
 class TestWiring:
     def test_shipped_job(self) -> None:
         c = load_routines(DEFAULT_ROUTINES_PATH)
-        assert c.scout_feed.enabled is False  # strategy lane: default off
         kind, spec = c.step("scout")
         assert kind == "persona"
         assert [t.strftime("%H:%M") for t in spec.schedule] == ["06:00"]
@@ -644,13 +641,12 @@ class TestWiring:
         }
         assert c.context_policy("scout_read", "scout").ttl.duration == dt.timedelta(hours=24)
         assert BUILTIN_HANDLERS["scout"] == "arc.routines.handlers:scout_persona"
-        assert "scout_feed" in PERSONA_FLAGS and "scout" in TIMELINE_PERSONAS
+        assert "scout" in TIMELINE_PERSONAS
 
     def test_registry_flag(self) -> None:
-        t = lookup("personas.scout_feed")
-        assert t is lookup("scout_feed")
-        assert t.risk is Risk.ORDER and t.choices == ("off", "on")
-        assert REGISTRY["personas.scout_feed"] is t
+        with pytest.raises(TunableError):
+            lookup("personas.scout_feed")
+        assert "personas.scout_feed" not in REGISTRY
 
     def test_strategy_lane_covers_scout(self) -> None:
         import yaml

@@ -153,8 +153,10 @@ class TestNoChange:
         # the skipped steps are on the record with the reason
         runs = RoutineRunRepo(conn)
         skipped = [r for r in runs.history(limit=30) if r.status.value == "skipped"]
-        assert {r.job for r in skipped} == {"quant.open", "risk.open", "quant.propose"}
-        assert all("no_change" in (r.summary or "") for r in skipped)
+        # E13.15: the exit steps skip on their own (no open positions / no cases)
+        assert {r.job for r in skipped} >= {"quant.open", "risk.open", "quant.propose"}
+        loop_skips = [r for r in skipped if r.job in ("quant.open", "risk.open", "quant.propose")]
+        assert all("no_change" in (r.summary or "") for r in loop_skips)
         # the run manifest carries the digest that was compared
         (payload,) = conn.execute(
             "SELECT payload FROM run_manifests WHERE run_id = ?", (d.run_id,)
@@ -463,7 +465,10 @@ class TestOverlapAndDeadline:
         assert chain_id is not None
         summary = LoopState(conn).chain_summary(chain_id)
         assert summary is not None and summary["timeout"] is True
-        assert set(summary["durations_ms"]) == {"research"}
+        # exits.mandatory is never deadline-skipped (§5.32); the LLM steps are
+        assert set(summary["durations_ms"]) <= {"research", "exits.mandatory", "quant.exit",
+                                                "risk.exit"}  # fmt: skip
+        assert "quant.open" not in summary["durations_ms"]
 
 
 # ---------------------------------------------------------------------------

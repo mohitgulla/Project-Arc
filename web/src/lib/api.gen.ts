@@ -437,7 +437,7 @@ export interface paths {
         /**
          * Positions
          * @description Open, closed or all structures with the latest broker marks; open rows carry the
-         *     E13.14 exit path under ``personas.exit_path`` shadow | research.
+         *     E13.14 exit path (D56: always Research-managed since E13.15).
          */
         get: operations["positions_api_positions_get"];
         put?: never;
@@ -2146,7 +2146,7 @@ export interface components {
             mandatory_pending: number;
             /**
              * Mode
-             * @description personas.exit_path (effective config)
+             * @description Exit path mode (research since the D56 cutover)
              * @enum {string}
              */
             mode: "deterministic" | "shadow" | "research";
@@ -5727,7 +5727,7 @@ export interface components {
             director_diversification?: string | null;
             /**
              * Discovery Fill
-             * @description E13.14 (D56): names the Scout's discovery feed listed today (0 = none yet); null under d51
+             * @description E13.14 (D56): names the Scout's discovery feed listed today (0 = none yet); null for a stored pre-cutover (d51) resolve
              */
             discovery_fill?: number | null;
             /** Dropped */
@@ -5736,8 +5736,8 @@ export interface components {
             market_reference: string[];
             /**
              * Model
-             * @description Tier layout the shown resolve used (d51 | d56); config/universe.yaml tiers.model when nothing is resolved
-             * @default d51
+             * @description Tier layout the shown resolve used: d56 (E13.15: the only layout); a stored pre-cutover resolve reads d51 until the next resolve
+             * @default d56
              * @enum {string}
              */
             model: "d51" | "d56";
@@ -5790,7 +5790,7 @@ export interface components {
             fetched_at: string | null;
             /**
              * Name
-             * @description core | momentum | trending | discovery (precedence order; d56 has no trending)
+             * @description core | momentum | discovery (precedence order)
              */
             name: string;
             /**
@@ -5805,12 +5805,12 @@ export interface components {
             partial: boolean;
             /**
              * Size Cap
-             * @description The tier's size: core ceiling 30, momentum/trending sizes; null = no cut
+             * @description The tier's size: core ceiling 30, momentum/discovery sizes; null = no cut
              */
             size_cap: number | null;
             /**
              * Source
-             * @description Feed source (stockanalysis, reddit+…, settings, scalp)
+             * @description Feed source (stockanalysis, settings, config, scout)
              */
             source: string | null;
             /** Source As Of */

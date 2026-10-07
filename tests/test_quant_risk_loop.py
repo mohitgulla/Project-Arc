@@ -1,11 +1,9 @@
-"""E13.9 (D56): the Quant <-> Risk open path behind ``personas.quant_risk_loop``.
+"""E13.9 (D56): the Quant <-> Risk open path (always on since E13.15).
 
-Flag off: the chain is today's under the new step names and the Quant/Risk prompts
-are byte-identical to origin/main (hashes from tests/quant_risk_golden.py run on main
-568cf0f). Flag on: Risk gives each structure a verdict; rejects never reach a
-proposal; one ``quant.revise`` round answers the revise requests from the same scanner
-menu; a step that needs more loop budget than is left is skipped
-(``step_skipped_deadline``) while later steps still run.
+Risk gives each structure a verdict; rejects never reach a proposal; one
+``quant.revise`` round answers the revise requests from the same scanner menu; a step
+that needs more loop budget than is left is skipped (``step_skipped_deadline``) while
+later steps still run.
 """
 
 from __future__ import annotations
@@ -23,22 +21,16 @@ from arc.journal.reasons import REASON_LABELS, ReasonCode
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
 from arc.pipeline.runner import ProposeReport, open_db, run_propose
 from arc.routines.config import (
+    AUTO_CHAINS,
     DEFAULT_ROUTINES_PATH,
     RoutinesConfig,
-    chain_for,
     load_routines,
 )
 from arc.routines.heartbeat import RecordingNotifier
-from tests import quant_risk_golden as golden
 
 if TYPE_CHECKING:
     import sqlite3
 
-# sha256 of tests/quant_risk_golden.py's prompts on origin/main 568cf0f (pre-E13.9).
-MAIN_QUANT_SHA = "d8e037e77f52de90f454d803fc6ce3411f193452b6f25f5fc3e4c8a19e8b0046"
-MAIN_RISK_SHA = "d6afe8f741fdc0ef2f4312ed3dc1f44c858edc2d575426f9ff1873adc5a2da5b"
-
-OFF_CHAIN = ["quant.open", "risk.open", "quant.propose", "broker.execute"]
 ON_CHAIN = ["quant.open", "risk.open", "quant.revise", "quant.propose", "broker.execute"]
 
 # Scanner-menu legs of the offline recording (SPY neutral condors, NVDA bull puts).
@@ -70,8 +62,10 @@ def settings(monkeypatch: pytest.MonkeyPatch) -> ArcSettings:
     return s
 
 
-def _routines(on: bool) -> RoutinesConfig:
-    return load_routines(overrides={("personas", "quant_risk_loop"): "on" if on else "off"})
+def _routines(on: bool = True) -> RoutinesConfig:
+    """The shipped routines (E13.15: the loop is always on)."""
+    assert on
+    return load_routines(DEFAULT_ROUTINES_PATH)
 
 
 def _structure(ticker: str, kind: str, legs: list[tuple[str, str, int, str]], why: str) -> dict:
@@ -167,92 +161,40 @@ def _codes(conn: sqlite3.Connection, stage: str) -> dict[str, list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# config: chain_for, the flag, aliases
+# config
 # ---------------------------------------------------------------------------
 
 
 class TestConfig:
-    def test_chain_for(self) -> None:
-        assert chain_for("research", {}) == OFF_CHAIN
-        assert chain_for("research", {"quant_risk_loop": False}) == OFF_CHAIN
-        assert chain_for("research", {"quant_risk_loop": True}) == ON_CHAIN
-        assert chain_for("positions.evaluate", {"quant_risk_loop": True})[0] == "quant.exits"
-        with pytest.raises(ValueError, match="chain: auto"):
-            chain_for("scalp", {})
-
-    def test_shipped_default_off(self) -> None:
+    def test_fixed_chain(self) -> None:
         r = load_routines(DEFAULT_ROUTINES_PATH)
-        assert r.quant_risk_loop.enabled is False
-        assert r.personas["research"].chain == OFF_CHAIN
-        assert _routines(on=True).personas["research"].chain == ON_CHAIN
+        assert AUTO_CHAINS["research"][-len(ON_CHAIN) :] == tuple(ON_CHAIN)
+        assert r.personas["research"].chain[-len(ON_CHAIN) :] == ON_CHAIN
         rev = r.steps["quant.revise"]
         assert rev.min_remaining_s == 90 and rev.on_no_change == "skip"
         assert rev.writes == ["structures", "note"]
         assert "risk_review" in (r.steps["quant.propose"].reads or [])
 
-    def test_literal_chain_still_loads_and_old_names_alias(self) -> None:
+    def test_old_step_names_rejected(self) -> None:
+        """E13.15: the one-release ``quant`` / ``risk`` / ``propose`` aliases are gone."""
         c = RoutinesConfig.model_validate(
             {
                 "personas": {"research": {"schedule": ["09:00"], "chain": ["quant", "risk"]}},
                 "steps": {"propose": {"llm": False}},
-                "monitoring": {"stuck_after_jobs": {"risk": "10m"}},
             }
         )
-        assert c.personas["research"].chain == ["quant.open", "risk.open"]
-        assert c.steps["quant.propose"].llm is False
-        assert c.step("quant") == c.step("quant.open")
-        assert c.monitoring.stuck_after_for("risk.open") == dt.timedelta(minutes=10)
+        assert c.personas["research"].chain == ["quant", "risk"]  # no longer renamed
+        assert "propose" in c.steps and "quant.propose" not in c.steps
 
-    def test_flag_registered_as_strategy_switch(self) -> None:
-        from arc.control.registry import Risk, lookup
+    def test_switch_orphaned(self) -> None:
+        from arc.control.registry import is_orphaned
 
-        t = lookup("personas.quant_risk_loop")
-        assert t.choices == ("off", "on") and t.risk is Risk.ORDER
-        assert lookup("quant_risk_loop").key == t.key
+        assert is_orphaned("personas.quant_risk_loop")
 
     def test_reason_codes_labelled(self) -> None:
         for code in (ReasonCode.RISK_REVISE, ReasonCode.RISK_REJECT, ReasonCode.QUANT_REVISED,
                      ReasonCode.QUANT_KEPT):  # fmt: skip
             assert REASON_LABELS[code]
-
-
-# ---------------------------------------------------------------------------
-# flag off: today's behaviour, byte-identical prompts
-# ---------------------------------------------------------------------------
-
-
-class TestFlagOff:
-    def test_prompts_byte_identical_to_main(self) -> None:
-        prompts = golden.fixture_prompts(_routines(on=False))
-        assert [golden.digest(p) for p in prompts["quant"]] == [MAIN_QUANT_SHA]
-        assert [golden.digest(p) for p in prompts["risk"]] == [MAIN_RISK_SHA]
-        assert "verdict" not in prompts["risk"][0]
-
-    def test_chain_and_attribution(self, settings: ArcSettings) -> None:
-        conn, report = _run(settings, _routines(on=False), _env())
-        assert [o.job for o in report.outcomes][2:] == OFF_CHAIN
-        assert len(report.proposals) == 1
-        # quant.propose is the Quant's step now (was persona 'system')
-        personas = {
-            r["persona"]
-            for r in conn.execute("SELECT persona FROM decisions WHERE stage='propose'")
-        }
-        assert personas == {"quant"}
-        review = conn.execute(
-            "SELECT payload FROM decisions WHERE stage='risk_review' AND subject='SPY'"
-        ).fetchone()
-        assert "verdict" not in json.loads(review["payload"])  # today's journal shape
-
-    def test_revise_step_skips_itself_when_run_with_flag_off(self, settings: ArcSettings) -> None:
-        # A literal chain naming quant.revise with the flag off: it skips, chain goes on.
-        r = _routines(on=False)
-        research = r.personas["research"].model_copy(update={"chain": ON_CHAIN})
-        r = r.model_copy(update={"personas": {**r.personas, "research": research}})
-        _, report = _run(settings, r, _env())
-        out = _outcomes(report)
-        assert out["quant.revise"].status == "skipped"
-        assert "quant_risk_loop is off" in out["quant.revise"].summary
-        assert out["quant.propose"].status == "ok" and len(report.proposals) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -285,12 +227,12 @@ class TestFlagOn:
         env = _env()  # fixture Risk reply has no verdicts -> every structure is accept
         conn, report = _run(settings, on, env)
         out = _outcomes(report)
-        assert [o.job for o in report.outcomes][2:] == ON_CHAIN
+        assert [o.job for o in report.outcomes][-len(ON_CHAIN) :] == ON_CHAIN
         assert out["quant.revise"].status == "skipped"
         assert out["quant.revise"].summary == "no revise requests"
         assert len(env.llms["quant"].prompts) == 1  # type: ignore[attr-defined]
         assert len(report.proposals) == 1
-        # Risk's flag-on prompt carries the verdict block; flag-off does not
+        # Risk's prompt carries the verdict block
         risk_prompt = env.llms["risk"].prompts[0]  # type: ignore[attr-defined]
         assert "verdict" in risk_prompt and "revise_request" in risk_prompt
         assert out["risk.open"].metrics["verdict_accept"] == 1
@@ -439,41 +381,23 @@ def test_deadline_skips_the_step_and_later_steps_run(settings: ArcSettings) -> N
 
 
 # ---------------------------------------------------------------------------
-# experiments (XP-7): where a paired arm forks
+# experiments: where a paired arm forks
 # ---------------------------------------------------------------------------
 
 
 def test_experiment_fork_points() -> None:
     from arc.experiments.runner import ACCOUNT_STEPS, STEP_TARGETS, fork_step
 
-    loop_on = {"routines": {"personas": {"quant_risk_loop": "on"}}}
-    # The flag changes Risk's prompt (verdicts), so the treatment arm reuses control's
-    # Research + quant.open and re-runs from risk.open (control's review has no verdicts).
     chain = ["research", *ON_CHAIN]
-    assert fork_step(chain, loop_on) == "risk.open"
-    # Any other routines key (or the flag plus another key) still re-runs Research.
+    # Any routines key re-runs Research.
     assert fork_step(chain, {"routines": {"loop": {"max_runtime": "5m"}}}) == "research"
-    both = {"routines": {"personas": {"quant_risk_loop": "on", "finnhub_context": "on"}}}
+    both = {"routines": {"personas": {"finnhub_context": "on"}}}
     assert fork_step(chain, both) == "research"
     assert fork_step(chain, {"exits": {"x": 1}}) == "quant.open"
     assert fork_step(chain, {}) == "quant.propose"
     assert {"quant.open", "risk.open", "quant.revise", "quant.propose"} <= set(STEP_TARGETS)
     # E13.18: exits.mandatory closes against the arm's own book
     assert frozenset({"exits.mandatory", "quant.propose", "broker.execute"}) == ACCOUNT_STEPS
-
-
-def test_xp7_draft_spec_loads() -> None:
-    from arc.control.effective import overlay_overrides
-    from arc.experiments.overlay import load_spec
-    from arc.routines.config import REPO_ROOT
-
-    spec = load_spec(REPO_ROOT / "config/experiments/live/xp7_quant_risk_loop.yaml")
-    assert spec.id == "XP-7"
-    overlay = spec.arms.treatment.overlay
-    assert overlay == {"routines": {"personas": {"quant_risk_loop": "on"}}}
-    on = load_routines(overrides=overlay_overrides(overlay)["routines"])
-    assert on.personas["research"].chain == ON_CHAIN
-    assert on.quant_risk_loop.enabled
 
 
 def test_legacy_job_names_map_old_steps_but_not_personas() -> None:

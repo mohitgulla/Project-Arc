@@ -1,26 +1,20 @@
-"""E13.17 (D56): Research exit watchlist + quant.exit exit cases behind
-``personas.exit_path`` (deterministic | shadow | research).
+"""E13.17 (D56): Research exit watchlist + quant.exit exit cases.
 
-Runs the fixture chain (bundled SPY recording + fixture personas):
-
-* ``deterministic`` (default): byte-identical Research prompt (no exit block, the
-  E5.9 thesis-check wording), no ``exit_watchlist`` write, no ``quant.exit`` step;
-* ``shadow``: the exit block + watchlist; one ``exit_case`` per triggered position;
-  journal rows; **no proposal** from the exit path; a reply that omits a case holds;
-* ``research`` adds the close path (E13.18, ``tests/test_risk_exit.py``).
+Runs the fixture chain (bundled SPY recording + fixture personas). Since E13.15 the
+exit path is always on (``personas.exit_path`` removed): the exit block + watchlist;
+one ``exit_case`` per triggered position; journal rows; a reply that omits a case
+holds. The close path (``risk.exit`` + ``quant.propose``) is in
+``tests/test_risk_exit.py``.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import json
-import re
 from typing import TYPE_CHECKING, Any
 
-import pytest
-
 from arc.config import ArcSettings
-from arc.control.registry import lookup
+from arc.control.registry import is_orphaned
 from arc.ingest.llm import FixtureScalpLLM
 from arc.ingest.scalp import load_fixture_docs
 from arc.pipeline import FIXTURE_NOW, PipelineEnv
@@ -31,10 +25,10 @@ from arc.pipeline.portfolio_context import (
 )
 from arc.pipeline.runner import open_db
 from arc.routines.config import (
+    AUTO_CHAINS,
     DEFAULT_ROUTINES_PATH,
     PERSONA_CHOICES,
     RoutinesConfig,
-    chain_for,
     load_routines,
 )
 from tests.test_e59_research_portfolio import (
@@ -49,7 +43,7 @@ from tests.test_routines_e53 import _env
 if TYPE_CHECKING:
     import sqlite3
 
-OFF_CHAIN = ["quant.open", "risk.open", "quant.propose", "broker.execute"]
+OPEN_CHAIN = ["quant.open", "risk.open", "quant.revise", "quant.propose", "broker.execute"]
 
 
 def _settings(**kw: object) -> ArcSettings:
@@ -58,8 +52,10 @@ def _settings(**kw: object) -> ArcSettings:
     return ArcSettings(**base)  # type: ignore[arg-type]
 
 
-def _routines(mode: str) -> RoutinesConfig:
-    return load_routines(overrides={("personas", "exit_path"): mode})
+def _routines(mode: str = "research") -> RoutinesConfig:
+    """The shipped routines (E13.15: the exit path is always ``research``)."""
+    assert mode == "research"
+    return load_routines(DEFAULT_ROUTINES_PATH)
 
 
 def _research_reply(**over: Any) -> str:
@@ -134,35 +130,28 @@ def _watch_reply(sid: str, action: str = "review") -> str:
 
 
 class TestConfig:
-    def test_chain_for_exit_path(self) -> None:
-        assert chain_for("research", {}) == OFF_CHAIN
-        assert chain_for("research", {}, {"exit_path": "deterministic"}) == OFF_CHAIN
-        assert chain_for("research", {}, {"exit_path": "shadow"}) == ["quant.exit", *OFF_CHAIN]
-        # E13.18: research adds the mandatory floor and Risk's exit review
-        assert chain_for("research", {}, {"exit_path": "research"}) == [
-            "exits.mandatory", "quant.exit", "risk.exit", *OFF_CHAIN,
-        ]  # fmt: skip
-        assert chain_for("research", {"quant_risk_loop": True}, {"exit_path": "shadow"}) == [
-            "quant.exit", "quant.open", "risk.open", "quant.revise", "quant.propose",
-            "broker.execute",
-        ]  # fmt: skip
-        # the positions chain keeps today's steps under shadow (E13.18: research differs)
-        assert chain_for("positions.evaluate", {}, {"exit_path": "shadow"})[0] == "quant.exits"
+    def test_fixed_chains(self) -> None:
+        assert AUTO_CHAINS["research"] == (
+            "exits.mandatory", "quant.exit", "risk.exit", *OPEN_CHAIN,
+        )  # fmt: skip
+        assert AUTO_CHAINS["positions.evaluate"] == ("exits.mandatory", "broker.execute")
 
-    def test_shipped_default_is_deterministic(self) -> None:
+    def test_shipped_chain_and_steps(self) -> None:
         r = load_routines(DEFAULT_ROUTINES_PATH)
-        assert r.exit_path.mode == "deterministic" and r.exit_path.watch is False
-        assert r.personas["research"].chain == OFF_CHAIN
-        assert _routines("shadow").personas["research"].chain[0] == "quant.exit"
-        assert _routines("research").exit_path.watch is True
+        assert r.personas["research"].chain == list(AUTO_CHAINS["research"])
         q = r.steps["quant.exit"]
         assert q.on_no_change == "skip" and q.writes == ["exit_case", "note"]
         assert {"exit_watchlist", "position_review"} <= set(r.personas["research"].writes or [])
-        assert PERSONA_CHOICES["exit_path"] == ("deterministic", "shadow", "research")
+        assert "exit_path" not in PERSONA_CHOICES
 
-    def test_bad_value_rejected(self) -> None:
-        with pytest.raises(ValueError, match="exit_path"):
-            _routines("roll")
+    def test_old_switch_ignored(self, tmp_path: Any) -> None:
+        text = DEFAULT_ROUTINES_PATH.read_text().replace(
+            "personas:\n", "personas:\n  exit_path: deterministic\n", 1
+        )
+        path = tmp_path / "routines.yaml"
+        path.write_text(text)
+        r = load_routines(path)
+        assert r.personas["research"].chain == list(AUTO_CHAINS["research"])
 
     def test_experiment_fork_knows_the_step(self) -> None:
         from arc.experiments.runner import STEP_TARGETS
@@ -170,9 +159,7 @@ class TestConfig:
         assert "exits" in STEP_TARGETS["quant.exit"]
 
     def test_registry(self) -> None:
-        t = lookup("personas.exit_path")
-        assert t.choices == ("deterministic", "shadow", "research")
-        assert lookup("exit_path").key == t.key
+        assert is_orphaned("personas.exit_path")
         s = ArcSettings(_env_file=None)  # type: ignore[call-arg]
         assert s.exit_block_max_chars_per_position == 600
         assert (s.quant_exit_max_cases, s.quant_exit_case_max_chars) == (8, 900)
@@ -219,31 +206,7 @@ class TestExitBlock:
 
 
 class TestChain:
-    def test_deterministic_prompt_and_writes_unchanged(self) -> None:
-        conn, env, sid = _book()
-        env.llms["research"] = FixtureScalpLLM([_research_reply()])
-        conn, report = _run(_settings(), _routines("deterministic"), env, conn=conn)
-        assert not report.failed
-        prompt = env.llms["research"].prompts[0]  # type: ignore[attr-defined]
-        assert "exit watch" not in prompt and "exit_watchlist" not in prompt
-        assert "`thesis_checks` entry per open structure" in prompt
-        assert _kind(conn, "exit_watchlist") == [] and _kind(conn, "exit_case") == []
-        assert "quant.exit" not in {o.job for o in report.outcomes}
-        assert _kind(conn, "shortlist")[-1].get("exit_watchlist_counts") is None
-
-    def test_deterministic_prompt_identical_to_default_routines(self) -> None:
-        """The off value and today's shipped config build the same Research prompt."""
-        prompts = []
-        for routines in (load_routines(DEFAULT_ROUTINES_PATH), _routines("deterministic")):
-            conn, env, _ = _book()
-            env.llms["research"] = FixtureScalpLLM([_research_reply()])
-            _run(_settings(), routines, env, conn=conn)
-            prompts.append(env.llms["research"].prompts[0])  # type: ignore[attr-defined]
-        ids = re.compile(r'"id": "[0-9a-f]{16}"|os-[0-9a-f]{16}|(ctx|st)-[0-9a-f]+')
-        assert ids.sub("<id>", prompts[0]) == ids.sub("<id>", prompts[1])
-
-    @pytest.mark.parametrize("mode", ["shadow", "research"])
-    def test_shadow_writes_watchlist_and_cases_never_a_proposal(self, mode: str) -> None:
+    def test_writes_watchlist_and_cases(self) -> None:
         conn, env, sid = _book()
         env.llms["research"] = FixtureScalpLLM([_watch_reply(sid)])
         quant_exit = _quant(
@@ -261,7 +224,7 @@ class TestChain:
             ),
         )
         before = conn.execute("SELECT COUNT(*) FROM proposals").fetchone()[0]
-        conn, report = _run(_settings(), _routines(mode), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed, report
         prompt = env.llms["research"].prompts[0]  # type: ignore[attr-defined]
         assert "### Open positions (exit watch; facts by code, E13.17)" in prompt
@@ -286,22 +249,15 @@ class TestChain:
         assert case["options"] == ["hold", "close"]
         assert codes.get("exit:case_built") or _codes(conn, "exit")["exit:case_built"] == [sid]
         assert "Exit cases (deterministic facts" in quant_exit.prompts[0]
-        # shadow: nothing proposed by the exit path
+        # quant.exit itself proposes nothing: the close needs Risk's verdict (E13.18)
         rows = conn.execute("SELECT structure_json FROM proposals").fetchall()
         assert len(rows) == before + len(report.proposals)
-        assert not [p for p in report.proposals if p.get("kind") == "close"]
-        assert (
-            conn.execute(
-                "SELECT exit_proposal_hash FROM open_structures WHERE id = ?", (sid,)
-            ).fetchone()[0]
-            is None
-        )
 
     def test_missing_judgement_holds_and_hold_item_has_no_case(self) -> None:
         conn, env, sid = _book()
         env.llms["research"] = FixtureScalpLLM([_watch_reply(sid)])
         _quant(env, json.dumps({"cases": []}))
-        conn, report = _run(_settings(), _routines("shadow"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed
         (case,) = _kind(conn, "exit_case")
         assert case["recommendation"] == "hold"
@@ -310,7 +266,7 @@ class TestChain:
         conn, env, sid = _book()
         env.llms["research"] = FixtureScalpLLM([_watch_reply(sid, "hold")])
         quant = _quant(env, None)
-        conn, report = _run(_settings(), _routines("shadow"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed
         codes = _codes(conn, "exit")
         assert codes["exit:watch_hold"] == [sid]
@@ -326,7 +282,7 @@ class TestChain:
             [_research_reply(portfolio_view={"verdict": "balanced", "notes": "ok"})]
         )
         _quant(env, None)
-        conn, report = _run(_settings(), _routines("shadow"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed
         (wl,) = _kind(conn, "exit_watchlist")
         assert wl["items"] == [] and wl["missing"] == [sid]
@@ -336,7 +292,7 @@ class TestChain:
         conn, env, sid = _book()
         env.llms["research"] = FixtureScalpLLM([_watch_reply(sid)])
         _quant(env, "not json")
-        conn, report = _run(_settings(), _routines("shadow"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed
         (case,) = _kind(conn, "exit_case")
         assert case["recommendation"] == "hold"
@@ -358,7 +314,7 @@ class TestChain:
         )  # fmt: skip
         env.llms["research"] = FixtureScalpLLM([reply])
         _quant(env, json.dumps({"cases": []}))
-        conn, report = _run(_settings(quant_exit_max_cases=1), _routines("shadow"), env, conn=conn)
+        conn, report = _run(_settings(quant_exit_max_cases=1), _routines(), env, conn=conn)
         assert not report.failed and sids
         assert len(_kind(conn, "exit_case")) == 1
         assert _outcome(report, "quant.exit").metrics["exit_over_limit"] == 1

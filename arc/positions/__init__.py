@@ -4,9 +4,10 @@
   loss, DTE, theta, remaining net EV per $ BP, remaining PoP, exit signals).
 - :mod:`arc.positions.reallocate`: pure D19 swap scorer (edge after switching
   costs, PoP tolerance, churn caps).
-- :mod:`arc.positions.steps`: the ``positions.evaluate → quant.exits →
-  risk.reallocate`` routine chain. Every close or swap open is a proposal that
-  goes through the gate and approval; nothing here submits orders.
+- :mod:`arc.positions.steps`: ``positions.evaluate`` and the ``exits.mandatory``
+  floor, plus the swap helpers the Research exit path uses (D56). Every close or
+  swap open is a proposal that goes through the gate and approval; nothing here
+  submits orders.
 """
 
 from arc.positions.evaluate import ExitSignal, PositionReview, SignalKind, review_position

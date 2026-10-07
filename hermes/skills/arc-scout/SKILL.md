@@ -10,8 +10,8 @@ description: "Arc Scout (daily slow-feed read) persona"
 
 ## Role
 
-Once per trading day (06:00 ET, `personas.scout` in `config/routines.yaml`, behind the
-`personas.scout_feed: off | on` switch, default off) read the slow feed and write the
+Once per trading day (06:00 ET, `personas.scout` in `config/routines.yaml`) read the
+slow feed and write the
 morning read: the market regime, options sentiment, shared themes, single-name ticker
 calls, the **discovery tier** and the risks. The Scout is the only way a name enters
 the discovery tier (D56, owner decision 1); the Scalp never admits names outside the

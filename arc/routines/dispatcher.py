@@ -48,7 +48,7 @@ from arc.context.store import ContextSnapshot, ContextStore
 from arc.context.ttl import to_db
 from arc.monitoring.correlation import bind as bind_ids
 from arc.routines.conditions import evaluate_condition
-from arc.routines.config import JobKind, Lane, Notify, current_job_name
+from arc.routines.config import JobKind, Lane, Notify
 from arc.routines.handlers import (
     Handler,
     JobContext,
@@ -89,7 +89,7 @@ _HALT_DEFERRED = "halt_deferred:{event}"
 # D39: the background child that owns a claimed run (one owner per run).
 _BG_OWNER = "bg_owner:{run}"
 # Chain steps whose name is not a persona, mapped to the persona whose model they use.
-# D56 (E13.2): broker.execute / quant.exits are deterministic (no persona model).
+# D56 (E13.2): broker.execute / exits.mandatory are deterministic (no persona model).
 _STEP_PERSONA = {
     "quant": "quant",
     "risk": "risk",
@@ -99,9 +99,9 @@ _STEP_PERSONA = {
     "quant.revise": "quant",
     "risk.open": "risk",
     "quant.propose": "quant",
-    # E13.17 (D56): exit cases (personas.exit_path shadow | research)
+    # E13.17 (D56): exit cases
     "quant.exit": "quant",
-    # E13.18 (D56): Risk's exit review (personas.exit_path research)
+    # E13.18 (D56): Risk's exit review
     "risk.exit": "risk",
 }
 
@@ -623,8 +623,8 @@ class Dispatcher:
         """D39: does *name* (a job or chain step) call a local, on-device model?
 
         The persona is the step's name (``scalp.overnight`` -> ``scalp``,
-        ``risk.reallocate`` -> ``risk``) or its chain-step owner (``quant``,
-        ``propose`` ...). Fail-safe: an unreadable routing file, or a step with no
+        ``risk.exit`` -> ``risk``) or its chain-step owner (``quant.open``,
+        ``quant.propose`` ...). Fail-safe: an unreadable routing file, or a step with no
         persona while any tier is local, counts as local (takes the lock).
         """
         routing = self._routing_config()
@@ -666,8 +666,6 @@ class Dispatcher:
         parent_run_id: str | None = None,
     ) -> list[Outcome]:
         """Run *job* for *scheduled_for* (plus its chain), then fire triggers."""
-        if self.routines.job(job) is None:
-            job = current_job_name(job)  # D56: `investor` / `auditor` load as aliases
         found = self.routines.job(job)
         if found is None:
             msg = f"unknown job {job!r}"
@@ -1667,8 +1665,6 @@ class Dispatcher:
         drain, which defers it until ``!resume`` or its TTL. Otherwise the event is
         consumed by this run whatever the outcome.
         """
-        if self.routines.job(job) is None:
-            job = current_job_name(job)  # D56: `investor` / `auditor` load as aliases
         found = self.routines.job(job)
         if found is None:
             msg = f"unknown job {job!r}"
@@ -1714,8 +1710,6 @@ class Dispatcher:
         self, job: str, *, now: _dt.datetime, chain: bool = False, fresh: bool = False
     ) -> list[Outcome]:
         """``arc routines run <job> [--chain]``: resume today's failed chain, else run now."""
-        if self.routines.job(job) is None:
-            job = current_job_name(job)  # D56: `investor` / `auditor` load as aliases
         found = self.routines.job(job)
         if found is None:
             msg = f"unknown job {job!r}"

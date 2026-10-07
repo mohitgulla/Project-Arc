@@ -156,11 +156,11 @@ def _positions(db: Path, tmp_path: Path) -> dict:
 
 
 class TestExitPath:
-    def test_shadow_chain_rows_and_strip(self, exits_db: Path, tmp_path: Path) -> None:
+    def test_research_chain_rows_and_strip(self, exits_db: Path, tmp_path: Path) -> None:
         body = _positions(exits_db, tmp_path)
         strip = body["exit_path"]
         assert strip == {
-            "mode": "shadow", "mandatory_pending": 1, "cases_today": 2,
+            "mode": "research", "mandatory_pending": 1, "cases_today": 2,
             "closes_proposed_today": 1, "holds_today": 1,
         }  # fmt: skip
         rows = {r["ticker"]: r for r in body["items"]}
@@ -182,11 +182,11 @@ class TestExitPath:
         assert nvda["mandatory_signal"] == "stop"
         assert nvda["exit_case"] is None and nvda["exit_review"] is None
 
-    def test_deterministic_mode_has_no_views(self, plain_db: Path, tmp_path: Path) -> None:
+    def test_no_entries_no_views(self, plain_db: Path, tmp_path: Path) -> None:
         body = _positions(plain_db, tmp_path)
-        assert body["exit_path"] == {
-            "mode": "deterministic", "mandatory_pending": 0, "cases_today": 0,
-            "closes_proposed_today": 0, "holds_today": 0,
+        assert body["exit_path"] == {  # the fixture's one close proposal is counted
+            "mode": "research", "mandatory_pending": 0, "cases_today": 0,
+            "closes_proposed_today": 1, "holds_today": 0,
         }  # fmt: skip
         for r in body["items"]:
             assert (r["exit_watch"], r["exit_case"], r["exit_review"]) == (None, None, None)
@@ -411,8 +411,10 @@ def _universe(tmp_path: Path, model: str) -> tuple[UniverseResponse, dict[str, i
         core=[_m("NVDA", Tier.CORE, 1), _m("AAPL", Tier.CORE, 2)],
         momentum=[_m("MU", Tier.MOMENTUM, 1), _m("GE", Tier.MOMENTUM, 2)],
         discoveries=[_m("QCOM", Tier.DISCOVERY, 1), _m("TEM", Tier.DISCOVERY, 2)],
-        active_max=5, as_of=TODAY, config_version=3, model=model,  # type: ignore[arg-type]
+        active_max=5, as_of=TODAY, config_version=3,
     )  # fmt: skip
+    if model == "d51":  # a stored pre-cutover resolve
+        active = active.model_copy(update={"model": "d51"})
     store = ContextStore(c)
     at = NOW - dt.timedelta(minutes=10)
     store.write(kind="active_universe", subject="active", payload=active, produced_by="t",
@@ -435,7 +437,8 @@ def _universe(tmp_path: Path, model: str) -> tuple[UniverseResponse, dict[str, i
 
 
 class TestUniverse:
-    def test_d51_tail_cuts_and_no_fill(self, tmp_path: Path) -> None:
+    def test_stored_d51_resolve_still_renders(self, tmp_path: Path) -> None:
+        # a pre-E13.15 resolve stored as d51 still loads; no Scout fill is counted
         r, _ = _universe(tmp_path, "d51")
         assert r.model == "d51" and r.discovery_fill is None
         assert [(d.ticker, d.tier) for d in r.tail_cuts] == [("TEM", "discovery")]

@@ -189,7 +189,7 @@ def test_explain_full_tree_for_closed_proposal(conn: sqlite3.Connection) -> None
     assert doc.proposal_hash == ph and doc.status == "closed" and doc.ticker == "SPY"
     assert rep.chain_run_id and rep.chain_run_id.startswith("chain-")
     # persona prompts' sha256 + replies
-    assert [c.persona for c in doc.persona_calls] == ["research", "quant", "risk"]
+    assert [c.persona for c in doc.persona_calls] == ["research", "quant", "risk_open"]
     assert all(len(c.prompt_sha256) == 64 and c.raw_response for c in doc.persona_calls)
     # gate verdict + violations, token withheld
     assert doc.gate is not None and doc.gate.passed and doc.gate.violations == []
@@ -289,7 +289,7 @@ def test_attribution_flags_low_sample(conn: sqlite3.Connection) -> None:
     assert b.key == {
         "kind": "iron_condor",
         "regime": "risk_on",
-        "persona_model": "quant=fixture,research=fixture,risk=fixture",
+        "persona_model": "quant=fixture,research=fixture,risk_open=fixture",
     }
     assert b.n == 1 and b.low_sample is True and rep.min_sample == MIN_SAMPLE == 30
     assert b.realised_pnl == pytest.approx(float(t["pnl"]))

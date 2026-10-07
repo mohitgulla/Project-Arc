@@ -37,17 +37,16 @@ class ScalpInput:
     scan_date: str  # ISO-8601
     min_confidence: float | None = None  # threshold the pipeline will apply
     output_schema_json: str = ""  # JSON Schema of ScalpOutput, embedded verbatim
-    # D28/D51: True = `universe` is the watch list (core + momentum + trending) and
-    # any US-listed optionable
-    # ticker the feeds discuss may be proposed (screened deterministically after).
+    # D28/D56: True = `universe` is the watch list (core + momentum + discovery); other
+    # listed tickers the feeds discuss may be proposed (kept only as mentions).
     open_universe: bool = False
     # D30: True = `raw_feeds` are stage-1 story digests (clustered, source-counted),
     # not raw documents; the prompt then tells the Scalp to weigh evidence, not volume.
     digests: bool = False
     # E4.8a (D46): code-built Finnhub facts, one line per ticker ("" = flag off).
     ticker_facts: str = ""
-    # E13.10 (D56): the code-built options_fast tape ("" = personas.scalp_options_tape
-    # off: the prompt is then byte-identical to the pre-E13.10 one).
+    # E13.10 (D56): the code-built options_fast tape ("" = no tape rows, or a recorded
+    # pre-E13.10 call: the prompt is then byte-identical to the pre-E13.10 one).
     options_tape: str = ""
 
 
@@ -69,7 +68,7 @@ class ResearchInput:
     portfolio_summary: str  # current portfolio state
     scan_date: str
     notes_json: str = "[]"  # prior D27 notes (context, not instructions)
-    market_data_json: str = "{}"  # D30: vol term, put/call, macro calendar
+    market_data_json: str = "{}"  # D30: vol term, macro calendar
     # E5.9 (D33): "" when the book is empty (the prompt is then identical to E5.7's).
     portfolio_block: str = ""  # rendered open book + aggregates (arc.pipeline.portfolio_context)
     recent_ideas: str = ""  # suppressed (ticker, stance) ideas with why; "" when none
@@ -92,15 +91,16 @@ class ResearchInput:
     # E13.8 (D56/D53): the merged Scalp + Scout idea pool, one line per ticker ("" =
     # not recorded: the candidates JSON alone, as before E13.8).
     pool_block: str = ""
-    pool_merged: bool = False  # personas.research_idea_pool: all
-    # E13.8 (D56/D54): personas.research_compact_prompt: compact.
+    pool_merged: bool = False  # Scalp + Scout pool (always since E13.15)
+    # E13.8 (D56/D54): the compact prompt (always since E13.15; False = a recorded
+    # pre-cutover call rebuilt by `arc journal replay`).
     compact: bool = False
     scout_read: str = ""  # the Scout's read (compact prompt only; "" = none active)
     regime_lines: str = ""  # one line per ticker (compact prompt only)
     market_lines: str = ""  # vol term / put-call / macro calendar lines (compact only)
     notes_lines: str = ""  # prior notes, one line each (compact prompt only)
-    # E13.17 (D56): personas.exit_path != deterministic. "" = the E5.9 thesis-check
-    # wording (byte-identical prompt off the exit path).
+    # E13.17 (D56): the exit watch. "" = no open positions, or a recorded pre-cutover
+    # call (the E5.9 thesis-check wording).
     exit_block: str = ""  # one position line + one facts line per open structure
     exit_rules: tuple[str, ...] = ()  # policy lines shown with the exit watch
 
@@ -211,15 +211,15 @@ def research_input_from_context(
 
     E13.8 (D56/D53/D54), all recorded by the step so a replay rebuilds the prompt:
     *idea_pool* (the code-built :class:`PoolItem` dumps) renders the one-line-per-
-    ticker pool; *pool_merged* (``research_idea_pool: all``) labels it Scalp + Scout;
-    *candidate_tickers* restricts the candidate entries to the pool (``None`` = every
-    active entry, as before); *compact* (``research_compact_prompt: compact``) swaps
+    ticker pool; *pool_merged* labels it Scalp + Scout; *candidate_tickers* restricts
+    the candidate entries to the pool (``None`` = every active entry); *compact* swaps
     the JSON blocks for one-line renderings and adds the ``scout_read``;
-    *max_headlines* is the per-category headline count after budget trimming.
+    *max_headlines* is the per-category headline count after budget trimming. Since
+    E13.15 (D56 cutover) the step always records ``compact`` + ``pool_merged``; the
+    full renderer below only rebuilds pre-cutover recorded calls (journal replay).
 
-    E13.17 (D56): *exit_block* / *exit_rules* (``personas.exit_path`` !=
-    ``deterministic``, recorded by the step) add the exit-watch section; empty keeps
-    the prompt byte for byte.
+    E13.17 (D56): *exit_block* / *exit_rules* (recorded by the step whenever the book
+    is not empty) add the exit-watch section.
     """
     entries = snapshot.of_kind("candidate")
     if candidate_tickers is not None:
@@ -402,18 +402,13 @@ def regime_line(ticker: str, payload: Mapping[str, Any]) -> str:
 
 
 def market_lines(data: Mapping[str, Any]) -> str:
-    """D30 market data as one line per kind (vol term, put/call, macro calendar)."""
+    """D30 market data as one line per kind (vol term, macro calendar)."""
     out: list[str] = []
     vt = data.get("vol_term")
     if vt:
         keys = ("vix9d", "vix", "vix3m", "vvix", "ratio_9d_1m", "ratio_3m_1m")
         nums = " · ".join(f"{k} {_num(vt.get(k))}" for k in keys if vt.get(k) is not None)
         out.append(f"Vol term ({vt.get('as_of', '?')}): {vt.get('structure', '?')} · {nums}")
-    pc = data.get("put_call")
-    if pc:
-        keys = ("total", "equity", "index", "spx", "etp", "vix")
-        nums = " · ".join(f"{k} {_num(pc.get(k))}" for k in keys if pc.get(k) is not None)
-        out.append(f"Put/call ({pc.get('as_of', '?')}): {nums}")
     mc = data.get("macro_calendar")
     if mc:
         events = sorted(mc.get("events") or [], key=lambda e: str(e.get("date", "")))
@@ -511,7 +506,7 @@ def category_specs_input(routines: Any) -> dict[str, dict[str, str]]:
 # Each is judged against its category's ``max_age`` from ``valid_from``;
 # ``channel_brief`` goes by its channel's category. Reference data (ex_dividend,
 # macro_calendar, Finnhub kinds) is not a category and is never listed here.
-_MARKET_KINDS: Mapping[str, tuple[str, ...]] = {"options_slow": ("vol_term", "put_call")}
+_MARKET_KINDS: Mapping[str, tuple[str, ...]] = {"options_slow": ("vol_term",)}
 
 # D49 (frozen for replay, D56): the six D49 categories and the typed kinds they listed.
 _D49_ORDER = (
@@ -532,7 +527,7 @@ _D49_DEFAULTS: Mapping[str, tuple[str, str]] = {
 }
 _D49_MARKET_KINDS: Mapping[str, tuple[str, ...]] = {
     "macro_data": ("macro_calendar",),
-    "options_data": ("vol_term", "put_call"),
+    "options_data": ("vol_term",),
 }
 _D49_TICKER_KINDS: Mapping[str, tuple[str, ...]] = {
     "options_data": ("unusual_options", "ex_dividend")
@@ -616,7 +611,7 @@ def category_context_block(
     keep equal standing in front of the LLM. Ages are measured from
     ``snapshot.as_of`` (no wall clock).
 
-    A typed entry (vol_term, put_call, channel_brief) older than its category's
+    A typed entry (vol_term, channel_brief) older than its category's
     ``max_age`` (from ``valid_from``) is listed as ``<kind> stale (age)`` and does not
     count as fresh; a category with nothing fresh reads ``no fresh info``. The context
     TTL is untouched (the entries stay readable for audit). Reference data (D56) is
@@ -860,7 +855,7 @@ def d47_category_context_block(
             cal = _kind_age("macro_calendar")
             out += _news(cat, [cal] if cal else [])
         elif cat == "options_data":
-            facts = [a for a in (_kind_age("vol_term"), _kind_age("put_call")) if a]
+            facts = [a for a in (_kind_age("vol_term"),) if a]
             n_uoa = sum(1 for e in snapshot.of_kind("unusual_options") if e.payload.get("flags"))
             if n_uoa:
                 facts.append(f"unusual_options {n_uoa} flagged")
@@ -1366,7 +1361,7 @@ def market_data_from_context(snapshot: ContextSnapshot, *, unusual: bool = False
     removed E4.5 detector wrote (D56 dropped the kind).
     """
     out: dict[str, Any] = {}
-    for kind in ("vol_term", "put_call", "macro_calendar"):
+    for kind in ("vol_term", "macro_calendar"):
         entry = snapshot.latest(kind, "market")
         if entry is not None:
             out[kind] = entry.payload
@@ -1557,7 +1552,7 @@ def build_scalp_prompt(inp: ScalpInput) -> str:
             "any other US-listed, optionable stock or ETF the feeds actually discuss."
         )
         task_line = (
-            "Analyze the feeds below. Watch list (core + momentum + trending): "
+            "Analyze the feeds below. Watch list (core + momentum + discovery): "
             f"{', '.join(inp.universe)}. The watch list is not a preference: judge every name "
             "on the feeds' evidence alone."
         )
@@ -1796,7 +1791,7 @@ def _compact_lines(title: str, body: str, note: str = "") -> str:
 
 
 def build_research_prompt_compact(inp: ResearchInput) -> str:
-    """E13.8 (D54): the compact Research prompt (``research_compact_prompt: compact``).
+    """E13.8 (D54): the compact Research prompt (the only live one since E13.15).
 
     One line per pool ticker and per regime entry, the Scout's read, the category
     counts with at most ``COMPACT_MAX_HEADLINES`` headlines each, D30 data as lines,
@@ -1941,91 +1936,7 @@ Respond with JSON matching the QuantOutput schema:
 
 
 # ---------------------------------------------------------------------------
-# Risk
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class RiskSwapInput:
-    """Input context for the Risk close-to-reallocate review (E6.4)."""
-
-    suggestions_json: str  # deterministic SwapSuggestion rows, each with its swap_id
-    reviews_json: str  # position_review entries of the positions to be closed
-    portfolio_json: str
-    account_equity: float
-    scan_date: str
-
-
-def risk_swap_input_from_context(
-    snapshot: ContextSnapshot,
-    *,
-    suggestions_json: str,
-    portfolio_json: str,
-    account_equity: float,
-    scan_date: str,
-) -> RiskSwapInput:
-    """Risk reads the active ``position_review`` entries (all subjects)."""
-    reviews = [e.payload for e in snapshot.of_kind("position_review")]
-    return RiskSwapInput(
-        suggestions_json=suggestions_json,
-        reviews_json=_dump(reviews),
-        portfolio_json=portfolio_json,
-        account_equity=account_equity,
-        scan_date=scan_date,
-    )
-
-
-def build_risk_swap_prompt(inp: RiskSwapInput) -> str:
-    """Build the Risk prompt that reviews close-to-reallocate swaps (veto only)."""
-    return f"""{_SYSTEM_PREAMBLE}
-{_ADVISORY_DISCLAIMER}
-## Role: Risk (Close-to-reallocate review)
-Slack label: [Risk]
-
-A deterministic scorer found open positions whose remaining expected value per
-dollar of buying power is clearly worse than a new trade the gate rejected only
-for capacity (buying power, per-underlying budget or the open-position cap).
-Each suggestion closes one open position first; the new trade is proposed only
-after that close fills. Both still go through the risk gate and approval.
-
-Review each suggestion and APPROVE or VETO it. Veto when, for example, the new
-trade duplicates exposure you already hold, an event (earnings, FOMC) makes the
-switch worse than the numbers show, or the open position's thesis is intact and
-close to paying off. You cannot add swaps or change sizes or prices.
-
-## Forbidden actions
-- Do NOT call any broker API or place any orders.
-- Do NOT override or bypass the risk gate.
-
-## Inputs
-
-### Suggested swaps (deterministic; edge = EV per $ of buying power, after costs)
-{inp.suggestions_json}
-
-### Reviews of the positions that would be closed
-{inp.reviews_json}
-
-### Current portfolio
-{inp.portfolio_json}
-
-### Account equity
-${inp.account_equity:,.2f}
-
-Date: {inp.scan_date}
-
-## Output format
-Respond with JSON matching the RiskSwapReview schema:
-{{
-  "verdicts": [
-    {{"swap_id": "...", "approve": true, "narrative": "..."}}
-  ],
-  "advisory_notes": "..."
-}}
-"""
-
-
-# ---------------------------------------------------------------------------
-# E13.17 (D56): Quant exit cases (personas.exit_path shadow | research)
+# E13.17 (D56): Quant exit cases
 # ---------------------------------------------------------------------------
 
 
@@ -2092,7 +2003,7 @@ Respond with JSON matching the QuantExitOutput schema, one entry per case:
 
 
 # ---------------------------------------------------------------------------
-# E13.18 (D56): Risk exit review (personas.exit_path research)
+# E13.18 (D56): Risk exit review
 # ---------------------------------------------------------------------------
 
 
@@ -2235,7 +2146,7 @@ Respond with JSON matching the RiskOutput schema:
 
 
 # ---------------------------------------------------------------------------
-# E13.9 (D56): Quant <-> Risk open path (personas.quant_risk_loop: on)
+# E13.9 (D56): Quant <-> Risk open path
 # ---------------------------------------------------------------------------
 
 RISK_VERDICT_BLOCK = """\
@@ -2291,11 +2202,3 @@ Rejected by Risk (dropped, do not re-propose): {rejected}.
         '  "skipped": [{"ticker": "...", "reason": "..."}],',
         '  "skipped": [{"ticker": "...", "reason": "..."}],\n  "kept": ["..."],',
     )
-
-
-# D56 (E13.1): pre-rename names, re-exported for one release.
-SweepInput = ScalpInput
-DirectorInput = ResearchInput
-build_sweep_prompt = build_scalp_prompt
-build_director_prompt = build_research_prompt
-director_input_from_context = research_input_from_context

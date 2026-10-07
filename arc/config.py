@@ -732,7 +732,7 @@ class ArcSettings(BaseSettings):
         description=(
             "D46/D51: per-ticker Finnhub jobs fetch at most this many tickers per run "
             "(open-position underlyings first, then today's candidates, core, momentum, "
-            "trending)."
+            "discovery)."
         ),
     )
     finnhub_insider_window_days: Annotated[int, Field(ge=7, le=365)] = Field(
@@ -845,10 +845,6 @@ class ArcSettings(BaseSettings):
         default=30,
         description="Max ticker calls kept from one Scout reply (schema cap 30).",
     )
-    scalp_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
-        default=0.6,
-        description="Candidates below this Scalp confidence are dropped.",
-    )
     scalp_batch_size: Annotated[int, Field(ge=1, le=50)] = Field(
         default=8,
         description="Max stories digested per stage-1 (digest) LLM call (E4.5).",
@@ -882,7 +878,7 @@ class ArcSettings(BaseSettings):
         default=1500,
         description="D30: per-document text in the stage-1 digest prompt (3 docs per story).",
     )
-    # E13.10 (D56): the options tape in the Scalp prompt (personas.scalp_options_tape).
+    # E13.10 (D56): the options tape in the Scalp prompt.
     scalp_tape_max_chars: Annotated[int, Field(ge=200, le=1500)] = Field(
         default=1500,
         description="E13.10: the options tape block in the Scalp prompt is cut to this size.",
@@ -914,10 +910,9 @@ class ArcSettings(BaseSettings):
     # exit block. Over it -> headlines trimmed, then the pool cut to its top 40.
     research_prompt_max_chars: Annotated[int, Field(ge=20_000, le=400_000)] = Field(
         default=80_000,
-        description="Target size of the compact Research prompt (chars); "
-        "personas.research_compact_prompt: compact only.",
+        description="Target size of the compact Research prompt (chars).",
     )
-    # E13.17 (D56): Research-managed exits (personas.exit_path shadow | research only).
+    # E13.17 (D56): Research-managed exits.
     exit_block_max_chars_per_position: Annotated[int, Field(ge=200, le=2_000)] = Field(
         default=600,
         description="Research exit-watch block: hard clip per open position (chars).",
@@ -930,7 +925,7 @@ class ArcSettings(BaseSettings):
         default=900,
         description="quant.exit prompt: hard clip per exit case (chars).",
     )
-    # E13.18 (D56): Risk exit review (personas.exit_path research only).
+    # E13.18 (D56): Risk exit review.
     exit_review_max_consecutive_holds: Annotated[int, Field(ge=1, le=10)] = Field(
         default=3,
         description="Risk `hold` on a case with a deterministic discretionary signal is "
@@ -962,7 +957,7 @@ class ArcSettings(BaseSettings):
     universe: list[str] = Field(
         default_factory=lambda: list(DEFAULT_UNIVERSE),
         description=(
-            "D51 core tier (was the D28 seed list): always scanned and always accepted. "
+            "Core tier (was the D28 seed list): always scanned and always accepted. "
             "Consumers read the active list (arc.universe.tiers.active_tickers), never this "
             "field. A list longer than 30 is a pre-D51 override and is ignored in favour of "
             "config/universe.yaml core. In strict mode (ARC_UNIVERSE_MODE=strict) the "
@@ -971,23 +966,14 @@ class ArcSettings(BaseSettings):
     )
     universe_active_max: Annotated[int, Field(ge=1, le=60)] = Field(
         default=50,
-        description="D51: the deduped active list (core > momentum > trending > discovery) "
+        description="D56: the deduped active list (core > momentum > discovery) "
         "is capped at this many names; the rest are journaled universe:over_active_cap.",
     )
-    universe_momentum_size: Annotated[int, Field(ge=0, le=50)] = Field(
-        default=25,
-        description="D51: momentum tier size (top N S&P 500 Momentum holdings, monthly, E12.2).",
-    )
-    universe_trending_size: Annotated[int, Field(ge=0, le=50)] = Field(
-        default=25,
-        description="D51: trending tier size (daily rules-based list, E12.3). Unused under "
-        "universe.tiers.model d56 (no trending tier).",
-    )
-    # -- D56 (E13.4): three tiers, per-tier floors (read only under universe.tiers.model d56)
+    # -- D56 (E13.4): three tiers, per-tier floors
     universe_momentum_size_d56: Annotated[int, Field(ge=0, le=50)] = Field(
         default=20,
         description="D56: momentum tier size (top N of the momentum feed; the feed itself "
-        "keeps its 25 rows). universe_momentum_size is the D51 size.",
+        "keeps its 25 rows, universe.momentum `size`).",
     )
     universe_discovery_size: Annotated[int, Field(ge=0, le=50)] = Field(
         default=20,
@@ -995,7 +981,7 @@ class ArcSettings(BaseSettings):
     )
     universe_floor_core: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.4,
-        description="D56: Scalp confidence floor for core names (scalp_min_confidence is D51's).",
+        description="D56: Scalp confidence floor for core names.",
     )
     universe_floor_momentum: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.5,
@@ -1015,13 +1001,6 @@ class ArcSettings(BaseSettings):
     universe_config_file: Path | None = Field(
         default=None,
         description="ARC_UNIVERSE_CONFIG_FILE; None -> config/universe.yaml.",
-    )
-    scalp_max_new_tickers: Annotated[int, Field(ge=0, le=50)] = Field(
-        default=25,
-        description=(
-            "Max discoveries (names in no D51 tier) the Scalp may accept per run (D28, "
-            "D51: 25); extra ones are rejected as over_new_ticker_cap."
-        ),
     )
 
     # -- Control panel (D26, E8.5) --------------------------------------------

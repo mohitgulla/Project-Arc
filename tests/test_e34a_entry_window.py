@@ -333,8 +333,8 @@ class TestPipeline:
         env = PipelineEnv.fixtures()
         conn, report = _run(settings, env)
         assert {o.job: o.status for o in report.outcomes}["risk.open"] == "ok"
-        for persona in ("research", "quant", "risk"):
-            prompt = env.llms[persona].prompts[0]  # type: ignore[attr-defined]
+        for llm, persona in (("research", "research"), ("quant", "quant"), ("risk", "risk_open")):
+            prompt = env.llms[llm].prompts[0]  # type: ignore[attr-defined]
             assert DTE_RANGE.findall(prompt) == [("30", "45")], persona
             row = conn.execute(
                 "SELECT prompt_inputs FROM persona_calls WHERE persona=?", (persona,)

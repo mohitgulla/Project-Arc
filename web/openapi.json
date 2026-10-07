@@ -3967,7 +3967,7 @@
             "type": "integer"
           },
           "mode": {
-            "description": "personas.exit_path (effective config)",
+            "description": "Exit path mode (research since the D56 cutover)",
             "enum": [
               "deterministic",
               "shadow",
@@ -14101,7 +14101,7 @@
                 "type": "null"
               }
             ],
-            "description": "E13.14 (D56): names the Scout's discovery feed listed today (0 = none yet); null under d51",
+            "description": "E13.14 (D56): names the Scout's discovery feed listed today (0 = none yet); null for a stored pre-cutover (d51) resolve",
             "title": "Discovery Fill"
           },
           "dropped": {
@@ -14119,8 +14119,8 @@
             "type": "array"
           },
           "model": {
-            "default": "d51",
-            "description": "Tier layout the shown resolve used (d51 | d56); config/universe.yaml tiers.model when nothing is resolved",
+            "default": "d56",
+            "description": "Tier layout the shown resolve used: d56 (E13.15: the only layout); a stored pre-cutover resolve reads d51 until the next resolve",
             "enum": [
               "d51",
               "d56"
@@ -14255,7 +14255,7 @@
             "title": "Fetched At"
           },
           "name": {
-            "description": "core | momentum | trending | discovery (precedence order; d56 has no trending)",
+            "description": "core | momentum | discovery (precedence order)",
             "title": "Name",
             "type": "string"
           },
@@ -14278,7 +14278,7 @@
                 "type": "null"
               }
             ],
-            "description": "The tier's size: core ceiling 30, momentum/trending sizes; null = no cut",
+            "description": "The tier's size: core ceiling 30, momentum/discovery sizes; null = no cut",
             "title": "Size Cap"
           },
           "source": {
@@ -14290,7 +14290,7 @@
                 "type": "null"
               }
             ],
-            "description": "Feed source (stockanalysis, reddit+\u2026, settings, scalp)",
+            "description": "Feed source (stockanalysis, settings, config, scout)",
             "title": "Source"
           },
           "source_as_of": {
@@ -15810,7 +15810,7 @@
     },
     "/api/positions": {
       "get": {
-        "description": "Open, closed or all structures with the latest broker marks; open rows carry the\nE13.14 exit path under ``personas.exit_path`` shadow | research.",
+        "description": "Open, closed or all structures with the latest broker marks; open rows carry the\nE13.14 exit path (D56: always Research-managed since E13.15).",
         "operationId": "positions_api_positions_get",
         "parameters": [
           {

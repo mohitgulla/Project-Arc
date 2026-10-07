@@ -1,8 +1,8 @@
-"""D56 tier layout (E13.4): core 20 / momentum 20 / discovery 20, no trending.
+"""D56 tier layout (E13.4, E13.15): core 20 / momentum 20 / discovery 20, no trending.
 
-Behind ``config/universe.yaml`` ``tiers.model: d56`` (default ``d51``). Covers the
-resolver (sizes, dedupe, discovery-tail cap cuts), the per-tier screens and floors,
-``not_in_tier`` mentions, the market reference and the d51 regression.
+The only layout since the E13.15 cutover. Covers the resolver (sizes, dedupe,
+discovery-tail cap cuts), the per-tier screens and floors, ``not_in_tier`` mentions,
+the market reference and the legacy keys an old universe.yaml / stored row carries.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from hypothesis import strategies as st
 
 from arc.config import DEFAULT_UNIVERSE, ArcSettings
 from arc.context.store import ContextStore
-from arc.control.registry import REGISTRY, Risk, lookup, parse_value
+from arc.control.registry import REGISTRY, Risk, is_orphaned, lookup
 from arc.ingest.scalp import (
     REJECT_THRESHOLD,
     ScalpRunResult,
@@ -48,7 +48,7 @@ from arc.universe.screen import LiquidityMetrics
 from arc.universe.tiers import (
     DROP_OVER_ACTIVE_CAP,
     DROP_OVER_TIER_SIZE,
-    TIER_ORDER_D56,
+    TIER_ORDER,
     ActiveUniverse,
     Tier,
     TierMember,
@@ -70,7 +70,6 @@ REPO = Path(__file__).resolve().parents[1]
 NOW = dt.datetime(2026, 10, 6, 9, 0, tzinfo=ET)
 DAY = NOW.date()
 URL = "https://example.com/a"
-D56 = {"universe": {("tiers", "model"): "d56"}}
 
 # The brief's fixture: SPMO-like momentum feed, 25 rows; 7 of its top 20 are core
 # (MU AAPL AMD INTC GOOGL XOM NVDA).
@@ -85,11 +84,8 @@ DISCOVERY_20 = [
 ]  # fmt: skip
 
 
-def _settings(model: str = "d56", **kw: Any) -> ArcSettings:
-    s = ArcSettings(_env_file=None, env="paper", **kw)  # type: ignore[call-arg]
-    if model == "d56":
-        s._yaml_overrides = dict(D56)  # noqa: SLF001
-    return s
+def _settings(**kw: Any) -> ArcSettings:
+    return ArcSettings(_env_file=None, env="paper", **kw)  # type: ignore[call-arg]
 
 
 def _m(ticker: str, tier: Tier, rank: int) -> TierMember:
@@ -127,10 +123,13 @@ def _write_tier(conn: sqlite3.Connection, tier: Tier, names: list[str]) -> None:
 
 
 class TestConfig:
-    def test_repo_yaml_is_d51_with_d56_policy(self) -> None:
+    def test_repo_yaml_is_d56(self) -> None:
         cfg = load_universe_config(REPO / "config" / "universe.yaml")
-        assert cfg.tiers.model == "d51"  # the control until E13.15
-        assert cfg.tiers.order == ["core", "momentum", "trending", "discovery"]
+        raw = yaml.safe_load((REPO / "config" / "universe.yaml").read_text())
+        assert "model" not in raw["tiers"] and "trending" not in raw["tiers"]
+        assert set(raw["liquidity_screen"]) == {"standard", "loose"}
+        assert cfg.tiers.order == ["core", "momentum", "discovery"]
+        assert cfg.tiers.reference() == ["SPY", "QQQ", "IWM"]
         assert {t: p.screen for t, p in cfg.tiers.policy.items()} == {
             "core": "none",
             "momentum": "standard",
@@ -150,29 +149,48 @@ class TestConfig:
         cfg = load_universe_config(REPO / "config" / "universe.yaml")
         assert cfg.core == list(DEFAULT_UNIVERSE) and len(cfg.core) == 20
 
-    def test_d56_order_and_reference(self) -> None:
-        t = TiersConfig(model="d56")
+    def test_order_and_reference(self) -> None:
+        t = TiersConfig()
         assert t.order == ["core", "momentum", "discovery"]
         assert t.reference() == ["SPY", "QQQ", "IWM"]
-        assert TiersConfig().reference() == ["SPY", "QQQ"]  # d51 unchanged
-        with pytest.raises(ValueError, match="fixed for model d56"):
-            TiersConfig(model="d56", order=["core", "momentum", "trending", "discovery"])
-        with pytest.raises(ValueError, match="fixed for model d51"):
-            TiersConfig(order=["core", "momentum", "discovery"])  # type: ignore[list-item]
+        with pytest.raises(ValueError, match="tiers.order is fixed"):
+            TiersConfig(order=["core", "discovery", "momentum"])
+        with pytest.raises(ValueError):
+            TiersConfig(order=["core", "momentum", "trending", "discovery"])  # type: ignore[list-item]
 
-    def test_pre_d56_block_loads_as_d51(self, tmp_path: Path) -> None:
+    def test_retired_keys_still_load(self, tmp_path: Path) -> None:
+        """E13.15: an old universe.yaml (model, trending/discovery blocks, strict/relaxed
+        profiles, a pre-D51 flat screen block) loads; the retired keys are ignored."""
         p = tmp_path / "u.yaml"
-        p.write_text(yaml.safe_dump({"tiers": {"trending": {"screen": "strict"}}}))
+        p.write_text(
+            yaml.safe_dump(
+                {
+                    "tiers": {
+                        "model": "d51",
+                        "trending": {"screen": "relaxed"},
+                        "discovery": {"screen": "relaxed"},
+                    },
+                    "liquidity_screen": {
+                        "min_price": 10.0,
+                        "strict": {"min_price": 10.0},
+                        "relaxed": {"min_price": 5.0},
+                        "loose": {"min_price": 2.0},
+                    },
+                }
+            )
+        )
         cfg = load_universe_config(p)
-        assert cfg.tiers.model == "d51" and cfg.tier_screen("trending") == "strict"
-        assert cfg.tier_screen("momentum") == "none"
+        assert cfg.tiers.order == ["core", "momentum", "discovery"]
+        assert cfg.tier_screen("discovery") == "loose" and cfg.tier_screen("trending") == "none"
+        assert cfg.liquidity_screen.loose.min_price == 2.0
+        assert cfg.liquidity_screen.standard.min_price == 7.5
 
     def test_partial_policy_keeps_defaults(self, tmp_path: Path) -> None:
         p = tmp_path / "u.yaml"
-        policy = {"discovery": {"screen": "relaxed"}}
-        p.write_text(yaml.safe_dump({"tiers": {"model": "d56", "policy": policy}}))
+        policy = {"discovery": {"screen": "standard"}}
+        p.write_text(yaml.safe_dump({"tiers": {"policy": policy}}))
         cfg = load_universe_config(p)
-        assert cfg.tier_screen("discovery") == "relaxed"
+        assert cfg.tier_screen("discovery") == "standard"
         assert cfg.tier_screen("momentum") == "standard"
         assert cfg.screen_for("momentum").min_price == 7.5
         with pytest.raises(ValueError, match="not screened"):
@@ -207,20 +225,31 @@ class TestRegistry:
                 "min_price",
             )
 
-    def test_model_flag_is_a_choice(self) -> None:
-        t = lookup("universe.tiers.model")
-        assert t.choices == ("d51", "d56") and t.path == ("tiers", "model")
-        assert parse_value(t, "D56") == "d56"
-        with pytest.raises(ValueError):
-            parse_value(t, "d52")
+    def test_d51_keys_removed_and_orphaned(self) -> None:
+        """E13.15: the layout flag and the D51 tunables are gone; a stored override on
+        one is orphaned (logged, ignored) instead of failing the load."""
+        for key in (
+            "universe.tiers.model",
+            "universe_momentum_size",
+            "universe_trending_size",
+            "scalp_max_new_tickers",
+            "universe_screen_relaxed_min_price",
+        ):
+            assert key not in REGISTRY and is_orphaned(key), key
+        assert not is_orphaned("universe_momentum_size_d56")
+        # the single D51 floor now names the core floor
+        assert lookup("scalp_min_confidence").key == "universe_floor_core"
+        s = _settings()
+        for gone in ("universe_trending_size", "scalp_min_confidence", "scalp_max_new_tickers"):
+            assert not hasattr(s, gone), gone
 
     def test_reason_labels(self) -> None:
         for code in (ReasonCode.UNIVERSE_NOT_IN_TIER, ReasonCode.UNIVERSE_BELOW_TIER_FLOOR):
             assert REASON_LABELS[code]
 
-    def test_flag_off_values_include_d51(self) -> None:
+    def test_flag_off_values_drop_retired_controls(self) -> None:
         lane = yaml.safe_load((REPO / "config" / "strategy_lane.yaml").read_text())
-        assert "d51" in lane["flag_off_values"]
+        assert not {"d51", "scalp", "full", "deterministic"} & set(lane["flag_off_values"])
 
 
 # -- resolver ----------------------------------------------------------------------------
@@ -230,12 +259,10 @@ def _brief(**kw: Any) -> ActiveUniverse:
     return resolve_active(
         core=_tier(Tier.CORE, list(DEFAULT_UNIVERSE)),
         momentum=_tier(Tier.MOMENTUM, MOMENTUM_25),
-        trending=[],
         discoveries=_tier(Tier.DISCOVERY, DISCOVERY_20),
         active_max=50,
         tier_sizes={Tier.MOMENTUM: 20, Tier.DISCOVERY: 20},
         as_of=DAY,
-        model="d56",
         **kw,
     )
 
@@ -265,35 +292,37 @@ class TestResolve:
         a = resolve_active(
             core=_tier(Tier.CORE, list(DEFAULT_UNIVERSE)),
             momentum=_tier(Tier.MOMENTUM, MOMENTUM_25),
-            trending=[],
             discoveries=_tier(Tier.DISCOVERY, DISCOVERY_20),
             active_max=30,
             tier_sizes={Tier.MOMENTUM: 20, Tier.DISCOVERY: 20},
             as_of=DAY,
-            model="d56",
         )
         assert a.counts == {"core": 20, "momentum": 10, "discovery": 0}
         caps = [d for d in a.dropped if d.reason == DROP_OVER_ACTIVE_CAP]
         assert [d.tier for d in caps[:3]] == [Tier.MOMENTUM] * 3
         assert caps[-1].ticker == "CEG"
 
-    def test_trending_rejected_under_d56(self) -> None:
-        with pytest.raises(ValueError, match="no trending"):
-            resolve_active(
-                core=[],
-                momentum=[],
-                trending=_tier(Tier.TRENDING, ["RKLB"]),
-                discoveries=[],
-                active_max=50,
-                as_of=DAY,
-                model="d56",
+    def test_no_trending_input(self) -> None:
+        with pytest.raises(TypeError):
+            resolve_active(  # type: ignore[call-arg]
+                core=[], trending=_tier(Tier.TRENDING, ["RKLB"]), active_max=50, as_of=DAY
             )
 
-    def test_payload_v1_row_loads_as_d51(self) -> None:
+    def test_stored_pre_cutover_rows_still_load(self) -> None:
+        """Tier.TRENDING stays a (legacy) member: a stored d51 resolve deserialises."""
         a = ActiveUniverse.model_validate(
             {"as_of": "2026-10-05", "members": [], "counts": {}, "raw_counts": {}}
         )
         assert a.model == "d51"
+        row = UniverseTierPayload.model_validate(
+            {
+                "tier": "trending",
+                "members": [_m("RKLB", Tier.TRENDING, 1).model_dump(mode="json")],
+                "fetched_at": NOW.isoformat(),
+                "source": "news+reddit",
+            }
+        )
+        assert row.tier is Tier.TRENDING and Tier.TRENDING not in TIER_ORDER
 
 
 _names = st.lists(st.sampled_from([f"T{i}" for i in range(40)]), max_size=30)
@@ -314,18 +343,16 @@ def test_d56_resolver_properties(
     kw: dict[str, Any] = {
         "core": _tier(Tier.CORE, core),
         "momentum": _tier(Tier.MOMENTUM, mom),
-        "trending": [],
         "discoveries": _tier(Tier.DISCOVERY, disc),
         "active_max": cap,
         "tier_sizes": {Tier.MOMENTUM: msize, Tier.DISCOVERY: dsize},
         "as_of": DAY,
-        "model": "d56",
     }
     a = resolve_active(**kw)
     assert resolve_active(**kw) == a
     tickers = a.tickers
     assert len(tickers) == len(set(tickers)) <= cap
-    idx = [TIER_ORDER_D56.index(m.tier) for m in a.members]
+    idx = [TIER_ORDER.index(m.tier) for m in a.members]
     assert idx == sorted(idx)  # core, then momentum, then discovery: cuts hit the tail
     offered = set(core) | set(mom) | set(disc)
     assert offered == set(tickers) | {d.ticker for d in a.dropped}
@@ -345,8 +372,8 @@ class TestStore:
     ) -> None:
         _write_tier(db, Tier.MOMENTUM, MOMENTUM_25)
         _write_tier(db, Tier.DISCOVERY, DISCOVERY_20)
-        _write_tier(db, Tier.TRENDING, ["PLUG"])  # ignored under d56
-        # a Scalp candidate is not a discovery under d56 (Scout is the only entry point)
+        _write_tier(db, Tier.TRENDING, ["PLUG"])  # a stale pre-cutover feed: never read
+        # a Scalp candidate is not a discovery (Scout is the only entry point)
         db.execute(
             "INSERT INTO candidates (id, ticker, stance, catalyst_type, confidence, created_at, "
             "day, corroboration) VALUES ('c1', 'ZZZZ', 'bullish', 'news', 0.9, ?, ?, 1)",
@@ -355,7 +382,7 @@ class TestStore:
         db.commit()
         s = _settings()
         a, inputs = build_active(db, s, NOW)
-        assert a.model == "d56" and inputs.trending == []
+        assert a.model == "d56" and not hasattr(inputs, "trending")
         assert a.counts == {"core": 20, "momentum": 13, "discovery": 17}
         assert "ZZZZ" not in a.tickers and "PLUG" not in a.tickers
         store = ContextStore(db)
@@ -384,8 +411,6 @@ class TestStore:
         tiers = tier_membership(db, _settings(), NOW)
         assert tiers["LRCX"] is Tier.MOMENTUM and tiers["NVDA"] is Tier.CORE
         assert "LLY" not in tiers  # momentum row 25: in no tier
-        d51 = tier_membership(db, _settings("d51"), NOW)
-        assert d51["LLY"] is Tier.MOMENTUM  # d51 reads the feed whole
 
     def test_empty_discovery_until_scout(self, db: sqlite3.Connection) -> None:
         _write_tier(db, Tier.MOMENTUM, MOMENTUM_25)
@@ -393,21 +418,18 @@ class TestStore:
         assert inputs.discoveries == [] and inputs.expired_tiers == []
         assert a.counts == {"core": 20, "momentum": 13, "discovery": 0}
 
-    def test_d51_regression(self, db: sqlite3.Connection) -> None:
+    def test_counts_are_three_tiers(self, db: sqlite3.Connection) -> None:
         _write_tier(db, Tier.MOMENTUM, ["NVDA", "LRCX", "KLAC"])
-        a, _ = build_active(db, _settings("d51"), NOW)
-        assert a.model == "d51"
-        assert list(a.counts) == ["core", "momentum", "trending", "discovery"]
+        a, _ = build_active(db, _settings(), NOW)
+        assert list(a.counts) == ["core", "momentum", "discovery"]
         assert a.tier_tickers(Tier.MOMENTUM) == ["LRCX", "KLAC"]
 
     def test_market_reference_includes_iwm(self) -> None:
         assert market_reference(_settings()) == list(D56_MARKET_REFERENCE)
-        assert market_reference(_settings("d51")) == ["SPY", "QQQ"]
-        assert market_reference(_settings("d51"), model="d56") == ["SPY", "QQQ", "IWM"]
 
 
 def test_regime_step_iterates_market_reference() -> None:
-    """IWM's regime entry is written every Research run under d56 (steps.py loop)."""
+    """IWM's regime entry is written every Research run (steps.py loop)."""
     import inspect
 
     from arc.pipeline import steps
@@ -481,7 +503,7 @@ def _validate(g: UniverseGuard, ticker: str, conf: float) -> Candidate | str:
     return validate_scalp_candidate(
         _item(ticker, conf),
         universe=g,
-        min_confidence=0.9,  # d51's floor: ignored under d56
+        min_confidence=0.9,  # the allow-list floor: a guard uses the tier floors
         allowed_sources=frozenset({URL}),
         created_at=NOW,
     )
@@ -496,7 +518,6 @@ class TestGuard:
 
     def test_floors_per_tier(self, tiers: sqlite3.Connection) -> None:
         g = _guard(tiers, {})
-        assert g.model == "d56"
         assert _validate(g, "NVDA", 0.39) == REJECT_THRESHOLD
         assert isinstance(_validate(g, "NVDA", 0.4), Candidate)
         assert _validate(g, "LRCX", 0.49) == REJECT_THRESHOLD
@@ -521,7 +542,7 @@ class TestGuard:
         assert _validate(g, "LLY", 0.95) == REJECT_NOT_IN_TIER  # momentum row 25
         assert g.mentions == ["OUTX", "LLY"]
         assert not g.screens  # never screened, no market data spent
-        assert g.admitted_new == []  # no new-ticker / backfill path
+        assert g.admitted_tier == []  # no new-ticker / backfill path
 
     def test_run_scalp_journals_and_lists_mentions(self, tiers: sqlite3.Connection) -> None:
         from arc.ingest.llm import LLMResult
@@ -555,7 +576,6 @@ class TestGuard:
         assert [c.ticker for c in res.candidates] == ["LRCX", "NVDA"]
         assert res.rejected == {REJECT_THRESHOLD: 1, REJECT_NOT_IN_TIER: 1}
         assert res.floor_rejected == {"RKLB": ("discovery", 0.59, 0.6)}
-        assert res.floor_skipped == {}
         assert [m.ticker for m in res.mentions] == ["OUTX"]
         stored = {r[0] for r in tiers.execute("SELECT ticker FROM candidates").fetchall()}
         assert stored == {"NVDA", "LRCX"}  # no candidate row for a mention
@@ -612,7 +632,6 @@ class TestGuard:
         got = candidates_for_scanner(
             db,
             DAY.isoformat(),
-            min_confidence=0.6,
             tier_floors={"NVDA": 0.4, "LRCX": 0.5, "RKLB": 0.6},
         )
         assert [c.ticker for c in got] == ["RKLB", "NVDA"]  # LRCX below, OUTX in no tier

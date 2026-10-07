@@ -9,20 +9,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-import structlog
 
 from arc.context.kinds import NotePayload
-from arc.control.registry import is_alias, lookup
+from arc.control.registry import is_alias, is_orphaned, lookup
 from arc.ingest.sources import _feed
 from arc.journal import legacy
 from arc.journal.reasons import JournalPersona, ReasonCode
 from arc.positions.portfolio import PortfolioThesis
 from arc.routines.config import RoutinesConfig, load_routines
-from arc.routines.handlers import BUILTIN_HANDLERS, resolve_handler
+from arc.routines.handlers import resolve_handler
 from arc.routines.runs import RoutineRunRepo
 from arc.store.db import connect
 from arc.store.migrate import MIGRATIONS_DIR, migrate
-from arc.universe.config import EarningsConfig
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -223,55 +221,18 @@ def test_journal_persona_enum_has_new_names_only() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["doc_budget", "min_confidence", "max_new_tickers"])
 @pytest.mark.parametrize("old", ["sweep", "scout"])
-def test_old_setting_names_resolve(old: str, name: str) -> None:
-    assert is_alias(f"{old}_{name}")
-    assert lookup(f"{old}_{name}").key == f"scalp_{name}"
+def test_old_setting_names_resolve(old: str) -> None:
+    assert is_alias(f"{old}_doc_budget")
+    assert lookup(f"{old}_doc_budget").key == "scalp_doc_budget"
+    # E13.15: the Scalp floor became the core-tier floor; the new-ticker cap is gone
+    assert lookup(f"{old}_min_confidence").key == "universe_floor_core"
+    assert is_orphaned(f"{old}_max_new_tickers")
 
 
 def test_old_shortlist_key_resolves() -> None:
     key = "order_budget.restrictive.director_max_shortlist"
     assert lookup(key).key == "order_budget.restrictive.research_max_shortlist"
-
-
-def test_builtin_handler_aliases_log() -> None:
-    from arc.routines.config import StepSpec
-
-    assert "sweep" not in BUILTIN_HANDLERS and "director" not in BUILTIN_HANDLERS
-    with structlog.testing.capture_logs() as logs:
-        h = resolve_handler("sweep", StepSpec())
-        h2 = resolve_handler("director", StepSpec())
-    assert h is resolve_handler("scalp", StepSpec())
-    assert h2 is resolve_handler("research", StepSpec())
-    events = [e for e in logs if e["event"] == "routines.deprecated_job_alias"]
-    assert [e["renamed_to"] for e in events] == ["scalp", "research"]
-
-
-def test_routines_yaml_legacy_persona_keys(shipped_raw: dict) -> None:
-    raw = dict(shipped_raw)
-    personas = dict(raw["personas"])
-    personas["sweep"] = personas.pop("scalp")
-    personas["sweep.overnight"] = personas.pop("scalp.overnight")
-    personas["director"] = personas.pop("research")
-    raw["personas"] = personas
-    with structlog.testing.capture_logs() as logs:
-        cfg = RoutinesConfig.model_validate(raw)
-    assert {"scalp", "scalp.overnight", "research"} <= set(cfg.personas)
-    assert not {"sweep", "director"} & set(cfg.personas)
-    assert sum(e["event"] == "routines.deprecated_job_alias" for e in logs) == 3
-
-
-def test_routines_yaml_both_names_is_an_error(shipped_raw: dict) -> None:
-    raw = dict(shipped_raw)
-    raw["personas"] = {**raw["personas"], "director": raw["personas"]["research"]}
-    with pytest.raises(ValueError, match="renamed"):
-        RoutinesConfig.model_validate(raw)
-
-
-def test_feed_sweep_alias() -> None:
-    assert _feed("sweep") == "scalp"
-    assert EarningsConfig.model_validate({"sweep": "all"}).scalp == "all"
 
 
 def test_stored_payloads_with_old_names_still_validate() -> None:
@@ -283,16 +244,6 @@ def test_stored_payloads_with_old_names_still_validate() -> None:
         {"persona": "director", "topic": "thesis", "title": "t", "body": "b"}
     )
     assert n.persona == "research"
-
-
-def test_old_python_names_reexported() -> None:
-    from arc.ingest import llm, scalp
-    from arc.personas import builders, schemas
-
-    assert llm.SweepLLM is llm.PersonaLLM
-    assert scalp.run_sweep is scalp.run_scalp
-    assert builders.build_director_prompt is builders.build_research_prompt
-    assert schemas.DirectorOutput is schemas.ResearchOutput
 
 
 def test_shipped_routines_use_new_names(shipped: RoutinesConfig) -> None:
@@ -340,3 +291,18 @@ def shipped_raw() -> dict:
     from arc.routines.config import DEFAULT_ROUTINES_PATH
 
     return yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
+
+
+def test_e13_15_aliases_are_gone(shipped_raw: dict) -> None:
+    """E13.15: the one-release D56 names no longer resolve."""
+    from arc.ingest import llm
+    from arc.personas import builders, schemas
+    from arc.routines.config import StepSpec
+    from arc.routines.handlers import not_implemented
+
+    assert resolve_handler("sweep", StepSpec()) is not_implemented
+    assert resolve_handler("director", StepSpec()) is not_implemented
+    assert not hasattr(llm, "SweepLLM") and not hasattr(builders, "build_director_prompt")
+    assert not hasattr(schemas, "DirectorOutput")
+    with pytest.raises(ValueError, match="sweep"):
+        _feed("sweep")

@@ -82,7 +82,7 @@ def entry_feeds(payload: Mapping[str, Any]) -> set[str]:
 
 
 def scalp_entries(entries: Iterable[ContextEntry]) -> list[ContextEntry]:
-    """The candidate entries the Scalp raised (``research_idea_pool: scalp``).
+    """The candidate entries the Scalp raised (the pre-cutover pool; replay only).
 
     Before the Scout exists (every entry pre-E13.7) this is every entry, so the
     control's prompt is unchanged.
@@ -195,7 +195,8 @@ def build_idea_pool(
 ) -> IdeaPool:
     """The idea pool from the snapshot's active ``candidate`` entries (pure).
 
-    *merged* = ``research_idea_pool: all``; otherwise Scalp-sourced entries only.
+    *merged* = Scalp + Scout (always live since E13.15); ``False`` = Scalp-sourced
+    entries only (a recorded pre-cutover call).
     *tiers* = ``ticker -> tier name`` (display only). Items are in :func:`pool_order`.
     """
     entries = snapshot.of_kind("candidate")

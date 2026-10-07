@@ -3,9 +3,9 @@
 Prints each open position's review (P&L, % of max gain / debit, DTE, theta,
 remaining net EV per $ BP, remaining PoP, exit signal), the closes the Quant exit step
 would propose, and every scored close-to-reallocate pair with its D19 outcome.
-Writes nothing and proposes nothing: the real chain is ``positions.evaluate →
-quant.exits → risk.reallocate`` (routines), where every close goes through
-the gate and approval.
+Writes nothing and proposes nothing: the real closes come from ``exits.mandatory``
+and the Research exit path (``quant.exit → risk.exit → quant.propose``, D56), where
+every close goes through the gate and approval.
 
 ``--fixtures`` uses the bundled SPY recording and ``arc/positions/fixtures/book.json``;
 otherwise the open structures and today's capacity-blocked entries come from ``--db``
