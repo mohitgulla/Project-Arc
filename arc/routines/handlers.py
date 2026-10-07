@@ -1070,7 +1070,7 @@ def symbols_source(ctx: JobContext) -> JobResult:
     c = active.counts
     parts.append(
         f"active {len(active.members)} (core {c['core']} · momentum {c['momentum']} · "
-        f"discovery {c['discovery']})"
+        f"discovery {c['discovery']} · trending {c.get('trending', 0)})"
     )
     metrics |= {"active": len(active.members), **{f"tier_{k}": v for k, v in c.items()}}
     return JobResult(summary=" · ".join(parts), metrics=metrics)
@@ -1169,6 +1169,189 @@ def universe_momentum_source(ctx: JobContext) -> JobResult:
             "dropped": [f"{s}:{r}" for s, r in fetch.dropped],
             "source_errors": fetch.errors,
             "active": len(active.members),
+        },
+    )
+
+
+def retail_buzz_source(
+    ctx: JobContext, *, get: Callable[[str, float, int], bytes] | None = None
+) -> JobResult:
+    """E13.19 (D58): daily Reddit (ApeWisdom) + Stocktwits pull -> one ``retail_buzz``
+    entry (subject ``all``) with each input's raw rows. Inputs are independent: a
+    failed one is recorded ``failed`` and contributes nothing; every input failing
+    raises (``failed`` + alerted, nothing written)."""
+    from arc.ingest.retail_buzz import fetch_retail_buzz, http_getter
+    from arc.ingest.retail_buzz_config import RetailBuzzConfig
+
+    cfg = RetailBuzzConfig.from_options(ctx.options)
+    payload = fetch_retail_buzz(
+        cfg, now=ctx.now, get=get or http_getter(ctx.settings.edgar_user_agent)
+    )
+    for name, inp in payload.inputs.items():
+        ctx.record_input(
+            f"retail_buzz.{name}",
+            " ".join(inp.urls) or inp.type,
+            None,
+            as_of=ctx.now,
+            count=len(inp.rows),
+            digest=inp.digest or None,
+        )
+    live = payload.live
+    if not live:
+        detail = "; ".join(f"{n}: {i.error or i.status}" for n, i in payload.inputs.items())
+        msg = f"retail_buzz: no input answered ({detail})"
+        raise RuntimeError(msg)
+    ctx.write("retail_buzz", "all", payload)
+    counts = {n: len(i.rows) for n, i in payload.inputs.items()}
+    failed = [n for n in payload.inputs if n not in live]
+    summary = " · ".join(f"{n} {c}" for n, c in counts.items())
+    if failed:
+        summary += " · no data: " + ", ".join(failed)
+    return JobResult(
+        summary=summary,
+        metrics={
+            "inputs": {n: i.status for n, i in payload.inputs.items()},
+            "rows": counts,
+            "input_errors": {n: payload.inputs[n].error for n in failed},
+        },
+    )
+
+
+def run_trending_tier(
+    *,
+    conn: sqlite3.Connection,
+    settings: ArcSettings,
+    routines: RoutinesConfig,
+    options: Mapping[str, Any],
+    now: _dt.datetime,
+    screen: bool = True,
+    market_factory: Callable[[], Any] | None = None,
+) -> Any:
+    """E13.19 (D58): rank the latest ``retail_buzz`` entry into the trending tier
+    (no write). Returns a ``TrendingResult``; raises ``TrendingError`` when the tier
+    cannot be built (0 live inputs, no symbol master)."""
+    from datetime import timedelta
+
+    from arc.context.categories import SourceCategory
+    from arc.ingest.retail_buzz_config import RetailBuzzConfig
+    from arc.universe import load_symbol_master
+    from arc.universe.config import universe_config
+    from arc.universe.guard import UniverseGuard
+    from arc.universe.tiers import Tier, market_reference, tier_membership
+    from arc.universe.trending import (
+        TrendingOptions,
+        latest_buzz,
+        normalise_exclusions,
+        run_trending,
+    )
+
+    opts = TrendingOptions.from_options(options)
+    buzz_spec = routines.sources.get("retail_buzz")
+    enabled = (
+        list(RetailBuzzConfig.from_options(buzz_spec.options).enabled)
+        if buzz_spec is not None
+        else []
+    )
+    max_age = routines.source_max_age("retail_buzz", SourceCategory.RETAIL_BUZZ).duration
+    buzz, stale = latest_buzz(conn, now=now, max_age=max_age or timedelta(hours=24))
+    ucfg = universe_config(settings)
+    master = load_symbol_master(
+        ucfg.symbol_master, user_agent=settings.edgar_user_agent, now=now, fetch_if_missing=False
+    )
+    exclude: dict[str, str] = {
+        t: tier.value
+        for t, tier in tier_membership(conn, settings, now).items()
+        if tier in (Tier.CORE, Tier.MOMENTUM, Tier.DISCOVERY)
+    }
+    if opts.exclude_market_reference:
+        for t in market_reference(settings):
+            exclude.setdefault(t, "market_reference")
+    exclude = normalise_exclusions(exclude, ucfg.momentum.share_class_aliases)
+    guard_screen: Callable[[str], Any] | None = None
+    if screen:
+        guard = UniverseGuard.from_settings(
+            settings,
+            now=now,
+            master=master,
+            config=ucfg,
+            conn=conn,
+            market_factory=market_factory,
+        )
+        profile = ucfg.tier_screen("trending")
+        if profile != "none":
+            guard_screen = lambda sym: guard.screen(sym, profile)  # noqa: E731
+    return run_trending(
+        buzz,
+        enabled=enabled,
+        stale=stale,
+        opts=opts,
+        now=now,
+        master=master,
+        size=settings.universe_trending_size,
+        exclude=exclude,
+        screen=guard_screen,
+    )
+
+
+def universe_trending_source(ctx: JobContext) -> JobResult:
+    """E13.19 (D58): daily trending tier from the ``retail_buzz`` pull -> ``universe_tier``
+    (subject ``trending``), then re-resolve today's active list.
+
+    Journals every admission / screen fail / leveraged drop and posts the daily diff as
+    a notice. 0 live inputs raises: ``failed`` + alerted, nothing written, the tier is
+    empty today (yesterday's entry has expired).
+    """
+    from arc.universe.trending import (
+        build_payload,
+        journal_decisions,
+        notice_line,
+        previous_members,
+    )
+
+    res = run_trending_tier(
+        conn=ctx.conn,
+        settings=ctx.settings,
+        routines=ctx.routines,
+        options=ctx.options,
+        now=ctx.now,
+    )
+    for i in res.inputs:
+        ctx.record_input(
+            f"trending.{i.name}",
+            " ".join(i.urls) or i.type,
+            sorted(i.raw),
+            as_of=ctx.now,
+            count=i.count,
+            digest=i.digest or None,
+        )
+    previous = previous_members(ctx.conn)
+    line = notice_line(res, previous)
+    journaled = journal_decisions(
+        ctx.conn, res, at=ctx.now, run_id=ctx.run_id, chain_run_id=ctx.chain_run_id
+    )
+    ctx.write("universe_tier", "trending", build_payload(res, now=ctx.now))
+    active = resolve_universe(ctx)
+    prev = set(previous or [])
+    kept = sum(1 for m in active.members if m.tier.value == "trending")
+    return JobResult(
+        summary=f"{line} · active {len(active.members)} ({kept} trending)",
+        notice=line,
+        metrics={
+            "names": len(res.members),
+            "both_inputs": sum(1 for r in res.members if r.n_inputs >= 2),
+            "tickers": res.tickers,
+            "added": [t for t in res.tickers if t not in prev],
+            "removed": [t for t in (previous or []) if t not in set(res.tickers)],
+            "ranked": len(res.ranked),
+            "pool": len(res.pool),
+            "screen_fail": sum(1 for r in res.pool if r.screen_passed is False),
+            "excluded": len(res.excluded),
+            "leveraged": [r.ticker for r in res.leveraged],
+            "inputs": {i.name: i.status for i in res.inputs},
+            "input_errors": res.failed_inputs,
+            "journaled": journaled,
+            "active": len(active.members),
+            "active_trending": kept,
         },
     )
 
@@ -2064,6 +2247,9 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "earnings": "arc.routines.handlers:earnings_source",
     "symbols": "arc.routines.handlers:symbols_source",  # E5.7 weekly symbol master
     "universe.momentum": "arc.routines.handlers:universe_momentum_source",  # E12.2 monthly
+    # E13.19 (D58): daily Reddit + Stocktwits pull, then the code-ranked trending tier
+    "retail_buzz": "arc.routines.handlers:retail_buzz_source",
+    "universe.trending": "arc.routines.handlers:universe_trending_source",
     "youtube": "arc.routines.handlers:youtube_source",
     "youtube.briefs": "arc.routines.handlers:youtube_briefs",  # E4.6 daily briefs (D45)
     # E4.5 / D30 options-trading data (no LLM; typed context kinds)

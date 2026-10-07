@@ -179,6 +179,7 @@ categories:              # D56: equal weight per category; sources split their c
   options_slow:  {weight: 1, max_age: 24h, label: Options slow}    # Scout, daily Cboe snapshots
   youtube_macro: {weight: 1, max_age: 24h, label: YouTube macro}
   youtube_micro: {weight: 1, max_age: 24h, label: YouTube micro}
+  retail_buzz:   {weight: 1, max_age: 24h, label: Retail buzz}     # D58: Scout slow feed + the trending tier (code)
 
 # D56 (E13.3, folds E5.14's config half): the idea funnel. Config only for now: the
 # Scout (E13.7), the coverage:scout alert and the Tower funnel report (E13.14) read
@@ -188,7 +189,7 @@ categories:              # D56: equal weight per category; sources split their c
 # tunable (`!arc config set funnel.<persona>.<key>`).
 funnel:
   scalp:    {doc_budget_split: equal}            # scalp_doc_budget: market_news | company_data
-  scout:    {max_discovery: 20, video_budget_split: equal, min_discovery_alert: 5}
+  scout:    {max_discovery: 25, video_budget_split: equal, min_discovery_alert: 5}
   research: {max_scout_only_ideas: 20}
 
 # E13.5 (D56): options_slow knobs (options_daily + vix_futures sources below).
@@ -417,7 +418,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     recent_report_days: [1, 3]  # other days: only tickers that reported 1-3 days ago (earnings calendar docs)
   symbols:                      # E5.7 / D28 symbol master + daily active-list resolve
     label: Universe
-    about: "Daily active list (core, momentum, discovery; max 50); Monday symbol master refresh"
+    about: "Daily active list (core, momentum, discovery, trending; max 50); Monday symbol master refresh"
     group: other
     schedule: ["05:30"]         # before the 06:00 earnings calendar; `arc universe refresh` = by hand
     days: trading               # the active list resolves every session (no network)
@@ -438,6 +439,50 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     writes: [universe_tier, active_universe]   # re-resolves today's active list after the write
     source_order: [stockanalysis, schwab]      # Schwab only when stockanalysis fails or < 20 rows
     size: 25
+  # E13.19 (D58): Trending tier v2. One daily pull of Reddit (ApeWisdom) + Stocktwits
+  # (category retail_buzz, Scout slow feed), then a code ranking (no LLM) into the
+  # trending tier: names in both inputs first, then the best single-input names.
+  retail_buzz:
+    label: Retail buzz
+    about: "Reddit (ApeWisdom) + Stocktwits trending lists, once a day: raw rows for the trending tier and the Scout"
+    schedule: ["05:40"]         # before universe.trending 05:50 and the 06:00 Scout
+    days: trading
+    ttl: 2h
+    category: retail_buzz
+    feed: scout
+    context: {ttl: 24h, supersede: latest}
+    writes: [retail_buzz]
+    # Adding or removing an input is config only; `type` picks the parser
+    # (apewisdom | stocktwits). A failed input contributes nothing (never renormalised).
+    inputs:
+      reddit:                   # ApeWisdom all-stocks, pages 1-2 (free, no key)
+        type: apewisdom
+        label: Reddit (ApeWisdom)
+        urls:
+          - https://apewisdom.io/api/v1.0/filter/all-stocks/page/1
+          - https://apewisdom.io/api/v1.0/filter/all-stocks/page/2
+        timeout_s: 15
+        retries: 1
+      stocktwits:               # Stocktwits trending (free, no key; crypto/non-US dropped by the ranker)
+        type: stocktwits
+        label: Stocktwits trending
+        urls: [https://api.stocktwits.com/api/2/trending/symbols.json]
+        timeout_s: 15
+        retries: 1
+  universe.trending:            # E13.19 (D58): code-ranked trending tier from retail_buzz
+    label: Trending tier
+    about: "Daily trending tier (<= 25): Reddit + Stocktwits names in both inputs first, then single-input fill; loose screen"
+    group: other
+    schedule: ["05:50"]         # after retail_buzz 05:40, before the 06:00 Scout; `arc universe trending` = by hand
+    days: trading
+    ttl: 1h
+    # context_ttl default for universe_tier: 1 session, supersede latest. A failed run
+    # writes nothing; yesterday's entry has expired, so the tier is empty today.
+    reads: [retail_buzz, universe_tier]
+    writes: [universe_tier, active_universe]   # re-resolves today's active list after the write
+    pool: 40                    # first 40 in rank order get the tier's screen
+    min_inputs_first: 2         # names in both inputs rank ahead of single-input names
+    exclude_market_reference: true
 
 # E4.8a (D46/D44): Finnhub per-ticker facts in the Scalp/Research prompts. The switch
 # is `personas.finnhub_context` below (default off = prompts unchanged); these are its
@@ -479,7 +524,7 @@ personas:
     lane: background            # one cheap LLM call (~1-2 min); the tick never waits on it
     llm: true
     notify: card
-    reads: [channel_brief, options_daily, vx_curve, vol_term, universe_tier, active_universe]
+    reads: [channel_brief, options_daily, vx_curve, vol_term, retail_buzz, universe_tier, active_universe]   # retail_buzz: D58 (prompt use E13.20)
     writes: [scout_read, candidate, note, universe_tier, active_universe]   # universe_tier: discovery only; active_universe: re-resolve after
   scalp:                        # D31: every 30 min in session (15 runs), after the fast sources
     label: Scalp

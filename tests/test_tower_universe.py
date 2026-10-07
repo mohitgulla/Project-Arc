@@ -121,11 +121,12 @@ def test_todays_resolve_is_shown_as_stored(tmp_path: Path) -> None:
     aapl = next(a for a in r.active if a.ticker == "AAPL")
     assert aapl.tier == "core" and aapl.also_in == ["momentum"]
     tiers = {t.name: t for t in r.tiers}
-    assert [t.name for t in r.tiers] == ["core", "momentum", "discovery"]
+    assert [t.name for t in r.tiers] == ["core", "momentum", "discovery", "trending"]
     assert (tiers["momentum"].offered, tiers["momentum"].active) == (3, 2)
     assert tiers["core"].size_cap == MAX_CORE
     assert tiers["momentum"].size_cap == ArcSettings().universe_momentum_size_d56
     assert tiers["discovery"].size_cap == ArcSettings().universe_discovery_size
+    assert tiers["trending"].size_cap == ArcSettings().universe_trending_size == 25
     assert sum(t.active for t in r.tiers) == len(r.active)
     assert r.market_reference == ["SPY", "QQQ", "IWM"]
     assert r.core_override_ignored is None
@@ -230,7 +231,7 @@ def test_route_on_the_ops_fixture_is_get_only(tmp_path: Path) -> None:
     assert body.state == "today"
     assert len(body.active) == body.active_max == 50
     counts = {t.name: t.active for t in body.tiers}
-    assert counts == {"core": 20, "momentum": 11, "discovery": 19}
+    assert counts == {"core": 20, "momentum": 11, "discovery": 19, "trending": 0}
     assert [(d.ticker, d.reason) for d in body.dropped] == [
         ("KKR", DROP_OVER_TIER_SIZE),
         ("VST", DROP_OVER_TIER_SIZE),

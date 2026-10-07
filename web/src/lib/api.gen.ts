@@ -5675,6 +5675,11 @@ export interface components {
              * @description Lower tiers that also list it
              */
             also_in?: string[];
+            /**
+             * Inputs
+             * @description D58 trending: retail_buzz inputs that listed the name (2 | 1)
+             */
+            inputs?: number | null;
             /** Rank */
             rank: number;
             /** Reason */
@@ -5796,7 +5801,7 @@ export interface components {
             fetched_at: string | null;
             /**
              * Name
-             * @description core | momentum | discovery (precedence order)
+             * @description core | momentum | discovery | trending (precedence order)
              */
             name: string;
             /**
@@ -5811,7 +5816,7 @@ export interface components {
             partial: boolean;
             /**
              * Size Cap
-             * @description The tier's size: core ceiling 30, momentum/discovery sizes; null = no cut
+             * @description The tier's size: core ceiling 25, momentum/discovery/trending sizes; null = no cut
              */
             size_cap: number | null;
             /**

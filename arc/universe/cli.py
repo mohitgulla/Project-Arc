@@ -10,6 +10,10 @@
 - ``arc universe momentum [--dry-run] [--db PATH] [--no-slack]``  E12.2: run the
   ``universe.momentum`` routine now (same as ``arc routines run universe.momentum``)
   and print the momentum tier it wrote; ``--dry-run`` fetches and prints only.
+- ``arc universe trending [--dry-run] [--no-screen] [--top N] [--db PATH] [--no-slack]``
+  E13.19 (D58): run the ``universe.trending`` routine now (ranks the latest
+  ``retail_buzz`` entry) and print the tier it wrote; ``--dry-run`` prints the score
+  table (reddit, stocktwits, score, inputs, screen, rank) and writes nothing.
 """
 
 from __future__ import annotations
@@ -66,6 +70,17 @@ def add_universe_parser(sub: argparse._SubParsersAction) -> None:  # type: ignor
     )
     m.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
     m.add_argument("--no-slack", action="store_true", help="Notice to the log only")
+    tr = usub.add_parser("trending", help="E13.19: run the daily trending tier job now")
+    tr.add_argument("--dry-run", action="store_true", help="Score + print only; write nothing")
+    tr.add_argument(
+        "--no-screen", action="store_true", help="--dry-run only: skip the liquidity screen"
+    )
+    tr.add_argument("--top", type=int, default=40, help="Rows of the score table (dry run)")
+    tr.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+    tr.add_argument(
+        "--now", default=None, help="--dry-run only: rank as of this ISO time (ET if naive)"
+    )
+    tr.add_argument("--no-slack", action="store_true", help="Notice to the log only")
     for q in (p, *usub.choices.values()):
         q.add_argument("--json", action="store_true", help="Emit JSON")
 
@@ -95,6 +110,8 @@ def run_universe(args: argparse.Namespace) -> int:
         return _run_tiers(args, settings, now)
     if cmd == "momentum":
         return _run_momentum(args, settings, now)
+    if cmd == "trending":
+        return _run_trending(args, settings, now)
     if cmd == "refresh":
         master = refresh_symbol_master(
             cfg.symbol_master, user_agent=settings.edgar_user_agent, now=now
@@ -243,7 +260,12 @@ def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetim
         ).fetchone()
     finally:
         conn.close()
-    feeds = {"core": inputs.core, "momentum": inputs.momentum, "discovery": inputs.discoveries}
+    feeds = {
+        "core": inputs.core,
+        "momentum": inputs.momentum,
+        "discovery": inputs.discoveries,
+        "trending": inputs.trending,
+    }
     order = TIER_ORDER
     tiers = {t.value: feeds[t.value] for t in order}
     reference = market_reference(eff)
@@ -291,6 +313,92 @@ def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetim
         lines.append(f"dropped    {d.ticker} ({d.tier.value}{rank}): {d.reason}")
     lines.append(f"market reference (regime only): {' '.join(out['market_reference'])}")
     sys.stdout.write("\n".join(lines) + "\n")
+    return 0
+
+
+def _parse_now(raw: str | None, now: _dt.datetime) -> _dt.datetime:
+    if not raw:
+        return now
+    import datetime as dt
+
+    from arc.utils.calendar import ET
+
+    parsed = dt.datetime.fromisoformat(raw)
+    return parsed.replace(tzinfo=ET) if parsed.tzinfo is None else parsed.astimezone(ET)
+
+
+def _run_trending(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetime) -> int:
+    """``--dry-run``: rank the latest ``retail_buzz`` entry (+ screen) from the store
+    read-only and print the score table (writes nothing). Otherwise run the
+    ``universe.trending`` routine."""
+    if not args.dry_run:
+        if args.no_screen or args.now:
+            _out({"error": "--no-screen / --now are only valid with --dry-run"}, args.json)
+            return 2
+        return _run_tier_job(args, "universe.trending", "trending")
+    from arc.control.effective import effective_settings
+    from arc.routines.config import load_routines
+    from arc.routines.handlers import run_trending_tier
+    from arc.store.db import connect_ro
+    from arc.universe.trending import TrendingError, table
+
+    now = _parse_now(args.now, now)
+    routines = load_routines()
+    job = routines.jobs().get("universe.trending")
+    options: dict[str, object] = dict(job[1].options) if job is not None else {}
+    try:
+        conn = connect_ro(args.db)
+    except FileNotFoundError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 1
+    try:
+        eff = effective_settings(conn, base=settings)
+        res = run_trending_tier(
+            conn=conn,
+            settings=eff,
+            routines=routines,
+            options=options,
+            now=now,
+            screen=not args.no_screen,
+        )
+    except TrendingError as exc:
+        _out({"error": str(exc)}, args.json)
+        return 1
+    finally:
+        conn.close()
+    info: dict[str, object] = {
+        "written": False,
+        "as_of": res.as_of.isoformat(),
+        "retail_buzz_as_of": res.buzz_as_of,
+        "screened": res.screened,
+        "inputs": {
+            i.name: f"{i.status} · {i.count} rows · {len(i.raw)} eligible"
+            + (f" · {i.error}" if i.error else "")
+            for i in res.inputs
+        },
+        "ranked": len(res.ranked),
+        "both_inputs": sum(1 for r in res.ranked if r.n_inputs >= 2),
+        "excluded": {r.ticker: r.excluded for r in res.excluded},
+        "names": len(res.members),
+        "names_both_inputs": sum(1 for r in res.members if r.n_inputs >= 2),
+        "tickers": " ".join(res.tickers),
+    }
+    rows = table(res, limit=args.top)
+    if args.json:
+        _out({**info, "table": rows}, True)
+        return 0
+    _out(info, False)
+    head = f"{'#':>3} {'ticker':<6} " + " ".join(f"{n[:10]:>10}" for n in res.order)
+    sys.stdout.write(head + f" {'score':>6} {'n':>2} {'screen':<6} reason\n")
+    for r in rows:
+        cells = " ".join(f"{'-' if r[n] is None else format(r[n], '.2f'):>10}" for n in res.order)
+        rank = r["rank"] if r["rank"] is not None else ""
+        sys.stdout.write(
+            f"{rank!s:>3} {r['ticker']:<6} {cells} {r['trend_score']:>6.3f} {r['inputs']:>2} "
+            f"{r['screen']:<6} {r['reason']}"
+            + (f" [{r['screen_detail']}]" if r["screen"] == "fail" else "")
+            + "\n"
+        )
     return 0
 
 
@@ -403,9 +511,13 @@ def _run_tier_job(args: argparse.Namespace, job: str, subject: str) -> int:
             "names": len(pay.members),
             "partial": pay.partial,
             "members": [
-                {"rank": m.rank, "ticker": m.ticker, "reason": m.reason} for m in pay.members
+                {"rank": m.rank, "ticker": m.ticker, "reason": m.reason, "inputs": m.inputs}
+                for m in pay.members
             ],
-            **{k: out.metrics.get(k) for k in ("added", "removed", "input_errors", "active")},
+            **{
+                k: out.metrics.get(k)
+                for k in ("added", "removed", "input_errors", "active", "active_trending")
+            },
         }
     _print_tier(info, args.json)
     return 0 if out is not None and out.status == "ok" else 1

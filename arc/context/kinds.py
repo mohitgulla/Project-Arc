@@ -495,6 +495,55 @@ class VxCurvePayload(BaseModel):
     url: str
 
 
+# E13.19 (D58): retail_buzz, the daily Reddit (ApeWisdom) + Stocktwits pull. Raw rows
+# per input (symbols normalised, nothing scored): the trending ranker
+# (arc.universe.trending) scores them; the Scout reads them as context (E13.20).
+class RetailBuzzRow(BaseModel):
+    """One symbol as one input listed it (position = its 1-based order in the input)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    symbol: str
+    position: int = Field(..., ge=1)
+    rank: int | None = Field(None, description="The input's own rank field, if any")
+    name: str = ""
+    mentions: float | None = Field(None, description="apewisdom: mentions (24h)")
+    rank_24h_ago: int | None = Field(None, description="apewisdom: rank 24 h ago")
+    trending_score: float | None = Field(None, description="stocktwits: trending_score")
+    exchange: str | None = Field(None, description="stocktwits: exchange (CRYPTO dropped later)")
+    region: str | None = Field(None, description="stocktwits: region (non-US dropped later)")
+
+
+class RetailBuzzInput(BaseModel):
+    """What one input fetched this run (``failed`` = no rows; contributes nothing)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["apewisdom", "stocktwits"]
+    label: str = ""
+    status: Literal["ok", "failed"]
+    urls: list[str] = Field(default_factory=list)
+    fetched_at: str = Field(..., description="ISO time (ET) of the fetch")
+    digest: str = Field("", description="sha256 of the fetched pages' raw bytes")
+    error: str | None = None
+    rows: list[RetailBuzzRow] = Field(default_factory=list)
+
+
+class RetailBuzzPayload(BaseModel):
+    """``retail_buzz`` (subject ``all``): one entry per daily pull, every enabled input."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str = Field(..., description="ISO time (ET) of the run")
+    session: str = Field(..., description="Trading session the pull is for (YYYY-MM-DD)")
+    inputs: dict[str, RetailBuzzInput] = Field(..., min_length=1)
+
+    @property
+    def live(self) -> list[str]:
+        """Inputs that answered with at least one row, in config order."""
+        return [n for n, i in self.inputs.items() if i.status == "ok" and i.rows]
+
+
 # E13.6 (D56): options_fast, Cboe ~15-min delayed quotes (index vols, per-ticker chain
 # top-of-book) + the exchange symbol_data volume CSVs. Context only, never gate inputs.
 IndexVolSymbol = Literal["VIX", "VIX9D", "VXN", "VIX1D", "VIX3M", "VVIX"]
@@ -836,6 +885,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("index_vols", IndexVolsPayload),  # subject market
     KindSpec("chain_snapshot", ChainSnapshotPayload),  # subject = ticker
     KindSpec("exchange_volume", ExchangeVolumePayload),  # subject market
+    # E13.19 (D58): retail_buzz (Reddit + Stocktwits raw rows, daily; subject all)
+    KindSpec("retail_buzz", RetailBuzzPayload),
     KindSpec("macro_calendar", MacroCalendarPayload),
     KindSpec("ex_dividend", ExDividendPayload),
     # E4.8 (D46): Finnhub per-ticker context (subject = ticker)
@@ -845,8 +896,10 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("fundamentals", FundamentalsPayload),
     # D51 (E12.1): tiered universe. universe_tier subject = tier name (E12.2/E12.3
     # write momentum/trending); active_universe subject = "active" (one per resolve).
-    KindSpec("universe_tier", UniverseTierPayload, schema_version=2),  # E12.2: url, partial
-    KindSpec("active_universe", ActiveUniverse, schema_version=2),  # E13.4: model, dropped rank
+    # E12.2: url, partial; E13.19 (D58): v3 member `inputs` (trending)
+    KindSpec("universe_tier", UniverseTierPayload, schema_version=3),
+    # E13.4: model, dropped rank; E13.19 (D58): v3 member `inputs` (trending)
+    KindSpec("active_universe", ActiveUniverse, schema_version=3),
     # E13.7 (D56): the Scout's daily read; subject = "session"
     KindSpec("scout_read", ScoutReadPayload),
     # E13.17 (D56): Research-managed exits. exit_watchlist subject = "session";

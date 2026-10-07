@@ -231,10 +231,10 @@ class TestProfiles:
 
 
 class TestGuardTiers:
-    def test_membership_core_momentum_discovery(self, conn: sqlite3.Connection) -> None:
+    def test_membership_four_tiers(self, conn: sqlite3.Connection) -> None:
         _write_tier(conn, Tier.MOMENTUM, ["LLY", "NVDA"])  # NVDA keeps core
         _write_tier(conn, Tier.DISCOVERY, ["HOOD", "LLY"])  # LLY keeps momentum
-        _write_tier(conn, Tier.TRENDING, ["XLE"])  # a stale pre-cutover feed: never read
+        _write_tier(conn, Tier.TRENDING, ["XLE", "HOOD"])  # D58: 4th tier; HOOD keeps discovery
         got = tier_membership(conn, _settings(), NOW)
         assert got == {
             "NVDA": Tier.CORE,
@@ -242,6 +242,7 @@ class TestGuardTiers:
             "PLTR": Tier.CORE,
             "LLY": Tier.MOMENTUM,
             "HOOD": Tier.DISCOVERY,
+            "XLE": Tier.TRENDING,
         }
         assert tier_membership(None, _settings(), NOW) == {t: Tier.CORE for t in CORE}
 

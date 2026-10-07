@@ -89,7 +89,9 @@ describe("universe page helpers", () => {
   });
 
   it("names the refreshing jobs (D56)", () => {
-    expect(refreshLine()).toBe("momentum refreshes on its own job; discovery is written by the Scout.");
+    expect(refreshLine()).toBe(
+      "momentum refreshes on its own job; discovery is written by the Scout; trending is ranked daily from Reddit + Stocktwits.",
+    );
   });
 });
 

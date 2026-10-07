@@ -1,6 +1,6 @@
-"""Tiered universe (D56; cards E13.4 / E13.15) → one active list.
+"""Tiered universe (D56 + D58; cards E13.4 / E13.15 / E13.19) → one active list.
 
-Three tiers, highest precedence first:
+Four tiers, highest precedence first:
 
 * ``core`` — the fixed list (``config/universe.yaml`` ``core:``, or the ``universe``
   D26 override when it has at most :data:`MAX_CORE` names). Never screened.
@@ -8,18 +8,17 @@ Three tiers, highest precedence first:
   latest valid ``universe_tier`` context entry with subject ``momentum``, cut to the
   top ``universe_momentum_size_d56`` rows by rank.
 * ``discovery`` — the Scout's ``universe_tier`` entry with subject ``discovery``
-  (E13.7), the single entry point; empty until the Scout writes it.
-
-E13.15 removed the D51 layout (the trending tier and Scalp-candidate discoveries).
-:attr:`Tier.TRENDING` stays as an enum member only so stored ``universe_tier`` /
-``active_universe`` rows still deserialise; nothing produces it.
+  (E13.7), cut to ``universe_discovery_size`` (25); empty until the Scout writes it.
+* ``trending`` — D58 (E13.19): the ``universe.trending`` job's ``universe_tier`` entry
+  (subject ``trending``), ranked by code from the daily ``retail_buzz`` pull (Reddit +
+  Stocktwits), cut to ``universe_trending_size`` (25).
 
 :func:`resolve_active` is pure and deterministic: a name keeps its **highest** tier
-(core > momentum > discovery) and records the others in ``also_in``; each tier is its
-feed's top ``size`` rows by rank; the deduped list is cut to ``active_max`` in tier
-order, then rank, so overflow leaves from the tail of the lowest tier first
-(discovery, then momentum). Every cut name is listed in ``dropped`` (never silently
-lost).
+(core > momentum > discovery > trending) and records the others in ``also_in``; each
+tier is its feed's top ``size`` rows by rank; the deduped list is cut to ``active_max``
+in tier order, then rank, so overflow leaves from the tail of the lowest tier first
+(trending, then discovery, then momentum). Every cut name is listed in ``dropped``
+(never silently lost).
 
 ``market_reference`` (SPY, QQQ, IWM) is not part of the trade list; Research always
 writes their ``regime`` entries so the D33 market guard keeps its SPY read.
@@ -78,7 +77,7 @@ __all__ = [
     "yaml_core",
 ]
 
-MAX_CORE = 30  # hard ceiling on the core list (registry `universe` max_items)
+MAX_CORE = 25  # D58: hard ceiling on the core list (registry `universe` max_items)
 ACTIVE_SUBJECT = "active"  # `active_universe` context subject
 DROP_OVER_ACTIVE_CAP = "over_active_cap"  # journaled as universe:over_active_cap
 DROP_OVER_TIER_SIZE = "over_tier_size"  # the tier's own feed listed more than its size
@@ -93,19 +92,16 @@ def _norm(raw: str) -> str:
 
 
 class Tier(enum.StrEnum):
-    """Universe tiers, highest precedence first."""
-
-    # E13.15: ``TRENDING`` is a legacy member. Stored pre-D56 rows carry it; nothing
-    # writes it and :data:`TIER_ORDER` leaves it out.
+    """Universe tiers, highest precedence first (D58: trending is last)."""
 
     CORE = "core"
     MOMENTUM = "momentum"
-    TRENDING = "trending"
     DISCOVERY = "discovery"
+    TRENDING = "trending"
 
 
-#: D56 precedence order (no trending tier).
-TIER_ORDER: tuple[Tier, ...] = (Tier.CORE, Tier.MOMENTUM, Tier.DISCOVERY)
+#: D58 precedence order: core > momentum > discovery > trending.
+TIER_ORDER: tuple[Tier, ...] = (Tier.CORE, Tier.MOMENTUM, Tier.DISCOVERY, Tier.TRENDING)
 #: Every member, legacy included: sort key for stored history only.
 _ALL_TIERS: tuple[Tier, ...] = tuple(Tier)
 
@@ -128,12 +124,16 @@ class TierMember(BaseModel):
     also_in: list[Tier] = Field(
         default_factory=list, description="lower tiers that also listed this name (dedupe)"
     )
+    # v3 (E13.19): trending members say how many retail_buzz inputs listed them (2|1)
+    inputs: int | None = Field(None, ge=1, description="trending: inputs that listed the name")
 
 
 class UniverseTierPayload(BaseModel):
-    """``universe_tier`` context entry (subject = tier name), written by E12.2 / E12.3."""
+    """``universe_tier`` context entry (subject = tier name).
 
-    # Writers since E13.15: the momentum job (E12.2) and the Scout (E13.7).
+    Writers: the momentum job (E12.2), the Scout (discovery, E13.7) and the
+    ``universe.trending`` job (D58, E13.19).
+    """
 
     model_config = _FORBID
 
@@ -199,6 +199,7 @@ def resolve_active(
     core: Sequence[TierMember],
     momentum: Sequence[TierMember] = (),
     discoveries: Sequence[TierMember] = (),
+    trending: Sequence[TierMember] = (),
     active_max: int,
     tier_sizes: dict[Tier, int] | None = None,
     as_of: _dt.date,
@@ -215,10 +216,15 @@ def resolve_active(
     missing a tier means no per-tier cut. Deterministic: same inputs, same output.
 
     The cap keeps names in tier order then rank, so the overflow is the tail of the
-    lowest tier first (discovery's lowest-ranked rows, then momentum's).
+    lowest tier first (trending's lowest-ranked rows, then discovery's, then momentum's).
     """
     sizes = tier_sizes or {}
-    by_tier = {Tier.CORE: core, Tier.MOMENTUM: momentum, Tier.DISCOVERY: discoveries}
+    by_tier = {
+        Tier.CORE: core,
+        Tier.MOMENTUM: momentum,
+        Tier.DISCOVERY: discoveries,
+        Tier.TRENDING: trending,
+    }
     raw_counts: dict[str, int] = {}
     kept: dict[str, TierMember] = {}
     order: list[str] = []
@@ -331,18 +337,21 @@ def tier_sizes(settings: ArcSettings) -> dict[Tier, int]:
     return {
         Tier.MOMENTUM: settings.universe_momentum_size_d56,
         Tier.DISCOVERY: settings.universe_discovery_size,
+        Tier.TRENDING: settings.universe_trending_size,
     }
 
 
 def tier_floor(settings: ArcSettings, tier: Tier | None) -> float | None:
     """Scalp confidence floor of *tier* (``universe_floor_<tier>``); ``None`` for a
-    name in no tier (never admitted) or the legacy trending member."""
+    name in no tier (never admitted)."""
     if tier is Tier.CORE:
         return settings.universe_floor_core
     if tier is Tier.MOMENTUM:
         return settings.universe_floor_momentum
     if tier is Tier.DISCOVERY:
         return settings.universe_floor_discovery
+    if tier is Tier.TRENDING:
+        return settings.universe_floor_trending
     return None
 
 
@@ -354,6 +363,7 @@ class TierInputs(BaseModel):
     core: list[TierMember]
     momentum: list[TierMember] = Field(default_factory=list)
     discoveries: list[TierMember] = Field(default_factory=list)
+    trending: list[TierMember] = Field(default_factory=list)
     expired_tiers: list[Tier] = Field(default_factory=list)
 
 
@@ -403,16 +413,19 @@ def _feed_tier(
 def load_tier_inputs(
     conn: sqlite3.Connection, settings: ArcSettings, now: _dt.datetime
 ) -> TierInputs:
-    """Core (config/settings), momentum and discovery (context; discovery is written
-    by the Scout)."""
+    """Core (config/settings), momentum, discovery and trending (context; discovery is
+    written by the Scout, trending by ``universe.trending``)."""
     core = _core_members(settings, _today(now))
     momentum, m_exp = _feed_tier(conn, Tier.MOMENTUM, now)
     discovery, d_exp = _feed_tier(conn, Tier.DISCOVERY, now)
+    trending, t_exp = _feed_tier(conn, Tier.TRENDING, now)
+    expired = ((Tier.MOMENTUM, m_exp), (Tier.DISCOVERY, d_exp), (Tier.TRENDING, t_exp))
     return TierInputs(
         core=core,
         momentum=momentum,
         discoveries=discovery,
-        expired_tiers=[t for t, e in ((Tier.MOMENTUM, m_exp), (Tier.DISCOVERY, d_exp)) if e],
+        trending=trending,
+        expired_tiers=[t for t, e in expired if e],
     )
 
 
@@ -425,6 +438,7 @@ def build_active(
         core=inputs.core,
         momentum=inputs.momentum,
         discoveries=inputs.discoveries,
+        trending=inputs.trending,
         active_max=settings.universe_active_max,
         tier_sizes=tier_sizes(settings),
         as_of=_today(now),
@@ -551,7 +565,7 @@ def watch_tickers(
     conn: sqlite3.Connection | None, settings: ArcSettings, now: _dt.datetime
 ) -> list[str]:
     """The Scalp's watch list: every tier of today's active list (discovery comes
-    from the Scout). A stored pre-D56 row lists its trending names too."""
+    from the Scout, trending from the daily retail_buzz ranking)."""
     if conn is not None and (active := _stored_active(conn, now)) is not None:
         return active.tickers
     return core_tickers(settings)
@@ -574,16 +588,16 @@ def tier_membership(
 ) -> dict[str, Tier]:
     """``ticker -> highest tier`` (admission, E13.4).
 
-    Core, momentum and the Scout's discovery feed, each feed cut to its tier size by
-    rank (momentum rows 21-25 are in no tier). Not cut by the active cap: a tier member
-    keeps its admission rule even when the active list overflows. A name not listed
-    here is in no tier and is never admitted (``not_in_tier``).
+    Core, momentum, the Scout's discovery feed and the trending feed (D58), each feed
+    cut to its tier size by rank (momentum rows 21-25 are in no tier). Not cut by the
+    active cap: a tier member keeps its admission rule even when the active list
+    overflows. A name not listed here is in no tier and is never admitted (``not_in_tier``).
     """
     out: dict[str, Tier] = {t: Tier.CORE for t in core_tickers(settings)}
     if conn is None:
         return out
     sizes = tier_sizes(settings)
-    for tier in (Tier.MOMENTUM, Tier.DISCOVERY):
+    for tier in (Tier.MOMENTUM, Tier.DISCOVERY, Tier.TRENDING):
         members, _ = _feed_tier(conn, tier, now)
         seen: list[str] = []
         for m in sorted(members, key=lambda r: r.rank):

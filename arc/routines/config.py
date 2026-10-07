@@ -766,7 +766,7 @@ class FunnelScout(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    max_discovery: Annotated[int, Field(ge=0, le=25)] = 20
+    max_discovery: Annotated[int, Field(ge=0, le=25)] = 25  # D58 (was 20)
     video_budget_split: Literal["equal"] = "equal"
     # owner decision 1 (D56): the ``coverage:scout`` alert fires below this many names
     min_discovery_alert: Annotated[int, Field(ge=0, le=20)] = 5
@@ -960,6 +960,10 @@ class RoutinesConfig(BaseModel):
                 raise ValueError(msg)
             self._check_source_category(name, spec)
             self._check_source_feed(name, spec)
+            if name == "retail_buzz":  # E13.19: the inputs block validates at load
+                from arc.ingest.retail_buzz_config import RetailBuzzConfig
+
+                RetailBuzzConfig.from_options(spec.options)
         for name, spec in self.personas.items():
             if name in spec.chain or len(set(spec.chain)) != len(spec.chain):
                 msg = f"persona {name!r}: chain repeats a step"

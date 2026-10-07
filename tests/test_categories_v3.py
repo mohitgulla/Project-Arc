@@ -51,7 +51,8 @@ def _cfg(sources: dict[str, Any]) -> RoutinesConfig:
 # -- the enum and its aliases --------------------------------------------------
 
 
-def test_six_members_in_display_order() -> None:
+def test_seven_members_in_display_order() -> None:
+    # D58 (E13.19): retail_buzz is the 7th category (Scout slow feed + trending tier)
     assert [c.value for c in CATEGORY_ORDER] == [
         "market_news",
         "company_data",
@@ -59,8 +60,9 @@ def test_six_members_in_display_order() -> None:
         "options_slow",
         "youtube_macro",
         "youtube_micro",
+        "retail_buzz",
     ]
-    assert len(SourceCategory) == 6
+    assert len(SourceCategory) == 7
     ages = {c.value: str(s.max_age) for c, s in DEFAULT_CATEGORIES.items()}
     assert ages == {
         "market_news": "6h",
@@ -69,6 +71,7 @@ def test_six_members_in_display_order() -> None:
         "options_slow": "1d",
         "youtube_macro": "1d",
         "youtube_micro": "1d",
+        "retail_buzz": "1d",
     }  # Ttl prints 24h as 1d
 
 
@@ -105,6 +108,7 @@ def test_kind_map_and_reference_kinds() -> None:
         "index_vols": SourceCategory.OPTIONS_FAST,  # E13.6
         "chain_snapshot": SourceCategory.OPTIONS_FAST,
         "exchange_volume": SourceCategory.OPTIONS_FAST,
+        "retail_buzz": SourceCategory.RETAIL_BUZZ,  # E13.19 (D58)
     }
     assert {"ex_dividend", "macro_calendar"} <= REFERENCE_KINDS
     assert not REFERENCE_KINDS & set(KIND_CATEGORY)
@@ -168,7 +172,7 @@ def test_shipped_yaml_classification(shipped: RoutinesConfig) -> None:
 def test_funnel_block_defaults_and_bounds(shipped: RoutinesConfig) -> None:
     f = shipped.funnel
     assert f.scalp.doc_budget_split == "equal"
-    assert (f.scout.max_discovery, f.scout.min_discovery_alert) == (20, 5)
+    assert (f.scout.max_discovery, f.scout.min_discovery_alert) == (25, 5)  # D58
     assert f.scout.video_budget_split == "equal"
     assert f.research.max_scout_only_ideas == 20
     for bad in (

@@ -1,4 +1,5 @@
-"""Source categories (D47, D49, D56): six equal-weight categories with a freshness window each.
+"""Source categories (D47, D49, D56, D58): seven equal-weight categories with a freshness
+window each.
 
 Every ingest source belongs to exactly one :class:`SourceCategory`, or is **reference
 data** (D56: ``reference: true``; ex-dividend, macro calendar, earnings calendar,
@@ -39,6 +40,7 @@ __all__ = [
     "LEGACY_VIDEO",
     "REFERENCE",
     "REFERENCE_KINDS",
+    "RESEARCH_CATEGORIES",
     "SCALP_CATEGORIES",
     "YOUTUBE_CATEGORIES",
     "CategorySpec",
@@ -56,7 +58,7 @@ __all__ = [
 
 
 class SourceCategory(enum.StrEnum):
-    """D56: exactly six categories, in the fixed display order."""
+    """D56 + D58: exactly seven categories, in the fixed display order."""
 
     MARKET_NEWS = "market_news"
     COMPANY_DATA = "company_data"
@@ -64,9 +66,17 @@ class SourceCategory(enum.StrEnum):
     OPTIONS_SLOW = "options_slow"
     YOUTUBE_MACRO = "youtube_macro"
     YOUTUBE_MICRO = "youtube_micro"
+    # D58 (E13.19): Reddit (ApeWisdom) + Stocktwits, one daily pull in the Scout's slow
+    # feed; ranked into the trending tier by code (arc.universe.trending).
+    RETAIL_BUZZ = "retail_buzz"
 
 
 CATEGORY_ORDER: tuple[SourceCategory, ...] = tuple(SourceCategory)
+#: The categories Research's "Context by category" block lists (D56's six). D58's
+#: ``retail_buzz`` feeds the trending tier (code) and the Scout, never Research.
+RESEARCH_CATEGORIES: tuple[SourceCategory, ...] = tuple(
+    c for c in CATEGORY_ORDER if c is not SourceCategory.RETAIL_BUZZ
+)
 
 # Old names, accepted for one release (logged as ``sources.category_alias``) so open
 # branches and YAML keep loading: the pre-D47 names, the D47 names D49 renamed and
@@ -140,6 +150,8 @@ KIND_CATEGORY: Mapping[str, SourceCategory] = {
     "index_vols": SourceCategory.OPTIONS_FAST,
     "chain_snapshot": SourceCategory.OPTIONS_FAST,
     "exchange_volume": SourceCategory.OPTIONS_FAST,
+    # E13.19 (D58): Reddit + Stocktwits raw rows, daily (subject all)
+    "retail_buzz": SourceCategory.RETAIL_BUZZ,
 }
 
 
@@ -275,6 +287,7 @@ DEFAULT_CATEGORIES: Mapping[SourceCategory, CategorySpec] = {
     SourceCategory.OPTIONS_SLOW: _spec("24h", "Options slow"),
     SourceCategory.YOUTUBE_MACRO: _spec("24h", "YouTube macro"),
     SourceCategory.YOUTUBE_MICRO: _spec("24h", "YouTube micro"),
+    SourceCategory.RETAIL_BUZZ: _spec("24h", "Retail buzz"),  # D58
 }
 
 

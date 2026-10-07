@@ -493,10 +493,10 @@ def category_specs_input(routines: Any) -> dict[str, dict[str, str]]:
     D49: Research step records this in its prompt inputs, so a replay rebuilds
     the same freshness verdicts even after a Slack ``max_age`` change.
     """
-    from arc.context.categories import CATEGORY_ORDER
+    from arc.context.categories import RESEARCH_CATEGORIES
 
     out: dict[str, dict[str, str]] = {}
-    for c in CATEGORY_ORDER:
+    for c in RESEARCH_CATEGORIES:  # D58: retail_buzz feeds the trending tier, not Research
         spec = routines.category_spec(c)
         out[c.value] = {"label": spec.label, "max_age": str(spec.max_age)}
     return out
@@ -573,10 +573,10 @@ def _d49_normalize(raw: Any) -> str | None:
 
 
 def _d56_spec() -> _BlockSpec:
-    from arc.context.categories import CATEGORY_ORDER, DEFAULT_CATEGORIES
+    from arc.context.categories import DEFAULT_CATEGORIES, RESEARCH_CATEGORIES
 
     return _BlockSpec(
-        order=tuple(c.value for c in CATEGORY_ORDER),
+        order=tuple(c.value for c in RESEARCH_CATEGORIES),
         defaults={c.value: (s.max_age, s.label) for c, s in DEFAULT_CATEGORIES.items()},
         market_kinds=_MARKET_KINDS,
         ticker_kinds={},

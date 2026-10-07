@@ -391,11 +391,12 @@ def render_doc(doc: _Doc, *, max_chars: int) -> str:
 def scalp_prompt_floor(settings: ArcSettings) -> float:
     """The lowest tier floor (D56): the prompt's "only report at or above" line. Each
     candidate is then held to its own tier's floor (core 0.4 / momentum 0.5 /
-    discovery 0.6)."""
+    discovery 0.6 / trending 0.6)."""
     return min(
         settings.universe_floor_core,
         settings.universe_floor_momentum,
         settings.universe_floor_discovery,
+        settings.universe_floor_trending,
     )
 
 
@@ -407,7 +408,7 @@ def build_prompt(
     open_universe: bool | None = None,
     universe: list[str] | None = None,
 ) -> str:
-    """*universe* = the watch list (core + momentum + discovery); default the core."""
+    """*universe* = the watch list (core + momentum + discovery + trending); default the core."""
     if open_universe is None:
         open_universe = settings.universe_mode == "seed"
     if universe is None:
@@ -488,7 +489,7 @@ def build_stage2_prompt(
     universe: list[str] | None = None,
     tape: str | None = None,
 ) -> str:
-    """*universe* = the watch list (core + momentum + discovery); default the core.
+    """*universe* = the watch list (core + momentum + discovery + trending); default the core.
 
     *tape* (E13.10) is the options tape block; ``None`` (no tape read) leaves it out.
     """
@@ -1124,7 +1125,7 @@ def run_scalp(
     if guard is None:
         guard = UniverseGuard.from_settings(settings, now=now, load_master=bool(docs), conn=conn)
     open_universe = guard.mode == "seed"
-    watch = watch_tickers(conn, settings, now)  # core + momentum + discovery
+    watch = watch_tickers(conn, settings, now)  # core + momentum + discovery + trending
     log.info(
         "scalp.run.start",
         run_id=run_id,

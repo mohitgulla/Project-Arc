@@ -8,8 +8,8 @@ export type UniverseActive = Schemas["UniverseActiveRow"];
 export type UniverseTier = Schemas["UniverseTierRow"];
 export type UniverseDropped = Schemas["UniverseDroppedRow"];
 
-/** Tier precedence (core > momentum > discovery), the page's section order. */
-export const TIER_ORDER = ["core", "momentum", "discovery"] as const;
+/** Tier precedence (D58: core > momentum > discovery > trending), the page's section order. */
+export const TIER_ORDER = ["core", "momentum", "discovery", "trending"] as const;
 
 /** `core` -> `Core` (Title Case labels, D48). */
 export function tierLabel(name: string): string {
@@ -36,9 +36,9 @@ export function membersOf(active: UniverseActive[], tier: string): UniverseActiv
   return active.filter((m) => m.tier === tier).sort((a, b) => a.rank - b.rank);
 }
 
-/** Footer: which tiers refresh on their own jobs (D56: discovery = Scout). */
+/** Footer: which tiers refresh on their own jobs (D56: discovery = Scout; D58: trending = retail buzz). */
 export function refreshLine(): string {
-  return "momentum refreshes on its own job; discovery is written by the Scout.";
+  return "momentum refreshes on its own job; discovery is written by the Scout; trending is ranked daily from Reddit + Stocktwits.";
 }
 
 /** Plain words for a drop reason. */
@@ -54,6 +54,7 @@ export function dropLabel(reason: string): string {
 /** A chip's detail lines: source, reason, `also in Momentum, Discovery`. */
 export function memberDetail(m: UniverseActive): string[] {
   const out = [`#${m.rank} in ${tierLabel(m.tier)} · source ${m.source || "—"}`];
+  if (m.inputs != null) out.push(m.inputs >= 2 ? "in both inputs" : "in one input");
   if (m.reason) out.push(m.reason);
   const also = m.also_in ?? [];
   if (also.length) out.push(`also in ${also.map(tierLabel).join(", ")}`);
