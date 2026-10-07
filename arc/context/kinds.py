@@ -820,6 +820,8 @@ class ScoutInputsPresence(BaseModel):
     options_daily: str | None = Field(None, description="as_of of the fresh entry; None = absent")
     vx_curve: str | None = None
     vol_term: str | None = None
+    # v2 (E13.20, D58): as_of of the fresh retail_buzz entry read (None = absent / v1 row)
+    retail_buzz: str | None = None
 
 
 class ScoutReadPayload(BaseModel):
@@ -901,7 +903,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     # E13.4: model, dropped rank; E13.19 (D58): v3 member `inputs` (trending)
     KindSpec("active_universe", ActiveUniverse, schema_version=3),
     # E13.7 (D56): the Scout's daily read; subject = "session"
-    KindSpec("scout_read", ScoutReadPayload),
+    KindSpec("scout_read", ScoutReadPayload, schema_version=2),  # E13.20: inputs.retail_buzz
     # E13.17 (D56): Research-managed exits. exit_watchlist subject = "session";
     # exit_case subject = open structure id.
     KindSpec("exit_watchlist", ExitWatchlistPayload),

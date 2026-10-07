@@ -27,7 +27,19 @@ tiers.
 - `options_slow`: `options_daily` (Cboe put/call and open interest), `vx_curve`
   (CFE VX settlements) and `vol_term` (VIX complex), fresh within 24 h, else
   "no fresh info".
+- `retail_buzz` (E13.20, D58): the top 15 Reddit (ApeWisdom) + Stocktwits names of
+  the daily pull, fresh within 24 h, each with its Reddit rank/mentions, Stocktwits
+  rank and whether it is in today's trending tier; else "no info".
 - The core and momentum tier lists (never listed in discovery).
+
+## Retail buzz (weak signal)
+
+Retail buzz is crowd attention, not evidence: it says many people are talking about a
+name, not why it should move. Treat it as a weak signal. Corroborate it with a video
+brief or the options data before it shapes a theme or a ticker call, and never cite it
+alone as a thesis or as a discovery reason. The trending tier is ranked by code (E13.19);
+you cannot add or remove trending names, and `in trending tier` in the prompt is a fact,
+not a recommendation.
 
 No raw documents, no ticker-level options data.
 

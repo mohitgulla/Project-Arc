@@ -57,6 +57,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ExecutionResult",
     "Performance",
+    "TrendingFact",
     "research_card",
     "quant_card",
     "exits_mandatory_summary",
@@ -338,6 +339,24 @@ def scalp_card(
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 
 
+class TrendingFact(BaseModel):
+    """E13.20 (D58): today's trending tier as the Scout card shows it (code counts)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    names: int = Field(..., ge=0, description="Names in the trending tier today")
+    size: int = Field(..., ge=0, description="universe_trending_size (25)")
+    both: int = Field(0, ge=0, description="Tier names both retail_buzz inputs listed")
+    active: int = Field(0, ge=0, description="Trending names that made the active list")
+
+    def line(self) -> str:
+        """``Trending: 23/25 (11 both-source) · 17 in active list``."""
+        return (
+            f"Trending: {self.names}/{self.size} ({self.both} both-source) · "
+            f"{self.active} in active list"
+        )
+
+
 def scout_card(
     *,
     read: ScoutReadPayload,
@@ -347,13 +366,15 @@ def scout_card(
     dropped_calls: Mapping[str, str] | None = None,
     run_id: str | None = None,
     chain_run_id: str | None = None,
+    trending: TrendingFact | None = None,
 ) -> CardView:
     """``🔭 [Scout] Daily read: Discovery n/20`` (E13.7; E13.13 bold sections).
 
     *read* is the run's :class:`~arc.context.kinds.ScoutReadPayload`: the sections
     verbatim (``*Regime:*`` · ``*Options sentiment:*`` · ``*Themes:*`` ·
     ``*Discovery (n/20):*`` · ``*Risks:*``, no second summary), a ``Discovery: n/N``
-    fact, the code-counted inputs and a
+    fact, the code-counted inputs, the trending tier fact (E13.20,
+    ``Trending: n/25 (k both-source) · m in active list``) and a
     one-line under-fill notice below ``funnel.scout.min_discovery_alert``.
     """
     fill = int(read.discovery_fill)
@@ -369,6 +390,7 @@ def scout_card(
         f"{_plural(len(read.ticker_calls), 'ticker call')}",
         f"{_plural(candidates, 'candidate')}",
         briefs,
+        trending.line() if trending is not None else "",
     )
     if fill < min_discovery_alert:
         blocks.append(
@@ -407,6 +429,7 @@ def scout_card(
         *(f"{m} (macro)" for m in inp.youtube_macro.missing),
         *(f"{m} (micro)" for m in inp.youtube_micro.missing),
         *(k for k in ("options_daily", "vx_curve", "vol_term") if getattr(inp, k) is None),
+        *(["retail_buzz"] if trending is not None and inp.retail_buzz is None else []),
     ]
     if missing:
         blocks.append(B.summary(B.clip("No fresh input: " + ", ".join(B.esc(m) for m in missing))))

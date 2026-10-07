@@ -1893,13 +1893,14 @@ def scout_persona(
     from arc.pipeline.market import ETF_UNDERLYINGS
     from arc.pipeline.steps import _with_constraints
     from arc.pipeline.store import PersonaCallRepo, sha256
-    from arc.slack.digests import scout_card
+    from arc.slack.digests import TrendingFact, scout_card
     from arc.store.repos import CandidateRepo
     from arc.universe.guard import UniverseGuard
     from arc.universe.tiers import (
         Tier,
         TierMember,
         UniverseTierPayload,
+        load_tier_inputs,
         market_reference,
         tier_floor,
         tier_membership,
@@ -1912,6 +1913,11 @@ def scout_persona(
     membership = tier_membership(ctx.conn, settings, ctx.now)
     higher = {t: tier.value for t, tier in membership.items() if tier in (Tier.CORE, Tier.MOMENTUM)}
     floor = settings.universe_floor_discovery
+    # E13.20 (D58): today's trending tier (code-ranked, E13.19), read as context only
+    trending = load_tier_inputs(ctx.conn, settings, ctx.now).trending
+    trending_names = [m.ticker for m in sorted(trending, key=lambda m: m.rank)][
+        : settings.universe_trending_size
+    ]
     inp = scout_input_from_context(
         ctx.snapshot,
         channels=channels,
@@ -1920,6 +1926,7 @@ def scout_persona(
         max_discovery=funnel.max_discovery,
         discovery_floor=floor,
         higher_tier=sorted(higher),
+        trending=trending_names,
         now=ctx.now,
     )
     rules = scout_rules(inp)
@@ -2030,6 +2037,7 @@ def scout_persona(
             options_daily=inp.options_as_of.get("options_daily"),
             vx_curve=inp.options_as_of.get("vx_curve"),
             vol_term=inp.options_as_of.get("vol_term"),
+            retail_buzz=inp.retail_buzz.as_of if inp.retail_buzz is not None else None,
         ),
         discovery=disc.tickers,
         discovery_fill=len(disc.tickers),
@@ -2122,6 +2130,8 @@ def scout_persona(
             "output_tokens": reply.output_tokens,
             "cost_usd": reply.cost_usd,
             "active": len(active.members),
+            "retail_buzz": inp.retail_buzz is not None,
+            "trending": len(trending_names),
         },
         card=scout_card(
             read=read,
@@ -2131,6 +2141,14 @@ def scout_persona(
             dropped_calls=dropped_calls,
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
+            trending=TrendingFact(
+                names=len(trending_names),
+                size=settings.universe_trending_size,
+                both=sum(
+                    1 for m in trending if m.ticker in set(trending_names) and (m.inputs or 0) >= 2
+                ),
+                active=sum(1 for m in active.members if m.tier is Tier.TRENDING),
+            ),
         ),
     )
 
