@@ -1192,7 +1192,18 @@
             "type": "integer"
           },
           "persona": {
+            "description": "Current persona key (E13.14: legacy names mapped)",
             "title": "Persona",
+            "type": "string"
+          },
+          "stated": {
+            "default": "confidence",
+            "description": "What was stated: a persona confidence or the Quant's PoP",
+            "enum": [
+              "confidence",
+              "pop"
+            ],
+            "title": "Stated",
             "type": "string"
           },
           "stated_mean": {
@@ -1296,6 +1307,53 @@
           "confidence"
         ],
         "title": "CandidateView",
+        "type": "object"
+      },
+      "CategoryMeta": {
+        "additionalProperties": false,
+        "description": "One D56 source category (or the reference-data group).",
+        "properties": {
+          "feed": {
+            "description": "scalp = 30-min fast feed; scout = daily slow feed",
+            "enum": [
+              "scalp",
+              "scout"
+            ],
+            "title": "Feed",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "max_age_minutes": {
+            "description": "Freshness window; 0 for reference data",
+            "title": "Max Age Minutes",
+            "type": "integer"
+          },
+          "reference": {
+            "default": false,
+            "title": "Reference",
+            "type": "boolean"
+          },
+          "weight": {
+            "description": "categories.<c>.weight; 0 for reference data",
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "max_age_minutes",
+          "weight",
+          "feed"
+        ],
+        "title": "CategoryMeta",
         "type": "object"
       },
       "ChannelBriefState": {
@@ -3552,6 +3610,88 @@
         "title": "ExecutionSection",
         "type": "object"
       },
+      "ExitCaseView": {
+        "additionalProperties": false,
+        "description": "Quant's latest exit case for one structure ($ per structure unit).",
+        "properties": {
+          "as_of": {
+            "title": "As Of",
+            "type": "string"
+          },
+          "close_now_net": {
+            "title": "Close Now Net",
+            "type": "number"
+          },
+          "rationale": {
+            "default": "",
+            "title": "Rationale",
+            "type": "string"
+          },
+          "recommendation": {
+            "enum": [
+              "hold",
+              "close"
+            ],
+            "title": "Recommendation",
+            "type": "string"
+          },
+          "remaining_ev_hold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Ev Hold"
+          },
+          "remaining_ev_managed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Ev Managed"
+          },
+          "stop_state": {
+            "title": "Stop State",
+            "type": "string"
+          },
+          "swap_ticker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Swap pairing's open ticker, if any",
+            "title": "Swap Ticker"
+          },
+          "triggers": {
+            "description": "'<kind>: <detail>' per trigger, in case order",
+            "items": {
+              "type": "string"
+            },
+            "title": "Triggers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "triggers",
+          "recommendation",
+          "close_now_net",
+          "stop_state"
+        ],
+        "title": "ExitCaseView",
+        "type": "object"
+      },
       "ExitLink": {
         "additionalProperties": false,
         "properties": {
@@ -3794,6 +3934,55 @@
         "title": "ExitModelResult",
         "type": "object"
       },
+      "ExitPathStrip": {
+        "additionalProperties": false,
+        "description": "The Positions page's Exit path strip (today = the ET day of the read).",
+        "properties": {
+          "cases_today": {
+            "default": 0,
+            "description": "exit_case entries written today",
+            "minimum": 0.0,
+            "title": "Cases Today",
+            "type": "integer"
+          },
+          "closes_proposed_today": {
+            "default": 0,
+            "description": "Close proposals created today",
+            "minimum": 0.0,
+            "title": "Closes Proposed Today",
+            "type": "integer"
+          },
+          "holds_today": {
+            "default": 0,
+            "description": "Risk exit verdicts `hold` today",
+            "minimum": 0.0,
+            "title": "Holds Today",
+            "type": "integer"
+          },
+          "mandatory_pending": {
+            "default": 0,
+            "description": "Open positions with a mandatory signal",
+            "minimum": 0.0,
+            "title": "Mandatory Pending",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "personas.exit_path (effective config)",
+            "enum": [
+              "deterministic",
+              "shadow",
+              "research"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "ExitPathStrip",
+        "type": "object"
+      },
       "ExitPolicy": {
         "additionalProperties": false,
         "description": "Exit rules for one structure kind (see module doc for exact semantics).",
@@ -3865,6 +4054,92 @@
           }
         },
         "title": "ExitPolicy",
+        "type": "object"
+      },
+      "ExitVerdictView": {
+        "additionalProperties": false,
+        "description": "Risk's latest exit verdict for one structure.",
+        "properties": {
+          "as_of": {
+            "title": "As Of",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "reason_code": {
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "unavailable": {
+            "default": false,
+            "description": "The Risk call failed: a fail-closed hold",
+            "title": "Unavailable",
+            "type": "boolean"
+          },
+          "verdict": {
+            "enum": [
+              "close",
+              "hold"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "as_of",
+          "verdict",
+          "reason_code",
+          "reason"
+        ],
+        "title": "ExitVerdictView",
+        "type": "object"
+      },
+      "ExitWatchView": {
+        "additionalProperties": false,
+        "description": "Research's latest exit-watch item for one structure.",
+        "properties": {
+          "action": {
+            "enum": [
+              "hold",
+              "review"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "as_of": {
+            "title": "As Of",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "thesis_status": {
+            "enum": [
+              "intact",
+              "weakened",
+              "broken"
+            ],
+            "title": "Thesis Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "as_of",
+          "action",
+          "thesis_status"
+        ],
+        "title": "ExitWatchView",
         "type": "object"
       },
       "ExperimentDetailResponse": {
@@ -4990,6 +5265,119 @@
           "empty"
         ],
         "title": "FunnelCard",
+        "type": "object"
+      },
+      "FunnelReport": {
+        "additionalProperties": false,
+        "properties": {
+          "discovery_fill": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "day -> discovery tier members (D56 Scout)",
+            "title": "Discovery Fill",
+            "type": "object"
+          },
+          "sessions": {
+            "description": "Trading sessions in the range",
+            "title": "Sessions",
+            "type": "integer"
+          },
+          "since": {
+            "title": "Since",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/FunnelStage"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "top_sources": {
+            "description": "source key -> candidates",
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "maxItems": 12,
+            "title": "Top Sources",
+            "type": "array"
+          },
+          "until": {
+            "title": "Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "since",
+          "until",
+          "sessions",
+          "stages"
+        ],
+        "title": "FunnelReport",
+        "type": "object"
+      },
+      "FunnelStage": {
+        "additionalProperties": false,
+        "properties": {
+          "by_category": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "docs stages only",
+            "title": "By Category",
+            "type": "object"
+          },
+          "by_feed": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "scalp",
+                "scout"
+              ]
+            },
+            "title": "By Feed",
+            "type": "object"
+          },
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "stage": {
+            "enum": [
+              "docs_fresh",
+              "docs_read",
+              "stories",
+              "candidates",
+              "pool",
+              "shortlist",
+              "structures",
+              "proposals",
+              "approved",
+              "filled"
+            ],
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "count"
+        ],
+        "title": "FunnelStage",
         "type": "object"
       },
       "FunnelStep": {
@@ -6873,6 +7261,14 @@
             "title": "Cadences",
             "type": "object"
           },
+          "categories": {
+            "description": "E13.14 (D56): the six source categories + the reference-data group",
+            "items": {
+              "$ref": "#/components/schemas/CategoryMeta"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
           "config_version": {
             "description": "Latest D26 config_changes id (0 = none)",
             "title": "Config Version",
@@ -6889,6 +7285,14 @@
           "lookback_days": {
             "title": "Lookback Days",
             "type": "integer"
+          },
+          "personas": {
+            "description": "E13.14 (D56): persona catalogue (labels + emoji), from routines.yaml",
+            "items": {
+              "$ref": "#/components/schemas/PersonaMeta"
+            },
+            "title": "Personas",
+            "type": "array"
           },
           "refresh_choices_s": {
             "items": {
@@ -8602,6 +9006,55 @@
         "title": "PersonaCallView",
         "type": "object"
       },
+      "PersonaMeta": {
+        "additionalProperties": false,
+        "description": "One persona chip: key, display label, emoji, whether it calls an LLM, its group.",
+        "properties": {
+          "emoji": {
+            "description": "arc.slack.personas PERSONA_EMOJI; '' when none (monitor)",
+            "title": "Emoji",
+            "type": "string"
+          },
+          "group": {
+            "description": "Timeline group (TIMELINE_GROUPS key) of its first job",
+            "title": "Group",
+            "type": "string"
+          },
+          "key": {
+            "enum": [
+              "scout",
+              "scalp",
+              "research",
+              "quant",
+              "risk",
+              "broker",
+              "ops",
+              "monitor"
+            ],
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "description": "Display name, e.g. 'Research'",
+            "title": "Label",
+            "type": "string"
+          },
+          "llm": {
+            "description": "Any job with this persona calls a model",
+            "title": "Llm",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "emoji",
+          "llm",
+          "group"
+        ],
+        "title": "PersonaMeta",
+        "type": "object"
+      },
       "PnlBar": {
         "additionalProperties": false,
         "properties": {
@@ -8948,6 +9401,16 @@
             "title": "Entry Net",
             "type": "string"
           },
+          "exit_case": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitCaseView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "exit_pending": {
             "default": false,
             "title": "Exit Pending",
@@ -8974,6 +9437,26 @@
               }
             ],
             "title": "Exit Reason"
+          },
+          "exit_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitVerdictView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exit_watch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitWatchView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "expiration": {
             "anyOf": [
@@ -9033,6 +9516,18 @@
             },
             "title": "Legs",
             "type": "array"
+          },
+          "mandatory_signal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "stop | dte_exit | expiry on the latest position_review",
+            "title": "Mandatory Signal"
           },
           "mark_at": {
             "anyOf": [
@@ -9333,6 +9828,10 @@
             "format": "date-time",
             "title": "As Of",
             "type": "string"
+          },
+          "exit_path": {
+            "$ref": "#/components/schemas/ExitPathStrip",
+            "description": "E13.14 (D56): the Exit path strip"
           },
           "items": {
             "items": {
@@ -12264,6 +12763,17 @@
               }
             ]
           },
+          "exit_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitVerdictView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E13.14: Risk's exit verdict stored on a research-path close proposal"
+          },
           "gate": {
             "items": {
               "$ref": "#/components/schemas/GateView"
@@ -13582,6 +14092,18 @@
             "description": "personas.director_diversification (E12.5): strict | relaxed",
             "title": "Research diversification"
           },
+          "discovery_fill": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E13.14 (D56): names the Scout's discovery feed listed today (0 = none yet); null under d51",
+            "title": "Discovery Fill"
+          },
           "dropped": {
             "items": {
               "$ref": "#/components/schemas/UniverseDroppedRow"
@@ -13599,6 +14121,10 @@
           "model": {
             "default": "d51",
             "description": "Tier layout the shown resolve used (d51 | d56); config/universe.yaml tiers.model when nothing is resolved",
+            "enum": [
+              "d51",
+              "d56"
+            ],
             "title": "Model",
             "type": "string"
           },
@@ -13659,6 +14185,14 @@
             ],
             "title": "State",
             "type": "string"
+          },
+          "tail_cuts": {
+            "description": "E13.14: names cut past the active cap (over_active_cap), with tier + rank",
+            "items": {
+              "$ref": "#/components/schemas/UniverseDroppedRow"
+            },
+            "title": "Tail Cuts",
+            "type": "array"
           },
           "tiers": {
             "items": {
@@ -14170,7 +14704,7 @@
     },
     "/api/meta": {
       "get": {
-        "description": "App/env info, cadences with stale thresholds, gate caps and client defaults.",
+        "description": "App/env info, cadences with stale thresholds, gate caps, client defaults and the\npersona / category catalogue (E13.14: every Tower label comes from here).",
         "operationId": "meta_api_meta_get",
         "responses": {
           "200": {
@@ -15180,9 +15714,103 @@
         ]
       }
     },
+    "/api/performance/funnel": {
+      "get": {
+        "description": "E13.14 (D56): the idea funnel (docs -> candidates -> pool -> shortlist ->\nstructures -> proposals -> fills) per feed for a day range; 60 s cache.",
+        "operationId": "performance_funnel_api_performance_funnel_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "1W",
+              "enum": [
+                "1D",
+                "1W",
+                "1M",
+                "3M"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FunnelReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Performance Funnel",
+        "tags": [
+          "performance"
+        ]
+      }
+    },
     "/api/positions": {
       "get": {
-        "description": "Open, closed or all structures with the latest broker marks.",
+        "description": "Open, closed or all structures with the latest broker marks; open rows carry the\nE13.14 exit path under ``personas.exit_path`` shadow | research.",
         "operationId": "positions_api_positions_get",
         "parameters": [
           {

@@ -92,3 +92,15 @@ export function coreOverrideWarning(value: unknown): string | null {
     ? `${n} names > ${CORE_MAX}: a pre-D51 flat list, so the resolver uses config/universe.yaml core instead.`
     : null;
 }
+
+/** E13.14 (D56): today's Scout discovery fill, `Discovery fill 8 / 20 today` (null under d51). */
+export function discoveryFillLine(u: Pick<Universe, "discovery_fill" | "tiers">): string | null {
+  if (u.discovery_fill == null) return null;
+  const cap = u.tiers.find((t) => t.name === "discovery")?.size_cap;
+  return `Discovery fill ${u.discovery_fill}${cap == null ? "" : ` / ${cap}`} today (Scout)`;
+}
+
+/** E13.14: a tail cut, `#18 in Discovery` (rank when stored). */
+export function tailCutDetail(d: UniverseDropped): string {
+  return d.rank == null ? tierLabel(d.tier) : `#${d.rank} in ${tierLabel(d.tier)}`;
+}

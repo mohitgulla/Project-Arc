@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  exitCaseText,
+  exitPathRows,
+  exitPathStripText,
+  exitPathVisible,
+  exitVerdictChip,
+  exitWatchChip,
+  mandatoryLabel,
+  type PositionRow,
+} from "./overview";
+
+import {
   directionView,
   equityDates,
   equityView,
@@ -179,5 +190,47 @@ describe("strip, movers, split", () => {
   it("realized/unrealized split uses magnitudes", () => {
     expect(pnlSplit(150, -228)).toEqual({ realized: 150, unrealized: 228 });
     expect(pnlSplit(null, null)).toEqual({ realized: 0, unrealized: 0 });
+  });
+});
+
+describe("E13.14 exit path", () => {
+  const strip = { mode: "shadow", mandatory_pending: 1, cases_today: 2, closes_proposed_today: 1, holds_today: 1 } as const;
+  const row = (over: Partial<PositionRow>) =>
+    ({ exit_watch: null, exit_case: null, exit_review: null, mandatory_signal: null, ...over }) as PositionRow;
+
+  it("shows only off the deterministic path", () => {
+    expect(exitPathVisible(strip)).toBe(true);
+    expect(exitPathVisible({ ...strip, mode: "deterministic" })).toBe(false);
+    expect(exitPathVisible(undefined)).toBe(false);
+  });
+
+  it("writes the strip with plurals", () => {
+    expect(exitPathStripText(strip)).toBe("Shadow · 1 mandatory pending · 2 cases today · 1 close proposed · 1 hold");
+    expect(exitPathStripText({ ...strip, mode: "research", cases_today: 1, holds_today: 0 })).toBe(
+      "Research · 1 mandatory pending · 1 case today · 1 close proposed · 0 holds",
+    );
+  });
+
+  it("tones the watch, case and verdict", () => {
+    const w: NonNullable<PositionRow["exit_watch"]> = { as_of: "", action: "review", thesis_status: "weakened", evidence: [], reason: "" };
+    expect(exitWatchChip(row({ exit_watch: w }))).toEqual({ text: "Review · Weakened", tone: "warn" });
+    expect(exitWatchChip(row({ exit_watch: { ...w, action: "hold", thesis_status: "intact" } }))?.tone).toBe("neutral");
+    expect(exitWatchChip(row({ exit_watch: { ...w, thesis_status: "broken" } }))?.tone).toBe("neg");
+    expect(exitWatchChip(row({}))).toBeNull();
+    const c: NonNullable<PositionRow["exit_case"]> = { as_of: "", triggers: [], recommendation: "close", remaining_ev_hold: -6.5, remaining_ev_managed: null, close_now_net: 74, stop_state: "off", rationale: "" };
+    expect(exitCaseText(row({ exit_case: c }))).toBe("Close · EV −$6.50");
+    expect(exitCaseText(row({ exit_case: { ...c, recommendation: "hold", remaining_ev_managed: 21 } }))).toBe("Hold · EV $21.00");
+    expect(exitCaseText(row({ exit_case: { ...c, remaining_ev_hold: null } }))).toBe("Close");
+    const v: NonNullable<PositionRow["exit_review"]> = { as_of: "", verdict: "close", reason_code: "thesis_broken", reason: "", unavailable: false };
+    expect(exitVerdictChip(row({ exit_review: v }))).toEqual({ text: "Close", tone: "neg" });
+    expect(exitVerdictChip(row({ exit_review: { ...v, verdict: "hold" } }))).toEqual({ text: "Hold", tone: "pos" });
+    expect(exitVerdictChip(row({ exit_review: { ...v, verdict: "hold", unavailable: true } }))?.text).toBe("Unavailable");
+  });
+
+  it("labels mandatory signals and lists rows with anything to show", () => {
+    expect(mandatoryLabel("dte_exit")).toBe("DTE exit");
+    expect(mandatoryLabel("stop")).toBe("stop");
+    expect(mandatoryLabel(null)).toBeNull();
+    expect(exitPathRows([row({}), row({ mandatory_signal: "stop" })])).toHaveLength(1);
   });
 });

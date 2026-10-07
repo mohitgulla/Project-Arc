@@ -209,37 +209,38 @@ export function calibrationLabel(stated: number, hit: number): string {
   return `${stated.toFixed(2)} → ${formatPercent(hit)}`;
 }
 
-/** E13.13 (D56): persona emoji, mirrored from arc/slack/personas.py PERSONA_EMOJI. */
-export const PERSONA_EMOJI: Record<string, string> = {
-  scout: "🔭",
-  scalp: "⚡",
-  research: "🧠",
-  quant: "📐",
-  risk: "🛡️",
-  broker: "🏦",
-  ops: "⚙️",
+
+// -- E13.14 (D56): idea funnel ---------------------------------------------------------
+
+export type Funnel = Schemas["FunnelReport"];
+export type FunnelStage = Schemas["FunnelStage"];
+
+/** Funnel stage names, in the API's stage order (labels mirror arc.tower.data_funnel). */
+export const FUNNEL_STAGE_LABEL: Record<FunnelStage["stage"], string> = {
+  docs_fresh: "Docs fresh",
+  docs_read: "Docs read",
+  stories: "Stories",
+  candidates: "Candidates",
+  pool: "Idea pool",
+  shortlist: "Shortlist",
+  structures: "Structures",
+  proposals: "Proposals",
+  approved: "Approved",
+  filled: "Filled",
 };
 
-/** `🧠 Research`; a persona without an emoji (quant_pop, monitor) is the plain name. */
-export function withEmoji(key: string, name: string): string {
-  const e = PERSONA_EMOJI[key.split(/[._]/)[0] ?? key];
-  return e ? `${e} ${name}` : name;
+/** `Scalp 104 · Scout 3` from a stage's feed split (feeds the stage has none of are left out). */
+export function feedSplit(s: Pick<FunnelStage, "by_feed">, name: (feed: string) => string): string {
+  return Object.entries(s.by_feed ?? {})
+    .filter(([, n]) => n > 0)
+    .map(([f, n]) => `${name(f)} ${n}`)
+    .join(" · ");
 }
 
-export const PERSONA_LABEL: Record<string, string> = {
-  research: withEmoji("research", "Research"),
-  quant_pop: "Quant PoP",
-  quant: withEmoji("quant", "Quant"),
-  risk: withEmoji("risk", "Risk"),
-  broker: withEmoji("broker", "Broker"),
-  ops: withEmoji("ops", "Ops"),
-  scalp: withEmoji("scalp", "Scalp"),
-  scout: withEmoji("scout", "Scout"),
-  // D56 (E13.2): pre-rename rows the server did not map (legacy reason codes)
-  investor: withEmoji("broker", "Broker"),
-  auditor: withEmoji("broker", "Broker"),
-};
-
-export function personaLabel(p: string): string {
-  return PERSONA_LABEL[p] ?? p.charAt(0).toUpperCase() + p.slice(1).replace(/_/g, " ");
+/** Each stage's share of the stage before it (`null` for the first, or after a zero). */
+export function stageConversion(stages: Pick<FunnelStage, "count">[]): Array<number | null> {
+  return stages.map((s, i) => {
+    const prev = i > 0 ? stages[i - 1]?.count ?? 0 : 0;
+    return i === 0 || prev === 0 ? null : s.count / prev;
+  });
 }

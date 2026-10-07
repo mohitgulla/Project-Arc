@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { FUNNEL_STAGE_LABEL, feedSplit, stageConversion } from "./performance";
+
 import {
   DEFAULT_RANGE,
   EXPLAIN,
@@ -9,9 +11,7 @@ import {
   equityView,
   formatRange,
   perfQuery,
-  personaLabel,
   tradesLink,
-  withEmoji,
   type Performance,
 } from "./performance";
 
@@ -62,14 +62,6 @@ describe("labels", () => {
     expect(formatRange("2026-09-28", "2026-09-28")).toBe("Sep 28, 2026");
   });
 
-  it("E13.13: persona labels lead with the D56 emoji (mirrors arc/slack/personas.py)", () => {
-    expect(personaLabel("research")).toBe("🧠 Research");
-    expect(personaLabel("scout")).toBe("🔭 Scout");
-    expect(personaLabel("auditor")).toBe("🏦 Broker");
-    expect(personaLabel("quant_pop")).toBe("Quant PoP");
-    expect(withEmoji("risk.exit", "Risk (exit)")).toBe("🛡️ Risk (exit)");
-    expect(withEmoji("monitor", "Monitor")).toBe("Monitor");
-  });
 });
 
 describe("views", () => {
@@ -109,5 +101,23 @@ describe("views", () => {
       "/trades?ticker=SPY&stage=closed&date=custom&date_from=2026-07-01&date_to=2026-09-28",
     );
     expect(tradesLink({ ...row, filter: null }, period)).toBeNull();
+  });
+});
+
+describe("E13.14 idea funnel", () => {
+  it("splits a stage by feed with the persona names", () => {
+    const name = (f: string) => (f === "scalp" ? "⚡ Scalp" : "🔭 Scout");
+    expect(feedSplit({ by_feed: { scalp: 104, scout: 3 } }, name)).toBe("⚡ Scalp 104 · 🔭 Scout 3");
+    expect(feedSplit({ by_feed: { scalp: 0, scout: 2 } }, name)).toBe("🔭 Scout 2");
+    expect(feedSplit({ by_feed: {} }, name)).toBe("");
+  });
+
+  it("converts stage over stage, null after a zero", () => {
+    expect(stageConversion([{ count: 10 }, { count: 5 }, { count: 0 }, { count: 0 }])).toEqual([null, 0.5, 0, null]);
+  });
+
+  it("labels all ten stages", () => {
+    expect(Object.keys(FUNNEL_STAGE_LABEL)).toHaveLength(10);
+    expect(FUNNEL_STAGE_LABEL.pool).toBe("Idea pool");
   });
 });

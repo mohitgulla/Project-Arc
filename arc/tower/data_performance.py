@@ -45,7 +45,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arc.journal import legacy
 from arc.journal.attribution import calibration
-from arc.journal.reasons import reason_label
+from arc.journal.reasons import JournalPersona, reason_label
 from arc.journal.scorecard import (
     calibration_points,
     closed_positions,
@@ -69,6 +69,7 @@ from arc.reconcile.performance import (
     sharpe,
     sortino,
 )
+from arc.routines.config import TIMELINE_PERSONAS
 from arc.tower.data import _has_table, _json
 from arc.utils.calendar import ET
 
@@ -111,21 +112,26 @@ DAILY_BARS_MAX_DAYS = 45
 WEEKLY_BARS_MAX_DAYS = 400
 _TEST_ORDER_PREFIX = "arc-"
 # Personas whose reason codes the breakdown groups by (not gate/system/owner bookkeeping).
-# D54/D56: stored rows keep the name of their time: "scout" (pre-D54) and "sweep" (pre-D56)
-# are the Scalp, "director" is Research (arc.journal.legacy); "scout" after D54 is the
-# slow-feed Scout. Pre-E13.2 "investor" rows are Broker/Quant, "auditor" Broker/Ops.
-_PERSONAS = (
-    "scalp",
-    "sweep",
-    "scout",
-    "research",
-    "director",
-    "quant",
-    "risk",
-    "broker",
-    "ops",
-    "investor",
-    "auditor",
+# E13.14: the current keys come from the persona catalogue (TIMELINE_PERSONAS, minus the
+# deterministic monitor); the stored pre-rename names that read as one of them come from
+# arc.journal.legacy (D54/D56: "sweep" = Scalp, "director" = Research, "investor" /
+# "auditor" = Broker/Quant). "scout" before D54 is the Scalp, after it the Scout.
+_PERSONAS: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        [
+            *(p for p in TIMELINE_PERSONAS if p != "monitor"),
+            *(
+                hop.old
+                for hop in legacy.RENAME_CHAIN
+                if not hop.job_only and "." not in hop.old and "." not in hop.new
+            ),
+            *(  # auditor -> Broker (reconcile): a persona hop onto a job name
+                hop.old
+                for hop in legacy.RENAME_CHAIN
+                if hop.persona and hop.old in {p.value for p in JournalPersona}
+            ),
+        ]
+    )
 )
 
 _FORBID = ConfigDict(extra="forbid", frozen=True)
@@ -427,7 +433,10 @@ class Breakdowns(BaseModel):
 class CalibrationItem(BaseModel):
     model_config = _FORBID
 
-    persona: str
+    persona: str = Field(description="Current persona key (E13.14: legacy names mapped)")
+    stated: Literal["confidence", "pop"] = Field(
+        "confidence", description="What was stated: a persona confidence or the Quant's PoP"
+    )
     lo: float
     hi: float
     n: int
@@ -875,11 +884,21 @@ def _breakdown(
     return _items(by, breakdown(pairs))
 
 
+_QUANT_POP = "quant_pop"  # arc.journal.scorecard.calibration_points' PoP series
+
+
+def _current_persona(value: str) -> str:
+    """A stored persona as its current key; current keys pass through unchanged (a
+    stored ``scout`` is ambiguous across D54, and calibration rows carry no time)."""
+    return value if value in TIMELINE_PERSONAS else legacy.persona_key(value, None, {})
+
+
 def _calibration(conn: sqlite3.Connection, history: list[ClosedPosition]) -> CalibrationCard:
     points = calibration_points(conn, [(c.open_proposal_hash, c.realised_pnl > 0) for c in history])
     rows = [
         CalibrationItem(
-            persona=b.persona,
+            persona="quant" if b.persona == _QUANT_POP else _current_persona(b.persona),
+            stated="pop" if b.persona == _QUANT_POP else "confidence",
             lo=b.lo,
             hi=b.hi,
             n=b.n,

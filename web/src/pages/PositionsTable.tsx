@@ -8,7 +8,15 @@ import { Money } from "../components/Money";
 import { num } from "../lib/api";
 import { formatEt, formatLeg, formatNumber } from "../lib/format";
 import { StructureLabel, structureText } from "../components/StructureLabel";
-import { exitStatus, type PositionRow } from "../lib/overview";
+import {
+  exitCaseText,
+  exitStatus,
+  exitVerdictChip,
+  exitWatchChip,
+  mandatoryLabel,
+  type PositionRow,
+} from "../lib/overview";
+import { Pill } from "./opsShared";
 
 /** Per-share net: `$4.15` debit, `-$1.20` credit (+ debit / − credit convention). */
 function Net({ v }: { v: string | null | undefined }) {
@@ -53,8 +61,52 @@ export function LegChips({ p }: { p: PositionRow }) {
   );
 }
 
-/** Columns shown on the Overview card; `full` adds the rest (Positions page). */
-export function positionColumns(full: boolean): ColumnDef<PositionRow, unknown>[] {
+const dash = <span className="text-muted">—</span>;
+
+/** E13.14 (D56): the exit-path columns (Positions page, Research exit path on). */
+function exitColumns(): ColumnDef<PositionRow, unknown>[] {
+  return [
+    {
+      id: "exit_watch",
+      header: "Exit watch",
+      accessorFn: (p) => exitWatchChip(p)?.text ?? null,
+      cell: (c) => {
+        const w = exitWatchChip(c.row.original);
+        return w ? <Pill tone={w.tone} testId="exit-watch">{w.text}</Pill> : dash;
+      },
+    },
+    {
+      id: "exit_case",
+      header: "Exit case",
+      accessorFn: (p) => exitCaseText(p),
+      cell: (c) => {
+        const p = c.row.original;
+        const t = exitCaseText(p);
+        const m = mandatoryLabel(p.mandatory_signal);
+        if (!t && !m) return dash;
+        return (
+          <span className="inline-flex flex-wrap items-center gap-1 tabular-nums" data-testid="exit-case">
+            {t && <span>{t}</span>}
+            {m && <Pill tone="neg" testId="mandatory-signal">{m}</Pill>}
+          </span>
+        );
+      },
+    },
+    {
+      id: "exit_risk",
+      header: "Risk",
+      accessorFn: (p) => exitVerdictChip(p)?.text ?? null,
+      cell: (c) => {
+        const v = exitVerdictChip(c.row.original);
+        return v ? <Pill tone={v.tone} testId="exit-verdict">{v.text}</Pill> : dash;
+      },
+    },
+  ];
+}
+
+/** Columns shown on the Overview card; `full` adds the rest (Positions page), `exits` the
+ * E13.14 exit-path columns. */
+export function positionColumns(full: boolean, exits = false): ColumnDef<PositionRow, unknown>[] {
   const cols: ColumnDef<PositionRow, unknown>[] = [
     {
       accessorKey: "ticker",
@@ -91,6 +143,7 @@ export function positionColumns(full: boolean): ColumnDef<PositionRow, unknown>[
     { id: "exit", header: "Exit", accessorFn: exitStatus },
     { id: "held", header: "Held", accessorFn: (p) => p.held, cell: (c) => <Held p={c.row.original} /> },
   ];
+  if (exits) cols.push(...exitColumns());
   if (full) {
     cols.push(
       { accessorKey: "status", header: "Status" },
@@ -136,12 +189,12 @@ export function positionColumns(full: boolean): ColumnDef<PositionRow, unknown>[
 }
 
 /** Open (or closed) structures; row -> /trades/<open_proposal_hash> (E8.7b). */
-export function PositionsTable({ rows, full = false }: { rows: PositionRow[]; full?: boolean }) {
+export function PositionsTable({ rows, full = false, exits = false }: { rows: PositionRow[]; full?: boolean; exits?: boolean }) {
   const navigate = useNavigate();
   return (
     <DataTable
       data={rows}
-      columns={positionColumns(full)}
+      columns={positionColumns(full, exits)}
       getRowId={(p) => p.id}
       columnPicker={full}
       onRowClick={(p) => navigate(`/trades/${p.open_proposal_hash}`)}
@@ -165,6 +218,12 @@ export function PositionsTable({ rows, full = false }: { rows: PositionRow[]; fu
             </span>
             {p.dte != null && <span>{p.dte} DTE</span>}
             {exitStatus(p) !== "—" && <span>exit {exitStatus(p)}</span>}
+            {exits && exitWatchChip(p) && <span>watch {exitWatchChip(p)?.text.toLowerCase()}</span>}
+            {exits && exitCaseText(p) && <span>case {exitCaseText(p)?.toLowerCase()}</span>}
+            {exits && exitVerdictChip(p) && <span>Risk {exitVerdictChip(p)?.text.toLowerCase()}</span>}
+            {exits && mandatoryLabel(p.mandatory_signal) && (
+              <span className="text-neg-text">{mandatoryLabel(p.mandatory_signal)}</span>
+            )}
           </>
         ),
       }}

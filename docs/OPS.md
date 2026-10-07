@@ -313,16 +313,34 @@ After a Python change, `launchctl kickstart -k gui/$(id -u)/com.projectarc.tower
 |---|---|---|
 | Overview (E8.7a) | `/` | `/api/overview?range=1D\|1W\|1M\|3M\|YTD\|ALL`, `/api/snapshot` |
 | Trades (E8.7b) | `/trades`, `/trades/<proposal_hash>` | `/api/trades`, `/api/trades/filters`, `/api/trades/{hash}`, `/api/search?q=` |
-| Positions (E8.7a) | `/positions` | `/api/positions?status=open\|closed\|all` |
-| Performance (E8.7c) | `/performance` | `/api/performance`, `/api/performance/breakdown?by=…` |
+| Positions (E8.7a; exit path E13.14) | `/positions` | `/api/positions?status=open\|closed\|all` |
+| Performance (E8.7c; idea funnel E13.14) | `/performance` | `/api/performance`, `/api/performance/breakdown?by=…`, `/api/performance/funnel?range=1D\|1W\|1M\|3M` (or `from`/`to`) |
 | Ops & pipeline (E8.7d) | `/ops`, `/ops/runs/<run_id>`, `/ops/context/<entry_id>` | `/api/ops/{session,health,alerts,halts,runs,runs/{id},budget,context,context/{id},sources,llm,config}` |
 
 Plus `/settings` (theme, density, refresh; client-side only) and `/kitchen-sink` (every
 design-system component in both themes). Shell data for every page: `/api/health`,
 `/api/meta` (version, git sha, `ARC_ENV`, account profile, `config_version`,
-`monitor`/`broker.reconcile`/`tick` cadences with stale thresholds, gate caps). `/api/docs` is the
+`monitor`/`broker.reconcile`/`tick` cadences with stale thresholds, gate caps, and (E13.14,
+D56) the persona catalogue `personas` (key, label, emoji, llm, group, from
+`config/routines.yaml` + `arc/slack/personas.py`) and the `categories` list (the six D56
+categories plus Reference data). The SPA takes every persona and category label from there. `/api/docs` is the
 OpenAPI browser. Every response carries `as_of` (ET); errors are `{error, detail, as_of}`
 (e.g. 503 `db_unavailable`, 503 `config_unavailable`).
+
+**D56 views (E13.14).**
+- *Positions:* under `personas.exit_path` `shadow | research` each open row shows the latest
+  Research exit watch (`hold | review` + thesis status), Quant exit case (recommendation +
+  remaining EV) and Risk verdict, plus a pending mandatory signal (stop / DTE exit / expiry)
+  from the latest `position_review`. The **Exit path** strip above the table shows mandatory
+  pending · cases today · closes proposed · holds. Under `deterministic` the strip and the
+  columns are hidden (no such entries exist). Close trades show Risk's `exit_review` on the
+  Why tab.
+- *Idea funnel:* docs fresh → read → stories → candidates → pool → shortlist → structures →
+  proposals → approved → filled, split by feed (Scalp / Scout), with the top candidate
+  sources and the Scout's discovery fill per day. The same report runs from the CLI:
+  `arc funnel report --since 2026-09-29 --until 2026-10-05 [--json] [--db …]`.
+- *Universe:* tail cuts (names past the active cap, with tier + rank) and, under `d56`,
+  today's discovery fill.
 
 **Bind rules (D29).** The address is `tailscale ip -4` (CLI on PATH or the macOS
 app bundle), otherwise the first `100.64.0.0/10` address on any interface.

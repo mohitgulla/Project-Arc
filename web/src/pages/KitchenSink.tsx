@@ -1,3 +1,4 @@
+import { CAT } from "../lib/personas.fixture";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { ReactNode } from "react";
 
@@ -165,13 +166,9 @@ const FILTERS: FilterDef[] = [
     key: "persona",
     label: "Persona",
     type: "select",
-    options: [
-      { value: "scalp", label: "Scalp" },
-      { value: "research", label: "Research" },
-      { value: "quant", label: "Quant" },
-      { value: "risk", label: "Risk" },
-      { value: "broker", label: "Broker" },
-    ],
+    // E13.14: real pages build these from /api/meta (lib/personas.ts); the sink uses the
+    // test catalogue so the demo needs no server.
+    options: CAT.personas.filter((p) => p.llm || p.key === "broker").map((p) => ({ value: p.key, label: p.label })),
   },
 ];
 

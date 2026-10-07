@@ -34,6 +34,7 @@ import {
   Block,
   DASH,
   Decisions,
+  ExitReview,
   Notes,
   et,
   Execution,
@@ -551,6 +552,11 @@ function TabPanel({ tab, d }: { tab: TabKey; d: TradeDetail }) {
           <Block title="Risk View">
             <RiskView text={d.header.risk_narrative} />
           </Block>
+          {d.exit_review && (
+            <Block title="Exit Review" testid="sec-exit-review">
+              <ExitReview d={d} />
+            </Block>
+          )}
           <Block title="Decision Trail" testid="sec-decisions">
             <Decisions d={d} />
           </Block>

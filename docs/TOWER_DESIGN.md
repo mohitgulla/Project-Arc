@@ -353,7 +353,7 @@ they are never dropped.
   **Lifecycle** (Gate → Approval → Execution → Position & Exits → Outcome & Review as one
   vertical timeline; each reached stage shows a one-line result and expands; not-reached stages
   are muted; the first failure, else the latest reached stage, opens expanded) · **Context**
-  (market context, Regime Read, Sweep Candidate, and the context entries the trade's own steps
+  (market context, Regime Read, Scalp Candidate, and the context entries the trade's own steps
   read, counted per kind, expandable) · **Audit** (identity with the shortened proposal hash +
   copy, run manifest incl. declared reads / inputs read, and the `source: <tables>` lines that
   used to sit under every section header). Default tab: Why while live, Lifecycle once
@@ -368,3 +368,24 @@ they are never dropped.
   read) behind `Show chain context (n)`. Timelines cap at 8 with `Show n more`.
 - **Desktop** keeps the right-side DetailPanel, widened to 600 px (`wide`) so the stat strip
   is one row.
+
+### 10.6 D56 pass (E13.14)
+
+- **Persona chips** read `/api/meta` `personas` (label + emoji from `config/routines.yaml` and
+  `arc/slack/personas.py`); `web/src/lib/personas.ts` is the only lookup and keeps no names.
+  A dotted step reads `🛡️ Risk (exit)`; monitor (no emoji) shows its job label. The server
+  maps stored pre-rename values (`director`, `investor`, `sweep`) through `arc.journal.legacy`,
+  so the SPA never sees them (a test fails on `Director|Investor|Auditor|Sweep` in `web/src`).
+- **Sources** keep one block per category from `/api/ops/sources`: the six D56 categories, then
+  a **Reference data** group (no share). options_fast rows are Scalp feed.
+- **Positions exit path**: an `Exit path` strip (one line, wraps) above the table; three columns
+  `Exit watch` (chip: `Review · Weakened` warn, `Hold · Intact` neutral, broken neg) · `Exit
+  case` (`Close · EV −$6.50`, a red mandatory chip when a stop/DTE/expiry signal is pending)
+  · `Risk` (`Close` neg / `Hold` pos / `Unavailable` warn). Evidence lines, triggers and the
+  Risk reason sit in a collapsed `Exit path details (n)` list under the table (cards on a
+  phone carry the same words). Hidden under `exit_path: deterministic`.
+- **Idea Funnel card** (Performance, full width, follows the page range): one ProgressRow per
+  stage with the feed split and the stage-over-stage % on the right; top sources (capped);
+  the discovery-fill line.
+- **Universe**: a `Tail Cuts` card (chips with `#rank in Tier`) before Dropped; the summary
+  card adds `Discovery fill n / 20 today (Scout)` under d56.

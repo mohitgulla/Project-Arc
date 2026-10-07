@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arc.tower.catalogue import CategoryMeta, PersonaMeta  # noqa: TC001 - pydantic fields
+
 __all__ = [
     "REFRESH_CHOICES",
     "AppInfo",
@@ -93,3 +95,11 @@ class MetaResponse(BaseModel):
     cadences: dict[str, Cadence] = Field(description="monitor, broker.reconcile, tick")
     gate_caps: GateCaps
     theme_default: Literal["system", "light", "dark"] = "system"
+    personas: list[PersonaMeta] = Field(
+        default_factory=list,
+        description="E13.14 (D56): persona catalogue (labels + emoji), from routines.yaml",
+    )
+    categories: list[CategoryMeta] = Field(
+        default_factory=list,
+        description="E13.14 (D56): the six source categories + the reference-data group",
+    )

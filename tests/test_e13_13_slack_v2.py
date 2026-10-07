@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -64,11 +63,14 @@ def test_heartbeat_labels_come_from_the_persona_map() -> None:
     assert "director" not in _PERSONA_LABELS  # legacy aliases are not separate labels
 
 
-def test_tower_mirror_matches_python_emoji_map() -> None:
-    src = WEB.read_text()
-    block = src[src.index("PERSONA_EMOJI") : src.index("};", src.index("PERSONA_EMOJI"))]
-    ts = dict(re.findall(r'(\w+): "([^"]+)"', block))
-    assert ts == {p.value.lower(): e for p, e in PERSONA_EMOJI.items()}
+def test_tower_serves_the_python_emoji_map() -> None:
+    # E13.14: the SPA keeps no emoji mirror; it reads /api/meta, built from this map.
+    from arc.routines.config import load_routines
+    from arc.tower.catalogue import persona_catalogue
+
+    served = {p.key: p.emoji for p in persona_catalogue(load_routines()) if p.emoji}
+    assert served == {p.value.lower(): e for p, e in PERSONA_EMOJI.items()}
+    assert "PERSONA_EMOJI" not in WEB.read_text()
 
 
 # -- note v5 -----------------------------------------------------------------

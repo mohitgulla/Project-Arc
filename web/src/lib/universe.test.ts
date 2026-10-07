@@ -1,6 +1,8 @@
 // E12.6: Universe page helpers (summary line, tier order, chip detail, override warning).
 import { describe, expect, it } from "vitest";
 
+import { discoveryFillLine, tailCutDetail } from "./universe";
+
 import {
   CORE_KEY_LABEL,
   coreOverrideWarning,
@@ -91,5 +93,19 @@ describe("universe page helpers", () => {
     expect(refreshLine(undefined)).toBe("momentum and trending refresh on their own jobs.");
     expect(refreshLine("d56")).toMatch(/discovery is written by the Scout/);
     expect(refreshLine("d56")).not.toMatch(/trending/);
+  });
+});
+
+describe("E13.14 tail cuts + discovery fill", () => {
+  it("shows the Scout fill only under d56", () => {
+    const tiers = [{ name: "discovery", size_cap: 20 }] as never;
+    expect(discoveryFillLine({ discovery_fill: 8, tiers })).toBe("Discovery fill 8 / 20 today (Scout)");
+    expect(discoveryFillLine({ discovery_fill: 0, tiers: [] })).toBe("Discovery fill 0 today (Scout)");
+    expect(discoveryFillLine({ discovery_fill: null, tiers })).toBeNull();
+  });
+
+  it("labels a tail cut with its rank", () => {
+    expect(tailCutDetail({ ticker: "TEM", tier: "discovery", reason: "over_active_cap", rank: 18 })).toBe("#18 in Discovery");
+    expect(tailCutDetail({ ticker: "TEM", tier: "momentum", reason: "over_active_cap", rank: null })).toBe("Momentum");
   });
 });

@@ -5,6 +5,7 @@
 //   node e2e/serve.mjs --fixture  scripts/tower_fixture_db.py anchored at now (Overview)
 //   node e2e/serve.mjs --history  the fixture plus the E8.7c performance history (Performance)
 //   node e2e/serve.mjs --ops      the fixture plus the E8.7d Ops rows (runs, manifests, ...)
+//                                 and the E13.14 shadow exit chain (--exits, Positions)
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,7 +30,7 @@ if (fixture) {
     join(repo, "scripts", "tower_fixture_db.py"),
     db,
     ...(history ? ["--history"] : []),
-    ...(ops ? ["--ops"] : []),
+    ...(ops ? ["--ops", "--exits"] : []),
   ];
   execFileSync(py, args, { stdio: "inherit", cwd: repo });
 } else {

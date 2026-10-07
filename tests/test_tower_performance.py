@@ -34,6 +34,7 @@ from arc.tower.api import create_app
 from arc.tower.data import connect_ro
 from arc.tower.data_performance import (
     BREAKDOWNS,
+    _current_persona,
     comparison_period,
     load_breakdown,
     load_performance,
@@ -366,10 +367,20 @@ def test_calibration_matches_the_scorecard(conn: sqlite3.Connection, perf) -> No
     )
     cal = perf.calibration
     assert not cal.empty and cal.trades == len(history)
-    assert [(r.persona, r.lo, r.n, r.hit_rate) for r in cal.rows] == [
-        (b.persona, b.lo, b.n, b.hit_rate) for b in buckets
+    # E13.14: the scorecard's quant_pop series is served as persona quant, stated "pop";
+    # legacy persona names map to their current key (arc.journal.legacy).
+    assert [(r.persona, r.stated, r.lo, r.n, r.hit_rate) for r in cal.rows] == [
+        (
+            "quant" if b.persona == "quant_pop" else _current_persona(b.persona),
+            "pop" if b.persona == "quant_pop" else "confidence",
+            b.lo,
+            b.n,
+            b.hit_rate,
+        )
+        for b in buckets
     ]
-    assert {r.persona for r in cal.rows} >= {"research", "quant_pop"}
+    stated = {(r.persona, r.stated) for r in cal.rows}
+    assert stated >= {("research", "confidence"), ("quant", "pop")}
 
 
 def test_funnel_matches(conn: sqlite3.Connection, perf) -> None:  # noqa: ANN001
