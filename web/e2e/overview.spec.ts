@@ -58,11 +58,11 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByText("NO", { exact: true }).or(page.getByText("not held")).first()).toBeVisible();
         await expect(page.getByTestId("proposals").locator(":scope > li")).toHaveCount(9);
         await expect(page.getByTestId("proposals")).toContainText("per_underlying_limit");
-        // D59: Today's Pick = Discovery and Trending tabs (top 10 each, Proposals row layout);
-        // VIEW ALL opens Ops > Universe.
+        // D59: Today's Pick = two compact columns, Discovery then Trending (ticker + score,
+        // top 10), headers `Tier (shown of active)`; VIEW ALL opens Ops > Universe.
         const picks = page.getByTestId("picks");
-        await expect(picks.getByTestId("pick-tabs").getByRole("tab")).toHaveCount(2);
-        await expect(picks.getByTestId("pick-tabs").getByRole("tab").first()).toContainText("Discovery");
+        await expect(picks.getByTestId("pick-header")).toHaveCount(2);
+        await expect(picks.getByTestId("pick-header").first()).toHaveText(/^Discovery \(\d+ of \d+\)$/);
         await expect(picks.getByRole("link", { name: /VIEW ALL/ })).toHaveAttribute("href", "/ops/universe");
         // Rolling 24 h, repeats grouped, capped at 8 with "Show n more".
         await expect(page.getByTestId("activity").locator(":scope > li")).toHaveCount(8);

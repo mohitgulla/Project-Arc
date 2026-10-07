@@ -136,15 +136,9 @@ export function pickSections(
   });
 }
 
-/** The tab shown first: the first tier with names (Discovery when both are empty). */
-export function defaultPickTier(sections: Pick<PickSection, "tier" | "rows">[]): PickTier {
-  return sections.find((s) => s.rows.length > 0)?.tier ?? PICK_TIERS[0];
-}
-
-/** Next to the tier name: `7 cut by top 10 cap` (names past the top N); null when none. */
-export function pickCaption(s: Pick<PickSection, "active" | "rows">, top: number = PICK_TOP): string | null {
-  const cut = Math.max(0, s.active - top);
-  return cut > 0 ? `${cut} cut by top ${top} cap` : null;
+/** Column header: `Trending (10 of 17)` = names shown of names in the active list. */
+export function pickHeader(s: Pick<PickSection, "label" | "rows" | "active">): string {
+  return `${s.label} (${s.rows.length} of ${s.active})`;
 }
 
 const SOURCE_WORDS: Record<string, string> = { reddit: "Reddit", stocktwits: "Stocktwits", scout: "Scout", youtube: "YouTube" };

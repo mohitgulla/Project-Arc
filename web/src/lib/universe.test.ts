@@ -1,7 +1,7 @@
 // E12.6: Universe page helpers (summary line, tier order, chip detail, override warning).
 import { describe, expect, it } from "vitest";
 
-import { defaultPickTier, discoveryFillLine, pickCaption, pickRow, pickSections, tailCutDetail } from "./universe";
+import { discoveryFillLine, pickHeader, pickRow, pickSections, tailCutDetail } from "./universe";
 
 import {
   CORE_KEY_LABEL,
@@ -132,15 +132,13 @@ describe("D59 Today's Pick", () => {
     expect(d!.active).toBe(12);
     expect(tr!.rows.map((r) => r.ticker)).toEqual(["TEM", "PENG"]);
     expect(tr!.cut).toBe(2);
-    expect(pickCaption(d!)).toBe("2 cut by top 10 cap");
-    expect(pickCaption(tr!)).toBeNull();
+    expect(pickHeader(d!)).toBe("Discovery (10 of 12)");
+    expect(pickHeader(tr!)).toBe("Trending (2 of 2)");
   });
-  it("never includes core or momentum; None today when empty; first non-empty tab", () => {
+  it("never includes core or momentum; an empty tier reads (0 of 0)", () => {
     const secs = pickSections({ active: [m("NVDA", "core", 1), m("BULL", "trending", 1)], tail_cuts: [], dropped: [] });
     expect(secs[0]!.rows).toEqual([]);
-    expect(pickCaption(secs[0]!)).toBeNull();
-    expect(defaultPickTier(secs)).toBe("trending");
-    expect(defaultPickTier(pickSections({ active: [], tail_cuts: [], dropped: [] }))).toBe("discovery");
+    expect(pickHeader(secs[0]!)).toBe("Discovery (0 of 0)");
   });
   it("falls back to over_active_cap drops when tail_cuts is absent", () => {
     const [, tr] = pickSections({ active: [], tail_cuts: [], dropped: [{ ticker: "Z", tier: "trending", reason: "over_active_cap", rank: null }] });
@@ -153,5 +151,6 @@ describe("D59 Today's Pick", () => {
       score: "0.98",
     });
     expect(pickRow({ source: "scout", reason: "2 videos" })).toEqual({ source: "Scout", detail: "2 videos", score: null });
+    expect(pickRow({ source: "scout", reason: "bullish · stockedup · score 0.72" }).score).toBe("0.72");
   });
 });

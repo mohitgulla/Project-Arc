@@ -46,8 +46,7 @@ import {
   type Overview,
   type OverviewRange,
 } from "../lib/overview";
-import { SegmentedControl } from "../components/SegmentedControl";
-import { defaultPickTier, memberDetail, pickCaption, pickRow, pickSections, type PickTier, type Universe } from "../lib/universe";
+import { memberDetail, pickHeader, pickRow, pickSections, type Universe } from "../lib/universe";
 import { useMeta, useOps, useOverview } from "../lib/useApi";
 import { PositionsTable } from "./PositionsTable";
 
@@ -461,69 +460,46 @@ function ProposalsCard({ o }: { o: Overview }) {
   );
 }
 
-/** D59: Today's Pick, the top 10 of each fast-changing tier (Discovery, Trending), in the
- *  Today's Proposals row layout; a tab switches tier. Core and momentum change slowly and stay
- *  on Ops › Universe. */
+/** D59: Today's Pick, two compact columns (Discovery | Trending): the top 10 active names of
+ *  each fast-changing tier with their score. Core and momentum stay on Ops › Universe. */
 function PickCard() {
   const q = useOps("/api/ops/universe");
   const u = q.data as Universe | undefined;
-  const sections = u ? pickSections(u) : [];
-  const [chosen, setChosen] = useState<PickTier | null>(null);
-  const tier = chosen ?? defaultPickTier(sections);
-  const sec = sections.find((x) => x.tier === tier);
   return (
-    <Card
-      title="Today's Pick"
-      testid="picks"
-      action={{ label: "VIEW ALL", to: "/ops/universe" }}
-      headerExtra={
-        u ? (
-          <SegmentedControl
-            size="sm"
-            label="Tier"
-            testid="pick-tabs"
-            value={tier}
-            onChange={setChosen}
-            options={sections.map((x) => ({ value: x.tier, label: `${x.label} ${x.active}` }))}
-          />
-        ) : undefined
-      }
-    >
-      {!u || !sec ? (
+    <Card title="Today's Pick" testid="picks" action={{ label: "VIEW ALL", to: "/ops/universe" }}>
+      {!u ? (
         <EmptyState caption={q.isError ? "Could not load the universe." : "Loading…"} />
-      ) : sec.rows.length === 0 ? (
-        <EmptyState caption={`No ${sec.label.toLowerCase()} names in today's active list.`} />
       ) : (
-        <>
-          <ul className="grid" data-testid="pick-rows" data-tier={sec.tier}>
-            {sec.rows.map((m) => {
-              const r = pickRow(m);
-              return (
-                <li key={m.ticker} className="border-b border-line last:border-b-0">
-                  <Link
-                    to="/ops/universe"
-                    className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 py-2.5 hover:bg-hover"
-                  >
-                    <span className="w-6 text-caption text-muted tabular-nums">#{m.rank}</span>
-                    <span className="min-w-0 truncate">
-                      <span className="font-semibold text-title">{m.ticker}</span> <span className="text-secondary">{r.source}</span>
-                    </span>
-                    <span className="text-right text-caption text-secondary tabular-nums">{r.score == null ? "" : `score ${r.score}`}</span>
-                    <span />
-                    <span className="min-w-0 truncate text-caption text-secondary tabular-nums" title={memberDetail(m).join("\n")}>
-                      {r.detail || "—"}
-                    </span>
-                    <span />
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-          <p className="mt-2 flex items-baseline gap-2" data-testid="pick-caption">
-            <span className="text-caption font-semibold text-title">{sec.label}</span>
-            {pickCaption(sec) && <span className="text-micro text-muted tabular-nums">{pickCaption(sec)}</span>}
-          </p>
-        </>
+        <div className="grid grid-cols-2 gap-x-6">
+          {pickSections(u).map((sec) => (
+            <div key={sec.tier} className="min-w-0" data-testid="pick-tier" data-tier={sec.tier}>
+              <div className="mb-1 border-b border-line pb-1 text-caption font-semibold text-title tabular-nums" data-testid="pick-header">
+                {pickHeader(sec)}
+              </div>
+              {sec.rows.length === 0 ? (
+                <p className="py-1.5 text-caption text-muted">None today</p>
+              ) : (
+                <ul data-testid="pick-rows">
+                  {sec.rows.map((m) => {
+                    const score = pickRow(m).score;
+                    return (
+                      <li key={m.ticker}>
+                        <Link
+                          to="/ops/universe"
+                          title={memberDetail(m).join("\n")}
+                          className="flex min-h-[28px] items-center justify-between gap-2 hover:bg-hover max-tablet:min-h-[32px]"
+                        >
+                          <span className="truncate font-semibold text-title">{m.ticker}</span>
+                          <span className="text-caption text-secondary tabular-nums">{score ?? "—"}</span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </Card>
   );
