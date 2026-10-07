@@ -9,6 +9,8 @@ fixture's open structures (``sids``: tag -> structure id):
 * QQQ — watch ``hold`` (intact), exit case ``hold`` (profit target), Risk ``hold``.
 * NVDA — a mandatory ``stop`` signal on its latest review (no case: mandatory exits
   stay deterministic).
+* The QQQ close proposal (``exit-qqq``) gets a run id and its ``proposal`` context
+  entry carries a Risk ``exit_review`` (what ``quant.propose`` writes on a close).
 
 Also used by ``scripts/tower_fixture_db.py --exits`` and the Playwright run.
 """
@@ -16,6 +18,7 @@ Also used by ``scripts/tower_fixture_db.py --exits`` and the Playwright run.
 from __future__ import annotations
 
 import datetime as dt
+import json
 from typing import TYPE_CHECKING, Any
 
 from arc.context.kinds import (
@@ -120,3 +123,27 @@ def add_exits(conn: sqlite3.Connection, now: dt.datetime, sids: dict[str, str]) 
                             reason="EV remaining beats closing now"),
         ],
     ).model_dump(mode="json"))  # fmt: skip
+
+    # The close proposal's context entry, as quant.propose's close branch writes it.
+    run_id = "run-fx-quant-propose"
+    row = conn.execute(
+        "SELECT * FROM proposals WHERE kind = 'close' AND ticker = 'QQQ'"
+    ).fetchone()
+    conn.execute("UPDATE proposals SET run_id = ? WHERE id = ?", (run_id, row["id"]))
+    payload = {
+        "candidate_id": row["candidate_id"] or "cand-exit-qqq",
+        "structure": json.loads(row["structure_json"]),
+        "thesis": row["thesis"],
+        "quant": json.loads(row["quant_json"]),
+        "risk_narrative": row["risk_narrative"] or "",
+        "sizing": json.loads(row["sizing_json"]),
+        "expires_at": row["expires_at"],
+        "exit_review": RiskExitVerdict(
+            structure_id=qqq, verdict="close", reason_code="ev_exhausted",
+            reason="Take the 60% gain before CPI",
+        ).model_dump(mode="json"),
+    }  # fmt: skip
+    store.write(
+        kind="proposal", subject="QQQ", payload=payload, produced_by="quant.propose",
+        ttl=_TTL, run_id=run_id, valid_from=at, now=at,
+    )  # fmt: skip

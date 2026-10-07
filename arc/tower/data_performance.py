@@ -433,7 +433,10 @@ class Breakdowns(BaseModel):
 class CalibrationItem(BaseModel):
     model_config = _FORBID
 
-    persona: str
+    persona: str = Field(description="Current persona key (E13.14: legacy names mapped)")
+    stated: Literal["confidence", "pop"] = Field(
+        "confidence", description="What was stated: a persona confidence or the Quant's PoP"
+    )
     lo: float
     hi: float
     n: int
@@ -881,11 +884,21 @@ def _breakdown(
     return _items(by, breakdown(pairs))
 
 
+_QUANT_POP = "quant_pop"  # arc.journal.scorecard.calibration_points' PoP series
+
+
+def _current_persona(value: str) -> str:
+    """A stored persona as its current key; current keys pass through unchanged (a
+    stored ``scout`` is ambiguous across D54, and calibration rows carry no time)."""
+    return value if value in TIMELINE_PERSONAS else legacy.persona_key(value, None, {})
+
+
 def _calibration(conn: sqlite3.Connection, history: list[ClosedPosition]) -> CalibrationCard:
     points = calibration_points(conn, [(c.open_proposal_hash, c.realised_pnl > 0) for c in history])
     rows = [
         CalibrationItem(
-            persona=b.persona,
+            persona="quant" if b.persona == _QUANT_POP else _current_persona(b.persona),
+            stated="pop" if b.persona == _QUANT_POP else "confidence",
             lo=b.lo,
             hi=b.hi,
             n=b.n,

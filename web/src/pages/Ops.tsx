@@ -33,7 +33,6 @@ import {
   llmBars,
   llmCost,
   loopSplit,
-  personaLabel,
   rowFacts,
   rowSummary,
   runApiQuery,
@@ -61,6 +60,7 @@ import {
   type Sources,
   type TimelineRow,
 } from "../lib/ops";
+import { personaName, useCatalogue } from "../lib/personas";
 import { useContextEntry, useOps } from "../lib/useApi";
 import { CONTROL, Loading, PersonaChip, Pill, RunStatus, et, shortId, type PillTone } from "./opsShared";
 
@@ -817,7 +817,7 @@ function SourcesCard({ s, now }: { s?: Sources; now: number }) {
       freshness={{ at: s?.as_of, label: "loaded" }}
       headerExtra={
         <InfoTip label="About sources">
-          One block per D47 category, each an equal share of the Scalp&apos;s doc budget; a row&apos;s share is inside its category.
+          One block per D56 category (Scalp: market news, company data, options fast; Scout: options slow, YouTube macro and micro), each an equal share of its feed&apos;s budget, then Reference data (no share). A row&apos;s share is inside its category.
         </InfoTip>
       }
     >
@@ -835,7 +835,8 @@ function SourcesCard({ s, now }: { s?: Sources; now: number }) {
 }
 
 function LlmCard({ l }: { l?: Llm }) {
-  const bars = useMemo(() => (l ? llmBars(l) : null), [l]);
+  const cat = useCatalogue();
+  const bars = useMemo(() => (l ? llmBars(l, cat) : null), [l, cat]);
   const delta = l && l.yesterday_cost > 0 ? (l.today_cost - l.yesterday_cost) / l.yesterday_cost : null;
   return (
     <Card title="LLM Usage" subtitle={l ? <>{l.days} days · {llmCost(l.total_cost)} total</> : undefined}>
@@ -866,7 +867,7 @@ function LlmCard({ l }: { l?: Llm }) {
               {l.today.map((g) => (
                 <tr key={`${g.persona}-${g.model}`} className="border-t border-line">
                   <td className="py-1">
-                    {personaLabel(g.persona)} <span className="text-muted">{g.model}</span>
+                    {personaName(g.persona, cat)} <span className="text-muted">{g.model}</span>
                   </td>
                   <td className="text-right">
                     {g.calls}

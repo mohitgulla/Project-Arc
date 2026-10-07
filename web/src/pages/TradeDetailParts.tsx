@@ -15,7 +15,7 @@ import { Timeline, type TimelineItem } from "../components/Timeline";
 import { num } from "../lib/api";
 import { formatAge, formatEt, formatLeg, formatNumber, formatPercent } from "../lib/format";
 import { useLayout } from "../lib/layout";
-import { withEmoji } from "../lib/performance";
+import { usePersonaLabel } from "../lib/personas";
 import { humanize, shortHash, STAGE_LABEL, type TradeDetail } from "../lib/trades";
 import { parseRiskNarrative, splitTrail, thesisPersona } from "../lib/tradeDetail";
 
@@ -92,12 +92,13 @@ function n4(v: number | null | undefined): ReactNode {
 // ---------------------------------------------------------------------------
 
 export function Thesis({ d }: { d: TradeDetail }) {
+  const label = usePersonaLabel();
   const h = d.header;
   if (!h.thesis) return <None what="No thesis recorded." />;
   return (
     <div className="grid gap-1" data-testid="thesis">
       <span className="w-fit rounded-label bg-control px-1.5 py-0.5 text-micro font-semibold uppercase tracking-wide text-accent">
-        {thesisPersona(h.row.kind)}
+        {label(thesisPersona(h.row.kind))}
       </span>
       <p className="text-pretty text-body text-primary">{h.thesis}</p>
     </div>
@@ -157,8 +158,26 @@ function PromptToggle({ text }: { text: string }) {
   );
 }
 
+/** E13.14 (D56): Risk's exit verdict on a research-path close (stored on the proposal). */
+export function ExitReview({ d }: { d: TradeDetail }) {
+  const label = usePersonaLabel();
+  const v = d.exit_review;
+  if (!v) return null;
+  return (
+    <p className="text-caption" data-testid="exit-review">
+      <span className="font-semibold text-primary">{label("risk")}</span>{" "}
+      <span className={v.verdict === "close" ? "font-semibold text-neg-text" : "font-semibold text-pos-text"}>
+        {v.verdict === "close" ? "Close" : "Hold"}
+      </span>{" "}
+      <span className="text-secondary">{v.reason}</span>{" "}
+      <span className="text-muted">({v.reason_code.replace(/_/g, " ")})</span>
+    </p>
+  );
+}
+
 /** E13.13 (D56): the chain's persona notes, label bold, text plain (same lines as Slack). */
 export function Notes({ d }: { d: TradeDetail }) {
+  const label = usePersonaLabel();
   const notes = d.decisions.notes ?? [];
   if (!notes.length) return <None what="No persona notes for this trade's chain." />;
   return (
@@ -166,7 +185,7 @@ export function Notes({ d }: { d: TradeDetail }) {
       {notes.map((n) => (
         <div key={n.id} className="grid gap-1" data-testid={`note-${n.id}`}>
           <p className="text-caption">
-            <span className="font-semibold text-primary">{withEmoji(n.persona, personaName(n.persona))}</span>{" "}
+            <span className="font-semibold text-primary">{label(n.persona)}</span>{" "}
             <span className="text-secondary">{n.title}</span>
           </p>
           {(n.sections ?? []).map((s, i) => (
@@ -186,10 +205,6 @@ export function Notes({ d }: { d: TradeDetail }) {
       ))}
     </div>
   );
-}
-
-function personaName(p: string): string {
-  return p.charAt(0).toUpperCase() + p.slice(1);
 }
 
 /** This trade's own decision steps; chain context (other tickers, the session read) behind a toggle. */

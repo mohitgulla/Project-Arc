@@ -29,15 +29,18 @@ import {
   money,
   pct,
   perfQuery,
-  personaLabel,
   pnlBars,
   ratio,
   shortDate,
   tradesLink,
   type PerfQuery,
   type Performance,
+  FUNNEL_STAGE_LABEL,
+  feedSplit,
+  stageConversion,
 } from "../lib/performance";
-import { usePerformance } from "../lib/useApi";
+import { usePersonaLabel } from "../lib/personas";
+import { useFunnel, usePerformance } from "../lib/useApi";
 
 function Hero({ value, children }: { value: React.ReactNode; children?: React.ReactNode }) {
   return (
@@ -432,6 +435,7 @@ function BreakdownCard({ p, by, setBy }: { p: Performance; by: PerfQuery["by"]; 
 }
 
 function CalibrationCard({ p }: { p: Performance }) {
+  const personaLabel = usePersonaLabel();
   const c = p.calibration;
   const tip = (
     <TitleTip about="persona calibration">
@@ -455,7 +459,7 @@ function CalibrationCard({ p }: { p: Performance }) {
         {(c.rows ?? []).map((r) => (
           <li key={`${r.persona}-${r.lo}`}>
             <ProgressRow
-              label={`${personaLabel(r.persona)} ${r.lo.toFixed(1)}–${r.hi.toFixed(1)}`}
+              label={`${personaLabel(r.persona)}${r.stated === "pop" ? " PoP" : ""} ${r.lo.toFixed(1)}–${r.hi.toFixed(1)}`}
               value={calibrationLabel(r.stated_mean, r.hit_rate)}
               right={`n=${r.n}`}
               fraction={r.hit_rate}
@@ -518,6 +522,75 @@ function FunnelCard({ p }: { p: Performance }) {
   );
 }
 
+/** E13.14 (D56): sources -> feed -> candidates -> pool -> shortlist -> structures ->
+ * proposals -> fills, for the page's period, split by feed (Scalp / Scout). */
+function IdeaFunnelCard({ period }: { period: { first: string; last: string } }) {
+  const res = useFunnel(period);
+  const persona = usePersonaLabel();
+  const name = (feed: string) => persona(feed);
+  const f = res.data;
+  const stages = f?.stages ?? [];
+  const top = Math.max(1, ...stages.map((s) => s.count));
+  const conv = stageConversion(stages);
+  const fill = Object.entries(f?.discovery_fill ?? {});
+  return (
+    <Card
+      title="Idea Funnel"
+      subtitle={f ? `${formatRange(f.since, f.until)} · ${f.sessions} sessions` : undefined}
+      headerExtra={
+        <InfoTip label="About the idea funnel">
+          How many ideas survive each step, per feed: the 30-min Scalp and the daily Scout. Docs come
+          from the ingest store; ideas from the candidate, shortlist and structure context; then
+          proposals, approvals and fills. Same numbers as `arc funnel report`.
+        </InfoTip>
+      }
+    >
+      {res.isError ? (
+        <EmptyState caption={`Could not load the funnel: ${String(res.error)}`} />
+      ) : !f ? (
+        <EmptyState caption="Loading…" />
+      ) : (
+        <>
+          <ul className="grid gap-1" data-testid="idea-funnel">
+            {stages.map((s, i) => {
+              const split = feedSplit(s, name);
+              const c = conv[i];
+              return (
+                <li key={s.stage} data-stage={s.stage}>
+                  <ProgressRow
+                    label={FUNNEL_STAGE_LABEL[s.stage]}
+                    value={formatNumber(s.count)}
+                    right={[split, c == null ? "" : `${Math.round(c * 100)}%`].filter(Boolean).join(" · ") || undefined}
+                    fraction={s.count / top}
+                    color="var(--accent-bar)"
+                  />
+                </li>
+              );
+            })}
+          </ul>
+          {(f.top_sources ?? []).length > 0 && (
+            <>
+              <div className="mt-4 mb-1 text-caption font-semibold text-secondary">Top sources (candidates)</div>
+              <CappedList className="grid gap-0.5 text-caption tabular-nums" testid="funnel-sources" noun="sources">
+                {(f.top_sources ?? []).map(([k, n]) => (
+                  <li key={k} className="flex justify-between gap-3">
+                    <span className="[overflow-wrap:anywhere]">{k}</span>
+                    <span>{formatNumber(n)}</span>
+                  </li>
+                ))}
+              </CappedList>
+            </>
+          )}
+          <p className="mt-3 text-caption text-muted" data-testid="funnel-discovery-fill">
+            Discovery fill (Scout):{" "}
+            {fill.length ? fill.map(([d, n]) => `${shortDate(d)} ${n}`).join(" · ") : "none in this period"}
+          </p>
+        </>
+      )}
+    </Card>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -564,6 +637,7 @@ export function PerformancePage() {
               <FunnelCard p={p} />
             </div>
           </div>
+          <IdeaFunnelCard period={p.period} />
           <p className="text-caption text-muted">
             As of {formatEt(p.as_of)} · cached 60 s; figures run to today.
           </p>

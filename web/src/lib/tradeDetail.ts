@@ -198,9 +198,10 @@ export function parseRiskNarrative(raw: string | null | undefined): RiskView {
   };
 }
 
-/** Thesis author: Research for opens, Quant for exits (D22 persona attribution; D56). */
-export function thesisPersona(kind: "open" | "close"): string {
-  return kind === "close" ? "Quant" : "Research";
+/** Thesis author's persona key: research for opens, quant for exits (D22; D56). The
+ * label comes from the /api/meta catalogue. */
+export function thesisPersona(kind: "open" | "close"): "research" | "quant" {
+  return kind === "close" ? "quant" : "research";
 }
 
 // ---------------------------------------------------------------------------

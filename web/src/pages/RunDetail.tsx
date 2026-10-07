@@ -22,12 +22,12 @@ import {
   formatDuration,
   llmCost,
   manifestGroups,
-  personaLabel,
   runStatusLabel,
   type RunDetail,
   type StepView,
 } from "../lib/ops";
 import { isHashLike, kindCounts, kindCountsText, shortHash, tailLines, type KindCount } from "../lib/opsConfig";
+import { usePersonaLabel } from "../lib/personas";
 import { useRun } from "../lib/useApi";
 import { CONTROL, CopyValue, Disclosure, Loading, PersonaChip, Pill, RunStatus, et, shortId } from "./opsShared";
 
@@ -292,13 +292,14 @@ function ContextRefs({ title, items, testid }: { title: string; items: StepView[
 }
 
 function LlmCalls({ step }: { step: StepView }) {
+  const label = usePersonaLabel();
   if (step.persona_calls.length === 0) return null;
   return (
     <Card title="LLM Calls">
       <CappedList className="divide-y divide-line text-caption tabular-nums" testid="persona-calls" noun="calls">
         {step.persona_calls.map((c) => (
           <li key={c.id} className="flex flex-wrap gap-x-3 py-1.5">
-            <span className="font-semibold text-title">{personaLabel(c.persona)}</span>
+            <span className="font-semibold text-title">{label(c.persona)}</span>
             <span className="text-muted [overflow-wrap:anywhere]">{c.model}</span>
             <span>
               {formatNumber(c.input_tokens ?? 0)} / {formatNumber(c.output_tokens ?? 0)} tok

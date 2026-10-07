@@ -7,6 +7,7 @@
  *   E13.4: no Trending, `u.model === "d56"`): ticker chips with rank;
  *   tap/hover a chip for source, reason and `also in <tier>`. Tier header: source, last
  *   refresh age, `Partial` / `Expired` badges, offered/active/size counts.
+ * - E13.14: tail cuts (past the active cap, with rank) and today's Scout discovery fill.
  * - Dropped names with tier + reason; the market reference line (SPY QQQ, regime only).
  * - Read-only: the stored resolve is shown as is, never re-computed.
  */
@@ -18,6 +19,7 @@ import { EmptyState } from "../components/EmptyState";
 import { Popover } from "../components/Popover";
 import { formatAge } from "../lib/format";
 import {
+  discoveryFillLine,
   dropLabel,
   marketReferenceLine,
   memberDetail,
@@ -26,6 +28,7 @@ import {
   refreshLine,
   sortTiers,
   summaryLine,
+  tailCutDetail,
   tierCounts,
   tierLabel,
   type Universe,
@@ -132,6 +135,11 @@ function Summary({ u, now }: { u: Universe; now: number }) {
         )}
         {u.config_version != null && <span className="tabular-nums">config v{u.config_version}</span>}
       </div>
+      {discoveryFillLine(u) && (
+        <p className="text-caption text-secondary tabular-nums" data-testid="uni-discovery-fill">
+          {discoveryFillLine(u)}
+        </p>
+      )}
       {u.note && (
         <p className="text-caption text-warn [text-wrap:pretty]" data-testid="uni-note">
           {u.note}
@@ -167,6 +175,25 @@ export function OpsUniversePage() {
           {sortTiers(u.tiers).map((t) => (
             <TierSection key={t.name} t={t} members={membersOf(u.active, t.name)} now={now} />
           ))}
+          <Card title="Tail Cuts" subtitle={`${(u.tail_cuts ?? []).length} names past the ${u.active_max}-name cap`} testid="uni-tail-cuts">
+            {(u.tail_cuts ?? []).length === 0 ? (
+              <EmptyState caption="Every tiered name fit under the cap." />
+            ) : (
+              <ul className="flex min-w-0 flex-wrap gap-1.5">
+                {(u.tail_cuts ?? []).map((d) => (
+                  <li
+                    key={`${d.tier}-${d.ticker}`}
+                    className="inline-flex min-h-[32px] items-center gap-1 rounded-pill bg-control px-2 text-caption max-tablet:min-h-[44px]"
+                    data-testid="uni-tail-cut"
+                    data-ticker={d.ticker}
+                  >
+                    <span className="font-semibold text-primary">{d.ticker}</span>
+                    <span className="text-muted tabular-nums">{tailCutDetail(d)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
           <Card title="Dropped" subtitle={`${u.dropped.length} names`} testid="uni-dropped">
             {u.dropped.length === 0 ? (
               <EmptyState caption="No name was cut." />

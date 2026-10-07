@@ -4,7 +4,8 @@ import type { ReactNode } from "react";
 
 import { copyText } from "../lib/clipboard";
 import { formatEt } from "../lib/format";
-import { PERSONA_CHIP, runStatusLabel, runStatusTone, type RunRow } from "../lib/ops";
+import { runStatusLabel, runStatusTone, type RunRow } from "../lib/ops";
+import { usePersonaLabel } from "../lib/personas";
 
 export const CONTROL =
   "min-h-[30px] rounded-control border border-line-input bg-control px-2 text-caption text-primary max-tablet:min-h-[44px]";
@@ -47,10 +48,11 @@ export function shortId(id: string | null | undefined, n = 14): string {
 }
 
 export function PersonaChip({ persona }: { persona?: string | null }) {
+  const label = usePersonaLabel();
   if (!persona) return null;
   return (
     <span data-testid="persona-chip" className="shrink-0 rounded-pill bg-control px-1.5 py-px text-micro font-semibold text-secondary">
-      {PERSONA_CHIP[persona] ?? persona}
+      {label(persona)}
     </span>
   );
 }

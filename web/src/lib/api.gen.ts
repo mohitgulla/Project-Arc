@@ -1072,8 +1072,18 @@ export interface components {
             lo: number;
             /** N */
             n: number;
-            /** Persona */
+            /**
+             * Persona
+             * @description Current persona key (E13.14: legacy names mapped)
+             */
             persona: string;
+            /**
+             * Stated
+             * @description What was stated: a persona confidence or the Quant's PoP
+             * @default confidence
+             * @enum {string}
+             */
+            stated: "confidence" | "pop";
             /** Stated Mean */
             stated_mean: number;
         };

@@ -1192,7 +1192,18 @@
             "type": "integer"
           },
           "persona": {
+            "description": "Current persona key (E13.14: legacy names mapped)",
             "title": "Persona",
+            "type": "string"
+          },
+          "stated": {
+            "default": "confidence",
+            "description": "What was stated: a persona confidence or the Quant's PoP",
+            "enum": [
+              "confidence",
+              "pop"
+            ],
+            "title": "Stated",
             "type": "string"
           },
           "stated_mean": {

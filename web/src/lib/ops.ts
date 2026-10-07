@@ -4,7 +4,7 @@
  */
 import type { Schemas } from "./api";
 import { formatMoney, formatNumber } from "./format";
-import { withEmoji } from "./performance";
+import { EMPTY_CATALOGUE, personaName, type Catalogue } from "./personas";
 
 export type Session = Schemas["SessionResponse"];
 export type Slot = Schemas["Slot"];
@@ -350,24 +350,18 @@ export function timeLeft(iso: string | null | undefined, now: number): string {
 // -- LLM -----------------------------------------------------------------------------
 
 /** StackedBars rows (cost by persona per day) and the series list. */
-export function llmBars(llm: Llm): {
+export function llmBars(llm: Llm, cat: Catalogue = EMPTY_CATALOGUE): {
   data: Array<Record<string, number | string>>;
   series: Array<{ key: string; label: string; color: string }>;
 } {
   const personas = llm.personas;
-  const series = personas.map((p, i) => ({ key: p, label: personaLabel(p), color: `var(--series-${(i % 5) + 1})` }));
+  const series = personas.map((p, i) => ({ key: p, label: personaName(p, cat), color: `var(--series-${(i % 5) + 1})` }));
   const data = llm.series.map((d) => {
     const row: Record<string, number | string> = { label: d.day.slice(5) };
     for (const p of personas) row[p] = d.by_persona[p] ?? 0;
     return row;
   });
   return { data, series };
-}
-
-export function personaLabel(p: string): string {
-  const [head = p, tail] = p.split(".");
-  const cap = head.charAt(0).toUpperCase() + head.slice(1);
-  return tail ? `${cap} (${tail})` : cap;
 }
 
 /** `$1.13` hero text for LLM cost (cents kept: these are small numbers). */
@@ -407,18 +401,6 @@ export const OPS_WIDGETS = [
 export const OPS_CLOSED_BY_DEFAULT = ["Alerts", "Halts", "Runs"] as const;
 
 // -- E8.8d: Session Timeline bands -----------------------------------------------------
-
-/** Persona chip text (routines.yaml `persona:`), E13.13 emoji first; sources carry none. */
-export const PERSONA_CHIP: Record<string, string> = {
-  scout: withEmoji("scout", "Scout"),
-  scalp: withEmoji("scalp", "Scalp"),
-  research: withEmoji("research", "Research"),
-  quant: withEmoji("quant", "Quant"),
-  risk: withEmoji("risk", "Risk"),
-  broker: withEmoji("broker", "Broker"),
-  ops: withEmoji("ops", "Ops"),
-  monitor: "Monitor",
-};
 
 export interface BandView {
   band: TimelineBand;

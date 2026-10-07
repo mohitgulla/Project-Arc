@@ -4,7 +4,7 @@ import { apiGet, type ApiPath, type Meta, type Positions, type Snapshot } from "
 import type { ExperimentDetail, ExperimentsList } from "./experiments";
 import type { ContextEntry, RunDetail } from "./ops";
 import type { Overview, OverviewRange } from "./overview";
-import type { Performance } from "./performance";
+import type { Funnel, Performance } from "./performance";
 import { useSettings } from "./settings";
 import {
   apiQuery,
@@ -110,6 +110,19 @@ export function usePositions(status: "open" | "closed" | "all") {
 }
 
 /** Performance (E8.7c): the server caches each response for 60 s per DB state. */
+/** E13.14 (D56): the idea funnel for ET days [from, to] (the Performance page's period). */
+export function useFunnel(period: { first: string; last: string } | undefined) {
+  const poll = usePoll();
+  return useQuery<Funnel>({
+    queryKey: ["funnel", period?.first, period?.last],
+    queryFn: ({ signal }) =>
+      apiGet("/api/performance/funnel", { query: { from: period?.first, to: period?.last }, signal }),
+    enabled: !!period,
+    placeholderData: keepPreviousData,
+    ...poll,
+  });
+}
+
 export function usePerformance(q: Record<string, string>) {
   const poll = usePoll();
   return useQuery<Performance>({

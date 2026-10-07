@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { CAT } from "./personas.fixture";
+
 import {
   OPS_CLOSED_BY_DEFAULT,
   OPS_WIDGETS,
@@ -17,7 +19,6 @@ import {
   llmBars,
   loopSplit,
   manifestGroups,
-  personaLabel,
   rowFacts,
   rowSummary,
   runApiQuery,
@@ -129,10 +130,6 @@ describe("formatting", () => {
     expect(timeLeft("2026-09-30T12:30:00-04:00", now)).toBe("30 min left");
   });
 
-  it("labels personas", () => {
-    expect(personaLabel("research")).toBe("Research");
-    expect(personaLabel("scalp.digest")).toBe("Scalp (digest)");
-  });
 });
 
 describe("day + run filters", () => {
@@ -217,7 +214,7 @@ describe("llm, config", () => {
         { day: "2026-09-30", calls: 1, input_tokens: 1, output_tokens: 1, cost_usd: 0.1, by_persona: { research: 0.1 }, by_model: {} },
       ],
     } as unknown as Llm;
-    const b = llmBars(llm);
+    const b = llmBars(llm, CAT);
     expect(b.data).toEqual([
       { label: "09-29", research: 0.1, scalp: 0.2 },
       { label: "09-30", research: 0.1, scalp: 0 },

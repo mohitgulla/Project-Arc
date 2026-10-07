@@ -292,3 +292,64 @@ export function statusRow(o: Pick<Overview, "status">, ctx: StatusContext): Stat
 export function usedOfCap(used: string, cap: string | null): string {
   return cap === null ? used : `${used} / ${cap}`;
 }
+
+// -- E13.14 (D56): the exit path on the Positions page ---------------------------------
+
+export type ExitPathStrip = Schemas["ExitPathStrip"];
+export type ExitTone = "pos" | "neg" | "warn" | "neutral";
+
+/** The exit-path columns and strip show only when the Research exit path runs. */
+export function exitPathVisible(strip: ExitPathStrip | null | undefined): boolean {
+  return !!strip && strip.mode !== "deterministic";
+}
+
+/** `Shadow · 1 mandatory pending · 2 cases today · 1 close proposed · 1 hold` */
+export function exitPathStripText(s: ExitPathStrip): string {
+  const mode = s.mode.charAt(0).toUpperCase() + s.mode.slice(1);
+  return [
+    mode,
+    `${s.mandatory_pending} mandatory pending`,
+    `${s.cases_today} ${s.cases_today === 1 ? "case" : "cases"} today`,
+    `${s.closes_proposed_today} ${s.closes_proposed_today === 1 ? "close" : "closes"} proposed`,
+    `${s.holds_today} ${s.holds_today === 1 ? "hold" : "holds"}`,
+  ].join(" · ");
+}
+
+/** Exit watch chip: `Review · Weakened` (warn), `Hold · Intact` (neutral), broken = neg. */
+export function exitWatchChip(p: Pick<PositionRow, "exit_watch">): { text: string; tone: ExitTone } | null {
+  const w = p.exit_watch;
+  if (!w) return null;
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const tone: ExitTone = w.thesis_status === "broken" ? "neg" : w.action === "review" ? "warn" : "neutral";
+  return { text: `${cap(w.action)} · ${cap(w.thesis_status)}`, tone };
+}
+
+/** Exit case cell: `Close · EV −$6.50` (EV = remaining managed when known, else hold). */
+export function exitCaseText(p: Pick<PositionRow, "exit_case">): string | null {
+  const c = p.exit_case;
+  if (!c) return null;
+  const ev = c.remaining_ev_managed ?? c.remaining_ev_hold;
+  const rec = c.recommendation === "close" ? "Close" : "Hold";
+  if (ev == null) return rec;
+  const abs = Math.abs(ev).toFixed(2);
+  return `${rec} · EV ${ev < 0 ? "−" : ""}$${abs}`;
+}
+
+/** Risk verdict chip: `Close` (neg), `Hold` (pos), `Unavailable` (warn). */
+export function exitVerdictChip(p: Pick<PositionRow, "exit_review">): { text: string; tone: ExitTone } | null {
+  const v = p.exit_review;
+  if (!v) return null;
+  if (v.unavailable) return { text: "Unavailable", tone: "warn" };
+  return v.verdict === "close" ? { text: "Close", tone: "neg" } : { text: "Hold", tone: "pos" };
+}
+
+/** Mandatory signal label: `stop`, `DTE exit`, `expiry`. */
+export function mandatoryLabel(s: string | null | undefined): string | null {
+  if (!s) return null;
+  return s === "dte_exit" ? "DTE exit" : s.replace(/_/g, " ");
+}
+
+/** Positions with anything to show in the exit-path details list. */
+export function exitPathRows(rows: PositionRow[]): PositionRow[] {
+  return rows.filter((p) => p.exit_watch || p.exit_case || p.exit_review || p.mandatory_signal);
+}
