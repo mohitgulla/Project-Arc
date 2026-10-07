@@ -1,0 +1,23 @@
+# Test fixture (E13.12 mechanics, kept after the E13.15 D56 cutover retired the
+# d51-vs-d56 draft): a `universe` overlay gives the treatment arm its own Scout and
+# forks its loop at `research`.
+spec_version: 1
+id: XP-5
+title: Looser discovery screen price floor
+hypothesis: >
+  A 4.00 discovery price floor does not lower paired daily net P&L, Sortino or max
+  drawdown against the 3.00 floor.
+area: universe
+kind: ab
+arms:
+  control:
+    overlay: {}
+  treatment:
+    overlay:
+      universe:
+        liquidity_screen:
+          loose:
+            min_price: 4.0
+non_inferiority_margin: 0.5
+proposed_by: owner
+backtest_ref: "none: universe screens change the LLM idea pool, not backtestable"

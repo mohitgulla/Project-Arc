@@ -212,9 +212,6 @@ def live_size_snapshot(*, scalp: int = 35, scout: int = 20, stories: int = 419) 
             {"as_of": "2026-10-05", "structure": "contango", "vix": 15.5, "vix3m": 18.0},
         )
     )
-    entries.append(
-        _e(3002, "put_call", "market", {"as_of": "2026-10-05", "total": 0.83, "equity": 0.59})
-    )
     for k, t in enumerate(_TICKERS[:15]):
         for j, (kind, p) in enumerate(g.finnhub_payloads(t)):
             entries.append(_e(4000 + 10 * k + j, kind, t, p, age_h=20))
@@ -287,7 +284,7 @@ def test_compact_prompt_layout() -> None:
     assert f"{_TICKERS[40]} · bullish · conf 0.70 · feeds scout · origins 1 · single" in p
     assert "### Scout's read (daily slow feed" in p and "Themes: Theme 0" in p
     assert "### Regime lines" in p and "TAA · bull (stick 0.70)" in p
-    assert "Vol term (2026-10-05): contango" in p and "Put/call (2026-10-05): total 0.83" in p
+    assert "Vol term (2026-10-05): contango" in p and "Put/call" not in p
     assert "YouTube micro briefs: 2/3 channels (missing: TradeBrigade)" in p
     assert "### Current portfolio (open book; deterministic, E5.9)" in p
     # no raw JSON blocks, no exclusion request

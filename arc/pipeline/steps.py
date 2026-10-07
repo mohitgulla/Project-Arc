@@ -228,7 +228,6 @@ RESEARCH_READS = [
     "channel_brief",
     "note",
     "vol_term",
-    "put_call",
     "macro_calendar",
     "position_review",  # E5.9: fresh E6.4 reviews feed the portfolio context
     "story",  # E4.7 (D47): per-category freshness lines (counts + headlines, by code)

@@ -1,14 +1,13 @@
 /**
- * `/ops/universe` (E12.6, D51): what can Arc trade today, and why is each name there?
+ * `/ops/universe` (E12.6, D56): what can Arc trade today, and why is each name there?
  *
  * - Pinned summary (outside the scrolling content, never collapses):
- *   `Active 50/50 · Core 25 · Momentum 17 · Trending n · Discovery n` + the resolve's age.
- * - One section per tier the API lists (D51: Core → Momentum → Trending → Discovery; D56,
- *   E13.4: no Trending, `u.model === "d56"`): ticker chips with rank;
+ *   `Active 50/50 · Core 20 · Momentum n · Discovery n` + the resolve's age.
+ * - One section per tier the API lists (Core → Momentum → Discovery): ticker chips with rank;
  *   tap/hover a chip for source, reason and `also in <tier>`. Tier header: source, last
  *   refresh age, `Partial` / `Expired` badges, offered/active/size counts.
  * - E13.14: tail cuts (past the active cap, with rank) and today's Scout discovery fill.
- * - Dropped names with tier + reason; the market reference line (SPY QQQ, regime only).
+ * - Dropped names with tier + reason; the market reference line (SPY QQQ IWM, regime only).
  * - Read-only: the stored resolve is shown as is, never re-computed.
  */
 import { Link, useNavigate } from "react-router-dom";
@@ -220,7 +219,7 @@ export function OpsUniversePage() {
             )}
           </Card>
           <p className="text-caption text-muted [text-wrap:pretty]">
-            Read-only. The core list is the <Link className="arc-action" to="/ops/config">universe</Link> key; {refreshLine(u.model)}
+            Read-only. The core list is the <Link className="arc-action" to="/ops/config">universe</Link> key; {refreshLine()}
           </p>
         </>
       )}

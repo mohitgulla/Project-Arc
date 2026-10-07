@@ -194,6 +194,7 @@ def fixture_universe_guard(
     """Offline universe guard: fixture symbol master + recorded market data."""
     from arc.universe.guard import UniverseGuard
     from arc.universe.master import SymbolMaster
+    from arc.universe.tiers import Tier
 
     master = SymbolMaster.model_validate_json((FIXTURES_DIR / "symbol_master.json").read_text())
     guard = UniverseGuard.from_settings(
@@ -201,8 +202,10 @@ def fixture_universe_guard(
     )
     # D51: SPY left the core list, but the recorded fixture day (2026-09-25) was
     # captured with SPY in the D9 seed list and its recording has no daily volume
-    # (pre-E5.7), so it cannot be screened. Keep it a seed here, as on that day.
+    # (pre-E5.7), so it cannot be screened. Keep it a core seed here, as on that day
+    # (D56: a seed must also be in a tier, or the scanner's tier floors drop it).
     guard.seed = guard.seed | FIXTURE_SEED_EXTRA
+    guard.tiers |= dict.fromkeys(FIXTURE_SEED_EXTRA, Tier.CORE)
     return guard
 
 

@@ -12,7 +12,7 @@ import pytest
 import structlog
 
 from arc.context.kinds import NotePayload
-from arc.control.registry import is_alias, lookup
+from arc.control.registry import is_alias, is_orphaned, lookup
 from arc.ingest.sources import _feed
 from arc.journal import legacy
 from arc.journal.reasons import JournalPersona, ReasonCode
@@ -223,11 +223,13 @@ def test_journal_persona_enum_has_new_names_only() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["doc_budget", "min_confidence", "max_new_tickers"])
 @pytest.mark.parametrize("old", ["sweep", "scout"])
-def test_old_setting_names_resolve(old: str, name: str) -> None:
-    assert is_alias(f"{old}_{name}")
-    assert lookup(f"{old}_{name}").key == f"scalp_{name}"
+def test_old_setting_names_resolve(old: str) -> None:
+    assert is_alias(f"{old}_doc_budget")
+    assert lookup(f"{old}_doc_budget").key == "scalp_doc_budget"
+    # E13.15: the Scalp floor became the core-tier floor; the new-ticker cap is gone
+    assert lookup(f"{old}_min_confidence").key == "universe_floor_core"
+    assert is_orphaned(f"{old}_max_new_tickers")
 
 
 def test_old_shortlist_key_resolves() -> None:
@@ -286,11 +288,10 @@ def test_stored_payloads_with_old_names_still_validate() -> None:
 
 
 def test_old_python_names_reexported() -> None:
-    from arc.ingest import llm, scalp
+    from arc.ingest import llm
     from arc.personas import builders, schemas
 
     assert llm.SweepLLM is llm.PersonaLLM
-    assert scalp.run_sweep is scalp.run_scalp
     assert builders.build_director_prompt is builders.build_research_prompt
     assert schemas.DirectorOutput is schemas.ResearchOutput
 

@@ -5,7 +5,9 @@ Run stand-alone against an origin/main checkout to (re)write the golden file::
     python -m tests.scalp_prompt_golden > tests/fixtures/scalp/stage2_prompt_flag_off.txt
 
 The golden was written from main at dac00d1 (before E13.10), so the flag-off prompt
-is proven byte-identical to the pre-card prompt.
+is proven byte-identical to the pre-card prompt. E13.15 changed one line in place: the
+watch list reads "core + momentum + discovery" (D56, no trending tier) and the
+report floor is the lowest tier floor, 0.40 (core), not the retired 0.60 Scalp floor.
 """
 
 from __future__ import annotations
@@ -58,7 +60,7 @@ def digests() -> list[StoryPayload]:
 
 
 def settings() -> ArcSettings:
-    return ArcSettings(env="paper", scalp_min_confidence=0.6)
+    return ArcSettings(env="paper")
 
 
 def prompt() -> str:

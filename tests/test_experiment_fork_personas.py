@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 T0 = FIXTURE_NOW - dt.timedelta(hours=1)
 NOW = dt.datetime(2026, 10, 6, 9, 0, tzinfo=ET)  # Tuesday
-XP5 = "config/experiments/live/xp5_universe_d56.yaml"
+XP5 = "tests/fixtures/experiments/xp5_universe_screen.yaml"
 XP8 = "config/experiments/live/xp8_scalp_options_tape.yaml"
 
 # research chain under exit_path research + quant_risk_loop on: every loop persona
@@ -102,7 +102,7 @@ def test_full_chain_has_every_loop_persona() -> None:
     ("overlay", "fork"),
     [
         ({}, "exits.mandatory"),  # the first account step: the arm's own book
-        ({"universe": {"tiers": {"model": "d56"}}}, "research"),
+        ({"universe": {"liquidity_screen": {"loose": {"min_price": 4.0}}}}, "research"),
         ({"routines": {"personas": {"exit_path": "research"}}}, "research"),
         ({"routines": {"personas": {"research_idea_pool": "all"}}}, "research"),
         ({"account_profiles": {"x": 1}}, "research"),
@@ -164,7 +164,7 @@ def test_owning_a_persona_forks_at_research_at_the_latest() -> None:
         ({"routines": {"personas": {"research_idea_pool": "all"}}}, set()),
         ({"routines": {"personas": {"scout_feed": "on"}}}, {"scout"}),
         ({"routines": {"funnel": {"scout": {"max_discovery": 10}}}}, {"scout"}),
-        ({"universe": {"tiers": {"model": "d56"}}}, {"scout"}),
+        ({"universe": {"liquidity_screen": {"loose": {"min_price": 4.0}}}}, {"scout"}),
         ({"routines": {"personas": {"scalp_options_tape": "on"}}}, {"scalp"}),
         ({"routines": {"funnel": {"scalp": {"x": 1}}}}, {"scalp"}),
         ({"routines": {"categories": {"market_news": {"weight": 2}}}}, {"scalp"}),
@@ -202,7 +202,9 @@ def test_arm_personas_are_validated_and_never_tunable() -> None:
 
 def test_plan_for_xp5_runs_its_own_scout_and_syncs_its_inputs() -> None:
     routines = load_routines()
-    plan = arm_plan(routines, {"universe": {"tiers": {"model": "d56"}}}, RunnerConfig())
+    plan = arm_plan(
+        routines, {"universe": {"liquidity_screen": {"loose": {"min_price": 4.0}}}}, RunnerConfig()
+    )
     assert plan.fork_step == "research"
     assert plan.arm_personas == ["scout"]
     assert plan.own_producers == ["scout"]
@@ -507,19 +509,20 @@ def test_universe_is_an_overlay_target_and_reaches_the_universe_config(tmp_path:
             spec_arm="treatment",
             keys_env="ALPACA_EXP",
             control_db=str(ctl_path),
-            overlay={"universe": {"tiers": {"model": "d56"}}},
+            overlay={"universe": {"liquidity_screen": {"loose": {"min_price": 4.0}}}},
             created_at=NOW,
         ),
     )
-    assert universe_config(effective_settings(arm)).tiers.model == "d56"
-    assert universe_config(effective_settings(_db(ctl_path))).tiers.model == "d51"
+    assert universe_config(effective_settings(arm)).liquidity_screen.loose.min_price == 4.0
+    ctl = universe_config(effective_settings(_db(ctl_path)))
+    assert ctl.liquidity_screen.loose.min_price == 3.0
 
 
 def test_bad_universe_overlay_is_refused_at_create(tmp_path: Path) -> None:
     from arc.experiments.models import ExperimentSpec
     from arc.experiments.overlay import validate_arms
 
-    with pytest.raises(ValueError, match="model"):
+    with pytest.raises(ValueError, match="screen"):
         validate_arms(
             ExperimentSpec.model_validate(
                 {
@@ -531,7 +534,11 @@ def test_bad_universe_overlay_is_refused_at_create(tmp_path: Path) -> None:
                     "kind": "ab",
                     "arms": {
                         "control": {"overlay": {}},
-                        "treatment": {"overlay": {"universe": {"tiers": {"model": "d99"}}}},
+                        "treatment": {
+                            "overlay": {
+                                "universe": {"tiers": {"policy": {"discovery": {"screen": "x"}}}}
+                            }
+                        },
                     },
                     "non_inferiority_margin": 0.5,
                     "proposed_by": "owner",

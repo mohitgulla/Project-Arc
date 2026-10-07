@@ -35,5 +35,5 @@ touching `personas.scalp_*`, `funnel.scalp.*` or `categories.*` its own Scalp
 (`experiments.runner.arm_personas` forces either for every arm). Preview without
 writing anything:
 
-    arc experiment start XP-5 --dry-run --db <db>
-    arc experiment arms-tick --dry-run --experiment XP-5 --now 2026-10-06T06:00-04:00 --db <db>
+    arc experiment start XP-<n> --dry-run --db <db>
+    arc experiment arms-tick --dry-run --experiment XP-<n> --now 2026-10-06T06:00-04:00 --db <db>

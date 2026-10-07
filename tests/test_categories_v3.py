@@ -100,7 +100,6 @@ def test_categories_block_refuses_macro_data() -> None:
 def test_kind_map_and_reference_kinds() -> None:
     assert dict(KIND_CATEGORY) == {
         "vol_term": SourceCategory.OPTIONS_SLOW,
-        "put_call": SourceCategory.OPTIONS_SLOW,
         "options_daily": SourceCategory.OPTIONS_SLOW,  # E13.5
         "vx_curve": SourceCategory.OPTIONS_SLOW,
         "index_vols": SourceCategory.OPTIONS_FAST,  # E13.6
@@ -155,7 +154,7 @@ def test_shipped_yaml_classification(shipped: RoutinesConfig) -> None:
     for job in shipped.sources:
         if job.startswith("finnhub."):
             assert shipped.is_reference(job), job
-    for job in ("vol_term", "put_call"):
+    for job in ("vol_term",):
         assert shipped.source_category(job) is SourceCategory.OPTIONS_SLOW
         assert shipped.sources[job].options["feed"] == "scout"
     assert "unusual_options" not in shipped.sources

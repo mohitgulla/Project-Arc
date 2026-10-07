@@ -37,9 +37,8 @@ class ScalpInput:
     scan_date: str  # ISO-8601
     min_confidence: float | None = None  # threshold the pipeline will apply
     output_schema_json: str = ""  # JSON Schema of ScalpOutput, embedded verbatim
-    # D28/D51: True = `universe` is the watch list (core + momentum + trending) and
-    # any US-listed optionable
-    # ticker the feeds discuss may be proposed (screened deterministically after).
+    # D28/D56: True = `universe` is the watch list (core + momentum + discovery); other
+    # listed tickers the feeds discuss may be proposed (kept only as mentions).
     open_universe: bool = False
     # D30: True = `raw_feeds` are stage-1 story digests (clustered, source-counted),
     # not raw documents; the prompt then tells the Scalp to weigh evidence, not volume.
@@ -69,7 +68,7 @@ class ResearchInput:
     portfolio_summary: str  # current portfolio state
     scan_date: str
     notes_json: str = "[]"  # prior D27 notes (context, not instructions)
-    market_data_json: str = "{}"  # D30: vol term, put/call, macro calendar
+    market_data_json: str = "{}"  # D30: vol term, macro calendar
     # E5.9 (D33): "" when the book is empty (the prompt is then identical to E5.7's).
     portfolio_block: str = ""  # rendered open book + aggregates (arc.pipeline.portfolio_context)
     recent_ideas: str = ""  # suppressed (ticker, stance) ideas with why; "" when none
@@ -402,18 +401,13 @@ def regime_line(ticker: str, payload: Mapping[str, Any]) -> str:
 
 
 def market_lines(data: Mapping[str, Any]) -> str:
-    """D30 market data as one line per kind (vol term, put/call, macro calendar)."""
+    """D30 market data as one line per kind (vol term, macro calendar)."""
     out: list[str] = []
     vt = data.get("vol_term")
     if vt:
         keys = ("vix9d", "vix", "vix3m", "vvix", "ratio_9d_1m", "ratio_3m_1m")
         nums = " · ".join(f"{k} {_num(vt.get(k))}" for k in keys if vt.get(k) is not None)
         out.append(f"Vol term ({vt.get('as_of', '?')}): {vt.get('structure', '?')} · {nums}")
-    pc = data.get("put_call")
-    if pc:
-        keys = ("total", "equity", "index", "spx", "etp", "vix")
-        nums = " · ".join(f"{k} {_num(pc.get(k))}" for k in keys if pc.get(k) is not None)
-        out.append(f"Put/call ({pc.get('as_of', '?')}): {nums}")
     mc = data.get("macro_calendar")
     if mc:
         events = sorted(mc.get("events") or [], key=lambda e: str(e.get("date", "")))
@@ -511,7 +505,7 @@ def category_specs_input(routines: Any) -> dict[str, dict[str, str]]:
 # Each is judged against its category's ``max_age`` from ``valid_from``;
 # ``channel_brief`` goes by its channel's category. Reference data (ex_dividend,
 # macro_calendar, Finnhub kinds) is not a category and is never listed here.
-_MARKET_KINDS: Mapping[str, tuple[str, ...]] = {"options_slow": ("vol_term", "put_call")}
+_MARKET_KINDS: Mapping[str, tuple[str, ...]] = {"options_slow": ("vol_term",)}
 
 # D49 (frozen for replay, D56): the six D49 categories and the typed kinds they listed.
 _D49_ORDER = (
@@ -532,7 +526,7 @@ _D49_DEFAULTS: Mapping[str, tuple[str, str]] = {
 }
 _D49_MARKET_KINDS: Mapping[str, tuple[str, ...]] = {
     "macro_data": ("macro_calendar",),
-    "options_data": ("vol_term", "put_call"),
+    "options_data": ("vol_term",),
 }
 _D49_TICKER_KINDS: Mapping[str, tuple[str, ...]] = {
     "options_data": ("unusual_options", "ex_dividend")
@@ -616,7 +610,7 @@ def category_context_block(
     keep equal standing in front of the LLM. Ages are measured from
     ``snapshot.as_of`` (no wall clock).
 
-    A typed entry (vol_term, put_call, channel_brief) older than its category's
+    A typed entry (vol_term, channel_brief) older than its category's
     ``max_age`` (from ``valid_from``) is listed as ``<kind> stale (age)`` and does not
     count as fresh; a category with nothing fresh reads ``no fresh info``. The context
     TTL is untouched (the entries stay readable for audit). Reference data (D56) is
@@ -860,7 +854,7 @@ def d47_category_context_block(
             cal = _kind_age("macro_calendar")
             out += _news(cat, [cal] if cal else [])
         elif cat == "options_data":
-            facts = [a for a in (_kind_age("vol_term"), _kind_age("put_call")) if a]
+            facts = [a for a in (_kind_age("vol_term"),) if a]
             n_uoa = sum(1 for e in snapshot.of_kind("unusual_options") if e.payload.get("flags"))
             if n_uoa:
                 facts.append(f"unusual_options {n_uoa} flagged")
@@ -1366,7 +1360,7 @@ def market_data_from_context(snapshot: ContextSnapshot, *, unusual: bool = False
     removed E4.5 detector wrote (D56 dropped the kind).
     """
     out: dict[str, Any] = {}
-    for kind in ("vol_term", "put_call", "macro_calendar"):
+    for kind in ("vol_term", "macro_calendar"):
         entry = snapshot.latest(kind, "market")
         if entry is not None:
             out[kind] = entry.payload
@@ -1557,7 +1551,7 @@ def build_scalp_prompt(inp: ScalpInput) -> str:
             "any other US-listed, optionable stock or ETF the feeds actually discuss."
         )
         task_line = (
-            "Analyze the feeds below. Watch list (core + momentum + trending): "
+            "Analyze the feeds below. Watch list (core + momentum + discovery): "
             f"{', '.join(inp.universe)}. The watch list is not a preference: judge every name "
             "on the feeds' evidence alone."
         )

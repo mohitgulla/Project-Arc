@@ -126,9 +126,7 @@ def add_exits(conn: sqlite3.Connection, now: dt.datetime, sids: dict[str, str]) 
 
     # The close proposal's context entry, as quant.propose's close branch writes it.
     run_id = "run-fx-quant-propose"
-    row = conn.execute(
-        "SELECT * FROM proposals WHERE kind = 'close' AND ticker = 'QQQ'"
-    ).fetchone()
+    row = conn.execute("SELECT * FROM proposals WHERE kind = 'close' AND ticker = 'QQQ'").fetchone()
     conn.execute("UPDATE proposals SET run_id = ? WHERE id = ?", (run_id, row["id"]))
     payload = {
         "candidate_id": row["candidate_id"] or "cand-exit-qqq",

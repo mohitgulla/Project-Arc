@@ -418,21 +418,6 @@ class VolTermPayload(BaseModel):
     source: str = "cboe"
 
 
-class PutCallPayload(BaseModel):
-    """Cboe daily put/call ratios (options sentiment)."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    as_of: str
-    total: float | None = None
-    equity: float | None = None
-    index: float | None = None
-    etp: float | None = None
-    spx: float | None = None
-    vix: float | None = None
-    source: str = "cboe"
-
-
 # E13.5 (D56): options_slow, Cboe daily market statistics + CFE VX settlements.
 PcSegment = Literal["total", "index", "etp", "equity", "vix", "spx"]
 OiProduct = Literal["all", "index", "etp", "equity", "vix", "spx"]
@@ -842,7 +827,6 @@ KINDS: Mapping[str, KindSpec] = _registry(
     # E4.5 (D30): story digests + options-trading data sources
     KindSpec("story", StoryPayload),
     KindSpec("vol_term", VolTermPayload),
-    KindSpec("put_call", PutCallPayload),
     # E13.5 (D56): options_slow (Cboe daily stats + CFE VX settlement curve; subject market)
     KindSpec("options_daily", OptionsDailyPayload),
     KindSpec("vx_curve", VxCurvePayload),

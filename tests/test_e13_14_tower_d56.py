@@ -411,8 +411,10 @@ def _universe(tmp_path: Path, model: str) -> tuple[UniverseResponse, dict[str, i
         core=[_m("NVDA", Tier.CORE, 1), _m("AAPL", Tier.CORE, 2)],
         momentum=[_m("MU", Tier.MOMENTUM, 1), _m("GE", Tier.MOMENTUM, 2)],
         discoveries=[_m("QCOM", Tier.DISCOVERY, 1), _m("TEM", Tier.DISCOVERY, 2)],
-        active_max=5, as_of=TODAY, config_version=3, model=model,  # type: ignore[arg-type]
+        active_max=5, as_of=TODAY, config_version=3,
     )  # fmt: skip
+    if model == "d51":  # a stored pre-cutover resolve
+        active = active.model_copy(update={"model": "d51"})
     store = ContextStore(c)
     at = NOW - dt.timedelta(minutes=10)
     store.write(kind="active_universe", subject="active", payload=active, produced_by="t",
@@ -435,7 +437,8 @@ def _universe(tmp_path: Path, model: str) -> tuple[UniverseResponse, dict[str, i
 
 
 class TestUniverse:
-    def test_d51_tail_cuts_and_no_fill(self, tmp_path: Path) -> None:
+    def test_stored_d51_resolve_still_renders(self, tmp_path: Path) -> None:
+        # a pre-E13.15 resolve stored as d51 still loads; no Scout fill is counted
         r, _ = _universe(tmp_path, "d51")
         assert r.model == "d51" and r.discovery_fill is None
         assert [(d.ticker, d.tier) for d in r.tail_cuts] == [("TEM", "discovery")]

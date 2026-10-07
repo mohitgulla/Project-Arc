@@ -365,8 +365,9 @@ class TestDigestCards:
         texts = [t for _, t in notes.posts]
         headers = [b[0]["text"]["text"] if b else None for b in notes.blocks]
         assert headers == [
-            "⚡ [Scalp] Scan: 10 Sources → 6 Candidates",  # D54: earnings doc = slow feed
-            "🧠 [Research] Ranked: 3 / 6 • Market Risk ON",
+            # D54 slow feed; D56: AAPL (0.2) is below the core floor
+            "⚡ [Scalp] Scan: 10 Sources → 5 Candidates",
+            "🧠 [Research] Ranked: 3 / 5 • Market Risk ON",
             "📐 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
             "🛡️ [Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
             None,  # propose has no card (E6.1 posts the proposal card)
@@ -374,10 +375,10 @@ class TestDigestCards:
         ]
         # Fallback text = the pre-E5.5 one-liners.
         assert texts[0] == (
-            "⚡ [Scalp] scalp ✓ 10 docs (10 stories) → 7 accepted, 6 candidates today"
+            "⚡ [Scalp] scalp ✓ 10 docs (10 stories) → 7 accepted, 5 candidates today"
         )
         assert texts[1] == (
-            "🧠 [Research] research ✓ 6 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
+            "🧠 [Research] research ✓ 5 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
             "XOM (bearish); excluded 1; dropped {'not_a_candidate': 1}"
         )
         assert texts[2].startswith(
@@ -405,8 +406,9 @@ class TestDigestCards:
             "*Source mix*\n*Market news* 50% · 8 read: rss 8\n"
             "*Company data* 50% · 2 read: EDGAR 2" in scalp  # D54: earnings = slow feed
         )
-        assert "• failed liquidity screen (1): UFPT" in scalp
-        assert "UFPT: relaxed screen: ADV 118k &lt; 500k; no expiry in the DTE window" in scalp
+        # D56: UFPT is listed but in no tier, so it is a mention, never screened
+        assert "UFPT" in scalp and "failed liquidity screen" not in scalp
+        assert "relaxed screen" not in scalp
         assert "• unknown symbol (1): ZZZQ" in scalp
         assert "http" not in scalp  # no source links
         assert "before sizing" not in json.dumps(notes.blocks[2])

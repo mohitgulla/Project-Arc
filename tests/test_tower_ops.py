@@ -418,7 +418,7 @@ def test_sources_registry_rows(conn, routines) -> None:
     raw = [x.key for x in s.sources if x.unit == "docs"]
     assert sorted(raw) == sorted(reg.sources)  # every registry source, once
     typed = [x for x in s.sources if x.unit == "entries"]
-    assert {x.job for x in typed} >= {"vol_term", "put_call", "macro_calendar"}
+    assert {x.job for x in typed} >= {"vol_term", "macro_calendar"}
     assert all(x.share_in_category is None for x in typed)
     by = {x.key: x for x in s.sources}
     # E8.8d: one stale doc (E4.7 skipped_stale) and the E4.6 per-channel brief states

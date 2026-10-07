@@ -183,7 +183,7 @@ class TestHelpers:
         prompt = build_prompt([doc], settings, DAY)
         assert "Scalp" in prompt
         assert URL_A in prompt
-        assert ">= 0.60" in prompt
+        assert ">= 0.40" in prompt  # D56: the lowest tier floor (core)
         assert '"ScalpOutput"' in prompt  # JSON schema embedded
         assert "untrusted" in prompt
         for t in UNIVERSE:
@@ -498,15 +498,11 @@ class TestRunScalp:
             REJECT_SCHEMA: 1,
         }
         by_ticker = {c.ticker: c for c in res.candidates}
-        # E12.4: core names skip the confidence floor. JPM (0.4) and AAPL (bullish 0.8
-        # vs bearish 0.6 → 0.2) are core, so both are kept below 0.6.
-        assert set(by_ticker) == {"NVDA", "XOM", "SPY", "JPM", "AAPL"}
-        assert res.floor_skipped == {
-            "AAPL": ("core", pytest.approx(0.2)),
-            "JPM": ("core", pytest.approx(0.4)),
-        }
+        # D56: core names are held to the core floor 0.4. JPM (0.4) is kept; AAPL
+        # (bullish 0.8 vs bearish 0.6 → 0.2) falls below it.
+        assert set(by_ticker) == {"NVDA", "XOM", "SPY", "JPM"}
         assert by_ticker["SPY"].sources == ["https://example.com/news/fed-preview-transcript"]
-        stored = CandidateRepo(conn).get_for_day("AAPL", res.day)
+        stored = CandidateRepo(conn).get_for_day("AAPL", res.day)  # stored, below its floor
         assert stored is not None
         assert stored["confidence"] == pytest.approx(0.2)
         models = {r[0] for r in conn.execute("SELECT model FROM scalp_batches")}
@@ -697,8 +693,8 @@ def test_cli_scan_dry_run() -> None:
     # seed mode (default): with no symbol master cached (tests are hermetic) non-seed
     # names fail closed as unknown_symbol. D51: PLTR is core now (admitted); SPY is
     # the market reference, not a trade name, so it fails closed like any non-seed.
-    # E12.4: core JPM (0.4) and AAPL (0.2) skip the confidence floor.
-    assert {c["ticker"] for c in report["candidates"]} == {"NVDA", "XOM", "PLTR", "JPM", "AAPL"}
+    # D56: core JPM (0.4) meets the core floor; AAPL (0.2) does not.
+    assert {c["ticker"] for c in report["candidates"]} == {"NVDA", "XOM", "PLTR", "JPM"}
     assert all("rationale" not in c for c in report["candidates"])
 
 
@@ -823,16 +819,6 @@ class TestOptionsTape:
         assert _age_text((NOW + dt.timedelta(minutes=5)).isoformat(), NOW) == "in the future"
         assert _age_text((NOW - dt.timedelta(minutes=125)).isoformat(), NOW) == "2h05m"
         assert _age_text("2026-09-28T06:00:00", NOW) == "1h00m"  # naive = ET
-
-    def test_flag_off_prompt_unchanged_and_no_tape(self, conn, settings) -> None:
-        _seed(conn, 1)
-        _store_tape(conn, NOW, {"AAPL": 0.5})
-        llm = FixtureScalpLLM([_reply(_item(sources=["https://example.com/aapl/0"]))])
-        res = run_scalp(conn, settings, llm=llm, now=NOW, routines=_tape_routines(False))
-        assert res.tape is None and not res.tape_present and res.tape_tickers == 0
-        assert "Options tape" not in llm.prompts[0]
-        assert res.candidates[0].sources == ["https://example.com/aapl/0"]
-        assert res.tape_corroborated == {}
 
     def test_flag_on_tape_in_prompt_and_corroboration(self, conn, settings) -> None:
         from arc.ingest.cboe_fast import TAPE_SOURCE
@@ -964,7 +950,7 @@ class TestOptionsTape:
             id="doc-a",
             title="OUTX soars on a buyout rumour",
         )
-        s = ArcSettings(env="paper", scalp_min_confidence=0.6)  # type: ignore[call-arg]
+        s = ArcSettings(env="paper")  # type: ignore[call-arg]
         syms = ["AAPL", "OUTX", *(f"OT{i}" for i in range(12))]
         guard = UniverseGuard(
             mode=UniverseMode.SEED,
@@ -977,11 +963,9 @@ class TestOptionsTape:
                     for x in syms
                 },
             ),
-            max_new=3,
             today=NOW.date(),
             dte_window=(30, 60),
             tiers={"AAPL": Tier.CORE},
-            model="d56",
             floors={Tier.CORE: 0.4},
         )
         items = [
@@ -1032,19 +1016,24 @@ class TestOptionsTape:
         assert res.metrics["mentions"] == 10
         note = db.execute("SELECT payload FROM context_entries WHERE kind = 'note'").fetchone()
         payload = json.loads(note[0])
-        assert payload["facts"] == {"docs": 1, "mentions": 10}
+        assert payload["facts"] == {
+            "docs": 1,
+            "mentions": 10,
+            "tape_tickers": 0,  # E13.15: the tape is always read
+            "tape_corroborated": 0,
+        }
         # E13.13 (note v5): bold sections, no body
         assert payload["body"] is None
         secs = {s["label"]: s["text"] for s in payload["sections"]}
         line = secs["Themes"]
         assert line.startswith("Outside the universe: OUTX (bullish, news), OT0 (bearish, ")
         assert len(line) <= 300
-        assert "Options sentiment" not in secs  # flag off: no tape line
+        assert secs["Options sentiment"] == "Options tape: no fresh info (age none stored)"
         card = json.dumps(res.card.blocks if res.card else [], ensure_ascii=False)
         assert "*Outside the universe (10):* OUTX (bullish)" in card
         assert "mentioned only, never admitted" in card
         assert "OUTX (bullish)" in card
-        assert "Options tape" not in card
+        assert "Options tape: no fresh info" in card  # E13.15: the tape line is always read
         db.close()
 
     def test_mention_headline_and_line_cap(self) -> None:

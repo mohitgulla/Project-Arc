@@ -80,7 +80,7 @@ class Target(StrEnum):
     ROUTINES = "routines"  # config/routines.yaml
     RANKING = "ranking"  # config/ranking.yaml (E6.4a: live Net EV floor)
     EXPERIMENTS = "experiments"  # config/experiments.yaml (E10.1: forward A/B defaults)
-    UNIVERSE = "universe"  # config/universe.yaml (E12.4: relaxed liquidity screen)
+    UNIVERSE = "universe"  # config/universe.yaml (liquidity screens, D56)
 
 
 class ValueType(StrEnum):
@@ -393,7 +393,7 @@ _STATIC: tuple[Tunable, ...] = (
         Group.UNIVERSE,
         ValueType.TICKERS,
         "Core tier (D56: 20 names, no ETFs): always scanned and accepted, no liquidity "
-        "screen. The active list adds momentum, trending (D51 only) and discoveries (cap "
+        "screen. The active list adds momentum and discovery (cap "
         "universe_active_max). '+NVDA,-TSLA' edits the list; added tickers must be "
         "optionable.",
         Risk.GROW,
@@ -403,35 +403,13 @@ _STATIC: tuple[Tunable, ...] = (
         "universe_active_max",
         Group.UNIVERSE,
         _I,
-        "D51: the deduped active list (core > momentum > trending > discovery) is capped "
+        "D56: the deduped active list (core > momentum > discovery) is capped "
         "at this many names; the rest are journaled universe:over_active_cap.",
         Risk.UP,
         min=1,
         max=60,
         hard_ceiling=60,
     ),
-    _s(
-        "universe_momentum_size",
-        Group.UNIVERSE,
-        _I,
-        "D51: momentum tier size (top N S&P 500 Momentum holdings, refreshed monthly).",
-        Risk.UP,
-        min=0,
-        max=50,
-        hard_ceiling=50,
-    ),
-    _s(
-        "universe_trending_size",
-        Group.UNIVERSE,
-        _I,
-        "D51: trending tier size (daily rules-based list). Unused under "
-        "universe.tiers.model d56 (no trending tier).",
-        Risk.UP,
-        min=0,
-        max=50,
-        hard_ceiling=50,
-    ),
-    # D56 (E13.4): three tiers; read only under universe.tiers.model d56.
     _s(
         "universe_momentum_size_d56",
         Group.UNIVERSE,
@@ -461,6 +439,8 @@ _STATIC: tuple[Tunable, ...] = (
         min=0.30,
         max=0.95,
         hard_ceiling=0.30,
+        # E13.15: the single D51 Scalp floor (and its pre-rename keys) became per tier
+        aliases=("scalp_min_confidence", "sweep_min_confidence", "scout_min_confidence"),
     ),
     _s(
         "universe_floor_momentum",
@@ -482,42 +462,14 @@ _STATIC: tuple[Tunable, ...] = (
         max=0.95,
         hard_ceiling=0.30,
     ),
-    # D56 (E13.4, D44 strategy lane): which tier layout the resolver and the Scalp's
-    # admission use. d51 is the control; d56 = core/momentum/discovery + per-tier policy.
-    Tunable(
-        key="universe.tiers.model",
-        group=Group.UNIVERSE,
-        type=ValueType.CHOICE,
-        description="Tier layout: d51 = core/momentum/trending/discovery (E12); d56 = "
-        "core 20 / momentum 20 (standard screen) / discovery 20 from the Scout (loose "
-        "screen), per-tier confidence floors, out-of-tier Scalp ideas only mentioned.",
-        target=Target.UNIVERSE,
-        risk=Risk.ORDER,
-        path=("tiers", "model"),
-        choices=("d51", "d56"),
-    ),
     _s(
         "universe_mode",
         Group.UNIVERSE,
         ValueType.CHOICE,
-        "D28: strict = only the universe list; seed = also any listed optionable ticker the "
-        "sources surface that passes the liquidity screen (config/universe.yaml).",
+        "D28: strict = only the active list; seed = also any listed optionable name in a "
+        "tier (core / momentum / discovery) that passes its screen (config/universe.yaml).",
         Risk.ORDER,
         choices=("strict", "seed"),
-    ),
-    _s(
-        "scalp_max_new_tickers",
-        Group.UNIVERSE,
-        _I,
-        "D28/D51: max discoveries (names in no tier) the Scalp may accept per run (seed mode).",
-        Risk.UP,
-        min=0,
-        max=25,
-        hard_ceiling=25,
-        aliases=(
-            "sweep_max_new_tickers",
-            "scout_max_new_tickers",
-        ),  # D56: was sweep_*; D54: was scout_*
     ),
     _s(
         "scalp_doc_budget",
@@ -531,61 +483,9 @@ _STATIC: tuple[Tunable, ...] = (
         hard_ceiling=400,
         aliases=("sweep_doc_budget", "scout_doc_budget"),  # D56: was sweep_*; D54: was scout_*
     ),
-    # E12.4 (D51): relaxed liquidity screen (trending + discoveries; config/universe.yaml).
-    # Lower floors / a wider spread admit more names to be looked at; the gate's spread
+    # D56 (E13.4): standard (momentum) + loose (discovery) liquidity screens. Lower
+    # floors / a wider spread admit more names to be looked at; the gate's spread
     # check and the scanner's contract filters still protect every order.
-    Tunable(
-        key="universe_screen_relaxed_min_price",
-        group=Group.UNIVERSE,
-        type=_F,
-        description="D51 relaxed screen (trending + discoveries): min underlying price.",
-        target=Target.UNIVERSE,
-        risk=Risk.DOWN,
-        path=("liquidity_screen", "relaxed", "min_price"),
-        unit="$",
-        min=1.0,
-        max=100.0,
-        hard_ceiling=1.0,
-    ),
-    Tunable(
-        key="universe_screen_relaxed_min_adv_shares",
-        group=Group.UNIVERSE,
-        type=_F,
-        description="D51 relaxed screen: min mean daily share volume (last adv_days sessions).",
-        target=Target.UNIVERSE,
-        risk=Risk.DOWN,
-        path=("liquidity_screen", "relaxed", "min_adv_shares"),
-        min=100_000,
-        max=10_000_000,
-        hard_ceiling=100_000,
-    ),
-    Tunable(
-        key="universe_screen_relaxed_min_atm_open_interest",
-        group=Group.UNIVERSE,
-        type=_I,
-        description="D51 relaxed screen: min call + put open interest over the 3 strikes "
-        "nearest spot (expiry nearest 30 DTE).",
-        target=Target.UNIVERSE,
-        risk=Risk.DOWN,
-        path=("liquidity_screen", "relaxed", "min_atm_open_interest"),
-        min=25,
-        max=5000,
-        hard_ceiling=25,
-    ),
-    Tunable(
-        key="universe_screen_relaxed_max_atm_spread_pct",
-        group=Group.UNIVERSE,
-        type=_F,
-        description="D51 relaxed screen: max ATM (ask - bid) / mid, call and put averaged.",
-        target=Target.UNIVERSE,
-        risk=Risk.UP,
-        path=("liquidity_screen", "relaxed", "max_atm_spread_pct"),
-        unit="pct",
-        min=0.02,
-        max=0.40,
-        hard_ceiling=0.40,
-    ),
-    # D56 (E13.4): standard (momentum) + loose (discovery) screens; same rules as relaxed.
     Tunable(
         key="universe_screen_standard_min_price",
         group=Group.UNIVERSE,
@@ -934,21 +834,6 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         min=1,
         max=1000,
         hard_ceiling=1,
-    ),
-    _s(
-        "scalp_min_confidence",
-        Group.ENTRIES,
-        _F,
-        "Scalp keeps a candidate only at or above this confidence (lower = more ideas). "
-        "D51 only: under universe.tiers.model d56 the universe_floor_<tier> keys apply.",
-        Risk.DOWN,
-        min=0.30,
-        max=0.95,
-        hard_ceiling=0.30,
-        aliases=(
-            "sweep_min_confidence",
-            "scout_min_confidence",
-        ),  # D56: was sweep_*; D54: was scout_*
     ),
     _s(
         "max_shortlist",
@@ -2026,12 +1911,26 @@ ORPHANED_KEY_PREFIXES: tuple[str, ...] = (
     "categories.options_data.",
     "uoa_",
     "settings.uoa_",
+    "universe_screen_relaxed_",  # E13.15: D51 relaxed screen
+)
+# E13.15: exact keys of removed D51 / flag tunables (a prefix would also match
+# ``universe_momentum_size_d56``).
+ORPHANED_KEYS: frozenset[str] = frozenset(
+    {
+        "universe.tiers.model",
+        "universe_momentum_size",
+        "universe_trending_size",
+        "scalp_max_new_tickers",
+        "sweep_max_new_tickers",
+        "scout_max_new_tickers",
+    }
 )
 
 
 def is_orphaned(key: str) -> bool:
-    """D56: *key* belongs to a removed category or the removed UOA detector."""
-    return key.startswith(ORPHANED_KEY_PREFIXES)
+    """D56: *key* belongs to a removed category, the removed UOA detector or a removed
+    D51 / flag tunable (E13.15)."""
+    return key in ORPHANED_KEYS or key.startswith(ORPHANED_KEY_PREFIXES)
 
 
 def _exp(key: str, desc: str, risk: Risk, path: tuple[str, ...], **kw: Any) -> Tunable:
@@ -2662,9 +2561,6 @@ def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
         if t.type is ValueType.BOOL:
             return bool(spec.get("enabled", True))
         return _cadence_text(spec)
-    if t.target is Target.UNIVERSE and t.path == ("tiers", "model"):
-        v = _get(raw, t.path)
-        return "d51" if v is None else str(v).strip().lower()  # absent = the D51 control
     if t.path == ("positions", "remaining_ev_floor_eod_only"):
         v = _get(raw, t.path)
         return "eod" if (True if v is None else bool(v)) else "intraday"

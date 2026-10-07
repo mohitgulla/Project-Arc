@@ -498,11 +498,11 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
                         actor="U0OWNER", reason="tighten while halted", source="slack",
                         at=now - dt.timedelta(days=2), status="applied",
                         direction="safer")  # fmt: skip
-    changes.append(key="scalp_min_confidence", old=0.6, new=0.5, is_default=False,
+    changes.append(key="universe_floor_core", old=0.4, new=0.5, is_default=False,
                    actor="U0OWNER", reason="more candidates", source="slack",
                    at=now - dt.timedelta(days=1, hours=6), status="applied",
                    direction="riskier")  # fmt: skip
-    changes.append(key="scalp_min_confidence", old=0.5, new=None, is_default=True,
+    changes.append(key="universe_floor_core", old=0.5, new=None, is_default=True,
                    actor="U0OWNER", reason="revert", source="slack",
                    at=now - dt.timedelta(days=1), status="reverted", direction="safer",
                    supersedes_id=c1.id + 1)  # fmt: skip
@@ -515,25 +515,23 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
     add_universe(conn, now)
 
 
-#: E12.6: the tiered-universe fixture (trending names with E12.3-style reasons).
+#: E12.6 / D56: the tiered-universe fixture (momentum feed + the Scout's discovery feed).
 MOMENTUM_FIXTURE: tuple[str, ...] = (
     "MU", "AAPL", "NVDA", "AVGO", "PLTR", "ORCL", "GE", "LLY", "JPM", "NFLX",
     "META", "GS", "APP", "RTX", "AXP", "CAT", "MS", "WMT", "HWM", "TJX",
     "KKR", "VST", "CEG", "ANET",
 )  # fmt: skip
-TRENDING_FIXTURE: tuple[str, ...] = (
-    "RKLB", "NVDA", "ASTS", "OKLO", "APP", "IONQ", "SOUN", "HIMS",
-)  # fmt: skip
 DISCOVERY_FIXTURE: tuple[str, ...] = (
-    "QCOM", "CRWV", "NBIS", "TEM", "SOFI", "UBER", "BAC", "SMCI", "MARA", "SNDK", "BBAI",
+    "QCOM", "CRWV", "NBIS", "TEM", "SOFI", "UBER", "BAC", "SMCI", "MARA", "RKLB",
+    "ASTS", "OKLO", "IONQ", "SOUN", "HIMS", "RDDT", "CRWD", "SNOW", "SNDK", "BBAI",
 )  # fmt: skip
 
 
 def add_universe(conn: sqlite3.Connection, now: dt.datetime) -> None:
-    """E12.6: a momentum feed (partial, Schwab-style), a trending feed and an
-    ``active_universe`` resolve over them via the real :func:`resolve_active`
-    (core 25 + momentum 15 + trending 6 + discovery 6 = 52 > 50, so 2 names are
-    ``over_active_cap``). The 100-name ``universe`` override above is ignored (> 30)."""
+    """E12.6 / D56: a momentum feed (partial, Schwab-style), the Scout's discovery feed
+    and an ``active_universe`` resolve over them via the real :func:`resolve_active`
+    (core + momentum top 20 + discovery, deduped, capped at 50 so the tail of discovery
+    is ``over_active_cap``). The 100-name ``universe`` override above is ignored (> 30)."""
     from arc.config import ArcSettings
     from arc.context.store import ContextStore
     from arc.context.ttl import Ttl
@@ -563,35 +561,28 @@ def add_universe(conn: sqlite3.Connection, now: dt.datetime) -> None:
         ),
         ttl=Ttl(duration=dt.timedelta(days=35)), valid_from=m_at, now=m_at,
     )  # fmt: skip
-    t_at = now - dt.timedelta(hours=3)
-    trending = [
-        TierMember(ticker=t, tier=Tier.TRENDING, rank=i, source="news+reddit+stocktwits",
-                   reason=f"reddit #{i} (+{40 - 4 * i} 24h), stocktwits, {5 - i % 3} news "
-                   f"sources · score {0.9 - 0.05 * i:.2f}", as_of=today)
-        for i, t in enumerate(TRENDING_FIXTURE, 1)
-    ]  # fmt: skip
-    store.write(
-        kind="universe_tier", subject="trending", produced_by="universe.trending",
-        payload=UniverseTierPayload(
-            tier=Tier.TRENDING, members=trending, fetched_at=t_at,
-            source="news+reddit+stocktwits", source_as_of=today, digest="fixture",
-        ),
-        ttl=Ttl(duration=dt.timedelta(hours=20)), valid_from=t_at, now=t_at,
-    )  # fmt: skip
     core = [
         TierMember(ticker=t, tier=Tier.CORE, rank=i, source="config", reason="core list",
                    as_of=today)
         for i, t in enumerate(yaml_core(ArcSettings()), 1)
     ]  # fmt: skip
+    d_at = now - dt.timedelta(hours=3)
     disc = [
-        TierMember(ticker=t, tier=Tier.DISCOVERY, rank=i, source="scalp",
-                   reason=f"candidate confidence {0.8 - 0.05 * i:.2f}, corroboration {4 - i}",
-                   as_of=today)
+        TierMember(ticker=t, tier=Tier.DISCOVERY, rank=i, source="scout",
+                   reason=f"YouTube call, confidence {0.9 - 0.04 * i:.2f}", as_of=today)
         for i, t in enumerate(DISCOVERY_FIXTURE, 1)
     ]  # fmt: skip
+    store.write(
+        kind="universe_tier", subject="discovery", produced_by="scout",
+        payload=UniverseTierPayload(
+            tier=Tier.DISCOVERY, members=disc, fetched_at=d_at, source="scout",
+            source_as_of=today, digest="fixture",
+        ),
+        ttl=Ttl(duration=dt.timedelta(hours=20)), valid_from=d_at, now=d_at,
+    )  # fmt: skip
     active = resolve_active(
-        core=core, momentum=momentum, trending=trending, discoveries=disc, active_max=50,
-        tier_sizes={Tier.MOMENTUM: 25, Tier.TRENDING: 25}, as_of=today, config_version=4,
+        core=core, momentum=momentum, discoveries=disc, active_max=50,
+        tier_sizes={Tier.MOMENTUM: 20, Tier.DISCOVERY: 20}, as_of=today, config_version=4,
     )  # fmt: skip
     a_at = now - dt.timedelta(minutes=20)
     store.write(

@@ -845,10 +845,6 @@ class ArcSettings(BaseSettings):
         default=30,
         description="Max ticker calls kept from one Scout reply (schema cap 30).",
     )
-    scalp_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
-        default=0.6,
-        description="Candidates below this Scalp confidence are dropped.",
-    )
     scalp_batch_size: Annotated[int, Field(ge=1, le=50)] = Field(
         default=8,
         description="Max stories digested per stage-1 (digest) LLM call (E4.5).",
@@ -962,7 +958,7 @@ class ArcSettings(BaseSettings):
     universe: list[str] = Field(
         default_factory=lambda: list(DEFAULT_UNIVERSE),
         description=(
-            "D51 core tier (was the D28 seed list): always scanned and always accepted. "
+            "Core tier (was the D28 seed list): always scanned and always accepted. "
             "Consumers read the active list (arc.universe.tiers.active_tickers), never this "
             "field. A list longer than 30 is a pre-D51 override and is ignored in favour of "
             "config/universe.yaml core. In strict mode (ARC_UNIVERSE_MODE=strict) the "
@@ -971,23 +967,14 @@ class ArcSettings(BaseSettings):
     )
     universe_active_max: Annotated[int, Field(ge=1, le=60)] = Field(
         default=50,
-        description="D51: the deduped active list (core > momentum > trending > discovery) "
+        description="D56: the deduped active list (core > momentum > discovery) "
         "is capped at this many names; the rest are journaled universe:over_active_cap.",
     )
-    universe_momentum_size: Annotated[int, Field(ge=0, le=50)] = Field(
-        default=25,
-        description="D51: momentum tier size (top N S&P 500 Momentum holdings, monthly, E12.2).",
-    )
-    universe_trending_size: Annotated[int, Field(ge=0, le=50)] = Field(
-        default=25,
-        description="D51: trending tier size (daily rules-based list, E12.3). Unused under "
-        "universe.tiers.model d56 (no trending tier).",
-    )
-    # -- D56 (E13.4): three tiers, per-tier floors (read only under universe.tiers.model d56)
+    # -- D56 (E13.4): three tiers, per-tier floors
     universe_momentum_size_d56: Annotated[int, Field(ge=0, le=50)] = Field(
         default=20,
         description="D56: momentum tier size (top N of the momentum feed; the feed itself "
-        "keeps its 25 rows). universe_momentum_size is the D51 size.",
+        "keeps its 25 rows, universe.momentum `size`).",
     )
     universe_discovery_size: Annotated[int, Field(ge=0, le=50)] = Field(
         default=20,
@@ -995,7 +982,7 @@ class ArcSettings(BaseSettings):
     )
     universe_floor_core: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.4,
-        description="D56: Scalp confidence floor for core names (scalp_min_confidence is D51's).",
+        description="D56: Scalp confidence floor for core names.",
     )
     universe_floor_momentum: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.5,
@@ -1015,13 +1002,6 @@ class ArcSettings(BaseSettings):
     universe_config_file: Path | None = Field(
         default=None,
         description="ARC_UNIVERSE_CONFIG_FILE; None -> config/universe.yaml.",
-    )
-    scalp_max_new_tickers: Annotated[int, Field(ge=0, le=50)] = Field(
-        default=25,
-        description=(
-            "Max discoveries (names in no D51 tier) the Scalp may accept per run (D28, "
-            "D51: 25); extra ones are rejected as over_new_ticker_cap."
-        ),
     )
 
     # -- Control panel (D26, E8.5) --------------------------------------------
