@@ -339,7 +339,9 @@ function GreeksCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
   // Judged in the browser too, so the badge appears between polls (and with the tab asleep).
   const cadence = monitorS ?? o.stale_after_s / STALE_FACTOR;
   const stale = o.marks_stale || isStale(g.at, cadence, now);
-  const delta = g.delta ?? null;
+  // D57: the gate caps dollar delta (Σ Δ × spot); a pre-D57 heartbeat has none (—).
+  const dollarDelta = g.dollar_delta ?? null;
+  const dollarCap = g.dollar_delta_cap ?? null;
   const vegaUsd = g.vega_usd ?? null;
   const byUnderlying = Object.entries(o.greeks.max_loss_by_underlying ?? {});
   const cap = num(o.greeks.per_underlying_cap);
@@ -353,9 +355,12 @@ function GreeksCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
       ) : (
         <div className="grid">
           <ProgressRow
-            label="|Δ| net delta"
-            value={usedOfCap(delta === null ? "—" : formatNumber(delta, 1), g.delta_cap != null ? formatNumber(g.delta_cap, 0) : null)}
-            fraction={delta !== null && g.delta_cap ? Math.abs(delta) / g.delta_cap : 0}
+            label="|$Δ| net dollar delta"
+            value={usedOfCap(
+              dollarDelta === null ? "—" : formatMoney(dollarDelta, "allocation"),
+              dollarCap != null ? formatMoney(dollarCap, "allocation") : null,
+            )}
+            fraction={dollarDelta !== null && dollarCap ? Math.abs(dollarDelta) / dollarCap : 0}
             warnAt={0.8}
           />
           <ProgressRow

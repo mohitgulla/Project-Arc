@@ -271,8 +271,8 @@ def build(
     ~40 closed trades and daily equity over the 3+ months before the 10 recent days).
     *ops* adds the E8.7d Ops page rows (``scripts/tower_fixture_ops.py``: a full
     simulated schedule with run manifests, alerts, context, LLM usage, config changes).
-    *exits* adds the E13.14 shadow exit chain (``scripts/tower_fixture_exits.py``:
-    ``personas.exit_path shadow``, watchlist, exit cases, Risk verdicts).
+    *exits* adds the E13.14 Research exit chain (``scripts/tower_fixture_exits.py``:
+    watchlist, exit cases, Risk verdicts).
     """
     if path.exists():
         msg = f"{path} exists; the fixture builder never overwrites a DB"
@@ -467,7 +467,8 @@ def build(
                 "prev_close": float(last_equity), "prev_close_source": "arc_close",
                 "day_pnl": float(equity - last_equity), "cash": 88000.0,
                 "buying_power": 88000.0, "options_buying_power": 88000.0,
-                "delta": 42.5 + i * 0.4, "gamma": 0.8, "vega": 21000.0 + 150 * i,
+                "delta": 42.5 + i * 0.4, "dollar_delta": 18_500.0 + 160 * i,
+                "gamma": 0.8, "vega": 21000.0 + 150 * i,
                 "theta": -34.2, "max_loss": 3910.0, "halted": True,
                 "order_budget": {"used": 31, "limit": 200, "tier": "normal"},
                 "orders_used": 31, "orders_limit": 200, "broker_requests": 6, "legs": legs,

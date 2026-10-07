@@ -43,10 +43,10 @@ function m(ticker: string, t: string, rank: number, extra: Partial<UniverseActiv
 
 describe("universe page helpers", () => {
   it("builds the pinned summary in tier order", () => {
-    const tiers = [tier("discovery", 8), tier("core", 25), tier("trending", 0), tier("momentum", 17)];
+    const tiers = [tier("discovery", 8), tier("core", 25), tier("momentum", 17)];
     const active = Array.from({ length: 50 }, (_, i) => m(`T${i}`, "core", i + 1));
-    expect(summaryLine({ active, active_max: 50, tiers })).toBe("Active 50/50 · Core 25 · Momentum 17 · Trending 0 · Discovery 8");
-    expect(sortTiers(tiers).map((t) => t.name)).toEqual(["core", "momentum", "trending", "discovery"]);
+    expect(summaryLine({ active, active_max: 50, tiers })).toBe("Active 50/50 · Core 25 · Momentum 17 · Discovery 8");
+    expect(sortTiers(tiers).map((t) => t.name)).toEqual(["core", "momentum", "discovery"]);
   });
 
   it("keeps an unknown tier last", () => {
@@ -59,8 +59,8 @@ describe("universe page helpers", () => {
   });
 
   it("shows source, reason and also-in on a chip", () => {
-    const aapl = m("AAPL", "core", 2, { source: "settings", reason: "core list", also_in: ["momentum", "trending"] });
-    expect(memberDetail(aapl)).toEqual(["#2 in Core · source settings", "core list", "also in Momentum, Trending"]);
+    const aapl = m("AAPL", "core", 2, { source: "settings", reason: "core list", also_in: ["momentum", "discovery"] });
+    expect(memberDetail(aapl)).toEqual(["#2 in Core · source settings", "core list", "also in Momentum, Discovery"]);
     expect(memberDetail(m("Z", "discovery", 1, { reason: "" }))).toHaveLength(1);
   });
 
@@ -71,7 +71,7 @@ describe("universe page helpers", () => {
     expect(dropLabel("weird_reason")).toBe("weird reason");
     expect(marketReferenceLine(["SPY", "QQQ"])).toBe("SPY QQQ (regime only, not traded)");
     expect(marketReferenceLine([])).toBe("none");
-    expect(tierLabel("trending")).toBe("Trending");
+    expect(tierLabel("discovery")).toBe("Discovery");
   });
 
   it("labels the resolve state", () => {
@@ -88,11 +88,10 @@ describe("universe page helpers", () => {
     expect(coreOverrideWarning("NVDA")).toBeNull();
   });
 
-  it("names the refreshing jobs per tier model (E13.4)", () => {
-    expect(refreshLine("d51")).toBe("momentum and trending refresh on their own jobs.");
-    expect(refreshLine(undefined)).toBe("momentum and trending refresh on their own jobs.");
-    expect(refreshLine("d56")).toMatch(/discovery is written by the Scout/);
-    expect(refreshLine("d56")).not.toMatch(/trending/);
+  it("names the refreshing jobs (D56)", () => {
+    expect(refreshLine()).toBe(
+      "momentum refreshes on its own job; discovery is written by the Scout; trending is ranked daily from Reddit + Stocktwits.",
+    );
   });
 });
 

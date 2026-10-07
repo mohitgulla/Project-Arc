@@ -16,7 +16,7 @@ closed) and never sent. An exit (``kind='close'``) closes the open structure
 it was proposed for.
 
 D34 in-chain Execute (:func:`execute_step`, chain step ``broker.execute`` right after
-``propose`` / ``risk.reallocate``): publishes this chain's proposals through the
+``quant.propose`` / ``exits.mandatory``): publishes this chain's proposals through the
 approval service (the same path as the tick sweep, so cards, journal and
 ``approval_id`` are identical), and when ``auto_approve`` is on for the running
 environment, hands every auto-approved proposal to a Broker **subprocess**

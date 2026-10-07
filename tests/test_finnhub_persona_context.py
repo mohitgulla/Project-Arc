@@ -64,7 +64,8 @@ REPO = Path(__file__).resolve().parent.parent
 MAIN_RESEARCH_SHA = "0e4ddd78d4c1651a599b8621180165e53bf3885f4499187414e1c85d7d356fbe"
 # D51 (E12.1) re-pinned the Scalp sha: the watch list is the 25-name core and the
 # task line says "Watch list (core + momentum + trending)" (a deliberate prompt change).
-MAIN_SCALP_SHA = "dd8297ccf25a1af882ee2770f8e91ed22494a17f3428c3bc3c4a33d45c93107d"
+# E13.15: watch-list line reads "core + momentum + discovery" (D56)
+MAIN_SCALP_SHA = "ccc38a779e2d0e7d509bfb3e3d4a061c2109f71e0520184f8ae3f55e9272eff9"
 ON = FinnhubContextSettings(enabled=True)
 TODAY = g._now().date()
 
@@ -477,15 +478,14 @@ def test_run_scalp_adds_facts_only_with_the_flag_on(flag: str) -> None:
                     now=now - dt.timedelta(hours=20))  # fmt: skip
     _seed_docs(conn, now)
     routines = RoutinesConfig.model_validate({"personas": {"finnhub_context": flag}})
-    cfg = ArcSettings(env="paper", universe=["AAPL", "NVDA"], universe_mode="strict",
-                      scalp_min_confidence=0.6)  # fmt: skip
+    cfg = ArcSettings(env="paper", universe=["AAPL", "NVDA"], universe_mode="strict")
     llm = FixtureScalpLLM([json.dumps({"candidates": [], "scan_summary": "s"})])
     run_scalp(conn, cfg, llm=llm, now=now, run_id="r1", routines=routines)
     (prompt,) = llm.prompts
     if flag == "off":
         assert "Ticker facts" not in prompt
-        snaps = conn.execute("SELECT COUNT(*) FROM context_snapshots").fetchone()[0]
-        assert snaps == 0  # no extra read recorded with the flag off
+        kinds = [r[0] for r in conn.execute("SELECT kinds FROM context_snapshots")]
+        assert not any("fundamentals" in k for k in kinds)  # no facts read with the flag off
     else:
         assert "## Ticker facts (Finnhub, code-built)" in prompt
         assert "AAPL: EPS surprise" in prompt and "NVDA:" not in prompt  # NVDA has no data

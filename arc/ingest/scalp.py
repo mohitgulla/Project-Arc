@@ -9,27 +9,22 @@ Flow per run::
 Filters (deterministic, applied after the LLM):
 
 * **schema** — each candidate must validate against ``ScalpCandidateOut``.
-* **universe** (D28/D51, :class:`~arc.universe.guard.UniverseGuard`) — ``strict``:
-  ticker must be in the active list. ``seed`` (default): core and momentum
-  tickers always pass; any other ticker must be in the symbol master
-  (``unknown_symbol``), optionable, under the per-run new-ticker cap
-  (``over_new_ticker_cap``) and pass the liquidity screen (``illiquid``).
-* **threshold** — confidence must be ``>= settings.scalp_min_confidence``. E12.4
-  (D51): core and momentum tickers skip it (kept, and journaled by the scalp job
-  as ``scalp_candidate`` with ``confidence_floor_skipped: tier=<tier>``).
-  D56 (``tiers.model: d56``, E13.4): each tier has its own floor
-  (``universe_floor_<tier>``: core 0.4, momentum 0.5, discovery 0.6); a candidate
-  below it is rejected ``below_threshold`` and journaled ``confidence_floor_skipped:
-  tier=<t> floor=<f>``. A name in no tier is ``not_in_tier``: never a candidate, only
-  listed in :attr:`ScalpRunResult.mentions`.
+* **universe** (D28/D56, :class:`~arc.universe.guard.UniverseGuard`) — ``strict``:
+  ticker must be in the active list. ``seed`` (default): core tickers always pass;
+  any other ticker must be in the symbol master (``unknown_symbol``), in a tier
+  (``not_in_tier``: a name in no tier is only listed in :attr:`ScalpRunResult.mentions`),
+  optionable and pass its tier's liquidity screen (``illiquid``).
+* **threshold** — each tier has its own floor (``universe_floor_<tier>``: core 0.4,
+  momentum 0.5, discovery 0.6); a candidate below it is rejected ``below_threshold``
+  and journaled ``confidence_floor_skipped: tier=<t> floor=<f>``.
 * **sources** — only URLs of documents actually in the batch survive; a
   candidate with no grounded source is dropped (no hallucinated citations).
 
-Options tape (E13.10, ``personas.scalp_options_tape: on``): stage 2 also reads the
-code-built Cboe tape (:func:`arc.ingest.cboe_fast.scalp_tape`), outside the doc budget.
-It never creates or removes a candidate: an accepted candidate whose stance matches
-its ticker's P/C direction gets the :data:`~arc.ingest.cboe_fast.TAPE_SOURCE` token,
-which counts as one more distinct source in ``corroboration``.
+Options tape (E13.10): stage 2 also reads the code-built Cboe tape
+(:func:`arc.ingest.cboe_fast.scalp_tape`), outside the doc budget. It never creates
+or removes a candidate: an accepted candidate whose stance matches its ticker's P/C
+direction gets the :data:`~arc.ingest.cboe_fast.TAPE_SOURCE` token, which counts as
+one more distinct source in ``corroboration``.
 
 The liquidity screen runs last (after threshold and sources), so market data is
 only fetched for candidates that would otherwise be accepted.
@@ -81,7 +76,6 @@ from arc.personas.schemas import ScalpCandidateOut, ScalpOutput, StoryDigestOutp
 from arc.store.repos import CandidateRepo
 from arc.universe.guard import (
     REJECT_ILLIQUID,
-    REJECT_NEW_TICKER_CAP,
     REJECT_NOT_IN_TIER,
     REJECT_NOT_IN_UNIVERSE,
     REJECT_UNKNOWN_SYMBOL,
@@ -112,7 +106,6 @@ REJECT_SOURCE = "no_grounded_source"
 # Re-exported for callers/tests (the universe keys live in arc.universe.guard).
 _UNIVERSE_REJECTS = (
     REJECT_ILLIQUID,
-    REJECT_NEW_TICKER_CAP,
     REJECT_UNKNOWN_SYMBOL,
     REJECT_NOT_IN_TIER,
 )
@@ -160,19 +153,15 @@ class ScalpRunResult:
     # scalp job as one ``note`` (topic=observation). Never copied onto ``Candidate``.
     summaries: list[str] = field(default_factory=list)
     summary_sources: list[str] = field(default_factory=list)
-    # D28: ticker -> why the universe guard rejected it (screen failures etc.), and the
-    # non-seed tickers admitted this run. Display + journal only.
+    # D28: ticker -> why the universe guard rejected it (screen failures etc.).
+    # Display + journal only.
     reject_details: dict[str, str] = field(default_factory=dict)
-    new_tickers: list[str] = field(default_factory=list)
-    # E12.4: ticker -> (tier, confidence) of candidates accepted this run below
-    # scalp_min_confidence because their tier (core / momentum) skips the floor.
-    floor_skipped: dict[str, tuple[str, float]] = field(default_factory=dict)
     # D56 (E13.4): ticker -> (tier, best confidence, floor) of ideas rejected below their
     # tier's floor this run, and the names in no tier (mentions, never candidates).
     floor_rejected: dict[str, tuple[str, float, float]] = field(default_factory=dict)
     mentions: list[ScalpMention] = field(default_factory=list)  # <= MAX_MENTIONS
-    # E13.10 (personas.scalp_options_tape on): the tape stage 2 read (None = flag off)
-    # and ticker -> P/C volume of candidates it corroborated this run.
+    # E13.10: the tape stage 2 read (None = no digests this run) and ticker -> P/C
+    # volume of candidates it corroborated this run.
     tape: ScalpTape | None = None
     tape_corroborated: dict[str, float | None] = field(default_factory=dict)
     # E4.5 (D30): fair selection + story synthesis accounting (display + manifest).
@@ -322,17 +311,16 @@ def validate_scalp_candidate(
     item: Any,
     *,
     universe: Collection[str] | UniverseGuard,
-    min_confidence: float,
     allowed_sources: frozenset[str],
     created_at: _dt.datetime,
+    min_confidence: float = 0.0,
 ) -> Candidate | str:
     """Turn one raw LLM candidate into a ``Candidate`` or a rejection reason.
 
-    *universe* is either a plain allow-list (strict behaviour) or a
-    :class:`UniverseGuard` (D28): the symbol check runs first, the new-ticker cap
-    and liquidity screen run last, only for otherwise-valid candidates. With a
-    guard, core and momentum tickers skip *min_confidence* (E12.4). Under a D56 guard
-    *min_confidence* is unused: the ticker's tier floor applies (E13.4).
+    *universe* is either a plain allow-list (strict behaviour, *min_confidence* is the
+    floor) or a :class:`UniverseGuard` (D28/D56): the symbol and tier check runs first,
+    the ticker's tier floor applies, and the liquidity screen runs last, only for
+    otherwise-valid candidates.
     """
     try:
         out = ScalpCandidateOut.model_validate(item)
@@ -344,15 +332,12 @@ def validate_scalp_candidate(
     if guard is not None:
         if (why := guard.known(ticker)) is not None:
             return why
-    elif ticker not in cast("Collection[str]", universe):
-        return REJECT_UNIVERSE
-    if guard is not None and guard.model == "d56":
         floor = guard.floor_for(ticker)
         if floor is not None and out.confidence < floor:
             return REJECT_THRESHOLD
-    elif out.confidence < min_confidence and (
-        guard is None or guard.skips_confidence_floor(ticker) is None
-    ):
+    elif ticker not in cast("Collection[str]", universe):
+        return REJECT_UNIVERSE
+    elif out.confidence < min_confidence:
         return REJECT_THRESHOLD
 
     sources = [s.strip() for s in out.sources if s.strip() in allowed_sources]
@@ -403,6 +388,18 @@ def render_doc(doc: _Doc, *, max_chars: int) -> str:
     )
 
 
+def scalp_prompt_floor(settings: ArcSettings) -> float:
+    """The lowest tier floor (D56): the prompt's "only report at or above" line. Each
+    candidate is then held to its own tier's floor (core 0.4 / momentum 0.5 /
+    discovery 0.6 / trending 0.6)."""
+    return min(
+        settings.universe_floor_core,
+        settings.universe_floor_momentum,
+        settings.universe_floor_discovery,
+        settings.universe_floor_trending,
+    )
+
+
 def build_prompt(
     docs: list[_Doc],
     settings: ArcSettings,
@@ -411,7 +408,7 @@ def build_prompt(
     open_universe: bool | None = None,
     universe: list[str] | None = None,
 ) -> str:
-    """*universe* = the watch list (D51: core + momentum + trending); default the core."""
+    """*universe* = the watch list (core + momentum + discovery + trending); default the core."""
     if open_universe is None:
         open_universe = settings.universe_mode == "seed"
     if universe is None:
@@ -423,7 +420,7 @@ def build_prompt(
             universe=list(universe),
             raw_feeds=[render_doc(d, max_chars=settings.scalp_max_doc_chars) for d in docs],
             scan_date=day,
-            min_confidence=settings.scalp_min_confidence,
+            min_confidence=scalp_prompt_floor(settings),
             output_schema_json=json.dumps(ScalpOutput.model_json_schema(), sort_keys=True),
             open_universe=open_universe,
         )
@@ -492,10 +489,9 @@ def build_stage2_prompt(
     universe: list[str] | None = None,
     tape: str | None = None,
 ) -> str:
-    """*universe* = the watch list (D51: core + momentum + trending); default the core.
+    """*universe* = the watch list (core + momentum + discovery + trending); default the core.
 
-    *tape* (E13.10) is the options tape block; ``None`` (flag off) leaves the prompt
-    byte-identical to the pre-E13.10 one.
+    *tape* (E13.10) is the options tape block; ``None`` (no tape read) leaves it out.
     """
     if universe is None:
         from arc.universe.tiers import core_tickers
@@ -506,7 +502,7 @@ def build_stage2_prompt(
             universe=list(universe),
             raw_feeds=[render_digest(p) for p in digests],
             scan_date=day,
-            min_confidence=settings.scalp_min_confidence,
+            min_confidence=scalp_prompt_floor(settings),
             output_schema_json=json.dumps(ScalpOutput.model_json_schema(), sort_keys=True),
             open_universe=open_universe,
             digests=True,
@@ -546,12 +542,12 @@ def _options_tape(
     now: _dt.datetime,
     run_id: str,
 ) -> ScalpTape | None:
-    """E13.10: the options tape at the tick's *now*, or None with the flag off.
+    """E13.10: the options tape at the tick's *now* (``None`` without a routines config).
 
     The read is recorded as a context snapshot (audit). *now* is the real tick time,
     never a stored ``fetched_at`` (that one is truncated to the second).
     """
-    if routines is None or not routines.scalp_options_tape.enabled:
+    if routines is None:
         return None
     from arc.context.categories import SourceCategory
     from arc.context.store import ContextStore
@@ -725,18 +721,15 @@ def candidates_for_scanner(
     conn: sqlite3.Connection,
     day: str,
     *,
-    min_confidence: float,
-    floor_exempt: Collection[str] = (),
     tier_floors: Mapping[str, float] | None = None,
+    min_confidence: float = 0.0,
 ) -> list[Candidate]:
     """The ONLY Scalp output downstream stages may consume.
 
-    Returns typed ``Candidate`` models (no persona free text) for *day*
-    at or above *min_confidence*, best first. Tickers in *floor_exempt* (E12.4:
-    core + momentum) are returned whatever their confidence.
-
-    *tier_floors* (D56, ``ticker -> floor``) replaces both: only tier names at or
-    above their own tier's floor are returned (a name in no tier never is).
+    Returns typed ``Candidate`` models (no persona free text) for *day*, best first.
+    *tier_floors* (D56, ``ticker -> floor``): only tier names at or above their own
+    tier's floor are returned (a name in no tier never is). Without it (strict mode /
+    tools) every row at or above *min_confidence* is.
     """
     if tier_floors is not None:
         floors = {normalize_ticker(t): f for t, f in tier_floors.items()}
@@ -747,14 +740,8 @@ def candidates_for_scanner(
             if t in floors and float(r["confidence"]) >= floors[t]:
                 out.append(_row_to_candidate(r))
         return out
-    exempt = {normalize_ticker(t) for t in floor_exempt}
-    floor = 0.0 if exempt else min_confidence
-    rows = CandidateRepo(conn).list_for_day(day, min_confidence=floor)
-    return [
-        _row_to_candidate(r)
-        for r in rows
-        if float(r["confidence"]) >= min_confidence or normalize_ticker(r["ticker"]) in exempt
-    ]
+    rows = CandidateRepo(conn).list_for_day(day, min_confidence=min_confidence)
+    return [_row_to_candidate(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -1138,7 +1125,7 @@ def run_scalp(
     if guard is None:
         guard = UniverseGuard.from_settings(settings, now=now, load_master=bool(docs), conn=conn)
     open_universe = guard.mode == "seed"
-    watch = watch_tickers(conn, settings, now)  # D51: core + momentum + trending
+    watch = watch_tickers(conn, settings, now)  # core + momentum + discovery + trending
     log.info(
         "scalp.run.start",
         run_id=run_id,
@@ -1252,7 +1239,6 @@ def run_scalp(
             outcome = validate_scalp_candidate(
                 item,
                 universe=guard,
-                min_confidence=settings.scalp_min_confidence,
                 allowed_sources=allowed_sources,
                 created_at=now,
             )
@@ -1261,7 +1247,7 @@ def run_scalp(
                 raw = item.get("ticker") if isinstance(item, dict) else None
                 label = normalize_ticker(str(raw or "?"))[:12] or "?"
                 result.rejected_items.setdefault(outcome, []).append(label)
-                if outcome == REJECT_THRESHOLD and guard.model == "d56":
+                if outcome == REJECT_THRESHOLD:
                     _note_floor_reject(result, guard, label, item)
                 if (
                     outcome == REJECT_NOT_IN_TIER
@@ -1309,19 +1295,7 @@ def run_scalp(
             rejected=dict(rejected),
         )
 
-    result.new_tickers = list(guard.admitted_new)
-    result.candidates = candidates_for_scanner(
-        conn,
-        day,
-        min_confidence=settings.scalp_min_confidence,
-        floor_exempt=guard.floor_exempt() if guard.model != "d56" else (),
-        tier_floors=guard.tier_floors() if guard.model == "d56" else None,
-    )
-    # E12.4: day-level candidates below the floor that stayed because of their tier
-    for c in result.candidates if guard.model != "d56" else ():
-        tier = guard.skips_confidence_floor(c.ticker)
-        if c.confidence < settings.scalp_min_confidence and tier is not None:
-            result.floor_skipped[c.ticker] = (tier.value, c.confidence)
+    result.candidates = candidates_for_scanner(conn, day, tier_floors=guard.tier_floors())
     for cand in result.candidates:
         # E13.10: the tape token is not a doc source; it never sets a freshness TTL.
         keys = [source_key_of(u) for u in cand.sources if u != TAPE_SOURCE]
@@ -1339,7 +1313,6 @@ def run_scalp(
         accepted=result.accepted,
         candidates=len(result.candidates),
         universe_mode=str(guard.mode),
-        new_tickers=result.new_tickers,
         mentions=[m.ticker for m in result.mentions],
         tape_present=result.tape_present,
         tape_corroborated=sorted(result.tape_corroborated),
@@ -1350,8 +1323,3 @@ def run_scalp(
         cost_usd=result.cost_usd,
     )
     return result
-
-
-# D56 (E13.1): pre-rename names, re-exported for one release.
-SweepRunResult = ScalpRunResult
-run_sweep = run_scalp

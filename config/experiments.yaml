@@ -46,8 +46,8 @@ experiments:
     arm_jobs: [monitor, positions.evaluate, broker.reconcile, broker]   # run on the arm's own store
     # E13.12 (D56): non-loop personas (scout | scalp) every arm runs itself, on its own
     # store, at control's slots. An arm whose overlay touches a persona's knobs runs it
-    # anyway (arc.experiments.runner.arm_owned_personas: scout <- personas.scout_feed,
-    # funnel.scout.*, universe; scalp <- personas.scalp_options_tape / scalp_*,
+    # anyway (arc.experiments.runner.arm_owned_personas: scout <- personas.scout.*,
+    # funnel.scout.*, universe; scalp <- personas.scalp.* / scalp_*,
     # funnel.scalp.*, categories.*). An arm that owns one forks its loop at research.
     # Topology, not a strategy knob: never runtime-tunable.
     arm_personas: []

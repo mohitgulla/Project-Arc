@@ -437,7 +437,7 @@ export interface paths {
         /**
          * Positions
          * @description Open, closed or all structures with the latest broker marks; open rows carry the
-         *     E13.14 exit path under ``personas.exit_path`` shadow | research.
+         *     E13.14 exit path (D56: always Research-managed since E13.15).
          */
         get: operations["positions_api_positions_get"];
         put?: never;
@@ -2146,7 +2146,7 @@ export interface components {
             mandatory_pending: number;
             /**
              * Mode
-             * @description personas.exit_path (effective config)
+             * @description Exit path mode (research since the D56 cutover)
              * @enum {string}
              */
             mode: "deterministic" | "shadow" | "research";
@@ -2711,10 +2711,10 @@ export interface components {
          */
         GateCaps: {
             /**
-             * Portfolio Delta Cap
-             * @description |net Δ| cap: × equity/100, share-eq
+             * Portfolio Dollar Delta Cap Pct
+             * @description D57: |net dollar delta| cap as a fraction of equity
              */
-            portfolio_delta_cap: number;
+            portfolio_dollar_delta_cap_pct: number;
             /**
              * Portfolio Vega Cap Pct
              * @description |ν| cap as a fraction of equity
@@ -2775,7 +2775,8 @@ export interface components {
         };
         /**
          * GreeksView
-         * @description Net portfolio Greeks from the latest monitor run (share-equivalents, as the gate).
+         * @description Net portfolio Greeks from the latest monitor run (share-equivalents), plus the
+         *     gate's D57 dollar delta (Σ Δ × spot) against its dollar cap.
          */
         GreeksView: {
             /** At */
@@ -2783,10 +2784,15 @@ export interface components {
             /** Delta */
             delta?: number | null;
             /**
-             * Delta Cap
-             * @description |Δ| cap, share-eq (cap × equity/100)
+             * Dollar Delta
+             * @description D57: net dollar delta Σ (Δ share-eq × spot), $; None on a heartbeat written before D57 (rendered —)
              */
-            delta_cap?: number | null;
+            dollar_delta?: number | null;
+            /**
+             * Dollar Delta Cap
+             * @description D57: |$Δ| cap, $ (portfolio_dollar_delta_cap_pct × equity)
+             */
+            dollar_delta_cap?: number | null;
             /** Equity */
             equity?: number | null;
             /** Gamma */
@@ -5669,6 +5675,11 @@ export interface components {
              * @description Lower tiers that also list it
              */
             also_in?: string[];
+            /**
+             * Inputs
+             * @description D58 trending: retail_buzz inputs that listed the name (2 | 1)
+             */
+            inputs?: number | null;
             /** Rank */
             rank: number;
             /** Reason */
@@ -5727,7 +5738,7 @@ export interface components {
             director_diversification?: string | null;
             /**
              * Discovery Fill
-             * @description E13.14 (D56): names the Scout's discovery feed listed today (0 = none yet); null under d51
+             * @description E13.14 (D56): names the Scout's discovery feed listed today (0 = none yet); null for a stored pre-cutover (d51) resolve
              */
             discovery_fill?: number | null;
             /** Dropped */
@@ -5736,8 +5747,8 @@ export interface components {
             market_reference: string[];
             /**
              * Model
-             * @description Tier layout the shown resolve used (d51 | d56); config/universe.yaml tiers.model when nothing is resolved
-             * @default d51
+             * @description Tier layout the shown resolve used: d56 (E13.15: the only layout); a stored pre-cutover resolve reads d51 until the next resolve
+             * @default d56
              * @enum {string}
              */
             model: "d51" | "d56";
@@ -5790,7 +5801,7 @@ export interface components {
             fetched_at: string | null;
             /**
              * Name
-             * @description core | momentum | trending | discovery (precedence order; d56 has no trending)
+             * @description core | momentum | discovery | trending (precedence order)
              */
             name: string;
             /**
@@ -5805,12 +5816,12 @@ export interface components {
             partial: boolean;
             /**
              * Size Cap
-             * @description The tier's size: core ceiling 30, momentum/trending sizes; null = no cut
+             * @description The tier's size: core ceiling 25, momentum/discovery/trending sizes; null = no cut
              */
             size_cap: number | null;
             /**
              * Source
-             * @description Feed source (stockanalysis, reddit+…, settings, scalp)
+             * @description Feed source (stockanalysis, settings, config, scout)
              */
             source: string | null;
             /** Source As Of */

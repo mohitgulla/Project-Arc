@@ -363,22 +363,6 @@ def vol_term_source(ctx: JobContext) -> JobResult:
     )
 
 
-def put_call_source(ctx: JobContext) -> JobResult:
-    """E4.5: Cboe daily put/call ratios -> one ``put_call`` entry."""
-    from arc.ingest.options_data import fetch_put_call
-
-    payload = fetch_put_call(ctx.now.astimezone(ET).date())
-    if payload is None:
-        msg = "no Cboe put/call ratios in the last week"
-        raise JobSkippedError(msg)
-    _data_result(ctx, "put_call", "cboe", payload.model_dump(mode="json"), 1)
-    ctx.write("put_call", "market", payload)
-    return JobResult(
-        summary=f"put/call total {payload.total} · equity {payload.equity} · {payload.as_of}",
-        metrics={"total": payload.total or 0.0, "equity": payload.equity or 0.0},
-    )
-
-
 def _probe_sleep(seconds: float) -> None:  # pragma: no cover - patched in tests
     import time
 
@@ -879,21 +863,16 @@ def _finnhub_run(ctx: JobContext, kind: str, *, recent_only: bool = False) -> Jo
         raise JobSkippedError(str(exc), notice=notice) from exc
 
     today = ctx.now.astimezone(ET).date()
-    from arc.universe.tiers import Tier, active_by_tier, tiers_model
+    from arc.universe.tiers import TIER_ORDER, active_by_tier
 
     universe = IngestUniverse.from_settings(s, now=ctx.now, conn=ctx.conn)
-    # E12.4 (D51): open underlyings -> today's candidates -> core -> momentum -> trending
+    # E12.4: open underlyings -> today's candidates -> core -> momentum -> discovery
     # (today's active list by tier); a `tickers` job option replaces the tier part.
     if ctx.options.get("tickers"):
         tiers: dict[str, list[str]] = {"tickers": list(ctx.options["tickers"])}
     else:
         by_tier = active_by_tier(ctx.conn, s, ctx.now)
-        # D56: discovery (the Scout's list) is a tier the Scalp reads, like trending was
-        tiers = {
-            t.value: by_tier[t]
-            for t in (Tier.CORE, Tier.MOMENTUM, Tier.TRENDING, Tier.DISCOVERY)
-            if t is not Tier.DISCOVERY or tiers_model(s) == "d56"
-        }
+        tiers = {t.value: by_tier.get(t, []) for t in TIER_ORDER}
     scope = ticker_scope(
         ctx.conn,
         tiers=tiers,
@@ -1091,13 +1070,15 @@ def symbols_source(ctx: JobContext) -> JobResult:
     c = active.counts
     parts.append(
         f"active {len(active.members)} (core {c['core']} · momentum {c['momentum']} · "
-        f"trending {c['trending']} · discovery {c['discovery']})"
+        f"discovery {c['discovery']} · trending {c.get('trending', 0)})"
     )
     metrics |= {"active": len(active.members), **{f"tier_{k}": v for k, v in c.items()}}
     return JobResult(summary=" · ".join(parts), metrics=metrics)
 
 
 MOMENTUM_SOURCES_DEFAULT = ("stockanalysis", "schwab")
+#: E12.2: rows the momentum feed keeps (the tier takes its top universe_momentum_size_d56).
+MOMENTUM_FEED_SIZE = 25
 
 
 def run_momentum(
@@ -1120,7 +1101,7 @@ def run_momentum(
         cfg.symbol_master, user_agent=settings.edgar_user_agent, now=now, fetch_if_missing=False
     )
     order = [str(s) for s in options.get("source_order", MOMENTUM_SOURCES_DEFAULT)]
-    size = int(options.get("size", settings.universe_momentum_size))
+    size = int(options.get("size", MOMENTUM_FEED_SIZE))
     return fetch_momentum(
         cfg.momentum,
         source_order=order,
@@ -1192,16 +1173,48 @@ def universe_momentum_source(ctx: JobContext) -> JobResult:
     )
 
 
-def trending_get(cfg: Any, user_agent: str) -> Callable[[str], bytes]:
-    """E12.3: HTTP GET for the trending network inputs (connection errors / 5xx
-    retried, never 4xx). Lives here, not in ``arc.universe.trending``, so the config
-    validator importing that module stays free of HTTP clients (tower contract)."""
-    from arc.ingest.options_data import http_get
+def retail_buzz_source(
+    ctx: JobContext, *, get: Callable[[str, float, int], bytes] | None = None
+) -> JobResult:
+    """E13.19 (D58): daily Reddit (ApeWisdom) + Stocktwits pull -> one ``retail_buzz``
+    entry (subject ``all``) with each input's raw rows. Inputs are independent: a
+    failed one is recorded ``failed`` and contributes nothing; every input failing
+    raises (``failed`` + alerted, nothing written)."""
+    from arc.ingest.retail_buzz import fetch_retail_buzz, http_getter
+    from arc.ingest.retail_buzz_config import RetailBuzzConfig
 
-    def get(url: str) -> bytes:
-        return http_get(url, user_agent, timeout=cfg.timeout_s, retries=cfg.retries)
-
-    return get
+    cfg = RetailBuzzConfig.from_options(ctx.options)
+    payload = fetch_retail_buzz(
+        cfg, now=ctx.now, get=get or http_getter(ctx.settings.edgar_user_agent)
+    )
+    for name, inp in payload.inputs.items():
+        ctx.record_input(
+            f"retail_buzz.{name}",
+            " ".join(inp.urls) or inp.type,
+            None,
+            as_of=ctx.now,
+            count=len(inp.rows),
+            digest=inp.digest or None,
+        )
+    live = payload.live
+    if not live:
+        detail = "; ".join(f"{n}: {i.error or i.status}" for n, i in payload.inputs.items())
+        msg = f"retail_buzz: no input answered ({detail})"
+        raise RuntimeError(msg)
+    ctx.write("retail_buzz", "all", payload)
+    counts = {n: len(i.rows) for n, i in payload.inputs.items()}
+    failed = [n for n in payload.inputs if n not in live]
+    summary = " · ".join(f"{n} {c}" for n, c in counts.items())
+    if failed:
+        summary += " · no data: " + ", ".join(failed)
+    return JobResult(
+        summary=summary,
+        metrics={
+            "inputs": {n: i.status for n, i in payload.inputs.items()},
+            "rows": counts,
+            "input_errors": {n: payload.inputs[n].error for n in failed},
+        },
+    )
 
 
 def run_trending_tier(
@@ -1211,40 +1224,49 @@ def run_trending_tier(
     routines: RoutinesConfig,
     options: Mapping[str, Any],
     now: _dt.datetime,
-    get: Callable[[str], bytes] | None = None,
     screen: bool = True,
     market_factory: Callable[[], Any] | None = None,
 ) -> Any:
-    """E12.3: gather + rank + screen the trending tier (no write). ``TrendingResult``.
+    """E13.19 (D58): rank the latest ``retail_buzz`` entry into the trending tier
+    (no write). Returns a ``TrendingResult``; raises ``TrendingError`` when the tier
+    cannot be built (0 live inputs, no symbol master)."""
+    from datetime import timedelta
 
-    Raises :class:`arc.universe.trending.TrendingError` when the tier cannot be built.
-    """
-    from arc.ingest.sources import SourceRegistry
+    from arc.context.categories import SourceCategory
+    from arc.ingest.retail_buzz_config import RetailBuzzConfig
     from arc.universe import load_symbol_master
     from arc.universe.config import universe_config
     from arc.universe.guard import UniverseGuard
-    from arc.universe.ingest import IngestUniverse
     from arc.universe.tiers import Tier, market_reference, tier_membership
-    from arc.universe.trending import TrendingConfig, run_trending
+    from arc.universe.trending import (
+        TrendingOptions,
+        latest_buzz,
+        normalise_exclusions,
+        run_trending,
+    )
 
-    tcfg = TrendingConfig.from_options(options)
+    opts = TrendingOptions.from_options(options)
+    buzz_spec = routines.sources.get("retail_buzz")
+    enabled = (
+        list(RetailBuzzConfig.from_options(buzz_spec.options).enabled)
+        if buzz_spec is not None
+        else []
+    )
+    max_age = routines.source_max_age("retail_buzz", SourceCategory.RETAIL_BUZZ).duration
+    buzz, stale = latest_buzz(conn, now=now, max_age=max_age or timedelta(hours=24))
     ucfg = universe_config(settings)
     master = load_symbol_master(
         ucfg.symbol_master, user_agent=settings.edgar_user_agent, now=now, fetch_if_missing=False
     )
-    exclude: dict[str, str] = {}
-    for t, tier in tier_membership(conn, settings, now).items():
-        if tier in (Tier.CORE, Tier.MOMENTUM):
-            exclude[t] = tier.value
-    if tcfg.exclude_market_reference:
+    exclude: dict[str, str] = {
+        t: tier.value
+        for t, tier in tier_membership(conn, settings, now).items()
+        if tier in (Tier.CORE, Tier.MOMENTUM, Tier.DISCOVERY)
+    }
+    if opts.exclude_market_reference:
         for t in market_reference(settings):
             exclude.setdefault(t, "market_reference")
-    # a share class of an excluded name (GOOG for core GOOGL) is the same company
-    for alias, target in ucfg.momentum.share_class_aliases.items():
-        if target in exclude:
-            exclude.setdefault(alias, exclude[target])
-    ingest = IngestUniverse.from_settings(settings, now=now, master=master, conn=conn)
-    registry = SourceRegistry.from_routines(routines)
+    exclude = normalise_exclusions(exclude, ucfg.momentum.share_class_aliases)
     guard_screen: Callable[[str], Any] | None = None
     if screen:
         guard = UniverseGuard.from_settings(
@@ -1255,40 +1277,30 @@ def run_trending_tier(
             conn=conn,
             market_factory=market_factory,
         )
-        profile = ucfg.tiers.trending.screen
-        guard_screen = lambda sym: guard.screen(sym, profile)  # noqa: E731
-
-    size = int(options.get("size", settings.universe_trending_size))
+        profile = ucfg.tier_screen("trending")
+        if profile != "none":
+            guard_screen = lambda sym: guard.screen(sym, profile)  # noqa: E731
     return run_trending(
-        tcfg,
-        conn=conn,
+        buzz,
+        enabled=enabled,
+        stale=stale,
+        opts=opts,
         now=now,
         master=master,
-        size=size,
+        size=settings.universe_trending_size,
         exclude=exclude,
-        get=get or trending_get(tcfg, settings.edgar_user_agent),
-        tickers_in=ingest.tickers_in,
-        key_for=registry.key_for,
         screen=guard_screen,
     )
 
 
 def universe_trending_source(ctx: JobContext) -> JobResult:
-    """E12.3 / D51: daily rules-based trending top N -> ``universe_tier`` (trending).
+    """E13.19 (D58): daily trending tier from the ``retail_buzz`` pull -> ``universe_tier``
+    (subject ``trending``), then re-resolve today's active list.
 
-    Records each input (URL, digest, count) in the run manifest, journals every
-    admission / screen fail / single-input reject, writes the tier entry (1 session),
-    posts the daily diff as a notice, then re-resolves today's active list. A run
-    that cannot build the tier raises: ``failed`` + alerted, nothing written, and the
-    tier is empty today (yesterday's entry has expired).
-
-    D56 (E13.4): under ``universe.tiers.model: d56`` there is no trending tier; the run
-    is ``skipped`` (no fetch, no write). The job itself is removed in E13.15.
+    Journals every admission / screen fail / leveraged drop and posts the daily diff as
+    a notice. 0 live inputs raises: ``failed`` + alerted, nothing written, the tier is
+    empty today (yesterday's entry has expired).
     """
-    from arc.universe.tiers import tiers_model
-
-    if tiers_model(ctx.settings) == "d56":
-        raise JobSkippedError("universe.tiers.model is d56: no trending tier")
     from arc.universe.trending import (
         build_payload,
         journal_decisions,
@@ -1308,7 +1320,7 @@ def universe_trending_source(ctx: JobContext) -> JobResult:
             f"trending.{i.name}",
             " ".join(i.urls) or i.type,
             sorted(i.raw),
-            as_of=i.newest,
+            as_of=ctx.now,
             count=i.count,
             digest=i.digest or None,
         )
@@ -1320,23 +1332,26 @@ def universe_trending_source(ctx: JobContext) -> JobResult:
     ctx.write("universe_tier", "trending", build_payload(res, now=ctx.now))
     active = resolve_universe(ctx)
     prev = set(previous or [])
+    kept = sum(1 for m in active.members if m.tier.value == "trending")
     return JobResult(
-        summary=f"{line} · active {len(active.members)}",
+        summary=f"{line} · active {len(active.members)} ({kept} trending)",
         notice=line,
         metrics={
             "names": len(res.members),
+            "both_inputs": sum(1 for r in res.members if r.n_inputs >= 2),
             "tickers": res.tickers,
             "added": [t for t in res.tickers if t not in prev],
             "removed": [t for t in (previous or []) if t not in set(res.tickers)],
             "ranked": len(res.ranked),
             "pool": len(res.pool),
             "screen_fail": sum(1 for r in res.pool if r.screen_passed is False),
-            "single_input": len(res.single_input),
             "excluded": len(res.excluded),
+            "leveraged": [r.ticker for r in res.leveraged],
             "inputs": {i.name: i.status for i in res.inputs},
             "input_errors": res.failed_inputs,
             "journaled": journaled,
             "active": len(active.members),
+            "active_trending": kept,
         },
     )
 
@@ -1601,7 +1616,6 @@ def _journal_universe_rejects(ctx: JobContext, result: ScalpRunResult) -> int:
         "not_in_universe": ReasonCode.UNIVERSE_NOT_IN_UNIVERSE,
         "unknown_symbol": ReasonCode.UNIVERSE_UNKNOWN_SYMBOL,
         "illiquid": ReasonCode.UNIVERSE_ILLIQUID,
-        "over_new_ticker_cap": ReasonCode.UNIVERSE_NEW_TICKER_CAP,
         "not_in_tier": ReasonCode.UNIVERSE_NOT_IN_TIER,  # D56: a mention, never a candidate
     }
     store = JournalStore(ctx.conn)
@@ -1670,62 +1684,6 @@ def _journal_tape_corroborations(ctx: JobContext, result: ScalpRunResult) -> int
                 "atm_spread_pct": t.atm_spread_pct,
                 "atm_oi": t.atm_oi,
                 "tape_as_of": tape.as_of,
-            },
-        )
-        n += 1
-    return n
-
-
-def _journal_floor_skips(ctx: JobContext, result: ScalpRunResult) -> int:
-    """E12.4: one ``scalp_candidate`` decision per core/momentum candidate kept below
-    ``scalp_min_confidence`` (payload ``confidence_floor_skipped: tier=<tier>``).
-
-    Once per ticker per ET day (the Scalp runs every 30 min). Returns the count.
-    """
-    if not result.floor_skipped:
-        return 0
-    import datetime as dt
-
-    from arc.context.ttl import to_db
-    from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
-    from arc.journal.store import JournalStore
-
-    day = ctx.now.astimezone(ET).date()
-    start = dt.datetime(day.year, day.month, day.day, tzinfo=ET)
-    done = {
-        r[0]
-        for r in ctx.conn.execute(
-            "SELECT subject FROM decisions WHERE reason_code = ? AND at >= ? AND at < ?"
-            " AND payload LIKE '%confidence_floor_skipped%'",
-            (
-                ReasonCode.SCALP_CANDIDATE.value,
-                to_db(start),
-                to_db(start + dt.timedelta(days=1)),
-            ),
-        ).fetchall()
-    }
-    store = JournalStore(ctx.conn)
-    n = 0
-    floor = ctx.settings.scalp_min_confidence
-    for ticker, (tier, conf) in sorted(result.floor_skipped.items()):
-        if ticker in done:
-            continue
-        store.record(
-            persona=JournalPersona.SCALP,
-            stage=Stage.CANDIDATE,
-            subject=ticker,
-            choice=Choice.SELECTED,
-            reason_code=ReasonCode.SCALP_CANDIDATE,
-            reason_text=f"{tier} name kept below the confidence floor ({conf:.2f} < {floor:.2f})",
-            confidence=conf,
-            at=ctx.now,
-            chain_run_id=ctx.chain_run_id,
-            run_id=ctx.run_id,
-            payload={
-                "confidence_floor_skipped": f"tier={tier}",
-                "tier": tier,
-                "confidence": conf,
-                "min_confidence": floor,
             },
         )
         n += 1
@@ -1810,7 +1768,6 @@ def scalp_persona(
         for p in result.stories:
             ctx.write("story", p.story_id, p, ttl=result.story_ttls.get(p.story_id))
     _journal_universe_rejects(ctx, result)
-    _journal_floor_skips(ctx, result)
     _journal_floor_rejects(ctx, result)
     _journal_tape_corroborations(ctx, result)
     if result.tape is not None:  # E13.10: the tape this run read (text + numbers)
@@ -1854,7 +1811,6 @@ def scalp_persona(
             "digest_batches": result.digest_batches,
             "failed_digest_batches": result.failed_digest_batches,
             "failed_batches": result.failed_batches,
-            "new_tickers": len(result.new_tickers),
             "mentions": len(result.mentions),
             **(
                 {
@@ -1878,7 +1834,6 @@ def scalp_persona(
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
             reject_details=result.reject_details,
-            new_tickers=result.new_tickers,
             source_mix=result.source_mix,
             stories=len(result.stories),
             category_mix=result.category_mix,
@@ -1903,8 +1858,7 @@ def scout_persona(
 ) -> JobResult:
     """Scout (E13.7, D56): snapshot → prompt → one cheap LLM call → code rules → writes.
 
-    Behind ``personas.scout_feed`` (off = skipped before any LLM call). Writes the
-    ``scout_read`` (subject ``session``), the ``discovery`` tier (only from the
+    Writes the ``scout_read`` (subject ``session``), the ``discovery`` tier (only from the
     YouTube calls, ``loose`` screen, ≤ ``funnel.scout.max_discovery``), re-resolves the
     active list, then writes a ``candidate`` (``feed=scout``) per call at or above its
     tier's floor. *llm* / *guard* override the Hermes backend and the universe guard
@@ -1939,20 +1893,19 @@ def scout_persona(
     from arc.pipeline.market import ETF_UNDERLYINGS
     from arc.pipeline.steps import _with_constraints
     from arc.pipeline.store import PersonaCallRepo, sha256
-    from arc.slack.digests import scout_card
+    from arc.slack.digests import TrendingFact, scout_card
     from arc.store.repos import CandidateRepo
     from arc.universe.guard import UniverseGuard
     from arc.universe.tiers import (
         Tier,
         TierMember,
         UniverseTierPayload,
+        load_tier_inputs,
         market_reference,
         tier_floor,
         tier_membership,
     )
 
-    if not ctx.routines.scout_feed.enabled:
-        raise JobSkippedError("personas.scout_feed off")
     funnel = ctx.routines.funnel.scout
     settings = ctx.settings
     found = ctx.routines.job(BRIEFS_JOB)
@@ -1960,6 +1913,11 @@ def scout_persona(
     membership = tier_membership(ctx.conn, settings, ctx.now)
     higher = {t: tier.value for t, tier in membership.items() if tier in (Tier.CORE, Tier.MOMENTUM)}
     floor = settings.universe_floor_discovery
+    # E13.20 (D58): today's trending tier (code-ranked, E13.19), read as context only
+    trending = load_tier_inputs(ctx.conn, settings, ctx.now).trending
+    trending_names = [m.ticker for m in sorted(trending, key=lambda m: m.rank)][
+        : settings.universe_trending_size
+    ]
     inp = scout_input_from_context(
         ctx.snapshot,
         channels=channels,
@@ -1968,6 +1926,7 @@ def scout_persona(
         max_discovery=funnel.max_discovery,
         discovery_floor=floor,
         higher_tier=sorted(higher),
+        trending=trending_names,
         now=ctx.now,
     )
     rules = scout_rules(inp)
@@ -2078,6 +2037,7 @@ def scout_persona(
             options_daily=inp.options_as_of.get("options_daily"),
             vx_curve=inp.options_as_of.get("vx_curve"),
             vol_term=inp.options_as_of.get("vol_term"),
+            retail_buzz=inp.retail_buzz.as_of if inp.retail_buzz is not None else None,
         ),
         discovery=disc.tickers,
         discovery_fill=len(disc.tickers),
@@ -2170,6 +2130,8 @@ def scout_persona(
             "output_tokens": reply.output_tokens,
             "cost_usd": reply.cost_usd,
             "active": len(active.members),
+            "retail_buzz": inp.retail_buzz is not None,
+            "trending": len(trending_names),
         },
         card=scout_card(
             read=read,
@@ -2179,6 +2141,14 @@ def scout_persona(
             dropped_calls=dropped_calls,
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
+            trending=TrendingFact(
+                names=len(trending_names),
+                size=settings.universe_trending_size,
+                both=sum(
+                    1 for m in trending if m.ticker in set(trending_names) and (m.inputs or 0) >= 2
+                ),
+                active=sum(1 for m in active.members if m.tier is Tier.TRENDING),
+            ),
         ),
     )
 
@@ -2295,12 +2265,13 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "earnings": "arc.routines.handlers:earnings_source",
     "symbols": "arc.routines.handlers:symbols_source",  # E5.7 weekly symbol master
     "universe.momentum": "arc.routines.handlers:universe_momentum_source",  # E12.2 monthly
-    "universe.trending": "arc.routines.handlers:universe_trending_source",  # E12.3 daily
+    # E13.19 (D58): daily Reddit + Stocktwits pull, then the code-ranked trending tier
+    "retail_buzz": "arc.routines.handlers:retail_buzz_source",
+    "universe.trending": "arc.routines.handlers:universe_trending_source",
     "youtube": "arc.routines.handlers:youtube_source",
     "youtube.briefs": "arc.routines.handlers:youtube_briefs",  # E4.6 daily briefs (D45)
     # E4.5 / D30 options-trading data (no LLM; typed context kinds)
     "vol_term": "arc.routines.handlers:vol_term_source",
-    "put_call": "arc.routines.handlers:put_call_source",
     "options_daily": "arc.routines.handlers:options_daily_source",  # E13.5 (D56)
     "vix_futures": "arc.routines.handlers:vix_futures_source",
     "options_fast": "arc.routines.handlers:options_fast_source",  # E13.6 (D56)
@@ -2313,7 +2284,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "finnhub.fundamentals": "arc.routines.handlers:finnhub_fundamentals_source",
     "finnhub.earnings_history": "arc.routines.handlers:finnhub_earnings_history_source",
     "scalp": "arc.routines.handlers:scalp_persona",
-    # E13.7 (D56): the daily Scout (personas.scout_feed; YouTube + options_slow)
+    # E13.7 (D56): the daily Scout (YouTube + options_slow)
     "scout": "arc.routines.handlers:scout_persona",
     # E5.2 pipeline chain: research → quant.open → risk.open → [quant.revise] →
     # quant.propose (arc/pipeline/steps.py; E13.9 / D56 step names)
@@ -2322,9 +2293,9 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "risk.open": "arc.pipeline.steps:risk_open_step",
     "quant.revise": "arc.pipeline.steps:quant_revise_step",
     "quant.propose": "arc.pipeline.steps:quant_propose_step",
-    # E13.17 (D56): exit cases judged by Quant (personas.exit_path shadow | research)
+    # E13.17 (D56): exit cases judged by Quant
     "quant.exit": "arc.pipeline.steps:quant_exit_step",
-    # E13.18 (D56): Risk's close | hold review of the exit cases (exit_path research)
+    # E13.18 (D56): Risk's close | hold review of the exit cases
     "risk.exit": "arc.pipeline.steps:risk_exit_step",
     # E5.3 intraday monitor (read-only: positions, Greeks, expiries, daily-loss halt)
     "monitor": "arc.routines.monitor:monitor_step",
@@ -2335,31 +2306,14 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "broker.execute": "arc.broker.ladder_job:execute_step",
     # E6.3 / D56 Broker reconcile: post-market broker vs local, snapshots, tax lots, card
     "broker.reconcile": "arc.broker.reconcile_job:broker_reconcile_step",
-    # E6.4 position manager: marks -> exits -> close-to-reallocate (arc/positions/steps.py)
+    # E6.4 position manager: marks -> mandatory exits (arc/positions/steps.py)
     "positions.evaluate": "arc.positions.steps:evaluate_step",
-    "quant.exits": "arc.positions.steps:exits_step",
-    "risk.reallocate": "arc.positions.steps:reallocate_step",
     # E13.18 (D56): the deterministic mandatory-exit floor (stop / DTE exit / expiry)
     "exits.mandatory": "arc.positions.steps:exits_mandatory_step",
     # E7.3 weekly paper scorecard (deterministic, from the audit store; posts as [Ops])
     "scorecard": "arc.routines.scorecard:scorecard_step",
     # E10.3 (D44): daily experiment evaluation after the EOD reconcile
     "experiments.evaluate": "arc.routines.experiments:experiments_evaluate_step",
-}
-
-#: D56 (E13.1/E13.2): pre-rename job names still resolve, for one release, to the
-#: renamed handlers (a local ``routines.yaml`` or ``--job sweep`` keeps working; logged).
-DEPRECATED_JOB_ALIASES: Mapping[str, str] = {
-    "sweep": "scalp",
-    "director": "research",
-    "investor": "broker",
-    "investor.exits": "quant.exits",
-    "execute": "broker.execute",
-    "auditor": "broker.reconcile",
-    # E13.9 (D56): open-path step renames
-    "quant": "quant.open",
-    "risk": "risk.open",
-    "propose": "quant.propose",
 }
 
 
@@ -2391,8 +2345,4 @@ def resolve_handler(
             return overrides[key]
         if key in BUILTIN_HANDLERS:
             return import_handler(BUILTIN_HANDLERS[key])
-        if key in DEPRECATED_JOB_ALIASES:
-            new = DEPRECATED_JOB_ALIASES[key]
-            log.warning("routines.deprecated_job_alias", job=name, alias=key, renamed_to=new)
-            return import_handler(BUILTIN_HANDLERS[new])
     return not_implemented

@@ -237,7 +237,7 @@ class PositionRow(BaseModel):
     direction: Direction | None = Field(
         default=None, description="D50: bullish / bearish / neutral from the opening legs"
     )
-    # E13.14 (D56): the exit path (arc.tower.data_exits); None under exit_path deterministic.
+    # E13.14 (D56): the exit path (arc.tower.data_exits); None = no exit watch yet.
     exit_watch: ExitWatchView | None = None
     exit_case: ExitCaseView | None = None
     exit_review: ExitVerdictView | None = None
@@ -989,12 +989,12 @@ def _greeks_section(
     monitor: sqlite3.Row | None,
     positions: list[PositionRow],
     *,
-    delta_cap: float,
+    dollar_delta_cap_pct: float,
     vega_cap_pct: float,
     max_alloc_pct: float,
     stale_after: _dt.timedelta,
 ) -> GreeksSection:
-    g = _greeks(monitor, delta_cap, vega_cap_pct, stale_after)
+    g = _greeks(monitor, dollar_delta_cap_pct, vega_cap_pct, stale_after)
     by: dict[str, Decimal] = {}
     for p in positions:
         if p.status == "open" and p.max_loss is not None:
@@ -1023,12 +1023,12 @@ def load_positions(
     now: _dt.datetime,
     status: PositionStatus = "open",
     stale_after: _dt.timedelta,
-    exit_mode: ExitPathMode = "deterministic",
+    exit_mode: ExitPathMode = "research",
 ) -> PositionsResponse:
     """Structures by *status* with the latest monitor marks (SELECT only).
 
     E13.14: open rows carry the exit path (watch / case / Risk verdict / mandatory
-    signal) and the response the Exit path strip, under *exit_mode* (shadow | research).
+    signal) and the response the Exit path strip (*exit_mode*: ``research`` since E13.15).
     """
     now_et = now.astimezone(ET)
     latest = _latest_mark(conn, _latest_heartbeat(conn, "monitor"))
@@ -1052,8 +1052,8 @@ def load_overview(
     *,
     now: _dt.datetime,
     rng: OverviewRange = "1D",
-    delta_cap: float = 0.30,
-    vega_cap_pct: float = 0.005,
+    dollar_delta_cap_pct: float = 0.50,
+    vega_cap_pct: float = 0.010,
     max_alloc_pct: float = 0.05,
     stale_after: _dt.timedelta,
     activity_hours: int = ACTIVITY_HOURS,
@@ -1090,7 +1090,7 @@ def load_overview(
         greeks=_greeks_section(
             monitor,
             positions,
-            delta_cap=delta_cap,
+            dollar_delta_cap_pct=dollar_delta_cap_pct,
             vega_cap_pct=vega_cap_pct,
             max_alloc_pct=max_alloc_pct,
             stale_after=stale_after,

@@ -1,7 +1,9 @@
-"""E6.4 intraday chain: ``positions.evaluate → quant.exits → risk.reallocate`` (D19).
+"""E6.4 intraday chain: ``positions.evaluate → exits.mandatory → broker.execute`` (D19, D56).
 
-D56 (E13.2): ``positions.evaluate`` is labelled "Position marks" (persona Quant) and
-its exit step ``investor.exits`` is ``quant.exits``; behaviour is unchanged.
+D56 (E13.15 cutover): discretionary exits (profit target, time-adjusted target,
+remaining-EV floor) and close-to-reallocate swaps are managed by the Research chain
+(``quant.exit`` → ``risk.exit`` → ``quant.propose``); this module keeps the marks and
+the deterministic mandatory floor, plus the swap helpers ``quant.propose`` uses.
 
 Every step reads and writes through the context store and the audit DB (D16):
 no in-memory hand-offs. Nothing here submits an order: every close or swap
@@ -13,21 +15,14 @@ approval.
     Marks every open structure, reviews it (:func:`arc.positions.evaluate.review_position`)
     and writes one ``position_review`` context entry per position.
 
-``quant.exits`` (deterministic)
-    Turns review signals (stop, profit target, time-adjusted target, DTE exit,
-    remaining-EV floor) into close proposals via
+``exits.mandatory`` (deterministic, E13.18)
+    Turns mandatory review signals (stop, DTE exit, expiry) into close proposals via
     :func:`arc.execution.exits.propose_close`: limit at mid over the D24 band, one
     per structure per ET day, none while one is pending. Halted: nothing proposed.
 
-``risk.reallocate`` (Risk persona, veto only)
-    1. advances existing swaps: a swap whose close FILLED gets its open proposal
-       (re-priced, re-sized, gated, carded); a close that did not fill cancels the
-       swap and its open is never proposed,
-    2. collects new proposals rejected for capacity only (gate
-       :func:`~arc.gate.rules.capacity_rejection`, or sizing ``budget_exhausted``),
-    3. scores (new, open) pairs (:func:`arc.positions.reallocate.score_swaps`),
-    4. asks Risk to approve/veto each suggestion (missing verdict or LLM failure
-       = veto, fail closed), then proposes the approved closes (``swap_id`` set).
+Swap helpers (used by the ``quant.propose`` close branch): :func:`capacity_candidates`
+(today's capacity-only rejections), :func:`_advance_swaps` (a swap whose close FILLED
+gets its open proposal; a close that did not fill cancels the swap) and :func:`_cancel`.
 """
 
 from __future__ import annotations
@@ -43,21 +38,13 @@ from arc.exits.position import OpenPosition, PositionMarks
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.models import LegIntent, Structure
 from arc.positions.evaluate import ExitSignal, PositionReview, SignalKind, review_position
-from arc.positions.reallocate import (
-    CapacityCandidate,
-    ReallocRules,
-    ScoredPair,
-    SwapSuggestion,
-    score_swaps,
-)
+from arc.positions.reallocate import CapacityCandidate
 from arc.routines.handlers import JobResult
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     import sqlite3
-    from decimal import Decimal
 
-    from arc.config import ArcSettings
     from arc.exits import ExitConfig
     from arc.gate.halt import HaltSwitch
     from arc.gate.inputs import AccountSnapshot, Portfolio
@@ -68,14 +55,11 @@ if TYPE_CHECKING:
 __all__ = [
     "SIGNAL_CODES",
     "evaluate",
+    "capacity_candidates",
     "evaluate_step",
-    "exits",
     "exits_mandatory",
     "exits_mandatory_step",
-    "exits_step",
     "position_handlers",
-    "reallocate",
-    "reallocate_step",
 ]
 
 log = structlog.get_logger(__name__)
@@ -87,17 +71,6 @@ SIGNAL_CODES: dict[SignalKind, ReasonCode] = {
     SignalKind.DTE_EXIT: ReasonCode.EXIT_DTE,
     SignalKind.EXPIRY: ReasonCode.EXIT_EXPIRY,
     SignalKind.REMAINING_EV_FLOOR: ReasonCode.EXIT_EV_FLOOR,
-}
-
-_PAIR_CODES: dict[str, ReasonCode] = {
-    "suggested": ReasonCode.REALLOC_SUGGESTED,
-    "edge_below_min": ReasonCode.REALLOC_EDGE_BELOW_MIN,
-    "pop_below_open": ReasonCode.REALLOC_POP_BELOW_OPEN,
-    "frees_nothing": ReasonCode.REALLOC_FREES_NOTHING,
-    "no_open_numbers": ReasonCode.REALLOC_NO_OPEN_NUMBERS,
-    "churn_ticker": ReasonCode.REALLOC_CHURN_TICKER,
-    "churn_day": ReasonCode.REALLOC_CHURN_DAY,
-    "already_paired": ReasonCode.REALLOC_ALREADY_PAIRED,
 }
 
 _CLOSE_FILLED = "filled"
@@ -326,19 +299,14 @@ def _theta(priced: PricedStructure, st: Structure, today: _dt.date, r: float) ->
 
 
 # ---------------------------------------------------------------------------
-# quant.exits (was investor.exits)
+# exits.mandatory: the close path
 # ---------------------------------------------------------------------------
 
 
-def exits(
-    ctx: JobContext, env: PipelineEnv, *, kinds: frozenset[SignalKind] | None = None
-) -> JobResult:
-    """Propose closes (gate + token + approval card) for positions with a review signal.
+def _close_on_signals(ctx: JobContext, env: PipelineEnv, kinds: frozenset[SignalKind]) -> JobResult:
+    """Propose closes (gate + token + approval card) for positions with a signal in *kinds*.
 
-    E13.18: *kinds* restricts the signals acted on (``exits.mandatory`` passes
-    :data:`~arc.positions.exit_case.MANDATORY_KINDS`: stop, DTE exit, expiry); the
-    first signal of a review inside *kinds* is the one closed on. ``None`` = every
-    signal (``quant.exits``, today's behaviour).
+    The first signal of a review inside *kinds* is the one closed on.
     """
     from arc.execution.exits import exit_pending, price_close, propose_close
     from arc.store.execution import OpenStructureRepo
@@ -347,7 +315,7 @@ def exits(
     reviews = _reviews(ctx)
     fired: dict[str, ExitSignal] = {}
     for r in reviews.values():
-        sig = r.signal if kinds is None else next((s for s in r.signals if s.kind in kinds), None)
+        sig = next((s for s in r.signals if s.kind in kinds), None)
         if sig is not None:
             fired[r.structure_id] = sig
     flagged = [r for r in reviews.values() if r.structure_id in fired]
@@ -426,17 +394,8 @@ def exits(
 
 
 # ---------------------------------------------------------------------------
-# risk.reallocate
+# Close-to-reallocate swaps (D19; driven by the quant.propose close branch)
 # ---------------------------------------------------------------------------
-
-
-def _rules(settings: ArcSettings) -> ReallocRules:
-    return ReallocRules(
-        min_edge=settings.realloc_min_edge,
-        pop_tolerance=settings.realloc_pop_tolerance,
-        max_per_day=settings.realloc_max_swaps_per_day,
-        max_per_ticker_per_day=settings.realloc_max_swaps_per_ticker_per_day,
-    )
 
 
 def capacity_candidates(
@@ -633,7 +592,7 @@ def _open_leg(
     st = priced.structure
     now = ctx.clock()  # E5.2b: judge quote age against a clock read after the fetch
     earnings = next_earnings(ctx.conn, [t], _today(ctx))
-    market = market_snapshot(priced.contracts, earnings)
+    market = market_snapshot(priced.contracts, earnings, {t: priced.spot})
     limit = limit_price(st.net_debit_credit, settings.limit_tick)
     band = band_for(st, limit, market, settings)
     size = size_contracts(
@@ -723,231 +682,6 @@ def _open_leg(
     return f"swap {sw['id']} open {t} x{size.contracts} limit {limit:+} gate {verdict}"
 
 
-def _journal_pairs(ctx: JobContext, pairs: list[ScoredPair], persona_call_id: str | None) -> None:
-    from arc.journal.store import JournalStore
-
-    store = JournalStore(ctx.conn)
-    for p in pairs:
-        store.record(
-            persona=JournalPersona.SYSTEM,
-            stage=Stage.REALLOCATE,
-            subject=p.open_ticker,
-            choice=Choice.SELECTED if p.outcome == "suggested" else Choice.REJECTED,
-            reason_code=_PAIR_CODES[p.outcome],
-            reason_text=p.detail,
-            payload=p.model_dump(mode="json"),
-            at=ctx.now,
-            run_id=ctx.run_id,
-            chain_run_id=ctx.chain_run_id,
-            persona_call_id=persona_call_id,
-        )
-
-
-def _risk_verdicts(
-    ctx: JobContext,
-    env: PipelineEnv,
-    keyed: dict[str, SwapSuggestion],
-    portfolio: Portfolio,
-    equity: Decimal,
-) -> tuple[dict[str, tuple[bool, str]], str | None]:
-    """Ask Risk (veto only). Any failure vetoes every suggestion (fail closed)."""
-    from collections import Counter as _C
-
-    from arc.personas.schemas import RiskSwapReview
-    from arc.pipeline.steps import PersonaError, _ask, _record_ok
-
-    inputs = {
-        "suggestions_json": json.dumps(
-            [{"swap_id": k, **s.model_dump(mode="json")} for k, s in keyed.items()],
-            indent=2,
-            sort_keys=True,
-        ),
-        "portfolio_json": portfolio.model_dump_json(indent=2),
-        "account_equity": float(equity),
-        "scan_date": _today(ctx).isoformat(),
-        "rules": [
-            "You may only approve or veto the listed swap_ids; unknown ids are ignored.",
-            "A swap without a verdict is vetoed.",
-        ],
-    }
-    try:
-        reply, out = _ask(ctx, env, "risk_swap", ctx.snapshot, inputs, RiskSwapReview)
-    except PersonaError as exc:
-        return {k: (False, f"Risk unavailable, vetoed (fail closed): {exc}") for k in keyed}, None
-    call_id = _record_ok(ctx, "risk_swap", reply, ctx.snapshot.id, _C())
-    got = {v.swap_id: v for v in out.verdicts if v.swap_id in keyed}
-    return {
-        k: (got[k].approve, got[k].narrative) if k in got else (False, "no verdict: vetoed")
-        for k in keyed
-    }, call_id
-
-
-def reallocate(ctx: JobContext, env: PipelineEnv) -> JobResult:
-    """Advance open swaps, then score, review (Risk) and start new ones (see module doc)."""
-    from arc.execution.exits import exit_pending, price_close, propose_close
-    from arc.journal.store import JournalStore
-    from arc.store.execution import OpenStructureRepo
-    from arc.store.swaps import SwapRepo
-
-    settings = ctx.settings
-    day = _today(ctx).isoformat()
-    swaps = SwapRepo(ctx.conn)
-    pending = swaps.by_status("closing")
-    reviews = _reviews(ctx)
-    taken = swaps.sources()
-    cands, sources = capacity_candidates(ctx.conn, day, taken=taken)
-    if not pending and (not cands or not reviews):
-        return JobResult(
-            summary="no swaps to advance; no capacity-blocked entries"
-            if not cands
-            else "no position reviews to pair with",
-            metrics={"candidates": len(cands), "suggested": 0, "swaps_started": 0},
-        )
-    secret = _gate_secret(ctx, env)
-    book = _book(ctx, env)
-    info, account, portfolio, switch = book
-    lines = _advance_swaps(ctx, env, book, secret) if pending else []
-    if switch.is_halted():
-        return JobResult(
-            summary="; ".join([*lines, "halted: no new swaps"]),
-            metrics={"candidates": len(cands), "suggested": 0, "swaps_started": 0, "halted": True},
-        )
-    count, per_ticker = swaps.churn(day)
-    suggestions, pairs = score_swaps(
-        [r for r in reviews.values() if r.signal is None],  # flagged ones are closing anyway
-        cands,
-        _rules(settings),
-        swaps_today=count,
-        ticker_swaps_today=per_ticker,
-    )
-    if not suggestions:
-        with ctx.conn:
-            _journal_pairs(ctx, pairs, None)
-        lines.append(f"{len(pairs)} pair(s) scored, none cleared the D19 edge/PoP/churn rules")
-        return JobResult(
-            summary="; ".join(lines),
-            metrics={
-                "candidates": len(cands),
-                "pairs": len(pairs),
-                "suggested": 0,
-                "swaps_started": 0,
-            },
-        )
-    keyed = {f"sg{i + 1}": s for i, s in enumerate(suggestions)}
-    verdicts, call_id = _risk_verdicts(ctx, env, keyed, portfolio, info.equity)
-    with ctx.conn:
-        _journal_pairs(ctx, pairs, call_id)
-    repo = OpenStructureRepo(ctx.conn)
-    started = vetoed = 0
-    alerts: list[str] = []
-    for key, s in keyed.items():
-        ok, why = verdicts[key]
-        suggestion_json = json.dumps(
-            {"suggestion": s.model_dump(mode="json"), "source": sources[s.source_ref], "risk": why}
-        )
-        if not ok:
-            with ctx.conn:
-                sid = swaps.create(
-                    day=day, status="vetoed", close_structure_id=s.close_structure_id,
-                    close_ticker=s.close_ticker, open_ticker=s.open_ticker,
-                    source_ref=s.source_ref, suggestion_json=suggestion_json, now=ctx.now,
-                    run_id=ctx.run_id, detail=why, commit=False,
-                )  # fmt: skip
-                JournalStore(ctx.conn).record(
-                    persona=JournalPersona.RISK,
-                    stage=Stage.REALLOCATE,
-                    subject=s.open_ticker,
-                    choice=Choice.REJECTED,
-                    reason_code=ReasonCode.REALLOC_VETOED,
-                    reason_text=why,
-                    persona_call_id=call_id,
-                    payload={"swap_id": sid, **s.model_dump(mode="json")},
-                    at=ctx.now,
-                    run_id=ctx.run_id,
-                    chain_run_id=ctx.chain_run_id,
-                )
-            vetoed += 1
-            lines.append(f"{s.close_ticker}->{s.open_ticker} vetoed by Risk: {why}")
-            continue
-        row = repo.get(s.close_structure_id)
-        if row is None or row["status"] != "open" or exit_pending(ctx.conn, row):
-            continue
-        st = Structure.model_validate_json(row["structure_json"])
-        try:
-            priced = price_close(
-                env.market, st, as_of=_today(ctx), r=settings.scanner_risk_free_rate
-            )
-        except (LookupError, ValueError) as exc:
-            lines.append(f"{s.close_ticker}: cannot price the swap close ({exc})")
-            continue
-        rv = reviews[s.close_structure_id]
-        with ctx.conn:
-            sid = swaps.create(
-                day=day, status="closing", close_structure_id=s.close_structure_id,
-                close_ticker=s.close_ticker, open_ticker=s.open_ticker, source_ref=s.source_ref,
-                suggestion_json=suggestion_json, now=ctx.now, run_id=ctx.run_id,
-                detail=why, commit=False,
-            )  # fmt: skip
-            JournalStore(ctx.conn).record(
-                persona=JournalPersona.RISK,
-                stage=Stage.REALLOCATE,
-                subject=s.open_ticker,
-                choice=Choice.APPROVED,
-                reason_code=ReasonCode.REALLOC_APPROVED,
-                reason_text=why,
-                persona_call_id=call_id,
-                payload={"swap_id": sid, **s.model_dump(mode="json")},
-                at=ctx.now,
-                run_id=ctx.run_id,
-                chain_run_id=ctx.chain_run_id,
-            )
-        res = propose_close(
-            ctx.conn,
-            row=row,
-            priced=priced,
-            thesis=(
-                f"Close to reallocate (swap {sid}): {s.detail}. The {s.open_ticker} open is "
-                "proposed only after this close fills."
-            ),
-            reason="reallocate",
-            reason_code=ReasonCode.EXIT_REALLOCATE,
-            persona=JournalPersona.RISK,
-            close_now_net=rv.close_now_net,
-            settings=settings,
-            account=account,
-            portfolio=portfolio,
-            switch=switch,
-            now=ctx.clock(),
-            run_id=ctx.run_id,
-            write_context=ctx.write,
-            secret=secret,
-            payload={"swap": s.model_dump(mode="json")},
-            swap_id=sid,
-        )
-        swaps.update(sid, status="closing", now=ctx.now, close_proposal_hash=res.proposal_hash)
-        if res.alert:
-            alerts.append(res.alert)
-        if res.proposal_hash is None:  # E6.2a: no close on unusable quotes, so no open
-            _cancel(ctx, swaps.get(sid) or {}, "close quotes unusable")
-            lines.append(f"swap {sid} cancelled: {res.line}")
-            continue
-        if not res.passed:
-            _cancel(ctx, swaps.get(sid) or {}, "close failed the gate")
-        started += 1
-        lines.append(f"swap {sid}: {res.line}")
-    return JobResult(
-        summary="; ".join(lines),
-        metrics={
-            "candidates": len(cands),
-            "pairs": len(pairs),
-            "suggested": len(suggestions),
-            "vetoed": vetoed,
-            "swaps_started": started,
-        },
-        notice="; ".join([*(line for line in lines if "gate PASS" in line), *alerts]),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Handler entry points
 # ---------------------------------------------------------------------------
@@ -963,25 +697,20 @@ def evaluate_step(ctx: JobContext) -> JobResult:
     return evaluate(ctx, _env(ctx))
 
 
-def exits_step(ctx: JobContext) -> JobResult:
-    return exits(ctx, _env(ctx))
-
-
 def exits_mandatory(ctx: JobContext, env: PipelineEnv) -> JobResult:
     """``exits.mandatory`` (E13.18, D56): the deterministic safety floor.
 
     Closes on mandatory signals only (stop, DTE exit, expiry), before any LLM step,
     whatever Research / Quant / Risk say or whether they run. Discretionary signals
     (profit target, time-adjusted target, remaining-EV floor) are left to the
-    Research exit path. Same close path as ``quant.exits`` (gate ``closing=True``,
-    band, token, approval card), one attempt per structure per ET day, nothing while
-    an exit is pending: running it in both the 10-min and the 30-min chain is
-    idempotent. Halted: nothing proposed (today's rule).
+    Research exit path. Gate ``closing=True``, band, token, approval card, one
+    attempt per structure per ET day, nothing while an exit is pending: running it
+    in both the 10-min and the 30-min chain is idempotent. Halted: nothing proposed (today's rule).
     """
     from arc.positions.exit_case import MANDATORY_KINDS
     from arc.slack.digests import exits_mandatory_summary
 
-    res = exits(ctx, env, kinds=MANDATORY_KINDS)
+    res = _close_on_signals(ctx, env, MANDATORY_KINDS)
     res.metrics["mandatory"] = True
     if res.summary == "no exit signals":
         res.summary = exits_mandatory_summary([])
@@ -997,15 +726,9 @@ def exits_mandatory_step(ctx: JobContext) -> JobResult:
     return exits_mandatory(ctx, _env(ctx))
 
 
-def reallocate_step(ctx: JobContext) -> JobResult:
-    return reallocate(ctx, _env(ctx))
-
-
 def position_handlers(env: PipelineEnv) -> dict[str, Handler]:
     """Dispatcher overrides binding the E6.4 chain to one *env* (fixtures / dry runs)."""
     return {
         "positions.evaluate": lambda ctx: evaluate(ctx, env),
-        "quant.exits": lambda ctx: exits(ctx, env),
-        "risk.reallocate": lambda ctx: reallocate(ctx, env),
         "exits.mandatory": lambda ctx: exits_mandatory(ctx, env),
     }

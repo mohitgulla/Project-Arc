@@ -2,7 +2,9 @@
 
 Once per trading day (06:00 ET) the Scout reads the two YouTube categories
 (``youtube_macro`` and ``youtube_micro`` channel briefs, equal budget) plus
-``options_slow`` (``options_daily``, ``vx_curve``, ``vol_term``) and replies with a
+``options_slow`` (``options_daily``, ``vx_curve``, ``vol_term``) plus ``retail_buzz``
+(E13.20, D58: the top Reddit + Stocktwits names as context only; the trending tier is
+ranked by code and the Scout never adds or removes a name there) and replies with a
 :class:`~arc.personas.schemas.ScoutOutput`. Code then validates the reply and decides
 everything that leaves the persona:
 
@@ -43,11 +45,16 @@ if TYPE_CHECKING:
 __all__ = [
     "OPTIONS_SLOW_KINDS",
     "ORIGIN_PREFIX",
+    "RETAIL_BUZZ_TOP",
+    "SCOUT_CATEGORIES",
     "DiscoveryResult",
     "ScoutInput",
     "build_scout_prompt",
+    "category_line",
     "discovery_members",
     "origin_id",
+    "retail_buzz_lines",
+    "retail_buzz_view",
     "scout_input_from_context",
     "scout_rules",
     "validate_calls",
@@ -57,6 +64,14 @@ __all__ = [
 ORIGIN_PREFIX = "youtube:"
 #: options_slow kinds the Scout reads (subject ``market``), in prompt order.
 OPTIONS_SLOW_KINDS: tuple[str, ...] = ("options_daily", "vx_curve", "vol_term")
+#: E13.20 (D58): the Scout's slow-feed categories, in the prompt's category line order.
+SCOUT_CATEGORIES: tuple[SourceCategory, ...] = (
+    *YOUTUBE_CATEGORIES,
+    SourceCategory.OPTIONS_SLOW,
+    SourceCategory.RETAIL_BUZZ,
+)
+#: E13.20: names listed in the prompt's retail-buzz section.
+RETAIL_BUZZ_TOP = 15
 #: Section headers, in the fixed order the owner set.
 SECTIONS: tuple[str, ...] = (
     "Regime",
@@ -95,6 +110,49 @@ class ScoutBrief(BaseModel):
     truncated: bool = False
 
 
+class RetailBuzzName(BaseModel):
+    """One ``retail_buzz`` name as the Scout reads it (code-built, context only)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ticker: str
+    reddit_rank: int | None = None
+    reddit_mentions: float | None = None
+    stocktwits_rank: int | None = None
+    in_trending: bool = Field(False, description="In today's trending tier (code, E13.19)")
+
+    @property
+    def n_inputs(self) -> int:
+        return int(self.reddit_rank is not None) + int(self.stocktwits_rank is not None)
+
+    def line(self) -> str:
+        """``- GME · reddit #1/1,234 mentions · stocktwits #4 · in trending tier y``."""
+        if self.reddit_rank is None:
+            reddit = "reddit —"
+        else:
+            m = self.reddit_mentions
+            reddit = f"reddit #{self.reddit_rank}" + (
+                f"/{m:,.0f} mentions" if m is not None else ""
+            )
+        st = (
+            "stocktwits —"
+            if self.stocktwits_rank is None
+            else f"stocktwits #{self.stocktwits_rank}"
+        )
+        flag = "y" if self.in_trending else "n"
+        return f"- {self.ticker} · {reddit} · {st} · in trending tier {flag}"
+
+
+class RetailBuzzView(BaseModel):
+    """The fresh ``retail_buzz`` entry, cut to the top :data:`RETAIL_BUZZ_TOP` names."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str
+    inputs: dict[str, str] = Field(default_factory=dict, description="input name -> status")
+    names: list[RetailBuzzName] = Field(default_factory=list)
+
+
 class ScoutInput(BaseModel):
     """Everything the Scout prompt is built from (recorded as the prompt inputs)."""
 
@@ -113,6 +171,19 @@ class ScoutInput(BaseModel):
     options_slow: dict[str, dict[str, Any] | None] = Field(default_factory=dict)
     options_as_of: dict[str, str | None] = Field(default_factory=dict)
     higher_tier: list[str] = Field(default_factory=list, description="core + momentum names")
+    # E13.20 (D58): retail_buzz as context only (None = no fresh entry: "no info")
+    retail_buzz: RetailBuzzView | None = None
+
+    @property
+    def categories_present(self) -> list[str]:
+        """The slow-feed categories with fresh input this run, in :data:`SCOUT_CATEGORIES`
+        order (a YouTube category needs one fresh brief; options_slow one fresh kind)."""
+        fresh = {
+            **{c.value: bool(self.present.get(c.value)) for c in YOUTUBE_CATEGORIES},
+            SourceCategory.OPTIONS_SLOW.value: any(v for v in self.options_slow.values()),
+            SourceCategory.RETAIL_BUZZ.value: self.retail_buzz is not None,
+        }
+        return [c.value for c in SCOUT_CATEGORIES if fresh[c.value]]
 
     @property
     def origins(self) -> frozenset[str]:
@@ -147,14 +218,16 @@ def scout_input_from_context(
     max_discovery: int,
     discovery_floor: float,
     higher_tier: Sequence[str] = (),
+    trending: Sequence[str] = (),
     now: _dt.datetime | None = None,
 ) -> ScoutInput:
     """Build the Scout's input from the snapshot (pure).
 
     *channels* is the ``youtube.briefs`` config (``[{slug, label, category}]``) so a
     missing channel is named. *max_age* maps each category (``youtube_macro``,
-    ``youtube_micro``, ``options_slow``) to its freshness window: an older entry is
-    "no fresh info", never read.
+    ``youtube_micro``, ``options_slow``, ``retail_buzz``) to its freshness window: an
+    older entry is "no fresh info", never read. *trending* = today's trending tier
+    (E13.20: marks ``in trending tier y`` in the retail-buzz section).
     """
     from arc.ingest.channels.daily import brief_presence_line, prompt_brief
 
@@ -208,6 +281,15 @@ def scout_input_from_context(
             continue
         options[kind] = dict(e.payload)
         options_as_of[kind] = str(e.payload.get("as_of") or "") or None
+    buzz_age = max_age.get(SourceCategory.RETAIL_BUZZ.value)
+    buzz_entry = snapshot.latest("retail_buzz", "all")
+    buzz = (
+        retail_buzz_view(buzz_entry.payload, trending=trending)
+        if buzz_entry is not None
+        and buzz_age is not None
+        and _fresh(buzz_entry.valid_from, as_of, buzz_age)
+        else None
+    )
     return ScoutInput(
         session=as_of.date().isoformat(),
         as_of=as_of.isoformat(),
@@ -222,6 +304,59 @@ def scout_input_from_context(
         options_slow=options,
         options_as_of=options_as_of,
         higher_tier=sorted(higher_tier),
+        retail_buzz=buzz,
+    )
+
+
+def retail_buzz_view(
+    payload: Mapping[str, Any], *, trending: Sequence[str] = (), top: int = RETAIL_BUZZ_TOP
+) -> RetailBuzzView:
+    """The top *top* ``retail_buzz`` names for the Scout's prompt (pure, code-built).
+
+    Ordered like the trending ranker (:func:`arc.universe.trending.rank_trending`, no
+    eligibility or tier exclusion here): names both inputs list first, then by the
+    rank-normalised score summed over the inputs, then ticker. ``in_trending`` is
+    ``True`` only for names in today's trending tier (*trending*); the Scout reads this
+    as context and never adds or removes a trending name.
+    """
+    from arc.context.kinds import RetailBuzzPayload
+    from arc.universe.trending import apewisdom_scores, rank_trending, stocktwits_scores
+
+    buzz = RetailBuzzPayload.model_validate(payload)
+    results = []
+    reddit: dict[str, tuple[int, float | None]] = {}
+    stocktwits: dict[str, int] = {}
+    for name, inp in buzz.inputs.items():
+        if inp.status != "ok" or not inp.rows:
+            continue
+        if inp.type == "apewisdom":
+            results.append(apewisdom_scores(name, inp))
+            for r in inp.rows:
+                reddit.setdefault(r.symbol, (r.rank or r.position, r.mentions))
+        else:
+            res = stocktwits_scores(name, inp)
+            results.append(res)
+            for r in inp.rows:
+                if r.symbol in res.raw:
+                    stocktwits.setdefault(r.symbol, r.rank or r.position)
+    ranked, _ = rank_trending(
+        results, enabled_count=max(len(buzz.inputs), 1), exclude={}, min_inputs_first=2
+    )
+    tier = {t.strip().upper() for t in trending}
+    names = [
+        RetailBuzzName(
+            ticker=r.ticker,
+            reddit_rank=reddit[r.ticker][0] if r.ticker in reddit else None,
+            reddit_mentions=reddit[r.ticker][1] if r.ticker in reddit else None,
+            stocktwits_rank=stocktwits.get(r.ticker),
+            in_trending=r.ticker in tier,
+        )
+        for r in ranked[: max(0, top)]
+    ]
+    return RetailBuzzView(
+        as_of=buzz.as_of,
+        inputs={n: i.status for n, i in buzz.inputs.items()},
+        names=names,
     )
 
 
@@ -264,12 +399,44 @@ def options_slow_lines(options: Mapping[str, Mapping[str, Any] | None]) -> list[
     return lines
 
 
+def category_line(inp: ScoutInput) -> str:
+    """``Categories: 3/4 present (youtube_macro, youtube_micro, options_slow; no fresh
+    info: retail_buzz)``: code-counted, in :data:`SCOUT_CATEGORIES` order."""
+    present = inp.categories_present
+    absent = [c.value for c in SCOUT_CATEGORIES if c.value not in present]
+    detail = ", ".join(present) or "none"
+    if absent:
+        detail += f"; no fresh info: {', '.join(absent)}"
+    return f"Categories: {len(present)}/{len(SCOUT_CATEGORIES)} present ({detail})"
+
+
+def retail_buzz_lines(view: RetailBuzzView | None) -> list[str]:
+    """E13.20 (D58): the code-built retail-buzz section (``no info`` when not fresh).
+
+    Context only: the trending tier is ranked by code (E13.19); the Scout cannot add or
+    remove a trending name and retail buzz alone never makes a discovery name.
+    """
+    if view is None:
+        return ["## Retail buzz (retail_buzz, Reddit + Stocktwits)", "- no info"]
+    inputs = ", ".join(f"{n} {s}" for n, s in view.inputs.items())
+    lines = [
+        f"## Retail buzz (as of {view.as_of}; Reddit + Stocktwits: crowd attention, context only)",
+        f"Inputs: {inputs}. Top {len(view.names)} by attention, names in both inputs first.",
+        "`in trending tier` is set by code; you cannot add or remove trending-tier names.",
+        "Buzz is a weak signal: never cite it alone as a thesis or a discovery reason.",
+    ]
+    lines += [n.line() for n in view.names] or ["- no names"]
+    return lines
+
+
 def build_scout_prompt(inp: ScoutInput) -> str:
     """The Scout's prompt (sections in the fixed order; schema appended by the caller)."""
     lines = [
         "You are the Scout, the daily slow-feed reader of Project Arc (options trading).",
         f"Session: {inp.session} (read at {inp.as_of}). You read the YouTube channel briefs",
-        "and the Cboe end-of-day options statistics below and write the morning read.",
+        "and the Cboe end-of-day options statistics below and write the morning read. The",
+        "retail buzz (Reddit + Stocktwits) is context only: corroborate it with a brief or",
+        "the options data before it shapes a call.",
         "",
         "Answer in these sections, in this order:",
         "1. Regime: the market regime the inputs describe (trend, volatility, breadth).",
@@ -282,6 +449,8 @@ def build_scout_prompt(inp: ScoutInput) -> str:
         "   are NOT already in the core or momentum tiers (listed below) and are not ETFs or",
         f"   index products. Only calls with confidence >= {inp.discovery_floor:.2f} qualify.",
         "6. Risks: up to 6 risks to the read.",
+        "",
+        category_line(inp),
         "",
         "## YouTube briefs (equal budget per category, then per channel present)",
     ]
@@ -298,6 +467,7 @@ def build_scout_prompt(inp: ScoutInput) -> str:
         "## Options (options_slow, Cboe end of day)",
         *options_slow_lines(inp.options_slow),
     ]
+    lines += ["", *retail_buzz_lines(inp.retail_buzz)]
     lines += [
         "",
         "## Already in a higher tier (never list these in discovery)",
@@ -416,6 +586,6 @@ def youtube_category_values() -> frozenset[str]:
 
 
 def category_max_ages(routines: Any) -> dict[str, Ttl]:
-    """``{youtube_macro, youtube_micro, options_slow: max_age}`` from the effective config."""
-    cats = (*YOUTUBE_CATEGORIES, SourceCategory.OPTIONS_SLOW)
-    return {c.value: routines.category_spec(c).max_age for c in cats}
+    """``{youtube_macro, youtube_micro, options_slow, retail_buzz: max_age}`` from the
+    effective config."""
+    return {c.value: routines.category_spec(c).max_age for c in SCOUT_CATEGORIES}

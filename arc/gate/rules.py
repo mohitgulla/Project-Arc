@@ -102,6 +102,7 @@ class RuleCode(StrEnum):
     BAND = "price_band"
     CLOSE_MISMATCH = "close_mismatch"
     MISSING_GREEKS = "missing_greeks"
+    MISSING_SPOT = "missing_spot"
     # D25 account profile (one code per sub-check; E7.4 reason codes reuse them)
     ACCOUNT_KIND = "account_profile_kind"
     ACCOUNT_NET_DEBIT = "account_profile_net_debit"
@@ -495,16 +496,33 @@ def check_wash_sale(
 
 
 def check_greek_caps(
-    proposal: Proposal, account: AccountSnapshot, portfolio: Portfolio, config: ArcSettings
+    proposal: Proposal,
+    account: AccountSnapshot,
+    portfolio: Portfolio,
+    market: MarketSnapshot,
+    config: ArcSettings,
 ) -> list[Violation]:
-    """Post-trade |net Δ| ≤ cap × equity/100 (share-eq); |ν| ≤ pct × equity ($/vol-pt)."""
+    """Post-trade |$Δ| ≤ pct × equity; |ν| ≤ pct × equity ($/vol-pt) (D57).
+
+    Dollar delta = the book's ``dollar_delta`` + the proposal's Δ (share-eq) × contracts
+    × its underlying's spot. Not beta-weighted. A missing or non-positive spot fails
+    closed (``missing_spot``); the vega check still runs.
+    """
     out: list[Violation] = []
     n = proposal.sizing.contracts
     g = proposal.structure.greeks
-    delta = _d(portfolio.greeks.delta + g.delta * n)
-    delta_cap = _d(config.portfolio_delta_cap) * account.equity / _HUNDRED
-    if abs(delta) > delta_cap:
-        out += _v(RuleCode.DELTA_CAP, f"post-trade |Δ| {abs(delta):.2f} > cap {delta_cap:.2f}")
+    root = parse_occ(proposal.structure.legs[0].occ_symbol).root
+    spot = market.underlying_spot.get(root)
+    if spot is None or spot <= 0:
+        out += _v(RuleCode.MISSING_SPOT, f"no spot for {root}: dollar delta unknown")
+    else:
+        dollar_delta = portfolio.dollar_delta + _d(g.delta) * n * spot
+        delta_cap = _d(config.portfolio_dollar_delta_cap_pct) * account.equity
+        if abs(dollar_delta) > delta_cap:
+            out += _v(
+                RuleCode.DELTA_CAP,
+                f"post-trade |$Δ| ${abs(dollar_delta):,.2f} > cap ${delta_cap:,.2f}",
+            )
     # vega is per 1.00 of sigma in share-equivalents -> /100 = dollars per vol point
     vega_usd = _d(portfolio.greeks.vega + g.vega * n) / _HUNDRED
     vega_cap = _d(config.portfolio_vega_cap_pct) * account.equity
@@ -771,7 +789,7 @@ class CapacityRejection(StrEnum):
     PORTFOLIO_CAP = "portfolio_cap"  # max open positions
     # D32: the daily order budget is used up. Typed like the capacity reasons so the
     # audit rows carry it, but closing a position frees no orders (it costs some), so
-    # risk.reallocate never pairs it (:func:`arc.positions.reallocate._frees`).
+    # a close-to-reallocate swap never pairs it (:func:`arc.positions.reallocate._frees`).
     ORDER_BUDGET = "order_budget"
 
 
@@ -837,7 +855,7 @@ def evaluate(
         violations += _run("daily_loss", lambda: check_daily_loss(a, c))
         violations += _run("max_open_positions", lambda: check_max_open_positions(pf, c))
         violations += _run("greeks_present", lambda: check_greeks_present(p))
-        violations += _run("greek_caps", lambda: check_greek_caps(p, a, pf, c))
+        violations += _run("greek_caps", lambda: check_greek_caps(p, a, pf, m, c))
     violations += _run("approval_ttl", lambda: check_approval_ttl(p, c, now))
     violations += _run("data_freshness", lambda: check_data_freshness(p, a, m, c, now))
     attempts = band.attempts if band is not None else 1 + c.execution_improvement_steps

@@ -30,10 +30,16 @@ Fork at any persona (E13.12, D56): `arc experiment start` computes each arm's pl
 `running` event: the loop step it forks at (any of `research`, `exits.mandatory`,
 `quant.exit`, `risk.exit`, `quant.open`, `risk.open`, `quant.revise`,
 `quant.propose`) and the non-loop personas it runs itself. An overlay touching
-`universe`, `personas.scout_feed` or `funnel.scout.*` gives the arm its own Scout; one
-touching `personas.scalp_*`, `funnel.scalp.*` or `categories.*` its own Scalp
+`universe` or `funnel.scout.*` gives the arm its own Scout; one touching
+`personas.scalp*`, `funnel.scalp.*` or `categories.*` its own Scalp
 (`experiments.runner.arm_personas` forces either for every arm). Preview without
 writing anything:
 
-    arc experiment start XP-5 --dry-run --db <db>
-    arc experiment arms-tick --dry-run --experiment XP-5 --now 2026-10-06T06:00-04:00 --db <db>
+    arc experiment start XP-<n> --dry-run --db <db>
+    arc experiment arms-tick --dry-run --experiment XP-<n> --now 2026-10-06T06:00-04:00 --db <db>
+
+Retired drafts (E13.15, D56 cutover): XP-4 (`research_idea_pool`), XP-5 (d56 vs d51
+universe), XP-6 (`research_compact_prompt`), XP-7 (`quant_risk_loop`), XP-8
+(`scalp_options_tape`) and XP-9 (`exit_path`) were never registered; the owner cut
+over to their treatments directly (2026-10-07) and the switches are gone. XP-5 is kept
+as a test fixture (`tests/fixtures/experiments/xp5_universe_screen.yaml`).

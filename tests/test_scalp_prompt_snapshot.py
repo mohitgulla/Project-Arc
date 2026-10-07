@@ -57,14 +57,13 @@ def test_flag_on_prompt_only_adds_the_tape_block() -> None:
 
 
 def test_xp8_draft_spec_and_flag_registry() -> None:
-    from arc.control.registry import lookup
+    from arc.control.registry import is_orphaned, lookup
     from arc.experiments.overlay import load_spec
     from arc.routines.config import PERSONA_FLAGS, load_routines
 
-    spec = load_spec(REPO / "config/experiments/live/xp8_scalp_options_tape.yaml")
-    assert spec.id == "XP-8"
-    assert spec.arms.treatment.overlay == {"routines": {"personas": {"scalp_options_tape": "on"}}}
-    assert "scalp_options_tape" in PERSONA_FLAGS
-    t = lookup("scalp_options_tape")
-    assert t.key == "personas.scalp_options_tape" and t.choices == ("off", "on")
-    assert load_routines(REPO / "config/routines.yaml").scalp_options_tape.enabled is False
+    # E13.15: XP-8 retired, the tape is always on
+    assert not (REPO / "config/experiments/live/xp8_scalp_options_tape.yaml").exists()
+    assert "scalp_options_tape" not in PERSONA_FLAGS
+    assert is_orphaned("personas.scalp_options_tape")
+    assert not hasattr(load_routines(REPO / "config/routines.yaml"), "scalp_options_tape")
+    del load_spec, lookup

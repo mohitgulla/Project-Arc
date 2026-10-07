@@ -1,4 +1,4 @@
-// E12.6 (D51): pure helpers for the Universe page (/ops/universe). The page shows the
+// E12.6 (D56 since E13.15): pure helpers for the Universe page (/ops/universe). The page shows the
 // stored resolve from `/api/ops/universe`; nothing here re-derives the dedupe or the cap.
 import type { components } from "./api.gen";
 
@@ -8,15 +8,15 @@ export type UniverseActive = Schemas["UniverseActiveRow"];
 export type UniverseTier = Schemas["UniverseTierRow"];
 export type UniverseDropped = Schemas["UniverseDroppedRow"];
 
-/** Tier precedence (core > momentum > trending > discovery), the page's section order. */
-export const TIER_ORDER = ["core", "momentum", "trending", "discovery"] as const;
+/** Tier precedence (D58: core > momentum > discovery > trending), the page's section order. */
+export const TIER_ORDER = ["core", "momentum", "discovery", "trending"] as const;
 
 /** `core` -> `Core` (Title Case labels, D48). */
 export function tierLabel(name: string): string {
   return name ? name[0]!.toUpperCase() + name.slice(1) : "—";
 }
 
-/** `Active 50/50 · Core 25 · Momentum 17 · Trending 0 · Discovery 8` (pinned header). */
+/** `Active 50/50 · Core 20 · Momentum 17 · Discovery 8` (pinned header). */
 export function summaryLine(u: Pick<Universe, "active" | "active_max" | "tiers">): string {
   const parts = [`Active ${u.active.length}/${u.active_max}`];
   for (const t of sortTiers(u.tiers)) parts.push(`${tierLabel(t.name)} ${t.active}`);
@@ -36,11 +36,9 @@ export function membersOf(active: UniverseActive[], tier: string): UniverseActiv
   return active.filter((m) => m.tier === tier).sort((a, b) => a.rank - b.rank);
 }
 
-/** Footer: which tiers refresh on their own jobs (D56: no trending; discovery = Scout). */
-export function refreshLine(model: string | null | undefined): string {
-  return model === "d56"
-    ? "momentum refreshes on its own job; discovery is written by the Scout."
-    : "momentum and trending refresh on their own jobs.";
+/** Footer: which tiers refresh on their own jobs (D56: discovery = Scout; D58: trending = retail buzz). */
+export function refreshLine(): string {
+  return "momentum refreshes on its own job; discovery is written by the Scout; trending is ranked daily from Reddit + Stocktwits.";
 }
 
 /** Plain words for a drop reason. */
@@ -53,9 +51,10 @@ export function dropLabel(reason: string): string {
   return DROP_LABEL[reason] ?? reason.replace(/_/g, " ");
 }
 
-/** A chip's detail lines: source, reason, `also in Momentum, Trending`. */
+/** A chip's detail lines: source, reason, `also in Momentum, Discovery`. */
 export function memberDetail(m: UniverseActive): string[] {
   const out = [`#${m.rank} in ${tierLabel(m.tier)} · source ${m.source || "—"}`];
+  if (m.inputs != null) out.push(m.inputs >= 2 ? "in both inputs" : "in one input");
   if (m.reason) out.push(m.reason);
   const also = m.also_in ?? [];
   if (also.length) out.push(`also in ${also.map(tierLabel).join(", ")}`);
@@ -93,7 +92,7 @@ export function coreOverrideWarning(value: unknown): string | null {
     : null;
 }
 
-/** E13.14 (D56): today's Scout discovery fill, `Discovery fill 8 / 20 today` (null under d51). */
+/** E13.14 (D56): today's Scout discovery fill, `Discovery fill 8 / 20 today` (null for a stored pre-cutover resolve). */
 export function discoveryFillLine(u: Pick<Universe, "discovery_fill" | "tiers">): string | null {
   if (u.discovery_fill == null) return null;
   const cap = u.tiers.find((t) => t.name === "discovery")?.size_cap;

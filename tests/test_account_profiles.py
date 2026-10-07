@@ -148,7 +148,9 @@ def gate(s: Structure, config: ArcSettings, account: AccountSnapshot | None = No
         account or acct(),
         Portfolio(),
         config,
-        market=MarketSnapshot(quotes=quotes_for(s), next_earnings={"SPY": None}),
+        market=MarketSnapshot(
+            quotes=quotes_for(s), next_earnings={"SPY": None}, underlying_spot={"SPY": D("580")}
+        ),
         now=NOW,
     )
 
@@ -437,7 +439,9 @@ class TestGateAccountProfile:
     def test_settled_cash_uses_band_worst_price(self) -> None:
         s = bull_call()
         p = proposal(s, limit_price=D("4.00"))
-        m = MarketSnapshot(quotes=quotes_for(s), next_earnings={"SPY": None})
+        m = MarketSnapshot(
+            quotes=quotes_for(s), next_earnings={"SPY": None}, underlying_spot={"SPY": D("580")}
+        )
         c = cfg()
         band = R.proposal_band(p, m, c)
         assert band.hi > D("4.00")
@@ -484,7 +488,11 @@ class TestGateAccountProfile:
             acct("0"),
             Portfolio(legs={k: -v for k, v in held.items()}),
             cfg(),
-            market=MarketSnapshot(quotes=quotes_for(close), next_earnings={"SPY": None}),
+            market=MarketSnapshot(
+                quotes=quotes_for(close),
+                next_earnings={"SPY": None},
+                underlying_spot={"SPY": D("580")},
+            ),
             now=NOW,
             closing=True,
         )

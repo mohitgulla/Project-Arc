@@ -254,10 +254,8 @@ def _age_basis(raw: Any) -> AgeBasis:
 
 
 def _feed(raw: Any) -> Feed:
-    """D54: a source's ``feed:`` (default ``scalp``; config load validates it vs cadence).
-
-    D56: the pre-rename ``feed: sweep`` still reads as ``scalp`` for one release."""
-    if raw is None or raw in ("scalp", "sweep"):
+    """D54: a source's ``feed:`` (default ``scalp``; config load validates it vs cadence)."""
+    if raw is None or raw == "scalp":
         return "scalp"
     if raw == "scout":
         return "scout"

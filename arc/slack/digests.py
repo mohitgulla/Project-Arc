@@ -57,6 +57,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ExecutionResult",
     "Performance",
+    "TrendingFact",
     "research_card",
     "quant_card",
     "exits_mandatory_summary",
@@ -242,7 +243,6 @@ def scalp_card(
     run_id: str | None = None,
     chain_run_id: str | None = None,
     reject_details: Mapping[str, str] | None = None,
-    new_tickers: Sequence[str] = (),
     source_mix: Sequence[tuple[str, int, int]] = (),
     stories: int | None = None,
     category_mix: Sequence[CategoryMix] = (),
@@ -253,8 +253,7 @@ def scalp_card(
     """``⚡ [Scalp] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
     No source links (owner, E5.5 review): the row carries the Scalp's one-line
-    rationale and a source count; the URLs stay in the audit store. D28: non-seed
-    tickers admitted by the liquidity screen are tagged ``new``; universe rejects
+    rationale and a source count; the URLs stay in the audit store. Universe rejects
     (``illiquid`` etc.) are grouped by reason under Rejected with the failed checks.
     D30 (E4.5): a *Source mix* fact (docs read per source, over-budget counts) and
     the story count; each candidate shows how many distinct sources back it.
@@ -262,21 +261,19 @@ def scalp_card(
     Scalp, never read) is one ``Filtered`` line under the source mix.
     D56 (E13.4): *mentions* (ideas for names in no tier, ``not_in_tier``) are listed
     under *Outside the universe*, never as candidates, and not repeated under Rejected.
-    E13.10: *tape_line* (``Options tape: VIX 17.6 · 9D/30D 0.94 · n tickers``, flag
-    on only) sits under the source mix; mentions render ``Outside the universe (n):
-    X (bullish), Y (bearish)``.
+    E13.10: *tape_line* (``Options tape: VIX 17.6 · 9D/30D 0.94 · n tickers``) sits
+    under the source mix; mentions render ``Outside the universe (n): X (bullish),
+    Y (bearish)``.
     """
     title = f"{_SCALP} Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
     if mentions:  # D56: listed once, under Outside the universe
         rejected = {k: n for k, n in rejected.items() if k != "not_in_tier"}
         rejected_items = {k: v for k, v in (rejected_items or {}).items() if k != "not_in_tier"}
     n_rej = sum(rejected.values())
-    new = set(new_tickers)
     blocks = _head(
         title,
         f"*{accepted}* accepted this run",
         (f"{stories} stor{'y' if stories == 1 else 'ies'}" if stories is not None else ""),
-        f"{len(new)} new (screened)" if new else "",
         f"{n_rej} rejected",
         f"{len(mentions)} outside the universe" if mentions else "",
         f":warning: {failed_batches} failed batch{'es' if failed_batches != 1 else ''}"
@@ -304,9 +301,8 @@ def scalp_card(
         )
         if c.corroboration is not None:
             facts += f" · {_plural(c.corroboration, 'source')}"
-        tag = " · new, passed liquidity screen" if c.ticker in new else ""
         why = (rationales or {}).get(c.ticker, "").strip()
-        lines = [f"*{B.esc(c.ticker)}*", facts + tag]
+        lines = [f"*{B.esc(c.ticker)}*", facts]
         if why:
             lines.append(B.esc(why))
         blocks.append(B.divider())
@@ -343,6 +339,24 @@ def scalp_card(
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 
 
+class TrendingFact(BaseModel):
+    """E13.20 (D58): today's trending tier as the Scout card shows it (code counts)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    names: int = Field(..., ge=0, description="Names in the trending tier today")
+    size: int = Field(..., ge=0, description="universe_trending_size (25)")
+    both: int = Field(0, ge=0, description="Tier names both retail_buzz inputs listed")
+    active: int = Field(0, ge=0, description="Trending names that made the active list")
+
+    def line(self) -> str:
+        """``Trending: 23/25 (11 both-source) · 17 in active list``."""
+        return (
+            f"Trending: {self.names}/{self.size} ({self.both} both-source) · "
+            f"{self.active} in active list"
+        )
+
+
 def scout_card(
     *,
     read: ScoutReadPayload,
@@ -352,13 +366,15 @@ def scout_card(
     dropped_calls: Mapping[str, str] | None = None,
     run_id: str | None = None,
     chain_run_id: str | None = None,
+    trending: TrendingFact | None = None,
 ) -> CardView:
     """``🔭 [Scout] Daily read: Discovery n/20`` (E13.7; E13.13 bold sections).
 
     *read* is the run's :class:`~arc.context.kinds.ScoutReadPayload`: the sections
     verbatim (``*Regime:*`` · ``*Options sentiment:*`` · ``*Themes:*`` ·
     ``*Discovery (n/20):*`` · ``*Risks:*``, no second summary), a ``Discovery: n/N``
-    fact, the code-counted inputs and a
+    fact, the code-counted inputs, the trending tier fact (E13.20,
+    ``Trending: n/25 (k both-source) · m in active list``) and a
     one-line under-fill notice below ``funnel.scout.min_discovery_alert``.
     """
     fill = int(read.discovery_fill)
@@ -374,6 +390,7 @@ def scout_card(
         f"{_plural(len(read.ticker_calls), 'ticker call')}",
         f"{_plural(candidates, 'candidate')}",
         briefs,
+        trending.line() if trending is not None else "",
     )
     if fill < min_discovery_alert:
         blocks.append(
@@ -412,6 +429,7 @@ def scout_card(
         *(f"{m} (macro)" for m in inp.youtube_macro.missing),
         *(f"{m} (micro)" for m in inp.youtube_micro.missing),
         *(k for k in ("options_daily", "vx_curve", "vol_term") if getattr(inp, k) is None),
+        *(["retail_buzz"] if trending is not None and inp.retail_buzz is None else []),
     ]
     if missing:
         blocks.append(B.summary(B.clip("No fresh input: " + ", ".join(B.esc(m) for m in missing))))
@@ -510,8 +528,7 @@ def research_card(
     ``evidence`` is ticker → a pre-escaped one-line summary of the upstream Scalp
     data (stance, catalyst, confidence, sources) shown under the thesis.
     ``exits`` is the stored exit watchlist (E13.17): one ``*Exits:*`` line per item,
-    ``Exits: none open`` for an empty list, no section at all for ``None``
-    (``personas.exit_path: deterministic``).
+    ``Exits: none open`` for an empty list, no section at all for ``None``.
     """
     regime = regime_name(out.market_regime)
     ranked = sorted(out.shortlist, key=lambda i: i.rank)
@@ -612,7 +629,7 @@ def research_card(
                 ],
             )
         )
-    # -- Exits (E13.17 watchlist; absent under exit_path deterministic) ------------
+    # -- Exits (E13.17 watchlist) ----------------------------------------------------
     if exits is not None:
         blocks.append(B.divider())
         blocks.append(_exits_section(exits))
@@ -857,7 +874,7 @@ def risk_card(
 ) -> CardView:
     """``🛡️ [Risk] Review: SPY Moderate • 14 Contracts``; one section per assessment.
 
-    E13.9: ``verdicts=True`` (``personas.quant_risk_loop: on``) adds a verdict chip per
+    E13.9: ``verdicts=True`` (the Quant <-> Risk open path) adds a verdict chip per
     assessment (Accept / Revise: <reason> / Reject) and a count line in the header.
 
     ``sized`` is the deterministic D18 result per ``(ticker, structure_type)``
@@ -989,7 +1006,7 @@ def _exit_case_line(c: ExitCase) -> str:
 def quant_exit_card(
     cases: Sequence[ExitCase],
     *,
-    shadow: bool = True,
+    shadow: bool = False,
     skipped: Mapping[str, int] | None = None,
     run_id: str | None = None,
     chain_run_id: str | None = None,

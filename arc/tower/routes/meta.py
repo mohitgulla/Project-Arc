@@ -140,7 +140,7 @@ def meta(cfg: Tower) -> MetaResponse:
         lookback_days=cfg.lookback_days,
         cadences=cadences(routines),
         gate_caps=GateCaps(
-            portfolio_delta_cap=settings.portfolio_delta_cap,
+            portfolio_dollar_delta_cap_pct=settings.portfolio_dollar_delta_cap_pct,
             portfolio_vega_cap_pct=settings.portfolio_vega_cap_pct,
         ),
         personas=persona_catalogue(routines),

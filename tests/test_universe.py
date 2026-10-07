@@ -30,12 +30,13 @@ from arc.universe import (
 from arc.universe.config import ExtractionConfig, SymbolMasterConfig
 from arc.universe.guard import (
     REJECT_ILLIQUID,
-    REJECT_NEW_TICKER_CAP,
+    REJECT_NOT_IN_TIER,
     REJECT_NOT_IN_UNIVERSE,
     REJECT_UNKNOWN_SYMBOL,
 )
 from arc.universe.ingest import IngestUniverse
 from arc.universe.master import build_symbol_master, normalize_symbol
+from arc.universe.tiers import Tier
 from arc.utils.calendar import ET
 
 NOW = dt.datetime(2026, 9, 28, 9, 0, tzinfo=ET)
@@ -287,18 +288,21 @@ class TestScreen:
 # -- guard ---------------------------------------------------------------------------
 
 
-def _fixture_guard(**kw: Any) -> UniverseGuard:
+def _fixture_guard(*, discovery: tuple[str, ...] = (), **kw: Any) -> UniverseGuard:
+    """Fixture guard; *discovery* names are put in the discovery tier (loose screen)."""
     md = RecordedMarketData.from_files(*MULTI_NAME_FIXTURES)
-    return fixture_universe_guard(_settings(**kw), FIXTURE_NOW, md)
+    g = fixture_universe_guard(_settings(**kw), FIXTURE_NOW, md)
+    g.tiers |= dict.fromkeys(discovery, Tier.DISCOVERY)
+    return g
 
 
 class TestGuard:
     def test_seed_mode(self) -> None:
-        g = _fixture_guard()
+        g = _fixture_guard(discovery=("PLTR", "UFPT"))
         assert g.admit("NVDA") is None  # seed, never screened
         assert "NVDA" not in g.screens
         assert g.admit("PLTR") is None
-        assert g.admitted_new == ["PLTR"]
+        assert g.admitted_tier == ["PLTR"]
         assert g.admit("pltr") is None  # counted once
         assert g.admit("UFPT") == REJECT_ILLIQUID
         assert "ADV" in g.details["UFPT"]
@@ -310,10 +314,10 @@ class TestGuard:
         assert g.admit("PLTR") == REJECT_NOT_IN_UNIVERSE
         assert not g.screens  # strict never measures
 
-    def test_new_ticker_cap(self) -> None:
-        g = _fixture_guard(scalp_max_new_tickers=0)
-        assert g.admit("PLTR") == REJECT_NEW_TICKER_CAP
-        assert g.admit("NVDA") is None  # seed names never count
+    def test_listed_name_in_no_tier_is_a_mention(self) -> None:
+        g = _fixture_guard()
+        assert g.admit("PLTR") == REJECT_NOT_IN_TIER  # D56: no new-ticker path
+        assert g.mentions == ["PLTR"] and not g.screens
 
     def test_no_master_fails_closed(self, tmp_path: Path) -> None:
         g = UniverseGuard.from_settings(_settings(), now=NOW)  # hermetic: no cache
@@ -331,6 +335,7 @@ class TestGuard:
         g = UniverseGuard.from_settings(
             _settings(), now=FIXTURE_NOW, master=master, market_factory=broken
         )
+        g.tiers["PLTR"] = Tier.DISCOVERY
         assert g.admit("PLTR") == REJECT_ILLIQUID
         assert "no market data" in g.details["PLTR"]
 
@@ -342,6 +347,7 @@ class TestGuard:
         g = UniverseGuard.from_settings(
             _settings(), now=FIXTURE_NOW, master=master, market_factory=lambda: md
         )
+        g.tiers["PLTR"] = Tier.DISCOVERY
         assert g.admit("PLTR") == REJECT_ILLIQUID
         assert not g.screens
 
@@ -385,8 +391,8 @@ class TestIngestUniverse:
 def test_universe_config_file_override(tmp_path: Path) -> None:
     path = tmp_path / "u.yaml"
     raw = Path("config/universe.yaml").read_text()
-    path.write_text(raw.replace("min_atm_open_interest: 500", "min_atm_open_interest: 7"))
-    assert load_universe_config(path).liquidity_screen.strict.min_atm_open_interest == 7
+    path.write_text(raw.replace("min_atm_open_interest: 250", "min_atm_open_interest: 7"))
+    assert load_universe_config(path).liquidity_screen.standard.min_atm_open_interest == 7
 
 
 def test_fixture_master_is_valid() -> None:
@@ -450,8 +456,11 @@ def test_cli_check_fixture(capsys: pytest.CaptureFixture[str]) -> None:
     rows = {r["ticker"]: r for r in json.loads(capsys.readouterr().out)}
     assert rc == 1
     assert rows["NVDA"]["admitted"] and rows["PLTR"]["admitted"]
-    assert rows["UFPT"]["reject"] == "illiquid"
+    assert rows["UFPT"]["reject"] == "not_in_tier"  # D56: in no tier = a mention
     assert rows["ZZZQ"]["reject"] == "unknown_symbol"
+    main(["universe", "check", "--fixture", "--json", "--profile", "loose", "UFPT"])
+    (ufpt,) = json.loads(capsys.readouterr().out)
+    assert ufpt["screen_passed"] is False and "ADV" in ufpt["detail"]
 
 
 def test_cli_status_missing(capsys: pytest.CaptureFixture[str]) -> None:

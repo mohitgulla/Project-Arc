@@ -37,7 +37,7 @@ YAML = """
       edgar: {every: 15m, window: "06:00-09:00", days: trading}
     personas:
       research: {every: 5m, window: "09:40-15:50", days: trading, ttl: 5m}
-      auditor: {schedule: ["16:30"], days: trading, ttl: 6h}
+      broker.reconcile: {schedule: ["16:30"], days: trading, ttl: 6h}
     monitoring:
       gateway: {enabled: false}
 """
@@ -408,7 +408,7 @@ def test_slot_rollup_line(conn: sqlite3.Connection) -> None:
     for s in [et(6, 0) + dt.timedelta(minutes=15 * i) for i in range(13)]:
         if s not in gap:
             run(conn, "edgar", s)
-    covs = checks.slot_rollup(conn, cfg(), et(16, 30))  # auditor 16:30 not closed yet
+    covs = checks.slot_rollup(conn, cfg(), et(16, 30))  # broker.reconcile 16:30 not closed yet
     by = {c.job: c for c in covs}
     assert set(by) == {"research", "edgar"}
     assert by["research"].text == "73/75" and by["edgar"].text == "11/13"

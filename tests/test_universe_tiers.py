@@ -1,4 +1,5 @@
-"""D51 tiered universe (E12.1): tier model, resolver, active list, consumers."""
+"""Tiered universe (E12.1, D56 layout since E13.15): tier model, resolver, active list,
+consumers."""
 
 from __future__ import annotations
 
@@ -163,21 +164,23 @@ class TestCoreConfig:
         cfg = load_universe_config(REPO / "config" / "universe.yaml")
         assert not set(cfg.core) & KNOWN_ETFS
         assert cfg.tiers.market_reference is None  # the model default
-        assert cfg.tiers.reference() == ["SPY", "QQQ"]  # d51
-        assert market_reference(_settings()) == ["SPY", "QQQ"]
+        assert cfg.tiers.reference() == ["SPY", "QQQ", "IWM"]
+        assert market_reference(_settings()) == ["SPY", "QQQ", "IWM"]
 
     def test_tier_order_fixed(self) -> None:
         from arc.universe.config import TiersConfig
 
-        assert [t.value for t in TIER_ORDER] == ["core", "momentum", "trending", "discovery"]
+        # D58 (E13.19): trending is the 4th tier
+        assert [t.value for t in TIER_ORDER] == ["core", "momentum", "discovery", "trending"]
         with pytest.raises(ValueError, match="fixed"):
-            TiersConfig(order=["momentum", "core", "trending", "discovery"])  # type: ignore[list-item]
+            TiersConfig(order=["momentum", "core", "discovery", "trending"])
 
     def test_registry_keys_and_ceiling(self) -> None:
-        assert MAX_UNIVERSE == MAX_CORE == 30
+        assert MAX_UNIVERSE == MAX_CORE == 25  # D58: every tier capped at 25
         for key, default in (
             ("universe_active_max", 50),
-            ("universe_momentum_size", 25),
+            ("universe_momentum_size_d56", 20),
+            ("universe_discovery_size", 25),
             ("universe_trending_size", 25),
         ):
             assert key in REGISTRY
@@ -218,20 +221,18 @@ class TestResolveActive:
     def test_dedupe_keeps_highest_tier_and_records_also_in(self) -> None:
         a = resolve_active(
             core=_tier(Tier.CORE, ["NVDA", "AAPL"]),
-            momentum=_tier(Tier.MOMENTUM, ["NVDA", "LRCX"]),
-            trending=_tier(Tier.TRENDING, ["LRCX", "NVDA", "RKLB"]),
-            discoveries=_tier(Tier.DISCOVERY, ["RKLB", "CRWD"]),
+            momentum=_tier(Tier.MOMENTUM, ["NVDA", "LRCX", "RKLB"]),
+            discoveries=_tier(Tier.DISCOVERY, ["LRCX", "NVDA", "CRWD"]),
             active_max=50,
             as_of=DAY,
         )
         assert a.tickers == ["NVDA", "AAPL", "LRCX", "RKLB", "CRWD"]
         by = {m.ticker: m for m in a.members}
         assert by["NVDA"].tier is Tier.CORE
-        assert by["NVDA"].also_in == [Tier.MOMENTUM, Tier.TRENDING]
-        assert by["LRCX"].tier is Tier.MOMENTUM and by["LRCX"].also_in == [Tier.TRENDING]
-        assert by["RKLB"].also_in == [Tier.DISCOVERY]
-        assert a.counts == {"core": 2, "momentum": 1, "trending": 1, "discovery": 1}
-        assert a.raw_counts == {"core": 2, "momentum": 2, "trending": 3, "discovery": 2}
+        assert by["NVDA"].also_in == [Tier.MOMENTUM, Tier.DISCOVERY]
+        assert by["LRCX"].tier is Tier.MOMENTUM and by["LRCX"].also_in == [Tier.DISCOVERY]
+        assert a.counts == {"core": 2, "momentum": 2, "discovery": 1, "trending": 0}
+        assert a.raw_counts == {"core": 2, "momentum": 3, "discovery": 3, "trending": 0}
         assert a.dropped == []
 
     def test_rank_order_normalisation_and_in_tier_duplicates(self) -> None:
@@ -250,22 +251,25 @@ class TestResolveActive:
             tier_sizes={Tier.MOMENTUM: 2},
             as_of=DAY,
         )
-        # NVDA (deduped into core) does not use a momentum slot
-        assert a.tier_tickers(Tier.MOMENTUM) == ["A1", "A2"]
-        assert [(d.ticker, d.reason) for d in a.dropped] == [("A3", DROP_OVER_TIER_SIZE)]
+        # D56: the tier takes the feed's top N before dedupe, so NVDA (deduped into
+        # core) still uses a momentum slot
+        assert a.tier_tickers(Tier.MOMENTUM) == ["A1"]
+        assert [(d.ticker, d.reason) for d in a.dropped] == [
+            ("A2", DROP_OVER_TIER_SIZE),
+            ("A3", DROP_OVER_TIER_SIZE),
+        ]
 
     def test_active_cap_cuts_lowest_tier_last_rank_first(self) -> None:
         a = resolve_active(
             core=_tier(Tier.CORE, [f"C{i}" for i in range(25)]),
             momentum=_tier(Tier.MOMENTUM, [f"M{i}" for i in range(20)]),
-            trending=_tier(Tier.TRENDING, [f"T{i}" for i in range(10)]),
-            discoveries=_tier(Tier.DISCOVERY, ["D0", "D1"]),
+            discoveries=_tier(Tier.DISCOVERY, [f"D{i}" for i in range(7)]),
             active_max=50,
             as_of=DAY,
         )
         assert len(a.members) == 50
-        assert a.counts == {"core": 25, "momentum": 20, "trending": 5, "discovery": 0}
-        assert [d.ticker for d in a.dropped] == ["T5", "T6", "T7", "T8", "T9", "D0", "D1"]
+        assert a.counts == {"core": 25, "momentum": 20, "discovery": 5, "trending": 0}
+        assert [d.ticker for d in a.dropped] == ["D5", "D6"]
         assert {d.reason for d in a.dropped} == {DROP_OVER_ACTIVE_CAP}
 
     def test_payload_round_trips(self) -> None:
@@ -280,7 +284,6 @@ _SYMS = st.sampled_from([f"S{i}" for i in range(40)])
 @given(
     core=st.lists(_SYMS, max_size=30),
     mom=st.lists(_SYMS, max_size=30),
-    trend=st.lists(_SYMS, max_size=30),
     disc=st.lists(_SYMS, max_size=30),
     cap=st.integers(min_value=1, max_value=60),
     msize=st.integers(min_value=0, max_value=30),
@@ -288,7 +291,6 @@ _SYMS = st.sampled_from([f"S{i}" for i in range(40)])
 def test_resolver_properties(
     core: list[str],
     mom: list[str],
-    trend: list[str],
     disc: list[str],
     cap: int,
     msize: int,
@@ -296,7 +298,6 @@ def test_resolver_properties(
     kw: dict[str, Any] = {
         "core": _tier(Tier.CORE, core),
         "momentum": _tier(Tier.MOMENTUM, mom),
-        "trending": _tier(Tier.TRENDING, trend),
         "discoveries": _tier(Tier.DISCOVERY, disc),
         "active_max": cap,
         "tier_sizes": {Tier.MOMENTUM: msize},
@@ -310,12 +311,12 @@ def test_resolver_properties(
     idx = [TIER_ORDER.index(m.tier) for m in a.members]
     assert idx == sorted(idx)
     # every name any tier offered is either active or listed in dropped (no silent loss)
-    offered = set(core) | set(mom) | set(trend) | set(disc)
+    offered = set(core) | set(mom) | set(disc)
     assert offered == set(tickers) | {d.ticker for d in a.dropped}
     assert not set(tickers) & {d.ticker for d in a.dropped}
     # a name keeps its highest tier (momentum may lose it to its size cut)
     for m in a.members:
-        tiers = (core, mom, trend, disc)
+        tiers = (core, mom, disc)
         first = next(t for t, names in zip(TIER_ORDER, tiers, strict=True) if m.ticker in names)
         if first is not Tier.MOMENTUM:
             assert m.tier is first
@@ -337,24 +338,23 @@ class TestStore:
         assert active_tickers(db, _settings(), NOW) == CORE_20  # nothing stored yet
         assert active_tickers(None, _settings(), NOW) == CORE_20
 
-    def test_feeds_discoveries_and_expiry(self, db: sqlite3.Connection) -> None:
+    def test_feeds_and_expiry(self, db: sqlite3.Connection) -> None:
         week_ago = NOW - dt.timedelta(days=7)
         _write_tier(
             db, Tier.MOMENTUM, ["NVDA", "LRCX", "KLAC"], at=NOW - dt.timedelta(hours=1), ttl="8d"
         )
-        _write_tier(db, Tier.TRENDING, ["RKLB"], at=week_ago, ttl="1 session")  # expired
-        _candidate(db, "CRWD", 0.7)
-        _candidate(db, "LRCX", 0.9)  # already momentum: not a discovery
-        _candidate(db, "SNOW", 0.7, corr=3)  # same confidence, more corroboration first
+        _write_tier(db, Tier.DISCOVERY, ["RKLB"], at=week_ago, ttl="1 session")  # expired
+        _write_tier(db, Tier.TRENDING, ["PLUG"], at=NOW, ttl="8d")  # D58: the 4th tier
+        _candidate(db, "CRWD", 0.7)  # a Scalp candidate is never a discovery (D56)
         a, inputs = build_active(db, _settings(), NOW)
-        assert inputs.expired_tiers == [Tier.TRENDING]
-        assert a.expired_tiers == [Tier.TRENDING]
+        assert inputs.expired_tiers == [Tier.DISCOVERY]
+        assert a.expired_tiers == [Tier.DISCOVERY]
         assert a.tier_tickers(Tier.MOMENTUM) == ["LRCX", "KLAC"]
-        assert a.tier_tickers(Tier.TRENDING) == []
-        assert a.tier_tickers(Tier.DISCOVERY) == ["SNOW", "CRWD"]
+        assert a.tier_tickers(Tier.DISCOVERY) == []
+        assert a.tier_tickers(Tier.TRENDING) == ["PLUG"] and "CRWD" not in a.tickers
         assert next(m for m in a.members if m.ticker == "NVDA").also_in == [Tier.MOMENTUM]
-        # Scalp admission: core ∪ momentum skip the screen; trending/discovery do not
-        assert seed_tickers(db, _settings(), NOW) == [*CORE_20, "LRCX", "KLAC"]
+        # Scalp admission: only core skips the screen
+        assert seed_tickers(db, _settings(), NOW) == CORE_20
 
     def test_record_writes_entry_and_journals_overflow_once(self, db: sqlite3.Connection) -> None:
         s = _settings(universe_active_max=21)
@@ -393,8 +393,8 @@ class TestStore:
         tomorrow = NOW + dt.timedelta(days=1)
         assert active_tickers(db, s, tomorrow.replace(hour=4)) == CORE_20
 
-    def test_watch_list_excludes_discoveries(self, db: sqlite3.Connection) -> None:
-        _candidate(db, "CRWD", 0.7)
+    def test_watch_list_includes_discovery(self, db: sqlite3.Connection) -> None:
+        _write_tier(db, Tier.DISCOVERY, ["CRWD"], at=NOW - dt.timedelta(hours=1), ttl="1d")
         store = ContextStore(db)
         a, _ = build_active(db, _settings(), NOW)
         record_active(
@@ -406,7 +406,7 @@ class TestStore:
             ),
         )
         assert active_tickers(db, _settings(), NOW)[-1] == "CRWD"
-        assert "CRWD" not in watch_tickers(db, _settings(), NOW)
+        assert watch_tickers(db, _settings(), NOW)[-1] == "CRWD"  # D56: the Scalp reads it
 
 
 class TestIngestUniverse:
@@ -416,7 +416,7 @@ class TestIngestUniverse:
         s = _settings(universe_mode="strict")
         uni = IngestUniverse.from_settings(s, now=NOW, conn=db)
         assert list(uni.seed) == CORE_20
-        assert uni.reference == ("SPY", "QQQ")
+        assert uni.reference == ("SPY", "QQQ", "IWM")
         assert not uni.is_seed("SPY")
         assert uni.tickers_in("SPY and NVDA rallied") == ["NVDA", "SPY"]
         assert "SPY" in uni.mention_universe("SPY")
@@ -428,7 +428,7 @@ def test_cli_tiers_reads_store_read_only(
     from arc.cli import main
 
     _write_tier(db, Tier.MOMENTUM, ["NVDA", "LRCX"], at=NOW, ttl="8d")
-    _candidate(db, "CRWD", 0.7)
+    _write_tier(db, Tier.DISCOVERY, ["CRWD"], at=NOW, ttl="1d")
     db.close()
     path = tmp_path / "arc.db"
     before = path.stat().st_mtime_ns
@@ -441,8 +441,8 @@ def test_cli_tiers_reads_store_read_only(
         {"ticker": "CRWD", "tier": "discovery", "rank": 1, "reason": out["active"][-1]["reason"]},
     ]
     assert out["dedupe"] == {"NVDA": ["momentum"]}
-    assert out["market_reference"] == ["SPY", "QQQ"]
+    assert out["market_reference"] == ["SPY", "QQQ", "IWM"]
     assert out["active_count"] == 22
-    assert out["model"] == "d51"
+    assert out["model"] == "d56"
     assert path.stat().st_mtime_ns == before  # wrote nothing
     assert main(["universe", "tiers", "--db", str(tmp_path / "missing.db")]) == 1

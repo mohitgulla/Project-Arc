@@ -337,7 +337,7 @@ def ticker_scope(
     etfs: frozenset[str] = frozenset(),
 ) -> TickerScope:
     """Open-structure underlyings ∪ live ``candidate`` subjects ∪ *tiers* (in their
-    given order, D51: core, momentum, trending), ETFs skipped, capped at *max_tickers*
+    given order: core, momentum, discovery), ETFs skipped, capped at *max_tickers*
     in that order: the names being traded get context first (E12.4)."""
     from arc.context.store import ContextStore
     from arc.universe.tiers import open_underlyings

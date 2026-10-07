@@ -80,7 +80,7 @@ class Target(StrEnum):
     ROUTINES = "routines"  # config/routines.yaml
     RANKING = "ranking"  # config/ranking.yaml (E6.4a: live Net EV floor)
     EXPERIMENTS = "experiments"  # config/experiments.yaml (E10.1: forward A/B defaults)
-    UNIVERSE = "universe"  # config/universe.yaml (E12.4: relaxed liquidity screen)
+    UNIVERSE = "universe"  # config/universe.yaml (liquidity screens, D56)
 
 
 class ValueType(StrEnum):
@@ -285,7 +285,7 @@ PROFILE_ORDER: tuple[str, ...] = ("cash_long_only", "cash_debit", "margin")  # s
 RANK_MENU_BY: tuple[str, ...] = ("scanner", "managed_net_ev", "rorc_day", "vrp")
 STOP_BASES: tuple[str, ...] = ("pct_max_loss", "pct_debit", "credit_multiple")
 
-MAX_UNIVERSE = 30  # D51: hard ceiling on the core list (arc.universe.tiers.MAX_CORE)
+MAX_UNIVERSE = 25  # D58: hard ceiling on the core list (arc.universe.tiers.MAX_CORE)
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.]{0,9}$")
 _USER_RE = re.compile(r"^[UW][A-Z0-9]{6,20}$")
 # Only `enabled` and `cadence` of a routine are tunable at runtime. `lane` (D39) and
@@ -393,7 +393,7 @@ _STATIC: tuple[Tunable, ...] = (
         Group.UNIVERSE,
         ValueType.TICKERS,
         "Core tier (D56: 20 names, no ETFs): always scanned and accepted, no liquidity "
-        "screen. The active list adds momentum, trending (D51 only) and discoveries (cap "
+        "screen. The active list adds momentum and discovery (cap "
         "universe_active_max). '+NVDA,-TSLA' edits the list; added tickers must be "
         "optionable.",
         Risk.GROW,
@@ -403,35 +403,13 @@ _STATIC: tuple[Tunable, ...] = (
         "universe_active_max",
         Group.UNIVERSE,
         _I,
-        "D51: the deduped active list (core > momentum > trending > discovery) is capped "
+        "D56: the deduped active list (core > momentum > discovery) is capped "
         "at this many names; the rest are journaled universe:over_active_cap.",
         Risk.UP,
         min=1,
         max=60,
         hard_ceiling=60,
     ),
-    _s(
-        "universe_momentum_size",
-        Group.UNIVERSE,
-        _I,
-        "D51: momentum tier size (top N S&P 500 Momentum holdings, refreshed monthly).",
-        Risk.UP,
-        min=0,
-        max=50,
-        hard_ceiling=50,
-    ),
-    _s(
-        "universe_trending_size",
-        Group.UNIVERSE,
-        _I,
-        "D51: trending tier size (daily rules-based list). Unused under "
-        "universe.tiers.model d56 (no trending tier).",
-        Risk.UP,
-        min=0,
-        max=50,
-        hard_ceiling=50,
-    ),
-    # D56 (E13.4): three tiers; read only under universe.tiers.model d56.
     _s(
         "universe_momentum_size_d56",
         Group.UNIVERSE,
@@ -446,11 +424,21 @@ _STATIC: tuple[Tunable, ...] = (
         "universe_discovery_size",
         Group.UNIVERSE,
         _I,
-        "D56: discovery tier size (the Scout's YouTube calls, ranked).",
+        "D58: discovery tier size (the Scout's YouTube calls, ranked).",
         Risk.UP,
         min=0,
-        max=50,
-        hard_ceiling=50,
+        max=25,
+        hard_ceiling=25,
+    ),
+    _s(
+        "universe_trending_size",
+        Group.UNIVERSE,
+        _I,
+        "D58: trending tier size (the daily Reddit + Stocktwits ranking).",
+        Risk.UP,
+        min=0,
+        max=25,
+        hard_ceiling=25,
     ),
     _s(
         "universe_floor_core",
@@ -461,6 +449,8 @@ _STATIC: tuple[Tunable, ...] = (
         min=0.30,
         max=0.95,
         hard_ceiling=0.30,
+        # E13.15: the single D51 Scalp floor (and its pre-rename keys) became per tier
+        aliases=("scalp_min_confidence", "sweep_min_confidence", "scout_min_confidence"),
     ),
     _s(
         "universe_floor_momentum",
@@ -482,42 +472,24 @@ _STATIC: tuple[Tunable, ...] = (
         max=0.95,
         hard_ceiling=0.30,
     ),
-    # D56 (E13.4, D44 strategy lane): which tier layout the resolver and the Scalp's
-    # admission use. d51 is the control; d56 = core/momentum/discovery + per-tier policy.
-    Tunable(
-        key="universe.tiers.model",
-        group=Group.UNIVERSE,
-        type=ValueType.CHOICE,
-        description="Tier layout: d51 = core/momentum/trending/discovery (E12); d56 = "
-        "core 20 / momentum 20 (standard screen) / discovery 20 from the Scout (loose "
-        "screen), per-tier confidence floors, out-of-tier Scalp ideas only mentioned.",
-        target=Target.UNIVERSE,
-        risk=Risk.ORDER,
-        path=("tiers", "model"),
-        choices=("d51", "d56"),
+    _s(
+        "universe_floor_trending",
+        Group.UNIVERSE,
+        _F,
+        "D58: min Scalp confidence for a trending name's candidate.",
+        Risk.DOWN,
+        min=0.30,
+        max=0.95,
+        hard_ceiling=0.30,
     ),
     _s(
         "universe_mode",
         Group.UNIVERSE,
         ValueType.CHOICE,
-        "D28: strict = only the universe list; seed = also any listed optionable ticker the "
-        "sources surface that passes the liquidity screen (config/universe.yaml).",
+        "D28: strict = only the active list; seed = also any listed optionable name in a "
+        "tier (core / momentum / discovery) that passes its screen (config/universe.yaml).",
         Risk.ORDER,
         choices=("strict", "seed"),
-    ),
-    _s(
-        "scalp_max_new_tickers",
-        Group.UNIVERSE,
-        _I,
-        "D28/D51: max discoveries (names in no tier) the Scalp may accept per run (seed mode).",
-        Risk.UP,
-        min=0,
-        max=25,
-        hard_ceiling=25,
-        aliases=(
-            "sweep_max_new_tickers",
-            "scout_max_new_tickers",
-        ),  # D56: was sweep_*; D54: was scout_*
     ),
     _s(
         "scalp_doc_budget",
@@ -531,61 +503,9 @@ _STATIC: tuple[Tunable, ...] = (
         hard_ceiling=400,
         aliases=("sweep_doc_budget", "scout_doc_budget"),  # D56: was sweep_*; D54: was scout_*
     ),
-    # E12.4 (D51): relaxed liquidity screen (trending + discoveries; config/universe.yaml).
-    # Lower floors / a wider spread admit more names to be looked at; the gate's spread
+    # D56 (E13.4): standard (momentum) + loose (discovery) liquidity screens. Lower
+    # floors / a wider spread admit more names to be looked at; the gate's spread
     # check and the scanner's contract filters still protect every order.
-    Tunable(
-        key="universe_screen_relaxed_min_price",
-        group=Group.UNIVERSE,
-        type=_F,
-        description="D51 relaxed screen (trending + discoveries): min underlying price.",
-        target=Target.UNIVERSE,
-        risk=Risk.DOWN,
-        path=("liquidity_screen", "relaxed", "min_price"),
-        unit="$",
-        min=1.0,
-        max=100.0,
-        hard_ceiling=1.0,
-    ),
-    Tunable(
-        key="universe_screen_relaxed_min_adv_shares",
-        group=Group.UNIVERSE,
-        type=_F,
-        description="D51 relaxed screen: min mean daily share volume (last adv_days sessions).",
-        target=Target.UNIVERSE,
-        risk=Risk.DOWN,
-        path=("liquidity_screen", "relaxed", "min_adv_shares"),
-        min=100_000,
-        max=10_000_000,
-        hard_ceiling=100_000,
-    ),
-    Tunable(
-        key="universe_screen_relaxed_min_atm_open_interest",
-        group=Group.UNIVERSE,
-        type=_I,
-        description="D51 relaxed screen: min call + put open interest over the 3 strikes "
-        "nearest spot (expiry nearest 30 DTE).",
-        target=Target.UNIVERSE,
-        risk=Risk.DOWN,
-        path=("liquidity_screen", "relaxed", "min_atm_open_interest"),
-        min=25,
-        max=5000,
-        hard_ceiling=25,
-    ),
-    Tunable(
-        key="universe_screen_relaxed_max_atm_spread_pct",
-        group=Group.UNIVERSE,
-        type=_F,
-        description="D51 relaxed screen: max ATM (ask - bid) / mid, call and put averaged.",
-        target=Target.UNIVERSE,
-        risk=Risk.UP,
-        path=("liquidity_screen", "relaxed", "max_atm_spread_pct"),
-        unit="pct",
-        min=0.02,
-        max=0.40,
-        hard_ceiling=0.40,
-    ),
-    # D56 (E13.4): standard (momentum) + loose (discovery) screens; same rules as relaxed.
     Tunable(
         key="universe_screen_standard_min_price",
         group=Group.UNIVERSE,
@@ -705,7 +625,7 @@ _STATIC: tuple[Tunable, ...] = (
         Group.UNIVERSE,
         _I,
         "D46/D51: tickers per Finnhub context run (open-position underlyings first, then "
-        "today's candidates, core, momentum, trending). Each ticker is one call per job, "
+        "today's candidates, core, momentum, discovery). Each ticker is one call per job, "
         "against the per-minute budget.",
         Risk.NONE,
         min=1,
@@ -748,14 +668,16 @@ _STATIC: tuple[Tunable, ...] = (
         hard_ceiling=20,
     ),
     _s(
-        "portfolio_delta_cap",
+        "portfolio_dollar_delta_cap_pct",
         Group.RISK,
         _F,
-        "|net delta| cap as a multiple of equity/100 (gate rule greek_caps).",
+        "D57: |net dollar delta| (Σ Δ share-eq × spot) cap as a share of equity "
+        "(gate rule greek_caps).",
         Risk.UP,
-        min=0.05,
-        max=0.60,
-        hard_ceiling=0.60,
+        unit="pct",
+        min=0.10,
+        max=1.00,
+        hard_ceiling=1.00,
     ),
     _s(
         "portfolio_vega_cap_pct",
@@ -765,8 +687,8 @@ _STATIC: tuple[Tunable, ...] = (
         Risk.UP,
         unit="pct",
         min=0.001,
-        max=0.01,
-        hard_ceiling=0.01,
+        max=0.02,
+        hard_ceiling=0.02,
     ),
     _s(
         "earnings_blackout",
@@ -936,21 +858,6 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         hard_ceiling=1,
     ),
     _s(
-        "scalp_min_confidence",
-        Group.ENTRIES,
-        _F,
-        "Scalp keeps a candidate only at or above this confidence (lower = more ideas). "
-        "D51 only: under universe.tiers.model d56 the universe_floor_<tier> keys apply.",
-        Risk.DOWN,
-        min=0.30,
-        max=0.95,
-        hard_ceiling=0.30,
-        aliases=(
-            "sweep_min_confidence",
-            "scout_min_confidence",
-        ),  # D56: was sweep_*; D54: was scout_*
-    ),
-    _s(
         "max_shortlist",
         Group.ENTRIES,
         _I,
@@ -1063,7 +970,7 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         max=3,
         hard_ceiling=3,
     ),
-    # E13.18 (D56): Risk exit review (personas.exit_path research only)
+    # E13.18 (D56): Risk exit review
     _s(
         "exit_review_max_consecutive_holds",
         Group.POSITIONS,
@@ -1383,7 +1290,7 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         "portfolio.greek_near_cap_pct",
         Group.RISK,
         _F,
-        "D33: net |delta| / |vega| usage of the cap that flags delta_near_cap / vega_near_cap.",
+        "D33: net |$delta| / |vega| usage of the cap that flags delta_near_cap / vega_near_cap.",
         Risk.UP,
         field="portfolio_greek_near_cap_pct",
         min=0.05,
@@ -1679,102 +1586,6 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("strict", "relaxed"),
         aliases=("routines.personas.director_diversification", "director_diversification"),
     ),
-    # E13.9 (D56/D44): the Quant <-> Risk open path. Strategy lane: off is the control
-    # (quant.open -> risk.open -> quant.propose); on adds Risk verdicts and one
-    # quant.revise round. Experiment XP-7 tests it.
-    Tunable(
-        key="personas.quant_risk_loop",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.9: Risk gives each structure a verdict (accept / revise / reject); "
-        "rejects are dropped and one quant.revise round answers the revise requests "
-        "before quant.propose. Experiment XP-7 tests it.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "quant_risk_loop"),
-        choices=("off", "on"),
-        aliases=("routines.personas.quant_risk_loop", "quant_risk_loop"),
-    ),
-    # E13.10 (D56/D44): the options_fast tape in the Scalp prompt. Strategy lane: off
-    # is the control (today's prompt); on shows the tape and lets a same-direction P/C
-    # read add one corroborating source. Experiment XP-8 tests it.
-    Tunable(
-        key="personas.scalp_options_tape",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.10: the Scalp also reads the Cboe options tape (VIX complex, "
-        "per-ticker P/C volume, ATM spread and OI), outside the doc budget; a candidate "
-        "whose stance matches its ticker's P/C direction gets one more corroborating "
-        "source. Experiment XP-8 tests it.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "scalp_options_tape"),
-        choices=("off", "on"),
-        aliases=("routines.personas.scalp_options_tape", "scalp_options_tape"),
-    ),
-    # E13.7 (D56/D44): the daily Scout persona. Strategy lane: off is the control (no
-    # Scout run, no discovery tier from it); on runs it at 06:00 ET.
-    Tunable(
-        key="personas.scout_feed",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.7: the daily Scout reads the YouTube briefs + options_slow at "
-        "06:00 ET, writes its read, the discovery tier (YouTube calls only) and Scout "
-        "candidates for Research. Off = the scout job is skipped, no LLM call.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "scout_feed"),
-        choices=("off", "on"),
-        aliases=("routines.personas.scout_feed", "scout_feed", "scout"),
-    ),
-    # E13.8 (D56/D53/D44): Research's idea pool. Strategy lane: scalp is the control
-    # (Scalp candidates only); all merges the Scout's candidates. Experiment XP-4.
-    Tunable(
-        key="personas.research_idea_pool",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.8: which ideas Research ranks. scalp = Scalp candidates only; "
-        "all = one merged pool of Scalp + Scout candidates (feeds, origins and stance "
-        "agreement counted by code; at most funnel.research.max_scout_only_ideas "
-        "Scout-only ideas). Experiment XP-4 tests it.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "research_idea_pool"),
-        choices=("scalp", "all"),
-        aliases=("routines.personas.research_idea_pool", "research_idea_pool"),
-    ),
-    # E13.8 (D56/D54/D44): Research prompt format. Strategy lane: full is the control.
-    Tunable(
-        key="personas.research_compact_prompt",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.8: Research prompt format. full = today's prompt; compact = one "
-        "line per idea, the Scout read, top-3 headlines per category and compact regime "
-        "lines (target research_prompt_max_chars). Experiment XP-6 tests it.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "research_compact_prompt"),
-        choices=("full", "compact"),
-        aliases=("routines.personas.research_compact_prompt", "research_compact_prompt"),
-    ),
-    # E13.17 (D56/D44): who manages discretionary exits. Strategy lane: deterministic
-    # is the control (today's positions chain only); shadow adds Research's exit
-    # watchlist + quant.exit cases, written and journaled, nothing proposed.
-    Tunable(
-        key="personas.exit_path",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.17: deterministic = today's exits (positions chain only); shadow = "
-        "Research also writes an exit watchlist and quant.exit builds exit cases (hold / "
-        "close judgement), journaled only, nothing proposed; research behaves as shadow "
-        "until E13.18 adds risk.exit and the close path. Mandatory exits (stop, DTE, "
-        "expiry) stay deterministic.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "exit_path"),
-        choices=("deterministic", "shadow", "research"),
-        aliases=("routines.personas.exit_path", "exit_path"),
-    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -2026,12 +1837,35 @@ ORPHANED_KEY_PREFIXES: tuple[str, ...] = (
     "categories.options_data.",
     "uoa_",
     "settings.uoa_",
+    "universe_screen_relaxed_",  # E13.15: D51 relaxed screen
+)
+# E13.15: exact keys of removed D51 / flag tunables (a prefix would also match
+# ``universe_momentum_size_d56``).
+ORPHANED_KEYS: frozenset[str] = frozenset(
+    {
+        "universe.tiers.model",
+        "universe_momentum_size",
+        "scalp_max_new_tickers",
+        "sweep_max_new_tickers",
+        "scout_max_new_tickers",
+        # the D56 cutover switches, always on now (arc.routines.config.REMOVED_PERSONA_SWITCHES)
+        "personas.quant_risk_loop",
+        "personas.scalp_options_tape",
+        "personas.scout_feed",
+        "personas.research_idea_pool",
+        "personas.research_compact_prompt",
+        "personas.exit_path",
+        # D57 (E3.5): the share-count delta cap, replaced by portfolio_dollar_delta_cap_pct
+        # (no alias: a multiple of equity/100 does not convert to a share of equity)
+        "portfolio_delta_cap",
+    }
 )
 
 
 def is_orphaned(key: str) -> bool:
-    """D56: *key* belongs to a removed category or the removed UOA detector."""
-    return key.startswith(ORPHANED_KEY_PREFIXES)
+    """D56: *key* belongs to a removed category, the removed UOA detector or a removed
+    D51 / flag tunable (E13.15), or the D57 share-count delta cap (E3.5)."""
+    return key in ORPHANED_KEYS or key.startswith(ORPHANED_KEY_PREFIXES)
 
 
 def _exp(key: str, desc: str, risk: Risk, path: tuple[str, ...], **kw: Any) -> Tunable:
@@ -2249,7 +2083,6 @@ def lookup(key: str) -> Tunable:
     k = _ALIASES.get(lowered, lowered)
     if k in REGISTRY:
         return REGISTRY[k]
-    k = _legacy_routine_key(k)
     pat = _pattern_tunable(k)
     if pat is not None:
         return pat
@@ -2257,25 +2090,10 @@ def lookup(key: str) -> Tunable:
     raise TunableError(msg)
 
 
-#: D56 (E13.2): ``routines.<old job>.*`` keys resolve to the renamed job for one release
-#: (``routines.investor.enabled`` -> ``routines.broker.enabled``).
-LEGACY_ROUTINE_JOBS: dict[str, str] = {
-    "investor": "broker",
-    "auditor": "broker.reconcile",
-}
-
-
-def _legacy_routine_key(key: str) -> str:
-    m = _ROUTINE_KEY_RE.match(key)
-    if m is None or m.group("job") not in LEGACY_ROUTINE_JOBS:
-        return key
-    return f"routines.{LEGACY_ROUTINE_JOBS[m.group('job')]}.{m.group('attr')}"
-
-
 def is_alias(key: str) -> bool:
     """True for an alias of a registry key (e.g. a D49-renamed ``categories.company.*``)."""
     lowered = key.strip().lower()
-    return lowered in _ALIASES or _legacy_routine_key(lowered) != lowered
+    return lowered in _ALIASES
 
 
 def keys_in_group(group: Group) -> list[Tunable]:
@@ -2577,17 +2395,11 @@ _PLAIN_ROUTINE_SECTIONS = (
 _PERSONA_SWITCHES = frozenset(
     {
         ("personas", "finnhub_context"),
-        ("personas", "quant_risk_loop"),
-        ("personas", "scalp_options_tape"),
-        ("personas", "scout_feed"),  # E13.7
     }
 )
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.
 _PERSONA_CHOICE_SWITCHES: dict[tuple[str, ...], str] = {
     ("personas", "director_diversification"): "strict",
-    ("personas", "research_idea_pool"): "scalp",  # E13.8
-    ("personas", "research_compact_prompt"): "full",  # E13.8
-    ("personas", "exit_path"): "deterministic",  # E13.17
 }
 
 
@@ -2662,9 +2474,6 @@ def read_raw(t: Tunable, raw: dict[str, Any]) -> Any:
         if t.type is ValueType.BOOL:
             return bool(spec.get("enabled", True))
         return _cadence_text(spec)
-    if t.target is Target.UNIVERSE and t.path == ("tiers", "model"):
-        v = _get(raw, t.path)
-        return "d51" if v is None else str(v).strip().lower()  # absent = the D51 control
     if t.path == ("positions", "remaining_ev_floor_eod_only"):
         v = _get(raw, t.path)
         return "eod" if (True if v is None else bool(v)) else "intraday"

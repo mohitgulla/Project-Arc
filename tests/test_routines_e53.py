@@ -90,7 +90,10 @@ class TestShippedDefaults:
         assert p["scalp"].after_sources and p["scalp.overnight"].after_sources
         assert p["scalp.overnight"].cadence == "at 22:00 ET (daily)"
         assert p["research"].cadence == "every 10m 09:40-15:50 ET (trading)"
-        assert p["research"].chain == ["quant.open", "risk.open", "quant.propose", "broker.execute"]
+        assert p["research"].chain == [
+            "exits.mandatory", "quant.exit", "risk.exit", "quant.open", "risk.open",
+            "quant.revise", "quant.propose", "broker.execute",
+        ]  # fmt: skip
         assert p["research"].ttl is not None
         assert p["research"].ttl.duration == dt.timedelta(minutes=5)
         assert p["monitor"].cadence == "every 10m 09:30-16:00 ET (trading)"  # D35, D52
@@ -521,6 +524,9 @@ class TestMonitor:
         assert hb is not None and hb.status == "ok" and hb.at == FIXTURE_NOW
         assert hb.correlation == {"run_id": "run-1"}
         assert hb.detail["delta"] == pytest.approx(r.metrics["delta"])
+        # D57: the Tower's dollar delta (Σ Δ × spot) rides on the heartbeat
+        assert hb.detail["dollar_delta"] == pytest.approx(r.metrics["dollar_delta"])
+        assert hb.detail["dollar_delta"] != 0.0
         assert hb.detail["equity"] == 100250.0 and hb.detail["last_equity"] == 100000.0
         assert [leg["symbol"] for leg in hb.detail["legs"]] == [
             "SPY261030P00711000",

@@ -70,7 +70,7 @@ import { CONTROL, Loading, PersonaChip, Pill, RunStatus, et, shortId, type PillT
 
 function JobInfo({ row }: { row: TimelineRow }) {
   return (
-    <InfoTip label={`About ${row.label}`} testid="job-info" formula={rowFacts(row).join(" · ")}>
+    <InfoTip label={`About ${titleCase(row.label)}`} testid="job-info" formula={rowFacts(row).join(" · ")}>
       {row.about ?? `${row.job} (no about line in routines.yaml)`}
     </InfoTip>
   );

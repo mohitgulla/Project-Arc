@@ -111,13 +111,13 @@ class ShortlistPayload(ResearchOutput):
         default_factory=list,
         description="Ideas (ticker stance structure) the dedupe held back from Research",
     )
-    # E13.8 (D56/D53), schema v4 (additive): the idea pool's make-up; None = the
-    # control (research_idea_pool scalp + research_compact_prompt full) or a v3 row.
+    # E13.8 (D56/D53), schema v4 (additive): the idea pool's make-up; None = a
+    # pre-cutover (Scalp-only pool, full prompt) or v3 row.
     pool_counts: dict[Literal["scalp", "scout", "both", "scout_only_capped"], int] | None = Field(
         None, description="Idea pool size by feed, plus Scout-only ideas cut by the cap"
     )
     # E13.17 (D56), schema v5 (additive): the exit watchlist's hold / review counts;
-    # None = personas.exit_path deterministic (no watchlist) or an older row.
+    # None = a pre-cutover (deterministic exits, no watchlist) or older row.
     exit_watchlist_counts: dict[Literal["hold", "review"], int] | None = Field(
         None, description="Research's exit watchlist: positions to hold / to review"
     )
@@ -189,6 +189,8 @@ class PortfolioContextPayload(PortfolioContext):
     """E5.9 (D33): Research's deterministic view of the open book (subject ``session``).
 
     v2 (E13.17, additive): each position may carry ``facts`` (exit path only).
+    v3 (E3.5, D57): ``aggregates.delta`` is net dollar delta vs the dollar cap (None when
+    a spot is unknown); ``aggregates.delta_shares`` keeps the share-equivalent net.
     """
 
     model_config = _FORBID
@@ -418,21 +420,6 @@ class VolTermPayload(BaseModel):
     source: str = "cboe"
 
 
-class PutCallPayload(BaseModel):
-    """Cboe daily put/call ratios (options sentiment)."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    as_of: str
-    total: float | None = None
-    equity: float | None = None
-    index: float | None = None
-    etp: float | None = None
-    spx: float | None = None
-    vix: float | None = None
-    source: str = "cboe"
-
-
 # E13.5 (D56): options_slow, Cboe daily market statistics + CFE VX settlements.
 PcSegment = Literal["total", "index", "etp", "equity", "vix", "spx"]
 OiProduct = Literal["all", "index", "etp", "equity", "vix", "spx"]
@@ -506,6 +493,55 @@ class VxCurvePayload(BaseModel):
     shape: Literal["contango", "flat", "backwardation"]
     source: Literal["cboe_cfe"] = "cboe_cfe"
     url: str
+
+
+# E13.19 (D58): retail_buzz, the daily Reddit (ApeWisdom) + Stocktwits pull. Raw rows
+# per input (symbols normalised, nothing scored): the trending ranker
+# (arc.universe.trending) scores them; the Scout reads them as context (E13.20).
+class RetailBuzzRow(BaseModel):
+    """One symbol as one input listed it (position = its 1-based order in the input)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    symbol: str
+    position: int = Field(..., ge=1)
+    rank: int | None = Field(None, description="The input's own rank field, if any")
+    name: str = ""
+    mentions: float | None = Field(None, description="apewisdom: mentions (24h)")
+    rank_24h_ago: int | None = Field(None, description="apewisdom: rank 24 h ago")
+    trending_score: float | None = Field(None, description="stocktwits: trending_score")
+    exchange: str | None = Field(None, description="stocktwits: exchange (CRYPTO dropped later)")
+    region: str | None = Field(None, description="stocktwits: region (non-US dropped later)")
+
+
+class RetailBuzzInput(BaseModel):
+    """What one input fetched this run (``failed`` = no rows; contributes nothing)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["apewisdom", "stocktwits"]
+    label: str = ""
+    status: Literal["ok", "failed"]
+    urls: list[str] = Field(default_factory=list)
+    fetched_at: str = Field(..., description="ISO time (ET) of the fetch")
+    digest: str = Field("", description="sha256 of the fetched pages' raw bytes")
+    error: str | None = None
+    rows: list[RetailBuzzRow] = Field(default_factory=list)
+
+
+class RetailBuzzPayload(BaseModel):
+    """``retail_buzz`` (subject ``all``): one entry per daily pull, every enabled input."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str = Field(..., description="ISO time (ET) of the run")
+    session: str = Field(..., description="Trading session the pull is for (YYYY-MM-DD)")
+    inputs: dict[str, RetailBuzzInput] = Field(..., min_length=1)
+
+    @property
+    def live(self) -> list[str]:
+        """Inputs that answered with at least one row, in config order."""
+        return [n for n, i in self.inputs.items() if i.status == "ok" and i.rows]
 
 
 # E13.6 (D56): options_fast, Cboe ~15-min delayed quotes (index vols, per-ticker chain
@@ -784,6 +820,8 @@ class ScoutInputsPresence(BaseModel):
     options_daily: str | None = Field(None, description="as_of of the fresh entry; None = absent")
     vx_curve: str | None = None
     vol_term: str | None = None
+    # v2 (E13.20, D58): as_of of the fresh retail_buzz entry read (None = absent / v1 row)
+    retail_buzz: str | None = None
 
 
 class ScoutReadPayload(BaseModel):
@@ -836,13 +874,12 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
     KindSpec("proposal", ProposalPayload, schema_version=3),  # E13.18: exit_review
     KindSpec("position_review", PositionReviewPayload, schema_version=2),  # E6.4a: floor window
-    KindSpec("portfolio_context", PortfolioContextPayload, schema_version=2),  # E13.17: facts
+    KindSpec("portfolio_context", PortfolioContextPayload, schema_version=3),  # E3.5: $Δ
     KindSpec("journal", JournalPayload),
     KindSpec("note", NotePayload, schema_version=5),  # E13.13: sections, scalar facts
     # E4.5 (D30): story digests + options-trading data sources
     KindSpec("story", StoryPayload),
     KindSpec("vol_term", VolTermPayload),
-    KindSpec("put_call", PutCallPayload),
     # E13.5 (D56): options_slow (Cboe daily stats + CFE VX settlement curve; subject market)
     KindSpec("options_daily", OptionsDailyPayload),
     KindSpec("vx_curve", VxCurvePayload),
@@ -850,6 +887,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("index_vols", IndexVolsPayload),  # subject market
     KindSpec("chain_snapshot", ChainSnapshotPayload),  # subject = ticker
     KindSpec("exchange_volume", ExchangeVolumePayload),  # subject market
+    # E13.19 (D58): retail_buzz (Reddit + Stocktwits raw rows, daily; subject all)
+    KindSpec("retail_buzz", RetailBuzzPayload),
     KindSpec("macro_calendar", MacroCalendarPayload),
     KindSpec("ex_dividend", ExDividendPayload),
     # E4.8 (D46): Finnhub per-ticker context (subject = ticker)
@@ -859,10 +898,12 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("fundamentals", FundamentalsPayload),
     # D51 (E12.1): tiered universe. universe_tier subject = tier name (E12.2/E12.3
     # write momentum/trending); active_universe subject = "active" (one per resolve).
-    KindSpec("universe_tier", UniverseTierPayload, schema_version=2),  # E12.2: url, partial
-    KindSpec("active_universe", ActiveUniverse, schema_version=2),  # E13.4: model, dropped rank
+    # E12.2: url, partial; E13.19 (D58): v3 member `inputs` (trending)
+    KindSpec("universe_tier", UniverseTierPayload, schema_version=3),
+    # E13.4: model, dropped rank; E13.19 (D58): v3 member `inputs` (trending)
+    KindSpec("active_universe", ActiveUniverse, schema_version=3),
     # E13.7 (D56): the Scout's daily read; subject = "session"
-    KindSpec("scout_read", ScoutReadPayload),
+    KindSpec("scout_read", ScoutReadPayload, schema_version=2),  # E13.20: inputs.retail_buzz
     # E13.17 (D56): Research-managed exits. exit_watchlist subject = "session";
     # exit_case subject = open structure id.
     KindSpec("exit_watchlist", ExitWatchlistPayload),

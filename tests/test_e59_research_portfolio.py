@@ -363,11 +363,13 @@ class TestResearchPortfolioAware:
         )  # fmt: skip
         reply = _research_reply(
             portfolio_view={"verdict": "concentrated", "notes": "all SPY, add elsewhere"},
-            thesis_checks=[
-                {"structure_id": sid, "status": "intact", "reason": "still range-bound"},
-                {"structure_id": "bogus", "status": "weakened", "reason": "ignored"},
+            exit_watchlist=[  # E13.15: the exit watch replaces thesis_checks
+                {"structure_id": sid, "ticker": "SPY", "action": "hold",
+                 "thesis_status": "intact", "reason": "still range-bound"},
+                {"structure_id": "bogus", "ticker": "SPY", "action": "hold",
+                 "thesis_status": "weakened", "reason": "ignored"},
             ],
-        )
+        )  # fmt: skip
         env.llms["research"] = FixtureScalpLLM([reply])
         conn, report = _run(settings, routines, env, conn=conn)
         assert not report.failed
@@ -571,7 +573,9 @@ class TestMarketGuard:
         assert not sl["market_guard"]["opens_allowed"]
         assert not report.proposals
         assert "No trade: market unclear" in _posted(notes)
-        assert [o.job for o in report.outcomes] == ["scalp", "research"]
+        # E13.15: the guard blocks opens only; the exit steps still run (§5.32)
+        statuses = {o.job: o.status for o in report.outcomes}
+        assert statuses["exits.mandatory"] == "ok"
         assert env.llms["quant"].prompts == [] and env.llms["risk"].prompts == []  # type: ignore[attr-defined]
 
     def test_exits_ignore_the_guard(self, settings: ArcSettings) -> None:
@@ -886,3 +890,66 @@ class TestProposeIntegrityError:
         ).fetchone()
         assert row["status"] == "failed" and "FOREIGN KEY" in row["error"]
         assert "already_proposed" not in _codes(conn, "propose")
+
+
+# ---------------------------------------------------------------------------
+# D57 (E3.5): dollar delta in the portfolio context
+# ---------------------------------------------------------------------------
+
+
+def test_as_opened_dollar_delta_uses_the_stored_spot(settings: ArcSettings) -> None:
+    """as_opened: Δ (share-eq, × contracts) × proposals.spot (770), vs 0.50 × equity."""
+    conn = open_db(":memory:", copy=False)
+    env = _env([])
+    _open_structure(conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=2)
+    pc = build_portfolio_context(
+        conn, env, settings, info=env.account(), now=FIXTURE_NOW, halted=False,
+        budget_tier="normal",
+    )  # fmt: skip
+    ag = pc.aggregates
+    assert ag is not None and ag.greeks_source == "as_opened" and ag.delta is not None
+    shares = pc.positions[0].greeks.delta
+    assert ag.delta_shares == pytest.approx(shares, abs=1e-3)
+    assert ag.delta.net == pytest.approx(shares * 770, abs=0.01)
+    assert ag.delta.cap == pytest.approx(0.50 * pc.account.equity)
+    assert ag.delta.pct_used == pytest.approx(abs(ag.delta.net) / ag.delta.cap, abs=1e-4)
+    assert ag.vega.cap == pytest.approx(0.010 * pc.account.equity)
+    text = render_portfolio_context(pc, settings)
+    assert f"$Δ ${ag.delta.net:+,.0f} of cap ${ag.delta.cap:,.0f}" in text
+
+
+def test_as_opened_dollar_delta_unknown_without_a_stored_spot(settings: ArcSettings) -> None:
+    """No spot on the opening proposal: delta usage is None (never guessed), no flag."""
+    conn = open_db(":memory:", copy=False)
+    env = _env([])
+    _open_structure(conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=2)
+    conn.execute("UPDATE proposals SET spot = NULL")
+    pc = build_portfolio_context(
+        conn, env, settings.model_copy(update={"portfolio_greek_near_cap_pct": 0.0001}),
+        info=env.account(), now=FIXTURE_NOW, halted=False, budget_tier="normal",
+    )  # fmt: skip
+    ag = pc.aggregates
+    assert ag is not None and ag.delta is None and ag.delta_shares is not None
+    assert "delta_near_cap" not in ag.flags
+    assert "$Δ n/a (spot unknown)" in render_portfolio_context(pc, settings)
+
+
+def test_market_book_dollar_delta_and_near_cap_flag(settings: ArcSettings) -> None:
+    """A priced book's dollar_delta is used as is; ≥ 80% of the $ cap flags delta_near_cap."""
+    from arc.gate.inputs import Portfolio
+    from arc.models import Greeks
+
+    conn = open_db(":memory:", copy=False)
+    env = _env([])
+    _open_structure(conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=2)
+    equity = float(env.account().equity)
+    for dd, flagged in ((0.80 * 0.50 * equity, True), (0.79 * 0.50 * equity, False)):
+        book = Portfolio(greeks=Greeks(delta=1.0), dollar_delta=D(str(round(-dd, 2))))
+        pc = build_portfolio_context(
+            conn, env, settings, info=env.account(), now=FIXTURE_NOW, halted=False,
+            budget_tier="normal", portfolio=book,
+        )  # fmt: skip
+        ag = pc.aggregates
+        assert ag is not None and ag.greeks_source == "market" and ag.delta is not None
+        assert ag.delta.net == pytest.approx(-dd, abs=0.01) and ag.delta_shares == 1.0
+        assert ("delta_near_cap" in ag.flags) is flagged

@@ -211,8 +211,12 @@ class TestFixtureRun:
         assert [(o.job, o.status) for o in report.outcomes] == [
             ("scalp", "ok"),
             ("research", "ok"),
+            ("exits.mandatory", "ok"),
+            ("quant.exit", "skipped"),  # E13.15: no open positions
+            ("risk.exit", "skipped"),
             ("quant.open", "ok"),
             ("risk.open", "ok"),
+            ("quant.revise", "skipped"),  # no revise requests
             ("quant.propose", "ok"),
             (
                 "broker.execute",
@@ -365,30 +369,39 @@ class TestDigestCards:
         texts = [t for _, t in notes.posts]
         headers = [b[0]["text"]["text"] if b else None for b in notes.blocks]
         assert headers == [
-            "⚡ [Scalp] Scan: 10 Sources → 6 Candidates",  # D54: earnings doc = slow feed
-            "🧠 [Research] Ranked: 3 / 6 • Market Risk ON",
+            # D54 slow feed; D56: AAPL (0.2) is below the core floor
+            "⚡ [Scalp] Scan: 10 Sources → 5 Candidates",
+            "🧠 [Research] Ranked: 3 / 5 • Market Risk ON",
+            None,  # exits.mandatory (E13.15): a [Routines] notice, no card
             "🤺 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
             "🛡️ [Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
-            None,  # propose has no card (E6.1 posts the proposal card)
+            None,  # quant.propose has no card (E6.1 posts the proposal card)
             None,  # execute (D34): summary only; the Investor posts the order card
         ]
         # Fallback text = the pre-E5.5 one-liners.
         assert texts[0] == (
-            "⚡ [Scalp] scalp ✓ 10 docs (10 stories) → 7 accepted, 6 candidates today"
+            "⚡ [Scalp] scalp ✓ 10 docs (10 stories) → 7 accepted, 5 candidates today"
         )
         assert texts[1] == (
-            "🧠 [Research] research ✓ 6 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
+            "🧠 [Research] research ✓ 5 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
             "XOM (bearish); excluded 1; dropped {'not_a_candidate': 1}"
         )
-        assert texts[2].startswith(
+        assert texts[2].startswith("```\n[Routines] exits.mandatory ✓")
+        assert texts[3].startswith(
             "🤺 [Quant] quant.open ✓ SPY iron_condor 740/745/798/803 2026-10-30"
         )
         assert (
-            texts[3]
-            == "🛡️ [Risk] risk.open ✓ SPY moderate, suggests 20; dropped {'unknown_structure': 1}"
+            texts[4] == "🛡️ [Risk] risk.open ✓ SPY moderate, suggests 20 [accept]; "
+            "dropped {'unknown_structure': 1}"
         )
         # Footer links each chain post to its run and chain (E7.4 journal).
-        for o, blocks in zip(report.outcomes[1:4], notes.blocks[1:4], strict=True):
+        cards = [
+            report.outcomes[1],
+            *(o for o in report.outcomes if o.job in ("quant.open", "risk.open")),
+        ]
+        for o, blocks in zip(
+            cards, [notes.blocks[1], notes.blocks[3], notes.blocks[4]], strict=True
+        ):
             assert blocks is not None
             footer = blocks[-1]["elements"][0]["text"]
             assert footer == f"run `{o.run_id}` · chain `{chain}`"
@@ -405,11 +418,12 @@ class TestDigestCards:
             "*Source mix*\n*Market news* 50% · 8 read: rss 8\n"
             "*Company data* 50% · 2 read: EDGAR 2" in scalp  # D54: earnings = slow feed
         )
-        assert "• failed liquidity screen (1): UFPT" in scalp
-        assert "UFPT: relaxed screen: ADV 118k &lt; 500k; no expiry in the DTE window" in scalp
+        # D56: UFPT is listed but in no tier, so it is a mention, never screened
+        assert "UFPT" in scalp and "failed liquidity screen" not in scalp
+        assert "relaxed screen" not in scalp
         assert "• unknown symbol (1): ZZZQ" in scalp
         assert "http" not in scalp  # no source links
-        assert "before sizing" not in json.dumps(notes.blocks[2])
+        assert "before sizing" not in json.dumps(notes.blocks[3])
         assert "Buyback plus raised data-center guidance." in scalp  # Scalp rationale line
         assert "*Evidence:* Scalp neutral · macro catalyst Oct 28 · 62% confidence" in json.dumps(
             notes.blocks[1], ensure_ascii=False
@@ -423,10 +437,10 @@ class TestDigestCards:
         # E13.13 (D56): exclusions stay in the journal / Tower trail, never on the card
         assert "Excluded" not in research and "new open-universe name" not in research
         assert "not a Scalp candidate (1): BRK.B" in research
-        quant = json.dumps(notes.blocks[2], ensure_ascii=False)
+        quant = json.dumps(notes.blocks[3], ensure_ascii=False)
         assert "*Skipped (1)*\\n• *NVDA*: Fixture: bull put credit is thin" in quant
         assert "no tradable chain (1): XOM" in quant
-        risk = json.dumps(notes.blocks[3])
+        risk = json.dumps(notes.blocks[4])
         assert "structure Quant did not propose (1): QQQ iron_condor" in risk
 
 
@@ -574,7 +588,9 @@ class TestFunnel:
         )
         outcome = next(o for o in report.outcomes if o.job == "risk.open")
         assert outcome.metrics["repaired"] == 1 and outcome.metrics["not_assessed"] == 0
-        n = conn.execute("SELECT COUNT(*) FROM persona_calls WHERE persona='risk'").fetchone()[0]
+        n = conn.execute("SELECT COUNT(*) FROM persona_calls WHERE persona='risk_open'").fetchone()[
+            0
+        ]
         assert n == 2
         assert [p["ticker"] for p in report.proposals] == ["SPY"]
 
@@ -937,7 +953,11 @@ def test_routines_dispatcher_uses_wall_clock_only_when_not_pinned(tmp_path: Path
 class TestAccountProfilePipeline:
     def _run(self, profile: str, fixture_set: str, monkeypatch: pytest.MonkeyPatch, routines):  # noqa: ANN001, ANN202
         monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
-        s = ArcSettings(_env_file=None, account_profile=profile)  # type: ignore[call-arg]
+        # D57: 5 lots of the fixture SPY debit spread are ~$96k of dollar delta, over the
+        # default $50k cap; these tests are about the profile, so the cap is lifted.
+        s = ArcSettings(  # type: ignore[call-arg]
+            _env_file=None, account_profile=profile, portfolio_dollar_delta_cap_pct=1.0
+        )
         # The fixture debit spreads model at negative managed Net EV; these tests are
         # about the account profile, so the E6.4a live Net EV floor is switched off.
         _net_ev_floor_off(s)
@@ -1079,3 +1099,17 @@ def test_live_net_ev_floor_drops_negative_ev_structure(
     ).fetchall()
     payload = json.loads(row["payload"])
     assert payload["managed_net_ev"] < 0 and payload["floor"] == 0.0
+
+
+def test_with_position_carries_dollar_delta() -> None:
+    """D57: a gate-passed proposal's $Δ (Δ × n × spot) reaches the next proposal's book."""
+    from arc.gate.inputs import Portfolio
+    from arc.models import Greeks
+    from arc.pipeline.steps import _with_position
+
+    book = Portfolio(dollar_delta=Decimal("18000"))
+    out = _with_position(book, "AVGO", Decimal("500"), Greeks(delta=50.0), 2, Decimal("350"))
+    assert out.dollar_delta == Decimal("53000") and out.greeks.delta == 100.0
+    assert [p.underlying for p in out.positions] == ["AVGO"]
+    same = _with_position(book, "AVGO", Decimal("500"), Greeks(delta=50.0), 2, None)
+    assert same.dollar_delta == Decimal("18000")

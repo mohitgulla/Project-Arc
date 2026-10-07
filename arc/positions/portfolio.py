@@ -133,8 +133,7 @@ class PortfolioThesis(BaseModel):
 class PositionFacts(BaseModel):
     """Code-built research facts for one open position (E13.17, D56).
 
-    Only built under ``personas.exit_path`` != ``deterministic`` (Research's exit
-    watch). The last six fields come straight from the position's
+    Built for Research's exit watch. The last six fields come straight from the position's
     :class:`~arc.positions.evaluate.PositionReview`; the rest from the context store.
     """
 
@@ -187,6 +186,9 @@ class PortfolioPosition(BaseModel):
 
 
 class GreekUsage(BaseModel):
+    """Net exposure against its gate cap. Delta (D57): net dollar delta and the dollar
+    cap; vega: $ per vol point and its cap."""
+
     model_config = _FORBID
 
     net: float
@@ -203,7 +205,16 @@ class PortfolioAggregates(BaseModel):
     by_stance: dict[str, float] = Field(default_factory=dict)
     by_expiry_bucket: dict[str, float] = Field(default_factory=dict)
     hhi_underlying: float = Field(0.0, description="Σ share² over underlyings (1 = one name)")
-    delta: GreekUsage
+    delta: GreekUsage | None = Field(
+        ...,
+        description=(
+            "D57: net dollar delta (Σ Δ share-eq × spot) vs the dollar cap. None = a spot "
+            "is unknown (as_opened book without a stored spot): never guessed."
+        ),
+    )
+    delta_shares: float | None = Field(
+        None, description="v3 (D57): net Δ in share-equivalents (unweighted, for reference)"
+    )
     vega: GreekUsage
     gamma: float
     theta: float

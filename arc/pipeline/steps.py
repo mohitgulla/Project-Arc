@@ -99,7 +99,6 @@ from arc.personas.builders import (
     build_risk_exit_prompt,
     build_risk_open_prompt,
     build_risk_prompt,
-    build_risk_swap_prompt,
     category_specs_input,
     quant_exit_input_from_context,
     quant_input_from_context,
@@ -107,7 +106,6 @@ from arc.personas.builders import (
     research_input_from_context,
     risk_exit_input_from_context,
     risk_input_from_context,
-    risk_swap_input_from_context,
     ticker_facts_digest,
 )
 from arc.personas.entry_window import entry_terms, mentions_dte
@@ -131,7 +129,6 @@ from arc.personas.schemas import (
     RiskOpenAssessment,
     RiskOpenOutput,
     RiskOutput,
-    RiskSwapReview,
 )
 from arc.pipeline.analytics import build_analytics
 from arc.pipeline.budget import BudgetView, budget_notice, read_budget
@@ -228,7 +225,6 @@ RESEARCH_READS = [
     "channel_brief",
     "note",
     "vol_term",
-    "put_call",
     "macro_calendar",
     "position_review",  # E5.9: fresh E6.4 reviews feed the portfolio context
     "story",  # E4.7 (D47): per-category freshness lines (counts + headlines, by code)
@@ -237,10 +233,10 @@ RESEARCH_READS = [
     "insider_activity",
     "analyst_recs",
     "fundamentals",
-    # E13.8 (D56): the Scout's read; rendered only with research_compact_prompt compact,
-    # and its ticker calls set the pool's stance agreement (research_idea_pool: all)
+    # E13.8 (D56): the Scout's read (compact prompt); its ticker calls set the pool's
+    # stance agreement
     "scout_read",
-    # E13.17 (D56): ex-dividend dates for the exit-watch facts (personas.exit_path only)
+    # E13.17 (D56): ex-dividend dates for the exit-watch facts
     "ex_dividend",
 ]  # == routines.yaml research.reads (D30 adds the options-data kinds)
 # E5.9 drop reasons (Research stage; deterministic). Values == ReasonCode values.
@@ -352,9 +348,7 @@ PROMPT_BUILDERS: dict[str, tuple[Callable[..., Any], Callable[..., str], type[Ba
     "research": (research_input_from_context, build_research_prompt, ResearchOutput),
     "quant": (quant_input_from_context, build_quant_prompt, QuantOutput),
     "risk": (risk_input_from_context, build_risk_prompt, RiskOutput),
-    # E6.4 risk.reallocate: the Risk persona's close-to-reallocate review (veto only)
-    "risk_swap": (risk_swap_input_from_context, build_risk_swap_prompt, RiskSwapReview),
-    # E13.9 (personas.quant_risk_loop on): Risk with verdicts; Quant's one revision round
+    # E13.9: Risk with verdicts; Quant's one revision round
     "risk_open": (risk_input_from_context, build_risk_open_prompt, RiskOpenOutput),
     "quant_revise": (quant_revise_input_from_context, build_quant_revise_prompt, QuantReviseOutput),
     # E13.17 (D56): Quant's hold/close judgement on code-built exit cases
@@ -368,7 +362,6 @@ D49_ONLY_CATEGORIES = frozenset({"macro_data", "options_data"})
 
 # prompt key → the persona whose LLM answers it (config/llm_routing.yaml)
 LLM_PERSONA = {
-    "risk_swap": "risk",
     "risk_open": "risk",
     "quant_revise": "quant",
     "quant_exit": "quant",
@@ -741,37 +734,26 @@ def _research_rules(
     budget: BudgetView | None = None,
     portfolio: PortfolioContext | None = None,
     diversification: ResearchDiversificationSettings | None = None,
-    *,
-    compact: bool = False,
-    exit_watch: bool = False,
 ) -> list[str]:
     """Research constraints (E5.7: rank, don't gatekeep; no count cap in the prompt).
 
     D32: in the restrictive order-budget tier an advisory line is added; the
     deterministic cap is the lowered Quant/Risk budget (:func:`_shortlist_limit`).
-    E13.8: *compact* (``research_compact_prompt: compact``) names the idea pool and
-    drops the per-exclusion reason request. E13.17: *exit_watch*
-    (``personas.exit_path`` != ``deterministic``) asks for the exit watchlist.
+    E13.8 (D56): the rules name the idea pool and Research lists no exclusions;
+    E13.17: with open positions they ask for the exit watchlist.
     """
     rules = [
-        f"shortlist tickers MUST come from the candidates above: {', '.join(sorted(cands))}.",
-        "Rank every candidate you would consider trading, best first (rank 1 = highest "
+        f"shortlist tickers MUST come from the idea pool above: {', '.join(sorted(cands))}.",
+        "Rank every pool ticker you would consider trading, best first (rank 1 = highest "
         "conviction), each with thesis, regime context and the evidence behind it. "
         "Do not cap the list yourself.",
-        "Exclude a candidate only with a one-line reason in `excluded` "
-        "({ticker, reason}); every candidate is either ranked or excluded.",
+        "Tickers you do not rank need no reason; leave `excluded` empty.",
         "evidence: up to 3 short, grounded facts per pick taken from the inputs above "
         "(e.g. '8-K: buyback $50B, Sep 24', 'IV rank 18'); no invented numbers.",
         "stance: bullish | bearish | neutral. suggested_structure_type: vertical_spread | "
         "iron_condor | long_call | long_put.",
         "An empty shortlist is a valid answer when nothing is worth trading.",
     ]
-    if compact:  # E13.8 (D54/D56): pool wording; Research does not list exclusions
-        rules[0] = (
-            f"shortlist tickers MUST come from the idea pool above: {', '.join(sorted(cands))}."
-        )
-        rules[1] = rules[1].replace("Rank every candidate", "Rank every pool ticker")
-        rules[2] = "Tickers you do not rank need no reason; leave `excluded` empty."
     if settings is not None:
         rules.append(_profile_rule(settings))
     if budget is not None and budget.tier.restricted:
@@ -799,18 +781,12 @@ def _research_rules(
             f"({', '.join(ag.at_cap_underlyings) or 'none'}) cannot be opened."
         )
         ids = ", ".join(p.structure_id for p in portfolio.positions[:12])
-        if exit_watch:  # E13.17: the exit watchlist replaces thesis_checks
-            rules.append(
-                "portfolio_view.verdict: balanced | concentrated | hedge_needed | reduce_risk; "
-                f"one exit_watchlist item per open structure_id ({ids}); action hold | "
-                "review; thesis_status intact | weakened | broken; evidence <= 4 items of "
-                "<= 160 chars each; reason <= 240 chars."
-            )
-        else:
-            rules.append(
-                "portfolio_view.verdict: balanced | concentrated | hedge_needed | reduce_risk; "
-                f"one thesis_checks entry per open structure_id ({ids})."
-            )
+        rules.append(  # E13.17: the exit watchlist replaces thesis_checks
+            "portfolio_view.verdict: balanced | concentrated | hedge_needed | reduce_risk; "
+            f"one exit_watchlist item per open structure_id ({ids}); action hold | "
+            "review; thesis_status intact | weakened | broken; evidence <= 4 items of "
+            "<= 160 chars each; reason <= 240 chars."
+        )
     return rules
 
 
@@ -855,10 +831,10 @@ def _research_no_opens(
         summary=f"{why}; empty shortlist ({len(cands)} candidates not ranked)",
         metrics={"shortlist": 0, "market_guard_blocked": 1, **budget.metrics()},
         notice=notice,
-        # E13.18: under exit_path research the chain goes on: the guard blocks new
-        # opens, never exits.mandatory / the exit review (the open steps see the empty
-        # shortlist and return without an LLM call).
-        stop_chain=not ctx.routines.exit_path.managed,
+        # E13.18: the chain goes on: the guard blocks new opens, never exits.mandatory /
+        # the exit review (the open steps see the empty shortlist and return without
+        # an LLM call).
+        stop_chain=False,
         card=research_card(
             payload,
             candidates=len(cands),
@@ -882,16 +858,15 @@ def _portfolio_context(
 ) -> PortfolioContext:
     """Build, record and store the E5.9 portfolio context for this run.
 
-    E13.17: under ``personas.exit_path`` != ``deterministic`` each position carries
-    its :class:`PositionFacts` (read from *snap*, the refreshed Research snapshot),
-    and the reviews computed here are written as ``position_review`` (subject =
-    structure id) so ``quant.exit`` reads the marks Research saw.
+    E13.17: each position carries its :class:`PositionFacts` (read from *snap*, the
+    refreshed Research snapshot), and the reviews computed here are written as
+    ``position_review`` (subject = structure id) so ``quant.exit`` reads the marks
+    Research saw.
     """
     from arc.gate.halt import HaltSwitch
     from arc.pipeline.market import PortfolioError, build_portfolio
     from arc.store.repos import HaltRepo
 
-    watch = ctx.routines.exit_path.watch
     info, positions = _account_inputs(ctx, env)
     portfolio = None
     try:
@@ -918,9 +893,9 @@ def _portfolio_context(
         portfolio=portfolio,
         snapshot=ctx.snapshot,
         diversification=ctx.routines.director_diversification,
-        facts=watch,
-        facts_snapshot=snap if watch else None,
-        reviews_out=computed if watch else None,
+        facts=True,
+        facts_snapshot=snap,
+        reviews_out=computed,
     )
     for sid in sorted(computed):
         ctx.write("position_review", sid, computed[sid])
@@ -1056,17 +1031,6 @@ def _no_trade_reason(out: ResearchOutput, kept: list[ResearchRankedItem]) -> str
         return None
     r = out.no_trade_reason
     return r if r and r != "none" else "no_fit"
-
-
-def _valid_thesis_checks(out: ResearchOutput, pctx: PortfolioContext) -> list[Any]:
-    ids = {p.structure_id for p in pctx.positions}
-    seen: set[str] = set()
-    checks = []
-    for c in out.thesis_checks:
-        if c.structure_id in ids and c.structure_id not in seen:
-            seen.add(c.structure_id)
-            checks.append(c)
-    return checks
 
 
 def _portfolio_notes(
@@ -1501,15 +1465,12 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     all_entries = ctx.snapshot.of_kind("candidate")
     if not all_entries:
         return _no_candidates(ctx)
-    # E13.8 (D56/D53): the idea pool. ``scalp`` (control) = the Scalp's candidates
-    # (every entry before the Scout exists); ``all`` = Scalp + Scout merged by ticker.
-    pool_cfg = ctx.routines.research_idea_pool
-    compact = ctx.routines.research_compact_prompt.compact
+    # E13.8 (D56/D53): the idea pool = Scalp + Scout candidates merged by ticker.
     pool = build_idea_pool(
         ctx.snapshot,
-        merged=pool_cfg.merged,
+        merged=True,
         max_scout_only=ctx.routines.funnel.research.max_scout_only_ideas,
-        tiers=_pool_tiers(ctx) if (pool_cfg.merged or compact) else None,
+        tiers=_pool_tiers(ctx),
     )
     pool_set = set(pool.tickers)
     cand_entries = [e for e in all_entries if e.subject in pool_set]
@@ -1557,7 +1518,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             set(cands)
             | set(market_reference(settings))
             # E13.17: IV rank for every open position's exit-watch facts
-            | (_held_tickers(ctx.conn) if ctx.routines.exit_path.watch else set())
+            | _held_tickers(ctx.conn)
         ),
     )
     # Re-read (and record) the context now that today's regime entries exist.
@@ -1573,8 +1534,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
     summary, _ = _portfolio_summary(ctx, env, settings)
     # E5.9 (D33): the open book as Research sees it (deterministic, stored as context).
-    # E13.17: personas.exit_path != deterministic adds the per-position facts.
-    exit_watch = ctx.routines.exit_path.watch
+    # E13.17: with the per-position exit facts.
     pctx = _portfolio_context(ctx, env, settings, budget, snap=snap)
     dedupe_cfg = DedupeConfig.from_settings(settings, budget.tier)
     priors = recent_ideas(ctx.conn, now=ctx.now, cfg=dedupe_cfg)
@@ -1599,9 +1559,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "portfolio_block": "" if pctx.empty else render_portfolio_context(pctx, settings),
         "recent_ideas": "\n".join(recent_lines),
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
-        "rules": _research_rules(
-            cands, settings, budget, pctx, diversification, compact=compact, exit_watch=exit_watch
-        ),
+        "rules": _research_rules(cands, settings, budget, pctx, diversification),
         # E4.6 (D45): [{slug, label, category}] of the youtube.briefs job, for the n/N lines.
         "youtube_channels": _youtube_channels(ctx),
         # D49: the effective categories block (labels + max_age), so a replay judges
@@ -1613,33 +1571,23 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         inputs["ticker_facts"] = facts
     if diversification.is_relaxed:  # E12.5: absent when strict (prompt unchanged)
         inputs["diversification"] = diversification.mode
-    # E13.8: pool inputs, recorded only off the control (scalp + full: prompt unchanged)
-    if len(cand_entries) != len(all_entries):  # Scout-only entries left out (scalp)
-        inputs["candidate_tickers"] = sorted(cands)
-    if pool_cfg.merged or compact:
-        inputs["idea_pool"] = [i.model_dump(mode="json") for i in pool.items]
-        inputs["candidate_tickers"] = sorted(cands)
-    if pool_cfg.merged:
-        inputs["pool_merged"] = True
-    if exit_watch and not pctx.empty:  # E13.17: absent off the exit path (prompt unchanged)
+    # E13.8: the merged idea pool, recorded with the compact prompt's inputs
+    inputs["idea_pool"] = [i.model_dump(mode="json") for i in pool.items]
+    inputs["candidate_tickers"] = sorted(cands)
+    inputs["pool_merged"] = True
+    if not pctx.empty:  # E13.17: the exit watch (absent with no open positions)
         inputs["exit_block"] = render_exit_block(pctx, settings)
         inputs["exit_rules"] = _exit_watch_rules(ctx)
-    budget_cut: list[PoolItem] = []
-    if compact:
-        inputs["compact"] = True
-        inputs, budget_cut = _fit_research_budget(
-            snap,
-            inputs,
-            pool.items,
-            settings,
-            lambda c: _research_rules(
-                c, settings, budget, pctx, diversification, compact=True, exit_watch=exit_watch
-            ),
-        )
-        for item in budget_cut:
-            cands.pop(item.ticker, None)
-    else:
-        _log_prompt_size(snap, inputs, settings)
+    inputs["compact"] = True
+    inputs, budget_cut = _fit_research_budget(
+        snap,
+        inputs,
+        pool.items,
+        settings,
+        lambda c: _research_rules(c, settings, budget, pctx, diversification),
+    )
+    for item in budget_cut:
+        cands.pop(item.ticker, None)
     schema: type[ResearchOutput] = ResearchExitOutput if "exit_block" in inputs else ResearchOutput
     reply, out = _ask(ctx, env, "research", snap, inputs, schema)
     kept, dropped, rejected = _filter_shortlist(out, cands)
@@ -1755,19 +1703,11 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         session_notes=out.session_notes,
         budget=qr_budget,
         portfolio_view=out.portfolio_view if not pctx.empty else None,
-        thesis_checks=(
-            _watch_thesis_checks(watch_items)
-            if "exit_block" in inputs
-            else _valid_thesis_checks(out, pctx)
-        ),
+        thesis_checks=_watch_thesis_checks(watch_items),
         no_trade_reason=no_trade,
         market_guard=guard,
         suppressed=[ln.removeprefix("- ") for ln in recent_lines],
-        pool_counts=(
-            IdeaPool([i for i in pool.items if i.ticker in cands], pool.capped).counts()
-            if (pool_cfg.merged or compact)
-            else None
-        ),
+        pool_counts=IdeaPool([i for i in pool.items if i.ticker in cands], pool.capped).counts(),
         exit_watchlist_counts=(
             {
                 "hold": len(pctx.positions) - sum(w.action == "review" for w in watch_items),
@@ -1853,8 +1793,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             funnel=funnel,
             budget=qr_budget,
             evidence=_scalp_evidence(snap),
-            # E13.13: the stored watchlist items (None off the exit path: no Exits section)
-            exits=watch_items if exit_watch else None,
+            exits=watch_items,  # E13.13: the stored watchlist items
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
         ),
@@ -2411,7 +2350,7 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
 
 # ---------------------------------------------------------------------------
-# Quant revision round (E13.9, personas.quant_risk_loop on)
+# Quant revision round (E13.9)
 # ---------------------------------------------------------------------------
 
 
@@ -2420,7 +2359,7 @@ def quant_revise(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
     Deterministic around one Quant call:
 
-    * skipped (chain continues) when the loop is off or no assessment is ``revise``;
+    * skipped (chain continues) when no assessment is ``revise``;
     * ``reject`` structures are dropped, ``accept`` ones pass through unchanged;
     * Quant re-chooses from the same scanner menu only for the ``revise`` tickers, or
       keeps its first structure (``kept``); anything else is dropped (a ticker outside
@@ -2431,9 +2370,6 @@ def quant_revise(ctx: JobContext, env: PipelineEnv) -> JobResult:
     from arc.routines.handlers import JobSkippedError
 
     settings = ctx.settings
-    if not ctx.routines.quant_risk_loop.enabled:
-        msg = "personas.quant_risk_loop is off"
-        raise JobSkippedError(msg, continue_chain=True)
     review_entry = ctx.snapshot.latest("risk_review", SESSION_SUBJECT)
     review = _latest(ctx.snapshot, "risk_review", RiskReviewPayload)
     first = _latest(ctx.snapshot, "structures", StructuresPayload)
@@ -2644,9 +2580,9 @@ _RISK_VERDICT_RULES = (
 )
 
 
-def _open_assessment(a: RiskAssessment, loop_on: bool) -> RiskOpenAssessment:
-    """*a* as a verdict-carrying assessment; with the loop off always ``accept``."""
-    if not loop_on or not isinstance(a, RiskOpenAssessment):
+def _open_assessment(a: RiskAssessment) -> RiskOpenAssessment:
+    """*a* as a verdict-carrying assessment (a verdict-less one reads as ``accept``)."""
+    if not isinstance(a, RiskOpenAssessment):
         return RiskOpenAssessment.model_validate(
             RiskAssessment.model_validate(a, from_attributes=True).model_dump()
         )
@@ -2659,11 +2595,9 @@ def _open_assessment(a: RiskAssessment, loop_on: bool) -> RiskOpenAssessment:
     return a
 
 
-def _assessment_payload(a: RiskOpenAssessment, loop_on: bool) -> dict[str, Any]:
-    """Journal payload: the flag-off shape is exactly today's ``RiskAssessment`` dump."""
-    if loop_on:
-        return a.model_dump(mode="json")
-    return a.model_dump(mode="json", exclude={"verdict", "revise_request"})
+def _assessment_payload(a: RiskOpenAssessment) -> dict[str, Any]:
+    """Journal payload: the assessment with its verdict (E13.9)."""
+    return a.model_dump(mode="json")
 
 
 def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
@@ -2733,14 +2667,10 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "entry_terms": entry_terms(settings).model_dump(mode="json"),
         "rules": _risk_rules(settings, caps),
     }
-    # E13.9: with personas.quant_risk_loop on, Risk also gives a verdict per structure.
-    loop_on = ctx.routines.quant_risk_loop.enabled
-    prompt_key = "risk_open" if loop_on else "risk"
-    if loop_on:
-        inputs["rules"] = [*inputs["rules"], *_RISK_VERDICT_RULES]
-    reply, out = _ask(
-        ctx, env, prompt_key, ctx.snapshot, inputs, RiskOpenOutput if loop_on else RiskOutput
-    )
+    # E13.9: Risk also gives a verdict per structure.
+    prompt_key = "risk_open"
+    inputs["rules"] = [*inputs["rules"], *_RISK_VERDICT_RULES]
+    reply, out = _ask(ctx, env, prompt_key, ctx.snapshot, inputs, RiskOpenOutput)
     wanted = {(s.ticker, s.structure_type) for s in structures.structures}
     dropped: Counter[str] = Counter()
     kept: list[RiskAssessment] = []
@@ -2783,7 +2713,7 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 prompt_key,
                 ctx.snapshot,
                 repair_inputs,
-                RiskOpenOutput if loop_on else RiskOutput,
+                RiskOpenOutput,
             )
         except PersonaError as exc:
             log.warning("pipeline.risk_repair_failed", missing=first_missing, error=str(exc))
@@ -2795,9 +2725,8 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
             r_id = _record_ok(ctx, prompt_key, r_reply, ctx.snapshot.id, dropped - r_dropped_before)
             log.info("pipeline.risk_repair", missing=first_missing, repaired=repaired, call=r_id)
             call_id = call_id or r_id
-    # E13.9: verdicts are applied in code. Flag off -> every assessment is `accept`
-    # (the RiskOutput reply has no verdict field), so nothing below changes.
-    kept = [_open_assessment(a, loop_on) for a in kept]
+    # E13.9: verdicts are applied in code.
+    kept = [_open_assessment(a) for a in kept]
     for a in kept:
         declined = a.sizing_suggestion < 1
         if a.verdict == "reject":
@@ -2818,7 +2747,7 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
             reason_text=f"{a.risk_rating}: {a.narrative}"
             + (f" | revise ({req.reason}): {req.instruction}" if req is not None else ""),
             persona_call_id=call_id,
-            payload=_assessment_payload(a, loop_on)
+            payload=_assessment_payload(a)
             | {"cap_contracts": caps.get((a.ticker, a.structure_type))},
         )
     for a, reason in rejected:
@@ -2874,12 +2803,11 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         for a in kept
     }
     desc = "; ".join(
-        f"{a.ticker} {a.risk_rating}, suggests {a.sizing_suggestion}"
-        + (f" [{a.verdict}]" if loop_on else "")
+        f"{a.ticker} {a.risk_rating}, suggests {a.sizing_suggestion}" + f" [{a.verdict}]"
         for a in kept
     )
     missing_s = [f"{t} {k}" for t, k in missing]
-    verdicts = Counter(a.verdict for a in kept) if loop_on else Counter()
+    verdicts = Counter(a.verdict for a in kept)
     return JobResult(
         summary=(desc or "no assessments")
         + (f"; not assessed: {', '.join(missing_s)}" if missing_s else "")
@@ -2905,7 +2833,7 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
             not_assessed=missing_s,
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
-            verdicts=loop_on,
+            verdicts=True,
         ),
     )
 
@@ -2975,15 +2903,25 @@ def _mint(
 
 
 def _with_position(
-    portfolio: Portfolio, underlying: str, max_loss: Decimal, g: Any, n: int
+    portfolio: Portfolio,
+    underlying: str,
+    max_loss: Decimal,
+    g: Any,
+    n: int,
+    spot: Decimal | None = None,
 ) -> Portfolio:
+    """The in-memory book with a gate-passed proposal added, so the next proposal in the
+    same run sees it. D57: its dollar delta (Δ × n × spot) is carried forward too; a
+    passed proposal always had a spot (the gate fails closed without one)."""
     from arc.gate.inputs import Position
     from arc.models import Greeks
 
     pg = portfolio.greeks
+    added = Decimal(str(g.delta)) * n * spot if spot is not None else Decimal(0)
     return portfolio.model_copy(
         update={
             "positions": [*portfolio.positions, Position(underlying=underlying, max_loss=max_loss)],
+            "dollar_delta": portfolio.dollar_delta + added,
             "greeks": Greeks(
                 delta=pg.delta + g.delta * n,
                 gamma=pg.gamma + g.gamma * n,
@@ -3035,7 +2973,7 @@ def _realloc_source(
     risk_narrative: str,
     suggestion: int,
 ) -> dict[str, Any]:
-    """What ``risk.reallocate`` needs to re-propose a capacity-blocked entry (E6.4).
+    """What a swap needs to re-propose a capacity-blocked entry (E6.4).
 
     Stored on the ``sizing:budget_exhausted`` journal row (no new table). Managed net
     EV and PoP come from the E2.4 model at the re-priced mids, after all costs.
@@ -3160,18 +3098,14 @@ def _review_for(
 def quant_propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
     """``quant.propose`` (was ``propose``; D56: Quant owns it): size, gate, propose.
 
-    E13.18: under ``personas.exit_path: research`` the exit cases are settled first
+    E13.18: the exit cases are settled first
     (:func:`_propose_exits`: Risk ``close`` -> a close proposal through
     ``propose_close``; ``hold`` -> a journaled no-action), then the opens as before.
     Exits go first so a close's buying power is visible to the open path's sizing on
     the next loop and a failing open path never blocks risk management.
     """
-    exit_res: JobResult | None = None
-    if ctx.routines.exit_path.managed:
-        exit_res = _propose_exits(ctx, env)
+    exit_res = _propose_exits(ctx, env)
     res = _propose_opens(ctx, env)
-    if exit_res is None:
-        return res
     res.metrics = {**res.metrics, **exit_res.metrics}
     res.summary = f"exits: {exit_res.summary}; opens: {res.summary}"
     res.notice = "; ".join(n for n in (exit_res.notice, res.notice) if n)
@@ -3418,7 +3352,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         # Quotes were just fetched: judge their age (and stamp the gate, token and
         # expiry) against a clock read now, never a time taken before the fetch.
         now = ctx.clock()
-        market = market_snapshot(priced.contracts, earnings)
+        market = market_snapshot(priced.contracts, earnings, {t: priced.spot})
         limit = limit_price(st.net_debit_credit, settings.limit_tick)
         # D24: the gate checks the whole price band; size at its worst price (D18).
         band = band_for(st, limit, market, settings)
@@ -3441,7 +3375,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             skipped["sizing"] += 1
             if size.code == "budget_exhausted":
                 # E6.4: existing exposure on this underlying uses the budget up. Keep
-                # what a close-to-reallocate swap needs (risk.reallocate reads it back).
+                # what a close-to-reallocate swap needs (quant.propose reads it back).
                 sizing_payload["realloc_source"] = _realloc_source(
                     priced,
                     exits,
@@ -3626,7 +3560,14 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
         if decision.passed:
             passed += 1
-            portfolio = _with_position(portfolio, t, size.max_loss_total, st.greeks, size.contracts)
+            portfolio = _with_position(
+                portfolio,
+                t,
+                size.max_loss_total,
+                st.greeks,
+                size.contracts,
+                market.underlying_spot.get(t),
+            )
     return JobResult(
         summary="; ".join(lines) or f"no proposals ({dict(skipped)})",
         metrics={"proposals": proposals, "gate_passed": passed, **skipped, **budget.metrics()},
@@ -3635,7 +3576,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
 
 # ---------------------------------------------------------------------------
-# quant.exit (E13.17 / D56): exit cases, shadow only until E13.18
+# quant.exit (E13.17 / D56): exit cases
 # ---------------------------------------------------------------------------
 
 _NO_JUDGEMENT = "no judgement (fail closed to hold)"
@@ -3662,8 +3603,7 @@ def _case_block(case: ExitCase, cap: int) -> str:
 def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
     """``quant.exit``: Quant's hold/close judgement on code-built exit cases (E13.17).
 
-    Runs only under ``personas.exit_path`` shadow | research (``chain_for`` adds the
-    step). Deterministic around one Quant call:
+    Deterministic around one Quant call:
 
     * a position with a mandatory signal (stop / DTE exit / expiry), a pending exit or
       an exit already proposed today gets no case (``exit:case_skipped``);
@@ -3671,8 +3611,8 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
       or the position pairs with today's capacity rejections (D19 ``score_swaps``);
     * at most ``quant_exit_max_cases`` cases (watch reviews first), each prompt block
       ≤ ``quant_exit_case_max_chars``; a case Quant omits is ``hold``;
-    * writes one ``exit_case`` per case + journal rows. **Nothing is proposed** (shadow;
-      ``research`` behaves the same until E13.18 adds ``risk.exit`` and the close path).
+    * writes one ``exit_case`` per case + journal rows. Nothing is proposed here:
+      ``risk.exit`` reviews the cases and ``quant.propose`` turns closes into proposals.
     """
     from arc.positions.evaluate import PositionReview as _Review
     from arc.positions.exit_case import (
@@ -3689,10 +3629,6 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
     from arc.store.swaps import SwapRepo
 
     settings = ctx.settings
-    mode = ctx.routines.exit_path.mode
-    if not ctx.routines.exit_path.watch:
-        msg = "personas.exit_path is deterministic"
-        raise JobSkippedError(msg, continue_chain=True)
     rows = {str(r["id"]): r for r in OpenStructureRepo(ctx.conn).list_open()}
     if not rows:
         msg = "no open positions"
@@ -3838,7 +3774,7 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
             ReasonCode.EXIT_CASE_BUILT,
             reason_text=f"{c2.ticker}: {rec}: {why}",
             persona_call_id=call_id,
-            payload=c2.model_dump(mode="json") | {"mode": mode, "proposed": False},
+            payload=c2.model_dump(mode="json") | {"mode": "research", "proposed": False},
         )
         _note(
             ctx,
@@ -3852,11 +3788,9 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
     ctx.conn.commit()
     closes = sum(c.recommendation == "close" for c in judged)
-    shadow = not ctx.routines.exit_path.managed
     return JobResult(
         summary=(
-            f"{len(judged)} exit case(s) judged ({closes} close)"
-            + ("; shadow: nothing proposed" if shadow else "; Risk reviews next")
+            f"{len(judged)} exit case(s) judged ({closes} close); Risk reviews next"
             + (f"; {sum(skipped.values())} skipped" if skipped else "")
         ),
         metrics={
@@ -3870,7 +3804,7 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
         },
         card=quant_exit_card(
             judged,
-            shadow=shadow,
+            shadow=False,
             skipped=dict(skipped),
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
@@ -3887,7 +3821,7 @@ def _policy_line(exits: ExitConfig, case: ExitCase) -> str:
 
 
 # ---------------------------------------------------------------------------
-# risk.exit + the quant.propose close branch (E13.18 / D56, exit_path research)
+# risk.exit + the quant.propose close branch (E13.18 / D56)
 # ---------------------------------------------------------------------------
 
 #: Per-case prompt clip for ``risk.exit`` (the card: cases <= 500 chars each).
@@ -3940,7 +3874,7 @@ def _signal_kinds(case: ExitCase) -> list[str]:
 def risk_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
     """``risk.exit`` (E13.18, D56): Risk's ``close`` | ``hold`` on this chain's exit cases.
 
-    Runs only under ``personas.exit_path: research``. Deterministic around one Risk
+    Deterministic around one Risk
     call: no case in this chain -> skipped without an LLM call; a case Risk omits is
     ``hold`` (fail closed); an LLM error or schema failure writes the review with
     ``unavailable=True`` (every case ``hold``) and ``quant.propose`` applies the
@@ -3950,9 +3884,6 @@ def risk_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
     from arc.routines.handlers import JobSkippedError
     from arc.slack.digests import risk_exit_card
 
-    if not ctx.routines.exit_path.managed:
-        msg = "personas.exit_path is not research"
-        raise JobSkippedError(msg, continue_chain=True)
     entries = _chain_entries(ctx, "exit_case")
     if not entries:
         msg = "no exit cases in this chain"
@@ -4059,7 +3990,7 @@ def risk_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
 
 
 def _propose_exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
-    """The ``quant.propose`` close branch (E13.18; ``personas.exit_path: research``).
+    """The ``quant.propose`` close branch (E13.18).
 
     Per open position (deterministic; the LLM verdicts are inputs):
 
@@ -4333,8 +4264,6 @@ _STEPS: dict[str, Callable[[JobContext, PipelineEnv], JobResult]] = {
     "quant.exit": quant_exit,
     "risk.exit": risk_exit,
 }
-#: E13.9: pre-D56 step names, bound to the same functions for one release.
-_STEP_ALIASES = {"quant": "quant.open", "risk": "risk.open", "propose": "quant.propose"}
 
 
 class _LazyEnv:
@@ -4394,8 +4323,7 @@ def pipeline_handlers(env: PipelineEnv) -> dict[str, Handler]:
         return lambda ctx: fn(ctx, env)
 
     handlers: dict[str, Handler] = {name: bind(fn) for name, fn in _STEPS.items()}
-    handlers |= {old: handlers[new] for old, new in _STEP_ALIASES.items()}
-    # E13.18: the mandatory-exit floor runs inside the Research chain (exit_path research).
+    # E13.18: the mandatory-exit floor runs inside the Research chain.
     from arc.positions.steps import exits_mandatory
 
     handlers["exits.mandatory"] = bind(exits_mandatory)

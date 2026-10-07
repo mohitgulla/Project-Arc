@@ -236,6 +236,8 @@ test.describe("ops behaviour", () => {
     await expect(cats.first()).toBeVisible();
     expect(await cats.count()).toBeGreaterThanOrEqual(4);
     await expect(cats.first()).toContainText("max_age");
+    // Tower labels are Title Case at render time; routines.yaml (shared with Slack) stays sentence case
+    await expect(src.locator('[data-category="market_news"]')).toContainText("Market News");
     await expect(src).toContainText("backoff");
     await expect(src).toContainText("skipped (stale)");
     await expect(src.getByTestId("brief-status").filter({ hasText: "brief ok" }).first()).toBeVisible();

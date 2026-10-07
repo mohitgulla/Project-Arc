@@ -1,39 +1,31 @@
-# Tiered universe (PLAN D51, revises D9/D28; card E12.1; D56 card E13.4). Validated by
+# Tiered universe (PLAN D56, E13.4; cut over in E13.15). Validated by
 # arc.universe.config.
 #
-# tiers.model picks the layout (strategy flag `universe.tiers.model`, D44):
-#
-# d51 (the control). Four tiers, deduped (a name keeps its highest tier:
-# core > momentum > trending > discovery) and capped into one ACTIVE LIST each run
-# (arc.universe.tiers.resolve_active; `arc universe tiers` prints it):
-#   core       the 20 names below (the `universe` registry key; a Slack override of
-#              more than 30 names is a pre-D51 flat list and is ignored for this one)
-#   momentum   top 25 S&P 500 Momentum holdings, monthly (E12.2; context `universe_tier`)
-#   trending   up to 25 rules-based names, daily (E12.3; context `universe_tier`)
-#   discovery  today's Scalp candidates in no other tier
-# Sizes and the active cap (50) are runtime tunables: universe_momentum_size,
-# universe_trending_size, universe_active_max. Overflow is journaled
-# universe:over_active_cap, never dropped silently.
-#
-# d56 (owner 2026-10-05). Three tiers, core > momentum > discovery, no trending:
-#   core       the 20 names below; no screen; Scalp confidence floor 0.4
-#   momentum   top 20 of the momentum feed (universe_momentum_size_d56); standard
-#              screen; floor 0.5
-#   discovery  <= 20 names the Scout writes from YouTube calls (E13.7; empty until
-#              then; universe_discovery_size); loose screen; floor 0.6
-# Active list <= 50 filled core -> momentum -> discovery; overflow is cut from the
-# discovery tail first (journaled universe:over_active_cap). A Scalp idea for a name
-# in no tier is never admitted (not_in_tier): it is only mentioned. Floors are the
-# runtime tunables universe_floor_core / _momentum / _discovery.
+# Four tiers (D56 + D58), deduped (a name keeps its highest tier:
+# core > momentum > discovery > trending)
+# and capped into one ACTIVE LIST each run (arc.universe.tiers.resolve_active;
+# `arc universe tiers` prints it):
+#   core       the 20 names below (the `universe` registry key); no screen; Scalp
+#              confidence floor 0.4
+#   momentum   top 20 of the momentum feed (universe_momentum_size_d56; E12.2, context
+#              `universe_tier`); standard screen; floor 0.5
+#   discovery  <= 25 names the Scout writes from YouTube calls (E13.7;
+#              universe_discovery_size); loose screen; floor 0.6
+#   trending   <= 25 names ranked by code from the daily retail_buzz pull (Reddit via
+#              ApeWisdom + Stocktwits; D58, E13.19, job universe.trending;
+#              universe_trending_size): names in both inputs first, then the best
+#              single-input names; loose screen (owner to confirm); floor 0.6
+# Active list <= 50 (universe_active_max) filled core -> momentum -> discovery ->
+# trending; overflow is cut from the trending tail first, then the discovery tail
+# (journaled universe:over_active_cap,
+# never dropped silently). A Scalp idea for a name in no tier is never admitted
+# (not_in_tier): it is only mentioned. Floors are the runtime tunables
+# universe_floor_core / _momentum / _discovery / _trending.
 #
 # ARC_UNIVERSE_MODE picks the admission mode (no code change):
-#   seed    (default) core + momentum are always accepted (no screen, no Scalp
-#           confidence floor). Any other US-listed ticker the sources surface may
-#           become a Scalp candidate if it is in the symbol master below and passes
-#           its tier's liquidity screen (trending + discovery: relaxed). At most
-#           scalp_max_new_tickers (25) discoveries per Scalp run; trending names do
-#           not count against it.
-#   strict  the active list is an allow-list (the pre-D28 behaviour).
+#   seed    (default) a name is admitted only through its tier: core never screened,
+#           momentum, discovery and trending screened with their tier's profile below.
+#   strict  the active list is a plain allow-list (the pre-D28 behaviour).
 #
 # The risk gate never reads this file: every PLAN §5 cap applies per underlying,
 # whatever the universe. The chain scanner's own liquidity filters (E2.3) still
@@ -45,23 +37,19 @@ core: [NVDA, AAPL, MSFT, AMZN, GOOGL, META, TSLA, AMD, AVGO, MU, JPM, XOM, UNH, 
        COIN, PLTR, HOOD, INTC, NFLX]
 
 tiers:
-  model: d51   # d51 | d56 (D56, E13.4). Flipping it is a promotion: E13.15.
-  # order is fixed per model (d51: core, momentum, trending, discovery; d56: core,
-  # momentum, discovery) and defaults to it.
+  # order is fixed (core, momentum, discovery, trending) and defaults to it. E13.15: the D51
+  # layout switch (`model:`) is gone; an old `model:` key still loads, ignored.
   # Not trade names: Research writes their `regime` entries every run so the D33
-  # market guard always has an SPY read. ETFs can still enter as trending/discoveries.
-  # Unset = the model's list: d51 [SPY, QQQ], d56 [SPY, QQQ, IWM].
+  # market guard always has an SPY read. ETFs can still enter as discoveries.
+  # Unset = [SPY, QQQ, IWM].
   # market_reference: [SPY, QQQ, IWM]
-  # d51 / E12.4: liquidity screen profile per screened tier (strict | relaxed). Core
-  # and momentum skip the screen and the Scalp confidence floor.
-  trending: {screen: relaxed}
-  discovery: {screen: relaxed}
-  # d56: screen per tier (none | strict | standard | relaxed | loose). The floors are
-  # the universe_floor_<tier> tunables (0.4 / 0.5 / 0.6).
+  # Screen per tier (none | standard | loose). The floors are the
+  # universe_floor_<tier> tunables (0.4 / 0.5 / 0.6 / 0.6).
   policy:
     core: {screen: none}
     momentum: {screen: standard}
     discovery: {screen: loose}
+    trending: {screen: loose}           # D58 default, owner to confirm
 
 momentum:
   # E12.2 momentum tier: S&P 500 Momentum index constituents are not free, so the
@@ -89,37 +77,20 @@ symbol_master:
   listed_exchanges: [Nasdaq, NYSE, CBOE]   # SEC exchange values; OTC / unlisted are left out
 
 liquidity_screen:
-  # Deterministic, no LLM. Runs on non-seed Scalp candidates (D51: trending names and
-  # discoveries; core + momentum are never screened) before they are written to
-  # context. Every check must pass; a missing number fails closed. Four profiles; each
-  # screened tier picks one (d51: tiers.<tier>.screen, d56: tiers.policy). A pre-D51 flat block (keys
-  # directly under liquidity_screen) still loads, as the strict profile.
-  # The screen only decides who gets looked at: the gate's spread check and the
-  # scanner's contract filters still protect every order.
-  strict:                         # the D28 values
-    min_price: 10.0               # underlying reference price ($)
-    min_adv_shares: 1000000       # mean daily share volume over the last adv_days completed sessions
+  # Deterministic, no LLM. Runs on momentum and discovery names (core is never
+  # screened) before they are written to context. Every check must pass; a missing
+  # number fails closed. Two profiles; each screened tier picks one in tiers.policy.
+  # E13.15: the D28/D51 `strict` / `relaxed` profiles are gone (an old block still
+  # loads, ignored). The screen only decides who gets looked at: the gate's spread
+  # check and the scanner's contract filters still protect every order.
+  standard:                       # D56 momentum tier (Slack: universe_screen_standard_*)
+    min_price: 7.5                # underlying reference price ($)
+    min_adv_shares: 750000        # mean daily share volume over the last adv_days completed sessions
     adv_days: 20
     adv_feed: sip                 # completed sessions only; the free IEX feed carries ~2-3% of volume
-    min_atm_open_interest: 500    # call + put OI summed over the atm_strikes strikes nearest spot,
-    atm_strikes: 3                #   expiry nearest 30 DTE (one strike alone fails PLTR/HOOD: OI 448/141)
-    max_atm_spread_pct: 0.10      # mean (ask - bid) / mid of the call and put at the strike nearest spot
-  relaxed:                        # D51 default for trending + discovery (Slack: universe_screen_relaxed_*)
-    min_price: 5.0                # 2026-10-04: strict failed PLTR (OI 462, spread 1.9%), XLE, ACN, HON;
-    min_adv_shares: 500000        #   Alpaca open_interest reads low across the board (SPY near-ATM 1,431)
-    adv_days: 20
-    adv_feed: sip
-    min_atm_open_interest: 150
-    atm_strikes: 3
-    max_atm_spread_pct: 0.20
-  standard:                       # D56 momentum tier (Slack: universe_screen_standard_*)
-    min_price: 7.5
-    min_adv_shares: 750000
-    adv_days: 20
-    adv_feed: sip
-    min_atm_open_interest: 250
-    atm_strikes: 3
-    max_atm_spread_pct: 0.15
+    min_atm_open_interest: 250    # call + put OI summed over the atm_strikes strikes nearest spot,
+    atm_strikes: 3                #   expiry nearest 30 DTE
+    max_atm_spread_pct: 0.15      # mean (ask - bid) / mid of the call and put at the strike nearest spot
   loose:                          # D56 discovery tier (Slack: universe_screen_loose_*)
     min_price: 3.0
     min_adv_shares: 300000

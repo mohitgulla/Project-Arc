@@ -323,24 +323,24 @@ design-system component in both themes). Shell data for every page: `/api/health
 `monitor`/`broker.reconcile`/`tick` cadences with stale thresholds, gate caps, and (E13.14,
 D56) the persona catalogue `personas` (key, label, emoji, llm, group, from
 `config/routines.yaml` + `arc/slack/personas.py`) and the `categories` list (the six D56
-categories plus Reference data). The SPA takes every persona and category label from there. `/api/docs` is the
+categories, D58 `retail_buzz`, then Reference data). The SPA takes every persona and category label from there. `/api/docs` is the
 OpenAPI browser. Every response carries `as_of` (ET); errors are `{error, detail, as_of}`
 (e.g. 503 `db_unavailable`, 503 `config_unavailable`).
 
 **D56 views (E13.14).**
-- *Positions:* under `personas.exit_path` `shadow | research` each open row shows the latest
+- *Positions:* each open row shows the latest
   Research exit watch (`hold | review` + thesis status), Quant exit case (recommendation +
   remaining EV) and Risk verdict, plus a pending mandatory signal (stop / DTE exit / expiry)
   from the latest `position_review`. The **Exit path** strip above the table shows mandatory
-  pending · cases today · closes proposed · holds. Under `deterministic` the strip and the
-  columns are hidden (no such entries exist). Close trades show Risk's `exit_review` on the
+  pending · cases today · closes proposed · holds (always `Research` since E13.15). Close
+  trades show Risk's `exit_review` on the
   Why tab.
 - *Idea funnel:* docs fresh → read → stories → candidates → pool → shortlist → structures →
   proposals → approved → filled, split by feed (Scalp / Scout), with the top candidate
   sources and the Scout's discovery fill per day. The same report runs from the CLI:
   `arc funnel report --since 2026-09-29 --until 2026-10-05 [--json] [--db …]`.
-- *Universe:* tail cuts (names past the active cap, with tier + rank) and, under `d56`,
-  today's discovery fill.
+- *Universe:* tail cuts (names past the active cap, with tier + rank) and today's
+  discovery fill.
 
 **Bind rules (D29).** The address is `tailscale ip -4` (CLI on PATH or the macOS
 app bundle), otherwise the first `100.64.0.0/10` address on any interface.
@@ -382,7 +382,7 @@ Outside the session the pages show the last in-session monitor run, marked stale
 |---|---|
 | Status strip | active `halts`, latest `tick`/`health` heartbeats, open `ops_alerts` |
 | P&L / equity | latest `monitor` heartbeat (intraday equity, day P&L); `pnl_snapshots` (reconciled realized/unrealized, Day/MTD/YTD via `arc.reconcile.performance`) |
-| Greeks | latest `monitor` heartbeat: net Δ Γ ν Θ and max loss, against the gate's `portfolio_delta_cap` / `portfolio_vega_cap_pct` |
+| Greeks | latest `monitor` heartbeat: net dollar delta (Σ Δ × spot, D57) against the gate's `portfolio_dollar_delta_cap_pct` × equity, ν against `portfolio_vega_cap_pct` × equity, plus Γ Θ and max loss |
 | Positions | `open_structures` + broker legs from the `monitor` heartbeat; "held at broker" from the last `positions_snapshots` |
 | Proposals / Trades | `proposals` + latest `gate_decisions` + `approval_requests` + `executions` |
 | Halts | `halts`, active first |
@@ -666,8 +666,8 @@ knobs (see `!arc config execution`). Raising the cap is the riskier direction (c
 ### 5.10 Auto-approve and in-chain Execute (E6.6, D34)
 
 `auto_approve` is one switch per environment, both **off** by default. When it is on for the
-running `ARC_ENV`, the chain step `broker.execute` (right after `propose`, and after
-`risk.reallocate` in the position-manager chain) publishes that chain's proposal cards,
+running `ARC_ENV`, the chain step `broker.execute` (right after `quant.propose`, and after
+`exits.mandatory` in the position-marks chain) publishes that chain's proposal cards,
 approves them as `arc:auto-approve` (card marked `Auto-approved (paper|LIVE)`, no buttons),
 and hands each one to a Broker subprocess (`arc routines run broker --event <id>`,
 its own per-event lock, never the LLM lock), so the ladder starts in the same tick. When it
@@ -792,64 +792,77 @@ log actor `arc:scorecard-gate`, reason `E7.5a: collection phase complete (n=30)`
 posts `Scorecard gate: ON (auto, …)` to the day thread. It does this once; turning the
 gate off again afterwards is respected.
 
-### 5.11 Open universe (E5.7, D9/D28) and tiers (E12.1, D51)
+### 5.11 Open universe (E5.7, D9/D28) and tiers (E12.1, D56)
 
-The trade universe is four tiers resolved into one **active list** (max
-`universe_active_max` 50): core (`universe`, 25 names in `config/universe.yaml`
-`core:`) > momentum (E12.2) > trending (E12.3) > today's Sweep discoveries. A name
-keeps its highest tier; names past the cap are journaled `universe:over_active_cap`.
-SPY/QQQ are the `market_reference`: they always get a Director `regime` entry but are
-not trade names. The active list resolves at 05:30 ET each trading day (`symbols`
-job, context `active_universe`) and at the start of every Sweep run; ingest, EDGAR,
-briefs, `ex_dividend`, Finnhub scope, monitoring and `arc history`
-read it (core until the first resolve of the day).
+The trade universe is four tiers (D58, each capped at 25) resolved into one **active
+list** (max `universe_active_max` 50): core (`universe`, 20 names in
+`config/universe.yaml` `core:`, ceiling 25) > momentum (E12.2, 20) > discovery (the
+Scout's picks, ≤ 25) > trending (code-ranked from `retail_buzz`, ≤ 25). A name keeps its
+highest tier; names past the cap are journaled `universe:over_active_cap`. SPY/QQQ/IWM
+are the `market_reference`: they always get a Research `regime` entry but are not
+trade names. The active list resolves at 05:30 ET each trading day (`symbols` job,
+context `active_universe`) and at the start of every Scalp run; ingest, EDGAR, briefs,
+`ex_dividend`, Finnhub scope, monitoring and `arc history` read it (core until the
+first resolve of the day). E13.15 removed the D51 layout (trending tier, Sweep
+discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
+`config/universe.yaml` loads and is ignored with a log.
 
 - See it: `arc universe tiers [--json] [--db PATH] [--now ISO]` (read-only).
 - **Momentum tier (E12.2):** job `universe.momentum`, 06:00 ET on the first trading
-  session of each month (`days: month_start`). It writes the top 25 holdings of Invesco
+  session of each month (`days: month_start`). It writes the top holdings of Invesco
   SPMO (the S&P 500 Momentum proxy) from stockanalysis.com, falling back to Schwab's
-  first 20 rows (`partial`). GOOG folds into GOOGL; ETFs/funds and non-optionable names
-  are dropped. The entry lives 35 days, so a failed month keeps last month's list; if
-  no entry was written since the month-start slot, the job retries every trading
+  first 20 rows (`partial`); the tier keeps the first `universe_momentum_size_d56` (20)
+  that pass the standard screen. GOOG folds into GOOGL; ETFs/funds and non-optionable
+  names are dropped. The entry lives 35 days, so a failed month keeps last month's list;
+  if no entry was written since the month-start slot, the job retries every trading
   session at 06:00 (`catch_up:`) until one run succeeds. The diff posts as a notice
   (`Momentum tier: +LITE +GS −NEM · 25 names · as of Oct 2`). A page as-of older than 40
   days raises `coverage:universe.momentum`. By hand: `arc universe momentum --dry-run`
   (fetch + print, no write) or `arc universe momentum [--db PATH] [--no-slack]` (runs the
   job). Weekly instead: `days: [mon]` and `context: {ttl: 8d}` in `config/routines.yaml`.
-  stockanalysis lists only 25 rows, so the GOOG fold leaves 24 names (marked `partial`).
-- **Trending tier (E12.3):** job `universe.trending`, 08:45 ET every trading day (TTL 1
-  session: a failed run writes nothing, and the tier is empty that day, never carried
-  stale). No LLM, and Alpaca is never a ranking input. Four equally weighted inputs under
-  `trending.inputs` in `config/routines.yaml`: news flow (distinct `raw_docs` sources over
-  3 sessions; EDGAR counts once, for the filer), Reddit (ApeWisdom pages 1–2: mentions +
-  24 h rank gain), Stocktwits trending (crypto/non-US dropped) and Sweep corroboration
-  (`candidates` over 3 sessions). Each input is rank-normalised to (0, 1];
-  `trend_score` = sum / number of enabled inputs (an input with no data scores 0, and
-  the others are not renormalised). A name needs ≥ 2 inputs; core, momentum and
-  SPY/QQQ are excluded first; the top 40 get the relaxed screen and the first 25 passes
-  are the tier. Every admission / screen fail / single-input reject is journaled
-  (`universe:trending_*`). Notice: `Trending tier: 22 names (+NKE −LULU) · inputs news,
-  reddit, stocktwits, sweep`. By hand: `arc universe trending --dry-run [--no-screen]
-  [--json]` (read-only score table) or `arc universe trending [--db PATH] [--no-slack]`.
-  Adding/removing an input of a known type (`news | apewisdom | stocktwits | sweep`) is a
-  YAML edit.
+- **Discovery tier (E13.4):** only the Scout admits names here (`scout_read`
+  `discovery`), screened `loose`; the Scalp never admits a name outside the tiers.
+- **Trending tier (E13.19, D58):** source job `retail_buzz` (05:40 ET, trading days)
+  pulls Reddit (ApeWisdom all-stocks, pages 1–2) and the Stocktwits trending list into
+  one `retail_buzz` entry (category `retail_buzz`, 24h); inputs are configured under
+  `sources.retail_buzz.inputs` (a failed input is recorded `failed`, the other still
+  writes; both failing fails the job). `universe.trending` (05:50) ranks it in code: each
+  input is rank-normalised (Reddit = mean of mentions and 24h rank gain; Stocktwits =
+  `trending_score`), `trend_score` = sum ÷ enabled inputs (a missing or stale input
+  counts 0, never renormalised), names in both inputs first, then single-input fill.
+  Core/momentum/discovery names, SPY/QQQ/IWM and leveraged/inverse funds
+  (`universe:trending_leveraged`) are excluded before the cut; the first `pool` (40)
+  get the `loose` screen and the tier keeps `universe_trending_size` (25), floor 0.6.
+  The active list fills core > momentum > discovery > trending, so overflow cuts the
+  trending tail first. By hand: `arc universe trending --dry-run [--no-screen]` (score
+  table, no write) or `arc universe trending [--db PATH] [--no-slack]` (runs the job).
+  The job's `[Routines]` notice is the diff against the previous list
+  (`Trending tier: 23 names, 11 in both inputs (+SPCX −RIVN) · inputs reddit, stocktwits`).
+- **Scout reads retail buzz (E13.20, D58), context only.** The Scout prompt carries a
+  code-built `## Retail buzz (as of …)` section: the top 15 names of the fresh
+  `retail_buzz` entry (both-input names first, crypto dropped), each
+  `reddit #r/mentions · stocktwits #s · in trending tier y|n`, where `y` comes from
+  today's trending tier only. A missing or stale (> 24h) entry reads `no info`. The
+  prompt's category line counts `n/4 present` (youtube_macro, youtube_micro,
+  options_slow, retail_buzz). The Scout cannot add or remove trending names and buzz
+  never makes a discovery name on its own. `scout_read` v2 records
+  `inputs.retail_buzz` (as_of, or null). The Scout card adds
+  `Trending: n/25 (k both-source) · m in active list`, and `retail_buzz` joins its
+  `No fresh input` list when absent.
 - **Ticker extraction (E12.3):** bare upper-case words of 2–3 letters count only for
   core + momentum names (`extraction.bare_min_len: 4`); `$SYM`, `(SYM)`, `(NYSE: SYM)`
   and `ticker symbol SYM` still match any length. RSI, ET, SA, TD, MSCI, COLA, NOW… are
   stop words in bare form (`config/universe.yaml`).
-- A `universe` override longer than 30 names (pre-D51 flat list) is ignored in favour
+- A `universe` override longer than 25 names (D58 `MAX_CORE`) is ignored in favour
   of the yaml core (logged `universe.core_override_ignored`). Reset it from Slack with
   `!arc config universe <core 20>` so the Tower shows the core.
 
-In seed mode (`ARC_UNIVERSE_MODE=seed`, the default) core + momentum names are always
-accepted, unscreened and below the Sweep confidence floor too (journaled
-`sweep_candidate` with `confidence_floor_skipped: tier=<tier>`). Trending names and
-discoveries reach the Sweep only if they are in the symbol master and pass their
-tier's liquidity screen profile in `config/universe.yaml` (E12.4): `strict` (price ≥ 10,
-ADV ≥ 1M, near-ATM OI ≥ 500, ATM spread ≤ 10%) or `relaxed` (price ≥ 5, ADV ≥ 500k,
-near-ATM OI ≥ 150, ATM spread ≤ 20%), picked by `tiers.trending.screen` /
-`tiers.discovery.screen` (both `relaxed`). `ARC_UNIVERSE_MODE=strict` makes the active
-list the allow-list.
+In seed mode (`ARC_UNIVERSE_MODE=seed`, the default) a name is admitted only through
+its tier: core is never screened, momentum and discovery use their tier's screen profile
+in `config/universe.yaml` (`standard` / `loose`). Each tier has its own Scalp confidence
+floor (`universe_floor_core` 0.4 / `_momentum` 0.5 / `_discovery` 0.6). A name in no
+tier is rejected `not_in_tier`. `ARC_UNIVERSE_MODE=strict` makes the active list the
+allow-list.
 
 1. First install (once, before the first seed-mode Sweep run; needs the paper keys):
    `set -a; source ~/.hermes/.env; set +a; arc universe refresh`
@@ -861,10 +874,9 @@ list the allow-list.
    tier membership from `--db`, default `data/arc.db`, read-only; `--fixture` =
    offline). `--profile relaxed|strict` screens every name with that profile, core
    and momentum included (a what-if; exit code = the screen result). The same checks
-   run in the Sweep; rejects are journalled as `universe:<reason>` and shown on the
-   Sweep card.
-4. Knobs: `sweep_max_new_tickers` (discoveries per Sweep run, default 25, ceiling 25;
-   trending names don't count), `universe_screen_relaxed_min_price` /
+   run in the Scalp; rejects are journalled as `universe:<reason>` and shown on the
+   Scalp card.
+4. Knobs: `universe_screen_relaxed_min_price` /
    `_min_adv_shares` / `_min_atm_open_interest` / `_max_atm_spread_pct` (Slack-tunable;
    looser is riskier and needs the confirm), `universe_mode`, `pipeline_max_shortlist`
    (the Quant/Risk budget, not a Director cap).
@@ -875,7 +887,7 @@ Every Sweep source is a named entry in `config/routines.yaml`: each RSS feed und
 `sources.rss.feeds` (`name`, `url`, optional `label`, `category`, `weight`,
 `max_age`, `max_docs_per_run`, `hosts`), and `edgar` / `earnings` with a
 `category` and `label`. Every context-writing source **must** declare exactly one of
-the 6 categories or `reference: true` (D56); neither, both, or an unknown category
+the 7 categories or `reference: true` (D56, D58); neither, both, or an unknown category
 fails config load. Adding or re-weighting a source is a YAML edit only.
 
 | category | label | `max_age` | sources | read by |
@@ -883,9 +895,10 @@ fails config load. Adding or re-weighting a source is a YAML edit only.
 | `market_news` | Market news | 6h | WSJ Markets, CNBC Business, Nasdaq RSS, Fed RSS (D56) | Scalp, Research |
 | `company_data` | Company data | 12h | Seeking Alpha, CNBC Earnings, WSJ Business, EDGAR | Scalp, Research |
 | `options_fast` | Options fast | 30m | none yet (E13.6 adds the 30-min RTH source) | Scalp (typed context) |
-| `options_slow` | Options slow | 24h | `vol_term`, `put_call` (`feed: scout`) | Scout, Research (typed context) |
+| `options_slow` | Options slow | 24h | `vol_term`, `options_daily`, `vix_futures` (`feed: scout`) | Scout, Research (typed context) |
 | `youtube_macro` | YouTube macro | 24h | FX Evolution, Bravos Research | Scout, Research (channel briefs, §5.22) |
 | `youtube_micro` | YouTube micro | 24h | StockedUp, Trade Brigade, Arete Trading | Scout, Research (channel briefs, §5.22) |
+| `retail_buzz` | Retail buzz | 24h | `retail_buzz` (Reddit via ApeWisdom + Stocktwits trending, 05:40, D58) | trending tier (code), Scout (context only); never Research |
 
 **Reference data (D56)** is not a category: `ex_dividend`, `macro_calendar`, the
 `earnings` calendar, the `finnhub.*` kinds and `iv.record` (`iv_daily`). Those jobs
@@ -944,11 +957,11 @@ and `arc context show --kind unusual_options` still lists them until then.
   read: WSJ 1 · Nasdaq 5 (10 over budget)`, with `(N stale)` per source.
 - **Director.** Its prompt carries a code-built *Context by category* block: the 6
   headers in fixed order, each with a freshness line (`Market news: 14 stories,
-  newest 22m`, `Options slow: vol_term 5h, put_call 8h`, `YouTube macro: 1/2
+  newest 22m`, `Options slow: vol_term 5h, options_daily 8h`, `YouTube macro: 1/2
   channels (missing: Bravos)`); an empty category reads `no fresh info`. Reference
   data is never listed there.
 - **Typed-kind freshness (D49).** The category `max_age` also applies to typed
-  context (vol_term, put_call, channel_brief), measured from `valid_from`. An older
+  context (vol_term, options_daily, channel_brief), measured from `valid_from`. An older
   entry is listed as `stale (age)`, e.g. `Options slow: no fresh info (vol_term stale
   (13h))`; a category with nothing fresh reads `no fresh info`. The context TTL is
   unchanged, so stale entries stay readable for audit and the Tower. A Director call
@@ -975,7 +988,6 @@ and `arc context show --kind unusual_options` still lists them until then.
   | Job | Source | Kind | Category | When (ET) |
   |---|---|---|---|---|
   | `vol_term` | Cboe VIX9D/VIX/VIX3M/VVIX daily history | `vol_term` (contango/backwardation) | `options_slow` | 09:00, 16:45 |
-  | `put_call` | Cboe daily market statistics | `put_call` | `options_slow` | 09:00 |
   | `macro_calendar` | federalreserve.gov FOMC page + BLS release ICS + BEA release ICS | `macro_calendar` | reference | 05:45 |
   | `ex_dividend` | Alpaca corporate actions | `ex_dividend` per ticker | reference | 06:15 |
 
@@ -1588,7 +1600,7 @@ tickers whose earnings date in the calendar docs was 1–3 days ago.
 logs `finnhub.rate_wait wait_s=…`.
 
 **Scope (D51, E12.4).** Open-structure underlyings → live `candidate` subjects → core
-→ momentum → trending (today's active list by tier), with ETFs skipped: the names
+→ momentum → discovery (today's active list by tier), with ETFs skipped: the names
 being traded get context first. It is capped at `finnhub_max_tickers` (50) in that
 order, and the cap logs `finnhub.scope_capped dropped=…`. 50 tickers × 3 jobs fit the
 shared 55/min budget (the jobs run 10 min apart). The job option `tickers` replaces
@@ -1750,35 +1762,29 @@ Main must stay green. On 2026-09-29 it was red from 17:34 to 18:49Z while three 
 (#59, #60, #61) merged on top of it, because a test stamped rows with the wall clock
 and nothing stopped a merge onto a red main.
 
-### 5.27 Quant <-> Risk open path: `personas.quant_risk_loop` (E13.9, D56, D44)
+### 5.27 Quant <-> Risk open path (E13.9, D56; always on since E13.15)
 
 The open chain's steps are `quant.open` -> `risk.open` -> [`quant.revise`] ->
-`quant.propose` -> `broker.execute` (was `quant`, `risk`, `propose`; the old names
-still resolve as logged aliases in `routines.yaml`, handlers, triggers and
-`monitoring.stuck_after_jobs`, and `arc.journal.legacy` maps stored `routine_runs.job`
-rows). `personas.research.chain: auto` is resolved at load by `chain_for()`:
+`quant.propose` -> `broker.execute`. The pre-E13.9 names (`quant`, `risk`, `propose`)
+and the D56 job aliases (`investor`, `auditor`, `execute`, `investor.exits`) no longer
+resolve since E13.15; `arc.journal.legacy` still maps stored `routine_runs.job` rows.
+`personas.research.chain: auto` resolves to the fixed `AUTO_CHAINS` entry (§5.32).
 
-    personas.quant_risk_loop: "off"     # config/routines.yaml; off | on
-
-- **Off (shipped default):** today's chain under the new names; the Quant and Risk
-  prompts are byte-identical to the pre-E13.9 ones (golden hashes in
-  `tests/test_quant_risk_loop.py`). `quant.propose` rows in the journal are now
-  `persona='quant'` (were `system`).
-- **On:** Risk gives each structure a verdict (`accept` / `revise` with a
-  `revise_request` / `reject`). Rejects never reach a proposal (journal
-  `risk_reject`). When any verdict is `revise`, one `quant.revise` round re-chooses
-  from the same scanner menu or keeps the first structure (`quant_revised` /
-  `quant_kept`); its `structures` entry (`revision_of` = the review id) supersedes the
-  first. Risk does not run again; the gate and approval do. The Slack Risk card shows
-  verdict chips and the Quant card a `[Quant (revised)]` header.
+- Risk gives each structure a verdict (`accept` / `revise` with a `revise_request` /
+  `reject`). Rejects never reach a proposal (journal `risk_reject`). When any verdict
+  is `revise`, one `quant.revise` round re-chooses from the same scanner menu or keeps
+  the first structure (`quant_revised` / `quant_kept`); its `structures` entry
+  (`revision_of` = the review id) supersedes the first. Risk does not run again; the
+  gate and approval do. The Slack Risk card shows verdict chips and the Quant card a
+  `[Quant (revised)]` header. `quant.propose` rows in the journal are `persona='quant'`.
 - **Cost guard:** `steps.quant.revise.min_remaining_s: 90`. The dispatcher skips any
   loop step whose `min_remaining_s` exceeds the `loop.max_runtime` budget left
   (`step_skipped_deadline`); later steps still run. `quant.revise` also skips itself
   (chain continues) with nothing to revise, and on a no-change loop slot.
-- Strategy lane: flips only on an XP-7 `win` verdict
-  (`config/experiments/live/xp7_quant_risk_loop.yaml`, draft; a paired arm forks at
-  `risk.open`). `!arc set personas.quant_risk_loop on` turns it on for paper without a
-  PR (asks for a confirm).
+- E13.15 removed the `personas.quant_risk_loop` switch (and `scalp_options_tape`,
+  `scout_feed`, `research_idea_pool`, `research_compact_prompt`, `exit_path`): each is
+  on. A leftover key in `config/routines.yaml` is ignored with a log; `!arc set` on one
+  answers `unknown key`, and a stored override for one is skipped as orphaned.
 
 ### 5.28 Cboe options data: `options_daily` + `vix_futures` (E13.5, D56)
 
@@ -1812,9 +1818,8 @@ fixtures: `arc/ingest/fixtures/cboe/` (session 2026-10-05).
 - **Terms:** Cboe market statistics are published for personal, non-commercial use.
   Arc stores them for its own decisions and shows them only on internal surfaces
   (Slack workspace, Tailscale-only Tower); no redistribution or republication.
-- `put_call` (E4.5) still writes the `put_call` kind via a thin wrapper over the new
-  parser for d51 readers; E13.15 removes it. `vol_term` (VIX index closes) stays as
-  `market_guard`'s VIX source.
+- E13.15 removed the `put_call` job and kind (its d51 readers are gone). `vol_term`
+  (VIX index closes) stays as `market_guard`'s VIX source.
 - Check: `arc routines run options_daily --db <scratch> --now <date>T18:30-04:00
   --no-slack`, then `arc context show --db <scratch> --kind options_daily --latest`.
 
@@ -1863,70 +1868,56 @@ captured 2026-10-06 ~10:50 ET). Context data only, never a gate input.
   --latest`, then `python -m arc.ingest.cboe_fast --tape --db <scratch>` (read-only)
   prints the rendered tape.
 
-### 5.30 Research inputs: idea pool + compact prompt (E13.8, D56/D53/D54, D44)
+### 5.30 Research inputs: idea pool + compact prompt (E13.8, D56/D53/D54)
 
-    personas.research_idea_pool: scalp        # config/routines.yaml; scalp | all
-    personas.research_compact_prompt: full    # full | compact
     funnel: {research: {max_scout_only_ideas: 20}}
 
-Both defaults are the control: Research ranks the Scalp's candidates with today's
-prompt byte for byte (`tests/test_research_prompt_compact.py` pins the E12.5 golden),
-and no pool input is recorded, so `arc journal replay` of older calls is unchanged.
+Always on since E13.15 (the `research_idea_pool` / `research_compact_prompt` switches
+are gone). `arc journal replay` of a pre-cutover call still rebuilds the full prompt
+byte for byte (`tests/test_research_prompt_compact.py` pins the E12.5 golden).
 
-- **`all` (XP-4):** one pool of Scalp + Scout candidates, one line per ticker, built by
+- **Idea pool:** one pool of Scalp + Scout candidates, one line per ticker, built by
   code (`arc/pipeline/research_pool.py`): feeds from the candidate's sources
   (`youtube:<slug>` = Scout), origins = distinct sources + channels, `agree` /
   `disagree` / `single` against the Scout read's call, confidence = max over feeds.
   Scout-only ideas past `max_scout_only_ideas` are journaled `over_scout_only_cap`.
   `not_a_candidate` drops only a ticker outside the pool. The Research card shows
   `Pool: n (scalp a · scout b · both c)`; the `shortlist` (v4) keeps `pool_counts`.
-- **`compact` (XP-6):** one line per pool ticker and per regime, the Scout read
+- **Compact prompt:** one line per pool ticker and per regime, the Scout read
   (≤ 2,500 chars), category counts with ≤ 3 headlines each, D30 data and notes as
   lines, today's E5.9 portfolio block; no raw candidate/story/brief JSON and no
   per-exclusion reasons. Budget: `research_prompt_max_chars` (80,000, settings only)
   minus 7,200 reserved for the E13.17 exit block. Over it: headlines go first, then
   the pool is cut to its top 40 by confidence (journaled `over_prompt_budget`); a
   prompt still over logs `research.prompt_over_budget`. On the 2026-10-06 snapshot the
-  compact prompt was ~35k chars against 175k for `full`.
+  compact prompt was ~35k chars against 175k for the old full one.
 
-Turn on with `!arc config personas.research_idea_pool all` /
-`personas.research_compact_prompt compact` (riskier, asks for a confirm), or run the
-draft A/Bs `config/experiments/live/xp4_research_idea_pool.yaml` /
-`xp6_research_compact_prompt.yaml` (not registered). `all` only differs from `scalp`
-when `personas.scout_feed: on` writes Scout candidates. Flipping a shipped default needs
-the experiment's `win` verdict.
+### 5.31 Research-managed exits I: exit watchlist + exit cases (E13.17, D56)
 
-### 5.31 Research-managed exits I: exit watchlist + exit cases (E13.17, D56, D44)
+Always on since E13.15 (the `personas.exit_path` switch is gone; `quant.exits`,
+`risk.reallocate` and the `risk_swap` prompt were deleted).
 
-    personas.exit_path: deterministic     # config/routines.yaml; deterministic | shadow | research
-
-`deterministic` (default) is today: Research's prompt is byte for byte unchanged, no
-`exit_watchlist` is written and the chain has no `quant.exit` step.
-
-- **`shadow`:** each Research loop adds an "Open positions (exit watch)" block (one
-  position line + one code-built facts line per structure, ≤ 600 chars each,
+- Each Research loop with open positions adds an "Open positions (exit watch)" block
+  (one position line + one code-built facts line per structure, ≤ 600 chars each,
   `exit_block_max_chars_per_position`) and asks for an `exit_watchlist` instead of
   `thesis_checks`. Code drops unknown ids, keeps one item per structure, takes the ticker
   from the book and journals `exit:watch_hold` / `exit:watch_review` /
   `exit:watch_missing`. The reviews Research saw are written as `position_review`.
-  `quant.exit` (first step after Research) builds one `exit_case` per position with a
-  trigger (Research `review`, a discretionary signal, or a D19 swap pairing) — never for
-  stop / DTE exit / expiry or a pending exit (`exit:case_skipped`) — at most
-  `quant_exit_max_cases` (8), ≤ 900 chars each, and asks Quant hold | close. A missing
-  judgement or a failed call holds. **Nothing is proposed**; the positions chain is
-  untouched. The `🤺 [Quant] Exit cases` card lists ticker · trigger · remaining EV hold/managed ·
-  close-now net, then `*Recommendation:*` and the rationale (E13.13).
-- **`research`:** everything `shadow` does, plus the close path (E13.18, §5.32).
+- `quant.exit` builds one `exit_case` per position with a trigger (Research `review`, a
+  discretionary signal, or a D19 swap pairing) — never for stop / DTE exit / expiry or a
+  pending exit (`exit:case_skipped`) — at most `quant_exit_max_cases` (8), ≤ 900 chars
+  each, and asks Quant hold | close. A missing judgement or a failed call holds. The
+  `🤺 [Quant] Exit cases` card lists ticker · trigger · remaining EV hold/managed ·
+  close-now net, then `*Recommendation:*` and the rationale (E13.13). The close path is
+  §5.32.
 
-Turn on with `!arc config personas.exit_path shadow` (riskier, asks for a confirm).
-Check: `arc routines tick --dry-run --now <today>T10:40-04:00` shows `quant.exit` only
-under shadow/research; `arc context show --kind exit_watchlist --latest` /
-`--kind exit_case`; `arc journal show` (stage `exit`).
+Check: `arc context show --kind exit_watchlist --latest` / `--kind exit_case`;
+`arc journal show` (stage `exit`).
 
 ### 5.32 Research-managed exits II: Risk exit review + close path (E13.18, D56, D44)
 
-`personas.exit_path: research` (XP-9 draft, `config/experiments/live/xp9_research_exit_path.yaml`).
-Exits run **before** opens in the 10-min Research chain:
+Exits run **before** opens in the 10-min Research chain (`AUTO_CHAINS`, fixed since
+E13.15):
 
     research → exits.mandatory → quant.exit → risk.exit → quant.open → risk.open → [quant.revise] → quant.propose → broker.execute
     positions.evaluate (:20/:50) → exits.mandatory → broker.execute     # marks + mandatory floor only
@@ -1934,8 +1925,8 @@ Exits run **before** opens in the 10-min Research chain:
 - **Mandatory floor (`exits.mandatory`, no LLM):** stop, DTE exit and expiry close
   deterministically through `propose_close` (gate `closing=True`, band, approval). One
   attempt per structure per ET day; nothing while an exit is pending or under a halt.
-  The `loop.max_runtime` deadline never skips it. The market guard no longer stops the
-  chain under `research` (it blocks opens, never exits). `MANDATORY_KINDS` is code.
+  The `loop.max_runtime` deadline never skips it. The market guard never stops the
+  chain (it blocks opens, never exits). `MANDATORY_KINDS` is code.
 - **`risk.exit`:** one Risk call on this chain's exit cases (≤ 500 chars each, plus the
   D53 portfolio block and the hold streaks) → `close | hold` + reason code
   (`thesis_broken`, `ev_exhausted`, `risk_event`, `capacity`, `concentration` /
@@ -1956,11 +1947,10 @@ Exits run **before** opens in the 10-min Research chain:
   Research-review-only cases have no limit.
 - **Risk unavailable (D23 fallback):** a deterministic discretionary signal closes as
   today (`exit:review_unavailable`); a Research-review-only case holds.
-- Under `research`, `quant.exits`, `risk.reallocate` and the `risk_swap` prompt do not run.
 
 Check: `arc routines tick --dry-run --now <today>T10:40-04:00` (Research chain) and
 `T10:50` (positions chain); `arc context show --kind risk_exit_review --latest`;
-`arc journal show` (stage `exit`). Back out: `!arc config personas.exit_path deterministic`.
+`arc journal show` (stage `exit`).
 
 ### 7.1 Required status check: `check`
 

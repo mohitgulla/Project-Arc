@@ -1,5 +1,6 @@
-"""D51 (E12.1): every former ``settings.universe`` consumer reads the active list,
-and the market reference (SPY, QQQ) keeps its regime entry when it is not a candidate."""
+"""E12.1 / D56: every former ``settings.universe`` consumer reads the active list,
+and the market reference (SPY, QQQ, IWM) keeps its regime entry when it is not a
+candidate."""
 
 from __future__ import annotations
 
@@ -81,11 +82,13 @@ def test_ingest_universe_seed_is_active_list(db: sqlite3.Connection) -> None:
     assert list(uni.seed) == [*DEFAULT_UNIVERSE, EXTRA]
 
 
-def test_universe_guard_seed_is_core_and_momentum(db: sqlite3.Connection) -> None:
+def test_universe_guard_seed_is_core_and_momentum_is_a_tier(db: sqlite3.Connection) -> None:
     from arc.universe.guard import UniverseGuard
 
     guard = UniverseGuard.from_settings(_settings(), now=NOW, load_master=False, conn=db)
-    assert EXTRA in guard.seed and "SPY" not in guard.seed
+    # D56: only core skips the screen; momentum is a tier (standard screen, floor 0.5)
+    assert EXTRA not in guard.seed and "SPY" not in guard.seed
+    assert guard.membership(EXTRA) is Tier.MOMENTUM and guard.floor_for(EXTRA) == 0.5
     strict = UniverseGuard.from_settings(
         _settings(universe_mode="strict"), now=NOW, load_master=False, conn=db
     )
@@ -153,7 +156,7 @@ def test_scalp_watch_list_in_prompt(db: sqlite3.Connection) -> None:
 
     watch = watch_tickers(db, _settings(), NOW)
     prompt = build_prompt([], _settings(), NOW.date().isoformat(), universe=watch)
-    assert "Watch list (core + momentum + trending)" in prompt
+    assert "Watch list (core + momentum + discovery)" in prompt
     assert f"NFLX, {EXTRA}." in prompt
     assert "not a preference" in prompt
 

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-import structlog
 
 from arc.control.registry import is_alias, lookup
 from arc.experiments.config import RunnerConfig
@@ -20,11 +19,9 @@ from arc.llm_routing import Persona, load_routing
 from arc.routines.config import (
     TIMELINE_PERSONAS,
     RoutinesConfig,
-    StepSpec,
-    current_job_name,
     load_routines,
 )
-from arc.routines.handlers import BUILTIN_HANDLERS, resolve_handler
+from arc.routines.handlers import BUILTIN_HANDLERS
 from arc.routines.heartbeat import _PERSONA_LABELS
 from arc.routines.runs import RoutineRunRepo
 from arc.slack.personas import Persona as SlackPersona
@@ -234,25 +231,18 @@ def test_builtin_handlers_use_new_names() -> None:
     assert BUILTIN_HANDLERS["broker.reconcile"] == (
         "arc.broker.reconcile_job:broker_reconcile_step"
     )
-    assert BUILTIN_HANDLERS["quant.exits"] == "arc.positions.steps:exits_step"
-    assert not {"investor", "auditor", "execute", "investor.exits"} & set(BUILTIN_HANDLERS)
+    assert BUILTIN_HANDLERS["exits.mandatory"] == "arc.positions.steps:exits_mandatory_step"
+    old = {"investor", "auditor", "execute", "investor.exits", "quant.exits", "risk.reallocate"}
+    assert not old & set(BUILTIN_HANDLERS)
 
 
-@pytest.mark.parametrize(
-    ("old", "new"),
-    [
-        ("investor", "broker"),
-        ("auditor", "broker.reconcile"),
-        ("execute", "broker.execute"),
-        ("investor.exits", "quant.exits"),
-    ],
-)
-def test_old_handler_names_resolve_with_a_log(old: str, new: str) -> None:
-    with structlog.testing.capture_logs() as logs:
-        h = resolve_handler(old, StepSpec())
-    assert h is resolve_handler(new, StepSpec())
-    assert [e["renamed_to"] for e in logs if e["event"] == "routines.deprecated_job_alias"] == [new]
-    assert current_job_name(old) == new
+@pytest.mark.parametrize("old", ["investor", "auditor", "execute", "investor.exits"])
+def test_old_handler_names_no_longer_resolve(old: str) -> None:
+    """E13.15: the one-release D56 job aliases are gone."""
+    from arc.routines.config import StepSpec
+    from arc.routines.handlers import not_implemented, resolve_handler
+
+    assert resolve_handler(old, StepSpec()) is not_implemented
 
 
 def test_shipped_routines_use_new_names(shipped: RoutinesConfig) -> None:
@@ -268,54 +258,17 @@ def test_shipped_routines_use_new_names(shipped: RoutinesConfig) -> None:
     assert (
         ev.options["label"] == "Position marks" and ev.options["persona"] == "quant" and not ev.llm
     )
-    assert ev.chain == ["quant.exits", "risk.reallocate", "broker.execute"]
+    assert ev.chain == ["exits.mandatory", "broker.execute"]
     assert p["research"].chain[-1] == "broker.execute"
-    assert {"quant.exits", "broker.execute"} <= set(shipped.steps)
-    assert not {"execute", "investor.exits"} & set(shipped.steps)
+    assert {"exits.mandatory", "broker.execute"} <= set(shipped.steps)
+    assert not {"execute", "investor.exits", "quant.exits", "risk.reallocate"} & set(shipped.steps)
 
 
-def test_old_routines_yaml_loads_as_aliases(shipped_raw: dict) -> None:
-    raw = dict(shipped_raw)
-    personas = dict(raw["personas"])
-    personas["investor"] = personas.pop("broker")
-    personas["auditor"] = personas.pop("broker.reconcile")
-    ev = dict(personas["positions.evaluate"])
-    ev["chain"] = ["investor.exits", "risk.reallocate", "execute"]
-    personas["positions.evaluate"] = ev
-    raw["personas"] = personas
-    steps = dict(raw["steps"])
-    steps["execute"] = steps.pop("broker.execute")
-    steps["investor.exits"] = steps.pop("quant.exits")
-    raw["steps"] = steps
-    with structlog.testing.capture_logs() as logs:
-        cfg = RoutinesConfig.model_validate(raw)
-    assert {"broker", "broker.reconcile"} <= set(cfg.personas)
-    assert cfg.personas["positions.evaluate"].chain == [
-        "quant.exits",
-        "risk.reallocate",
-        "broker.execute",
-    ]
-    assert {"quant.exits", "broker.execute"} <= set(cfg.steps)
-    assert any(e["event"] == "routines.deprecated_job_alias" for e in logs)
-
-
-def test_old_and_new_job_names_together_is_an_error(shipped_raw: dict) -> None:
-    raw = dict(shipped_raw)
-    raw["personas"] = {**raw["personas"], "auditor": raw["personas"]["broker.reconcile"]}
-    with pytest.raises(ValueError, match="renamed"):
-        RoutinesConfig.model_validate(raw)
-
-
-@pytest.mark.parametrize(
-    ("old", "new"),
-    [
-        ("routines.investor.enabled", "routines.broker.enabled"),
-        ("routines.auditor.enabled", "routines.broker.reconcile.enabled"),
-    ],
-)
-def test_old_routine_keys_resolve(old: str, new: str) -> None:
-    assert is_alias(old)
-    assert lookup(old).key == lookup(new).key
+@pytest.mark.parametrize("old", ["routines.investor.enabled", "routines.auditor.enabled"])
+def test_old_routine_keys_no_longer_resolve(old: str) -> None:
+    # E13.15: no longer renamed (a pattern key for an unknown job, which matches nothing)
+    assert not is_alias(old)
+    assert lookup(old).key == old
 
 
 # ---------------------------------------------------------------------------
@@ -352,9 +305,9 @@ def test_only_submission_calls_submit_mleg() -> None:
     assert callers == {"arc/execution/submission.py"}
 
 
-def test_quant_exits_records_quant_persona() -> None:
+def test_mandatory_exits_record_quant_persona() -> None:
     text = (REPO / "arc/positions/steps.py").read_text()
-    body = text[text.index("def exits(") : text.index("def exits_step(")]
+    body = text[text.index("def _close_on_signals(") : text.index("# Close-to-reallocate swaps")]
     assert "JournalPersona.QUANT" in body and "JournalPersona.INVESTOR" not in body
     assert "llm" not in body.lower()
 
@@ -368,7 +321,7 @@ _ALLOWED = (
     "arc/journal/legacy.py",
     "arc/journal/reasons.py",  # read-only legacy enum members
     "arc/store/migrations/",
-    "arc/personas/schemas.py",  # one-release re-exports
+    "arc/personas/schemas.py",  # section headers name the move
     "arc/broker/ladder_job.py",  # module doc names the move
     "arc/broker/reconcile_job.py",
     "arc/routines/spawn.py",

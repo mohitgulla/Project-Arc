@@ -60,7 +60,7 @@ def _validator(target: str) -> Callable[[dict[str, Any]], object]:
         from arc.account_profiles import AccountProfiles
 
         return AccountProfiles.model_validate
-    if target == "universe":  # E13.12: tiers / liquidity screens (XP-5)
+    if target == "universe":  # E13.12: tiers / liquidity screens
         from arc.universe.config import UniverseConfig
 
         return UniverseConfig.model_validate

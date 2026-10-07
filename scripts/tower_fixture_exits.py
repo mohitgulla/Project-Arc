@@ -1,7 +1,6 @@
-"""E13.14 fixture rows: the D56 exit path on the Positions page (shadow chain).
+"""E13.14 fixture rows: the D56 exit path on the Positions page (Research chain).
 
-``add_exits(conn, now, sids)`` turns ``personas.exit_path`` to ``shadow`` (a D26
-config change) and writes one Research ``exit_watchlist``, Quant ``exit_case`` entries,
+``add_exits(conn, now, sids)`` writes one Research ``exit_watchlist``, Quant ``exit_case`` entries,
 a Risk ``risk_exit_review`` and the ``position_review`` rows the cases answer, for the
 fixture's open structures (``sids``: tag -> structure id):
 
@@ -29,7 +28,6 @@ from arc.context.kinds import (
 )
 from arc.context.store import ContextStore
 from arc.context.ttl import Ttl
-from arc.control.store import ConfigChangeRepo
 from arc.models import Structure
 from arc.personas.schemas import ExitWatchItem, RiskExitVerdict
 from arc.positions.evaluate import ExitSignal, SignalKind
@@ -66,12 +64,7 @@ def _facts(close_now: float, ev_hold: float, ev_managed: float) -> ExitCaseFacts
 
 
 def add_exits(conn: sqlite3.Connection, now: dt.datetime, sids: dict[str, str]) -> None:
-    """Write the shadow exit chain for the fixture's open SPY/QQQ/NVDA structures."""
-    ConfigChangeRepo(conn).append(
-        key="personas.exit_path", old="deterministic", new="shadow", is_default=False,
-        actor="U0OWNER", reason="shadow the Research exit path", source="slack",
-        at=now - dt.timedelta(hours=4), status="applied", direction="riskier",
-    )  # fmt: skip
+    """Write the Research exit chain for the fixture's open SPY/QQQ/NVDA structures."""
     store = ContextStore(conn)
     spy, qqq, nvda = sids["pos-spy"], sids["pos-qqq"], sids["pos-nvda"]
     at = now - dt.timedelta(minutes=40)
@@ -126,9 +119,7 @@ def add_exits(conn: sqlite3.Connection, now: dt.datetime, sids: dict[str, str]) 
 
     # The close proposal's context entry, as quant.propose's close branch writes it.
     run_id = "run-fx-quant-propose"
-    row = conn.execute(
-        "SELECT * FROM proposals WHERE kind = 'close' AND ticker = 'QQQ'"
-    ).fetchone()
+    row = conn.execute("SELECT * FROM proposals WHERE kind = 'close' AND ticker = 'QQQ'").fetchone()
     conn.execute("UPDATE proposals SET run_id = ? WHERE id = ?", (run_id, row["id"]))
     payload = {
         "candidate_id": row["candidate_id"] or "cand-exit-qqq",

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from arc.routines.handlers import JobContext
 
 SLOT = FIXTURE_NOW.astimezone(ET)
-STEPS = ("positions.evaluate", "quant.exits", "risk.reallocate", "broker.execute")
+STEPS = ("positions.evaluate", "exits.mandatory", "broker.execute")  # E13.15 chain
 
 
 def _conn() -> sqlite3.Connection:
@@ -82,9 +82,6 @@ def _disp(
         hashes.extend(_insert_close(conn, ctx, t) for t in closes)
         return JobResult(summary=f"{len(closes)} exit(s) proposed")
 
-    def reallocate(ctx: JobContext) -> JobResult:
-        return JobResult(summary="no swap")
-
     def execute(ctx: JobContext) -> JobResult:
         if fill:
             with conn:
@@ -104,8 +101,7 @@ def _disp(
         load_routines(overrides=overrides or {}),
         handlers={
             "positions.evaluate": evaluate,
-            "quant.exits": exits,
-            "risk.reallocate": reallocate,
+            "exits.mandatory": exits,
             "broker.execute": execute,
         },
         notifier=notes,

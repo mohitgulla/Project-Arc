@@ -24,6 +24,7 @@ from arc.tower.data import connect_ro
 from arc.tower.data_universe import UniverseResponse, load_universe
 from arc.universe.tiers import (
     DROP_OVER_ACTIVE_CAP,
+    DROP_OVER_TIER_SIZE,
     MAX_CORE,
     Tier,
     TierMember,
@@ -91,10 +92,13 @@ def _small_active(day: dt.date, *, expired: tuple[Tier, ...] = ()):  # noqa: ANN
             _m("AAPL", Tier.MOMENTUM, 2, "SPMO weight 8.90% (row 2)"),
             _m("GE", Tier.MOMENTUM, 3, "SPMO weight 3.10% (row 3)"),
         ],
-        trending=[_m("RKLB", Tier.TRENDING, 1, "reddit #3 (+41 24h), stocktwits")],
-        discoveries=[_m("QCOM", Tier.DISCOVERY, 1), _m("TEM", Tier.DISCOVERY, 2)],
+        discoveries=[
+            _m("RKLB", Tier.DISCOVERY, 1, "YouTube call, confidence 0.8"),
+            _m("QCOM", Tier.DISCOVERY, 2),
+            _m("TEM", Tier.DISCOVERY, 3),
+        ],
         active_max=5,
-        tier_sizes={Tier.MOMENTUM: 25, Tier.TRENDING: 25},
+        tier_sizes={Tier.MOMENTUM: 20},
         as_of=day,
         config_version=7,
         expired_tiers=expired,
@@ -117,12 +121,14 @@ def test_todays_resolve_is_shown_as_stored(tmp_path: Path) -> None:
     aapl = next(a for a in r.active if a.ticker == "AAPL")
     assert aapl.tier == "core" and aapl.also_in == ["momentum"]
     tiers = {t.name: t for t in r.tiers}
-    assert [t.name for t in r.tiers] == ["core", "momentum", "trending", "discovery"]
+    assert [t.name for t in r.tiers] == ["core", "momentum", "discovery", "trending"]
     assert (tiers["momentum"].offered, tiers["momentum"].active) == (3, 2)
-    assert tiers["core"].size_cap == MAX_CORE and tiers["discovery"].size_cap is None
-    assert tiers["momentum"].size_cap == ArcSettings().universe_momentum_size
+    assert tiers["core"].size_cap == MAX_CORE
+    assert tiers["momentum"].size_cap == ArcSettings().universe_momentum_size_d56
+    assert tiers["discovery"].size_cap == ArcSettings().universe_discovery_size
+    assert tiers["trending"].size_cap == ArcSettings().universe_trending_size == 25
     assert sum(t.active for t in r.tiers) == len(r.active)
-    assert r.market_reference == ["SPY", "QQQ"]
+    assert r.market_reference == ["SPY", "QQQ", "IWM"]
     assert r.core_override_ignored is None
 
 
@@ -131,7 +137,7 @@ def test_dropped_list_carries_tier_and_reason(tmp_path: Path) -> None:
     _write(db, "active_universe", "active", _small_active(TODAY), at=NOW,
            ttl=dt.timedelta(hours=8))  # fmt: skip
     r = _read(db)
-    # 2 core + 2 momentum (AAPL deduped) + 1 trending + 2 discovery = 7 > cap 5
+    # 2 core + 2 momentum (AAPL deduped) + 3 discovery = 7 > cap 5
     assert len(r.active) == 5
     assert [(d.ticker, d.tier, d.reason) for d in r.dropped] == [
         ("QCOM", "discovery", DROP_OVER_ACTIVE_CAP),
@@ -183,10 +189,10 @@ def test_no_resolve_shows_the_core_list(tmp_path: Path) -> None:
 
 def test_expired_tier_is_flagged(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    _write(db, "active_universe", "active", _small_active(TODAY, expired=(Tier.TRENDING,)),
+    _write(db, "active_universe", "active", _small_active(TODAY, expired=(Tier.DISCOVERY,)),
            at=NOW, ttl=dt.timedelta(hours=8))  # fmt: skip
     tiers = {t.name: t for t in _read(db).tiers}
-    assert tiers["trending"].expired and not tiers["momentum"].expired
+    assert tiers["discovery"].expired and not tiers["momentum"].expired
 
 
 # -- ignored override ------------------------------------------------------------------
@@ -225,17 +231,20 @@ def test_route_on_the_ops_fixture_is_get_only(tmp_path: Path) -> None:
     assert body.state == "today"
     assert len(body.active) == body.active_max == 50
     counts = {t.name: t.active for t in body.tiers}
-    assert counts == {"core": 20, "momentum": 15, "trending": 6, "discovery": 9}
+    assert counts == {"core": 20, "momentum": 11, "discovery": 19, "trending": 0}
     assert [(d.ticker, d.reason) for d in body.dropped] == [
-        ("SNDK", DROP_OVER_ACTIVE_CAP),
+        ("KKR", DROP_OVER_TIER_SIZE),
+        ("VST", DROP_OVER_TIER_SIZE),
+        ("CEG", DROP_OVER_TIER_SIZE),
+        ("ANET", DROP_OVER_TIER_SIZE),
         ("BBAI", DROP_OVER_ACTIVE_CAP),
     ]
     # the fixture's 100-name `universe` override (E8.8e) is the pre-D51 list: ignored
     assert body.core_override_ignored is not None and body.core_override_ignored.count == 100
     mom = next(t for t in body.tiers if t.name == "momentum")
     assert mom.partial and mom.source == "stockanalysis" and mom.offered == 24
-    trn = next(t for t in body.tiers if t.name == "trending")
-    assert trn.offered == len(ops_fixture.TRENDING_FIXTURE)
+    disc = next(t for t in body.tiers if t.name == "discovery")
+    assert disc.offered == len(ops_fixture.DISCOVERY_FIXTURE) and disc.source == "scout"
     assert body.director_diversification in {"strict", "relaxed"}
     rk = next(a for a in body.active if a.ticker == "RKLB")
-    assert rk.reason.startswith("reddit #1")
+    assert rk.tier == "discovery" and rk.reason.startswith("YouTube call")

@@ -28,7 +28,6 @@ from arc.ingest.cboe_daily import (
     session_date,
     vx_curve,
 )
-from arc.ingest.options_data import parse_put_call
 from arc.routines import handlers
 from arc.routines.config import CatchUp, RoutinesConfig, load_routines
 from arc.routines.dispatcher import Dispatcher
@@ -140,18 +139,6 @@ class TestParseDailyOptions:
         assert [r.segment for r in p.ratios] == ["total"]
         assert p.ratios[0].call_volume is None
         assert p.open_interest == []
-
-    def test_put_call_wrapper_matches(self) -> None:
-        legacy = parse_put_call(_daily(), DAY)
-        assert legacy is not None
-        assert (legacy.total, legacy.equity, legacy.index, legacy.spx, legacy.vix) == (
-            0.83,
-            0.59,
-            0.91,
-            1.03,
-            0.31,
-        )
-        assert legacy.as_of == "2026-10-05"
 
 
 class TestFetchDailyOptions:

@@ -19,10 +19,10 @@ count as end of day from ``eod_marks_from`` (default 15:30 ET), so the last
 monitor runs of the session can still fire the stop while the market is open.
 No exits are proposed while trading is halted.
 
-E6.4: the intraday ``positions.evaluate → quant.exits → risk.reallocate`` chain
-(:mod:`arc.positions`) calls :func:`propose_close` for review signals (profit
-target, time-adjusted target, remaining-EV floor, stop, DTE) and for the close
-leg of a close-to-reallocate swap. :func:`propose_exits` is the E6.2 monitor path.
+E6.4/D56: ``exits.mandatory`` (:mod:`arc.positions`) calls :func:`propose_close`
+for mandatory review signals (stop, DTE exit, expiry), and the ``quant.propose``
+close branch calls it for Research-managed exits and the close leg of a
+close-to-reallocate swap. :func:`propose_exits` is the E6.2 monitor path.
 """
 
 from __future__ import annotations

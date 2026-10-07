@@ -50,7 +50,7 @@ Feed = Literal["scalp", "scout"]
 REFERENCE_LABEL = "Reference data"
 
 #: D56 (owner decision, categories): the Scalp's 30-min feed reads these; the rest
-#: (options_slow, youtube_macro, youtube_micro) are the Scout's daily feed.
+#: (options_slow, youtube_macro, youtube_micro, D58 retail_buzz) are the Scout's daily feed.
 _SCALP_FEED: frozenset[SourceCategory] = frozenset(
     {SourceCategory.MARKET_NEWS, SourceCategory.COMPANY_DATA, SourceCategory.OPTIONS_FAST}
 )
@@ -121,7 +121,8 @@ def persona_catalogue(routines: RoutinesConfig) -> list[PersonaMeta]:
 
 
 def category_catalogue(routines: RoutinesConfig) -> list[CategoryMeta]:
-    """The six categories in display order, then the reference-data group."""
+    """The seven categories (D56 six + D58 retail_buzz) in display order, then the
+    reference-data group."""
     out: list[CategoryMeta] = []
     for cat in CATEGORY_ORDER:
         spec = routines.category_spec(cat)

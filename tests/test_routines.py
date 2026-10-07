@@ -75,10 +75,11 @@ BASE_YAML = """
       rss: {every: 30m, window: "06:00-20:00", days: trading}
     personas:
       scalp: {schedule: ["22:00", "12:00"], days: daily, after_sources: true, ttl: 3h}
-      research: {schedule: ["09:00"], days: trading, chain: [quant, risk, propose], ttl: 2h,
+      research: {schedule: ["09:00"], days: trading,
+                 chain: [quant.open, risk.open, quant.propose], ttl: 2h,
                  writes: [shortlist]}
-      auditor: {schedule: ["16:30"], days: trading, halt_exempt: true, ttl: 6h}
-      investor: {trigger: approval}
+      broker.reconcile: {schedule: ["16:30"], days: trading, halt_exempt: true, ttl: 6h}
+      broker: {trigger: approval}
     triggers:
       - on: scalp.completed
         if: "new_candidates > 0 and session == 'open'"
@@ -186,8 +187,12 @@ class TestConfig:
         c = load_routines(DEFAULT_ROUTINES_PATH)
         assert c.personas["scalp"].after_sources
         assert c.personas["research"].chain == [
+            "exits.mandatory",
+            "quant.exit",
+            "risk.exit",
             "quant.open",
             "risk.open",
+            "quant.revise",
             "quant.propose",
             "broker.execute",
         ]
@@ -229,9 +234,10 @@ class TestConfig:
               earnings:          {schedule: ["06:00", "18:00"], days: trading}
             personas:
               scalp:    {schedule: ["22:00", "12:00"], days: daily, after_sources: true}
-              research: {schedule: ["09:00"], days: trading, chain: [quant, risk, propose]}
-              auditor:  {schedule: ["16:30"], days: trading}
-              investor: {trigger: approval}
+              research: {schedule: ["09:00"], days: trading,
+                         chain: [quant.open, risk.open, quant.propose]}
+              broker.reconcile: {schedule: ["16:30"], days: trading}
+              broker: {trigger: approval}
             triggers:
               - on: scalp.completed
                 if: "new_candidates > 0 and session == 'open'"
@@ -284,7 +290,7 @@ class TestConfig:
     def test_writes_parse(self) -> None:
         c = cfg("personas: {d: {schedule: ['09:00'], writes: [shortlist, note]}}")
         assert c.personas["d"].writes == ["shortlist", "note"]
-        assert cfg("steps: {propose: {writes: []}}").steps["quant.propose"].writes == []
+        assert cfg("steps: {quant.propose: {writes: []}}").steps["quant.propose"].writes == []
         assert cfg("personas: {d: {schedule: ['09:00']}}").personas["d"].writes is None
 
     def test_unknown_write_kind_message(self) -> None:
@@ -299,9 +305,9 @@ class TestConfig:
         c = cfg(
             """
             personas:
-              research: {schedule: ["09:00"], chain: [quant]}
-              auditor: {schedule: ["16:30"]}
-            triggers: [{on: quant.completed, run: auditor}]
+              research: {schedule: ["09:00"], chain: [quant.open]}
+              broker.reconcile: {schedule: ["16:30"]}
+            triggers: [{on: quant.open.completed, run: broker.reconcile}]
             """
         )
         assert c.triggers_for("quant.open.completed")[0].run == "broker.reconcile"
@@ -311,16 +317,16 @@ class TestConfig:
             """
             context_ttl: {shortlist: {ttl: 1 session}}
             personas:
-              research: {schedule: ["09:00"], chain: [propose]}
+              research: {schedule: ["09:00"], chain: [quant.propose]}
             steps:
-              propose: {context: {ttl: 20m, supersede: accumulate}, llm: false}
+              quant.propose: {context: {ttl: 20m, supersede: accumulate}, llm: false}
             """
         )
         assert str(c.context_policy("shortlist", "research").ttl) == "1 session"
-        assert str(c.context_policy("proposal", "propose").ttl) == "20m"
+        assert str(c.context_policy("proposal", "quant.propose").ttl) == "20m"
         assert c.context_policy("regime").ttl is None
-        assert c.step("propose")[1].llm is False
-        assert c.step("quant")[0] is JobKind.PERSONA
+        assert c.step("quant.propose")[1].llm is False
+        assert c.step("quant.open")[0] is JobKind.PERSONA
         assert c.job("nobody") is None
 
     def test_disabled_jobs_are_ignored(self) -> None:
@@ -591,8 +597,8 @@ class TestTick:
 
     def test_unimplemented_persona_is_skipped_not_failed(self, conn: sqlite3.Connection) -> None:
         yaml_text = BASE_YAML.replace(
-            "investor: {trigger: approval}",
-            'investor: {trigger: approval}\n      lessons: {schedule: ["16:45"], days: [fri]}',
+            "broker: {trigger: approval}",
+            'broker: {trigger: approval}\n      lessons: {schedule: ["16:45"], days: [fri]}',
         )
         d = Dispatcher(conn, cfg(yaml_text), notifier=RecordingNotifier(), is_halted=lambda: False)
         outcomes = d.run_job(
@@ -743,7 +749,8 @@ class TestContextIntegration:
     def test_persona_reads_only_configured_kinds(self, conn: sqlite3.Connection) -> None:
         text = BASE_YAML.replace(
             "                 writes: [shortlist]}",
-            "                 writes: [shortlist]}\n    steps:\n      quant: {reads: [candidate]}",
+            "                 writes: [shortlist]}\n"
+            "    steps:\n      quant.open: {reads: [candidate]}",
         )
         c = cfg(text)
         assert c.steps["quant.open"].reads == ["candidate"]
@@ -862,8 +869,8 @@ class TestConfigDriven:
         assert resolve_handler("scorecard", spec).__name__ == "scorecard_step"
         assert resolve_handler("broker.reconcile", spec).__name__ == "broker_reconcile_step"
         assert resolve_handler("quant.open", spec).__name__ == "quant_open_step"
-        assert resolve_handler("quant", spec).__name__ == "quant_open_step"  # E13.9 alias
-        assert resolve_handler("propose", spec).__name__ == "quant_propose_step"
+        assert resolve_handler("quant.propose", spec).__name__ == "quant_propose_step"
+        assert resolve_handler("propose", spec) is not_implemented  # E13.15: alias gone
         assert resolve_handler("rss", spec).__name__ == "rss_source"
         assert resolve_handler("edgar.filings", spec).__name__ == "edgar_source"
         with pytest.raises(TypeError):
@@ -1081,7 +1088,7 @@ class TestDryRunAndCli:
         assert (
             "INVALID" in out
             and "research" in out
-            and "quant.open → risk.open → quant.propose" in out
+            and "quant.open → risk.open → quant.revise → quant.propose" in out
         )
 
         db = str(tmp_path / "arc.db")
@@ -1099,8 +1106,9 @@ class TestDryRunAndCli:
         db = str(tmp_path / "arc.db")
         cfg_path = tmp_path / "r.yaml"
         cfg_path.write_text(
-            "personas:\n  research: {schedule: ['09:00'], chain: [quant], writes: [shortlist]}\n"
-            "steps:\n  quant: {writes: [structures, note]}\n"
+            "personas:\n"
+            "  research: {schedule: ['09:00'], chain: [quant.open], writes: [shortlist]}\n"
+            "steps:\n  quant.open: {writes: [structures, note]}\n"
         )
         base = ["--config", str(cfg_path), "--db", db]
         rc = main(

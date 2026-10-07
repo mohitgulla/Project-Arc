@@ -1,0 +1,208 @@
+{
+  "$defs": {
+    "RetailBuzzInput": {
+      "additionalProperties": false,
+      "description": "What one input fetched this run (``failed`` = no rows; contributes nothing).",
+      "properties": {
+        "digest": {
+          "default": "",
+          "description": "sha256 of the fetched pages' raw bytes",
+          "title": "Digest",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "fetched_at": {
+          "description": "ISO time (ET) of the fetch",
+          "title": "Fetched At",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/RetailBuzzRow"
+          },
+          "title": "Rows",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "apewisdom",
+            "stocktwits"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "urls": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Urls",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "status",
+        "fetched_at"
+      ],
+      "title": "RetailBuzzInput",
+      "type": "object"
+    },
+    "RetailBuzzRow": {
+      "additionalProperties": false,
+      "description": "One symbol as one input listed it (position = its 1-based order in the input).",
+      "properties": {
+        "exchange": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "stocktwits: exchange (CRYPTO dropped later)",
+          "title": "Exchange"
+        },
+        "mentions": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "apewisdom: mentions (24h)",
+          "title": "Mentions"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "position": {
+          "minimum": 1,
+          "title": "Position",
+          "type": "integer"
+        },
+        "rank": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The input's own rank field, if any",
+          "title": "Rank"
+        },
+        "rank_24h_ago": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "apewisdom: rank 24 h ago",
+          "title": "Rank 24H Ago"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "stocktwits: region (non-US dropped later)",
+          "title": "Region"
+        },
+        "symbol": {
+          "title": "Symbol",
+          "type": "string"
+        },
+        "trending_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "stocktwits: trending_score",
+          "title": "Trending Score"
+        }
+      },
+      "required": [
+        "symbol",
+        "position"
+      ],
+      "title": "RetailBuzzRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "``retail_buzz`` (subject ``all``): one entry per daily pull, every enabled input.",
+  "properties": {
+    "as_of": {
+      "description": "ISO time (ET) of the run",
+      "title": "As Of",
+      "type": "string"
+    },
+    "inputs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/RetailBuzzInput"
+      },
+      "minProperties": 1,
+      "title": "Inputs",
+      "type": "object"
+    },
+    "session": {
+      "description": "Trading session the pull is for (YYYY-MM-DD)",
+      "title": "Session",
+      "type": "string"
+    }
+  },
+  "required": [
+    "as_of",
+    "session",
+    "inputs"
+  ],
+  "title": "RetailBuzzPayload",
+  "type": "object"
+}

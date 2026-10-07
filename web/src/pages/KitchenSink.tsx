@@ -407,7 +407,7 @@ function Stories() {
             items={[
               { id: "1", persona: "Scalp", stage: "Candidate", reason: "news_catalyst", at: "Mon 09-28 09:12" },
               { id: "2", persona: "Quant", stage: "Structure", reason: "ev_ranked", at: "Mon 09-28 09:34", body: "Debit call vertical 620/640, net EV $87.25 after costs." },
-              { id: "3", persona: "Risk", stage: "Gate FAIL", reason: "delta_cap", at: "Mon 09-28 09:35", status: "failed", body: "post-trade |Δ| 400 > cap 300" },
+              { id: "3", persona: "Risk", stage: "Gate FAIL", reason: "delta_cap", at: "Mon 09-28 09:35", status: "failed", body: "post-trade |$Δ| $53,000.00 > cap $50,000.00" },
               { id: "4", persona: "Broker", stage: "Awaiting approval", at: "—", status: "pending" },
             ]}
           />

@@ -1,5 +1,5 @@
-"""E13.18 (D56): Risk exit review + the quant.propose close branch
-(``personas.exit_path: research``).
+"""E13.18 (D56): Risk exit review + the quant.propose close branch (always on since
+E13.15).
 
 Fixture chain (bundled SPY recording + fixture personas). The fixture book holds one
 SPY long call; its entry price decides which deterministic signal fires:
@@ -146,7 +146,7 @@ class TestRiskExit:
     def test_close_becomes_a_close_proposal_with_review(self) -> None:
         conn, env, sid = _book()
         _, risk = _personas(env, sid, research=_watch(sid), risk_reply=_verdict(sid))
-        conn, report = _run(_settings(), _routines("research"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed, report
         jobs = [o.job for o in report.outcomes]
         assert jobs[1:5] == ["research", "exits.mandatory", "quant.exit", "risk.exit"]
@@ -177,7 +177,7 @@ class TestRiskExit:
     def test_hold_is_journaled_no_action(self) -> None:
         conn, env, sid = _book()
         _personas(env, sid, research=_watch(sid), risk_reply=_verdict(sid, "hold", "thesis_intact"))
-        conn, report = _run(_settings(), _routines("research"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed, report
         assert _closes(conn) == [] and _exit_hash(conn, sid) is None
         assert _codes(conn, "exit")["exit:hold_reviewed"] == [sid]
@@ -187,7 +187,7 @@ class TestRiskExit:
     def test_missing_verdict_holds_fail_closed(self) -> None:
         conn, env, sid = _book()
         _personas(env, sid, research=_watch(sid), risk_reply=json.dumps({"verdicts": []}))
-        conn, report = _run(_settings(), _routines("research"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed
         (rv,) = _kind(conn, "risk_exit_review")
         assert rv["verdicts"][0]["verdict"] == "hold"
@@ -197,7 +197,7 @@ class TestRiskExit:
     def test_unavailable_review_only_case_holds(self) -> None:
         conn, env, sid = _book()
         _personas(env, sid, research=_watch(sid), risk_reply="not json")
-        conn, report = _run(_settings(), _routines("research"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed
         (rv,) = _kind(conn, "risk_exit_review")
         assert rv["unavailable"] is True
@@ -211,7 +211,7 @@ class TestRiskExit:
         conn, env, sid = _book(entry=fx["entry"])
         _personas(env, sid, research=_watch(sid, fx["research_action"]),
                   quant_rec=fx["quant_recommendation"], risk_reply=fx["risk_reply"])  # fmt: skip
-        conn, report = _run(_settings(), _routines("research"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed, report
         (case,) = _kind(conn, "exit_case")
         assert [t["kind"] for t in case["triggers"]] == [fx["expect"]["trigger"]]
@@ -232,7 +232,7 @@ class TestRiskExit:
         state.set(f"exit_hold:{sid}:profit_target", "3")
         _personas(env, sid, research=_watch(sid, "hold"), quant_rec="hold",
                   risk_reply=_verdict(sid, "hold", "ev_remaining"))  # fmt: skip
-        conn, report = _run(_settings(), _routines("research"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed, report
         (close,) = _closes(conn)
         row = conn.execute(
@@ -246,7 +246,7 @@ class TestRiskExit:
         conn, env, sid = _book(entry="1.00")
         _personas(env, sid, research=_watch(sid, "hold"), quant_rec="hold",
                   risk_reply=_verdict(sid, "hold", "ev_remaining"))  # fmt: skip
-        conn, report = _run(_settings(), _routines("research"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed
         assert _closes(conn) == []
         assert RoutineStateRepo(conn).get(f"exit_hold:{sid}:profit_target") == "1"
@@ -255,20 +255,11 @@ class TestRiskExit:
     def test_no_case_no_risk_call(self) -> None:
         conn, env, sid = _book()
         _, risk = _personas(env, sid, research=_watch(sid, "hold"), risk_reply=None)
-        conn, report = _run(_settings(), _routines("research"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert not report.failed
         assert _outcome(report, "risk.exit").status == "skipped"
         assert not any("Exit review" in p for p in risk.prompts)  # type: ignore[attr-defined]
         assert _kind(conn, "risk_exit_review") == []
-
-    def test_shadow_never_runs_risk_exit(self) -> None:
-        conn, env, sid = _book()
-        _personas(env, sid, research=_watch(sid), risk_reply=None)
-        conn, report = _run(_settings(), _routines("shadow"), env, conn=conn)
-        assert not report.failed
-        jobs = {o.job for o in report.outcomes}
-        assert "risk.exit" not in jobs and "exits.mandatory" not in jobs
-        assert _closes(conn) == []
 
     def test_halt_proposes_nothing(self) -> None:
         from arc.gate.halt import HaltSwitch
@@ -277,7 +268,7 @@ class TestRiskExit:
         conn, env, sid = _book()
         _personas(env, sid, research=_watch(sid), risk_reply=_verdict(sid))
         HaltSwitch(HaltRepo(conn)).halt(reason="test", actor="t", now=FIXTURE_NOW)
-        conn, report = _run(_settings(), _routines("research"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         assert _closes(conn) == []
         p = _outcome(report, "quant.propose")
         assert p.status != "ok" or p.metrics.get("exit_closes", 0) == 0
@@ -296,7 +287,7 @@ class TestMandatory:
         settings = _settings()
         # the fixture call has 35 DTE; a 40-day DTE exit fires the mandatory floor
         settings._yaml_overrides = {"exits": {("kinds", "long_call", "close_at_dte"): 40}}  # noqa: SLF001
-        conn, report = _run(settings, _routines("research"), env, conn=conn)
+        conn, report = _run(settings, _routines(), env, conn=conn)
         assert not report.failed, report
         m = _outcome(report, "exits.mandatory")
         assert m.status == "ok" and m.metrics["mandatory"] is True, m.summary
@@ -308,18 +299,16 @@ class TestMandatory:
         assert not any("Exit review" in p for p in risk.prompts)  # type: ignore[attr-defined]
 
     def test_positions_chain(self) -> None:
-        from arc.routines.config import chain_for
         from arc.routines.dispatcher import DEADLINE_EXEMPT_STEPS
+        from arc.routines.handlers import BUILTIN_HANDLERS
 
-        assert chain_for("positions.evaluate", {}, {"exit_path": "research"}) == [
-            "exits.mandatory", "broker.execute",
-        ]  # fmt: skip
-        assert chain_for("positions.evaluate", {}, {"exit_path": "deterministic"}) == [
-            "quant.exits", "risk.reallocate", "broker.execute",
-        ]  # fmt: skip
+        r = _routines()
+        assert r.personas["positions.evaluate"].chain == ["exits.mandatory", "broker.execute"]
+        assert r.personas["research"].chain[:3] == ["exits.mandatory", "quant.exit", "risk.exit"]
         assert "exits.mandatory" in DEADLINE_EXEMPT_STEPS
-        r = _routines("research")
-        assert r.exit_path.managed and not _routines("shadow").exit_path.managed
+        # E13.15: the deterministic-only exit chain is gone
+        assert not {"quant.exits", "risk.reallocate"} & set(BUILTIN_HANDLERS)
+        assert not {"quant.exits", "risk.reallocate"} & set(r.steps)
 
     def test_registry_and_settings(self) -> None:
         from arc.control.registry import lookup
@@ -337,23 +326,8 @@ class TestMandatory:
 
         conn, env, sid = _book()
         _personas(env, sid, research=_watch(sid), risk_reply=_verdict(sid))
-        conn, report = _run(_settings(), _routines("research"), env, conn=conn)
+        conn, report = _run(_settings(), _routines(), env, conn=conn)
         card = _outcome(report, "risk.exit")
         assert card.status == "ok"
         view = risk_exit_card([], {}, unavailable=True)
         assert "0 reviewed" in view.text
-
-
-def test_xp9_draft_spec_loads() -> None:
-    from arc.control.effective import overlay_overrides
-    from arc.experiments.overlay import load_spec
-    from arc.routines.config import REPO_ROOT, load_routines
-
-    spec = load_spec(REPO_ROOT / "config/experiments/live/xp9_research_exit_path.yaml")
-    assert spec.id == "XP-9" and spec.area == "exits"
-    overlay = spec.arms.treatment.overlay
-    assert overlay == {"routines": {"personas": {"exit_path": "research"}}}
-    on = load_routines(overrides=overlay_overrides(overlay)["routines"])
-    assert on.exit_path.managed
-    assert on.personas["research"].chain[:3] == ["exits.mandatory", "quant.exit", "risk.exit"]
-    assert on.personas["positions.evaluate"].chain == ["exits.mandatory", "broker.execute"]

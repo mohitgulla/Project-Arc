@@ -177,10 +177,10 @@ def test_cutover_without_routine_state() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["doc_budget", "min_confidence", "max_new_tickers"])
-def test_old_setting_names_resolve(name: str) -> None:
-    assert is_alias(f"scout_{name}")
-    assert lookup(f"scout_{name}").key == lookup(f"scalp_{name}").key == f"scalp_{name}"
+def test_old_setting_names_resolve() -> None:
+    assert is_alias("scout_doc_budget")
+    assert lookup("scout_doc_budget").key == lookup("scalp_doc_budget").key == "scalp_doc_budget"
+    assert lookup("scout_min_confidence").key == "universe_floor_core"  # E13.15
 
 
 def test_universe_earnings_scout_key_alias() -> None:
