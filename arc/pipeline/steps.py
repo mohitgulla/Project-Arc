@@ -3501,8 +3501,13 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 regime=shortlist.market_regime,
                 commit=False,
             )
-        except sqlite3.IntegrityError:  # a concurrent run won the (chain, ticker) slot
+        except sqlite3.IntegrityError:
             ctx.conn.rollback()
+            # Only the (chain, ticker) unique slot is a race a concurrent run can win.
+            # Any other constraint (e.g. proposals.candidate_id -> candidates, which hid
+            # the E10.2a arm's missing candidate rows) is a bug: fail the step loudly.
+            if not _existing(ctx.conn, chain_key, t):
+                raise
             skip(t, "exists", ReasonCode.ALREADY_PROPOSED, "a concurrent run won the slot")
             continue
         GateDecisionRepo(ctx.conn).insert(

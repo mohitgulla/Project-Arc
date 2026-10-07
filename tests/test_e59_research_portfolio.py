@@ -853,3 +853,36 @@ def test_fixture_book_portfolio_context(settings: ArcSettings) -> None:
     text = render_portfolio_context(pc, settings)
     assert "3 of 8 positions open" in text and "Flags: " in text
     assert all(sid in text for sid in ids)
+
+
+class TestProposeIntegrityError:
+    """E10.2c: only a lost (chain, ticker) slot is journalled as already_proposed."""
+
+    def test_lost_slot_is_already_proposed(self, settings, routines, monkeypatch) -> None:  # noqa: ANN001
+        real = ProposalRepo.insert
+
+        def race(self, **kw):  # noqa: ANN001, ANN003, ANN202
+            # a concurrent run inserts the same (chain, ticker) first
+            real(self, **{**kw, "proposal_hash": "concurrent-" + kw["proposal_hash"]})
+            self.conn.commit()
+            raise sqlite3.IntegrityError("UNIQUE constraint failed: proposals.chain_run_id")
+
+        monkeypatch.setattr(ProposalRepo, "insert", race)
+        conn, r = _run(settings, routines, PipelineEnv.fixtures())
+        po = _outcome(r, "quant.propose")
+        assert po.metrics["proposals"] == 0
+        assert _codes(conn, "propose")["already_proposed"] == ["SPY"]
+
+    def test_other_integrity_error_fails_the_step(self, settings, routines, monkeypatch) -> None:  # noqa: ANN001
+        def fk(self, **kw):  # noqa: ANN001, ANN003, ANN202
+            raise sqlite3.IntegrityError("FOREIGN KEY constraint failed")
+
+        monkeypatch.setattr(ProposalRepo, "insert", fk)
+        conn, r = _run(settings, routines, PipelineEnv.fixtures())
+        po = _outcome(r, "quant.propose")
+        assert po.status == "failed", po
+        row = conn.execute(
+            "SELECT status, error FROM routine_runs WHERE job = 'quant.propose'"
+        ).fetchone()
+        assert row["status"] == "failed" and "FOREIGN KEY" in row["error"]
+        assert "already_proposed" not in _codes(conn, "propose")
