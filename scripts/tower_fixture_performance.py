@@ -339,7 +339,7 @@ def add_history(conn: sqlite3.Connection, *, now: dt.datetime, first_equity_day:
     # Gate-failed proposals across the period (violation histogram).
     fails = ("per_underlying_limit: max loss over cap", "spread_too_wide: 18% > 12%",
              "dte_window: 5 < 14", "spread_too_wide: 22% > 12%",
-             "portfolio_delta_cap: 310 > 300", "earnings_blackout: AAPL reports in 2d")  # fmt: skip
+             "portfolio_delta_cap: |$Δ| $53,000 > $50,000", "earnings_blackout: AAPL reports in 2d")  # fmt: skip
     for k, v in enumerate(fails):
         at = dt.datetime.combine(
             _weekday((now - dt.timedelta(days=100 - 15 * k)).date()), dt.time(11), tzinfo=ET

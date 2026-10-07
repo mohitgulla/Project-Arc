@@ -47,7 +47,7 @@ def overview(
         conn,
         now=cfg.clock(),
         rng=range,
-        delta_cap=settings.portfolio_delta_cap,
+        dollar_delta_cap_pct=settings.portfolio_dollar_delta_cap_pct,
         vega_cap_pct=settings.portfolio_vega_cap_pct,
         max_alloc_pct=settings.max_alloc_pct,
         stale_after=monitor_stale_after(conn),

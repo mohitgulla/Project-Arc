@@ -259,6 +259,24 @@ def _computed_review(
         return None
 
 
+def _open_spot(conn: sqlite3.Connection, row: Mapping[str, Any]) -> float | None:
+    """D57: the underlying spot stored with the opening proposal (``proposals.spot``).
+
+    ``None`` when it was never stored (pre-016 rows) or is not a positive number: the
+    as-opened dollar delta is then unknown rather than guessed.
+    """
+    found = conn.execute(
+        "SELECT spot FROM proposals WHERE proposal_hash = ?", (row["open_proposal_hash"],)
+    ).fetchone()
+    if found is None or found["spot"] in (None, "", "None"):
+        return None
+    try:
+        spot = float(Decimal(str(found["spot"])))
+    except ArithmeticError:
+        return None
+    return spot if spot > 0 else None
+
+
 def _scale(g: Greeks, n: int) -> Greeks:
     return Greeks(
         delta=g.delta * n,
@@ -353,6 +371,8 @@ def build_portfolio_context(
     positions: list[PortfolioPosition] = []
     warnings: list[str] = []
     opened_greeks = Greeks()
+    # D57: as-opened dollar delta (Δ × n × spot at open); None once any spot is unknown
+    opened_dollar_delta: float | None = 0.0
     open_pnl = 0.0
     earnings: Mapping[str, _dt.date | None] = {}
     if facts:
@@ -383,6 +403,11 @@ def build_portfolio_context(
             vega=opened_greeks.vega + g.vega,
             theta=opened_greeks.theta + g.theta,
         )
+        if opened_dollar_delta is not None:
+            spot_open = _open_spot(conn, row)
+            opened_dollar_delta = (
+                None if spot_open is None else opened_dollar_delta + g.delta * spot_open
+            )
         if review is not None:
             open_pnl += review.pnl_total
         positions.append(
@@ -434,13 +459,18 @@ def build_portfolio_context(
     hhi = round(sum(s * s for s in under_sh.values()), 4)
 
     net = portfolio.greeks if portfolio is not None else opened_greeks
-    delta_cap = settings.portfolio_delta_cap * equity / 100.0
+    dollar_delta = float(portfolio.dollar_delta) if portfolio is not None else opened_dollar_delta
+    delta_cap = settings.portfolio_dollar_delta_cap_pct * equity
     vega_cap = settings.portfolio_vega_cap_pct * equity
     vega_usd = net.vega / 100.0
-    delta = GreekUsage(
-        net=round(net.delta, 4),
-        cap=round(delta_cap, 4),
-        pct_used=round(abs(net.delta) / delta_cap, 4) if delta_cap > 0 else None,
+    delta = (
+        None
+        if dollar_delta is None
+        else GreekUsage(
+            net=round(dollar_delta, 2),
+            cap=round(delta_cap, 2),
+            pct_used=round(abs(dollar_delta) / delta_cap, 4) if delta_cap > 0 else None,
+        )
     )
     vega = GreekUsage(
         net=round(vega_usd, 4),
@@ -459,7 +489,7 @@ def build_portfolio_context(
     if f_buckets and len(positions) > 1:
         flags.append("expiry_cluster")
     near = settings.portfolio_greek_near_cap_pct
-    if delta.pct_used is not None and delta.pct_used >= near:
+    if delta is not None and delta.pct_used is not None and delta.pct_used >= near:
         flags.append("delta_near_cap")
     if vega.pct_used is not None and vega.pct_used >= near:
         flags.append("vega_near_cap")
@@ -474,6 +504,7 @@ def build_portfolio_context(
         by_expiry_bucket=bucket_sh,
         hhi_underlying=hhi,
         delta=delta,
+        delta_shares=round(net.delta, 4),
         vega=vega,
         gamma=round(net.gamma, 4),
         theta=round(net.theta, 4),
@@ -667,8 +698,13 @@ def render_portfolio_context(
         f"{_mix(ag.by_stance)}; by expiry bucket "
         f"{_mix({_bucket(k): v for k, v in ag.by_expiry_bucket.items()})}. "
         f"HHI {ag.hhi_underlying:.2f}.",
-        f"Net Greeks ({ag.greeks_source}): Δ {d.net:+.1f} of cap {d.cap:.1f} "
-        f"({_pct(d.pct_used)} used); ν ${v.net:+,.0f}/vol-pt of cap ${v.cap:,.0f} "
+        f"Net Greeks ({ag.greeks_source}): "
+        + (
+            f"$Δ ${d.net:+,.0f} of cap ${d.cap:,.0f} ({_pct(d.pct_used)} used)"
+            if d is not None
+            else "$Δ n/a (spot unknown)"
+        )
+        + f"; ν ${v.net:+,.0f}/vol-pt of cap ${v.cap:,.0f} "
         f"({_pct(v.pct_used)} used); Γ {ag.gamma:+.2f}; Θ {ag.theta:+.1f}.",
         "Flags: "
         + (", ".join(ag.flags) if ag.flags else "none")

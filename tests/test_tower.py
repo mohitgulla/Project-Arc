@@ -116,7 +116,8 @@ def db(tmp_path: Path) -> Path:
         )  # fmt: skip
     HeartbeatRepo(conn).record(
         "monitor", "ok", at=NOW - dt.timedelta(minutes=10),
-        detail={"valued": True, "positions": 1, "delta": 25.0, "gamma": -0.5, "vega": -300.0,
+        detail={"valued": True, "positions": 1, "delta": 25.0, "dollar_delta": 14_500.0,
+                "gamma": -0.5, "vega": -300.0,
                 "theta": 4.2, "max_loss": 140.0, "equity": 100500.0, "last_equity": 100400.0,
                 "legs": [
                     {"symbol": SHORT, "qty": "-2", "side": "short", "unrealized_pl": "-20"},
@@ -150,8 +151,24 @@ def _snap(db: Path, **kw: object):
 # ---------------------------------------------------------------------------
 
 
+def test_greeks_pre_d57_heartbeat_has_no_dollar_delta(tmp_path: Path) -> None:
+    """A monitor heartbeat written before D57 carries no dollar_delta: None (Tower: —)."""
+    from arc.tower.data import _greeks
+
+    conn = connect(tmp_path / "old.db")
+    migrate(conn)
+    HeartbeatRepo(conn).record(
+        "monitor", "ok", at=NOW, detail={"valued": True, "delta": 25.0, "equity": 1000.0}
+    )
+    row = conn.execute("SELECT * FROM heartbeats ORDER BY rowid DESC LIMIT 1").fetchone()
+    g = _greeks(row, 0.50, 0.010, dt.timedelta(minutes=15))
+    conn.close()
+    assert g.delta == 25.0 and g.dollar_delta is None
+    assert g.dollar_delta_cap == pytest.approx(500.0) and g.vega_cap_usd == pytest.approx(10.0)
+
+
 def test_snapshot_sections(db: Path) -> None:
-    s = _snap(db, delta_cap=0.30, vega_cap_pct=0.005)
+    s = _snap(db, dollar_delta_cap_pct=0.50, vega_cap_pct=0.010)
     # P&L: reconcile + intraday + MTD from the daily series
     assert s.pnl.reconciled_day == dt.date(2026, 9, 25)
     assert s.pnl.realized == D("10") and s.pnl.unrealized == D("-15")
@@ -160,9 +177,10 @@ def test_snapshot_sections(db: Path) -> None:
     assert s.pnl.reconcile_clean is True
     # Greeks with gate caps
     assert s.greeks.valued and s.greeks.delta == 25.0
-    assert s.greeks.delta_cap == pytest.approx(301.5)  # 0.30 x 100500 / 100
+    assert s.greeks.dollar_delta == pytest.approx(14_500.0)  # D57: as the monitor wrote it
+    assert s.greeks.dollar_delta_cap == pytest.approx(50_250.0)  # 0.50 x 100500
     assert s.greeks.vega_usd == pytest.approx(-3.0)
-    assert s.greeks.vega_cap_usd == pytest.approx(502.5)
+    assert s.greeks.vega_cap_usd == pytest.approx(1005.0)  # 1.0% x 100500
     # positions: structure with its legs' P&L and the reconcile held flag
     assert len(s.structures) == 1
     st = s.structures[0]
