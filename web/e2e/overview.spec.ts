@@ -47,7 +47,7 @@ for (const vp of VIEWPORTS) {
         await page.getByTestId("alerts-toggle").click();
         await expect(strip).toContainText("scalp slot 12:00 ET missed");
         // Cards.
-        for (const title of ["Equity", "P&L Today", "Positions", "Greeks vs Caps", "Today's Proposals", "Movers", "Recent Activity · 24 h"])
+        for (const title of ["Equity", "P&L Today", "Positions", "Greeks vs Caps", "Today's Proposals", "Today's Buzz", "Movers", "Recent Activity · 24 h"])
           await expect(page.getByRole("heading", { level: 2, name: title, exact: false }).first()).toBeVisible();
         await expect(page.getByTestId("trend-chart").locator("svg path").first()).toBeVisible();
         await expect(page.getByTestId("mtd-ytd")).toContainText("MTD");
@@ -58,6 +58,11 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByText("NO", { exact: true }).or(page.getByText("not held")).first()).toBeVisible();
         await expect(page.getByTestId("proposals").locator(":scope > li")).toHaveCount(9);
         await expect(page.getByTestId("proposals")).toContainText("per_underlying_limit");
+        // D59: Today's Buzz = Discovery then Trending (top 10 each); VIEW ALL opens Ops > Universe.
+        const buzz = page.getByTestId("buzz");
+        await expect(buzz.getByTestId("buzz-tier")).toHaveCount(2);
+        await expect(buzz.getByTestId("buzz-tier").first()).toHaveAttribute("data-tier", "discovery");
+        await expect(buzz.getByRole("link", { name: /VIEW ALL/ })).toHaveAttribute("href", "/ops/universe");
         // Rolling 24 h, repeats grouped, capped at 8 with "Show n more".
         await expect(page.getByTestId("activity").locator(":scope > li")).toHaveCount(8);
         await expect(page.getByTestId("activity-more")).toHaveText("Show 1 more");
@@ -217,8 +222,8 @@ test.describe("overview phone-75 layout", { tag: PHONE_75_TAG }, () => {
         .sort((a, b) => a.y - b.y)
         .map((x) => x.t),
     );
-    const order = ["Equity", "P&L Today", "Positions", "Greeks vs Caps", "Today's Proposals", "Movers", "Recent Activity"];
-    expect(order.map((o) => titles.findIndex((t) => t.startsWith(o)))).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    const order = ["Equity", "P&L Today", "Positions", "Greeks vs Caps", "Today's Proposals", "Today's Buzz", "Movers", "Recent Activity"];
+    expect(order.map((o) => titles.findIndex((t) => t.startsWith(o)))).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     const cols = await page.getByTestId("status-slots").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
     expect(cols).toBe(3);
   });

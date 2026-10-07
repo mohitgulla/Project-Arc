@@ -14,7 +14,7 @@ import { KeyValueList } from "../components/KeyValueList";
 import { ProgressRow } from "../components/ProgressRow";
 import { Section } from "../components/Section";
 import { StackedBars } from "../components/StackedBars";
-import { formatAge, formatNumber } from "../lib/format";
+import { formatAge, formatNumber, titleCase } from "../lib/format";
 import { useLayout } from "../lib/layout";
 import {
   DAY_PRESETS,
@@ -79,8 +79,8 @@ function JobInfo({ row }: { row: TimelineRow }) {
 function JobLabel({ row, strong }: { row: TimelineRow; strong?: boolean }) {
   return (
     <span className="flex min-w-0 items-center gap-1">
-      <span className={`min-w-0 truncate text-caption ${strong ? "font-semibold text-title" : "text-secondary"}`} title={`${row.job} · ${row.cadence}`}>
-        {row.label}
+      <span className={`min-w-0 truncate text-caption ${strong ? "font-semibold text-primary" : "text-secondary"}`} title={`${row.job} · ${row.cadence}`} data-testid="job-label">
+        {titleCase(row.label)}
       </span>
       <PersonaChip persona={row.persona} />
       <JobInfo row={row} />
@@ -144,10 +144,10 @@ function TimelineGantt({ s, bands }: { s: Session; bands: BandView[] }) {
           {bands.map(({ band, rows, sub, firstOfGroup }) => (
             <div key={band.key} data-testid="band" data-band={band.key}>
               {sub && firstOfGroup && (
-                <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{band.group_label}</div>
+                <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{titleCase(band.group_label)}</div>
               )}
               <div className="flex items-baseline gap-2 border-b border-line pb-0.5 pt-2" data-testid="band-header">
-                <span className={`text-caption font-semibold text-title ${sub ? "pl-2" : ""}`}>{band.label}</span>
+                <span className={`text-caption font-semibold text-title ${sub ? "pl-2" : ""}`}>{titleCase(band.label)}</span>
                 <span className="text-micro text-muted tabular-nums">{bandRollup(rows)}</span>
               </div>
               {rows.map((row) => (
@@ -217,7 +217,7 @@ function MobileJobRow({ row, s }: { row: TimelineRow; s: Session }) {
           className="flex min-h-[44px] min-w-0 flex-1 flex-col items-start justify-center text-left"
         >
           <span className="flex w-full min-w-0 items-center gap-1.5">
-            <span className={`min-w-0 truncate text-caption ${row.job === s.loop_job ? "font-semibold text-title" : "text-primary"}`}>{row.label}</span>
+            <span className={`min-w-0 truncate text-caption ${row.job === s.loop_job ? "font-semibold text-primary" : "text-primary"}`} data-testid="job-label">{titleCase(row.label)}</span>
             <PersonaChip persona={row.persona} />
           </span>
           <span className="text-micro text-muted tabular-nums" data-testid="row-summary">
@@ -253,7 +253,7 @@ function MobileBand({ view, s }: { view: BandView; s: Session }) {
   const id = useId();
   return (
     <div data-testid="band" data-band={band.key} data-open={open}>
-      {sub && firstOfGroup && <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{band.group_label}</div>}
+      {sub && firstOfGroup && <div className="pt-2 text-micro font-semibold uppercase tracking-wide text-muted">{titleCase(band.group_label)}</div>}
       <button
         type="button"
         aria-expanded={open}
@@ -265,7 +265,7 @@ function MobileBand({ view, s }: { view: BandView; s: Session }) {
         <span className="w-3 text-caption text-muted" aria-hidden="true">
           {open ? "▼" : "▶"}
         </span>
-        <span className="text-caption font-semibold text-title">{band.label}</span>
+        <span className="text-caption font-semibold text-title">{titleCase(band.label)}</span>
         <span className="min-w-0 truncate text-micro text-muted tabular-nums">· {bandRollup(rows)}</span>
       </button>
       <ul id={id} hidden={!open} className="divide-y divide-line pl-5">
@@ -731,7 +731,7 @@ function SourceRowItem({ src }: { src: SourceRow }) {
   return (
     <li className="py-2" data-testid="source-row" data-status={status}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-semibold text-title">{src.label}</span>
+        <span className="font-semibold text-title">{titleCase(src.label)}</span>
         <span className="text-micro text-muted tabular-nums">
           {src.share_in_category != null
             ? `${sharePct(src.share_in_category)} of category`
@@ -790,7 +790,7 @@ function SourceCategoryBlock({ cat, rows, now, phone }: { cat: SourceCategory; r
           {open ? "▼" : "▶"}
         </span>
         <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${DOT[tone]}`} />
-        <span className="font-semibold text-title">{cat.label}</span>
+        <span className="font-semibold text-title">{titleCase(cat.label)}</span>
         <span className="text-caption text-secondary tabular-nums">
           {/* D56: reference data has no share and no freshness window (max_age "-") */}
           {cat.max_age === "-"

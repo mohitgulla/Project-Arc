@@ -10,7 +10,7 @@ the closing order is proposed like an entry (:func:`propose_close`):
    halt, TTL, freshness, spread/NBBO/tick and band checks all still run; every
    leg must reduce a held position),
 3. a passed decision gets an ``arc2`` token, and the proposal (``kind='close'``)
-   goes to the approval sweep, which posts a ``📐 [Quant] Exit`` card,
+   goes to the approval sweep, which posts a ``🤺 [Quant] Exit`` card,
 4. once approved, the Broker works it through the band (:mod:`arc.broker.ladder_job`).
 
 At most one exit proposal per structure per ET day, and none while one is still

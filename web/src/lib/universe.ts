@@ -104,3 +104,48 @@ export function discoveryFillLine(u: Pick<Universe, "discovery_fill" | "tiers">)
 export function tailCutDetail(d: UniverseDropped): string {
   return d.rank == null ? tierLabel(d.tier) : `#${d.rank} in ${tierLabel(d.tier)}`;
 }
+
+// ---------------------------------------------------------------------------
+// D59: Overview "Today's Buzz" (the fast-changing tiers: discovery + trending)
+// ---------------------------------------------------------------------------
+
+/** The fast-changing tiers the Overview widget shows, in active-list order (D58). */
+export const BUZZ_TIERS = ["discovery", "trending"] as const;
+export const BUZZ_TOP = 10;
+
+export interface BuzzSection {
+  tier: (typeof BUZZ_TIERS)[number];
+  label: string;
+  /** Active members by rank, at most BUZZ_TOP. */
+  rows: UniverseActive[];
+  /** Active members of the tier (before the top-N cut). */
+  active: number;
+  /** Names the tier lost past the active-list cap today. */
+  cut: number;
+}
+
+/** Top N active names per fast tier, from the stored resolve (nothing re-derived). */
+export function buzzSections(
+  u: Pick<Universe, "active" | "tail_cuts" | "dropped">,
+  top: number = BUZZ_TOP,
+): BuzzSection[] {
+  const cuts = (u.tail_cuts?.length ? u.tail_cuts : (u.dropped ?? []).filter((d) => d.reason === "over_active_cap")) ?? [];
+  return BUZZ_TIERS.map((tier) => {
+    const all = membersOf(u.active, tier);
+    return {
+      tier,
+      label: tierLabel(tier),
+      rows: all.slice(0, top),
+      active: all.length,
+      cut: cuts.filter((d) => d.tier === tier).length,
+    };
+  });
+}
+
+/** Section caption: `8 active · 3 cut by cap` (`none today` when empty). */
+export function buzzCaption(s: Pick<BuzzSection, "active" | "cut">): string {
+  if (s.active === 0 && s.cut === 0) return "none today";
+  const parts = [`${s.active} active`];
+  if (s.cut > 0) parts.push(`${s.cut} cut by cap`);
+  return parts.join(" · ");
+}

@@ -367,7 +367,7 @@ class TestDigestCards:
         assert headers == [
             "⚡ [Scalp] Scan: 10 Sources → 6 Candidates",  # D54: earnings doc = slow feed
             "🧠 [Research] Ranked: 3 / 6 • Market Risk ON",
-            "📐 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
+            "🤺 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
             "🛡️ [Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
             None,  # propose has no card (E6.1 posts the proposal card)
             None,  # execute (D34): summary only; the Investor posts the order card
@@ -381,7 +381,7 @@ class TestDigestCards:
             "XOM (bearish); excluded 1; dropped {'not_a_candidate': 1}"
         )
         assert texts[2].startswith(
-            "📐 [Quant] quant.open ✓ SPY iron_condor 740/745/798/803 2026-10-30"
+            "🤺 [Quant] quant.open ✓ SPY iron_condor 740/745/798/803 2026-10-30"
         )
         assert (
             texts[3]

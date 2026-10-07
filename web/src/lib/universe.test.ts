@@ -1,7 +1,7 @@
 // E12.6: Universe page helpers (summary line, tier order, chip detail, override warning).
 import { describe, expect, it } from "vitest";
 
-import { discoveryFillLine, tailCutDetail } from "./universe";
+import { buzzCaption, buzzSections, discoveryFillLine, tailCutDetail } from "./universe";
 
 import {
   CORE_KEY_LABEL,
@@ -107,5 +107,43 @@ describe("E13.14 tail cuts + discovery fill", () => {
   it("labels a tail cut with its rank", () => {
     expect(tailCutDetail({ ticker: "TEM", tier: "discovery", reason: "over_active_cap", rank: 18 })).toBe("#18 in Discovery");
     expect(tailCutDetail({ ticker: "TEM", tier: "momentum", reason: "over_active_cap", rank: null })).toBe("Momentum");
+  });
+});
+
+describe("D59 Today's Buzz", () => {
+  const m = (ticker: string, tier: string, rank: number) => ({ ticker, tier, rank, source: "s", reason: "r", also_in: [] });
+  const u = {
+    active: [
+      m("NVDA", "core", 1),
+      ...Array.from({ length: 12 }, (_, i) => m(`D${i + 1}`, "discovery", 12 - i)),
+      m("PENG", "trending", 2),
+      m("TEM", "trending", 1),
+    ],
+    tail_cuts: [
+      { ticker: "X", tier: "trending", reason: "over_active_cap", rank: 9 },
+      { ticker: "Y", tier: "trending", reason: "over_active_cap", rank: 10 },
+    ],
+    dropped: [],
+  };
+  it("lists discovery then trending, top 10 by rank, with cut counts", () => {
+    const [d, tr] = buzzSections(u);
+    expect(d!.tier).toBe("discovery");
+    expect(d!.label).toBe("Discovery");
+    expect(d!.rows.map((r) => r.ticker)).toEqual(["D12", "D11", "D10", "D9", "D8", "D7", "D6", "D5", "D4", "D3"]);
+    expect(d!.active).toBe(12);
+    expect(tr!.rows.map((r) => r.ticker)).toEqual(["TEM", "PENG"]);
+    expect(tr!.cut).toBe(2);
+    expect(buzzCaption(d!)).toBe("12 active");
+    expect(buzzCaption(tr!)).toBe("2 active · 2 cut by cap");
+  });
+  it("never includes core or momentum, and says none today when empty", () => {
+    const [d, tr] = buzzSections({ active: [m("NVDA", "core", 1)], tail_cuts: [], dropped: [] });
+    expect(d!.rows).toEqual([]);
+    expect(tr!.rows).toEqual([]);
+    expect(buzzCaption(d!)).toBe("none today");
+  });
+  it("falls back to over_active_cap drops when tail_cuts is absent", () => {
+    const [, tr] = buzzSections({ active: [], tail_cuts: [], dropped: [{ ticker: "Z", tier: "trending", reason: "over_active_cap", rank: null }] });
+    expect(tr!.cut).toBe(1);
   });
 });

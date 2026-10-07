@@ -54,7 +54,7 @@ class TestPersonaLabel:
             (Persona.SCALP, "⚡ [Scalp]"),
             (Persona.SCOUT, "🔭 [Scout]"),
             (Persona.RESEARCH, "🧠 [Research]"),
-            (Persona.QUANT, "📐 [Quant]"),
+            (Persona.QUANT, "🤺 [Quant]"),
             (Persona.RISK, "🛡️ [Risk]"),
             (Persona.BROKER, "🏦 [Broker]"),
             (Persona.OPS, "⚙️ [Ops]"),

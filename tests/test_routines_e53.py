@@ -303,7 +303,7 @@ class TestHeartbeatPolicy:
         hb.summary(et(2026, 9, 28, 12, 0), "research", "ranked 2")
         assert notes.posts[2][1] == "🧠 [Research] research ✓ ranked 2"
         hb.alert(et(2026, 9, 28, 12, 5), "quant", "boom")
-        assert notes.posts[3][1] == ":rotating_light: 📐 [Quant] quant FAILED: boom"
+        assert notes.posts[3][1] == ":rotating_light: 🤺 [Quant] quant FAILED: boom"
 
     def test_routines_code_block_escapes_inner_fences(self, conn: sqlite3.Connection) -> None:
         notes = RecordingNotifier()

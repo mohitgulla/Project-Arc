@@ -422,7 +422,7 @@ class TestQuant:
             run_id="r",
             chain_run_id="c",
         )
-        assert view.text == "📐 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78"
+        assert view.text == "🤺 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78"
         text = _all(view)
         assert (
             "*SPY Iron Condor · Oct 30 (35 DTE)*\nLong 1x 740P\nShort 1x 745P\n"
@@ -446,10 +446,10 @@ class TestQuant:
             "ν Vega -$17.11 / vol pt\nΘ Theta +$3.14 / day\n"
         ) in fields
         assert "*Confidence*\n70%\n" in fields
-        assert "*📐 [Quant] Rationale*\nBalanced deltas." in text
+        assert "*🤺 [Quant] Rationale*\nBalanced deltas." in text
         assert "• not in the scanner menu (1): SPY" in text
         assert "• no tradable chain (1): XOM" in text
-        assert "*📐 [Quant] Analysis*\nMenu #2." in text
+        assert "*🤺 [Quant] Analysis*\nMenu #2." in text
         _assert_slack_limits(view)
 
     @pytest.mark.parametrize(
@@ -483,7 +483,7 @@ class TestQuant:
         assert "+1 more" in view.text
         assert "Nov 20" in _all(view)
         none = D.quant_card(QuantOutput(structures=[], analysis_notes=""))
-        assert none.text == "📐 [Quant] Structures: none chosen"
+        assert none.text == "🤺 [Quant] Structures: none chosen"
 
     def test_escaping_and_clip(self) -> None:
         out = QuantOutput(structures=[condor(rationale=EVIL + LONG)], analysis_notes=EVIL)

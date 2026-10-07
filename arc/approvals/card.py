@@ -129,9 +129,9 @@ def strategy_name(p: Proposal) -> str:
 
 
 def title(p: Proposal, kind: str = "open") -> str:
-    """One consistent title: ``📐 [Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor``.
+    """One consistent title: ``🤺 [Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor``.
 
-    An exit (``kind='close'``, E6.2) reads ``📐 [Quant] Exit: SPY • Oct 30 (21 DTE) • Close``.
+    An exit (``kind='close'``, E6.2) reads ``🤺 [Quant] Exit: SPY • Oct 30 (21 DTE) • Close``.
     """
     exp = parse_occ(p.structure.legs[0].occ_symbol).expiration
     q = persona_label(Persona.QUANT)

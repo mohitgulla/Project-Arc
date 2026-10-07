@@ -4,7 +4,7 @@ One visual grammar for all personas (Scalp, Research, Quant, Risk, Broker,
 Ops), so a reviewer reads every card the same way:
 
 - ``header``      one plain-text title line, e.g.
-                  ``📐 [Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor``
+                  ``🤺 [Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor``
 - ``summary``     one context line with the at-a-glance facts
 - ``facts``       a two-column grid of ``*Label*`` / value pairs
 - ``persona``     a section attributed to the persona that wrote it
