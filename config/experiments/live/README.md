@@ -4,7 +4,7 @@ One YAML file per experiment, validated by `arc.experiments.models.ExperimentSpe
 (`extra="forbid"`). Not the same thing as the backtest overlays one level up in
 `config/experiments/*.yaml`, but the `arms.treatment.overlay` block uses the same
 format: each key is a config file stem (`ranking`, `exits`, `costs`,
-`account_profiles`, `routines`) and its value is a partial copy of that file,
+`account_profiles`, `routines`, `universe` (E13.12)) and its value is a partial copy of that file,
 deep-merged over it with `arc.utils.yamlpatch.deep_merge` (the function
 `arc backtest rank --experiment` uses).
 
@@ -24,3 +24,16 @@ strategy default cites `Experiment: XP-<n>` and commits
 `verdicts/XP-<n>.yaml` with `experiment_id`, `verdict: win` and the stored report's
 `report_hash` (from `arc experiment show XP-<n> --json`). The check only lets the PR
 change the values that experiment's treatment overlay tested.
+
+Fork at any persona (E13.12, D56): `arc experiment start` computes each arm's plan
+(`arc.experiments.runner.arm_plan`) and stores it on the arm's identity and in the
+`running` event: the loop step it forks at (any of `research`, `exits.mandatory`,
+`quant.exit`, `risk.exit`, `quant.open`, `risk.open`, `quant.revise`,
+`quant.propose`) and the non-loop personas it runs itself. An overlay touching
+`universe`, `personas.scout_feed` or `funnel.scout.*` gives the arm its own Scout; one
+touching `personas.scalp_*`, `funnel.scalp.*` or `categories.*` its own Scalp
+(`experiments.runner.arm_personas` forces either for every arm). Preview without
+writing anything:
+
+    arc experiment start XP-5 --dry-run --db <db>
+    arc experiment arms-tick --dry-run --experiment XP-5 --now 2026-10-06T06:00-04:00 --db <db>

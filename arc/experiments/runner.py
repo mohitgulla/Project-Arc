@@ -19,9 +19,21 @@ for every consumer). Three entry points:
   not paired yet (``max_lag_seconds``), then runs the arm's own ``arm_jobs``
   (position management, reconcile, Broker ladders) on its store.
 
-Shared inputs: sources and the Scalp run once, in control. Before each paired
-chain, the active context entries the chain reads are synced from control's store,
-except the kinds the arm's own jobs produce (e.g. ``position_review``).
+Shared inputs: sources run once, in control, and so do the Scout and the Scalp
+unless the arm owns them. Before each paired chain, the active context entries the
+chain reads are synced from control's store, except the kinds the arm's own jobs
+produce (e.g. ``position_review``) and the book kinds (:data:`BOOK_KINDS`).
+
+E13.12 (D56): experiments fork at any persona. Each arm's :class:`ArmPlan` is
+computed at t0 (:func:`arm_plan`) and stored on its identity: the loop's fork step
+(any of ``research``, ``exits.mandatory``, ``quant.exit``, ``risk.exit``,
+``quant.open``, ``risk.open``, ``quant.revise``, ``quant.propose``), and the
+non-loop personas the arm runs on its own store (``arm_personas``: ``scout`` /
+``scalp``, from the overlay's keys via :data:`PERSONA_OVERLAY_PREFIXES` or
+``runner.arm_personas``). An arm-owned persona runs at control's slots in the arms'
+tick, on control's synced inputs (briefs, options stats, raw docs), and its rows are
+never synced from control; an arm that owns one forks its loop at ``research``.
+Broker code is shared; each arm trades its own account (``keys_env``).
 """
 
 from __future__ import annotations
@@ -44,39 +56,52 @@ from arc.experiments.arms import (
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
     from decimal import Decimal
 
     from arc.config import ArcSettings
     from arc.experiments.config import ArmRunner, RunnerConfig
-    from arc.experiments.models import ExperimentState
+    from arc.experiments.models import ArmPlan, ExperimentState
     from arc.routines.config import RoutinesConfig
     from arc.routines.dispatcher import Outcome
     from arc.routines.handlers import Handler
 
 __all__ = [
     "ACCOUNT_STEPS",
+    "BOOK_KINDS",
+    "PERSONA_JOBS",
+    "PERSONA_OVERLAY_PREFIXES",
     "STEP_TARGETS",
     "ArmStartError",
     "PairResult",
+    "arm_owned_personas",
+    "arm_plan",
     "arm_routines",
     "arm_stores",
+    "arms_preview",
     "arms_tick",
     "fork_step",
     "pair_chain",
+    "persona_jobs",
+    "plan_of",
+    "plans_at_start",
     "start_arms",
+    "sync_persona_inputs",
 ]
 
 log = structlog.get_logger(__name__)
 
 _QUANT_RISK_LOOP = "routines.personas.quant_risk_loop"
+_RESEARCH = "research"
 
 # Which overlay targets (config file stems) each loop step's behaviour depends on,
 # from what the step reads through arc.control.effective (exit_config / cost_model /
 # ranking_config / the profile spec / routines options). A step whose targets meet
 # the arm's overlay is re-run by the arm, and so is everything after it.
 STEP_TARGETS: dict[str, frozenset[str]] = {
-    "research": frozenset({"account_profiles", "routines"}),
+    # E13.12: routines = personas.research_* / exit_path / funnel.research; universe =
+    # the market_reference regime reads and the pool's tier column.
+    "research": frozenset({"account_profiles", "routines", "universe"}),
     # E13.17: exit cases read the exit policy + realloc settings; shadow only (no orders).
     "quant.exit": frozenset({"account_profiles", "exits", "costs", "routines"}),
     # E13.18: the mandatory floor closes against the arm's own book (an ACCOUNT_STEP);
@@ -97,6 +122,35 @@ ACCOUNT_STEPS: frozenset[str] = frozenset({"exits.mandatory", "quant.propose", "
 # open path reads); an overlay touching only these does not re-run Research.
 _NARROW_ROUTINES_KEYS = {("personas", "quant_risk_loop"): _QUANT_RISK_LOOP}
 
+# E13.12 (D56): overlay leaves (dotted ``<target>.<path>`` globs) that change a
+# non-loop persona, so the arm runs that persona itself (arm_owned_personas).
+PERSONA_OVERLAY_PREFIXES: dict[str, tuple[str, ...]] = {
+    "scout": (
+        "routines.personas.scout_feed",
+        "routines.personas.scout",
+        "routines.personas.scout.*",
+        "routines.funnel.scout.*",
+        "universe.*",
+    ),
+    "scalp": (
+        "routines.personas.scalp_*",
+        "routines.personas.scalp",
+        "routines.personas.scalp.*",
+        "routines.funnel.scalp.*",
+        "routines.categories.*",
+    ),
+}
+# The routine jobs each arm persona runs (the 30-min Scalp and its 22:00 run).
+PERSONA_JOBS: dict[str, tuple[str, ...]] = {
+    "scout": ("scout",),
+    "scalp": ("scalp", "scalp.overnight"),
+}
+# Book-specific kinds: written per arm against its own positions, never synced.
+BOOK_KINDS: frozenset[str] = frozenset(
+    {"position_review", "exit_watchlist", "exit_case", "risk_exit_review"}
+)
+
+_INGEST_FMT = "%Y-%m-%dT%H:%M:%S.%fZ"  # raw_docs.ingested_at (arc.ingest.store)
 _STATE_ARM = "experiment_arm:{arm}"  # control routine_state -> arm store path
 
 
@@ -153,21 +207,111 @@ def runner_config(conn: sqlite3.Connection) -> RunnerConfig:
     return experiments_config(effective_settings(conn)).runner
 
 
-def fork_step(chain: list[str], overlay: Mapping[str, Any]) -> str:
+def fork_step(chain: list[str], overlay: Mapping[str, Any], personas: Iterable[str] = ()) -> str:
     """The first chain step the arm runs itself (see the module doc).
 
     Pre-D56 step names (``quant``, ``risk``, ``propose``) resolve to the current ones.
+    E13.12: an arm that runs its own Scout / Scalp (*personas*) ranks a different idea
+    pool, so it forks at ``research`` at the latest (by chain order).
     """
     from arc.routines.config import LEGACY_JOB_NAMES
 
     targets = _overlay_targets(overlay)
     chain = [LEGACY_JOB_NAMES.get(s, s) for s in chain]
+    fork = chain[-1]
     for step in chain:
         if step in ACCOUNT_STEPS or STEP_TARGETS.get(step, frozenset()) & targets:
-            return step
+            fork = step
+            break
         if step not in STEP_TARGETS:  # an unknown step: never assume it is unaffected
-            return step
-    return chain[-1]
+            fork = step
+            break
+    if set(personas) and _RESEARCH in chain and chain.index(_RESEARCH) < chain.index(fork):
+        return _RESEARCH
+    return fork
+
+
+def _overlay_paths(overlay: Mapping[str, Any]) -> list[str]:
+    """Every leaf of *overlay* as a dotted ``<target>.<key>…`` path."""
+    from arc.control.effective import overlay_overrides
+
+    return sorted(
+        ".".join((target, *path))
+        for target, pairs in overlay_overrides(dict(overlay)).items()
+        for path in pairs
+    )
+
+
+def arm_owned_personas(overlay: Mapping[str, Any]) -> set[str]:
+    """E13.12: the non-loop personas an arm must run itself because *overlay* changes them.
+
+    A persona is the arm's own when any overlay leaf matches one of its
+    :data:`PERSONA_OVERLAY_PREFIXES` globs (deterministic, no config read).
+    """
+    from fnmatch import fnmatchcase
+
+    paths = _overlay_paths(overlay)
+    return {
+        persona
+        for persona, globs in PERSONA_OVERLAY_PREFIXES.items()
+        if any(fnmatchcase(p, g) for p in paths for g in globs)
+    }
+
+
+def persona_jobs(personas: Iterable[str]) -> list[str]:
+    """The routine jobs of the arm's own non-loop personas (``scalp`` -> both Scalp jobs)."""
+    return [job for p in sorted(set(personas)) for job in PERSONA_JOBS[p]]
+
+
+def arm_plan(routines: RoutinesConfig, overlay: Mapping[str, Any], runner: RunnerConfig) -> ArmPlan:
+    """The arm's :class:`~arc.experiments.models.ArmPlan` (pure; computed at t0).
+
+    *routines* is the arm's effective routines config (control's + the overlay), so
+    ``chain: auto`` resolves under the arm's own persona flags.
+    """
+    from arc.experiments.models import ArmPlan
+    from arc.routines.config import LEGACY_JOB_NAMES
+
+    personas = sorted(arm_owned_personas(overlay) | set(runner.arm_personas))
+    loop = routines.loop.job
+    found = routines.job(loop)
+    chain = [LEGACY_JOB_NAMES.get(s, s) for s in (loop, *(found[1].chain if found else []))]
+    return ArmPlan(
+        fork_step=fork_step(chain, overlay, personas),
+        arm_personas=personas,  # type: ignore[arg-type] - validated Literal
+        arm_jobs=list(runner.arm_jobs),
+        shared_kinds=sorted(_shared_kinds(routines, chain, runner.arm_jobs, personas)),
+        own_producers=persona_jobs(personas),
+    )
+
+
+def plan_of(ident: ArmIdentity, routines: RoutinesConfig, runner: RunnerConfig) -> ArmPlan:
+    """The arm's stored plan; a pre-E13.12 store (no plan) is recomputed from its overlay
+    alone (``runner.arm_personas`` applies at t0 only, so it loads with none)."""
+    from arc.experiments.models import ArmPlan
+
+    if ident.plan is not None:
+        return ArmPlan.model_validate(ident.plan)
+    return arm_plan(routines, ident.overlay, runner.model_copy(update={"arm_personas": []}))
+
+
+def plans_at_start(
+    control: sqlite3.Connection,
+    st: ExperimentState,
+    runner: RunnerConfig,
+    *,
+    routines_path: str | None = None,
+) -> dict[str, ArmPlan]:
+    """Runner arm -> its plan for experiment *st*, from control's effective routines plus
+    the spec arm's overlay (what the arm store will resolve once it exists)."""
+    from arc.control.effective import routines_for_overlay
+
+    out: dict[str, ArmPlan] = {}
+    for name, arm in runner.arms.items():
+        overlay = getattr(st.spec.arms, arm.spec_arm).overlay
+        routines = routines_for_overlay(control, overlay, routines_path)
+        out[name] = arm_plan(routines, overlay, runner)
+    return out
 
 
 def _overlay_targets(overlay: Mapping[str, Any]) -> set[str]:
@@ -218,8 +362,13 @@ def start_arms(
     aa_override: bool = False,
     control_sha: str | None = None,
     check_flat: Callable[[ArmRunner], None] | None = None,
+    routines_path: str | None = None,
 ) -> ExperimentState:
     """t0 of a registered experiment: create every arm store, then mark it ``running``.
+
+    E13.12: each arm's :class:`~arc.experiments.models.ArmPlan` (fork step, own
+    personas, shared kinds) is computed here and stored on its identity and in the
+    ``running`` event (``arm_plans``).
 
     *check_flat* (live) raises :class:`ArmStartError` when the arm's paper account
     holds positions or open orders; fixtures pass ``None``. A failure leaves no arm
@@ -259,6 +408,7 @@ def start_arms(
         if check_flat is not None:
             check_flat(arm)
         paths[name] = p
+    plans = plans_at_start(control, st, runner, routines_path=routines_path)
     created: list[Path] = []
     try:
         for name, arm in runner.arms.items():
@@ -279,6 +429,7 @@ def start_arms(
                         control_db=str(control_db),
                         overlay=getattr(st.spec.arms, arm.spec_arm).overlay,
                         created_at=now,
+                        plan=plans[name].model_dump(mode="json"),
                     ),
                 )
                 open_account(conn, aid, t0_equity=t0_equity, legacy=legacy, at=now)
@@ -295,6 +446,7 @@ def start_arms(
             legacy_book=sorted(legacy),
             control_sha=sha if len(sha) >= 7 else sha.ljust(7, "0"),
             config_hashes=config_hashes(),
+            arm_plans=plans,
         )
         state = RoutineStateRepo(control)
         for name, p in paths.items():
@@ -311,6 +463,7 @@ def start_arms(
         "experiments.started",
         experiment_id=experiment_id,
         arms={n: str(p) for n, p in paths.items()},
+        plans={n: pl.model_dump(mode="json") for n, pl in plans.items()},
         t0_equity=str(t0_equity),
         legacy=len(legacy),
     )
@@ -358,12 +511,33 @@ def live_flat_check(environ: Mapping[str, str] | None = None) -> Callable[[ArmRu
 # ---------------------------------------------------------------------------
 
 
-def _shared_kinds(routines: RoutinesConfig, chain: list[str], arm_jobs: list[str]) -> set[str]:
+def _shared_kinds(
+    routines: RoutinesConfig,
+    chain: list[str],
+    arm_jobs: list[str],
+    personas: Iterable[str] = (),
+) -> set[str]:
+    """Kinds synced from control: what the chain and the arm's own personas read, minus
+    what the arm's own jobs write and the book kinds (E13.12: never synced).
+
+    Kinds the arm's own Scout / Scalp write (``candidate``, ``note``, ``story``,
+    ``scout_read``, ``universe_tier``) stay shared *by producer*: control's rows from
+    other jobs (momentum tier, the Scalp's ideas for a Scout-only arm) still sync, its
+    rows from the arm's persona jobs never do (:func:`sync_shared_context`). The active
+    list is re-resolved by those personas, so an arm owning one never syncs it.
+    """
+    personas = sorted(set(personas))
     reads: set[str] = set()
     for step in chain:
         spec = routines.step(step)[1]
         reads.update(spec.reads or [])
-    own: set[str] = set()
+    for job in persona_jobs(personas):
+        found = routines.job(job)
+        if found is not None:
+            reads.update(found[1].reads or [])
+    if "scalp" in personas:
+        reads.add("raw_doc_ref")  # E13.12: the arm's Scalp reads control's raw docs
+    own: set[str] = set(BOOK_KINDS)
     for job in arm_jobs:
         found = routines.job(job)
         if found is None:
@@ -371,6 +545,8 @@ def _shared_kinds(routines: RoutinesConfig, chain: list[str], arm_jobs: list[str
         own.update(found[1].writes or [])
         for step in getattr(found[1], "chain", []) or []:
             own.update(routines.step(step)[1].writes or [])
+    if personas:
+        own.add("active_universe")
     return reads - own
 
 
@@ -431,19 +607,159 @@ def sync_shared_context(
     arm_jobs: list[str],
     *,
     as_of: _dt.datetime,
+    personas: Iterable[str] = (),
 ) -> int:
-    """Copy control's active entries of the kinds the chain reads (not the arm's own)."""
-    kinds = sorted(_shared_kinds(routines, chain, arm_jobs))
+    """Copy control's active entries of the kinds the chain reads (not the arm's own).
+
+    E13.12: rows written by the arm's own persona jobs (*personas*: ``scout`` /
+    ``scalp``) are never copied; the ``candidates`` rows behind copied ``candidate``
+    entries and the ``raw_docs`` behind copied ``raw_doc_ref`` entries come along
+    (``proposals.candidate_id`` / the Scalp's doc queue read them by id).
+    """
+    personas = sorted(set(personas))
+    kinds = sorted(_shared_kinds(routines, chain, arm_jobs, personas))
     if not kinds:
         return 0
+    own = persona_jobs(personas)
     marks = ",".join("?" * len(kinds))
-    rows = control.execute(
-        f"""SELECT * FROM context_entries
-            WHERE status = 'active' AND kind IN ({marks}) AND valid_from <= ?
-            ORDER BY valid_from, created_at, rowid""",  # noqa: S608 - placeholders only
-        (*kinds, to_db(as_of)),
-    ).fetchall()
-    return _copy_entries(control, arm, rows, routines)
+    rows = [
+        r
+        for r in control.execute(
+            f"""SELECT * FROM context_entries
+                WHERE status = 'active' AND kind IN ({marks}) AND valid_from <= ?
+                ORDER BY valid_from, created_at, rowid""",  # noqa: S608 - placeholders only
+            (*kinds, to_db(as_of)),
+        ).fetchall()
+        if r["produced_by"] not in own
+    ]
+    n = _copy_entries(control, arm, rows, routines)
+    _copy_candidates(control, arm, [r for r in rows if r["kind"] == "candidate"])
+    _copy_raw_docs(control, arm, [r["subject"] for r in rows if r["kind"] == "raw_doc_ref"])
+    return n
+
+
+def sync_persona_inputs(
+    control: sqlite3.Connection,
+    arm: sqlite3.Connection,
+    routines: RoutinesConfig,
+    personas: Iterable[str],
+    *,
+    as_of: _dt.datetime,
+    since: _dt.datetime | None = None,
+) -> int:
+    """E13.12: before the arm's own Scout / Scalp run, copy control's inputs they read.
+
+    The kinds those personas read (``channel_brief``, ``options_daily``, the options
+    tape, control's tiers) minus what they write themselves; for the Scalp also
+    control's raw docs ingested in ``(max(since, as_of - 2 days), as_of]`` that the arm
+    store lacks (sources never run in an arm; *since* = the arm's t0, so a new arm never
+    re-reads a backlog). Rows the arm's own persona jobs wrote in control are never
+    copied.
+    """
+    personas = sorted(set(personas))
+    if not personas:
+        return 0
+    return sync_shared_context(control, arm, routines, [], [], as_of=as_of, personas=personas) + (
+        _sync_raw_docs(control, arm, as_of=as_of, since=since) if "scalp" in personas else 0
+    )
+
+
+def _sync_raw_docs(
+    control: sqlite3.Connection,
+    arm: sqlite3.Connection,
+    *,
+    as_of: _dt.datetime,
+    since: _dt.datetime | None = None,
+) -> int:
+    """Control's raw docs ingested in the 2 days up to *as_of* that the arm store lacks.
+
+    ``ingested_at`` is ISO-8601 UTC text (``arc.ingest.store``), compared as text.
+    """
+    utc = as_of.astimezone(_dt.UTC)
+    floor = utc - _dt.timedelta(days=2)
+    if since is not None:
+        floor = max(floor, since.astimezone(_dt.UTC))
+    ids = [
+        r[0]
+        for r in control.execute(
+            """SELECT id FROM raw_docs WHERE ingested_at <= ? AND ingested_at >= ?
+               ORDER BY ingested_at, id""",
+            (utc.strftime(_INGEST_FMT), floor.strftime(_INGEST_FMT)),
+        )
+    ]
+    return _copy_raw_docs(control, arm, ids)
+
+
+def _copy_candidates(
+    control: sqlite3.Connection, arm: sqlite3.Connection, rows: list[sqlite3.Row]
+) -> int:
+    """The ``candidates`` rows behind copied ``candidate`` entries (same ids; skip existing)."""
+    ids = sorted({str(i) for r in rows if (i := json.loads(r["payload"]).get("id"))})
+    return _copy_rows(control, arm, "candidates", ids)
+
+
+def _copy_raw_docs(control: sqlite3.Connection, arm: sqlite3.Connection, ids: list[str]) -> int:
+    """E13.12: control's raw docs *ids* into the arm store for the arm's own Scalp.
+
+    The Scalp bookkeeping (``scalped_at`` / ``scalp_run_id`` / ``scalp_status``) is kept
+    per store: a copied doc arrives unread, except an ingest-time ``filtered`` close
+    (D55), which is part of the doc, not of a Scalp run. Existing rows are untouched.
+    """
+    from arc.ingest.store import FILTERED_STATUS
+
+    def reset(row: dict[str, Any]) -> dict[str, Any]:
+        filtered = row.get("scalp_status") == FILTERED_STATUS
+        return {
+            **row,
+            "scalped_at": row.get("scalped_at") if filtered else None,
+            "scalp_run_id": None,
+            "scalp_status": FILTERED_STATUS if filtered else None,
+        }
+
+    return _copy_rows(control, arm, "raw_docs", ids, transform=reset)
+
+
+def _copy_rows(
+    control: sqlite3.Connection,
+    arm: sqlite3.Connection,
+    table: str,
+    ids: list[str],
+    *,
+    transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> int:
+    if not ids:
+        return 0
+    cols = [r[1] for r in control.execute(f"PRAGMA table_info({table})")]
+    arm_cols = {r[1] for r in arm.execute(f"PRAGMA table_info({table})")}
+    keep = [c for c in cols if c in arm_cols]
+    n = 0
+    with arm:
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
+            marks = ",".join("?" * len(chunk))
+            have = {
+                r[0]
+                for r in arm.execute(
+                    f"SELECT id FROM {table} WHERE id IN ({marks})",  # noqa: S608
+                    chunk,
+                )
+            }
+            for r in control.execute(
+                f"SELECT * FROM {table} WHERE id IN ({marks})",  # noqa: S608
+                chunk,
+            ):
+                row = {c: r[c] for c in keep}
+                if row["id"] in have:
+                    continue
+                if transform is not None:
+                    row = transform(row)
+                cur = arm.execute(
+                    f"INSERT OR IGNORE INTO {table} ({', '.join(keep)}) "  # noqa: S608
+                    f"VALUES ({', '.join('?' * len(keep))})",
+                    tuple(row[c] for c in keep),
+                )
+                n += cur.rowcount
+    return n
 
 
 def _reuse_upstream(
@@ -595,7 +911,9 @@ def pair_chain(
         log.info("experiments.pair_skipped", **res.as_json())
         return res
     status = {LEGACY_JOB_NAMES.get(r.job, r.job): r.status.value for r in rows}
-    fork = fork_step(chain, ident.overlay)
+    plan = plan_of(ident, routines, runner)
+    personas = list(plan.arm_personas)
+    fork = fork_step(chain, ident.overlay, personas)
     upstream = chain[: chain.index(fork)]
     not_ok = [j for j in upstream if status.get(j) != "ok"]
     if not_ok:
@@ -609,7 +927,13 @@ def pair_chain(
     _record_pair(arm, res, lag=lag, now=now)
     try:
         synced = sync_shared_context(
-            control, arm, routines, chain, runner.arm_jobs, as_of=root.scheduled_for
+            control,
+            arm,
+            routines,
+            chain,
+            runner.arm_jobs,
+            as_of=root.scheduled_for,
+            personas=personas,
         )
         reused = _reuse_upstream(
             control,
@@ -748,9 +1072,21 @@ def arms_tick(
                     ).as_json()
                 )
             out["pairs"] = pairs
+            plan = plan_of(ident, routines, runner)
+            out["plan"] = plan.model_dump(mode="json")
+            own = persona_jobs(plan.arm_personas)
+            if own:  # E13.12: the arm's own Scout / Scalp read control's synced inputs
+                out["persona_synced"] = sync_persona_inputs(
+                    control,
+                    arm,
+                    routines,
+                    plan.arm_personas,
+                    as_of=now,
+                    since=st.running.t0 if st.running is not None else None,
+                )
             disp = Dispatcher(
                 arm,
-                arm_routines(routines, runner.arm_jobs),
+                arm_routines(routines, [*runner.arm_jobs, *own]),
                 handlers=handlers,
                 locks=LockManager(arm_lock) if arm_lock is not None else NullLocks(),
                 notifier=LogNotifier(),
@@ -771,6 +1107,71 @@ def arms_tick(
         finally:
             arm.close()
     log.info("experiments.arms_tick", **{k: v for k, v in report.items() if k != "arms"})
+    return report
+
+
+def arms_preview(
+    control: sqlite3.Connection,
+    experiment_id: str | None,
+    *,
+    routines_path: str | None,
+    now: _dt.datetime,
+    since: _dt.datetime | None = None,
+    runner: RunnerConfig | None = None,
+) -> dict[str, Any]:
+    """E13.12: each arm's :class:`ArmPlan` and its dry-run tick, with no write anywhere.
+
+    For a running experiment the plans are the stored ones; for a draft or registered
+    one (*experiment_id*) they are what ``arc experiment start`` would compute now.
+    The tick listing plans the arm's own jobs (``arm_jobs`` + its personas) at *now*
+    on an in-memory copy of the schema (window ``(since, now]``, default one tick).
+    Sources and control's jobs are never listed: an arm never runs them.
+    """
+    import sqlite3 as _sqlite3
+
+    from arc.control.effective import routines_for_overlay
+    from arc.experiments.store import ExperimentStore
+    from arc.experiments.tape import running_experiment
+    from arc.routines.dispatcher import Dispatcher
+    from arc.routines.heartbeat import LogNotifier
+    from arc.store.migrate import migrate
+
+    st = running_experiment(control)
+    if experiment_id is not None and (st is None or st.experiment_id != experiment_id):
+        st = ExperimentStore(control).require(experiment_id)
+    if st is None:
+        return {"now": now.isoformat(), "skipped": "no running experiment"}
+    runner = runner if runner is not None else runner_config(control)
+    stored = st.running.arm_plans if st.running is not None else {}
+    plans = {**plans_at_start(control, st, runner, routines_path=routines_path), **stored}
+    report: dict[str, Any] = {
+        "now": now.isoformat(),
+        "experiment_id": st.experiment_id,
+        "status": st.status.value,
+        "plans_from": "stored (running)" if stored else "computed (not started)",
+        "arms": {},
+    }
+    for name, arm in runner.arms.items():
+        plan = plans[name]
+        overlay = getattr(st.spec.arms, arm.spec_arm).overlay
+        routines = routines_for_overlay(control, overlay, routines_path)
+        scratch = _sqlite3.connect(":memory:")
+        try:
+            migrate(scratch)
+            disp = Dispatcher(
+                scratch,
+                arm_routines(routines, [*plan.arm_jobs, *persona_jobs(plan.arm_personas)]),
+                notifier=LogNotifier(),
+                is_halted=lambda: False,
+            )
+            tick = disp.tick(now, dry_run=True, since=since)
+        finally:
+            scratch.close()
+        report["arms"][name] = {
+            "spec_arm": arm.spec_arm,
+            "plan": plan.model_dump(mode="json"),
+            "tick": tick.lines(),
+        }
     return report
 
 

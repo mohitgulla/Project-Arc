@@ -9,6 +9,7 @@ import { ArmEquityChart, CumulativeDiffChart } from "../components/ExperimentCha
 import { KeyValueList } from "../components/KeyValueList";
 import { Section } from "../components/Section";
 import {
+  armPlanRows,
   armRows,
   BREAKDOWN_LABEL,
   breakdownView,
@@ -202,6 +203,32 @@ export function ExperimentBody({ d }: { d: ExperimentDetail }) {
         </>
       ) : (
         <p className="text-caption text-muted">No evaluation yet: the spec and status are shown until the first EOD run.</p>
+      )}
+      {armPlanRows(d).length > 0 && (
+        <Section title="Arm Plans" defaultOpen={false}>
+          <table className="w-full text-body" data-testid="arm-plan-table">
+            <thead>
+              <tr className="text-left text-caption text-muted">
+                <th className="py-1">Arm</th>
+                <th>Fork Step</th>
+                <th>Own Personas</th>
+                <th>Own Jobs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {armPlanRows(d).map((a) => (
+                <tr key={a.arm} className="border-t border-line">
+                  <td className="py-1">{a.arm}</td>
+                  <td>
+                    <code className="text-micro">{a.forkStep}</code>
+                  </td>
+                  <td>{a.personas}</td>
+                  <td className="text-caption">{a.jobs}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Section>
       )}
       <Section title="Spec and Hashes" defaultOpen={false}>
         <KeyValueList

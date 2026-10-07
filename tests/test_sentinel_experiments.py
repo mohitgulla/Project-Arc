@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from arc.experiments.models import Area
 from arc.experiments.store import ExperimentStore
 from arc.store.migrate import migrate
 from tests import experiment_fixtures as fx
@@ -217,7 +218,7 @@ def test_window_ends_at_the_stop_event(tmp_path: Path) -> None:
 
 def test_area_map_covers_every_area_and_other_is_the_union() -> None:
     areas = _areas()["areas"]
-    assert set(areas) == {"entries", "exits", "ranking", "sizing", "other"}
+    assert set(areas) == {e.value for e in Area}  # E13.12: + universe, funnel
     union = set().union(*(set(v) for k, v in areas.items() if k != "other"))
     assert set(areas["other"]) == union
     assert all("config/costs.yaml" in v for v in areas.values())

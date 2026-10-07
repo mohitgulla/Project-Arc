@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from arc.config import UniverseMode
-from arc.universe.config import load_universe_config
+from arc.universe.config import universe_config
 from arc.universe.extract import extract_tickers
 from arc.universe.master import load_symbol_master, normalize_symbol
 
@@ -70,7 +70,9 @@ class IngestUniverse:
         from arc.universe.tiers import SEED_TIERS, active_tickers, market_reference, tier_membership
         from arc.utils.calendar import now_et
 
-        cfg = load_universe_config(settings.universe_config_file)
+        # E13.12: the effective file (D26 overrides + an experiment arm's overlay), the
+        # same config the guard and the tier resolver read.
+        cfg = universe_config(settings)
         mode = UniverseMode(settings.universe_mode)
         if master is None and mode is UniverseMode.SEED:
             # Never fetches: the weekly `symbols` job (or `arc universe refresh`) fills the

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  armPlanRows,
   armRows,
   breakdownView,
   ciText,
@@ -133,5 +134,39 @@ describe("p-value and Sortino text (owner line format)", () => {
     expect(ratioText(0.35, true)).toBe("+0.35");
     expect(ratioText(-0.1, true)).toBe("−0.10");
     expect(ratioText(null)).toBe("n/a");
+  });
+});
+
+describe("arm plans (E13.12)", () => {
+  it("lists each arm's fork step and own personas, sorted by arm", () => {
+    const d = {
+      running: {
+        arm_plans: {
+          treatment: {
+            fork_step: "research",
+            arm_personas: ["scout"],
+            arm_jobs: ["monitor", "broker"],
+            shared_kinds: [],
+            own_producers: ["scout"],
+          },
+          shadow_control: {
+            fork_step: "quant.propose",
+            arm_personas: [],
+            arm_jobs: ["monitor"],
+            shared_kinds: [],
+            own_producers: [],
+          },
+        },
+      },
+    } as unknown as ExperimentDetail;
+    expect(armPlanRows(d)).toEqual([
+      { arm: "Shadow Control", forkStep: "quant.propose", personas: "None (control's)", jobs: "monitor" },
+      { arm: "Treatment", forkStep: "research", personas: "Scout", jobs: "monitor, broker" },
+    ]);
+  });
+
+  it("is empty before t0 and for pre-E13.12 runs", () => {
+    expect(armPlanRows({ running: null } as unknown as ExperimentDetail)).toEqual([]);
+    expect(armPlanRows(null)).toEqual([]);
   });
 });

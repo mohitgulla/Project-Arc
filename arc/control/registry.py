@@ -2132,8 +2132,9 @@ _EXPERIMENT_TUNABLES: tuple[Tunable, ...] = (
 def _runner(key: str, desc: str, risk: Risk, **kw: Any) -> Tunable:
     """``experiments.runner.*`` (E10.2, D44): how arms pair with control's loop.
 
-    The arm list itself (keys, store, spec arm) is structural, never tunable: an
-    arm's broker keys or store must not change from Slack.
+    The arm list itself (keys, store, spec arm), ``arm_jobs`` and ``arm_personas``
+    (E13.12: which personas an arm runs itself) are experiment topology, never
+    tunable: an arm's broker keys, store or persona set must not change from Slack.
     """
     return Tunable(
         key=f"experiments.runner.{key}",

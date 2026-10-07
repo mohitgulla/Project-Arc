@@ -57,6 +57,13 @@ class ArmIdentity(BaseModel):
     control_db: str = Field(..., description="the control store this arm pairs with")
     overlay: dict[str, dict[str, Any]] = Field(default_factory=dict)
     created_at: _dt.datetime
+    plan: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "E13.12: the arm's ArmPlan as JSON (arc.experiments.models.ArmPlan); None on "
+            "a store created before E13.12 (recomputed from the overlay)"
+        ),
+    )
 
 
 def read_identity(conn: sqlite3.Connection) -> ArmIdentity | None:
@@ -70,6 +77,10 @@ def read_identity(conn: sqlite3.Connection) -> ArmIdentity | None:
         return None
     if r is None:
         return None
+    try:  # E13.12 (migration 026); a store not migrated yet has no plan column
+        p = conn.execute("SELECT plan FROM arm_identity WHERE id = 1").fetchone()
+    except sqlite3.OperationalError:
+        p = None
     return ArmIdentity(
         arm_id=r[0],
         experiment_id=r[1],
@@ -79,6 +90,7 @@ def read_identity(conn: sqlite3.Connection) -> ArmIdentity | None:
         control_db=r[5],
         overlay=json.loads(r[6] or "{}"),
         created_at=from_db(r[7]),
+        plan=json.loads(p[0]) if p is not None and p[0] else None,
     )
 
 
@@ -91,8 +103,8 @@ def write_identity(conn: sqlite3.Connection, ident: ArmIdentity) -> None:
         conn.execute(
             """INSERT INTO arm_identity
                (id, arm_id, experiment_id, arm, spec_arm, keys_env, control_db, overlay,
-                created_at)
-               VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                created_at, plan)
+               VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ident.arm_id,
                 ident.experiment_id,
@@ -102,6 +114,7 @@ def write_identity(conn: sqlite3.Connection, ident: ArmIdentity) -> None:
                 ident.control_db,
                 json.dumps(ident.overlay, sort_keys=True),
                 to_db(ident.created_at),
+                None if ident.plan is None else json.dumps(ident.plan, sort_keys=True),
             ),
         )
 

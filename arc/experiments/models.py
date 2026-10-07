@@ -36,8 +36,10 @@ __all__ = [
     "OVERLAY_TARGETS",
     "SPEC_VERSION",
     "TRANSITIONS",
+    "ARM_PERSONAS",
     "Area",
     "Arm",
+    "ArmPlan",
     "Arms",
     "ExperimentEvent",
     "ExperimentKind",
@@ -59,7 +61,19 @@ _ID_RE = re.compile(r"^XP-[1-9]\d*$")
 _PROPOSER_RE = re.compile(r"^(owner|A-[1-9]\d*)$")
 
 # Config files a forward overlay may patch (key = file stem under config/).
-OVERLAY_TARGETS: tuple[str, ...] = ("ranking", "exits", "costs", "account_profiles", "routines")
+# E13.12: ``universe`` (tiers / liquidity screens; XP-5 d56 vs d51). It is NOT a
+# strategy-lane promotion stem (config/strategy_lane.yaml says why).
+OVERLAY_TARGETS: tuple[str, ...] = (
+    "ranking",
+    "exits",
+    "costs",
+    "account_profiles",
+    "routines",
+    "universe",
+)
+
+#: E13.12 (D56): the non-loop personas an experiment arm may run on its own store.
+ARM_PERSONAS: tuple[str, ...] = ("scout", "scalp")
 
 
 class Area(StrEnum):
@@ -69,6 +83,8 @@ class Area(StrEnum):
     EXITS = "exits"
     RANKING = "ranking"
     SIZING = "sizing"
+    UNIVERSE = "universe"  # E13.12: tier layout / screens (config/universe.yaml)
+    FUNNEL = "funnel"  # E13.12: Scout / Scalp inputs (routines funnel, categories)
     OTHER = "other"
 
 
@@ -249,6 +265,28 @@ def spec_hash(spec: ExperimentSpec) -> str:
     return hashlib.sha256(canonical_json(spec).encode()).hexdigest()
 
 
+class ArmPlan(BaseModel):
+    """How one runner arm runs (E13.12, D56): computed at t0, stored on ``arm_identity``.
+
+    ``fork_step`` is the first loop step the arm runs itself; ``arm_personas`` the
+    non-loop personas it runs on its own store (their output never comes from
+    control); ``shared_kinds`` the context kinds synced from control before each
+    paired chain (and before the arm's own Scout / Scalp), minus every row
+    ``own_producers`` wrote: the arm writes those itself.
+    """
+
+    model_config = _FORBID
+
+    fork_step: str
+    arm_personas: list[Literal["scout", "scalp"]] = Field(default_factory=list)
+    arm_jobs: list[str] = Field(default_factory=list)
+    shared_kinds: list[str] = Field(default_factory=list)
+    own_producers: list[str] = Field(
+        default_factory=list,
+        description="Jobs whose context rows are never synced from control (the arm's own)",
+    )
+
+
 class RunningDetail(BaseModel):
     """What ``running`` records at t0 (E10.2 fills it)."""
 
@@ -262,6 +300,10 @@ class RunningDetail(BaseModel):
     control_sha: str = Field(..., min_length=7)
     config_hashes: dict[str, str] = Field(default_factory=dict)
     aa_override: bool = False
+    arm_plans: dict[str, ArmPlan] = Field(
+        default_factory=dict,
+        description="E13.12: runner arm -> its ArmPlan at t0 (empty before E13.12)",
+    )
 
     @field_validator("t0")
     @classmethod
