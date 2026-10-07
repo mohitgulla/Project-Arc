@@ -7,7 +7,7 @@ Runs the fixture chain (bundled SPY recording + fixture personas):
   E5.9 thesis-check wording), no ``exit_watchlist`` write, no ``quant.exit`` step;
 * ``shadow``: the exit block + watchlist; one ``exit_case`` per triggered position;
   journal rows; **no proposal** from the exit path; a reply that omits a case holds;
-* ``research`` behaves as ``shadow`` until E13.18.
+* ``research`` adds the close path (E13.18, ``tests/test_risk_exit.py``).
 """
 
 from __future__ import annotations

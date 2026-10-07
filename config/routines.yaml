@@ -572,7 +572,7 @@ personas:
     every: 10m                  # D52 (owner 2026-10-05; was 5m)
     window: "09:40-15:50"       # 38 slots; skips the open's first 10 min
     days: trading
-    chain: auto                 # E13.9 chain_for(): [quant.exit if exit_path shadow|research], quant.open, risk.open, [quant.revise if quant_risk_loop on], quant.propose, broker.execute (D34)
+    chain: auto                 # E13.9 chain_for(): [E13.18 exit_path research: exits.mandatory, quant.exit, risk.exit | shadow: quant.exit], quant.open, risk.open, [quant.revise if quant_risk_loop on], quant.propose, broker.execute (D34)
     reads: [candidate, regime, channel_brief, note, vol_term, put_call, macro_calendar, position_review, story,
             earnings_history, insider_activity, analyst_recs, fundamentals, scout_read, ex_dividend]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read renders only with research_compact_prompt compact; E13.17 ex_dividend feeds the exit-watch facts (exit_path only)
     writes: [shortlist, regime, note, portfolio_context, exit_watchlist, position_review]   # E5.9: portfolio_context + portfolio_view/thesis_check notes; E13.17 (exit_path != deterministic): exit_watchlist + the reviews Research saw
