@@ -61,7 +61,13 @@ def positions(
     conn: Conn,
     status: Annotated[PositionStatus, Query()] = "open",
 ) -> PositionsResponse:
-    """Open, closed or all structures with the latest broker marks."""
+    """Open, closed or all structures with the latest broker marks; open rows carry the
+    E13.14 exit path under ``personas.exit_path`` shadow | research."""
+    _, routines = effective(cfg)
     return load_positions(
-        conn, now=cfg.clock(), status=status, stale_after=monitor_stale_after(conn)
+        conn,
+        now=cfg.clock(),
+        status=status,
+        stale_after=monitor_stale_after(conn),
+        exit_mode=routines.exit_path.mode,
     )

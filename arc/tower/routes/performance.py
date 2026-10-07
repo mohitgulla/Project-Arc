@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from fastapi import APIRouter, Depends, Query, Request
 
 from arc.tower.api import TowerError
+from arc.tower.data_funnel import FunnelRange, FunnelReport, funnel_bounds, load_funnel_report
 from arc.tower.data_performance import (
     BreakdownBy,
     BreakdownResponse,
@@ -26,8 +27,9 @@ from arc.tower.data_performance import (
     load_breakdown,
     load_performance,
 )
-from arc.tower.routes.deps import Conn, Tower  # noqa: TC001 - FastAPI dependencies
+from arc.tower.routes.deps import Conn, Tower, effective
 from arc.tower.schemas import ErrorResponse
+from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -174,4 +176,35 @@ def performance_breakdown(  # noqa: PLR0913 - one query parameter per control
             raise TowerError(422, "invalid_request", str(exc)) from exc
 
     result: BreakdownResponse = cache.get_or_build(key, build)
+    return result
+
+
+@router.get(
+    "/performance/funnel",
+    response_model=FunnelReport,
+    responses={422: {"model": ErrorResponse}},
+)
+def performance_funnel(  # noqa: PLR0913 - one query parameter per control
+    cfg: Tower,
+    conn: Conn,
+    cache: Cache,
+    range: Annotated[FunnelRange, Query()] = "1W",  # noqa: A002 - the URL parameter name
+    date_from: Annotated[_dt.date | None, Query(alias="from")] = None,
+    date_to: Annotated[_dt.date | None, Query(alias="to")] = None,
+) -> FunnelReport:
+    """E13.14 (D56): the idea funnel (docs -> candidates -> pool -> shortlist ->
+    structures -> proposals -> fills) per feed for a day range; 60 s cache."""
+    now = cfg.clock()
+    try:
+        today = now.astimezone(ET).date()
+        first, last = funnel_bounds(today, range, since=date_from, until=date_to)
+    except ValueError as exc:
+        raise TowerError(422, "invalid_request", str(exc)) from exc
+    key = ("funnel", first, last, _stamp(cfg.db_path))
+
+    def build() -> FunnelReport:
+        _, routines = effective(cfg)
+        return load_funnel_report(conn, since=first, until=last, routines=routines)
+
+    result: FunnelReport = cache.get_or_build(key, build)
     return result

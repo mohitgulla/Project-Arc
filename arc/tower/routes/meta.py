@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter
 
 from arc.tower.api import TowerError
+from arc.tower.catalogue import category_catalogue, persona_catalogue
 from arc.tower.routes.deps import Conn, Tower, effective
 from arc.tower.schemas import (
     STALE_FACTOR,
@@ -124,7 +125,8 @@ def health(cfg: Tower, conn: Conn) -> HealthResponse:
 
 @router.get("/meta", response_model=MetaResponse)
 def meta(cfg: Tower) -> MetaResponse:
-    """App/env info, cadences with stale thresholds, gate caps and client defaults."""
+    """App/env info, cadences with stale thresholds, gate caps, client defaults and the
+    persona / category catalogue (E13.14: every Tower label comes from here)."""
     if not cfg.db_path.is_file():
         raise TowerError(503, "db_unavailable", f"audit store not found: {cfg.db_path}")
     settings, routines = effective(cfg)
@@ -141,4 +143,6 @@ def meta(cfg: Tower) -> MetaResponse:
             portfolio_delta_cap=settings.portfolio_delta_cap,
             portfolio_vega_cap_pct=settings.portfolio_vega_cap_pct,
         ),
+        personas=persona_catalogue(routines),
+        categories=category_catalogue(routines),
     )

@@ -73,7 +73,8 @@ export interface paths {
         };
         /**
          * Meta
-         * @description App/env info, cadences with stale thresholds, gate caps and client defaults.
+         * @description App/env info, cadences with stale thresholds, gate caps, client defaults and the
+         *     persona / category catalogue (E13.14: every Tower label comes from here).
          */
         get: operations["meta_api_meta_get"];
         put?: never;
@@ -405,6 +406,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/performance/funnel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Performance Funnel
+         * @description E13.14 (D56): the idea funnel (docs -> candidates -> pool -> shortlist ->
+         *     structures -> proposals -> fills) per feed for a day range; 60 s cache.
+         */
+        get: operations["performance_funnel_api_performance_funnel_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/positions": {
         parameters: {
             query?: never;
@@ -414,7 +436,8 @@ export interface paths {
         };
         /**
          * Positions
-         * @description Open, closed or all structures with the latest broker marks.
+         * @description Open, closed or all structures with the latest broker marks; open rows carry the
+         *     E13.14 exit path under ``personas.exit_path`` shadow | research.
          */
         get: operations["positions_api_positions_get"];
         put?: never;
@@ -1076,6 +1099,37 @@ export interface components {
             stance: string;
             /** Ticker */
             ticker: string;
+        };
+        /**
+         * CategoryMeta
+         * @description One D56 source category (or the reference-data group).
+         */
+        CategoryMeta: {
+            /**
+             * Feed
+             * @description scalp = 30-min fast feed; scout = daily slow feed
+             * @enum {string}
+             */
+            feed: "scalp" | "scout";
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Max Age Minutes
+             * @description Freshness window; 0 for reference data
+             */
+            max_age_minutes: number;
+            /**
+             * Reference
+             * @default false
+             */
+            reference: boolean;
+            /**
+             * Weight
+             * @description categories.<c>.weight; 0 for reference data
+             */
+            weight: number;
         };
         /**
          * ChannelBriefState
@@ -1919,6 +1973,42 @@ export interface components {
             /** Token Version */
             token_version?: string | null;
         };
+        /**
+         * ExitCaseView
+         * @description Quant's latest exit case for one structure ($ per structure unit).
+         */
+        ExitCaseView: {
+            /** As Of */
+            as_of: string;
+            /** Close Now Net */
+            close_now_net: number;
+            /**
+             * Rationale
+             * @default
+             */
+            rationale: string;
+            /**
+             * Recommendation
+             * @enum {string}
+             */
+            recommendation: "hold" | "close";
+            /** Remaining Ev Hold */
+            remaining_ev_hold?: number | null;
+            /** Remaining Ev Managed */
+            remaining_ev_managed?: number | null;
+            /** Stop State */
+            stop_state: string;
+            /**
+             * Swap Ticker
+             * @description Swap pairing's open ticker, if any
+             */
+            swap_ticker?: string | null;
+            /**
+             * Triggers
+             * @description '<kind>: <detail>' per trigger, in case order
+             */
+            triggers: string[];
+        };
         /** ExitLink */
         ExitLink: {
             /** Close Net */
@@ -2016,6 +2106,42 @@ export interface components {
             vrp?: number | null;
         };
         /**
+         * ExitPathStrip
+         * @description The Positions page's Exit path strip (today = the ET day of the read).
+         */
+        ExitPathStrip: {
+            /**
+             * Cases Today
+             * @description exit_case entries written today
+             * @default 0
+             */
+            cases_today: number;
+            /**
+             * Closes Proposed Today
+             * @description Close proposals created today
+             * @default 0
+             */
+            closes_proposed_today: number;
+            /**
+             * Holds Today
+             * @description Risk exit verdicts `hold` today
+             * @default 0
+             */
+            holds_today: number;
+            /**
+             * Mandatory Pending
+             * @description Open positions with a mandatory signal
+             * @default 0
+             */
+            mandatory_pending: number;
+            /**
+             * Mode
+             * @description personas.exit_path (effective config)
+             * @enum {string}
+             */
+            mode: "deterministic" | "shadow" | "research";
+        };
+        /**
          * ExitPolicy
          * @description Exit rules for one structure kind (see module doc for exact semantics).
          */
@@ -2046,6 +2172,54 @@ export interface components {
             take_profit_pct_of_max_gain: number | null;
             /** Time Adjusted Targets */
             time_adjusted_targets?: components["schemas"]["TimeAdjustedTarget"][];
+        };
+        /**
+         * ExitVerdictView
+         * @description Risk's latest exit verdict for one structure.
+         */
+        ExitVerdictView: {
+            /** As Of */
+            as_of: string;
+            /** Reason */
+            reason: string;
+            /** Reason Code */
+            reason_code: string;
+            /**
+             * Unavailable
+             * @description The Risk call failed: a fail-closed hold
+             * @default false
+             */
+            unavailable: boolean;
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "close" | "hold";
+        };
+        /**
+         * ExitWatchView
+         * @description Research's latest exit-watch item for one structure.
+         */
+        ExitWatchView: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "hold" | "review";
+            /** As Of */
+            as_of: string;
+            /** Evidence */
+            evidence?: string[];
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Thesis Status
+             * @enum {string}
+             */
+            thesis_status: "intact" | "weakened" | "broken";
         };
         /**
          * ExperimentDetailResponse
@@ -2461,6 +2635,56 @@ export interface components {
             violations?: {
                 [key: string]: number;
             };
+        };
+        /** FunnelReport */
+        FunnelReport: {
+            /**
+             * Discovery Fill
+             * @description day -> discovery tier members (D56 Scout)
+             */
+            discovery_fill?: {
+                [key: string]: number;
+            };
+            /**
+             * Sessions
+             * @description Trading sessions in the range
+             */
+            sessions: number;
+            /** Since */
+            since: string;
+            /** Stages */
+            stages: components["schemas"]["FunnelStage"][];
+            /**
+             * Top Sources
+             * @description source key -> candidates
+             */
+            top_sources?: [
+                string,
+                number
+            ][];
+            /** Until */
+            until: string;
+        };
+        /** FunnelStage */
+        FunnelStage: {
+            /**
+             * By Category
+             * @description docs stages only
+             */
+            by_category?: {
+                [key: string]: number;
+            };
+            /** By Feed */
+            by_feed?: {
+                [key: string]: number;
+            };
+            /** Count */
+            count: number;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "docs_fresh" | "docs_read" | "stories" | "candidates" | "pool" | "shortlist" | "structures" | "proposals" | "approved" | "filled";
         };
         /** FunnelStep */
         FunnelStep: {
@@ -3113,6 +3337,11 @@ export interface components {
                 [key: string]: components["schemas"]["Cadence"];
             };
             /**
+             * Categories
+             * @description E13.14 (D56): the six source categories + the reference-data group
+             */
+            categories?: components["schemas"]["CategoryMeta"][];
+            /**
              * Config Version
              * @description Latest D26 config_changes id (0 = none)
              */
@@ -3125,6 +3354,11 @@ export interface components {
             gate_caps: components["schemas"]["GateCaps"];
             /** Lookback Days */
             lookback_days: number;
+            /**
+             * Personas
+             * @description E13.14 (D56): persona catalogue (labels + emoji), from routines.yaml
+             */
+            personas?: components["schemas"]["PersonaMeta"][];
             /** Refresh Choices S */
             refresh_choices_s?: number[];
             /**
@@ -3696,6 +3930,37 @@ export interface components {
             /** Status */
             status: string;
         };
+        /**
+         * PersonaMeta
+         * @description One persona chip: key, display label, emoji, whether it calls an LLM, its group.
+         */
+        PersonaMeta: {
+            /**
+             * Emoji
+             * @description arc.slack.personas PERSONA_EMOJI; '' when none (monitor)
+             */
+            emoji: string;
+            /**
+             * Group
+             * @description Timeline group (TIMELINE_GROUPS key) of its first job
+             */
+            group: string;
+            /**
+             * Key
+             * @enum {string}
+             */
+            key: "scout" | "scalp" | "research" | "quant" | "risk" | "broker" | "ops" | "monitor";
+            /**
+             * Label
+             * @description Display name, e.g. 'Research'
+             */
+            label: string;
+            /**
+             * Llm
+             * @description Any job with this persona calls a model
+             */
+            llm: boolean;
+        };
         /** PnlBar */
         PnlBar: {
             /** Cumulative */
@@ -3800,6 +4065,7 @@ export interface components {
             dte?: number | null;
             /** Entry Net */
             entry_net: string;
+            exit_case?: components["schemas"]["ExitCaseView"] | null;
             /**
              * Exit Pending
              * @default false
@@ -3809,6 +4075,8 @@ export interface components {
             exit_proposal_hash?: string | null;
             /** Exit Reason */
             exit_reason?: string | null;
+            exit_review?: components["schemas"]["ExitVerdictView"] | null;
+            exit_watch?: components["schemas"]["ExitWatchView"] | null;
             /** Expiration */
             expiration?: string | null;
             /**
@@ -3827,6 +4095,11 @@ export interface components {
              * @description Compact OCC symbols
              */
             legs: string[];
+            /**
+             * Mandatory Signal
+             * @description stop | dte_exit | expiry on the latest position_review
+             */
+            mandatory_signal?: string | null;
             /** Mark At */
             mark_at?: string | null;
             /**
@@ -3911,6 +4184,8 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
+            /** @description E13.14 (D56): the Exit path strip */
+            exit_path?: components["schemas"]["ExitPathStrip"];
             /** Items */
             items: components["schemas"]["PositionRow"][];
             /** Marks At */
@@ -4965,6 +5240,8 @@ export interface components {
             context?: components["schemas"]["ContextReads"];
             decisions: components["schemas"]["DecisionTrail"];
             execution: components["schemas"]["ExecutionSection"] | null;
+            /** @description E13.14: Risk's exit verdict stored on a research-path close proposal */
+            exit_review?: components["schemas"]["ExitVerdictView"] | null;
             /** Gate */
             gate: components["schemas"]["GateView"][];
             header: components["schemas"]["TradeHeader"];
@@ -5438,6 +5715,11 @@ export interface components {
              * @description personas.director_diversification (E12.5): strict | relaxed
              */
             director_diversification?: string | null;
+            /**
+             * Discovery Fill
+             * @description E13.14 (D56): names the Scout's discovery feed listed today (0 = none yet); null under d51
+             */
+            discovery_fill?: number | null;
             /** Dropped */
             dropped: components["schemas"]["UniverseDroppedRow"][];
             /** Market Reference */
@@ -5446,8 +5728,9 @@ export interface components {
              * Model
              * @description Tier layout the shown resolve used (d51 | d56); config/universe.yaml tiers.model when nothing is resolved
              * @default d51
+             * @enum {string}
              */
-            model: string;
+            model: "d51" | "d56";
             /** Note */
             note?: string | null;
             /**
@@ -5468,6 +5751,11 @@ export interface components {
              * @enum {string}
              */
             state: "today" | "stale" | "none";
+            /**
+             * Tail Cuts
+             * @description E13.14: names cut past the active cap (over_active_cap), with tier + rank
+             */
+            tail_cuts?: components["schemas"]["UniverseDroppedRow"][];
             /** Tiers */
             tiers: components["schemas"]["UniverseTierRow"][];
         };
@@ -6309,6 +6597,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BreakdownResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    performance_funnel_api_performance_funnel_get: {
+        parameters: {
+            query?: {
+                range?: "1D" | "1W" | "1M" | "3M";
+                from?: string | null;
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FunnelReport"];
                 };
             };
             /** @description Unprocessable Entity */

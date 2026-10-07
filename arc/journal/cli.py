@@ -18,8 +18,11 @@
 - ``arc journal backfill-outcomes [--dry-run]``  (E7.4b) write the missing
   ``outcomes`` row of every closed structure; idempotent.
 
-``explain``, ``counterfactual`` and ``arc scorecard attribution`` open the store
-read-only (``mode=ro``): they never create, migrate or write it.
+- ``arc funnel report --since YYYY-MM-DD --until YYYY-MM-DD``  (E13.14, D56) the
+  idea funnel per stage and feed (shares ``arc.tower.data_funnel`` with the Tower).
+
+``explain``, ``counterfactual``, ``arc scorecard attribution`` and ``arc funnel`` open
+the store read-only (``mode=ro``): they never create, migrate or write it.
 """
 
 from __future__ import annotations
@@ -37,7 +40,14 @@ if TYPE_CHECKING:
 
     from arc.config import ArcSettings
 
-__all__ = ["add_journal_parser", "add_scorecard_parser", "run_journal", "run_scorecard"]
+__all__ = [
+    "add_funnel_parser",
+    "add_journal_parser",
+    "add_scorecard_parser",
+    "run_funnel",
+    "run_journal",
+    "run_scorecard",
+]
 
 #: subcommands that open the store read-only and never migrate it (E9.3)
 READ_ONLY = ("explain", "counterfactual")
@@ -131,6 +141,49 @@ def add_scorecard_parser(sub: argparse._SubParsersAction) -> None:  # type: igno
     )
     a.add_argument("--json", action="store_true", help="Print the report as JSON")
     a.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+
+
+def add_funnel_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    """``arc funnel report`` (E13.14, D56; folds E5.14's report half)."""
+    p = sub.add_parser("funnel", help="Idea funnel: docs -> candidates -> proposals (read-only)")
+    fsub = p.add_subparsers(dest="funnel_command", required=True)
+    r = fsub.add_parser("report", help="Funnel counts per stage and feed for a day range")
+    r.add_argument("--since", default=None, help="YYYY-MM-DD (ET, inclusive); default: --range")
+    r.add_argument("--until", default=None, help="YYYY-MM-DD (ET, inclusive); default: today")
+    r.add_argument(
+        "--range", default="1W", choices=["1D", "1W", "1M", "3M"], help="Days when no --since"
+    )
+    r.add_argument("--json", action="store_true", help="Print the report as JSON")
+    r.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+    r.add_argument("--config", default=None, help="routines.yaml (default: config/routines.yaml)")
+
+
+def run_funnel(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from arc.config import get_settings
+    from arc.routines.config import load_routines
+    from arc.tower.data_funnel import funnel_bounds, load_funnel_report, render_funnel_table
+    from arc.utils.calendar import now_et
+
+    try:
+        since = _dt.date.fromisoformat(args.since) if args.since else None
+        until = _dt.date.fromisoformat(args.until) if args.until else None
+        first, last = funnel_bounds(now_et().date(), args.range, since=since, until=until)
+        routines = load_routines(Path(args.config)) if args.config else load_routines()
+        conn = _connect_ro(args.db, get_settings())
+    except (FileNotFoundError, ValueError) as exc:
+        sys.stderr.write(f"arc funnel report: {exc}\n")
+        return 2
+    try:
+        rep = load_funnel_report(conn, since=first, until=last, routines=routines)
+    finally:
+        conn.close()
+    if args.json:
+        sys.stdout.write(rep.model_dump_json(indent=2) + "\n")
+    else:
+        sys.stdout.write(render_funnel_table(rep) + "\n")
+    return 0
 
 
 def _day(text: str | None) -> _dt.datetime | None:

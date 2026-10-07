@@ -258,7 +258,12 @@ def _trades_module():  # noqa: ANN202 - a module loaded by path
 
 
 def build(
-    path: Path, now: dt.datetime | None = None, *, history: bool = False, ops: bool = False
+    path: Path,
+    now: dt.datetime | None = None,
+    *,
+    history: bool = False,
+    ops: bool = False,
+    exits: bool = False,
 ) -> Path:
     """Create *path* (must not exist), migrate it and fill it with the fixture rows.
 
@@ -266,6 +271,8 @@ def build(
     ~40 closed trades and daily equity over the 3+ months before the 10 recent days).
     *ops* adds the E8.7d Ops page rows (``scripts/tower_fixture_ops.py``: a full
     simulated schedule with run manifests, alerts, context, LLM usage, config changes).
+    *exits* adds the E13.14 shadow exit chain (``scripts/tower_fixture_exits.py``:
+    ``personas.exit_path shadow``, watchlist, exit cases, Risk verdicts).
     """
     if path.exists():
         msg = f"{path} exists; the fixture builder never overwrites a DB"
@@ -527,6 +534,8 @@ def build(
     HeartbeatRepo(conn).record(
         "health", "ok", at=now - dt.timedelta(minutes=11), detail={"checks": {}}
     )
+    if exits:
+        _load_script("tower_fixture_exits").add_exits(conn, now, sids)
     if ops:
         ops_mod = _load_script("tower_fixture_ops")
         ops_mod.add_ops(conn, now)
@@ -549,12 +558,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--ops", action="store_true", help="add the E8.7d Ops page rows (runs, manifests, ...)"
     )
+    ap.add_argument(
+        "--exits", action="store_true", help="add the E13.14 shadow exit chain (Positions)"
+    )
     args = ap.parse_args(argv)
     now = dt.datetime.fromisoformat(args.now) if args.now else None
     if now is not None and now.tzinfo is None:
         now = now.replace(tzinfo=ET)
     try:
-        build(args.out, now, history=args.history, ops=args.ops)
+        build(args.out, now, history=args.history, ops=args.ops, exits=args.exits)
     except FileExistsError as exc:
         log.error("tower_fixture.refused", error=str(exc))
         return 2

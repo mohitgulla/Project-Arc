@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from arc.tower.data import _has_table, parse_ts
 from arc.universe.tiers import (
     ACTIVE_SUBJECT,
+    DROP_OVER_ACTIVE_CAP,
     MAX_CORE,
     ActiveUniverse,
     Tier,
@@ -46,6 +47,7 @@ __all__ = [
     "UniverseDroppedRow",
     "UniverseResponse",
     "UniverseTierRow",
+    "discovery_fill_by_day",
     "load_universe",
 ]
 
@@ -106,7 +108,7 @@ class UniverseResponse(BaseModel):
     model_config = _STRICT
 
     as_of: _dt.datetime = Field(description="Server time of this read")
-    model: str = Field(
+    model: Literal["d51", "d56"] = Field(
         "d51",
         description="Tier layout the shown resolve used (d51 | d56); config/universe.yaml "
         "tiers.model when nothing is resolved",
@@ -126,6 +128,15 @@ class UniverseResponse(BaseModel):
     tiers: list[UniverseTierRow]
     dropped: list[UniverseDroppedRow]
     market_reference: list[str]
+    tail_cuts: list[UniverseDroppedRow] = Field(
+        default_factory=list,
+        description="E13.14: names cut past the active cap (over_active_cap), with tier + rank",
+    )
+    discovery_fill: int | None = Field(
+        None,
+        description="E13.14 (D56): names the Scout's discovery feed listed today (0 = none "
+        "yet); null under d51",
+    )
     core_override_ignored: CoreOverrideIgnored | None = None
     director_diversification: str | None = Field(
         None,
@@ -168,6 +179,33 @@ def _feed(conn: sqlite3.Connection, tier: Tier) -> UniverseTierPayload | None:
         return UniverseTierPayload.model_validate(json.loads(row["payload"]))
     except (ValueError, ValidationError):
         return None
+
+
+def discovery_fill_by_day(
+    conn: sqlite3.Connection, first: _dt.date, last: _dt.date
+) -> dict[str, int]:
+    """D56: per ET day in ``[first, last]``, the member count of the day's latest
+    ``universe_tier`` / ``discovery`` entry (the Scout's fill). Days without one are
+    absent. Read-only; payloads this build can't read are skipped."""
+    if not _has_table(conn, "context_entries"):
+        return {}
+    lo = _dt.datetime.combine(first, _dt.time.min, tzinfo=ET)
+    hi = _dt.datetime.combine(last + _dt.timedelta(days=1), _dt.time.min, tzinfo=ET)
+    out: dict[str, int] = {}
+    for r in conn.execute(
+        "SELECT payload, valid_from FROM context_entries WHERE kind = 'universe_tier'"
+        " AND subject = ? ORDER BY valid_from, created_at, rowid",
+        (Tier.DISCOVERY.value,),
+    ):
+        at = parse_ts(r["valid_from"])
+        if at is None or not lo <= at < hi:
+            continue
+        try:
+            feed = UniverseTierPayload.model_validate(json.loads(r["payload"]))
+        except (ValueError, ValidationError):
+            continue
+        out[at.astimezone(ET).date().isoformat()] = len(feed.members)  # latest wins
+    return dict(sorted(out.items()))
 
 
 def _active_row(m: TierMember) -> UniverseActiveRow:
@@ -285,6 +323,15 @@ def load_universe(
             core_in_use=core,
         )
 
+    dropped = [
+        UniverseDroppedRow(ticker=d.ticker, tier=d.tier.value, reason=d.reason, rank=d.rank)
+        for d in active.dropped
+    ]
+    fill = (
+        discovery_fill_by_day(conn, today, today).get(today.isoformat(), 0)
+        if active.model == "d56"
+        else None
+    )
     return UniverseResponse(
         as_of=now,
         model=active.model,
@@ -298,11 +345,10 @@ def load_universe(
         active_max=settings.universe_active_max,
         active=[_active_row(m) for m in active.members],
         tiers=tiers,
-        dropped=[
-            UniverseDroppedRow(ticker=d.ticker, tier=d.tier.value, reason=d.reason, rank=d.rank)
-            for d in active.dropped
-        ],
+        dropped=dropped,
         market_reference=market_reference(settings, model=active.model),
+        tail_cuts=[d for d in dropped if d.reason == DROP_OVER_ACTIVE_CAP],
+        discovery_fill=fill,
         core_override_ignored=override,
         director_diversification=director_diversification,
     )

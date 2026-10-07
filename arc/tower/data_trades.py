@@ -51,6 +51,7 @@ from arc.journal.analytics import ProposalAnalytics  # noqa: TC001 - pydantic fi
 from arc.journal.floor_exit import FloorExitFacts, floor_exit_facts
 from arc.journal.reasons import gate_reason, reason_label
 from arc.tower.data import Direction, _dec, _has_table, _json, direction_of, parse_ts
+from arc.tower.data_exits import ExitVerdictView
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -887,6 +888,10 @@ class TradeDetail(BaseModel):
     market: MarketSection
     manifest: ManifestView | None
     context: ContextReads = Field(default_factory=ContextReads)
+    exit_review: ExitVerdictView | None = Field(
+        default=None,
+        description="E13.14: Risk's exit verdict stored on a research-path close proposal",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2167,6 +2172,38 @@ def _context_reads(
     return ContextReads(snapshot_ids=sids, total=sum(k.count for k in kinds), kinds=kinds)
 
 
+def _exit_review(conn: sqlite3.Connection, p: sqlite3.Row) -> ExitVerdictView | None:
+    """E13.18/E13.14: the ``exit_review`` a close proposal's context entry carries.
+
+    ``quant.propose`` writes it on the ``proposal`` entry (subject = ticker) in the
+    proposal's run; it is context only (never hashed), so it is read from there.
+    """
+    if p["kind"] != "close" or not p["run_id"] or not _has_table(conn, "context_entries"):
+        return None
+    for r in conn.execute(
+        """SELECT payload, valid_from FROM context_entries
+           WHERE kind = 'proposal' AND subject = ? AND run_id = ?
+           ORDER BY valid_from DESC, rowid DESC""",
+        (p["ticker"] or "", p["run_id"]),
+    ):
+        rv = _json(r["payload"], {}).get("exit_review")
+        if not isinstance(rv, dict):
+            continue
+        at = parse_ts(r["valid_from"])
+        try:
+            return ExitVerdictView.model_validate(
+                {
+                    "as_of": at.isoformat() if at else "",
+                    "verdict": rv.get("verdict"),
+                    "reason_code": str(rv.get("reason_code") or ""),
+                    "reason": str(rv.get("reason") or ""),
+                }
+            )
+        except ValueError:
+            continue
+    return None
+
+
 def load_trade(
     conn: sqlite3.Connection, proposal_hash: str, *, now: _dt.datetime
 ) -> TradeDetail | None:
@@ -2197,4 +2234,5 @@ def load_trade(
         market=market,
         manifest=manifest,
         context=_context_reads(conn, trail, manifest),
+        exit_review=_exit_review(conn, p),
     )

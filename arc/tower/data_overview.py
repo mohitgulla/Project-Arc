@@ -61,6 +61,14 @@ from arc.tower.data import (
     parse_ts,
     prev_close_of,
 )
+from arc.tower.data_exits import (
+    ExitCaseView,
+    ExitPathMode,
+    ExitPathStrip,
+    ExitVerdictView,
+    ExitWatchView,
+    load_exit_path,
+)
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -229,6 +237,13 @@ class PositionRow(BaseModel):
     direction: Direction | None = Field(
         default=None, description="D50: bullish / bearish / neutral from the opening legs"
     )
+    # E13.14 (D56): the exit path (arc.tower.data_exits); None under exit_path deterministic.
+    exit_watch: ExitWatchView | None = None
+    exit_case: ExitCaseView | None = None
+    exit_review: ExitVerdictView | None = None
+    mandatory_signal: str | None = Field(
+        default=None, description="stop | dte_exit | expiry on the latest position_review"
+    )
 
 
 class GreeksSection(BaseModel):
@@ -332,6 +347,10 @@ class PositionsResponse(BaseModel):
     stale_after_s: int
     marks_at: _dt.datetime | None = None
     items: list[PositionRow]
+    exit_path: ExitPathStrip = Field(
+        default_factory=lambda: ExitPathStrip.model_validate({"mode": "deterministic"}),
+        description="E13.14 (D56): the Exit path strip",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1004,16 +1023,27 @@ def load_positions(
     now: _dt.datetime,
     status: PositionStatus = "open",
     stale_after: _dt.timedelta,
+    exit_mode: ExitPathMode = "deterministic",
 ) -> PositionsResponse:
-    """Structures by *status* with the latest monitor marks (SELECT only)."""
+    """Structures by *status* with the latest monitor marks (SELECT only).
+
+    E13.14: open rows carry the exit path (watch / case / Risk verdict / mandatory
+    signal) and the response the Exit path strip, under *exit_mode* (shadow | research).
+    """
     now_et = now.astimezone(ET)
     latest = _latest_mark(conn, _latest_heartbeat(conn, "monitor"))
+    items = _position_rows(conn, latest, now_et.date(), status)
+    strip, views = load_exit_path(
+        conn, [r.id for r in items if r.status == "open"], mode=exit_mode, now=now_et
+    )
+    items = [r.model_copy(update=dict(views[r.id])) if r.id in views else r for r in items]
     return PositionsResponse(
         as_of=now_et,
         status=status,
         stale_after_s=int(stale_after.total_seconds()),
         marks_at=latest.at if latest else None,
-        items=_position_rows(conn, latest, now_et.date(), status),
+        items=items,
+        exit_path=strip,
     )
 
 

@@ -40,6 +40,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from arc.context.trace import trace_runs
 from arc.context.ttl import to_db
 from arc.journal import legacy
+from arc.tower.catalogue import REFERENCE_LABEL as _CATALOGUE_REFERENCE_LABEL
+from arc.tower.catalogue import category_feed
 from arc.tower.data import _has_table, _json, parse_ts
 from arc.utils.calendar import ET
 
@@ -1435,7 +1437,7 @@ class SourceRow(BaseModel):
 
 
 #: D56: the Sources page group for reference-data sources (not a category).
-REFERENCE_LABEL = "Reference data"
+REFERENCE_LABEL = _CATALOGUE_REFERENCE_LABEL
 
 
 class SourceCategoryRow(BaseModel):
@@ -1726,7 +1728,9 @@ def load_sources(  # noqa: PLR0912, PLR0915 - one pass over the registry and the
                 label=_label(job, spec),
                 job=job,
                 category=cat.value if cat is not None else REFERENCE,
-                feed="scout",  # D54: typed context is never Scalp-read (slow feed)
+                # D56: options_fast is the Scalp's 30-min tape; other typed context and
+                # reference data are the Scout's slow feed (arc.tower.catalogue).
+                feed=category_feed(cat) if cat is not None else "scout",
                 weight=0.0,
                 share_in_category=None,
                 unit="entries",

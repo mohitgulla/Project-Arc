@@ -231,12 +231,13 @@ def _make_parser() -> argparse.ArgumentParser:
             sub.add_parser(cmd, help=f"{cmd.capitalize()} (stub)")
 
     from arc.data.history.cli import add_history_parser
-    from arc.journal.cli import add_journal_parser, add_scorecard_parser
+    from arc.journal.cli import add_funnel_parser, add_journal_parser, add_scorecard_parser
     from arc.routines.cli import add_context_parser, add_routines_parser
 
     add_history_parser(sub)
     add_journal_parser(sub)
     add_scorecard_parser(sub)
+    add_funnel_parser(sub)
     add_routines_parser(sub)
     add_context_parser(sub)
 
@@ -801,6 +802,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_scorecard(args)
+    if args.command == "funnel":
+        from arc.journal.cli import run_funnel
+
+        _log_to_stderr()
+        return run_funnel(args)
     if args.command == "iv":
         from arc.iv.cli import run_iv
 
