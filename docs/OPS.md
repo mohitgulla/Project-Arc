@@ -323,7 +323,7 @@ design-system component in both themes). Shell data for every page: `/api/health
 `monitor`/`broker.reconcile`/`tick` cadences with stale thresholds, gate caps, and (E13.14,
 D56) the persona catalogue `personas` (key, label, emoji, llm, group, from
 `config/routines.yaml` + `arc/slack/personas.py`) and the `categories` list (the six D56
-categories plus Reference data). The SPA takes every persona and category label from there. `/api/docs` is the
+categories, D58 `retail_buzz`, then Reference data). The SPA takes every persona and category label from there. `/api/docs` is the
 OpenAPI browser. Every response carries `as_of` (ET); errors are `{error, detail, as_of}`
 (e.g. 503 `db_unavailable`, 503 `config_unavailable`).
 
@@ -794,9 +794,10 @@ gate off again afterwards is respected.
 
 ### 5.11 Open universe (E5.7, D9/D28) and tiers (E12.1, D56)
 
-The trade universe is three tiers resolved into one **active list** (max
-`universe_active_max` 50): core (`universe`, 20 names in `config/universe.yaml`
-`core:`) > momentum (E12.2, 20) > discovery (the Scout's picks, 20). A name keeps its
+The trade universe is four tiers (D58, each capped at 25) resolved into one **active
+list** (max `universe_active_max` 50): core (`universe`, 20 names in
+`config/universe.yaml` `core:`, ceiling 25) > momentum (E12.2, 20) > discovery (the
+Scout's picks, ≤ 25) > trending (code-ranked from `retail_buzz`, ≤ 25). A name keeps its
 highest tier; names past the cap are journaled `universe:over_active_cap`. SPY/QQQ/IWM
 are the `market_reference`: they always get a Research `regime` entry but are not
 trade names. The active list resolves at 05:30 ET each trading day (`symbols` job,
@@ -835,6 +836,19 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   The active list fills core > momentum > discovery > trending, so overflow cuts the
   trending tail first. By hand: `arc universe trending --dry-run [--no-screen]` (score
   table, no write) or `arc universe trending [--db PATH] [--no-slack]` (runs the job).
+  The job's `[Routines]` notice is the diff against the previous list
+  (`Trending tier: 23 names, 11 in both inputs (+SPCX −RIVN) · inputs reddit, stocktwits`).
+- **Scout reads retail buzz (E13.20, D58), context only.** The Scout prompt carries a
+  code-built `## Retail buzz (as of …)` section: the top 15 names of the fresh
+  `retail_buzz` entry (both-input names first, crypto dropped), each
+  `reddit #r/mentions · stocktwits #s · in trending tier y|n`, where `y` comes from
+  today's trending tier only. A missing or stale (> 24h) entry reads `no info`. The
+  prompt's category line counts `n/4 present` (youtube_macro, youtube_micro,
+  options_slow, retail_buzz). The Scout cannot add or remove trending names and buzz
+  never makes a discovery name on its own. `scout_read` v2 records
+  `inputs.retail_buzz` (as_of, or null). The Scout card adds
+  `Trending: n/25 (k both-source) · m in active list`, and `retail_buzz` joins its
+  `No fresh input` list when absent.
 - **Ticker extraction (E12.3):** bare upper-case words of 2–3 letters count only for
   core + momentum names (`extraction.bare_min_len: 4`); `$SYM`, `(SYM)`, `(NYSE: SYM)`
   and `ticker symbol SYM` still match any length. RSI, ET, SA, TD, MSCI, COLA, NOW… are
@@ -873,7 +887,7 @@ Every Sweep source is a named entry in `config/routines.yaml`: each RSS feed und
 `sources.rss.feeds` (`name`, `url`, optional `label`, `category`, `weight`,
 `max_age`, `max_docs_per_run`, `hosts`), and `edgar` / `earnings` with a
 `category` and `label`. Every context-writing source **must** declare exactly one of
-the 6 categories or `reference: true` (D56); neither, both, or an unknown category
+the 7 categories or `reference: true` (D56, D58); neither, both, or an unknown category
 fails config load. Adding or re-weighting a source is a YAML edit only.
 
 | category | label | `max_age` | sources | read by |
@@ -884,6 +898,7 @@ fails config load. Adding or re-weighting a source is a YAML edit only.
 | `options_slow` | Options slow | 24h | `vol_term`, `options_daily`, `vix_futures` (`feed: scout`) | Scout, Research (typed context) |
 | `youtube_macro` | YouTube macro | 24h | FX Evolution, Bravos Research | Scout, Research (channel briefs, §5.22) |
 | `youtube_micro` | YouTube micro | 24h | StockedUp, Trade Brigade, Arete Trading | Scout, Research (channel briefs, §5.22) |
+| `retail_buzz` | Retail buzz | 24h | `retail_buzz` (Reddit via ApeWisdom + Stocktwits trending, 05:40, D58) | trending tier (code), Scout (context only); never Research |
 
 **Reference data (D56)** is not a category: `ex_dividend`, `macro_calendar`, the
 `earnings` calendar, the `finnhub.*` kinds and `iv.record` (`iv_daily`). Those jobs

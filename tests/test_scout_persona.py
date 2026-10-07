@@ -628,7 +628,7 @@ class TestWiring:
             "channel_brief",
             "options_daily",
             "vx_curve",
-            "retail_buzz",  # D58 (E13.19): prompt use lands in E13.20
+            "retail_buzz",  # D58: context only in the prompt (E13.20)
             "vol_term",
             "universe_tier",
             "active_universe",

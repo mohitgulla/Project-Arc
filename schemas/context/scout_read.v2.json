@@ -59,6 +59,18 @@
           "description": "as_of of the fresh entry; None = absent",
           "title": "Options Daily"
         },
+        "retail_buzz": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retail Buzz"
+        },
         "vol_term": {
           "anyOf": [
             {

@@ -524,7 +524,7 @@ personas:
     lane: background            # one cheap LLM call (~1-2 min); the tick never waits on it
     llm: true
     notify: card
-    reads: [channel_brief, options_daily, vx_curve, vol_term, retail_buzz, universe_tier, active_universe]   # retail_buzz: D58 (prompt use E13.20)
+    reads: [channel_brief, options_daily, vx_curve, vol_term, retail_buzz, universe_tier, active_universe]   # retail_buzz: D58, context only (E13.20)
     writes: [scout_read, candidate, note, universe_tier, active_universe]   # universe_tier: discovery only; active_universe: re-resolve after
   scalp:                        # D31: every 30 min in session (15 runs), after the fast sources
     label: Scalp
