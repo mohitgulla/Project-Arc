@@ -930,6 +930,17 @@ class ArcSettings(BaseSettings):
         default=900,
         description="quant.exit prompt: hard clip per exit case (chars).",
     )
+    # E13.18 (D56): Risk exit review (personas.exit_path research only).
+    exit_review_max_consecutive_holds: Annotated[int, Field(ge=1, le=10)] = Field(
+        default=3,
+        description="Risk `hold` on a case with a deterministic discretionary signal is "
+        "honoured for at most this many consecutive reviews; the next one closes.",
+    )
+    exit_steps_min_remaining_s: Annotated[int, Field(ge=0, le=600)] = Field(
+        default=60,
+        description="quant.exit / risk.exit: loop budget (s) a step needs to start "
+        "(routines.yaml steps.*.min_remaining_s mirrors it).",
+    )
     pipeline_max_shortlist: Annotated[int, Field(ge=1, le=20)] = Field(
         default=10,
         description=(

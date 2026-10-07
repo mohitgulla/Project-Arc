@@ -26,6 +26,7 @@ from arc.personas.schemas import (
     QuantOutput,
     ReconcileOutput,
     ResearchOutput,
+    RiskExitVerdict,
     RiskOpenAssessment,
     RiskOutput,
     ScoutTickerCall,
@@ -173,6 +174,9 @@ class ProposalPayload(Proposal):
 
     exit_model: ExitModelResult | None = None
     revised: bool = False
+    # E13.18 (D56), schema v3: Risk's exit verdict on a research-path close (closes
+    # only; context only, never hashed).
+    exit_review: RiskExitVerdict | None = None
 
 
 class PositionReviewPayload(PositionReview):
@@ -215,6 +219,25 @@ class ExitCasePayload(ExitCase):
     """One exit case Quant judged (E13.17, D56); kind ``exit_case``, subject = structure id."""
 
     model_config = _FORBID
+
+
+class RiskExitReviewPayload(BaseModel):
+    """Risk's review of the exit cases (E13.18, D56); kind ``risk_exit_review``.
+
+    Subject ``session``. ``verdicts`` holds one entry per reviewed case (code fills a
+    missing one with ``hold``). ``unavailable`` = the Risk call failed, timed out or
+    did not parse: every verdict is ``hold`` and ``quant.propose`` applies the fallback
+    rules (a deterministic discretionary signal closes as today).
+    """
+
+    model_config = _FORBID
+
+    as_of: str
+    case_ids: list[str] = Field(default_factory=list, description="exit_case entry ids reviewed")
+    verdicts: list[RiskExitVerdict] = Field(default_factory=list)
+    unavailable: bool = False
+    persona_call_id: str | None = None
+    schema_version: int = 1
 
 
 class JournalPayload(ReconcileOutput):
@@ -770,7 +793,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("shortlist", ShortlistPayload, schema_version=5),  # E13.17: exit_watchlist_counts
     KindSpec("structures", StructuresPayload, schema_version=3),  # E13.9: revision_of/kept
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
-    KindSpec("proposal", ProposalPayload, schema_version=2),  # E13.9: revised
+    KindSpec("proposal", ProposalPayload, schema_version=3),  # E13.18: exit_review
     KindSpec("position_review", PositionReviewPayload, schema_version=2),  # E6.4a: floor window
     KindSpec("portfolio_context", PortfolioContextPayload, schema_version=2),  # E13.17: facts
     KindSpec("journal", JournalPayload),
@@ -803,6 +826,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     # exit_case subject = open structure id.
     KindSpec("exit_watchlist", ExitWatchlistPayload),
     KindSpec("exit_case", ExitCasePayload),
+    # E13.18 (D56): Risk's exit review; subject = "session"
+    KindSpec("risk_exit_review", RiskExitReviewPayload),
 )
 
 

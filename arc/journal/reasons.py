@@ -243,6 +243,11 @@ class ReasonCode(StrEnum):
     EXIT_WATCH_MISSING = "exit:watch_missing"  # no watch item for an open position: hold
     EXIT_CASE_BUILT = "exit:case_built"  # Quant judged an exit case (hold | close)
     EXIT_CASE_SKIPPED = "exit:case_skipped"  # mandatory_pending | exit_pending | no_trigger
+    # E13.18 (D56): Risk exit review + the close path (personas.exit_path research)
+    EXIT_RESEARCH_REVIEW = "exit:research_review"  # close on a Research review (Risk close)
+    EXIT_HOLD_REVIEWED = "exit:hold_reviewed"  # Risk said hold: journaled no-action
+    EXIT_HOLD_LIMIT = "exit:hold_limit_reached"  # too many consecutive holds: close
+    EXIT_REVIEW_UNAVAILABLE = "exit:review_unavailable"  # Risk unavailable: D23 fallback
     # reallocate (E6.4: close-to-reallocate swaps; one row per scored pair / swap step)
     REALLOC_SUGGESTED = "realloc:suggested"
     REALLOC_EDGE_BELOW_MIN = "realloc:edge_below_min"
@@ -456,6 +461,10 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.EXIT_WATCH_MISSING: "Exit watch: no Research item (hold)",
     ReasonCode.EXIT_CASE_BUILT: "Exit case judged by Quant",
     ReasonCode.EXIT_CASE_SKIPPED: "Exit case skipped",
+    ReasonCode.EXIT_RESEARCH_REVIEW: "Exit: Research review (Risk close)",
+    ReasonCode.EXIT_HOLD_REVIEWED: "Exit: Risk holds (reviewed)",
+    ReasonCode.EXIT_HOLD_LIMIT: "Exit: hold limit reached (close)",
+    ReasonCode.EXIT_REVIEW_UNAVAILABLE: "Exit: Risk review unavailable (policy fallback)",
     ReasonCode.REALLOC_SUGGESTED: "Swap suggested",
     ReasonCode.REALLOC_EDGE_BELOW_MIN: "Swap edge below the minimum",
     ReasonCode.REALLOC_POP_BELOW_OPEN: "Swap PoP below the open position's",

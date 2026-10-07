@@ -78,7 +78,11 @@ _QUANT_RISK_LOOP = "routines.personas.quant_risk_loop"
 STEP_TARGETS: dict[str, frozenset[str]] = {
     "research": frozenset({"account_profiles", "routines"}),
     # E13.17: exit cases read the exit policy + realloc settings; shadow only (no orders).
-    "quant.exit": frozenset({"account_profiles", "exits", "routines"}),
+    "quant.exit": frozenset({"account_profiles", "exits", "costs", "routines"}),
+    # E13.18: the mandatory floor closes against the arm's own book (an ACCOUNT_STEP);
+    # Risk's exit review reads the exit policy and the account profile.
+    "exits.mandatory": frozenset({"exits"}),
+    "risk.exit": frozenset({"account_profiles", "exits"}),
     "quant.open": frozenset({"account_profiles", "exits", "costs"}),
     # E13.9: the quant_risk_loop flag changes Risk's prompt (verdicts), so an arm that
     # flips it forks at risk.open, not later: control's review carries no verdicts.
@@ -88,7 +92,7 @@ STEP_TARGETS: dict[str, frozenset[str]] = {
     "broker.execute": frozenset(),
 }
 # Steps that size, gate or trade against the arm's own account: always the arm's.
-ACCOUNT_STEPS: frozenset[str] = frozenset({"quant.propose", "broker.execute"})
+ACCOUNT_STEPS: frozenset[str] = frozenset({"exits.mandatory", "quant.propose", "broker.execute"})
 # E13.9: routines overlay keys narrower than "routines" (a persona flag that only the
 # open path reads); an overlay touching only these does not re-run Research.
 _NARROW_ROUTINES_KEYS = {("personas", "quant_risk_loop"): _QUANT_RISK_LOOP}

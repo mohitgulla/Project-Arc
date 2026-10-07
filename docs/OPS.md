@@ -1897,12 +1897,51 @@ the experiment's `win` verdict.
   `quant_exit_max_cases` (8), ≤ 900 chars each, and asks Quant hold | close. A missing
   judgement or a failed call holds. **Nothing is proposed**; the positions chain is
   untouched. The `[Quant] Exit cases` card lists ticker · trigger · call · remaining EV.
-- **`research`:** behaves as `shadow` until E13.18 adds `risk.exit` and the close path.
+- **`research`:** everything `shadow` does, plus the close path (E13.18, §5.32).
 
 Turn on with `!arc config personas.exit_path shadow` (riskier, asks for a confirm).
 Check: `arc routines tick --dry-run --now <today>T10:40-04:00` shows `quant.exit` only
 under shadow/research; `arc context show --kind exit_watchlist --latest` /
 `--kind exit_case`; `arc journal show` (stage `exit`).
+
+### 5.32 Research-managed exits II: Risk exit review + close path (E13.18, D56, D44)
+
+`personas.exit_path: research` (XP-9 draft, `config/experiments/live/xp9_research_exit_path.yaml`).
+Exits run **before** opens in the 10-min Research chain:
+
+    research → exits.mandatory → quant.exit → risk.exit → quant.open → risk.open → [quant.revise] → quant.propose → broker.execute
+    positions.evaluate (:20/:50) → exits.mandatory → broker.execute     # marks + mandatory floor only
+
+- **Mandatory floor (`exits.mandatory`, no LLM):** stop, DTE exit and expiry close
+  deterministically through `propose_close` (gate `closing=True`, band, approval). One
+  attempt per structure per ET day; nothing while an exit is pending or under a halt.
+  The `loop.max_runtime` deadline never skips it. The market guard no longer stops the
+  chain under `research` (it blocks opens, never exits). `MANDATORY_KINDS` is code.
+- **`risk.exit`:** one Risk call on this chain's exit cases (≤ 500 chars each, plus the
+  D53 portfolio block and the hold streaks) → `close | hold` + reason code
+  (`thesis_broken`, `ev_exhausted`, `risk_event`, `capacity`, `concentration` /
+  `thesis_intact`, `ev_remaining`, `costs_exceed_gain`, `await_eod_marks`). Writes
+  `risk_exit_review` (subject `session`, 30 m). No cases → skipped, no LLM call. A
+  missing verdict holds (`no verdict: held (fail closed)`); a failed call writes the
+  review with `unavailable: true` (journal `exit:review_unavailable`).
+- **`quant.propose` close branch:** Risk `close` → `propose_close` with the verdict on
+  the proposal (`proposal.v3 exit_review`, context only, never hashed;
+  `exit:research_review`, or the signal's own code when one fired). A `capacity` close
+  on a D19 swap case opens the swap `closing`; the open leg follows the fill
+  (`_advance_swaps`, every loop). Risk `hold` → `exit:hold_reviewed`, no action.
+- **Hold limit:** a hold on a discretionary signal (profit target, time-adjusted
+  target, EV floor) is honoured `exit_review_max_consecutive_holds` times (3, 1–10,
+  `!arc config exit_review_max_consecutive_holds 4`); the next review closes
+  (`exit:hold_limit_reached`). Streaks live in `routine_state`
+  `exit_hold:<structure_id>:<kind>` and reset on a close or when the signal clears.
+  Research-review-only cases have no limit.
+- **Risk unavailable (D23 fallback):** a deterministic discretionary signal closes as
+  today (`exit:review_unavailable`); a Research-review-only case holds.
+- Under `research`, `quant.exits`, `risk.reallocate` and the `risk_swap` prompt do not run.
+
+Check: `arc routines tick --dry-run --now <today>T10:40-04:00` (Research chain) and
+`T10:50` (positions chain); `arc context show --kind risk_exit_review --latest`;
+`arc journal show` (stage `exit`). Back out: `!arc config personas.exit_path deterministic`.
 
 ### 7.1 Required status check: `check`
 

@@ -2091,6 +2091,87 @@ Respond with JSON matching the QuantExitOutput schema, one entry per case:
 """
 
 
+# ---------------------------------------------------------------------------
+# E13.18 (D56): Risk exit review (personas.exit_path research)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RiskExitInput:
+    """Input context for ``risk.exit``: Quant's judged cases, a close | hold verdict wanted."""
+
+    cases_block: str  # one clipped block per case (<= 500 chars each), Quant's call included
+    portfolio_block: str  # the D53 portfolio block (rendered by the step)
+    hold_state: str  # consecutive-hold counts vs the limit, one line per case
+    scan_date: str
+
+
+def risk_exit_input_from_context(
+    snapshot: ContextSnapshot,  # noqa: ARG001 - adapter signature (PROMPT_BUILDERS)
+    *,
+    cases_block: str,
+    portfolio_block: str,
+    hold_state: str,
+    scan_date: str,
+) -> RiskExitInput:
+    """Every input is rendered by the step (recorded), so a replay rebuilds the prompt."""
+    return RiskExitInput(
+        cases_block=cases_block,
+        portfolio_block=portfolio_block,
+        hold_state=hold_state,
+        scan_date=scan_date,
+    )
+
+
+def build_risk_exit_prompt(inp: RiskExitInput) -> str:
+    """Build the Risk exit-review prompt (verdict only: close or hold, with a reason)."""
+    return f"""{_SYSTEM_PREAMBLE}
+{_ADVISORY_DISCLAIMER}
+## Role: Risk (Exit review)
+Slack label: [Risk]
+
+Quant judged these exit cases (hold or close). Review each one and give the final
+verdict: `close` or `hold`, with a reason code and a short reason that names the
+numbers you weighed. A `close` is still checked by the deterministic gate and the
+price band, and goes through approval. Stops, DTE exits and expiry are closed by code
+before you run and never appear here. A case you omit is held.
+
+Reason codes. close: thesis_broken, ev_exhausted, risk_event, capacity (a swap case:
+free buying power for the paired trade), concentration. hold: thesis_intact,
+ev_remaining, costs_exceed_gain, await_eod_marks.
+
+Hold limit: a profit-target / EV-floor signal held for the stated number of
+consecutive reviews is closed by code on the next review.
+
+## Forbidden actions
+- Do NOT call any broker API or place any orders.
+- Do NOT size, price or roll a position (rolling is not an option).
+- Do NOT override or bypass the risk gate.
+
+## Inputs
+
+### Portfolio
+{inp.portfolio_block or "none"}
+
+### Exit cases (deterministic facts + Quant's call; one block per position)
+{scrub_carried_text(inp.cases_block)}
+
+### Hold limit state
+{inp.hold_state or "none"}
+
+Date: {inp.scan_date}
+
+## Output format
+Respond with JSON matching the RiskExitOutput schema, one entry per case:
+{{
+  "verdicts": [
+    {{"structure_id": "...", "verdict": "hold", "reason_code": "thesis_intact",
+     "reason": "..."}}
+  ]
+}}
+"""
+
+
 def build_risk_prompt(inp: RiskInput) -> str:
     """Build the Risk persona prompt.
 

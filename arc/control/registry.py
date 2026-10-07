@@ -243,6 +243,7 @@ NOT_EXPOSED: dict[str, str] = {
     "exit_block_max_chars_per_position": "LLM plumbing",
     "quant_exit_max_cases": "LLM plumbing",
     "quant_exit_case_max_chars": "LLM plumbing",
+    "exit_steps_min_remaining_s": "loop plumbing",
     "pipeline_max_context_notes": "LLM context size",
 }
 
@@ -1061,6 +1062,18 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         min=0,
         max=3,
         hard_ceiling=3,
+    ),
+    # E13.18 (D56): Risk exit review (personas.exit_path research only)
+    _s(
+        "exit_review_max_consecutive_holds",
+        Group.POSITIONS,
+        _I,
+        "Research exit path: a Risk `hold` on a profit-target / EV-floor signal is honoured "
+        "for at most this many consecutive reviews; the next review closes it.",
+        Risk.UP,
+        min=1,
+        max=10,
+        hard_ceiling=10,
     ),
     # -- execution (D24, E6.2) ---------------------------------------------------
     _s(

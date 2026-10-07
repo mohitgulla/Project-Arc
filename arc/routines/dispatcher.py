@@ -101,7 +101,14 @@ _STEP_PERSONA = {
     "quant.propose": "quant",
     # E13.17 (D56): exit cases (personas.exit_path shadow | research)
     "quant.exit": "quant",
+    # E13.18 (D56): Risk's exit review (personas.exit_path research)
+    "risk.exit": "risk",
 }
+
+#: E13.18 (D56): loop steps the ``loop.max_runtime`` deadline never skips. The
+#: mandatory-exit floor (stop / DTE exit / expiry) is risk management: a slow run
+#: cuts new risk, not exits.
+DEADLINE_EXEMPT_STEPS: frozenset[str] = frozenset({"exits.mandatory"})
 
 
 # ---------------------------------------------------------------------------
@@ -844,7 +851,12 @@ class Dispatcher:
                     )
                     continue
                 _, step_spec = self.routines.step(step)
-                if is_loop and index and time.monotonic() > deadline:
+                if (
+                    is_loop
+                    and index
+                    and step not in DEADLINE_EXEMPT_STEPS
+                    and time.monotonic() > deadline
+                ):
                     timed_out = True
                     outcomes.append(
                         self._record_skipped_step(

@@ -150,6 +150,7 @@ context_ttl:
   scout_read:    {ttl: 24h, supersede: latest}             # E13.7 (D56) the Scout's daily read; subject = session
   exit_watchlist: {ttl: 30m, supersede: latest}          # E13.17 (D56) Research exit watch; subject = session
   exit_case:     {ttl: 30m, supersede: latest}             # E13.17 (D56) Quant exit case; subject = open structure id
+  risk_exit_review: {ttl: 30m, supersede: latest}          # E13.18 (D56) Risk exit verdicts; subject = session
 
 # D47/D49/D56 (E4.7, E4.9, E13.3): six source categories, weighted EQUALLY (not per source). A
 # source's `weight:` is its share INSIDE its category, so a new feed (or YouTube channel)
@@ -602,7 +603,7 @@ personas:
     window: "09:50-15:50"       # D52: :20/:50 on the 10-min tick grid; never at the open's first quotes
     days: trading
     llm: false                  # the review is deterministic; risk.reallocate calls the LLM
-    chain: [quant.exits, risk.reallocate, broker.execute]   # D34: auto-approved closes/swaps go out in-run
+    chain: auto                 # E13.18 chain_for(): exit_path deterministic|shadow -> [quant.exits, risk.reallocate, broker.execute]; research -> [exits.mandatory, broker.execute] (D34: auto-approved closes go out in-run)
     notify: quiet               # folds into the next persona line; proposals post their own cards
     reads: [regime]             # realised-vol forecast for the remaining-EV paths
     writes: [position_review]
@@ -662,11 +663,16 @@ steps:                          # per-step settings for chain-only steps (E5.2, 
   # personas.quant_risk_loop on only: one revision round; skipped when no structure is
   # `revise`, on a no-change loop, or with < 90 s of loop.max_runtime left.
   quant.revise:  {reads: [shortlist, regime, structures, risk_review], writes: [structures, note], notify: card, on_no_change: skip, min_remaining_s: 90}
-  quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review], writes: [proposal], llm: false, notify: summary}  # was propose; E6.1 posts the proposal cards; E5.9 fingerprint dedupe
+  quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review, exit_case, risk_exit_review, position_review], writes: [proposal], llm: false, notify: summary}  # was propose; E6.1 posts the proposal cards; E5.9 fingerprint dedupe; E13.18 close branch (exit_path research)
   # E13.17 (D56) exit path, personas.exit_path shadow | research only: Quant judges one exit
   # case per position Research flagged `review`, with a discretionary signal, or paired with
   # a capacity rejection. Shadow = written + journaled, nothing proposed (E13.18 adds risk.exit).
-  quant.exit:    {reads: [position_review, exit_watchlist, portfolio_context, regime, ex_dividend, story, scout_read], writes: [exit_case, note], notify: card, on_no_change: skip}
+  quant.exit:    {reads: [position_review, exit_watchlist, portfolio_context, regime, ex_dividend, story, scout_read], writes: [exit_case, note], notify: card, on_no_change: skip, min_remaining_s: 60}
+  # E13.18 (D56) exit path, personas.exit_path research only: exits.mandatory closes stop /
+  # DTE exit / expiry deterministically before any LLM step (also in positions.evaluate);
+  # risk.exit gives close | hold per exit case; quant.propose proposes the closes.
+  exits.mandatory: {reads: [position_review], writes: [proposal], llm: false, notify: summary, on_no_change: run}
+  risk.exit:     {reads: [exit_case, position_review, portfolio_context, ex_dividend, macro_calendar], writes: [risk_exit_review, note], notify: card, on_no_change: skip, min_remaining_s: 60}
   # E6.4 chain steps (after positions.evaluate). Every close / swap open is a proposal: gate + approval.
   quant.exits:     {reads: [position_review], writes: [proposal], llm: false, notify: summary}   # D56: was investor.exits
   risk.reallocate: {reads: [position_review, note], writes: [proposal], notify: summary}   # Risk vetoes swaps (LLM); E5.9 thesis_check notes are advisory input
