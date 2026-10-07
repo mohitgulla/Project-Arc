@@ -481,6 +481,51 @@ class RiskSwapReview(BaseModel):
     advisory_notes: str = Field("", description="Overall note on reallocating now")
 
 
+# E13.18 (D56): Risk's review of Quant's exit cases (personas.exit_path: research).
+type RiskExitReasonCode = Literal[
+    "thesis_broken",
+    "ev_exhausted",
+    "risk_event",
+    "capacity",
+    "concentration",
+    "thesis_intact",
+    "ev_remaining",
+    "costs_exceed_gain",
+    "await_eod_marks",
+]
+
+
+class RiskExitVerdict(BaseModel):
+    """Risk's verdict on one exit case (E13.18): ``close`` or ``hold``, with a reason.
+
+    Advisory input to code: a ``close`` still goes through ``propose_close`` (gate
+    ``closing=True``, price band, token, approval); a ``hold`` is journaled.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    structure_id: str = Field(..., description="The case's structure_id, copied verbatim")
+    verdict: Literal["close", "hold"]
+    reason_code: RiskExitReasonCode
+    reason: str = Field(..., max_length=240)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _trim_reason(cls, v: object) -> object:
+        return str(v).strip()[:240] if isinstance(v, str) else v
+
+
+class RiskExitOutput(BaseModel):
+    """Risk's reply on ``risk.exit`` (E13.18): one verdict per exit case.
+
+    A case missing from ``verdicts`` is ``hold`` (fail closed); unknown ids are ignored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    verdicts: list[RiskExitVerdict] = Field(default_factory=list)
+
+
 class QuantExitJudgement(BaseModel):
     """Quant's call on one exit case (E13.17, D56): hold or close, with why.
 

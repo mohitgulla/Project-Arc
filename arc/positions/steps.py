@@ -42,7 +42,7 @@ import structlog
 from arc.exits.position import OpenPosition, PositionMarks
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.models import LegIntent, Structure
-from arc.positions.evaluate import PositionReview, SignalKind, review_position
+from arc.positions.evaluate import ExitSignal, PositionReview, SignalKind, review_position
 from arc.positions.reallocate import (
     CapacityCandidate,
     ReallocRules,
@@ -70,6 +70,8 @@ __all__ = [
     "evaluate",
     "evaluate_step",
     "exits",
+    "exits_mandatory",
+    "exits_mandatory_step",
     "exits_step",
     "position_handlers",
     "reallocate",
@@ -328,14 +330,27 @@ def _theta(priced: PricedStructure, st: Structure, today: _dt.date, r: float) ->
 # ---------------------------------------------------------------------------
 
 
-def exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
-    """Propose closes (gate + token + approval card) for positions with a review signal."""
+def exits(
+    ctx: JobContext, env: PipelineEnv, *, kinds: frozenset[SignalKind] | None = None
+) -> JobResult:
+    """Propose closes (gate + token + approval card) for positions with a review signal.
+
+    E13.18: *kinds* restricts the signals acted on (``exits.mandatory`` passes
+    :data:`~arc.positions.exit_case.MANDATORY_KINDS`: stop, DTE exit, expiry); the
+    first signal of a review inside *kinds* is the one closed on. ``None`` = every
+    signal (``quant.exits``, today's behaviour).
+    """
     from arc.execution.exits import exit_pending, price_close, propose_close
     from arc.store.execution import OpenStructureRepo
 
     settings = ctx.settings
     reviews = _reviews(ctx)
-    flagged = [r for r in reviews.values() if r.signal is not None]
+    fired: dict[str, ExitSignal] = {}
+    for r in reviews.values():
+        sig = r.signal if kinds is None else next((s for s in r.signals if s.kind in kinds), None)
+        if sig is not None:
+            fired[r.structure_id] = sig
+    flagged = [r for r in reviews.values() if r.structure_id in fired]
     if not flagged:
         return JobResult(summary="no exit signals", metrics={"signals": 0, "proposed": 0})
     secret = _gate_secret(ctx, env)
@@ -357,8 +372,7 @@ def exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
             continue
         if exit_pending(ctx.conn, row) or row.get("exit_day") == day:
             continue
-        sig = rv.signal
-        assert sig is not None  # noqa: S101 - filtered above
+        sig = fired[rv.structure_id]
         st = Structure.model_validate_json(row["structure_json"])
         try:
             priced = price_close(
@@ -950,6 +964,32 @@ def exits_step(ctx: JobContext) -> JobResult:
     return exits(ctx, _env(ctx))
 
 
+def exits_mandatory(ctx: JobContext, env: PipelineEnv) -> JobResult:
+    """``exits.mandatory`` (E13.18, D56): the deterministic safety floor.
+
+    Closes on mandatory signals only (stop, DTE exit, expiry), before any LLM step,
+    whatever Research / Quant / Risk say or whether they run. Discretionary signals
+    (profit target, time-adjusted target, remaining-EV floor) are left to the
+    Research exit path. Same close path as ``quant.exits`` (gate ``closing=True``,
+    band, token, approval card), one attempt per structure per ET day, nothing while
+    an exit is pending: running it in both the 10-min and the 30-min chain is
+    idempotent. Halted: nothing proposed (today's rule).
+    """
+    from arc.positions.exit_case import MANDATORY_KINDS
+
+    res = exits(ctx, env, kinds=MANDATORY_KINDS)
+    res.metrics["mandatory"] = True
+    if res.summary == "no exit signals":
+        res.summary = "no mandatory exit signals (stop / DTE exit / expiry)"
+    else:
+        res.summary = f"mandatory exits: {res.summary}"
+    return res
+
+
+def exits_mandatory_step(ctx: JobContext) -> JobResult:
+    return exits_mandatory(ctx, _env(ctx))
+
+
 def reallocate_step(ctx: JobContext) -> JobResult:
     return reallocate(ctx, _env(ctx))
 
@@ -960,4 +1000,5 @@ def position_handlers(env: PipelineEnv) -> dict[str, Handler]:
         "positions.evaluate": lambda ctx: evaluate(ctx, env),
         "quant.exits": lambda ctx: exits(ctx, env),
         "risk.reallocate": lambda ctx: reallocate(ctx, env),
+        "exits.mandatory": lambda ctx: exits_mandatory(ctx, env),
     }

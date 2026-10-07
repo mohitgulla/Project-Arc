@@ -1,0 +1,12 @@
+{
+  "_doc": "E13.18 (D56): risk.exit fails (unparseable reply) on a long call whose profit target fired; quant.propose falls back to the D23 policy and proposes the close (exit:review_unavailable). Used by tests/test_risk_exit.py.",
+  "entry": "1.00",
+  "research_action": "hold",
+  "quant_recommendation": "hold",
+  "risk_reply": "Sorry, I cannot review these positions right now.",
+  "expect": {
+    "trigger": "profit_target",
+    "review_unavailable": true,
+    "close_reason_code": "exit:review_unavailable"
+  }
+}

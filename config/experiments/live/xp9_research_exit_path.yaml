@@ -1,0 +1,35 @@
+# E13.18 (D56, D44): DRAFT forward A/B for the Research-managed exit path.
+# Not registered: `arc experiment create` + `register` hash-lock it, so the owner
+# reviews the margin and sessions first.
+#
+# Treatment = `personas.exit_path: research`. Exits run before opens in the Research
+# chain: exits.mandatory (stop / DTE exit / expiry, deterministic) -> quant.exit (exit
+# cases) -> risk.exit (close | hold per case) -> quant.propose's close branch. A Risk
+# hold on a discretionary signal (profit target / time-adjusted target / EV floor) is
+# honoured at most `exit_review_max_consecutive_holds` times; Risk unavailable -> the
+# D23 policy closes as today. positions.evaluate becomes marks + exits.mandatory only.
+# Control = `deterministic` (today's D23 policy + D19 reallocate).
+# Promotion (flipping the default in config/routines.yaml) needs a committed
+# `verdicts/XP-9.yaml` with `verdict: win` (docs/OPS.md 5.20).
+spec_version: 1
+id: XP-9
+title: Research-managed exits (Risk close | hold over the D23 policy)
+hypothesis: >
+  Letting Risk hold a discretionary policy exit while the thesis holds (bounded by the
+  hold limit) and close a broken-thesis position before a policy trigger raises paired
+  daily net P&L without a worse Sortino; mandatory exits are unchanged.
+area: exits
+kind: ab
+arms:
+  control:
+    overlay: {}
+  treatment:
+    overlay:
+      routines:
+        personas:
+          exit_path: research
+non_inferiority_margin: 0.5
+proposed_by: owner
+# The E7.5 backtester replays no LLM, so a persona-flow change has no backtest;
+# the forward run is the only test.
+backtest_ref: "none: persona flow change, not backtestable (E7.5 replays no LLM)"

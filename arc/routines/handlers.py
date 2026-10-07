@@ -2306,6 +2306,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "quant.propose": "arc.pipeline.steps:quant_propose_step",
     # E13.17 (D56): exit cases judged by Quant (personas.exit_path shadow | research)
     "quant.exit": "arc.pipeline.steps:quant_exit_step",
+    # E13.18 (D56): Risk's close | hold review of the exit cases (exit_path research)
+    "risk.exit": "arc.pipeline.steps:risk_exit_step",
     # E5.3 intraday monitor (read-only: positions, Greeks, expiries, daily-loss halt)
     "monitor": "arc.routines.monitor:monitor_step",
     # E6.2 / D56 Broker: works an approved proposal through its D24 price band
@@ -2319,6 +2321,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "positions.evaluate": "arc.positions.steps:evaluate_step",
     "quant.exits": "arc.positions.steps:exits_step",
     "risk.reallocate": "arc.positions.steps:reallocate_step",
+    # E13.18 (D56): the deterministic mandatory-exit floor (stop / DTE exit / expiry)
+    "exits.mandatory": "arc.positions.steps:exits_mandatory_step",
     # E7.3 weekly paper scorecard (deterministic, from the audit store; posts as [Ops])
     "scorecard": "arc.routines.scorecard:scorecard_step",
     # E10.3 (D44): daily experiment evaluation after the EOD reconcile

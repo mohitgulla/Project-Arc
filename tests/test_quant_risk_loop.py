@@ -458,7 +458,8 @@ def test_experiment_fork_points() -> None:
     assert fork_step(chain, {"exits": {"x": 1}}) == "quant.open"
     assert fork_step(chain, {}) == "quant.propose"
     assert {"quant.open", "risk.open", "quant.revise", "quant.propose"} <= set(STEP_TARGETS)
-    assert frozenset({"quant.propose", "broker.execute"}) == ACCOUNT_STEPS
+    # E13.18: exits.mandatory closes against the arm's own book
+    assert frozenset({"exits.mandatory", "quant.propose", "broker.execute"}) == ACCOUNT_STEPS
 
 
 def test_xp7_draft_spec_loads() -> None:

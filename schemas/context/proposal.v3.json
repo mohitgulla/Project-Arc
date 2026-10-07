@@ -580,6 +580,55 @@
       "title": "QuantMetrics",
       "type": "object"
     },
+    "RiskExitReasonCode": {
+      "enum": [
+        "thesis_broken",
+        "ev_exhausted",
+        "risk_event",
+        "capacity",
+        "concentration",
+        "thesis_intact",
+        "ev_remaining",
+        "costs_exceed_gain",
+        "await_eod_marks"
+      ],
+      "type": "string"
+    },
+    "RiskExitVerdict": {
+      "additionalProperties": false,
+      "description": "Risk's verdict on one exit case (E13.18): ``close`` or ``hold``, with a reason.\n\nAdvisory input to code: a ``close`` still goes through ``propose_close`` (gate\n``closing=True``, price band, token, approval); a ``hold`` is journaled.",
+      "properties": {
+        "reason": {
+          "maxLength": 240,
+          "title": "Reason",
+          "type": "string"
+        },
+        "reason_code": {
+          "$ref": "#/$defs/RiskExitReasonCode"
+        },
+        "structure_id": {
+          "description": "The case's structure_id, copied verbatim",
+          "title": "Structure Id",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "close",
+            "hold"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "structure_id",
+        "verdict",
+        "reason_code",
+        "reason"
+      ],
+      "title": "RiskExitVerdict",
+      "type": "object"
+    },
     "Sizing": {
       "description": "Position sizing for a proposal.",
       "properties": {
@@ -966,6 +1015,17 @@
       "anyOf": [
         {
           "$ref": "#/$defs/ExitModelResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "exit_review": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RiskExitVerdict"
         },
         {
           "type": "null"

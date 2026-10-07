@@ -65,6 +65,7 @@ from arc.context.kinds import (
     NoteTopic,
     ProposalPayload,
     RegimePayload,
+    RiskExitReviewPayload,
     RiskReviewPayload,
     ShortlistPayload,
     StructuresPayload,
@@ -79,12 +80,21 @@ from arc.iv.store import safe_store as safe_iv_store
 from arc.journal.models import LegQuote, MarketContext, PersonaCallMeta
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage, gate_reason
 from arc.journal.store import JournalStore, Recorder
-from arc.models import LegIntent, Proposal, QuantMetrics, Sizing, Stance, StructureKind
+from arc.models import (
+    LegIntent,
+    Proposal,
+    QuantMetrics,
+    Sizing,
+    Stance,
+    Structure,
+    StructureKind,
+)
 from arc.personas.builders import (
     build_quant_exit_prompt,
     build_quant_prompt,
     build_quant_revise_prompt,
     build_research_prompt,
+    build_risk_exit_prompt,
     build_risk_open_prompt,
     build_risk_prompt,
     build_risk_swap_prompt,
@@ -93,6 +103,7 @@ from arc.personas.builders import (
     quant_input_from_context,
     quant_revise_input_from_context,
     research_input_from_context,
+    risk_exit_input_from_context,
     risk_input_from_context,
     risk_swap_input_from_context,
     ticker_facts_digest,
@@ -113,6 +124,8 @@ from arc.personas.schemas import (
     ResearchRankedItem,
     ResearchThesisCheck,
     RiskAssessment,
+    RiskExitOutput,
+    RiskExitVerdict,
     RiskOpenAssessment,
     RiskOpenOutput,
     RiskOutput,
@@ -171,7 +184,7 @@ if TYPE_CHECKING:
     from arc.backtest.costs import CostModel
     from arc.broker.base import AccountInfo, BrokerPosition
     from arc.config import ArcSettings
-    from arc.context.store import ContextSnapshot
+    from arc.context.store import ContextEntry, ContextSnapshot
     from arc.exits import ExitConfig, ExitModelResult
     from arc.gate.band import PriceBand
     from arc.gate.inputs import Portfolio
@@ -199,6 +212,8 @@ __all__ = [
     "quant_revise",
     "quant_revise_step",
     "quant_exit_step",
+    "risk_exit",
+    "risk_exit_step",
     "risk_open",
     "risk_open_step",
 ]
@@ -330,6 +345,8 @@ PROMPT_BUILDERS: dict[str, tuple[Callable[..., Any], Callable[..., str], type[Ba
     "quant_revise": (quant_revise_input_from_context, build_quant_revise_prompt, QuantReviseOutput),
     # E13.17 (D56): Quant's hold/close judgement on code-built exit cases
     "quant_exit": (quant_exit_input_from_context, build_quant_exit_prompt, QuantExitOutput),
+    # E13.18 (D56): Risk's close | hold verdict on Quant's exit cases
+    "risk_exit": (risk_exit_input_from_context, build_risk_exit_prompt, RiskExitOutput),
 }
 
 # D56: category keys only a D49-era recorded ``categories`` input carries.
@@ -341,6 +358,7 @@ LLM_PERSONA = {
     "risk_open": "risk",
     "quant_revise": "quant",
     "quant_exit": "quant",
+    "risk_exit": "risk",
 }
 
 
@@ -823,7 +841,10 @@ def _research_no_opens(
         summary=f"{why}; empty shortlist ({len(cands)} candidates not ranked)",
         metrics={"shortlist": 0, "market_guard_blocked": 1, **budget.metrics()},
         notice=notice,
-        stop_chain=True,
+        # E13.18: under exit_path research the chain goes on: the guard blocks new
+        # opens, never exits.mandatory / the exit review (the open steps see the empty
+        # shortlist and return without an LLM call).
+        stop_chain=not ctx.routines.exit_path.managed,
         card=research_card(
             payload,
             candidates=len(cands),
@@ -3120,7 +3141,28 @@ def _review_for(
 
 
 def quant_propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
-    """``quant.propose`` (was ``propose``; D56: Quant owns it): size, gate, propose."""
+    """``quant.propose`` (was ``propose``; D56: Quant owns it): size, gate, propose.
+
+    E13.18: under ``personas.exit_path: research`` the exit cases are settled first
+    (:func:`_propose_exits`: Risk ``close`` -> a close proposal through
+    ``propose_close``; ``hold`` -> a journaled no-action), then the opens as before.
+    Exits go first so a close's buying power is visible to the open path's sizing on
+    the next loop and a failing open path never blocks risk management.
+    """
+    exit_res: JobResult | None = None
+    if ctx.routines.exit_path.managed:
+        exit_res = _propose_exits(ctx, env)
+    res = _propose_opens(ctx, env)
+    if exit_res is None:
+        return res
+    res.metrics = {**res.metrics, **exit_res.metrics}
+    res.summary = f"exits: {exit_res.summary}; opens: {res.summary}"
+    res.notice = "; ".join(n for n in (exit_res.notice, res.notice) if n)
+    return res
+
+
+def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
+    """The open path of ``quant.propose`` (E5.2 / E13.9)."""
     from arc.gate.halt import HaltSwitch, evaluate_with_halt
     from arc.gate.rules import proposal_hash
     from arc.store.repos import GateDecisionRepo, HaltRepo, ProposalRepo
@@ -3787,9 +3829,11 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
     ctx.conn.commit()
     closes = sum(c.recommendation == "close" for c in judged)
+    shadow = not ctx.routines.exit_path.managed
     return JobResult(
         summary=(
-            f"{len(judged)} exit case(s) judged ({closes} close); shadow: nothing proposed"
+            f"{len(judged)} exit case(s) judged ({closes} close)"
+            + ("; shadow: nothing proposed" if shadow else "; Risk reviews next")
             + (f"; {sum(skipped.values())} skipped" if skipped else "")
         ),
         metrics={
@@ -3803,7 +3847,7 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
         },
         card=quant_exit_card(
             judged,
-            shadow=True,
+            shadow=shadow,
             skipped=dict(skipped),
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
@@ -3820,6 +3864,440 @@ def _policy_line(exits: ExitConfig, case: ExitCase) -> str:
 
 
 # ---------------------------------------------------------------------------
+# risk.exit + the quant.propose close branch (E13.18 / D56, exit_path research)
+# ---------------------------------------------------------------------------
+
+#: Per-case prompt clip for ``risk.exit`` (the card: cases <= 500 chars each).
+RISK_EXIT_CASE_MAX_CHARS = 500
+_HOLD_KEY = "exit_hold:{sid}:{kind}"
+_NO_VERDICT = "no verdict: held (fail closed)"
+_DISCRETIONARY_TRIGGERS = frozenset({"profit_target", "time_adjusted_target", "remaining_ev_floor"})
+
+
+def _chain_entries(ctx: JobContext, kind: str) -> list[ContextEntry]:
+    """This chain's entries of *kind* (latest per subject); any chain for a lone run.
+
+    ``exit_case`` / ``risk_exit_review`` live 30 m, so a later loop must never act
+    on an earlier loop's cases or verdicts.
+    """
+    out: dict[str, ContextEntry] = {}
+    for e in ctx.snapshot.of_kind(kind):
+        if ctx.chain_run_id is None or e.chain_run_id == ctx.chain_run_id:
+            out[e.subject] = e
+    return [out[k] for k in sorted(out)]
+
+
+def _hold_count(conn: sqlite3.Connection, sid: str, kind: str) -> int:
+    from arc.routines.runs import RoutineStateRepo
+
+    val = RoutineStateRepo(conn).get(_HOLD_KEY.format(sid=sid, kind=kind))
+    try:
+        return int(val) if val else 0
+    except ValueError:
+        return 0
+
+
+def _reset_holds(conn: sqlite3.Connection, sid: str, keep: Sequence[str] = ()) -> None:
+    """Drop *sid*'s hold streaks, except the signal kinds in *keep* (still firing)."""
+    prefix = _HOLD_KEY.format(sid=sid, kind="")
+    keys = {f"{prefix}{k}" for k in keep}
+    with conn:
+        for (key,) in conn.execute(
+            "SELECT key FROM routine_state WHERE key >= ? AND key < ?", (prefix, prefix + "\uffff")
+        ).fetchall():
+            if key not in keys:
+                conn.execute("DELETE FROM routine_state WHERE key = ?", (key,))
+
+
+def _signal_kinds(case: ExitCase) -> list[str]:
+    """The case's deterministic discretionary signal kinds (the hold limit applies)."""
+    return [t.kind for t in case.triggers if t.kind in _DISCRETIONARY_TRIGGERS]
+
+
+def risk_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
+    """``risk.exit`` (E13.18, D56): Risk's ``close`` | ``hold`` on this chain's exit cases.
+
+    Runs only under ``personas.exit_path: research``. Deterministic around one Risk
+    call: no case in this chain -> skipped without an LLM call; a case Risk omits is
+    ``hold`` (fail closed); an LLM error or schema failure writes the review with
+    ``unavailable=True`` (every case ``hold``) and ``quant.propose`` applies the
+    fallback (a deterministic discretionary signal closes as the D23 policy would).
+    Nothing is proposed here: ``quant.propose`` turns the verdicts into closes.
+    """
+    from arc.routines.handlers import JobSkippedError
+    from arc.slack.digests import risk_exit_card
+
+    if not ctx.routines.exit_path.managed:
+        msg = "personas.exit_path is not research"
+        raise JobSkippedError(msg, continue_chain=True)
+    entries = _chain_entries(ctx, "exit_case")
+    if not entries:
+        msg = "no exit cases in this chain"
+        raise JobSkippedError(msg, continue_chain=True)
+    cases = [ExitCasePayload.model_validate(e.payload) for e in entries]
+    settings = ctx.settings
+    limit = settings.exit_review_max_consecutive_holds
+    pc = _latest(ctx.snapshot, "portfolio_context", PortfolioContext)
+    blocks = []
+    for c in cases:
+        text = (
+            _case_block(c, RISK_EXIT_CASE_MAX_CHARS)
+            + f"\n  quant: {c.recommendation}: {' '.join(c.rationale.split())}"
+        )
+        cap = RISK_EXIT_CASE_MAX_CHARS
+        blocks.append(text if len(text) <= cap else text[: cap - 1] + "…")
+    hold_lines = [
+        f"- {c.structure_id} {c.ticker} {k}: held {_hold_count(ctx.conn, c.structure_id, k)}"
+        f"/{limit} consecutive review(s)"
+        for c in cases
+        for k in _signal_kinds(c)
+    ]
+    ids = [c.structure_id for c in cases]
+    inputs = {
+        "cases_block": "\n".join(blocks),
+        "portfolio_block": "" if pc is None or pc.empty else render_portfolio_context(pc, settings),
+        "hold_state": "\n".join(hold_lines),
+        "scan_date": _today(ctx).isoformat(),
+        "rules": [
+            "Return exactly one verdict per case structure_id: " + ", ".join(ids) + ".",
+            "verdict close | hold; reason_code from the listed codes; reason <= 240 chars.",
+        ],
+    }
+    j = _journal(ctx, ctx.snapshot.id)
+    call_id: str | None = None
+    failed: str | None = None
+    got: dict[str, RiskExitVerdict] = {}
+    try:
+        reply, out = _ask(ctx, env, "risk_exit", ctx.snapshot, inputs, RiskExitOutput)
+    except PersonaError as exc:  # fail closed to hold; quant.propose applies the fallback
+        log.warning("pipeline.risk_exit_failed", error=str(exc))
+        failed = str(exc)[:200]
+    else:
+        call_id = _record_ok(ctx, "risk_exit", reply, ctx.snapshot.id, Counter())
+        for v in out.verdicts:
+            if v.structure_id in ids and v.structure_id not in got:
+                got[v.structure_id] = v
+    verdicts: dict[str, RiskExitVerdict] = {}
+    for c in cases:
+        v = got.get(c.structure_id)
+        if v is None:
+            why = f"Risk unavailable: held (fail closed): {failed}" if failed else _NO_VERDICT
+            v = RiskExitVerdict(
+                structure_id=c.structure_id,
+                verdict="hold",
+                reason_code="thesis_intact",
+                reason=why[:240],
+            )
+        verdicts[c.structure_id] = v
+        j.add(
+            JournalPersona.RISK,
+            Stage.EXIT,
+            c.structure_id,
+            Choice.NOTED,
+            ReasonCode.EXIT_REVIEW_UNAVAILABLE if failed else ReasonCode.EXIT_RESEARCH_REVIEW,
+            reason_text=f"{c.ticker}: {v.verdict} ({v.reason_code}): {v.reason}",
+            persona_call_id=call_id,
+            payload={
+                "case": c.model_dump(mode="json"),
+                "verdict": v.model_dump(mode="json"),
+                "unavailable": failed is not None,
+            },
+        )
+    review = RiskExitReviewPayload(
+        as_of=ctx.now.isoformat(),
+        case_ids=[e.id for e in entries],
+        verdicts=list(verdicts.values()),
+        unavailable=failed is not None,
+        persona_call_id=call_id,
+    )
+    ctx.write("risk_exit_review", SESSION_SUBJECT, review)
+    ctx.conn.commit()
+    closes = sum(v.verdict == "close" for v in verdicts.values())
+    return JobResult(
+        summary=(
+            f"{len(cases)} exit case(s) reviewed ({closes} close)"
+            + (f"; Risk unavailable (fail closed to hold): {failed}" if failed else "")
+        ),
+        metrics={
+            "exit_reviewed": len(cases),
+            "exit_review_close": closes,
+            "exit_review_hold": len(cases) - closes,
+            "exit_review_missing": sum(c.structure_id not in got for c in cases),
+            "exit_review_unavailable": failed is not None,
+        },
+        card=risk_exit_card(
+            cases,
+            verdicts,
+            unavailable=failed is not None,
+            run_id=ctx.run_id,
+            chain_run_id=ctx.chain_run_id,
+        ),
+    )
+
+
+def _propose_exits(ctx: JobContext, env: PipelineEnv) -> JobResult:
+    """The ``quant.propose`` close branch (E13.18; ``personas.exit_path: research``).
+
+    Per open position (deterministic; the LLM verdicts are inputs):
+
+    * a mandatory signal, a pending exit or an exit already proposed today -> nothing
+      (``exits.mandatory`` owns mandatory signals);
+    * Risk ``close`` on this chain's case -> ``propose_close`` (gate ``closing=True``,
+      band, token, approval card) with the verdict attached; a ``capacity`` close on a
+      swap case opens a ``closing`` swap first (the open leg follows the fill);
+    * Risk ``hold`` -> ``exit:hold_reviewed``; with a deterministic discretionary
+      signal the hold is honoured for ``exit_review_max_consecutive_holds`` reviews,
+      the next one closes (``exit:hold_limit_reached``);
+    * no Risk review (``risk.exit`` unavailable, or the exit steps were skipped / the
+      case was over the case limit): a deterministic discretionary signal closes as
+      today (``exit:review_unavailable``); a Research-review / swap-only case holds.
+
+    Then every ``closing`` swap advances (close filled -> the open is proposed).
+    Under a total halt nothing is proposed (today's ``exits()`` rule).
+    """
+    from arc.execution.exits import exit_pending, price_close, propose_close
+    from arc.positions.evaluate import PositionReview as _Review
+    from arc.positions.exit_case import DISCRETIONARY_KINDS, case_skip_reason
+    from arc.positions.steps import (
+        SIGNAL_CODES,
+        _advance_swaps,
+        _book,
+        _cancel,
+        _gate_secret,
+        capacity_candidates,
+    )
+    from arc.routines.runs import RoutineStateRepo
+    from arc.store.execution import OpenStructureRepo
+    from arc.store.swaps import SwapRepo
+
+    settings = ctx.settings
+    limit = settings.exit_review_max_consecutive_holds
+    repo = OpenStructureRepo(ctx.conn)
+    rows = {str(r["id"]): r for r in repo.list_open()}
+    swaps = SwapRepo(ctx.conn)
+    pending_swaps = swaps.by_status("closing")
+    reviews: dict[str, PositionReview] = {}
+    for e in ctx.snapshot.of_kind("position_review"):
+        r = _Review.model_validate(e.payload)
+        if r.structure_id in rows:
+            reviews[r.structure_id] = r
+    cases = {
+        e.subject: ExitCasePayload.model_validate(e.payload)
+        for e in _chain_entries(ctx, "exit_case")
+        if e.subject in rows
+    }
+    rv_entries = _chain_entries(ctx, "risk_exit_review")
+    risk = RiskExitReviewPayload.model_validate(rv_entries[-1].payload) if rv_entries else None
+    verdicts = (
+        {v.structure_id: v for v in risk.verdicts}
+        if risk is not None and not risk.unavailable
+        else {}
+    )
+    unavailable = risk is None or risk.unavailable
+    day = _today(ctx).isoformat()
+    # Positions to settle: every case, plus every unreviewed discretionary signal.
+    todo: list[str] = sorted(
+        set(cases)
+        | {
+            sid
+            for sid, r in reviews.items()
+            if any(s.kind in DISCRETIONARY_KINDS for s in r.signals)
+        }
+    )
+    # A hold streak ends when its signal clears.
+    for sid in reviews:
+        if sid not in todo:
+            _reset_holds(ctx.conn, sid)
+    if not todo and not pending_swaps:
+        return JobResult(summary="no exit cases", metrics={"exit_closes": 0, "exit_holds": 0})
+    j = _journal(ctx, ctx.snapshot.id)
+    secret = _gate_secret(ctx, env)
+    book = _book(ctx, env)
+    _info, account, portfolio, switch = book
+    if switch.is_halted():
+        return JobResult(
+            summary=f"halted: {len(todo)} exit case(s) not proposed",
+            metrics={"exit_closes": 0, "exit_holds": 0, "exit_halted": True},
+        )
+    state = RoutineStateRepo(ctx.conn)
+    _cands, sources = capacity_candidates(ctx.conn, day, taken=swaps.sources())
+    lines: list[str] = []
+    alerts: list[str] = []
+    closes = holds = fallbacks = 0
+
+    def note(sid: str, code: ReasonCode, text: str, **payload: Any) -> None:
+        with ctx.conn:
+            j.add(
+                JournalPersona.QUANT,
+                Stage.EXIT,
+                sid,
+                Choice.NOTED,
+                code,
+                reason_text=text,
+                payload=payload or None,
+            )
+
+    for sid in todo:
+        row = rows[sid]
+        rv = reviews.get(sid)
+        case = cases.get(sid)
+        ticker = str(row["ticker"])
+        if rv is None:  # a case without fresh marks: nothing to price against
+            note(sid, ReasonCode.EXIT_CASE_SKIPPED, "no position review", detail="no_review")
+            continue
+        skip = case_skip_reason(
+            rv, today_exit=exit_pending(ctx.conn, row) or row.get("exit_day") == day
+        )
+        if skip is not None:
+            note(sid, ReasonCode.EXIT_CASE_SKIPPED, skip, detail=skip)
+            continue
+        signals = [s for s in rv.signals if s.kind in DISCRETIONARY_KINDS]
+        kinds = [s.kind.value for s in signals]
+        verdict = verdicts.get(sid) if case is not None else None
+        if case is not None and verdict is None and not unavailable:
+            verdict = RiskExitVerdict(
+                structure_id=sid, verdict="hold", reason_code="thesis_intact", reason=_NO_VERDICT
+            )
+        case_payload = case.model_dump(mode="json") if case is not None else None
+        code: ReasonCode
+        swap_close = False
+        if verdict is None:
+            # Risk did not review it: the D23 policy decides (discretionary signal only).
+            if not signals:
+                holds += 1
+                note(
+                    sid,
+                    ReasonCode.EXIT_REVIEW_UNAVAILABLE,
+                    f"{ticker}: Risk review unavailable; no deterministic signal: held",
+                    case=case_payload,
+                )
+                lines.append(f"{ticker}: held (review unavailable)")
+                continue
+            code = ReasonCode.EXIT_REVIEW_UNAVAILABLE
+            why = f"Risk review unavailable: policy {kinds[0]} ({signals[0].detail})"
+            fallbacks += 1
+        elif verdict.verdict == "hold":
+            over = [k for k in kinds if _hold_count(ctx.conn, sid, k) >= limit]
+            if not over:
+                for k in kinds:
+                    key = _HOLD_KEY.format(sid=sid, kind=k)
+                    state.set(key, str(_hold_count(ctx.conn, sid, k) + 1), now=ctx.now)
+                _reset_holds(ctx.conn, sid, keep=kinds)
+                holds += 1
+                note(
+                    sid,
+                    ReasonCode.EXIT_HOLD_REVIEWED,
+                    f"{ticker}: Risk holds ({verdict.reason_code}): {verdict.reason}",
+                    case=case_payload,
+                    risk_review=verdict.model_dump(mode="json"),
+                    holds={k: _hold_count(ctx.conn, sid, k) for k in kinds},
+                    limit=limit,
+                )
+                lines.append(f"{ticker}: held ({verdict.reason_code})")
+                continue
+            code = ReasonCode.EXIT_HOLD_LIMIT
+            why = f"hold limit: {over[0]} held for {limit} consecutive review(s)"
+        else:
+            swap_close = (
+                case is not None
+                and case.swap is not None
+                and verdict.reason_code == "capacity"
+                and case.swap.source_ref in sources
+            )
+            if swap_close:
+                code = ReasonCode.EXIT_REALLOCATE
+            elif signals:
+                code = SIGNAL_CODES[signals[0].kind]
+            else:
+                code = ReasonCode.EXIT_RESEARCH_REVIEW
+            why = f"Risk close ({verdict.reason_code}): {verdict.reason}"
+        st = Structure.model_validate_json(row["structure_json"])
+        try:
+            priced = price_close(
+                env.market, st, as_of=_today(ctx), r=settings.scanner_risk_free_rate
+            )
+        except (LookupError, ValueError) as exc:
+            lines.append(f"{ticker}: cannot price close ({exc})")
+            continue
+        swap_id: str | None = None
+        if swap_close:
+            assert case is not None and case.swap is not None  # noqa: S101 - swap_close
+            sw = case.swap
+            with ctx.conn:
+                swap_id = swaps.create(
+                    day=day, status="closing", close_structure_id=sid, close_ticker=ticker,
+                    open_ticker=sw.open_ticker, source_ref=sw.source_ref,
+                    suggestion_json=json.dumps({
+                        "suggestion": sw.model_dump(mode="json"),
+                        "source": sources[sw.source_ref],
+                        "risk": verdict.reason if verdict is not None else "",
+                    }),
+                    now=ctx.now, run_id=ctx.run_id, detail=why, commit=False,
+                )  # fmt: skip
+        reason = "reallocate" if swap_close else (kinds[0] if signals else "research_review")
+        exit_review = verdict
+
+        def write_ctx(kind: str, subject: str, p: Any, _v: Any = exit_review) -> Any:
+            return ctx.write(
+                kind, subject, ProposalPayload.model_validate(p.model_dump() | {"exit_review": _v})
+            )
+
+        res = propose_close(
+            ctx.conn,
+            row=row,
+            priced=priced,
+            thesis=f"Exit ({reason}): {why}; structure {sid}",
+            reason=reason,
+            reason_code=code,
+            persona=JournalPersona.QUANT,
+            close_now_net=rv.close_now_net,
+            settings=settings,
+            account=account,
+            portfolio=portfolio,
+            switch=switch,
+            now=ctx.clock(),
+            run_id=ctx.run_id,
+            write_context=write_ctx,
+            secret=secret,
+            payload={
+                "case": case_payload,
+                "risk_review": verdict.model_dump(mode="json") if verdict is not None else None,
+                "path": "research",
+            },
+            swap_id=swap_id,
+        )
+        if res.alert:
+            alerts.append(res.alert)
+        if swap_id is not None:
+            swaps.update(
+                swap_id, status="closing", now=ctx.now, close_proposal_hash=res.proposal_hash
+            )
+            if res.proposal_hash is None:
+                _cancel(ctx, swaps.get(swap_id) or {}, "close quotes unusable")
+            elif not res.passed:
+                _cancel(ctx, swaps.get(swap_id) or {}, "close failed the gate")
+        if res.proposal_hash is None:  # E6.2a: quotes unusable; the next loop retries
+            lines.append(res.line)
+            continue
+        _reset_holds(ctx.conn, sid)
+        closes += 1
+        lines.append(f"{res.line} ({why})")
+    if pending_swaps:
+        lines.extend(_advance_swaps(ctx, env, book, secret))
+    notices = [f"exit proposed: {line}" for line in lines if "gate PASS" in line] + alerts
+    return JobResult(
+        summary="; ".join(lines) or "no exits proposed",
+        metrics={
+            "exit_closes": closes,
+            "exit_holds": holds,
+            "exit_fallback_closes": fallbacks,
+            "exit_review_unavailable": unavailable and bool(cases or fallbacks),
+        },
+        notice="; ".join(notices),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Handler entry points
 # ---------------------------------------------------------------------------
 
@@ -3830,6 +4308,7 @@ _STEPS: dict[str, Callable[[JobContext, PipelineEnv], JobResult]] = {
     "quant.revise": quant_revise,
     "quant.propose": quant_propose,
     "quant.exit": quant_exit,
+    "risk.exit": risk_exit,
 }
 #: E13.9: pre-D56 step names, bound to the same functions for one release.
 _STEP_ALIASES = {"quant": "quant.open", "risk": "risk.open", "propose": "quant.propose"}
@@ -3880,6 +4359,10 @@ def quant_exit_step(ctx: JobContext) -> JobResult:
     return quant_exit(ctx, _live_env(ctx))
 
 
+def risk_exit_step(ctx: JobContext) -> JobResult:
+    return risk_exit(ctx, _live_env(ctx))
+
+
 def pipeline_handlers(env: PipelineEnv) -> dict[str, Handler]:
     """Dispatcher overrides binding every E5.2 step (and the Scalp) to one *env*."""
     from arc.routines.handlers import scalp_persona
@@ -3889,6 +4372,10 @@ def pipeline_handlers(env: PipelineEnv) -> dict[str, Handler]:
 
     handlers: dict[str, Handler] = {name: bind(fn) for name, fn in _STEPS.items()}
     handlers |= {old: handlers[new] for old, new in _STEP_ALIASES.items()}
+    # E13.18: the mandatory-exit floor runs inside the Research chain (exit_path research).
+    from arc.positions.steps import exits_mandatory
+
+    handlers["exits.mandatory"] = bind(exits_mandatory)
     if env.scalp_llm is not None or env.universe_guard is not None:
         scalp_llm, make_guard = env.scalp_llm, env.universe_guard
 

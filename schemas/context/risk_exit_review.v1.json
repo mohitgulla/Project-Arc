@@ -1,0 +1,103 @@
+{
+  "$defs": {
+    "RiskExitReasonCode": {
+      "enum": [
+        "thesis_broken",
+        "ev_exhausted",
+        "risk_event",
+        "capacity",
+        "concentration",
+        "thesis_intact",
+        "ev_remaining",
+        "costs_exceed_gain",
+        "await_eod_marks"
+      ],
+      "type": "string"
+    },
+    "RiskExitVerdict": {
+      "additionalProperties": false,
+      "description": "Risk's verdict on one exit case (E13.18): ``close`` or ``hold``, with a reason.\n\nAdvisory input to code: a ``close`` still goes through ``propose_close`` (gate\n``closing=True``, price band, token, approval); a ``hold`` is journaled.",
+      "properties": {
+        "reason": {
+          "maxLength": 240,
+          "title": "Reason",
+          "type": "string"
+        },
+        "reason_code": {
+          "$ref": "#/$defs/RiskExitReasonCode"
+        },
+        "structure_id": {
+          "description": "The case's structure_id, copied verbatim",
+          "title": "Structure Id",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "close",
+            "hold"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "structure_id",
+        "verdict",
+        "reason_code",
+        "reason"
+      ],
+      "title": "RiskExitVerdict",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Risk's review of the exit cases (E13.18, D56); kind ``risk_exit_review``.\n\nSubject ``session``. ``verdicts`` holds one entry per reviewed case (code fills a\nmissing one with ``hold``). ``unavailable`` = the Risk call failed, timed out or\ndid not parse: every verdict is ``hold`` and ``quant.propose`` applies the fallback\nrules (a deterministic discretionary signal closes as today).",
+  "properties": {
+    "as_of": {
+      "title": "As Of",
+      "type": "string"
+    },
+    "case_ids": {
+      "description": "exit_case entry ids reviewed",
+      "items": {
+        "type": "string"
+      },
+      "title": "Case Ids",
+      "type": "array"
+    },
+    "persona_call_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Persona Call Id"
+    },
+    "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "unavailable": {
+      "default": false,
+      "title": "Unavailable",
+      "type": "boolean"
+    },
+    "verdicts": {
+      "items": {
+        "$ref": "#/$defs/RiskExitVerdict"
+      },
+      "title": "Verdicts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "as_of"
+  ],
+  "title": "RiskExitReviewPayload",
+  "type": "object"
+}

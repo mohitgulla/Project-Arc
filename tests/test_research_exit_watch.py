@@ -7,7 +7,7 @@ Runs the fixture chain (bundled SPY recording + fixture personas):
   E5.9 thesis-check wording), no ``exit_watchlist`` write, no ``quant.exit`` step;
 * ``shadow``: the exit block + watchlist; one ``exit_case`` per triggered position;
   journal rows; **no proposal** from the exit path; a reply that omits a case holds;
-* ``research`` behaves as ``shadow`` until E13.18.
+* ``research`` adds the close path (E13.18, ``tests/test_risk_exit.py``).
 """
 
 from __future__ import annotations
@@ -137,13 +137,16 @@ class TestConfig:
     def test_chain_for_exit_path(self) -> None:
         assert chain_for("research", {}) == OFF_CHAIN
         assert chain_for("research", {}, {"exit_path": "deterministic"}) == OFF_CHAIN
-        for mode in ("shadow", "research"):
-            assert chain_for("research", {}, {"exit_path": mode}) == ["quant.exit", *OFF_CHAIN]
+        assert chain_for("research", {}, {"exit_path": "shadow"}) == ["quant.exit", *OFF_CHAIN]
+        # E13.18: research adds the mandatory floor and Risk's exit review
+        assert chain_for("research", {}, {"exit_path": "research"}) == [
+            "exits.mandatory", "quant.exit", "risk.exit", *OFF_CHAIN,
+        ]  # fmt: skip
         assert chain_for("research", {"quant_risk_loop": True}, {"exit_path": "shadow"}) == [
             "quant.exit", "quant.open", "risk.open", "quant.revise", "quant.propose",
             "broker.execute",
         ]  # fmt: skip
-        # E13.18 re-wires the positions chain; untouched here
+        # the positions chain keeps today's steps under shadow (E13.18: research differs)
         assert chain_for("positions.evaluate", {}, {"exit_path": "shadow"})[0] == "quant.exits"
 
     def test_shipped_default_is_deterministic(self) -> None:

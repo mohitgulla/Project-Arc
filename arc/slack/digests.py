@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         ReconcileOutput,
         ResearchOutput,
         RiskAssessment,
+        RiskExitVerdict,
         RiskOutput,
     )
     from arc.positions.exit_case import ExitCase
@@ -60,6 +61,7 @@ __all__ = [
     "quant_exit_card",
     "regime_name",
     "risk_card",
+    "risk_exit_card",
     "scalp_card",
     "scalp_context_card",
     "scout_card",
@@ -936,6 +938,37 @@ def quant_exit_card(
         blocks.append(B.divider())
         blocks.append(
             B.persona_section(Persona.QUANT, line, B.esc(_clip_line(c.rationale)), escape=False)
+        )
+    return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
+
+
+def risk_exit_card(
+    cases: Sequence[ExitCase],
+    verdicts: Mapping[str, RiskExitVerdict],
+    *,
+    unavailable: bool = False,
+    run_id: str | None = None,
+    chain_run_id: str | None = None,
+) -> CardView:
+    """``[Risk] Exit review: 2 reviewed • 1 close``; one line per case (E13.18, minimal).
+
+    ticker · Quant's call → Risk's verdict · reason code; the reason underneath.
+    """
+    closes = sum(v.verdict == "close" for v in verdicts.values())
+    title = f"[Risk] Exit review: {len(cases)} reviewed • {closes} close"
+    sub = "Risk unavailable: every case held (policy fallback applies)" if unavailable else ""
+    blocks = _head(title, sub, "")
+    for c in cases:
+        v = verdicts.get(c.structure_id)
+        if v is None:
+            continue
+        line = (
+            f"*{B.esc(c.ticker)}* `{B.esc(c.structure_id)}` · Quant {c.recommendation} → "
+            f"*{v.verdict.capitalize()}* · {B.esc(_title_case(v.reason_code))}"
+        )
+        blocks.append(B.divider())
+        blocks.append(
+            B.persona_section(Persona.RISK, line, B.esc(_clip_line(v.reason)), escape=False)
         )
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 

@@ -633,17 +633,26 @@ def chain_for(
 
     ``research``: ``quant_risk_loop`` off -> ``quant.open, risk.open, quant.propose,
     broker.execute`` (today's chain under the new names); on -> one ``quant.revise``
-    round between Risk and ``quant.propose``. E13.17: *choices* ``exit_path`` shadow |
-    research inserts ``quant.exit`` right after the loop job (deterministic = no
-    step). ``positions.evaluate`` keeps today's exit chain (E13.18 adds its
-    ``exit_path`` rows).
+    round between Risk and ``quant.propose``. E13.17: *choices* ``exit_path`` shadow
+    inserts ``quant.exit`` right after the loop job (deterministic = no step).
+
+    E13.18 ``exit_path: research``: ``exits.mandatory, quant.exit, risk.exit`` run
+    first (exits before opens: a close frees buying power and a deadline cuts new
+    risk, not risk management); ``positions.evaluate`` becomes marks plus
+    ``exits.mandatory`` only (``quant.exits`` / ``risk.reallocate`` do not run).
     """
     exit_path = (choices or {}).get("exit_path", "deterministic")
     if job == "research":
-        exits = ["quant.exit"] if exit_path in EXIT_PATH_CASES else []
+        exits: list[str] = []
+        if exit_path == "research":
+            exits = ["exits.mandatory", "quant.exit", "risk.exit"]
+        elif exit_path in EXIT_PATH_CASES:
+            exits = ["quant.exit"]
         revise = ["quant.revise"] if flags.get("quant_risk_loop", False) else []
         return [*exits, "quant.open", "risk.open", *revise, "quant.propose", "broker.execute"]
     if job == "positions.evaluate":
+        if exit_path == "research":
+            return ["exits.mandatory", "broker.execute"]
         return ["quant.exits", "risk.reallocate", "broker.execute"]
     msg = f"chain: auto is only defined for {', '.join(AUTO_CHAIN_JOBS)}, not {job!r}"
     raise ValueError(msg)
@@ -796,8 +805,9 @@ class ExitPathSettings(BaseModel):
     ``mode`` comes from ``personas.exit_path: deterministic | shadow | research``.
     ``deterministic`` = today (the positions chain only; Research's prompt byte for
     byte). ``shadow`` = Research also writes an ``exit_watchlist`` and ``quant.exit``
-    builds ``exit_case`` entries (journaled, nothing proposed). ``research`` behaves as
-    ``shadow`` until E13.18 adds ``risk.exit`` and the close path.
+    builds ``exit_case`` entries (journaled, nothing proposed). ``research`` (E13.18)
+    adds ``exits.mandatory`` (deterministic floor), ``risk.exit`` (close | hold) and the
+    close branch in ``quant.propose``; ``quant.exits`` / ``risk.reallocate`` stop.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -808,6 +818,11 @@ class ExitPathSettings(BaseModel):
     def watch(self) -> bool:
         """Research writes the exit watchlist and ``quant.exit`` builds cases."""
         return self.mode in EXIT_PATH_CASES
+
+    @property
+    def managed(self) -> bool:
+        """E13.18: Research/Quant/Risk manage discretionary exits (closes proposed)."""
+        return self.mode == "research"
 
 
 class ResearchCompactPromptSettings(BaseModel):
