@@ -221,7 +221,8 @@ class PnlView(BaseModel):
 
 
 class GreeksView(BaseModel):
-    """Net portfolio Greeks from the latest monitor run (share-equivalents, as the gate)."""
+    """Net portfolio Greeks from the latest monitor run (share-equivalents), plus the
+    gate's D57 dollar delta (Σ Δ × spot) against its dollar cap."""
 
     model_config = _FROZEN
 
@@ -234,8 +235,13 @@ class GreeksView(BaseModel):
     theta: float | None = None
     max_loss: float | None = None
     equity: float | None = None
-    delta_cap: float | None = Field(
-        default=None, description="|Δ| cap, share-eq (cap × equity/100)"
+    dollar_delta: float | None = Field(
+        default=None,
+        description="D57: net dollar delta Σ (Δ share-eq × spot), $; None on a heartbeat "
+        "written before D57 (rendered —)",
+    )
+    dollar_delta_cap: float | None = Field(
+        default=None, description="D57: |$Δ| cap, $ (portfolio_dollar_delta_cap_pct × equity)"
     )
     vega_usd: float | None = Field(default=None, description="ν in $ per vol point (ν/100)")
     vega_cap_usd: float | None = Field(default=None, description="|ν| cap, $ per vol point")
@@ -421,7 +427,7 @@ def _pnl(conn: sqlite3.Connection, monitor: sqlite3.Row | None) -> PnlView:
 
 def _greeks(
     monitor: sqlite3.Row | None,
-    delta_cap: float,
+    dollar_delta_cap_pct: float,
     vega_cap_pct: float,
     stale_after: _dt.timedelta,
 ) -> GreeksView:
@@ -441,7 +447,8 @@ def _greeks(
         theta=m.get("theta"),
         max_loss=m.get("max_loss"),
         equity=equity,
-        delta_cap=None if equity is None else delta_cap * float(equity) / 100.0,
+        dollar_delta=m.get("dollar_delta"),
+        dollar_delta_cap=None if equity is None else dollar_delta_cap_pct * float(equity),
         vega_usd=None if vega is None else float(vega) / 100.0,
         vega_cap_usd=None if equity is None else vega_cap_pct * float(equity),
         stale_after_s=stale_s,
@@ -721,8 +728,8 @@ def load_snapshot(
     now: _dt.datetime,
     db_path: str = "",
     lookback_days: int = 7,
-    delta_cap: float = 0.30,
-    vega_cap_pct: float = 0.005,
+    dollar_delta_cap_pct: float = 0.50,
+    vega_cap_pct: float = 0.010,
     limit: int = 200,
     stale_after: _dt.timedelta | None = None,
 ) -> TowerSnapshot:
@@ -741,7 +748,7 @@ def load_snapshot(
         as_of=now_et,
         db_path=db_path,
         pnl=_pnl(conn, monitor),
-        greeks=_greeks(monitor, delta_cap, vega_cap_pct, stale),
+        greeks=_greeks(monitor, dollar_delta_cap_pct, vega_cap_pct, stale),
         structures=_structures(conn, legs),
         legs=legs,
         proposals=_proposals(conn, since_day, limit),

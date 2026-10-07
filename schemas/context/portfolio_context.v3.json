@@ -2,6 +2,7 @@
   "$defs": {
     "GreekUsage": {
       "additionalProperties": false,
+      "description": "Net exposure against its gate cap. Delta (D57): net dollar delta and the dollar\ncap; vega: $ per vol point and its cap.",
       "properties": {
         "cap": {
           "title": "Cap",
@@ -198,7 +199,28 @@
           "type": "object"
         },
         "delta": {
-          "$ref": "#/$defs/GreekUsage"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GreekUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "D57: net dollar delta (\u03a3 \u0394 share-eq \u00d7 spot) vs the dollar cap. None = a spot is unknown (as_opened book without a stored spot): never guessed."
+        },
+        "delta_shares": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v3 (D57): net \u0394 in share-equivalents (unweighted, for reference)",
+          "title": "Delta Shares"
         },
         "flagged_expiry_buckets": {
           "items": {
@@ -701,7 +723,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "E5.9 (D33): Research's deterministic view of the open book (subject ``session``).\n\nv2 (E13.17, additive): each position may carry ``facts`` (exit path only).",
+  "description": "E5.9 (D33): Research's deterministic view of the open book (subject ``session``).\n\nv2 (E13.17, additive): each position may carry ``facts`` (exit path only).\nv3 (E3.5, D57): ``aggregates.delta`` is net dollar delta vs the dollar cap (None when\na spot is unknown); ``aggregates.delta_shares`` keeps the share-equivalent net.",
   "properties": {
     "account": {
       "$ref": "#/$defs/PortfolioAccount"

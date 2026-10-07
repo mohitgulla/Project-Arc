@@ -2711,10 +2711,10 @@ export interface components {
          */
         GateCaps: {
             /**
-             * Portfolio Delta Cap
-             * @description |net Δ| cap: × equity/100, share-eq
+             * Portfolio Dollar Delta Cap Pct
+             * @description D57: |net dollar delta| cap as a fraction of equity
              */
-            portfolio_delta_cap: number;
+            portfolio_dollar_delta_cap_pct: number;
             /**
              * Portfolio Vega Cap Pct
              * @description |ν| cap as a fraction of equity
@@ -2775,7 +2775,8 @@ export interface components {
         };
         /**
          * GreeksView
-         * @description Net portfolio Greeks from the latest monitor run (share-equivalents, as the gate).
+         * @description Net portfolio Greeks from the latest monitor run (share-equivalents), plus the
+         *     gate's D57 dollar delta (Σ Δ × spot) against its dollar cap.
          */
         GreeksView: {
             /** At */
@@ -2783,10 +2784,15 @@ export interface components {
             /** Delta */
             delta?: number | null;
             /**
-             * Delta Cap
-             * @description |Δ| cap, share-eq (cap × equity/100)
+             * Dollar Delta
+             * @description D57: net dollar delta Σ (Δ share-eq × spot), $; None on a heartbeat written before D57 (rendered —)
              */
-            delta_cap?: number | null;
+            dollar_delta?: number | null;
+            /**
+             * Dollar Delta Cap
+             * @description D57: |$Δ| cap, $ (portfolio_dollar_delta_cap_pct × equity)
+             */
+            dollar_delta_cap?: number | null;
             /** Equity */
             equity?: number | null;
             /** Gamma */

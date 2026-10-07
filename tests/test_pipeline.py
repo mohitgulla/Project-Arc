@@ -953,7 +953,11 @@ def test_routines_dispatcher_uses_wall_clock_only_when_not_pinned(tmp_path: Path
 class TestAccountProfilePipeline:
     def _run(self, profile: str, fixture_set: str, monkeypatch: pytest.MonkeyPatch, routines):  # noqa: ANN001, ANN202
         monkeypatch.delenv("ARC_GATE_SECRET", raising=False)
-        s = ArcSettings(_env_file=None, account_profile=profile)  # type: ignore[call-arg]
+        # D57: 5 lots of the fixture SPY debit spread are ~$96k of dollar delta, over the
+        # default $50k cap; these tests are about the profile, so the cap is lifted.
+        s = ArcSettings(  # type: ignore[call-arg]
+            _env_file=None, account_profile=profile, portfolio_dollar_delta_cap_pct=1.0
+        )
         # The fixture debit spreads model at negative managed Net EV; these tests are
         # about the account profile, so the E6.4a live Net EV floor is switched off.
         _net_ev_floor_off(s)
@@ -1095,3 +1099,17 @@ def test_live_net_ev_floor_drops_negative_ev_structure(
     ).fetchall()
     payload = json.loads(row["payload"])
     assert payload["managed_net_ev"] < 0 and payload["floor"] == 0.0
+
+
+def test_with_position_carries_dollar_delta() -> None:
+    """D57: a gate-passed proposal's $Δ (Δ × n × spot) reaches the next proposal's book."""
+    from arc.gate.inputs import Portfolio
+    from arc.models import Greeks
+    from arc.pipeline.steps import _with_position
+
+    book = Portfolio(dollar_delta=Decimal("18000"))
+    out = _with_position(book, "AVGO", Decimal("500"), Greeks(delta=50.0), 2, Decimal("350"))
+    assert out.dollar_delta == Decimal("53000") and out.greeks.delta == 100.0
+    assert [p.underlying for p in out.positions] == ["AVGO"]
+    same = _with_position(book, "AVGO", Decimal("500"), Greeks(delta=50.0), 2, None)
+    assert same.dollar_delta == Decimal("18000")

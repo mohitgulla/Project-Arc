@@ -382,7 +382,7 @@ Outside the session the pages show the last in-session monitor run, marked stale
 |---|---|
 | Status strip | active `halts`, latest `tick`/`health` heartbeats, open `ops_alerts` |
 | P&L / equity | latest `monitor` heartbeat (intraday equity, day P&L); `pnl_snapshots` (reconciled realized/unrealized, Day/MTD/YTD via `arc.reconcile.performance`) |
-| Greeks | latest `monitor` heartbeat: net Δ Γ ν Θ and max loss, against the gate's `portfolio_delta_cap` / `portfolio_vega_cap_pct` |
+| Greeks | latest `monitor` heartbeat: net dollar delta (Σ Δ × spot, D57) against the gate's `portfolio_dollar_delta_cap_pct` × equity, ν against `portfolio_vega_cap_pct` × equity, plus Γ Θ and max loss |
 | Positions | `open_structures` + broker legs from the `monitor` heartbeat; "held at broker" from the last `positions_snapshots` |
 | Proposals / Trades | `proposals` + latest `gate_decisions` + `approval_requests` + `executions` |
 | Halts | `halts`, active first |

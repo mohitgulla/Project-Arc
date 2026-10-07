@@ -49,3 +49,12 @@ describe("one freshness slot (TOWER_DESIGN §10)", () => {
     expect(PAGES["../pages/Overview.tsx"]).not.toContain("greeks-stale");
   });
 });
+
+describe("Greeks card shows dollar delta (D57)", () => {
+  it("labels and caps delta in dollars, never the share-equivalent cap", () => {
+    const src = PAGES["../pages/Overview.tsx"]!;
+    expect(src).toContain('label="|$Δ| net dollar delta"');
+    expect(src).toContain("g.dollar_delta_cap");
+    expect(src).not.toContain("g.delta_cap");
+  });
+});

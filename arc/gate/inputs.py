@@ -7,7 +7,8 @@ then hand them to :func:`arc.gate.rules.evaluate`.
 Units follow :mod:`arc.structures`:
   - money is ``Decimal`` dollars; option prices are per share;
   - Greeks are share-equivalents (per-share Greek x 100 x signed ratio);
-    vega is per 1.00 of sigma, so vega / 100 is dollars per vol point.
+    vega is per 1.00 of sigma, so vega / 100 is dollars per vol point;
+  - dollar delta (D57) is share-equivalent delta x the underlying's spot, dollars.
 """
 
 from __future__ import annotations
@@ -103,6 +104,14 @@ class Portfolio(_Frozen):
 
     positions: list[Position] = Field(default_factory=list)
     greeks: Greeks = Field(default_factory=Greeks, description="Net portfolio Greeks")
+    dollar_delta: Decimal = Field(
+        Decimal(0),
+        description=(
+            "D57: signed Σ over underlyings of (net Δ share-eq × that underlying's spot), "
+            "dollars. Built by arc.pipeline.market.build_portfolio (fails closed on a "
+            "missing spot); the gate's delta cap reads this, not greeks.delta."
+        ),
+    )
     closed_lots: list[ClosedLot] = Field(default_factory=list)
     legs: dict[str, int] = Field(
         default_factory=dict,
@@ -132,4 +141,12 @@ class MarketSnapshot(_Frozen):
         default_factory=dict,
         description="Next earnings date per underlying. Missing key = unknown (fails closed "
         "for short premium); None = known to have no scheduled earnings.",
+    )
+    underlying_spot: dict[str, Decimal] = Field(
+        default_factory=dict,
+        description=(
+            "D57: spot per underlying, the same spot the proposal was re-priced at. The "
+            "dollar-delta cap needs it: a missing or non-positive spot on an opening "
+            "proposal fails closed (missing_spot)."
+        ),
     )

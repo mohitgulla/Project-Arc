@@ -233,6 +233,7 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 "valued": True,
                 "max_loss": float(max_loss),
                 "delta": g.delta,
+                "dollar_delta": float(portfolio.dollar_delta),  # D57: Σ Δ × spot, $
                 "gamma": g.gamma,
                 "vega": g.vega,
                 "theta": g.theta,

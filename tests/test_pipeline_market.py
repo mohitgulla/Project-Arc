@@ -199,6 +199,16 @@ def test_market_snapshot_drops_untimestamped_quotes() -> None:
     assert snap.next_earnings == {"SPY": None}
 
 
+def test_market_snapshot_carries_usable_spots_only() -> None:
+    """D57: the re-pricing spot reaches the gate; a None / non-positive spot is left
+    out so the dollar-delta cap fails closed (missing_spot)."""
+    m = FakeMarket({LP: 0.2, SP: 0.19})
+    contracts = {c.symbol: c for c in m.chain}
+    snap = market_snapshot(contracts, {}, {"SPY": 580.5, "QQQ": None, "IWM": 0.0})
+    assert snap.underlying_spot == {"SPY": D("580.5")}
+    assert market_snapshot(contracts, {}).underlying_spot == {}
+
+
 def test_limit_price_and_account_snapshot() -> None:
     assert limit_price(D("-1.6555"), 0.01) == D("-1.65")
     info = AccountInfo(
@@ -238,6 +248,17 @@ def test_build_portfolio_prices_greeks() -> None:
     assert [p.underlying for p in pf.positions] == ["SPY"]
     assert pf.greeks.vega != 0.0
     assert pf.legs == {SP: -1, LP: 1}
+    # D57: dollar delta = net Δ (share-eq) x the spot it was priced at
+    assert pf.greeks.delta != 0.0
+    assert float(pf.dollar_delta) == pytest.approx(pf.greeks.delta * 580.0)
+    pf2 = build_portfolio(
+        conn, positions(), FakeMarket({LP: 0.2, SP: 0.19}, spot=1160.0), now=NOW,
+        wash_sale_days=30, r=0.04,
+    )  # fmt: skip
+    assert float(pf2.dollar_delta) == pytest.approx(pf2.greeks.delta * 1160.0)
+    assert build_portfolio(
+        conn, [], FakeMarket({}), now=NOW, wash_sale_days=30, r=0.04
+    ).dollar_delta == D(0)
 
 
 def test_build_portfolio_missing_iv_blocks() -> None:
