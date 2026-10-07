@@ -183,7 +183,7 @@ export interface ArmPlanView {
 export function armPlanRows(d: Pick<ExperimentDetail, "running"> | null | undefined): ArmPlanView[] {
   const plans = d?.running?.arm_plans ?? {};
   return Object.entries(plans)
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([arm, p]) => ({
       arm: arm
         .split("_")
