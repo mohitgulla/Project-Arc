@@ -533,7 +533,7 @@
     },
     "PositionFacts": {
       "additionalProperties": false,
-      "description": "Code-built research facts for one open position (E13.17, D56).\n\nOnly built under ``personas.exit_path`` != ``deterministic`` (Research's exit\nwatch). The last six fields come straight from the position's\n:class:`~arc.positions.evaluate.PositionReview`; the rest from the context store.",
+      "description": "Code-built research facts for one open position (E13.17, D56).\n\nBuilt for Research's exit watch. The last six fields come straight from the position's\n:class:`~arc.positions.evaluate.PositionReview`; the rest from the context store.",
       "properties": {
         "ex_dividend": {
           "anyOf": [

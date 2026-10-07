@@ -156,11 +156,11 @@ def _positions(db: Path, tmp_path: Path) -> dict:
 
 
 class TestExitPath:
-    def test_shadow_chain_rows_and_strip(self, exits_db: Path, tmp_path: Path) -> None:
+    def test_research_chain_rows_and_strip(self, exits_db: Path, tmp_path: Path) -> None:
         body = _positions(exits_db, tmp_path)
         strip = body["exit_path"]
         assert strip == {
-            "mode": "shadow", "mandatory_pending": 1, "cases_today": 2,
+            "mode": "research", "mandatory_pending": 1, "cases_today": 2,
             "closes_proposed_today": 1, "holds_today": 1,
         }  # fmt: skip
         rows = {r["ticker"]: r for r in body["items"]}
@@ -182,11 +182,11 @@ class TestExitPath:
         assert nvda["mandatory_signal"] == "stop"
         assert nvda["exit_case"] is None and nvda["exit_review"] is None
 
-    def test_deterministic_mode_has_no_views(self, plain_db: Path, tmp_path: Path) -> None:
+    def test_no_entries_no_views(self, plain_db: Path, tmp_path: Path) -> None:
         body = _positions(plain_db, tmp_path)
-        assert body["exit_path"] == {
-            "mode": "deterministic", "mandatory_pending": 0, "cases_today": 0,
-            "closes_proposed_today": 0, "holds_today": 0,
+        assert body["exit_path"] == {  # the fixture's one close proposal is counted
+            "mode": "research", "mandatory_pending": 0, "cases_today": 0,
+            "closes_proposed_today": 1, "holds_today": 0,
         }  # fmt: skip
         for r in body["items"]:
             assert (r["exit_watch"], r["exit_case"], r["exit_review"]) == (None, None, None)

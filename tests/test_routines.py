@@ -75,7 +75,8 @@ BASE_YAML = """
       rss: {every: 30m, window: "06:00-20:00", days: trading}
     personas:
       scalp: {schedule: ["22:00", "12:00"], days: daily, after_sources: true, ttl: 3h}
-      research: {schedule: ["09:00"], days: trading, chain: [quant.open, risk.open, quant.propose], ttl: 2h,
+      research: {schedule: ["09:00"], days: trading,
+                 chain: [quant.open, risk.open, quant.propose], ttl: 2h,
                  writes: [shortlist]}
       broker.reconcile: {schedule: ["16:30"], days: trading, halt_exempt: true, ttl: 6h}
       broker: {trigger: approval}
@@ -233,7 +234,8 @@ class TestConfig:
               earnings:          {schedule: ["06:00", "18:00"], days: trading}
             personas:
               scalp:    {schedule: ["22:00", "12:00"], days: daily, after_sources: true}
-              research: {schedule: ["09:00"], days: trading, chain: [quant.open, risk.open, quant.propose]}
+              research: {schedule: ["09:00"], days: trading,
+                         chain: [quant.open, risk.open, quant.propose]}
               broker.reconcile: {schedule: ["16:30"], days: trading}
               broker: {trigger: approval}
             triggers:
@@ -747,7 +749,8 @@ class TestContextIntegration:
     def test_persona_reads_only_configured_kinds(self, conn: sqlite3.Connection) -> None:
         text = BASE_YAML.replace(
             "                 writes: [shortlist]}",
-            "                 writes: [shortlist]}\n    steps:\n      quant.open: {reads: [candidate]}",
+            "                 writes: [shortlist]}\n"
+            "    steps:\n      quant.open: {reads: [candidate]}",
         )
         c = cfg(text)
         assert c.steps["quant.open"].reads == ["candidate"]
@@ -1085,7 +1088,7 @@ class TestDryRunAndCli:
         assert (
             "INVALID" in out
             and "research" in out
-            and "quant.open → risk.open → quant.propose" in out
+            and "quant.open → risk.open → quant.revise → quant.propose" in out
         )
 
         db = str(tmp_path / "arc.db")
@@ -1103,7 +1106,8 @@ class TestDryRunAndCli:
         db = str(tmp_path / "arc.db")
         cfg_path = tmp_path / "r.yaml"
         cfg_path.write_text(
-            "personas:\n  research: {schedule: ['09:00'], chain: [quant.open], writes: [shortlist]}\n"
+            "personas:\n"
+            "  research: {schedule: ['09:00'], chain: [quant.open], writes: [shortlist]}\n"
             "steps:\n  quant.open: {writes: [structures, note]}\n"
         )
         base = ["--config", str(cfg_path), "--db", db]

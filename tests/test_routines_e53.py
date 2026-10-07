@@ -90,7 +90,10 @@ class TestShippedDefaults:
         assert p["scalp"].after_sources and p["scalp.overnight"].after_sources
         assert p["scalp.overnight"].cadence == "at 22:00 ET (daily)"
         assert p["research"].cadence == "every 10m 09:40-15:50 ET (trading)"
-        assert p["research"].chain == ["quant.open", "risk.open", "quant.propose", "broker.execute"]
+        assert p["research"].chain == [
+            "exits.mandatory", "quant.exit", "risk.exit", "quant.open", "risk.open",
+            "quant.revise", "quant.propose", "broker.execute",
+        ]  # fmt: skip
         assert p["research"].ttl is not None
         assert p["research"].ttl.duration == dt.timedelta(minutes=5)
         assert p["monitor"].cadence == "every 10m 09:30-16:00 ET (trading)"  # D35, D52

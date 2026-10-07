@@ -215,8 +215,8 @@ def test_stuck_after_jobs_validation() -> None:
     assert MonitoringSettings.model_validate({"stuck_after_jobs": None}).stuck_after_jobs == {}
     with pytest.raises(ValidationError, match="unknown job 'nope'"):
         cfg(YAML + "    monitoring: {stuck_after_jobs: {nope: 10m}}\n")
-    ok = cfg(YAML + "    monitoring: {stuck_after_jobs: {quant: 10m, rss: 5m}}\n")  # step + job
-    assert ok.monitoring.stuck_after_for("quant.open") == dt.timedelta(minutes=10)  # E13.9 alias
+    ok = cfg(YAML + "    monitoring: {stuck_after_jobs: {quant.open: 10m, rss: 5m}}\n")
+    assert ok.monitoring.stuck_after_for("quant.open") == dt.timedelta(minutes=10)  # step + job
 
 
 def test_shipped_monitor_stuck_after_is_two_slots() -> None:

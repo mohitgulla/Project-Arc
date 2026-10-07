@@ -3967,7 +3967,7 @@
             "type": "integer"
           },
           "mode": {
-            "description": "personas.exit_path (effective config)",
+            "description": "Exit path mode (research since the D56 cutover)",
             "enum": [
               "deterministic",
               "shadow",
@@ -15810,7 +15810,7 @@
     },
     "/api/positions": {
       "get": {
-        "description": "Open, closed or all structures with the latest broker marks; open rows carry the\nE13.14 exit path under ``personas.exit_path`` shadow | research.",
+        "description": "Open, closed or all structures with the latest broker marks; open rows carry the\nE13.14 exit path (D56: always Research-managed since E13.15).",
         "operationId": "positions_api_positions_get",
         "parameters": [
           {

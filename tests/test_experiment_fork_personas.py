@@ -209,9 +209,7 @@ def test_plan_for_xp5_runs_its_own_scout_and_syncs_its_inputs() -> None:
 
 
 def test_plan_for_a_scalp_arm_shares_raw_docs_and_the_tape() -> None:
-    plan = arm_plan(
-        load_routines(), {"routines": {"funnel": {"scalp": {"x": 1}}}}, RunnerConfig()
-    )
+    plan = arm_plan(load_routines(), {"routines": {"funnel": {"scalp": {"x": 1}}}}, RunnerConfig())
     assert plan.arm_personas == ["scalp"]
     assert plan.own_producers == ["scalp", "scalp.overnight"]
     assert {"raw_doc_ref", "index_vols", "chain_snapshot"} <= set(plan.shared_kinds)

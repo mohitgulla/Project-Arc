@@ -363,11 +363,13 @@ class TestResearchPortfolioAware:
         )  # fmt: skip
         reply = _research_reply(
             portfolio_view={"verdict": "concentrated", "notes": "all SPY, add elsewhere"},
-            thesis_checks=[
-                {"structure_id": sid, "status": "intact", "reason": "still range-bound"},
-                {"structure_id": "bogus", "status": "weakened", "reason": "ignored"},
+            exit_watchlist=[  # E13.15: the exit watch replaces thesis_checks
+                {"structure_id": sid, "ticker": "SPY", "action": "hold",
+                 "thesis_status": "intact", "reason": "still range-bound"},
+                {"structure_id": "bogus", "ticker": "SPY", "action": "hold",
+                 "thesis_status": "weakened", "reason": "ignored"},
             ],
-        )
+        )  # fmt: skip
         env.llms["research"] = FixtureScalpLLM([reply])
         conn, report = _run(settings, routines, env, conn=conn)
         assert not report.failed
@@ -571,7 +573,9 @@ class TestMarketGuard:
         assert not sl["market_guard"]["opens_allowed"]
         assert not report.proposals
         assert "No trade: market unclear" in _posted(notes)
-        assert [o.job for o in report.outcomes] == ["scalp", "research"]
+        # E13.15: the guard blocks opens only; the exit steps still run (§5.32)
+        statuses = {o.job: o.status for o in report.outcomes}
+        assert statuses["exits.mandatory"] == "ok"
         assert env.llms["quant"].prompts == [] and env.llms["risk"].prompts == []  # type: ignore[attr-defined]
 
     def test_exits_ignore_the_guard(self, settings: ArcSettings) -> None:

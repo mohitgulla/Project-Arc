@@ -437,7 +437,7 @@ export interface paths {
         /**
          * Positions
          * @description Open, closed or all structures with the latest broker marks; open rows carry the
-         *     E13.14 exit path under ``personas.exit_path`` shadow | research.
+         *     E13.14 exit path (D56: always Research-managed since E13.15).
          */
         get: operations["positions_api_positions_get"];
         put?: never;
@@ -2146,7 +2146,7 @@ export interface components {
             mandatory_pending: number;
             /**
              * Mode
-             * @description personas.exit_path (effective config)
+             * @description Exit path mode (research since the D56 cutover)
              * @enum {string}
              */
             mode: "deterministic" | "shadow" | "research";

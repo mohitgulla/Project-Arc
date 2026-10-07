@@ -424,7 +424,15 @@ def test_positions_cli_fixture_dry_run(capsys: pytest.CaptureFixture[str]) -> No
 
 def test_realloc_settings_feed_the_scorer(monkeypatch: pytest.MonkeyPatch) -> None:
     from arc.config import ArcSettings
-    from arc.positions.steps import _rules
+    from arc.positions.reallocate import ReallocRules
+
+    def _rules(s: ArcSettings) -> ReallocRules:  # as quant.propose builds them (E13.15)
+        return ReallocRules(
+            min_edge=s.realloc_min_edge,
+            pop_tolerance=s.realloc_pop_tolerance,
+            max_per_day=s.realloc_max_swaps_per_day,
+            max_per_ticker_per_day=s.realloc_max_swaps_per_ticker_per_day,
+        )
 
     monkeypatch.setenv("ARC_REALLOC_MIN_EDGE", "0.5")
     monkeypatch.setenv("ARC_REALLOC_MAX_SWAPS_PER_DAY", "1")

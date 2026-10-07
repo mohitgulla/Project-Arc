@@ -11,10 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import re
 from typing import TYPE_CHECKING, Any
-
-import pytest
 
 from arc.config import ArcSettings
 from arc.control.registry import is_orphaned
