@@ -64,6 +64,10 @@ for (const vp of VIEWPORTS) {
         await expect(picks.getByTestId("pick-header")).toHaveCount(2);
         await expect(picks.getByTestId("pick-header").first()).toHaveText(/^Discovery \(\d+ of \d+\)$/);
         await expect(picks.getByRole("link", { name: /VIEW ALL/ })).toHaveAttribute("href", "/ops/universe");
+        await expect(picks.getByTestId("pick-asof")).toBeVisible();
+        // Column headers are caption size, smaller than the card title.
+        const px = (l: import("@playwright/test").Locator) => l.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+        expect(await px(picks.getByTestId("pick-header").first())).toBeLessThan(await px(picks.getByRole("heading", { level: 2 }).first()));
         // Rolling 24 h, repeats grouped, capped at 8 with "Show n more".
         await expect(page.getByTestId("activity").locator(":scope > li")).toHaveCount(8);
         await expect(page.getByTestId("activity-more")).toHaveText("Show 1 more");

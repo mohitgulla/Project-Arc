@@ -466,14 +466,19 @@ function PickCard() {
   const q = useOps("/api/ops/universe");
   const u = q.data as Universe | undefined;
   return (
-    <Card title="Today's Pick" testid="picks" action={{ label: "VIEW ALL", to: "/ops/universe" }}>
+    <Card
+      title="Today's Pick"
+      testid="picks"
+      action={{ label: "VIEW ALL", to: "/ops/universe" }}
+      subtitle={<span data-testid="pick-asof">{u?.resolved_at ? <>as of {formatEt(u.resolved_at)} ET</> : "not resolved yet"}</span>}
+    >
       {!u ? (
         <EmptyState caption={q.isError ? "Could not load the universe." : "Loading…"} />
       ) : (
         <div className="grid grid-cols-2 gap-x-6">
           {pickSections(u).map((sec) => (
             <div key={sec.tier} className="min-w-0" data-testid="pick-tier" data-tier={sec.tier}>
-              <div className="mb-1 border-b border-line pb-1 text-caption font-semibold text-title tabular-nums" data-testid="pick-header">
+              <div className="mb-1 border-b border-line pb-1 text-caption font-semibold text-secondary tabular-nums" data-testid="pick-header">
                 {pickHeader(sec)}
               </div>
               {sec.rows.length === 0 ? (
