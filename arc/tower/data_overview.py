@@ -989,12 +989,12 @@ def _greeks_section(
     monitor: sqlite3.Row | None,
     positions: list[PositionRow],
     *,
-    delta_cap: float,
+    dollar_delta_cap_pct: float,
     vega_cap_pct: float,
     max_alloc_pct: float,
     stale_after: _dt.timedelta,
 ) -> GreeksSection:
-    g = _greeks(monitor, delta_cap, vega_cap_pct, stale_after)
+    g = _greeks(monitor, dollar_delta_cap_pct, vega_cap_pct, stale_after)
     by: dict[str, Decimal] = {}
     for p in positions:
         if p.status == "open" and p.max_loss is not None:
@@ -1052,8 +1052,8 @@ def load_overview(
     *,
     now: _dt.datetime,
     rng: OverviewRange = "1D",
-    delta_cap: float = 0.30,
-    vega_cap_pct: float = 0.005,
+    dollar_delta_cap_pct: float = 0.50,
+    vega_cap_pct: float = 0.010,
     max_alloc_pct: float = 0.05,
     stale_after: _dt.timedelta,
     activity_hours: int = ACTIVITY_HOURS,
@@ -1090,7 +1090,7 @@ def load_overview(
         greeks=_greeks_section(
             monitor,
             positions,
-            delta_cap=delta_cap,
+            dollar_delta_cap_pct=dollar_delta_cap_pct,
             vega_cap_pct=vega_cap_pct,
             max_alloc_pct=max_alloc_pct,
             stale_after=stale_after,

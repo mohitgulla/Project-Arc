@@ -77,7 +77,9 @@ class GateCaps(BaseModel):
 
     model_config = _STRICT
 
-    portfolio_delta_cap: float = Field(description="|net Δ| cap: × equity/100, share-eq")
+    portfolio_dollar_delta_cap_pct: float = Field(
+        description="D57: |net dollar delta| cap as a fraction of equity"
+    )
     portfolio_vega_cap_pct: float = Field(description="|ν| cap as a fraction of equity")
 
 

@@ -276,12 +276,17 @@ def test_load_positions_status(conn: sqlite3.Connection) -> None:
 
 def test_greeks_vs_caps(conn: sqlite3.Connection) -> None:
     o = load_overview(
-        conn, now=NOW, delta_cap=0.30, vega_cap_pct=0.005, max_alloc_pct=0.05, stale_after=STALE
+        conn,
+        now=NOW,
+        dollar_delta_cap_pct=0.50,
+        vega_cap_pct=0.010,
+        max_alloc_pct=0.05,
+        stale_after=STALE,
     )
     g = o.greeks
     eq = float(o.equity.value)  # type: ignore[arg-type]
-    assert g.greeks.delta_cap == pytest.approx(0.30 * eq / 100)
-    assert g.greeks.vega_cap_usd == pytest.approx(0.005 * eq)
+    assert g.greeks.dollar_delta_cap == pytest.approx(0.50 * eq)
+    assert g.greeks.vega_cap_usd == pytest.approx(0.010 * eq)
     assert g.per_underlying_cap == pytest.approx(D("0.05") * D(str(eq)))
     assert set(g.max_loss_by_underlying) == {"SPY", "QQQ", "NVDA"}
     assert list(g.max_loss_by_underlying.values()) == sorted(
@@ -498,11 +503,11 @@ def test_api_overview_uses_effective_caps(fx_db: Path, tmp_path: Path) -> None:
     """The caps come from the effective settings (D26 overrides reach the tower)."""
     from arc.config import ArcSettings
 
-    base = ArcSettings(_env_file=None, max_alloc_pct=0.04, portfolio_delta_cap=0.2)  # type: ignore[call-arg]
+    base = ArcSettings(_env_file=None, max_alloc_pct=0.04, portfolio_dollar_delta_cap_pct=0.2)  # type: ignore[call-arg]
     c = TestClient(create_app(fx_db, base, static_dir=tmp_path, clock=lambda: NOW))
     g = c.get("/api/overview").json()["greeks"]
     assert g["max_alloc_pct"] == pytest.approx(0.04)
-    assert g["greeks"]["delta_cap"] == pytest.approx(0.2 * g["greeks"]["equity"] / 100)
+    assert g["greeks"]["dollar_delta_cap"] == pytest.approx(0.2 * g["greeks"]["equity"])
 
 
 def test_api_overview_is_read_only(fx_db: Path, tmp_path: Path) -> None:

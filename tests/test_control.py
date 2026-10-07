@@ -811,3 +811,42 @@ def test_e64a_keys_reach_exits_and_ranking(svc: ControlService) -> None:
     assert svc.set("entries.min_managed_net_ev", "-60", actor=OWNER, source="slack").outcome == (
         "refused"
     )  # below the hard ceiling
+
+
+# ---------------------------------------------------------------------------
+# D57 (E3.5): dollar-delta cap replaces the share-count delta cap
+# ---------------------------------------------------------------------------
+
+
+def test_dollar_delta_and_vega_cap_tunables() -> None:
+    from arc.control.registry import Risk, is_orphaned
+
+    t = lookup("portfolio_dollar_delta_cap_pct")
+    assert t.field == "portfolio_dollar_delta_cap_pct" and t.risk is Risk.UP
+    assert (t.min, t.max, t.hard_ceiling, t.unit) == (0.10, 1.00, 1.00, "pct")
+    v = lookup("portfolio_vega_cap_pct")
+    assert v.min is not None and v.max is not None and v.min <= 0.010 <= v.max
+    assert (v.max, v.hard_ceiling) == (0.02, 0.02)
+    with pytest.raises(TunableError):
+        lookup("portfolio_delta_cap")
+    assert "portfolio_delta_cap" not in REGISTRY and is_orphaned("portfolio_delta_cap")
+
+
+def test_orphaned_share_delta_cap_override_is_ignored_and_logged(
+    conn: sqlite3.Connection,
+) -> None:
+    """A stored override on the removed `portfolio_delta_cap` cannot convert to a share of
+    equity: it is logged (config.override_orphaned) and the D57 defaults stand."""
+    import structlog
+
+    repo = ConfigChangeRepo(conn)
+    repo.append(
+        key="portfolio_delta_cap", old=0.30, new=0.20, is_default=False, actor=OWNER,
+        reason=None, at=NOW, source="slack", status="applied", direction="safer",
+    )  # fmt: skip
+    with structlog.testing.capture_logs() as logs:
+        s = effective_settings(conn, base=base())
+    assert s.portfolio_dollar_delta_cap_pct == 0.50 and s.portfolio_vega_cap_pct == 0.010
+    orphaned = [e["key"] for e in logs if e["event"] == "config.override_orphaned"]
+    assert set(orphaned) == {"portfolio_delta_cap"}
+    assert not [e for e in logs if e["event"] == "control.override_unknown_key"]

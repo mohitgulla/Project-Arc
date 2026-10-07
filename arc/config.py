@@ -191,13 +191,16 @@ class ArcSettings(BaseSettings):
         default=30,
         description="Wash-sale lookback window in calendar days.",
     )
-    portfolio_delta_cap: Annotated[float, Field(ge=0.0)] = Field(
-        default=0.30,
-        description="|net Δ| cap: 0.30 × equity/100 per dollar.",
+    portfolio_dollar_delta_cap_pct: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.50,
+        description=(
+            "D57: |net dollar delta| cap as a share of equity: post-trade "
+            "|Σ (net Δ share-eq × spot)| ≤ 0.50 × equity. Not beta-weighted."
+        ),
     )
     portfolio_vega_cap_pct: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
-        default=0.005,
-        description="|ν| cap: 0.5% of equity per vol-point.",
+        default=0.010,
+        description="|ν| cap: 1.0% of equity per vol-point (D57).",
     )
     # NoDecode: the env value may be comma-separated or JSON; see _parse_whitelist.
     structure_whitelist: Annotated[list[StructureKind], NoDecode] = Field(
@@ -449,8 +452,8 @@ class ArcSettings(BaseSettings):
     portfolio_greek_near_cap_pct: Annotated[float, Field(gt=0.0, le=1.0)] = Field(
         default=0.80,
         description=(
-            "D33: net |delta| / |vega| usage of the PLAN §5 cap above which the book is "
-            "flagged delta_near_cap / vega_near_cap."
+            "D33: net |dollar delta| / |vega| usage of the PLAN §5 cap above which the "
+            "book is flagged delta_near_cap / vega_near_cap (D57: delta in dollars)."
         ),
     )
     portfolio_context_max_positions: Annotated[int, Field(ge=1, le=50)] = Field(

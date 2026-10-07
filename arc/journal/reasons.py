@@ -201,6 +201,7 @@ class ReasonCode(StrEnum):
     GATE_PRICE_BAND = "gate:price_band"
     GATE_CLOSE_MISMATCH = "gate:close_mismatch"
     GATE_MISSING_GREEKS = "gate:missing_greeks"
+    GATE_MISSING_SPOT = "gate:missing_spot"
     GATE_ACCOUNT_KIND = "gate:account_profile_kind"
     GATE_ACCOUNT_NET_DEBIT = "gate:account_profile_net_debit"
     GATE_ACCOUNT_SHORT_LEG = "gate:account_profile_short_leg"
@@ -412,7 +413,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_LIMIT_OUTSIDE_NBBO: "Gate: limit outside the market",
     ReasonCode.GATE_TICK: "Gate: limit not on a valid tick",
     ReasonCode.GATE_WASH_SALE: "Gate: wash-sale risk",
-    ReasonCode.GATE_DELTA_CAP: "Gate: over the portfolio delta cap",
+    ReasonCode.GATE_DELTA_CAP: "Gate: over the portfolio dollar-delta cap",
     ReasonCode.GATE_VEGA_CAP: "Gate: over the portfolio vega cap",
     ReasonCode.GATE_STRUCTURE_NOT_ALLOWED: "Gate: structure not allowed",
     ReasonCode.GATE_DTE_WINDOW: "Gate: expiry outside the DTE window",
@@ -425,6 +426,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_PRICE_BAND: "Gate: price band invalid",
     ReasonCode.GATE_CLOSE_MISMATCH: "Gate: close does not match the open position",
     ReasonCode.GATE_MISSING_GREEKS: "Gate: Greeks missing",
+    ReasonCode.GATE_MISSING_SPOT: "Gate: underlying spot missing",
     ReasonCode.GATE_ACCOUNT_KIND: "Gate: structure not allowed by the account profile",
     ReasonCode.GATE_ACCOUNT_NET_DEBIT: "Gate: account profile needs a net debit",
     ReasonCode.GATE_ACCOUNT_SHORT_LEG: "Gate: account profile forbids this short leg",

@@ -592,7 +592,7 @@ def _open_leg(
     st = priced.structure
     now = ctx.clock()  # E5.2b: judge quote age against a clock read after the fetch
     earnings = next_earnings(ctx.conn, [t], _today(ctx))
-    market = market_snapshot(priced.contracts, earnings)
+    market = market_snapshot(priced.contracts, earnings, {t: priced.spot})
     limit = limit_price(st.net_debit_credit, settings.limit_tick)
     band = band_for(st, limit, market, settings)
     size = size_contracts(

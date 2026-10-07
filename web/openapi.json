@@ -5408,9 +5408,9 @@
         "additionalProperties": false,
         "description": "The gate's portfolio caps (PLAN \u00a75), from the effective settings.",
         "properties": {
-          "portfolio_delta_cap": {
-            "description": "|net \u0394| cap: \u00d7 equity/100, share-eq",
-            "title": "Portfolio Delta Cap",
+          "portfolio_dollar_delta_cap_pct": {
+            "description": "D57: |net dollar delta| cap as a fraction of equity",
+            "title": "Portfolio Dollar Delta Cap Pct",
             "type": "number"
           },
           "portfolio_vega_cap_pct": {
@@ -5420,7 +5420,7 @@
           }
         },
         "required": [
-          "portfolio_delta_cap",
+          "portfolio_dollar_delta_cap_pct",
           "portfolio_vega_cap_pct"
         ],
         "title": "GateCaps",
@@ -5589,7 +5589,7 @@
       },
       "GreeksView": {
         "additionalProperties": false,
-        "description": "Net portfolio Greeks from the latest monitor run (share-equivalents, as the gate).",
+        "description": "Net portfolio Greeks from the latest monitor run (share-equivalents), plus the\ngate's D57 dollar delta (\u03a3 \u0394 \u00d7 spot) against its dollar cap.",
         "properties": {
           "at": {
             "anyOf": [
@@ -5614,7 +5614,7 @@
             ],
             "title": "Delta"
           },
-          "delta_cap": {
+          "dollar_delta": {
             "anyOf": [
               {
                 "type": "number"
@@ -5623,8 +5623,20 @@
                 "type": "null"
               }
             ],
-            "description": "|\u0394| cap, share-eq (cap \u00d7 equity/100)",
-            "title": "Delta Cap"
+            "description": "D57: net dollar delta \u03a3 (\u0394 share-eq \u00d7 spot), $; None on a heartbeat written before D57 (rendered \u2014)",
+            "title": "Dollar Delta"
+          },
+          "dollar_delta_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D57: |$\u0394| cap, $ (portfolio_dollar_delta_cap_pct \u00d7 equity)",
+            "title": "Dollar Delta Cap"
           },
           "equity": {
             "anyOf": [

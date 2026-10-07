@@ -33,7 +33,7 @@ from arc.utils.calendar import ET, dte_calendar
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from arc.broker.base import AccountInfo, BrokerPosition
     from arc.config import ArcSettings
@@ -235,12 +235,16 @@ def build_portfolio(
 ) -> Portfolio:
     """Open option positions (max loss per underlying + net Greeks) plus recent closed lots.
 
+    D57: ``dollar_delta`` sums each root's net Δ (share-eq) × that root's spot (the same
+    spot its Greeks were priced at).
+
     Raises :class:`PortfolioError` when any open position cannot be valued
     (e.g. undefined risk, missing quotes): no new trade is proposed then.
     """
     today = now.astimezone(ET).date()
     open_positions: list[Position] = []
     greeks = Greeks()
+    dollar_delta = Decimal(0)
     groups = _group_legs(conn, positions)
     for root, label, legs in groups:
         try:
@@ -282,6 +286,7 @@ def build_portfolio(
                     vega=greeks.vega + g.vega,
                     theta=greeks.theta + g.theta,
                 )
+                dollar_delta += Decimal(str(g.delta)) * Decimal(str(spot))
         except PortfolioError:
             raise
         except Exception as exc:
@@ -302,6 +307,7 @@ def build_portfolio(
     return Portfolio(
         positions=open_positions,
         greeks=greeks,
+        dollar_delta=dollar_delta,
         closed_lots=lots,
         legs=dict(held),
         opened_today=frozenset(opened_today_symbols(conn, today)),
@@ -621,9 +627,15 @@ def limit_price(net: Decimal, tick: float) -> Decimal:
 
 
 def market_snapshot(
-    contracts: dict[str, OptionContract], earnings: dict[str, _dt.date | None]
+    contracts: dict[str, OptionContract],
+    earnings: dict[str, _dt.date | None],
+    spots: Mapping[str, float | None] | None = None,
 ) -> MarketSnapshot:
-    """Gate quotes for the legs. A contract without a quote timestamp is left out (fails closed)."""
+    """Gate quotes for the legs. A contract without a quote timestamp is left out (fails closed).
+
+    *spots* (D57): underlying spot per root, the re-pricing spot. A ``None`` or
+    non-positive spot is left out, so the gate's dollar-delta cap fails closed.
+    """
     quotes: dict[str, Quote] = {}
     for sym, c in contracts.items():
         if c.bid is None or c.ask is None or c.quote_timestamp is None:
@@ -631,4 +643,7 @@ def market_snapshot(
         quotes[sym] = Quote(
             bid=Decimal(str(c.bid)), ask=Decimal(str(c.ask)), as_of=c.quote_timestamp
         )
-    return MarketSnapshot(quotes=quotes, next_earnings=earnings)
+    spot_map = {
+        root: Decimal(str(v)) for root, v in (spots or {}).items() if v is not None and v > 0
+    }
+    return MarketSnapshot(quotes=quotes, next_earnings=earnings, underlying_spot=spot_map)

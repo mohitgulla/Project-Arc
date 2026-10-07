@@ -668,14 +668,16 @@ _STATIC: tuple[Tunable, ...] = (
         hard_ceiling=20,
     ),
     _s(
-        "portfolio_delta_cap",
+        "portfolio_dollar_delta_cap_pct",
         Group.RISK,
         _F,
-        "|net delta| cap as a multiple of equity/100 (gate rule greek_caps).",
+        "D57: |net dollar delta| (Σ Δ share-eq × spot) cap as a share of equity "
+        "(gate rule greek_caps).",
         Risk.UP,
-        min=0.05,
-        max=0.60,
-        hard_ceiling=0.60,
+        unit="pct",
+        min=0.10,
+        max=1.00,
+        hard_ceiling=1.00,
     ),
     _s(
         "portfolio_vega_cap_pct",
@@ -685,8 +687,8 @@ _STATIC: tuple[Tunable, ...] = (
         Risk.UP,
         unit="pct",
         min=0.001,
-        max=0.01,
-        hard_ceiling=0.01,
+        max=0.02,
+        hard_ceiling=0.02,
     ),
     _s(
         "earnings_blackout",
@@ -1288,7 +1290,7 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         "portfolio.greek_near_cap_pct",
         Group.RISK,
         _F,
-        "D33: net |delta| / |vega| usage of the cap that flags delta_near_cap / vega_near_cap.",
+        "D33: net |$delta| / |vega| usage of the cap that flags delta_near_cap / vega_near_cap.",
         Risk.UP,
         field="portfolio_greek_near_cap_pct",
         min=0.05,
@@ -1853,13 +1855,16 @@ ORPHANED_KEYS: frozenset[str] = frozenset(
         "personas.research_idea_pool",
         "personas.research_compact_prompt",
         "personas.exit_path",
+        # D57 (E3.5): the share-count delta cap, replaced by portfolio_dollar_delta_cap_pct
+        # (no alias: a multiple of equity/100 does not convert to a share of equity)
+        "portfolio_delta_cap",
     }
 )
 
 
 def is_orphaned(key: str) -> bool:
     """D56: *key* belongs to a removed category, the removed UOA detector or a removed
-    D51 / flag tunable (E13.15)."""
+    D51 / flag tunable (E13.15), or the D57 share-count delta cap (E3.5)."""
     return key in ORPHANED_KEYS or key.startswith(ORPHANED_KEY_PREFIXES)
 
 
