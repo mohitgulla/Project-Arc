@@ -1,7 +1,7 @@
 // E12.6: Universe page helpers (summary line, tier order, chip detail, override warning).
 import { describe, expect, it } from "vitest";
 
-import { buzzCaption, buzzSections, discoveryFillLine, tailCutDetail } from "./universe";
+import { defaultPickTier, discoveryFillLine, pickCaption, pickRow, pickSections, tailCutDetail } from "./universe";
 
 import {
   CORE_KEY_LABEL,
@@ -109,7 +109,7 @@ describe("E13.14 tail cuts + discovery fill", () => {
   });
 });
 
-describe("D59 Today's Buzz", () => {
+describe("D59 Today's Pick", () => {
   const m = (ticker: string, tier: string, rank: number) => ({ ticker, tier, rank, source: "s", reason: "r", also_in: [] });
   const u = {
     active: [
@@ -125,24 +125,33 @@ describe("D59 Today's Buzz", () => {
     dropped: [],
   };
   it("lists discovery then trending, top 10 by rank, with cut counts", () => {
-    const [d, tr] = buzzSections(u);
+    const [d, tr] = pickSections(u);
     expect(d!.tier).toBe("discovery");
     expect(d!.label).toBe("Discovery");
     expect(d!.rows.map((r) => r.ticker)).toEqual(["D12", "D11", "D10", "D9", "D8", "D7", "D6", "D5", "D4", "D3"]);
     expect(d!.active).toBe(12);
     expect(tr!.rows.map((r) => r.ticker)).toEqual(["TEM", "PENG"]);
     expect(tr!.cut).toBe(2);
-    expect(buzzCaption(d!)).toBe("12 active");
-    expect(buzzCaption(tr!)).toBe("2 active · 2 cut by cap");
+    expect(pickCaption(d!)).toBe("2 cut by top 10 cap");
+    expect(pickCaption(tr!)).toBeNull();
   });
-  it("never includes core or momentum, and says none today when empty", () => {
-    const [d, tr] = buzzSections({ active: [m("NVDA", "core", 1)], tail_cuts: [], dropped: [] });
-    expect(d!.rows).toEqual([]);
-    expect(tr!.rows).toEqual([]);
-    expect(buzzCaption(d!)).toBe("none today");
+  it("never includes core or momentum; None today when empty; first non-empty tab", () => {
+    const secs = pickSections({ active: [m("NVDA", "core", 1), m("BULL", "trending", 1)], tail_cuts: [], dropped: [] });
+    expect(secs[0]!.rows).toEqual([]);
+    expect(pickCaption(secs[0]!)).toBeNull();
+    expect(defaultPickTier(secs)).toBe("trending");
+    expect(defaultPickTier(pickSections({ active: [], tail_cuts: [], dropped: [] }))).toBe("discovery");
   });
   it("falls back to over_active_cap drops when tail_cuts is absent", () => {
-    const [, tr] = buzzSections({ active: [], tail_cuts: [], dropped: [{ ticker: "Z", tier: "trending", reason: "over_active_cap", rank: null }] });
+    const [, tr] = pickSections({ active: [], tail_cuts: [], dropped: [{ ticker: "Z", tier: "trending", reason: "over_active_cap", rank: null }] });
     expect(tr!.cut).toBe(1);
+  });
+  it("formats a row: source words, detail without the score, score apart", () => {
+    expect(pickRow({ source: "reddit+stocktwits", reason: "reddit #5 · stocktwits #2 · score 0.98" })).toEqual({
+      source: "Reddit + Stocktwits",
+      detail: "Reddit #5 · Stocktwits #2",
+      score: "0.98",
+    });
+    expect(pickRow({ source: "scout", reason: "2 videos" })).toEqual({ source: "Scout", detail: "2 videos", score: null });
   });
 });

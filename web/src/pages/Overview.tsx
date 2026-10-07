@@ -46,7 +46,8 @@ import {
   type Overview,
   type OverviewRange,
 } from "../lib/overview";
-import { buzzCaption, buzzSections, memberDetail, type Universe } from "../lib/universe";
+import { SegmentedControl } from "../components/SegmentedControl";
+import { defaultPickTier, memberDetail, pickCaption, pickRow, pickSections, type PickTier, type Universe } from "../lib/universe";
 import { useMeta, useOps, useOverview } from "../lib/useApi";
 import { PositionsTable } from "./PositionsTable";
 
@@ -460,50 +461,69 @@ function ProposalsCard({ o }: { o: Overview }) {
   );
 }
 
-/** D59: Today's Buzz, the top 10 of each fast-changing tier (Discovery, Trending). */
-function BuzzCard() {
+/** D59: Today's Pick, the top 10 of each fast-changing tier (Discovery, Trending), in the
+ *  Today's Proposals row layout; a tab switches tier. Core and momentum change slowly and stay
+ *  on Ops › Universe. */
+function PickCard() {
   const q = useOps("/api/ops/universe");
   const u = q.data as Universe | undefined;
-  const sections = u ? buzzSections(u) : [];
+  const sections = u ? pickSections(u) : [];
+  const [chosen, setChosen] = useState<PickTier | null>(null);
+  const tier = chosen ?? defaultPickTier(sections);
+  const sec = sections.find((x) => x.tier === tier);
   return (
     <Card
-      title="Today's Buzz"
-      testid="buzz"
+      title="Today's Pick"
+      testid="picks"
       action={{ label: "VIEW ALL", to: "/ops/universe" }}
-      freshness={u?.resolved_at ? { at: u.resolved_at, label: "universe resolve" } : undefined}
-      subtitle={<>top 10 per tier · the fast-changing tiers</>}
+      headerExtra={
+        u ? (
+          <SegmentedControl
+            size="sm"
+            label="Tier"
+            testid="pick-tabs"
+            value={tier}
+            onChange={setChosen}
+            options={sections.map((x) => ({ value: x.tier, label: `${x.label} ${x.active}` }))}
+          />
+        ) : undefined
+      }
     >
-      {!u ? (
+      {!u || !sec ? (
         <EmptyState caption={q.isError ? "Could not load the universe." : "Loading…"} />
+      ) : sec.rows.length === 0 ? (
+        <EmptyState caption={`No ${sec.label.toLowerCase()} names in today's active list.`} />
       ) : (
-        <div className="grid gap-4">
-          {sections.map((sec) => (
-            <div key={sec.tier} data-testid="buzz-tier" data-tier={sec.tier}>
-              <div className="mb-1.5 flex items-baseline gap-2">
-                <span className="text-caption font-semibold text-title">{sec.label}</span>
-                <span className="text-micro text-muted tabular-nums">{buzzCaption(sec)}</span>
-              </div>
-              {sec.rows.length === 0 ? (
-                <p className="text-caption text-muted">No {sec.label.toLowerCase()} names in today&apos;s active list.</p>
-              ) : (
-                <ul className="flex flex-wrap gap-1.5" data-testid="buzz-tickers">
-                  {sec.rows.map((m) => (
-                    <li key={m.ticker}>
-                      <Link
-                        to="/ops/universe"
-                        title={memberDetail(m).join("\n")}
-                        className="inline-flex min-h-[32px] items-center gap-1 rounded-control bg-control px-2 text-caption tabular-nums hover:bg-hover"
-                      >
-                        <span className="text-micro text-muted">{m.rank}</span>
-                        <span className="font-semibold text-title">{m.ticker}</span>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ))}
-        </div>
+        <>
+          <ul className="grid" data-testid="pick-rows" data-tier={sec.tier}>
+            {sec.rows.map((m) => {
+              const r = pickRow(m);
+              return (
+                <li key={m.ticker} className="border-b border-line last:border-b-0">
+                  <Link
+                    to="/ops/universe"
+                    className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 py-2.5 hover:bg-hover"
+                  >
+                    <span className="w-6 text-caption text-muted tabular-nums">#{m.rank}</span>
+                    <span className="min-w-0 truncate">
+                      <span className="font-semibold text-title">{m.ticker}</span> <span className="text-secondary">{r.source}</span>
+                    </span>
+                    <span className="text-right text-caption text-secondary tabular-nums">{r.score == null ? "" : `score ${r.score}`}</span>
+                    <span />
+                    <span className="min-w-0 truncate text-caption text-secondary tabular-nums" title={memberDetail(m).join("\n")}>
+                      {r.detail || "—"}
+                    </span>
+                    <span />
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-2 flex items-baseline gap-2" data-testid="pick-caption">
+            <span className="text-caption font-semibold text-title">{sec.label}</span>
+            {pickCaption(sec) && <span className="text-micro text-muted tabular-nums">{pickCaption(sec)}</span>}
+          </p>
+        </>
       )}
     </Card>
   );
@@ -636,7 +656,7 @@ export function OverviewPage() {
   }
   const positions = o.positions ?? [];
   // Mobile/tablet (one column, E8.8b order): status → Equity → P&L Today → Positions → Greeks
-  // vs Caps → Today's Proposals → Today's Buzz → Movers → Recent Activity. The column wrappers are
+  // vs Caps → Today's Proposals → Today's Pick → Movers → Recent Activity. The column wrappers are
   // `display: contents` below desktop so `order` interleaves them; desktop keeps two stacks.
   const col = "contents desktop:grid desktop:min-w-0 desktop:content-start desktop:gap-10";
   return (
@@ -660,7 +680,7 @@ export function OverviewPage() {
             <ProposalsCard o={o} />
           </div>
           <div className="order-6 min-w-0 desktop:order-none">
-            <BuzzCard />
+            <PickCard />
           </div>
         </div>
         <div className={col}>

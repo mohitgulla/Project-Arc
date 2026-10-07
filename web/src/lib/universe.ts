@@ -105,17 +105,18 @@ export function tailCutDetail(d: UniverseDropped): string {
 }
 
 // ---------------------------------------------------------------------------
-// D59: Overview "Today's Buzz" (the fast-changing tiers: discovery + trending)
+// D59: Overview "Today's Pick" (the fast-changing tiers: discovery + trending)
 // ---------------------------------------------------------------------------
 
 /** The fast-changing tiers the Overview widget shows, in active-list order (D58). */
-export const BUZZ_TIERS = ["discovery", "trending"] as const;
-export const BUZZ_TOP = 10;
+export const PICK_TIERS = ["discovery", "trending"] as const;
+export type PickTier = (typeof PICK_TIERS)[number];
+export const PICK_TOP = 10;
 
-export interface BuzzSection {
-  tier: (typeof BUZZ_TIERS)[number];
+export interface PickSection {
+  tier: PickTier;
   label: string;
-  /** Active members by rank, at most BUZZ_TOP. */
+  /** Active members by rank, at most PICK_TOP. */
   rows: UniverseActive[];
   /** Active members of the tier (before the top-N cut). */
   active: number;
@@ -124,27 +125,36 @@ export interface BuzzSection {
 }
 
 /** Top N active names per fast tier, from the stored resolve (nothing re-derived). */
-export function buzzSections(
+export function pickSections(
   u: Pick<Universe, "active" | "tail_cuts" | "dropped">,
-  top: number = BUZZ_TOP,
-): BuzzSection[] {
-  const cuts = (u.tail_cuts?.length ? u.tail_cuts : (u.dropped ?? []).filter((d) => d.reason === "over_active_cap")) ?? [];
-  return BUZZ_TIERS.map((tier) => {
+  top: number = PICK_TOP,
+): PickSection[] {
+  const cuts = u.tail_cuts?.length ? u.tail_cuts : (u.dropped ?? []).filter((d) => d.reason === "over_active_cap");
+  return PICK_TIERS.map((tier) => {
     const all = membersOf(u.active, tier);
-    return {
-      tier,
-      label: tierLabel(tier),
-      rows: all.slice(0, top),
-      active: all.length,
-      cut: cuts.filter((d) => d.tier === tier).length,
-    };
+    return { tier, label: tierLabel(tier), rows: all.slice(0, top), active: all.length, cut: cuts.filter((d) => d.tier === tier).length };
   });
 }
 
-/** Section caption: `8 active · 3 cut by cap` (`none today` when empty). */
-export function buzzCaption(s: Pick<BuzzSection, "active" | "cut">): string {
-  if (s.active === 0 && s.cut === 0) return "none today";
-  const parts = [`${s.active} active`];
-  if (s.cut > 0) parts.push(`${s.cut} cut by cap`);
-  return parts.join(" · ");
+/** The tab shown first: the first tier with names (Discovery when both are empty). */
+export function defaultPickTier(sections: Pick<PickSection, "tier" | "rows">[]): PickTier {
+  return sections.find((s) => s.rows.length > 0)?.tier ?? PICK_TIERS[0];
+}
+
+/** Next to the tier name: `7 cut by top 10 cap` (names past the top N); null when none. */
+export function pickCaption(s: Pick<PickSection, "active" | "rows">, top: number = PICK_TOP): string | null {
+  const cut = Math.max(0, s.active - top);
+  return cut > 0 ? `${cut} cut by top ${top} cap` : null;
+}
+
+const SOURCE_WORDS: Record<string, string> = { reddit: "Reddit", stocktwits: "Stocktwits", scout: "Scout", youtube: "YouTube" };
+const sourceWord = (w: string) => SOURCE_WORDS[w.toLowerCase()] ?? (w ? w[0]!.toUpperCase() + w.slice(1) : w);
+
+/** One Overview row: `Reddit + Stocktwits`, `Reddit #5 · Stocktwits #2`, score `0.98`. */
+export function pickRow(m: Pick<UniverseActive, "source" | "reason">): { source: string; detail: string; score: string | null } {
+  const source = (m.source || "").split("+").filter(Boolean).map(sourceWord).join(" + ") || "—";
+  const match = /\s*·?\s*score\s+([0-9.]+)\s*$/.exec(m.reason ?? "");
+  const rest = match ? (m.reason ?? "").slice(0, match.index) : (m.reason ?? "");
+  const detail = rest.replace(/\b(reddit|stocktwits|scout|youtube)\b/gi, (w) => sourceWord(w)).trim();
+  return { source, detail, score: match ? match[1]! : null };
 }
