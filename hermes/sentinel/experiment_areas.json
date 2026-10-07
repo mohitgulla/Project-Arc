@@ -38,6 +38,19 @@
       "hermes/skills/arc-risk/SKILL.md",
       "config/account_profiles.yaml"
     ],
+    "universe": [
+      "arc/universe/*",
+      "config/universe.yaml"
+    ],
+    "funnel": [
+      "arc/ingest/scalp.py",
+      "arc/ingest/stories.py",
+      "arc/ingest/llm.py",
+      "arc/personas/*",
+      "hermes/skills/arc-scalp/SKILL.md",
+      "hermes/skills/arc-scout/SKILL.md",
+      "config/routines.yaml"
+    ],
     "other": "*"
   },
   "always": [

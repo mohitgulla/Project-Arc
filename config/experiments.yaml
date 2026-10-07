@@ -44,6 +44,13 @@ experiments:
     max_lag_seconds: 240     # skip pairing a control chain older than this (stale quotes)
     tape_keep_days: 3        # market_tape retention in the control store
     arm_jobs: [monitor, positions.evaluate, broker.reconcile, broker]   # run on the arm's own store
+    # E13.12 (D56): non-loop personas (scout | scalp) every arm runs itself, on its own
+    # store, at control's slots. An arm whose overlay touches a persona's knobs runs it
+    # anyway (arc.experiments.runner.arm_owned_personas: scout <- personas.scout_feed,
+    # funnel.scout.*, universe; scalp <- personas.scalp_options_tape / scalp_*,
+    # funnel.scalp.*, categories.*). An arm that owns one forks its loop at research.
+    # Topology, not a strategy knob: never runtime-tunable.
+    arm_personas: []
     arms:
       treatment:
         spec_arm: treatment

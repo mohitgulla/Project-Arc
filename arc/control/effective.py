@@ -342,3 +342,19 @@ def effective_routines(
     ov = yaml_overrides(changes, routines_path=path).get(Target.ROUTINES.value) or {}
     ov = {**ov, **overlay_overrides(overlay).get(Target.ROUTINES.value, {})}
     return load_routines(path, overrides=ov or None)
+
+
+def routines_for_overlay(
+    control: sqlite3.Connection,
+    overlay: dict[str, dict[str, Any]] | None,
+    path: Path | str | None = None,
+) -> RoutinesConfig:
+    """What :func:`effective_routines` returns on an arm store with *overlay* (E13.12).
+
+    Read from the *control* store before the arm store exists (``arc experiment start``
+    computes each arm's plan from it): control's overrides plus the overlay's routines.
+    """
+    changes, _, _ = _arm_source(control)
+    ov = yaml_overrides(changes, routines_path=path).get(Target.ROUTINES.value) or {}
+    ov = {**ov, **overlay_overrides(overlay).get(Target.ROUTINES.value, {})}
+    return load_routines(path, overrides=ov or None)

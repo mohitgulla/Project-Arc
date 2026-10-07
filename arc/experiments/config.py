@@ -126,8 +126,17 @@ class RunnerConfig(BaseModel):
         default_factory=lambda: ["monitor", "positions.evaluate", "broker.reconcile", "broker"],
         description=(
             "Jobs an arm runs on its own store and account (position management, "
-            "reconcile, ladders). Sources and the Scalp are shared from control; the loop "
-            "runs paired; everything else is control's."
+            "reconcile, ladders). Sources are shared from control; the Scout / Scalp too "
+            "unless the arm owns them (arm_personas); the loop runs paired; everything "
+            "else is control's."
+        ),
+    )
+    arm_personas: list[Literal["scout", "scalp"]] = Field(
+        default_factory=list,
+        description=(
+            "E13.12 (D56): non-loop personas every arm runs on its own store, on top of "
+            "the ones its overlay touches (arc.experiments.runner.arm_owned_personas). "
+            "Experiment topology, not a strategy knob (never runtime-tunable)."
         ),
     )
     arms: dict[str, ArmRunner] = Field(default_factory=dict)
@@ -135,6 +144,10 @@ class RunnerConfig(BaseModel):
     @model_validator(mode="after")
     def _arms(self) -> RunnerConfig:
         import re
+
+        if len(set(self.arm_personas)) != len(self.arm_personas):
+            msg = "runner arm_personas lists a persona twice"
+            raise ValueError(msg)
 
         dbs: set[str] = set()
         for name, arm in self.arms.items():

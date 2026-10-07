@@ -47,10 +47,12 @@ experiments_dir: config/experiments/live
 verdicts_dir: config/experiments/live/verdicts
 
 # Strategy YAMLs where changing or removing an existing value is a *promotion*. These
-# are the files a forward experiment can overlay (arc.experiments.models
-# OVERLAY_TARGETS), so a winning experiment can have tested the new value. A value
-# change in another strategy YAML (universe.yaml: no experiment can overlay it) is an
-# ordinary strategy-lane change: any one lane line covers it.
+# are files a forward experiment can overlay (arc.experiments.models OVERLAY_TARGETS),
+# so a winning experiment can have tested the new value. A value change in another
+# strategy YAML is an ordinary strategy-lane change: any one lane line covers it.
+# universe.yaml became an overlay target in E13.12 (XP-5, d56 vs d51 tiers) but stays
+# out of this list on purpose: the D56 cutover (E13.15) flips universe.tiers.model by
+# owner go-ahead (PLAN D56, open decision 12), and the core list is owner-edited.
 promotion_stems: [exits, ranking, costs, account_profiles]
 
 # Values that count as "off" (control behaviour) for a new `Flag:` key.

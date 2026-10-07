@@ -696,7 +696,7 @@ export interface components {
          * @description What part of the strategy the experiment changes; one running per area.
          * @enum {string}
          */
-        Area: "entries" | "exits" | "ranking" | "sizing" | "other";
+        Area: "entries" | "exits" | "ranking" | "sizing" | "universe" | "funnel" | "other";
         /**
          * Arm
          * @description One arm: a config overlay per target file (empty = production config).
@@ -711,6 +711,31 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+        };
+        /**
+         * ArmPlan
+         * @description How one runner arm runs (E13.12, D56): computed at t0, stored on ``arm_identity``.
+         *
+         *     ``fork_step`` is the first loop step the arm runs itself; ``arm_personas`` the
+         *     non-loop personas it runs on its own store (their output never comes from
+         *     control); ``shared_kinds`` the context kinds synced from control before each
+         *     paired chain (and before the arm's own Scout / Scalp), minus every row
+         *     ``own_producers`` wrote: the arm writes those itself.
+         */
+        ArmPlan: {
+            /** Arm Jobs */
+            arm_jobs?: string[];
+            /** Arm Personas */
+            arm_personas?: ("scout" | "scalp")[];
+            /** Fork Step */
+            fork_step: string;
+            /**
+             * Own Producers
+             * @description Jobs whose context rows are never synced from control (the arm's own)
+             */
+            own_producers?: string[];
+            /** Shared Kinds */
+            shared_kinds?: string[];
         };
         /**
          * ArmSummary
@@ -4226,6 +4251,13 @@ export interface components {
              * @default false
              */
             aa_override: boolean;
+            /**
+             * Arm Plans
+             * @description E13.12: runner arm -> its ArmPlan at t0 (empty before E13.12)
+             */
+            arm_plans?: {
+                [key: string]: components["schemas"]["ArmPlan"];
+            };
             /** Config Hashes */
             config_hashes?: {
                 [key: string]: string;

@@ -53,6 +53,13 @@ def add_arm_parsers(esub: Any, common: Any, local_actor: str) -> None:
     sa.add_argument("--arm-dir", default=None, help="Put the arm stores in this dir (scratch)")
     sa.add_argument("--aa-override", action="store_true", help="Owner: ab start with no A/A")
     sa.add_argument("--now", default=None, help="t0 as this ISO time (default: now)")
+    sa.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="E13.12: print each arm's plan (fork step, own personas, shared kinds); "
+        "no store, no broker call, nothing written",
+    )
+    sa.add_argument("--config", default=None, help="routines.yaml (default: config/routines.yaml)")
     pr = common(esub.add_parser("pair", help="Run each arm's copy of one control chain (E10.2)"))
     pr.add_argument("chain_run_id", help="The control loop chain to pair")
     pr.add_argument(
@@ -69,6 +76,17 @@ def add_arm_parsers(esub: Any, common: Any, local_actor: str) -> None:
     at.add_argument("--lock-dir", default="data/locks")
     at.add_argument("--now", default=None)
     at.add_argument("--no-slack", action="store_true", help="Accepted; the arms never post")
+    at.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="E13.12: each arm's plan + the jobs its tick would run at --now; writes nothing",
+    )
+    at.add_argument(
+        "--experiment",
+        default=None,
+        help="With --dry-run: preview this (draft/registered) experiment's arms instead",
+    )
+    at.add_argument("--since", default=None, help="With --dry-run: tick window start (ISO)")
 
 
 def _parse_now(text: str | None, default: _dt.datetime | None = None) -> _dt.datetime:
@@ -80,9 +98,40 @@ def _parse_now(text: str | None, default: _dt.datetime | None = None) -> _dt.dat
     return t.replace(tzinfo=ET) if t.tzinfo is None else t.astimezone(ET)
 
 
+def _preview(args: argparse.Namespace, conn: sqlite3.Connection, experiment_id: str | None) -> int:
+    from arc.experiments.runner import arms_preview
+
+    now = _parse_now(args.now)
+    since = _parse_now(args.since) if getattr(args, "since", None) else None
+    report = arms_preview(conn, experiment_id, routines_path=args.config, now=now, since=since)
+    if args.json:
+        _out(json.dumps(report, indent=2, default=str))
+        return 0
+    if "skipped" in report:
+        _out(f"dry-run: {report['skipped']}")
+        return 0
+    _out(
+        f"dry-run · {report['experiment_id']} ({report['status']}) · plans "
+        f"{report['plans_from']} · nothing written"
+    )
+    for name, arm in report["arms"].items():
+        plan = arm["plan"]
+        _out(f"arm {name} (spec arm {arm['spec_arm']}):")
+        _out(f"  fork step:     {plan['fork_step']}")
+        personas = ", ".join(plan["arm_personas"]) or "none (control's Scout / Scalp)"
+        _out(f"  arm personas:  {personas}")
+        _out(f"  arm jobs:      {', '.join(plan['arm_jobs'])}")
+        _out(f"  shared kinds:  {', '.join(plan['shared_kinds'])}")
+        for line in arm["tick"]:
+            _out(f"  {line}")
+    return 0
+
+
 def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     from arc.experiments.runner import live_flat_check, runner_config, start_arms
 
+    if args.dry_run:
+        return _preview(args, conn, args.experiment_id)
     now = _parse_now(args.now)
     if args.fixtures:
         from arc.pipeline.env import fixture_account
@@ -111,6 +160,7 @@ def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
         arm_dir=Path(args.arm_dir).resolve() if args.arm_dir else None,
         aa_override=args.aa_override,
         check_flat=check,
+        routines_path=args.config,
     )
     from arc.experiments.runner import arm_stores
 
@@ -121,6 +171,9 @@ def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
         "t0_equity": str(t0_equity),
         "legacy_book": [] if st.running is None else st.running.legacy_book,
         "arms": {n: str(p) for n, p in arm_stores(conn).items()},
+        "plans": {}
+        if st.running is None
+        else {n: pl.model_dump(mode="json") for n, pl in st.running.arm_plans.items()},
     }
     if args.json:
         _out(json.dumps(payload, indent=2))
@@ -130,7 +183,9 @@ def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
             f"({len(payload['legacy_book'])} legacy structure(s))"
         )
         for n, p in payload["arms"].items():
-            _out(f"  arm {n}: {p}")
+            plan = payload["plans"].get(n) or {}
+            personas = ", ".join(plan.get("arm_personas") or []) or "none"
+            _out(f"  arm {n}: {p} (fork {plan.get('fork_step')}; own personas: {personas})")
     return 0
 
 
@@ -226,6 +281,11 @@ def _arms_tick(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     from arc.routines.spawn import spawn_detached
     from arc.utils.calendar import now_et
 
+    if args.dry_run:
+        return _preview(args, conn, args.experiment)
+    if args.experiment or args.since:
+        _err("arc experiment arms-tick: --experiment / --since are only for --dry-run")
+        return 2
     now = _parse_now(args.now)
     lock_dir = Path(args.lock_dir)
     report: dict[str, Any]

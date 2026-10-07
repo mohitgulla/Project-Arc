@@ -167,3 +167,32 @@ export function breakdownView(r: ExperimentReport | null | undefined): Breakdown
 }
 
 export const BREAKDOWN_LABEL: Record<string, string> = { regime: "Regime", structure_kind: "Structure" };
+
+export interface ArmPlanView {
+  arm: string;
+  forkStep: string;
+  personas: string;
+  jobs: string;
+}
+
+/**
+ * E13.12 (D56): where each runner arm forks from control's loop and which non-loop
+ * personas (Scout / Scalp) it runs on its own store. Empty before t0 or for an
+ * experiment started before E13.12 (no stored plans).
+ */
+export function armPlanRows(d: Pick<ExperimentDetail, "running"> | null | undefined): ArmPlanView[] {
+  const plans = d?.running?.arm_plans ?? {};
+  return Object.entries(plans)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([arm, p]) => ({
+      arm: arm
+        .split("_")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" "),
+      forkStep: p.fork_step,
+      personas: (p.arm_personas ?? []).length
+        ? (p.arm_personas ?? []).map((x) => x.charAt(0).toUpperCase() + x.slice(1)).join(", ")
+        : "None (control's)",
+      jobs: (p.arm_jobs ?? []).join(", ") || "—",
+    }));
+}

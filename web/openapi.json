@@ -439,6 +439,8 @@
           "exits",
           "ranking",
           "sizing",
+          "universe",
+          "funnel",
           "other"
         ],
         "title": "Area",
@@ -459,6 +461,54 @@
           }
         },
         "title": "Arm",
+        "type": "object"
+      },
+      "ArmPlan": {
+        "additionalProperties": false,
+        "description": "How one runner arm runs (E13.12, D56): computed at t0, stored on ``arm_identity``.\n\n``fork_step`` is the first loop step the arm runs itself; ``arm_personas`` the\nnon-loop personas it runs on its own store (their output never comes from\ncontrol); ``shared_kinds`` the context kinds synced from control before each\npaired chain (and before the arm's own Scout / Scalp), minus every row\n``own_producers`` wrote: the arm writes those itself.",
+        "properties": {
+          "arm_jobs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Arm Jobs",
+            "type": "array"
+          },
+          "arm_personas": {
+            "items": {
+              "enum": [
+                "scout",
+                "scalp"
+              ],
+              "type": "string"
+            },
+            "title": "Arm Personas",
+            "type": "array"
+          },
+          "fork_step": {
+            "title": "Fork Step",
+            "type": "string"
+          },
+          "own_producers": {
+            "description": "Jobs whose context rows are never synced from control (the arm's own)",
+            "items": {
+              "type": "string"
+            },
+            "title": "Own Producers",
+            "type": "array"
+          },
+          "shared_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Shared Kinds",
+            "type": "array"
+          }
+        },
+        "required": [
+          "fork_step"
+        ],
+        "title": "ArmPlan",
         "type": "object"
       },
       "ArmSummary": {
@@ -10536,6 +10586,14 @@
             "default": false,
             "title": "Aa Override",
             "type": "boolean"
+          },
+          "arm_plans": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ArmPlan"
+            },
+            "description": "E13.12: runner arm -> its ArmPlan at t0 (empty before E13.12)",
+            "title": "Arm Plans",
+            "type": "object"
           },
           "config_hashes": {
             "additionalProperties": {
