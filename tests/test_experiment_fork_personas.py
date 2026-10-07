@@ -37,7 +37,7 @@ from arc.experiments.runner import (
 )
 from arc.ingest.store import FILTERED_STATUS, RawDocRepo
 from arc.pipeline.env import FIXTURE_NOW
-from arc.routines.config import chain_for, load_routines
+from arc.routines.config import AUTO_CHAINS, load_routines
 from arc.routines.handlers import JobResult
 from arc.store.migrate import migrate
 from arc.utils.calendar import ET
@@ -48,10 +48,9 @@ if TYPE_CHECKING:
 T0 = FIXTURE_NOW - dt.timedelta(hours=1)
 NOW = dt.datetime(2026, 10, 6, 9, 0, tzinfo=ET)  # Tuesday
 XP5 = "tests/fixtures/experiments/xp5_universe_screen.yaml"
-XP8 = "config/experiments/live/xp8_scalp_options_tape.yaml"
 
-# research chain under exit_path research + quant_risk_loop on: every loop persona
-FULL = ["research", *chain_for("research", {"quant_risk_loop": True}, {"exit_path": "research"})]
+# the research chain (fixed since E13.15): every loop persona
+FULL = ["research", *AUTO_CHAINS["research"]]
 
 
 def _db(path: Path | str = ":memory:") -> sqlite3.Connection:
@@ -103,13 +102,11 @@ def test_full_chain_has_every_loop_persona() -> None:
     [
         ({}, "exits.mandatory"),  # the first account step: the arm's own book
         ({"universe": {"liquidity_screen": {"loose": {"min_price": 4.0}}}}, "research"),
-        ({"routines": {"personas": {"exit_path": "research"}}}, "research"),
-        ({"routines": {"personas": {"research_idea_pool": "all"}}}, "research"),
+        ({"routines": {"personas": {"director_diversification": "relaxed"}}}, "research"),
         ({"account_profiles": {"x": 1}}, "research"),
         ({"exits": {"x": 1}}, "exits.mandatory"),
         ({"costs": {"x": 1}}, "exits.mandatory"),
         ({"ranking": {"x": 1}}, "exits.mandatory"),
-        ({"routines": {"personas": {"quant_risk_loop": "on"}}}, "exits.mandatory"),
     ],
 )
 def test_fork_on_the_exit_path_chain(overlay: dict, fork: str) -> None:
@@ -123,13 +120,12 @@ def test_fork_on_the_exit_path_chain(overlay: dict, fork: str) -> None:
         ({"exits": {"x": 1}}, "quant.exit"),
         ({"account_profiles": {"x": 1}}, "research"),
         ({"ranking": {"x": 1}}, "quant.propose"),
-        ({"routines": {"personas": {"quant_risk_loop": "on"}}}, "risk.open"),
     ],
 )
-def test_fork_on_the_shadow_exit_chain(overlay: dict, fork: str) -> None:
-    """exit_path shadow: quant.exit (no account step) precedes the open path."""
-    chain = ["research", *chain_for("research", {"quant_risk_loop": True}, {"exit_path": "shadow"})]
-    assert chain[1] == "quant.exit"
+def test_fork_on_a_chain_without_an_account_step_first(overlay: dict, fork: str) -> None:
+    """quant.exit (no account step) ahead of the open path."""
+    chain = ["research", "quant.exit", "quant.open", "risk.open", "quant.revise",
+             "quant.propose", "broker.execute"]  # fmt: skip
     assert fork_step(chain, overlay) == fork
 
 
@@ -138,10 +134,8 @@ def test_fork_at_risk_exit_and_quant_revise() -> None:
     chain = ["research", "quant.open", "risk.exit", "quant.revise", "quant.propose"]
     assert fork_step(chain, {"account_profiles": {}, "exits": {"x": 1}}) == "quant.open"
     assert fork_step(["research", "risk.exit", "quant.propose"], {"exits": {"x": 1}}) == "risk.exit"
-    loop = {"routines": {"personas": {"quant_risk_loop": "on"}}}
-    assert fork_step(["research", "quant.open", "quant.revise", "quant.propose"], loop) == (
-        "quant.revise"
-    )
+    chain = ["research", "quant.revise", "quant.propose"]
+    assert fork_step(chain, {"costs": {"x": 1}}) == "quant.revise"
 
 
 def test_owning_a_persona_forks_at_research_at_the_latest() -> None:
@@ -161,17 +155,17 @@ def test_owning_a_persona_forks_at_research_at_the_latest() -> None:
     [
         ({}, set()),
         ({"exits": {"x": 1}}, set()),
-        ({"routines": {"personas": {"research_idea_pool": "all"}}}, set()),
-        ({"routines": {"personas": {"scout_feed": "on"}}}, {"scout"}),
+        ({"routines": {"personas": {"director_diversification": "relaxed"}}}, set()),
+        ({"routines": {"personas": {"scout": {"max_runtime": "10m"}}}}, {"scout"}),
         ({"routines": {"funnel": {"scout": {"max_discovery": 10}}}}, {"scout"}),
         ({"universe": {"liquidity_screen": {"loose": {"min_price": 4.0}}}}, {"scout"}),
-        ({"routines": {"personas": {"scalp_options_tape": "on"}}}, {"scalp"}),
+        ({"routines": {"personas": {"scalp": {"max_runtime": "10m"}}}}, {"scalp"}),
         ({"routines": {"funnel": {"scalp": {"x": 1}}}}, {"scalp"}),
         ({"routines": {"categories": {"market_news": {"weight": 2}}}}, {"scalp"}),
         (
             {
                 "universe": {"core": ["AAPL"]},
-                "routines": {"personas": {"scalp_options_tape": "on"}},
+                "routines": {"funnel": {"scalp": {"x": 1}}},
             },
             {"scout", "scalp"},
         ),
@@ -216,16 +210,16 @@ def test_plan_for_xp5_runs_its_own_scout_and_syncs_its_inputs() -> None:
 
 def test_plan_for_a_scalp_arm_shares_raw_docs_and_the_tape() -> None:
     plan = arm_plan(
-        load_routines(), {"routines": {"personas": {"scalp_options_tape": "on"}}}, RunnerConfig()
+        load_routines(), {"routines": {"funnel": {"scalp": {"x": 1}}}}, RunnerConfig()
     )
     assert plan.arm_personas == ["scalp"]
     assert plan.own_producers == ["scalp", "scalp.overnight"]
     assert {"raw_doc_ref", "index_vols", "chain_snapshot"} <= set(plan.shared_kinds)
 
 
-def test_plan_never_syncs_book_kinds_under_the_research_exit_path() -> None:
-    routines = load_routines(overrides={("personas", "exit_path"): "research"})
-    plan = arm_plan(routines, {"routines": {"personas": {"exit_path": "research"}}}, RunnerConfig())
+def test_plan_never_syncs_book_kinds_on_the_research_exit_path() -> None:
+    overlay = {"routines": {"personas": {"director_diversification": "relaxed"}}}
+    plan = arm_plan(load_routines(), overlay, RunnerConfig())
     assert plan.fork_step == "research"
     assert not set(plan.shared_kinds) & BOOK_KINDS
     assert "portfolio_context" in plan.shared_kinds  # exit steps read it
@@ -292,7 +286,8 @@ def test_start_stores_each_arm_plan(control: Path, tmp_path: Path) -> None:
     assert plans["treatment"].arm_personas == ["scout"]
     assert plans["treatment"].fork_step == "research"
     assert plans["shadow_control"].arm_personas == []
-    assert plans["shadow_control"].fork_step == "quant.propose"
+    # E13.15: the shipped chain opens with exits.mandatory (the arm's own book)
+    assert plans["shadow_control"].fork_step == "exits.mandatory"
     arm = _db(tmp_path / "arms" / "exp-XP-5.db")
     ident = read_identity(arm)
     assert ident is not None and ArmPlan.model_validate(ident.plan) == plans["treatment"]
@@ -546,13 +541,6 @@ def test_bad_universe_overlay_is_refused_at_create(tmp_path: Path) -> None:
                 }
             )
         )
-
-
-def test_xp8_owns_the_scalp() -> None:
-    import yaml
-
-    spec = yaml.safe_load(open(XP8))  # noqa: PTH123, SIM115
-    assert arm_owned_personas(spec["arms"]["treatment"]["overlay"]) == {"scalp"}
 
 
 def test_migration_026_keeps_every_experiment_row_and_the_triggers(tmp_path: Path) -> None:

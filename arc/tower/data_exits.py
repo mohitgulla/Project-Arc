@@ -14,8 +14,8 @@ Plus the **Exit path strip** (mode · mandatory signals pending · cases today �
 proposed today · holds today). "Latest" is by ``valid_from`` (the entry's as-of), then
 ``created_at``. The Tower never recomputes a case or verdict; it only reads them.
 
-Under ``personas.exit_path: deterministic`` no such entries exist: every view is
-``None`` and the strip carries the mode only (counts 0).
+E13.15: the exit path is always ``research`` (the ``personas.exit_path`` switch was
+removed); ``deterministic`` / ``shadow`` remain readable modes for fixtures.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ class ExitPathStrip(BaseModel):
 
     model_config = _STRICT
 
-    mode: ExitPathMode = Field(description="personas.exit_path (effective config)")
+    mode: ExitPathMode = Field(description="Exit path mode (research since the D56 cutover)")
     mandatory_pending: int = Field(0, ge=0, description="Open positions with a mandatory signal")
     cases_today: int = Field(0, ge=0, description="exit_case entries written today")
     closes_proposed_today: int = Field(0, ge=0, description="Close proposals created today")

@@ -262,11 +262,11 @@ class ResearchOutput(BaseModel):
 
 
 class ResearchExitOutput(ResearchOutput):
-    """Research reply under ``personas.exit_path`` != ``deterministic`` (E13.17, D56).
+    """Research reply with open positions (E13.17, D56).
 
-    A subclass (not a new field on :class:`ResearchOutput`) so the off path's prompt,
-    which embeds the reply schema, stays byte-identical. ``exit_watchlist`` replaces
-    ``thesis_checks`` (kept for the off path and stored shortlists).
+    A subclass (not a new field on :class:`ResearchOutput`) so a recorded
+    pre-cutover prompt, which embeds the reply schema, replays byte-identical.
+    ``exit_watchlist`` replaces ``thesis_checks`` (kept for stored shortlists).
     """
 
     exit_watchlist: list[ExitWatchItem] = Field(
@@ -445,7 +445,7 @@ class RiskOpenAssessment(RiskAssessment):
 
 
 class RiskOpenOutput(RiskOutput):
-    """Risk output on the E13.9 open path (``personas.quant_risk_loop: on``)."""
+    """Risk output on the E13.9 open path (verdicts; always since E13.15)."""
 
     assessments: list[RiskOpenAssessment] = Field(  # type: ignore[assignment]
         ..., description="One assessment (with a verdict) per proposed structure"
@@ -462,26 +462,7 @@ class QuantReviseOutput(QuantOutput):
     )
 
 
-class SwapVerdict(BaseModel):
-    """Risk's verdict on one close-to-reallocate suggestion (E6.4, D19)."""
-
-    swap_id: str = Field(..., description="The suggestion's swap_id, copied verbatim")
-    approve: bool = Field(..., description="false = veto; the swap is dropped")
-    narrative: str = Field(..., description="Why, in one or two sentences (advisory)")
-
-
-class RiskSwapReview(BaseModel):
-    """Risk persona output for ``risk.reallocate``: a verdict per suggested swap.
-
-    Risk can only veto: a suggestion missing from ``verdicts`` counts as a veto,
-    and nothing here can add a swap or change its numbers (deterministic scorer).
-    """
-
-    verdicts: list[SwapVerdict] = Field(default_factory=list)
-    advisory_notes: str = Field("", description="Overall note on reallocating now")
-
-
-# E13.18 (D56): Risk's review of Quant's exit cases (personas.exit_path: research).
+# E13.18 (D56): Risk's review of Quant's exit cases.
 type RiskExitReasonCode = Literal[
     "thesis_broken",
     "ev_exhausted",
@@ -667,16 +648,3 @@ class ScoutOutput(BaseModel):
                 msg = "each theme is one line of at most 160 characters"
                 raise ValueError(msg)
         return v
-
-
-# D56 (E13.1): pre-rename names, re-exported for one release.
-SweepCandidateOut = ScalpCandidateOut
-SweepOutput = ScalpOutput
-DirectorRankedItem = ResearchRankedItem
-DirectorExclusion = ResearchExclusion
-DirectorPortfolioView = ResearchPortfolioView
-DirectorThesisCheck = ResearchThesisCheck
-DirectorOutput = ResearchOutput
-# D56 (E13.2): Investor / Auditor names, re-exported for one release.
-InvestorPlan = BrokerPlan
-AuditorOutput = ReconcileOutput

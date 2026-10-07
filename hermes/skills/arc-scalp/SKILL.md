@@ -56,7 +56,7 @@ audit.
 Dry run: `arc scan --dry-run` uses fixture docs and canned replies in `arc/ingest/fixtures/scalp/`
 (no network).
 
-## Options tape (E13.10, D56; only with `personas.scalp_options_tape: on`)
+## Options tape (E13.10, D56)
 
 Stage 2 also reads a code-built `## Options tape (Cboe, code-built)` block: the Cboe delayed
 VIX complex (VIX1D/9D/VIX/3M/VVIX/VXN, ratios, flags) and one line per fresh ticker chain

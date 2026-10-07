@@ -133,8 +133,7 @@ class PortfolioThesis(BaseModel):
 class PositionFacts(BaseModel):
     """Code-built research facts for one open position (E13.17, D56).
 
-    Only built under ``personas.exit_path`` != ``deterministic`` (Research's exit
-    watch). The last six fields come straight from the position's
+    Built for Research's exit watch. The last six fields come straight from the position's
     :class:`~arc.positions.evaluate.PositionReview`; the rest from the context store.
     """
 

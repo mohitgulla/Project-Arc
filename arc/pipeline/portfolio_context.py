@@ -303,7 +303,7 @@ def build_portfolio_context(
     E12.5: *diversification* in ``relaxed`` mode flags sector / stance / expiry
     concentration at its relaxed thresholds (never below the strict settings).
 
-    E13.17: *facts* (``personas.exit_path`` != ``deterministic``) adds each position's
+    E13.17: *facts* (the Research exit watch) adds each position's
     :class:`PositionFacts` (IV rank, next earnings, ex-dividend, fresh stories, Scout
     mention, review numbers), read from *facts_snapshot* (default *snapshot*).
     *reviews_out* (when given) collects the ``computed`` reviews (no fresh stored

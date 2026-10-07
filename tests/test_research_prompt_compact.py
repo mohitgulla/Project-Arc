@@ -1,8 +1,7 @@
-"""E13.8 (D56/D54, D44): the compact Research prompt behind
-``personas.research_compact_prompt``.
+"""E13.8 (D56/D54, D44): the compact Research prompt (always since E13.15).
 
-Pins: ``full`` (the control) is today's prompt byte for byte (the E12.5 golden plus a
-recorded-inputs replay); ``compact`` on a snapshot at today's live counts (35
+Pins: the full renderer still rebuilds pre-cutover recorded calls byte for byte (the
+E12.5 golden plus a recorded-inputs replay); ``compact`` on a snapshot at today's live counts (35
 candidates, 37 regimes, 419 stories, 235 notes, 3 briefs, Finnhub facts, a 6-position
 book) fits ``research_prompt_max_chars`` minus the 7,200-char E13.17 reserve with no
 trimming; over budget the headlines go first, then the pool is cut to its top 40 by
@@ -21,7 +20,6 @@ import pytest
 
 from arc.config import ArcSettings
 from arc.context.store import ContextEntry, ContextSnapshot, ContextStore
-from arc.experiments.overlay import arm_config_data, load_spec
 from arc.ingest.llm import FixtureScalpLLM
 from arc.personas.builders import (
     COMPACT_MAX_HEADLINES,
@@ -36,12 +34,7 @@ from arc.pipeline.research_pool import (
     build_idea_pool,
 )
 from arc.pipeline.steps import _fit_research_budget, _research_rules, build_prompt
-from arc.routines.config import (
-    DEFAULT_ROUTINES_PATH,
-    ResearchCompactPromptSettings,
-    RoutinesConfig,
-    load_routines,
-)
+from arc.routines.config import load_routines
 from arc.utils.calendar import ET
 from tests import diversification_golden as dg
 from tests import finnhub_golden as g
@@ -234,7 +227,7 @@ def _inputs(snap: ContextSnapshot, *, merged: bool, compact: bool) -> dict[str, 
         "portfolio_block": _book(),
         "recent_ideas": "\n".join(f"- {t} bullish (proposed 1d ago)" for t in _TICKERS[:8]),
         "entry_terms": None,
-        "rules": _research_rules(cands, _settings(), compact=compact),
+        "rules": _research_rules(cands, _settings()),
         "youtube_channels": CHANNELS,
         "categories": None,
         "ticker_facts": {"max_tickers": 15, "tickers": _TICKERS[:15], "max_chars": 300},
@@ -250,7 +243,7 @@ def _inputs(snap: ContextSnapshot, *, merged: bool, compact: bool) -> dict[str, 
 
 
 # ---------------------------------------------------------------------------
-# full (the control) is unchanged
+# full (pre-cutover recorded calls) still replays
 # ---------------------------------------------------------------------------
 
 
@@ -326,7 +319,7 @@ def _fit(snap: ContextSnapshot, max_chars: int) -> tuple[dict[str, Any], list[An
         inputs,
         pool.items,
         settings,
-        lambda c: _research_rules(c, settings, compact=True),
+        lambda c: _research_rules(c, settings),
     )
     return out, cut, build_prompt("research", snap, out)
 
@@ -401,10 +394,7 @@ def _compact_run() -> Any:
     )
     env = PipelineEnv.fixtures()
     env.llms["research"] = FixtureScalpLLM([(FIXTURES_DIR / "research.json").read_text()])
-    routines = load_routines().model_copy(
-        update={"research_compact_prompt": ResearchCompactPromptSettings(mode="compact")}
-    )
-    conn, _ = _run(_settings(), routines, env, conn=conn)
+    conn, _ = _run(_settings(), load_routines(), env, conn=conn)
     return conn
 
 
@@ -415,27 +405,13 @@ def test_research_step_compact_records_and_replays() -> None:
         "WHERE persona='research' ORDER BY rowid DESC"
     ).fetchone()
     inputs = json.loads(row["prompt_inputs"])
-    assert inputs["compact"] is True and "pool_merged" not in inputs
+    assert inputs["compact"] is True and inputs["pool_merged"] is True
     assert inputs["idea_pool"] and len(row["prompt_text"]) <= LIMIT
     assert "### Scout's read" in row["prompt_text"]
     snap = ContextStore(conn).load_snapshot(row["snapshot_id"])
     assert build_prompt("research", snap, inputs) == row["prompt_text"]
     assert _shortlist(conn)["pool_counts"]["scalp"] == len(inputs["idea_pool"])
     assert "over_prompt_budget" not in _codes(conn, "shortlist")
-
-
-def test_xp6_draft_spec_turns_only_the_flag_on() -> None:
-    spec = load_spec(REPO / "config" / "experiments" / "live" / "xp6_research_compact_prompt.yaml")
-    assert spec.id == "XP-6" and spec.kind.value == "ab"
-    assert spec.arms.treatment.overlay == {
-        "routines": {"personas": {"research_compact_prompt": "compact"}}
-    }
-    treat = RoutinesConfig.model_validate(arm_config_data(spec, "treatment", "routines"))
-    base = load_routines(DEFAULT_ROUTINES_PATH)
-    assert treat.research_compact_prompt.compact
-    assert (
-        treat.model_copy(update={"research_compact_prompt": base.research_compact_prompt}) == base
-    )
 
 
 @pytest.mark.parametrize("bad", [19_999, 400_001])

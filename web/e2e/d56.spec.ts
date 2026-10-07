@@ -24,7 +24,7 @@ for (const vp of VIEWPORTS) {
       await open(page, "/positions");
       const strip = page.getByTestId("exit-path-strip");
       // 3 cases: the exits fixture's SPY + QQQ, plus the --ops fixture's generic exit_case row.
-      await expect(strip).toHaveText("Exit path · Shadow · 1 mandatory pending · 3 cases today · 1 close proposed · 1 hold");
+      await expect(strip).toHaveText("Exit path · Research · 1 mandatory pending · 3 cases today · 1 close proposed · 1 hold");
       if (vp.width > 768) {
         await expect(page.getByTestId("exit-watch").first()).toBeVisible();
         await expect(page.getByTestId("exit-verdict")).toHaveCount(2);

@@ -50,20 +50,17 @@ verdicts_dir: config/experiments/live/verdicts
 # are files a forward experiment can overlay (arc.experiments.models OVERLAY_TARGETS),
 # so a winning experiment can have tested the new value. A value change in another
 # strategy YAML is an ordinary strategy-lane change: any one lane line covers it.
-# universe.yaml became an overlay target in E13.12 (E13.12) but stays
-# out of this list on purpose: the D56 cutover (E13.15) flips universe.tiers.model by
-# owner go-ahead (PLAN D56, open decision 12), and the core list is owner-edited.
+# universe.yaml became an overlay target in E13.12 but stays out of this list on
+# purpose: the core list is owner-edited (the D56 cutover, E13.15, was by owner
+# go-ahead, PLAN D56).
 promotion_stems: [exits, ranking, costs, account_profiles]
 
 # Values that count as "off" (control behaviour) for a new `Flag:` key.
 # "strict" (E12.5): the control of a strict | relaxed choice switch
 # (personas.director_diversification); it names the unchanged behaviour.
-# "scalp" / "full" (E13.8): the controls of personas.research_idea_pool (scalp | all:
-# Research ranks Scalp candidates only, as today) and personas.research_compact_prompt
-# (full | compact: today's Research prompt byte for byte); same precedent as "strict".
-# "deterministic" (E13.17): the control of personas.exit_path (deterministic | shadow |
-# research): exits run by code only, no exit watchlist and no quant.exit, as today.
-flag_off_values: [false, null, "off", "none", "control", "strict", "scalp", "full", "deterministic"]
+# E13.15 (D56 cutover): "scalp" / "full" / "deterministic" (the controls of the removed
+# research_idea_pool / research_compact_prompt / exit_path switches) left with them.
+flag_off_values: [false, null, "off", "none", "control", "strict"]
 
 # Minimum length of the `Lane: fast` reason, so "Lane: fast — x" does not pass.
 fast_reason_min_chars: 10

@@ -62,12 +62,11 @@ def positions(
     status: Annotated[PositionStatus, Query()] = "open",
 ) -> PositionsResponse:
     """Open, closed or all structures with the latest broker marks; open rows carry the
-    E13.14 exit path under ``personas.exit_path`` shadow | research."""
-    _, routines = effective(cfg)
+    E13.14 exit path (D56: always Research-managed since E13.15)."""
+    effective(cfg)  # an invalid config still 503s like every page
     return load_positions(
         conn,
         now=cfg.clock(),
         status=status,
         stale_after=monitor_stale_after(conn),
-        exit_mode=routines.exit_path.mode,
     )

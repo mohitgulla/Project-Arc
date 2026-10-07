@@ -505,8 +505,7 @@ def research_card(
     ``evidence`` is ticker → a pre-escaped one-line summary of the upstream Scalp
     data (stance, catalyst, confidence, sources) shown under the thesis.
     ``exits`` is the stored exit watchlist (E13.17): one ``*Exits:*`` line per item,
-    ``Exits: none open`` for an empty list, no section at all for ``None``
-    (``personas.exit_path: deterministic``).
+    ``Exits: none open`` for an empty list, no section at all for ``None``.
     """
     regime = regime_name(out.market_regime)
     ranked = sorted(out.shortlist, key=lambda i: i.rank)
@@ -607,7 +606,7 @@ def research_card(
                 ],
             )
         )
-    # -- Exits (E13.17 watchlist; absent under exit_path deterministic) ------------
+    # -- Exits (E13.17 watchlist) ----------------------------------------------------
     if exits is not None:
         blocks.append(B.divider())
         blocks.append(_exits_section(exits))
@@ -852,7 +851,7 @@ def risk_card(
 ) -> CardView:
     """``🛡️ [Risk] Review: SPY Moderate • 14 Contracts``; one section per assessment.
 
-    E13.9: ``verdicts=True`` (``personas.quant_risk_loop: on``) adds a verdict chip per
+    E13.9: ``verdicts=True`` (the Quant <-> Risk open path) adds a verdict chip per
     assessment (Accept / Revise: <reason> / Reject) and a count line in the header.
 
     ``sized`` is the deterministic D18 result per ``(ticker, structure_type)``
@@ -984,7 +983,7 @@ def _exit_case_line(c: ExitCase) -> str:
 def quant_exit_card(
     cases: Sequence[ExitCase],
     *,
-    shadow: bool = True,
+    shadow: bool = False,
     skipped: Mapping[str, int] | None = None,
     run_id: str | None = None,
     chain_run_id: str | None = None,

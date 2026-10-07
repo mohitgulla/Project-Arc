@@ -271,8 +271,8 @@ def build(
     ~40 closed trades and daily equity over the 3+ months before the 10 recent days).
     *ops* adds the E8.7d Ops page rows (``scripts/tower_fixture_ops.py``: a full
     simulated schedule with run manifests, alerts, context, LLM usage, config changes).
-    *exits* adds the E13.14 shadow exit chain (``scripts/tower_fixture_exits.py``:
-    ``personas.exit_path shadow``, watchlist, exit cases, Risk verdicts).
+    *exits* adds the E13.14 Research exit chain (``scripts/tower_fixture_exits.py``:
+    watchlist, exit cases, Risk verdicts).
     """
     if path.exists():
         msg = f"{path} exists; the fixture builder never overwrites a DB"

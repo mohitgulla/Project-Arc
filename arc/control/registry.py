@@ -605,7 +605,7 @@ _STATIC: tuple[Tunable, ...] = (
         Group.UNIVERSE,
         _I,
         "D46/D51: tickers per Finnhub context run (open-position underlyings first, then "
-        "today's candidates, core, momentum, trending). Each ticker is one call per job, "
+        "today's candidates, core, momentum, discovery). Each ticker is one call per job, "
         "against the per-minute budget.",
         Risk.NONE,
         min=1,
@@ -948,7 +948,7 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         max=3,
         hard_ceiling=3,
     ),
-    # E13.18 (D56): Risk exit review (personas.exit_path research only)
+    # E13.18 (D56): Risk exit review
     _s(
         "exit_review_max_consecutive_holds",
         Group.POSITIONS,
@@ -1564,102 +1564,6 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("strict", "relaxed"),
         aliases=("routines.personas.director_diversification", "director_diversification"),
     ),
-    # E13.9 (D56/D44): the Quant <-> Risk open path. Strategy lane: off is the control
-    # (quant.open -> risk.open -> quant.propose); on adds Risk verdicts and one
-    # quant.revise round. Experiment XP-7 tests it.
-    Tunable(
-        key="personas.quant_risk_loop",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.9: Risk gives each structure a verdict (accept / revise / reject); "
-        "rejects are dropped and one quant.revise round answers the revise requests "
-        "before quant.propose. Experiment XP-7 tests it.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "quant_risk_loop"),
-        choices=("off", "on"),
-        aliases=("routines.personas.quant_risk_loop", "quant_risk_loop"),
-    ),
-    # E13.10 (D56/D44): the options_fast tape in the Scalp prompt. Strategy lane: off
-    # is the control (today's prompt); on shows the tape and lets a same-direction P/C
-    # read add one corroborating source. Experiment XP-8 tests it.
-    Tunable(
-        key="personas.scalp_options_tape",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.10: the Scalp also reads the Cboe options tape (VIX complex, "
-        "per-ticker P/C volume, ATM spread and OI), outside the doc budget; a candidate "
-        "whose stance matches its ticker's P/C direction gets one more corroborating "
-        "source. Experiment XP-8 tests it.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "scalp_options_tape"),
-        choices=("off", "on"),
-        aliases=("routines.personas.scalp_options_tape", "scalp_options_tape"),
-    ),
-    # E13.7 (D56/D44): the daily Scout persona. Strategy lane: off is the control (no
-    # Scout run, no discovery tier from it); on runs it at 06:00 ET.
-    Tunable(
-        key="personas.scout_feed",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.7: the daily Scout reads the YouTube briefs + options_slow at "
-        "06:00 ET, writes its read, the discovery tier (YouTube calls only) and Scout "
-        "candidates for Research. Off = the scout job is skipped, no LLM call.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "scout_feed"),
-        choices=("off", "on"),
-        aliases=("routines.personas.scout_feed", "scout_feed", "scout"),
-    ),
-    # E13.8 (D56/D53/D44): Research's idea pool. Strategy lane: scalp is the control
-    # (Scalp candidates only); all merges the Scout's candidates. Experiment XP-4.
-    Tunable(
-        key="personas.research_idea_pool",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.8: which ideas Research ranks. scalp = Scalp candidates only; "
-        "all = one merged pool of Scalp + Scout candidates (feeds, origins and stance "
-        "agreement counted by code; at most funnel.research.max_scout_only_ideas "
-        "Scout-only ideas). Experiment XP-4 tests it.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "research_idea_pool"),
-        choices=("scalp", "all"),
-        aliases=("routines.personas.research_idea_pool", "research_idea_pool"),
-    ),
-    # E13.8 (D56/D54/D44): Research prompt format. Strategy lane: full is the control.
-    Tunable(
-        key="personas.research_compact_prompt",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.8: Research prompt format. full = today's prompt; compact = one "
-        "line per idea, the Scout read, top-3 headlines per category and compact regime "
-        "lines (target research_prompt_max_chars). Experiment XP-6 tests it.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "research_compact_prompt"),
-        choices=("full", "compact"),
-        aliases=("routines.personas.research_compact_prompt", "research_compact_prompt"),
-    ),
-    # E13.17 (D56/D44): who manages discretionary exits. Strategy lane: deterministic
-    # is the control (today's positions chain only); shadow adds Research's exit
-    # watchlist + quant.exit cases, written and journaled, nothing proposed.
-    Tunable(
-        key="personas.exit_path",
-        group=Group.ROUTINES,
-        type=ValueType.CHOICE,
-        description="E13.17: deterministic = today's exits (positions chain only); shadow = "
-        "Research also writes an exit watchlist and quant.exit builds exit cases (hold / "
-        "close judgement), journaled only, nothing proposed; research behaves as shadow "
-        "until E13.18 adds risk.exit and the close path. Mandatory exits (stop, DTE, "
-        "expiry) stay deterministic.",
-        target=Target.ROUTINES,
-        risk=Risk.ORDER,
-        path=("personas", "exit_path"),
-        choices=("deterministic", "shadow", "research"),
-        aliases=("routines.personas.exit_path", "exit_path"),
-    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -1923,6 +1827,13 @@ ORPHANED_KEYS: frozenset[str] = frozenset(
         "scalp_max_new_tickers",
         "sweep_max_new_tickers",
         "scout_max_new_tickers",
+        # the D56 cutover switches, always on now (arc.routines.config.REMOVED_PERSONA_SWITCHES)
+        "personas.quant_risk_loop",
+        "personas.scalp_options_tape",
+        "personas.scout_feed",
+        "personas.research_idea_pool",
+        "personas.research_compact_prompt",
+        "personas.exit_path",
     }
 )
 
@@ -2148,7 +2059,6 @@ def lookup(key: str) -> Tunable:
     k = _ALIASES.get(lowered, lowered)
     if k in REGISTRY:
         return REGISTRY[k]
-    k = _legacy_routine_key(k)
     pat = _pattern_tunable(k)
     if pat is not None:
         return pat
@@ -2156,25 +2066,10 @@ def lookup(key: str) -> Tunable:
     raise TunableError(msg)
 
 
-#: D56 (E13.2): ``routines.<old job>.*`` keys resolve to the renamed job for one release
-#: (``routines.investor.enabled`` -> ``routines.broker.enabled``).
-LEGACY_ROUTINE_JOBS: dict[str, str] = {
-    "investor": "broker",
-    "auditor": "broker.reconcile",
-}
-
-
-def _legacy_routine_key(key: str) -> str:
-    m = _ROUTINE_KEY_RE.match(key)
-    if m is None or m.group("job") not in LEGACY_ROUTINE_JOBS:
-        return key
-    return f"routines.{LEGACY_ROUTINE_JOBS[m.group('job')]}.{m.group('attr')}"
-
-
 def is_alias(key: str) -> bool:
     """True for an alias of a registry key (e.g. a D49-renamed ``categories.company.*``)."""
     lowered = key.strip().lower()
-    return lowered in _ALIASES or _legacy_routine_key(lowered) != lowered
+    return lowered in _ALIASES
 
 
 def keys_in_group(group: Group) -> list[Tunable]:
@@ -2476,17 +2371,11 @@ _PLAIN_ROUTINE_SECTIONS = (
 _PERSONA_SWITCHES = frozenset(
     {
         ("personas", "finnhub_context"),
-        ("personas", "quant_risk_loop"),
-        ("personas", "scalp_options_tape"),
-        ("personas", "scout_feed"),  # E13.7
     }
 )
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.
 _PERSONA_CHOICE_SWITCHES: dict[tuple[str, ...], str] = {
     ("personas", "director_diversification"): "strict",
-    ("personas", "research_idea_pool"): "scalp",  # E13.8
-    ("personas", "research_compact_prompt"): "full",  # E13.8
-    ("personas", "exit_path"): "deterministic",  # E13.17
 }
 
 

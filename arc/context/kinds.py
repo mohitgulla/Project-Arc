@@ -111,13 +111,13 @@ class ShortlistPayload(ResearchOutput):
         default_factory=list,
         description="Ideas (ticker stance structure) the dedupe held back from Research",
     )
-    # E13.8 (D56/D53), schema v4 (additive): the idea pool's make-up; None = the
-    # control (research_idea_pool scalp + research_compact_prompt full) or a v3 row.
+    # E13.8 (D56/D53), schema v4 (additive): the idea pool's make-up; None = a
+    # pre-cutover (Scalp-only pool, full prompt) or v3 row.
     pool_counts: dict[Literal["scalp", "scout", "both", "scout_only_capped"], int] | None = Field(
         None, description="Idea pool size by feed, plus Scout-only ideas cut by the cap"
     )
     # E13.17 (D56), schema v5 (additive): the exit watchlist's hold / review counts;
-    # None = personas.exit_path deterministic (no watchlist) or an older row.
+    # None = a pre-cutover (deterministic exits, no watchlist) or older row.
     exit_watchlist_counts: dict[Literal["hold", "review"], int] | None = Field(
         None, description="Research's exit watchlist: positions to hold / to review"
     )

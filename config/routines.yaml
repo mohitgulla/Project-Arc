@@ -23,11 +23,13 @@
 #   09:00-16:00     Scalp every 30 min (15 in-session runs; after the fast sources)
 #   09:30-16:00     intraday monitor every 10 min (D35/D52: positions, Greeks, marks + account
 #                   fields for the tower, expiries, halts; 40 slots, 16:00 inclusive)
-#   09:40-15:50     trading loop every 10 min (38 slots, D52): research -> quant -> risk ->
-#                   propose -> broker.execute. ttl 5m: a missed slot is skipped, never caught up.
+#   09:40-15:50     trading loop every 10 min (38 slots, D52): research -> exits.mandatory ->
+#                   quant.exit -> risk.exit -> quant.open -> risk.open -> quant.revise ->
+#                   quant.propose -> broker.execute (D56: exits before opens). ttl 5m: a
+#                   missed slot is skipped, never caught up.
 #                   One #arc-investor root line per slot, persona cards in its thread (D36).
-#   09:50-15:50     position marks every 30 min (:20/:50, D52): positions.evaluate -> quant.exits
-#                   -> risk.reallocate (early exits + close-to-reallocate swaps, E6.4)
+#   09:50-15:50     position marks every 30 min (:20/:50, D52): positions.evaluate ->
+#                   exits.mandatory -> broker.execute (stop / DTE exit / expiry; D56)
 #   16:30           broker.reconcile (reconcile + journal)
 #   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop; E10.5 posts)
 #   16:45 Fri       weekly scorecard ([Ops])
@@ -465,12 +467,6 @@ director_diversification:
 personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
-  quant_risk_loop: "off"        # E13.9 (D56): off | on — Risk verdicts + one quant.revise round (strategy lane; XP-7)
-  scalp_options_tape: "off"     # E13.10 (D56): off | on — options_fast tape in the Scalp prompt, P/C corroboration (strategy lane; XP-8)
-  scout_feed: "off"             # E13.7 (D56): off | on — the daily Scout below (strategy lane); off = scout skipped, no LLM call
-  research_idea_pool: scalp     # E13.8 (D56/D53): scalp | all — all = merged Scalp + Scout idea pool (strategy lane; XP-4)
-  research_compact_prompt: full # E13.8 (D56/D54): full | compact — compact one-line-per-idea prompt ≤ research_prompt_max_chars (strategy lane; XP-6)
-  exit_path: deterministic      # E13.17 (D56): deterministic | shadow | research — Research exit watchlist + quant.exit cases (strategy lane; shadow = journaled only; research = shadow until E13.18)
   scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + 18:30 options_slow
     label: Scout
     about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"
@@ -496,7 +492,7 @@ personas:
     after_sources: true
     ttl: 20m                    # a slot missed by 20 min is skipped (the next one is closer)
     notify: card
-    reads: [index_vols, chain_snapshot, exchange_volume]   # E13.10: the options tape (used only with personas.scalp_options_tape on)
+    reads: [index_vols, chain_snapshot, exchange_volume]   # E13.10: the options tape (always read since E13.15)
     writes: [candidate, note, story, active_universe]   # note: scan summary (D27); story: D30 stage-1 digests; active_universe: D51 resolve at start
     lane: background            # D39: p90 441 s; the tick never waits on the Scalp
   scalp.overnight:              # D15/D31: 22:00 after-close fast sources (no YouTube, D45)
@@ -520,10 +516,10 @@ personas:
     every: 10m                  # D52 (owner 2026-10-05; was 5m)
     window: "09:40-15:50"       # 38 slots; skips the open's first 10 min
     days: trading
-    chain: auto                 # E13.9 chain_for(): [E13.18 exit_path research: exits.mandatory, quant.exit, risk.exit | shadow: quant.exit], quant.open, risk.open, [quant.revise if quant_risk_loop on], quant.propose, broker.execute (D34)
+    chain: auto                 # E13.15 AUTO_CHAINS: exits.mandatory, quant.exit, risk.exit, quant.open, risk.open, quant.revise, quant.propose, broker.execute (D34/D56)
     reads: [candidate, regime, channel_brief, note, vol_term, macro_calendar, position_review, story,
-            earnings_history, insider_activity, analyst_recs, fundamentals, scout_read, ex_dividend]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read renders only with research_compact_prompt compact; E13.17 ex_dividend feeds the exit-watch facts (exit_path only)
-    writes: [shortlist, regime, note, portfolio_context, exit_watchlist, position_review]   # E5.9: portfolio_context + portfolio_view/thesis_check notes; E13.17 (exit_path != deterministic): exit_watchlist + the reviews Research saw
+            earnings_history, insider_activity, analyst_recs, fundamentals, scout_read, ex_dividend]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read in the compact prompt; E13.17 ex_dividend feeds the exit-watch facts
+    writes: [shortlist, regime, note, portfolio_context, exit_watchlist, position_review]   # E5.9: portfolio_context + portfolio_view/thesis_check notes; E13.17: exit_watchlist + the reviews Research saw
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card
   monitor:                      # intraday: positions, net Greeks, expiries, daily-loss halt (read-only)
@@ -542,16 +538,16 @@ personas:
     expiry_warn_days: 1
     exits: false                # E6.4: the positions.evaluate chain below owns exit proposals
     eod_marks_from: "15:50"     # D35: marks from here count as end of day (stops EOD-only, D23)
-  positions.evaluate:           # E6.4 (D19): review open positions -> exits -> close-to-reallocate
+  positions.evaluate:           # E6.4 (D19): review open positions -> mandatory exits (D56)
     label: Position marks         # D56 (E13.2), persona quant
-    about: "Marks open positions (deterministic); take-profit/stop exits; close-to-reallocate swaps"
+    about: "Marks open positions (deterministic); mandatory exits (stop, DTE exit, expiry)"
     group: position_management
     persona: quant
     every: 30m
     window: "09:50-15:50"       # D52: :20/:50 on the 10-min tick grid; never at the open's first quotes
     days: trading
-    llm: false                  # the review is deterministic; risk.reallocate calls the LLM
-    chain: auto                 # E13.18 chain_for(): exit_path deterministic|shadow -> [quant.exits, risk.reallocate, broker.execute]; research -> [exits.mandatory, broker.execute] (D34: auto-approved closes go out in-run)
+    llm: false                  # the review and the mandatory floor are deterministic
+    chain: auto                 # E13.15 AUTO_CHAINS: [exits.mandatory, broker.execute] (D34: auto-approved closes go out in-run; discretionary exits run in the Research chain)
     notify: quiet               # folds into the next persona line; proposals post their own cards
     reads: [regime]             # realised-vol forecast for the remaining-EV paths
     writes: [position_review]
@@ -605,25 +601,21 @@ personas:
     writes: [note]              # E13.13: one execution note per worked ladder (facts only)
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
-  # E13.9 (D56) open path; old names quant/risk/propose resolve as logged aliases.
+  # E13.9 (D56) open path.
   quant.open:    {reads: [shortlist, regime], writes: [structures, note], notify: card}
   risk.open:     {reads: [structures, ex_dividend, macro_calendar], writes: [risk_review, note], notify: card}
-  # personas.quant_risk_loop on only: one revision round; skipped when no structure is
+  # One Quant revision round after Risk's verdicts; skipped when no structure is
   # `revise`, on a no-change loop, or with < 90 s of loop.max_runtime left.
   quant.revise:  {reads: [shortlist, regime, structures, risk_review], writes: [structures, note], notify: card, on_no_change: skip, min_remaining_s: 90}
-  quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review, exit_case, risk_exit_review, position_review], writes: [proposal], llm: false, notify: summary}  # was propose; E6.1 posts the proposal cards; E5.9 fingerprint dedupe; E13.18 close branch (exit_path research)
-  # E13.17 (D56) exit path, personas.exit_path shadow | research only: Quant judges one exit
-  # case per position Research flagged `review`, with a discretionary signal, or paired with
-  # a capacity rejection. Shadow = written + journaled, nothing proposed (E13.18 adds risk.exit).
+  quant.propose: {reads: [candidate, regime, shortlist, structures, risk_review, exit_case, risk_exit_review, position_review], writes: [proposal], llm: false, notify: summary}  # was propose; E6.1 posts the proposal cards; E5.9 fingerprint dedupe; E13.18 close branch
+  # E13.17 (D56) exit path: Quant judges one exit case per position Research flagged
+  # `review`, with a discretionary signal, or paired with a capacity rejection.
   quant.exit:    {reads: [position_review, exit_watchlist, portfolio_context, regime, ex_dividend, story, scout_read], writes: [exit_case, note], notify: card, on_no_change: skip, min_remaining_s: 60}
-  # E13.18 (D56) exit path, personas.exit_path research only: exits.mandatory closes stop /
+  # E13.18 (D56) exit path: exits.mandatory closes stop /
   # DTE exit / expiry deterministically before any LLM step (also in positions.evaluate);
   # risk.exit gives close | hold per exit case; quant.propose proposes the closes.
   exits.mandatory: {reads: [position_review], writes: [proposal], llm: false, notify: summary, on_no_change: run}
   risk.exit:     {reads: [exit_case, position_review, portfolio_context, ex_dividend, macro_calendar], writes: [risk_exit_review, note], notify: card, on_no_change: skip, min_remaining_s: 60}
-  # E6.4 chain steps (after positions.evaluate). Every close / swap open is a proposal: gate + approval.
-  quant.exits:     {reads: [position_review], writes: [proposal], llm: false, notify: summary}   # D56: was investor.exits
-  risk.reallocate: {reads: [position_review, note], writes: [proposal], notify: summary}   # Risk vetoes swaps (LLM); E5.9 thesis_check notes are advisory input
   # D34: publishes this chain's proposal cards (auto-approved when `auto_approve` is on for
   # ARC_ENV) and hands each approved one to a Broker subprocess (own lock, ~6 min ladder).
   # With auto-approve off it reports "awaiting approval". The Broker run joins the chain.

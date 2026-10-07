@@ -66,7 +66,6 @@ _PERSONA_MODEL = {
     "risk": "claude-sonnet-5",
     "scalp": "claude-sonnet-5",
     "scalp.digest": "claude-haiku-5",
-    "risk.reallocate": "claude-haiku-5",
 }
 
 
@@ -361,10 +360,6 @@ def add_ops(conn: sqlite3.Connection, now: dt.datetime) -> None:  # noqa: C901, 
                 dur = dt.timedelta(0)
             else:
                 summary = "execute: 0 approved proposals"
-        elif not root and o.job in ("quant", "risk", "risk.reallocate"):
-            call_n += 1
-            calls.append(ops.call(rid_guess, o.job, started + dt.timedelta(seconds=15), call_n))
-            dur = dt.timedelta(seconds=60)
         elif o.job == "edgar" and not failed_done and o.scheduled_for.date() == today:
             status, summary = "failed", None
             error = "HTTPError: 503 Service Unavailable (sec.gov)"

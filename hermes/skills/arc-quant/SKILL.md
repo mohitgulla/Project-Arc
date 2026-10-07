@@ -22,7 +22,7 @@ QuantOutput (see arc/personas/schemas.py): structures[] with legs, net_debit_cre
 
 All output MUST be valid JSON matching the schema. No prose outside the JSON object.
 
-## Revision round (E13.9, D56; only with `personas.quant_risk_loop: on`)
+## Revision round (E13.9, D56)
 
 Chain step `quant.revise` runs once, after `risk.open`, only when Risk returned at
 least one `revise` verdict. The prompt is the Quant prompt plus a "Risk requested
@@ -35,7 +35,7 @@ Risk does not review the revision; the gate and approval still do. Steps:
 `quant.open` (was `quant`), `quant.revise`, `quant.propose` (was `propose`, code only,
 attributed to Quant).
 
-## Exit cases (E13.17, D56; only with `personas.exit_path: shadow | research`)
+## Exit cases (E13.17, D56)
 
 Chain step `quant.exit` runs right after Research. Code builds one exit case per open
 position Research flagged `review`, or whose position review fired a discretionary
@@ -45,7 +45,8 @@ or an exit already pending never get a case. The case's numbers (remaining EV ho
 managed, close-now net, stop state, theta/day, BP freed, IV rank, events) are computed
 by code; you give only `QuantExitOutput.cases[]`: `structure_id`, `recommendation`
 hold | close, `rationale` (≤ 400 chars). A case you omit is `hold`; rolling is not an
-option. Shadow: cases are journaled only, nothing is proposed (E13.18 adds `risk.exit`).
+option. Risk reviews each case next (`risk.exit`); `quant.propose` closes only on
+Risk's `close` verdict.
 
 ## Forbidden actions
 

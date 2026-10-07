@@ -194,18 +194,18 @@ describe("strip, movers, split", () => {
 });
 
 describe("E13.14 exit path", () => {
-  const strip = { mode: "shadow", mandatory_pending: 1, cases_today: 2, closes_proposed_today: 1, holds_today: 1 } as const;
+  const strip = { mode: "research", mandatory_pending: 1, cases_today: 2, closes_proposed_today: 1, holds_today: 1 } as const;
   const row = (over: Partial<PositionRow>) =>
     ({ exit_watch: null, exit_case: null, exit_review: null, mandatory_signal: null, ...over }) as PositionRow;
 
-  it("shows only off the deterministic path", () => {
+  it("shows on the Research path (deterministic = an old fixture)", () => {
     expect(exitPathVisible(strip)).toBe(true);
     expect(exitPathVisible({ ...strip, mode: "deterministic" })).toBe(false);
     expect(exitPathVisible(undefined)).toBe(false);
   });
 
   it("writes the strip with plurals", () => {
-    expect(exitPathStripText(strip)).toBe("Shadow · 1 mandatory pending · 2 cases today · 1 close proposed · 1 hold");
+    expect(exitPathStripText(strip)).toBe("Research · 1 mandatory pending · 2 cases today · 1 close proposed · 1 hold");
     expect(exitPathStripText({ ...strip, mode: "research", cases_today: 1, holds_today: 0 })).toBe(
       "Research · 1 mandatory pending · 1 case today · 1 close proposed · 0 holds",
     );

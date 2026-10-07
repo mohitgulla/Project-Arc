@@ -1,9 +1,8 @@
-"""E13.8 (D56/D53, D44): Research's idea pool behind ``personas.research_idea_pool``.
+"""E13.8 (D56/D53, D44): Research's idea pool (Scalp + Scout, always since E13.15).
 
 Pins: the pool rules (feeds from sources, origins, stance agreement, the Scout-only
-cap), ``scalp`` mode = today's candidate set and prompt, ``all`` mode lets a
-Scout-only idea through the ``not_a_candidate`` filter, the switch + registry +
-strategy-lane plumbing, and the draft XP-4 spec.
+cap), a Scout-only idea passes the ``not_a_candidate`` filter, and the removed
+``personas.research_idea_pool`` / ``research_compact_prompt`` switches.
 """
 
 from __future__ import annotations
@@ -18,8 +17,7 @@ import yaml
 
 from arc.config import ArcSettings
 from arc.context.store import ContextEntry, ContextSnapshot, ContextStore
-from arc.control.registry import REGISTRY, lookup, read_raw, write_raw
-from arc.experiments.overlay import arm_config_data, load_spec
+from arc.control.registry import REGISTRY, is_orphaned
 from arc.ingest.llm import FixtureScalpLLM
 from arc.journal.reasons import REASON_LABELS, ReasonCode
 from arc.models import Stance
@@ -35,7 +33,6 @@ from arc.pipeline.research_pool import (
 from arc.pipeline.steps import DROP_NOT_CANDIDATE, RESEARCH_READS, _filter_shortlist
 from arc.routines.config import (
     DEFAULT_ROUTINES_PATH,
-    ResearchIdeaPoolSettings,
     RoutinesConfig,
     load_routines,
 )
@@ -246,19 +243,14 @@ def test_not_a_candidate_fires_only_outside_the_pool() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Switch, registry, strategy lane, XP-4
+# Removed switches, config
 # ---------------------------------------------------------------------------
 
 
-def test_switches_default_to_the_control_in_the_shipped_config() -> None:
+def test_switches_removed_and_funnel_defaults() -> None:
     raw = yaml.safe_load(DEFAULT_ROUTINES_PATH.read_text())
-    assert raw["personas"]["research_idea_pool"] == "scalp"
-    assert raw["personas"]["research_compact_prompt"] == "full"
+    assert not {"research_idea_pool", "research_compact_prompt"} & set(raw["personas"])
     cfg = load_routines(DEFAULT_ROUTINES_PATH)
-    assert not cfg.research_idea_pool.merged and not cfg.research_compact_prompt.compact
-    assert "research_idea_pool" not in cfg.personas  # a switch, not a job
-    assert RoutinesConfig().research_idea_pool.mode == "scalp"
-    assert RoutinesConfig().research_compact_prompt.mode == "full"
     assert cfg.funnel.research.max_scout_only_ideas == 20
     assert _settings().research_prompt_max_chars == 80_000
 
@@ -271,39 +263,14 @@ def test_research_reads_scout_read_in_code_and_yaml() -> None:
     assert list(found[1].reads or []) == RESEARCH_READS
 
 
-@pytest.mark.parametrize(
-    ("key", "choices"),
-    [
-        ("personas.research_idea_pool", ("scalp", "all")),
-        ("personas.research_compact_prompt", ("full", "compact")),
-    ],
-)
-def test_registry_choice_keys(key: str, choices: tuple[str, str]) -> None:
-    t = lookup(key)
-    assert t is REGISTRY[key] and lookup(f"routines.{key}") is t
-    assert t.choices == choices
-    name = key.split(".", 1)[1]
-    assert read_raw(t, {"personas": {}}) == choices[0]
-    assert read_raw(t, {"personas": {name: choices[1]}}) == choices[1]
-    assert write_raw(t, choices[1], {}) == [(("personas", name), choices[1])]
+@pytest.mark.parametrize("key", ["personas.research_idea_pool", "personas.research_compact_prompt"])
+def test_removed_switch_keys_are_orphaned(key: str) -> None:
+    assert is_orphaned(key) and key not in REGISTRY
 
 
-@pytest.mark.parametrize(
-    ("data", "match"),
-    [
-        ({"personas": {"research_idea_pool": "both"}}, "scalp | all"),
-        ({"personas": {"research_compact_prompt": "short"}}, "full | compact"),
-    ],
-)
-def test_switch_values_are_validated(data: dict[str, Any], match: str) -> None:
-    with pytest.raises(ValueError, match=match):
-        RoutinesConfig.model_validate(data)
-
-
-def test_controls_are_strategy_lane_off_values() -> None:
-    lane = yaml.safe_load((REPO / "config" / "strategy_lane.yaml").read_text())
-    assert {"scalp", "full"} <= set(lane["flag_off_values"])
-    assert "arc/pipeline/research_pool.py" in yaml.safe_dump(lane)
+def test_old_switch_in_yaml_is_ignored() -> None:
+    cfg = RoutinesConfig.model_validate({"personas": {"research_idea_pool": "scalp"}})
+    assert "research_idea_pool" not in cfg.personas
 
 
 def test_new_reason_codes_have_labels() -> None:
@@ -312,22 +279,12 @@ def test_new_reason_codes_have_labels() -> None:
     assert REASON_LABELS[ReasonCode.POOL_OVER_PROMPT_BUDGET]
 
 
-def test_xp4_draft_spec_turns_only_the_flag_on() -> None:
-    spec = load_spec(REPO / "config" / "experiments" / "live" / "xp4_research_idea_pool.yaml")
-    assert spec.id == "XP-4" and spec.kind.value == "ab"
-    assert spec.arms.treatment.overlay == {"routines": {"personas": {"research_idea_pool": "all"}}}
-    treat = RoutinesConfig.model_validate(arm_config_data(spec, "treatment", "routines"))
-    base = load_routines(DEFAULT_ROUTINES_PATH)
-    assert treat.research_idea_pool.merged
-    assert treat.model_copy(update={"research_idea_pool": base.research_idea_pool}) == base
-
-
 # ---------------------------------------------------------------------------
 # The research step end to end (fixture chain)
 # ---------------------------------------------------------------------------
 
 
-def _research_run(mode: str) -> tuple[Any, Any]:
+def _research_run() -> tuple[Any, Any]:
     from arc.ingest.scalp import load_fixture_docs
     from arc.pipeline.runner import open_db
 
@@ -353,15 +310,11 @@ def _research_run(mode: str) -> tuple[Any, Any]:
     base = d["shortlist"][0]
     d["shortlist"] = [base, {**base, "ticker": "TEM", "rank": 2}]
     env.llms["research"] = FixtureScalpLLM([json.dumps(d)])
-    routines = load_routines().model_copy(
-        update={"research_idea_pool": ResearchIdeaPoolSettings(mode=mode)}  # type: ignore[arg-type]
-    )
-    return _run(_settings(), routines, env, conn=conn)
+    return _run(_settings(), load_routines(), env, conn=conn)
 
 
-@pytest.mark.parametrize("mode", ["scalp", "all"])
-def test_research_step_ranks_scout_ideas_only_in_all_mode(mode: str) -> None:
-    conn, _ = _research_run(mode)
+def test_research_step_ranks_scout_ideas() -> None:
+    conn, _ = _research_run()
     sl = _shortlist(conn)
     tickers = [i["ticker"] for i in sl["shortlist"]]
     row = conn.execute(
@@ -370,25 +323,19 @@ def test_research_step_ranks_scout_ideas_only_in_all_mode(mode: str) -> None:
     ).fetchone()
     inputs = json.loads(row["prompt_inputs"])
     codes = _codes(conn, "shortlist")
-    if mode == "scalp":
-        assert "TEM" not in tickers and codes["not_a_candidate"] == ["TEM"]
-        assert "idea_pool" not in inputs and "pool_merged" not in inputs
-        assert "TEM" not in inputs["candidate_tickers"]  # Scout-only entry left out
-        assert '"TEM"' not in row["prompt_text"] and sl.get("pool_counts") is None
-    else:
-        assert "TEM" in tickers and "not_a_candidate" not in codes
-        assert inputs["pool_merged"] is True
-        assert [i["ticker"] for i in inputs["idea_pool"] if i["feeds"] == ["scout"]] == ["TEM"]
-        assert "### Idea pool (Scalp + Scout" in row["prompt_text"]
-        assert sl["pool_counts"]["scout"] == 1
-        cand = _codes(conn, "candidate")
-        assert cand.get("scout_feed_candidate") == ["TEM"]
+    assert "TEM" in tickers and "not_a_candidate" not in codes
+    assert inputs["pool_merged"] is True and inputs["compact"] is True
+    assert [i["ticker"] for i in inputs["idea_pool"] if i["feeds"] == ["scout"]] == ["TEM"]
+    assert "TEM" in row["prompt_text"]
+    assert sl["pool_counts"]["scout"] == 1
+    cand = _codes(conn, "candidate")
+    assert cand.get("scout_feed_candidate") == ["TEM"]
 
 
 def test_replay_rebuilds_the_merged_prompt_from_recorded_inputs() -> None:
     from arc.pipeline.steps import build_prompt
 
-    conn, _ = _research_run("all")
+    conn, _ = _research_run()
     row = conn.execute(
         "SELECT snapshot_id, prompt_inputs, prompt_text FROM persona_calls "
         "WHERE persona='research' ORDER BY rowid DESC"

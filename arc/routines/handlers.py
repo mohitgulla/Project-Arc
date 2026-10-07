@@ -1675,8 +1675,7 @@ def scout_persona(
 ) -> JobResult:
     """Scout (E13.7, D56): snapshot → prompt → one cheap LLM call → code rules → writes.
 
-    Behind ``personas.scout_feed`` (off = skipped before any LLM call). Writes the
-    ``scout_read`` (subject ``session``), the ``discovery`` tier (only from the
+    Writes the ``scout_read`` (subject ``session``), the ``discovery`` tier (only from the
     YouTube calls, ``loose`` screen, ≤ ``funnel.scout.max_discovery``), re-resolves the
     active list, then writes a ``candidate`` (``feed=scout``) per call at or above its
     tier's floor. *llm* / *guard* override the Hermes backend and the universe guard
@@ -1723,8 +1722,6 @@ def scout_persona(
         tier_membership,
     )
 
-    if not ctx.routines.scout_feed.enabled:
-        raise JobSkippedError("personas.scout_feed off")
     funnel = ctx.routines.funnel.scout
     settings = ctx.settings
     found = ctx.routines.job(BRIEFS_JOB)
@@ -2083,7 +2080,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "finnhub.fundamentals": "arc.routines.handlers:finnhub_fundamentals_source",
     "finnhub.earnings_history": "arc.routines.handlers:finnhub_earnings_history_source",
     "scalp": "arc.routines.handlers:scalp_persona",
-    # E13.7 (D56): the daily Scout (personas.scout_feed; YouTube + options_slow)
+    # E13.7 (D56): the daily Scout (YouTube + options_slow)
     "scout": "arc.routines.handlers:scout_persona",
     # E5.2 pipeline chain: research → quant.open → risk.open → [quant.revise] →
     # quant.propose (arc/pipeline/steps.py; E13.9 / D56 step names)
@@ -2092,9 +2089,9 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "risk.open": "arc.pipeline.steps:risk_open_step",
     "quant.revise": "arc.pipeline.steps:quant_revise_step",
     "quant.propose": "arc.pipeline.steps:quant_propose_step",
-    # E13.17 (D56): exit cases judged by Quant (personas.exit_path shadow | research)
+    # E13.17 (D56): exit cases judged by Quant
     "quant.exit": "arc.pipeline.steps:quant_exit_step",
-    # E13.18 (D56): Risk's close | hold review of the exit cases (exit_path research)
+    # E13.18 (D56): Risk's close | hold review of the exit cases
     "risk.exit": "arc.pipeline.steps:risk_exit_step",
     # E5.3 intraday monitor (read-only: positions, Greeks, expiries, daily-loss halt)
     "monitor": "arc.routines.monitor:monitor_step",
@@ -2105,31 +2102,14 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "broker.execute": "arc.broker.ladder_job:execute_step",
     # E6.3 / D56 Broker reconcile: post-market broker vs local, snapshots, tax lots, card
     "broker.reconcile": "arc.broker.reconcile_job:broker_reconcile_step",
-    # E6.4 position manager: marks -> exits -> close-to-reallocate (arc/positions/steps.py)
+    # E6.4 position manager: marks -> mandatory exits (arc/positions/steps.py)
     "positions.evaluate": "arc.positions.steps:evaluate_step",
-    "quant.exits": "arc.positions.steps:exits_step",
-    "risk.reallocate": "arc.positions.steps:reallocate_step",
     # E13.18 (D56): the deterministic mandatory-exit floor (stop / DTE exit / expiry)
     "exits.mandatory": "arc.positions.steps:exits_mandatory_step",
     # E7.3 weekly paper scorecard (deterministic, from the audit store; posts as [Ops])
     "scorecard": "arc.routines.scorecard:scorecard_step",
     # E10.3 (D44): daily experiment evaluation after the EOD reconcile
     "experiments.evaluate": "arc.routines.experiments:experiments_evaluate_step",
-}
-
-#: D56 (E13.1/E13.2): pre-rename job names still resolve, for one release, to the
-#: renamed handlers (a local ``routines.yaml`` or ``--job sweep`` keeps working; logged).
-DEPRECATED_JOB_ALIASES: Mapping[str, str] = {
-    "sweep": "scalp",
-    "director": "research",
-    "investor": "broker",
-    "investor.exits": "quant.exits",
-    "execute": "broker.execute",
-    "auditor": "broker.reconcile",
-    # E13.9 (D56): open-path step renames
-    "quant": "quant.open",
-    "risk": "risk.open",
-    "propose": "quant.propose",
 }
 
 
@@ -2161,8 +2141,4 @@ def resolve_handler(
             return overrides[key]
         if key in BUILTIN_HANDLERS:
             return import_handler(BUILTIN_HANDLERS[key])
-        if key in DEPRECATED_JOB_ALIASES:
-            new = DEPRECATED_JOB_ALIASES[key]
-            log.warning("routines.deprecated_job_alias", job=name, alias=key, renamed_to=new)
-            return import_handler(BUILTIN_HANDLERS[new])
     return not_implemented

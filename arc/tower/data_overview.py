@@ -237,7 +237,7 @@ class PositionRow(BaseModel):
     direction: Direction | None = Field(
         default=None, description="D50: bullish / bearish / neutral from the opening legs"
     )
-    # E13.14 (D56): the exit path (arc.tower.data_exits); None under exit_path deterministic.
+    # E13.14 (D56): the exit path (arc.tower.data_exits); None = no exit watch yet.
     exit_watch: ExitWatchView | None = None
     exit_case: ExitCaseView | None = None
     exit_review: ExitVerdictView | None = None
@@ -1023,12 +1023,12 @@ def load_positions(
     now: _dt.datetime,
     status: PositionStatus = "open",
     stale_after: _dt.timedelta,
-    exit_mode: ExitPathMode = "deterministic",
+    exit_mode: ExitPathMode = "research",
 ) -> PositionsResponse:
     """Structures by *status* with the latest monitor marks (SELECT only).
 
     E13.14: open rows carry the exit path (watch / case / Risk verdict / mandatory
-    signal) and the response the Exit path strip, under *exit_mode* (shadow | research).
+    signal) and the response the Exit path strip (*exit_mode*: ``research`` since E13.15).
     """
     now_et = now.astimezone(ET)
     latest = _latest_mark(conn, _latest_heartbeat(conn, "monitor"))

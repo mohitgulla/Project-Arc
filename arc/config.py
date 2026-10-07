@@ -732,7 +732,7 @@ class ArcSettings(BaseSettings):
         description=(
             "D46/D51: per-ticker Finnhub jobs fetch at most this many tickers per run "
             "(open-position underlyings first, then today's candidates, core, momentum, "
-            "trending)."
+            "discovery)."
         ),
     )
     finnhub_insider_window_days: Annotated[int, Field(ge=7, le=365)] = Field(
@@ -878,7 +878,7 @@ class ArcSettings(BaseSettings):
         default=1500,
         description="D30: per-document text in the stage-1 digest prompt (3 docs per story).",
     )
-    # E13.10 (D56): the options tape in the Scalp prompt (personas.scalp_options_tape).
+    # E13.10 (D56): the options tape in the Scalp prompt.
     scalp_tape_max_chars: Annotated[int, Field(ge=200, le=1500)] = Field(
         default=1500,
         description="E13.10: the options tape block in the Scalp prompt is cut to this size.",
@@ -910,10 +910,9 @@ class ArcSettings(BaseSettings):
     # exit block. Over it -> headlines trimmed, then the pool cut to its top 40.
     research_prompt_max_chars: Annotated[int, Field(ge=20_000, le=400_000)] = Field(
         default=80_000,
-        description="Target size of the compact Research prompt (chars); "
-        "personas.research_compact_prompt: compact only.",
+        description="Target size of the compact Research prompt (chars).",
     )
-    # E13.17 (D56): Research-managed exits (personas.exit_path shadow | research only).
+    # E13.17 (D56): Research-managed exits.
     exit_block_max_chars_per_position: Annotated[int, Field(ge=200, le=2_000)] = Field(
         default=600,
         description="Research exit-watch block: hard clip per open position (chars).",
@@ -926,7 +925,7 @@ class ArcSettings(BaseSettings):
         default=900,
         description="quant.exit prompt: hard clip per exit case (chars).",
     )
-    # E13.18 (D56): Risk exit review (personas.exit_path research only).
+    # E13.18 (D56): Risk exit review.
     exit_review_max_consecutive_holds: Annotated[int, Field(ge=1, le=10)] = Field(
         default=3,
         description="Risk `hold` on a case with a deterministic discretionary signal is "

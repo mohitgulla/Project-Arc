@@ -771,7 +771,7 @@ class CapacityRejection(StrEnum):
     PORTFOLIO_CAP = "portfolio_cap"  # max open positions
     # D32: the daily order budget is used up. Typed like the capacity reasons so the
     # audit rows carry it, but closing a position frees no orders (it costs some), so
-    # risk.reallocate never pairs it (:func:`arc.positions.reallocate._frees`).
+    # a close-to-reallocate swap never pairs it (:func:`arc.positions.reallocate._frees`).
     ORDER_BUDGET = "order_budget"
 
 

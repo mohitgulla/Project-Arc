@@ -45,8 +45,8 @@ class ScalpInput:
     digests: bool = False
     # E4.8a (D46): code-built Finnhub facts, one line per ticker ("" = flag off).
     ticker_facts: str = ""
-    # E13.10 (D56): the code-built options_fast tape ("" = personas.scalp_options_tape
-    # off: the prompt is then byte-identical to the pre-E13.10 one).
+    # E13.10 (D56): the code-built options_fast tape ("" = no tape rows, or a recorded
+    # pre-E13.10 call: the prompt is then byte-identical to the pre-E13.10 one).
     options_tape: str = ""
 
 
@@ -91,15 +91,16 @@ class ResearchInput:
     # E13.8 (D56/D53): the merged Scalp + Scout idea pool, one line per ticker ("" =
     # not recorded: the candidates JSON alone, as before E13.8).
     pool_block: str = ""
-    pool_merged: bool = False  # personas.research_idea_pool: all
-    # E13.8 (D56/D54): personas.research_compact_prompt: compact.
+    pool_merged: bool = False  # Scalp + Scout pool (always since E13.15)
+    # E13.8 (D56/D54): the compact prompt (always since E13.15; False = a recorded
+    # pre-cutover call rebuilt by `arc journal replay`).
     compact: bool = False
     scout_read: str = ""  # the Scout's read (compact prompt only; "" = none active)
     regime_lines: str = ""  # one line per ticker (compact prompt only)
     market_lines: str = ""  # vol term / put-call / macro calendar lines (compact only)
     notes_lines: str = ""  # prior notes, one line each (compact prompt only)
-    # E13.17 (D56): personas.exit_path != deterministic. "" = the E5.9 thesis-check
-    # wording (byte-identical prompt off the exit path).
+    # E13.17 (D56): the exit watch. "" = no open positions, or a recorded pre-cutover
+    # call (the E5.9 thesis-check wording).
     exit_block: str = ""  # one position line + one facts line per open structure
     exit_rules: tuple[str, ...] = ()  # policy lines shown with the exit watch
 
@@ -210,15 +211,15 @@ def research_input_from_context(
 
     E13.8 (D56/D53/D54), all recorded by the step so a replay rebuilds the prompt:
     *idea_pool* (the code-built :class:`PoolItem` dumps) renders the one-line-per-
-    ticker pool; *pool_merged* (``research_idea_pool: all``) labels it Scalp + Scout;
-    *candidate_tickers* restricts the candidate entries to the pool (``None`` = every
-    active entry, as before); *compact* (``research_compact_prompt: compact``) swaps
+    ticker pool; *pool_merged* labels it Scalp + Scout; *candidate_tickers* restricts
+    the candidate entries to the pool (``None`` = every active entry); *compact* swaps
     the JSON blocks for one-line renderings and adds the ``scout_read``;
-    *max_headlines* is the per-category headline count after budget trimming.
+    *max_headlines* is the per-category headline count after budget trimming. Since
+    E13.15 (D56 cutover) the step always records ``compact`` + ``pool_merged``; the
+    full renderer below only rebuilds pre-cutover recorded calls (journal replay).
 
-    E13.17 (D56): *exit_block* / *exit_rules* (``personas.exit_path`` !=
-    ``deterministic``, recorded by the step) add the exit-watch section; empty keeps
-    the prompt byte for byte.
+    E13.17 (D56): *exit_block* / *exit_rules* (recorded by the step whenever the book
+    is not empty) add the exit-watch section.
     """
     entries = snapshot.of_kind("candidate")
     if candidate_tickers is not None:
@@ -1790,7 +1791,7 @@ def _compact_lines(title: str, body: str, note: str = "") -> str:
 
 
 def build_research_prompt_compact(inp: ResearchInput) -> str:
-    """E13.8 (D54): the compact Research prompt (``research_compact_prompt: compact``).
+    """E13.8 (D54): the compact Research prompt (the only live one since E13.15).
 
     One line per pool ticker and per regime entry, the Scout's read, the category
     counts with at most ``COMPACT_MAX_HEADLINES`` headlines each, D30 data as lines,
@@ -1935,91 +1936,7 @@ Respond with JSON matching the QuantOutput schema:
 
 
 # ---------------------------------------------------------------------------
-# Risk
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class RiskSwapInput:
-    """Input context for the Risk close-to-reallocate review (E6.4)."""
-
-    suggestions_json: str  # deterministic SwapSuggestion rows, each with its swap_id
-    reviews_json: str  # position_review entries of the positions to be closed
-    portfolio_json: str
-    account_equity: float
-    scan_date: str
-
-
-def risk_swap_input_from_context(
-    snapshot: ContextSnapshot,
-    *,
-    suggestions_json: str,
-    portfolio_json: str,
-    account_equity: float,
-    scan_date: str,
-) -> RiskSwapInput:
-    """Risk reads the active ``position_review`` entries (all subjects)."""
-    reviews = [e.payload for e in snapshot.of_kind("position_review")]
-    return RiskSwapInput(
-        suggestions_json=suggestions_json,
-        reviews_json=_dump(reviews),
-        portfolio_json=portfolio_json,
-        account_equity=account_equity,
-        scan_date=scan_date,
-    )
-
-
-def build_risk_swap_prompt(inp: RiskSwapInput) -> str:
-    """Build the Risk prompt that reviews close-to-reallocate swaps (veto only)."""
-    return f"""{_SYSTEM_PREAMBLE}
-{_ADVISORY_DISCLAIMER}
-## Role: Risk (Close-to-reallocate review)
-Slack label: [Risk]
-
-A deterministic scorer found open positions whose remaining expected value per
-dollar of buying power is clearly worse than a new trade the gate rejected only
-for capacity (buying power, per-underlying budget or the open-position cap).
-Each suggestion closes one open position first; the new trade is proposed only
-after that close fills. Both still go through the risk gate and approval.
-
-Review each suggestion and APPROVE or VETO it. Veto when, for example, the new
-trade duplicates exposure you already hold, an event (earnings, FOMC) makes the
-switch worse than the numbers show, or the open position's thesis is intact and
-close to paying off. You cannot add swaps or change sizes or prices.
-
-## Forbidden actions
-- Do NOT call any broker API or place any orders.
-- Do NOT override or bypass the risk gate.
-
-## Inputs
-
-### Suggested swaps (deterministic; edge = EV per $ of buying power, after costs)
-{inp.suggestions_json}
-
-### Reviews of the positions that would be closed
-{inp.reviews_json}
-
-### Current portfolio
-{inp.portfolio_json}
-
-### Account equity
-${inp.account_equity:,.2f}
-
-Date: {inp.scan_date}
-
-## Output format
-Respond with JSON matching the RiskSwapReview schema:
-{{
-  "verdicts": [
-    {{"swap_id": "...", "approve": true, "narrative": "..."}}
-  ],
-  "advisory_notes": "..."
-}}
-"""
-
-
-# ---------------------------------------------------------------------------
-# E13.17 (D56): Quant exit cases (personas.exit_path shadow | research)
+# E13.17 (D56): Quant exit cases
 # ---------------------------------------------------------------------------
 
 
@@ -2086,7 +2003,7 @@ Respond with JSON matching the QuantExitOutput schema, one entry per case:
 
 
 # ---------------------------------------------------------------------------
-# E13.18 (D56): Risk exit review (personas.exit_path research)
+# E13.18 (D56): Risk exit review
 # ---------------------------------------------------------------------------
 
 
@@ -2229,7 +2146,7 @@ Respond with JSON matching the RiskOutput schema:
 
 
 # ---------------------------------------------------------------------------
-# E13.9 (D56): Quant <-> Risk open path (personas.quant_risk_loop: on)
+# E13.9 (D56): Quant <-> Risk open path
 # ---------------------------------------------------------------------------
 
 RISK_VERDICT_BLOCK = """\
@@ -2285,11 +2202,3 @@ Rejected by Risk (dropped, do not re-propose): {rejected}.
         '  "skipped": [{"ticker": "...", "reason": "..."}],',
         '  "skipped": [{"ticker": "...", "reason": "..."}],\n  "kept": ["..."],',
     )
-
-
-# D56 (E13.1): pre-rename names, re-exported for one release.
-SweepInput = ScalpInput
-DirectorInput = ResearchInput
-build_sweep_prompt = build_scalp_prompt
-build_director_prompt = build_research_prompt
-director_input_from_context = research_input_from_context

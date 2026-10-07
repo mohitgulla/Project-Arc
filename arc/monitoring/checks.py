@@ -724,12 +724,12 @@ def scout_coverage(
 
     Under-fill is accepted (discovery comes from the YouTube calls only) and measured:
     the condition clears on the next Scout run that meets the threshold. Not judged
-    while ``personas.scout_feed`` is off or before the first read.
+    while the ``scout`` job is disabled or before the first read.
     """
     import json
 
-    if SCOUT_JOB not in routines.jobs() or not routines.scout_feed.enabled:
-        return CheckResult("scout_coverage", "ok", "not judged: personas.scout_feed off")
+    if SCOUT_JOB not in routines.jobs():
+        return CheckResult("scout_coverage", "ok", "not judged: scout job disabled")
     try:
         row = conn.execute(
             "SELECT payload FROM context_entries WHERE kind = 'scout_read' "
