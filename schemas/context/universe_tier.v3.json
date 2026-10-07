@@ -1,12 +1,12 @@
 {
   "$defs": {
     "Tier": {
-      "description": "Universe tiers, highest precedence first.",
+      "description": "Universe tiers, highest precedence first (D58: trending is last).",
       "enum": [
         "core",
         "momentum",
-        "trending",
-        "discovery"
+        "discovery",
+        "trending"
       ],
       "title": "Tier",
       "type": "string"
@@ -27,6 +27,20 @@
           "format": "date",
           "title": "As Of",
           "type": "string"
+        },
+        "inputs": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "trending: inputs that listed the name",
+          "title": "Inputs"
         },
         "rank": {
           "minimum": 1,
@@ -62,7 +76,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "``universe_tier`` context entry (subject = tier name), written by E12.2 / E12.3.",
+  "description": "``universe_tier`` context entry (subject = tier name).\n\nWriters: the momentum job (E12.2), the Scout (discovery, E13.7) and the\n``universe.trending`` job (D58, E13.19).",
   "properties": {
     "digest": {
       "default": "",

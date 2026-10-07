@@ -103,6 +103,8 @@ class ReasonCode(StrEnum):
     UNIVERSE_TRENDING_ADMITTED = "universe:trending_admitted"
     UNIVERSE_TRENDING_SCREEN_FAIL = "universe:trending_screen_fail"
     UNIVERSE_TRENDING_SINGLE_INPUT = "universe:trending_single_input"
+    # D58 (E13.19): a leveraged / inverse fund dropped from the trending tier
+    UNIVERSE_TRENDING_LEVERAGED = "universe:trending_leveraged"
     # E13.7 (D56): the daily Scout (name reserved by arc.journal.legacy's docstring)
     SCOUT_CANDIDATE = "scout_feed_candidate"  # a Scout ticker call written as a candidate
     SCOUT_DISCOVERY = "scout_discovery"  # added to the discovery tier
@@ -339,6 +341,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.UNIVERSE_TRENDING_ADMITTED: "Added to the trending tier",
     ReasonCode.UNIVERSE_TRENDING_SCREEN_FAIL: "Trending, but options too illiquid",
     ReasonCode.UNIVERSE_TRENDING_SINGLE_INPUT: "Trending on one input only",
+    ReasonCode.UNIVERSE_TRENDING_LEVERAGED: "Trending, but a leveraged fund",
     ReasonCode.SCOUT_CANDIDATE: "Scout raised this idea",
     ReasonCode.SCOUT_DISCOVERY: "Added to the discovery tier by the Scout",
     ReasonCode.SCOUT_DISCOVERY_SCREENED_OUT: "Scout pick kept out of the discovery tier",

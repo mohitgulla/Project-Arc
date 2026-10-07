@@ -447,7 +447,7 @@ class TestUniverse:
     def test_d56_fill_and_reference(self, tmp_path: Path) -> None:
         r, by_day = _universe(tmp_path, "d56")
         assert r.model == "d56"
-        assert [t.name for t in r.tiers] == ["core", "momentum", "discovery"]
+        assert [t.name for t in r.tiers] == ["core", "momentum", "discovery", "trending"]
         assert r.market_reference == ["SPY", "QQQ", "IWM"]
         assert r.discovery_fill == 2 and by_day == {TODAY.isoformat(): 2}
         assert [d.ticker for d in r.tail_cuts] == ["TEM"]

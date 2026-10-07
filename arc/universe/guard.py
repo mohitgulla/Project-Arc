@@ -7,16 +7,17 @@ One :class:`UniverseGuard` per Scalp run. It answers two questions:
   name in no tier is ``not_in_tier``, kept only as a *mention*
   (:attr:`UniverseGuard.mentions`) for the Scalp note/card.
 * :meth:`UniverseGuard.admit` — may this (already schema/source validated)
-  candidate be written to context? Core names always pass. A momentum or discovery
-  name must be optionable and pass its tier's screen profile (``tiers.policy``:
-  momentum ``standard``, discovery ``loose``). Screen results are cached per ticker
-  and profile for the run, so one ticker is measured once however many batches
-  name it.
+  candidate be written to context? Core names always pass. A momentum, discovery or
+  trending name must be optionable and pass its tier's screen profile
+  (``tiers.policy``: momentum ``standard``, discovery and trending ``loose``). Screen
+  results are cached per ticker and profile for the run, so one ticker is measured
+  once however many batches name it.
 
 Each tier has its own Scalp confidence floor (:meth:`UniverseGuard.floor_for`):
-core 0.4, momentum 0.5, discovery 0.6. The Scout is the only way into discovery;
-there is no new-ticker path (E13.15 removed the D51 trending tier, the new-ticker
-cap and the core/momentum floor exemption).
+core 0.4, momentum 0.5, discovery 0.6, trending 0.6 (D58). The Scout is the only way
+into discovery and the daily retail_buzz ranking the only way into trending; there is
+no new-ticker path (E13.15 removed the new-ticker cap and the core/momentum floor
+exemption).
 
 The guard never touches the gate: gate caps apply per underlying whatever the
 universe (PLAN §5).
@@ -33,7 +34,7 @@ from arc.config import UniverseMode
 from arc.universe.config import universe_config
 from arc.universe.master import load_symbol_master, normalize_symbol
 from arc.universe.screen import measure_liquidity, screen_liquidity
-from arc.universe.tiers import SEED_TIERS, Tier, tier_floor
+from arc.universe.tiers import SEED_TIERS, TIER_ORDER, Tier, tier_floor
 
 if TYPE_CHECKING:
     import datetime as _dt
@@ -75,7 +76,7 @@ class UniverseGuard:
     dte_window: tuple[int, int]
     market_factory: Callable[[], MarketDataProvider] | None = None
     adv_market_factory: Callable[[], MarketDataProvider] | None = None
-    #: ``ticker -> tier`` for core, momentum and discovery (others are in no tier).
+    #: ``ticker -> tier`` for core, momentum, discovery and trending (others: no tier).
     tiers: dict[str, Tier] = field(default_factory=dict)
     #: Per-tier confidence floors (``universe_floor_<tier>``).
     floors: dict[Tier, float] = field(default_factory=dict)
@@ -135,11 +136,7 @@ class UniverseGuard:
             market_factory=market_factory,
             adv_market_factory=adv_market_factory,
             tiers={normalize_symbol(t): tier for t, tier in tiers.items()},
-            floors={
-                t: f
-                for t in (Tier.CORE, Tier.MOMENTUM, Tier.DISCOVERY)
-                if (f := tier_floor(settings, t)) is not None
-            },
+            floors={t: f for t in TIER_ORDER if (f := tier_floor(settings, t)) is not None},
         )
 
     # -- membership ----------------------------------------------------------
@@ -169,7 +166,9 @@ class UniverseGuard:
 
     def _mention(self, sym: str) -> str:
         """A name in no tier is only mentioned (Scout is the one way into discovery)."""
-        self.details[sym] = "in no tier (core / momentum / discovery): mentioned, not admitted"
+        self.details[sym] = (
+            "in no tier (core / momentum / discovery / trending): mentioned, not admitted"
+        )
         if sym not in self.mentions:
             self.mentions.append(sym)
         return REJECT_NOT_IN_TIER

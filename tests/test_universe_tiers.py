@@ -170,16 +170,18 @@ class TestCoreConfig:
     def test_tier_order_fixed(self) -> None:
         from arc.universe.config import TiersConfig
 
-        assert [t.value for t in TIER_ORDER] == ["core", "momentum", "discovery"]
+        # D58 (E13.19): trending is the 4th tier
+        assert [t.value for t in TIER_ORDER] == ["core", "momentum", "discovery", "trending"]
         with pytest.raises(ValueError, match="fixed"):
-            TiersConfig(order=["momentum", "core", "discovery"])
+            TiersConfig(order=["momentum", "core", "discovery", "trending"])
 
     def test_registry_keys_and_ceiling(self) -> None:
-        assert MAX_UNIVERSE == MAX_CORE == 30
+        assert MAX_UNIVERSE == MAX_CORE == 25  # D58: every tier capped at 25
         for key, default in (
             ("universe_active_max", 50),
             ("universe_momentum_size_d56", 20),
-            ("universe_discovery_size", 20),
+            ("universe_discovery_size", 25),
+            ("universe_trending_size", 25),
         ):
             assert key in REGISTRY
             assert getattr(_settings(), key) == default
@@ -229,8 +231,8 @@ class TestResolveActive:
         assert by["NVDA"].tier is Tier.CORE
         assert by["NVDA"].also_in == [Tier.MOMENTUM, Tier.DISCOVERY]
         assert by["LRCX"].tier is Tier.MOMENTUM and by["LRCX"].also_in == [Tier.DISCOVERY]
-        assert a.counts == {"core": 2, "momentum": 2, "discovery": 1}
-        assert a.raw_counts == {"core": 2, "momentum": 3, "discovery": 3}
+        assert a.counts == {"core": 2, "momentum": 2, "discovery": 1, "trending": 0}
+        assert a.raw_counts == {"core": 2, "momentum": 3, "discovery": 3, "trending": 0}
         assert a.dropped == []
 
     def test_rank_order_normalisation_and_in_tier_duplicates(self) -> None:
@@ -266,7 +268,7 @@ class TestResolveActive:
             as_of=DAY,
         )
         assert len(a.members) == 50
-        assert a.counts == {"core": 25, "momentum": 20, "discovery": 5}
+        assert a.counts == {"core": 25, "momentum": 20, "discovery": 5, "trending": 0}
         assert [d.ticker for d in a.dropped] == ["D5", "D6"]
         assert {d.reason for d in a.dropped} == {DROP_OVER_ACTIVE_CAP}
 
@@ -342,14 +344,14 @@ class TestStore:
             db, Tier.MOMENTUM, ["NVDA", "LRCX", "KLAC"], at=NOW - dt.timedelta(hours=1), ttl="8d"
         )
         _write_tier(db, Tier.DISCOVERY, ["RKLB"], at=week_ago, ttl="1 session")  # expired
-        _write_tier(db, Tier.TRENDING, ["PLUG"], at=NOW, ttl="8d")  # pre-cutover: never read
+        _write_tier(db, Tier.TRENDING, ["PLUG"], at=NOW, ttl="8d")  # D58: the 4th tier
         _candidate(db, "CRWD", 0.7)  # a Scalp candidate is never a discovery (D56)
         a, inputs = build_active(db, _settings(), NOW)
         assert inputs.expired_tiers == [Tier.DISCOVERY]
         assert a.expired_tiers == [Tier.DISCOVERY]
         assert a.tier_tickers(Tier.MOMENTUM) == ["LRCX", "KLAC"]
         assert a.tier_tickers(Tier.DISCOVERY) == []
-        assert "PLUG" not in a.tickers and "CRWD" not in a.tickers
+        assert a.tier_tickers(Tier.TRENDING) == ["PLUG"] and "CRWD" not in a.tickers
         assert next(m for m in a.members if m.ticker == "NVDA").also_in == [Tier.MOMENTUM]
         # Scalp admission: only core skips the screen
         assert seed_tickers(db, _settings(), NOW) == CORE_20

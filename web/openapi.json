@@ -13958,6 +13958,18 @@
             "title": "Also In",
             "type": "array"
           },
+          "inputs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D58 trending: retail_buzz inputs that listed the name (2 | 1)",
+            "title": "Inputs"
+          },
           "rank": {
             "title": "Rank",
             "type": "integer"
@@ -14255,7 +14267,7 @@
             "title": "Fetched At"
           },
           "name": {
-            "description": "core | momentum | discovery (precedence order)",
+            "description": "core | momentum | discovery | trending (precedence order)",
             "title": "Name",
             "type": "string"
           },
@@ -14278,7 +14290,7 @@
                 "type": "null"
               }
             ],
-            "description": "The tier's size: core ceiling 30, momentum/discovery sizes; null = no cut",
+            "description": "The tier's size: core ceiling 25, momentum/discovery/trending sizes; null = no cut",
             "title": "Size Cap"
           },
           "source": {

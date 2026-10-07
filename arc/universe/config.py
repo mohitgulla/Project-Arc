@@ -74,18 +74,20 @@ class LiquidityThresholds(BaseModel):
     max_atm_spread_pct: float = Field(0.10, ge=0.0)
 
 
-#: D56 (E13.15): two profiles, ``standard`` (momentum) and ``loose`` (discovery).
+#: D56 (E13.15): two profiles, ``standard`` (momentum) and ``loose`` (discovery, trending).
 ScreenProfile = Literal["standard", "loose"]
 SCREEN_PROFILES: tuple[ScreenProfile, ...] = ("standard", "loose")
 #: A tier's screen may also be ``none`` (core: never screened).
 TierScreenName = Literal["none", "standard", "loose"]
-D56_ORDER: tuple[str, ...] = ("core", "momentum", "discovery")
+#: D58: trending is the 4th tier, after discovery.
+D56_ORDER: tuple[str, ...] = ("core", "momentum", "discovery", "trending")
 D56_MARKET_REFERENCE: tuple[str, ...] = ("SPY", "QQQ", "IWM")
-PolicyTier = Literal["core", "momentum", "discovery"]
+PolicyTier = Literal["core", "momentum", "discovery", "trending"]
 #: E13.15: profiles removed at the D56 cutover; a block for one still loads (ignored, logged).
 RETIRED_SCREEN_PROFILES: tuple[str, ...] = ("strict", "relaxed")
 #: E13.15: ``tiers:`` keys of the pre-D56 layouts, accepted (ignored, logged) so an old
-#: local universe.yaml or a stored override still loads.
+#: local universe.yaml or a stored override still loads. (D58's trending screen lives
+#: under ``tiers.policy.trending``, not a top-level ``tiers.trending`` block.)
 RETIRED_TIER_KEYS: tuple[str, ...] = ("model", "trending", "discovery")
 
 
@@ -218,17 +220,19 @@ class TierPolicy(BaseModel):
 
 
 def _default_policy() -> dict[PolicyTier, TierPolicy]:
-    """D56 (owner 2026-10-05): core none, momentum standard, discovery loose."""
+    """D56 (owner 2026-10-05): core none, momentum standard, discovery loose.
+    D58: trending loose (default, owner to confirm)."""
     return {
         "core": TierPolicy(screen="none"),
         "momentum": TierPolicy(screen="standard"),
         "discovery": TierPolicy(screen="loose"),
+        "trending": TierPolicy(screen="loose"),
     }
 
 
 class TiersConfig(BaseModel):
-    """Tier layout (D56): core / momentum / discovery, a screen per tier (``policy``)
-    and the market reference.
+    """Tier layout (D56 + D58): core / momentum / discovery / trending, a screen per
+    tier (``policy``) and the market reference.
 
     Sizes, floors and the active cap are runtime tunables (ArcSettings ``universe_*``).
     E13.15: the D56 cutover removed the layout switch; a ``model:`` key (and the pre-D56
@@ -238,7 +242,7 @@ class TiersConfig(BaseModel):
 
     model_config = _FORBID
 
-    order: list[Literal["core", "momentum", "discovery"]] = Field(default_factory=list)
+    order: list[Literal["core", "momentum", "discovery", "trending"]] = Field(default_factory=list)
     # None = SPY QQQ IWM (D56); see `reference()`.
     market_reference: list[str] | None = None
     policy: dict[PolicyTier, TierPolicy] = Field(default_factory=_default_policy)
@@ -280,7 +284,7 @@ class TiersConfig(BaseModel):
 class UniverseConfig(BaseModel):
     model_config = _FORBID
 
-    core: list[str] = Field(default_factory=list, max_length=30)
+    core: list[str] = Field(default_factory=list, max_length=25)  # D58 MAX_CORE
     tiers: TiersConfig = Field(default_factory=TiersConfig)
     momentum: MomentumConfig = Field(default_factory=MomentumConfig)
     symbol_master: SymbolMasterConfig = Field(default_factory=SymbolMasterConfig)
@@ -288,7 +292,7 @@ class UniverseConfig(BaseModel):
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
     earnings: EarningsConfig = Field(default_factory=EarningsConfig)
 
-    def screen_for(self, tier: Literal["momentum", "discovery"]) -> LiquidityThresholds:
+    def screen_for(self, tier: Literal["momentum", "discovery", "trending"]) -> LiquidityThresholds:
         """Thresholds of the profile ``tiers.policy`` sets for *tier*; a tier screened
         ``none`` (core) raises ``ValueError``."""
         name = self.tier_screen(tier)

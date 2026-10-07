@@ -64,6 +64,9 @@ class UniverseActiveRow(BaseModel):
     source: str
     reason: str
     also_in: list[str] = Field(default_factory=list, description="Lower tiers that also list it")
+    inputs: int | None = Field(
+        None, description="D58 trending: retail_buzz inputs that listed the name (2 | 1)"
+    )
 
 
 class UniverseDroppedRow(BaseModel):
@@ -78,11 +81,12 @@ class UniverseDroppedRow(BaseModel):
 class UniverseTierRow(BaseModel):
     model_config = _STRICT
 
-    name: str = Field(description="core | momentum | discovery (precedence order)")
+    name: str = Field(description="core | momentum | discovery | trending (precedence order)")
     offered: int = Field(description="Names the tier offered before dedupe and caps (raw_count)")
     active: int = Field(description="Names this tier holds in the active list")
     size_cap: int | None = Field(
-        description="The tier's size: core ceiling 30, momentum/discovery sizes; null = no cut"
+        description="The tier's size: core ceiling 25, momentum/discovery/trending sizes; "
+        "null = no cut"
     )
     source: str | None = Field(description="Feed source (stockanalysis, settings, config, scout)")
     url: str | None = None
@@ -213,6 +217,7 @@ def _active_row(m: TierMember) -> UniverseActiveRow:
         source=m.source,
         reason=m.reason,
         also_in=[t.value for t in m.also_in],
+        inputs=m.inputs,
     )
 
 
@@ -274,8 +279,9 @@ def load_universe(
         Tier.CORE: core_source,
         Tier.MOMENTUM: None,
         Tier.DISCOVERY: "scout",
+        Tier.TRENDING: "retail_buzz",
     }
-    feed_tiers = (Tier.MOMENTUM, Tier.DISCOVERY)
+    feed_tiers = (Tier.MOMENTUM, Tier.DISCOVERY, Tier.TRENDING)
     tiers: list[UniverseTierRow] = []
     for tier in TIER_ORDER:
         feed = _feed(conn, tier) if has_ctx and tier in feed_tiers else None

@@ -959,25 +959,30 @@ class ArcSettings(BaseSettings):
         description=(
             "Core tier (was the D28 seed list): always scanned and always accepted. "
             "Consumers read the active list (arc.universe.tiers.active_tickers), never this "
-            "field. A list longer than 30 is a pre-D51 override and is ignored in favour of "
+            "field. A list longer than 25 (D58 MAX_CORE) is a pre-D51 override and is ignored "
+            "in favour of "
             "config/universe.yaml core. In strict mode (ARC_UNIVERSE_MODE=strict) the "
             "active list is the allow-list."
         ),
     )
     universe_active_max: Annotated[int, Field(ge=1, le=60)] = Field(
         default=50,
-        description="D56: the deduped active list (core > momentum > discovery) "
+        description="D58: the deduped active list (core > momentum > discovery > trending) "
         "is capped at this many names; the rest are journaled universe:over_active_cap.",
     )
-    # -- D56 (E13.4): three tiers, per-tier floors
+    # -- D56 (E13.4) / D58 (E13.19): four tiers, per-tier sizes and floors
     universe_momentum_size_d56: Annotated[int, Field(ge=0, le=50)] = Field(
         default=20,
         description="D56: momentum tier size (top N of the momentum feed; the feed itself "
         "keeps its 25 rows, universe.momentum `size`).",
     )
-    universe_discovery_size: Annotated[int, Field(ge=0, le=50)] = Field(
-        default=20,
-        description="D56: discovery tier size (the Scout's YouTube calls, ranked).",
+    universe_discovery_size: Annotated[int, Field(ge=0, le=25)] = Field(
+        default=25,
+        description="D58: discovery tier size (the Scout's YouTube calls, ranked; was 20).",
+    )
+    universe_trending_size: Annotated[int, Field(ge=0, le=25)] = Field(
+        default=25,
+        description="D58: trending tier size (the daily retail_buzz ranking, E13.19).",
     )
     universe_floor_core: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.4,
@@ -990,6 +995,11 @@ class ArcSettings(BaseSettings):
     universe_floor_discovery: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.6,
         description="D56: Scalp confidence floor for discovery names (owner: >= 0.6).",
+    )
+    universe_floor_trending: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.6,
+        description="D58: Scalp confidence floor for trending names (default pending owner "
+        "confirmation; same as discovery).",
     )
     universe_mode: UniverseMode = Field(
         default=UniverseMode.SEED,

@@ -821,11 +821,25 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   job). Weekly instead: `days: [mon]` and `context: {ttl: 8d}` in `config/routines.yaml`.
 - **Discovery tier (E13.4):** only the Scout admits names here (`scout_read`
   `discovery`), screened `loose`; the Scalp never admits a name outside the tiers.
+- **Trending tier (E13.19, D58):** source job `retail_buzz` (05:40 ET, trading days)
+  pulls Reddit (ApeWisdom all-stocks, pages 1–2) and the Stocktwits trending list into
+  one `retail_buzz` entry (category `retail_buzz`, 24h); inputs are configured under
+  `sources.retail_buzz.inputs` (a failed input is recorded `failed`, the other still
+  writes; both failing fails the job). `universe.trending` (05:50) ranks it in code: each
+  input is rank-normalised (Reddit = mean of mentions and 24h rank gain; Stocktwits =
+  `trending_score`), `trend_score` = sum ÷ enabled inputs (a missing or stale input
+  counts 0, never renormalised), names in both inputs first, then single-input fill.
+  Core/momentum/discovery names, SPY/QQQ/IWM and leveraged/inverse funds
+  (`universe:trending_leveraged`) are excluded before the cut; the first `pool` (40)
+  get the `loose` screen and the tier keeps `universe_trending_size` (25), floor 0.6.
+  The active list fills core > momentum > discovery > trending, so overflow cuts the
+  trending tail first. By hand: `arc universe trending --dry-run [--no-screen]` (score
+  table, no write) or `arc universe trending [--db PATH] [--no-slack]` (runs the job).
 - **Ticker extraction (E12.3):** bare upper-case words of 2–3 letters count only for
   core + momentum names (`extraction.bare_min_len: 4`); `$SYM`, `(SYM)`, `(NYSE: SYM)`
   and `ticker symbol SYM` still match any length. RSI, ET, SA, TD, MSCI, COLA, NOW… are
   stop words in bare form (`config/universe.yaml`).
-- A `universe` override longer than 30 names (a pre-D51 flat list) is ignored in favour
+- A `universe` override longer than 25 names (D58 `MAX_CORE`) is ignored in favour
   of the yaml core (logged `universe.core_override_ignored`). Reset it from Slack with
   `!arc config universe <core 20>` so the Tower shows the core.
 

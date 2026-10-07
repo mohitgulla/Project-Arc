@@ -160,7 +160,7 @@ class TestRegistry:
         assert "vol_term" not in reg.sources and "unusual_options" not in reg.sources
         assert "earnings" not in reg.effective_weights()
         assert abs(sum(reg.effective_weights().values()) - 1.0) < 1e-9
-        # D56: six categories, weighted equally, each with a freshness window
+        # D56 + D58: seven categories, weighted equally, each with a freshness window
         assert [c.value for c in SourceCategory] == [
             "market_news",
             "company_data",
@@ -168,6 +168,7 @@ class TestRegistry:
             "options_slow",
             "youtube_macro",
             "youtube_micro",
+            "retail_buzz",
         ]
         assert set(routines.categories) == set(SourceCategory)
         windows = {c.value: s.max_age.duration for c, s in routines.categories.items()}
@@ -178,6 +179,7 @@ class TestRegistry:
             "options_slow": dt.timedelta(hours=24),
             "youtube_macro": dt.timedelta(hours=24),
             "youtube_micro": dt.timedelta(hours=24),
+            "retail_buzz": dt.timedelta(hours=24),
         }
         assert {c.weight for c in routines.categories.values()} == {1.0}
         assert routines.categories[SourceCategory.MARKET_NEWS].max_age.duration == dt.timedelta(

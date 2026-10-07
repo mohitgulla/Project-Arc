@@ -285,7 +285,7 @@ PROFILE_ORDER: tuple[str, ...] = ("cash_long_only", "cash_debit", "margin")  # s
 RANK_MENU_BY: tuple[str, ...] = ("scanner", "managed_net_ev", "rorc_day", "vrp")
 STOP_BASES: tuple[str, ...] = ("pct_max_loss", "pct_debit", "credit_multiple")
 
-MAX_UNIVERSE = 30  # D51: hard ceiling on the core list (arc.universe.tiers.MAX_CORE)
+MAX_UNIVERSE = 25  # D58: hard ceiling on the core list (arc.universe.tiers.MAX_CORE)
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.]{0,9}$")
 _USER_RE = re.compile(r"^[UW][A-Z0-9]{6,20}$")
 # Only `enabled` and `cadence` of a routine are tunable at runtime. `lane` (D39) and
@@ -424,11 +424,21 @@ _STATIC: tuple[Tunable, ...] = (
         "universe_discovery_size",
         Group.UNIVERSE,
         _I,
-        "D56: discovery tier size (the Scout's YouTube calls, ranked).",
+        "D58: discovery tier size (the Scout's YouTube calls, ranked).",
         Risk.UP,
         min=0,
-        max=50,
-        hard_ceiling=50,
+        max=25,
+        hard_ceiling=25,
+    ),
+    _s(
+        "universe_trending_size",
+        Group.UNIVERSE,
+        _I,
+        "D58: trending tier size (the daily Reddit + Stocktwits ranking).",
+        Risk.UP,
+        min=0,
+        max=25,
+        hard_ceiling=25,
     ),
     _s(
         "universe_floor_core",
@@ -457,6 +467,16 @@ _STATIC: tuple[Tunable, ...] = (
         Group.UNIVERSE,
         _F,
         "D56: min Scalp confidence for a discovery name's candidate (owner: >= 0.6).",
+        Risk.DOWN,
+        min=0.30,
+        max=0.95,
+        hard_ceiling=0.30,
+    ),
+    _s(
+        "universe_floor_trending",
+        Group.UNIVERSE,
+        _F,
+        "D58: min Scalp confidence for a trending name's candidate.",
         Risk.DOWN,
         min=0.30,
         max=0.95,
@@ -1823,7 +1843,6 @@ ORPHANED_KEYS: frozenset[str] = frozenset(
     {
         "universe.tiers.model",
         "universe_momentum_size",
-        "universe_trending_size",
         "scalp_max_new_tickers",
         "sweep_max_new_tickers",
         "scout_max_new_tickers",

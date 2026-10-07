@@ -560,9 +560,9 @@ class TestHandler:
         ).fetchone()
         assert tuple(call) == ("scout", "ok", "fake-cheap", 4000)
         assert res.metrics["discovery_fill"] == 3 and res.metrics["under_filled"] is True
-        assert "discovery 3/20" in res.summary
+        assert "discovery 3/25" in res.summary
         text = json.dumps(res.card.blocks)
-        assert "Discovery: 3/20" in text and "coverage:scout" in text
+        assert "Discovery: 3/25" in text and "coverage:scout" in text
         assert ctx.outputs  # writes recorded for the manifest
 
     def test_coverage_scout_condition(self, db: sqlite3.Connection) -> None:
@@ -590,7 +590,7 @@ class TestHandler:
         scout_persona(ctx, llm=FakeLLM(many), guard=_guard(db, settings))
         db.commit()
         r2 = checks.scout_coverage(db, routines, NOW + dt.timedelta(hours=2))
-        assert r2.severity == "ok" and r2.summary.startswith("discovery 5/20")
+        assert r2.severity == "ok" and r2.summary.startswith("discovery 5/25")
 
     def test_undeclared_write_fails_closed(self, db: sqlite3.Connection) -> None:
         _seed(db)
@@ -628,6 +628,7 @@ class TestWiring:
             "channel_brief",
             "options_daily",
             "vx_curve",
+            "retail_buzz",  # D58 (E13.19): prompt use lands in E13.20
             "vol_term",
             "universe_tier",
             "active_universe",

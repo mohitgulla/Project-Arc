@@ -1,24 +1,30 @@
 # Tiered universe (PLAN D56, E13.4; cut over in E13.15). Validated by
 # arc.universe.config.
 #
-# Three tiers, deduped (a name keeps its highest tier: core > momentum > discovery)
+# Four tiers (D56 + D58), deduped (a name keeps its highest tier:
+# core > momentum > discovery > trending)
 # and capped into one ACTIVE LIST each run (arc.universe.tiers.resolve_active;
 # `arc universe tiers` prints it):
 #   core       the 20 names below (the `universe` registry key); no screen; Scalp
 #              confidence floor 0.4
 #   momentum   top 20 of the momentum feed (universe_momentum_size_d56; E12.2, context
 #              `universe_tier`); standard screen; floor 0.5
-#   discovery  <= 20 names the Scout writes from YouTube calls (E13.7;
+#   discovery  <= 25 names the Scout writes from YouTube calls (E13.7;
 #              universe_discovery_size); loose screen; floor 0.6
-# Active list <= 50 (universe_active_max) filled core -> momentum -> discovery;
-# overflow is cut from the discovery tail first (journaled universe:over_active_cap,
+#   trending   <= 25 names ranked by code from the daily retail_buzz pull (Reddit via
+#              ApeWisdom + Stocktwits; D58, E13.19, job universe.trending;
+#              universe_trending_size): names in both inputs first, then the best
+#              single-input names; loose screen (owner to confirm); floor 0.6
+# Active list <= 50 (universe_active_max) filled core -> momentum -> discovery ->
+# trending; overflow is cut from the trending tail first, then the discovery tail
+# (journaled universe:over_active_cap,
 # never dropped silently). A Scalp idea for a name in no tier is never admitted
 # (not_in_tier): it is only mentioned. Floors are the runtime tunables
-# universe_floor_core / _momentum / _discovery.
+# universe_floor_core / _momentum / _discovery / _trending.
 #
 # ARC_UNIVERSE_MODE picks the admission mode (no code change):
 #   seed    (default) a name is admitted only through its tier: core never screened,
-#           momentum and discovery screened with their tier's profile below.
+#           momentum, discovery and trending screened with their tier's profile below.
 #   strict  the active list is a plain allow-list (the pre-D28 behaviour).
 #
 # The risk gate never reads this file: every PLAN §5 cap applies per underlying,
@@ -31,18 +37,19 @@ core: [NVDA, AAPL, MSFT, AMZN, GOOGL, META, TSLA, AMD, AVGO, MU, JPM, XOM, UNH, 
        COIN, PLTR, HOOD, INTC, NFLX]
 
 tiers:
-  # order is fixed (core, momentum, discovery) and defaults to it. E13.15: the D51
+  # order is fixed (core, momentum, discovery, trending) and defaults to it. E13.15: the D51
   # layout switch (`model:`) is gone; an old `model:` key still loads, ignored.
   # Not trade names: Research writes their `regime` entries every run so the D33
   # market guard always has an SPY read. ETFs can still enter as discoveries.
   # Unset = [SPY, QQQ, IWM].
   # market_reference: [SPY, QQQ, IWM]
   # Screen per tier (none | standard | loose). The floors are the
-  # universe_floor_<tier> tunables (0.4 / 0.5 / 0.6).
+  # universe_floor_<tier> tunables (0.4 / 0.5 / 0.6 / 0.6).
   policy:
     core: {screen: none}
     momentum: {screen: standard}
     discovery: {screen: loose}
+    trending: {screen: loose}           # D58 default, owner to confirm
 
 momentum:
   # E12.2 momentum tier: S&P 500 Momentum index constituents are not free, so the

@@ -37,12 +37,12 @@
       "type": "object"
     },
     "Tier": {
-      "description": "Universe tiers, highest precedence first.",
+      "description": "Universe tiers, highest precedence first (D58: trending is last).",
       "enum": [
         "core",
         "momentum",
-        "trending",
-        "discovery"
+        "discovery",
+        "trending"
       ],
       "title": "Tier",
       "type": "string"
@@ -63,6 +63,20 @@
           "format": "date",
           "title": "As Of",
           "type": "string"
+        },
+        "inputs": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "trending: inputs that listed the name",
+          "title": "Inputs"
         },
         "rank": {
           "minimum": 1,
