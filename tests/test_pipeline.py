@@ -365,25 +365,27 @@ class TestDigestCards:
         texts = [t for _, t in notes.posts]
         headers = [b[0]["text"]["text"] if b else None for b in notes.blocks]
         assert headers == [
-            "[Scalp] Scan: 10 Sources → 6 Candidates",  # D54: earnings doc = slow feed
-            "[Research] Ranked: 3 / 6 • Market Risk ON",
-            "[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
-            "[Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
+            "⚡ [Scalp] Scan: 10 Sources → 6 Candidates",  # D54: earnings doc = slow feed
+            "🧠 [Research] Ranked: 3 / 6 • Market Risk ON",
+            "📐 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
+            "🛡️ [Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
             None,  # propose has no card (E6.1 posts the proposal card)
             None,  # execute (D34): summary only; the Investor posts the order card
         ]
         # Fallback text = the pre-E5.5 one-liners.
-        assert texts[0] == ("[Scalp] scalp ✓ 10 docs (10 stories) → 7 accepted, 6 candidates today")
+        assert texts[0] == (
+            "⚡ [Scalp] scalp ✓ 10 docs (10 stories) → 7 accepted, 6 candidates today"
+        )
         assert texts[1] == (
-            "[Research] research ✓ 6 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
+            "🧠 [Research] research ✓ 6 candidates → ranked 3: SPY (neutral), NVDA (bullish), "
             "XOM (bearish); excluded 1; dropped {'not_a_candidate': 1}"
         )
         assert texts[2].startswith(
-            "[Quant] quant.open ✓ SPY iron_condor 740/745/798/803 2026-10-30"
+            "📐 [Quant] quant.open ✓ SPY iron_condor 740/745/798/803 2026-10-30"
         )
         assert (
             texts[3]
-            == "[Risk] risk.open ✓ SPY moderate, suggests 20; dropped {'unknown_structure': 1}"
+            == "🛡️ [Risk] risk.open ✓ SPY moderate, suggests 20; dropped {'unknown_structure': 1}"
         )
         # Footer links each chain post to its run and chain (E7.4 journal).
         for o, blocks in zip(report.outcomes[1:4], notes.blocks[1:4], strict=True):
@@ -409,16 +411,17 @@ class TestDigestCards:
         assert "http" not in scalp  # no source links
         assert "before sizing" not in json.dumps(notes.blocks[2])
         assert "Buyback plus raised data-center guidance." in scalp  # Scalp rationale line
-        assert "Evidence: Scalp neutral · macro catalyst Oct 28 · 62% confidence" in json.dumps(
+        assert "*Evidence:* Scalp neutral · macro catalyst Oct 28 · 62% confidence" in json.dumps(
             notes.blocks[1], ensure_ascii=False
         )
         research = json.dumps(notes.blocks[1], ensure_ascii=False)
         # every ranked name is listed, with its Research evidence (≤3 items)
         for t in ("*SPY*", "*NVDA*", "*XOM*"):
             assert t in research
-        assert "Research evidence: 8-K: buyback $50B, Sep 24 · uptrend" in research
+        assert "*Research evidence:* 8-K: buyback $50B, Sep 24 · uptrend" in research
         assert "a fourth item is cut" not in research
-        assert "*Excluded (1)*\\n• *PLTR*: Fixture: new open-universe name" in research
+        # E13.13 (D56): exclusions stay in the journal / Tower trail, never on the card
+        assert "Excluded" not in research and "new open-universe name" not in research
         assert "not a Scalp candidate (1): BRK.B" in research
         quant = json.dumps(notes.blocks[2], ensure_ascii=False)
         assert "*Skipped (1)*\\n• *NVDA*: Fixture: bull put credit is thin" in quant

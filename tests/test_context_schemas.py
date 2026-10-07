@@ -32,15 +32,15 @@ def test_no_orphan_schema_files() -> None:
 def test_cli_check_and_write(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     reg = tmp_path / "reg"
     assert main(["context", "schemas", "--check", "--dir", str(reg)]) == 1
-    assert "stale: note.v4.json" in capsys.readouterr().out
+    assert "stale: note.v5.json" in capsys.readouterr().out
     assert main(["context", "schemas", "--write", "--dir", str(reg)]) == 0
     assert main(["context", "schemas", "--check", "--dir", str(reg)]) == 0
     # a hand-edited (drifted) schema and an orphan file are both caught
-    (reg / "note.v4.json").write_text("{}\n")
+    (reg / "note.v5.json").write_text("{}\n")
     (reg / "gone.v1.json").write_text("{}\n")
     capsys.readouterr()
     assert main(["context", "schemas", "--check", "--dir", str(reg)]) == 1
     out = capsys.readouterr().out
-    assert "stale: note.v4.json" in out and "orphan: gone.v1.json" in out
+    assert "stale: note.v5.json" in out and "orphan: gone.v1.json" in out
     assert main(["context", "schemas", "--write", "--dir", str(reg)]) == 0
     assert not (reg / "gone.v1.json").exists()

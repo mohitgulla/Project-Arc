@@ -215,7 +215,9 @@ class TestScalp:
             chain_run_id="chain-1",
         )
         assert (
-            view.text == view.blocks[0]["text"]["text"] == "[Scalp] Scan: 12 Sources → 2 Candidates"
+            view.text
+            == view.blocks[0]["text"]["text"]
+            == "⚡ [Scalp] Scan: 12 Sources → 2 Candidates"
         )
         text = _all(view)
         assert "*3* accepted this run · 3 rejected" in text
@@ -245,7 +247,7 @@ class TestScalp:
     def test_empty_run_and_failed_batches(self) -> None:
         view = D.scalp_card(docs=1, accepted=0, candidates=[], rejected={}, failed_batches=2)
         text = _all(view)
-        assert view.text == "[Scalp] Scan: 1 Source → 0 Candidates"
+        assert view.text == "⚡ [Scalp] Scan: 1 Source → 0 Candidates"
         assert "*Candidates*\nnone" in text
         assert ":warning: 2 failed batches" in text
         assert "Rejected" not in text
@@ -343,18 +345,18 @@ class TestResearch:
             run_id="r",
             chain_run_id="c",
         )
-        assert view.text == "[Research] Ranked: 2 / 5 • Market Risk ON"
+        assert view.text == "🧠 [Research] Ranked: 2 / 5 • Market Risk ON"
         text = _all(view)
         assert (
             "*SPY*\nRank 1 · Neutral · 70% confidence · Iron Condor\n"
-            "Thesis: Range-bound into FOMC.\nRegime: Low realised vol.\n"
-            "Evidence: Scalp neutral · macro"
+            "*Thesis:* Range-bound into FOMC.\n*Regime:* Low realised vol.\n"
+            "*Evidence:* Scalp neutral · macro"
         ) in text
         assert "Rank 2 · Bullish · 70% confidence · Vertical Spread" in text
-        assert "[Research] SPY" not in text and "_Regime:_" not in text
+        assert "🧠 [Research] SPY" not in text and "_Regime:_" not in text
         assert "• not a Scalp candidate (1): AAPL" in text
         assert "• not ranked or excluded by Research (2): XOM, TSLA" in text
-        assert "*[Research] Session notes*\nTwo setups." in text
+        assert "*🧠 [Research] Session notes*\nTwo setups." in text
         assert _footer(view) == "run `r` · chain `c`"
         _assert_slack_limits(view)
 
@@ -376,14 +378,15 @@ class TestResearch:
             funnel=[("XOM", "excluded", "Crude already priced.")],
             budget=2,
         )
-        assert view.text == "[Research] Ranked: 3 / 4 • Market Risk ON"
+        assert view.text == "🧠 [Research] Ranked: 3 / 4 • Market Risk ON"
         text = _all(view)
         assert "*SPY*\nRank 1" in text and "*NVDA*\nRank 2" in text
         assert "*PLTR*\nRank 3" not in text
         assert "Ranked, not structured (1, over the budget of 2)" in text
         assert "#3 *PLTR* · Bullish · 70% · Contract win." in text
-        assert "Research evidence: 8-K buyback · IV rank 18" in text
-        assert "XOM" in text and "Crude already priced." in text
+        assert "*Research evidence:* 8-K buyback · IV rank 18" in text
+        # E13.13 (D56): no excluded list on the card
+        assert "XOM" not in text and "Crude already priced." not in text and "Excluded" not in text
         _assert_slack_limits(view)
 
     def test_empty_shortlist_and_escaping(self) -> None:
@@ -419,7 +422,7 @@ class TestQuant:
             run_id="r",
             chain_run_id="c",
         )
-        assert view.text == "[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78"
+        assert view.text == "📐 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78"
         text = _all(view)
         assert (
             "*SPY Iron Condor · Oct 30 (35 DTE)*\nLong 1x 740P\nShort 1x 745P\n"
@@ -443,10 +446,10 @@ class TestQuant:
             "ν Vega -$17.11 / vol pt\nΘ Theta +$3.14 / day\n"
         ) in fields
         assert "*Confidence*\n70%\n" in fields
-        assert "*[Quant] Rationale*\nBalanced deltas." in text
+        assert "*📐 [Quant] Rationale*\nBalanced deltas." in text
         assert "• not in the scanner menu (1): SPY" in text
         assert "• no tradable chain (1): XOM" in text
-        assert "*[Quant] Analysis*\nMenu #2." in text
+        assert "*📐 [Quant] Analysis*\nMenu #2." in text
         _assert_slack_limits(view)
 
     @pytest.mark.parametrize(
@@ -480,7 +483,7 @@ class TestQuant:
         assert "+1 more" in view.text
         assert "Nov 20" in _all(view)
         none = D.quant_card(QuantOutput(structures=[], analysis_notes=""))
-        assert none.text == "[Quant] Structures: none chosen"
+        assert none.text == "📐 [Quant] Structures: none chosen"
 
     def test_escaping_and_clip(self) -> None:
         out = QuantOutput(structures=[condor(rationale=EVIL + LONG)], analysis_notes=EVIL)
@@ -522,7 +525,7 @@ class TestRisk:
             run_id="r",
             chain_run_id="c",
         )
-        assert view.text == "[Risk] Review: SPY Moderate +1 more • Suggests 20"
+        assert view.text == "🛡️ [Risk] Review: SPY Moderate +1 more • Suggests 20"
         text = _all(view)
         assert "*SPY Iron Condor*\nRating *Moderate*" in text
         assert "*Size*\nSuggested 20 (advisory)" in text
@@ -530,11 +533,11 @@ class TestRisk:
         assert "*Concentration*\n:warning: over limit" in text
         assert ":warning: 1 concentration" in text and "1 not assessed" in text
         assert (
-            "*[Risk] SPY review*\nGreek budget: Small short vega.\n"
-            "Calendar: FOMC inside the trade.\nDefined-risk condor."
+            "*🛡️ [Risk] SPY review*\n*Greek budget:* Small short vega.\n"
+            "*Calendar:* FOMC inside the trade.\n*Risks:* Defined-risk condor."
         ) in text
-        assert "*[Risk] Portfolio*\nFlat book." in text
-        assert "*[Risk] Advisory*\nMind FOMC." in text
+        assert "*🛡️ [Risk] Portfolio*\nFlat book." in text
+        assert "*🛡️ [Risk] Advisory*\nMind FOMC." in text
         assert "• structure Quant did not propose (1): QQQ iron_condor" in text
         assert "• not assessed by Risk (1): XOM vertical_spread" in text
         assert _footer(view) == "run `r` · chain `c`"
@@ -562,7 +565,7 @@ class TestRisk:
         view = D.risk_card(
             out, sized=sized, max_gain={("SPY", "iron_condor"): 165.55}, cap_pct=0.05
         )
-        assert view.text == "[Risk] Review: SPY Moderate +1 more • 14 Contracts"
+        assert view.text == "🛡️ [Risk] Review: SPY Moderate +1 more • 14 Contracts"
         text = _all(view)
         assert "*Size*\nSuggested 20\nSized 14 (capped by 5% cap)" in text
         assert (
@@ -573,7 +576,7 @@ class TestRisk:
 
     def test_nothing_assessed_and_escaping(self) -> None:
         view = D.risk_card(RiskOutput(assessments=[], portfolio_summary=EVIL, advisory_notes=""))
-        assert view.text == "[Risk] Review: nothing assessed"
+        assert view.text == "🛡️ [Risk] Review: nothing assessed"
         assert EVIL_ESC in _all(view) and "<!channel>" not in _all(view)
 
     def test_long_narrative_is_clipped(self) -> None:
@@ -591,7 +594,7 @@ class TestRisk:
 class TestBrokerOrder:
     def test_plan_only(self) -> None:
         view = D.broker_card(plan(), run_id="r")
-        assert view.text == "[Broker] Order: SPY Iron Condor • x3 • Limit -1.25"
+        assert view.text == "🏦 [Broker] Order: SPY Iron Condor • x3 • Limit -1.25"
         text = _all(view)
         assert "Limit order · 3 attempts max · timeout 120s" in text
         assert (
@@ -600,7 +603,7 @@ class TestBrokerOrder:
         ) in text
         assert "Each attempt" not in text
         assert "Result" not in text
-        assert "*[Broker] Notes*\nStart at mid." in text
+        assert "*🏦 [Broker] Notes*\nStart at mid." in text
         _assert_slack_limits(view)
 
     def test_fill_with_slippage(self) -> None:
@@ -656,8 +659,8 @@ class TestBrokerReconcile:
             equity=100_812.0,
         )
         view = D.reconcile_card(journal(), performance=perf, run_id="r")
-        assert view.blocks[0]["text"]["text"] == "[Broker] Reconcile: Sep 28 • P&L +$312 (+0.3%)"
-        assert view.text == "[Broker] Reconcile: Sep 28 • P&amp;L +$312 (+0.3%)"
+        assert view.blocks[0]["text"]["text"] == "🏦 [Broker] Reconcile: Sep 28 • P&L +$312 (+0.3%)"
+        assert view.text == "🏦 [Broker] Reconcile: Sep 28 • P&amp;L +$312 (+0.3%)"
         assert "anomal" not in view.text  # owner: anomalies only in the body
         text = _all(view)
         assert "Reconciliation :white_check_mark: *clean* · equity $100,812" in text
@@ -667,13 +670,13 @@ class TestBrokerReconcile:
             "*Anomalies (1)*\n• *Warning* · Fill discrepancy: Fill worse than mid. (orders o-1)"
         ) in text
         assert "• *Timing*: Mid moved.\n   → Wait less." in text
-        assert "*[Broker] Journal*\nQuiet day." in text
+        assert "*🏦 [Broker] Journal*\nQuiet day." in text
         assert _footer(view) == "run `r`"
         _assert_slack_limits(view)
 
     def test_without_performance_shows_na(self) -> None:
         view = D.reconcile_card(journal())
-        assert view.text == "[Broker] Reconcile: Sep 28 • P&amp;L +$312"
+        assert view.text == "🏦 [Broker] Reconcile: Sep 28 • P&amp;L +$312"
         assert "MTD n/a\nYTD n/a" in _all(view)
 
     def test_loss_no_anomalies_discrepancy(self) -> None:
@@ -687,7 +690,7 @@ class TestBrokerReconcile:
                 journal_narrative=EVIL,
             )
         )
-        assert view.blocks[0]["text"]["text"] == "[Broker] Reconcile: bad • P&L -$46"
+        assert view.blocks[0]["text"]["text"] == "🏦 [Broker] Reconcile: bad • P&L -$46"
         text = _all(view)
         assert ":warning: *discrepancies found*" in text
         assert "Day -$46" in text

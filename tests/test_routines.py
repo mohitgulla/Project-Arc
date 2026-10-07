@@ -888,12 +888,12 @@ class TestHeartbeats:
         d.tick(et(2026, 9, 28, 12, 0), since=et(2026, 9, 28, 11, 55))
         assert len(notes.posts) == 1
         text = notes.posts[0][1]
-        assert text.startswith("[Scalp] scalp ✓")
+        assert text.startswith("⚡ [Scalp] scalp ✓")
         assert "rss ×2 (last: rss done)" in text  # E5.3: repeated source runs fold into one
         assert notes.posts[0][0] == dt.date(2026, 9, 28)
 
     def test_labels(self) -> None:
-        assert label_for("research") == "[Research]"
+        assert label_for("research") == "🧠 [Research]"
         assert label_for("youtube.stockedup") == "[Routines]"
 
     @staticmethod
@@ -909,7 +909,7 @@ class TestHeartbeats:
             personas:
               scalp: {{schedule: ["12:00"]{extra}}}
         """
-        view = CardView(text="[Scalp] Scan: 1 doc → 1 candidate", blocks=[header("card")])
+        view = CardView(text="⚡ [Scalp] Scan: 1 doc → 1 candidate", blocks=[header("card")])
         notes = RecordingNotifier()
         d = Dispatcher(
             conn,
@@ -936,7 +936,7 @@ class TestHeartbeats:
         assert len(notes.posts) == posts
         if posts:
             # The fallback text is the unchanged one-liner in every mode.
-            assert notes.posts[0][1] == "[Scalp] scalp ✓ 1 docs → 1 accepted"
+            assert notes.posts[0][1] == "⚡ [Scalp] scalp ✓ 1 docs → 1 accepted"
             assert (notes.blocks[0] is not None) is has_blocks
 
     def test_card_default_without_a_card_falls_back_to_one_liner(
@@ -944,7 +944,7 @@ class TestHeartbeats:
     ) -> None:
         d, _, notes = make(conn)
         d.run_manual("broker.reconcile", now=et(2026, 9, 28, 16, 30))
-        assert notes.posts[0][1] == "[Broker] broker.reconcile ✓ broker.reconcile done"
+        assert notes.posts[0][1] == "🏦 [Broker] broker.reconcile ✓ broker.reconcile done"
         assert notes.blocks == [None]
 
     def test_card_folds_pending_sources(self, conn: sqlite3.Connection) -> None:
@@ -953,11 +953,11 @@ class TestHeartbeats:
         d.run_manual("scalp", now=et(2026, 9, 28, 12, 0))
         blocks = notes.blocks[0]
         assert blocks is not None
-        # E5.5b: the folded line is a [Scalp] Session notes section before the
+        # E5.5b: the folded line is a ⚡ [Scalp] Session notes section before the
         # footer; the footer stays last. The card fixture has no footer, so the
         # section is simply the last block here.
         assert blocks[-1]["text"]["text"] == (
-            "*[Scalp] Session notes*\nsources since last update: rss: 3 new docs"
+            "*⚡ [Scalp] Session notes*\nsources since last update: rss: 3 new docs"
         )
         assert notes.posts[0][1].endswith("\n> sources since last update: rss: 3 new docs")
 
@@ -966,7 +966,7 @@ class TestHeartbeats:
         rec.fail.add("broker.reconcile")
         (o,) = d.run_manual("broker.reconcile", now=et(2026, 9, 28, 16, 30))
         assert notes.posts[0][1] == (
-            ":rotating_light: [Broker] broker.reconcile FAILED: "
+            ":rotating_light: 🏦 [Broker] broker.reconcile FAILED: "
             f"RuntimeError: broker.reconcile boom `{o.run_id}`"
         )
         assert notes.blocks == [None]

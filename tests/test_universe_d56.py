@@ -569,7 +569,7 @@ class TestGuard:
             mentions=res.mentions,
         )
         text = json.dumps(card.blocks)
-        assert "Outside the universe (1): mentioned, not admitted" in text
+        assert "*Outside the universe (1):*" in text
         assert "1 outside the universe" in text
         assert "1 rejected" in text  # the mention is not counted twice
 

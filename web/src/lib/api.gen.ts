@@ -1694,6 +1694,8 @@ export interface components {
             chain_run_id?: string | null;
             /** Items */
             items?: components["schemas"]["DecisionItem"][];
+            /** Notes */
+            notes?: components["schemas"]["NoteView"][];
             /** Persona Calls */
             persona_calls?: {
                 [key: string]: components["schemas"]["PersonaCallView"];
@@ -3292,6 +3294,48 @@ export interface components {
              * @description net − realised
              */
             unrealised_change?: number | null;
+        };
+        /**
+         * NoteSectionView
+         * @description E13.13: one ``note`` section; the Why tab renders the label bold, text plain.
+         */
+        NoteSectionView: {
+            /**
+             * Label
+             * @description None = a legacy (v1) body without sections
+             */
+            label: string | null;
+            /** Text */
+            text: string;
+        };
+        /**
+         * NoteView
+         * @description E13.13 (D56): a persona ``note`` for this trade's ticker / session in its chain.
+         *
+         *     ``sections`` / ``text`` come from :func:`arc.context.render` (the same lines Slack
+         *     renders, without markup).
+         */
+        NoteView: {
+            /** Facts */
+            facts?: {
+                [key: string]: string | number | boolean;
+            };
+            /** Id */
+            id: string;
+            /** Persona */
+            persona: string;
+            /** Sections */
+            sections?: components["schemas"]["NoteSectionView"][];
+            /** Subject */
+            subject: string;
+            /** Text */
+            text: string;
+            /** Title */
+            title: string;
+            /** Topic */
+            topic: string;
+            /** Valid From */
+            valid_from?: string | null;
         };
         /** OpsView */
         OpsView: {

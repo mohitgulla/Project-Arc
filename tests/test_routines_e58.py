@@ -534,16 +534,22 @@ class TestRootPerLoop:
         # every persona post of this loop is a reply under the root, none in the day thread
         replies = notes.in_thread(ts)
         assert replies and notes.day_thread_posts() == []
-        # D36 thread order: [Scalp] context first, then the chain's persona cards,
+        # D36 thread order: ⚡ [Scalp] context first, then the chain's persona cards,
         # the proposal card (recorded by the poster), and [Routines] last.
-        labels = [r.split(" ", 1)[0].lstrip("`\n") for r in replies]
-        order = [lbl for lbl in labels if lbl in {"[Scalp]", "[Research]", "[Quant]", "[Risk]"}]
-        # E13.9: quant.propose is the Quant's step (D56), so its summary is a [Quant] line.
-        assert order == ["[Scalp]", "[Research]", "[Quant]", "[Risk]", "[Quant]"], replies
-        assert replies[0].startswith("[Scalp] scalp ✓ [Scalp] Context: ")
+        labels = [" ".join(r.lstrip("`\n").split(" ", 2)[:2]) for r in replies]
+        order = [
+            lbl
+            for lbl in labels
+            if lbl in {"⚡ [Scalp]", "🧠 [Research]", "📐 [Quant]", "🛡️ [Risk]"}
+        ]
+        # E13.9: quant.propose is the Quant's step (D56), so its summary is a 📐 [Quant] line.
+        assert order == ["⚡ [Scalp]", "🧠 [Research]", "📐 [Quant]", "🛡️ [Risk]", "📐 [Quant]"], (
+            replies
+        )
+        assert replies[0].startswith("⚡ [Scalp] scalp ✓ ⚡ [Scalp] Context: ")
         assert "run " + slot_stamp(SLOT0) in replies[0]  # the Scalp run Research read
         scalp_blocks = notes.blocks[notes.threads.index(ts)]
-        assert scalp_blocks and scalp_blocks[0]["text"]["text"].startswith("[Scalp] Context: ")
+        assert scalp_blocks and scalp_blocks[0]["text"]["text"].startswith("⚡ [Scalp] Context: ")
         assert any("SPY" in (b.get("text") or {}).get("text", "") for b in scalp_blocks)
         assert replies[-1].startswith("```\n[Routines] " + chain)
         assert "research=" in replies[-1] and "digest=" in replies[-1]

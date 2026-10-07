@@ -51,13 +51,13 @@ class TestPersonaLabel:
     @pytest.mark.parametrize(
         ("persona", "expected"),
         [
-            (Persona.SCALP, "[Scalp]"),
-            (Persona.SCOUT, "[Scout]"),
-            (Persona.RESEARCH, "[Research]"),
-            (Persona.QUANT, "[Quant]"),
-            (Persona.RISK, "[Risk]"),
-            (Persona.BROKER, "[Broker]"),
-            (Persona.OPS, "[Ops]"),
+            (Persona.SCALP, "⚡ [Scalp]"),
+            (Persona.SCOUT, "🔭 [Scout]"),
+            (Persona.RESEARCH, "🧠 [Research]"),
+            (Persona.QUANT, "📐 [Quant]"),
+            (Persona.RISK, "🛡️ [Risk]"),
+            (Persona.BROKER, "🏦 [Broker]"),
+            (Persona.OPS, "⚙️ [Ops]"),
         ],
     )
     def test_all_personas(self, persona: Persona, expected: str) -> None:
@@ -179,7 +179,7 @@ class TestProposalCard:
             sizing="1",
             persona=Persona.RISK,
         )
-        assert "[Risk]" in blocks[0]["text"]["text"]
+        assert "🛡️ [Risk]" in blocks[0]["text"]["text"]
 
 
 class TestHaltNotice:
@@ -234,7 +234,7 @@ class TestArcSlackClient:
             persona=Persona.SCALP,
         )
         call_kwargs = fake.chat_postMessage.call_args.kwargs
-        assert call_kwargs["text"].startswith("[Scalp]")
+        assert call_kwargs["text"].startswith("⚡ [Scalp]")
 
     def test_update(self) -> None:
         arc, fake = self._make()

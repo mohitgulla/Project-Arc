@@ -173,14 +173,14 @@ Project-Arc/
 
 | Persona | Input | Output (JSON schema) | Model tier | Slack label |
 |---|---|---|---|---|
-| **Scalp** (Information Retrieval, fast feed; D54, renamed from Sweep in D56) | raw RSS/EDGAR docs, every 30 min | `Candidate[]` | cheap | `[Scalp]` |
-| **Scout** (slow feed; E5.13, D54) | typed kinds: YouTube briefs, options data, macro calendar, earnings calendar, Finnhub facts | `Candidate[]` (`feed=scout`) | cheap | `[Scout]` |
-| **Research** (Aggregator; renamed from Director in D56) | candidates + regime + portfolio | ranked shortlist + thesis per ticker | frontier | `[Research]` |
-| **Quant** (Risk/Reward) | shortlist + chains + Greeks | `Structure[]` with PoP/EV/cost, confidence | frontier | `[Quant]` |
-| **Risk** (Portfolio Alignment) | structures + portfolio + calendar | risk narrative, sizing suggestion (advisory only) | frontier | `[Risk]` |
-| **Quant** (position marks / exits; E13.2) | open structures + marks | `position_review` (job `positions.evaluate`, "Position marks"), close proposals (`quant.exits`); deterministic | — | `[Quant]` |
-| **Broker** (D56, E13.2; was Investor + Auditor) | approved proposal; broker state after the close | ladder through the D24 band (`broker`, `broker.execute`); post-market reconcile + journal (`broker.reconcile`); deterministic | — | `[Broker]` |
-| **Ops** (D56, E13.2) | audit store | weekly paper scorecard (job `scorecard`); deterministic | — | `[Ops]` |
+| **Scalp** (Information Retrieval, fast feed; D54, renamed from Sweep in D56) | raw RSS/EDGAR docs, every 30 min | `Candidate[]` | cheap | `⚡ [Scalp]` |
+| **Scout** (slow feed; E5.13, D54) | typed kinds: YouTube briefs, options data, macro calendar, earnings calendar, Finnhub facts | `Candidate[]` (`feed=scout`) | cheap | `🔭 [Scout]` |
+| **Research** (Aggregator; renamed from Director in D56) | candidates + regime + portfolio | ranked shortlist + thesis per ticker | frontier | `🧠 [Research]` |
+| **Quant** (Risk/Reward) | shortlist + chains + Greeks | `Structure[]` with PoP/EV/cost, confidence | frontier | `📐 [Quant]` |
+| **Risk** (Portfolio Alignment) | structures + portfolio + calendar | risk narrative, sizing suggestion (advisory only) | frontier | `🛡️ [Risk]` |
+| **Quant** (position marks / exits; E13.2) | open structures + marks | `position_review` (job `positions.evaluate`, "Position marks"), close proposals (`quant.exits`); deterministic | — | `📐 [Quant]` |
+| **Broker** (D56, E13.2; was Investor + Auditor) | approved proposal; broker state after the close | ladder through the D24 band (`broker`, `broker.execute`); post-market reconcile + journal (`broker.reconcile`); deterministic | — | `🏦 [Broker]` |
+| **Ops** (D56, E13.2) | audit store | weekly paper scorecard (job `scorecard`); deterministic | — | `⚙️ [Ops]` |
 
 AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits are enforced by the gate. AutoHedge's stock-centric `QUANT_ANALYSIS_PROMPT` is replaced by an options schema (IV/HV, IVR, regime, PoP, EV after spread cost).
 
@@ -193,7 +193,7 @@ AutoHedge's `RISK_PROMPT` becomes *advisory narrative only*; sizing and limits a
 ### 2.5 Slack design
 
 - **`#project-arc` (dev).** Every Kanban card gets one thread: creation post → worker progress comments → PR link → review verdict. Hermes' kanban notification subscriptions post into the same thread. Use `!cmd` prefix inside threads (Slack blocks slash commands there).
-- **`#arc-investor` (trading).** One thread per trading day (`💡 Mon Sep 28 · Session Notes`, switching at 24:00 ET; D37). Persona posts are labelled `[Scalp] [Scout] [Research] [Quant] [Risk] [Broker] [Ops]` (D56: Scalp was Sweep, Research was Director, Broker/Quant/Ops replace Investor and Auditor; history keeps the old names and `arc.journal.legacy` maps them). Proposal cards render as Hermes `clarify` → Block Kit **Approve / Reject** buttons; TTL default 20 min; expiry = reject. `!halt` in any thread trips the kill switch; only the owner can `!resume`.
+- **`#arc-investor` (trading).** One thread per trading day (`💡 Mon Sep 28 · Session Notes`, switching at 24:00 ET; D37). Persona posts are labelled `⚡ [Scalp] 🔭 [Scout] 🧠 [Research] 📐 [Quant] 🛡️ [Risk] 🏦 [Broker] ⚙️ [Ops]` (E13.13: emoji + name from one map, `arc/slack/personas.py`, mirrored in the Tower's `web/src/lib/performance.ts`; long text sits under bold section labels such as `*Thesis:*`, `*Regime:*`, `*Evidence:*`, `*Risks:*` from the `note` v5 `sections`; the Research card has `*Opens:*` and `*Exits:*` sections and no excluded list; D56: Scalp was Sweep, Research was Director, Broker/Quant/Ops replace Investor and Auditor; history keeps the old names and `arc.journal.legacy` maps them). Proposal cards render as Hermes `clarify` → Block Kit **Approve / Reject** buttons; TTL default 20 min; expiry = reject. `!halt` in any thread trips the kill switch; only the owner can `!resume`.
 - No order is ever submitted from `#project-arc`.
 
 ### 2.6 Hermes orchestration

@@ -24,7 +24,7 @@ def test_facts_spill_past_ten_fields() -> None:
 def test_persona_section_is_attributed_and_escaped() -> None:
     block = B.persona_section(Persona.RISK, "Review", "<@U1> sized down")
     assert block is not None
-    assert block["text"]["text"] == "*[Risk] Review*\n&lt;@U1&gt; sized down"
+    assert block["text"]["text"] == "*🛡️ [Risk] Review*\n&lt;@U1&gt; sized down"
     assert B.persona_section(Persona.RISK, "Review", "   ") is None
 
 

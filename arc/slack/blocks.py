@@ -4,11 +4,12 @@ One visual grammar for all personas (Scalp, Research, Quant, Risk, Broker,
 Ops), so a reviewer reads every card the same way:
 
 - ``header``      one plain-text title line, e.g.
-                  ``[Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor``
+                  ``📐 [Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor``
 - ``summary``     one context line with the at-a-glance facts
 - ``facts``       a two-column grid of ``*Label*`` / value pairs
 - ``persona``     a section attributed to the persona that wrote it
-                  (``*[Risk]* Review`` + body), so authorship is never ambiguous
+                  (``*🛡️ [Risk]* Review`` + body), so authorship is never ambiguous
+- ``sections``    E13.13: bold-labelled lines (``*Thesis:* …``, ``*Regime:* …``)
 - ``bullets``     a titled bullet list (violations, warnings, levels)
 - ``footer``      ids for audit (proposal hash, run id, snapshot id)
 
@@ -18,9 +19,14 @@ Pure functions: dicts in, dicts out. Untrusted persona text is escaped here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from arc.slack.personas import Persona, persona_label
+from arc.context.kinds import NOTE_SECTION_MAX
+from arc.context.render import facts_line, note_lines
+from arc.slack.personas import Persona, persona_for, persona_label
+
+if TYPE_CHECKING:
+    from arc.context.kinds import NotePayload
 
 __all__ = [
     "HEADER_MAX",
@@ -37,6 +43,9 @@ __all__ = [
     "footer",
     "header",
     "persona_section",
+    "render_note",
+    "section_text",
+    "sections",
     "summary",
 ]
 
@@ -116,6 +125,52 @@ def bullets(title: str, items: list[str], *, escape: bool = True) -> Block | Non
         return None
     lines = "\n".join(f"• {esc(i) if escape else i}" for i in items)
     return {"type": "section", "text": {"type": "mrkdwn", "text": clip(f"*{title}*\n{lines}")}}
+
+
+def section_text(pairs: list[tuple[str, str]], *, escape: bool = True) -> str:
+    """``*Label:* text`` lines (E13.13); each text clipped to :data:`NOTE_SECTION_MAX`.
+
+    Empty texts are omitted (never "n/a").
+    """
+    lines = []
+    for label, text in pairs:
+        body = text.strip()
+        if not body:
+            continue
+        body = clip(body, NOTE_SECTION_MAX)
+        lines.append(f"*{label}:* {esc(body) if escape else body}")
+    return "\n".join(lines)
+
+
+def sections(pairs: list[tuple[str, str]], *, escape: bool = True) -> Block | None:
+    """One section of bold-labelled lines: ``*Thesis:* …`` / ``*Regime:* …`` (E13.13).
+
+    ``None`` when every text is empty, so callers can skip it.
+    """
+    text = section_text(pairs, escape=escape)
+    if not text:
+        return None
+    return {"type": "section", "text": {"type": "mrkdwn", "text": clip(text)}}
+
+
+def render_note(note: NotePayload) -> list[Block]:
+    """A ``note`` as blocks (E13.13): the persona-labelled title, its sections, the facts.
+
+    Same lines as :func:`arc.context.render.render_note_text` (the Tower), with the
+    labels bold and the text escaped. A legacy body-only note renders its body.
+    """
+    persona = persona_for(note.persona) or Persona.OPS
+    pairs = note_lines(note)
+    head = f"*{persona_label(persona)} {esc(note.title)}*"
+    body = [
+        f"*{label}:* {esc(clip(t, NOTE_SECTION_MAX))}" if label else esc(t) for label, t in pairs
+    ]
+    out: list[Block] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": clip("\n".join([head, *body]))}}
+    ]
+    if note.facts:
+        out.append(summary(esc(facts_line(note.facts))))
+    return out
 
 
 def divider() -> Block:

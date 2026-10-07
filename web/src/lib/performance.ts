@@ -209,18 +209,35 @@ export function calibrationLabel(stated: number, hit: number): string {
   return `${stated.toFixed(2)} → ${formatPercent(hit)}`;
 }
 
+/** E13.13 (D56): persona emoji, mirrored from arc/slack/personas.py PERSONA_EMOJI. */
+export const PERSONA_EMOJI: Record<string, string> = {
+  scout: "🔭",
+  scalp: "⚡",
+  research: "🧠",
+  quant: "📐",
+  risk: "🛡️",
+  broker: "🏦",
+  ops: "⚙️",
+};
+
+/** `🧠 Research`; a persona without an emoji (quant_pop, monitor) is the plain name. */
+export function withEmoji(key: string, name: string): string {
+  const e = PERSONA_EMOJI[key.split(/[._]/)[0] ?? key];
+  return e ? `${e} ${name}` : name;
+}
+
 export const PERSONA_LABEL: Record<string, string> = {
-  research: "Research",
+  research: withEmoji("research", "Research"),
   quant_pop: "Quant PoP",
-  quant: "Quant",
-  risk: "Risk",
-  broker: "Broker",
-  ops: "Ops",
-  scalp: "Scalp",
-  scout: "Scout",
+  quant: withEmoji("quant", "Quant"),
+  risk: withEmoji("risk", "Risk"),
+  broker: withEmoji("broker", "Broker"),
+  ops: withEmoji("ops", "Ops"),
+  scalp: withEmoji("scalp", "Scalp"),
+  scout: withEmoji("scout", "Scout"),
   // D56 (E13.2): pre-rename rows the server did not map (legacy reason codes)
-  investor: "Broker",
-  auditor: "Broker",
+  investor: withEmoji("broker", "Broker"),
+  auditor: withEmoji("broker", "Broker"),
 };
 
 export function personaLabel(p: string): string {

@@ -527,11 +527,41 @@ class DecisionItem(BaseModel):
     run_id: str | None = None
 
 
+class NoteSectionView(BaseModel):
+    """E13.13: one ``note`` section; the Why tab renders the label bold, text plain."""
+
+    model_config = _STRICT
+
+    label: str | None = Field(description="None = a legacy (v1) body without sections")
+    text: str
+
+
+class NoteView(BaseModel):
+    """E13.13 (D56): a persona ``note`` for this trade's ticker / session in its chain.
+
+    ``sections`` / ``text`` come from :func:`arc.context.render` (the same lines Slack
+    renders, without markup).
+    """
+
+    model_config = _STRICT
+
+    id: str
+    persona: str
+    topic: str
+    subject: str
+    title: str
+    valid_from: _dt.datetime | None = None
+    sections: list[NoteSectionView] = Field(default_factory=list)
+    facts: dict[str, str | float | int | bool] = Field(default_factory=dict)
+    text: str
+
+
 class DecisionTrail(BaseModel):
     model_config = _STRICT
 
     chain_run_id: str | None = None
     items: list[DecisionItem] = Field(default_factory=list)
+    notes: list[NoteView] = Field(default_factory=list)
     persona_calls: dict[str, PersonaCallView] = Field(default_factory=dict)
 
 
@@ -1534,7 +1564,51 @@ def _decisions(conn: sqlite3.Connection, p: sqlite3.Row, chain: str | None) -> D
                 prompt_text=get("prompt_text"),
                 created_at=parse_ts(r["created_at"]),
             )
-    return DecisionTrail(chain_run_id=chain, items=items, persona_calls=calls)
+    notes = _chain_notes(conn, chain, p["ticker"] or "", cut)
+    return DecisionTrail(chain_run_id=chain, items=items, persona_calls=calls, notes=notes)
+
+
+_NOTE_CAP = 40
+
+
+def _chain_notes(
+    conn: sqlite3.Connection, chain: str | None, ticker: str, cut: dict[str, _dt.datetime]
+) -> list[NoteView]:
+    """E13.13: the chain's ``note`` entries about this ticker or the session (<= 40)."""
+    from pydantic import ValidationError
+
+    from arc.context.kinds import NotePayload
+    from arc.context.render import note_lines, render_note_text
+
+    if chain is None or not _has_table(conn, "context_entries"):
+        return []
+    rows = conn.execute(
+        """SELECT id, subject, payload, valid_from FROM context_entries
+           WHERE kind = 'note' AND chain_run_id = ? AND subject IN (?, 'session', 'market')
+           ORDER BY valid_from, id LIMIT ?""",
+        (chain, ticker, _NOTE_CAP),
+    ).fetchall()
+    out: list[NoteView] = []
+    for r in rows:
+        try:
+            note = NotePayload.model_validate(_json(r["payload"], {}))
+        except ValidationError:
+            continue  # a row from a future schema: skipped, never a 500
+        at = parse_ts(r["valid_from"])
+        out.append(
+            NoteView(
+                id=r["id"],
+                persona=legacy.persona_key(note.persona, at, cut),
+                topic=note.topic.value,
+                subject=r["subject"],
+                title=note.title,
+                valid_from=at,
+                sections=[NoteSectionView(label=lb, text=t) for lb, t in note_lines(note)],
+                facts=dict(note.facts),
+                text=render_note_text(note),
+            )
+        )
+    return out
 
 
 def _gate(conn: sqlite3.Connection, h: str) -> list[GateView]:

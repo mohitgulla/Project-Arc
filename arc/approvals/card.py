@@ -33,7 +33,7 @@ from arc.gate.token import BandToken, TokenError, parse_any
 from arc.models import StructureKind
 from arc.slack import blocks as B
 from arc.slack.blocks import CardView
-from arc.slack.personas import Persona
+from arc.slack.personas import Persona, persona_label
 from arc.structures import parse_occ
 from arc.utils.calendar import ET
 
@@ -129,12 +129,13 @@ def strategy_name(p: Proposal) -> str:
 
 
 def title(p: Proposal, kind: str = "open") -> str:
-    """One consistent title: ``[Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor``.
+    """One consistent title: ``📐 [Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor``.
 
-    An exit (``kind='close'``, E6.2) reads ``[Quant] Exit: SPY • Oct 30 (21 DTE) • Close``.
+    An exit (``kind='close'``, E6.2) reads ``📐 [Quant] Exit: SPY • Oct 30 (21 DTE) • Close``.
     """
     exp = parse_occ(p.structure.legs[0].occ_symbol).expiration
-    head = "[Quant] Exit" if kind == "close" else "[Quant] Proposal"
+    q = persona_label(Persona.QUANT)
+    head = f"{q} Exit" if kind == "close" else f"{q} Proposal"
     what = "Close position" if kind == "close" else strategy_name(p)
     return f"{head}: {ticker_of(p)} • {exp:%b %d} ({p.structure.dte} DTE) • {what}"
 
@@ -603,9 +604,13 @@ def _why(p: Proposal, t: DecisionTrail) -> list[dict[str, Any] | None]:
         meta.append(str(d["stance"]))
     if (c := _pct(d.get("confidence"))) is not None:
         meta.append(f"confidence {c}")
-    thesis = B.esc(p.thesis.strip())
-    if d.get("regime_context"):
-        thesis += f"\nRegime: {B.esc(str(d['regime_context']))}"
+    thesis = B.section_text(
+        [
+            ("Thesis", B.esc(p.thesis)),
+            ("Regime", B.esc(str(d.get("regime_context") or ""))),
+        ],
+        escape=False,
+    )
     out.append(
         B.persona_section(
             Persona.RESEARCH,
@@ -643,12 +648,16 @@ def _why(p: Proposal, t: DecisionTrail) -> list[dict[str, Any] | None]:
     if r.get("verdict") == "revise" and isinstance(req, dict):  # E13.9
         head.append(f"Asked Quant to revise ({B.esc(str(req.get('reason', '')))})")
     lines = [" · ".join(head)] if head else []
-    for label, key in (("Calendar", "calendar_concerns"), ("Greek budget", "greek_budget_impact")):
-        if r.get(key):
-            lines.append(f"{label}: {B.esc(str(r[key]))}")
-    narrative = B.esc(p.risk_narrative.strip())
-    if narrative:
-        lines.append(narrative)
+    calendar_greeks = B.section_text(
+        [
+            ("Calendar", B.esc(str(r.get("calendar_concerns") or ""))),
+            ("Greek budget", B.esc(str(r.get("greek_budget_impact") or ""))),
+            ("Risks", B.esc(p.risk_narrative)),
+        ],
+        escape=False,
+    )
+    if calendar_greeks:
+        lines.append(calendar_greeks)
     out.append(B.persona_section(Persona.RISK, "Review", "\n".join(lines), escape=False))
     return out
 

@@ -2834,6 +2834,13 @@
             "title": "Items",
             "type": "array"
           },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/NoteView"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
           "persona_calls": {
             "additionalProperties": {
               "$ref": "#/components/schemas/PersonaCallView"
@@ -7293,6 +7300,113 @@
           "bucket"
         ],
         "title": "NetPnlCard",
+        "type": "object"
+      },
+      "NoteSectionView": {
+        "additionalProperties": false,
+        "description": "E13.13: one ``note`` section; the Why tab renders the label bold, text plain.",
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None = a legacy (v1) body without sections",
+            "title": "Label"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "text"
+        ],
+        "title": "NoteSectionView",
+        "type": "object"
+      },
+      "NoteView": {
+        "additionalProperties": false,
+        "description": "E13.13 (D56): a persona ``note`` for this trade's ticker / session in its chain.\n\n``sections`` / ``text`` come from :func:`arc.context.render` (the same lines Slack\nrenders, without markup).",
+        "properties": {
+          "facts": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "title": "Facts",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "persona": {
+            "title": "Persona",
+            "type": "string"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/NoteSectionView"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          }
+        },
+        "required": [
+          "id",
+          "persona",
+          "topic",
+          "subject",
+          "title",
+          "text"
+        ],
+        "title": "NoteView",
         "type": "object"
       },
       "OpsView": {

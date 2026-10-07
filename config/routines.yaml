@@ -654,7 +654,7 @@ personas:
     trigger: approval           # event-driven, never scheduled
     llm: false                  # deterministic: gate token + approval -> arc.execution.submit()
     notify: card                # [Broker] Order card with the ExecutionResult (E5.5)
-    writes: [note]              # execution notes (placeholder; handler writes none yet)
+    writes: [note]              # E13.13: one execution note per worked ladder (facts only)
 
 steps:                          # per-step settings for chain-only steps (E5.2, arc/pipeline/steps.py)
   # E13.9 (D56) open path; old names quant/risk/propose resolve as logged aliases.

@@ -244,6 +244,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_health_parser(sub)
 
+    from arc.slack.render_cli import add_slack_parser
+
+    add_slack_parser(sub)
+
     from arc.backtest.cli import add_backtest_parser
 
     add_backtest_parser(sub)
@@ -821,6 +825,11 @@ def main(argv: list[str] | None = None) -> int:
         from arc.routines.cli import run_context
 
         return run_context(args)
+
+    if args.command == "slack":
+        from arc.slack.render_cli import run_slack
+
+        return run_slack(args)
 
     if args.command == "backtest":
         from arc.backtest.cli import run_backtest_cli

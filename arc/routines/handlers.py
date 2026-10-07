@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from arc.config import ArcSettings
+    from arc.context.kinds import ScoutReadPayload
     from arc.context.ttl import Ttl
     from arc.data.base import MarketDataProvider
     from arc.ingest.llm import PersonaLLM
@@ -1555,11 +1556,21 @@ def _scalp_note(ctx: JobContext, result: ScalpRunResult, about: list[str]) -> No
 
     if not result.summaries:
         return
+    from arc.context.kinds import NOTE_SECTION_MAX, NoteSection
+
     urls = list(dict.fromkeys(result.summary_sources))[:20]
-    extra = [x for x in (scalp_tape_line(result), scalp_mentions_line(result)) if x]
-    tail = ("\n\n" + "\n".join(extra)) if extra else ""
-    body = "\n\n".join(result.summaries)[: 4000 - len(tail)] + tail
-    facts: dict[str, int] = {}
+    # E13.13 (note v5): bold sections instead of one free-text body.
+    pairs = [
+        ("Summary", "\n\n".join(result.summaries)),
+        ("Options sentiment", scalp_tape_line(result)),
+        ("Themes", scalp_mentions_line(result)),
+    ]
+    sections = [
+        NoteSection(label=label, text=text.strip()[:NOTE_SECTION_MAX])  # type: ignore[arg-type]
+        for label, text in pairs
+        if text and text.strip()
+    ]
+    facts: dict[str, str | float | int | bool] = {"docs": result.docs_scalped}
     if result.mentions:
         facts["mentions"] = len(result.mentions)
     if result.tape is not None:
@@ -1570,7 +1581,7 @@ def _scalp_note(ctx: JobContext, result: ScalpRunResult, about: list[str]) -> No
             persona="scalp",
             topic=NoteTopic.OBSERVATION,
             title=f"Scan summary ({result.docs_scalped} docs)",
-            body=body,
+            sections=sections,
             about=about,
             evidence=[Evidence(ref=u) for u in urls],
             facts=facts,
@@ -2134,7 +2145,7 @@ def scout_persona(
         written.append(ctx.write("candidate", c.ticker, payload).id)
         written_tickers.append(c.ticker)
     _scout_journal(ctx, read_entry.id, disc, calls, below, written_tickers=written_tickers)
-    _scout_note(ctx, out, inp.session, [read_entry.id, *written])
+    _scout_note(ctx, read, inp.session, [read_entry.id, *written])
     under = read.discovery_fill < funnel.min_discovery_alert
     return JobResult(
         summary=(
@@ -2241,28 +2252,35 @@ def _scout_journal(
     return len(rec.records)
 
 
-def _scout_note(ctx: JobContext, out: Any, session: str, about: list[str]) -> None:
-    """One ``regime_view`` note with the Scout's read (D27), for Research to read back."""
+def _scout_note(ctx: JobContext, out: ScoutReadPayload, session: str, about: list[str]) -> None:
+    """One ``regime_view`` note with the Scout's read (D27), for Research to read back.
+
+    E13.13 (note v5): the read's sections verbatim (Regime · Options sentiment · Themes
+    · Risks) plus a ``discovery`` fact; no body.
+    """
     from pydantic import ValidationError
 
-    from arc.context.kinds import NotePayload, NoteTopic
+    from arc.context.kinds import NOTE_SECTION_MAX, NotePayload, NoteSection, NoteTopic
 
-    body = "\n\n".join(
-        part
-        for part in (
-            f"Regime: {out.regime}",
-            f"Options sentiment: {out.options_sentiment}",
-            ("Themes:\n" + "\n".join(f"- {t}" for t in out.themes)) if out.themes else "",
-            ("Risks:\n" + "\n".join(f"- {r}" for r in out.risks)) if out.risks else "",
-        )
-        if part
-    )
+    pairs = [
+        ("Regime", out.regime),
+        ("Options sentiment", out.options_sentiment),
+        ("Themes", "\n".join(f"- {t}" for t in out.themes)),
+        ("Risks", "\n".join(f"- {r}" for r in out.risks)),
+    ]
+    sections = [
+        NoteSection(label=label, text=text.strip()[:NOTE_SECTION_MAX])  # type: ignore[arg-type]
+        for label, text in pairs
+        if text and text.strip()
+    ]
+    facts: dict[str, str | float | int | bool] = {"discovery": int(out.discovery_fill)}
     try:
         payload = NotePayload(
             persona="scout",
             topic=NoteTopic.REGIME_VIEW,
             title=f"Scout daily read {session}",
-            body=body[:4000],
+            sections=sections,
+            facts=facts,
             about=about,
         )
     except ValidationError as exc:

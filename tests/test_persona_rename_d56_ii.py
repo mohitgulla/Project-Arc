@@ -217,8 +217,8 @@ def test_slack_and_heartbeat_labels() -> None:
     assert SlackPersona.BROKER.value == "Broker"
     assert SlackPersona.OPS.value == "Ops"
     assert not {"Investor", "Auditor"} & {p.value for p in SlackPersona}
-    assert _PERSONA_LABELS["broker"] == "[Broker]"
-    assert _PERSONA_LABELS["ops"] == _PERSONA_LABELS["scorecard"] == "[Ops]"
+    assert _PERSONA_LABELS["broker"] == "🏦 [Broker]"
+    assert _PERSONA_LABELS["ops"] == _PERSONA_LABELS["scorecard"] == "⚙️ [Ops]"
     assert {"broker", "ops", "quant"} <= set(TIMELINE_PERSONAS)
     assert not {"investor", "auditor"} & set(TIMELINE_PERSONAS)
 

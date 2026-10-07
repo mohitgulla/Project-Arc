@@ -4,6 +4,7 @@
  */
 import type { Schemas } from "./api";
 import { formatMoney, formatNumber } from "./format";
+import { withEmoji } from "./performance";
 
 export type Session = Schemas["SessionResponse"];
 export type Slot = Schemas["Slot"];
@@ -407,15 +408,15 @@ export const OPS_CLOSED_BY_DEFAULT = ["Alerts", "Halts", "Runs"] as const;
 
 // -- E8.8d: Session Timeline bands -----------------------------------------------------
 
-/** Persona chip text (routines.yaml `persona:`); sources carry none. */
+/** Persona chip text (routines.yaml `persona:`), E13.13 emoji first; sources carry none. */
 export const PERSONA_CHIP: Record<string, string> = {
-  scout: "Scout",
-  scalp: "Scalp",
-  research: "Research",
-  quant: "Quant",
-  risk: "Risk",
-  broker: "Broker",
-  ops: "Ops",
+  scout: withEmoji("scout", "Scout"),
+  scalp: withEmoji("scalp", "Scalp"),
+  research: withEmoji("research", "Research"),
+  quant: withEmoji("quant", "Quant"),
+  risk: withEmoji("risk", "Risk"),
+  broker: withEmoji("broker", "Broker"),
+  ops: withEmoji("ops", "Ops"),
   monitor: "Monitor",
 };
 

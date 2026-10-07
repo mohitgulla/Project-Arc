@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from arc.models import Performance
 from arc.slack import blocks as B
 from arc.slack.blocks import Block, CardView
-from arc.slack.personas import Persona
+from arc.slack.personas import Persona, persona_label
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from arc.models import Candidate
     from arc.personas.schemas import (
         BrokerPlan,
+        ExitWatchItem,
         QuantLeg,
         QuantOutput,
         QuantStructureOut,
@@ -58,6 +59,7 @@ __all__ = [
     "Performance",
     "research_card",
     "quant_card",
+    "exits_mandatory_summary",
     "quant_exit_card",
     "regime_name",
     "risk_card",
@@ -69,6 +71,13 @@ __all__ = [
 ]
 
 _MULT = 100  # option contract multiplier
+# E13.13 (D56): emoji persona labels on every card title (``🧠 [Research] Ranked: …``).
+_SCOUT = persona_label(Persona.SCOUT)
+_SCALP = persona_label(Persona.SCALP)
+_RESEARCH = persona_label(Persona.RESEARCH)
+_QUANT = persona_label(Persona.QUANT)
+_RISK = persona_label(Persona.RISK)
+_BROKER = persona_label(Persona.BROKER)
 # Scalp rows are two blocks each (divider + section); 20 keeps a card with the
 # head, a "+N more" line, the Rejected list, folded Session notes and the footer
 # under Slack's 50-block cap.
@@ -241,7 +250,7 @@ def scalp_card(
     mentions: Sequence[ScalpMention | str] = (),
     tape_line: str = "",
 ) -> CardView:
-    """``[Scalp] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
+    """``⚡ [Scalp] Scan: 12 Sources → 3 Candidates``; one evidence line per candidate.
 
     No source links (owner, E5.5 review): the row carries the Scalp's one-line
     rationale and a source count; the URLs stay in the audit store. D28: non-seed
@@ -257,7 +266,7 @@ def scalp_card(
     on only) sits under the source mix; mentions render ``Outside the universe (n):
     X (bullish), Y (bearish)``.
     """
-    title = f"[Scalp] Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
+    title = f"{_SCALP} Scan: {_plural(docs, 'Source')} → {_plural(len(candidates), 'Candidate')}"
     if mentions:  # D56: listed once, under Outside the universe
         rejected = {k: n for k, n in rejected.items() if k != "not_in_tier"}
         rejected_items = {k: v for k, v in (rejected_items or {}).items() if k != "not_in_tier"}
@@ -316,12 +325,12 @@ def scalp_card(
             for m in mentions
         ]
         blocks.append(B.divider())
-        blocks.append(
-            _section(
-                f"Outside the universe ({len(mentions)}): mentioned, not admitted",
-                [B.clip(", ".join(named))],
+        blocks.append(  # E13.13: ``*Outside the universe (n):* X (bullish), Y (bearish)``
+            B.sections(
+                [(f"Outside the universe ({len(mentions)})", ", ".join(named))], escape=False
             )
         )
+        blocks.append(B.summary("mentioned only, never admitted (D56)"))
     items = [(t, reason) for reason, ts in (rejected_items or {}).items() for t in ts]
     rej_rows = _drops(rejected, items)
     # E5.7 failed-check details; E5.5b: column 0, no indent.
@@ -344,14 +353,16 @@ def scout_card(
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Scout] Daily read: Discovery n/20`` (E13.7, minimal; E13.13 restyles).
+    """``🔭 [Scout] Daily read: Discovery n/20`` (E13.7; E13.13 bold sections).
 
-    *read* is the run's :class:`~arc.context.kinds.ScoutReadPayload`: the sections in
-    their fixed order, a ``Discovery: n/N`` fact, the code-counted inputs and a
+    *read* is the run's :class:`~arc.context.kinds.ScoutReadPayload`: the sections
+    verbatim (``*Regime:*`` · ``*Options sentiment:*`` · ``*Themes:*`` ·
+    ``*Discovery (n/20):*`` · ``*Risks:*``, no second summary), a ``Discovery: n/N``
+    fact, the code-counted inputs and a
     one-line under-fill notice below ``funnel.scout.min_discovery_alert``.
     """
     fill = int(read.discovery_fill)
-    title = f"[Scout] Daily read: Discovery {fill}/{max_discovery}"
+    title = f"{_SCOUT} Daily read: Discovery {fill}/{max_discovery}"
     inp = read.inputs
     briefs = (
         f"briefs macro {inp.youtube_macro.present}/{inp.youtube_macro.configured} · "
@@ -371,10 +382,21 @@ def scout_card(
                 [f":warning: discovery {fill} < {min_discovery_alert} (coverage:scout)"],
             )
         )
-    blocks.append(_section("Regime", [B.clip(B.esc(read.regime))]))
-    blocks.append(_section("Options sentiment", [B.clip(B.esc(read.options_sentiment))]))
-    if read.themes:
-        blocks.append(_section("Themes", [B.clip("\n".join(f"• {B.esc(t)}" for t in read.themes))]))
+    # E13.13: the scout_read sections verbatim, bold labels in the fixed note order.
+    blocks.append(
+        B.sections(
+            [
+                ("Regime", read.regime),
+                ("Options sentiment", read.options_sentiment),
+                ("Themes", " · ".join(read.themes)),
+                (
+                    f"Discovery ({fill}/{max_discovery})",
+                    ", ".join(read.discovery) or "none",
+                ),
+                ("Risks", " · ".join(read.risks)),
+            ]
+        )
+    )
     calls = [
         f"*{B.esc(c.ticker)}* {c.stance.value} · {_pct(c.confidence)} · {c.horizon} · "
         f"{B.esc(', '.join(o.removeprefix('youtube:') for o in c.origins))}"
@@ -382,20 +404,15 @@ def scout_card(
     ]
     if calls:
         blocks.append(_section("Ticker calls", [B.clip("\n".join(calls))]))
-    blocks.append(
-        _section("Discovery", [B.clip(", ".join(B.esc(t) for t in read.discovery) or "none")])
-    )
-    if read.risks:
-        blocks.append(_section("Risks", [B.clip("\n".join(f"• {B.esc(r)}" for r in read.risks))]))
+    out = [f"{B.esc(t)}: {B.esc(r)}" for t, r in (read.screened_out or {}).items()]
+    out += [f"{B.esc(t)}: {B.esc(r)}" for t, r in (dropped_calls or {}).items()]
+    if out:
+        blocks.append(_section("Screened out", [B.clip("\n".join(out))]))
     missing = [
         *(f"{m} (macro)" for m in inp.youtube_macro.missing),
         *(f"{m} (micro)" for m in inp.youtube_micro.missing),
         *(k for k in ("options_daily", "vx_curve", "vol_term") if getattr(inp, k) is None),
     ]
-    out = [f"{B.esc(t)}: {B.esc(r)}" for t, r in (read.screened_out or {}).items()]
-    out += [f"{B.esc(t)}: {B.esc(r)}" for t, r in (dropped_calls or {}).items()]
-    if out:
-        blocks.append(_section("Screened out", [B.clip("\n".join(out))]))
     if missing:
         blocks.append(B.summary(B.clip("No fresh input: " + ", ".join(B.esc(m) for m in missing))))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
@@ -408,7 +425,7 @@ def scalp_context_card(
 ) -> CardView:
     """D36 thread item 1: the Scalp candidates Research read this loop.
 
-    ``[Scalp] Context: 3 Candidates • run 2026-09-28 09:30ET``: the run time is
+    ``⚡ [Scalp] Context: 3 Candidates • run 2026-09-28 09:30ET``: the run time is
     the newest candidate entry's ``valid_from`` (the Scalp run that wrote it),
     one section per candidate (E5.5b layout), and the footer links the Scalp
     ``run`` that produced the newest entry plus the loop ``chain``. Built from
@@ -419,7 +436,7 @@ def scalp_context_card(
     cands = sorted(entries, key=lambda e: -float(e.payload.get("confidence") or 0.0))
     newest = max(entries, key=lambda e: e.valid_from) if entries else None
     when = f" • run {slot_stamp(newest.valid_from)}" if newest else ""
-    title = f"[Scalp] Context: {_plural(len(cands), 'Candidate')}{when}"
+    title = f"{_SCALP} Context: {_plural(len(cands), 'Candidate')}{when}"
     runs = sorted({e.run_id for e in entries if e.run_id})
     blocks = _head(
         title,
@@ -477,24 +494,29 @@ def research_card(
     funnel: Sequence[tuple[str, str, str]] = (),
     budget: int | None = None,
     evidence: Mapping[str, str] | None = None,
+    exits: Sequence[ExitWatchItem] | None = None,
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Research] Ranked: 12 / 30 • Market Risk ON``; a section per budgeted pick.
+    """``🧠 [Research] Ranked: 12 / 30 • Market Risk ON``; *Opens* then *Exits* (E13.13).
 
     E5.7: Research ranks every candidate it would trade. The first ``budget``
-    (the Quant/Risk budget, ``pipeline_max_shortlist``) get full sections; the rest
-    are listed under "Ranked, not structured". ``funnel`` is ``(ticker, key, reason)``
-    for candidates Research excluded (with its reason) or left unranked.
+    (the Quant/Risk budget, ``pipeline_max_shortlist``) get full sections under
+    ``*Opens:*``; the rest are listed under "Ranked, not structured".
+    ``funnel`` is ``(ticker, key, reason)`` for candidates Research excluded or left
+    unranked. E13.13 (D56): excluded tickers are not listed on the card (they stay in
+    the journal and the Tower trail); unranked ones are counted under Dropped.
     ``dropped`` is ``(ticker, reason_key)`` for invalid shortlist entries.
     ``evidence`` is ticker → a pre-escaped one-line summary of the upstream Scalp
     data (stance, catalyst, confidence, sources) shown under the thesis.
+    ``exits`` is the stored exit watchlist (E13.17): one ``*Exits:*`` line per item,
+    ``Exits: none open`` for an empty list, no section at all for ``None``
+    (``personas.exit_path: deterministic``).
     """
     regime = regime_name(out.market_regime)
     ranked = sorted(out.shortlist, key=lambda i: i.rank)
     inside = ranked if budget is None else ranked[:budget]
     beyond = [] if budget is None else ranked[budget:]
-    excluded = [(t, r) for t, k, r in funnel if k == "excluded"]
     unranked = [(t, k) for t, k, _ in funnel if k != "excluded"]
     # E5.9 (D33): explicit no-trade, market guard, portfolio view and suppressed ideas.
     guard = getattr(out, "market_guard", None)
@@ -511,20 +533,21 @@ def research_card(
         else ""
     )
     if guard is not None and not guard.opens_allowed:
-        title = f"[Research] No trade: market unclear • Market {regime}"
+        title = f"{_RESEARCH} No trade: market unclear • Market {regime}"
     elif not ranked and no_trade:
-        title = f"[Research] No trade: {_title_case(no_trade)} • Market {regime}"
+        title = f"{_RESEARCH} No trade: {_title_case(no_trade)} • Market {regime}"
     else:
-        title = f"[Research] Ranked: {len(ranked)} / {candidates} • Market {regime}"
+        title = f"{_RESEARCH} Ranked: {len(ranked)} / {candidates} • Market {regime}"
+    reviews = sum(w.action == "review" for w in exits or ())
     blocks = _head(
         title,
         f"*{len(ranked)}* ranked",
         pool_line,
         f"{len(inside)} to Quant (budget {budget})" if beyond else "",
-        f"{len(excluded)} excluded" if excluded else "",
         f"{len(dropped) + len(unranked)} dropped" if dropped or unranked else "",
         f"{len(suppressed)} suppressed (dedupe)" if suppressed else "",
         f"Portfolio {B.esc(_title_case(pview.verdict))}" if pview is not None else "",
+        f"{len(exits)} watched · {reviews} review" if exits else "",
     )
     if guard is not None:
         vix = f"VIX {guard.vix.value:.1f}" if guard.vix else "VIX n/a"
@@ -541,8 +564,22 @@ def research_card(
                 [x for x in (vix, reg, *[B.esc(r) for r in guard.reasons]) if x],
             )
         )
+    # -- Opens ------------------------------------------------------------------
+    if ranked:
+        opens = [f"{len(inside)} ranked within budget"]
+        if beyond:
+            opens.append(f"{len(beyond)} beyond the budget of {budget}")
+    else:
+        opens = [
+            f"nothing worth trading today ({_title_case(no_trade)})"
+            if no_trade
+            else "nothing worth trading today"
+        ]
+    if pool_line:
+        opens.append(pool_line)
+    blocks.append(B.divider())
+    blocks.append(B.sections([("Opens", " · ".join(opens))], escape=False))
     for item in inside:
-        blocks.append(B.divider())
         fit = getattr(item, "portfolio_fit", None)
         meta = (
             f"Rank {item.rank} · {B.esc(item.stance.strip().capitalize())} · "
@@ -550,45 +587,20 @@ def research_card(
             f"{B.esc(_title_case(item.suggested_structure_type))}"
             + (f" · Fit: {B.esc(_title_case(fit))}" if fit else "")
         )
-        lines = [f"*{B.esc(item.ticker)}*", meta]
-        if item.thesis.strip():
-            lines.append(f"Thesis: {B.esc(item.thesis.strip())}")
-        if item.regime_context.strip():
-            lines.append(f"Regime: {B.esc(item.regime_context.strip())}")
-        ev = (evidence or {}).get(item.ticker, "")
-        if ev:
-            lines.append(f"Evidence: {ev}")
-        if item.evidence:
-            lines.append("Research evidence: " + " · ".join(B.esc(e) for e in item.evidence))
+        body = B.section_text(
+            [
+                ("Thesis", B.esc(item.thesis)),
+                ("Regime", B.esc(item.regime_context)),
+                ("Evidence", (evidence or {}).get(item.ticker, "")),
+                ("Research evidence", " · ".join(B.esc(e) for e in item.evidence)),
+            ],
+            escape=False,
+        )
+        lines = [f"*{B.esc(item.ticker)}*", meta, *([body] if body else [])]
         blocks.append(
             {"type": "section", "text": {"type": "mrkdwn", "text": B.clip("\n".join(lines))}}
         )
-    if not ranked:
-        why = (
-            f"nothing worth trading today ({_title_case(no_trade)})"
-            if no_trade
-            else ("nothing worth trading today")
-        )
-        blocks.append(_section("Ranked", [why]))
-    if pview is not None:
-        blocks.append(B.divider())
-        rows = [B.esc(pview.notes.strip())] if pview.notes.strip() else []
-        rows += [
-            f"• {B.esc(c.structure_id)}: {B.esc(_title_case(c.status))}"
-            + (f" · {B.esc(_clip_line(c.reason))}" if c.reason.strip() else "")
-            for c in checks
-        ]
-        blocks.append(_section(f"Portfolio: {_title_case(pview.verdict)}", rows or ["-"]))
-    if suppressed:
-        blocks.append(B.divider())
-        blocks.append(
-            _section(
-                f"Suppressed by dedupe ({len(suppressed)})",
-                [f"• {B.esc(_clip_line(x))}" for x in suppressed],
-            )
-        )
     if beyond:
-        blocks.append(B.divider())
         blocks.append(
             _section(
                 f"Ranked, not structured ({len(beyond)}, over the budget of {budget})",
@@ -600,12 +612,31 @@ def research_card(
                 ],
             )
         )
-    if excluded:
+    # -- Exits (E13.17 watchlist; absent under exit_path deterministic) ------------
+    if exits is not None:
+        blocks.append(B.divider())
+        blocks.append(_exits_section(exits))
+    if pview is not None:
+        blocks.append(B.divider())
+        rows = [B.esc(pview.notes.strip())] if pview.notes.strip() else []
+        if exits is None:  # E13.17: the watchlist replaces the thesis-check rows
+            rows += [
+                f"• {B.esc(c.structure_id)}: {B.esc(_title_case(c.status))}"
+                + (f" · {B.esc(_clip_line(c.reason))}" if c.reason.strip() else "")
+                for c in checks
+            ]
+        blocks.append(
+            B.sections(
+                [(f"Portfolio ({_title_case(pview.verdict)})", "\n".join(rows) or "-")],
+                escape=False,
+            )
+        )
+    if suppressed:
         blocks.append(B.divider())
         blocks.append(
             _section(
-                f"Excluded ({len(excluded)})",
-                [f"• *{B.esc(t)}*: {B.esc(_clip_line(r))}" for t, r in excluded],
+                f"Suppressed by dedupe ({len(suppressed)})",
+                [f"• {B.esc(_clip_line(x))}" for x in suppressed],
             )
         )
     items = [*dropped, *unranked]
@@ -617,6 +648,27 @@ def research_card(
     blocks.append(_section("Dropped", _drops(counts, items)))
     blocks.append(B.persona_section(Persona.RESEARCH, "Session notes", out.session_notes))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
+
+
+_MAX_EXIT_LINES = 12
+
+
+def _exits_section(exits: Sequence[ExitWatchItem]) -> Block:
+    """``*Exits:*`` one line per watch item (≤ 12): ticker · action · status · evidence."""
+    if not exits:
+        return {"type": "section", "text": {"type": "mrkdwn", "text": "*Exits:* none open"}}
+    order = sorted(exits, key=lambda w: (w.action != "review", w.ticker, w.structure_id))
+    lines = []
+    for w in order[:_MAX_EXIT_LINES]:
+        first = w.evidence[0] if w.evidence else w.reason
+        line = f"• *{B.esc(w.ticker)}* · {w.action} · {w.thesis_status}"
+        if first.strip():
+            line += f" · {B.esc(_clip_line(first))}"
+        lines.append(line)
+    if len(order) > _MAX_EXIT_LINES:
+        lines.append(f"+{len(order) - _MAX_EXIT_LINES} more")
+    text = f"*Exits ({len(exits)}):*\n" + "\n".join(lines)
+    return {"type": "section", "text": {"type": "mrkdwn", "text": B.clip(text)}}
 
 
 def _clip_line(text: str, limit: int = 140) -> str:
@@ -687,7 +739,7 @@ def quant_card(
     revision: bool = False,
     kept: Sequence[str] = (),
 ) -> CardView:
-    """``[Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78`` + legs per structure.
+    """``📐 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78`` + legs per structure.
 
     E13.9: ``revision=True`` is the ``quant.revise`` card (header ``[Quant (revised)]``);
     ``kept`` lists the revise-requested tickers Quant kept unchanged.
@@ -696,7 +748,7 @@ def quant_card(
     (``out.skipped``), "no structure, no reason" (``not_structured``) or no chain.
     ``over_budget`` = ranked by Research beyond the Quant/Risk budget.
     """
-    label = "[Quant (revised)]" if revision else "[Quant]"
+    label = persona_label(Persona.QUANT, suffix=" (revised)") if revision else _QUANT
     if out.structures:
         best = out.structures[0]
         more = f" +{len(out.structures) - 1} more" if len(out.structures) > 1 else ""
@@ -803,7 +855,7 @@ def risk_card(
     chain_run_id: str | None = None,
     verdicts: bool = False,
 ) -> CardView:
-    """``[Risk] Review: SPY Moderate • 14 Contracts``; one section per assessment.
+    """``🛡️ [Risk] Review: SPY Moderate • 14 Contracts``; one section per assessment.
 
     E13.9: ``verdicts=True`` (``personas.quant_risk_loop: on``) adds a verdict chip per
     assessment (Accept / Revise: <reason> / Reject) and a count line in the header.
@@ -824,9 +876,9 @@ def risk_card(
         a0 = out.assessments[0]
         more = f" +{len(out.assessments) - 1} more" if len(out.assessments) > 1 else ""
         rating = _title_case(a0.risk_rating)
-        title = f"[Risk] Review: {a0.ticker} {rating}{more} • {size_of(a0)}"
+        title = f"{_RISK} Review: {a0.ticker} {rating}{more} • {size_of(a0)}"
     else:
-        title = "[Risk] Review: nothing assessed"
+        title = f"{_RISK} Review: nothing assessed"
     warn = sum(a.concentration_warning for a in out.assessments)
     tally = Counter(_verdict(a) for a in out.assessments) if verdicts else Counter()
     blocks = _head(
@@ -872,16 +924,15 @@ def risk_card(
                 ]
             )
         )
-        lines = [
-            f"Greek budget: {B.esc(a.greek_budget_impact.strip())}",
-            f"Calendar: {B.esc(a.calendar_concerns.strip())}",
-        ]
-        if a.narrative.strip():
-            lines.append(B.esc(a.narrative.strip()))
+        body = B.section_text(  # E13.13: bold section labels
+            [
+                ("Greek budget", a.greek_budget_impact),
+                ("Calendar", a.calendar_concerns),
+                ("Risks", a.narrative),
+            ]
+        )
         blocks.append(
-            B.persona_section(
-                Persona.RISK, f"{B.esc(a.ticker)} review", "\n".join(lines), escape=False
-            )
+            B.persona_section(Persona.RISK, f"{B.esc(a.ticker)} review", body, escape=False)
         )
     blocks.append(B.divider())
     blocks.append(B.persona_section(Persona.RISK, "Portfolio", out.portfolio_summary))
@@ -909,6 +960,32 @@ _TRIGGER_LABEL = {
 }
 
 
+_MAX_EXIT_CASES = 8
+
+
+def _exit_case_line(c: ExitCase) -> str:
+    """``*CRWD* `os-1` · Profit target · EV hold +$12 / managed +$30 · close now +$85``.
+
+    Numbers come from ``ExitCase.facts`` only (E13.13).
+    """
+    f = c.facts
+    trig = ", ".join(_TRIGGER_LABEL.get(t.kind, t.kind) for t in c.triggers)
+    managed = (
+        f" / managed {_money(f.remaining_ev_managed, signed=True)}"
+        if f.remaining_ev_managed is not None
+        else ""
+    )
+    ev = (
+        f"EV hold {_money(f.remaining_ev_hold, signed=True)}{managed}"
+        if f.remaining_ev_hold is not None
+        else f"EV hold n/a{managed}"
+    )
+    return (
+        f"*{B.esc(c.ticker)}* `{B.esc(c.structure_id)}` · {B.esc(trig)} · {ev} · "
+        f"close now {_money(f.close_now_net, signed=True)}"
+    )
+
+
 def quant_exit_card(
     cases: Sequence[ExitCase],
     *,
@@ -917,28 +994,36 @@ def quant_exit_card(
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Quant] Exit cases: 2 judged • 1 close``; one line per case.
+    """``📐 [Quant] Exit cases: 2 judged • 1 close``; one section per case (≤ 8).
 
-    Minimal (E13.17): ticker · trigger(s) · recommendation · remaining EV. Under
-    ``shadow`` the header says nothing is proposed.
+    E13.13: ticker · triggers · remaining EV hold/managed · close-now net, then
+    ``*Recommendation:*`` and Quant's rationale. Under ``shadow`` the summary says
+    nothing is proposed.
     """
     closes = sum(c.recommendation == "close" for c in cases)
-    title = f"[Quant] Exit cases: {len(cases)} judged • {closes} close"
+    title = f"{_QUANT} Exit cases: {len(cases)} judged • {closes} close"
     skip_txt = " · ".join(
         f"{n} skipped ({k.replace('_', ' ')})" for k, n in sorted((skipped or {}).items())
     )
     blocks = _head(title, "Shadow: journaled only, nothing proposed" if shadow else "", skip_txt)
-    for c in cases:
-        trig = ", ".join(_TRIGGER_LABEL.get(t.kind, t.kind) for t in c.triggers)
-        ev = c.facts.remaining_ev_hold
-        line = (
-            f"*{B.esc(c.ticker)}* `{B.esc(c.structure_id)}` · {B.esc(trig)} · "
-            f"*{c.recommendation.capitalize()}* · remaining EV {_money(ev, signed=True)}"
+    for c in cases[:_MAX_EXIT_CASES]:
+        body = B.section_text(
+            [
+                ("Recommendation", c.recommendation.capitalize()),
+                ("Thesis", c.facts.thesis_status or ""),
+                ("Rationale", _clip_line(c.rationale, 400)),
+            ]
         )
         blocks.append(B.divider())
         blocks.append(
-            B.persona_section(Persona.QUANT, line, B.esc(_clip_line(c.rationale)), escape=False)
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": B.clip(f"{_exit_case_line(c)}\n{body}")},
+            }
         )
+    if len(cases) > _MAX_EXIT_CASES:
+        rest = ", ".join(B.esc(c.ticker) for c in cases[_MAX_EXIT_CASES:])
+        blocks.append(B.summary(B.clip(f"+{len(cases) - _MAX_EXIT_CASES} more: {rest}")))
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
 
 
@@ -950,27 +1035,46 @@ def risk_exit_card(
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Risk] Exit review: 2 reviewed • 1 close``; one line per case (E13.18, minimal).
+    """``🛡️ [Risk] Exit review: 2 reviewed • 1 close``; one section per case (E13.13).
 
-    ticker · Quant's call → Risk's verdict · reason code; the reason underneath.
+    ticker · Quant's call → Risk's verdict chip · reason code; the reason underneath.
     """
     closes = sum(v.verdict == "close" for v in verdicts.values())
-    title = f"[Risk] Exit review: {len(cases)} reviewed • {closes} close"
+    title = f"{_RISK} Exit review: {len(cases)} reviewed • {closes} close"
     sub = "Risk unavailable: every case held (policy fallback applies)" if unavailable else ""
     blocks = _head(title, sub, "")
+    shown = 0
     for c in cases:
         v = verdicts.get(c.structure_id)
         if v is None:
             continue
+        if shown == _MAX_EXIT_CASES:
+            break
+        shown += 1
         line = (
             f"*{B.esc(c.ticker)}* `{B.esc(c.structure_id)}` · Quant {c.recommendation} → "
-            f"*{v.verdict.capitalize()}* · {B.esc(_title_case(v.reason_code))}"
+            f"*{v.verdict.capitalize()}* · `{B.esc(v.reason_code)}`"
         )
+        body = B.section_text([("Reason", _clip_line(v.reason, 240))])
         blocks.append(B.divider())
         blocks.append(
-            B.persona_section(Persona.RISK, line, B.esc(_clip_line(v.reason)), escape=False)
+            {"type": "section", "text": {"type": "mrkdwn", "text": B.clip(f"{line}\n{body}")}}
         )
     return _finish(title, blocks, run_id=run_id, chain=chain_run_id)
+
+
+def exits_mandatory_summary(closes: Sequence[tuple[str, str, str | None]]) -> str:
+    """E13.13: the ``exits.mandatory`` one-liner, ``CRWD · stop · proposal ab12cd34``.
+
+    *closes* is ``(ticker, signal, proposal hash or None)``; ``None`` = not proposed.
+    """
+    if not closes:
+        return "no mandatory exit signals (stop / DTE exit / expiry)"
+    parts = [
+        f"{t} · {sig.replace('_', ' ')} · " + (f"proposal {h[:8]}" if h else "not proposed")
+        for t, sig, h in closes
+    ]
+    return "mandatory exits: " + "; ".join(parts)
 
 
 def _verdict_chip(a: RiskAssessment) -> str:
@@ -1025,9 +1129,9 @@ def broker_card(
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``[Broker] Order: SPY Iron Condor • x3 • Limit -1.25`` (+ fill/cancel outcome)."""
+    """``🏦 [Broker] Order: SPY Iron Condor • x3 • Limit -1.25`` (+ fill/cancel outcome)."""
     title = (
-        f"[Broker] Order: {plan.ticker} {_title_case(plan.structure_type)} • "
+        f"{_BROKER} Order: {plan.ticker} {_title_case(plan.structure_type)} • "
         f"x{plan.contracts} • Limit {plan.initial_limit_price:+.2f}"
     )
     if result is not None:
@@ -1103,13 +1207,15 @@ def reconcile_card(
     chain_run_id: str | None = None,
     ops_line: str | None = None,
 ) -> CardView:
-    """``[Broker] Reconcile: Sep 28 • P&L +$312 (+0.3%)``; anomalies live in the body.
+    """``🏦 [Broker] Reconcile: Sep 28 • P&L +$312 (+0.3%)``; anomalies live in the body.
 
     E8.2a: *ops_line* (``Slots: research 71/75, … · missed 6 (list in tower Ops)``)
     is the day's routine slot coverage, shown in an ``Ops`` section.
     """
     perf = performance or Performance(day_pnl=out.daily_pnl)
-    title = f"[Broker] Reconcile: {_day(out.journal_date)} • P&L {_pnl(perf.day_pnl, perf.day_pct)}"
+    title = (
+        f"{_BROKER} Reconcile: {_day(out.journal_date)} • P&L {_pnl(perf.day_pnl, perf.day_pct)}"
+    )
     recon = out.reconciliation_status.strip() or "pending"
     icon = ":white_check_mark:" if recon == "clean" else ":warning:"
     n_anom = len(out.anomalies)
