@@ -4,7 +4,7 @@ D56 (E13.2): was the Auditor (``arc.routines.auditor``); the old job name ``audi
 loads as a logged alias. ``personas.broker.reconcile`` in ``config/routines.yaml``
 (16:30 ET, ``halt_exempt``).
 Deterministic: it runs :func:`arc.reconcile.engine.reconcile` against the paper
-broker (read-only calls only), then posts the ``[Broker] Reconcile`` card with
+broker (read-only calls only), then posts the ``🏦 [Broker] Reconcile`` card with
 Day / MTD / YTD performance from ``pnl_snapshots`` (D28).
 
 Any mismatch has already raised a halt (``arc:reconcile``) inside ``reconcile``;

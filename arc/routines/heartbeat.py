@@ -31,7 +31,7 @@ import structlog
 
 from arc.routines.runs import RoutineStateRepo
 from arc.slack import blocks as B
-from arc.slack.personas import Persona, persona_label
+from arc.slack.personas import PERSONA_KEYS, Persona, persona_label
 from arc.utils.calendar import ET, is_session, next_session
 
 if TYPE_CHECKING:
@@ -44,15 +44,12 @@ Blocks = list[dict[str, Any]]
 _PENDING_KEY = "heartbeat:pending_sources"
 _MAX_PENDING_JOBS = 50
 _ROUTINES_LABEL = "[Routines]"
+# E13.13 (D56): built from arc.slack.personas (single source), ``🧠 [Research]``.
+# Pre-D56 job prefixes (sweep, director, investor, auditor) are aliases, not labels.
 _PERSONA_LABELS = {
-    "scalp": "[Scalp]",
-    "scout": "[Scout]",  # E13.7 (D56)
-    "research": "[Research]",
-    "quant": "[Quant]",
-    "risk": "[Risk]",
-    "broker": "[Broker]",
-    "ops": "[Ops]",
-    "scorecard": "[Ops]",  # D56 (E13.2): the weekly scorecard posts as [Ops]
+    key: persona_label(p)
+    for key, p in PERSONA_KEYS.items()
+    if key not in {"sweep", "director", "investor", "auditor"}
 }
 
 
@@ -340,7 +337,7 @@ class Heartbeats:
 
         E5.5b: a ``[Routines]`` line (non-persona job) is posted inside a ```
         code block, folded sources included. On a card the folded sources go in
-        a ``[Scalp] Session notes`` section before the audit footer (the sources
+        a ``⚡ [Scalp] Session notes`` section before the audit footer (the sources
         belong to the Scalp, whatever card they land on).
         """
         label = label_for(job)
@@ -423,10 +420,10 @@ def _detail(job: str, text: str, *, sep: str = ": ", inline: bool = False) -> st
 
 
 def _fold_sources_into_card(blocks: Blocks, folded: str) -> Blocks:
-    """Put the folded sources line in ``[Scalp] Session notes`` before the footer.
+    """Put the folded sources line in ``⚡ [Scalp] Session notes`` before the footer.
 
     The footer (a context block of audit ids, always last on a digest card) stays
-    last. When the card already has a ``[Scalp] Session notes`` section, the line
+    last. When the card already has a ``⚡ [Scalp] Session notes`` section, the line
     is appended to it; otherwise a new one is inserted before the footer.
     """
     body = [*blocks]

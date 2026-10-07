@@ -150,7 +150,7 @@ class TestTitle:
         p = _proposal(conn)
         p = p.model_copy(update={"structure": p.structure.model_copy(update={"kind": kind})})
         assert strategy_name(p) == name
-        assert title(p) == f"[Quant] Proposal: SPY • Oct 30 (35 DTE) • {name}"
+        assert title(p) == f"📐 [Quant] Proposal: SPY • Oct 30 (35 DTE) • {name}"
 
     def test_call_side_from_first_leg(self, conn: sqlite3.Connection) -> None:
         p = _proposal(conn)
@@ -187,13 +187,13 @@ class TestLayout:
         assert trail.chain_run_id and trail.research and trail.quant and trail.risk
         text = _text(render_card(p, None, proposal_hash=ph, actionable=False, trail=trail).blocks)
         assert (
-            "*[Research] Thesis (rank 1 of 3, neutral, confidence 70%)*" in text
+            "*🧠 [Research] Thesis (rank 1 of 3, neutral, confidence 70%)*" in text
         )  # E5.7: SPY, NVDA, XOM
-        assert "Regime: Fixture: low realised vol" in text
-        assert "*[Quant] Structure choice (confidence 70%)*" in text
-        assert "*[Risk] Review*" in text and "Rating *moderate*" in text
+        assert "*Regime:* Fixture: low realised vol" in text
+        assert "*📐 [Quant] Structure choice (confidence 70%)*" in text
+        assert "*🛡️ [Risk] Review*" in text and "Rating *moderate*" in text
         assert "Suggested 20 → sized 14 (5% equity cap)" in text
-        assert "Calendar: Fixture: FOMC Oct 28" in text
+        assert "*Calendar:* Fixture: FOMC Oct 28" in text
         assert "Regime *sideways*" in text and "Research market read *risk_on*" in text
         assert f"chain `{trail.chain_run_id}`" in text
 
@@ -202,13 +202,13 @@ class TestLayout:
         ph = proposal_hash(p)
         assert load_trail(conn, "no-such-hash", "SPY").chain_run_id is None
         text = _text(render_card(p, None, proposal_hash=ph, actionable=False).blocks)
-        assert "*[Research] Thesis*" in text and "*[Risk] Review*" in text
+        assert "*🧠 [Research] Thesis*" in text and "*🛡️ [Risk] Review*" in text
 
     def test_published_card_carries_trail(
         self, svc: ApprovalService, poster: RecordingPoster
     ) -> None:
         svc.publish_pending(NOW)
-        assert "[Quant] Structure choice" in _text(poster.posted[0][1].blocks)
+        assert "📐 [Quant] Structure choice" in _text(poster.posted[0][1].blocks)
 
 
 class TestCard:
@@ -218,7 +218,7 @@ class TestCard:
         d = GateDecision(proposal_hash=ph, passed=True, token="t")
         view = render_card(p, d, proposal_hash=ph, actionable=True)
         text = _text(view.blocks)
-        expected = "[Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor"
+        expected = "📐 [Quant] Proposal: SPY • Oct 30 (35 DTE) • Iron Condor"
         assert view.blocks[0]["text"]["text"] == expected
         assert view.text == f"{expected} • x14 • gate PASS"
         for leg in p.structure.legs:  # legs: every strike shown
@@ -969,7 +969,7 @@ def test_slack_poster_uses_shared_day_thread(
 
     web = FakeWeb()
     client = ArcSlackClient(client=web)  # type: ignore[arg-type]
-    SlackDayThreadNotifier(conn, client).post(_dt.date(2026, 9, 25), "[Scalp] hello")
+    SlackDayThreadNotifier(conn, client).post(_dt.date(2026, 9, 25), "⚡ [Scalp] hello")
     svc = ApprovalService(conn, arc_settings, SlackCardPoster(conn, client))
     svc.publish_pending(NOW)
     kinds = [k for k, _ in web.calls]

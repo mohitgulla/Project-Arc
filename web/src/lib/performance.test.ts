@@ -9,7 +9,9 @@ import {
   equityView,
   formatRange,
   perfQuery,
+  personaLabel,
   tradesLink,
+  withEmoji,
   type Performance,
 } from "./performance";
 
@@ -58,6 +60,15 @@ describe("labels", () => {
     expect(formatRange("2026-08-03", "2026-08-09")).toBe("Aug 3 – 9, 2026");
     expect(formatRange("2025-12-29", "2026-01-02")).toBe("Dec 29, 2025 – Jan 2, 2026");
     expect(formatRange("2026-09-28", "2026-09-28")).toBe("Sep 28, 2026");
+  });
+
+  it("E13.13: persona labels lead with the D56 emoji (mirrors arc/slack/personas.py)", () => {
+    expect(personaLabel("research")).toBe("🧠 Research");
+    expect(personaLabel("scout")).toBe("🔭 Scout");
+    expect(personaLabel("auditor")).toBe("🏦 Broker");
+    expect(personaLabel("quant_pop")).toBe("Quant PoP");
+    expect(withEmoji("risk.exit", "Risk (exit)")).toBe("🛡️ Risk (exit)");
+    expect(withEmoji("monitor", "Monitor")).toBe("Monitor");
   });
 });
 

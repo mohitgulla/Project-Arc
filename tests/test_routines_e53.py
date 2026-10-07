@@ -283,7 +283,7 @@ class TestHeartbeatPolicy:
         )
         assert notes.posts[1] == (
             dt.date(2026, 9, 29),
-            ":rotating_light: [Scalp] scalp FAILED: boom",
+            ":rotating_light: ⚡ [Scalp] scalp FAILED: boom",
         )
 
     def test_routines_lines_are_code_blocks_and_persona_lines_are_not(
@@ -301,9 +301,9 @@ class TestHeartbeatPolicy:
         hb.alert(et(2026, 9, 28, 10, 5), "monitor", "boom", run_id="r-1")
         assert notes.posts[1][1] == (":rotating_light: `[Routines] monitor FAILED: boom` `r-1`")
         hb.summary(et(2026, 9, 28, 12, 0), "research", "ranked 2")
-        assert notes.posts[2][1] == "[Research] research ✓ ranked 2"
+        assert notes.posts[2][1] == "🧠 [Research] research ✓ ranked 2"
         hb.alert(et(2026, 9, 28, 12, 5), "quant", "boom")
-        assert notes.posts[3][1] == ":rotating_light: [Quant] quant FAILED: boom"
+        assert notes.posts[3][1] == ":rotating_light: 📐 [Quant] quant FAILED: boom"
 
     def test_routines_code_block_escapes_inner_fences(self, conn: sqlite3.Connection) -> None:
         notes = RecordingNotifier()
@@ -317,14 +317,14 @@ class TestHeartbeatPolicy:
     def test_card_folds_sources_into_scalp_session_notes_before_footer(
         self, conn: sqlite3.Connection
     ) -> None:
-        """E5.5b: folded sources → ``[Scalp] Session notes`` section, footer stays last."""
+        """E5.5b: folded sources → ``⚡ [Scalp] Session notes`` section, footer stays last."""
         from arc.slack import blocks as B
         from arc.slack.personas import Persona
 
         notes = RecordingNotifier()
         hb = Heartbeats(conn, notes)
         hb.queue_source("rss", "3 new <docs>", new_docs=3)
-        card = [B.header("[Research] Ranked"), B.divider(), B.footer(run="r-1", chain="c-1")]
+        card = [B.header("🧠 [Research] Ranked"), B.divider(), B.footer(run="r-1", chain="c-1")]
         hb.summary(et(2026, 9, 28, 12, 0), "research", "ranked", blocks=card)
         posted = notes.blocks[0]
         assert posted is not None
@@ -332,7 +332,7 @@ class TestHeartbeatPolicy:
         assert posted[-1] == B.footer(run="r-1", chain="c-1")
         # Attributed to the Scalp even on a Research card; persona text is escaped.
         assert posted[2]["text"]["text"] == (
-            "*[Scalp] Session notes*\nsources since last update: rss: 3 new &lt;docs&gt;"
+            "*⚡ [Scalp] Session notes*\nsources since last update: rss: 3 new &lt;docs&gt;"
         )
         assert card[-1]["type"] == "context"  # the caller's list is not mutated
         assert "> sources since last update: rss: 3 new <docs>" in notes.posts[0][1]
@@ -340,7 +340,7 @@ class TestHeartbeatPolicy:
         # A Scalp card that already has session notes gets the line appended.
         hb.queue_source("edgar", "1 new doc", new_docs=1)
         card2 = [
-            B.header("[Scalp] Scan"),
+            B.header("⚡ [Scalp] Scan"),
             B.persona_section(Persona.SCALP, "Session notes", "Quiet tape."),
             B.footer(run="r-2"),
         ]
@@ -349,7 +349,7 @@ class TestHeartbeatPolicy:
         assert posted2 is not None
         assert [b["type"] for b in posted2] == ["header", "section", "context"]
         assert posted2[1]["text"]["text"] == (
-            "*[Scalp] Session notes*\nQuiet tape.\nsources since last update: edgar: 1 new doc"
+            "*⚡ [Scalp] Session notes*\nQuiet tape.\nsources since last update: edgar: 1 new doc"
         )
         assert posted2[-1] == B.footer(run="r-2")
 
@@ -359,14 +359,18 @@ class TestHeartbeatPolicy:
         notes = RecordingNotifier()
         hb = Heartbeats(conn, notes)
         hb.queue_source("rss", "1 new doc")
-        card = [B.header("[Research] Ranked"), *[B.divider() for _ in range(48)], B.footer(run="r")]
+        card = [
+            B.header("🧠 [Research] Ranked"),
+            *[B.divider() for _ in range(48)],
+            B.footer(run="r"),
+        ]
         assert len(card) == B.MAX_BLOCKS
         hb.summary(et(2026, 9, 28, 12, 0), "research", "x", blocks=card)
         posted = notes.blocks[0]
         assert posted is not None
         assert len(posted) == B.MAX_BLOCKS
         assert posted[-1] == B.footer(run="r")
-        assert posted[-2]["text"]["text"].startswith("*[Scalp] Session notes*")
+        assert posted[-2]["text"]["text"].startswith("*⚡ [Scalp] Session notes*")
 
     def test_dispatcher_posts_quiet_job_notice_and_rolls_over(
         self, conn: sqlite3.Connection
@@ -392,7 +396,7 @@ class TestHeartbeatPolicy:
             ":warning: `[Routines] monitor: HALT`",
         )
         assert notes.posts[1][0] == dt.date(2026, 9, 28)
-        assert notes.posts[1][1].startswith("[Scalp] scalp ✓ 3 candidates")
+        assert notes.posts[1][1].startswith("⚡ [Scalp] scalp ✓ 3 candidates")
         assert "monitor: ok" in notes.posts[1][1]
 
 

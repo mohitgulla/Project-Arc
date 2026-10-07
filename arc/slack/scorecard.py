@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from arc.slack import blocks as B
 from arc.slack.blocks import Block, CardView
+from arc.slack.personas import Persona, persona_label
 
 if TYPE_CHECKING:
     from arc.journal.scorecard import Scorecard
@@ -62,8 +63,8 @@ def scorecard_card(
 ) -> CardView:
     f, a, p, lim = sc.funnel, sc.funnel.approvals, sc.pnl, sc.order_budget
     title = (
-        f"[Ops] Scorecard: {sc.label} • P&L {_usd(p.realised)} • {p.closed} Closed"
-        f" • {f.fills} Fills"
+        f"{persona_label(Persona.OPS)} Scorecard: {sc.label} • P&L {_usd(p.realised)}"
+        f" • {p.closed} Closed • {f.fills} Fills"
     )
     summary = B.summary(
         f"Proposals {f.proposals}",
