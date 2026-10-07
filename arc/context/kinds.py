@@ -16,7 +16,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic field
 from arc.features.snapshot import FeatureSnapshot
@@ -258,6 +258,37 @@ class NoteTopic(enum.StrEnum):
     RISK_FLAG = "risk_flag"  # portfolio/calendar concern (Risk)
     LESSON = "lesson"  # post-trade learning (Broker reconcile / Ops)
     EXECUTION = "execution"  # fill/market-conditions note (Broker)
+    OPTIONS_SENTIMENT = "options_sentiment"  # E13.13: Scout's options read
+    THEME = "theme"  # E13.13: a market theme (Scout)
+    DISCOVERY = "discovery"  # E13.13: discovery-tier admissions (Scout)
+
+
+#: E13.13 (D56): section labels of a note, in render order (the Literal order).
+NoteSectionLabel = Literal[
+    "Thesis",
+    "Regime",
+    "Options sentiment",
+    "Evidence",
+    "Risks",
+    "Themes",
+    "Portfolio",
+    "Opens",
+    "Exits",
+    "Execution",
+    "Lesson",
+    "Summary",
+]
+NOTE_SECTION_ORDER: tuple[str, ...] = NoteSectionLabel.__args__  # type: ignore[attr-defined]
+NOTE_SECTION_MAX = 1500
+
+
+class NoteSection(BaseModel):
+    """One bold-labelled block of a note (E13.13): ``*Thesis:* text`` in Slack."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    label: NoteSectionLabel
+    text: str = Field(..., min_length=1, max_length=NOTE_SECTION_MAX)
 
 
 class NoteHorizon(enum.StrEnum):
@@ -306,7 +337,10 @@ class NotePayload(BaseModel):
     horizon: NoteHorizon = NoteHorizon.SESSION
     stance: Stance | None = None
     title: str = Field(..., min_length=1, max_length=120)
-    body: str = Field(..., min_length=1, max_length=4000)
+    # v5 (E13.13): ``body`` is legacy free text; v2-envelope writers leave it None and
+    # fill ``sections`` instead (rendered by arc.context.render.render_note_text).
+    body: str | None = Field(None, min_length=1, max_length=4000)
+    sections: list[NoteSection] = Field(default_factory=list, max_length=8)
     confidence: float | None = Field(None, ge=0.0, le=1.0)
     tags: list[str] = Field(default_factory=list, max_length=12)
     evidence: list[Evidence] = Field(default_factory=list, max_length=20)
@@ -314,8 +348,15 @@ class NotePayload(BaseModel):
         default_factory=list, description="Context entry ids this note comments on"
     )
     # v3 (E13.10): code-counted facts about the run the note describes (e.g. the
-    # Scalp's ``mentions`` count). Defaulted, so v2 rows still validate.
-    facts: dict[str, int] = Field(default_factory=dict, max_length=12)
+    # Scalp's ``mentions`` count). v5 (E13.13): any scalar (``{"vix": 17.6}``), <= 20.
+    facts: dict[str, str | float | int | bool] = Field(default_factory=dict, max_length=20)
+
+    @model_validator(mode="after")
+    def _body_or_sections(self) -> NotePayload:
+        if not (self.body or "").strip() and not self.sections:
+            msg = "a note needs a body or at least one section"
+            raise ValueError(msg)
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -797,7 +838,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("position_review", PositionReviewPayload, schema_version=2),  # E6.4a: floor window
     KindSpec("portfolio_context", PortfolioContextPayload, schema_version=2),  # E13.17: facts
     KindSpec("journal", JournalPayload),
-    KindSpec("note", NotePayload, schema_version=4),  # E13.17: exit_watch topic (v3 E13.10 facts)
+    KindSpec("note", NotePayload, schema_version=5),  # E13.13: sections, scalar facts
     # E4.5 (D30): story digests + options-trading data sources
     KindSpec("story", StoryPayload),
     KindSpec("vol_term", VolTermPayload),

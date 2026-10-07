@@ -1032,13 +1032,17 @@ class TestOptionsTape:
         assert res.metrics["mentions"] == 10
         note = db.execute("SELECT payload FROM context_entries WHERE kind = 'note'").fetchone()
         payload = json.loads(note[0])
-        assert payload["facts"] == {"mentions": 10}
-        line = payload["body"].splitlines()[-1]
+        assert payload["facts"] == {"docs": 1, "mentions": 10}
+        # E13.13 (note v5): bold sections, no body
+        assert payload["body"] is None
+        secs = {s["label"]: s["text"] for s in payload["sections"]}
+        line = secs["Themes"]
         assert line.startswith("Outside the universe: OUTX (bullish, news), OT0 (bearish, ")
         assert len(line) <= 300
-        assert "Options tape" not in payload["body"]  # flag off: no tape line
-        card = json.dumps(res.card.blocks if res.card else [])
-        assert "Outside the universe (10): mentioned, not admitted" in card
+        assert "Options sentiment" not in secs  # flag off: no tape line
+        card = json.dumps(res.card.blocks if res.card else [], ensure_ascii=False)
+        assert "*Outside the universe (10):* OUTX (bullish)" in card
+        assert "mentioned only, never admitted" in card
         assert "OUTX (bullish)" in card
         assert "Options tape" not in card
         db.close()

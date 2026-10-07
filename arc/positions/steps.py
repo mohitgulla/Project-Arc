@@ -366,6 +366,7 @@ def exits(
     errors: list[str] = []
     alerts: list[str] = []
     proposed = passed = quote_blocked = 0
+    closes: list[list[str]] = []
     for rv in flagged:
         row = repo.get(rv.structure_id)
         if row is None or row["status"] != "open":
@@ -409,6 +410,7 @@ def exits(
         proposed += 1
         passed += res.passed
         lines.append(f"{res.line} ({sig.detail})")
+        closes.append([rv.ticker, sig.kind.value, res.proposal_hash])
     notices = [f"exit proposed: {line}" for line in lines if "gate PASS" in line] + alerts
     return JobResult(
         summary="; ".join(lines + errors) or "no exits proposed",
@@ -417,6 +419,7 @@ def exits(
             "proposed": proposed,
             "gate_passed": passed,
             "quote_blocked": quote_blocked,
+            "closes": closes,  # E13.13: [ticker, signal, proposal hash] per proposed close
         },
         notice="; ".join(notices),
     )
@@ -976,11 +979,15 @@ def exits_mandatory(ctx: JobContext, env: PipelineEnv) -> JobResult:
     idempotent. Halted: nothing proposed (today's rule).
     """
     from arc.positions.exit_case import MANDATORY_KINDS
+    from arc.slack.digests import exits_mandatory_summary
 
     res = exits(ctx, env, kinds=MANDATORY_KINDS)
     res.metrics["mandatory"] = True
     if res.summary == "no exit signals":
-        res.summary = "no mandatory exit signals (stop / DTE exit / expiry)"
+        res.summary = exits_mandatory_summary([])
+    elif res.metrics.get("closes"):
+        # E13.13: ticker · signal · proposal id per proposed close (gate detail: journal)
+        res.summary = exits_mandatory_summary([tuple(c) for c in res.metrics["closes"]])
     else:
         res.summary = f"mandatory exits: {res.summary}"
     return res

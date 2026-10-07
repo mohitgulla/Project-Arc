@@ -34,6 +34,7 @@ import {
   Block,
   DASH,
   Decisions,
+  Notes,
   et,
   Execution,
   Gate,
@@ -552,6 +553,9 @@ function TabPanel({ tab, d }: { tab: TabKey; d: TradeDetail }) {
           </Block>
           <Block title="Decision Trail" testid="sec-decisions">
             <Decisions d={d} />
+          </Block>
+          <Block title="Persona Notes" testid="sec-notes">
+            <Notes d={d} />
           </Block>
         </div>
       );

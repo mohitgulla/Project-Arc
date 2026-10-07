@@ -15,6 +15,7 @@ import { Timeline, type TimelineItem } from "../components/Timeline";
 import { num } from "../lib/api";
 import { formatAge, formatEt, formatLeg, formatNumber, formatPercent } from "../lib/format";
 import { useLayout } from "../lib/layout";
+import { withEmoji } from "../lib/performance";
 import { humanize, shortHash, STAGE_LABEL, type TradeDetail } from "../lib/trades";
 import { parseRiskNarrative, splitTrail, thesisPersona } from "../lib/tradeDetail";
 
@@ -154,6 +155,41 @@ function PromptToggle({ text }: { text: string }) {
       {open && <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-control bg-control p-2 text-micro">{text}</pre>}
     </>
   );
+}
+
+/** E13.13 (D56): the chain's persona notes, label bold, text plain (same lines as Slack). */
+export function Notes({ d }: { d: TradeDetail }) {
+  const notes = d.decisions.notes ?? [];
+  if (!notes.length) return <None what="No persona notes for this trade's chain." />;
+  return (
+    <div className="grid gap-3" data-testid="notes">
+      {notes.map((n) => (
+        <div key={n.id} className="grid gap-1" data-testid={`note-${n.id}`}>
+          <p className="text-caption">
+            <span className="font-semibold text-primary">{withEmoji(n.persona, personaName(n.persona))}</span>{" "}
+            <span className="text-secondary">{n.title}</span>
+          </p>
+          {(n.sections ?? []).map((s, i) => (
+            <p key={i} className="text-pretty whitespace-pre-line text-body text-secondary">
+              {s.label && <span className="font-semibold text-primary">{s.label}: </span>}
+              {s.text}
+            </p>
+          ))}
+          {Object.keys(n.facts ?? {}).length > 0 && (
+            <p className="text-micro text-muted">
+              {Object.entries(n.facts ?? {})
+                .map(([k, v]) => `${k.replace(/_/g, " ")} ${typeof v === "boolean" ? (v ? "yes" : "no") : String(v)}`)
+                .join(" · ")}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function personaName(p: string): string {
+  return p.charAt(0).toUpperCase() + p.slice(1);
 }
 
 /** This trade's own decision steps; chain context (other tickers, the session read) behind a toggle. */

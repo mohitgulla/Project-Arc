@@ -203,7 +203,7 @@ def broker_card(
     step_seconds: int,
     run_id: str | None = None,
 ) -> CardView:
-    """``[Broker] Order`` card (E5.5 layout) with the ladder's :class:`ExecutionResult`.
+    """``🏦 [Broker] Order`` card (E5.5 layout) with the ladder's :class:`ExecutionResult`.
 
     ``steps_used`` is the index of the filling attempt (0 = filled at mid), so the
     card reads "Filled on attempt k+1 of max_steps+1" (D28: attempts, not steps).
@@ -359,6 +359,7 @@ def broker_execute(
             run_id=ctx.run_id,
         )
         _refresh_root(ctx, phash)
+        _execution_note(ctx, out, ticker=ticker or out.ticker, what=what, phash=phash)
     return JobResult(
         card=card,
         summary=f"{ticker} {what}: {out.summary()}",
@@ -370,6 +371,43 @@ def broker_execute(
         },
         notice=f"{ticker} {what} {out.status}" + (f": {out.detail}" if out.detail else ""),
     )
+
+
+def _execution_note(
+    ctx: JobContext, out: ExecutionOutcome, *, ticker: str, what: str, phash: str
+) -> None:
+    """E13.13 (note v5): one ``execution`` note per worked ladder; code facts only, no LLM.
+
+    Best-effort: a note never fails the order (it is logged and skipped).
+    """
+    from pydantic import ValidationError
+
+    from arc.context.kinds import NotePayload, NoteSection, NoteTopic
+
+    if "note" not in (ctx.spec.writes or []):
+        return  # a contract without ``writes: [note]`` (tests, arm configs): no note
+    facts: dict[str, str | float | int | bool] = {
+        "status": str(out.status),
+        "attempts": len(out.attempts),
+        "filled_qty": out.filled_qty,
+        "kind": what,
+        "proposal": phash[:12],
+    }
+    if out.fill_price is not None:
+        facts["fill_price"] = float(out.fill_price)
+    if out.steps_used is not None:
+        facts["steps_used"] = out.steps_used
+    try:
+        payload = NotePayload(
+            persona="broker",
+            topic=NoteTopic.EXECUTION,
+            title=f"{ticker} {what}: {out.status}"[:120],
+            sections=[NoteSection(label="Execution", text=out.summary()[:1500])],
+            facts=facts,
+        )
+        ctx.write("note", ticker or "session", payload)
+    except (ValidationError, ValueError) as exc:
+        log.warning("broker.execution_note_failed", proposal_hash=phash, error=str(exc))
 
 
 def broker_step(ctx: JobContext) -> JobResult:

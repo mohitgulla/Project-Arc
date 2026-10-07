@@ -333,7 +333,7 @@ def test_investor_closes_the_structure(conn: sqlite3.Connection) -> None:
     )
     assert res.metrics["status"] == "filled" and res.metrics["steps_used"] == 0
     assert res.card is not None
-    assert "[Broker] Order: SPY Close Position • x2" in res.card.text
+    assert "🏦 [Broker] Order: SPY Close Position • x2" in res.card.text
     assert "Filled on attempt*\\n1 of" in str(res.card.blocks).replace("\n", "\\n")
     row = OpenStructureRepo(conn).get(sid)
     assert row is not None and row["status"] == "closed"

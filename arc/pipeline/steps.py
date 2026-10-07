@@ -58,10 +58,12 @@ import structlog
 from pydantic import BaseModel, ValidationError
 
 from arc.context.kinds import (
+    NOTE_SECTION_MAX,
     Evidence,
     ExitCasePayload,
     ExitWatchlistPayload,
     NotePayload,
+    NoteSection,
     NoteTopic,
     ProposalPayload,
     RegimePayload,
@@ -289,26 +291,38 @@ def _note(
     persona: str,
     topic: NoteTopic,
     title: str,
-    body: str,
     about: list[str],
+    sections: Sequence[tuple[str, str]] = (),
+    body: str = "",
+    facts: Mapping[str, str | float | int | bool] | None = None,
     stance: Stance | None = None,
     confidence: float | None = None,
     evidence: list[Evidence] | None = None,
 ) -> str | None:
     """Write a D27 ``note`` for persona narrative that would otherwise be discarded.
 
-    Truncates to the model limits. An invalid note is logged (``pipeline.note_invalid``)
-    and skipped: a note never fails its step. A contract violation still does.
+    E13.13 (note v5): *sections* are ``(label, text)`` pairs (``Thesis``, ``Regime``,
+    ``Evidence``, ...); empty texts are dropped and each text is clipped to 1500
+    chars at write time. *body* is the legacy free-text form (used only when no
+    section has text). Truncates to the model limits. An invalid note is logged
+    (``pipeline.note_invalid``) and skipped: a note never fails its step.
     """
+    secs = [
+        NoteSection(label=label, text=text.strip()[:NOTE_SECTION_MAX])  # type: ignore[arg-type]
+        for label, text in sections
+        if text and text.strip()
+    ]
     body = body.strip()
-    if not body:
+    if not secs and not body:
         return None
     try:
         payload = NotePayload(
             persona=persona,  # type: ignore[arg-type]
             topic=topic,
             title=(title.strip() or topic.value)[:120],
-            body=body[:4000],
+            body=None if secs else body[:4000],
+            sections=secs[:8],
+            facts=dict(facts or {}),
             stance=stance,
             confidence=confidence,
             about=about,
@@ -1074,7 +1088,8 @@ def _portfolio_notes(
             persona="research",
             topic=NoteTopic.PORTFOLIO_VIEW,
             title=f"Portfolio: {pv.verdict}",
-            body=f"{pv.verdict}: {pv.notes}".strip(": "),
+            sections=[("Portfolio", pv.notes)],
+            facts={"verdict": pv.verdict},
             about=[entry_id],
         )
         j.add(
@@ -1096,7 +1111,8 @@ def _portfolio_notes(
             persona="research",
             topic=NoteTopic.THESIS_CHECK,
             title=f"{pos.ticker} thesis {c.status}",
-            body=f"{c.status}: {c.reason}".strip(": "),
+            sections=[("Thesis", c.reason)],
+            facts={"status": c.status},
             about=[entry_id],
             stance=pos.stance,
         )
@@ -1202,7 +1218,11 @@ def _exit_watchlist(
             persona="research",
             topic=NoteTopic.EXIT_WATCH,
             title=f"{w.ticker} exit watch: {w.action} ({w.thesis_status})",
-            body="\n".join([w.reason, *(f"- {e}" for e in w.evidence)]),
+            sections=[
+                ("Exits", w.reason),
+                ("Evidence", "\n".join(f"- {e}" for e in w.evidence)),
+            ],
+            facts={"action": w.action, "thesis_status": w.thesis_status},
             about=[],
         )
         j.add(
@@ -1768,7 +1788,7 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         persona="research",
         topic=NoteTopic.REGIME_VIEW,
         title=f"Regime: {out.market_regime}",
-        body=f"{out.market_regime}: {out.session_notes}".strip(": "),
+        sections=[("Regime", out.market_regime), ("Summary", out.session_notes)],
         about=[entry.id],
     )
     for item in kept:
@@ -1778,17 +1798,12 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             persona="research",
             topic=NoteTopic.THESIS,
             title=f"{item.ticker} {item.stance} thesis",
-            body="\n\n".join(
-                x
-                for x in (
-                    item.thesis,
-                    item.regime_context,
-                    "Evidence:\n" + "\n".join(f"- {e}" for e in item.evidence)
-                    if item.evidence
-                    else "",
-                )
-                if x.strip()
-            ),
+            sections=[
+                ("Thesis", item.thesis),
+                ("Regime", item.regime_context),
+                ("Evidence", "\n".join(f"- {e}" for e in item.evidence)),
+            ],
+            facts={"rank": item.rank},
             about=[entry.id],
             stance=_stance(item.stance),
             confidence=item.confidence,
@@ -1838,6 +1853,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             funnel=funnel,
             budget=qr_budget,
             evidence=_scalp_evidence(snap),
+            # E13.13: the stored watchlist items (None off the exit path: no Exits section)
+            exits=watch_items if exit_watch else None,
             run_id=ctx.run_id,
             chain_run_id=ctx.chain_run_id,
         ),
@@ -2344,7 +2361,7 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
             persona="quant",
             topic=NoteTopic.THESIS,
             title=f"{s.ticker} {s.structure_type}",
-            body=s.rationale,
+            sections=[("Thesis", s.rationale)],
             about=[entry.id],
             confidence=s.confidence,
         )
@@ -2354,7 +2371,7 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         persona="quant",
         topic=NoteTopic.OBSERVATION,
         title="Quant analysis",
-        body=out.analysis_notes,
+        sections=[("Summary", out.analysis_notes)],
         about=[entry.id],
     )
     desc = "; ".join(
@@ -2561,7 +2578,7 @@ def quant_revise(ctx: JobContext, env: PipelineEnv) -> JobResult:
         persona="quant",
         topic=NoteTopic.OBSERVATION,
         title="Quant revision",
-        body=out.analysis_notes,
+        sections=[("Summary", out.analysis_notes)],
         about=[entry.id],
     )
     desc = "; ".join(
@@ -2838,7 +2855,7 @@ def risk_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
         persona="risk",
         topic=NoteTopic.RISK_FLAG,
         title="Risk advisory",
-        body="\n\n".join(x for x in (out.advisory_notes, out.portfolio_summary) if x.strip()),
+        sections=[("Risks", out.advisory_notes), ("Portfolio", out.portfolio_summary)],
         about=[entry.id],
     )
     by_key = {(s.ticker, s.structure_type): s for s in structures.structures}
@@ -3824,7 +3841,8 @@ def quant_exit(ctx: JobContext, env: PipelineEnv) -> JobResult:
             persona="quant",
             topic=NoteTopic.EXIT_WATCH,
             title=f"{c2.ticker} exit case: {rec}",
-            body=why,
+            sections=[("Exits", why)],
+            facts={"recommendation": rec},
             about=[],
         )
     ctx.conn.commit()

@@ -1154,7 +1154,7 @@ up within one slot.
 
 The thread under it, in order: `[Sweep] Context: N Candidates • run <stamp>`
 (the candidate entries the Director read, with the Sweep run that wrote them),
-`[Director]`, `[Quant]`, `[Risk]`, the proposal card, `[Broker]` when a ladder
+`🧠 [Research]`, `📐 [Quant]`, `🛡️ [Risk]`, the proposal card, `🏦 [Broker]` when a ladder
 ran, and last a `[Routines] <chain> director=12ms … digest=…` code block. A
 `no_change` loop gets only the `[Routines]` reply. The root is re-rendered from the DB
 on approve / reject / expire and after the Broker's fill. `loop.post_hold_roots`
@@ -1896,7 +1896,8 @@ the experiment's `win` verdict.
   stop / DTE exit / expiry or a pending exit (`exit:case_skipped`) — at most
   `quant_exit_max_cases` (8), ≤ 900 chars each, and asks Quant hold | close. A missing
   judgement or a failed call holds. **Nothing is proposed**; the positions chain is
-  untouched. The `[Quant] Exit cases` card lists ticker · trigger · call · remaining EV.
+  untouched. The `📐 [Quant] Exit cases` card lists ticker · trigger · remaining EV hold/managed ·
+  close-now net, then `*Recommendation:*` and the rationale (E13.13).
 - **`research`:** everything `shadow` does, plus the close path (E13.18, §5.32).
 
 Turn on with `!arc config personas.exit_path shadow` (riskier, asks for a confirm).

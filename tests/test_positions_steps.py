@@ -192,7 +192,9 @@ def test_evaluate_writes_reviews_and_exits_propose_through_gate_and_approval(
     assert reviews[0].payload["remaining_pop"] is not None
 
     out = _run(conn, env, "quant.exits")
+    closes = out.metrics.pop("closes")
     assert out.metrics == {"signals": 1, "proposed": 1, "gate_passed": 1, "quote_blocked": 0}
+    assert [c[:2] for c in closes] == [["SPY", "profit_target"]] and closes[0][2]
     assert "+98% of max gain at 35 DTE" in out.summary
     row = conn.execute("SELECT * FROM proposals WHERE kind = 'close'").fetchone()
     gate = conn.execute(

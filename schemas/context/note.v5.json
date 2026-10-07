@@ -41,6 +41,42 @@
       "title": "NoteHorizon",
       "type": "string"
     },
+    "NoteSection": {
+      "additionalProperties": false,
+      "description": "One bold-labelled block of a note (E13.13): ``*Thesis:* text`` in Slack.",
+      "properties": {
+        "label": {
+          "enum": [
+            "Thesis",
+            "Regime",
+            "Options sentiment",
+            "Evidence",
+            "Risks",
+            "Themes",
+            "Portfolio",
+            "Opens",
+            "Exits",
+            "Execution",
+            "Lesson",
+            "Summary"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 1500,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "text"
+      ],
+      "title": "NoteSection",
+      "type": "object"
+    },
     "NoteTopic": {
       "description": "What a :class:`NotePayload` is about (D27).",
       "enum": [
@@ -52,7 +88,10 @@
         "observation",
         "risk_flag",
         "lesson",
-        "execution"
+        "execution",
+        "options_sentiment",
+        "theme",
+        "discovery"
       ],
       "title": "NoteTopic",
       "type": "string"
@@ -80,10 +119,18 @@
       "type": "array"
     },
     "body": {
-      "maxLength": 4000,
-      "minLength": 1,
-      "title": "Body",
-      "type": "string"
+      "anyOf": [
+        {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Body"
     },
     "confidence": {
       "anyOf": [
@@ -109,9 +156,22 @@
     },
     "facts": {
       "additionalProperties": {
-        "type": "integer"
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
       },
-      "maxProperties": 12,
+      "maxProperties": 20,
       "title": "Facts",
       "type": "object"
     },
@@ -134,6 +194,14 @@
       ],
       "title": "Persona",
       "type": "string"
+    },
+    "sections": {
+      "items": {
+        "$ref": "#/$defs/NoteSection"
+      },
+      "maxItems": 8,
+      "title": "Sections",
+      "type": "array"
     },
     "stance": {
       "anyOf": [
@@ -167,8 +235,7 @@
   "required": [
     "persona",
     "topic",
-    "title",
-    "body"
+    "title"
   ],
   "title": "NotePayload",
   "type": "object"

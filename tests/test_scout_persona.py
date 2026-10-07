@@ -714,5 +714,5 @@ class TestWiring:
         )
         card = scout_card(read=read, max_discovery=20, min_discovery_alert=5, candidates=5)
         text = json.dumps(card.blocks)
-        assert card.text.startswith("[Scout] Daily read: Discovery 5/20")
+        assert card.text.startswith("🔭 [Scout] Daily read: Discovery 5/20")
         assert "Under-filled" not in text and "No fresh input" not in text
