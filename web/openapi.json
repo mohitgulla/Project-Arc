@@ -478,7 +478,8 @@
             "items": {
               "enum": [
                 "scout",
-                "scalp"
+                "scalp",
+                "trending"
               ],
               "type": "string"
             },
@@ -14074,6 +14075,30 @@
           "tier": {
             "title": "Tier",
             "type": "string"
+          },
+          "velocity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E14.5 trending: Reddit mention velocity (m + k) / (m24 + k), code-computed from the retail_buzz entry the tier was ranked from (null = none / not on Reddit)",
+            "title": "Velocity"
+          },
+          "velocity_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E14.5 trending: `reddit #20 \u00b7 5.2\u00d7 (157 vs 30)`",
+            "title": "Velocity Detail"
           }
         },
         "required": [

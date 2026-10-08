@@ -2116,6 +2116,18 @@ def scout_persona(
     trending_names = [m.ticker for m in sorted(trending, key=lambda m: m.rank)][
         : settings.universe_trending_size
     ]
+    buzz_velocity = None
+    if ctx.routines.scout_buzz_velocity.enabled:  # E14.5 (D60), strategy lane, default off
+        from arc.personas.scout import BuzzVelocity
+        from arc.universe.config import universe_config
+        from arc.universe.trending import TrendingOptions
+
+        tjob = ctx.routines.job("universe.trending")
+        topts = TrendingOptions.from_options(tjob[1].options if tjob else {})
+        buzz_velocity = BuzzVelocity(
+            options=topts.velocity,
+            stop_words=tuple(universe_config(settings).extraction.stop_words),
+        )
     inp = scout_input_from_context(
         ctx.snapshot,
         channels=channels,
@@ -2126,6 +2138,7 @@ def scout_persona(
         higher_tier=sorted(higher),
         trending=trending_names,
         now=ctx.now,
+        buzz_velocity=buzz_velocity,
     )
     rules = scout_rules(inp)
     prompt = _with_constraints(build_scout_prompt(inp), rules, ScoutOutput)

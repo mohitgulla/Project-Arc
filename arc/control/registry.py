@@ -1598,6 +1598,21 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("strict", "relaxed"),
         aliases=("routines.personas.director_diversification", "director_diversification"),
     ),
+    # E14.5 (D60/D44): Reddit mention velocity in the Scout's retail-buzz section.
+    # Strategy lane (a Scout prompt change): default off.
+    Tunable(
+        key="personas.scout_buzz_velocity",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E14.5: show each Reddit name's code-computed mention velocity "
+        "((m + k) / (m24 + k)) and a 'Fastest risers' line in the Scout's retail-buzz "
+        "section. Context only; the trending tier is unchanged.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "scout_buzz_velocity"),
+        choices=("off", "on"),
+        aliases=("routines.personas.scout_buzz_velocity", "scout_buzz_velocity"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -1814,7 +1829,10 @@ _OPTIONS_SLOW_TUNABLES: tuple[Tunable, ...] = (
 # E13.6 (D56): source-job options that are runtime-tunable (plain YAML paths under a
 # `sources:` job; read and written as is, not as a cadence).
 _SOURCE_OPTION_PATHS: frozenset[tuple[str, ...]] = frozenset(
-    {("sources", "options_fast", "max_tickers")}
+    {
+        ("sources", "options_fast", "max_tickers"),
+        ("sources", "universe.trending", "scoring"),  # E14.5
+    }
 )
 _OPTIONS_FAST_TUNABLES: tuple[Tunable, ...] = (
     Tunable(
@@ -1829,6 +1847,25 @@ _OPTIONS_FAST_TUNABLES: tuple[Tunable, ...] = (
         min=1,
         max=60,
         hard_ceiling=60,
+    ),
+    # E14.5 (D60/D44): the trending ranker's Reddit scoring. Strategy lane (a selection
+    # change): rank_gain is the control; draft XP-10 tests velocity.
+    Tunable(
+        key="universe.trending.scoring",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E14.5: how the trending tier scores Reddit: mentions plus the 24 h "
+        "rank gain (rank_gain) or plus the mention velocity (m + k) / (m24 + k) (velocity). "
+        "Experiment XP-10 tests velocity.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("sources", "universe.trending", "scoring"),
+        choices=("rank_gain", "velocity"),
+        aliases=(
+            "routines.universe.trending.scoring",
+            "sources.universe.trending.scoring",
+            "routines.sources.universe.trending.scoring",
+        ),
     ),
 )
 
@@ -2407,6 +2444,7 @@ _PLAIN_ROUTINE_SECTIONS = (
 _PERSONA_SWITCHES = frozenset(
     {
         ("personas", "finnhub_context"),
+        ("personas", "scout_buzz_velocity"),  # E14.5
     }
 )
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.

@@ -898,6 +898,7 @@ def test_yaml_comment_overview_matches_config() -> None:
     assert raw["tick"]["interval"] == "10m"  # D52
     assert set(raw["personas"]) - {
         "finnhub_context", "director_diversification", "quant_risk_loop", "scout_feed",
+        "scout_buzz_velocity",
         "scalp_options_tape",
         "research_idea_pool", "research_compact_prompt", "exit_path",
     } == {

@@ -120,6 +120,7 @@ ACCOUNT_STEPS: frozenset[str] = frozenset({"exits.mandatory", "quant.propose", "
 PERSONA_OVERLAY_PREFIXES: dict[str, tuple[str, ...]] = {
     "scout": (
         "routines.personas.scout",
+        "routines.personas.scout_*",  # E14.5: personas.scout_buzz_velocity
         "routines.personas.scout.*",
         "routines.funnel.scout.*",
         "universe.*",
@@ -131,12 +132,20 @@ PERSONA_OVERLAY_PREFIXES: dict[str, tuple[str, ...]] = {
         "routines.funnel.scalp.*",
         "routines.categories.*",
     ),
+    # E14.5 (D60): a trending-ranker overlay (XP-10 `scoring: velocity`) runs the
+    # arm's own trending tier job; it also owns the Scout (TIER_COMPANIONS), which
+    # re-resolves the active list after it.
+    "trending": ("routines.sources.universe.trending.*",),
 }
 # The routine jobs each arm persona runs (the 30-min Scalp and its 22:00 run).
 PERSONA_JOBS: dict[str, tuple[str, ...]] = {
     "scout": ("scout",),
     "scalp": ("scalp", "scalp.overnight"),
+    "trending": ("universe.trending",),
 }
+# E14.5: an arm-owned tier job brings the persona that re-resolves the active list
+# after it (05:50 trending -> 06:00 Scout), so the arm's list carries its own tier.
+TIER_COMPANIONS: dict[str, frozenset[str]] = {"trending": frozenset({"scout"})}
 # Book-specific kinds: written per arm against its own positions, never synced.
 BOOK_KINDS: frozenset[str] = frozenset(
     {"position_review", "exit_watchlist", "exit_case", "risk_exit_review"}
@@ -239,11 +248,18 @@ def arm_owned_personas(overlay: Mapping[str, Any]) -> set[str]:
     from fnmatch import fnmatchcase
 
     paths = _overlay_paths(overlay)
-    return {
-        persona
-        for persona, globs in PERSONA_OVERLAY_PREFIXES.items()
-        if any(fnmatchcase(p, g) for p in paths for g in globs)
-    }
+    return _with_companions(
+        {
+            persona
+            for persona, globs in PERSONA_OVERLAY_PREFIXES.items()
+            if any(fnmatchcase(p, g) for p in paths for g in globs)
+        }
+    )
+
+
+def _with_companions(personas: set[str]) -> set[str]:
+    """*personas* plus each one's :data:`TIER_COMPANIONS` (E14.5)."""
+    return personas.union(*(TIER_COMPANIONS.get(p, frozenset()) for p in personas))
 
 
 def persona_jobs(personas: Iterable[str]) -> list[str]:
@@ -259,7 +275,7 @@ def arm_plan(routines: RoutinesConfig, overlay: Mapping[str, Any], runner: Runne
     """
     from arc.experiments.models import ArmPlan
 
-    personas = sorted(arm_owned_personas(overlay) | set(runner.arm_personas))
+    personas = sorted(_with_companions(arm_owned_personas(overlay) | set(runner.arm_personas)))
     loop = routines.loop.job
     found = routines.job(loop)
     chain = [loop, *(found[1].chain if found else [])]

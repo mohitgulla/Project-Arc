@@ -838,6 +838,18 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   table, no write) or `arc universe trending [--db PATH] [--no-slack]` (runs the job).
   The job's `[Routines]` notice is the diff against the previous list
   (`Trending tier: 23 names, 11 in both inputs (+SPCX −RIVN) · inputs reddit, stocktwits`).
+- **Reddit mention velocity (E14.5, D60).** `retail_buzz` v2 rows also store ApeWisdom's
+  `mentions_24h_ago` and `upvotes`. Velocity = `(mentions + k) / (mentions_24h_ago + k)`
+  (`universe.trending.velocity.smoothing` k = 5; under `min_mentions` 10, or with no 24 h
+  count, it is none, never 0), computed in code (`arc.universe.velocity`). Two default-off
+  strategy-lane switches: `universe.trending.scoring: rank_gain | velocity` (velocity
+  swaps the Reddit rank-gain half for rank-normalised velocity; draft XP-10) and
+  `personas.scout_buzz_velocity: off | on` (each Reddit name in the Scout's retail-buzz
+  section shows `velocity 4.6× (157 vs 30)`, plus a "Fastest risers" line: top 5 rising,
+  leveraged funds and stop words left out). Compare both rankings without a config change:
+  `arc universe trending --dry-run --scoring velocity` (the table gains a `vel` column and
+  a `fastest_risers` line). The Tower's trending members carry `velocity` /
+  `velocity_detail` (`reddit #3 · 6.2× (180 vs 25)`).
 - **Scout reads retail buzz (E13.20, D58), context only.** The Scout prompt carries a
   code-built `## Retail buzz (as of …)` section: the top 15 names of the fresh
   `retail_buzz` entry (both-input names first, crypto dropped), each

@@ -609,7 +609,7 @@ FINNHUB_FACT_KINDS: tuple[str, ...] = (
 )
 # Persona-level switches that live under ``personas:`` next to the jobs (a scalar,
 # not a job mapping). Each maps to the settings block whose ``enabled`` it sets.
-PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context",)
+PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context", "scout_buzz_velocity")
 #: E13.15 (D56 cutover): switches removed with their off paths. Each is always on
 #: now (quant_risk_loop on, scalp_options_tape on, scout_feed on, research_idea_pool
 #: all, research_compact_prompt compact, exit_path research); a leftover key in a
@@ -712,6 +712,20 @@ def parse_on_off(v: Any, *, where: str) -> bool:
         return v.strip().lower() == "on"
     msg = f"{where}: expected on | off, got {v!r}"
     raise ValueError(msg)
+
+
+class ScoutBuzzVelocitySettings(BaseModel):
+    """E14.5 (D60, D44): Reddit mention velocity in the Scout's retail-buzz section.
+
+    ``enabled`` comes from ``personas.scout_buzz_velocity: off | on`` (default off = the
+    Scout prompt is byte-identical to E13.20). The velocity knobs (``smoothing``,
+    ``min_mentions``) are the ``universe.trending`` job's ``velocity`` block, so the
+    Scout and the ranker's velocity arm read one definition.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
 
 
 class FinnhubContextSettings(BaseModel):
@@ -864,6 +878,10 @@ class RoutinesConfig(BaseModel):
     triggers: list[TriggerRule] = Field(default_factory=list)
     # E4.8a: knobs + the ``personas.finnhub_context`` flag (as ``enabled``).
     finnhub_context: FinnhubContextSettings = Field(default_factory=FinnhubContextSettings)
+    # E14.5: the ``personas.scout_buzz_velocity`` flag (as ``enabled``).
+    scout_buzz_velocity: ScoutBuzzVelocitySettings = Field(
+        default_factory=ScoutBuzzVelocitySettings
+    )
     # E12.5: knobs + the ``personas.director_diversification`` switch (as ``mode``).
     director_diversification: ResearchDiversificationSettings = Field(
         default_factory=ResearchDiversificationSettings
