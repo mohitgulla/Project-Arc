@@ -624,13 +624,16 @@ class ScoutTickerCall(BaseModel):
     catalyst_date: str | None = Field(None, description="ISO-8601 date, if any")
 
 
+SCOUT_PROSE_MAX = 600
+
+
 class ScoutOutput(BaseModel):
     """Scout reply (E13.7, D56): the daily slow-feed read, sections in fixed order."""
 
     model_config = ConfigDict(extra="forbid")
 
-    regime: str = Field(..., max_length=600)
-    options_sentiment: str = Field(..., max_length=600)
+    regime: str = Field(..., max_length=SCOUT_PROSE_MAX)
+    options_sentiment: str = Field(..., max_length=SCOUT_PROSE_MAX)
     themes: list[str] = Field(default_factory=list, max_length=8)
     ticker_calls: list[ScoutTickerCall] = Field(default_factory=list, max_length=30)
     discovery: list[str] = Field(
@@ -639,6 +642,20 @@ class ScoutOutput(BaseModel):
         description="Ordered subset of ticker_calls tickers for the discovery tier, best first",
     )
     risks: list[str] = Field(default_factory=list, max_length=6)
+
+    @field_validator("regime", "options_sentiment", mode="before")
+    @classmethod
+    def _clip_prose(cls, v: object) -> object:
+        """Clip an over-long prose section to 600 chars instead of failing the run.
+
+        The model overshoots 600 by a few dozen characters often enough to fail the
+        whole daily Scout (live 2026-10-07: 625 chars, two runs in a row). The
+        section is display/context prose, so clipping at a word boundary is safe.
+        """
+        if isinstance(v, str) and len(v) > SCOUT_PROSE_MAX:
+            cut = v[: SCOUT_PROSE_MAX - 1].rsplit(" ", 1)[0].rstrip(" ,;:")
+            return cut + "…"
+        return v
 
     @field_validator("themes")
     @classmethod

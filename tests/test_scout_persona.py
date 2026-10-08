@@ -713,3 +713,18 @@ class TestWiring:
         text = json.dumps(card.blocks)
         assert card.text.startswith("🔭 [Scout] Daily read: Discovery 5/20")
         assert "Under-filled" not in text and "No fresh input" not in text
+
+
+def test_scout_output_clips_overlong_prose_sections() -> None:
+    """A regime/options_sentiment a little over 600 chars is clipped, not a failed run."""
+    from arc.personas.schemas import SCOUT_PROSE_MAX, ScoutOutput
+
+    long = ("Positioning is constructive " * 30).strip()
+    assert len(long) > SCOUT_PROSE_MAX
+    out = ScoutOutput.model_validate({"regime": long, "options_sentiment": long})
+    for text in (out.regime, out.options_sentiment):
+        assert len(text) <= SCOUT_PROSE_MAX
+        assert text.endswith("…")
+        assert not text[:-1].endswith(" ")
+    short = ScoutOutput.model_validate({"regime": "calm", "options_sentiment": "no fresh info"})
+    assert (short.regime, short.options_sentiment) == ("calm", "no fresh info")

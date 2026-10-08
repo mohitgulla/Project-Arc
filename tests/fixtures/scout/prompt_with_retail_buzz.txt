@@ -5,9 +5,11 @@ retail buzz (Reddit + Stocktwits) is context only: corroborate it with a brief o
 the options data before it shapes a call.
 
 Answer in these sections, in this order:
-1. Regime: the market regime the inputs describe (trend, volatility, breadth).
+1. Regime: the market regime the inputs describe (trend, volatility, breadth);
+   at most 600 characters.
 2. Options sentiment: what put/call, open interest, the VX curve and the VIX
-   complex say about positioning. Say 'no fresh info' for an absent input.
+   complex say about positioning, in at most 600 characters. Say 'no fresh info'
+   for an absent input.
 3. Themes: up to 8 one-line themes shared across channels.
 4. Ticker calls: single-name ideas the channels made, each citing the channel ids
    (origins) that made it. Only names a brief below actually discusses.
