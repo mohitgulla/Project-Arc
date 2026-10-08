@@ -222,7 +222,7 @@ def test_stuck_after_jobs_validation() -> None:
 def test_shipped_monitor_stuck_after_is_two_slots() -> None:
     ms = load_routines().monitoring
     assert ms.stuck_after_for("monitor") == dt.timedelta(minutes=20)  # D52: 2 x 10-min slots
-    # D31: the trading loop gets the same rule (loop.max_runtime is 7m, D60)
+    # D31: the trading loop gets the same rule (loop.max_runtime is 7m, D61)
     assert ms.stuck_after_for("research") == dt.timedelta(minutes=20)
     assert ms.stuck_after_for("scalp") == dt.timedelta(minutes=70)
 

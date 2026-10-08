@@ -1513,7 +1513,7 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         group=Group.ROUTINES,
         type=_I,
         description="D31: minutes a loop chain may run before later steps are skipped "
-        "(must stay under the 10-min slot; D60: 7m, ceiling 8m).",
+        "(must stay under the 10-min slot; D61: 7m, ceiling 8m).",
         target=Target.ROUTINES,
         risk=Risk.UP,
         path=("loop", "max_runtime"),

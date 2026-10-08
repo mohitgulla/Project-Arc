@@ -631,7 +631,7 @@ def test_loop_overrides_reach_the_dispatcher_config(
     svc.confirm(r.pending.code, actor=OWNER, source="slack")
     assert effective_routines(conn).loop.max_idle == dt.timedelta(minutes=60)
     assert svc.view("loop.max_idle").value == 60
-    # the code ceiling: a loop must fit its 10-min slot (D60: ceiling 8m)
+    # the code ceiling: a loop must fit its 10-min slot (D61: ceiling 8m)
     assert svc.set("loop.max_runtime", "9", actor=OWNER, source="slack").outcome == "refused"
     r = svc.set("loop.slack_layout", "day_thread", actor=OWNER, source="slack")
     assert r.outcome == "applied", r

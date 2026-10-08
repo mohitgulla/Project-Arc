@@ -40,7 +40,7 @@ YAML = """
       broker.reconcile: {schedule: ["16:30"], days: trading, ttl: 6h}
     monitoring:
       gateway: {enabled: false}
-      tick_slow_after: 4m   # fixture threshold (shipped default is 8m since D60)
+      tick_slow_after: 4m   # fixture threshold (shipped default is 8m since D61)
 """
 
 
@@ -133,7 +133,7 @@ def test_defaults_and_shipped_config() -> None:
     assert ms.per_slot_min_interval == dt.timedelta(minutes=60)
     assert ms.coverage_window == dt.timedelta(minutes=60)
     assert ms.coverage_min == 0.8
-    assert ms.tick_slow_count == 2 and ms.tick_slow_after == dt.timedelta(minutes=8)  # D60
+    assert ms.tick_slow_count == 2 and ms.tick_slow_after == dt.timedelta(minutes=8)  # D61
     assert load_routines().monitoring.model_dump() == {
         **load_routines().monitoring.model_dump(),
         "per_slot_min_interval": dt.timedelta(minutes=60),
@@ -292,7 +292,7 @@ SLOW = [{"job": "scalp", "ms": 340_000}, {"job": "edgar", "ms": 20_000}]
 def test_tick_slow_check() -> None:
     c = connect(":memory:")
     migrate(c)
-    # the pre-D60 4m threshold keeps the fixture durations meaningful
+    # the pre-D61 4m threshold keeps the fixture durations meaningful
     ms, r = MonitoringSettings(tick_slow_after=dt.timedelta(minutes=4)), cfg()
     ticks(c, et(10, 0), et(10, 30))
     ok = checks.tick_slow(c, r, ms, et(10, 30))
@@ -538,7 +538,7 @@ EARNINGS_YAML = """
         writes: [raw_doc_ref]
     monitoring:
       gateway: {enabled: false}
-      tick_slow_after: 4m   # fixture threshold (shipped default is 8m since D60)
+      tick_slow_after: 4m   # fixture threshold (shipped default is 8m since D61)
 """
 STOCKS = ["SPY", "QQQ", "AAPL", "MSFT"]
 

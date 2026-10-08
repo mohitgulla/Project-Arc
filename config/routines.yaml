@@ -71,14 +71,14 @@ monitoring:
   stuck_after: 70m         # routine run still `running` (tick timeout is 55m)
   stuck_after_jobs:        # per-job override of stuck_after (E5.3a; E5.8 reuses it for the loop)
     monitor: 20m           # 10-min cadence (D52): two slots without finishing means it is wedged
-    research: 20m          # D31/D52 trading loop: same rule (loop.max_runtime is 7m, D60)
+    research: 20m          # D31/D52 trading loop: same rule (loop.max_runtime is 7m, D61)
   # E8.2a: one alert per missed slot only for slow jobs; fast jobs (10-min loop,
   # monitor, scalp, rss) get one `coverage:<job>` condition per job instead.
   per_slot_min_interval: 60m   # slots >= this far apart: one `missed_window` alert per slot
   coverage_window: 60m         # rolling window for `coverage:<job>` and `tick_slow`
   coverage_min: 0.8            # coverage:<job> fails below this share of slots run
   tick_slow_count: 2           # tick_slow fails at >= this many ticks in the window ...
-  tick_slow_after: 8m          # D60: > the 7m loop budget, < the 10m tick; ... that took longer than this (or p90 spacing > 1.5 x tick.interval)
+  tick_slow_after: 8m          # D61: > the 7m loop budget, < the 10m tick; ... that took longer than this (or p90 spacing > 1.5 x tick.interval)
   earnings_stale_after: 7d     # E4.1d: coverage:earnings when no earnings doc is newer than this
   alert_channel: project_arc
   gateway:
@@ -100,7 +100,7 @@ monitoring:
 loop:
   job: research
   max_idle: 30m            # force one full LLM evaluation at least this often
-  max_runtime: 7m          # chain deadline: no new step starts after it (run -> `timeout`); D60 (owner 2026-10-07, was 4m)
+  max_runtime: 7m          # chain deadline: no new step starts after it (run -> `timeout`); D61 (owner 2026-10-07, was 4m)
   pnl_bucket_pct: 0.5      # P&L rounding (as % of equity) inside the no-change digest
   post_hold_roots: true    # false = HOLD / no_change loops post no root line
   slack_layout: root_per_loop   # root_per_loop (D36) | day_thread (pre-D36 rollback)
