@@ -81,6 +81,12 @@ def add_universe_parser(sub: argparse._SubParsersAction) -> None:  # type: ignor
         "--now", default=None, help="--dry-run only: rank as of this ISO time (ET if naive)"
     )
     tr.add_argument("--no-slack", action="store_true", help="Notice to the log only")
+    tr.add_argument(
+        "--scoring",
+        choices=["rank_gain", "velocity"],
+        default=None,
+        help="--dry-run only (E14.5): rank with this Reddit scoring (default: the job's)",
+    )
     for q in (p, *usub.choices.values()):
         q.add_argument("--json", action="store_true", help="Emit JSON")
 
@@ -332,20 +338,33 @@ def _run_trending(args: argparse.Namespace, settings: ArcSettings, now: _dt.date
     read-only and print the score table (writes nothing). Otherwise run the
     ``universe.trending`` routine."""
     if not args.dry_run:
-        if args.no_screen or args.now:
-            _out({"error": "--no-screen / --now are only valid with --dry-run"}, args.json)
+        if args.no_screen or args.now or args.scoring:
+            _out(
+                {"error": "--no-screen / --now / --scoring are only valid with --dry-run"},
+                args.json,
+            )
             return 2
         return _run_tier_job(args, "universe.trending", "trending")
     from arc.control.effective import effective_settings
     from arc.routines.config import load_routines
     from arc.routines.handlers import run_trending_tier
     from arc.store.db import connect_ro
-    from arc.universe.trending import TrendingError, table
+    from arc.universe.config import universe_config
+    from arc.universe.trending import (
+        TrendingError,
+        TrendingOptions,
+        fastest_risers,
+        table,
+        velocity_text,
+    )
 
     now = _parse_now(args.now, now)
     routines = load_routines()
     job = routines.jobs().get("universe.trending")
     options: dict[str, object] = dict(job[1].options) if job is not None else {}
+    if args.scoring:  # E14.5: compare the two Reddit scorings without a config change
+        options["scoring"] = args.scoring
+    vopts = TrendingOptions.from_options(options).velocity
     try:
         conn = connect_ro(args.db)
     except FileNotFoundError as exc:
@@ -366,10 +385,17 @@ def _run_trending(args: argparse.Namespace, settings: ArcSettings, now: _dt.date
         return 1
     finally:
         conn.close()
+    risers = [
+        f"{sym} {velocity_text((v, m, m24))}"
+        for sym, v, m, m24 in fastest_risers(
+            res.buzz, vopts, top=5, stop_words=universe_config(settings).extraction.stop_words
+        )
+    ]
     info: dict[str, object] = {
         "written": False,
         "as_of": res.as_of.isoformat(),
         "retail_buzz_as_of": res.buzz_as_of,
+        "scoring": res.scoring,
         "screened": res.screened,
         "inputs": {
             i.name: f"{i.status} · {i.count} rows · {len(i.raw)} eligible"
@@ -382,19 +408,24 @@ def _run_trending(args: argparse.Namespace, settings: ArcSettings, now: _dt.date
         "names": len(res.members),
         "names_both_inputs": sum(1 for r in res.members if r.n_inputs >= 2),
         "tickers": " ".join(res.tickers),
+        "fastest_risers": "; ".join(risers) or "none",
     }
     rows = table(res, limit=args.top)
+    for r in rows:  # E14.5: the Reddit mention velocity (display only, not the table's)
+        r["velocity"] = res.velocity.get(r["ticker"], (None, None, None))[0]
     if args.json:
         _out({**info, "table": rows}, True)
         return 0
     _out(info, False)
     head = f"{'#':>3} {'ticker':<6} " + " ".join(f"{n[:10]:>10}" for n in res.order)
-    sys.stdout.write(head + f" {'score':>6} {'n':>2} {'screen':<6} reason\n")
+    sys.stdout.write(head + f" {'score':>6} {'n':>2} {'vel':>6} {'screen':<6} reason\n")
     for r in rows:
         cells = " ".join(f"{'-' if r[n] is None else format(r[n], '.2f'):>10}" for n in res.order)
         rank = r["rank"] if r["rank"] is not None else ""
+        vel = "-" if r.get("velocity") is None else f"{r['velocity']:.2f}"
         sys.stdout.write(
             f"{rank!s:>3} {r['ticker']:<6} {cells} {r['trend_score']:>6.3f} {r['inputs']:>2} "
+            f"{vel:>6} "
             f"{r['screen']:<6} {r['reason']}"
             + (f" [{r['screen_detail']}]" if r["screen"] == "fail" else "")
             + "\n"

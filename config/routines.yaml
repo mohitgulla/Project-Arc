@@ -625,6 +625,13 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     pool: 40                    # first 40 in rank order get the tier's screen
     min_inputs_first: 2         # names in both inputs rank ahead of single-input names
     exclude_market_reference: true
+    # E14.5 (D60): Reddit's second half. rank_gain = 24 h rank gain (control); velocity =
+    # rank-normalised mention velocity (m + k) / (m24 + k). Strategy lane: change only via
+    # `!arc config universe.trending.scoring` or the XP-10 draft (velocity arm).
+    scoring: rank_gain
+    velocity:                   # also the Scout's velocity lines (personas.scout_buzz_velocity)
+      smoothing: 5              # k: a 3 -> 12 jump reads 2.1x, not 4x
+      min_mentions: 10          # fewer 24 h mentions -> no velocity (never ranked as growth)
 
 # E4.8a (D46/D44): Finnhub per-ticker facts in the Scalp/Research prompts. The switch
 # is `personas.finnhub_context` below (default off = prompts unchanged); these are its
@@ -655,6 +662,7 @@ personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   scalp_movers_context: "off"   # E14.3 (D60): off | on, the Scalp's "Tape movers" block (strategy lane; XP-11)
   director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
+  scout_buzz_velocity: "off"    # E14.5 (D60): off | on: Reddit mention velocity + "Fastest risers" in the Scout's retail-buzz section (strategy lane)
   scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + the previous evening's options_slow (18:30 vol_term, 23:00 options_daily/vix_futures; E14.2)
     label: Scout
     about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"

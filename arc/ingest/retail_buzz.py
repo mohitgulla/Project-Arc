@@ -80,6 +80,8 @@ def parse_apewisdom(pages: list[Any]) -> list[RetailBuzzRow]:
                 name=str(it.get("name") or "")[:120],
                 mentions=_float(it.get("mentions")),
                 rank_24h_ago=_int(it.get("rank_24h_ago")),
+                mentions_24h_ago=_float(it.get("mentions_24h_ago")),  # E14.5
+                upvotes=_float(it.get("upvotes")),
             )
         )
     return out

@@ -4,6 +4,7 @@ Re-write the golden files after an intended prompt change::
 
     python -m tests.scout_prompt_golden with > tests/fixtures/scout/prompt_with_retail_buzz.txt
     python -m tests.scout_prompt_golden without > tests/fixtures/scout/prompt_no_retail_buzz.txt
+    python -m tests.scout_prompt_golden velocity > tests/fixtures/scout/prompt_buzz_velocity.txt
 """
 
 from __future__ import annotations
@@ -12,7 +13,14 @@ import sys
 from typing import Any
 
 from arc.context.kinds import RetailBuzzPayload
-from arc.personas.scout import ScoutBrief, ScoutInput, build_scout_prompt, retail_buzz_view
+from arc.personas.scout import (
+    BuzzVelocity,
+    ScoutBrief,
+    ScoutInput,
+    build_scout_prompt,
+    retail_buzz_view,
+)
+from arc.universe.velocity import VelocityOptions
 
 AS_OF = "2026-10-08T06:00:00-04:00"
 TRENDING = ["GME", "RKLB", "SOFI"]
@@ -21,11 +29,11 @@ TRENDING = ["GME", "RKLB", "SOFI"]
 def buzz() -> RetailBuzzPayload:
     """Reddit + Stocktwits rows: GME/RKLB/SOFI in both, BTC.X crypto, a single-input tail."""
     reddit = [
-        ("GME", 1, 1234.0, 3),
-        ("RKLB", 2, 640.0, 9),
-        ("TSLA", 3, 610.0, 2),
-        ("SOFI", 4, 300.0, 4),
-        ("ACHR", 5, 120.0, None),
+        ("GME", 1, 1234.0, 3, 1100.0),
+        ("RKLB", 2, 640.0, 9, 150.0),
+        ("TSLA", 3, 610.0, 2, 700.0),
+        ("SOFI", 4, 300.0, 4, None),  # E14.5: no 24 h count -> no velocity, never a riser
+        ("ACHR", 5, 120.0, None, 20.0),
     ]
     stocktwits = [
         ("RKLB", 1, 33.1, "NASDAQ", "US"),
@@ -50,8 +58,9 @@ def buzz() -> RetailBuzzPayload:
                             "rank": r,
                             "mentions": m,
                             "rank_24h_ago": prev,
+                            "mentions_24h_ago": m24,
                         }
-                        for s, r, m, prev in reddit
+                        for s, r, m, prev, m24 in reddit
                     ],
                 },
                 "stocktwits": {
@@ -74,9 +83,11 @@ def buzz() -> RetailBuzzPayload:
     )
 
 
-def scout_input(*, with_buzz: bool) -> ScoutInput:
+def scout_input(*, with_buzz: bool, velocity: bool = False) -> ScoutInput:
+    """*velocity* (E14.5) = the ``personas.scout_buzz_velocity`` flag on (default knobs)."""
+    vel = BuzzVelocity(options=VelocityOptions(), stop_words=("YOLO",)) if velocity else None
     extra: dict[str, Any] = (
-        {"retail_buzz": retail_buzz_view(buzz().model_dump(), trending=TRENDING)}
+        {"retail_buzz": retail_buzz_view(buzz().model_dump(), trending=TRENDING, velocity=vel)}
         if with_buzz
         else {}
     )
@@ -133,9 +144,11 @@ def scout_input(*, with_buzz: bool) -> ScoutInput:
     )
 
 
-def prompt(*, with_buzz: bool) -> str:
-    return build_scout_prompt(scout_input(with_buzz=with_buzz))
+def prompt(*, with_buzz: bool, velocity: bool = False) -> str:
+    return build_scout_prompt(scout_input(with_buzz=with_buzz, velocity=velocity))
 
 
 if __name__ == "__main__":  # pragma: no cover - golden writer
-    sys.stdout.write(prompt(with_buzz=sys.argv[1:] == ["with"]))
+    sys.stdout.write(
+        prompt(with_buzz=sys.argv[1] in ("with", "velocity"), velocity=sys.argv[1] == "velocity")
+    )

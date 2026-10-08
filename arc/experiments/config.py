@@ -131,7 +131,7 @@ class RunnerConfig(BaseModel):
             "else is control's."
         ),
     )
-    arm_personas: list[Literal["scout", "scalp"]] = Field(
+    arm_personas: list[Literal["scout", "scalp", "trending"]] = Field(
         default_factory=list,
         description=(
             "E13.12 (D56): non-loop personas every arm runs on its own store, on top of "

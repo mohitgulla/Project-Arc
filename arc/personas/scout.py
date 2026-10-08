@@ -41,12 +41,15 @@ if TYPE_CHECKING:
     from arc.context.ttl import Ttl
     from arc.personas.schemas import ScoutOutput, ScoutTickerCall
     from arc.universe.screen import ScreenResult
+    from arc.universe.velocity import VelocityOptions
 
 __all__ = [
     "OPTIONS_SLOW_KINDS",
     "ORIGIN_PREFIX",
     "RETAIL_BUZZ_TOP",
+    "RISERS_TOP",
     "SCOUT_CATEGORIES",
+    "BuzzVelocity",
     "DiscoveryResult",
     "ScoutInput",
     "build_scout_prompt",
@@ -72,6 +75,18 @@ SCOUT_CATEGORIES: tuple[SourceCategory, ...] = (
 )
 #: E13.20: names listed in the prompt's retail-buzz section.
 RETAIL_BUZZ_TOP = 15
+#: E14.5 (D60): names on the "Fastest risers" line (flag personas.scout_buzz_velocity).
+RISERS_TOP = 5
+
+
+@dataclass(frozen=True)
+class BuzzVelocity:
+    """E14.5: what the Scout's velocity lines need (passed only with the flag on)."""
+
+    options: VelocityOptions
+    stop_words: tuple[str, ...] = ()
+
+
 #: Section headers, in the fixed order the owner set.
 SECTIONS: tuple[str, ...] = (
     "Regime",
@@ -120,13 +135,20 @@ class RetailBuzzName(BaseModel):
     reddit_mentions: float | None = None
     stocktwits_rank: int | None = None
     in_trending: bool = Field(False, description="In today's trending tier (code, E13.19)")
+    # E14.5 (D60): code-computed mention velocity; set only with the
+    # personas.scout_buzz_velocity flag on (None = flag off, or no velocity)
+    velocity: float | None = None
+    reddit_mentions_24h_ago: float | None = None
 
     @property
     def n_inputs(self) -> int:
         return int(self.reddit_rank is not None) + int(self.stocktwits_rank is not None)
 
     def line(self) -> str:
-        """``- GME · reddit #1/1,234 mentions · stocktwits #4 · in trending tier y``."""
+        """``- GME · reddit #1/1,234 mentions · stocktwits #4 · in trending tier y``
+        (E14.5, flag on: ``reddit #3/157 mentions · velocity 4.6× (157 vs 30)``)."""
+        from arc.universe.velocity import velocity_text
+
         if self.reddit_rank is None:
             reddit = "reddit —"
         else:
@@ -134,6 +156,9 @@ class RetailBuzzName(BaseModel):
             reddit = f"reddit #{self.reddit_rank}" + (
                 f"/{m:,.0f} mentions" if m is not None else ""
             )
+            vel = velocity_text((self.velocity, m, self.reddit_mentions_24h_ago))
+            if vel is not None:
+                reddit += f" · velocity {vel}"
         st = (
             "stocktwits —"
             if self.stocktwits_rank is None
@@ -151,6 +176,11 @@ class RetailBuzzView(BaseModel):
     as_of: str
     inputs: dict[str, str] = Field(default_factory=dict, description="input name -> status")
     names: list[RetailBuzzName] = Field(default_factory=list)
+    # E14.5 (D60): top Reddit names by mention velocity, "SYM 4.6× (157 vs 30)";
+    # None = the personas.scout_buzz_velocity flag is off (no line in the prompt)
+    risers: list[str] | None = None
+    min_mentions: float | None = None
+    smoothing: float | None = None
 
 
 class ScoutInput(BaseModel):
@@ -220,6 +250,7 @@ def scout_input_from_context(
     higher_tier: Sequence[str] = (),
     trending: Sequence[str] = (),
     now: _dt.datetime | None = None,
+    buzz_velocity: BuzzVelocity | None = None,
 ) -> ScoutInput:
     """Build the Scout's input from the snapshot (pure).
 
@@ -227,7 +258,9 @@ def scout_input_from_context(
     missing channel is named. *max_age* maps each category (``youtube_macro``,
     ``youtube_micro``, ``options_slow``, ``retail_buzz``) to its freshness window: an
     older entry is "no fresh info", never read. *trending* = today's trending tier
-    (E13.20: marks ``in trending tier y`` in the retail-buzz section).
+    (E13.20: marks ``in trending tier y`` in the retail-buzz section). *buzz_velocity*
+    (E14.5) = the mention-velocity knobs when ``personas.scout_buzz_velocity`` is on;
+    ``None`` (off) keeps the retail-buzz section byte-identical to E13.20.
     """
     from arc.ingest.channels.daily import brief_ages, brief_presence_line, prompt_brief
 
@@ -286,7 +319,7 @@ def scout_input_from_context(
     buzz_age = max_age.get(SourceCategory.RETAIL_BUZZ.value)
     buzz_entry = snapshot.latest("retail_buzz", "all")
     buzz = (
-        retail_buzz_view(buzz_entry.payload, trending=trending)
+        retail_buzz_view(buzz_entry.payload, trending=trending, velocity=buzz_velocity)
         if buzz_entry is not None
         and buzz_age is not None
         and _fresh(buzz_entry.valid_from, as_of, buzz_age)
@@ -311,7 +344,11 @@ def scout_input_from_context(
 
 
 def retail_buzz_view(
-    payload: Mapping[str, Any], *, trending: Sequence[str] = (), top: int = RETAIL_BUZZ_TOP
+    payload: Mapping[str, Any],
+    *,
+    trending: Sequence[str] = (),
+    top: int = RETAIL_BUZZ_TOP,
+    velocity: BuzzVelocity | None = None,
 ) -> RetailBuzzView:
     """The top *top* ``retail_buzz`` names for the Scout's prompt (pure, code-built).
 
@@ -320,9 +357,21 @@ def retail_buzz_view(
     rank-normalised score summed over the inputs, then ticker. ``in_trending`` is
     ``True`` only for names in today's trending tier (*trending*); the Scout reads this
     as context and never adds or removes a trending name.
+
+    E14.5 (D60): with *velocity* (the ``personas.scout_buzz_velocity`` flag on) each
+    Reddit name carries its code-computed mention velocity and the view lists the
+    :data:`RISERS_TOP` fastest risers. The order is unchanged (the ranker's control
+    scoring), so only the shown text differs.
     """
     from arc.context.kinds import RetailBuzzPayload
-    from arc.universe.trending import apewisdom_scores, rank_trending, stocktwits_scores
+    from arc.universe.trending import (
+        apewisdom_scores,
+        buzz_velocities,
+        fastest_risers,
+        rank_trending,
+        stocktwits_scores,
+        velocity_text,
+    )
 
     buzz = RetailBuzzPayload.model_validate(payload)
     results = []
@@ -345,6 +394,7 @@ def retail_buzz_view(
         results, enabled_count=max(len(buzz.inputs), 1), exclude={}, min_inputs_first=2
     )
     tier = {t.strip().upper() for t in trending}
+    vel = buzz_velocities(buzz, velocity.options) if velocity is not None else {}
     names = [
         RetailBuzzName(
             ticker=r.ticker,
@@ -352,13 +402,26 @@ def retail_buzz_view(
             reddit_mentions=reddit[r.ticker][1] if r.ticker in reddit else None,
             stocktwits_rank=stocktwits.get(r.ticker),
             in_trending=r.ticker in tier,
+            velocity=vel[r.ticker][0] if r.ticker in vel else None,
+            reddit_mentions_24h_ago=vel[r.ticker][2] if r.ticker in vel else None,
         )
         for r in ranked[: max(0, top)]
     ]
+    risers: list[str] | None = None
+    if velocity is not None:
+        risers = [
+            f"{sym} {velocity_text((v, m, m24))}"
+            for sym, v, m, m24 in fastest_risers(
+                buzz, velocity.options, top=RISERS_TOP, stop_words=velocity.stop_words
+            )
+        ]
     return RetailBuzzView(
         as_of=buzz.as_of,
         inputs={n: i.status for n, i in buzz.inputs.items()},
         names=names,
+        risers=risers,
+        min_mentions=velocity.options.min_mentions if velocity is not None else None,
+        smoothing=velocity.options.smoothing if velocity is not None else None,
     )
 
 
@@ -428,6 +491,14 @@ def retail_buzz_lines(view: RetailBuzzView | None) -> list[str]:
         "Buzz is a weak signal: never cite it alone as a thesis or a discovery reason.",
     ]
     lines += [n.line() for n in view.names] or ["- no names"]
+    if view.risers is not None:  # E14.5 (D60): personas.scout_buzz_velocity on
+        floor = f"{view.min_mentions or 0:,.0f}"
+        k = f"{view.smoothing or 0:g}"
+        lines.append(
+            f"Fastest risers (Reddit mention velocity = (mentions + {k}) / (mentions 24h ago"
+            f" + {k}), computed by code; >= {floor} mentions; leveraged ETFs and word tickers"
+            " left out): " + ("; ".join(view.risers) or "none")
+        )
     return lines
 
 

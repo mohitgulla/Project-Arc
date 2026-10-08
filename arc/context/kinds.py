@@ -511,6 +511,9 @@ class RetailBuzzRow(BaseModel):
     name: str = ""
     mentions: float | None = Field(None, description="apewisdom: mentions (24h)")
     rank_24h_ago: int | None = Field(None, description="apewisdom: rank 24 h ago")
+    # v2 (E14.5, D60): raw counts for the mention velocity (None on v1 rows)
+    mentions_24h_ago: float | None = Field(None, description="apewisdom: mentions 24 h ago")
+    upvotes: float | None = Field(None, description="apewisdom: upvotes (24h)")
     trending_score: float | None = Field(None, description="stocktwits: trending_score")
     exchange: str | None = Field(None, description="stocktwits: exchange (CRYPTO dropped later)")
     region: str | None = Field(None, description="stocktwits: region (non-US dropped later)")
@@ -930,7 +933,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     # E14.3 (D60): Alpaca movers + most-actives, Scalp context only (subject market)
     KindSpec("market_movers", MarketMoversPayload),
     # E13.19 (D58): retail_buzz (Reddit + Stocktwits raw rows, daily; subject all)
-    KindSpec("retail_buzz", RetailBuzzPayload),
+    # E14.5 (D60): v2 rows carry mentions_24h_ago + upvotes (defaulted; v1 rows load)
+    KindSpec("retail_buzz", RetailBuzzPayload, schema_version=2),
     KindSpec("macro_calendar", MacroCalendarPayload),
     KindSpec("ex_dividend", ExDividendPayload),
     # E4.8 (D46): Finnhub per-ticker context (subject = ticker)
