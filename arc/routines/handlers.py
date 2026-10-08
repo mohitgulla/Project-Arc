@@ -784,6 +784,128 @@ def edgar_source(ctx: JobContext) -> JobResult:
 EARNINGS_NO_KEY_DAY = "earnings:no_api_key_notice"
 
 
+def _alpaca_news_get(ctx: JobContext) -> Any:  # pragma: no cover - live keys
+    """The Alpaca news getter, or ``None`` when no Alpaca key is set (``no_api_key``)."""
+    from arc.data.alpaca import _get_keys
+    from arc.ingest.ticker_news import alpaca_getter
+
+    try:
+        key, secret = _get_keys()
+    except RuntimeError:
+        return None
+    return alpaca_getter(key, secret)
+
+
+def _finnhub_news_client(ctx: JobContext) -> Any:
+    """Finnhub client on the shared 55/min budget, or ``None`` without a key."""
+    from arc.ingest.finnhub import DbRateLimiter, FinnhubClient, FinnhubNoKey
+
+    s = ctx.settings
+    try:
+        return FinnhubClient(
+            s.finnhub_api_key,
+            limiter=DbRateLimiter(ctx.conn, calls_per_minute=s.finnhub_calls_per_minute),
+        )
+    except FinnhubNoKey:
+        return None
+
+
+def ticker_news_source(
+    ctx: JobContext,
+    *,
+    alpaca_get: Any = "live",
+    finnhub_client: Any = "live",
+    sleep: Callable[[float], None] | None = None,
+) -> JobResult:
+    """E14.1 (D60): ticker-tagged news (Alpaca/Benzinga, Finnhub fallback) for the scope.
+
+    Scope = active list ∪ open underlyings (``tickers: active_list``, capped at
+    ``max_tickers``). Outcomes: nothing answered and every reason ``no_api_key`` ->
+    ``skipped`` (``no_api_key``); nothing answered otherwise -> ``failed``
+    (``forbidden`` / ``rate_limited`` / ``error``); some tickers answered -> ``ok``
+    with ``failed_tickers``. Never ``ok · 0`` for a run no provider answered.
+    """
+    import datetime as dt
+    import time
+
+    from arc.ingest.sources import SourceRegistry
+    from arc.ingest.ticker_news import fetch_ticker_news, source_key
+    from arc.ingest.ticker_news_config import TickerNewsConfig
+
+    cfg = TickerNewsConfig.from_options(ctx.options)
+    scope = _options_fast_tickers(ctx, int(ctx.options.get("max_tickers", 50)))
+    if not scope:
+        msg = "ticker_news: empty scope (no active list, no open underlyings)"
+        raise JobSkippedError(msg)
+    reg = SourceRegistry.from_routines(ctx.routines)
+    keys = [source_key(n) for n in cfg.enabled if source_key(n) in reg.sources]
+    window = reg.max_age_for(keys[0]) if keys else None
+    max_age = (
+        window.duration
+        if window is not None and window.duration is not None
+        else dt.timedelta(hours=12)
+    )
+    fetched = fetch_ticker_news(
+        ctx.conn,
+        cfg,
+        scope,
+        now=ctx.now,
+        max_age=max_age,
+        alpaca_get=_alpaca_news_get(ctx) if alpaca_get == "live" else alpaca_get,
+        finnhub_client=(_finnhub_news_client(ctx) if finnhub_client == "live" else finnhub_client),
+        sleep=sleep or time.sleep,
+        run_id=ctx.run_id,
+    )
+    for name, run in fetched.inputs.items():
+        ctx.record_input(
+            f"ticker_news.{name}",
+            run.type,
+            {"tickers": run.tickers, "status": run.status},
+            as_of=ctx.now,
+            count=run.articles,
+        )
+    unresolved = fetched.unresolved
+    answered = [t for t in fetched.scope if t not in unresolved]
+    if not answered:
+        # every input's reasons: a keyless fallback never hides the primary's 403/429
+        reasons = {r for run in fetched.inputs.values() for r in run.failed.values()}
+        detail = "; ".join(
+            f"{n}: {r.status} ({'; '.join(r.errors[:2]) or ','.join(sorted(r.reasons))})"
+            for n, r in fetched.inputs.items()
+            if r.status != "not_needed"
+        )
+        if reasons <= {"no_api_key"}:
+            msg = f"no_api_key: no ticker_news input has a key ({detail})"
+            raise JobSkippedError(msg)
+        reason = next((r for r in ("forbidden", "rate_limited", "error") if r in reasons), "error")
+        msg = f"ticker_news {reason}: no input answered ({detail})"
+        raise RuntimeError(msg)
+    res = _source_result(ctx, fetched.docs)
+    per_input = ", ".join(f"{n} {fetched.new[n]}" for n in fetched.inputs)
+    n_filtered = sum(fetched.filtered.values())
+    covered = sorted(fetched.seen_tickers)
+    summary = f"{res.summary} ({per_input}), {n_filtered} filtered"
+    summary += f" · {len(covered)}/{len(fetched.scope)} names"
+    if unresolved:
+        summary += f" · {len(unresolved)} failed ({', '.join(sorted(unresolved)[:5])})"
+    metrics: dict[str, Any] = {
+        **res.metrics,
+        "filtered": n_filtered,
+        "duplicates": fetched.duplicates,
+        "stale": fetched.stale,
+        "scope": len(fetched.scope),
+        "covered": len(covered),
+        "covered_tickers": covered,
+        "per_ticker": dict(sorted(fetched.per_ticker.items())),
+        "inputs": {n: r.status for n, r in fetched.inputs.items()},
+        "calls": {n: r.calls for n, r in fetched.inputs.items()},
+        "failed_tickers": dict(sorted(unresolved.items())),
+    }
+    metrics.update({f"new_{n}": fetched.new[n] for n in fetched.inputs})
+    metrics.update({f"filtered_{n}": fetched.filtered[n] for n in fetched.inputs})
+    return JobResult(summary=summary, metrics=metrics)
+
+
 def earnings_source(ctx: JobContext) -> JobResult:
     """E4.1d: no key -> ``skipped`` (``no_api_key``, one notice per day); a fetch,
     HTTP, JSON, truncation or rate-limit error propagates -> ``failed`` + alert.
@@ -2262,6 +2384,7 @@ def _scout_note(ctx: JobContext, out: ScoutReadPayload, session: str, about: lis
 BUILTIN_HANDLERS: Mapping[str, str] = {
     "rss": "arc.routines.handlers:rss_source",
     "edgar": "arc.routines.handlers:edgar_source",
+    "ticker_news": "arc.routines.handlers:ticker_news_source",  # E14.1 (D60)
     "earnings": "arc.routines.handlers:earnings_source",
     "symbols": "arc.routines.handlers:symbols_source",  # E5.7 weekly symbol master
     "universe.momentum": "arc.routines.handlers:universe_momentum_source",  # E12.2 monthly

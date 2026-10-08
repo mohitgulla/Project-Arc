@@ -964,6 +964,10 @@ class RoutinesConfig(BaseModel):
                 from arc.ingest.retail_buzz_config import RetailBuzzConfig
 
                 RetailBuzzConfig.from_options(spec.options)
+            if name == "ticker_news":  # E14.1: the inputs block validates at load
+                from arc.ingest.ticker_news_config import TickerNewsConfig
+
+                TickerNewsConfig.from_options(spec.options)
         for name, spec in self.personas.items():
             if name in spec.chain or len(set(spec.chain)) != len(spec.chain):
                 msg = f"persona {name!r}: chain repeats a step"

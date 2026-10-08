@@ -86,6 +86,7 @@ DEFAULT_CATEGORY: Mapping[str, SourceCategory] = {
     "rss": SourceCategory.MARKET_NEWS,
     "edgar": SourceCategory.COMPANY_DATA,
     "earnings": SourceCategory.COMPANY_DATA,
+    "ticker_news": SourceCategory.COMPANY_DATA,  # E14.1: a removed input's rows
     # A removed channel's legacy rows (never Scalp-read either way, D45); a configured
     # channel always resolves through its own ``category:`` (D49).
     "youtube": SourceCategory.YOUTUBE_MICRO,
@@ -330,6 +331,37 @@ class SourceRegistry:
                         label=str(raw.get("label") or slug),
                         channel=str(raw.get("channel") or "") or None,
                         max_age=job_age,
+                        feed=feed_of,
+                    )
+                continue
+            inputs = opts.get("inputs")
+            if isinstance(inputs, dict) and inputs:
+                # E14.1 (D60): one registry source per input (``ticker_news.<input>``),
+                # each in the job's category with the job's weight (a fallback input
+                # only has docs when the primary failed, so they rarely compete).
+                if category is None:
+                    msg = f"source {job!r}: no category (D47)"
+                    raise ValueError(msg)
+                weight = float(opts.get("weight", 1.0))
+                if weight <= 0:
+                    msg = f"source {job!r}: weight must be > 0"
+                    raise ValueError(msg)
+                for name, raw in inputs.items():
+                    raw = raw or {}
+                    if raw.get("enabled") is False:
+                        continue
+                    key = f"{job}.{name}"
+                    if key in out:
+                        msg = f"duplicate source key {key!r}"
+                        raise ValueError(msg)
+                    out[key] = SourceSpec(
+                        key=key,
+                        job=job,
+                        category=category,
+                        weight=weight,
+                        label=str(raw.get("label") or key),
+                        max_age=job_age,
+                        age_basis=basis,
                         feed=feed_of,
                     )
                 continue

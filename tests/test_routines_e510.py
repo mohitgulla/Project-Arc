@@ -195,6 +195,7 @@ class TestConfig:
             "scalp",
             "scalp.overnight",
             "scout",  # E13.7: one daily cheap LLM call
+            "ticker_news",  # E14.1: up to 20 pages per symbol chunk + Finnhub fallback
             "youtube.briefs",
         ]  # fmt: skip  (E4.8: the Finnhub jobs wait on the shared 55/min budget)
         for job in ("research", "monitor", "positions.evaluate"):
