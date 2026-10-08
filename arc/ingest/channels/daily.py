@@ -351,8 +351,8 @@ class ChannelRun:
         }
 
     def short(self) -> str:
-        """``StockedUp ✓`` / ``TradeBrigade – (no video 24h)`` for the summary line."""
-        name = self.channel.display.replace(" ", "")
+        """``StockedUp ✓`` / ``Trade Brigade – (no video 24h)`` for the summary line."""
+        name = self.channel.display
         if self.present:
             return f"{name} ✓"
         if self.outcome is Outcome.NO_VIDEO:
