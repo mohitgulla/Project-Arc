@@ -121,6 +121,7 @@ PERSONA_OVERLAY_PREFIXES: dict[str, tuple[str, ...]] = {
     "scout": (
         "routines.personas.scout",
         "routines.personas.scout_*",  # E14.5: personas.scout_buzz_velocity
+        "routines.personas.retail_sentiment_context",  # E14.6: also the Scout's prompt
         "routines.personas.scout.*",
         "routines.funnel.scout.*",
         "universe.*",

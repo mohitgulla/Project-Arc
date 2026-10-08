@@ -77,6 +77,11 @@ class UniverseActiveRow(BaseModel):
     velocity_detail: str | None = Field(
         None, description="E14.5 trending: `reddit #20 · 5.2× (157 vs 30)`"
     )
+    sentiment: str | None = Field(
+        None,
+        description="E14.6: Stocktwits `ST 80% bull (10 tagged, 2.7h)` from the newest "
+        "unexpired retail_sentiment entry (null = none); context only",
+    )
 
 
 class UniverseDroppedRow(BaseModel):
@@ -256,7 +261,32 @@ def _trending_velocity(
     return out
 
 
-def _active_row(m: TierMember, velocity: Mapping[str, tuple[float, str]]) -> UniverseActiveRow:
+def _sentiment_facts(conn: sqlite3.Connection, now: _dt.datetime) -> dict[str, str]:
+    """E14.6: ``ticker -> "ST 80% bull (…)"`` from each ticker's newest unexpired
+    ``retail_sentiment`` entry (read-only; ``{}`` when there is none)."""
+    from arc.context.retail_sentiment import sentiment_fact
+    from arc.context.ttl import to_db
+
+    rows = conn.execute(
+        "SELECT subject, payload FROM context_entries WHERE kind = 'retail_sentiment'"
+        " AND valid_from <= ? AND (expires_at IS NULL OR expires_at > ?)"
+        " ORDER BY valid_from, created_at, rowid",
+        (to_db(now), to_db(now)),
+    ).fetchall()
+    out: dict[str, str] = {}
+    for r in rows:  # oldest first: the newest per ticker wins
+        try:
+            out[r["subject"]] = sentiment_fact(json.loads(r["payload"]))
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def _active_row(
+    m: TierMember,
+    velocity: Mapping[str, tuple[float, str]],
+    sentiment: Mapping[str, str] | None = None,
+) -> UniverseActiveRow:
     vel = velocity.get(m.ticker) if m.tier is Tier.TRENDING else None
     return UniverseActiveRow(
         ticker=m.ticker,
@@ -268,6 +298,7 @@ def _active_row(m: TierMember, velocity: Mapping[str, tuple[float, str]]) -> Uni
         inputs=m.inputs,
         velocity=vel[0] if vel else None,
         velocity_detail=vel[1] if vel else None,
+        sentiment=(sentiment or {}).get(m.ticker),
     )
 
 
@@ -385,6 +416,7 @@ def load_universe(
         if has_ctx and any(m.tier is Tier.TRENDING for m in active.members)
         else {}
     )
+    sentiment = _sentiment_facts(conn, now) if has_ctx else {}
     return UniverseResponse(
         as_of=now,
         model=active.model,
@@ -396,7 +428,7 @@ def load_universe(
         note=note,
         config_version=active.config_version if state != "none" else settings.config_version,
         active_max=settings.universe_active_max,
-        active=[_active_row(m, trending_vel) for m in active.members],
+        active=[_active_row(m, trending_vel, sentiment) for m in active.members],
         tiers=tiers,
         dropped=dropped,
         market_reference=market_reference(settings),

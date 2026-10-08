@@ -203,6 +203,10 @@ class ScoutInput(BaseModel):
     higher_tier: list[str] = Field(default_factory=list, description="core + momentum names")
     # E13.20 (D58): retail_buzz as context only (None = no fresh entry: "no info")
     retail_buzz: RetailBuzzView | None = None
+    # E14.6 (D60): Stocktwits sentiment lines (None = personas.retail_sentiment_context
+    # off: no section; [] = on with nothing fresh: "no info")
+    retail_sentiment: list[str] | None = None
+    retail_sentiment_min_tagged: int | None = None
 
     @property
     def categories_present(self) -> list[str]:
@@ -251,6 +255,7 @@ def scout_input_from_context(
     trending: Sequence[str] = (),
     now: _dt.datetime | None = None,
     buzz_velocity: BuzzVelocity | None = None,
+    sentiment_top: int | None = None,
 ) -> ScoutInput:
     """Build the Scout's input from the snapshot (pure).
 
@@ -261,6 +266,8 @@ def scout_input_from_context(
     (E13.20: marks ``in trending tier y`` in the retail-buzz section). *buzz_velocity*
     (E14.5) = the mention-velocity knobs when ``personas.scout_buzz_velocity`` is on;
     ``None`` (off) keeps the retail-buzz section byte-identical to E13.20.
+    *sentiment_top* (E14.6) = how many ``retail_sentiment`` tickers to list when
+    ``personas.retail_sentiment_context`` is on; ``None`` (off) adds no section.
     """
     from arc.ingest.channels.daily import brief_ages, brief_presence_line, prompt_brief
 
@@ -325,6 +332,15 @@ def scout_input_from_context(
         and _fresh(buzz_entry.valid_from, as_of, buzz_age)
         else None
     )
+    sentiment: list[str] | None = None
+    sentiment_floor: int | None = None
+    if sentiment_top is not None:  # E14.6 (D60), strategy lane, default off
+        from arc.personas.retail_sentiment import fresh_sentiment, scout_sentiment_lines
+
+        readings = fresh_sentiment(snapshot, as_of=as_of, max_age=buzz_age)
+        sentiment = scout_sentiment_lines(readings, top=sentiment_top)
+        floors = {int(p.get("min_tagged") or 0) for p in readings.values()}
+        sentiment_floor = floors.pop() if len(floors) == 1 else None
     return ScoutInput(
         session=as_of.date().isoformat(),
         as_of=as_of.isoformat(),
@@ -340,6 +356,8 @@ def scout_input_from_context(
         options_as_of=options_as_of,
         higher_tier=sorted(higher_tier),
         retail_buzz=buzz,
+        retail_sentiment=sentiment,
+        retail_sentiment_min_tagged=sentiment_floor,
     )
 
 
@@ -543,6 +561,10 @@ def build_scout_prompt(inp: ScoutInput) -> str:
         *options_slow_lines(inp.options_slow),
     ]
     lines += ["", *retail_buzz_lines(inp.retail_buzz)]
+    if inp.retail_sentiment is not None:  # E14.6 (D60): personas.retail_sentiment_context on
+        from arc.personas.retail_sentiment import scout_block
+
+        lines += scout_block(inp.retail_sentiment, min_tagged=inp.retail_sentiment_min_tagged)
     lines += [
         "",
         "## Already in a higher tier (never list these in discovery)",

@@ -1,0 +1,36 @@
+# E14.6 (D60, D44): DRAFT forward A/B for Stocktwits sentiment as persona context.
+# Not registered: `arc experiment create` + `register` hash-lock it, so the owner
+# reviews the margin and sessions first (XP-1's A/A sets the real MDE). The owner may
+# instead flip the flag directly (`!arc config personas.retail_sentiment_context on`);
+# this spec is the measured alternative.
+#
+# Treatment = `personas.retail_sentiment_context: on`. The arm's Scout prompt gains a
+# code-built "Retail sentiment" block (top 15 tickers by tagged count: bull % of the
+# user-tagged Stocktwits messages, tag count, time span; "too few tags" under 5) and
+# each line of the arm's Research idea pool gains one `ST 80% bull (10 tagged, 2.7h)`
+# fact. The `retail_sentiment` source runs in both arms (shared input); the gate, the
+# tier ranking and every other prompt section are unchanged.
+# Promotion (flipping the default in config/routines.yaml) needs a committed
+# `verdicts/XP-12.yaml` with `verdict: win` (docs/OPS.md 5.20).
+spec_version: 1
+id: XP-12
+title: Stocktwits sentiment in the Scout and Research prompts
+hypothesis: >
+  Showing the Scout and Research the code-computed Stocktwits bull/bear ratio per
+  ticker (crowd mood, often contrarian) improves which ideas they call and rank,
+  raising paired daily net P&L without a worse Sortino or max drawdown.
+area: entries
+kind: ab
+arms:
+  control:
+    overlay: {}
+  treatment:
+    overlay:
+      routines:
+        personas:
+          retail_sentiment_context: "on"
+non_inferiority_margin: 0.5
+proposed_by: owner
+# The E7.5 backtester replays no LLM, so a persona-prompt change has no backtest;
+# the forward run is the only test.
+backtest_ref: "none: persona prompt change, not backtestable (E7.5 replays no LLM)"
