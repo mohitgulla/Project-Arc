@@ -239,6 +239,9 @@ RESEARCH_READS = [
     "scout_read",
     # E13.17 (D56): ex-dividend dates for the exit-watch facts
     "ex_dividend",
+    # E14.6 (D60): Stocktwits bull/bear per ticker; rendered only with
+    # personas.retail_sentiment_context on (one fact per pool line)
+    "retail_sentiment",
 ]  # == routines.yaml research.reads (D30 adds the options-data kinds)
 # E5.9 drop reasons (Research stage; deterministic). Values == ReasonCode values.
 DROP_CONCENTRATION = ReasonCode.DROP_CONCENTRATION.value
@@ -1223,14 +1226,17 @@ def _loop_inputs(
     pending_orders: int,
     bucket_pct: float,
     facts_tickers: list[str] | None = None,
+    extra_facts: list[str] | None = None,
 ) -> LoopInputs:
     """The deterministic, rounded inputs the D31 change-aware skip digests.
 
     E4.8a: with ``personas.finnhub_context`` on, the Finnhub facts in scope enter as
     ``<kind>:<ticker>@<as_of>`` only, so a re-fetch of the same data is no change.
+    E14.6: *extra_facts* (the ``retail_sentiment:<ticker>@<as_of>`` keys, flag on only)
+    join them, so the 12:30 sentiment refresh counts as a change.
     """
     return LoopInputs(
-        facts=ticker_facts_digest(snap, facts_tickers or []),
+        facts=sorted([*ticker_facts_digest(snap, facts_tickers or []), *(extra_facts or [])]),
         candidates=sorted(f"{e.id}@{e.schema_version}" for e in snap.of_kind("candidate")),
         regimes=sorted(f"{e.subject}@{e.id}" for e in snap.of_kind("regime")),
         briefs=sorted(f"{e.subject}@{e.id}" for e in snap.of_kind("channel_brief")),
@@ -1266,6 +1272,7 @@ def _loop_no_change(
     budget: BudgetView,
     *,
     facts_tickers: list[str] | None = None,
+    extra_facts: list[str] | None = None,
 ) -> JobResult | None:
     """D31 change-aware skip: same inputs as the last loop -> no LLM call.
 
@@ -1282,6 +1289,7 @@ def _loop_no_change(
         pending_orders=_pending_orders(ctx.conn),
         bucket_pct=loop.pnl_bucket_pct,
         facts_tickers=facts_tickers or [],
+        extra_facts=extra_facts,
     )
     new_digest = inputs.digest()
     log.debug("pipeline.loop_inputs", digest=new_digest[:12], **inputs.payload())
@@ -1354,6 +1362,25 @@ def _research_ticker_facts(ctx: JobContext, cand_entries: list[Any]) -> dict[str
         return None
     tickers = _research_facts_tickers(ctx, cand_entries)
     return cfg.prompt_options(tickers, cfg.research_max_tickers)
+
+
+def _research_sentiment(
+    ctx: JobContext, snap: ContextSnapshot, tickers: Sequence[str]
+) -> tuple[dict[str, str] | None, list[str]]:
+    """E14.6 (D60): ``(ticker -> "ST 80% bull (…)", digest keys)`` for the pool tickers,
+    or ``(None, [])`` with ``personas.retail_sentiment_context`` off."""
+    if not ctx.routines.retail_sentiment_context.enabled:
+        return None, []
+    from arc.context.categories import SourceCategory
+    from arc.personas.retail_sentiment import (
+        fresh_sentiment,
+        research_sentiment_facts,
+        sentiment_digest,
+    )
+
+    max_age = ctx.routines.category_spec(SourceCategory.RETAIL_BUZZ).max_age
+    readings = fresh_sentiment(snap, as_of=ctx.now, max_age=max_age)
+    return research_sentiment_facts(readings, tickers), sentiment_digest(readings, tickers)
 
 
 def _youtube_channels(ctx: JobContext) -> list[dict[str, str]]:
@@ -1545,8 +1572,15 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     held, recent_lines = _held_and_recent(cands, priors, pctx, ctx.now, dedupe_cfg)
     # D31: change-aware skip. Same inputs as the previous loop and a full run not
     # yet due (loop.max_idle) -> no LLM call; the chain runs its deterministic tail.
+    sentiment, sentiment_keys = _research_sentiment(ctx, snap, pool.tickers)
     skip = _loop_no_change(
-        ctx, snap, pctx, priors, budget, facts_tickers=_research_facts_tickers(ctx, cand_entries)
+        ctx,
+        snap,
+        pctx,
+        priors,
+        budget,
+        facts_tickers=_research_facts_tickers(ctx, cand_entries),
+        extra_facts=sentiment_keys,
     )
     if skip is not None:
         return skip
@@ -1572,6 +1606,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         inputs["ticker_facts"] = facts
     if diversification.is_relaxed:  # E12.5: absent when strict (prompt unchanged)
         inputs["diversification"] = diversification.mode
+    if sentiment is not None:  # E14.6: absent when the flag is off (prompt unchanged)
+        inputs["retail_sentiment"] = sentiment
     # E13.8: the merged idea pool, recorded with the compact prompt's inputs
     inputs["idea_pool"] = [i.model_dump(mode="json") for i in pool.items]
     inputs["candidate_tickers"] = sorted(cands)

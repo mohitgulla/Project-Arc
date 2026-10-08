@@ -5727,6 +5727,11 @@ export interface components {
             rank: number;
             /** Reason */
             reason: string;
+            /**
+             * Sentiment
+             * @description E14.6: Stocktwits `ST 80% bull (10 tagged, 2.7h)` from the newest unexpired retail_sentiment entry (null = none); context only
+             */
+            sentiment?: string | null;
             /** Source */
             source: string;
             /** Ticker */

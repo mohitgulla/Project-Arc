@@ -850,6 +850,29 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   `arc universe trending --dry-run --scoring velocity` (the table gains a `vel` column and
   a `fastest_risers` line). The Tower's trending members carry `velocity` /
   `velocity_detail` (`reddit #3 · 6.2× (180 vs 25)`).
+- **Stocktwits per-ticker sentiment (E14.6, D60), context only.** Source job
+  `retail_sentiment` (05:45 + 12:30 ET, trading days, background lane, category
+  `retail_buzz`, feed scout) fetches `api.stocktwits.com/api/2/streams/symbol/<T>.json`
+  (free, no key; latest 30 messages) for the active list ∪ open underlyings (≤ 55),
+  `pace_s` 1.5 apart, and writes one `retail_sentiment` entry per ticker (24h, latest
+  supersedes): `messages`, `tagged`, `bullish`, `bearish`, `bull_ratio` (bullish /
+  tagged; null under `min_tagged` 5 = "too few tags", never 0 % / 100 %),
+  `window_minutes` (oldest → newest message, a chatter-intensity proxy) and
+  `watchlist_count`. Untagged messages count only in `messages`. `pages: 2` reads one
+  older page (`max` cursor) for a ticker under `min_tagged`; `max_requests` 150 caps a
+  run. A 429 stops the run `partial` and keeps what was fetched; a 404 or bad body skips
+  that ticker; nothing fetched fails the run. Live 2026-10-08 (14:19 ET, scratch copy):
+  `49 tickers · 49 with ratio · 49 requests in 86s`, no 429, no rate-limit headers;
+  tagged per ticker min 5 / median 11 / max 19. Quiet names span days
+  (`window_minutes` 31 067 for YOU), so read a long span as low chatter, not fresh mood.
+  Prompts (strategy lane, `personas.retail_sentiment_context: off | on`, draft XP-12):
+  on adds a `## Retail sentiment (Stocktwits …)` block to the Scout (top 15 by tagged
+  count, `- NVDA · 80% bull (10 tagged, 2.7h) of 30 messages`) and one
+  `· ST 80% bull (10 tagged, 2.7h)` fact to each Research pool line; the readings join
+  the D31 loop digest by `as_of`, so the 12:30 refresh wakes the loop once. Off = both
+  prompts byte-identical. Never a gate or tier-ranking input. The Tower lists the
+  source under `/api/ops/sources` and each `/api/ops/universe` active row carries
+  `sentiment` (the chip detail shows `Stocktwits: 80% bull (…)`).
 - **Scout reads retail buzz (E13.20, D58), context only.** The Scout prompt carries a
   code-built `## Retail buzz (as of …)` section: the top 15 names of the fresh
   `retail_buzz` entry (both-input names first, crypto dropped), each
@@ -927,7 +950,7 @@ key on every input → `skipped` (`no_api_key`); nothing answered → `failed`
 | `options_slow` | Options slow | 24h | `vol_term`, `options_daily`, `vix_futures` (`feed: scout`) | Scout, Research (typed context) |
 | `youtube_macro` | YouTube macro | 48h (D60) | FX Evolution, Bravos Research | Scout, Research (channel briefs, §5.22) |
 | `youtube_micro` | YouTube micro | 48h (D60) | StockedUp, Trade Brigade, Arete Trading, Warrior Trading, IBD | Scout, Research (channel briefs, §5.22) |
-| `retail_buzz` | Retail buzz | 24h | `retail_buzz` (Reddit via ApeWisdom + Stocktwits trending, 05:40, D58) | trending tier (code), Scout (context only); never Research |
+| `retail_buzz` | Retail buzz | 24h | `retail_buzz` (Reddit via ApeWisdom + Stocktwits trending, 05:40, D58); `retail_sentiment` (Stocktwits per-ticker bull/bear, 05:45 + 12:30, E14.6) | trending tier (code), Scout (context only); Research reads only `retail_sentiment`, only with `personas.retail_sentiment_context` on |
 
 **Reference data (D56)** is not a category: `ex_dividend`, `macro_calendar`, the
 `earnings` calendar, the `finnhub.*` kinds and `iv.record` (`iv_daily`). Those jobs

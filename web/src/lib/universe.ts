@@ -56,6 +56,7 @@ export function memberDetail(m: UniverseActive): string[] {
   const out = [`#${m.rank} in ${tierLabel(m.tier)} · source ${m.source || "—"}`];
   if (m.inputs != null) out.push(m.inputs >= 2 ? "in both inputs" : "in one input");
   if (m.velocity_detail) out.push(`mention velocity: ${m.velocity_detail}`);
+  if (m.sentiment) out.push(`Stocktwits: ${m.sentiment.replace(/^ST /, "")}`);
   if (m.reason) out.push(m.reason);
   const also = m.also_in ?? [];
   if (also.length) out.push(`also in ${also.map(tierLabel).join(", ")}`);

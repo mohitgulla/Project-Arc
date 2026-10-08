@@ -632,6 +632,32 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     velocity:                   # also the Scout's velocity lines (personas.scout_buzz_velocity)
       smoothing: 5              # k: a 3 -> 12 jump reads 2.1x, not 4x
       min_mentions: 10          # fewer 24 h mentions -> no velocity (never ranked as growth)
+  # E14.6 (D60): Stocktwits per-ticker sentiment. One stream request per ticker in
+  # scope (latest 30 messages); code counts the user-tagged Bullish/Bearish ones.
+  # Context only (Scout + Research behind personas.retail_sentiment_context); never a
+  # gate or tier-ranking input. Rate limit (unauthenticated, ~200 req/h per IP): the
+  # live run 2026-10-08 made 49 requests in 86 s with no 429 and no rate-limit headers
+  # (2 runs/day x <= 55 = 110 req/day). A 429 stops the run (partial), keeps what was
+  # fetched. See docs/OPS.md "Stocktwits per-ticker sentiment (E14.6)".
+  retail_sentiment:
+    label: Retail sentiment
+    about: "Stocktwits bull/bear ratio per active ticker (user-tagged messages, latest 30): Scout + Research context"
+    schedule: ["05:45", "12:30"]  # pre-Scout (06:00), plus a midday refresh Research reads via max_age
+    days: trading
+    ttl: 1h
+    lane: background            # ~55 paced requests (~1.5 min); never delays the tick
+    category: retail_buzz
+    feed: scout
+    context: {ttl: 24h, supersede: latest}   # subject = ticker
+    writes: [retail_sentiment]
+    tickers: active_list        # active list ∪ open underlyings, active first
+    max_tickers: 55
+    pace_s: 1.5                 # seconds between requests
+    pages: 1                    # 2 = one older page (max cursor) when a ticker has < min_tagged tags
+    min_tagged: 5               # fewer tags -> "too few tags" (no ratio, never 0% / 100%)
+    max_requests: 150           # hard cap per run, under the unauthenticated limit
+    timeout_s: 15
+    retries: 1
 
 # E4.8a (D46/D44): Finnhub per-ticker facts in the Scalp/Research prompts. The switch
 # is `personas.finnhub_context` below (default off = prompts unchanged); these are its
@@ -663,6 +689,7 @@ personas:
   scalp_movers_context: "off"   # E14.3 (D60): off | on, the Scalp's "Tape movers" block (strategy lane; XP-11)
   director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
   scout_buzz_velocity: "off"    # E14.5 (D60): off | on: Reddit mention velocity + "Fastest risers" in the Scout's retail-buzz section (strategy lane)
+  retail_sentiment_context: "off"   # E14.6 (D60): off | on: Stocktwits bull/bear lines for the Scout + one fact per Research pool line (strategy lane; draft XP-12)
   scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + the previous evening's options_slow (18:30 vol_term, 23:00 options_daily/vix_futures; E14.2)
     label: Scout
     about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"
@@ -675,7 +702,7 @@ personas:
     lane: background            # one cheap LLM call (~1-2 min); the tick never waits on it
     llm: true
     notify: card
-    reads: [channel_brief, options_daily, vx_curve, vol_term, retail_buzz, universe_tier, active_universe]   # retail_buzz: D58, context only (E13.20)
+    reads: [channel_brief, options_daily, vx_curve, vol_term, retail_buzz, retail_sentiment, universe_tier, active_universe]   # retail_buzz: D58, context only (E13.20); retail_sentiment: E14.6, read only with personas.retail_sentiment_context on
     writes: [scout_read, candidate, note, universe_tier, active_universe]   # universe_tier: discovery only; active_universe: re-resolve after
   scalp:                        # D31: every 30 min in session (15 runs), after the fast sources
     label: Scalp
@@ -714,7 +741,8 @@ personas:
     days: trading
     chain: auto                 # E13.15 AUTO_CHAINS: exits.mandatory, quant.exit, risk.exit, quant.open, risk.open, quant.revise, quant.propose, broker.execute (D34/D56)
     reads: [candidate, regime, channel_brief, note, vol_term, macro_calendar, position_review, story,
-            earnings_history, insider_activity, analyst_recs, fundamentals, scout_read, ex_dividend]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read in the compact prompt; E13.17 ex_dividend feeds the exit-watch facts
+            earnings_history, insider_activity, analyst_recs, fundamentals, scout_read, ex_dividend,
+            retail_sentiment]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read in the compact prompt; E13.17 ex_dividend feeds the exit-watch facts; E14.6 retail_sentiment renders only with retail_sentiment_context on
     writes: [shortlist, regime, note, portfolio_context, exit_watchlist, position_review]   # E5.9: portfolio_context + portfolio_view/thesis_check notes; E13.17: exit_watchlist + the reviews Research saw
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card

@@ -643,6 +643,7 @@ class TestWiring:
             "options_daily",
             "vx_curve",
             "retail_buzz",  # D58: context only in the prompt (E13.20)
+            "retail_sentiment",  # E14.6: only with personas.retail_sentiment_context on
             "vol_term",
             "universe_tier",
             "active_universe",

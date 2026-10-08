@@ -613,6 +613,7 @@ PERSONA_FLAGS: tuple[str, ...] = (
     "finnhub_context",
     "scout_buzz_velocity",
     "scalp_movers_context",
+    "retail_sentiment_context",  # E14.6
 )
 #: E13.15 (D56 cutover): switches removed with their off paths. Each is always on
 #: now (quant_risk_loop on, scalp_options_tape on, scout_feed on, research_idea_pool
@@ -730,6 +731,21 @@ class ScoutBuzzVelocitySettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     enabled: bool = False
+
+
+class RetailSentimentContextSettings(BaseModel):
+    """E14.6 (D60, D44): Stocktwits sentiment in the Scout and Research prompts.
+
+    ``enabled`` comes from ``personas.retail_sentiment_context: off | on`` (default off
+    = both prompts byte-identical to before E14.6). On: the Scout gets a code-built
+    "Retail sentiment" block (top ``scout_top`` tickers by tagged count) and each
+    Research pool line gets one ``ST 80% bull (10 tagged, 2.7h)`` fact.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    scout_top: int = Field(15, ge=1, le=55)
 
 
 class FinnhubContextSettings(BaseModel):
@@ -904,6 +920,10 @@ class RoutinesConfig(BaseModel):
     scalp_movers_context: ScalpMoversContextSettings = Field(
         default_factory=ScalpMoversContextSettings
     )
+    # E14.6: the ``personas.retail_sentiment_context`` flag (as ``enabled``).
+    retail_sentiment_context: RetailSentimentContextSettings = Field(
+        default_factory=RetailSentimentContextSettings
+    )
     # E12.5: knobs + the ``personas.director_diversification`` switch (as ``mode``).
     director_diversification: ResearchDiversificationSettings = Field(
         default_factory=ResearchDiversificationSettings
@@ -1018,6 +1038,10 @@ class RoutinesConfig(BaseModel):
                 from arc.ingest.retail_buzz_config import RetailBuzzConfig
 
                 RetailBuzzConfig.from_options(spec.options)
+            if name == "retail_sentiment":  # E14.6: the knobs validate at load
+                from arc.ingest.retail_sentiment_config import RetailSentimentConfig
+
+                RetailSentimentConfig.from_options(spec.options)
             if name == "ticker_news":  # E14.1: the inputs block validates at load
                 from arc.ingest.ticker_news_config import TickerNewsConfig
 

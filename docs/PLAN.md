@@ -393,7 +393,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E14.3 Tape movers + most-actives as Scalp context, flag off by default (D60; built: `market_movers` source, `personas.scalp_movers_context`, draft XP-11; OPS §5.34)
 - E14.4 YouTube 48h freshness, newest-video supersede, + Warrior Trading, IBD (youtube_micro) (D60)
 - E14.5 Reddit mention velocity: stored, Scout context, velocity ranking arm behind a flag (D60) ← E14.4
-- E14.6 Stocktwits per-ticker sentiment as typed context, flag off (D60) ← E14.5
+- E14.6 Stocktwits per-ticker sentiment as typed context, flag off (D60) ← E14.5 (**built**: source `retail_sentiment`, kind `retail_sentiment`, flag `personas.retail_sentiment_context`, draft XP-12)
 
 ---
 

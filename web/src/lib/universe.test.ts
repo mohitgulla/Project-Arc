@@ -62,6 +62,10 @@ describe("universe page helpers", () => {
     const aapl = m("AAPL", "core", 2, { source: "settings", reason: "core list", also_in: ["momentum", "discovery"] });
     expect(memberDetail(aapl)).toEqual(["#2 in Core · source settings", "core list", "also in Momentum, Discovery"]);
     expect(memberDetail(m("Z", "discovery", 1, { reason: "" }))).toHaveLength(1);
+    expect(memberDetail(m("N", "core", 1, { reason: "", sentiment: "ST 80% bull (10 tagged, 2.7h)" }))).toEqual([
+      "#1 in Core · source x",
+      "Stocktwits: 80% bull (10 tagged, 2.7h)",
+    ]);
   });
 
   it("formats tier counts, drop reasons and the market reference", () => {

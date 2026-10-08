@@ -587,6 +587,46 @@ class MarketMoversPayload(BaseModel):
     source: Literal["alpaca_screener"] = "alpaca_screener"
 
 
+# E14.6 (D60): retail_sentiment, the Stocktwits per-symbol stream (latest 30 messages
+# per page) counted by code. Context only: never a gate input, never a ranking input.
+class RetailSentimentPayload(BaseModel):
+    """``retail_sentiment`` (subject = ticker): user-tagged Bullish/Bearish counts.
+
+    ``bull_ratio = bullish / tagged`` is set only when ``tagged >= min_tagged``
+    (None = "too few tags", never a 0% or 100% reading). Untagged messages are
+    counted in ``messages`` only.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str = Field(..., description="ISO time (ET) of the fetch")
+    source: Literal["stocktwits"] = "stocktwits"
+    messages: int = Field(..., ge=0, description="Messages read (all pages)")
+    tagged: int = Field(..., ge=0, description="Messages tagged Bullish or Bearish")
+    bullish: int = Field(..., ge=0)
+    bearish: int = Field(..., ge=0)
+    bull_ratio: float | None = Field(
+        None, ge=0.0, le=1.0, description="bullish / tagged; None when tagged < min_tagged"
+    )
+    min_tagged: int = Field(..., ge=1, description="The threshold this reading used")
+    window_minutes: float | None = Field(
+        None, ge=0.0, description="Newest minus oldest message time (chatter intensity proxy)"
+    )
+    newest_at: str | None = Field(None, description="ISO time (UTC) of the newest message")
+    watchlist_count: int | None = Field(None, ge=0, description="Stocktwits watchers, if given")
+    pages: int = Field(1, ge=1, description="Stream pages read")
+
+    @model_validator(mode="after")
+    def _counts(self) -> RetailSentimentPayload:
+        if self.bullish + self.bearish != self.tagged or self.tagged > self.messages:
+            msg = "retail_sentiment: bullish + bearish must equal tagged <= messages"
+            raise ValueError(msg)
+        if (self.bull_ratio is None) != (self.tagged < self.min_tagged):
+            msg = "retail_sentiment: bull_ratio is set iff tagged >= min_tagged"
+            raise ValueError(msg)
+        return self
+
+
 # E13.6 (D56): options_fast, Cboe ~15-min delayed quotes (index vols, per-ticker chain
 # top-of-book) + the exchange symbol_data volume CSVs. Context only, never gate inputs.
 IndexVolSymbol = Literal["VIX", "VIX9D", "VXN", "VIX1D", "VIX3M", "VVIX"]
@@ -935,6 +975,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     # E13.19 (D58): retail_buzz (Reddit + Stocktwits raw rows, daily; subject all)
     # E14.5 (D60): v2 rows carry mentions_24h_ago + upvotes (defaulted; v1 rows load)
     KindSpec("retail_buzz", RetailBuzzPayload, schema_version=2),
+    # E14.6 (D60): Stocktwits per-ticker bull/bear counts (subject = ticker)
+    KindSpec("retail_sentiment", RetailSentimentPayload),
     KindSpec("macro_calendar", MacroCalendarPayload),
     KindSpec("ex_dividend", ExDividendPayload),
     # E4.8 (D46): Finnhub per-ticker context (subject = ticker)

@@ -106,6 +106,9 @@ class ResearchInput:
     # call (the E5.9 thesis-check wording).
     exit_block: str = ""  # one position line + one facts line per open structure
     exit_rules: tuple[str, ...] = ()  # policy lines shown with the exit watch
+    # E14.6 (D60): True = the pool lines carry a Stocktwits ``ST …`` fact
+    # (personas.retail_sentiment_context on); False keeps the prompt byte-identical.
+    retail_sentiment: bool = False
 
 
 @dataclass(frozen=True)
@@ -187,6 +190,7 @@ def research_input_from_context(
     max_headlines: int | None = None,
     exit_block: str = "",
     exit_rules: Sequence[str] = (),
+    retail_sentiment: Mapping[str, str] | None = None,
 ) -> ResearchInput:
     """Research reads every active ``candidate`` and ``regime`` entry, plus up to
     *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
@@ -223,6 +227,10 @@ def research_input_from_context(
 
     E13.17 (D56): *exit_block* / *exit_rules* (recorded by the step whenever the book
     is not empty) add the exit-watch section.
+
+    E14.6 (D60): *retail_sentiment* (``ticker -> "ST 80% bull (10 tagged, 2.7h)"``,
+    recorded only with ``personas.retail_sentiment_context`` on) appends one fact to
+    each pool line that has a reading.
     """
     entries = snapshot.of_kind("candidate")
     if candidate_tickers is not None:
@@ -244,7 +252,7 @@ def research_input_from_context(
         }
         for e in notes[: max(0, max_notes)]
     ]
-    pool_block = pool_lines(idea_pool) if idea_pool is not None else ""
+    pool_block = pool_lines(idea_pool, sentiment=retail_sentiment) if idea_pool is not None else ""
     if compact:
         heads = COMPACT_MAX_HEADLINES if max_headlines is None else max_headlines
         return ResearchInput(
@@ -272,6 +280,7 @@ def research_input_from_context(
             notes_lines="\n".join(note_line(n) for n in notes_out),
             exit_block=exit_block,
             exit_rules=tuple(exit_rules),
+            retail_sentiment=retail_sentiment is not None,
         )
     return ResearchInput(
         candidates_json=_dump({"candidates": candidates}),
@@ -310,6 +319,7 @@ def research_input_from_context(
         pool_merged=pool_merged,
         exit_block=exit_block,
         exit_rules=tuple(exit_rules),
+        retail_sentiment=retail_sentiment is not None,
     )
 
 
@@ -329,11 +339,12 @@ def _num(v: Any, fmt: str = ".2f") -> str:
     return "n/a" if not isinstance(v, int | float) or isinstance(v, bool) else format(v, fmt)
 
 
-def pool_line(item: Mapping[str, Any]) -> str:
+def pool_line(item: Mapping[str, Any], sentiment: str | None = None) -> str:
     """``NVDA · bullish · conf 0.72 · feeds scalp+scout · origins 3 · agree · tier core``.
 
     Code-built from a :class:`~arc.personas.schemas.PoolItem` dump (no persona text);
-    a catalyst adds `` · earnings 2026-10-20``.
+    a catalyst adds `` · earnings 2026-10-20``; E14.6 *sentiment* adds
+    `` · ST 80% bull (10 tagged, 2.7h)``.
     """
     parts = [
         str(item["ticker"]),
@@ -347,12 +358,17 @@ def pool_line(item: Mapping[str, Any]) -> str:
     if item.get("catalyst_type"):
         when = f" {item['catalyst_date']}" if item.get("catalyst_date") else ""
         parts.append(f"{item['catalyst_type']}{when}")
+    if sentiment:
+        parts.append(sentiment)
     return " · ".join(parts)
 
 
-def pool_lines(items: Sequence[Mapping[str, Any]]) -> str:
+def pool_lines(
+    items: Sequence[Mapping[str, Any]], *, sentiment: Mapping[str, str] | None = None
+) -> str:
     """The pool block: one :func:`pool_line` per ticker, in the recorded order."""
-    return "\n".join(pool_line(i) for i in items)
+    facts = sentiment or {}
+    return "\n".join(pool_line(i, facts.get(str(i["ticker"]))) for i in items)
 
 
 def scout_read_block(snapshot: ContextSnapshot, *, max_chars: int = SCOUT_READ_MAX_CHARS) -> str:
@@ -1735,8 +1751,14 @@ def _pool_section(inp: ResearchInput) -> str:
         f"\n### Idea pool ({src}; one line per ticker, counted by code)\n"
         "Format: ticker · stance · conf (max over feeds) · feeds · origins (distinct "
         "sources/channels) · agree|disagree|single (do the feeds agree on the stance) · "
-        "universe tier · catalyst.\n"
-        f"{inp.pool_block}\n"
+        "universe tier · catalyst."
+        + (
+            " ST = Stocktwits bull % of user-tagged messages (counted by code; 'too few"
+            " tags' under the minimum; crowd mood, never a thesis on its own)."
+            if inp.retail_sentiment
+            else ""
+        )
+        + f"\n{inp.pool_block}\n"
     )
 
 

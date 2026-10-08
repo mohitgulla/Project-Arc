@@ -1628,6 +1628,21 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("off", "on"),
         aliases=("routines.personas.scout_buzz_velocity", "scout_buzz_velocity"),
     ),
+    # E14.6 (D60/D44): Stocktwits per-ticker sentiment in the Scout and Research
+    # prompts. Strategy lane (a prompt change): default off; draft XP-12 tests on.
+    Tunable(
+        key="personas.retail_sentiment_context",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E14.6: add the code-computed Stocktwits bull/bear ratio (user-tagged "
+        "messages, min 5 tagged) as a 'Retail sentiment' block in the Scout prompt and one "
+        "fact per Research pool line. Context only; never a gate or ranking input.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "retail_sentiment_context"),
+        choices=("off", "on"),
+        aliases=("routines.personas.retail_sentiment_context", "retail_sentiment_context"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -2461,6 +2476,7 @@ _PERSONA_SWITCHES = frozenset(
         ("personas", "finnhub_context"),
         ("personas", "scout_buzz_velocity"),  # E14.5
         ("personas", "scalp_movers_context"),  # E14.3
+        ("personas", "retail_sentiment_context"),  # E14.6
     }
 )
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.

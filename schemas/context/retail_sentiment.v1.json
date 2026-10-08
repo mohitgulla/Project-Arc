@@ -1,0 +1,118 @@
+{
+  "additionalProperties": false,
+  "description": "``retail_sentiment`` (subject = ticker): user-tagged Bullish/Bearish counts.\n\n``bull_ratio = bullish / tagged`` is set only when ``tagged >= min_tagged``\n(None = \"too few tags\", never a 0% or 100% reading). Untagged messages are\ncounted in ``messages`` only.",
+  "properties": {
+    "as_of": {
+      "description": "ISO time (ET) of the fetch",
+      "title": "As Of",
+      "type": "string"
+    },
+    "bearish": {
+      "minimum": 0,
+      "title": "Bearish",
+      "type": "integer"
+    },
+    "bull_ratio": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "bullish / tagged; None when tagged < min_tagged",
+      "title": "Bull Ratio"
+    },
+    "bullish": {
+      "minimum": 0,
+      "title": "Bullish",
+      "type": "integer"
+    },
+    "messages": {
+      "description": "Messages read (all pages)",
+      "minimum": 0,
+      "title": "Messages",
+      "type": "integer"
+    },
+    "min_tagged": {
+      "description": "The threshold this reading used",
+      "minimum": 1,
+      "title": "Min Tagged",
+      "type": "integer"
+    },
+    "newest_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "ISO time (UTC) of the newest message",
+      "title": "Newest At"
+    },
+    "pages": {
+      "default": 1,
+      "description": "Stream pages read",
+      "minimum": 1,
+      "title": "Pages",
+      "type": "integer"
+    },
+    "source": {
+      "const": "stocktwits",
+      "default": "stocktwits",
+      "title": "Source",
+      "type": "string"
+    },
+    "tagged": {
+      "description": "Messages tagged Bullish or Bearish",
+      "minimum": 0,
+      "title": "Tagged",
+      "type": "integer"
+    },
+    "watchlist_count": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Stocktwits watchers, if given",
+      "title": "Watchlist Count"
+    },
+    "window_minutes": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Newest minus oldest message time (chatter intensity proxy)",
+      "title": "Window Minutes"
+    }
+  },
+  "required": [
+    "as_of",
+    "messages",
+    "tagged",
+    "bullish",
+    "bearish",
+    "min_tagged"
+  ],
+  "title": "RetailSentimentPayload",
+  "type": "object"
+}

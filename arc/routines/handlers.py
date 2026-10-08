@@ -1505,6 +1505,75 @@ def retail_buzz_source(
     )
 
 
+def retail_sentiment_source(
+    ctx: JobContext,
+    *,
+    get: Callable[[str, float, int], bytes] | None = None,
+    sleep: Callable[[float], None] | None = None,
+) -> JobResult:
+    """E14.6 (D60): Stocktwits per-symbol stream -> one ``retail_sentiment`` entry per
+    ticker in scope (active list ∪ open underlyings, ``max_tickers``), serial with
+    ``pace_s`` pacing. A 429 stops the run (``partial``) and keeps what was fetched;
+    nothing fetched raises (``failed`` + alerted). Context only (never a gate input).
+    """
+    import time
+
+    from arc.ingest.retail_sentiment import fetch_retail_sentiment, http_getter
+    from arc.ingest.retail_sentiment_config import RetailSentimentConfig
+
+    cfg = RetailSentimentConfig.from_options(ctx.options)
+    scope = _options_fast_tickers(ctx, cfg.max_tickers)
+    if not scope:
+        msg = "retail_sentiment: empty scope (no active list, no open underlyings)"
+        raise JobSkippedError(msg)
+    fetched = fetch_retail_sentiment(
+        cfg,
+        scope,
+        now=ctx.now,
+        get=get or http_getter(ctx.settings.edgar_user_agent),
+        sleep=sleep or time.sleep,
+    )
+    ctx.record_input(
+        "retail_sentiment",
+        cfg.url,
+        {t: [r.tagged, r.bull_ratio] for t, r in fetched.readings.items()},
+        as_of=ctx.now,
+        count=len(fetched.readings),
+    )
+    if not fetched.readings:
+        why = (
+            "rate limited (429)"
+            if fetched.rate_limited
+            else "; ".join(f"{t} {r}" for t, r in list(fetched.skipped.items())[:3])
+        )
+        msg = f"retail_sentiment: no ticker answered ({why})"
+        raise RuntimeError(msg)
+    for ticker, payload in fetched.readings.items():
+        ctx.write("retail_sentiment", ticker, payload)
+    n, m = len(fetched.readings), len(fetched.with_ratio)
+    summary = f"{n} tickers · {m} with ratio"
+    if fetched.partial:
+        why = "429" if fetched.rate_limited else "request cap"
+        summary += f" · partial ({why}; {len(fetched.not_reached)} not reached)"
+    if fetched.skipped:
+        summary += f" · {len(fetched.skipped)} skipped"
+    summary += f" · {fetched.requests} requests in {fetched.wall_s:.0f}s"
+    return JobResult(
+        summary=summary,
+        metrics={
+            "tickers_requested": len(scope),
+            "tickers_fetched": n,
+            "with_ratio": m,
+            "requests": fetched.requests,
+            "wall_s": fetched.wall_s,
+            "partial": fetched.partial,
+            "rate_limited": fetched.rate_limited,
+            "not_reached": fetched.not_reached,
+            "skipped": fetched.skipped,
+        },
+    )
+
+
 def run_trending_tier(
     *,
     conn: sqlite3.Connection,
@@ -2240,6 +2309,12 @@ def scout_persona(
         trending=trending_names,
         now=ctx.now,
         buzz_velocity=buzz_velocity,
+        # E14.6 (D60): Stocktwits sentiment block, strategy lane, default off
+        sentiment_top=(
+            ctx.routines.retail_sentiment_context.scout_top
+            if ctx.routines.retail_sentiment_context.enabled
+            else None
+        ),
     )
     rules = scout_rules(inp)
     prompt = _with_constraints(build_scout_prompt(inp), rules, ScoutOutput)
@@ -2581,6 +2656,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     # E13.19 (D58): daily Reddit + Stocktwits pull, then the code-ranked trending tier
     "retail_buzz": "arc.routines.handlers:retail_buzz_source",
     "universe.trending": "arc.routines.handlers:universe_trending_source",
+    "retail_sentiment": "arc.routines.handlers:retail_sentiment_source",  # E14.6 (D60)
     "youtube": "arc.routines.handlers:youtube_source",
     "youtube.briefs": "arc.routines.handlers:youtube_briefs",  # E4.6 daily briefs (D45)
     # E4.5 / D30 options-trading data (no LLM; typed context kinds)

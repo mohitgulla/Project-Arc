@@ -194,6 +194,7 @@ class TestConfig:
             "iv.record",
             "market_movers",  # E14.3: two screener calls + one snapshot call
             "options_fast",  # E13.6: ~50 chain requests, ~45 s
+            "retail_sentiment",  # E14.6: ~55 paced Stocktwits requests, ~90 s
             "scalp",
             "scalp.overnight",
             "scout",  # E13.7: one daily cheap LLM call

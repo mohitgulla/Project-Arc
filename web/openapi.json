@@ -14064,6 +14064,18 @@
             "title": "Reason",
             "type": "string"
           },
+          "sentiment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E14.6: Stocktwits `ST 80% bull (10 tagged, 2.7h)` from the newest unexpired retail_sentiment entry (null = none); context only",
+            "title": "Sentiment"
+          },
           "source": {
             "title": "Source",
             "type": "string"
