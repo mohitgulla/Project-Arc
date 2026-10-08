@@ -390,7 +390,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E13.21 Loop exit and open branches run in parallel: `loop.parallel_branches` fork/join after `exits.mandatory`, own thread + SQLite connection per branch, `loop_wall_ms` (D63)
 - E14.1 Ticker news source: Alpaca/Benzinga (+ Finnhub fallback) in company_data, SA/Nasdaq weight 0.5 (D60)
 - E14.2 Feed hygiene: Nasdaq filters, CNBC → PR Newswire/Business Wire, EDGAR forms + titles, options_slow retimes (D60) ← E14.1
-- E14.3 Tape movers + most-actives as Scalp context, flag off by default (D60)
+- E14.3 Tape movers + most-actives as Scalp context, flag off by default (D60; built: `market_movers` source, `personas.scalp_movers_context`, draft XP-11; OPS §5.34)
 - E14.4 YouTube 48h freshness, newest-video supersede, + Warrior Trading, IBD (youtube_micro) (D60)
 - E14.5 Reddit mention velocity: stored, Scout context, velocity ranking arm behind a flag (D60) ← E14.4
 - E14.6 Stocktwits per-ticker sentiment as typed context, flag off (D60) ← E14.5

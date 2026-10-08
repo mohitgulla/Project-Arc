@@ -549,6 +549,44 @@ class RetailBuzzPayload(BaseModel):
         return [n for n, i in self.inputs.items() if i.status == "ok" and i.rows]
 
 
+class MoverRow(BaseModel):
+    """One Alpaca screener row kept after the write-time exclusions (E14.3, D60).
+
+    Movers carry ``price`` / ``pct`` from the screener (no volume); most-actives carry
+    ``volume`` / ``trade_count`` from the screener and ``price`` / ``pct`` from one
+    snapshot lookup (``None`` when the lookup did not answer for that name).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    symbol: str = Field(..., min_length=1, max_length=12)
+    price: float | None = Field(None, gt=0)
+    pct: float | None = Field(None, description="percent change vs the previous close")
+    volume: int | None = Field(None, ge=0)
+    trade_count: int | None = Field(None, ge=0)
+    in_active: bool = Field(..., description="on the active list when written")
+
+
+class MarketMoversPayload(BaseModel):
+    """``market_movers`` (subject ``market``): the tape's movers + most-actives (E14.3).
+
+    Scalp context only, behind ``personas.scalp_movers_context`` (D60). Never a
+    ``candidate`` / ``universe_tier`` input and never a discovery or trending input (D56).
+    Rows under $3, warrants / units / rights and leveraged / inverse funds are dropped at
+    write time; ``excluded`` counts the drops per reason.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_of: str = Field(..., description="ISO time (ET) of the screener's last_updated")
+    fetched_at: str = Field(..., description="ISO time (ET) of the fetch")
+    gainers: list[MoverRow] = Field(default_factory=list, max_length=50)
+    losers: list[MoverRow] = Field(default_factory=list, max_length=50)
+    most_actives: list[MoverRow] = Field(default_factory=list, max_length=50)
+    excluded: dict[str, int] = Field(default_factory=dict)
+    source: Literal["alpaca_screener"] = "alpaca_screener"
+
+
 # E13.6 (D56): options_fast, Cboe ~15-min delayed quotes (index vols, per-ticker chain
 # top-of-book) + the exchange symbol_data volume CSVs. Context only, never gate inputs.
 IndexVolSymbol = Literal["VIX", "VIX9D", "VXN", "VIX1D", "VIX3M", "VVIX"]
@@ -892,6 +930,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("index_vols", IndexVolsPayload),  # subject market
     KindSpec("chain_snapshot", ChainSnapshotPayload),  # subject = ticker
     KindSpec("exchange_volume", ExchangeVolumePayload),  # subject market
+    # E14.3 (D60): Alpaca movers + most-actives, Scalp context only (subject market)
+    KindSpec("market_movers", MarketMoversPayload),
     # E13.19 (D58): retail_buzz (Reddit + Stocktwits raw rows, daily; subject all)
     # E14.5 (D60): v2 rows carry mentions_24h_ago + upvotes (defaulted; v1 rows load)
     KindSpec("retail_buzz", RetailBuzzPayload, schema_version=2),

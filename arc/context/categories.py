@@ -150,6 +150,7 @@ KIND_CATEGORY: Mapping[str, SourceCategory] = {
     "index_vols": SourceCategory.OPTIONS_FAST,
     "chain_snapshot": SourceCategory.OPTIONS_FAST,
     "exchange_volume": SourceCategory.OPTIONS_FAST,
+    "market_movers": SourceCategory.OPTIONS_FAST,  # E14.3 (D60): Scalp context only
     # E13.19 (D58): Reddit + Stocktwits raw rows, daily (subject all)
     "retail_buzz": SourceCategory.RETAIL_BUZZ,
 }

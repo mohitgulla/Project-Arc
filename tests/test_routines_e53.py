@@ -162,6 +162,7 @@ class TestShippedDefaults:
         order = [x.job for x in d.plan(et(2026, 9, 28, 10, 0), since=et(2026, 9, 28, 9, 55))]
         assert order == [
             "edgar",
+            "market_movers",  # E14.3 (D60)
             "options_fast",
             "rss",
             "ticker_news",
@@ -898,7 +899,7 @@ def test_yaml_comment_overview_matches_config() -> None:
     assert raw["tick"]["interval"] == "10m"  # D52
     assert set(raw["personas"]) - {
         "finnhub_context", "director_diversification", "quant_risk_loop", "scout_feed",
-        "scout_buzz_velocity",
+        "scout_buzz_velocity", "scalp_movers_context",
         "scalp_options_tape",
         "research_idea_pool", "research_compact_prompt", "exit_path",
     } == {

@@ -192,6 +192,7 @@ class TestConfig:
             "finnhub.insider",
             "finnhub.recs",
             "iv.record",
+            "market_movers",  # E14.3: two screener calls + one snapshot call
             "options_fast",  # E13.6: ~50 chain requests, ~45 s
             "scalp",
             "scalp.overnight",

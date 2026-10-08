@@ -1079,10 +1079,12 @@ class TestDryRunAndCli:
             "research",
             "monitor",
             "options_fast",
+            "market_movers",  # E14.3 (D60)
             "ticker_news",
         }
         assert order.index("research") < order.index("scalp")
         assert order.index("options_fast") < order.index("scalp")  # E13.6: a Scalp source
+        assert order.index("market_movers") < order.index("scalp")  # E14.3: a Scalp source
         assert "quant.open" in out and "may-run" not in out  # no trigger any more
 
     def test_cli_validate_list_history_context(

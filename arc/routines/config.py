@@ -609,7 +609,11 @@ FINNHUB_FACT_KINDS: tuple[str, ...] = (
 )
 # Persona-level switches that live under ``personas:`` next to the jobs (a scalar,
 # not a job mapping). Each maps to the settings block whose ``enabled`` it sets.
-PERSONA_FLAGS: tuple[str, ...] = ("finnhub_context", "scout_buzz_velocity")
+PERSONA_FLAGS: tuple[str, ...] = (
+    "finnhub_context",
+    "scout_buzz_velocity",
+    "scalp_movers_context",
+)
 #: E13.15 (D56 cutover): switches removed with their off paths. Each is always on
 #: now (quant_risk_loop on, scalp_options_tape on, scout_feed on, research_idea_pool
 #: all, research_compact_prompt compact, exit_path research); a leftover key in a
@@ -781,6 +785,20 @@ class FinnhubContextSettings(BaseModel):
         }
 
 
+class ScalpMoversContextSettings(BaseModel):
+    """E14.3 (D60, D44): the "Tape movers" block in the Scalp prompt (default off).
+
+    ``enabled`` comes from ``personas.scalp_movers_context: off | on``; the knobs are
+    the ``scalp_movers_context:`` block. Off = the Scalp prompt is byte-identical to
+    the pre-E14.3 prompt (the ``market_movers`` source still writes its context).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    max_lines: Annotated[int, Field(ge=1, le=10)] = 10
+
+
 class FunnelScalp(BaseModel):
     """D56 ``funnel.scalp``: the Scalp's doc budget split (fixed by D56)."""
 
@@ -881,6 +899,10 @@ class RoutinesConfig(BaseModel):
     # E14.5: the ``personas.scout_buzz_velocity`` flag (as ``enabled``).
     scout_buzz_velocity: ScoutBuzzVelocitySettings = Field(
         default_factory=ScoutBuzzVelocitySettings
+    )
+    # E14.3: knobs + the ``personas.scalp_movers_context`` flag (as ``enabled``).
+    scalp_movers_context: ScalpMoversContextSettings = Field(
+        default_factory=ScalpMoversContextSettings
     )
     # E12.5: knobs + the ``personas.director_diversification`` switch (as ``mode``).
     director_diversification: ResearchDiversificationSettings = Field(
