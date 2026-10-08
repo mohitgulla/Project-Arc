@@ -373,6 +373,11 @@ def build_portfolio_context(
     opened_greeks = Greeks()
     # D57: as-opened dollar delta (Δ × n × spot at open); None once any spot is unknown
     opened_dollar_delta: float | None = 0.0
+    # D62: as-opened beta-weighted $Δ (Δ × n × spot at open × current β used)
+    opened_beta_delta: float | None = 0.0
+    from arc.betas.store import betas_used
+
+    betas = betas_used(conn, sorted({str(r["ticker"]) for r in rows}), today)
     open_pnl = 0.0
     earnings: Mapping[str, _dt.date | None] = {}
     if facts:
@@ -405,9 +410,12 @@ def build_portfolio_context(
         )
         if opened_dollar_delta is not None:
             spot_open = _open_spot(conn, row)
-            opened_dollar_delta = (
-                None if spot_open is None else opened_dollar_delta + g.delta * spot_open
-            )
+            if spot_open is None:
+                opened_dollar_delta = opened_beta_delta = None
+            else:
+                opened_dollar_delta += g.delta * spot_open
+                beta = betas[str(row["ticker"]).upper()].beta
+                opened_beta_delta = (opened_beta_delta or 0.0) + g.delta * spot_open * beta
         if review is not None:
             open_pnl += review.pnl_total
         positions.append(
@@ -460,7 +468,11 @@ def build_portfolio_context(
 
     net = portfolio.greeks if portfolio is not None else opened_greeks
     dollar_delta = float(portfolio.dollar_delta) if portfolio is not None else opened_dollar_delta
+    beta_dollar_delta = (
+        float(portfolio.beta_dollar_delta) if portfolio is not None else opened_beta_delta
+    )
     delta_cap = settings.portfolio_dollar_delta_cap_pct * equity
+    beta_cap = settings.portfolio_beta_delta_cap_pct * equity
     vega_cap = settings.portfolio_vega_cap_pct * equity
     vega_usd = net.vega / 100.0
     delta = (
@@ -470,6 +482,15 @@ def build_portfolio_context(
             net=round(dollar_delta, 2),
             cap=round(delta_cap, 2),
             pct_used=round(abs(dollar_delta) / delta_cap, 4) if delta_cap > 0 else None,
+        )
+    )
+    beta_delta = (
+        None
+        if beta_dollar_delta is None
+        else GreekUsage(
+            net=round(beta_dollar_delta, 2),
+            cap=round(beta_cap, 2),
+            pct_used=round(abs(beta_dollar_delta) / beta_cap, 4) if beta_cap > 0 else None,
         )
     )
     vega = GreekUsage(
@@ -491,6 +512,8 @@ def build_portfolio_context(
     near = settings.portfolio_greek_near_cap_pct
     if delta is not None and delta.pct_used is not None and delta.pct_used >= near:
         flags.append("delta_near_cap")
+    if beta_delta is not None and beta_delta.pct_used is not None and beta_delta.pct_used >= near:
+        flags.append("beta_delta_near_cap")
     if vega.pct_used is not None and vega.pct_used >= near:
         flags.append("vega_near_cap")
     cap_usd = settings.max_alloc_pct * equity
@@ -505,6 +528,8 @@ def build_portfolio_context(
         hhi_underlying=hhi,
         delta=delta,
         delta_shares=round(net.delta, 4),
+        beta_delta=beta_delta,
+        betas={t: round(b.beta, 4) for t, b in sorted(betas.items())},
         vega=vega,
         gamma=round(net.gamma, 4),
         theta=round(net.theta, 4),
@@ -690,7 +715,7 @@ def render_portfolio_context(
                 else ""
             )
         )
-    d, v = ag.delta, ag.vega
+    d, v, bd = ag.delta, ag.vega, ag.beta_delta
     lines += [
         "",
         f"Allocation of open max loss (${ag.total_max_loss:,.0f}): by underlying "
@@ -703,6 +728,12 @@ def render_portfolio_context(
             f"$Δ ${d.net:+,.0f} of cap ${d.cap:,.0f} ({_pct(d.pct_used)} used)"
             if d is not None
             else "$Δ n/a (spot unknown)"
+        )
+        + (
+            f"; β-weighted $Δ (SPY-equivalent, β = max(1y β vs SPY, 1)) ${bd.net:+,.0f} of "
+            f"cap ${bd.cap:,.0f} ({_pct(bd.pct_used)} used)"
+            if bd is not None
+            else ""
         )
         + f"; ν ${v.net:+,.0f}/vol-pt of cap ${v.cap:,.0f} "
         f"({_pct(v.pct_used)} used); Γ {ag.gamma:+.2f}; Θ {ag.theta:+.1f}.",

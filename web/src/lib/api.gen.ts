@@ -830,6 +830,27 @@ export interface components {
              */
             scorecard_gate: "off" | "met" | "unmet";
         };
+        /**
+         * BetaDeltaRow
+         * @description D62: one underlying's share of the book's dollar delta and its β weighting.
+         */
+        BetaDeltaRow: {
+            /**
+             * Beta
+             * @description β used: max(1y β vs SPY, 1.0); 1.0 when missing/stale
+             */
+            beta: number;
+            /** Beta Dollar Delta */
+            beta_dollar_delta: number;
+            /**
+             * Beta Source
+             * @default default
+             * @enum {string}
+             */
+            beta_source: "stored" | "default";
+            /** Dollar Delta */
+            dollar_delta: number;
+        };
         /** BreakdownItem */
         BreakdownItem: {
             /** Count */
@@ -2711,6 +2732,11 @@ export interface components {
          */
         GateCaps: {
             /**
+             * Portfolio Beta Delta Cap Pct
+             * @description D62: |beta-weighted net dollar delta| cap as a fraction of equity
+             */
+            portfolio_beta_delta_cap_pct: number;
+            /**
              * Portfolio Dollar Delta Cap Pct
              * @description D57: |net dollar delta| cap as a fraction of equity
              */
@@ -2781,8 +2807,25 @@ export interface components {
         GreeksView: {
             /** At */
             at?: string | null;
+            /**
+             * Beta Delta Cap
+             * @description D62: |β$Δ| cap, $ (portfolio_beta_delta_cap_pct × equity)
+             */
+            beta_delta_cap?: number | null;
+            /**
+             * Beta Dollar Delta
+             * @description D62: beta-weighted net dollar delta Σ (Δ × spot × max(β vs SPY, 1)), $ (SPY-equivalent); None on a heartbeat written before D62 (rendered —)
+             */
+            beta_dollar_delta?: number | null;
             /** Delta */
             delta?: number | null;
+            /**
+             * Delta By Underlying
+             * @description D62: per-underlying $Δ, β used, β$Δ and β source (stored | default)
+             */
+            delta_by_underlying?: {
+                [key: string]: components["schemas"]["BetaDeltaRow"];
+            };
             /**
              * Dollar Delta
              * @description D57: net dollar delta Σ (Δ share-eq × spot), $; None on a heartbeat written before D57 (rendered —)

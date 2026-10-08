@@ -993,8 +993,15 @@ def _greeks_section(
     vega_cap_pct: float,
     max_alloc_pct: float,
     stale_after: _dt.timedelta,
+    beta_delta_cap_pct: float = 2.00,
 ) -> GreeksSection:
-    g = _greeks(monitor, dollar_delta_cap_pct, vega_cap_pct, stale_after)
+    g = _greeks(
+        monitor,
+        dollar_delta_cap_pct,
+        vega_cap_pct,
+        stale_after,
+        beta_delta_cap_pct=beta_delta_cap_pct,
+    )
     by: dict[str, Decimal] = {}
     for p in positions:
         if p.status == "open" and p.max_loss is not None:
@@ -1052,11 +1059,12 @@ def load_overview(
     *,
     now: _dt.datetime,
     rng: OverviewRange = "1D",
-    dollar_delta_cap_pct: float = 0.50,
+    dollar_delta_cap_pct: float = 1.00,
     vega_cap_pct: float = 0.010,
     max_alloc_pct: float = 0.05,
     stale_after: _dt.timedelta,
     activity_hours: int = ACTIVITY_HOURS,
+    beta_delta_cap_pct: float = 2.00,
 ) -> OverviewResponse:
     """Every Overview section read in one pass as of *now* (SELECT only).
 
@@ -1094,6 +1102,7 @@ def load_overview(
             vega_cap_pct=vega_cap_pct,
             max_alloc_pct=max_alloc_pct,
             stale_after=stale_after,
+            beta_delta_cap_pct=beta_delta_cap_pct,
         ),
         proposals=_proposal_rows(conn, now_et),
         proposals_since=now_et - PROPOSAL_WINDOW,

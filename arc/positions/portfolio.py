@@ -42,6 +42,7 @@ PortfolioFlag = Literal[
     "stance_skew",
     "expiry_cluster",
     "delta_near_cap",
+    "beta_delta_near_cap",
     "vega_near_cap",
 ]
 ExpiryBucket = Literal["0-7", "8-21", "22-45", "46+"]
@@ -214,6 +215,17 @@ class PortfolioAggregates(BaseModel):
     )
     delta_shares: float | None = Field(
         None, description="v3 (D57): net Δ in share-equivalents (unweighted, for reference)"
+    )
+    beta_delta: GreekUsage | None = Field(
+        None,
+        description=(
+            "v4 (D62): beta-weighted net dollar delta (Σ Δ × spot × max(β vs SPY, 1)) vs "
+            "its cap. None = a spot is unknown (as_opened book without a stored spot)."
+        ),
+    )
+    betas: dict[str, float] = Field(
+        default_factory=dict,
+        description="v4 (D62): β used per open underlying (≥ 1.0; 1.0 = missing or stale)",
     )
     vega: GreekUsage
     gamma: float

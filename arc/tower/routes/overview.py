@@ -48,6 +48,7 @@ def overview(
         now=cfg.clock(),
         rng=range,
         dollar_delta_cap_pct=settings.portfolio_dollar_delta_cap_pct,
+        beta_delta_cap_pct=settings.portfolio_beta_delta_cap_pct,
         vega_cap_pct=settings.portfolio_vega_cap_pct,
         max_alloc_pct=settings.max_alloc_pct,
         stale_after=monitor_stale_after(conn),

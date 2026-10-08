@@ -77,6 +77,7 @@ __all__ = [
 
 _ZERO = Decimal(0)
 _HUNDRED = Decimal(100)
+_ONE = Decimal(1)
 
 
 class RuleCode(StrEnum):
@@ -91,6 +92,7 @@ class RuleCode(StrEnum):
     TICK = "limit_off_tick"
     WASH_SALE = "wash_sale"
     DELTA_CAP = "portfolio_delta_cap"
+    BETA_DELTA_CAP = "portfolio_beta_delta_cap"  # D62 (E3.6)
     VEGA_CAP = "portfolio_vega_cap"
     STRUCTURE_NOT_ALLOWED = "structure_not_allowed"
     DTE_WINDOW = "dte_window"
@@ -502,11 +504,14 @@ def check_greek_caps(
     market: MarketSnapshot,
     config: ArcSettings,
 ) -> list[Violation]:
-    """Post-trade |$Δ| ≤ pct × equity; |ν| ≤ pct × equity ($/vol-pt) (D57).
+    """Post-trade |$Δ| ≤ pct × equity; |β$Δ| ≤ pct × equity; |ν| ≤ pct × equity ($/vol-pt).
 
-    Dollar delta = the book's ``dollar_delta`` + the proposal's Δ (share-eq) × contracts
-    × its underlying's spot. Not beta-weighted. A missing or non-positive spot fails
-    closed (``missing_spot``); the vega check still runs.
+    Dollar delta (D57) = the book's ``dollar_delta`` + the proposal's Δ (share-eq) ×
+    contracts × its underlying's spot. Beta-weighted dollar delta (D62) = the book's
+    ``beta_dollar_delta`` + the same proposal term × β used, where β used is
+    ``market.underlying_beta[root]`` floored at 1.0 (a missing β is 1.0, never a
+    rejection). A missing or non-positive spot fails closed (``missing_spot``) and
+    skips both delta caps; the vega check still runs.
     """
     out: list[Violation] = []
     n = proposal.sizing.contracts
@@ -516,12 +521,22 @@ def check_greek_caps(
     if spot is None or spot <= 0:
         out += _v(RuleCode.MISSING_SPOT, f"no spot for {root}: dollar delta unknown")
     else:
-        dollar_delta = portfolio.dollar_delta + _d(g.delta) * n * spot
+        added = _d(g.delta) * n * spot
+        dollar_delta = portfolio.dollar_delta + added
         delta_cap = _d(config.portfolio_dollar_delta_cap_pct) * account.equity
         if abs(dollar_delta) > delta_cap:
             out += _v(
                 RuleCode.DELTA_CAP,
                 f"post-trade |$Δ| ${abs(dollar_delta):,.2f} > cap ${delta_cap:,.2f}",
+            )
+        beta = max(market.underlying_beta.get(root) or _ONE, _ONE)
+        beta_delta = portfolio.beta_dollar_delta + added * beta
+        beta_cap = _d(config.portfolio_beta_delta_cap_pct) * account.equity
+        if abs(beta_delta) > beta_cap:
+            out += _v(
+                RuleCode.BETA_DELTA_CAP,
+                f"post-trade |β$Δ| ${abs(beta_delta):,.2f} > cap ${beta_cap:,.2f} "
+                f"({root} β {beta:.2f})",
             )
     # vega is per 1.00 of sigma in share-equivalents -> /100 = dollars per vol point
     vega_usd = _d(portfolio.greeks.vega + g.vega * n) / _HUNDRED

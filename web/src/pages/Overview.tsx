@@ -333,7 +333,18 @@ function PnlCard({ o, cad }: { o: Overview; cad: ReturnType<typeof useCadences> 
 // Greeks vs caps
 // ---------------------------------------------------------------------------
 
-function GreeksCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
+type GateCapsMeta = {
+  portfolio_dollar_delta_cap_pct?: number;
+  portfolio_beta_delta_cap_pct?: number;
+  portfolio_vega_cap_pct?: number;
+};
+
+/** A cap share for tip text, from /api/meta (effective config): `100%`, `1%`, or `cap`. */
+function capText(pct: number | undefined): string {
+  return pct == null ? "cap" : `${formatNumber(pct * 100, 2)}%`;
+}
+
+function GreeksCard({ o, monitorS, caps }: { o: Overview; monitorS?: number; caps?: GateCapsMeta }) {
   const g = o.greeks.greeks;
   const now = useNow();
   // Judged in the browser too, so the badge appears between polls (and with the tab asleep).
@@ -342,6 +353,12 @@ function GreeksCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
   // D57: the gate caps dollar delta (Σ Δ × spot); a pre-D57 heartbeat has none (—).
   const dollarDelta = g.dollar_delta ?? null;
   const dollarCap = g.dollar_delta_cap ?? null;
+  // D62: beta-weighted dollar delta (SPY-equivalent); a pre-D62 heartbeat has none (—).
+  const betaDelta = g.beta_dollar_delta ?? null;
+  const betaCap = g.beta_delta_cap ?? null;
+  const betaRows = Object.entries(g.delta_by_underlying ?? {}).sort(
+    ([, a], [, b]) => Math.abs(b.beta_dollar_delta) - Math.abs(a.beta_dollar_delta),
+  );
   const vegaUsd = g.vega_usd ?? null;
   const byUnderlying = Object.entries(o.greeks.max_loss_by_underlying ?? {});
   const cap = num(o.greeks.per_underlying_cap);
@@ -356,6 +373,15 @@ function GreeksCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
         <div className="grid">
           <ProgressRow
             label="|$Δ| net dollar delta"
+            info={
+              <InfoTip
+                label="About net dollar delta"
+                testid="greeks-info-dollar-delta"
+                formula={<>|Σ Δ × spot| ≤ {capText(caps?.portfolio_dollar_delta_cap_pct)} × equity</>}
+              >
+                How many dollars of stock the whole book behaves like (longs minus shorts).
+              </InfoTip>
+            }
             value={usedOfCap(
               dollarDelta === null ? "—" : formatMoney(dollarDelta, "allocation"),
               dollarCap != null ? formatMoney(dollarCap, "allocation") : null,
@@ -364,7 +390,49 @@ function GreeksCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
             warnAt={0.8}
           />
           <ProgressRow
+            label="|β$Δ| beta-weighted net delta (SPY-eq)"
+            info={
+              <InfoTip
+                label="About beta-weighted net delta"
+                testid="greeks-info-beta-delta"
+                formula={
+                  <>
+                    |Σ Δ × spot × max(β,1)| ≤ {capText(caps?.portfolio_beta_delta_cap_pct)} × equity · β = 1y daily vs SPY
+                    {betaRows.length > 0 && (
+                      <span className="mt-1 block" data-testid="greeks-beta-breakdown">
+                        {betaRows.map(([t, r]) => (
+                          <span key={t} className="block">
+                            {t} β {r.beta.toFixed(2)}
+                            {r.beta_source === "default" ? " (default)" : ""} ·{" "}
+                            {formatMoney(r.beta_dollar_delta, "allocation")}
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </>
+                }
+              >
+                The same, in S&amp;P 500 dollars: high-beta names count more.
+              </InfoTip>
+            }
+            value={usedOfCap(
+              betaDelta === null ? "—" : formatMoney(betaDelta, "allocation"),
+              betaDelta !== null && betaCap != null ? formatMoney(betaCap, "allocation") : null,
+            )}
+            fraction={betaDelta !== null && betaCap ? Math.abs(betaDelta) / betaCap : 0}
+            warnAt={0.8}
+          />
+          <ProgressRow
             label="|ν| vega $/vol pt"
+            info={
+              <InfoTip
+                label="About vega"
+                testid="greeks-info-vega"
+                formula={<>|Σ ν| / 100 ≤ {capText(caps?.portfolio_vega_cap_pct)} × equity per vol pt</>}
+              >
+                Dollars the book gains or loses when implied volatility moves one point.
+              </InfoTip>
+            }
             value={usedOfCap(
               vegaUsd === null ? "—" : formatMoney(vegaUsd, "price"),
               g.vega_cap_usd != null ? formatMoney(g.vega_cap_usd, "price") : null,
@@ -373,17 +441,34 @@ function GreeksCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
             warnAt={0.8}
           />
           <div className="grid grid-cols-2 gap-3 border-t border-line py-2 text-caption">
-            <span className="text-secondary">
-              Θ / day <span className="ml-2 font-semibold text-primary tabular-nums">{g.theta == null ? "—" : formatMoney(g.theta, "pnl")}</span>
+            <span className="flex items-center text-secondary">
+              Θ / day
+              <InfoTip label="About theta" testid="greeks-info-theta" formula="Σ Θ ($ per day, share-equivalent) · no cap">
+                Dollars the book gains or loses per day from time decay alone.
+              </InfoTip>
+              <span className="ml-2 font-semibold text-primary tabular-nums">{g.theta == null ? "—" : formatMoney(g.theta, "pnl")}</span>
             </span>
-            <span className="text-secondary">
-              Γ <span className="ml-2 font-semibold text-primary tabular-nums">{g.gamma == null ? "—" : formatNumber(g.gamma, 2)}</span>
+            <span className="flex items-center text-secondary">
+              Γ
+              <InfoTip label="About gamma" testid="greeks-info-gamma" formula="Σ Γ (share-equivalent Δ per $1 move) · no cap">
+                How fast net delta changes when the stocks move a dollar.
+              </InfoTip>
+              <span className="ml-2 font-semibold text-primary tabular-nums">{g.gamma == null ? "—" : formatNumber(g.gamma, 2)}</span>
             </span>
           </div>
           <div className="border-t border-line pt-2 text-caption text-secondary" data-testid="max-loss-caps">
-            <p>
-              Max loss per underlying vs {formatPercent(o.greeks.max_alloc_pct)} of equity
-              {cap !== null && <> ({formatMoney(cap, "max_loss")})</>}
+            <p className="flex items-center">
+              <span>
+                Max loss per underlying vs {formatPercent(o.greeks.max_alloc_pct)} of equity
+                {cap !== null && <> ({formatMoney(cap, "max_loss")})</>}
+              </span>
+              <InfoTip
+                label="About max loss per underlying"
+                testid="greeks-info-max-loss"
+                formula={<>Σ max loss per ticker ≤ {formatPercent(o.greeks.max_alloc_pct)} × equity</>}
+              >
+                The most one ticker&apos;s open structures can lose together at their worst outcome.
+              </InfoTip>
             </p>
             {byUnderlying.length === 0 ? (
               <p className="text-muted">No open structures.</p>
@@ -669,7 +754,7 @@ export function OverviewPage() {
             <PnlCard o={o} cad={cad} />
           </div>
           <div className="order-4 min-w-0 desktop:order-none">
-            <GreeksCard o={o} monitorS={cad.monitor} />
+            <GreeksCard o={o} monitorS={cad.monitor} caps={cad.caps} />
           </div>
           <div className="order-7 min-w-0 desktop:order-none">
             <MoversCard o={o} monitorS={cad.monitor} />

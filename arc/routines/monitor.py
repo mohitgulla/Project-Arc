@@ -208,6 +208,7 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
     }
 
     positions = env.positions()
+    breakdown: dict[str, dict[str, float | str]] = {}
     try:
         portfolio = build_portfolio(
             ctx.conn,
@@ -217,6 +218,7 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
             wash_sale_days=settings.wash_sale_days,
             r=settings.scanner_risk_free_rate,
             spot_max_spread_pct=settings.spot_max_spread_pct,
+            delta_breakdown=breakdown,
         )
     except PortfolioError as exc:
         notices.append(f"cannot value open positions: {exc}")
@@ -234,6 +236,11 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 "max_loss": float(max_loss),
                 "delta": g.delta,
                 "dollar_delta": float(portfolio.dollar_delta),  # D57: Σ Δ × spot, $
+                # D62: Σ Δ × spot × max(β, 1), $; its cap; per-underlying breakdown
+                "beta_dollar_delta": float(portfolio.beta_dollar_delta),
+                "beta_delta_cap": settings.portfolio_beta_delta_cap_pct * float(info.equity),
+                "dollar_delta_cap": settings.portfolio_dollar_delta_cap_pct * float(info.equity),
+                "delta_by_underlying": dict(sorted(breakdown.items())),
                 "gamma": g.gamma,
                 "vega": g.vega,
                 "theta": g.theta,

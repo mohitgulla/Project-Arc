@@ -45,5 +45,6 @@ def read_snapshot(
         db_path=str(cfg.db_path),
         lookback_days=lookback_days or cfg.lookback_days,
         dollar_delta_cap_pct=settings.portfolio_dollar_delta_cap_pct,
+        beta_delta_cap_pct=settings.portfolio_beta_delta_cap_pct,
         vega_cap_pct=settings.portfolio_vega_cap_pct,
     )

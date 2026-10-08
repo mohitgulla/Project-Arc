@@ -898,7 +898,7 @@ class TestProposeIntegrityError:
 
 
 def test_as_opened_dollar_delta_uses_the_stored_spot(settings: ArcSettings) -> None:
-    """as_opened: Δ (share-eq, × contracts) × proposals.spot (770), vs 0.50 × equity."""
+    """as_opened: Δ (share-eq, × contracts) × proposals.spot (770), vs 1.00 × equity (D62)."""
     conn = open_db(":memory:", copy=False)
     env = _env([])
     _open_structure(conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=2)
@@ -911,11 +911,41 @@ def test_as_opened_dollar_delta_uses_the_stored_spot(settings: ArcSettings) -> N
     shares = pc.positions[0].greeks.delta
     assert ag.delta_shares == pytest.approx(shares, abs=1e-3)
     assert ag.delta.net == pytest.approx(shares * 770, abs=0.01)
-    assert ag.delta.cap == pytest.approx(0.50 * pc.account.equity)
+    assert ag.delta.cap == pytest.approx(1.00 * pc.account.equity)
     assert ag.delta.pct_used == pytest.approx(abs(ag.delta.net) / ag.delta.cap, abs=1e-4)
     assert ag.vega.cap == pytest.approx(0.010 * pc.account.equity)
     text = render_portfolio_context(pc, settings)
     assert f"$Δ ${ag.delta.net:+,.0f} of cap ${ag.delta.cap:,.0f}" in text
+    # D62: no stored beta -> 1.0: β$Δ == $Δ, against the 2.00 × equity cap
+    assert ag.beta_delta is not None and ag.beta_delta.net == pytest.approx(ag.delta.net)
+    assert ag.beta_delta.cap == pytest.approx(2.00 * pc.account.equity)
+    assert set(ag.betas.values()) == {1.0}
+    assert "β-weighted $Δ" in text
+
+
+def test_as_opened_beta_delta_uses_the_stored_beta(settings: ArcSettings) -> None:
+    """D62: a stored 1y β (≥ 1) weights the as-opened $Δ; the shared lookup floors it."""
+    from arc.betas.store import BetaRow, upsert
+
+    conn = open_db(":memory:", copy=False)
+    env = _env([])
+    _open_structure(conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=2)
+    t = str(conn.execute("SELECT ticker FROM open_structures").fetchone()[0])
+    day = FIXTURE_NOW.astimezone(ET).date()
+    upsert(conn, [BetaRow(t, day, 2.5, 252, 252, "SPY", day)], now=FIXTURE_NOW)
+    pc = build_portfolio_context(
+        conn, env, settings, info=env.account(), now=FIXTURE_NOW, halted=False,
+        budget_tier="normal",
+    )  # fmt: skip
+    ag = pc.aggregates
+    assert ag is not None and ag.delta is not None and ag.beta_delta is not None
+    assert ag.betas == {t: 2.5}
+    assert ag.beta_delta.net == pytest.approx(2.5 * ag.delta.net, abs=0.05)
+    near = settings.model_copy(update={"portfolio_greek_near_cap_pct": 0.0001})
+    pc2 = build_portfolio_context(
+        conn, env, near, info=env.account(), now=FIXTURE_NOW, halted=False, budget_tier="normal",
+    )  # fmt: skip
+    assert pc2.aggregates is not None and "beta_delta_near_cap" in pc2.aggregates.flags
 
 
 def test_as_opened_dollar_delta_unknown_without_a_stored_spot(settings: ArcSettings) -> None:
@@ -930,7 +960,8 @@ def test_as_opened_dollar_delta_unknown_without_a_stored_spot(settings: ArcSetti
     )  # fmt: skip
     ag = pc.aggregates
     assert ag is not None and ag.delta is None and ag.delta_shares is not None
-    assert "delta_near_cap" not in ag.flags
+    assert ag.beta_delta is None  # D62: unknown too, never guessed
+    assert "delta_near_cap" not in ag.flags and "beta_delta_near_cap" not in ag.flags
     assert "$Δ n/a (spot unknown)" in render_portfolio_context(pc, settings)
 
 
@@ -943,7 +974,7 @@ def test_market_book_dollar_delta_and_near_cap_flag(settings: ArcSettings) -> No
     env = _env([])
     _open_structure(conn, env, LONG_CALL, stance="bullish", entry="12.10", contracts=2)
     equity = float(env.account().equity)
-    for dd, flagged in ((0.80 * 0.50 * equity, True), (0.79 * 0.50 * equity, False)):
+    for dd, flagged in ((0.80 * 1.00 * equity, True), (0.79 * 1.00 * equity, False)):
         book = Portfolio(greeks=Greeks(delta=1.0), dollar_delta=D(str(round(-dd, 2))))
         pc = build_portfolio_context(
             conn, env, settings, info=env.account(), now=FIXTURE_NOW, halted=False,
@@ -953,3 +984,4 @@ def test_market_book_dollar_delta_and_near_cap_flag(settings: ArcSettings) -> No
         assert ag is not None and ag.greeks_source == "market" and ag.delta is not None
         assert ag.delta.net == pytest.approx(-dd, abs=0.01) and ag.delta_shares == 1.0
         assert ("delta_near_cap" in ag.flags) is flagged
+        assert ag.beta_delta is not None and ag.beta_delta.net == 0.0  # book has no β$Δ set

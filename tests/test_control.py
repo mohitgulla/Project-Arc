@@ -823,7 +823,7 @@ def test_dollar_delta_and_vega_cap_tunables() -> None:
 
     t = lookup("portfolio_dollar_delta_cap_pct")
     assert t.field == "portfolio_dollar_delta_cap_pct" and t.risk is Risk.UP
-    assert (t.min, t.max, t.hard_ceiling, t.unit) == (0.10, 1.00, 1.00, "pct")
+    assert (t.min, t.max, t.hard_ceiling, t.unit) == (0.10, 2.00, 2.00, "pct")  # D62
     v = lookup("portfolio_vega_cap_pct")
     assert v.min is not None and v.max is not None and v.min <= 0.010 <= v.max
     assert (v.max, v.hard_ceiling) == (0.02, 0.02)
@@ -846,7 +846,7 @@ def test_orphaned_share_delta_cap_override_is_ignored_and_logged(
     )  # fmt: skip
     with structlog.testing.capture_logs() as logs:
         s = effective_settings(conn, base=base())
-    assert s.portfolio_dollar_delta_cap_pct == 0.50 and s.portfolio_vega_cap_pct == 0.010
+    assert s.portfolio_dollar_delta_cap_pct == 1.00 and s.portfolio_vega_cap_pct == 0.010
     orphaned = [e["key"] for e in logs if e["event"] == "config.override_orphaned"]
     assert set(orphaned) == {"portfolio_delta_cap"}
     assert not [e for e in logs if e["event"] == "control.override_unknown_key"]

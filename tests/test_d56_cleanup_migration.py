@@ -34,7 +34,7 @@ def _store_at_026(path: Path) -> sqlite3.Connection:
 
 def test_migration_027_drops_only_dead_cursors(tmp_path: Path) -> None:
     c = _store_at_026(tmp_path / "arc.db")
-    assert migrate(c) == [27]
+    assert migrate(c)[0] == 27  # later migrations (028 betas, E3.6) apply after it
     keys = {r[0] for r in c.execute("SELECT key FROM routine_state")}
     assert keys.isdisjoint(_DEAD)
     assert {"cursor:scalp", "cursor:universe.momentum"} <= keys

@@ -535,6 +535,13 @@ class TestMonitor:
         # D57: the Tower's dollar delta (Σ Δ × spot) rides on the heartbeat
         assert hb.detail["dollar_delta"] == pytest.approx(r.metrics["dollar_delta"])
         assert hb.detail["dollar_delta"] != 0.0
+        # D62: no stored beta -> 1.0, so β$Δ == $Δ; caps ride along for the Tower
+        assert hb.detail["beta_dollar_delta"] == pytest.approx(hb.detail["dollar_delta"])
+        assert hb.detail["beta_delta_cap"] == pytest.approx(2.00 * 100250.0)
+        assert hb.detail["dollar_delta_cap"] == pytest.approx(1.00 * 100250.0)
+        spy = hb.detail["delta_by_underlying"]["SPY"]
+        assert spy["beta"] == 1.0 and spy["beta_source"] == "default"
+        assert spy["beta_dollar_delta"] == pytest.approx(hb.detail["dollar_delta"], abs=0.01)
         assert hb.detail["equity"] == 100250.0 and hb.detail["last_equity"] == 100000.0
         assert [leg["symbol"] for leg in hb.detail["legs"]] == [
             "SPY261030P00711000",

@@ -141,6 +141,7 @@ def meta(cfg: Tower) -> MetaResponse:
         cadences=cadences(routines),
         gate_caps=GateCaps(
             portfolio_dollar_delta_cap_pct=settings.portfolio_dollar_delta_cap_pct,
+            portfolio_beta_delta_cap_pct=settings.portfolio_beta_delta_cap_pct,
             portfolio_vega_cap_pct=settings.portfolio_vega_cap_pct,
         ),
         personas=persona_catalogue(routines),

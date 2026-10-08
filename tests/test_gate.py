@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal as D
+from typing import TYPE_CHECKING
 
 import pytest
 from hypothesis import given
@@ -47,6 +48,9 @@ from arc.models import (
 from arc.models import StructureKind as MK
 from arc.structures import MarketInputs, credit_vertical, debit_vertical, format_occ, long_call
 from arc.utils.calendar import ET
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 EXP = dt.date(2026, 11, 20)
 AS_OF = dt.date(2026, 10, 9)
@@ -422,17 +426,17 @@ def test_closed_lot_from_store_row() -> None:
 
 
 def test_greek_caps() -> None:
-    # D57: $Δ cap 0.50 x $100,000 = $50,000; vega cap 1.0% = $1,000/vol-pt.
+    # D62: $Δ cap 1.00 x $100,000 = $100,000; vega cap 1.0% = $1,000/vol-pt.
     c, a, m = cfg(), acct(), mkt()
     s = bull_put().model_copy(update={"greeks": Greeks(delta=20.0, vega=-1000.0)})
     p = make_proposal(s)  # x2: delta 40 sh-eq x $580 = $23,200; vega -2000 -> $20/vol-pt
-    ok = Portfolio(dollar_delta=D("26800"))  # 26,800 + 23,200 = 50,000 (at the cap)
+    ok = Portfolio(dollar_delta=D("76800"))  # 76,800 + 23,200 = 100,000 (at the cap)
     assert R.check_greek_caps(p, a, ok, m, c) == []
-    [v] = R.check_greek_caps(p, a, Portfolio(dollar_delta=D("26800.01")), m, c)
+    [v] = R.check_greek_caps(p, a, Portfolio(dollar_delta=D("76800.01")), m, c)
     assert v.code == RuleCode.DELTA_CAP
-    assert v.detail == "post-trade |$Δ| $50,000.01 > cap $50,000.00"
-    [v] = R.check_greek_caps(p, a, Portfolio(dollar_delta=D("-73300")), m, c)
-    assert v.code == RuleCode.DELTA_CAP  # |-73,300 + 23,200| = 50,100
+    assert v.detail == "post-trade |$Δ| $100,000.01 > cap $100,000.00"
+    [v] = R.check_greek_caps(p, a, Portfolio(dollar_delta=D("-123300")), m, c)
+    assert v.code == RuleCode.DELTA_CAP  # |-123,300 + 23,200| = 100,100
     # share-equivalent greeks.delta is no longer read by the delta cap
     assert R.check_greek_caps(p, a, Portfolio(greeks=Greeks(delta=10_000.0)), m, c) == []
     [v] = R.check_greek_caps(p, a, Portfolio(greeks=Greeks(vega=-98_001.0)), m, c)
@@ -441,9 +445,9 @@ def test_greek_caps() -> None:
 
 
 def test_dollar_delta_worked_example() -> None:
-    """Card acceptance: equity $100k, cap $50k. Book +100 Δ NVDA @ $180 ($18k).
-
-    +100 Δ AVGO @ $350 ($35k) -> $53k fails; +100 Δ INTC @ $25 ($2.5k) passes."""
+    """D57 worked example at its own 0.50 cap (pinned): equity $100k, cap $50k. Book +100 Δ
+    NVDA @ $180 ($18k). +100 Δ AVGO @ $350 ($35k) -> $53k fails; +100 Δ INTC @ $25 passes."""
+    c = cfg(portfolio_dollar_delta_cap_pct=0.50)
     nvda = Portfolio(dollar_delta=D(100) * D(180))
     for root, spot, fails in (("AVGO", "350", True), ("INTC", "25", False)):
         lc = long_call(root, EXP, strike=100, premium="3", as_of=AS_OF)
@@ -452,11 +456,81 @@ def test_dollar_delta_worked_example() -> None:
             sizing=Sizing(contracts=1, notional=D("300"), pct_equity=0.003),
         )
         m = mkt(underlying_spot={root: D(spot)})
-        out = R.check_greek_caps(p, acct(), nvda, m, cfg())
+        out = R.check_greek_caps(p, acct(), nvda, m, c)
         assert [v.code for v in out] == ([RuleCode.DELTA_CAP] if fails else [])
     flat = make_proposal(bull_put().model_copy(update={"greeks": Greeks(vega=1.0)}))
-    [v] = R.check_greek_caps(flat, acct(), Portfolio(dollar_delta=D(53_000)), mkt(), cfg())
+    [v] = R.check_greek_caps(flat, acct(), Portfolio(dollar_delta=D(53_000)), mkt(), c)
     assert "$53,000.00 > cap $50,000.00" in v.detail
+
+
+def _call(root: str, delta: float, n: int = 1) -> Proposal:
+    lc = long_call(root, EXP, strike=100, premium="3", as_of=AS_OF)
+    return make_proposal(
+        lc.model_copy(update={"greeks": Greeks(delta=delta, vega=1.0)}),
+        sizing=Sizing(contracts=n, notional=D("300"), pct_equity=0.003),
+    )
+
+
+def test_beta_delta_worked_example() -> None:
+    """D62 acceptance, equity $100k: $Δ cap $100k, β$Δ cap $200k. Book: $60k of $Δ that
+    is $150k β-weighted (high-β semis). +$30k of MU (β 3.22): $Δ $90k passes its cap, but
+    β$Δ 150k + 96.6k = $246.6k fails. +$30k of KO (β 0.55 -> floored 1.0): $Δ $90k, β$Δ
+    $180k: passes both."""
+    book = Portfolio(dollar_delta=D(60_000), beta_dollar_delta=D(150_000))
+    betas = {"MU": D("3.22"), "KO": D("0.55")}
+    m_mu = mkt(underlying_spot={"MU": D(100)}, underlying_beta=betas)
+    mu = R.check_greek_caps(_call("MU", 300.0), acct(), book, m_mu, cfg())
+    assert [v.code for v in mu] == [RuleCode.BETA_DELTA_CAP]
+    assert mu[0].detail == "post-trade |β$Δ| $246,600.00 > cap $200,000.00 (MU β 3.22)"
+    m_ko = mkt(underlying_spot={"KO": D(60)}, underlying_beta=betas)
+    ko = R.check_greek_caps(_call("KO", 500.0), acct(), book, m_ko, cfg())
+    assert ko == []
+
+
+@pytest.mark.parametrize("beta", [None, D("0.3"), D("1"), D("0")])
+def test_missing_or_low_beta_counts_as_one(beta: D | None) -> None:
+    """D62: a missing β, or β < 1, weighs the proposal at 1.0; never a rejection."""
+    betas = {} if beta is None else {"SPY": beta}
+    flat_book = Portfolio()
+    # +$200,000 of SPY: at the β cap exactly when β used = 1.0 ($Δ cap lifted to isolate)
+    c = cfg(portfolio_dollar_delta_cap_pct=2.0)
+    p = _call("SPY", 2000.0)
+    m = mkt(underlying_spot={"SPY": D(100)}, underlying_beta=betas)
+    assert R.check_greek_caps(p, acct(), flat_book, m, c) == []
+    over = _call("SPY", 2000.01)
+    by_code = {v.code: v for v in R.check_greek_caps(over, acct(), flat_book, m, c)}
+    assert "SPY β 1.00" in by_code[RuleCode.BETA_DELTA_CAP].detail
+    # with β 1.0 the β-weighted book equals the dollar book (both caps at 2.00 here)
+    assert set(by_code) == {RuleCode.BETA_DELTA_CAP, RuleCode.DELTA_CAP}
+
+
+def test_missing_spot_skips_beta_cap_too() -> None:
+    m = mkt(underlying_spot={}, underlying_beta={"SPY": D(3)})
+    book = Portfolio(beta_dollar_delta=D(10**9))
+    out = R.check_greek_caps(make_proposal(), acct(), book, m, cfg())
+    assert [v.code for v in out] == [RuleCode.MISSING_SPOT]
+
+
+def test_beta_cap_override_reaches_check_greek_caps(tmp_path: Path) -> None:
+    """D62: a Slack override (D26 config_changes) of the β cap reaches the gate rule."""
+    from arc.control.effective import effective_settings
+    from arc.control.store import ConfigChangeRepo
+    from arc.store.db import connect
+    from arc.store.migrate import migrate
+
+    conn = connect(tmp_path / "arc.db")
+    migrate(conn)
+    ConfigChangeRepo(conn).append(
+        key="portfolio_beta_delta_cap_pct", old=2.00, new=0.50, is_default=False, actor="U1",
+        reason="test", at=NOW, source="slack", status="applied", direction="safer",
+    )  # fmt: skip
+    eff = effective_settings(conn, base=cfg())
+    assert eff.portfolio_beta_delta_cap_pct == 0.50
+    p = _call("SPY", 600.0)  # +$60k at β 1 -> over the overridden $50k β cap
+    m = mkt(underlying_spot={"SPY": D(100)})
+    assert R.check_greek_caps(p, acct(), Portfolio(), m, cfg()) == []
+    [v] = R.check_greek_caps(p, acct(), Portfolio(), m, eff)
+    assert v.code == RuleCode.BETA_DELTA_CAP
 
 
 @pytest.mark.parametrize(
@@ -506,26 +580,60 @@ def test_dollar_delta_additive_and_linear(legs: list[tuple[int, D, int]], k: int
         sizing=Sizing(contracts=k, notional=D("300"), pct_equity=0.003),
     )
     post = book + D(dl) * k * sp
-    cap = D("0.50") * D("100000")
+    cap = D("1.00") * D("100000")
     out = R.check_greek_caps(
         p, acct(), Portfolio(dollar_delta=book), mkt(underlying_spot={"SPY": sp}), cfg()
     )
-    assert (out == []) == (abs(post) <= cap)
+    # D62: only the $Δ cap is under test (the book's β$Δ is left at 0 here)
+    assert (RuleCode.DELTA_CAP not in {v.code for v in out}) == (abs(post) <= cap)
 
 
-@given(cents=st.integers(min_value=-10_000_000, max_value=10_000_000))
+@given(cents=st.integers(min_value=-20_000_000, max_value=20_000_000))
 def test_dollar_delta_cap_boundary(cents: int) -> None:
-    """(b) A book exactly at the cap passes; one cent over fails."""
+    """(b) A book exactly at the cap ($100k, D62) passes; one cent over fails."""
     flat = make_proposal(bull_put().model_copy(update={"greeks": Greeks(vega=1.0)}))
     book = D(cents) / 100
     out = R.check_greek_caps(flat, acct(), Portfolio(dollar_delta=book), mkt(), cfg())
-    assert (out == []) == (abs(book) <= D("50000"))
-    for edge, ok in ((D("50000"), True), (D("50000.01"), False)):
+    assert (out == []) == (abs(book) <= D("100000"))
+    for edge, ok in ((D("100000"), True), (D("100000.01"), False)):
         for sign in (1, -1):
             res = R.check_greek_caps(
                 flat, acct(), Portfolio(dollar_delta=sign * edge), mkt(), cfg()
             )
             assert (res == []) == ok
+
+
+@given(cents=st.integers(min_value=-40_000_000, max_value=40_000_000))
+def test_beta_delta_cap_boundary(cents: int) -> None:
+    """D62: a β-weighted book exactly at the cap ($200k) passes; one cent over fails."""
+    flat = make_proposal(bull_put().model_copy(update={"greeks": Greeks(vega=1.0)}))
+    book = D(cents) / 100
+    out = R.check_greek_caps(flat, acct(), Portfolio(beta_dollar_delta=book), mkt(), cfg())
+    assert (out == []) == (abs(book) <= D("200000"))
+    for edge, ok in ((D("200000"), True), (D("200000.01"), False)):
+        for sign in (1, -1):
+            res = R.check_greek_caps(
+                flat, acct(), Portfolio(beta_dollar_delta=sign * edge), mkt(), cfg()
+            )
+            assert (res == []) == ok
+
+
+@given(
+    delta=st.integers(min_value=-3000, max_value=3000),
+    spot=_SPOT,
+    beta=st.decimals(min_value=D("0"), max_value=D("5"), places=2),
+    book=st.integers(min_value=-300_000, max_value=300_000),
+)
+def test_beta_delta_post_trade_formula(delta: int, spot: D, beta: D, book: int) -> None:
+    """D62: post-trade β$Δ = book + Δ·n·S·max(β, 1); ≤ 2.00·E passes (cap boundary)."""
+    c = cfg(portfolio_dollar_delta_cap_pct=2.0)  # $Δ ≤ β$Δ for β ≥ 1: isolate the β cap
+    m = mkt(underlying_spot={"SPY": spot}, underlying_beta={"SPY": beta})
+    pf = Portfolio(beta_dollar_delta=D(book))
+    out = R.check_greek_caps(_call("SPY", float(delta)), acct(), pf, m, c)
+    post = D(book) + D(delta) * spot * max(beta, D(1))
+    dollar_post = D(delta) * spot
+    assert (RuleCode.BETA_DELTA_CAP not in {v.code for v in out}) == (abs(post) <= D("200000"))
+    assert (RuleCode.DELTA_CAP not in {v.code for v in out}) == (abs(dollar_post) <= D("200000"))
 
 
 @given(
@@ -895,3 +1003,23 @@ def test_order_budget_rejection_is_typed_but_never_reallocated() -> None:
     assert R.capacity_rejection(d.violations) is R.CapacityRejection.ORDER_BUDGET
     # mixed with a real capacity code it is not a pure capacity rejection either
     assert R.capacity_rejection(["order_budget: x", "per_underlying_limit: y"]) is None
+
+
+def test_beta_delta_carries_forward_across_two_proposals() -> None:
+    """D62: two proposals in one run. The first (MU, β 3.22, +$40k $Δ = $128.8k β$Δ) passes
+    and is added to the book with ``_with_position``; the second (+$40k MU again) still
+    passes the $Δ cap ($80k ≤ $100k) but fails the β cap ($257.6k > $200k)."""
+    from arc.pipeline.steps import _with_position
+
+    m = mkt(underlying_spot={"MU": D(100)}, underlying_beta={"MU": D("3.22")})
+    p = _call("MU", 400.0)
+    book = Portfolio()
+    assert R.check_greek_caps(p, acct(), book, m, cfg()) == []
+    st_ = p.structure
+    book = _with_position(
+        book, "MU", D(100), st_.greeks, p.sizing.contracts, D(100), m.underlying_beta["MU"]
+    )
+    assert book.dollar_delta == D(40_000) and book.beta_dollar_delta == D("128800.00")
+    [v] = R.check_greek_caps(p, acct(), book, m, cfg())
+    assert v.code == RuleCode.BETA_DELTA_CAP
+    assert v.detail == "post-trade |β$Δ| $257,600.00 > cap $200,000.00 (MU β 3.22)"

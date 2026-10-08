@@ -80,6 +80,9 @@ class GateCaps(BaseModel):
     portfolio_dollar_delta_cap_pct: float = Field(
         description="D57: |net dollar delta| cap as a fraction of equity"
     )
+    portfolio_beta_delta_cap_pct: float = Field(
+        description="D62: |beta-weighted net dollar delta| cap as a fraction of equity"
+    )
     portfolio_vega_cap_pct: float = Field(description="|ν| cap as a fraction of equity")
 
 

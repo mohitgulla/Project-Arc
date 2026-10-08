@@ -690,6 +690,41 @@
         "title": "AutoApproveView",
         "type": "object"
       },
+      "BetaDeltaRow": {
+        "additionalProperties": false,
+        "description": "D62: one underlying's share of the book's dollar delta and its \u03b2 weighting.",
+        "properties": {
+          "beta": {
+            "description": "\u03b2 used: max(1y \u03b2 vs SPY, 1.0); 1.0 when missing/stale",
+            "title": "Beta",
+            "type": "number"
+          },
+          "beta_dollar_delta": {
+            "title": "Beta Dollar Delta",
+            "type": "number"
+          },
+          "beta_source": {
+            "default": "default",
+            "enum": [
+              "stored",
+              "default"
+            ],
+            "title": "Beta Source",
+            "type": "string"
+          },
+          "dollar_delta": {
+            "title": "Dollar Delta",
+            "type": "number"
+          }
+        },
+        "required": [
+          "dollar_delta",
+          "beta",
+          "beta_dollar_delta"
+        ],
+        "title": "BetaDeltaRow",
+        "type": "object"
+      },
       "BreakdownItem": {
         "additionalProperties": false,
         "properties": {
@@ -5408,6 +5443,11 @@
         "additionalProperties": false,
         "description": "The gate's portfolio caps (PLAN \u00a75), from the effective settings.",
         "properties": {
+          "portfolio_beta_delta_cap_pct": {
+            "description": "D62: |beta-weighted net dollar delta| cap as a fraction of equity",
+            "title": "Portfolio Beta Delta Cap Pct",
+            "type": "number"
+          },
           "portfolio_dollar_delta_cap_pct": {
             "description": "D57: |net dollar delta| cap as a fraction of equity",
             "title": "Portfolio Dollar Delta Cap Pct",
@@ -5421,6 +5461,7 @@
         },
         "required": [
           "portfolio_dollar_delta_cap_pct",
+          "portfolio_beta_delta_cap_pct",
           "portfolio_vega_cap_pct"
         ],
         "title": "GateCaps",
@@ -5603,6 +5644,30 @@
             ],
             "title": "At"
           },
+          "beta_delta_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D62: |\u03b2$\u0394| cap, $ (portfolio_beta_delta_cap_pct \u00d7 equity)",
+            "title": "Beta Delta Cap"
+          },
+          "beta_dollar_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D62: beta-weighted net dollar delta \u03a3 (\u0394 \u00d7 spot \u00d7 max(\u03b2 vs SPY, 1)), $ (SPY-equivalent); None on a heartbeat written before D62 (rendered \u2014)",
+            "title": "Beta Dollar Delta"
+          },
           "delta": {
             "anyOf": [
               {
@@ -5613,6 +5678,14 @@
               }
             ],
             "title": "Delta"
+          },
+          "delta_by_underlying": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/BetaDeltaRow"
+            },
+            "description": "D62: per-underlying $\u0394, \u03b2 used, \u03b2$\u0394 and \u03b2 source (stored | default)",
+            "title": "Delta By Underlying",
+            "type": "object"
           },
           "dollar_delta": {
             "anyOf": [

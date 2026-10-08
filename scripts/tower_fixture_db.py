@@ -468,6 +468,14 @@ def build(
                 "day_pnl": float(equity - last_equity), "cash": 88000.0,
                 "buying_power": 88000.0, "options_buying_power": 88000.0,
                 "delta": 42.5 + i * 0.4, "dollar_delta": 18_500.0 + 160 * i,
+                # D62: beta-weighted $Δ (SPY-eq) and its per-underlying breakdown
+                "beta_dollar_delta": 29_300.0 + 304 * i,
+                "delta_by_underlying": {
+                    "AMD": {"dollar_delta": 12_000.0 + 160 * i, "beta": 1.9,
+                            "beta_dollar_delta": 22_800.0 + 304 * i, "beta_source": "stored"},
+                    "SPY": {"dollar_delta": 6_500.0, "beta": 1.0,
+                            "beta_dollar_delta": 6_500.0, "beta_source": "default"},
+                },
                 "gamma": 0.8, "vega": 21000.0 + 150 * i,
                 "theta": -34.2, "max_loss": 3910.0, "halted": True,
                 "order_budget": {"used": 31, "limit": 200, "tier": "normal"},

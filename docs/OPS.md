@@ -382,7 +382,7 @@ Outside the session the pages show the last in-session monitor run, marked stale
 |---|---|
 | Status strip | active `halts`, latest `tick`/`health` heartbeats, open `ops_alerts` |
 | P&L / equity | latest `monitor` heartbeat (intraday equity, day P&L); `pnl_snapshots` (reconciled realized/unrealized, Day/MTD/YTD via `arc.reconcile.performance`) |
-| Greeks | latest `monitor` heartbeat: net dollar delta (Σ Δ × spot, D57) against the gate's `portfolio_dollar_delta_cap_pct` × equity, ν against `portfolio_vega_cap_pct` × equity, plus Γ Θ and max loss |
+| Greeks | latest `monitor` heartbeat: net dollar delta (Σ Δ × spot, D57) against the gate's `portfolio_dollar_delta_cap_pct` × equity (1.00), beta-weighted net dollar delta (Σ Δ × spot × max(β, 1), D62) against `portfolio_beta_delta_cap_pct` × equity (2.00) with the per-underlying β in its ⓘ, ν against `portfolio_vega_cap_pct` × equity, plus Γ Θ and max loss; every row has an ⓘ |
 | Positions | `open_structures` + broker legs from the `monitor` heartbeat; "held at broker" from the last `positions_snapshots` |
 | Proposals / Trades | `proposals` + latest `gate_decisions` + `approval_requests` + `executions` |
 | Halts | `halts`, active first |
@@ -2003,6 +2003,33 @@ E13.15):
 Check: `arc routines tick --dry-run --now <today>T10:40-04:00` (Research chain) and
 `T10:50` (positions chain); `arc context show --kind risk_exit_review --latest`;
 `arc journal show` (stage `exit`).
+
+### 5.33 Betas and the beta-weighted delta cap (E3.6, D62)
+
+**Producer.** The `betas` routine (05:35 ET trading days, `ttl` 3h, background lane,
+`writes: []`) pulls ~400 calendar days of Alpaca daily closes (strictly before today)
+for the active list, every open underlying, today's candidates and SPY/QQQ/IWM, and
+stores one `betas` row per (ticker, day): the raw 1-year β vs SPY over the last 252
+aligned daily log returns (`arc/features/beta.py`), `n_days`, `window`, `benchmark`,
+`as_of`. Fewer than 120 aligned returns stores `beta = NULL`. Each request takes a slot
+of the shared Alpaca data budget (`routine_state[alpaca_data:calls]`).
+
+**One lookup.** `arc.betas.store.betas_used` is the only reader: the latest row with
+`day ≤ today` at most 5 trading sessions old, floored at 1.0; missing, stale or NULL →
+1.0 (`source: default`, logged `beta_default`). The gate inputs (`build_portfolio`,
+`MarketSnapshot.underlying_beta`), `portfolio_context` (v4 `aggregates.beta_delta`,
+`betas`, flag `beta_delta_near_cap`), the `monitor` heartbeat (`beta_dollar_delta`,
+`beta_delta_cap`, `delta_by_underlying`) and the Tower all read through it. The gate
+never fetches: a missing β is 1.0, never a rejection (`portfolio_beta_delta_cap`
+rejects only over the cap; a missing spot still fails closed as `missing_spot`).
+
+**By hand.**
+
+    arc betas refresh [--tickers MU,GS] [--day 2026-10-08] [--db <scratch>]
+    arc betas show [--tickers MU,GS] [--db <scratch>]
+
+`show` prints the stored β, the β used today and its source. Override the cap with
+`!arc config portfolio_beta_delta_cap_pct 1.5` (registry 0.25–4.00).
 
 ### 7.1 Required status check: `check`
 

@@ -165,6 +165,34 @@ def test_greeks_pre_d57_heartbeat_has_no_dollar_delta(tmp_path: Path) -> None:
     conn.close()
     assert g.delta == 25.0 and g.dollar_delta is None
     assert g.dollar_delta_cap == pytest.approx(500.0) and g.vega_cap_usd == pytest.approx(10.0)
+    assert g.beta_dollar_delta is None and g.delta_by_underlying == {}  # pre-D62: —
+
+
+def test_greeks_beta_weighted_delta_from_heartbeat(tmp_path: Path) -> None:
+    """D62: β$Δ, its cap and the per-underlying β breakdown come off the monitor heartbeat;
+    a malformed breakdown row is dropped, never a 500."""
+    from arc.tower.data import _greeks
+
+    conn = connect(tmp_path / "hb.db")
+    migrate(conn)
+    HeartbeatRepo(conn).record(
+        "monitor", "ok", at=NOW,
+        detail={
+            "valued": True, "equity": 100_000.0, "dollar_delta": 30_000.0,
+            "beta_dollar_delta": 66_600.0,
+            "delta_by_underlying": {
+                "MU": {"dollar_delta": 30_000.0, "beta": 2.22, "beta_dollar_delta": 66_600.0,
+                       "beta_source": "stored"},
+                "BAD": {"beta": "x"},
+            },
+        },
+    )  # fmt: skip
+    row = conn.execute("SELECT * FROM heartbeats ORDER BY rowid DESC LIMIT 1").fetchone()
+    g = _greeks(row, 1.00, 0.010, dt.timedelta(minutes=15), beta_delta_cap_pct=2.00)
+    conn.close()
+    assert g.beta_dollar_delta == 66_600.0 and g.beta_delta_cap == pytest.approx(200_000.0)
+    assert list(g.delta_by_underlying) == ["MU"]
+    assert g.delta_by_underlying["MU"].beta == 2.22
 
 
 def test_snapshot_sections(db: Path) -> None:

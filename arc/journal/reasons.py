@@ -189,6 +189,7 @@ class ReasonCode(StrEnum):
     GATE_TICK = "gate:limit_off_tick"
     GATE_WASH_SALE = "gate:wash_sale"
     GATE_DELTA_CAP = "gate:portfolio_delta_cap"
+    GATE_BETA_DELTA_CAP = "gate:portfolio_beta_delta_cap"  # D62
     GATE_VEGA_CAP = "gate:portfolio_vega_cap"
     GATE_STRUCTURE_NOT_ALLOWED = "gate:structure_not_allowed"
     GATE_DTE_WINDOW = "gate:dte_window"
@@ -414,6 +415,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_TICK: "Gate: limit not on a valid tick",
     ReasonCode.GATE_WASH_SALE: "Gate: wash-sale risk",
     ReasonCode.GATE_DELTA_CAP: "Gate: over the portfolio dollar-delta cap",
+    ReasonCode.GATE_BETA_DELTA_CAP: "Gate: over the beta-weighted dollar-delta cap",
     ReasonCode.GATE_VEGA_CAP: "Gate: over the portfolio vega cap",
     ReasonCode.GATE_STRUCTURE_NOT_ALLOWED: "Gate: structure not allowed",
     ReasonCode.GATE_DTE_WINDOW: "Gate: expiry outside the DTE window",
