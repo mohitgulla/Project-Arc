@@ -89,7 +89,7 @@ class AlpacaOptionsFeed(enum.StrEnum):
 # Default YouTube sources (D13)
 # ---------------------------------------------------------------------------
 
-# D13/D45 (E4.6): the four channels behind the daily 02:00 ET ``youtube.briefs`` job
+# D13/D45 (E4.6), D60: the channels behind the daily 02:00 ET ``youtube.briefs`` job
 # (config/routines.yaml is the source of truth; this list is the CLI default).
 # Channel ids, never @handles, so a rename can't break them.
 DEFAULT_YOUTUBE_CHANNELS: list[str] = [
@@ -97,6 +97,10 @@ DEFAULT_YOUTUBE_CHANNELS: list[str] = [
     "https://www.youtube.com/channel/UCvJZEG5x-DVYZKTz--pS39w/videos",  # FX Evolution
     "https://www.youtube.com/channel/UCYKtr6GfycBqQJf32tbQSbQ/videos",  # Trade Brigade
     "https://www.youtube.com/channel/UCTeFsS-bP0XEt3NBMjfW2cA/videos",  # Arete Trading
+    "https://www.youtube.com/channel/UCOHxDwCcOzBaLkeTazanwcw/videos",  # Bravos
+    "https://www.youtube.com/channel/UCBayuhgYpKNbhJxfExYkPfA/videos",  # Warrior Trading (D60)
+    "https://www.youtube.com/channel/UC5fZv7bPcF5j2RsfO-9OiLA/videos",  # IBD (D60)
+    "https://www.youtube.com/channel/UC5fZv7bPcF5j2RsfO-9OiLA/streams",  # IBD daily show (D60)
 ]
 
 
@@ -754,7 +758,7 @@ class ArcSettings(BaseSettings):
         default_factory=lambda: list(DEFAULT_YOUTUBE_CHANNELS),
         description=(
             "YouTube channel/playlist URLs for transcript ingestion (`arc ingest`). "
-            "Default: the four D45 channels (StockedUp, FX Evolution, Trade Brigade, Arete)."
+            "Default: the youtube.briefs channels (D45/D49/D60), IBD's /streams included."
         ),
     )
 
@@ -771,11 +775,11 @@ class ArcSettings(BaseSettings):
         description="Skip audio transcription for longer videos (ARC_YT_MAX_AUDIO_MINUTES).",
     )
     yt_max_audio_per_run: Annotated[int, Field(ge=0)] = Field(
-        default=3,
+        default=5,  # D60: was 3
         description="Max audio transcriptions per ingest run (ARC_YT_MAX_AUDIO_PER_RUN).",
     )
     yt_max_audio_per_slot: Annotated[int, Field(ge=0)] = Field(
-        default=4,
+        default=5,  # D60: was 4 (7 channels per run since E14.4)
         description=(
             "Max audio transcriptions across all channels of one daily youtube.briefs "
             "run (E4.6; ARC_YT_MAX_AUDIO_PER_SLOT)."

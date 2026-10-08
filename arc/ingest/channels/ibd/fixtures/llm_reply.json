@@ -1,0 +1,44 @@
+{
+  "market_bias": {
+    "stance": "bullish",
+    "confidence": 0.5,
+    "quote": "the NASDAQ and S&amp;P and a lot of stocks are showing a lot of strength."
+  },
+  "levels": [
+    {
+      "ticker": "AAPL",
+      "kind": "pivot",
+      "price": 345.0,
+      "quote": "It's also a 3 weeks tight if there's actually a 3 weeks tight with the same buy point of 345 etc."
+    }
+  ],
+  "calls": [
+    {
+      "ticker": "MU",
+      "stance": "bullish",
+      "horizon": "swing",
+      "instrument_hint": "none",
+      "conviction": 0.6,
+      "quote": "I think you could have bought it here today because reversing from the 21day line"
+    }
+  ],
+  "catalysts": [
+    {
+      "event": "Samsung preliminary September-quarter operating profit after the close",
+      "kind": "earnings",
+      "tickers": [
+        "MU"
+      ],
+      "date": null,
+      "expected_impact": "volatile",
+      "quote": "Samsung is going to release its operating profit preliminary results for the September ended quarter."
+    }
+  ],
+  "risk_flags": [
+    {
+      "flag": "Weak breadth: small caps and the equal-weight S&P lag the leaders",
+      "severity": "med",
+      "quote": "It's not great. You'd like to see more breadth."
+    }
+  ]
+}

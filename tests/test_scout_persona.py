@@ -366,15 +366,19 @@ class TestInputs:
     def test_presence_lines_name_missing_channels(self, db: sqlite3.Connection) -> None:
         _seed(db)
         inp = self._inp(db)
+        # D60: each present channel carries its brief's age
         assert (
-            inp.presence["youtube_macro"] == "YouTube macro briefs: 1/2 channels (missing: Bravos)"
+            inp.presence["youtube_macro"]
+            == "YouTube macro briefs: 1/2 channels: FX (4h) (missing: Bravos)"
         )
-        assert inp.presence["youtube_micro"].endswith("2/3 channels (missing: TradeBrigade)")
+        assert inp.presence["youtube_micro"].endswith(
+            "2/3 channels: StockedUp (4h), Arete (4h) (missing: TradeBrigade)"
+        )
         assert inp.missing == {"youtube_macro": ["Bravos"], "youtube_micro": ["TradeBrigade"]}
         assert inp.origins == {"youtube:fxevolution", "youtube:stockedup", "youtube:arete"}
 
     def test_stale_brief_and_options_are_not_read(self, db: sqlite3.Connection) -> None:
-        _write_brief(db, "stockedup", age=dt.timedelta(hours=30))  # > youtube_micro 24h
+        _write_brief(db, "stockedup", age=dt.timedelta(hours=49))  # > youtube_micro 48h (D60)
         _write_options(db, age=dt.timedelta(hours=30))  # > options_slow 24h
         db.commit()
         inp = self._inp(db)
@@ -384,6 +388,16 @@ class TestInputs:
         assert "No fresh brief today" in prompt
         assert "Cboe put/call: no fresh info" in prompt
         assert "VIX complex: no fresh info" in prompt
+
+    def test_brief_47h_old_is_read_49h_is_not(self, db: sqlite3.Connection) -> None:
+        """D60: the YouTube window is 48 h from the video's publish time."""
+        _write_brief(db, "stockedup", age=dt.timedelta(hours=47))
+        _write_brief(db, "arete", age=dt.timedelta(hours=49))
+        db.commit()
+        inp = self._inp(db)
+        assert inp.origins == {"youtube:stockedup"}
+        assert "StockedUp (47h)" in inp.presence["youtube_micro"]
+        assert "Arete" in inp.presence["youtube_micro"].split("missing: ")[1]
 
     def test_prompt_sections_in_fixed_order(self, db: sqlite3.Connection) -> None:
         _seed(db)

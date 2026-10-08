@@ -177,8 +177,8 @@ class TestRegistry:
             "company_data": dt.timedelta(hours=12),
             "options_fast": dt.timedelta(minutes=30),
             "options_slow": dt.timedelta(hours=24),
-            "youtube_macro": dt.timedelta(hours=24),
-            "youtube_micro": dt.timedelta(hours=24),
+            "youtube_macro": dt.timedelta(hours=48),  # D60
+            "youtube_micro": dt.timedelta(hours=48),  # D60
             "retail_buzz": dt.timedelta(hours=24),
         }
         assert {c.weight for c in routines.categories.values()} == {1.0}

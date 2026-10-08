@@ -285,8 +285,8 @@ DEFAULT_CATEGORIES: Mapping[SourceCategory, CategorySpec] = {
     SourceCategory.COMPANY_DATA: _spec("12h", "Company data"),
     SourceCategory.OPTIONS_FAST: _spec("30m", "Options fast"),
     SourceCategory.OPTIONS_SLOW: _spec("24h", "Options slow"),
-    SourceCategory.YOUTUBE_MACRO: _spec("24h", "YouTube macro"),
-    SourceCategory.YOUTUBE_MICRO: _spec("24h", "YouTube micro"),
+    SourceCategory.YOUTUBE_MACRO: _spec("48h", "YouTube macro"),  # D60: was 24h
+    SourceCategory.YOUTUBE_MICRO: _spec("48h", "YouTube micro"),  # D60: was 24h
     SourceCategory.RETAIL_BUZZ: _spec("24h", "Retail buzz"),  # D58
 }
 

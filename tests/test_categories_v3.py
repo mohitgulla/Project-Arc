@@ -69,8 +69,8 @@ def test_seven_members_in_display_order() -> None:
         "company_data": "12h",
         "options_fast": "30m",
         "options_slow": "1d",
-        "youtube_macro": "1d",
-        "youtube_micro": "1d",
+        "youtube_macro": "2d",  # D60
+        "youtube_micro": "2d",  # D60
         "retail_buzz": "1d",
     }  # Ttl prints 24h as 1d
 
