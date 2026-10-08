@@ -890,10 +890,27 @@ Every Sweep source is a named entry in `config/routines.yaml`: each RSS feed und
 the 7 categories or `reference: true` (D56, D58); neither, both, or an unknown category
 fails config load. Adding or re-weighting a source is a YAML edit only.
 
+**Ticker news (E14.1, D60).** Source job `ticker_news` (every 15m, 06:00-20:00, trading
+days, `lane: background`) pulls news tagged by ticker for the active list ∪ open
+underlyings (≤ 50). Inputs live under `sources.ticker_news.inputs`; each is its own
+registry source `ticker_news.<input>` in `company_data` at the job's `weight` (2):
+`alpaca` (`type: alpaca_news`, Alpaca `/v1beta1/news` = Benzinga on the existing
+Alpaca key; ≤ 50 symbols per call, every `next_page_token` page walked; `start` = the
+`ingest_cursors` row `ticker_news:alpaca`, never older than `max_age`) and `finnhub`
+(`type: finnhub_company_news`, `enabled_when: primary_failed`: `/company-news` per
+ticker through the shared 55/min Finnhub budget, only for tickers the primary failed).
+A doc's `tickers_hint` is the provider's `symbols` ∩ the scope (no regex); an article
+with none is stored closed `filtered`. A URL already stored by any source (RSS too) is
+dropped. The cursor advances only after every chunk's full page walk. Run outcomes: no
+key on every input → `skipped` (`no_api_key`); nothing answered → `failed`
+(`ticker_news forbidden` for 401/403, `rate_limited` after one Retry-After retry on
+429, else `error`); otherwise `ok` with `failed_tickers`. Summary:
+`n new docs (alpaca n, finnhub n), m filtered · covered/scope names`.
+
 | category | label | `max_age` | sources | read by |
 |---|---|---|---|---|
-| `market_news` | Market news | 6h | WSJ Markets, CNBC Business, Nasdaq RSS, Fed RSS (D56) | Scalp, Research |
-| `company_data` | Company data | 12h | Seeking Alpha, CNBC Earnings, WSJ Business, EDGAR | Scalp, Research |
+| `market_news` | Market news | 6h | WSJ Markets, CNBC Business, Nasdaq RSS (weight 0.5, D60), Fed RSS (D56) | Scalp, Research |
+| `company_data` | Company data | 12h | `ticker_news` (Benzinga, weight 2, D60), Seeking Alpha (weight 0.5, D60), CNBC Earnings, WSJ Business, EDGAR | Scalp, Research |
 | `options_fast` | Options fast | 30m | none yet (E13.6 adds the 30-min RTH source) | Scalp (typed context) |
 | `options_slow` | Options slow | 24h | `vol_term`, `options_daily`, `vix_futures` (`feed: scout`) | Scout, Research (typed context) |
 | `youtube_macro` | YouTube macro | 24h | FX Evolution, Bravos Research | Scout, Research (channel briefs, §5.22) |

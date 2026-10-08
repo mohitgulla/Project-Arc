@@ -261,14 +261,51 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
         url: "https://seekingalpha.com/market_currents.xml"
         category: company_data
         feed: scalp
+        weight: 0.5             # D60 (E14.1): half an RSS feed's share (generic copy, few ticker hints)
         title_exclude:          # D55: fund/ETF dividend declarations (ex_dividend covers the universe)
           - '\bdeclares\b.*\bdividend\b'
           - '\b(increases|decreases|raises|cuts)\b.*\bdividend\b'
           - '\bETF\b.*\b(distribution|dividend)\b'
-      - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets", category: market_news, feed: scalp}
+      - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets", category: market_news, feed: scalp, weight: 0.5}   # D60 (E14.1): half share
       - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: market_news, feed: scalp}   # D56: was macro_data
   edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: company_data, label: EDGAR, writes: [raw_doc_ref], lane: background,
              about: "SEC filings (8-K, 10-Q, 10-K, Form 4) for the universe; stale filings are skipped"}   # D39: p90 75 s (377 s max on new filings)
+  # E14.1 (D60): ticker-tagged news scoped to the active list. Each input is its own
+  # registry source (`ticker_news.<input>`) in company_data at the job's `weight` (2:
+  # twice an RSS feed's share). Docs carry the provider's symbols ∩ (active list ∪
+  # open underlyings) as tickers_hint; an article with none is stored `filtered`.
+  # `type` picks the fetcher (alpaca_news | finnhub_company_news); `enabled_when:
+  # primary_failed` runs an input only for tickers every primary failed on this run.
+  # No key -> skipped no_api_key; 401/403 -> failed forbidden; 429 -> one retry after
+  # Retry-After, then rate_limited. Cursor `ticker_news:<input>` (full walk only).
+  ticker_news:
+    label: Ticker news
+    about: "Alpaca/Benzinga news tagged by ticker for the active list (Finnhub company news as fallback)"
+    every: 15m
+    window: "06:00-20:00"
+    days: trading
+    category: company_data
+    feed: scalp
+    weight: 2
+    writes: [raw_doc_ref]
+    lane: background
+    tickers: active_list        # active list ∪ open underlyings, active first
+    max_tickers: 50
+    inputs:
+      alpaca:                   # /v1beta1/news (Benzinga, free on the Alpaca key)
+        type: alpaca_news
+        label: Benzinga
+        chunk_size: 50          # symbols per call
+        page_limit: 50
+        max_pages: 20
+        timeout_s: 15
+        retry_after_default_s: 30
+      finnhub:                  # /company-news per ticker, shared 55/min Finnhub budget
+        type: finnhub_company_news
+        label: Finnhub news
+        enabled_when: primary_failed
+        timeout_s: 15
+        retry_after_default_s: 30
   earnings:                     # Finnhub /calendar/earnings (ARC_FINNHUB_API_KEY; no key = skipped run)
     schedule: ["06:00", "18:00"]
     days: trading

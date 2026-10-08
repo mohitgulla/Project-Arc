@@ -1071,7 +1071,14 @@ class TestDryRunAndCli:
         assert order[-1] == "scalp"
         # D31: 12:00 is a loop slot too; the loop runs before the Scalp of the same tick.
         # D45: no 12:00 YouTube slot any more (02:00 ET only).
-        assert set(order[:-1]) == {"edgar", "rss", "research", "monitor", "options_fast"}
+        assert set(order[:-1]) == {
+            "edgar",
+            "rss",
+            "research",
+            "monitor",
+            "options_fast",
+            "ticker_news",
+        }
         assert order.index("research") < order.index("scalp")
         assert order.index("options_fast") < order.index("scalp")  # E13.6: a Scalp source
         assert "quant.open" in out and "may-run" not in out  # no trigger any more
