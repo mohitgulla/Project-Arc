@@ -30,7 +30,8 @@ class TestDefaults:
         assert s.spread_max_pct == 0.10
         assert s.spread_max_abs == 0.10
         assert s.wash_sale_days == 30
-        assert s.portfolio_dollar_delta_cap_pct == 0.50  # D57
+        assert s.portfolio_dollar_delta_cap_pct == 1.00  # D62 (was 0.50, D57)
+        assert s.portfolio_beta_delta_cap_pct == 2.00  # D62
         assert s.portfolio_vega_cap_pct == 0.010  # D57
         assert not hasattr(s, "portfolio_delta_cap")
         assert s.dte_min == 30

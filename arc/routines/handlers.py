@@ -761,6 +761,57 @@ def iv_record_source(
     )
 
 
+def betas_source(
+    ctx: JobContext,
+    market: MarketDataProvider | None = None,
+    take: Callable[[], object] | None = None,
+) -> JobResult:
+    """E3.6 (D62): today's 1y daily beta vs SPY per ticker -> ``betas`` table.
+
+    Covers the active list + open underlyings (+ today's candidates) and SPY/QQQ/IWM.
+    No context kind is written (``writes: []``): the gate inputs, portfolio_context,
+    the monitor and the Tower read the table through ``arc.betas.store.betas_used``.
+    """
+    from arc.betas.refresh import refresh_betas
+
+    if market is None:  # pragma: no cover - live Alpaca (integration)
+        from arc.data.alpaca import AlpacaMarketData
+
+        market = AlpacaMarketData()
+    if take is None:  # pragma: no cover - live shared Alpaca data budget
+        from arc.ingest.finnhub import DbRateLimiter
+        from arc.iv.alpaca_history import RATE_STATE_KEY
+
+        take = DbRateLimiter(
+            ctx.conn,
+            calls_per_minute=ctx.settings.alpaca_data_calls_per_minute,
+            key=RATE_STATE_KEY,
+        ).acquire
+    day = ctx.now.astimezone(ET).date()
+    res = refresh_betas(ctx.conn, market, _data_tickers(ctx), day, now=ctx.now, take=take)
+    _data_result(
+        ctx,
+        "betas",
+        "alpaca",
+        [{"ticker": r.ticker, "beta": r.beta, "n_days": r.n_days} for r in res.rows],
+        len(res.rows),
+    )
+    if not res.rows and res.errors:
+        msg = f"no betas computed ({len(res.errors)} errors, e.g. {next(iter(res.errors.items()))})"
+        raise RuntimeError(msg)
+    spy = next((r.beta for r in res.rows if r.ticker == "SPY"), None)
+    few = [r.ticker for r in res.rows if r.beta is None]
+    return JobResult(
+        summary=(
+            f"{len(res.rows)} betas vs SPY for {day}"
+            + (f" · SPY {spy:.2f}" if spy is not None else "")
+            + (f" · {len(few)} too few days ({', '.join(few[:5])})" if few else "")
+            + (f" · {len(res.errors)} errors" if res.errors else "")
+        ),
+        metrics=res.metrics(),
+    )
+
+
 def ex_dividend_source(ctx: JobContext) -> JobResult:
     """E4.5: next cash-dividend ex-date per ticker (Alpaca corporate actions)."""
     from arc.ingest.options_data import fetch_ex_dividends
@@ -2426,6 +2477,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "macro_calendar": "arc.routines.handlers:macro_calendar_source",
     "ex_dividend": "arc.routines.handlers:ex_dividend_source",
     "iv.record": "arc.routines.handlers:iv_record_source",  # E4.12 (D55) daily 30-DTE IV
+    "betas": "arc.routines.handlers:betas_source",  # E3.6 (D62) daily 1y beta vs SPY
     # E4.8 (D46): Finnhub per-ticker context (typed kinds, shared 55/min budget)
     "finnhub.insider": "arc.routines.handlers:finnhub_insider_source",
     "finnhub.recs": "arc.routines.handlers:finnhub_recs_source",

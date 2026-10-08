@@ -36,7 +36,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arc.models import Leg, Performance  # noqa: TC001 - pydantic field
 from arc.reconcile.baseline import BaselineSource, start_of_day_equity
@@ -220,6 +220,17 @@ class PnlView(BaseModel):
     equity_series: list[tuple[_dt.date, Decimal]] = Field(default_factory=list)
 
 
+class BetaDeltaRow(BaseModel):
+    """D62: one underlying's share of the book's dollar delta and its β weighting."""
+
+    model_config = _FROZEN
+
+    dollar_delta: float
+    beta: float = Field(description="β used: max(1y β vs SPY, 1.0); 1.0 when missing/stale")
+    beta_dollar_delta: float
+    beta_source: Literal["stored", "default"] = "default"
+
+
 class GreeksView(BaseModel):
     """Net portfolio Greeks from the latest monitor run (share-equivalents), plus the
     gate's D57 dollar delta (Σ Δ × spot) against its dollar cap."""
@@ -242,6 +253,18 @@ class GreeksView(BaseModel):
     )
     dollar_delta_cap: float | None = Field(
         default=None, description="D57: |$Δ| cap, $ (portfolio_dollar_delta_cap_pct × equity)"
+    )
+    beta_dollar_delta: float | None = Field(
+        default=None,
+        description="D62: beta-weighted net dollar delta Σ (Δ × spot × max(β vs SPY, 1)), $ "
+        "(SPY-equivalent); None on a heartbeat written before D62 (rendered —)",
+    )
+    beta_delta_cap: float | None = Field(
+        default=None, description="D62: |β$Δ| cap, $ (portfolio_beta_delta_cap_pct × equity)"
+    )
+    delta_by_underlying: dict[str, BetaDeltaRow] = Field(
+        default_factory=dict,
+        description="D62: per-underlying $Δ, β used, β$Δ and β source (stored | default)",
     )
     vega_usd: float | None = Field(default=None, description="ν in $ per vol point (ν/100)")
     vega_cap_usd: float | None = Field(default=None, description="|ν| cap, $ per vol point")
@@ -430,6 +453,7 @@ def _greeks(
     dollar_delta_cap_pct: float,
     vega_cap_pct: float,
     stale_after: _dt.timedelta,
+    beta_delta_cap_pct: float = 2.00,
 ) -> GreeksView:
     stale_s = int(stale_after.total_seconds())
     if monitor is None:
@@ -437,6 +461,12 @@ def _greeks(
     m = _json(monitor["detail"], {})
     equity = m.get("equity")
     vega = m.get("vega")
+    by_under: dict[str, BetaDeltaRow] = {}
+    for t, row in (m.get("delta_by_underlying") or {}).items():
+        try:
+            by_under[str(t)] = BetaDeltaRow.model_validate(row)
+        except ValidationError:  # a malformed row is left out, never a 500
+            continue
     return GreeksView(
         at=parse_ts(monitor["at"]),
         valued=bool(m.get("valued")),
@@ -449,6 +479,9 @@ def _greeks(
         equity=equity,
         dollar_delta=m.get("dollar_delta"),
         dollar_delta_cap=None if equity is None else dollar_delta_cap_pct * float(equity),
+        beta_dollar_delta=m.get("beta_dollar_delta"),
+        beta_delta_cap=None if equity is None else beta_delta_cap_pct * float(equity),
+        delta_by_underlying=by_under,
         vega_usd=None if vega is None else float(vega) / 100.0,
         vega_cap_usd=None if equity is None else vega_cap_pct * float(equity),
         stale_after_s=stale_s,
@@ -728,10 +761,11 @@ def load_snapshot(
     now: _dt.datetime,
     db_path: str = "",
     lookback_days: int = 7,
-    dollar_delta_cap_pct: float = 0.50,
+    dollar_delta_cap_pct: float = 1.00,
     vega_cap_pct: float = 0.010,
     limit: int = 200,
     stale_after: _dt.timedelta | None = None,
+    beta_delta_cap_pct: float = 2.00,
 ) -> TowerSnapshot:
     """Read every dashboard section from *conn* (SELECT only) as of *now*.
 
@@ -748,7 +782,13 @@ def load_snapshot(
         as_of=now_et,
         db_path=db_path,
         pnl=_pnl(conn, monitor),
-        greeks=_greeks(monitor, dollar_delta_cap_pct, vega_cap_pct, stale),
+        greeks=_greeks(
+            monitor,
+            dollar_delta_cap_pct,
+            vega_cap_pct,
+            stale,
+            beta_delta_cap_pct=beta_delta_cap_pct,
+        ),
         structures=_structures(conn, legs),
         legs=legs,
         proposals=_proposals(conn, since_day, limit),

@@ -8,7 +8,8 @@ Units follow :mod:`arc.structures`:
   - money is ``Decimal`` dollars; option prices are per share;
   - Greeks are share-equivalents (per-share Greek x 100 x signed ratio);
     vega is per 1.00 of sigma, so vega / 100 is dollars per vol point;
-  - dollar delta (D57) is share-equivalent delta x the underlying's spot, dollars.
+  - dollar delta (D57) is share-equivalent delta x the underlying's spot, dollars;
+  - beta-weighted dollar delta (D62) is dollar delta x max(beta vs SPY, 1.0), dollars.
 """
 
 from __future__ import annotations
@@ -112,6 +113,15 @@ class Portfolio(_Frozen):
             "missing spot); the gate's delta cap reads this, not greeks.delta."
         ),
     )
+    beta_dollar_delta: Decimal = Field(
+        Decimal(0),
+        description=(
+            "D62: signed Σ over underlyings of (net Δ share-eq × spot × β used), dollars, "
+            "where β used = max(stored 1y β vs SPY, 1.0) and 1.0 when missing/stale. Built "
+            "by arc.pipeline.market.build_portfolio; the gate's beta-weighted delta cap "
+            "reads it."
+        ),
+    )
     closed_lots: list[ClosedLot] = Field(default_factory=list)
     legs: dict[str, int] = Field(
         default_factory=dict,
@@ -148,5 +158,13 @@ class MarketSnapshot(_Frozen):
             "D57: spot per underlying, the same spot the proposal was re-priced at. The "
             "dollar-delta cap needs it: a missing or non-positive spot on an opening "
             "proposal fails closed (missing_spot)."
+        ),
+    )
+    underlying_beta: dict[str, Decimal] = Field(
+        default_factory=dict,
+        description=(
+            "D62: β used per underlying (already floored: max(1y β vs SPY, 1.0)), from "
+            "arc.betas.store.betas_used. A missing key counts as 1.0: a missing β never "
+            "fails closed."
         ),
     )

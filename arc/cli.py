@@ -285,6 +285,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_iv_parser(sub)
 
+    from arc.betas.cli import add_betas_parser
+
+    add_betas_parser(sub)
+
     from arc.remote.cli import add_remote_parser
 
     add_remote_parser(sub)
@@ -812,6 +816,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_iv(args)
+    if args.command == "betas":
+        from arc.betas.cli import run_betas
+
+        _log_to_stderr()
+        return run_betas(args)
     if args.command == "history":
         from arc.data.history.cli import run_history
 

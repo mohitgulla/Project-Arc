@@ -195,11 +195,19 @@ class ArcSettings(BaseSettings):
         default=30,
         description="Wash-sale lookback window in calendar days.",
     )
-    portfolio_dollar_delta_cap_pct: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
-        default=0.50,
+    portfolio_dollar_delta_cap_pct: Annotated[float, Field(ge=0.0, le=2.0)] = Field(
+        default=1.00,
         description=(
-            "D57: |net dollar delta| cap as a share of equity: post-trade "
-            "|Σ (net Δ share-eq × spot)| ≤ 0.50 × equity. Not beta-weighted."
+            "D57/D62: |net dollar delta| cap as a share of equity: post-trade "
+            "|Σ (net Δ share-eq × spot)| ≤ 1.00 × equity. Not beta-weighted."
+        ),
+    )
+    portfolio_beta_delta_cap_pct: Annotated[float, Field(ge=0.0, le=4.0)] = Field(
+        default=2.00,
+        description=(
+            "D62: |beta-weighted net dollar delta| cap as a share of equity: post-trade "
+            "|Σ (net Δ share-eq × spot × max(β, 1))| ≤ 2.00 × equity; β = 1y daily vs SPY "
+            "(betas routine), 1.0 when missing or stale."
         ),
     )
     portfolio_vega_cap_pct: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
@@ -457,7 +465,7 @@ class ArcSettings(BaseSettings):
         default=0.80,
         description=(
             "D33: net |dollar delta| / |vega| usage of the PLAN §5 cap above which the "
-            "book is flagged delta_near_cap / vega_near_cap (D57: delta in dollars)."
+            "book is flagged delta_near_cap / beta_delta_near_cap / vega_near_cap (D57/D62)."
         ),
     )
     portfolio_context_max_positions: Annotated[int, Field(ge=1, le=50)] = Field(

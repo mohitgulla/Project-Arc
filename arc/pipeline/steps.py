@@ -150,6 +150,7 @@ from arc.pipeline.market import (
     market_snapshot,
     next_earnings,
     price_structure,
+    proposal_betas,
 )
 from arc.pipeline.market_guard import MarketGuard, market_guard
 from arc.pipeline.portfolio_context import (
@@ -2909,19 +2910,23 @@ def _with_position(
     g: Any,
     n: int,
     spot: Decimal | None = None,
+    beta: Decimal | None = None,
 ) -> Portfolio:
     """The in-memory book with a gate-passed proposal added, so the next proposal in the
     same run sees it. D57: its dollar delta (Δ × n × spot) is carried forward too; a
-    passed proposal always had a spot (the gate fails closed without one)."""
+    passed proposal always had a spot (the gate fails closed without one). D62: so is
+    its beta-weighted dollar delta (Δ × n × spot × β used; β floored at 1.0)."""
     from arc.gate.inputs import Position
     from arc.models import Greeks
 
     pg = portfolio.greeks
     added = Decimal(str(g.delta)) * n * spot if spot is not None else Decimal(0)
+    beta_used = max(beta if beta is not None else Decimal(1), Decimal(1))
     return portfolio.model_copy(
         update={
             "positions": [*portfolio.positions, Position(underlying=underlying, max_loss=max_loss)],
             "dollar_delta": portfolio.dollar_delta + added,
+            "beta_dollar_delta": portfolio.beta_dollar_delta + added * beta_used,
             "greeks": Greeks(
                 delta=pg.delta + g.delta * n,
                 gamma=pg.gamma + g.gamma * n,
@@ -3352,7 +3357,12 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         # Quotes were just fetched: judge their age (and stamp the gate, token and
         # expiry) against a clock read now, never a time taken before the fetch.
         now = ctx.clock()
-        market = market_snapshot(priced.contracts, earnings, {t: priced.spot})
+        market = market_snapshot(
+            priced.contracts,
+            earnings,
+            {t: priced.spot},
+            proposal_betas(ctx.conn, [t], now.astimezone(ET).date()),
+        )
         limit = limit_price(st.net_debit_credit, settings.limit_tick)
         # D24: the gate checks the whole price band; size at its worst price (D18).
         band = band_for(st, limit, market, settings)
@@ -3567,6 +3577,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 st.greeks,
                 size.contracts,
                 market.underlying_spot.get(t),
+                market.underlying_beta.get(t),
             )
     return JobResult(
         summary="; ".join(lines) or f"no proposals ({dict(skipped)})",

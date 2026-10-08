@@ -58,3 +58,21 @@ describe("Greeks card shows dollar delta (D57)", () => {
     expect(src).not.toContain("g.delta_cap");
   });
 });
+
+describe("Greeks card: beta-weighted delta + an ⓘ on every row (D62)", () => {
+  const src = PAGES["../pages/Overview.tsx"]!;
+  it("shows the β$Δ row against its cap", () => {
+    expect(src).toContain('label="|β$Δ| beta-weighted net delta (SPY-eq)"');
+    expect(src).toContain("g.beta_delta_cap");
+  });
+  it("every row carries an InfoTip test id", () => {
+    for (const id of ["dollar-delta", "beta-delta", "vega", "theta", "gamma", "max-loss"]) {
+      expect(src).toContain(`testid="greeks-info-${id}"`);
+    }
+  });
+  it("tip caps come from /api/meta, not literals", () => {
+    expect(src).toContain("caps?.portfolio_dollar_delta_cap_pct");
+    expect(src).toContain("caps?.portfolio_beta_delta_cap_pct");
+    expect(src).not.toMatch(/≤ (100|200)% × equity/);
+  });
+});

@@ -19,6 +19,7 @@
 #   02:00           youtube.briefs (D45/E4.6; owner 2026-10-05, was 05:00): newest video per channel (last 48 h, D60) ->
 #                   one channel_brief each (newest supersedes; pending keeps the older); Research reads them
 #   05:30           active universe resolve (D56 tiers); Mon: symbol master refresh (E5.7)
+#   05:35           betas (E3.6/D62): 1y daily beta vs SPY per ticker -> betas (beta-weighted delta cap)
 #   06:00           earnings calendar; rss (15m) / edgar (15m) polling until 20:00
 #   08:15           options_slow catch-up (options_daily / vix_futures / vol_term), only for a
 #                   session the evening slot did not write; lands after the 06:00 Scout, so it
@@ -476,6 +477,16 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     feed: scout                 # D54: slow feed (once a day)
     writes: []                  # stores iv_daily rows; the regime step reads them (no context kind)
     lane: background            # one chain snapshot per ticker
+  betas:                        # E3.6 (D62): 1y daily beta vs SPY -> betas table (beta-weighted delta cap)
+    label: Betas
+    about: "Daily 1-year beta vs SPY per ticker (Alpaca daily closes) for the beta-weighted delta cap"
+    schedule: ["05:35"]         # pre-market, before the 06:00 Scout and RTH
+    days: trading
+    ttl: 3h                     # a missed slot catches up that morning
+    reference: true             # reference data (betas table; the gate inputs read it)
+    feed: scout                 # slow feed (once a day)
+    writes: []                  # stores betas rows; no context kind
+    lane: background            # one daily-bars request per ticker
   ex_dividend:                  # Alpaca corporate actions: early-assignment risk on short calls
     label: Ex-dividend
     about: "Upcoming ex-dividend dates: early-assignment risk on short calls"

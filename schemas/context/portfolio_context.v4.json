@@ -169,6 +169,26 @@
           "title": "At Cap Underlyings",
           "type": "array"
         },
+        "beta_delta": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GreekUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v4 (D62): beta-weighted net dollar delta (\u03a3 \u0394 \u00d7 spot \u00d7 max(\u03b2 vs SPY, 1)) vs its cap. None = a spot is unknown (as_opened book without a stored spot)."
+        },
+        "betas": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "v4 (D62): \u03b2 used per open underlying (\u2265 1.0; 1.0 = missing or stale)",
+          "title": "Betas",
+          "type": "object"
+        },
         "by_expiry_bucket": {
           "additionalProperties": {
             "type": "number"
@@ -250,6 +270,7 @@
               "stance_skew",
               "expiry_cluster",
               "delta_near_cap",
+              "beta_delta_near_cap",
               "vega_near_cap"
             ],
             "type": "string"
@@ -723,7 +744,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "E5.9 (D33): Research's deterministic view of the open book (subject ``session``).\n\nv2 (E13.17, additive): each position may carry ``facts`` (exit path only).\nv3 (E3.5, D57): ``aggregates.delta`` is net dollar delta vs the dollar cap (None when\na spot is unknown); ``aggregates.delta_shares`` keeps the share-equivalent net.",
+  "description": "E5.9 (D33): Research's deterministic view of the open book (subject ``session``).\n\nv2 (E13.17, additive): each position may carry ``facts`` (exit path only).\nv3 (E3.5, D57): ``aggregates.delta`` is net dollar delta vs the dollar cap (None when\na spot is unknown); ``aggregates.delta_shares`` keeps the share-equivalent net.\nv4 (E3.6, D62, additive): ``aggregates.beta_delta`` (beta-weighted $\u0394 vs its cap),\n``aggregates.betas`` (\u03b2 used per underlying) and the ``beta_delta_near_cap`` flag.",
   "properties": {
     "account": {
       "$ref": "#/$defs/PortfolioAccount"

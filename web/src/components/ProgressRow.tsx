@@ -12,8 +12,11 @@ export function ProgressRow({
   fraction,
   color = "var(--accent-bar)",
   warnAt,
+  info,
 }: {
   label: ReactNode;
+  /** Optional ⓘ (an `InfoTip`) after the label, outside its clipping. */
+  info?: ReactNode;
   value: ReactNode;
   right?: ReactNode;
   fraction: number;
@@ -27,6 +30,7 @@ export function ProgressRow({
       <div className="flex min-w-0 items-center gap-2">
         <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: barColor }} />
         <span className="truncate text-secondary">{label}</span>
+        {info}
       </div>
       <span className="text-right font-semibold tabular-nums">{value}</span>
       <span className="text-right text-caption text-muted tabular-nums">{right}</span>

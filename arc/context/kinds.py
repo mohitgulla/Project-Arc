@@ -191,6 +191,8 @@ class PortfolioContextPayload(PortfolioContext):
     v2 (E13.17, additive): each position may carry ``facts`` (exit path only).
     v3 (E3.5, D57): ``aggregates.delta`` is net dollar delta vs the dollar cap (None when
     a spot is unknown); ``aggregates.delta_shares`` keeps the share-equivalent net.
+    v4 (E3.6, D62, additive): ``aggregates.beta_delta`` (beta-weighted $Δ vs its cap),
+    ``aggregates.betas`` (β used per underlying) and the ``beta_delta_near_cap`` flag.
     """
 
     model_config = _FORBID
@@ -874,7 +876,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
     KindSpec("proposal", ProposalPayload, schema_version=3),  # E13.18: exit_review
     KindSpec("position_review", PositionReviewPayload, schema_version=2),  # E6.4a: floor window
-    KindSpec("portfolio_context", PortfolioContextPayload, schema_version=3),  # E3.5: $Δ
+    KindSpec("portfolio_context", PortfolioContextPayload, schema_version=4),  # E3.6: β$Δ
     KindSpec("journal", JournalPayload),
     KindSpec("note", NotePayload, schema_version=5),  # E13.13: sections, scalar facts
     # E4.5 (D30): story digests + options-trading data sources

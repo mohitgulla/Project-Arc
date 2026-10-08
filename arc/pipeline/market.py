@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import BaseModel, ConfigDict
 
+from arc.betas.store import betas_used
 from arc.context.ttl import from_db
 from arc.data.base import DEFAULT_SPOT_MAX_SPREAD_PCT, market_spot
 from arc.gate.inputs import AccountSnapshot, ClosedLot, MarketSnapshot, Portfolio, Position, Quote
@@ -232,11 +233,15 @@ def build_portfolio(
     wash_sale_days: int,
     r: float,
     spot_max_spread_pct: float = DEFAULT_SPOT_MAX_SPREAD_PCT,
+    delta_breakdown: dict[str, dict[str, float | str]] | None = None,
 ) -> Portfolio:
     """Open option positions (max loss per underlying + net Greeks) plus recent closed lots.
 
     D57: ``dollar_delta`` sums each root's net Δ (share-eq) × that root's spot (the same
-    spot its Greeks were priced at).
+    spot its Greeks were priced at). D62: ``beta_dollar_delta`` sums the same terms ×
+    the root's β used (:func:`arc.betas.store.betas_used`: stored 1y β vs SPY floored at
+    1.0; missing or stale -> 1.0). *delta_breakdown* (when given) is filled per root with
+    ``{dollar_delta, beta, beta_dollar_delta, beta_source}`` for the monitor heartbeat.
 
     Raises :class:`PortfolioError` when any open position cannot be valued
     (e.g. undefined risk, missing quotes): no new trade is proposed then.
@@ -245,7 +250,9 @@ def build_portfolio(
     open_positions: list[Position] = []
     greeks = Greeks()
     dollar_delta = Decimal(0)
+    beta_dollar_delta = Decimal(0)
     groups = _group_legs(conn, positions)
+    betas = betas_used(conn, sorted({root for root, _, _ in groups}), today)
     for root, label, legs in groups:
         try:
             _, max_loss = max_gain_loss(legs)
@@ -286,7 +293,27 @@ def build_portfolio(
                     vega=greeks.vega + g.vega,
                     theta=greeks.theta + g.theta,
                 )
-                dollar_delta += Decimal(str(g.delta)) * Decimal(str(spot))
+                leg_dollar_delta = Decimal(str(g.delta)) * Decimal(str(spot))
+                b = betas[root.upper()]
+                leg_beta_delta = leg_dollar_delta * Decimal(str(b.beta))
+                dollar_delta += leg_dollar_delta
+                beta_dollar_delta += leg_beta_delta
+                if delta_breakdown is not None:
+                    row = delta_breakdown.setdefault(
+                        root,
+                        {
+                            "dollar_delta": 0.0,
+                            "beta": b.beta,
+                            "beta_dollar_delta": 0.0,
+                            "beta_source": b.source,
+                        },
+                    )
+                    row["dollar_delta"] = round(
+                        float(row["dollar_delta"]) + float(leg_dollar_delta), 2
+                    )
+                    row["beta_dollar_delta"] = round(
+                        float(row["beta_dollar_delta"]) + float(leg_beta_delta), 2
+                    )
         except PortfolioError:
             raise
         except Exception as exc:
@@ -308,6 +335,7 @@ def build_portfolio(
         positions=open_positions,
         greeks=greeks,
         dollar_delta=dollar_delta,
+        beta_dollar_delta=beta_dollar_delta,
         closed_lots=lots,
         legs=dict(held),
         opened_today=frozenset(opened_today_symbols(conn, today)),
@@ -630,11 +658,13 @@ def market_snapshot(
     contracts: dict[str, OptionContract],
     earnings: dict[str, _dt.date | None],
     spots: Mapping[str, float | None] | None = None,
+    betas: Mapping[str, float] | None = None,
 ) -> MarketSnapshot:
     """Gate quotes for the legs. A contract without a quote timestamp is left out (fails closed).
 
     *spots* (D57): underlying spot per root, the re-pricing spot. A ``None`` or
     non-positive spot is left out, so the gate's dollar-delta cap fails closed.
+    *betas* (D62): β used per root (from :func:`proposal_betas`; already floored).
     """
     quotes: dict[str, Quote] = {}
     for sym, c in contracts.items():
@@ -646,4 +676,14 @@ def market_snapshot(
     spot_map = {
         root: Decimal(str(v)) for root, v in (spots or {}).items() if v is not None and v > 0
     }
-    return MarketSnapshot(quotes=quotes, next_earnings=earnings, underlying_spot=spot_map)
+    beta_map = {root: Decimal(str(v)) for root, v in (betas or {}).items()}
+    return MarketSnapshot(
+        quotes=quotes, next_earnings=earnings, underlying_spot=spot_map, underlying_beta=beta_map
+    )
+
+
+def proposal_betas(
+    conn: sqlite3.Connection | None, tickers: Sequence[str], today: _dt.date
+) -> dict[str, float]:
+    """D62: β used per ticker for a gate ``MarketSnapshot`` (floored; 1.0 by default)."""
+    return {t: b.beta for t, b in betas_used(conn, tickers, today).items()}

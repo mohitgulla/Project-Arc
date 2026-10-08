@@ -564,7 +564,13 @@ def _open_leg(
     from arc.gate.token import issue_token
     from arc.journal.store import JournalStore
     from arc.models import Proposal, QuantMetrics, Sizing
-    from arc.pipeline.market import limit_price, market_snapshot, next_earnings, price_structure
+    from arc.pipeline.market import (
+        limit_price,
+        market_snapshot,
+        next_earnings,
+        price_structure,
+        proposal_betas,
+    )
     from arc.pipeline.steps import (
         band_for,
         existing_max_loss,
@@ -592,7 +598,9 @@ def _open_leg(
     st = priced.structure
     now = ctx.clock()  # E5.2b: judge quote age against a clock read after the fetch
     earnings = next_earnings(ctx.conn, [t], _today(ctx))
-    market = market_snapshot(priced.contracts, earnings, {t: priced.spot})
+    market = market_snapshot(
+        priced.contracts, earnings, {t: priced.spot}, proposal_betas(ctx.conn, [t], _today(ctx))
+    )
     limit = limit_price(st.net_debit_credit, settings.limit_tick)
     band = band_for(st, limit, market, settings)
     size = size_contracts(

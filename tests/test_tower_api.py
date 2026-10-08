@@ -67,7 +67,8 @@ def test_meta_has_cadences_caps_and_env(client: TestClient) -> None:
     assert mon.stale_after_s == 3 * mon.every_s and mon.window and mon.days == "trading"
     assert m.cadences["broker.reconcile"].every_s == 86_400  # one run a day
     assert m.env == "paper" and m.account_profile
-    assert m.gate_caps.portfolio_dollar_delta_cap_pct == pytest.approx(0.50)
+    assert m.gate_caps.portfolio_dollar_delta_cap_pct == pytest.approx(1.00)  # D62
+    assert m.gate_caps.portfolio_beta_delta_cap_pct == pytest.approx(2.00)
     assert m.gate_caps.portfolio_vega_cap_pct == pytest.approx(0.010)
     assert m.refresh_interval_s == 60 and m.refresh_choices_s == [30, 60, 120]
     assert m.app.name == "arc" and m.app.version and m.theme_default == "system"
@@ -80,7 +81,7 @@ def test_meta_and_snapshot_read_d26_overrides_from_store(db: Path, static: Path)
     assert c.get("/api/meta").json()["config_version"] == 0
     conn = connect(db)
     ConfigChangeRepo(conn).append(
-        key="portfolio_dollar_delta_cap_pct", old=0.50, new=0.20, is_default=False, actor="U1",
+        key="portfolio_dollar_delta_cap_pct", old=1.00, new=0.20, is_default=False, actor="U1",
         reason="test", at=NOW, source="slack", status="applied", direction="safer",
     )  # fmt: skip
     conn.close()
@@ -90,6 +91,17 @@ def test_meta_and_snapshot_read_d26_overrides_from_store(db: Path, static: Path)
     assert m["gate_caps"]["portfolio_dollar_delta_cap_pct"] == pytest.approx(0.20)
     s = c.get("/api/snapshot").json()
     assert s["greeks"]["dollar_delta_cap"] == pytest.approx(0.20 * 100500)
+    # D62: the beta-weighted cap follows its own override too
+    conn = connect(db)
+    ConfigChangeRepo(conn).append(
+        key="portfolio_beta_delta_cap_pct", old=2.00, new=1.50, is_default=False, actor="U1",
+        reason="test", at=NOW, source="slack", status="applied", direction="safer",
+    )  # fmt: skip
+    conn.close()
+    before = _sha(db)
+    assert c.get("/api/meta").json()["gate_caps"]["portfolio_beta_delta_cap_pct"] == 1.50
+    s = c.get("/api/snapshot").json()
+    assert s["greeks"]["beta_delta_cap"] == pytest.approx(1.50 * 100500)
     assert _sha(db) == before
 
 
@@ -98,7 +110,9 @@ def test_snapshot_is_the_tower_snapshot(client: TestClient) -> None:
     assert r.status_code == 200
     s = r.json()
     assert dt.datetime.fromisoformat(s["as_of"]) == NOW
-    assert s["greeks"]["delta"] == 25.0 and s["greeks"]["dollar_delta_cap"] == pytest.approx(50_250)
+    assert s["greeks"]["delta"] == 25.0 and s["greeks"]["dollar_delta_cap"] == pytest.approx(
+        100_500
+    )
     assert {p["ticker"] for p in s["proposals"]} == {"SPY", "QQQ"}
     wide = client.get("/api/snapshot", params={"lookback_days": 30}).json()
     assert {p["ticker"] for p in wide["proposals"]} == {"SPY", "QQQ", "IWM"}
