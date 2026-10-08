@@ -232,8 +232,26 @@ LEGACY_SOURCES: Mapping[str, SourceSpec] = {
         label="CNBC",
         hosts=("cnbc.com",),
     ),
+    # E14.2 (D60): the CNBC feeds gave 1-4 docs/day and no candidates; replaced by the
+    # PR Newswire + Business Wire press-release wires (company_data).
+    "cnbc_earnings": SourceSpec(
+        key="cnbc_earnings",
+        job="rss",
+        category=SourceCategory.COMPANY_DATA,
+        label="CNBC Earnings",
+    ),
+    "cnbc_business": SourceSpec(
+        key="cnbc_business",
+        job="rss",
+        category=SourceCategory.MARKET_NEWS,
+        label="CNBC Business",
+    ),
 }
-LEGACY_REPLACED_BY: Mapping[str, str] = {"cnbc": "cnbc_earnings, cnbc_business"}
+LEGACY_REPLACED_BY: Mapping[str, str] = {
+    "cnbc": "cnbc_earnings, cnbc_business",
+    "cnbc_earnings": "prnewswire, businesswire",
+    "cnbc_business": "prnewswire, businesswire",
+}
 
 
 def _job_category(job: str, options: Mapping[str, Any]) -> SourceCategory | None:

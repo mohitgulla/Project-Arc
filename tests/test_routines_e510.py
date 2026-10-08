@@ -633,8 +633,9 @@ def test_edgar_one_submissions_request_per_company(
     )
     settings = ArcSettings(universe=["AAPL", "MSFT", "QQQ"], _env_file=None)  # type: ignore[call-arg]
     docs = E.fetch_edgar(conn, settings)
-    assert calls == {"tickers": 1, "submissions": 2, "filing": 6}
-    assert len(docs) == 6
+    # E14.2 (D60): Form 4 is no longer fetched -> 8-K + 10-Q per company
+    assert calls == {"tickers": 1, "submissions": 2, "filing": 4}
+    assert len(docs) == 4
     # second run: cursors hold, no filing downloads, still one request per company
     calls.update(tickers=0, submissions=0, filing=0)
     assert E.fetch_edgar(conn, settings) == []

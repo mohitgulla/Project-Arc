@@ -1,8 +1,14 @@
 """SEC EDGAR connector.
 
-Fetches 8-K, 10-Q, and Form 4 filings from the EDGAR full-text search
-and company submissions APIs.  Respects the ≤10 req/s rate limit and
-sends the required ``User-Agent`` header.
+Fetches 8-K, 10-Q and 10-K filings (and their ``/A`` amendments) from the EDGAR
+company submissions API. Respects the ≤10 req/s rate limit and sends the required
+``User-Agent`` header. E14.2 (D60): Form 4 is not fetched (``finnhub.insider``
+covers insider trades).
+
+Each stored doc carries a ``title`` (``"8-K NVDA Items 2.02, 9.01"``,
+``"10-Q NVDA period 2026-07-26"``), a ``text`` without ``<style>``/CSS and the inline
+XBRL header, and ``tickers_hint`` = the filer's own ticker only (the CIK map entry
+the filing was fetched for; a regex over the body produced ``A``, ``D``, ``PARK``).
 
 Incremental: persists the latest filing ``accessionNumber`` per form
 type as the cursor.
@@ -10,9 +16,11 @@ type as the cursor.
 
 from __future__ import annotations
 
+import html
+import re
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import sqlite3
@@ -33,8 +41,27 @@ CONNECTOR = "edgar"
 EFTS_BASE = "https://efts.sec.gov/LATEST/search-index"
 SUBMISSIONS_BASE = "https://data.sec.gov/submissions"
 FILING_BASE = "https://www.sec.gov/Archives/edgar/data"
-FORM_TYPES = ("8-K", "10-Q", "4")
-_HINT_SCAN_CHARS = 20_000  # ticker hints: scan the head of the filing only
+# E14.2 (D60): material company filings only; Form 4 is covered by finnhub.insider.
+FORM_TYPES = ("8-K", "8-K/A", "10-Q", "10-Q/A", "10-K", "10-K/A")
+MAX_TEXT_CHARS = 50_000  # truncate huge filings (10-K) after cleaning
+
+# Blocks whose content is never filing prose (E14.2): CSS, scripts, the inline XBRL
+# header (contexts, units, hidden facts), the HTML head and comments.
+_DROP_BLOCKS = re.compile(
+    r"<(style|script|head|ix:header|xbrli?:[a-z]+)\b[^>]*>.*?</\1\s*>|<!--.*?-->|<\?xml[^>]*\?>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_TAG = re.compile(r"<[^>]+>")
+# Inline tags are removed without a gap (a span can split a word: "CORP<span>ORATION").
+_INLINE_TAG = re.compile(
+    r"</?(span|a|b|i|u|em|strong|font|sup|sub|small|ix:[a-z]+)\b[^>]*>", flags=re.IGNORECASE
+)
+_WS = re.compile(r"\s+")
+# Inline CSS rule sets that survive as text in some XSL renderings (Form-style docs):
+# ``.FormData {color: blue; ...}``.
+_CSS_RULES = re.compile(
+    r"(?:[.#]?[A-Za-z][\w-]*\s*(?:,\s*[.#]?[A-Za-z][\w-]*\s*)*)\{[^{}]*:[^{}]*\}"
+)
 
 # EDGAR asks ≤10 req/s; we target ~5 to be safe
 _MIN_REQUEST_INTERVAL = 0.2
@@ -112,6 +139,8 @@ def _filings_of_form(data: dict | None, cik: str, form_type: str, *, count: int)
     dates = recent.get("filingDate", [])
     accepted = recent.get("acceptanceDateTime", [])
     primary_docs = recent.get("primaryDocument", [])
+    report_dates = recent.get("reportDate", [])
+    items = recent.get("items", [])
 
     results = []
     for i, form in enumerate(forms):
@@ -125,12 +154,50 @@ def _filings_of_form(data: dict | None, cik: str, form_type: str, *, count: int)
                 "filingDate": dates[i] if i < len(dates) else "",
                 "acceptanceDateTime": accepted[i] if i < len(accepted) else "",
                 "primaryDocument": primary_docs[i] if i < len(primary_docs) else "",
+                "reportDate": report_dates[i] if i < len(report_dates) else "",
+                "items": items[i] if i < len(items) else "",
                 "form": form,
                 "cik": cik,
             }
         )
 
     return results
+
+
+def filing_title(filing: dict[str, Any], ticker: str) -> str:
+    """E14.2: ``"<form> <ticker> <period/items>"`` for a submissions entry.
+
+    8-K (and 8-K/A): ``"8-K NVDA Items 2.02, 9.01"`` from the submissions ``items``
+    field. 10-Q / 10-K: ``"10-Q NVDA period 2026-07-26"`` from ``reportDate``. Either
+    part is left out when EDGAR does not carry it.
+    """
+    form = str(filing.get("form") or "").strip() or "filing"
+    head = f"{form} {ticker.upper()}"
+    if form.startswith("8-K"):
+        parts = [p.strip() for p in str(filing.get("items") or "").split(",") if p.strip()]
+        if parts:
+            label = "Item" if len(parts) == 1 else "Items"
+            return f"{head} {label} {', '.join(parts)}"
+        return head
+    period = str(filing.get("reportDate") or "").strip()
+    return f"{head} period {period}" if period else head
+
+
+def clean_filing_text(raw: str) -> str:
+    """E14.2: plain text of a filing document (HTML / inline XBRL / XSL render).
+
+    Drops ``<style>``/``<script>``/``<head>`` blocks, the inline XBRL header
+    (``<ix:header>``: contexts, units, hidden dei facts), comments and the XML
+    declaration, then the remaining tags, CSS rule sets that leaked into text, and
+    HTML entities. Whitespace is collapsed; the result is capped at
+    :data:`MAX_TEXT_CHARS`.
+    """
+    text = _DROP_BLOCKS.sub(" ", raw)
+    text = _INLINE_TAG.sub("", text)
+    text = _TAG.sub(" ", text)
+    text = html.unescape(text)
+    text = _CSS_RULES.sub(" ", text)
+    return _WS.sub(" ", text).strip()[:MAX_TEXT_CHARS]
 
 
 def filing_published_at(filing: dict) -> datetime | None:
@@ -181,16 +248,10 @@ def _fetch_filing_text(url: str, settings: ArcSettings) -> str:
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
-            # Strip HTML tags for a rough text extraction
-            import re
-
-            text = re.sub(r"<[^>]+>", " ", raw)
-            text = re.sub(r"\s+", " ", text).strip()
-            # Truncate to ~50k chars to avoid huge blobs
-            return text[:50_000]
     except Exception:  # noqa: BLE001
         log.warning("edgar.filing_fetch_failed", url=url)
         return ""
+    return clean_filing_text(raw)
 
 
 def fetch_edgar(
@@ -218,7 +279,7 @@ def fetch_edgar(
     doc_repo = RawDocRepo(conn)
     # D51: filings for today's active list (core until the first resolve of the day).
     # D28: CIKs come from the cached symbol master when it has them (no per-ticker
-    # download of the SEC file); ticker hints add master-validated symbols in the text.
+    # download of the SEC file). E14.2: tickers_hint is the filer's ticker only.
     # E12.4: plus open-position underlyings (filings on a held name matter even when it
     # left the active list). *tickers* (the job's `tickers` option) replaces the scope.
     uni = IngestUniverse.from_settings(settings, now=now, conn=conn)
@@ -286,14 +347,14 @@ def fetch_edgar(
                     continue
 
                 h = content_hash(CONNECTOR, url)
+                title = filing_title(filing, ticker)
                 doc = RawDoc(
                     source=CONNECTOR,
                     url=url,
                     published_at=pub_dt or run_now,
                     text=text,
-                    tickers_hint=list(
-                        dict.fromkeys([ticker, *uni.tickers_in(text[:_HINT_SCAN_CHARS])])
-                    ),
+                    # E14.2: the filer's ticker only (no body regex: `A`, `D`, `PARK`)
+                    tickers_hint=[ticker.upper()],
                     content_hash=h,
                 )
 
@@ -304,6 +365,7 @@ def fetch_edgar(
                     text=doc.text,
                     tickers_hint=doc.tickers_hint,
                     hash_val=h,
+                    title=title,
                 )
 
                 if doc_id is not None:

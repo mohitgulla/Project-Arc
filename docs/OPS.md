@@ -921,8 +921,8 @@ key on every input → `skipped` (`no_api_key`); nothing answered → `failed`
 
 | category | label | `max_age` | sources | read by |
 |---|---|---|---|---|
-| `market_news` | Market news | 6h | WSJ Markets, CNBC Business, Nasdaq RSS (weight 0.5, D60), Fed RSS (D56) | Scalp, Research |
-| `company_data` | Company data | 12h | `ticker_news` (Benzinga, weight 2, D60), Seeking Alpha (weight 0.5, D60), CNBC Earnings, WSJ Business, EDGAR | Scalp, Research |
+| `market_news` | Market news | 6h | WSJ Markets, Nasdaq RSS (weight 0.5 + title filters, D60), Fed RSS (D56) | Scalp, Research |
+| `company_data` | Company data | 12h | `ticker_news` (Benzinga, weight 2, D60), Seeking Alpha (weight 0.5, D60), PR Newswire + Business Wire (title-filtered wires, D60), WSJ Business, EDGAR (8-K/10-Q/10-K, D60) | Scalp, Research |
 | `options_fast` | Options fast | 30m | none yet (E13.6 adds the 30-min RTH source) | Scalp (typed context) |
 | `options_slow` | Options slow | 24h | `vol_term`, `options_daily`, `vix_futures` (`feed: scout`) | Scout, Research (typed context) |
 | `youtube_macro` | YouTube macro | 48h (D60) | FX Evolution, Bravos Research | Scout, Research (channel briefs, §5.22) |
@@ -978,10 +978,23 @@ and `arc context show --kind unusual_options` still lists them until then.
   claims it (`sweep_run_id`) and counts it once (`filtered` metric, a *Filtered* line on
   the Sweep card); the `rss` run reports `new_<feed>` / `filtered_<feed>` metrics and the
   Tower Sources page shows `N filtered (title)` per feed today. Seeking Alpha ships with
-  three patterns for fund/ETF dividend declarations (~31% of its docs). The lists are
-  edited in `config/routines.yaml` by PR only (not `!arc config`). The retired `cnbc`
-  key (CNBC Economy, replaced by `cnbc_earnings` + `cnbc_business`) keeps its label
-  for old rows for one release.
+  three patterns for fund/ETF dividend declarations (~31% of its docs). Nasdaq (E14.2,
+  D60) excludes foreign-market wraps and listicle/opinion titles (160 of 514 stored
+  titles over 2026-10-06..08, 31%). The two press-release wires (E14.2) use
+  `title_include` (results, guidance, M&A, FDA, offerings, buybacks, dividends) plus a
+  `title_exclude` for earnings-date / conference-call notices, AGM poll results and
+  law-firm alerts (live 2026-10-08: PR Newswire 3/20 kept, Business Wire Earnings
+  5/63). The lists are edited in `config/routines.yaml` by PR only (not `!arc
+  config`). Retired keys keep their label and category for old rows
+  (`LEGACY_SOURCES`): `cnbc` (CNBC Economy, D55) and `cnbc_earnings` /
+  `cnbc_business` (E14.2, replaced by `prnewswire` + `businesswire`).
+- **EDGAR (E14.2, D60).** Forms 8-K, 10-Q, 10-K and their `/A` amendments (Form 4 is
+  dropped: `finnhub.insider` covers insider trades). Each doc's `title` is
+  `<form> <ticker> <items|period>` (`8-K NVDA Items 2.02, 9.01`, `10-Q NVDA period
+  2026-07-26`, from the submissions `items` / `reportDate`). `text` drops `<style>`,
+  `<script>`, `<head>`, the inline XBRL header and leaked CSS rule sets
+  (`arc.ingest.edgar.clean_filing_text`). `tickers_hint` is the filer's ticker only
+  (the CIK the filing was fetched for); no regex over the body.
 - **Source mix.** The Sweep card groups it by category: `*Market news* 50% · 6
   read: WSJ 1 · Nasdaq 5 (10 over budget)`, with `(N stale)` per source.
 - **Director.** Its prompt carries a code-built *Context by category* block: the 6
@@ -1016,7 +1029,7 @@ and `arc context show --kind unusual_options` still lists them until then.
 
   | Job | Source | Kind | Category | When (ET) |
   |---|---|---|---|---|
-  | `vol_term` | Cboe VIX9D/VIX/VIX3M/VVIX daily history | `vol_term` (contango/backwardation) | `options_slow` | 09:00, 16:45 |
+  | `vol_term` | Cboe VIX9D/VIX/VIX3M/VVIX daily history | `vol_term` (contango/backwardation) | `options_slow` | 18:30 + 08:15 catch-up (E14.2, D60; was 09:00/16:45, both stored the previous close) |
   | `macro_calendar` | federalreserve.gov FOMC page + BLS release ICS + BEA release ICS | `macro_calendar` | reference | 05:45 |
   | `ex_dividend` | Alpaca corporate actions | `ex_dividend` per ticker | reference | 06:15 |
 
@@ -1846,20 +1859,24 @@ fixtures: `arc/ingest/fixtures/cboe/` (session 2026-10-05).
 
 - **Session read:** a slot at/after 16:30 ET on a session reads that session; earlier
   slots read the previous session (`arc.utils.calendar.completed_session`).
-- **Schedule:** `["18:30", "08:15"]` trading days, `catch_up: {until_written:
-  "<kind>:{day}"}`. Any slot whose session already has an entry (payload `as_of`)
-  is planned `skip-written` (`already written: options_daily for 2026-10-05`), so
-  08:15 runs only when the evening slot did not write. Not published (CDN 403/404,
-  empty body, or a header-only CSV) = `skipped` at 18:30, `failed` at 08:15.
+- **Schedule:** `["23:00", "08:15"]` trading days (E14.2, D60: was 18:30, which was
+  always before the publish), `catch_up: {until_written: "<kind>:{day}"}`. Any slot
+  whose session already has an entry (payload `as_of`) is planned `skip-written`
+  (`already written: options_daily for 2026-10-05`), so 08:15 runs only when the
+  evening slot did not write. Not published (CDN 403/404, empty body, or a
+  header-only CSV) = `skipped` at 23:00, `failed` at 08:15. The 06:00 Scout reads
+  the previous evening's 23:00 write; an 08:15 catch-up lands after the Scout, so it
+  only serves Research and the Scalp that day. `vol_term` uses the same per-session
+  catch-up at 18:30 / 08:15 (a CSV still ending on an older close = not published).
 - **Shape:** `flat` when `|slope_1_2_pct| < options_slow.vx_flat_band` (0.5, tunable
   0-10, Risk none); else `contango` / `backwardation`. Weeklies never set front /
   second / back.
 - **Measured publish time** (CDN `Last-Modified` of `_daily_options`, 2026-10-06):
   21:08-22:50 ET over 8 sessions (09-24 21:34, 09-25 21:34, 09-28 21:43, 09-29 21:47,
   09-30 21:39, 10-01 21:14, 10-02 22:50, 10-05 21:08). Today's file is a 403 until
-  then and the VX CSV is header-only. So the 18:30 slot normally skips and the 08:15
-  catch-up writes the previous session; that is the expected steady state until the
-  evening slot moves after ~23:00. To re-measure, set
+  then and the VX CSV is header-only. So the old 18:30 slot always skipped and the
+  08:15 catch-up wrote the previous session; E14.2 moved the evening slot to 23:00
+  (after the latest measured publish, 22:50). To re-measure, set
   `options_slow.publish_probe_minutes` (0-60, measurement only, not runtime-tunable):
   an evening run then re-probes once a minute and records `probe_wait_s`.
 - **Terms:** Cboe market statistics are published for personal, non-commercial use.
@@ -1867,7 +1884,7 @@ fixtures: `arc/ingest/fixtures/cboe/` (session 2026-10-05).
   (Slack workspace, Tailscale-only Tower); no redistribution or republication.
 - E13.15 removed the `put_call` job and kind (its d51 readers are gone). `vol_term`
   (VIX index closes) stays as `market_guard`'s VIX source.
-- Check: `arc routines run options_daily --db <scratch> --now <date>T18:30-04:00
+- Check: `arc routines run options_daily --db <scratch> --now <date>T23:00-04:00
   --no-slack`, then `arc context show --db <scratch> --kind options_daily --latest`.
 
 ### 5.29 Cboe options tape: `options_fast` (E13.6, D56)
