@@ -105,6 +105,11 @@ loop:
   post_hold_roots: true    # false = HOLD / no_change loops post no root line
   slack_layout: root_per_loop   # root_per_loop (D36) | day_thread (pre-D36 rollback)
   action_roots: [positions.evaluate]   # D38: these chains get the same root line, only when they propose (SELL: …)
+  # D63 (E13.21): the exit and open branches run side by side (own thread + SQLite
+  # connection each), joined before quant.propose. [] = serial (the rollback).
+  parallel_branches:
+    - [quant.exit, risk.exit]
+    - [quant.open, risk.open, quant.revise]
 
 # E8.8b / D48: Arc Tower display knobs (read per request; never used by trading code).
 tower:
