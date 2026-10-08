@@ -142,8 +142,8 @@ class TestRegistry:
         assert {
             "wsj",
             "wsj_business",
-            "cnbc_earnings",
-            "cnbc_business",
+            "prnewswire",
+            "businesswire",
             "seekingalpha",
             "nasdaq",
             "fed",
@@ -151,6 +151,8 @@ class TestRegistry:
             "earnings",
         } <= set(reg.sources)
         assert "cnbc" not in reg.sources  # D55: CNBC Economy retired (label alias only)
+        # E14.2 (D60): CNBC Earnings/Business retired too (label aliases only)
+        assert not {"cnbc_earnings", "cnbc_business"} & set(reg.sources)
         assert reg.sources["edgar"].category is SourceCategory.COMPANY_DATA
         # D56: the earnings calendar is reference data (no category, no weight)
         assert reg.sources["earnings"].category is None and reg.sources["earnings"].reference
