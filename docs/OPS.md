@@ -191,7 +191,7 @@ the plist with `--print`, and remove it with `--uninstall`.
 | Check | Fails when | Alert key |
 |---|---|---|
 | tick | There is no `tick` heartbeat for `tick_stale_after` (15m), or none ever. | `tick_stale` |
-| tick_slow (E8.2a) | In the last `coverage_window` (60m), at least `tick_slow_count` (2) ticks took longer than `tick_slow_after` (4m, from E5.10's `tick_duration_ms`), or the p90 gap between ticks is above 1.5 × `tick.interval` (7m30s). The message names the slowest job. | `tick_slow` |
+| tick_slow (E8.2a) | In the last `coverage_window` (60m), at least `tick_slow_count` (2) ticks took longer than `tick_slow_after` (8m since D61, was 4m; from E5.10's `tick_duration_ms`), or the p90 gap between ticks is above 1.5 × `tick.interval` (7m30s). The message names the slowest job. | `tick_slow` |
 | routine_windows | Only for **slow-cadence** jobs (slots at least `per_slot_min_interval`, 60m, apart: Sweep overnight, broker.reconcile, earnings, the daily sources). A scheduled slot's catch-up window (+`miss_grace` 10m) closed and the slot never ran or was recorded as missed. Slots are only judged after the first tick heartbeat, looking back `miss_lookback` (1d). | `missed:<job>:<slot>` |
 | slot_coverage (E8.2a) | For **fast** jobs (the 10-min loop, monitor, the 30-min Sweep, rss/edgar): the job ran fewer than `coverage_min` (80 %) of its slots judged in the last `coverage_window` (60m). Slots are judged the same way as routine_windows (collapse aware), and halted slots count in neither number. One alert per job, which names the likely cause from the tick heartbeats (slow ticks with the top job, or tick gaps). | `coverage:<job>` |
 | earnings_coverage (E4.1d) | The `earnings` source job is enabled, the effective universe has at least one non-ETF ticker, and no earnings-calendar doc was stored in the last `earnings_stale_after` (7d). The message names the last earnings run's status and error (e.g. `skipped: no_api_key`, `failed: HTTPError …`). Without the dates `next_earnings` is empty and short premium on stocks fails closed. Never folded into a tick incident. | `coverage:earnings` |
@@ -1161,8 +1161,8 @@ up within one slot.
 - *No overlap.* A loop slot that finds the previous loop (or a Sweep holding the
   LLM lock) still running is recorded as `skipped` and never caught up. In one
   tick the loop runs before the Sweep (name order), so a Sweep can't starve it.
-- *Deadline.* `loop.max_runtime` (4m). A step already running may finish; no
-  later step starts (`timeout: loop exceeded 4m`). One Slack notice per day.
+- *Deadline.* `loop.max_runtime` (7m, D61; was 4m). A step already running may finish; no
+  later step starts (`timeout: loop exceeded 7m`). One Slack notice per day.
 - *Change-aware.* The Director digests its inputs (candidate ids, regime entries,
   positions, day-P&L bucket of `loop.pnl_bucket_pct` % equity, pending orders,
   budget tier, suppressed ideas). Same digest as the last full run and less than
@@ -1192,7 +1192,7 @@ off drops the roots of skipped slots; `loop.slack_layout = day_thread` is the
 rollback to the single day thread (cards and heartbeats as before D36).
 
 **Knobs** (`!arc config loop`): `loop.max_idle` (5-240 m, riskier up),
-`loop.max_runtime` (1-5 m, hard ceiling 5), `loop.pnl_bucket_pct`,
+`loop.max_runtime` (1-8 m, hard ceiling 8; D61), `loop.pnl_bucket_pct`,
 `loop.post_hold_roots`, `loop.slack_layout`. Cadences: `routines.sweep.cadence`,
 `routines.director.cadence` as before.
 

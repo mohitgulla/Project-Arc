@@ -535,7 +535,7 @@ class LoopSettings(BaseModel):
 
     job: str = "research"
     max_idle: _dt.timedelta = _dt.timedelta(minutes=30)
-    max_runtime: _dt.timedelta = _dt.timedelta(minutes=4)
+    max_runtime: _dt.timedelta = _dt.timedelta(minutes=7)
     pnl_bucket_pct: Annotated[float, Field(gt=0, le=10)] = 0.5
     post_hold_roots: bool = True
     slack_layout: LoopLayout = LoopLayout.ROOT_PER_LOOP

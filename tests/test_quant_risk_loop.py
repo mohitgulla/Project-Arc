@@ -345,7 +345,7 @@ class TestFlagOn:
 def test_deadline_skips_the_step_and_later_steps_run(settings: ArcSettings) -> None:
     on = _routines(on=True)
     steps = dict(on.steps)
-    # more seconds than the 4m loop budget: quant.revise can never start
+    # more seconds than the 7m loop budget: quant.revise can never start
     steps["quant.revise"] = steps["quant.revise"].model_copy(update={"min_remaining_s": 10_000})
     on = on.model_copy(update={"steps": steps})
     from arc.ingest.scalp import load_fixture_docs
