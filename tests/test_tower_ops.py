@@ -545,7 +545,9 @@ def test_sources_youtube_brief_status_from_manifest(tmp_path, routines) -> None:
     assert yt["youtube.stockedup"].brief and yt["youtube.stockedup"].brief.text == "brief ok"
     assert yt["youtube.fxevolution"].brief.text == "pending: no captions yet"  # type: ignore[union-attr]
     assert yt["youtube.fxevolution"].status == "pending"
-    assert yt["youtube.tradebrigade"].brief.text == "no video in 24h"  # type: ignore[union-attr]
+    assert (
+        yt["youtube.tradebrigade"].brief.text == "no video in 48h"
+    )  # D60  # type: ignore[union-attr]
     assert yt["youtube.arete"].status == "failed"
     video = next(c for c in s.categories if c.key == yt["youtube.arete"].category)
     assert video.status == "failed" and video.share is None  # never in the Scalp budget

@@ -86,13 +86,18 @@ def scout_input(*, with_buzz: bool) -> ScoutInput:
         max_discovery=25,
         discovery_floor=0.6,
         budget_chars=12_000,
-        presence={
-            "youtube_macro": "YouTube macro briefs: 1/2 channels (missing: Bravos)",
-            "youtube_micro": "YouTube micro briefs: 1/3 channels (missing: TradeBrigade, Arete)",
+        presence={  # D60: 2 macro + 5 micro channels; present briefs carry their age
+            "youtube_macro": "YouTube macro briefs: 1/2 channels: FX Evolution (13h)"
+            " (missing: Bravos)",
+            "youtube_micro": "YouTube micro briefs: 2/5 channels: StockedUp (31h), IBD (13h)"
+            " (missing: Trade Brigade, Arete Trading, Warrior Trading)",
         },
-        present={"youtube_macro": ["fxevolution"], "youtube_micro": ["stockedup"]},
-        missing={"youtube_macro": ["Bravos"], "youtube_micro": ["TradeBrigade", "Arete"]},
-        configured={"youtube_macro": 2, "youtube_micro": 3},
+        present={"youtube_macro": ["fxevolution"], "youtube_micro": ["stockedup", "ibd"]},
+        missing={
+            "youtube_macro": ["Bravos"],
+            "youtube_micro": ["Trade Brigade", "Arete Trading", "Warrior Trading"],
+        },
+        configured={"youtube_macro": 2, "youtube_micro": 5},
         briefs=[
             ScoutBrief(
                 origin="youtube:fxevolution",
@@ -105,6 +110,12 @@ def scout_input(*, with_buzz: bool) -> ScoutInput:
                 channel="StockedUp",
                 category="youtube_micro",
                 text='{"title": "RKLB breakout"}',
+            ),
+            ScoutBrief(
+                origin="youtube:ibd",
+                channel="IBD",
+                category="youtube_micro",
+                text='{"title": "MU reclaims the 21-day line"}',
             ),
         ],
         options_slow={

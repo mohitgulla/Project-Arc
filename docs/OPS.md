@@ -913,8 +913,8 @@ key on every input → `skipped` (`no_api_key`); nothing answered → `failed`
 | `company_data` | Company data | 12h | `ticker_news` (Benzinga, weight 2, D60), Seeking Alpha (weight 0.5, D60), PR Newswire + Business Wire (title-filtered wires, D60), WSJ Business, EDGAR (8-K/10-Q/10-K, D60) | Scalp, Research |
 | `options_fast` | Options fast | 30m | none yet (E13.6 adds the 30-min RTH source) | Scalp (typed context) |
 | `options_slow` | Options slow | 24h | `vol_term`, `options_daily`, `vix_futures` (`feed: scout`) | Scout, Research (typed context) |
-| `youtube_macro` | YouTube macro | 24h | FX Evolution, Bravos Research | Scout, Research (channel briefs, §5.22) |
-| `youtube_micro` | YouTube micro | 24h | StockedUp, Trade Brigade, Arete Trading | Scout, Research (channel briefs, §5.22) |
+| `youtube_macro` | YouTube macro | 48h (D60) | FX Evolution, Bravos Research | Scout, Research (channel briefs, §5.22) |
+| `youtube_micro` | YouTube micro | 48h (D60) | StockedUp, Trade Brigade, Arete Trading, Warrior Trading, IBD | Scout, Research (channel briefs, §5.22) |
 | `retail_buzz` | Retail buzz | 24h | `retail_buzz` (Reddit via ApeWisdom + Stocktwits trending, 05:40, D58) | trending tier (code), Scout (context only); never Research |
 
 **Reference data (D56)** is not a category: `ex_dividend`, `macro_calendar`, the
@@ -1193,6 +1193,15 @@ up within one slot.
   tick the loop runs before the Sweep (name order), so a Sweep can't starve it.
 - *Deadline.* `loop.max_runtime` (7m, D61; was 4m). A step already running may finish; no
   later step starts (`timeout: loop exceeded 7m`). One Slack notice per day.
+- *Parallel branches (D63, E13.21).* After `exits.mandatory` the exit branch
+  (`quant.exit → risk.exit`) and the open branch (`quant.open → risk.open →
+  quant.revise`) run side by side, each in its own thread on its own SQLite
+  connection, and join before `quant.propose`. The deadline is shared; a failed
+  step ends only its branch, then `quant.propose` does not run (as before). Proof:
+  overlapping `started_at`/`finished_at` in `routine_runs`, `wall=…ms parallel` on the
+  `[Routines]` reply, `loop_wall_ms` in the loop summary and the tick heartbeat. Serial
+  fallback (log `routines.parallel_branches_serial`): a branch persona on a `local`
+  model tier, or an in-memory store. Rollback: `loop.parallel_branches: []`.
 - *Change-aware.* The Director digests its inputs (candidate ids, regime entries,
   positions, day-P&L bucket of `loop.pnl_bucket_pct` % equity, pending orders,
   budget tier, suppressed ideas). Same digest as the last full run and less than
@@ -1560,27 +1569,36 @@ Channels, in config order:
 | `fxevolution` | FX Evolution `UCvJZEG5x-DVYZKTz--pS39w` | `youtube_macro` | `Live Stream` titles excluded |
 | `tradebrigade` | Trade Brigade `UCYKtr6GfycBqQJf32tbQSbQ` | `youtube_micro` | 50-77 min videos: `max_audio_minutes: 90` |
 | `arete` | Arete Trading `UCTeFsS-bP0XEt3NBMjfW2cA` | `youtube_micro` | `^PREMARKET LIVE` clips excluded, `max_videos: 10` |
-| `bravos` | Bravos Research `UCOHxDwCcOzBaLkeTazanwcw` | `youtube_macro` | macro-thesis channel (`horizon: multi_week`); about 2 long-form uploads a week (15 from 2026-08-09 to 10-03), 10-22 min, published about 15:00-18:00 ET, so the 24 h lookback finds a video on about 2 of 5 mornings (the rest: no info). Paid-package pitch stripped by `sponsor_patterns` |
+| `bravos` | Bravos Research `UCOHxDwCcOzBaLkeTazanwcw` | `youtube_macro` | macro-thesis channel (`horizon: multi_week`); about 2 long-form uploads a week (15 from 2026-08-09 to 10-03), 10-22 min, published about 15:00-18:00 ET, so the 48 h lookback (D60) finds a video on most mornings. Paid-package pitch stripped by `sponsor_patterns` |
+| `warrior` | Warrior Trading `UCBayuhgYpKNbhJxfExYkPfA` | `youtube_micro` | D60: one 10-25 min small-cap momentum recap per weekday about 09:40 ET (+ Sunday watch list); `/streams` lives excluded; Warrior Pro / trial pitch stripped. Most names fail the liquidity screen (expected) |
+| `ibd` | Investor's Business Daily `UC5fZv7bPcF5j2RsfO-9OiLA` | `youtube_micro` | D60: `include_streams: true`: the daily *Stock Market Today* (20-25 min, about 17:00 ET) is a post-live stream on `/streams`; `/videos` adds interviews. `MarketSurge` / `How To ` titles excluded |
 
 **Per channel (deterministic, in code):**
-1. Flat-list the newest `max_videos` uploads. A listing failure (yt-dlp missing,
-   timeout, non-zero exit) is an **error**: the summary shows `✗` and a notice posts.
-2. Drop live/upcoming streams, Shorts (≤ 60 s or `/shorts/`) and `title_exclude`
-   matches; take the newest remaining video published in the last `lookback` (24 h).
-3. None → **no brief today** (`– (no video 24h)`): no info, not a neutral vote, and
-   yesterday's brief does not carry over.
+1. Flat-list the newest `max_videos` uploads (with `include_streams`, `/streams` too,
+   D60). A listing failure (yt-dlp missing, timeout, non-zero exit) is an **error**:
+   the summary shows `✗` and a notice posts.
+2. Drop live/upcoming streams (finished `post_live` streams are kept with
+   `include_streams`), Shorts (≤ 60 s or `/shorts/`) and `title_exclude` matches; take
+   the newest remaining video published in the last `lookback` (48 h, D60) across both
+   listings.
+3. None → **no brief** (`– (no video 48h)`): no info, not a neutral vote.
+   If the newest video is pending (no captions yet, audio cap) or fails, the channel's
+   older brief stays active (`StockedUp ✓ (older brief 31h; newer pending: …)`):
+   a newer video never blanks a channel.
 4. Transcript: captions first, audio fallback; one caption breaker and one audio
-   budget (`yt_max_audio_per_slot`, default 4) for the whole run, so a 429 on one
+   budget (`yt_max_audio_per_slot`, default 5, D60) for the whole run, so a 429 on one
    channel sends the rest to audio instead of starting four cooldowns.
 5. The transcript is stored as a `raw_docs` row (`source_key youtube.<slug>`) and
    closed `scalp_status='brief_only'`: **the 30-min Sweep never reads video**.
 6. The channel profile (`arc/ingest/channels/<slug>/profile.yaml` + `GUIDELINES.md`)
    extracts a `ChannelBrief`; every item needs a verbatim quote, and sponsor/promo
-   reads are stripped first. The brief expires 24 h after the run and supersedes the
+   reads are stripped first. The brief expires 48 h after its **video was published**
+   (D60; the context entry's `valid_from` is the publish time) and supersedes the
    channel's previous `channel_brief` entry.
 
 **What the Director sees.** A code-built block per YouTube category: `YouTube macro
-briefs: 1/2 channels (missing: Bravos)` and `YouTube micro briefs: 3/3 channels`,
+briefs: 1/2 channels: FX Evolution (13h) (missing: Bravos)` and `YouTube micro briefs:
+5/5 channels: StockedUp (31h), …` (D60: each present brief's age),
 each followed by agreement per (ticker, stance) counted over distinct channels
 *inside that category* (the category's channel count is the denominator), then
 each brief. Each YouTube category is one equal voice among the six; its channels

@@ -1,4 +1,4 @@
-"""E4.6 (D45): daily ``youtube.briefs`` job — four channels, one pre-market run.
+"""E4.6 (D45), D60: daily ``youtube.briefs`` job — seven channels, one pre-market run.
 
 Network pieces (channel listing, video metadata, transcripts, the LLM) are
 replaced by fakes; the channel profiles, fixtures, store and context writes
@@ -25,6 +25,7 @@ from arc.ingest.channels.daily import (
     brief_agreement,
     brief_presence_line,
     configured_channels,
+    pick_newest,
     pick_video,
 )
 from arc.ingest.llm import FixtureScalpLLM, LLMResult
@@ -44,14 +45,17 @@ from arc.utils.calendar import ET
 if TYPE_CHECKING:
     import sqlite3
 
-SLUGS = ["stockedup", "fxevolution", "tradebrigade", "arete", "bravos"]
-CATEGORY = {  # D49: each channel's YouTube category (config/routines.yaml)
+SLUGS = ["stockedup", "fxevolution", "tradebrigade", "arete", "bravos", "warrior", "ibd"]
+CATEGORY = {  # D49/D60: each channel's YouTube category (config/routines.yaml)
     "stockedup": "youtube_micro",
     "fxevolution": "youtube_macro",
     "tradebrigade": "youtube_micro",
     "arete": "youtube_micro",
     "bravos": "youtube_macro",
+    "warrior": "youtube_micro",
+    "ibd": "youtube_micro",
 }
+STREAMS = {"ibd"}  # D60: include_streams; the fixture video is listed on /streams
 RUN_AT = dt.datetime(2026, 10, 5, 5, 0, tzinfo=ET)  # Monday 05:00 ET
 
 
@@ -122,7 +126,7 @@ def _world(
     *,
     extra_listing: dict[str, list[dict[str, Any]]] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]], dict[str, str], dict]:
-    """Listings, metadata and transcripts for the four fixture videos."""
+    """Listings, metadata and transcripts for the fixture videos (``<slug>:streams`` too)."""
     published = published or {}
     listings: dict[str, list[dict[str, Any]]] = {}
     infos: dict[str, dict[str, Any]] = {}
@@ -132,9 +136,11 @@ def _world(
         video, transcript, reply = _fixture(slug)
         vid = video["video_id"]
         when = published.get(slug, RUN_AT - dt.timedelta(hours=8))
-        listings[slug] = [
-            *(extra_listing or {}).get(slug, []),
-            {"id": vid, "title": video["title"]},
+        own = [{"id": vid, "title": video["title"]}]
+        listings[slug] = [*(extra_listing or {}).get(slug, []), *([] if slug in STREAMS else own)]
+        listings[f"{slug}:streams"] = [
+            *(extra_listing or {}).get(f"{slug}:streams", []),
+            *(own if slug in STREAMS else []),
         ]
         infos[vid] = {
             "id": vid,
@@ -142,7 +148,7 @@ def _world(
             "timestamp": _ts(when),
             "duration": 1800,
             "channel": slug,
-            "live_status": "was_live" if slug == "arete" else "not_live",
+            "live_status": "was_live" if slug in ("arete", "ibd") else "not_live",
         }
         texts[vid] = transcript
         replies[slug] = reply
@@ -168,6 +174,14 @@ def _ctx(
     )
 
 
+def _url_slugs(routines: RoutinesConfig) -> dict[str, str]:
+    """``{listing url: slug | slug:streams}`` for the configured channels."""
+    cfg = DailyBriefConfig.from_options(routines.job(JOB)[1].options)  # type: ignore[index]
+    out = {c.url: c.slug for c in cfg.channels}
+    out.update({c.streams_url: f"{c.slug}:streams" for c in cfg.channels if c.include_streams})
+    return out
+
+
 def _run(
     conn: sqlite3.Connection,
     routines: RoutinesConfig,
@@ -179,8 +193,7 @@ def _run(
     extra_listing: dict[str, list[dict[str, Any]]] | None = None,
 ) -> tuple[Any, FakeSession, list[str]]:
     listings, infos, texts, replies = _world(published, extra_listing=extra_listing)
-    cfg = DailyBriefConfig.from_options(routines.job(JOB)[1].options)  # type: ignore[index]
-    url_slug = {c.url: c.slug for c in cfg.channels}
+    url_slug = _url_slugs(routines)
     fetched: list[str] = []
 
     def list_videos(url: str, n: int) -> list[dict[str, Any]]:
@@ -222,9 +235,9 @@ class TestConfig:
         assert spec.lane == "background"
         cfg = DailyBriefConfig.from_options(spec.options)
         assert [c.slug for c in cfg.channels] == SLUGS
-        assert cfg.lookback == dt.timedelta(hours=24)
+        assert cfg.lookback == dt.timedelta(hours=48)  # D60
         policy = shipped.context_policy("channel_brief", JOB)
-        assert policy.ttl is not None and policy.ttl.duration == dt.timedelta(hours=24)
+        assert policy.ttl is not None and policy.ttl.duration == dt.timedelta(hours=48)
         assert policy.supersede == "latest"
 
     def test_every_configured_channel_has_a_profile(self, shipped: RoutinesConfig) -> None:
@@ -328,12 +341,12 @@ class TestConfig:
             )
 
     def test_channels_split_their_category_share(self, shipped: RoutinesConfig) -> None:
-        """D49: 2 macro channels get 1/2 of youtube_macro each, 3 micro channels 1/3."""
+        """D49/D60: 2 macro channels get 1/2 of youtube_macro each, 5 micro channels 1/5."""
         reg = SourceRegistry.from_routines(shipped)
         for slug in ("fxevolution", "bravos"):
             assert reg.share_in_category(f"youtube.{slug}") == pytest.approx(0.5)
-        for slug in ("stockedup", "tradebrigade", "arete"):
-            assert reg.share_in_category(f"youtube.{slug}") == pytest.approx(1 / 3)
+        for slug in ("stockedup", "tradebrigade", "arete", "warrior", "ibd"):
+            assert reg.share_in_category(f"youtube.{slug}") == pytest.approx(1 / 5)
         assert reg.share_in_category("youtube.gone") == 0.0
 
     @pytest.mark.parametrize(
@@ -358,6 +371,8 @@ class TestConfig:
             {"slug": "tradebrigade", "label": "Trade Brigade", "category": "youtube_micro"},
             {"slug": "arete", "label": "Arete Trading", "category": "youtube_micro"},
             {"slug": "bravos", "label": "Bravos", "category": "youtube_macro"},
+            {"slug": "warrior", "label": "Warrior Trading", "category": "youtube_micro"},
+            {"slug": "ibd", "label": "IBD", "category": "youtube_micro"},
         ]
         assert configured_channels(None) == []
 
@@ -417,7 +432,7 @@ def _ch(**kw: Any) -> DailyChannel:
 
 
 class TestPick:
-    LB = dt.timedelta(hours=24)
+    LB = dt.timedelta(hours=48)  # D60
 
     def _info(self, vid: str, hours_ago: float, **kw: Any) -> dict[str, Any]:
         return {
@@ -436,7 +451,7 @@ class TestPick:
         assert pick.metadata_fetched == 1
 
     def test_nothing_in_window_is_no_info(self) -> None:
-        infos = {"a": self._info("a", 30), "b": self._info("b", 50)}
+        infos = {"a": self._info("a", 49), "b": self._info("b", 50)}
         pick = pick_video(
             [{"id": "a"}, {"id": "b"}], lambda u: infos[u[-1]], _ch(), now=RUN_AT, lookback=self.LB
         )
@@ -478,6 +493,64 @@ class TestPick:
         )  # fmt: skip
         assert pick.video_id == "ok"
 
+    def test_47h_old_video_in_window_49h_out(self) -> None:
+        """D60: the window is 48 h."""
+        infos = {"a": self._info("a", 47)}
+        got = pick_video([{"id": "a"}], lambda u: infos["a"], _ch(), now=RUN_AT, lookback=self.LB)
+        assert got.video_id == "a"
+        infos = {"a": self._info("a", 49)}
+        got = pick_video([{"id": "a"}], lambda u: infos["a"], _ch(), now=RUN_AT, lookback=self.LB)
+        assert got.info is None
+
+    def test_include_streams_merges_and_accepts_post_live(self) -> None:
+        """D60: /videos + /streams, newest wins; post_live ok, is_live / is_upcoming never."""
+        infos = {
+            "live": self._info("live", 0.5, live_status="is_live"),
+            "soon": self._info("soon", -1, live_status="is_upcoming"),
+            "show": self._info("show", 9, live_status="post_live", duration=1430),
+            "intv": self._info("intv", 20, duration=1200),
+        }
+        videos = [{"id": "intv"}]
+        streams = [
+            {"id": "live", "live_status": "is_live"},
+            {"id": "soon", "live_status": "is_upcoming"},
+            {"id": "show"},
+        ]
+        fetch = lambda u: infos[u.rsplit("=", 1)[1]]  # noqa: E731
+        ch = _ch(include_streams=True)
+        got = pick_newest([videos, streams], fetch, ch, now=RUN_AT, lookback=self.LB)
+        assert got.video_id == "show"
+        assert {(e.video_id, e.reason) for e in got.excluded} == {
+            ("live", "live"),
+            ("soon", "live"),
+        }
+        # the /videos pick wins when it is newer
+        infos["intv"] = self._info("intv", 3, duration=1200)
+        got = pick_newest([videos, streams], fetch, ch, now=RUN_AT, lookback=self.LB)
+        assert got.video_id == "intv"
+        # a duplicate listed in both is scanned once
+        got = pick_newest(
+            [[{"id": "intv"}], [{"id": "intv"}]], fetch, ch, now=RUN_AT, lookback=self.LB
+        )
+        assert got.video_id == "intv" and got.scanned == 1
+
+    def test_post_live_excluded_without_include_streams(self) -> None:
+        infos = {"show": self._info("show", 9, live_status="post_live")}
+        got = pick_video(
+            [{"id": "show"}], lambda u: infos["show"], _ch(), now=RUN_AT, lookback=self.LB
+        )
+        assert got.info is None and [e.reason for e in got.excluded] == ["live"]
+
+    def test_streams_url(self) -> None:
+        ch = _ch(include_streams=True)
+        assert ch.streams_url == "https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx/streams"
+        assert (
+            DailyChannel(
+                slug="y", channel="https://www.youtube.com/@ibd/videos", category="youtube_micro"
+            ).streams_url
+            == "https://www.youtube.com/@ibd/streams"
+        )
+
     def test_shorts_kept_when_channel_allows(self) -> None:
         infos = {"sh": self._info("sh", 1, duration=30)}
         pick = pick_video(
@@ -501,19 +574,20 @@ def _briefs(conn: sqlite3.Connection, now: dt.datetime = RUN_AT) -> dict[str, di
 
 
 class TestJob:
-    def test_five_channels_five_briefs(
+    def test_seven_channels_seven_briefs(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
         result, session, _ = _run(conn, shipped)
         briefs = _briefs(conn)
         assert set(briefs) == {f"youtube.{s}" for s in SLUGS}
-        assert result.metrics["briefs"] == 5
+        assert result.metrics["briefs"] == 7
         assert result.metrics["channels_failed"] == 0
         assert result.summary.startswith(
-            "briefs 5/5 · StockedUp ✓ FX Evolution ✓ Trade Brigade ✓ Arete Trading ✓ Bravos ✓"
+            "briefs 7/7 · StockedUp ✓ FX Evolution ✓ Trade Brigade ✓ Arete Trading ✓ Bravos ✓"
+            " Warrior Trading ✓ IBD ✓"
         )
         assert not result.notice
-        assert len(session.calls) == 5
+        assert len(session.calls) == 7
         # every item grounded in its transcript; self-promo stripped
         for slug in SLUGS:
             b = briefs[f"youtube.{slug}"]
@@ -532,25 +606,28 @@ class TestJob:
         assert per["arete"]["transcript_truncated"] is False
         assert per["arete"]["transcript_chars"] > 1000
 
-    def test_brief_expires_24h_after_the_run(
+    def test_brief_expires_48h_after_its_video(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
-        _run(conn, shipped)
-        assert len(_briefs(conn, RUN_AT + dt.timedelta(hours=23, minutes=59))) == 5
-        assert _briefs(conn, RUN_AT + dt.timedelta(hours=24, minutes=1)) == {}
+        """D60: the brief (row and context entry) lives 48 h from the video's publish."""
+        _run(conn, shipped)  # every fixture video published RUN_AT - 8h
+        published = RUN_AT - dt.timedelta(hours=8)
+        assert len(_briefs(conn, published + dt.timedelta(hours=47, minutes=59))) == 7
+        assert _briefs(conn, published + dt.timedelta(hours=48, minutes=1)) == {}
         exp = {r[0] for r in conn.execute("SELECT expires_at FROM channel_briefs")}
         assert len(exp) == 1
-        assert dt.datetime.fromisoformat(exp.pop()) <= RUN_AT + dt.timedelta(hours=24)
+        got = dt.datetime.fromisoformat(exp.pop().replace("Z", "+00:00"))
+        assert got == published + dt.timedelta(hours=48)
 
     def test_no_video_means_no_info(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
-        old = RUN_AT - dt.timedelta(hours=30)
+        old = RUN_AT - dt.timedelta(hours=50)
         result, _, _ = _run(conn, shipped, published={"tradebrigade": old})
         briefs = _briefs(conn)
         assert "youtube.tradebrigade" not in briefs
-        assert len(briefs) == 4
-        assert "Trade Brigade – (no video 24h)" in result.summary
+        assert len(briefs) == 6
+        assert "Trade Brigade – (no video 48h)" in result.summary
         assert result.metrics["channels"]["tradebrigade"]["outcome"] == "no_video"
         assert not result.notice  # no info is not an error
 
@@ -558,17 +635,17 @@ class TestJob:
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
         _run(conn, shipped)
-        tomorrow = RUN_AT + dt.timedelta(days=1)
-        # Next morning: nobody posted since; yesterday's videos are now > 24 h old.
-        result, _, _ = _run(conn, shipped, now=tomorrow)
-        assert _briefs(conn, tomorrow) == {}
+        later = RUN_AT + dt.timedelta(days=2)
+        # Two mornings on: nobody posted since; the videos are now 56 h old (> 48 h).
+        result, _, _ = _run(conn, shipped, now=later)
+        assert _briefs(conn, later) == {}
         assert result.metrics["briefs"] == 0
 
     def test_listing_failure_alerts_and_others_carry_on(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
         result, _, _ = _run(conn, shipped, list_error={"fxevolution"})
-        assert len(_briefs(conn)) == 4
+        assert len(_briefs(conn)) == 6
         assert result.metrics["channels_failed"] == 1
         assert result.notice.startswith("YouTube briefs: FX Evolution failed (YoutubeListError")
         assert "FX Evolution ✗" in result.summary
@@ -588,8 +665,8 @@ class TestJob:
         result, session, _ = _run(conn, shipped, now=later)
         assert session.calls == []  # no transcript re-fetched
         assert {c["outcome"] for c in result.metrics["channels"].values()} == {"existing"}
-        assert conn.execute("SELECT count(*) FROM channel_briefs").fetchone()[0] == 5
-        assert len(_briefs(conn, later)) == 5
+        assert conn.execute("SELECT count(*) FROM channel_briefs").fetchone()[0] == 7
+        assert len(_briefs(conn, later)) == 7
 
     def test_newer_video_supersedes(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
@@ -609,8 +686,7 @@ class TestJob:
             "duration": 900,
         }
         texts[new_vid] = transcript
-        cfg = DailyBriefConfig.from_options(shipped.job(JOB)[1].options)  # type: ignore[index]
-        url_slug = {c.url: c.slug for c in cfg.channels}
+        url_slug = _url_slugs(shipped)
         youtube_briefs(
             _ctx(conn, shipped, nxt),
             RoutedLLM(replies),
@@ -622,6 +698,86 @@ class TestJob:
         snap = ContextStore(conn).snapshot(nxt)
         su = [e for e in snap.of_kind("channel_brief") if e.subject == "youtube.stockedup"]
         assert len(su) == 1 and su[0].payload["video_id"] == new_vid
+        rows = dict(
+            conn.execute(
+                "SELECT video_id, status FROM channel_briefs WHERE channel_slug = 'stockedup'"
+            ).fetchall()
+        )
+        old_vid = _fixture("stockedup")[0]["video_id"]
+        assert rows == {old_vid: "superseded", new_vid: "active"}
+
+    def test_pending_newer_video_keeps_the_older_brief(
+        self, conn: sqlite3.Connection, shipped: RoutinesConfig
+    ) -> None:
+        """D60: a newer video still waiting for its transcript never blanks the channel."""
+        _run(conn, shipped)  # day 1: every channel briefed (videos RUN_AT - 8h)
+        nxt = RUN_AT + dt.timedelta(days=1)  # old video now 32 h old: still in 48 h
+        new_vid = "NEWVIDEO002"
+        listings, infos, texts, replies = _world(
+            {s: RUN_AT - dt.timedelta(hours=8) for s in SLUGS},
+            extra_listing={"stockedup": [{"id": new_vid, "title": "Fresh"}]},
+        )
+        infos[new_vid] = {
+            "id": new_vid,
+            "title": "Fresh",
+            "timestamp": _ts(nxt - dt.timedelta(hours=2)),
+            "duration": 900,
+        }
+        url_slug = _url_slugs(shipped)
+        result = youtube_briefs(
+            _ctx(conn, shipped, nxt),
+            RoutedLLM(replies),
+            session=FakeSession(texts, {new_vid: "no captions yet"}),
+            list_videos=lambda url, n: listings[url_slug[url]][:n],
+            fetch_info=lambda url: infos.get(url.rsplit("=", 1)[1], {}),
+            price_lookup=None,
+        )
+        per = result.metrics["channels"]["stockedup"]
+        assert per["outcome"] == "pending" and per["video_id"] == new_vid
+        old_vid = _fixture("stockedup")[0]["video_id"]
+        assert per["kept_video_id"] == old_vid and per["kept_age"] == "32h"
+        assert "StockedUp ✓ (older brief 32h; newer pending: no captions yet)" in result.summary
+        assert _briefs(conn, nxt)["youtube.stockedup"]["video_id"] == old_vid
+        assert result.metrics["briefs"] == 7
+        # once the newer video is processed it supersedes the kept one
+        later = nxt + dt.timedelta(hours=1)
+        youtube_briefs(
+            _ctx(conn, shipped, later),
+            RoutedLLM(replies),
+            session=FakeSession({**texts, new_vid: texts[_fixture("stockedup")[0]["video_id"]]}),
+            list_videos=lambda url, n: listings[url_slug[url]][:n],
+            fetch_info=lambda url: infos.get(url.rsplit("=", 1)[1], {}),
+            price_lookup=None,
+        )
+        assert _briefs(conn, later)["youtube.stockedup"]["video_id"] == new_vid
+
+    def test_post_live_stream_dated_by_its_release(
+        self, conn: sqlite3.Connection, shipped: RoutinesConfig
+    ) -> None:
+        """D60: a finished stream's ``timestamp`` is when it was scheduled (often the day
+        before); the brief and its context entry are dated by ``release_timestamp``."""
+        aired = RUN_AT - dt.timedelta(hours=9)
+        listings, infos, texts, replies = _world()
+        vid = _fixture("ibd")[0]["video_id"]
+        infos[vid] |= {
+            "timestamp": _ts(aired - dt.timedelta(hours=27)),
+            "release_timestamp": _ts(aired),
+            "live_status": "post_live",
+        }
+        url_slug = _url_slugs(shipped)
+        youtube_briefs(
+            _ctx(conn, shipped),
+            RoutedLLM(replies),
+            session=FakeSession(texts),
+            list_videos=lambda url, n: listings[url_slug[url]][:n],
+            fetch_info=lambda url: infos.get(url.rsplit("=", 1)[1], {}),
+            price_lookup=None,
+        )
+        snap = ContextStore(conn).snapshot(RUN_AT)
+        (entry,) = [e for e in snap.of_kind("channel_brief") if e.subject == "youtube.ibd"]
+        assert entry.valid_from == aired
+        assert dt.datetime.fromisoformat(entry.payload["published_at"]) == aired
+        assert entry.expires_at == aired + dt.timedelta(hours=48)
 
     def test_contract_writes_only_declared_kinds(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
@@ -727,27 +883,28 @@ class TestResearchView:
     def test_research_prompt_has_the_briefs(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
-        old = RUN_AT - dt.timedelta(hours=30)
+        old = RUN_AT - dt.timedelta(hours=50)
         _run(conn, shipped, published={"bravos": old})
         snap = ContextStore(conn).snapshot(RUN_AT + dt.timedelta(hours=5))
         channels = configured_channels(shipped.job(JOB)[1].options)  # type: ignore[index]
         block = channel_brief_block(snap, channels)
         heads = [ln for ln in block.splitlines() if " briefs: " in ln]
-        assert heads == [
-            "YouTube macro briefs: 1/2 channels (missing: Bravos)",
-            "YouTube micro briefs: 3/3 channels",
+        assert heads == [  # D60: each present brief carries its age
+            "YouTube macro briefs: 1/2 channels: FX Evolution (13h) (missing: Bravos)",
+            "YouTube micro briefs: 5/5 channels: StockedUp (13h), Trade Brigade (13h),"
+            " Arete Trading (13h), Warrior Trading (13h), IBD (13h)",
         ]
         inp = research_input_from_context(
             snap, portfolio_summary="flat", scan_date="2026-10-05", youtube_channels=channels
         )
         prompt = build_research_prompt(inp)
         assert "### YouTube channel briefs" in prompt
-        assert "YouTube macro briefs: 1/2 channels (missing: Bravos)" in prompt
-        assert "YouTube micro briefs: 3/3 channels" in prompt
+        assert "YouTube macro briefs: 1/2 channels: FX Evolution (13h) (missing: Bravos)" in prompt
+        assert "YouTube micro briefs: 5/5 channels: StockedUp (13h)" in prompt
         assert '"channel": "Trade Brigade"' in prompt
         # the category block names both YouTube categories with their own counts
         assert "YouTube macro: 1/2 channels (missing: Bravos)" in prompt
-        assert "YouTube micro: 3/3 channels" in prompt
+        assert "YouTube micro: 5/5 channels" in prompt
         # no channels configured -> no section at all
         assert "YouTube channel briefs" not in build_research_prompt(
             research_input_from_context(snap, portfolio_summary="flat", scan_date="2026-10-05")
@@ -759,7 +916,7 @@ class TestResearchView:
         _run(conn, shipped)
         snap = ContextStore(conn).snapshot(RUN_AT)
         block = channel_brief_block(snap, CHANNELS[:1])
-        assert block.splitlines()[0] == "YouTube micro briefs: 1/1 channels"
+        assert block.splitlines()[0] == "YouTube micro briefs: 1/1 channels: StockedUp (8h)"
         assert "TradeBrigade" not in block
 
 
@@ -835,27 +992,32 @@ def test_sixth_channel_from_temp_config_and_profile_root(
 
 
 # ---------------------------------------------------------------------------
-# Rule 5: Trade Brigade Wednesday video, Thursday run without one -> no brief
+# Rule 5 (D60: 48 h): a Tuesday-evening video counts Wednesday and Thursday, not Friday
 # ---------------------------------------------------------------------------
 
 
-def test_trade_brigade_wednesday_brief_gone_on_thursday(
+def test_trade_brigade_tuesday_video_counts_two_mornings(
     conn: sqlite3.Connection, shipped: RoutinesConfig
 ) -> None:
-    thu = dt.datetime(2026, 10, 8, 5, 0, tzinfo=ET)
-    wed = thu - dt.timedelta(days=1)
-    wed_evening = dt.datetime(2026, 10, 6, 20, 0, tzinfo=ET)  # Tue evening video
-    _run(conn, shipped, now=wed, published={s: wed_evening for s in SLUGS})
+    wed = dt.datetime(2026, 10, 7, 5, 0, tzinfo=ET)
+    thu, fri = wed + dt.timedelta(days=1), wed + dt.timedelta(days=2)
+    tue_evening = dt.datetime(2026, 10, 6, 20, 0, tzinfo=ET)
+    published = {s: tue_evening for s in SLUGS}
+    _run(conn, shipped, now=wed, published=published)
     assert "youtube.tradebrigade" in _briefs(conn, wed)
-    # Thursday: the only Trade Brigade video is now ~33 h old -> nothing in the window.
-    result, _, _ = _run(conn, shipped, now=thu, published={s: wed_evening for s in SLUGS})
-    assert "youtube.tradebrigade" not in _briefs(conn, thu)
-    assert _briefs(conn, thu) == {}
+    # Thursday: the video is ~33 h old -> still inside 48 h, re-confirmed as existing.
+    result, _, _ = _run(conn, shipped, now=thu, published=published)
+    assert "youtube.tradebrigade" in _briefs(conn, thu)
+    assert result.metrics["channels"]["tradebrigade"]["outcome"] == "existing"
+    # Friday: ~57 h old -> nothing in the window, and the brief has expired.
+    result, _, _ = _run(conn, shipped, now=fri, published=published)
+    assert _briefs(conn, fri) == {}
     assert result.metrics["channels"]["tradebrigade"]["outcome"] == "no_video"
     rows = conn.execute(
         "SELECT expires_at FROM channel_briefs WHERE channel_slug = 'tradebrigade'"
     ).fetchall()
-    assert [dt.datetime.fromisoformat(r[0]) for r in rows] == [wed + dt.timedelta(hours=24)]
+    got = [dt.datetime.fromisoformat(r[0].replace("Z", "+00:00")) for r in rows]
+    assert got == [tue_evening + dt.timedelta(hours=48)]
 
 
 # ---------------------------------------------------------------------------
@@ -864,13 +1026,15 @@ def test_trade_brigade_wednesday_brief_gone_on_thursday(
 
 
 def test_one_of_four_micro_present(conn: sqlite3.Connection, shipped: RoutinesConfig) -> None:
-    old = RUN_AT - dt.timedelta(hours=40)
+    old = RUN_AT - dt.timedelta(hours=50)
     _run(conn, shipped, published={"fxevolution": old, "tradebrigade": old, "arete": old})
     snap = ContextStore(conn).snapshot(RUN_AT)
     block = channel_brief_block(snap, CHANNELS)
     lines = block.splitlines()
-    i_macro = lines.index("YouTube macro briefs: 1/2 channels (missing: FX)")
-    i_micro = lines.index("YouTube micro briefs: 1/3 channels (missing: TradeBrigade, Arete)")
+    i_macro = lines.index("YouTube macro briefs: 1/2 channels: Bravos (8h) (missing: FX)")
+    i_micro = lines.index(
+        "YouTube micro briefs: 1/3 channels: StockedUp (8h) (missing: TradeBrigade, Arete)"
+    )
     micro_agreement = [ln for ln in lines[i_micro:] if ln.startswith("- ")]
     assert micro_agreement and all(" 1/3 channels (StockedUp)" in ln for ln in micro_agreement)
     macro_agreement = [ln for ln in lines[i_macro:i_micro] if ln.startswith("- ")]

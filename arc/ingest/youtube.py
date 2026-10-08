@@ -247,9 +247,17 @@ def _extract_tickers(text: str, universe: list[str] | IngestUniverse) -> list[st
 
 
 def _published_at(info: dict, fallback_date: str) -> datetime:
-    ts = info.get("timestamp")
-    if isinstance(ts, int | float):
-        return datetime.fromtimestamp(ts, tz=UTC)
+    """When the video went public: ``release_timestamp`` first, then ``timestamp``.
+
+    D60: for a finished live stream ``timestamp`` is when the stream was *scheduled*
+    (IBD's 2026-10-07 show: 10-06 14:28), ``release_timestamp`` when it aired (10-07
+    17:01). The ``youtube.briefs`` picker uses the same order, so a brief's age and
+    expiry match the video it picked.
+    """
+    for key in ("release_timestamp", "timestamp"):
+        ts = info.get(key)
+        if isinstance(ts, int | float):
+            return datetime.fromtimestamp(ts, tz=UTC)
     date = str(info.get("upload_date") or fallback_date or "")
     try:
         return datetime.strptime(date, "%Y%m%d").replace(tzinfo=UTC)

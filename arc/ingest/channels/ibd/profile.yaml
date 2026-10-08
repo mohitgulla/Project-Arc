@@ -1,0 +1,40 @@
+# Investor's Business Daily (@investorsbusinessdaily). The daily "Stock Market Today"
+# show (20-25 min, ~17:00 ET) is a post-live stream on /streams (include_streams in
+# routines.yaml); /videos adds 8-35 min interviews 2-3x a week. Profiled live 2026-10-07
+# (D60, E14.4). D60: youtube_micro.
+slug: ibd
+channel_id: UC5fZv7bPcF5j2RsfO-9OiLA
+display_name: Investor's Business Daily
+url: https://www.youtube.com/channel/UC5fZv7bPcF5j2RsfO-9OiLA
+cadence: trading_daily
+horizon: multi_day
+publish_window_et: "16:30-18:30"
+focus:
+  - market_bias
+  - levels
+  - calls
+  - catalysts
+  - risk_flags
+trust_weight: 0.5          # D45: equal weight; D60: splits youtube_micro five ways
+guidelines_version: "ibd-2026-10-07.1"
+max_active_sessions: 1     # the daily job caps it at published + 48 h (D60)
+# Product / programming plugs (read from a real transcript, 2026-10-07): MarketSurge,
+# IBD Live / Leaderboard / SwingTrader, "investors.com/videos", podcast and cheat-sheet promos.
+sponsor_patterns:
+  - '\bmarket ?surge\b'
+  - '\bleaderboard\b'
+  - '\bswing ?trader\b'
+  - '\bibd digital\b'
+  - '\bfree trial\b'
+  - '\bsubscription\b'
+  - '\binvestors\.com\b'
+  - '\bpodcast\b'
+  - '\bon our youtube channel\b'
+hedge_words:
+  - could
+  - might
+  - maybe
+  - I don't know
+  - we'll have to see
+  - potentially
+  - arguably

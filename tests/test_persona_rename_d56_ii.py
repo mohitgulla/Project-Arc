@@ -328,6 +328,7 @@ _ALLOWED = (
     "arc/routines/config.py",
     "arc/context/kinds.py",
     "arc/positions/evaluate.py",  # field description is in the position_review v2 schema
+    "arc/ingest/channels/ibd/",  # D60: the channel's name, "Investor's Business Daily"
 )
 
 

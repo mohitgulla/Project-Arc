@@ -1570,8 +1570,10 @@ def youtube_briefs(
     """E4.6 (D45): the daily 02:00 ET YouTube brief run, all channels in one job.
 
     Per channel: newest qualifying video in ``lookback`` -> transcript -> brief ->
-    ``channel_brief`` context entry (subject ``youtube.<slug>``, the job's
-    ``context`` TTL, supersede latest) plus a ``raw_doc_ref``. The keyword
+    ``channel_brief`` context entry (subject ``youtube.<slug>``, supersede latest)
+    plus a ``raw_doc_ref``. D60: the entry's ``valid_from`` is the video's publish
+    time, so the job's ``context`` TTL and the category ``max_age`` both run from
+    publish: a 47h-old video's brief is read and a 49h-old one's is not. The keyword
     arguments replace the network pieces in tests.
     """
     from pathlib import Path
@@ -1598,6 +1600,7 @@ def youtube_briefs(
             "channel_brief",
             cr.channel.source_key,
             ChannelBriefPayload.model_validate(cr.brief.model_dump()),
+            valid_from=min(cr.brief.published_at, now),  # D60: ages run from publish
         )
 
     run = run_daily_briefs(

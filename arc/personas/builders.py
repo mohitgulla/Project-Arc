@@ -449,6 +449,7 @@ def channel_brief_block(
     JSON; the presence and agreement lines stay.
     """
     from arc.ingest.channels.daily import (
+        brief_ages,
         brief_agreement,
         brief_presence_line,
         prompt_brief,
@@ -458,15 +459,22 @@ def channel_brief_block(
     if not channels:
         return ""
     labels = {c["slug"]: c.get("label") or c["slug"] for c in channels}
-    briefs = [e.payload for e in snapshot.of_kind("channel_brief")]
-    briefs = [b for b in briefs if b.get("channel_slug") in labels]
-    briefs.sort(key=lambda b: list(labels).index(str(b["channel_slug"])))
+    newest: dict[str, Mapping[str, Any]] = {}  # D60: only the newest brief per channel
+    for e in snapshot.of_kind("channel_brief"):
+        slug = str(e.payload.get("channel_slug"))
+        prev = newest.get(slug)
+        if slug in labels and (
+            prev is None or str(e.payload.get("published_at")) > str(prev.get("published_at"))
+        ):
+            newest[slug] = e.payload
+    briefs = sorted(newest.values(), key=lambda b: list(labels).index(str(b["channel_slug"])))
     present = [str(b["channel_slug"]) for b in briefs]
+    ages = brief_ages(briefs, snapshot.as_of)
     lines: list[str] = []
     for cat, chs in youtube_groups(channels):
         if cat is not None and not chs:
             continue
-        lines.append(brief_presence_line(present, chs, cat))
+        lines.append(brief_presence_line(present, chs, cat, ages=ages))
         agreement = brief_agreement(briefs, chs, cat)
         if agreement:
             where = "" if cat is None else f"{_category_label(cat)}; "

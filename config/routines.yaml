@@ -16,8 +16,8 @@
 # `reads` limits the recorded input snapshot. `arc context trace <run|chain>` shows both.
 #
 # A trading day at a glance (full simulated day: `arc routines tick --dry-run`), D31:
-#   02:00           youtube.briefs (D45/E4.6; owner 2026-10-05, was 05:00): newest video per channel (last 24 h) ->
-#                   one channel_brief each, fresh for the day; Research reads them
+#   02:00           youtube.briefs (D45/E4.6; owner 2026-10-05, was 05:00): newest video per channel (last 48 h, D60) ->
+#                   one channel_brief each (newest supersedes; pending keeps the older); Research reads them
 #   05:30           active universe resolve (D56 tiers); Mon: symbol master refresh (E5.7)
 #   06:00           earnings calendar; rss (15m) / edgar (15m) polling until 20:00
 #   08:15           options_slow catch-up (options_daily / vix_futures / vol_term), only for a
@@ -111,6 +111,11 @@ loop:
   post_hold_roots: true    # false = HOLD / no_change loops post no root line
   slack_layout: root_per_loop   # root_per_loop (D36) | day_thread (pre-D36 rollback)
   action_roots: [positions.evaluate]   # D38: these chains get the same root line, only when they propose (SELL: …)
+  # D63 (E13.21): the exit and open branches run side by side (own thread + SQLite
+  # connection each), joined before quant.propose. [] = serial (the rollback).
+  parallel_branches:
+    - [quant.exit, risk.exit]
+    - [quant.open, risk.open, quant.revise]
 
 # E8.8b / D48: Arc Tower display knobs (read per request; never used by trading code).
 tower:
@@ -183,8 +188,8 @@ categories:              # D56: equal weight per category; sources split their c
   company_data:  {weight: 1, max_age: 12h, label: Company data}
   options_fast:  {weight: 1, max_age: 30m, label: Options fast}    # Scalp, 30-min RTH (E13.6 source)
   options_slow:  {weight: 1, max_age: 24h, label: Options slow}    # Scout, daily Cboe snapshots
-  youtube_macro: {weight: 1, max_age: 24h, label: YouTube macro}
-  youtube_micro: {weight: 1, max_age: 24h, label: YouTube micro}
+  youtube_macro: {weight: 1, max_age: 48h, label: YouTube macro}   # D60: was 24h
+  youtube_micro: {weight: 1, max_age: 48h, label: YouTube micro}   # D60: was 24h
   retail_buzz:   {weight: 1, max_age: 24h, label: Retail buzz}     # D58: Scout slow feed + the trending tier (code)
 
 # D56 (E13.3, folds E5.14's config half): the idea funnel. Config only for now: the
@@ -228,22 +233,25 @@ options_fast:
 sources:                        # fetch-only jobs (no LLM), each with its own cadence; quiet heartbeats
   youtube.briefs:               # D45/E4.6: one pre-market brief run, newest video per channel
     label: YouTube briefs
-    about: "Newest video per channel (last 24 h) -> transcript -> one channel brief each, fresh for the day"
+    about: "Newest video per channel (last 48 h) -> transcript -> one channel brief each; the newest video wins"
     schedule: ["02:00"]         # 23:00 PT; uploads land ~15:00-18:00 ET, captioned by now
     days: trading
     ttl: 3h                     # catch-up window; a missed night is skipped after 05:00
-    lane: background            # captions + 5 LLM extractions; never delays the tick
+    lane: background            # captions + 7 LLM extractions; never delays the tick
     llm: true                   # holds the global LLM lock (brief extraction)
     notify: quiet               # folded into the first persona post; a channel error posts a notice
-    context: {ttl: 24h, supersede: latest}   # briefs live for the trading day (hard expiry)
+    context: {ttl: 48h, supersede: latest}   # D60: a brief lives 48 h from its video's publish time (hard expiry)
     writes: [raw_doc_ref, channel_brief]
-    lookback: 24h               # newest qualifying video published in the last 24 h (every channel; D49: no weekend carry-over)
+    lookback: 48h               # D60 (was 24h): newest qualifying video in the last 48 h; Monday 02:00 sees Saturday uploads
     channels:                   # adding a channel = one entry here + arc/ingest/channels/<slug>/; D49: each declares youtube_macro | youtube_micro
+                                # D60: include_streams also lists /streams (post_live ok, never is_live/is_upcoming)
       - {slug: stockedup, channel: UC-m6zNItyoDk5lSykDlhE4Q, label: StockedUp, category: youtube_micro, skip_shorts: true}
       - {slug: fxevolution, channel: UCvJZEG5x-DVYZKTz--pS39w, label: FX Evolution, category: youtube_macro, title_exclude: ['Live Stream']}
       - {slug: tradebrigade, channel: UCYKtr6GfycBqQJf32tbQSbQ, label: Trade Brigade, category: youtube_micro, max_audio_minutes: 90}
       - {slug: arete, channel: UCTeFsS-bP0XEt3NBMjfW2cA, label: Arete Trading, category: youtube_micro, title_exclude: ['^PREMARKET LIVE'], max_videos: 10}
       - {slug: bravos, channel: UCOHxDwCcOzBaLkeTazanwcw, label: Bravos, category: youtube_macro, skip_shorts: true, title_exclude: []}   # D49: ~2 long-form/week, 10-22 min, ~15:00-18:00 ET
+      - {slug: warrior, channel: UCBayuhgYpKNbhJxfExYkPfA, label: Warrior Trading, category: youtube_micro, skip_shorts: true}   # D60: weekday recap ~09:40 ET, 10-25 min; /streams lives excluded
+      - {slug: ibd, channel: UC5fZv7bPcF5j2RsfO-9OiLA, label: IBD, category: youtube_micro, include_streams: true, title_exclude: ['MarketSurge', 'How To ']}   # D60: daily Stock Market Today is a post-live stream (~17:00 ET)
   rss:                          # owner pick 2026-09-28: broad market, single names, macro
     label: RSS news
     about: "Polls the news feeds (WSJ, PR Newswire, Business Wire, Nasdaq, Seeking Alpha, Fed) and stores new articles for the Scalp"

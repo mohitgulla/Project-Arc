@@ -229,7 +229,7 @@ def scout_input_from_context(
     older entry is "no fresh info", never read. *trending* = today's trending tier
     (E13.20: marks ``in trending tier y`` in the retail-buzz section).
     """
-    from arc.ingest.channels.daily import brief_presence_line, prompt_brief
+    from arc.ingest.channels.daily import brief_ages, brief_presence_line, prompt_brief
 
     as_of = (now or snapshot.as_of).astimezone(ET)
     labels = {c["slug"]: c.get("label") or c["slug"] for c in channels}
@@ -252,7 +252,9 @@ def scout_input_from_context(
     for cat in YOUTUBE_CATEGORIES:
         chs = [c for c in channels if c.get("category") == cat.value]
         configured[cat.value] = len(chs)
-        presence[cat.value] = brief_presence_line(list(fresh_briefs), chs, cat)
+        presence[cat.value] = brief_presence_line(
+            list(fresh_briefs), chs, cat, ages=brief_ages(fresh_briefs.values(), as_of)
+        )
         present[cat.value] = [c["slug"] for c in chs if c["slug"] in fresh_briefs]
         missing[cat.value] = [labels[c["slug"]] for c in chs if c["slug"] not in fresh_briefs]
     per_channel = _budget_split(budget_chars, {c: len(p) for c, p in present.items()})

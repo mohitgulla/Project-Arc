@@ -366,15 +366,19 @@ class TestInputs:
     def test_presence_lines_name_missing_channels(self, db: sqlite3.Connection) -> None:
         _seed(db)
         inp = self._inp(db)
+        # D60: each present channel carries its brief's age
         assert (
-            inp.presence["youtube_macro"] == "YouTube macro briefs: 1/2 channels (missing: Bravos)"
+            inp.presence["youtube_macro"]
+            == "YouTube macro briefs: 1/2 channels: FX (4h) (missing: Bravos)"
         )
-        assert inp.presence["youtube_micro"].endswith("2/3 channels (missing: TradeBrigade)")
+        assert inp.presence["youtube_micro"].endswith(
+            "2/3 channels: StockedUp (4h), Arete (4h) (missing: TradeBrigade)"
+        )
         assert inp.missing == {"youtube_macro": ["Bravos"], "youtube_micro": ["TradeBrigade"]}
         assert inp.origins == {"youtube:fxevolution", "youtube:stockedup", "youtube:arete"}
 
     def test_stale_brief_and_options_are_not_read(self, db: sqlite3.Connection) -> None:
-        _write_brief(db, "stockedup", age=dt.timedelta(hours=30))  # > youtube_micro 24h
+        _write_brief(db, "stockedup", age=dt.timedelta(hours=49))  # > youtube_micro 48h (D60)
         _write_options(db, age=dt.timedelta(hours=30))  # > options_slow 24h
         db.commit()
         inp = self._inp(db)
@@ -384,6 +388,16 @@ class TestInputs:
         assert "No fresh brief today" in prompt
         assert "Cboe put/call: no fresh info" in prompt
         assert "VIX complex: no fresh info" in prompt
+
+    def test_brief_47h_old_is_read_49h_is_not(self, db: sqlite3.Connection) -> None:
+        """D60: the YouTube window is 48 h from the video's publish time."""
+        _write_brief(db, "stockedup", age=dt.timedelta(hours=47))
+        _write_brief(db, "arete", age=dt.timedelta(hours=49))
+        db.commit()
+        inp = self._inp(db)
+        assert inp.origins == {"youtube:stockedup"}
+        assert "StockedUp (47h)" in inp.presence["youtube_micro"]
+        assert "Arete" in inp.presence["youtube_micro"].split("missing: ")[1]
 
     def test_prompt_sections_in_fixed_order(self, db: sqlite3.Connection) -> None:
         _seed(db)
@@ -728,3 +742,46 @@ def test_scout_output_clips_overlong_prose_sections() -> None:
         assert not text[:-1].endswith(" ")
     short = ScoutOutput.model_validate({"regime": "calm", "options_sentiment": "no fresh info"})
     assert (short.regime, short.options_sentiment) == ("calm", "no fresh info")
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [("geopolitical", "news"), ("fed", "macro"), ("other", "news"), ("earnings", "earnings")],
+)
+def test_brief_catalyst_kinds_map_onto_catalyst_type(raw: str, want: str) -> None:
+    """A brief's catalyst kind copied into a Scout call no longer fails the whole run
+    (live 2026-10-08: ``geopolitical``)."""
+    out = ScoutOutput.model_validate(
+        {
+            "regime": "r",
+            "options_sentiment": "o",
+            "ticker_calls": [
+                {
+                    "ticker": "XOM",
+                    "stance": "bullish",
+                    "confidence": 0.5,
+                    "horizon": "days",
+                    "origins": ["youtube:stockedup"],
+                    "thesis": "t",
+                    "catalyst_type": raw,
+                }
+            ],
+        }
+    )
+    assert out.ticker_calls[0].catalyst_type.value == want
+
+
+def test_unknown_catalyst_type_still_rejected() -> None:
+    call = {
+        "ticker": "XOM",
+        "stance": "bullish",
+        "confidence": 0.5,
+        "horizon": "days",
+        "origins": ["youtube:stockedup"],
+        "thesis": "t",
+        "catalyst_type": "vibes",
+    }
+    with pytest.raises(ValueError, match="catalyst_type"):
+        ScoutOutput.model_validate(
+            {"regime": "r", "options_sentiment": "o", "ticker_calls": [call]}
+        )

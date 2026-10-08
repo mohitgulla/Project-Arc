@@ -1,0 +1,24 @@
+{
+  "market_bias": null,
+  "levels": [],
+  "calls": [],
+  "catalysts": [
+    {
+      "event": "SXTC up 130% on no news in an after-hours / morning short squeeze",
+      "kind": "other",
+      "tickers": [
+        "SXTC"
+      ],
+      "date": null,
+      "expected_impact": "volatile",
+      "quote": "SXTC is a Chinese pharmaceutical company. It's up 130% as of right now. The move began in the afterhour session yesterday and it's on no news."
+    }
+  ],
+  "risk_flags": [
+    {
+      "flag": "No-news Chinese small caps squeeze shorts, then fall back with no support",
+      "severity": "med",
+      "quote": "When a stock just suddenly surges like that, where's support?"
+    }
+  ]
+}

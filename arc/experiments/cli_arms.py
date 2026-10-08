@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import json
 import sys
@@ -224,17 +225,32 @@ def _pair(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
                 now = _parse_now(args.now, FIXTURE_NOW)
                 settings = _fixture_arm_settings(arm, args.profile)
                 env = PipelineEnv.fixtures(FIXTURE_SETS[args.fixture_set])
-                vb = virtual_broker(
-                    arm,
-                    ident,
-                    cast("BrokerAdapter", _FixtureBroker()),
-                    settings=settings,
-                    now=lambda t=now: t,
-                )
-                env.account = vb.account
                 env.positions = list
+
+                def _bound(
+                    name: str,
+                    env: PipelineEnv = env,
+                    ident: Any = ident,
+                    t: Any = now,
+                    settings: Any = settings,
+                ) -> Any:
+                    # D63: a parallel branch runs on its own connection, so the arm's
+                    # virtual account is built on the step's connection, per step.
+                    def run(ctx: Any) -> Any:
+                        vb = virtual_broker(
+                            ctx.conn,
+                            ident,
+                            cast("BrokerAdapter", _FixtureBroker()),
+                            settings=settings,
+                            now=lambda: t,
+                        )
+                        step_env = dataclasses.replace(env, account=vb.account)
+                        return pipeline_handlers(step_env)[name](ctx)
+
+                    return run
+
                 kwargs = {
-                    "handlers": pipeline_handlers(env),
+                    "handlers": {name: _bound(name) for name in pipeline_handlers(env)},
                     "settings_factory": lambda s=settings: s,
                     "check_lag": False,
                 }
