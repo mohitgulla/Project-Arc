@@ -373,7 +373,7 @@ class TestDigestCards:
             "⚡ [Scalp] Scan: 10 Sources → 5 Candidates",
             "🧠 [Research] Ranked: 3 / 5 • Market Risk ON",
             None,  # exits.mandatory (E13.15): a [Routines] notice, no card
-            "📐 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
+            "🤺 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$18.74",
             "🛡️ [Risk] Review: SPY Moderate • 14 Contracts",  # D18-sized, not the advisory 20
             None,  # quant.propose has no card (E6.1 posts the proposal card)
             None,  # execute (D34): summary only; the Investor posts the order card
@@ -388,7 +388,7 @@ class TestDigestCards:
         )
         assert texts[2].startswith("```\n[Routines] exits.mandatory ✓")
         assert texts[3].startswith(
-            "📐 [Quant] quant.open ✓ SPY iron_condor 740/745/798/803 2026-10-30"
+            "🤺 [Quant] quant.open ✓ SPY iron_condor 740/745/798/803 2026-10-30"
         )
         assert (
             texts[4] == "🛡️ [Risk] risk.open ✓ SPY moderate, suggests 20 [accept]; "

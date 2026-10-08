@@ -79,7 +79,7 @@ function JobInfo({ row }: { row: TimelineRow }) {
 function JobLabel({ row, strong }: { row: TimelineRow; strong?: boolean }) {
   return (
     <span className="flex min-w-0 items-center gap-1">
-      <span className={`min-w-0 truncate text-caption ${strong ? "font-semibold text-title" : "text-secondary"}`} title={`${row.job} · ${row.cadence}`}>
+      <span className={`min-w-0 truncate text-caption ${strong ? "font-semibold text-primary" : "text-secondary"}`} title={`${row.job} · ${row.cadence}`} data-testid="job-label">
         {titleCase(row.label)}
       </span>
       <PersonaChip persona={row.persona} />
@@ -217,7 +217,7 @@ function MobileJobRow({ row, s }: { row: TimelineRow; s: Session }) {
           className="flex min-h-[44px] min-w-0 flex-1 flex-col items-start justify-center text-left"
         >
           <span className="flex w-full min-w-0 items-center gap-1.5">
-            <span className={`min-w-0 truncate text-caption ${row.job === s.loop_job ? "font-semibold text-title" : "text-primary"}`}>{titleCase(row.label)}</span>
+            <span className={`min-w-0 truncate text-caption ${row.job === s.loop_job ? "font-semibold text-primary" : "text-primary"}`} data-testid="job-label">{titleCase(row.label)}</span>
             <PersonaChip persona={row.persona} />
           </span>
           <span className="text-micro text-muted tabular-nums" data-testid="row-summary">

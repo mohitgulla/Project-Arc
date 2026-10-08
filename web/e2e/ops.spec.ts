@@ -205,6 +205,11 @@ test.describe("ops behaviour", () => {
     expect(bands.indexOf("trading_loop")).toBeLessThan(bands.indexOf("position_management"));
     const loop = page.getByTestId("loop-row");
     await expect(loop).toContainText("Research → Quant → Risk → Propose → Execute");
+    // D59: the loop label is the same size as every other job label (bold only), and
+    // band / job labels are Title Case.
+    const fs = async (l: import("@playwright/test").Locator) => l.evaluate((el) => getComputedStyle(el).fontSize);
+    expect(await fs(loop.getByTestId("job-label"))).toBe(await fs(tl.getByTestId("timeline-row").first().getByTestId("job-label")));
+    await expect(tl.locator("[data-band=trading_loop] [data-testid=band-header]")).toContainText("Trading Loop");
     await expect(loop.getByTestId("persona-chip")).toHaveText("🧠 Research");
     await expect(tl.locator('[data-job="positions.evaluate"]')).toContainText("Position Marks");
     await loop.getByTestId("job-info").click();

@@ -2055,7 +2055,7 @@ def scout_persona(
             tier=Tier.DISCOVERY,
             rank=i,
             source="scout",
-            reason=f"{c.stance.value} · {', '.join(c.origins)}",
+            reason=f"{c.stance.value} · {', '.join(c.origins)} · score {c.confidence:.2f}",
             as_of=today,
         )
         for i, c in enumerate(disc.members, 1)

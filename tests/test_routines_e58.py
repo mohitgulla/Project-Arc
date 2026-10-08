@@ -545,10 +545,10 @@ class TestRootPerLoop:
         order = [
             lbl
             for lbl in labels
-            if lbl in {"⚡ [Scalp]", "🧠 [Research]", "📐 [Quant]", "🛡️ [Risk]"}
+            if lbl in {"⚡ [Scalp]", "🧠 [Research]", "🤺 [Quant]", "🛡️ [Risk]"}
         ]
-        # E13.9: quant.propose is the Quant's step (D56), so its summary is a 📐 [Quant] line.
-        assert order == ["⚡ [Scalp]", "🧠 [Research]", "📐 [Quant]", "🛡️ [Risk]", "📐 [Quant]"], (
+        # E13.9: quant.propose is the Quant's step (D56), so its summary is a 🤺 [Quant] line.
+        assert order == ["⚡ [Scalp]", "🧠 [Research]", "🤺 [Quant]", "🛡️ [Risk]", "🤺 [Quant]"], (
             replies
         )
         assert replies[0].startswith("⚡ [Scalp] scalp ✓ ⚡ [Scalp] Context: ")

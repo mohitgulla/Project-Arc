@@ -6,7 +6,7 @@ export const CAT: Catalogue = {
     { key: "scout", label: "Scout", emoji: "🔭", llm: true, group: "scout" },
     { key: "scalp", label: "Scalp", emoji: "⚡", llm: true, group: "scalp" },
     { key: "research", label: "Research", emoji: "🧠", llm: true, group: "trading_loop" },
-    { key: "quant", label: "Quant", emoji: "📐", llm: true, group: "position_management" },
+    { key: "quant", label: "Quant", emoji: "🤺", llm: true, group: "position_management" },
     { key: "risk", label: "Risk", emoji: "🛡️", llm: true, group: "trading_loop" },
     { key: "broker", label: "Broker", emoji: "🏦", llm: false, group: "post_market" },
     { key: "ops", label: "Ops", emoji: "⚙️", llm: false, group: "post_market" },

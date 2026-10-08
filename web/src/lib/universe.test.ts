@@ -1,7 +1,7 @@
 // E12.6: Universe page helpers (summary line, tier order, chip detail, override warning).
 import { describe, expect, it } from "vitest";
 
-import { discoveryFillLine, tailCutDetail } from "./universe";
+import { discoveryFillLine, pickHeader, pickRow, pickSections, tailCutDetail } from "./universe";
 
 import {
   CORE_KEY_LABEL,
@@ -106,5 +106,51 @@ describe("E13.14 tail cuts + discovery fill", () => {
   it("labels a tail cut with its rank", () => {
     expect(tailCutDetail({ ticker: "TEM", tier: "discovery", reason: "over_active_cap", rank: 18 })).toBe("#18 in Discovery");
     expect(tailCutDetail({ ticker: "TEM", tier: "momentum", reason: "over_active_cap", rank: null })).toBe("Momentum");
+  });
+});
+
+describe("D59 Today's Pick", () => {
+  const m = (ticker: string, tier: string, rank: number) => ({ ticker, tier, rank, source: "s", reason: "r", also_in: [] });
+  const u = {
+    active: [
+      m("NVDA", "core", 1),
+      ...Array.from({ length: 12 }, (_, i) => m(`D${i + 1}`, "discovery", 12 - i)),
+      m("PENG", "trending", 2),
+      m("TEM", "trending", 1),
+    ],
+    tail_cuts: [
+      { ticker: "X", tier: "trending", reason: "over_active_cap", rank: 9 },
+      { ticker: "Y", tier: "trending", reason: "over_active_cap", rank: 10 },
+    ],
+    dropped: [],
+  };
+  it("lists discovery then trending, top 10 by rank, with cut counts", () => {
+    const [d, tr] = pickSections(u);
+    expect(d!.tier).toBe("discovery");
+    expect(d!.label).toBe("Discovery");
+    expect(d!.rows.map((r) => r.ticker)).toEqual(["D12", "D11", "D10", "D9", "D8", "D7", "D6", "D5", "D4", "D3"]);
+    expect(d!.active).toBe(12);
+    expect(tr!.rows.map((r) => r.ticker)).toEqual(["TEM", "PENG"]);
+    expect(tr!.cut).toBe(2);
+    expect(pickHeader(d!)).toBe("Discovery (10 of 12)");
+    expect(pickHeader(tr!)).toBe("Trending (2 of 2)");
+  });
+  it("never includes core or momentum; an empty tier reads (0 of 0)", () => {
+    const secs = pickSections({ active: [m("NVDA", "core", 1), m("BULL", "trending", 1)], tail_cuts: [], dropped: [] });
+    expect(secs[0]!.rows).toEqual([]);
+    expect(pickHeader(secs[0]!)).toBe("Discovery (0 of 0)");
+  });
+  it("falls back to over_active_cap drops when tail_cuts is absent", () => {
+    const [, tr] = pickSections({ active: [], tail_cuts: [], dropped: [{ ticker: "Z", tier: "trending", reason: "over_active_cap", rank: null }] });
+    expect(tr!.cut).toBe(1);
+  });
+  it("formats a row: source words, detail without the score, score apart", () => {
+    expect(pickRow({ source: "reddit+stocktwits", reason: "reddit #5 · stocktwits #2 · score 0.98" })).toEqual({
+      source: "Reddit + Stocktwits",
+      detail: "Reddit #5 · Stocktwits #2",
+      score: "0.98",
+    });
+    expect(pickRow({ source: "scout", reason: "2 videos" })).toEqual({ source: "Scout", detail: "2 videos", score: null });
+    expect(pickRow({ source: "scout", reason: "bullish · stockedup · score 0.72" }).score).toBe("0.72");
   });
 });

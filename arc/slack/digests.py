@@ -756,7 +756,7 @@ def quant_card(
     revision: bool = False,
     kept: Sequence[str] = (),
 ) -> CardView:
-    """``📐 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78`` + legs per structure.
+    """``🤺 [Quant] Structures: SPY Iron Condor • PoP 62% • EV -$21.78`` + legs per structure.
 
     E13.9: ``revision=True`` is the ``quant.revise`` card (header ``[Quant (revised)]``);
     ``kept`` lists the revise-requested tickers Quant kept unchanged.
@@ -1011,7 +1011,7 @@ def quant_exit_card(
     run_id: str | None = None,
     chain_run_id: str | None = None,
 ) -> CardView:
-    """``📐 [Quant] Exit cases: 2 judged • 1 close``; one section per case (≤ 8).
+    """``🤺 [Quant] Exit cases: 2 judged • 1 close``; one section per case (≤ 8).
 
     E13.13: ticker · triggers · remaining EV hold/managed · close-now net, then
     ``*Recommendation:*`` and Quant's rationale. Under ``shadow`` the summary says

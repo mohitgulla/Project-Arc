@@ -51,7 +51,7 @@ def test_every_persona_has_one_emoji_label() -> None:
     assert set(PERSONA_EMOJI) == set(Persona)
     assert persona_label(Persona.SCOUT) == "🔭 [Scout]"
     assert persona_label(Persona.RESEARCH) == "🧠 [Research]"
-    assert persona_label(Persona.QUANT, suffix=" (revised)") == "📐 [Quant (revised)]"
+    assert persona_label(Persona.QUANT, suffix=" (revised)") == "🤺 [Quant (revised)]"
     assert persona_for("director") is Persona.RESEARCH
     assert persona_for("investor") is Persona.BROKER
     assert persona_for("nope") is None
@@ -251,7 +251,7 @@ def _case(t: str = "CRWD", rec: str = "close") -> ExitCase:
 def test_quant_exit_card_line_per_case() -> None:
     view = D.quant_exit_card([_case(), _case("MU", "hold")], shadow=True)
     text = _text(view.blocks)
-    assert view.text == "📐 [Quant] Exit cases: 2 judged • 1 close"
+    assert view.text == "🤺 [Quant] Exit cases: 2 judged • 1 close"
     assert (
         "*CRWD* `os-crwd` · Profit target · EV hold +$12.00 / managed +$30.00 · close now +$85.00"
         in text

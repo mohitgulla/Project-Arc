@@ -46,7 +46,8 @@ import {
   type Overview,
   type OverviewRange,
 } from "../lib/overview";
-import { useMeta, useOverview } from "../lib/useApi";
+import { memberDetail, pickHeader, pickRow, pickSections, type Universe } from "../lib/universe";
+import { useMeta, useOps, useOverview } from "../lib/useApi";
 import { PositionsTable } from "./PositionsTable";
 
 const PROPOSAL_STAGES = ["proposed", "gate", "approval", "execution", "filled"] as const;
@@ -459,6 +460,56 @@ function ProposalsCard({ o }: { o: Overview }) {
   );
 }
 
+/** D59: Today's Pick, two compact columns (Discovery | Trending): the top 10 active names of
+ *  each fast-changing tier with their score. Core and momentum stay on Ops › Universe. */
+function PickCard() {
+  const q = useOps("/api/ops/universe");
+  const u = q.data as Universe | undefined;
+  return (
+    <Card
+      title="Today's Pick"
+      testid="picks"
+      action={{ label: "VIEW ALL", to: "/ops/universe" }}
+      subtitle={<span data-testid="pick-asof">{u?.resolved_at ? <>as of {formatEt(u.resolved_at)} ET</> : "not resolved yet"}</span>}
+    >
+      {!u ? (
+        <EmptyState caption={q.isError ? "Could not load the universe." : "Loading…"} />
+      ) : (
+        <div className="grid grid-cols-2 gap-x-6">
+          {pickSections(u).map((sec) => (
+            <div key={sec.tier} className="min-w-0" data-testid="pick-tier" data-tier={sec.tier}>
+              <div className="mb-1 border-b border-line pb-1 text-caption font-semibold text-secondary tabular-nums" data-testid="pick-header">
+                {pickHeader(sec)}
+              </div>
+              {sec.rows.length === 0 ? (
+                <p className="py-1.5 text-caption text-muted">None today</p>
+              ) : (
+                <ul data-testid="pick-rows">
+                  {sec.rows.map((m) => {
+                    const score = pickRow(m).score;
+                    return (
+                      <li key={m.ticker}>
+                        <Link
+                          to="/ops/universe"
+                          title={memberDetail(m).join("\n")}
+                          className="flex min-h-[28px] items-center justify-between gap-2 hover:bg-hover max-tablet:min-h-[32px]"
+                        >
+                          <span className="truncate font-semibold text-title">{m.ticker}</span>
+                          <span className="text-caption text-secondary tabular-nums">{score ?? "—"}</span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function MoversCard({ o, monitorS }: { o: Overview; monitorS?: number }) {
   const movers = sortMovers(o.movers ?? []);
   return (
@@ -586,7 +637,7 @@ export function OverviewPage() {
   }
   const positions = o.positions ?? [];
   // Mobile/tablet (one column, E8.8b order): status → Equity → P&L Today → Positions → Greeks
-  // vs Caps → Today's Proposals → Movers → Recent Activity. The column wrappers are
+  // vs Caps → Today's Proposals → Today's Pick → Movers → Recent Activity. The column wrappers are
   // `display: contents` below desktop so `order` interleaves them; desktop keeps two stacks.
   const col = "contents desktop:grid desktop:min-w-0 desktop:content-start desktop:gap-10";
   return (
@@ -609,6 +660,9 @@ export function OverviewPage() {
           <div className="order-5 min-w-0 desktop:order-none">
             <ProposalsCard o={o} />
           </div>
+          <div className="order-6 min-w-0 desktop:order-none">
+            <PickCard />
+          </div>
         </div>
         <div className={col}>
           <div className="order-2 min-w-0 desktop:order-none">
@@ -617,10 +671,10 @@ export function OverviewPage() {
           <div className="order-4 min-w-0 desktop:order-none">
             <GreeksCard o={o} monitorS={cad.monitor} />
           </div>
-          <div className="order-6 min-w-0 desktop:order-none">
+          <div className="order-7 min-w-0 desktop:order-none">
             <MoversCard o={o} monitorS={cad.monitor} />
           </div>
-          <div className="order-7 min-w-0 desktop:order-none">
+          <div className="order-8 min-w-0 desktop:order-none">
             <ActivityCard o={o} />
           </div>
         </div>

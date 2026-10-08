@@ -27,7 +27,7 @@ PERSONA_EMOJI: dict[Persona, str] = {
     Persona.SCOUT: "🔭",
     Persona.SCALP: "⚡",
     Persona.RESEARCH: "🧠",
-    Persona.QUANT: "📐",
+    Persona.QUANT: "🤺",
     Persona.RISK: "🛡️",
     Persona.BROKER: "🏦",
     Persona.OPS: "⚙️",
@@ -54,7 +54,7 @@ PERSONA_KEYS: dict[str, Persona] = {
 def persona_label(persona: Persona, *, suffix: str = "") -> str:
     """Format a persona tag for Slack message prefixes: ``"🔭 [Scout]"``.
 
-    *suffix* goes inside the brackets: ``"📐 [Quant (revised)]"``.
+    *suffix* goes inside the brackets: ``"🤺 [Quant (revised)]"``.
     """
     return f"{PERSONA_EMOJI[persona]} [{persona.value}{suffix}]"
 
