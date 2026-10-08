@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -76,10 +77,15 @@ _EMPTY_RESPONSE = json.dumps({"candidates": [], "scan_summary": "fixture respons
 
 @dataclass
 class FixtureScalpLLM:
-    """Replays canned responses in order; returns an empty scan once exhausted."""
+    """Replays canned responses in order; returns an empty scan once exhausted.
+
+    Thread-safe (D63: the loop's exit and open branches may share one persona's
+    fixture); the order of two concurrent calls is the order they arrive in.
+    """
 
     responses: Sequence[str]
     prompts: list[str] = field(default_factory=list)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     @classmethod
     def from_dir(cls, path: Path) -> FixtureScalpLLM:
@@ -87,8 +93,9 @@ class FixtureScalpLLM:
         return cls([p.read_text() for p in sorted(path.glob("*.txt"))])
 
     def complete(self, prompt: str) -> LLMResult:
-        idx = len(self.prompts)
-        self.prompts.append(prompt)
+        with self._lock:
+            idx = len(self.prompts)
+            self.prompts.append(prompt)
         text = self.responses[idx] if idx < len(self.responses) else _EMPTY_RESPONSE
         return LLMResult(text=text, model=FIXTURE_MODEL)
 

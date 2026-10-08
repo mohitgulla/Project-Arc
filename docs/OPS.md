@@ -1192,6 +1192,15 @@ up within one slot.
   tick the loop runs before the Sweep (name order), so a Sweep can't starve it.
 - *Deadline.* `loop.max_runtime` (7m, D61; was 4m). A step already running may finish; no
   later step starts (`timeout: loop exceeded 7m`). One Slack notice per day.
+- *Parallel branches (D63, E13.21).* After `exits.mandatory` the exit branch
+  (`quant.exit → risk.exit`) and the open branch (`quant.open → risk.open →
+  quant.revise`) run side by side, each in its own thread on its own SQLite
+  connection, and join before `quant.propose`. The deadline is shared; a failed
+  step ends only its branch, then `quant.propose` does not run (as before). Proof:
+  overlapping `started_at`/`finished_at` in `routine_runs`, `wall=…ms parallel` on the
+  `[Routines]` reply, `loop_wall_ms` in the loop summary and the tick heartbeat. Serial
+  fallback (log `routines.parallel_branches_serial`): a branch persona on a `local`
+  model tier, or an in-memory store. Rollback: `loop.parallel_branches: []`.
 - *Change-aware.* The Director digests its inputs (candidate ids, regime entries,
   positions, day-P&L bucket of `loop.pnl_bucket_pct` % equity, pending orders,
   budget tier, suppressed ideas). Same digest as the last full run and less than

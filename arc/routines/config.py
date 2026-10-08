@@ -86,7 +86,7 @@ from arc.monitoring.config import MonitoringSettings
 from arc.routines.conditions import parse_condition
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_ROUTINES_PATH = REPO_ROOT / "config" / "routines.yaml"
@@ -542,6 +542,11 @@ class LoopSettings(BaseModel):
     # D38: other chains that get the same one-line root, but only when they act
     # (a proposal published: close / swap). Quiet runs post no root at all.
     action_roots: tuple[str, ...] = ("positions.evaluate",)
+    # D63 (E13.21): fork/join inside the loop chain. Each inner list is a branch of
+    # consecutive chain steps; the branches run side by side (own thread + own
+    # SQLite connection) and join before the next step. [] = serial (the rollback).
+    # RoutinesConfig checks them against the chain and the steps' reads/writes.
+    parallel_branches: tuple[tuple[str, ...], ...] = ()
 
     @field_validator("max_idle", "max_runtime", mode="before")
     @classmethod
@@ -552,6 +557,15 @@ class LoopSettings(BaseModel):
     def _positive(self) -> LoopSettings:
         if self.max_idle <= _dt.timedelta(0) or self.max_runtime <= _dt.timedelta(0):
             msg = "loop.max_idle and loop.max_runtime must be positive"
+            raise ValueError(msg)
+        flat = [s for b in self.parallel_branches for s in b]
+        if self.parallel_branches and (
+            len(self.parallel_branches) < 2 or any(not b for b in self.parallel_branches)  # noqa: PLR2004
+        ):
+            msg = "loop.parallel_branches: list at least two non-empty branches (or [] for serial)"
+            raise ValueError(msg)
+        if len(set(flat)) != len(flat):
+            msg = "loop.parallel_branches: a step is listed twice"
             raise ValueError(msg)
         return self
 
@@ -1014,6 +1028,7 @@ class RoutinesConfig(BaseModel):
         if "loop" in self.model_fields_set and self.loop.job not in self.personas:
             msg = f"loop.job: unknown persona {self.loop.job!r}"
             raise ValueError(msg)
+        self._check_parallel_branches()
         for job in self.monitoring.stuck_after_jobs:
             if job not in known_jobs and not self._is_chain_step(job):
                 msg = f"monitoring.stuck_after_jobs: unknown job {job!r}"
@@ -1032,6 +1047,86 @@ class RoutinesConfig(BaseModel):
 
     def _is_chain_step(self, name: str) -> bool:
         return any(name in p.chain for p in self.personas.values())
+
+    def branch_conflicts(self, branches: Sequence[Sequence[str]]) -> list[str]:
+        """D63: why *branches* may NOT run side by side (``[]`` = independent).
+
+        Computed from the steps' declared ``reads``/``writes`` (D27, enforced at
+        write time): no branch may read or write a kind another branch writes,
+        except kinds the writer stores with ``supersede: accumulate`` (e.g. ``note``:
+        entries stack, so both branches may append). Undeclared ``reads`` (= every
+        kind) or ``writes`` conflict with any non-accumulate write.
+        """
+        out: list[str] = []
+        for a, branch_a in enumerate(branches):
+            for b, branch_b in enumerate(branches):
+                if a == b:
+                    continue
+                for writer in branch_a:
+                    wspec = self.step(writer)[1]
+                    if wspec.writes is None:
+                        out.append(f"{writer}: writes undeclared")
+                        continue
+                    shared = {
+                        k
+                        for k in wspec.writes
+                        if self.context_policy(k, writer).supersede is not Supersede.ACCUMULATE
+                    }
+                    for other in branch_b:
+                        ospec = self.step(other)[1]
+                        reads = set(KINDS) if ospec.reads is None else set(ospec.reads)
+                        for kind in sorted(shared & reads):
+                            out.append(f"{other} reads {kind!r}, written by {writer}")
+                        for kind in sorted(shared & set(ospec.writes or [])):
+                            if a < b:
+                                out.append(f"{other} and {writer} both write {kind!r}")
+        return sorted(set(out))
+
+    def _check_parallel_branches(self) -> None:
+        """D63: ``loop.parallel_branches`` must be a contiguous run of LLM steps of the
+        loop chain (each branch in chain order, after the root and before the first
+        deterministic step that follows them), with independent reads/writes."""
+        branches = self.loop.parallel_branches
+        if not branches:
+            return
+        where = "loop.parallel_branches"
+        found = self.personas.get(self.loop.job)
+        if found is None:
+            msg = f"{where}: loop.job {self.loop.job!r} is not a persona"
+            raise ValueError(msg)
+        chain = list(found.chain)
+        if not any(s in chain for b in branches for s in b):
+            # loop.job re-pointed at another persona (tests, a rollback): the branches
+            # name none of its steps, so its chain simply runs serially.
+            structlog.get_logger(__name__).info(
+                "routines.parallel_branches_unused", loop_job=self.loop.job
+            )
+            return
+        for step in (s for b in branches for s in b):
+            if step not in chain:
+                msg = f"{where}: {step!r} is not a step of the {self.loop.job} chain"
+                raise ValueError(msg)
+            kind, spec = self.step(step)
+            llm = spec.llm if spec.llm is not None else kind is JobKind.PERSONA
+            if not llm:
+                msg = (
+                    f"{where}: {step!r} is deterministic (llm: false); account steps "
+                    "(exits.mandatory, quant.propose, broker.execute) stay serial"
+                )
+                raise ValueError(msg)
+        for b in branches:
+            idx = [chain.index(s) for s in b]
+            if idx != list(range(idx[0], idx[0] + len(idx))):
+                msg = f"{where}: branch {list(b)} must list consecutive chain steps in order"
+                raise ValueError(msg)
+        idx = sorted(chain.index(s) for b in branches for s in b)
+        if idx != list(range(idx[0], idx[0] + len(idx))):
+            msg = f"{where}: the branches must cover consecutive chain steps (no gap)"
+            raise ValueError(msg)
+        conflicts = self.branch_conflicts(branches)
+        if conflicts:
+            msg = f"{where}: branches are not independent: {'; '.join(conflicts)}"
+            raise ValueError(msg)
 
     @staticmethod
     def _check_source_feed(name: str, spec: JobSpec) -> None:

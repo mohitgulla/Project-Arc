@@ -389,6 +389,7 @@ def _record_tick(
             "reclaimed": report.reclaimed,
             "tick_duration_ms": duration_ms,
             "slowest_jobs": report.slowest(3),
+            "loop_wall_ms": report.loop_wall_ms,  # D63: the loop chain's wall time
             "approvals": approvals or {},
             "outcomes": [
                 {"job": o.job, "status": o.status, "run_id": o.run_id}
