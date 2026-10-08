@@ -208,7 +208,7 @@ class TestConfig:
         assert c.sources["youtube.briefs"].schedule == [dt.time(2, 0)]  # D45 / E4.6 (02:00 ET)
         assert c.monitoring.stuck_after_for("research") == dt.timedelta(minutes=20)
         assert c.loop.max_idle == dt.timedelta(minutes=30)
-        assert c.loop.max_runtime == dt.timedelta(minutes=4)
+        assert c.loop.max_runtime == dt.timedelta(minutes=7)  # D60
         assert {r.run for r in c.triggers_for("approval")} == {"broker"}
         yt = c.sources["youtube.briefs"]
         assert "youtube.stockedup" not in c.sources

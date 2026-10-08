@@ -625,14 +625,14 @@ def test_loop_overrides_reach_the_dispatcher_config(
     """E5.8 (D31/D36): the loop knobs are Slack-tunable and land in `RoutinesConfig.loop`."""
     import datetime as dt
 
-    assert svc.view("loop.max_idle").value == 30 and svc.view("loop.max_runtime").value == 4
+    assert svc.view("loop.max_idle").value == 30 and svc.view("loop.max_runtime").value == 7
     r = svc.set("loop.max_idle", "60", actor=OWNER, source="slack")
     assert r.pending is not None  # riskier direction (fewer full runs) → confirm
     svc.confirm(r.pending.code, actor=OWNER, source="slack")
     assert effective_routines(conn).loop.max_idle == dt.timedelta(minutes=60)
     assert svc.view("loop.max_idle").value == 60
-    # the code ceiling: a loop must fit its 5-min slot
-    assert svc.set("loop.max_runtime", "6", actor=OWNER, source="slack").outcome == "refused"
+    # the code ceiling: a loop must fit its 10-min slot (D60: ceiling 8m)
+    assert svc.set("loop.max_runtime", "9", actor=OWNER, source="slack").outcome == "refused"
     r = svc.set("loop.slack_layout", "day_thread", actor=OWNER, source="slack")
     assert r.outcome == "applied", r
     assert effective_routines(conn).loop.slack_layout.value == "day_thread"

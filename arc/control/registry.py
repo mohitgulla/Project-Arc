@@ -1513,14 +1513,14 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         group=Group.ROUTINES,
         type=_I,
         description="D31: minutes a loop chain may run before later steps are skipped "
-        "(must stay under the 5-min slot).",
+        "(must stay under the 10-min slot; D60: 7m, ceiling 8m).",
         target=Target.ROUTINES,
         risk=Risk.UP,
         path=("loop", "max_runtime"),
         unit="m",
         min=1,
-        max=5,
-        hard_ceiling=5,
+        max=8,
+        hard_ceiling=8,
     ),
     Tunable(
         key="loop.pnl_bucket_pct",

@@ -895,6 +895,6 @@ def test_yaml_comment_overview_matches_config() -> None:
         **raw["personas"]["research"],
         "every": "10m", "window": "09:40-15:50", "days": "trading", "ttl": "5m",
     }  # fmt: skip
-    assert raw["loop"]["job"] == "research" and raw["loop"]["max_runtime"] == "4m"
+    assert raw["loop"]["job"] == "research" and raw["loop"]["max_runtime"] == "7m"
     assert raw["monitoring"]["stuck_after_jobs"]["research"] == "20m"  # D52: two 10-min slots
     assert raw["triggers"] == []
