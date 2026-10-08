@@ -2031,6 +2031,50 @@ rejects only over the cap; a missing spot still fails closed as `missing_spot`).
 `show` prints the stored β, the β used today and its source. Override the cap with
 `!arc config portfolio_beta_delta_cap_pct 1.5` (registry 0.25–4.00).
 
+### 5.34 Tape movers: `market_movers` (E14.3, D60, D44)
+
+One `market_movers` source (`feed: scalp`, `category: options_fast`, every 30m
+09:30-16:00 ET on trading days, `lane: background`, `ttl: 20m`) on the existing Alpaca
+key. Code: `arc/ingest/market_movers.py`; handler `market_movers_source`.
+
+| Call | Endpoint | Used for |
+|---|---|---|
+| Movers | `GET data.alpaca.markets/v1beta1/screener/stocks/movers?top=20` | `gainers` / `losers`: price, % change |
+| Most actives | `GET …/v1beta1/screener/stocks/most-actives?top=20` (by volume) | `most_actives`: volume, trade count |
+| Snapshots | `GET …/v2/stocks/snapshots?symbols=<the most-actives>` | price + % vs the previous close for the most-actives (the screener gives neither) |
+
+- **Kind:** `market_movers` (subject `market`, TTL 1h, supersede latest), rows
+  `{symbol, price, pct, volume, trade_count, in_active}` plus `excluded` counts per
+  reason. `in_active` = on the active list when written.
+- **Dropped at write time:** `price_below_min` (price < `min_price`, $3),
+  `no_price` (a most-active the snapshot did not price), `warrant_unit_right`
+  (`.WS/.WT/.W/.U/.UN/.R/.RT` suffixes; 5-letter symbols ending W/U/R, e.g. DAAQW,
+  ALISU), `leveraged` (symbol-master name matches the D58 trending ranker's
+  leveraged/inverse test, e.g. SOXL, SOXS). A name missing from the symbol master
+  passes the leveraged test (no name to read).
+- **Failures:** no key → `skipped` (`no_api_key`); a screener 401/403/429/5xx →
+  `failed`, nothing written; a failed snapshot call only drops the most-actives
+  (`no_price`) and lands in `metrics.snapshot_error`.
+- **Context only (D60):** never a `candidate`, `universe_tier` or discovery/trending
+  input; D56 stands. Only `scalp` / `scalp.overnight` list it in `reads`.
+- **Scalp block (flag `personas.scalp_movers_context`, default `off`):** with it on,
+  the stage-2 prompt gets a `## Tape movers (Alpaca screener, code-built)` section of
+  at most `scalp_movers_context.max_lines` (10) lines, listing only active-list names
+  and names a story in the batch mentions, one line per symbol:
+  `INTC -5.7% $106.65 (active list) · most active #2 (61.4M sh, 567k trades)`. Nothing
+  stored or older than the `options_fast` `max_age` (30m) → `Tape movers: no fresh
+  info (age …)`. With the flag off the prompt is byte-identical to before E14.3
+  (golden `tests/fixtures/scalp/stage2_prompt_flag_off.txt`). Each block shown is
+  recorded in the run's input manifest (`tape_movers`).
+- **Strategy lane:** flip with `arc config set personas.scalp_movers_context on`
+  (confirm code) only after XP-11 (`config/experiments/live/xp11_scalp_movers.yaml`,
+  draft, unregistered) returns `win`.
+- Measured 2026-10-08 13:08 ET (live key): 60 raw rows → 2 gainers, 1 loser, 6
+  most-actives kept; 51 excluded (27 under $3, 17 warrants/units/rights, 7
+  leveraged); INTC and NVDA on the active list; three HTTP calls, < 1 s.
+- Check: `arc routines run market_movers --db <scratch> --no-slack`, then
+  `arc context show --db <scratch> --kind market_movers --subject market --latest`.
+
 ### 7.1 Required status check: `check`
 
 `.github/workflows/ci.yml` job `check` (job id and `name:` both `check`) runs

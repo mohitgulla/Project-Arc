@@ -649,6 +649,99 @@ def options_fast_source(
     return JobResult(summary=summary, metrics=metrics)
 
 
+def _symbol_names(ctx: JobContext) -> Callable[[str], str | None]:
+    """Symbol-master name lookup (cached master, never fetched mid-run); no master ->
+    every name ``None`` (the leveraged check then passes nothing through by name)."""
+    from arc.universe import load_symbol_master, load_universe_config
+
+    try:
+        cfg = load_universe_config(ctx.settings.universe_config_file)
+        master = load_symbol_master(
+            cfg.symbol_master,
+            user_agent=ctx.settings.edgar_user_agent,
+            now=ctx.now,
+            fetch_if_missing=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - the filter degrades, the run continues
+        log.warning("market_movers.symbol_master_unavailable", error=str(exc))
+        master = None
+
+    def name(sym: str) -> str | None:
+        info = master.get(sym) if master is not None else None
+        return info.name if info is not None else None
+
+    return name
+
+
+def market_movers_source(
+    ctx: JobContext,
+    *,
+    alpaca_get: Any = "live",
+    names: Callable[[str], str | None] | None = None,
+) -> JobResult:
+    """E14.3 (D60): Alpaca movers + most-actives → ``market_movers`` (subject market).
+
+    Scalp context only (shown with ``personas.scalp_movers_context`` on); never a
+    ``candidate`` / ``universe_tier`` / discovery input (D56). Rows under ``min_price``,
+    warrants / units / rights and leveraged funds are dropped at write time. No key ->
+    ``skipped`` (``no_api_key``); a failed screener call -> ``failed`` and nothing is
+    written (the Scalp then reads ``Tape movers: no fresh info``).
+    """
+    from arc.ingest.market_movers import MoversFetchError, fetch_market_movers
+    from arc.universe.tiers import active_tickers
+
+    get = _alpaca_news_get(ctx) if alpaca_get == "live" else alpaca_get
+    if get is None:
+        msg = "no_api_key: market_movers needs the Alpaca key"
+        raise JobSkippedError(msg)
+    top = int(ctx.options.get("top", 20))
+    min_price = float(ctx.options.get("min_price", 3.0))
+    active = active_tickers(ctx.conn, ctx.settings, ctx.now)
+    try:
+        payload, metrics = fetch_market_movers(
+            get,
+            top=top,
+            active=active,
+            names=names or _symbol_names(ctx),
+            now=ctx.now,
+            min_price=min_price,
+            timeout_s=float(ctx.options.get("timeout_s", 15)),
+        )
+    except MoversFetchError as exc:
+        msg = f"market_movers {exc.reason}: {exc}"
+        raise RuntimeError(msg) from exc
+    ctx.record_input(
+        "market_movers",
+        "alpaca_screener",
+        payload.model_dump(mode="json"),
+        as_of=ctx.now,
+        count=len(payload.gainers) + len(payload.losers) + len(payload.most_actives),
+    )
+    ctx.write("market_movers", "market", payload)
+    rows = [*payload.gainers, *payload.losers, *payload.most_actives]
+    in_active = sorted({r.symbol for r in rows if r.in_active})
+    n_excl = sum(payload.excluded.values())
+    summary = (
+        f"{len(payload.gainers)} gainers, {len(payload.losers)} losers, "
+        f"{len(payload.most_actives)} most-actives kept · {n_excl} excluded"
+        f" · {len(in_active)} on the active list"
+    )
+    if in_active:
+        summary += f" ({', '.join(in_active[:8])})"
+    return JobResult(
+        summary=summary,
+        metrics={
+            **metrics,
+            "as_of": payload.as_of,
+            "gainers": len(payload.gainers),
+            "losers": len(payload.losers),
+            "most_actives": len(payload.most_actives),
+            "excluded": dict(payload.excluded),
+            "in_active": in_active,
+        },
+    )
+
+
 def macro_calendar_source(ctx: JobContext) -> JobResult:
     """E4.5/E4.10: FOMC + BLS (CPI/PPI/NFP/JOLTS/ECI) + BEA (GDP/PCE) -> ``macro_calendar``."""
     from arc.ingest.options_data import fetch_macro_calendar
@@ -1976,6 +2069,14 @@ def scalp_persona(
             as_of=ctx.now,
             count=result.tape_tickers,
         )
+    if result.movers_blocks:  # E14.3: the Tape movers lines this run showed (flag on)
+        ctx.record_input(
+            "tape_movers",
+            "market_movers",
+            result.movers_blocks,
+            as_of=ctx.now,
+            count=len(result.movers_blocks),
+        )
     written = [
         ctx.write(
             "candidate",
@@ -2474,6 +2575,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "options_daily": "arc.routines.handlers:options_daily_source",  # E13.5 (D56)
     "vix_futures": "arc.routines.handlers:vix_futures_source",
     "options_fast": "arc.routines.handlers:options_fast_source",  # E13.6 (D56)
+    "market_movers": "arc.routines.handlers:market_movers_source",  # E14.3 (D60)
     "macro_calendar": "arc.routines.handlers:macro_calendar_source",
     "ex_dividend": "arc.routines.handlers:ex_dividend_source",
     "iv.record": "arc.routines.handlers:iv_record_source",  # E4.12 (D55) daily 30-DTE IV

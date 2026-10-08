@@ -108,6 +108,7 @@ def test_kind_map_and_reference_kinds() -> None:
         "index_vols": SourceCategory.OPTIONS_FAST,  # E13.6
         "chain_snapshot": SourceCategory.OPTIONS_FAST,
         "exchange_volume": SourceCategory.OPTIONS_FAST,
+        "market_movers": SourceCategory.OPTIONS_FAST,  # E14.3 (D60)
         "retail_buzz": SourceCategory.RETAIL_BUZZ,  # E13.19 (D58)
     }
     assert {"ex_dividend", "macro_calendar"} <= REFERENCE_KINDS

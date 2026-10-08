@@ -148,6 +148,7 @@ context_ttl:
   index_vols:    {ttl: 1h, supersede: latest}               # subject = market
   chain_snapshot: {ttl: 1h, supersede: latest}              # subject = ticker
   exchange_volume: {ttl: 1h, supersede: latest}             # subject = market
+  market_movers: {ttl: 1h, supersede: latest}               # E14.3 (D60): subject = market; Scalp context only
   macro_calendar: {ttl: 7d, supersede: latest}             # long-lived: FOMC/BLS/BEA dates move rarely
   ex_dividend:   {ttl: 7d, supersede: latest}              # subject = ticker
   # E4.8 (D46): Finnhub per-ticker context; subject = ticker. Context only, never a gate input.
@@ -458,6 +459,23 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     strikes: 3                  # strikes nearest spot (call + put each)
     pace_s: 0.2
     symbol_data_markets: [opt]  # opt | cone | ctwo | exo (one CSV each)
+  # E14.3 (D60): Alpaca screener movers + most-actives on the existing key, Scalp
+  # context only (the "Tape movers" block, behind personas.scalp_movers_context).
+  # Never a candidate / universe_tier / discovery input (D56). Dropped at write time:
+  # price < min_price, warrants/units/rights, leveraged/inverse funds. OPS 5.29a.
+  market_movers:
+    label: Tape movers
+    about: "Alpaca top gainers / losers and most-active stocks (context for the Scalp; never a discovery input)"
+    every: 30m
+    window: "09:30-16:00"
+    days: trading
+    ttl: 20m
+    lane: background
+    category: options_fast
+    feed: scalp
+    writes: [market_movers]
+    top: 20
+    min_price: 3
   macro_calendar:               # FOMC (federalreserve.gov) + BLS CPI/PPI/NFP/JOLTS/ECI + BEA GDP/PCE
     label: Macro calendar
     about: "FOMC decisions, BLS release dates (CPI, PPI, NFP, JOLTS, ECI) and BEA GDP / PCE"
@@ -635,6 +653,7 @@ director_diversification:
 
 personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
+  scalp_movers_context: "off"   # E14.3 (D60): off | on, the Scalp's "Tape movers" block (strategy lane; XP-11)
   director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
   scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + the previous evening's options_slow (18:30 vol_term, 23:00 options_daily/vix_futures; E14.2)
     label: Scout
@@ -661,7 +680,7 @@ personas:
     after_sources: true
     ttl: 20m                    # a slot missed by 20 min is skipped (the next one is closer)
     notify: card
-    reads: [index_vols, chain_snapshot, exchange_volume]   # E13.10: the options tape (always read since E13.15)
+    reads: [index_vols, chain_snapshot, exchange_volume, market_movers]   # E13.10: the options tape (always read since E13.15); E14.3: market_movers only with personas.scalp_movers_context on
     writes: [candidate, note, story, active_universe]   # note: scan summary (D27); story: D30 stage-1 digests; active_universe: D51 resolve at start
     lane: background            # D39: p90 441 s; the tick never waits on the Scalp
   scalp.overnight:              # D15/D31: 22:00 after-close fast sources (no YouTube, D45)
@@ -674,7 +693,7 @@ personas:
     after_sources: true
     ttl: 3h
     notify: card
-    reads: [index_vols, chain_snapshot, exchange_volume]   # E13.10: at 22:00 the tape is stale -> "no fresh info" line
+    reads: [index_vols, chain_snapshot, exchange_volume, market_movers]   # E13.10: at 22:00 the tape is stale -> "no fresh info" line (E14.3: movers too, flag on)
     writes: [candidate, note, story, active_universe]
     lane: background            # D39: same Scalp handler as above
   research:                     # D31/D52: the 10-min trading loop (see `loop:` above)

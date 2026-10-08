@@ -1582,6 +1582,21 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("off", "on"),
         aliases=("routines.personas.finnhub_context", "finnhub_context"),
     ),
+    # E14.3 (D60/D44): Alpaca movers + most-actives as a "Tape movers" block in the
+    # Scalp prompt. Strategy lane: off until an experiment (XP-11) returns `win`.
+    Tunable(
+        key="personas.scalp_movers_context",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E14.3: show the Scalp a 'Tape movers' block (Alpaca movers + "
+        "most-actives, only active-list names and names a story mentions, at most 10 "
+        "lines). Context only, never a discovery input. Experiment XP-11 tests it.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "scalp_movers_context"),
+        choices=("off", "on"),
+        aliases=("routines.personas.scalp_movers_context", "scalp_movers_context"),
+    ),
     # E12.5 (D51/D44): Research diversification. Strategy lane: strict is the
     # control; relaxed lets two same-industry names rank and loosens the drops.
     Tunable(
@@ -2407,6 +2422,7 @@ _PLAIN_ROUTINE_SECTIONS = (
 _PERSONA_SWITCHES = frozenset(
     {
         ("personas", "finnhub_context"),
+        ("personas", "scalp_movers_context"),  # E14.3
     }
 )
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.

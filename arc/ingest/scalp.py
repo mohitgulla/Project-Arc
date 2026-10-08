@@ -50,7 +50,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arc.context.categories import LEGACY_VIDEO, REFERENCE, SCALP_CATEGORIES
-from arc.context.kinds import StoryEvidence, StoryPayload
+from arc.context.kinds import MarketMoversPayload, StoryEvidence, StoryPayload
 from arc.ingest.cboe_fast import TAPE_SOURCE, ScalpTape, tape_corroborates
 from arc.ingest.llm import FixtureScalpLLM, HermesScalpLLM, LLMResult, ScalpLLMError
 from arc.ingest.sources import (
@@ -164,6 +164,8 @@ class ScalpRunResult:
     # volume of candidates it corroborated this run.
     tape: ScalpTape | None = None
     tape_corroborated: dict[str, float | None] = field(default_factory=dict)
+    # E14.3 (D60): the "Tape movers" block of each stage-2 batch (flag on only).
+    movers_blocks: list[str] = field(default_factory=list)
     # E4.5 (D30): fair selection + story synthesis accounting (display + manifest).
     source_mix: list[tuple[str, int, int]] = field(default_factory=list)  # label, read, over
     over_budget: int = 0
@@ -488,10 +490,12 @@ def build_stage2_prompt(
     ticker_facts: str = "",
     universe: list[str] | None = None,
     tape: str | None = None,
+    movers: str = "",
 ) -> str:
     """*universe* = the watch list (core + momentum + discovery + trending); default the core.
 
     *tape* (E13.10) is the options tape block; ``None`` (no tape read) leaves it out.
+    *movers* (E14.3) is the "Tape movers" block; ``""`` (flag off) leaves it out.
     """
     if universe is None:
         from arc.universe.tiers import core_tickers
@@ -508,6 +512,7 @@ def build_stage2_prompt(
             digests=True,
             ticker_facts=ticker_facts,
             options_tape=tape or "",
+            tape_movers=movers,
         )
     )
 
@@ -533,6 +538,29 @@ def _facts_snapshot(
     from arc.routines.config import FINNHUB_FACT_KINDS
 
     return ContextStore(conn).snapshot(now, kinds=[*FINNHUB_FACT_KINDS, "regime"], run_id=run_id)
+
+
+def _movers_payload(
+    conn: sqlite3.Connection,
+    routines: RoutinesConfig | None,
+    now: _dt.datetime,
+    run_id: str,
+) -> tuple[MarketMoversPayload | None, _dt.timedelta] | None:
+    """E14.3: the newest ``market_movers`` entry at *now*, or ``None`` with the flag off.
+
+    The read is recorded as a context snapshot (audit). Returns ``(payload or None,
+    max_age)``: ``None`` payload = nothing stored (a failed fetch writes nothing).
+    """
+    if routines is None or not routines.scalp_movers_context.enabled:
+        return None
+    from arc.context.categories import SourceCategory
+    from arc.context.store import ContextStore
+
+    snap = ContextStore(conn).snapshot(now, kinds=["market_movers"], run_id=run_id)
+    entry = snap.latest("market_movers", "market")
+    max_age = routines.category_spec(SourceCategory.OPTIONS_FAST).max_age.duration
+    payload = MarketMoversPayload.model_validate(entry.payload) if entry is not None else None
+    return payload, max_age or _dt.timedelta(minutes=30)
 
 
 def _options_tape(
@@ -1163,6 +1191,7 @@ def run_scalp(
     facts_snap = _facts_snapshot(conn, routines, now, run_id) if digests else None
     tape = _options_tape(conn, settings, routines, now, run_id) if digests else None
     result.tape = tape
+    movers_in = _movers_payload(conn, routines, now, run_id) if digests else None
     size = settings.scalp_story_batch_size
     for i in range(0, len(digests), size):
         batch = digests[i : i + size]
@@ -1174,6 +1203,19 @@ def run_scalp(
             facts = ticker_facts_block(
                 facts_snap, cfg.prompt_options(tickers, cfg.scalp_max_tickers)
             )
+        movers = ""
+        if movers_in is not None and routines is not None:
+            from arc.ingest.market_movers import movers_block
+
+            movers = movers_block(
+                movers_in[0],
+                now=now,
+                max_age=movers_in[1],
+                active=watch,
+                story_tickers=[t for p in batch for t in p.tickers],
+                max_lines=routines.scalp_movers_context.max_lines,
+            )
+            result.movers_blocks.append(movers)
         prompt = build_stage2_prompt(
             batch,
             settings,
@@ -1182,6 +1224,7 @@ def run_scalp(
             ticker_facts=facts,
             universe=watch,
             tape=tape.text if tape is not None else None,
+            movers=movers,
         )
         result.batches += 1
 

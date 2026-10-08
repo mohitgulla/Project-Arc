@@ -1,0 +1,136 @@
+{
+  "$defs": {
+    "MoverRow": {
+      "additionalProperties": false,
+      "description": "One Alpaca screener row kept after the write-time exclusions (E14.3, D60).\n\nMovers carry ``price`` / ``pct`` from the screener (no volume); most-actives carry\n``volume`` / ``trade_count`` from the screener and ``price`` / ``pct`` from one\nsnapshot lookup (``None`` when the lookup did not answer for that name).",
+      "properties": {
+        "in_active": {
+          "description": "on the active list when written",
+          "title": "In Active",
+          "type": "boolean"
+        },
+        "pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "percent change vs the previous close",
+          "title": "Pct"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Price"
+        },
+        "symbol": {
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        },
+        "trade_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trade Count"
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Volume"
+        }
+      },
+      "required": [
+        "symbol",
+        "in_active"
+      ],
+      "title": "MoverRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "``market_movers`` (subject ``market``): the tape's movers + most-actives (E14.3).\n\nScalp context only, behind ``personas.scalp_movers_context`` (D60). Never a\n``candidate`` / ``universe_tier`` input and never a discovery or trending input (D56).\nRows under $3, warrants / units / rights and leveraged / inverse funds are dropped at\nwrite time; ``excluded`` counts the drops per reason.",
+  "properties": {
+    "as_of": {
+      "description": "ISO time (ET) of the screener's last_updated",
+      "title": "As Of",
+      "type": "string"
+    },
+    "excluded": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Excluded",
+      "type": "object"
+    },
+    "fetched_at": {
+      "description": "ISO time (ET) of the fetch",
+      "title": "Fetched At",
+      "type": "string"
+    },
+    "gainers": {
+      "items": {
+        "$ref": "#/$defs/MoverRow"
+      },
+      "maxItems": 50,
+      "title": "Gainers",
+      "type": "array"
+    },
+    "losers": {
+      "items": {
+        "$ref": "#/$defs/MoverRow"
+      },
+      "maxItems": 50,
+      "title": "Losers",
+      "type": "array"
+    },
+    "most_actives": {
+      "items": {
+        "$ref": "#/$defs/MoverRow"
+      },
+      "maxItems": 50,
+      "title": "Most Actives",
+      "type": "array"
+    },
+    "source": {
+      "const": "alpaca_screener",
+      "default": "alpaca_screener",
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "as_of",
+    "fetched_at"
+  ],
+  "title": "MarketMoversPayload",
+  "type": "object"
+}

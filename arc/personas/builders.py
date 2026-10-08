@@ -48,6 +48,9 @@ class ScalpInput:
     # E13.10 (D56): the code-built options_fast tape ("" = no tape rows, or a recorded
     # pre-E13.10 call: the prompt is then byte-identical to the pre-E13.10 one).
     options_tape: str = ""
+    # E14.3 (D60): the code-built "Tape movers" block ("" = flag off: the prompt is then
+    # byte-identical to the pre-E14.3 one).
+    tape_movers: str = ""
 
 
 @dataclass(frozen=True)
@@ -1240,6 +1243,22 @@ def _options_tape_section(block: str) -> str:
     return f"\n## Options tape (Cboe, code-built)\n{OPTIONS_TAPE_NOTE}\n{block}\n"
 
 
+# E14.3 (D60): how the Scalp may use the "Tape movers" block (context only).
+TAPE_MOVERS_NOTE = (
+    "Alpaca screener (movers + most-actives), built by code, not a feed item: never "
+    "cite it in `sources`. Listed only for active-list names and names a story in this "
+    "run mentions. Use it to see which story is driving a name that is moving; a move "
+    "alone is never a reason to raise a candidate."
+)
+
+
+def _tape_movers_section(block: str) -> str:
+    """E14.3 (D60): the "Tape movers" section; ``""`` (flag off) adds nothing."""
+    if not block.strip():
+        return ""
+    return f"\n## Tape movers (Alpaca screener, code-built)\n{TAPE_MOVERS_NOTE}\n{block}\n"
+
+
 def _ticker_facts_section(block: str, *, header: str = "###") -> str:
     if not block.strip():
         return ""
@@ -1590,6 +1609,8 @@ def build_scalp_prompt(inp: ScalpInput) -> str:
         )
     else:
         feed_kind = ""
+    # E13.10 options tape + E14.3 tape movers (each "" when absent / flag off)
+    typed_sections = _options_tape_section(inp.options_tape) + _tape_movers_section(inp.tape_movers)
     return f"""{_SYSTEM_PREAMBLE}
 ## Role: Scalp (Information Retrieval)
 Slack label: [Scalp]
@@ -1626,7 +1647,7 @@ Date: {inp.scan_date}
 <<<FEEDS
 {feeds_block}
 FEEDS>>>
-{_ticker_facts_section(inp.ticker_facts, header="##")}{_options_tape_section(inp.options_tape)}
+{_ticker_facts_section(inp.ticker_facts, header="##")}{typed_sections}
 ## Output format
 Respond with ONLY a JSON object (no prose, no code fences) matching the ScalpOutput schema:
 {{
