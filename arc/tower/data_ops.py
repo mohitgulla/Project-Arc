@@ -414,16 +414,25 @@ def _bands(
     rank = {key: i for i, (key, _, _) in enumerate(order)}
     every = [*([loop] if loop else []), *rows]
     ordered = sorted(every, key=lambda r: rank.get(r.band, len(order)))
+
+    def member(r: TimelineRow, key: str) -> bool:
+        # A source job that feeds several categories (rss: market_news + company_data;
+        # youtube.briefs: youtube_macro + youtube_micro) is listed under every category
+        # band it feeds, not only its first; its own `band` stays the first (D47 order).
+        if r.band == key:
+            return True
+        return key.startswith("sources.") and key.removeprefix("sources.") in r.categories
+
     bands = [
         TimelineBand(
             key=key,
             label=label,
             group=g,
             group_label=group_label[g],
-            jobs=[r.job for r in ordered if r.band == key],
+            jobs=[r.job for r in ordered if member(r, key)],
         )
         for key, label, g in order
-        if any(r.band == key for r in ordered)
+        if any(member(r, key) for r in ordered)
     ]
     return [r for r in ordered if r is not loop], bands
 

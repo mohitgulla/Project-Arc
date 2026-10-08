@@ -354,9 +354,9 @@ class TestConfig:
         opts = shipped.job(JOB)[1].options  # type: ignore[index]
         assert configured_channels(opts) == [
             {"slug": "stockedup", "label": "StockedUp", "category": "youtube_micro"},
-            {"slug": "fxevolution", "label": "FX", "category": "youtube_macro"},
-            {"slug": "tradebrigade", "label": "TradeBrigade", "category": "youtube_micro"},
-            {"slug": "arete", "label": "Arete", "category": "youtube_micro"},
+            {"slug": "fxevolution", "label": "FX Evolution", "category": "youtube_macro"},
+            {"slug": "tradebrigade", "label": "Trade Brigade", "category": "youtube_micro"},
+            {"slug": "arete", "label": "Arete Trading", "category": "youtube_micro"},
             {"slug": "bravos", "label": "Bravos", "category": "youtube_macro"},
         ]
         assert configured_channels(None) == []
@@ -510,7 +510,7 @@ class TestJob:
         assert result.metrics["briefs"] == 5
         assert result.metrics["channels_failed"] == 0
         assert result.summary.startswith(
-            "briefs 5/5 · StockedUp ✓ FX ✓ TradeBrigade ✓ Arete ✓ Bravos ✓"
+            "briefs 5/5 · StockedUp ✓ FX Evolution ✓ Trade Brigade ✓ Arete Trading ✓ Bravos ✓"
         )
         assert not result.notice
         assert len(session.calls) == 5
@@ -550,7 +550,7 @@ class TestJob:
         briefs = _briefs(conn)
         assert "youtube.tradebrigade" not in briefs
         assert len(briefs) == 4
-        assert "TradeBrigade – (no video 24h)" in result.summary
+        assert "Trade Brigade – (no video 24h)" in result.summary
         assert result.metrics["channels"]["tradebrigade"]["outcome"] == "no_video"
         assert not result.notice  # no info is not an error
 
@@ -570,15 +570,15 @@ class TestJob:
         result, _, _ = _run(conn, shipped, list_error={"fxevolution"})
         assert len(_briefs(conn)) == 4
         assert result.metrics["channels_failed"] == 1
-        assert result.notice.startswith("YouTube briefs: FX failed (YoutubeListError")
-        assert "FX ✗" in result.summary
+        assert result.notice.startswith("YouTube briefs: FX Evolution failed (YoutubeListError")
+        assert "FX Evolution ✗" in result.summary
 
     def test_pending_transcript(self, conn: sqlite3.Connection, shipped: RoutinesConfig) -> None:
         vid = _fixture("arete")[0]["video_id"]
         result, _, _ = _run(conn, shipped, pending={vid: "audio cap 4/slot reached"})
         assert "youtube.arete" not in _briefs(conn)
         assert result.metrics["channels"]["arete"]["outcome"] == "pending"
-        assert "Arete – (pending: audio cap 4/slot reached)" in result.summary
+        assert "Arete Trading – (pending: audio cap 4/slot reached)" in result.summary
 
     def test_rerun_same_day_is_idempotent(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
@@ -744,7 +744,7 @@ class TestResearchView:
         assert "### YouTube channel briefs" in prompt
         assert "YouTube macro briefs: 1/2 channels (missing: Bravos)" in prompt
         assert "YouTube micro briefs: 3/3 channels" in prompt
-        assert '"channel": "TradeBrigade"' in prompt
+        assert '"channel": "Trade Brigade"' in prompt
         # the category block names both YouTube categories with their own counts
         assert "YouTube macro: 1/2 channels (missing: Bravos)" in prompt
         assert "YouTube micro: 3/3 channels" in prompt

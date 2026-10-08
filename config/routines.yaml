@@ -234,9 +234,9 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     lookback: 24h               # newest qualifying video published in the last 24 h (every channel; D49: no weekend carry-over)
     channels:                   # adding a channel = one entry here + arc/ingest/channels/<slug>/; D49: each declares youtube_macro | youtube_micro
       - {slug: stockedup, channel: UC-m6zNItyoDk5lSykDlhE4Q, label: StockedUp, category: youtube_micro, skip_shorts: true}
-      - {slug: fxevolution, channel: UCvJZEG5x-DVYZKTz--pS39w, label: FX, category: youtube_macro, title_exclude: ['Live Stream']}
-      - {slug: tradebrigade, channel: UCYKtr6GfycBqQJf32tbQSbQ, label: TradeBrigade, category: youtube_micro, max_audio_minutes: 90}
-      - {slug: arete, channel: UCTeFsS-bP0XEt3NBMjfW2cA, label: Arete, category: youtube_micro, title_exclude: ['^PREMARKET LIVE'], max_videos: 10}
+      - {slug: fxevolution, channel: UCvJZEG5x-DVYZKTz--pS39w, label: FX Evolution, category: youtube_macro, title_exclude: ['Live Stream']}
+      - {slug: tradebrigade, channel: UCYKtr6GfycBqQJf32tbQSbQ, label: Trade Brigade, category: youtube_micro, max_audio_minutes: 90}
+      - {slug: arete, channel: UCTeFsS-bP0XEt3NBMjfW2cA, label: Arete Trading, category: youtube_micro, title_exclude: ['^PREMARKET LIVE'], max_videos: 10}
       - {slug: bravos, channel: UCOHxDwCcOzBaLkeTazanwcw, label: Bravos, category: youtube_macro, skip_shorts: true, title_exclude: []}   # D49: ~2 long-form/week, 10-22 min, ~15:00-18:00 ET
   rss:                          # owner pick 2026-09-28: broad market, single names, macro
     label: RSS news
