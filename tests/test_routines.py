@@ -212,16 +212,18 @@ class TestConfig:
         assert {r.run for r in c.triggers_for("approval")} == {"broker"}
         yt = c.sources["youtube.briefs"]
         assert "youtube.stockedup" not in c.sources
-        assert "category" not in yt.options and yt.options["lookback"] == "24h"  # D49
+        assert "category" not in yt.options and yt.options["lookback"] == "48h"  # D49, D60
         assert [(ch["slug"], ch["category"]) for ch in yt.options["channels"]] == [
             ("stockedup", "youtube_micro"),
             ("fxevolution", "youtube_macro"),
             ("tradebrigade", "youtube_micro"),
             ("arete", "youtube_micro"),
             ("bravos", "youtube_macro"),
+            ("warrior", "youtube_micro"),  # D60
+            ("ibd", "youtube_micro"),  # D60
         ]
         brief_ttl = c.context_policy("channel_brief", "youtube.briefs").ttl
-        assert brief_ttl is not None and brief_ttl.duration == dt.timedelta(hours=24)
+        assert brief_ttl is not None and brief_ttl.duration == dt.timedelta(hours=48)  # D60
 
     def test_card_example_parses(self) -> None:
         c = cfg(

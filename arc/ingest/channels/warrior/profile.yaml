@@ -1,0 +1,42 @@
+# Warrior Trading (@DaytradeWarrior): Ross Cameron's small-cap momentum recap. One
+# 10-25 min /videos upload per weekday around 09:40 ET (the morning's leading gainers,
+# his trades, the outlook for the rest of the day/week), plus a Sunday "Day Trading
+# Watch List for Monday". /streams carries 1.5-3 h lives (excluded: no include_streams).
+# Profiled live 2026-10-07 (D60, E14.4). D60: youtube_micro.
+slug: warrior
+channel_id: UCBayuhgYpKNbhJxfExYkPfA
+display_name: Warrior Trading
+url: https://www.youtube.com/channel/UCBayuhgYpKNbhJxfExYkPfA
+cadence: trading_daily
+horizon: next_session
+publish_window_et: "09:00-11:00"
+focus:
+  - market_bias
+  - levels
+  - calls
+  - catalysts
+  - risk_flags
+trust_weight: 0.5          # D45: equal weight; D60: splits youtube_micro five ways
+guidelines_version: "warrior-2026-10-07.1"
+max_active_sessions: 1     # the daily job caps it at published + 48 h (D60)
+# The closing membership pitch (read from a real transcript, 2026-10-07): "Warrior Pro
+# members", "small cap room for members", "two-week trial", "post a link", "pinned at the
+# top of the comments", "be a member of Warrior Trading", plus the course/mentorship plugs.
+sponsor_patterns:
+  - '\bwarrior pro\b'
+  - '\bfor members\b'
+  - '\bbe a member\b'
+  - '\b(?:two|2|14)[- ]?(?:week|day|eek) trial\b'
+  - '\bpost a link\b'
+  - '\bpinned at the top\b'
+  - '\bin the description\b'
+  - '\b(?:our|my|the) (?:trading )?(?:course|mentorship|program)\b'
+  - '\bwarriortrading\.com\b'
+hedge_words:
+  - could
+  - might
+  - maybe
+  - I don't know
+  - we'll see
+  - hope
+  - I suppose

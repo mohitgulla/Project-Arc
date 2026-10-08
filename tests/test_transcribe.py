@@ -246,18 +246,19 @@ class TestGuardRails:
         docs, _, tx, _ = _run(db, settings, {"v1": info}, force=True)
         assert docs == [] and tx.calls == []
 
-    def test_at_most_three_per_run(self, db, settings) -> None:
-        infos = {f"v{i}": _info(f"v{i}") for i in range(5)}
+    def test_at_most_five_per_run(self, db, settings) -> None:
+        """D60: ``yt_max_audio_per_run`` default 5 (was 3)."""
+        infos = {f"v{i}": _info(f"v{i}") for i in range(7)}
         docs, tools, tx, _ = _run(db, settings, infos)
-        assert len(tx.calls) == 3 and len(docs) == 3
+        assert len(tx.calls) == 5 and len(docs) == 5
         # the remaining two are left for the next run
         docs2, _, tx2, _ = _run(db, settings, infos)
         assert len(docs2) == 2 and len(tx2.calls) == 2
 
     def test_failed_attempt_counts_toward_cap(self, db, settings) -> None:
-        infos = {f"v{i}": _info(f"v{i}") for i in range(5)}
+        infos = {f"v{i}": _info(f"v{i}") for i in range(7)}
         _, tools, _, _ = _run(db, settings, infos, fail_ffmpeg=True)
-        assert len(tools.downloads) == 3
+        assert len(tools.downloads) == 5
 
     def test_captioned_videos_do_not_use_cap(self, db, settings) -> None:
         infos = {f"c{i}": _info(f"c{i}", captions=True) for i in range(4)}

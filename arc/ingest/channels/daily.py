@@ -1,20 +1,24 @@
 """Daily YouTube channel briefs (E4.6, PLAN D45).
 
 One job (``youtube.briefs``, 02:00 ET on trading days) turns the newest qualifying
-video per configured channel from the last ``lookback`` (24 h) into at most one
-validated :class:`~arc.models.ChannelBrief` per channel::
+video per configured channel from the last ``lookback`` (48 h, D60; was 24 h) into at
+most one validated :class:`~arc.models.ChannelBrief` per channel::
 
-    list newest max_videos ──▶ drop excluded (live / Shorts / title_exclude)
+    list newest max_videos (+ /streams with include_streams) ──▶ drop excluded
+        (live / Shorts / title_exclude)
         ──▶ newest qualifying video inside the window (metadata fetched only until
             a video is older than now - lookback)
         ──▶ transcript (captions, then audio; shared caption breaker + audio cap)
         ──▶ raw_doc (source_key youtube.<slug>, scalp_status brief_only)
         ──▶ channel processor (LLM extraction + verbatim-quote check)
-        ──▶ channel_briefs row (hard expiry = run + ttl) + channel_brief context entry
+        ──▶ channel_briefs row (hard expiry = published + ttl) + channel_brief context entry
 
 Everything except the extraction call is deterministic. A channel with no
-qualifying video has no brief that day ("no video means no info"); nothing
-carries over, and the other channels are not re-weighted. Channels and their
+qualifying video in the window has no brief ("no video means no info"), and the
+other channels are not re-weighted. D60: the newest video wins. Its brief supersedes
+the channel's older one; while the newest video is still pending (no transcript yet)
+or fails, the channel's older active brief (still inside the window) stays the one
+personas read, so a newer video never blanks a channel. Channels and their
 knobs are config (``config/routines.yaml``): adding a channel is one ``channels:``
 entry plus one profile dir under :mod:`arc.ingest.channels`.
 """
@@ -37,6 +41,7 @@ from arc.context.categories import (
     DEFAULT_CATEGORIES,
     YOUTUBE_CATEGORIES,
     SourceCategory,
+    age_text,
     channel_category,
     normalize_category,
     parse_youtube_category,
@@ -64,6 +69,9 @@ JOB = "youtube.briefs"
 SOURCE_PREFIX = "youtube."
 SCALP_STATUS_BRIEF_ONLY = "brief_only"
 LIVE_STATUSES = frozenset({"is_live", "is_upcoming", "post_live"})
+# D60: a channel with ``include_streams`` also reads finished streams (``post_live``);
+# a stream still live or upcoming is never read.
+STREAM_LIVE_STATUSES = frozenset({"is_live", "is_upcoming"})
 SHORTS_MAX_SECONDS = 60
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -90,6 +98,11 @@ class DailyChannel(BaseModel):
     max_audio_minutes: int | None = Field(None, ge=1)
     skip_shorts: bool = True
     title_exclude: list[str] = Field(default_factory=list)
+    include_streams: bool = Field(
+        False,
+        description="D60: also list /streams (finished streams, post_live allowed; never "
+        "is_live / is_upcoming) and take the newer of the two picks",
+    )
 
     @field_validator("slug")
     @classmethod
@@ -131,6 +144,19 @@ class DailyChannel(BaseModel):
         return f"https://www.youtube.com/channel/{self.channel}/videos"
 
     @property
+    def streams_url(self) -> str:
+        """The channel's ``/streams`` tab (D60 ``include_streams``)."""
+        base = self.url.rstrip("/")
+        for tab in ("/videos", "/streams", "/shorts", "/featured"):
+            base = base.removesuffix(tab)
+        return f"{base}/streams"
+
+    @property
+    def live_statuses(self) -> frozenset[str]:
+        """Live statuses this channel excludes (D60: ``post_live`` allowed with streams)."""
+        return STREAM_LIVE_STATUSES if self.include_streams else LIVE_STATUSES
+
+    @property
     def channel_id(self) -> str | None:
         m = re.search(r"(UC[A-Za-z0-9_-]{20,})", self.channel)
         return m.group(1) if m else None
@@ -141,7 +167,7 @@ class DailyBriefConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
-    lookback: _dt.timedelta = _dt.timedelta(hours=24)
+    lookback: _dt.timedelta = _dt.timedelta(hours=48)  # D60 (was 24 h)
     channels: list[DailyChannel] = Field(..., min_length=1)
 
     @field_validator("lookback", mode="before")
@@ -211,7 +237,7 @@ def _published(info: Mapping[str, Any]) -> _dt.datetime | None:
 
 def _exclude_reason(entry: Mapping[str, Any], ch: DailyChannel) -> ExcludeReason | None:
     """Exclusion from listing or metadata fields (live, Shorts, title regex)."""
-    if entry.get("live_status") in LIVE_STATUSES or entry.get("is_live"):
+    if entry.get("live_status") in ch.live_statuses or entry.get("is_live"):
         return ExcludeReason.LIVE
     if ch.skip_shorts:
         url = str(entry.get("url") or entry.get("webpage_url") or "")
@@ -278,6 +304,37 @@ def pick_video(
     return out
 
 
+def pick_newest(
+    listings: Sequence[Iterable[Mapping[str, Any]]],
+    fetch_info: Callable[[str], Mapping[str, Any]],
+    ch: DailyChannel,
+    *,
+    now: _dt.datetime,
+    lookback: _dt.timedelta,
+) -> Pick:
+    """D60: the newest qualifying video across several listings (``/videos`` + ``/streams``).
+
+    Each listing is scanned with :func:`pick_video` (newest first, so each scan stops
+    at its first video older than the window); the picks are merged by publish time.
+    A video listed twice is scanned once. Counters and exclusions add up.
+    """
+    out = Pick()
+    seen: set[str] = set()
+    for listing in listings:
+        entries = [e for e in listing if str(e.get("id") or "") not in seen]
+        seen.update(str(e.get("id") or "") for e in entries)
+        got = pick_video(entries, fetch_info, ch, now=now, lookback=lookback)
+        out.scanned += got.scanned
+        out.metadata_fetched += got.metadata_fetched
+        out.excluded.extend(got.excluded)
+        if got.info is not None and (
+            out.published_at is None
+            or (got.published_at is not None and got.published_at > out.published_at)
+        ):
+            out.info, out.published_at = got.info, got.published_at
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -314,10 +371,14 @@ class ChannelRun:
     cost_usd: float | None = None
     wall_s: float = 0.0
     error: str | None = None
+    # D60: the channel's older active brief kept while its newest video is pending /
+    # failed (personas keep reading it until the newer one is processed).
+    kept: ChannelBrief | None = None
+    kept_age: _dt.timedelta | None = None
 
     @property
     def present(self) -> bool:
-        return self.outcome in (Outcome.BRIEFED, Outcome.EXISTING)
+        return self.outcome in (Outcome.BRIEFED, Outcome.EXISTING) or self.kept is not None
 
     def manifest(self) -> dict[str, Any]:
         """JSON-able per-channel record (run manifest metrics)."""
@@ -348,11 +409,27 @@ class ChannelRun:
             "cost_usd": self.cost_usd,
             "wall_s": round(self.wall_s, 1),
             "error": self.error,
+            "kept_brief_id": self.kept.brief_id if self.kept else None,
+            "kept_video_id": self.kept.video_id if self.kept else None,
+            "kept_published_at": self.kept.published_at.isoformat() if self.kept else None,
+            "kept_age": age_text(self.kept_age) if self.kept_age is not None else None,
         }
 
     def short(self) -> str:
-        """``StockedUp ✓`` / ``Trade Brigade – (no video 24h)`` for the summary line."""
+        """``StockedUp ✓`` / ``Trade Brigade – (no video 48h)`` for the summary line.
+
+        D60: ``IBD ✓ (older brief 31h; newer pending: run_cap_reached)`` when the newest
+        video is pending (or failed) and the older brief stays active.
+        """
         name = self.channel.display
+        if self.kept is not None:
+            age = age_text(self.kept_age) if self.kept_age is not None else "?"
+            why = (
+                f"newer pending: {self.pending_reason}"
+                if self.outcome is Outcome.PENDING
+                else f"newer failed: {self.error}"
+            )
+            return f"{name} ✓ (older brief {age}; {why})"
         if self.present:
             return f"{name} ✓"
         if self.outcome is Outcome.NO_VIDEO:
@@ -386,9 +463,35 @@ def _no_text_reason(err: Exception) -> str:
     return f"{type(err).__name__}: {str(err)[:160]}"
 
 
-def expire_at(now: _dt.datetime, ttl: _dt.timedelta) -> _dt.datetime:
-    """Hard brief expiry (rule 5): *ttl* after the run that built it."""
-    return now + ttl
+def expire_at(published: _dt.datetime, ttl: _dt.timedelta) -> _dt.datetime:
+    """Hard brief expiry (D60): *ttl* after the video was published (was: after the run).
+
+    A brief is read for as long as its video is inside the freshness window, so a
+    47h-old video's brief is present and a 49h-old one's is not (48 h ttl).
+    """
+    return published + ttl
+
+
+def _keep_older(repo: ChannelBriefRepo, cr: ChannelRun, now: _dt.datetime) -> None:
+    """D60: the newest video is pending / failed: keep the channel's older active brief.
+
+    Its context entry is left alone (still active until its own expiry); nothing is
+    rewritten, so the older brief's age and expiry stay those of its video.
+    """
+    older = repo.active(now, channel_slug=cr.channel.slug)
+    if not older:
+        return
+    cr.kept = older[0]  # newest first
+    cr.kept_age = now - older[0].published_at
+    log.info(
+        "youtube.brief_kept_older",
+        channel=cr.channel.slug,
+        brief_id=cr.kept.brief_id,
+        video_id=cr.kept.video_id,
+        age=age_text(cr.kept_age),
+        newer=cr.pick.video_id,
+        reason=cr.pending_reason or cr.error,
+    )
 
 
 def run_daily_briefs(
@@ -410,9 +513,14 @@ def run_daily_briefs(
 ) -> DailyBriefRun:
     """Run every configured channel in order (one shared caption session).
 
-    *write_brief* is called once per channel that ends with a brief (the job
-    writes the ``channel_brief`` context entry there). Listing failures, LLM and
-    parse errors mark that channel ``error`` and the run carries on.
+    *write_brief* is called once per channel that ends with a new or re-confirmed
+    brief (the job writes the ``channel_brief`` context entry there). Listing
+    failures, LLM and parse errors mark that channel ``error`` and the run carries on.
+
+    D60: *list_videos* is called for ``/videos`` and, with ``include_streams``, for
+    ``/streams`` too; the newest qualifying video of both wins. When that video is
+    pending or fails, the channel's older active brief is kept (``ChannelRun.kept``).
+    *ttl* runs from the video's publish time.
     """
     from arc.ingest.youtube import (
         MAX_CAPTION_CHARS,
@@ -433,13 +541,15 @@ def run_daily_briefs(
             cr.outcome, cr.error = Outcome.ERROR, f"no channel profile {ch.slug!r}"
             log.error("youtube.brief_failed", channel=ch.slug, error=cr.error)
             continue
+        urls = [ch.url, ch.streams_url] if ch.include_streams else [ch.url]
         try:
-            listing = list_videos(ch.url, ch.max_videos)
+            listings = [list_videos(u, ch.max_videos) for u in urls]
         except YoutubeListError as exc:
             cr.outcome, cr.error = Outcome.ERROR, _no_text_reason(exc)
             log.error("youtube.brief_failed", channel=ch.slug, error=cr.error)
+            _keep_older(repo, cr, now)
             continue
-        cr.pick = pick_video(listing, fetch_info, ch, now=now, lookback=cfg.lookback)
+        cr.pick = pick_newest(listings, fetch_info, ch, now=now, lookback=cfg.lookback)
         log.info(
             "youtube.brief_pick",
             channel=ch.slug,
@@ -476,8 +586,9 @@ def run_daily_briefs(
         )
         if not text:
             cr.outcome, cr.pending_reason = Outcome.PENDING, pending
-            cr.wall_s = clock() - started
             log.info("youtube.brief_pending", channel=ch.slug, video_id=vid, reason=pending)
+            _keep_older(repo, cr, now)
+            cr.wall_s = clock() - started
             continue
         cr.transcript_source = source.value if source else None
         cr.transcript_chars = len(text)
@@ -516,11 +627,16 @@ def run_daily_briefs(
             )
         except (ScalpLLMError, BriefParseError) as exc:
             cr.outcome, cr.error = Outcome.ERROR, _no_text_reason(exc)
-            cr.wall_s = clock() - started
             log.error("youtube.brief_failed", channel=ch.slug, video_id=vid, error=cr.error)
+            _keep_older(repo, cr, now)
+            cr.wall_s = clock() - started
             continue
         cr.brief_status = repo.store(
-            result, proc, now=now, raw_doc_id=doc_id, expires=expire_at(now, ttl)
+            result,
+            proc,
+            now=now,
+            raw_doc_id=doc_id,
+            expires=expire_at(cr.pick.published_at or now, ttl),
         )
         cr.brief = result.brief
         cr.items = result.kept
@@ -589,12 +705,18 @@ def brief_presence_line(
     present: Iterable[str],
     channels: Sequence[Mapping[str, Any]],
     category: SourceCategory | None = None,
+    *,
+    ages: Mapping[str, _dt.timedelta] | None = None,
 ) -> str:
     """``YouTube macro briefs: n/N channels (missing: …)`` from config + active briefs.
 
     D49: with *category*, the denominator is the channels configured in that category
     (never all channels, never renormalised over the ones present). Without it, every
     channel (``YouTube briefs: …``).
+
+    D60: *ages* (``{slug: now - published_at}``) appends each present channel's brief
+    age, ``… 2/5 channels: StockedUp (31h), IBD (9h) (missing: …)``, so a persona can
+    weigh an older brief (the window is 48 h).
     """
     have = set(present)
     chs = category_channels(channels, category)
@@ -602,7 +724,30 @@ def brief_presence_line(
     n = sum(1 for c in chs if c["slug"] in have)
     name = "YouTube" if category is None else DEFAULT_CATEGORIES[category].label
     line = f"{name} briefs: {n}/{len(chs)} channels"
+    if ages is not None and n:
+        aged = [
+            f"{c.get('label') or c['slug']} ({age_text(ages[c['slug']])})"
+            for c in chs
+            if c["slug"] in have and c["slug"] in ages
+        ]
+        if aged:
+            line = f"{line}: {', '.join(aged)}"
     return f"{line} (missing: {', '.join(missing)})" if missing else line
+
+
+def brief_ages(briefs: Iterable[Mapping[str, Any]], now: _dt.datetime) -> dict[str, _dt.timedelta]:
+    """D60: ``{slug: now - published_at}`` for brief payloads (the newest per channel)."""
+    out: dict[str, _dt.timedelta] = {}
+    for b in briefs:
+        raw = b.get("published_at")
+        if not raw:
+            continue
+        pub = raw if isinstance(raw, _dt.datetime) else _dt.datetime.fromisoformat(str(raw))
+        age = now - pub
+        slug = str(b.get("channel_slug"))
+        if slug not in out or age < out[slug]:
+            out[slug] = age
+    return out
 
 
 def brief_agreement(

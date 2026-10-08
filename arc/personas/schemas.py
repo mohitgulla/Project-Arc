@@ -623,6 +623,28 @@ class ScoutTickerCall(BaseModel):
     catalyst_type: CatalystType
     catalyst_date: str | None = Field(None, description="ISO-8601 date, if any")
 
+    @field_validator("catalyst_type", mode="before")
+    @classmethod
+    def _brief_catalyst_kind(cls, v: object) -> object:
+        """Map a channel brief's catalyst ``kind`` onto :class:`CatalystType`.
+
+        The Scout reads brief JSON whose catalysts use the brief vocabulary
+        (``fed`` / ``geopolitical`` / ``other``) and sometimes copies it into its own
+        call (live 2026-10-08: ``geopolitical`` failed the whole run twice). Same map
+        as the brief → candidate path (``arc.ingest.channels.briefs._CATALYST_TYPE``).
+        """
+        if isinstance(v, str):
+            return _BRIEF_KIND_TO_CATALYST.get(v.strip().lower(), v)
+        return v
+
+
+# Brief catalyst kinds that are not CatalystType values (BriefCatalystKind, D45).
+_BRIEF_KIND_TO_CATALYST: dict[str, str] = {
+    "fed": CatalystType.MACRO.value,
+    "geopolitical": CatalystType.NEWS.value,
+    "other": CatalystType.NEWS.value,
+}
+
 
 SCOUT_PROSE_MAX = 600
 
