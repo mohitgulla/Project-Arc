@@ -343,6 +343,27 @@ def _data_result(ctx: JobContext, name: str, source: str, payload: object, n: in
     ctx.record_input(name, source, payload, as_of=ctx.now, count=n)
 
 
+def _vol_term_session_check(ctx: JobContext, as_of: str) -> None:
+    """E14.2 (D60): with a per-session ``catch_up`` (``vol_term:{day}``), a slot stores
+    only the session it reads (:func:`arc.utils.calendar.completed_session`). Cboe's
+    CSV still ending on an older close = not published yet: a skip on the evening slot
+    (the session is today), a failure on the morning catch-up (it should be there)."""
+    from arc.utils.calendar import completed_session
+
+    cu = getattr(ctx.spec, "catch_up", None)  # chain steps (StepSpec) carry none
+    if cu is None or not cu.per_session:
+        return
+    slot = ctx.scheduled_for.astimezone(ET)
+    day = completed_session(slot)
+    if as_of >= day.isoformat():
+        return
+    if day == slot.date():
+        msg = f"not published yet: Cboe VIX history ends {as_of}, want {day.isoformat()}"
+        raise JobSkippedError(msg)
+    msg = f"catch-up: Cboe VIX history still ends {as_of}, want {day.isoformat()}"
+    raise RuntimeError(msg)
+
+
 def vol_term_source(ctx: JobContext) -> JobResult:
     """E4.5: VIX9D / VIX / VIX3M / VVIX closes (Cboe) -> one ``vol_term`` entry."""
     from arc.ingest.options_data import fetch_vol_term
@@ -352,6 +373,7 @@ def vol_term_source(ctx: JobContext) -> JobResult:
     if payload is None:
         msg = "Cboe VIX history unavailable"
         raise JobSkippedError(msg)
+    _vol_term_session_check(ctx, payload.as_of)
     _data_result(ctx, "vol_term", "cboe", payload.model_dump(mode="json"), 4)
     ctx.write("vol_term", "market", payload)
     return JobResult(

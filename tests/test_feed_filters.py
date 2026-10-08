@@ -59,9 +59,15 @@ def _shipped_feeds() -> dict[str, FeedSpec]:
 class TestShippedFeeds:
     def test_retargeted_feeds(self) -> None:
         feeds = _shipped_feeds()
-        assert "cnbc" not in feeds
-        assert feeds["cnbc_earnings"].url == "https://www.cnbc.com/id/15839135/device/rss/rss.html"
-        assert feeds["cnbc_business"].url == "https://www.cnbc.com/id/10001147/device/rss/rss.html"
+        # E14.2 (D60): CNBC Earnings/Business replaced by the two press-release wires
+        assert not {"cnbc", "cnbc_earnings", "cnbc_business"} & set(feeds)
+        assert feeds["prnewswire"].url == (
+            "https://www.prnewswire.com/rss/financial-services-latest-news/"
+            "financial-services-latest-news-list.rss"
+        )
+        assert feeds["businesswire"].url == (
+            "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEF9YXA=="
+        )
         assert feeds["wsj_business"].url == (
             "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness"
         )
@@ -72,14 +78,30 @@ class TestShippedFeeds:
         reg = SourceRegistry.from_routines(load_routines(DEFAULT_ROUTINES_PATH))
         got = {
             k: (reg.sources[k].display, reg.sources[k].category)
-            for k in ("cnbc_earnings", "cnbc_business", "wsj_business")
+            for k in ("prnewswire", "businesswire", "wsj_business")
         }
         assert got == {
-            "cnbc_earnings": ("CNBC Earnings", SourceCategory.COMPANY_DATA),
-            "cnbc_business": ("CNBC Business", SourceCategory.MARKET_NEWS),
+            "prnewswire": ("PR Newswire", SourceCategory.COMPANY_DATA),
+            "businesswire": ("Business Wire", SourceCategory.COMPANY_DATA),
             "wsj_business": ("WSJ Business", SourceCategory.COMPANY_DATA),
         }
+        assert "cnbc_earnings" not in reg.sources and "cnbc_business" not in reg.sources
         assert abs(sum(reg.effective_weights().values()) - 1.0) < 1e-9
+
+    @pytest.mark.parametrize(
+        ("key", "label", "category"),
+        [
+            ("cnbc", "CNBC", SourceCategory.MARKET_NEWS),
+            ("cnbc_earnings", "CNBC Earnings", SourceCategory.COMPANY_DATA),
+            ("cnbc_business", "CNBC Business", SourceCategory.MARKET_NEWS),
+        ],
+    )
+    def test_retired_cnbc_keys_keep_labels(
+        self, key: str, label: str, category: SourceCategory
+    ) -> None:
+        reg = SourceRegistry.from_routines(load_routines(DEFAULT_ROUTINES_PATH))
+        spec = reg.spec_for(key)
+        assert (spec.display, spec.category) == (label, category)
 
     @pytest.mark.parametrize("title", DIVIDEND_TITLES)
     def test_sa_filter_drops_dividend_declarations(self, title: str) -> None:
@@ -89,14 +111,87 @@ class TestShippedFeeds:
     def test_sa_filter_keeps_company_news(self, title: str) -> None:
         assert not _shipped_feeds()["seekingalpha"].title_filtered(title)
 
-    def test_other_feeds_have_no_filter(self) -> None:
-        for key, f in _shipped_feeds().items():
-            if key != "seekingalpha":
-                assert not f.title_filtered(DIVIDEND_TITLES[0]), key
+    def test_unfiltered_feeds(self) -> None:
+        filtered = {k for k, f in _shipped_feeds().items() if f.title_exclude or f.title_include}
+        assert filtered == {"seekingalpha", "nasdaq", "prnewswire", "businesswire"}
 
     def test_etf_distribution_pattern(self) -> None:
         sa = _shipped_feeds()["seekingalpha"]
         assert sa.title_filtered("Global X ETF announces monthly distribution")
+
+
+# ---------------------------------------------------------------------------
+# E14.2 (D60): Nasdaq + wire title filters (real titles, 2026-10-06..08)
+# ---------------------------------------------------------------------------
+
+NASDAQ_DROPPED = [
+    "Malaysia Stock Market May Extend Losing Streak",
+    "Lower Open Called For Taiwan Stock Market",
+    "Hong Kong Shares May Snap Losing Streak",
+    "European Shares Seen Higher As Investors Await ECB Minutes",
+    "DAX Slips As Investors Await Fresh Triggers",
+    "3 High-Yield Dividend Stocks to Buy in October",
+    "The 2 Best AI Stocks to Buy Right Now",
+    "Prediction: This Stock Will Be Worth More Than Nvidia by 2030",
+    "Is Palantir Stock a Buy Now?",
+    "Here's Why Shares of AppLovin Jumped Today",
+    "If You'd Invested $1,000 in Costco 10 Years Ago, Here's How Much You'd Have Today",
+    "Social Security Recipients Get Some Good News for 2027",
+]
+NASDAQ_KEPT = [
+    "Pre-Market Most Active Section",
+    "Wall Street Closes Mostly Higher As Tech Rally Continues",
+    "Delta Air Lines Q3 Profit Beats Estimates",
+    "Constellation Brands Cuts FY26 Outlook",
+    "Treasuries Move Modestly Higher Ahead Of Fed Minutes",
+]
+WIRE_KEPT = [
+    "Acme Corp Reports Third Quarter 2026 Results",
+    "Acme Corp Reports Third Quarter 2026 Results; Conference Call Today at 5:00 PM ET",
+    "Acme Corp Announces Pricing of $500 Million Senior Notes Offering",
+    "Acme Corp to Acquire Widget Co. for $1.2 Billion",
+    "FDA Approves Acme Therapeutics' Drug for Rare Disease",
+    "Acme Corp Board Authorizes New $2 Billion Share Repurchase Program",
+    "Acme Corp Declares Quarterly Dividend",
+    "Acme Corp Raises Full-Year 2026 Guidance",
+]
+WIRE_DROPPED = [
+    "Acme Corp to Announce Third Quarter 2026 Financial Results on October 29",
+    "Acme Corp Schedules Third Quarter 2026 Earnings Release and Conference Call",
+    "Acme Corp Announces Date for Third Quarter 2026 Earnings Release",
+    "Acme Corp Sets Date for Third Quarter Results",
+    "Acme Corp to Host Q3 2026 Earnings Conference Call",
+    "Acme Corp Third Quarter Earnings Webcast Scheduled",
+    "Acme Corp Announces Voting Results of Annual Meeting",
+    "Acme Investors Who Lost Money: Class Action Filed - Contact the Firm",
+    "Acme Corp Appoints New Chief Marketing Officer",  # no material keyword
+    "Acme Corp Launches New Product Line",
+]
+
+
+class TestE142Filters:
+    @pytest.mark.parametrize("title", NASDAQ_DROPPED)
+    def test_nasdaq_drops_wraps_and_listicles(self, title: str) -> None:
+        assert _shipped_feeds()["nasdaq"].title_filtered(title)
+
+    @pytest.mark.parametrize("title", NASDAQ_KEPT)
+    def test_nasdaq_keeps_us_market_news(self, title: str) -> None:
+        assert not _shipped_feeds()["nasdaq"].title_filtered(title)
+
+    @pytest.mark.parametrize("key", ["prnewswire", "businesswire"])
+    @pytest.mark.parametrize("title", WIRE_KEPT)
+    def test_wires_keep_material_events(self, key: str, title: str) -> None:
+        assert not _shipped_feeds()[key].title_filtered(title)
+
+    @pytest.mark.parametrize("key", ["prnewswire", "businesswire"])
+    @pytest.mark.parametrize("title", WIRE_DROPPED)
+    def test_wires_drop_notices_and_noise(self, key: str, title: str) -> None:
+        assert _shipped_feeds()[key].title_filtered(title)
+
+    def test_wires_share_one_pattern_set(self) -> None:
+        feeds = _shipped_feeds()
+        pr, bw = feeds["prnewswire"], feeds["businesswire"]
+        assert (pr.title_include, pr.title_exclude) == (bw.title_include, bw.title_exclude)
 
 
 # ---------------------------------------------------------------------------
@@ -346,4 +441,4 @@ def test_tower_sources_count_filtered_today(conn) -> None:
     rows = {r.key: r for r in resp.sources}
     sa = rows["seekingalpha"]
     assert (sa.docs_today, sa.filtered_today) == (4, 3)
-    assert rows["cnbc_earnings"].filtered_today == 0
+    assert rows["prnewswire"].filtered_today == 0

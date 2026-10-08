@@ -513,7 +513,8 @@ class TestCatchUpTemplate:
         cfg = _routines()
         for job, kind in (("options_daily", "options_daily"), ("vix_futures", "vx_curve")):
             spec = cfg.sources[job]
-            assert [t.strftime("%H:%M") for t in spec.schedule] == ["18:30", "08:15"]
+            # E14.2 (D60): evening slot after the ~21:00-22:50 Cboe publish
+            assert [t.strftime("%H:%M") for t in spec.schedule] == ["23:00", "08:15"]
             assert spec.catch_up is not None
             assert spec.catch_up.until_written == f"{kind}:{{day}}"
             assert spec.options.get("category") == "options_slow"
@@ -522,10 +523,96 @@ class TestCatchUpTemplate:
         assert cfg.options_slow.vx_flat_band == 0.5
         assert cfg.options_slow.publish_probe_minutes == 0
 
+    def test_repo_config_vol_term(self) -> None:
+        # E14.2 (D60): was 09:00 + 16:45, both of which read the previous close
+        spec = _routines().sources["vol_term"]
+        assert [t.strftime("%H:%M") for t in spec.schedule] == ["18:30", "08:15"]
+        assert spec.catch_up is not None
+        assert spec.catch_up.until_written == "vol_term:{day}"
+        assert spec.writes == ["vol_term"]
+
     def test_registry(self) -> None:
         assert REGISTRY["options_slow.vx_flat_band"].max == 10.0
         assert "options_slow.publish_probe_minutes" in NOT_EXPOSED_PATHS
         assert "options_slow.publish_probe_minutes" not in REGISTRY
+
+
+class TestVolTermSession:
+    """E14.2 (D60): a vol_term slot stores only the session it reads."""
+
+    @staticmethod
+    def _run(
+        conn: sqlite3.Connection,
+        monkeypatch: pytest.MonkeyPatch,
+        slot: dt.datetime,
+        as_of: str,
+    ) -> JobResult:
+        import arc.ingest.options_data as od
+        from arc.context.kinds import VolTermPayload
+
+        payload = VolTermPayload.model_validate(
+            {
+                "as_of": as_of,
+                "vix9d": 14.0,
+                "vix": 15.0,
+                "vix3m": 17.6,
+                "vvix": 90.0,
+                "ratio_3m_1m": 1.1733,
+                "structure": "contango",
+            }
+        )
+        monkeypatch.setattr(od, "fetch_vol_term", lambda **_k: payload)
+        return handlers.vol_term_source(_ctx(conn, "vol_term", slot))
+
+    def test_evening_writes_todays_close(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        r = self._run(conn, monkeypatch, et(2026, 10, 7, 18, 30), "2026-10-07")
+        assert "as of 2026-10-07" in r.summary
+        assert [p["as_of"] for p in _payloads(conn, "vol_term")] == ["2026-10-07"]
+
+    def test_evening_skips_when_csv_still_on_previous_close(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with pytest.raises(JobSkippedError, match="not published yet.*want 2026-10-07"):
+            self._run(conn, monkeypatch, et(2026, 10, 7, 18, 30), "2026-10-06")
+        assert _payloads(conn, "vol_term") == []
+
+    def test_morning_catch_up_reads_previous_session(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._run(conn, monkeypatch, et(2026, 10, 8, 8, 15), "2026-10-07")
+        assert [p["as_of"] for p in _payloads(conn, "vol_term")] == ["2026-10-07"]
+
+    def test_morning_catch_up_fails_when_still_stale(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with pytest.raises(RuntimeError, match="catch-up.*still ends 2026-10-06"):
+            self._run(conn, monkeypatch, et(2026, 10, 8, 8, 15), "2026-10-06")
+
+    def test_no_catch_up_spec_stores_whatever_it_reads(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = _routines()
+        spec = cfg.sources["vol_term"].model_copy(update={"catch_up": None})
+        cfg = cfg.model_copy(update={"sources": {**cfg.sources, "vol_term": spec}})
+        import arc.ingest.options_data as od
+        from arc.context.kinds import VolTermPayload
+
+        payload = VolTermPayload.model_validate(
+            {
+                "as_of": "2026-10-06",
+                "vix9d": 14.0,
+                "vix": 15.0,
+                "vix3m": 17.6,
+                "vvix": 90.0,
+                "ratio_3m_1m": 1.1733,
+                "structure": "contango",
+            }
+        )
+        monkeypatch.setattr(od, "fetch_vol_term", lambda **_k: payload)
+        handlers.vol_term_source(_ctx(conn, "vol_term", et(2026, 10, 7, 18, 30), routines=cfg))
+        assert [p["as_of"] for p in _payloads(conn, "vol_term")] == ["2026-10-06"]
 
 
 YAML = """

@@ -20,6 +20,9 @@
 #                   one channel_brief each, fresh for the day; Research reads them
 #   05:30           active universe resolve (D56 tiers); Mon: symbol master refresh (E5.7)
 #   06:00           earnings calendar; rss (15m) / edgar (15m) polling until 20:00
+#   08:15           options_slow catch-up (options_daily / vix_futures / vol_term), only for a
+#                   session the evening slot did not write; lands after the 06:00 Scout, so it
+#                   serves Research and the Scalp only (E14.2, D60)
 #   09:00-16:00     Scalp every 30 min (15 in-session runs; after the fast sources)
 #   09:30-16:00     intraday monitor every 10 min (D35/D52: positions, Greeks, marks + account
 #                   fields for the tower, expiries, halts; 40 slots, 16:00 inclusive)
@@ -34,8 +37,11 @@
 #   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop; E10.5 posts)
 #   16:45 Fri       weekly scorecard ([Ops])
 #   18:00           earnings calendar
+#   18:30           vol_term (today's Cboe VIX-complex closes; E14.2, D60)
 #   22:00 daily     overnight Scalp (after-close fast sources; Sunday 22:00 feeds Monday).
 #                   YouTube never reaches the Scalp (D45): briefs only, at 02:00.
+#   23:00           options_daily / vix_futures (after the ~21:00-22:50 Cboe publish; E14.2)
+#                   -> read by the next morning's 06:00 Scout
 #
 # lane (D39 / E5.10): `background` = the tick claims the slot, spawns a detached
 # `arc routines run-claimed <run_id>` and moves on, so a slow job never delays the
@@ -240,7 +246,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
       - {slug: bravos, channel: UCOHxDwCcOzBaLkeTazanwcw, label: Bravos, category: youtube_macro, skip_shorts: true, title_exclude: []}   # D49: ~2 long-form/week, 10-22 min, ~15:00-18:00 ET
   rss:                          # owner pick 2026-09-28: broad market, single names, macro
     label: RSS news
-    about: "Polls the news feeds (WSJ, CNBC, Nasdaq, Seeking Alpha, Fed) and stores new articles for the Scalp"
+    about: "Polls the news feeds (WSJ, PR Newswire, Business Wire, Nasdaq, Seeking Alpha, Fed) and stores new articles for the Scalp"
     every: 15m                  # D31: at least as often as the 30-min Scalp
     window: "06:00-20:00"
     days: trading
@@ -250,12 +256,43 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     # (case-insensitive search on the entry title). A filtered entry is stored closed
     # `scalp_status='filtered'` (counted on the Tower Sources page and the Scalp card),
     # never read and never silently dropped. Not runtime-tunable (NOT_EXPOSED_PATHS).
-    # The retired `cnbc` key (CNBC Economy) stays readable as a label alias for one release.
+    # Retired keys stay readable as label aliases (LEGACY_SOURCES): `cnbc` (CNBC Economy,
+    # D55) and `cnbc_earnings` / `cnbc_business` (E14.2, D60: replaced by the wires below).
     feeds:
       - {name: wsj, label: WSJ, url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", hosts: [wsj.com], category: market_news, feed: scalp}
       - {name: wsj_business, label: WSJ Business, url: "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness", hosts: [wsj.com], category: company_data, feed: scalp}
-      - {name: cnbc_earnings, label: CNBC Earnings, url: "https://www.cnbc.com/id/15839135/device/rss/rss.html", category: company_data, feed: scalp}
-      - {name: cnbc_business, label: CNBC Business, url: "https://www.cnbc.com/id/10001147/device/rss/rss.html", category: market_news, feed: scalp}
+      # E14.2 (D60): press-release wires. Only material company events are read: an
+      # entry must match a title_include (results / guidance / M&A / FDA / offering /
+      # buyback / dividend); date-of-call notices, AGM polls and law-firm alerts are
+      # title_exclude'd. Measured live 2026-10-08: PR Newswire 3/20 kept, Business
+      # Wire 5/63 kept (the rest were "to announce Q3 results on ..." notices).
+      - name: prnewswire
+        label: PR Newswire
+        url: "https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss"
+        hosts: [prnewswire.com]
+        category: company_data
+        feed: scalp
+        title_include: &wire_include
+          - '\b(earnings|results|revenue|sales|EPS|profit|guidance|outlook|forecast)\b'
+          - '\bfinancial (and|&|&amp;) operational update\b'
+          - '\b(acquir\w*|acquisition|merger|merge|to buy|buyout|tender offer|takeover|divest\w*)\b'
+          - '\b(FDA|approval|approves|clearance|cleared|breakthrough therapy|PDUFA|phase 3|phase III)\b'
+          - '\b(offering|private placement|notes due|convertible|IPO)\b'
+          - '\b(buyback|repurchase)\b'
+          - '\b(dividend|stock split)\b'
+        title_exclude: &wire_exclude
+          - '\b(schedules|to (announce|report|release|host|webcast|discuss)|announces? (the )?(date|dates|timing|release date)|sets date|dates? (for|of)|timing of|release date)\b'
+          - '^(?!.*\b(reports?|reported|declares?)\b).*\b(conference call|earnings call|investor call|webcast)\b'
+          - '\b(poll|voting) results\b'
+          - '\b(class action|investor alert|shareholder alert|investors? (who|with) losses|lead plaintiff|securities fraud)\b'
+      - name: businesswire
+        label: Business Wire
+        url: "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEF9YXA=="   # "Business Wire Earnings News"
+        hosts: [businesswire.com]
+        category: company_data
+        feed: scalp
+        title_include: *wire_include
+        title_exclude: *wire_exclude
       - name: seekingalpha
         label: SA
         url: "https://seekingalpha.com/market_currents.xml"
@@ -266,10 +303,32 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
           - '\bdeclares\b.*\bdividend\b'
           - '\b(increases|decreases|raises|cuts)\b.*\bdividend\b'
           - '\bETF\b.*\b(distribution|dividend)\b'
-      - {name: nasdaq, label: Nasdaq, url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets", category: market_news, feed: scalp, weight: 0.5}   # D60 (E14.1): half share
+      - name: nasdaq
+        label: Nasdaq
+        url: "https://www.nasdaq.com/feed/rssoutbound?category=Markets"
+        category: market_news
+        feed: scalp
+        weight: 0.5             # D60 (E14.1): half share
+        # E14.2 (D60): foreign-market wraps and listicle/opinion pieces. Measured on the
+        # 514 stored titles of 2026-10-06..08: 160 filtered (31%).
+        title_exclude:
+          # foreign-market wraps
+          - '\b(Malaysia|Korea|Japan|China|Hong Kong|Taiwan|Singapore|Thai|Indonesia|Philippine|Australia|New Zealand|Europe(an)?|German|French|Swiss|U\.?K\.?) (stock market|shares|bourse)\b'
+          - '\b(lower|higher|flat) open called\b'
+          - '\bmay (extend|continue|snap|halt)\b.*\b(losses|gains|streak)\b'
+          - '^(Asian|European|Indian|Canadian|German|Swiss|French|Japanese|Chinese|Australian) (shares|stocks|markets?)\b'
+          - '^(CAC 40|DAX|FTSE 100|Nikkei|Hang Seng|Sensex|Nifty|KOSPI|TSX|ASX 200|Bay Street)\b'
+          # listicles / opinion
+          - '^\d+ (High-Yield|Top|Best|Stocks?|Reasons|Things)\b'
+          - '^(Prediction|Forget|Should You|Is It Too Late|Think You Missed|Most Investors)\b'
+          - '\?$'
+          - '^(The |These )?\d+ (of the )?([\w$&()''.,-]+ ){0,5}(Stocks?|ETFs?|Reasons|Things|Holdings)\b'
+          - '^(Here''s|Here Is) (What|Why|How|the Average)\b'
+          - '^(If (I|You|You''d|a Stock Market|the Fed)|History Says|What a \$|All It Takes|Warren Buffett( Says|''s))\b'
+          - '\bSocial Security\b'
       - {name: fed, label: Fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", category: market_news, feed: scalp}   # D56: was macro_data
   edgar:    {every: 15m, window: "06:00-20:00", days: trading, category: company_data, label: EDGAR, writes: [raw_doc_ref], lane: background,
-             about: "SEC filings (8-K, 10-Q, 10-K, Form 4) for the universe; stale filings are skipped"}   # D39: p90 75 s (377 s max on new filings)
+             about: "SEC filings (8-K, 10-Q, 10-K) for the universe; stale filings are skipped"}   # D39: p90 75 s (377 s max on new filings); E14.2 (D60): no Form 4
   # E14.1 (D60): ticker-tagged news scoped to the active list. Each input is its own
   # registry source (`ticker_news.<input>`) in company_data at the job's `weight` (2:
   # twice an RSS feed's share). Docs carry the provider's symbols ∩ (active list ∪
@@ -329,22 +388,31 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   vol_term:                     # Cboe VIX9D/VIX/VIX3M/VVIX closes -> contango/backwardation
     label: VIX term structure
     about: "Cboe VIX9D / VIX / VIX3M / VVIX closes -> contango or backwardation"
-    schedule: ["09:00", "16:45"]
+    # E14.2 (D60): was 09:00 + 16:45, and both slots stored the previous session's close
+    # (Cboe's history CSVs update after 16:45). 18:30 reads today's close; the 08:15
+    # catch-up runs only when 18:30 did not write that session (payload as_of). A slot
+    # whose CSV still ends on an older session is skipped at 18:30, failed at 08:15.
+    schedule: ["18:30", "08:15"]
     days: trading
-    ttl: 6h
+    ttl: 2h
+    catch_up: {days: trading, until_written: "vol_term:{day}"}
     flat_band: 0.02             # |VIX3M/VIX - 1| below this = flat
     category: options_slow
     feed: scout                 # D56: daily Cboe closes (Scout's slow feed)
     writes: [vol_term]
   # E13.5 (D56): options_slow. Evening run after the Cboe publish (~21:00-22:50 ET
-  # measured, OPS 5.28) and an 08:15 catch-up. Both slots read one session: 18:30
+  # measured, OPS 5.28) and an 08:15 catch-up. Both slots read one session: 23:00
   # reads today's, 08:15 the previous session's. catch_up `<kind>:{day}` drops any
   # slot whose session is already written (payload as_of), so 08:15 runs only when the
-  # evening slot did not write. Not published = skipped at 18:30, failed at 08:15.
+  # evening slot did not write. Not published = skipped at 23:00, failed at 08:15.
+  # E14.2 (D60): evening slot 18:30 -> 23:00 (18:30 was always before the publish, so
+  # every session came from the 08:15 catch-up). The 06:00 Scout reads the 23:00 write
+  # of the previous evening; the 08:15 catch-up lands after the Scout, so it only
+  # serves Research and the Scalp that day.
   options_daily:                # Cboe daily options statistics: P/C x6 + volume/OI per product
     label: Cboe daily options
     about: "Cboe put/call ratios (total, index, ETP, equity, VIX, SPX) and volume + open interest per product"
-    schedule: ["18:30", "08:15"]
+    schedule: ["23:00", "08:15"]
     days: trading
     ttl: 2h
     catch_up: {days: trading, until_written: "options_daily:{day}"}
@@ -354,7 +422,7 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
   vix_futures:                  # CFE VX futures settlement curve (monthlies + weeklies)
     label: VX futures curve
     about: "CFE VX futures settlements: front / second / back month, slope and contango or backwardation"
-    schedule: ["18:30", "08:15"]
+    schedule: ["23:00", "08:15"]
     days: trading
     ttl: 2h
     catch_up: {days: trading, until_written: "vx_curve:{day}"}
@@ -549,7 +617,7 @@ director_diversification:
 personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
-  scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + 18:30 options_slow
+  scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + the previous evening's options_slow (18:30 vol_term, 23:00 options_daily/vix_futures; E14.2)
     label: Scout
     about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"
     group: scout
