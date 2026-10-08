@@ -584,7 +584,8 @@ def test_dollar_delta_additive_and_linear(legs: list[tuple[int, D, int]], k: int
     out = R.check_greek_caps(
         p, acct(), Portfolio(dollar_delta=book), mkt(underlying_spot={"SPY": sp}), cfg()
     )
-    assert (out == []) == (abs(post) <= cap)
+    # D62: only the $Δ cap is under test (the book's β$Δ is left at 0 here)
+    assert (RuleCode.DELTA_CAP not in {v.code for v in out}) == (abs(post) <= cap)
 
 
 @given(cents=st.integers(min_value=-20_000_000, max_value=20_000_000))
