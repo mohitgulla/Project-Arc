@@ -742,3 +742,46 @@ def test_scout_output_clips_overlong_prose_sections() -> None:
         assert not text[:-1].endswith(" ")
     short = ScoutOutput.model_validate({"regime": "calm", "options_sentiment": "no fresh info"})
     assert (short.regime, short.options_sentiment) == ("calm", "no fresh info")
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [("geopolitical", "news"), ("fed", "macro"), ("other", "news"), ("earnings", "earnings")],
+)
+def test_brief_catalyst_kinds_map_onto_catalyst_type(raw: str, want: str) -> None:
+    """A brief's catalyst kind copied into a Scout call no longer fails the whole run
+    (live 2026-10-08: ``geopolitical``)."""
+    out = ScoutOutput.model_validate(
+        {
+            "regime": "r",
+            "options_sentiment": "o",
+            "ticker_calls": [
+                {
+                    "ticker": "XOM",
+                    "stance": "bullish",
+                    "confidence": 0.5,
+                    "horizon": "days",
+                    "origins": ["youtube:stockedup"],
+                    "thesis": "t",
+                    "catalyst_type": raw,
+                }
+            ],
+        }
+    )
+    assert out.ticker_calls[0].catalyst_type.value == want
+
+
+def test_unknown_catalyst_type_still_rejected() -> None:
+    call = {
+        "ticker": "XOM",
+        "stance": "bullish",
+        "confidence": 0.5,
+        "horizon": "days",
+        "origins": ["youtube:stockedup"],
+        "thesis": "t",
+        "catalyst_type": "vibes",
+    }
+    with pytest.raises(ValueError, match="catalyst_type"):
+        ScoutOutput.model_validate(
+            {"regime": "r", "options_sentiment": "o", "ticker_calls": [call]}
+        )

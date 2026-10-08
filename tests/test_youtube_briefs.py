@@ -751,6 +751,34 @@ class TestJob:
         )
         assert _briefs(conn, later)["youtube.stockedup"]["video_id"] == new_vid
 
+    def test_post_live_stream_dated_by_its_release(
+        self, conn: sqlite3.Connection, shipped: RoutinesConfig
+    ) -> None:
+        """D60: a finished stream's ``timestamp`` is when it was scheduled (often the day
+        before); the brief and its context entry are dated by ``release_timestamp``."""
+        aired = RUN_AT - dt.timedelta(hours=9)
+        listings, infos, texts, replies = _world()
+        vid = _fixture("ibd")[0]["video_id"]
+        infos[vid] |= {
+            "timestamp": _ts(aired - dt.timedelta(hours=27)),
+            "release_timestamp": _ts(aired),
+            "live_status": "post_live",
+        }
+        url_slug = _url_slugs(shipped)
+        youtube_briefs(
+            _ctx(conn, shipped),
+            RoutedLLM(replies),
+            session=FakeSession(texts),
+            list_videos=lambda url, n: listings[url_slug[url]][:n],
+            fetch_info=lambda url: infos.get(url.rsplit("=", 1)[1], {}),
+            price_lookup=None,
+        )
+        snap = ContextStore(conn).snapshot(RUN_AT)
+        (entry,) = [e for e in snap.of_kind("channel_brief") if e.subject == "youtube.ibd"]
+        assert entry.valid_from == aired
+        assert dt.datetime.fromisoformat(entry.payload["published_at"]) == aired
+        assert entry.expires_at == aired + dt.timedelta(hours=48)
+
     def test_contract_writes_only_declared_kinds(
         self, conn: sqlite3.Connection, shipped: RoutinesConfig
     ) -> None:
