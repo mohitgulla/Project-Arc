@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import structlog
 
@@ -233,6 +233,12 @@ class SlackDayThreadNotifier:
     def bind_thread(self, ts: str | None) -> None:
         self.thread_ts = ts
 
+    def for_connection(self, conn: sqlite3.Connection) -> SlackDayThreadNotifier:
+        """D63: the same client and bound loop thread, reading the store via *conn*."""
+        out = SlackDayThreadNotifier(conn, self._client)
+        out.thread_ts = self.thread_ts
+        return out
+
     def post_root(self, text: str) -> str | None:
         """D36: a new one-line loop root in #arc-investor (not in the day thread)."""
         from arc.slack.client import CHANNEL_ARC_INVESTOR, ArcSlackClient
@@ -286,6 +292,16 @@ class Heartbeats:
 
     def day(self, now: _dt.datetime) -> _dt.date:
         return thread_day(now, self._rollover)
+
+    def for_connection(self, conn: sqlite3.Connection) -> Heartbeats:
+        """D63: the same policy and loop thread on another connection (a branch thread).
+
+        A notifier that reads the store (the Slack day thread) is re-bound to *conn*,
+        keeping its client and bound loop thread; plain notifiers are shared.
+        """
+        rebind = getattr(self._notifier, "for_connection", None)
+        notifier = cast("Notifier", rebind(conn)) if callable(rebind) else self._notifier
+        return Heartbeats(conn, notifier, day_rollover=self._rollover)
 
     def _pending_raw(self) -> list[dict[str, object]]:
         raw = self._state.get(_PENDING_KEY)

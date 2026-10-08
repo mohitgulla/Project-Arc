@@ -34,12 +34,16 @@ child (same ``_execute`` path), so the tick never waits on it.
 from __future__ import annotations
 
 import contextlib
+import contextvars
+import dataclasses
 import datetime as _dt
 import os
 import sqlite3
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -155,6 +159,8 @@ class TickReport:
     outcomes: list[Outcome] = field(default_factory=list)
     # E5.10: wall time the tick spent on each due job (inline work; a spawn is ~0 ms).
     durations_ms: dict[str, int] = field(default_factory=dict)
+    # D63 (E13.21): wall time of the loop chain this tick ran (None: no loop ran).
+    loop_wall_ms: int | None = None
 
     def slowest(self, n: int = 3) -> list[dict[str, Any]]:
         """The *n* due jobs the tick spent longest on, slowest first."""
@@ -179,6 +185,51 @@ class TickReport:
                 text += f" — {o.summary}"
             out.append(text.rstrip())
         return out
+
+
+@dataclass
+class _ChainRun:
+    """Mutable state of one chain run, shared by its steps (one copy per D63 branch)."""
+
+    steps: list[str]
+    scheduled_for: _dt.datetime
+    reason: str
+    now: _dt.datetime
+    chain_run_id: str | None
+    event: RoutineEvent | None
+    existing: Mapping[str, RoutineRun]
+    note: str
+    is_loop: bool
+    deadline: float  # time.monotonic() after which no loop step starts (shared)
+    prev_run_id: str | None = None  # the next step's parent run
+    outcomes: list[Outcome] = field(default_factory=list)
+    durations: dict[str, int] = field(default_factory=dict)
+    no_change: bool = False
+    timed_out: bool = False
+    stopped: bool = False  # a branch ended early (failed / stop_chain / duplicate)
+
+
+def db_path(conn: sqlite3.Connection) -> Path | None:
+    """The file behind *conn*'s ``main`` database (``None`` for ``:memory:``)."""
+    for row in conn.execute("PRAGMA database_list"):
+        if row[1] == "main":
+            return Path(row[2]) if row[2] else None
+    return None
+
+
+def branch_indices(routines: RoutinesConfig, steps: Sequence[str]) -> list[list[int]]:
+    """D63: ``loop.parallel_branches`` as step indices of *steps* (``[]``: serial).
+
+    Only the loop job's chain forks. A branch step missing from *steps* is dropped;
+    fewer than two non-empty branches left means the chain runs serially.
+    """
+    branches_cfg = routines.loop.parallel_branches
+    if not branches_cfg or not steps or not routines.is_loop(steps[0]):
+        return []
+    pos = {s: i for i, s in enumerate(steps)}
+    branches = [[pos[s] for s in b if s in pos] for b in branches_cfg]
+    branches = [b for b in branches if b]
+    return branches if len(branches) >= 2 else []  # noqa: PLR2004 - one branch = serial
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +278,10 @@ class Dispatcher:
         # D26: without an explicit factory every run reads the effective config
         # (defaults < YAML/env < config_changes overrides) from this DB.
         self._settings_factory = settings_factory or self._effective_settings
+        # D63: a branch child re-derives the defaults from its own connection.
+        self._custom_halted = is_halted is not None
+        self._custom_settings = settings_factory is not None
+        self.last_loop_wall_ms: int | None = None  # D63: the latest loop chain's wall time
         # E5.2b: fresh wall clock handed to steps (None = the tick's frozen ``now``).
         self._clock = clock
         self._manifest_alerted = False
@@ -400,9 +455,12 @@ class Dispatcher:
         report.expired = self.store.expire_due(now)
         for d in plan:
             t_job = time.monotonic()
+            self.last_loop_wall_ms = None
             report.outcomes.extend(self._handle_due(d, now))
             ms = int((time.monotonic() - t_job) * 1000)
             report.durations_ms[d.job] = report.durations_ms.get(d.job, 0) + ms
+            if self.last_loop_wall_ms is not None:
+                report.loop_wall_ms = self.last_loop_wall_ms
         reclaimed = self._reclaim_stranded(now)
         report.reclaimed = len(reclaimed)
         report.outcomes.extend(self._drain_events(now, reclaimed=reclaimed))
@@ -805,17 +863,24 @@ class Dispatcher:
         note: str = "",
         parent_run_id: str | None = None,
     ) -> list[Outcome]:
-        outcomes: list[Outcome] = []
-        prev_run_id = parent_run_id
-        existing = existing or {}
         # D31: the loop chain has a deadline. A step that is running when it passes
         # may finish; no later step starts. `no_change` (Research found the same
         # inputs as last time) skips the LLM steps and runs the deterministic tail.
         is_loop = bool(chain_run_id) and reason == "schedule" and self.routines.is_loop(steps[0])
-        deadline = time.monotonic() + self.routines.loop.max_runtime.total_seconds()
-        durations: dict[str, int] = {}
-        no_change = False
-        timed_out = False
+        t_start = time.monotonic()
+        c = _ChainRun(
+            steps=steps,
+            scheduled_for=scheduled_for,
+            reason=reason,
+            now=now,
+            chain_run_id=chain_run_id,
+            event=event,
+            existing=existing or {},
+            note=note,
+            is_loop=is_loop,
+            deadline=t_start + self.routines.loop.max_runtime.total_seconds(),
+            prev_run_id=parent_run_id,
+        )
         root_ts: str | None = None
         if is_loop and chain_run_id:
             root_ts = self._open_loop_root(chain_run_id, scheduled_for)
@@ -828,155 +893,36 @@ class Dispatcher:
             and steps[0] in self.routines.loop.action_roots
             and not is_loop
         )
+        # D63 (E13.21): the loop's exit and open branches run side by side.
+        forks = self._branch_plan(steps) if chain_run_id else {}
         try:
-            for index, step in enumerate(steps):
+            index = 0
+            while index < len(steps):
                 if is_action and index and root_ts is None and chain_run_id:
                     root_ts = self._open_action_root(chain_run_id, scheduled_for)
                     self._loop_root_ts = root_ts
-                prior = existing.get(step)
-                if prior is not None and prior.status is RunStatus.OK:
-                    outcomes.append(
-                        Outcome(
-                            step,
-                            scheduled_for,
-                            "ok",
-                            "already done (resume)",
-                            run_id=prior.run_id,
-                            chain_run_id=chain_run_id,
-                            step_index=index,
-                            summary=prior.summary or "",
-                        )
-                    )
-                    continue
-                _, step_spec = self.routines.step(step)
-                if (
-                    is_loop
-                    and index
-                    and step not in DEADLINE_EXEMPT_STEPS
-                    and time.monotonic() > deadline
-                ):
-                    timed_out = True
-                    outcomes.append(
-                        self._record_skipped_step(
-                            step,
-                            scheduled_for,
-                            reason=f"chain:{steps[0]}",
-                            chain_run_id=chain_run_id,
-                            step_index=index,
-                            summary=f"timeout: loop exceeded {self._max_runtime_label()}",
-                            now=now,
-                        )
-                    )
-                    continue
-                # E13.9: a step that needs more of the loop budget than is left
-                # (``min_remaining_s``, e.g. quant.revise's extra LLM call) is skipped;
-                # later steps still run (generic; reused by E13.18's exit path).
-                left = deadline - time.monotonic()
-                need = step_spec.min_remaining_s
-                if is_loop and index and need is not None and left < need:
-                    log.info(
-                        "routines.step_skipped_deadline",
-                        job=step,
-                        chain_run_id=chain_run_id,
-                        needs_s=need,
-                        left_s=round(left, 1),
-                    )
-                    outcomes.append(
-                        self._record_skipped_step(
-                            step,
-                            scheduled_for,
-                            reason=f"chain:{steps[0]}",
-                            chain_run_id=chain_run_id,
-                            step_index=index,
-                            summary=f"step_skipped_deadline: needs {need}s of the "
-                            f"{self._max_runtime_label()} loop budget, {max(left, 0):.0f}s left",
-                            now=now,
-                        )
-                    )
-                    continue
-                if is_loop and no_change and index and step_spec.on_no_change == "skip":
-                    outcomes.append(
-                        self._record_skipped_step(
-                            step,
-                            scheduled_for,
-                            reason=f"chain:{steps[0]}",
-                            chain_run_id=chain_run_id,
-                            step_index=index,
-                            summary="no_change: inputs unchanged since the last full loop",
-                            now=now,
-                        )
-                    )
-                    continue
-                if prior is not None:
-                    run = self.runs.restart(prior.run_id, now=now)
+                branches = forks.get(index)
+                if branches is not None:
+                    stop = self._run_parallel(c, branches)
+                    index = max(i for b in branches for i in b) + 1
                 else:
-                    claimed = self.runs.claim(
-                        job=step,
-                        scheduled_for=scheduled_for,
-                        reason=reason if index == 0 else f"chain:{steps[0]}",
-                        chain_run_id=chain_run_id,
-                        step_index=index,
-                        now=now,
-                        # E6.2d: an event-triggered run is unique per (job, event), not per slot.
-                        event_id=event.id if event is not None else None,
-                    )
-                    if claimed is None:
-                        outcomes.append(
-                            Outcome(
-                                step,
-                                scheduled_for,
-                                "duplicate",
-                                "already ran for this slot",
-                                chain_run_id=chain_run_id,
-                                step_index=index,
-                            )
-                        )
-                        break
-                    run = claimed
-                t_step = time.monotonic()
-                outcome = self._execute(
-                    run,
-                    now=now,
-                    event=event,
-                    note=note if index == 0 else "",
-                    parent_run_id=prev_run_id,
-                )
-                durations[step] = int((time.monotonic() - t_step) * 1000)
-                prev_run_id = run.run_id
-                outcomes.append(outcome)
-                if index == 0 and outcome.metrics.get("no_change"):
-                    no_change = True
-                    self._loop_no_change = True
-                # E13.9: an optional step that skips itself (``JobSkippedError(...,
-                # continue_chain=True)``, e.g. quant.revise with nothing to revise)
-                # lets the chain go on.
-                optional_skip = outcome.status == "skipped" and bool(
-                    outcome.metrics.get("continue_chain")
-                )
-                stop = (outcome.status != "ok" and not optional_skip) or bool(
-                    outcome.metrics.get("stop_chain")
-                )
+                    stop = self._run_step(c, index, remaining=steps[index + 1 :])
+                    index += 1
                 if stop:
-                    if chain_run_id and index + 1 < len(steps):
-                        log.warning(
-                            "routines.chain_stopped",
-                            chain_run_id=chain_run_id,
-                            at=step,
-                            status=outcome.status,
-                            reason="stop_chain" if outcome.status == "ok" else outcome.status,
-                            remaining=steps[index + 1 :],
-                        )
                     break
+            wall_ms = int((time.monotonic() - t_start) * 1000)
             if is_loop and chain_run_id:
                 self._finish_loop(
                     chain_run_id,
-                    outcomes,
-                    durations,
+                    c.outcomes,
+                    c.durations,
                     now=now,
-                    timed_out=timed_out,
-                    no_change=no_change,
+                    timed_out=c.timed_out,
+                    no_change=c.no_change,
                     scheduled_for=scheduled_for,
                     root_ts=root_ts,
+                    wall_ms=wall_ms,
+                    parallel=bool(forks),
                 )
             elif is_action and chain_run_id:
                 if root_ts is None:  # the chain stopped right after proposing
@@ -988,7 +934,284 @@ class Dispatcher:
             self._loop_no_change = False
             if root_ts:
                 self.heartbeats.close_loop_root()
-        return outcomes
+        return c.outcomes
+
+    def _run_step(self, c: _ChainRun, index: int, *, remaining: Sequence[str]) -> bool:
+        """Run (or skip / resume) chain step *index* of *c*; True = stop the sequence.
+
+        Every per-step rule lives here, so a parallel branch (D63) applies exactly the
+        same ones: resume of an ``ok`` prior row, the loop deadline, ``min_remaining_s``,
+        ``on_no_change``, duplicate claims and the stop rule.
+        """
+        steps, scheduled_for, now = c.steps, c.scheduled_for, c.now
+        step = steps[index]
+        chain_run_id = c.chain_run_id
+        prior = c.existing.get(step)
+        if prior is not None and prior.status is RunStatus.OK:
+            c.outcomes.append(
+                Outcome(
+                    step,
+                    scheduled_for,
+                    "ok",
+                    "already done (resume)",
+                    run_id=prior.run_id,
+                    chain_run_id=chain_run_id,
+                    step_index=index,
+                    summary=prior.summary or "",
+                )
+            )
+            return False
+        _, step_spec = self.routines.step(step)
+        if (
+            c.is_loop
+            and index
+            and step not in DEADLINE_EXEMPT_STEPS
+            and time.monotonic() > c.deadline
+        ):
+            c.timed_out = True
+            c.outcomes.append(
+                self._record_skipped_step(
+                    step,
+                    scheduled_for,
+                    reason=f"chain:{steps[0]}",
+                    chain_run_id=chain_run_id,
+                    step_index=index,
+                    summary=f"timeout: loop exceeded {self._max_runtime_label()}",
+                    now=now,
+                )
+            )
+            return False
+        # E13.9: a step that needs more of the loop budget than is left
+        # (``min_remaining_s``, e.g. quant.revise's extra LLM call) is skipped;
+        # later steps still run (generic; reused by E13.18's exit path).
+        left = c.deadline - time.monotonic()
+        need = step_spec.min_remaining_s
+        if c.is_loop and index and need is not None and left < need:
+            log.info(
+                "routines.step_skipped_deadline",
+                job=step,
+                chain_run_id=chain_run_id,
+                needs_s=need,
+                left_s=round(left, 1),
+            )
+            c.outcomes.append(
+                self._record_skipped_step(
+                    step,
+                    scheduled_for,
+                    reason=f"chain:{steps[0]}",
+                    chain_run_id=chain_run_id,
+                    step_index=index,
+                    summary=f"step_skipped_deadline: needs {need}s of the "
+                    f"{self._max_runtime_label()} loop budget, {max(left, 0):.0f}s left",
+                    now=now,
+                )
+            )
+            return False
+        if c.is_loop and c.no_change and index and step_spec.on_no_change == "skip":
+            c.outcomes.append(
+                self._record_skipped_step(
+                    step,
+                    scheduled_for,
+                    reason=f"chain:{steps[0]}",
+                    chain_run_id=chain_run_id,
+                    step_index=index,
+                    summary="no_change: inputs unchanged since the last full loop",
+                    now=now,
+                )
+            )
+            return False
+        if prior is not None:
+            run = self.runs.restart(prior.run_id, now=now)
+        else:
+            claimed = self.runs.claim(
+                job=step,
+                scheduled_for=scheduled_for,
+                reason=c.reason if index == 0 else f"chain:{steps[0]}",
+                chain_run_id=chain_run_id,
+                step_index=index,
+                now=now,
+                # E6.2d: an event-triggered run is unique per (job, event), not per slot.
+                event_id=c.event.id if c.event is not None else None,
+            )
+            if claimed is None:
+                c.outcomes.append(
+                    Outcome(
+                        step,
+                        scheduled_for,
+                        "duplicate",
+                        "already ran for this slot",
+                        chain_run_id=chain_run_id,
+                        step_index=index,
+                    )
+                )
+                return True
+            run = claimed
+        t_step = time.monotonic()
+        outcome = self._execute(
+            run,
+            now=now,
+            event=c.event,
+            note=c.note if index == 0 else "",
+            parent_run_id=c.prev_run_id,
+        )
+        c.durations[step] = int((time.monotonic() - t_step) * 1000)
+        c.prev_run_id = run.run_id
+        c.outcomes.append(outcome)
+        if index == 0 and outcome.metrics.get("no_change"):
+            c.no_change = True
+            self._loop_no_change = True
+        # E13.9: an optional step that skips itself (``JobSkippedError(...,
+        # continue_chain=True)``, e.g. quant.revise with nothing to revise)
+        # lets the chain go on.
+        optional_skip = outcome.status == "skipped" and bool(outcome.metrics.get("continue_chain"))
+        stop = (outcome.status != "ok" and not optional_skip) or bool(
+            outcome.metrics.get("stop_chain")
+        )
+        if stop and chain_run_id and remaining:
+            log.warning(
+                "routines.chain_stopped",
+                chain_run_id=chain_run_id,
+                at=step,
+                status=outcome.status,
+                reason="stop_chain" if outcome.status == "ok" else outcome.status,
+                remaining=list(remaining),
+            )
+        return stop
+
+    # -- D63 (E13.21): parallel branches inside the loop chain -------------------
+
+    def _branch_plan(self, steps: Sequence[str]) -> dict[int, list[list[int]]]:
+        """``{fork index: [branch step indices, ...]}`` for *steps*, or ``{}`` (serial).
+
+        Only the loop job's chain forks (``loop.parallel_branches``; the config
+        validator proves the branches contiguous and independent). Falls back to
+        serial when the store has no file (``:memory:``: a second connection would be
+        a different, empty database) or when a branch step runs a local model (D39:
+        the ``llm`` lock serialises on-device models, so two branches must not both
+        run one).
+        """
+        branches = branch_indices(self.routines, steps)
+        if not branches:
+            return {}
+        why = None
+        if db_path(self.conn) is None:
+            why = "in-memory store"
+        else:
+            local = [
+                steps[i]
+                for b in branches
+                for i in b
+                if self._llm(*self.routines.step(steps[i])) and self._local_llm(steps[i])
+            ]
+            if local:
+                why = f"{local[0]} runs a local model (D39 llm lock)"
+        if why is not None:
+            log.info("routines.parallel_branches_serial", why=why)
+            return {}
+        return {min(i for b in branches for i in b): branches}
+
+    def _run_parallel(self, c: _ChainRun, branches: list[list[int]]) -> bool:
+        """Run each branch in its own thread on its own SQLite connection, then join.
+
+        Within a branch the order and every per-step rule are unchanged
+        (:meth:`_run_step`); a stop ends that branch only, the other branch finishes.
+        After the join the chain's existing stop rule applies: if any branch stopped
+        (a failed step, ``stop_chain``, a duplicate claim) no later step starts,
+        exactly as the serial chain would have stopped. Outcomes keep the declared
+        chain order; each branch's first step links to the fork's parent run.
+        """
+        path = db_path(self.conn)
+        assert path is not None  # _branch_plan checked it
+        if self.conn.in_transaction:  # the branches must see everything written so far
+            self.conn.commit()
+        results: list[_ChainRun | BaseException | None] = [None] * len(branches)
+
+        def work(slot: int, indices: list[int]) -> None:
+            from arc.store.db import connect
+
+            conn = connect(path)
+            try:
+                child = self._branch_child(conn)
+                bc = dataclasses.replace(c, outcomes=[], durations={}, timed_out=False)
+                for k, index in enumerate(indices):
+                    rest = [c.steps[j] for j in indices[k + 1 :]]
+                    if child._run_step(bc, index, remaining=rest):
+                        bc.stopped = True
+                        break
+                results[slot] = bc
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the parent thread
+                results[slot] = exc
+            finally:
+                if conn.in_transaction:
+                    conn.commit()
+                conn.close()
+
+        t0 = time.monotonic()
+        threads = [
+            threading.Thread(
+                target=contextvars.copy_context().run,
+                args=(work, n, b),
+                name=f"arc-branch-{c.steps[b[0]]}",
+                daemon=True,
+            )
+            for n, b in enumerate(branches)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        errors = [r for r in results if isinstance(r, BaseException)]
+        if errors:
+            raise errors[0]
+        done = [r for r in results if isinstance(r, _ChainRun)]
+        c.outcomes.extend(sorted((o for r in done for o in r.outcomes), key=lambda o: o.step_index))
+        for r in done:
+            c.durations.update(r.durations)
+            c.timed_out = c.timed_out or r.timed_out
+        # the step after the join links to the last declared branch that ran a step
+        moved = [r.prev_run_id for r in done if r.prev_run_id != c.prev_run_id]
+        if moved:
+            c.prev_run_id = moved[-1]
+        stopped = [c.steps[r.outcomes[-1].step_index] for r in done if r.stopped and r.outcomes]
+        log.info(
+            "routines.branches_joined",
+            chain_run_id=c.chain_run_id,
+            branches=[[c.steps[i] for i in b] for b in branches],
+            wall_ms=int((time.monotonic() - t0) * 1000),
+            stopped=stopped,
+        )
+        if stopped and c.chain_run_id:
+            log.warning(
+                "routines.chain_stopped",
+                chain_run_id=c.chain_run_id,
+                at=stopped,
+                reason="branch_stopped",
+                remaining=c.steps[max(i for b in branches for i in b) + 1 :],
+            )
+        return bool(stopped)
+
+    def _branch_child(self, conn: sqlite3.Connection) -> Dispatcher:
+        """A dispatcher on *conn* sharing this one's config, handlers, locks, notifier
+        and loop thread (D63: one SQLite connection per branch thread, never shared)."""
+        child = Dispatcher(
+            conn,
+            self.routines,
+            handlers=self.handlers,
+            locks=self.locks,
+            # the defaults read through self.conn; the child's read through its own
+            is_halted=self._is_halted if self._custom_halted else None,
+            settings_factory=self._settings_factory if self._custom_settings else None,
+            clock=self._clock,
+            run_env=self.run_env,
+            routing=self._routing,
+            sleep=self._sleep,
+        )
+        child.heartbeats = self.heartbeats.for_connection(conn)
+        child._lane = self._lane
+        child._loop_root_ts = self._loop_root_ts
+        child._loop_no_change = self._loop_no_change
+        child._manifest_alerted = self._manifest_alerted
+        return child
 
     def _open_action_root(self, chain_run_id: str, slot: _dt.datetime) -> str | None:
         """D38: the position manager's root line, opened once its chain proposed something.
@@ -1129,16 +1352,25 @@ class Dispatcher:
         no_change: bool,
         scheduled_for: _dt.datetime,
         root_ts: str | None,
+        wall_ms: int | None = None,
+        parallel: bool = False,
     ) -> None:
         """Record the loop's step durations / flags (D27), alert a timeout once a day,
-        and (D36) re-render the root line plus post the ``[Routines]`` metadata reply."""
+        and (D36) re-render the root line plus post the ``[Routines]`` metadata reply.
+
+        D63: ``loop_wall_ms`` is the chain's wall time; with parallel branches it is
+        less than the sum of the step durations (``parallel`` says the loop forked).
+        """
         from arc.routines.loop import LoopState, loop_root_from_db
 
+        self.last_loop_wall_ms = wall_ms
         state = LoopState(self.conn)
         state.set_chain_summary(
             chain_run_id,
             {
                 "durations_ms": durations,
+                "loop_wall_ms": wall_ms,
+                "parallel": parallel,
                 "timeout": timed_out,
                 "no_change": no_change,
                 "steps": [(o.job, o.status) for o in outcomes],
@@ -1169,8 +1401,14 @@ class Dispatcher:
             for o in outcomes
         )
         digest = str(outcomes[0].metrics.get("loop_digest") or "")[:12]
-        flags = " ".join(f for f, on in (("no_change", no_change), ("timeout", timed_out)) if on)
+        flags = " ".join(
+            f
+            for f, on in (("no_change", no_change), ("timeout", timed_out), ("parallel", parallel))
+            if on
+        )
         meta = f"{chain_run_id} {steps} digest={digest or 'n/a'}"
+        if wall_ms is not None:
+            meta += f" wall={wall_ms}ms"
         if flags:
             meta += f" {flags}"
         self.heartbeats.loop_metadata(now, meta)
