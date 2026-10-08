@@ -85,11 +85,24 @@ def test_live_config_bands_in_owner_order(empty_db) -> None:
     assert rows["scalp"].band == "scalp" and rows["scalp"].llm
     for job in ("earnings", "macro_calendar", "ex_dividend", "iv.record"):
         assert rows[job].band == "sources.reference", job
-    # every band's jobs are exactly the rows tagged with it
+    # every band's jobs are the rows tagged with it plus multi-category sources that feed it
     for b in s.bands:
-        assert b.jobs == [j for j in rows if rows[j].band == b.key] or set(b.jobs) == {
-            j for j in rows if rows[j].band == b.key
+        cat = b.key.removeprefix("sources.") if b.key.startswith("sources.") else None
+        assert set(b.jobs) == {
+            j for j in rows if rows[j].band == b.key or (cat and cat in rows[j].categories)
         }
+
+
+def test_multi_category_source_shows_in_every_category_band(empty_db) -> None:
+    """youtube.briefs feeds youtube_macro + youtube_micro: both bands list it (and rss
+    shows under market_news and company_data), so no category band goes missing."""
+    s = load_session(empty_db, load_routines(), now=NOW, day=TODAY)
+    jobs = {b.key: b.jobs for b in s.bands}
+    assert "youtube.briefs" in jobs["sources.youtube_macro"]
+    assert "youtube.briefs" in jobs["sources.youtube_micro"]
+    assert "rss" in jobs["sources.market_news"] and "rss" in jobs["sources.company_data"]
+    rows = {r.job: r for r in s.rows}
+    assert rows["youtube.briefs"].band == "sources.youtube_macro"  # home band unchanged
 
 
 def test_every_scheduled_live_job_has_label_and_about(empty_db) -> None:
