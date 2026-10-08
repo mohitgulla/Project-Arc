@@ -207,11 +207,17 @@ def llm(cfg: Tower, conn: Conn, days: Annotated[int, Query(ge=1, le=365)] = 30) 
 def universe(cfg: Tower, conn: Conn) -> UniverseResponse:
     """E12.6 (D51): the stored active list by tier, tier feeds, drops, ignored override."""
     settings, routines = effective(cfg)
+    from arc.universe.velocity import VelocityOptions
+
+    tjob = routines.job("universe.trending")
     return load_universe(
         conn,
         settings,
         now=cfg.clock(),
         director_diversification=routines.director_diversification.mode,
+        velocity=VelocityOptions.model_validate(
+            (tjob[1].options.get("velocity") if tjob else None) or {}
+        ),
     )
 
 

@@ -6,7 +6,11 @@ this module scores them and builds the ``universe_tier`` entry (subject ``trendi
 
 Per input (restored from E12.3, ``f0101ea:arc/universe/trending.py``):
 
-* ``apewisdom`` (Reddit): the mean of the rank-normalised mentions and 24 h rank gain.
+* ``apewisdom`` (Reddit): the mean of the rank-normalised mentions and 24 h rank gain
+  (``scoring: rank_gain``, the default). E14.5 (D60): ``scoring: velocity`` (strategy
+  lane, flag ``universe.trending.scoring``, draft XP-10) swaps the rank gain for the
+  rank-normalised mention velocity (:func:`mention_velocity`); a row without one scores
+  0 on that half (never infinite growth).
 * ``stocktwits``: ``trending_score`` (list position when absent); crypto and non-US
   symbols dropped.
 
@@ -43,6 +47,14 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.universe.master import normalize_symbol
+from arc.universe.velocity import (
+    Velocity,
+    VelocityOptions,
+    buzz_velocities,
+    format_velocity,
+    mention_velocity,
+    velocity_text,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -60,11 +72,16 @@ __all__ = [
     "TrendingOptions",
     "TrendingResult",
     "TrendingRow",
+    "VelocityOptions",
     "build_payload",
+    "buzz_velocities",
+    "fastest_risers",
+    "format_velocity",
     "eligible",
     "journal_decisions",
     "latest_buzz",
     "leveraged",
+    "mention_velocity",
     "notice_line",
     "previous_members",
     "rank_normalise",
@@ -73,6 +90,7 @@ __all__ = [
     "score_inputs",
     "screen_pool",
     "table",
+    "velocity_text",
 ]
 
 EXCLUDED_LEVERAGED = "leveraged"
@@ -85,6 +103,11 @@ class TrendingError(RuntimeError):
     """The trending tier cannot be built today (nothing is written)."""
 
 
+TrendingScoring = Literal["rank_gain", "velocity"]
+#: E14.5: ``universe.trending.scoring`` choices, the control first.
+SCORING_CHOICES: tuple[str, ...] = ("rank_gain", "velocity")
+
+
 class TrendingOptions(BaseModel):
     """``universe.trending`` job options (``config/routines.yaml``)."""
 
@@ -93,6 +116,9 @@ class TrendingOptions(BaseModel):
     pool: int = Field(40, ge=1, le=200)
     min_inputs_first: int = Field(2, ge=1, le=10)
     exclude_market_reference: bool = True
+    # E14.5 (D60): Reddit's second half; rank_gain = the E13.19 ranking (control).
+    scoring: TrendingScoring = "rank_gain"
+    velocity: VelocityOptions = Field(default_factory=VelocityOptions)
 
     @classmethod
     def from_options(cls, options: Mapping[str, Any]) -> TrendingOptions:
@@ -191,22 +217,70 @@ def _short(name: str, type_: str) -> str:
     return _SHORT.get(type_, name)
 
 
-def apewisdom_scores(name: str, inp: RetailBuzzInput) -> InputResult:
-    """Reddit (ApeWisdom): mean of rank-normalised mentions and 24 h rank gain."""
+def apewisdom_scores(
+    name: str,
+    inp: RetailBuzzInput,
+    *,
+    scoring: TrendingScoring = "rank_gain",
+    velocity: VelocityOptions | None = None,
+) -> InputResult:
+    """Reddit (ApeWisdom): mean of rank-normalised mentions and either the 24 h rank
+    gain (``rank_gain``) or the mention velocity (``velocity``, E14.5; a row with no
+    velocity scores 0 on that half)."""
     res = _base(name, inp)
     rows = inp.rows
     n = len(rows)
     mentions = {r.symbol: float(r.mentions or 0.0) for r in rows}
+    if scoring == "velocity":
+        vopts = velocity or VelocityOptions()
+        vel = {
+            r.symbol: v
+            for r in rows
+            if (v := mention_velocity(r.mentions, r.mentions_24h_ago, vopts)) is not None
+        }
+        v_norm = rank_normalise(vel)
+        second = {r.symbol: v_norm.get(r.symbol, 0.0) for r in rows}
+    else:
 
-    def gain(rank: int | None, prev: int | None) -> float:
-        return float((prev if prev else n + 1) - (rank or n))
+        def gain(rank: int | None, prev: int | None) -> float:
+            return float((prev if prev else n + 1) - (rank or n))
 
-    gains = {r.symbol: gain(r.rank, r.rank_24h_ago) for r in rows}
-    m_norm, g_norm = rank_normalise(mentions), rank_normalise(gains)
+        second = rank_normalise({r.symbol: gain(r.rank, r.rank_24h_ago) for r in rows})
+    m_norm = rank_normalise(mentions)
     for r in rows:
-        res.raw[r.symbol] = (m_norm[r.symbol] + g_norm[r.symbol]) / 2
+        res.raw[r.symbol] = (m_norm[r.symbol] + second[r.symbol]) / 2
         res.detail[r.symbol] = f"reddit #{r.rank or r.position}"
     return res
+
+
+def fastest_risers(
+    buzz: RetailBuzzPayload | None,
+    opts: VelocityOptions,
+    *,
+    top: int = 5,
+    stop_words: Sequence[str] = (),
+) -> list[tuple[str, float, float, float]]:
+    """The *top* Reddit names by mention velocity: ``(symbol, velocity, m, m24)`` (pure).
+
+    Only rows with a velocity above 1 (rising; >= ``min_mentions`` and a 24 h count
+    present); leveraged /
+    inverse funds (:func:`leveraged` on the input's name) and word tickers (*stop_words*,
+    ``universe.extraction.stop_words``) are left out. Ties: more mentions, then ticker.
+    """
+    stop = {w.upper() for w in stop_words}
+    names: dict[str, str] = {}
+    if buzz is not None:
+        for inp in buzz.inputs.values():
+            if inp.type == "apewisdom":
+                for r in inp.rows:
+                    names.setdefault(r.symbol, r.name)
+    rows = [
+        (sym, v, float(m or 0.0), float(m24 or 0.0))
+        for sym, (v, m, m24) in buzz_velocities(buzz, opts).items()
+        if v is not None and v > 1.0 and sym not in stop and not leveraged(names.get(sym, ""))
+    ]
+    rows.sort(key=lambda x: (-x[1], -x[2], x[0]))
+    return rows[: max(0, top)]
 
 
 def stocktwits_scores(name: str, inp: RetailBuzzInput) -> InputResult:
@@ -244,6 +318,7 @@ def score_inputs(
     *,
     master: SymbolMaster,
     stale: bool = False,
+    opts: TrendingOptions | None = None,
 ) -> list[InputResult]:
     """One :class:`InputResult` per **enabled** input, eligible names only (pure).
 
@@ -272,8 +347,11 @@ def score_inputs(
         if inp.status != "ok":
             out.append(_base(name, inp))
             continue
+        o = opts or TrendingOptions()
         res = (
-            apewisdom_scores(name, inp) if inp.type == "apewisdom" else stocktwits_scores(name, inp)
+            apewisdom_scores(name, inp, scoring=o.scoring, velocity=o.velocity)
+            if inp.type == "apewisdom"
+            else stocktwits_scores(name, inp)
         )
         for sym in list(res.raw):
             why = eligible(sym, master)
@@ -391,6 +469,10 @@ class TrendingResult:
     pool_size: int
     screened: bool
     buzz_as_of: str | None = None
+    scoring: str = "rank_gain"
+    # E14.5: symbol -> (velocity, mentions, mentions_24h_ago) from the Reddit input
+    velocity: dict[str, Velocity] = field(default_factory=dict)
+    buzz: RetailBuzzPayload | None = None  # E14.5: the entry ranked (fastest risers)
 
     @property
     def members(self) -> list[TrendingRow]:
@@ -459,7 +541,7 @@ def run_trending(
     if not enabled:
         msg = "no retail_buzz input enabled"
         raise TrendingError(msg)
-    inputs = score_inputs(buzz, enabled, master=master, stale=stale)
+    inputs = score_inputs(buzz, enabled, master=master, stale=stale, opts=opts)
     if not any(i.live for i in inputs):
         detail = "; ".join(f"{i.name}: {i.status} ({i.error or 'no names'})" for i in inputs)
         msg = f"0 live retail_buzz inputs: {detail}"
@@ -491,6 +573,9 @@ def run_trending(
         pool_size=opts.pool,
         screened=screen is not None,
         buzz_as_of=buzz.as_of if buzz is not None else None,
+        scoring=opts.scoring,
+        velocity=buzz_velocities(buzz, opts.velocity),
+        buzz=buzz,
     )
 
 

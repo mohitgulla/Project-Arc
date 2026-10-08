@@ -749,7 +749,7 @@ export interface components {
             /** Arm Jobs */
             arm_jobs?: string[];
             /** Arm Personas */
-            arm_personas?: ("scout" | "scalp")[];
+            arm_personas?: ("scout" | "scalp" | "trending")[];
             /** Fork Step */
             fork_step: string;
             /**
@@ -5690,6 +5690,16 @@ export interface components {
             ticker: string;
             /** Tier */
             tier: string;
+            /**
+             * Velocity
+             * @description E14.5 trending: Reddit mention velocity (m + k) / (m24 + k), code-computed from the retail_buzz entry the tier was ranked from (null = none / not on Reddit)
+             */
+            velocity?: number | null;
+            /**
+             * Velocity Detail
+             * @description E14.5 trending: `reddit #20 · 5.2× (157 vs 30)`
+             */
+            velocity_detail?: string | null;
         };
         /** UniverseDroppedRow */
         UniverseDroppedRow: {

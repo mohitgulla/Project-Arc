@@ -73,7 +73,8 @@ OVERLAY_TARGETS: tuple[str, ...] = (
 )
 
 #: E13.12 (D56): the non-loop personas an experiment arm may run on its own store.
-ARM_PERSONAS: tuple[str, ...] = ("scout", "scalp")
+#: E14.5: ``trending`` = the daily trending tier job (an XP-10-style ranker overlay).
+ARM_PERSONAS: tuple[str, ...] = ("scout", "scalp", "trending")
 
 
 class Area(StrEnum):
@@ -278,7 +279,7 @@ class ArmPlan(BaseModel):
     model_config = _FORBID
 
     fork_step: str
-    arm_personas: list[Literal["scout", "scalp"]] = Field(default_factory=list)
+    arm_personas: list[Literal["scout", "scalp", "trending"]] = Field(default_factory=list)
     arm_jobs: list[str] = Field(default_factory=list)
     shared_kinds: list[str] = Field(default_factory=list)
     own_producers: list[str] = Field(

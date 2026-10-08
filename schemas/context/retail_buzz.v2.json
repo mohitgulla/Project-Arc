@@ -101,6 +101,19 @@
           "description": "apewisdom: mentions (24h)",
           "title": "Mentions"
         },
+        "mentions_24h_ago": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "apewisdom: mentions 24 h ago",
+          "title": "Mentions 24H Ago"
+        },
         "name": {
           "default": "",
           "title": "Name",
@@ -166,6 +179,19 @@
           "default": null,
           "description": "stocktwits: trending_score",
           "title": "Trending Score"
+        },
+        "upvotes": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "apewisdom: upvotes (24h)",
+          "title": "Upvotes"
         }
       },
       "required": [

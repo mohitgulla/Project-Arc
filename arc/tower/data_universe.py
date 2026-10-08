@@ -33,10 +33,12 @@ from arc.universe.tiers import (
     market_reference,
     tier_sizes,
 )
+from arc.universe.velocity import VelocityOptions
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Mapping
 
     from arc.config import ArcSettings
 
@@ -66,6 +68,14 @@ class UniverseActiveRow(BaseModel):
     also_in: list[str] = Field(default_factory=list, description="Lower tiers that also list it")
     inputs: int | None = Field(
         None, description="D58 trending: retail_buzz inputs that listed the name (2 | 1)"
+    )
+    velocity: float | None = Field(
+        None,
+        description="E14.5 trending: Reddit mention velocity (m + k) / (m24 + k), code-computed "
+        "from the retail_buzz entry the tier was ranked from (null = none / not on Reddit)",
+    )
+    velocity_detail: str | None = Field(
+        None, description="E14.5 trending: `reddit #20 · 5.2× (157 vs 30)`"
     )
 
 
@@ -209,7 +219,45 @@ def discovery_fill_by_day(
     return dict(sorted(out.items()))
 
 
-def _active_row(m: TierMember) -> UniverseActiveRow:
+def _trending_velocity(
+    conn: sqlite3.Connection, feed: UniverseTierPayload | None, opts: VelocityOptions
+) -> dict[str, tuple[float, str]]:
+    """E14.5: ``ticker -> (velocity, "reddit #20 · 5.2× (157 vs 30)")`` from the newest
+    ``retail_buzz`` entry at or before the trending feed's fetch (read-only; ``{}`` when
+    there is none or it predates E14.5's 24 h counts)."""
+    from arc.context.kinds import RetailBuzzPayload
+    from arc.context.ttl import to_db
+    from arc.universe.velocity import buzz_velocities, velocity_text
+
+    at = feed.fetched_at if feed is not None else None
+    row = conn.execute(
+        "SELECT payload FROM context_entries WHERE kind = 'retail_buzz' AND subject = 'all'"
+        + (" AND valid_from <= ?" if at is not None else "")
+        + " ORDER BY valid_from DESC, created_at DESC, rowid DESC LIMIT 1",
+        (to_db(at),) if at is not None else (),
+    ).fetchone()
+    if row is None:
+        return {}
+    try:
+        buzz = RetailBuzzPayload.model_validate(json.loads(row["payload"]))
+    except (ValueError, ValidationError):
+        return {}
+    ranks = {
+        r.symbol: r.rank or r.position
+        for i in buzz.inputs.values()
+        if i.type == "apewisdom"
+        for r in reversed(i.rows)
+    }
+    out: dict[str, tuple[float, str]] = {}
+    for sym, vel in buzz_velocities(buzz, opts).items():
+        text = velocity_text(vel)
+        if vel[0] is not None and text is not None:
+            out[sym] = (vel[0], f"reddit #{ranks.get(sym, '?')} · {text}")
+    return out
+
+
+def _active_row(m: TierMember, velocity: Mapping[str, tuple[float, str]]) -> UniverseActiveRow:
+    vel = velocity.get(m.ticker) if m.tier is Tier.TRENDING else None
     return UniverseActiveRow(
         ticker=m.ticker,
         tier=m.tier.value,
@@ -218,6 +266,8 @@ def _active_row(m: TierMember) -> UniverseActiveRow:
         reason=m.reason,
         also_in=[t.value for t in m.also_in],
         inputs=m.inputs,
+        velocity=vel[0] if vel else None,
+        velocity_detail=vel[1] if vel else None,
     )
 
 
@@ -245,8 +295,12 @@ def load_universe(
     *,
     now: _dt.datetime,
     director_diversification: str | None = None,
+    velocity: VelocityOptions | None = None,
 ) -> UniverseResponse:
-    """The stored resolve + tier feeds + the effective core/market-reference settings."""
+    """The stored resolve + tier feeds + the effective core/market-reference settings.
+
+    *velocity* (E14.5) = the ``universe.trending`` velocity knobs; each trending member
+    gets its Reddit mention velocity (default knobs when ``None``)."""
     now = now.astimezone(ET)
     today = now.date()
     has_ctx = _has_table(conn, "context_entries")
@@ -326,6 +380,11 @@ def load_universe(
         if active.model == "d56"
         else None
     )
+    trending_vel = (
+        _trending_velocity(conn, _feed(conn, Tier.TRENDING), velocity or VelocityOptions())
+        if has_ctx and any(m.tier is Tier.TRENDING for m in active.members)
+        else {}
+    )
     return UniverseResponse(
         as_of=now,
         model=active.model,
@@ -337,7 +396,7 @@ def load_universe(
         note=note,
         config_version=active.config_version if state != "none" else settings.config_version,
         active_max=settings.universe_active_max,
-        active=[_active_row(m) for m in active.members],
+        active=[_active_row(m, trending_vel) for m in active.members],
         tiers=tiers,
         dropped=dropped,
         market_reference=market_reference(settings),
