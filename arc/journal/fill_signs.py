@@ -30,6 +30,17 @@ Repair, one transaction per structure:
    ``realized_pnl_delta``; :func:`arc.journal.scorecard._realised_by_structure`
    adds that delta to the ``exit:closed`` rows it sums.
 
+Then, after the structures: :func:`restate_pnl_snapshots` re-derives the
+``realized`` / ``total`` of every production ``pnl_snapshots`` row (the reconcile's
+day snapshot, read by the Tower's Day P&L card) on a day a corrected lot closed.
+``realized`` is recomputed the way the reconcile computes it
+(``reconcile.engine._realized_today``): the sum of ``tax_lots.realized_pnl`` closed
+that ET day at or before the snapshot. A row changes only when the gap to the
+stored value equals the corrections' summed delta, so a snapshot that drifted for
+another reason is left alone (logged), and an already restated one shows no gap.
+This step runs on every invocation, so it also repairs a store whose structures
+were restated before the snapshot step existed.
+
 Idempotent: after a run nothing mismatches, so a second run changes nothing.
 """
 
@@ -50,7 +61,14 @@ if TYPE_CHECKING:
     import datetime as _dt
     import sqlite3
 
-__all__ = ["FillSignFix", "StructureRepair", "find_sign_mismatches", "repair_fill_signs"]
+__all__ = [
+    "FillSignFix",
+    "SnapshotRestatement",
+    "StructureRepair",
+    "find_sign_mismatches",
+    "repair_fill_signs",
+    "restate_pnl_snapshots",
+]
 
 log = structlog.get_logger(__name__)
 
@@ -324,4 +342,146 @@ def repair_fill_signs(
             )
         if rep is not None:
             out.append(rep)
+    return out
+
+
+@dataclass(frozen=True)
+class SnapshotRestatement:
+    """One production ``pnl_snapshots`` row whose realised P&L is restated."""
+
+    snapshot_id: str
+    day: str
+    old_realized: Decimal
+    new_realized: Decimal
+    old_total: Decimal
+    new_total: Decimal
+
+    def line(self) -> str:
+        return (
+            f"pnl_snapshots {self.snapshot_id} ({self.day}) realized "
+            f"{self.old_realized:+.2f} -> {self.new_realized:+.2f}, total "
+            f"{self.old_total:+.2f} -> {self.new_total:+.2f}"
+        )
+
+
+def _ts(raw: str | None) -> _dt.datetime | None:
+    import datetime as dt
+
+    if not raw:
+        return None
+    try:
+        ts = dt.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=dt.UTC)
+
+
+def _et_day(ts: _dt.datetime) -> str:
+    from arc.utils.calendar import ET
+
+    return ts.astimezone(ET).date().isoformat()
+
+
+def _corrections(conn: sqlite3.Connection) -> list[tuple[_dt.datetime, Decimal]]:
+    """(P&L lot's close time, realised delta) of every ``fill_sign_corrected`` decision."""
+    import json
+
+    out: list[tuple[_dt.datetime, Decimal]] = []
+    for (payload,) in conn.execute(
+        "SELECT payload FROM decisions WHERE reason_code = ? ORDER BY at, rowid",
+        (str(ReasonCode.RECONCILE_FILL_SIGN),),
+    ).fetchall():
+        p = json.loads(payload or "{}")
+        sid, delta = p.get("structure_id"), p.get("realized_pnl_delta")
+        if not sid or delta in (None, ""):
+            continue
+        srow = conn.execute(
+            "SELECT open_proposal_hash FROM open_structures WHERE id = ?", (sid,)
+        ).fetchone()
+        if srow is None:
+            continue
+        lot = conn.execute(
+            """SELECT l.closed_at FROM tax_lots l JOIN orders o ON o.id = l.order_id
+               WHERE o.proposal_hash = ? AND l.closed_at IS NOT NULL
+                 AND l.realized_pnl IS NOT NULL AND l.realized_pnl != ''
+                 AND CAST(l.realized_pnl AS REAL) != 0
+               ORDER BY l.rowid LIMIT 1""",
+            (srow[0],),
+        ).fetchone()
+        closed = _ts(lot[0]) if lot is not None else None
+        if closed is not None:
+            out.append((closed, Decimal(str(delta))))
+    return out
+
+
+def restate_pnl_snapshots(
+    conn: sqlite3.Connection, *, dry_run: bool = False
+) -> list[SnapshotRestatement]:
+    """Re-derive production day snapshots on days a corrected lot closed (one transaction)."""
+    import json
+
+    corrections = _corrections(conn)
+    days = {_et_day(c) for c, _ in corrections}
+    if not days:
+        return []
+    lots = [
+        (ts, Decimal(str(r[1] or 0)))
+        for r in conn.execute(
+            "SELECT closed_at, realized_pnl FROM tax_lots WHERE closed_at IS NOT NULL"
+        ).fetchall()
+        if (ts := _ts(r[0])) is not None
+    ]
+    out: list[SnapshotRestatement] = []
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN")
+    try:
+        for r in conn.execute(
+            """SELECT id, snapshot_at, realized, unrealized, total, details_json
+               FROM pnl_snapshots WHERE arm_id IS NULL ORDER BY snapshot_at, rowid"""
+        ).fetchall():
+            day = json.loads(r[5] or "{}").get("day")
+            at = _ts(r[1])
+            if day not in days or at is None:
+                continue
+            new = sum((v for ts, v in lots if _et_day(ts) == day and ts <= at), start=Decimal(0))
+            old = Decimal(str(r[2]))
+            expected = sum(
+                (d for c, d in corrections if _et_day(c) == day and c <= at), start=Decimal(0)
+            )
+            gap = new - old
+            if gap == 0:
+                continue
+            if gap != expected:
+                log.warning(
+                    "journal.fill_sign_snapshot_skipped",
+                    snapshot_id=r[0],
+                    day=day,
+                    stored=str(old),
+                    recomputed=str(new),
+                    corrections=str(expected),
+                )
+                continue
+            unreal = Decimal(str(r[3]))
+            rest = SnapshotRestatement(str(r[0]), day, old, new, Decimal(str(r[4])), new + unreal)
+            conn.execute(
+                "UPDATE pnl_snapshots SET realized = ?, total = ? WHERE id = ?",
+                (f"{rest.new_realized:.4f}", f"{rest.new_total:.4f}", rest.snapshot_id),
+            )
+            out.append(rest)
+    except Exception:
+        conn.rollback()
+        raise
+    if dry_run:
+        conn.rollback()
+    else:
+        conn.commit()
+        for s in out:
+            log.info(
+                "journal.fill_sign_snapshot_restated",
+                snapshot_id=s.snapshot_id,
+                day=s.day,
+                old=str(s.old_realized),
+                new=str(s.new_realized),
+            )
     return out
