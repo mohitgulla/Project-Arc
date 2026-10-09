@@ -13,6 +13,9 @@ from decimal import Decimal as D
 from typing import TYPE_CHECKING
 
 import pytest
+import requests
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st_
 from structlog.testing import capture_logs
 
 from arc.broker.base import BrokerOrderStatus, MlegOrder
@@ -297,13 +300,264 @@ def test_broker_rejects(conn: sqlite3.Connection) -> None:
     assert ("rejected", "order:broker_rejected") in journal(conn)
 
 
-def test_submit_error_is_unconfirmed(conn: sqlite3.Connection) -> None:
+# ---------------------------------------------------------------------------
+# E11.1 (D71): unknown submit state, resolved by client_order_id
+# ---------------------------------------------------------------------------
+
+
+class FaultBroker(ScriptedBroker):
+    """``faults[k]`` = (exception, accepted): attempt k raises *exception* from
+    ``submit_mleg``; *accepted* means the venue took the order first (so a lookup by
+    client id finds it). ``lookup_errors`` makes the first N lookups raise.
+    """
+
+    def __init__(
+        self,
+        scripts: list[list[str]],
+        faults: dict[int, tuple[Exception, bool]],
+        *,
+        lookup_errors: int = 0,
+        **kw: object,
+    ) -> None:
+        super().__init__(scripts, **kw)  # type: ignore[arg-type]
+        self.faults = faults
+        self.lookup_errors = lookup_errors
+        self.by_coid: dict[str, str] = {}
+        self.lookups: list[str] = []
+        self.coid_cancels: list[str] = []
+        self.sent_coids: list[str] = []
+
+    def submit_mleg(self, order: MlegOrder) -> str:
+        k = len(self.orders)
+        self.sent_coids.append(str(order.client_order_id))
+        fault = self.faults.get(k)
+        if fault is not None and not fault[1]:
+            self.orders.append(order)  # count the attempt; the venue never saw it
+            self._queue[f"brk-{k}"] = [("rejected", 0)]
+            raise fault[0]
+        bid = super().submit_mleg(order)
+        self.by_coid[str(order.client_order_id)] = bid
+        if fault is not None:
+            raise fault[0]
+        return bid
+
+    def order_status_by_client_id(self, coid: str) -> BrokerOrderStatus | None:
+        self.lookups.append(coid)
+        if self.lookup_errors:
+            self.lookup_errors -= 1
+            raise requests.ConnectionError("lookup down")
+        bid = self.by_coid.get(coid)
+        return None if bid is None else self.order_status(bid)
+
+    def cancel_by_client_id(self, coid: str) -> None:
+        self.coid_cancels.append(coid)
+
+
+class Api422(Exception):
+    status_code = 422
+
+
+def order_states(conn: sqlite3.Connection, coid_suffix: str) -> list[str]:
+    rows = conn.execute(
+        """SELECT e.to_state FROM order_events e JOIN orders o ON o.id = e.order_id
+           WHERE o.client_order_id LIKE ? ORDER BY e.id""",
+        (f"%{coid_suffix}",),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def intraday_events(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    rows = conn.execute(
+        "SELECT payload FROM routine_events WHERE name = 'reconcile.intraday' ORDER BY rowid"
+    ).fetchall()
+    return [json.loads(r[0]) for r in rows]
+
+
+def test_submit_timeout_after_broker_accepted_is_adopted_and_filled(
+    conn: sqlite3.Connection,
+) -> None:
+    """The fault-injected submit: the venue took it, the POST timed out reading."""
+    b = FaultBroker(
+        [["filled"]], {0: (requests.ReadTimeout("read timed out"), True)}, fills={0: (2, "-0.85")}
+    )
+    out = run(conn, b)
+    assert out.status is ExecStatus.FILLED and out.filled_qty == 2
+    assert len(b.orders) == 1 and b.lookups == [b.sent_coids[0]]
+    (order,) = conn.execute("SELECT state, broker_order_id FROM orders").fetchall()
+    assert (order[0], order[1]) == ("filled", "brk-0")
+    assert order_states(conn, ".s0")[-3:] == ["approved", "submitted", "filled"]
+    assert conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 1
+    ex = ExecutionRepo(conn).get(out.proposal_hash)
+    assert ex is not None and ex["status"] == "filled"
+    steps = conn.execute(
+        "SELECT payload FROM decisions WHERE reason_code = 'order:step'"
+    ).fetchall()
+    assert len(steps) == 1 and json.loads(steps[0][0])["adopted"] is True
+    codes = [c for _, c in journal(conn)]
+    assert "order:cancel_unconfirmed" not in codes and "order:unconfirmed" not in codes
+    assert intraday_events(conn) == []
+
+
+def test_adopted_working_order_is_worked_and_cancelled(conn: sqlite3.Connection) -> None:
+    """Adopted while still ``new``: normal step/cancel path, then the next step."""
+    b = FaultBroker(
+        [["new"], ["filled"]],
+        {0: (requests.ReadTimeout("t"), True)},
+        cancel_scripts={0: [("canceled", 0)]},
+        fills={1: (2, "-0.82")},
+    )
+    out = run(conn, b)
+    assert out.status is ExecStatus.FILLED and out.steps_used == 1
+    assert ("cancel", 0, "") in b.calls
+    assert order_states(conn, ".s0")[-3:] == ["approved", "submitted", "cancelled"]
+
+
+def test_submit_connect_error_absent_moves_to_next_step(conn: sqlite3.Connection) -> None:
+    b = FaultBroker(
+        [["rejected"], ["filled"]],
+        {0: (requests.ConnectionError("refused"), False)},
+        fills={1: (2, "-0.82")},
+    )
+    out = run(conn, b)
+    assert out.status is ExecStatus.FILLED and out.steps_used == 1
+    assert [c.rsplit(".", 1)[1] for c in b.sent_coids] == ["s0", "s1"]
+    assert b.lookups == [b.sent_coids[0]] * 3  # execution_unknown_submit_lookups
+    assert order_states(conn, ".s0")[-2:] == ["approved", "cancelled"]
+    assert ("failed", "order:submit_failed") in journal(conn)
+    assert b.orders[1].limit_price == D("-0.82"), "next step, never the same price again"
+
+
+def test_submit_non_transport_error_absent_stops(conn: sqlite3.Connection) -> None:
+    """A non-transport error the broker has no order for: cancelled, ladder stops."""
+    b = FaultBroker([["rejected"], ["filled"]], {0: (RuntimeError("bad payload"), False)})
+    out = run(conn, b)
+    assert out.status is ExecStatus.CANCELLED and len(b.sent_coids) == 1
+    assert "submit failed" in out.detail
+    assert intraday_events(conn) == []
+
+
+def test_submit_api_4xx_is_rejected(conn: sqlite3.Connection) -> None:
+    b = FaultBroker([["rejected"], ["filled"]], {0: (Api422("unprocessable"), False)})
+    out = run(conn, b)
+    assert out.status is ExecStatus.REJECTED
+    assert len(b.lookups) == 1, "a 4xx is an answer: one lookup, no loop"
+    assert len(b.sent_coids) == 1
+    assert ("rejected", "order:broker_rejected") in journal(conn)
+    assert order_states(conn, ".s0")[-2:] == ["approved", "cancelled"]
+
+
+def test_submit_4xx_duplicate_id_is_adopted(conn: sqlite3.Connection) -> None:
+    """422 "client_order_id must be unique" after a retried POST landed: adopted."""
+    b = FaultBroker([["filled"]], {0: (Api422("must be unique"), True)}, fills={0: (2, "-0.85")})
+    out = run(conn, b)
+    assert out.status is ExecStatus.FILLED and len(b.lookups) == 1
+
+
+def test_submit_unknown_marks_unconfirmed_and_queues_intraday_reconcile(
+    conn: sqlite3.Connection,
+) -> None:
+    b = FaultBroker([["new"]], {0: (requests.ReadTimeout("t"), True)}, lookup_errors=99)
+    out = run(conn, b)
+    assert out.status is ExecStatus.UNCONFIRMED and len(b.sent_coids) == 1
+    assert b.coid_cancels == [b.sent_coids[0]]
+    ex = ExecutionRepo(conn).get(out.proposal_hash)
+    assert ex is not None and ex["status"] == "unconfirmed"
+    (row,) = conn.execute(
+        "SELECT payload FROM decisions WHERE reason_code = 'order:cancel_unconfirmed'"
+    ).fetchall()
+    facts = json.loads(row[0])
+    assert facts["lookups"] == 3 and facts["cancel_sent"] is True
+    assert "ConnectionError" in facts["lookup_error"]
+    (ev,) = intraday_events(conn)
+    assert ev["proposal_hash"] == out.proposal_hash and "order state unknown" in ev["reason"]
+
+    from arc.reconcile.intraday import queue_intraday_reconcile
+
+    assert queue_intraday_reconcile(conn, out.proposal_hash, reason="again", now=NOW) is None
+    assert len(intraday_events(conn)) == 1, "one event per proposal"
+
+
+def test_unconfirmed_without_intraday_flag_queues_nothing(conn: sqlite3.Connection) -> None:
+    b = FaultBroker([["new"]], {0: (requests.ReadTimeout("t"), True)}, lookup_errors=99)
+    out = run(conn, b, config=cfg(execution_intraday_reconcile=False))
+    assert out.status is ExecStatus.UNCONFIRMED and intraday_events(conn) == []
+
+
+def test_cancel_never_confirmed_queues_intraday_reconcile(conn: sqlite3.Connection) -> None:
+    b = ScriptedBroker([["new"]], cancel_scripts={0: [("pending_cancel", 0)]})
+    out = run(conn, b, config=cfg(execution_cancel_confirm_seconds=10))
+    assert out.status is ExecStatus.UNCONFIRMED
+    assert [e["proposal_hash"] for e in intraday_events(conn)] == [out.proposal_hash]
+
+
+def test_broker_without_client_id_lookup_is_unconfirmed(conn: sqlite3.Connection) -> None:
     class Boom(ScriptedBroker):
         def submit_mleg(self, order: MlegOrder) -> str:
             raise RuntimeError("503")
 
     out = run(conn, Boom([["new"]]))
     assert out.status is ExecStatus.UNCONFIRMED
+    assert (
+        "cannot look orders up"
+        in conn.execute(
+            "SELECT payload FROM decisions WHERE reason_code = 'order:cancel_unconfirmed'"
+        ).fetchone()[0]
+    )
+
+
+def test_poll_transport_error_within_deadline_retries(conn: sqlite3.Connection) -> None:
+    class Flaky(ScriptedBroker):
+        def __init__(self, *a: object, raises: int, **kw: object) -> None:
+            super().__init__(*a, **kw)  # type: ignore[arg-type]
+            self.raises = raises
+
+        def order_status(self, broker_order_id: str) -> BrokerOrderStatus:
+            if self.raises:
+                self.raises -= 1
+                raise requests.ReadTimeout("poll slow")
+            return super().order_status(broker_order_id)
+
+    b = Flaky([["filled"]], raises=1, fills={0: (2, "-0.85")})
+    assert run(conn, b).status is ExecStatus.FILLED
+
+    c2 = connect(":memory:")
+    migrate(c2)
+    b2 = Flaky([["new"]], raises=10**6)
+    out = run(c2, b2, config=cfg(execution_cancel_confirm_seconds=10))
+    assert out.status is ExecStatus.UNCONFIRMED
+    assert ("cancel", 0, "") in b2.calls, "past the deadline the cancel path runs"
+    assert len(b2.orders) == 1
+    assert "status unreadable" in out.detail
+
+
+_FAULTS = st_.sampled_from(["ok", "timeout_accepted", "connect_absent", "unknown"])
+
+
+@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(faults=st_.lists(_FAULTS, min_size=4, max_size=4))
+def test_same_client_order_id_never_resubmitted(faults: list[str]) -> None:
+    """Whatever the fault sequence, each client_order_id reaches submit_mleg at most once."""
+    c = connect(":memory:")
+    migrate(c)
+    fmap: dict[int, tuple[Exception, bool]] = {}
+    for k, f in enumerate(faults):
+        if f == "timeout_accepted":
+            fmap[k] = (requests.ReadTimeout("t"), True)
+        elif f == "connect_absent":
+            fmap[k] = (requests.ConnectionError("c"), False)
+        elif f == "unknown":
+            fmap[k] = (requests.ReadTimeout("t"), True)
+    errs = 99 if "unknown" in faults else 0
+    b = FaultBroker(
+        [["new"]] * 4,
+        fmap,
+        lookup_errors=errs,
+        cancel_scripts={k: [("canceled", 0)] for k in range(4)},
+    )
+    run(c, b)
+    assert len(b.sent_coids) == len(set(b.sent_coids))
+    suffixes = [x.rsplit(".", 1)[1] for x in b.sent_coids]
+    assert suffixes == [f"s{k}" for k in range(len(suffixes))], "steps are monotone"
 
 
 def test_cancel_error_still_polls(conn: sqlite3.Connection) -> None:

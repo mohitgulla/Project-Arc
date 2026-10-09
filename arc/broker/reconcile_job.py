@@ -2,7 +2,8 @@
 
 D56 (E13.2): was the Auditor (``arc.routines.auditor``); the old job name ``auditor``
 loads as a logged alias. ``personas.broker.reconcile`` in ``config/routines.yaml``
-(16:30 ET, ``halt_exempt``).
+(16:30 ET, ``halt_exempt``). E11.1 (D71): ``reconcile.intraday`` (event-driven) checks
+an unconfirmed ladder's orders right away instead of at 16:30.
 Deterministic: it runs :func:`arc.reconcile.engine.reconcile` against the paper
 broker (read-only calls only), then posts the ``🏦 [Broker] Reconcile`` card with
 Day / MTD / YTD performance from ``pnl_snapshots`` (D28).
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
 __all__ = [
     "broker_reconcile",
     "broker_reconcile_step",
+    "intraday_reconcile",
+    "intraday_reconcile_step",
     "reconcile_output",
     "settle_from_market",
 ]
@@ -236,6 +239,63 @@ def _approvals_line(ctx: JobContext) -> str | None:
     except Exception as exc:  # noqa: BLE001 - ops detail must not block the reconcile card
         log.warning("reconcile.approvals_unavailable", error=str(exc))
         return None
+
+
+def intraday_reconcile(ctx: JobContext, *, broker: BrokerAdapter) -> JobResult:
+    """E11.1 (D71): job ``reconcile.intraday``, run for a ``reconcile.intraday`` event.
+
+    The Broker queues the event when a ladder ends ``unconfirmed``. This checks
+    that proposal's orders/executions only (``scope="intraday"``: no positions,
+    fills, snapshots or settles). Policy, decided here and not in the engine:
+    an order still unresolved (no broker id the lookup could find, a fill, or not
+    terminal) raises the ``arc:reconcile`` halt and alerts; a resolved one is
+    journaled ``reconcile:resolved`` and trading carries on.
+    """
+    from arc.reconcile.engine import halt_on_mismatch, reconcile
+
+    payload = dict(ctx.event.payload) if ctx.event else {}
+    phash = str(payload.get("proposal_hash") or "")
+    report = reconcile(
+        ctx.conn,
+        broker,
+        settings=ctx.settings,
+        now=ctx.now,
+        run_id=ctx.run_id,
+        scope="intraday",
+        proposal_hashes={phash} if phash else None,
+    )
+    if report.mismatches and bool(ctx.options.get("halt_on_mismatch", True)):
+        halt_on_mismatch(ctx.conn, report, now=ctx.now, run_id=ctx.run_id)
+    who = phash[:12] or "all unconfirmed"
+    notice = ""
+    if report.mismatches:
+        items = [f"{m.kind}: {m.detail}" for m in report.mismatches[:_MAX_NOTICE_ITEMS]]
+        stop = (
+            "trading HALTED until the owner checks and runs !resume"
+            if report.halted
+            else "not halted"
+        )
+        notice = (
+            f"intraday reconcile ({who}): {len(report.mismatches)} order(s) still unknown; "
+            f"{stop}\n• " + "\n• ".join(items)
+        )
+    return JobResult(
+        summary=f"{who}: {report.summary()}",
+        notice=notice,
+        metrics={
+            "clean": report.clean,
+            "mismatches": len(report.mismatches),
+            "orders_checked": report.orders_checked,
+            "halted": report.halted,
+        },
+    )
+
+
+def intraday_reconcile_step(ctx: JobContext) -> JobResult:
+    """Dispatcher entry point for ``reconcile.intraday``: the store's broker (read-only)."""
+    from arc.experiments.broker import trading_broker
+
+    return intraday_reconcile(ctx, broker=trading_broker(ctx.conn, ctx.settings))
 
 
 def broker_reconcile_step(ctx: JobContext) -> JobResult:

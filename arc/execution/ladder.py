@@ -11,6 +11,15 @@ Invariants
 - Never two working orders for one proposal: the next step is only sent after
   the previous attempt is confirmed terminal. An unconfirmed cancel stops the
   ladder with status ``unconfirmed`` (E6.3 reconcile resolves it).
+- D71 unknown submit (E11.1): ``submit()`` raising anything but
+  :class:`SubmitRefused` means the order *may* exist. It is looked up by its
+  deterministic ``client_order_id`` (:mod:`arc.execution.resolve`): found = adopted
+  and worked like any attempt; absent after a transport error = cancelled locally
+  (``order:submit_failed``) and the *next* step goes out with its own id; an API
+  4xx the lookup cannot find = rejected; lookups failing = one
+  ``cancel_by_client_id``, ``unconfirmed``, and a ``reconcile.intraday`` event.
+  The same ``client_order_id`` is never submitted twice. A status poll that
+  raises is retried until the attempt's deadline, then goes down the cancel path.
 - A partial fill that is then cancelled stops the ladder (the token is bound to
   the full quantity); the filled contracts are recorded.
 - Idempotent: one ``executions`` row per proposal; a second call is a no-op.
@@ -46,6 +55,12 @@ import structlog
 
 from arc.budget.orders import REFUSED_DETAIL_PREFIX, OrderBudgetConfig, can_submit, count_orders
 from arc.context.ttl import to_db
+from arc.execution.resolve import (
+    ResolvedSubmit,
+    api_status_code,
+    is_transport_error,
+    resolve_unknown_submit,
+)
 from arc.execution.submission import SubmitRefused, attempt_order_id, submit
 from arc.gate.band import PriceBand
 from arc.gate.rules import proposal_hash as hash_proposal
@@ -98,6 +113,8 @@ class AttemptRecord:
     status: str = "approved"
     filled_qty: int = 0
     fill_price: Decimal | None = None
+    adopted: bool = False  # D71: found by client_order_id after a submit error
+    detail: str = ""
 
 
 @dataclass
@@ -256,13 +273,28 @@ class _Ctx:
         )
 
 
-def _poll(c: _Ctx, broker_id: str, seconds: float) -> BrokerOrderStatus:
-    """Poll until the order is terminal or *seconds* pass; return the last status."""
+def _poll(c: _Ctx, broker_id: str, seconds: float) -> BrokerOrderStatus | None:
+    """Poll until the order is terminal or *seconds* pass; return the last status read.
+
+    D71: a poll that raises (timeout, dropped connection, API error) is logged and
+    retried until the deadline; ``None`` when no poll in the window answered.
+    """
     deadline = c.clock() + _dt.timedelta(seconds=seconds)
+    last: BrokerOrderStatus | None = None
     while True:
-        st = c.broker.order_status(broker_id)
-        if st.status in _FILLED | _DONE_NO_FILL or c.clock() >= deadline:
-            return st
+        try:
+            last = c.broker.order_status(broker_id)
+        except Exception as exc:  # noqa: BLE001 - retried within the deadline
+            log.warning(
+                "execution.poll_error",
+                broker_order_id=broker_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        else:
+            if last.status in _FILLED | _DONE_NO_FILL:
+                return last
+        if c.clock() >= deadline:
+            return last
         c.sleep(c.config.execution_poll_seconds)
 
 
@@ -284,7 +316,8 @@ def _record_fill(c: _Ctx, a: AttemptRecord, st: BrokerOrderStatus) -> None:
 
 def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
     """Send and work one attempt. Returns the record and a verdict:
-    ``filled`` | ``partial`` | ``next`` | ``refused`` | ``rejected`` | ``unconfirmed``."""
+    ``filled`` | ``partial`` | ``next`` | ``refused`` | ``rejected`` | ``unconfirmed`` |
+    ``submit_failed`` (D71)."""
     token = c.decision.token or ""
     try:
         coid = attempt_order_id(token, step)
@@ -324,34 +357,125 @@ def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
             refusal=str(exc.code),
         )
         return a, "refused"
-    except Exception as exc:  # noqa: BLE001 - unknown broker state: stop, reconcile later
-        a.status = "unconfirmed"
-        detail = f"broker error on submit: {type(exc).__name__}: {exc}"
-        c.journal(Choice.FAILED, ReasonCode.ORDER_UNCONFIRMED, detail, step=step)
-        log.error("execution.submit_error", proposal_hash=c.phash, step=step, error=str(exc))
-        return a, "unconfirmed"
+    except Exception as exc:  # noqa: BLE001 - D71: the order may exist; resolve it
+        return a, _unknown_submit(c, a, exc)
+    return a, _work(c, a, broker_id)
 
+
+def _work(c: _Ctx, a: AttemptRecord, broker_id: str, first: BrokerOrderStatus | None = None) -> str:
+    """Record the broker id, let the attempt work, cancel it if needed, settle it."""
     a.broker_order_id = broker_id
-    c.orders.set_broker_order_id(order_id, broker_id)
-    c.move(order_id, OrderState.SUBMITTED, f"broker {broker_id}")
+    c.orders.set_broker_order_id(a.order_id, broker_id)
+    how = "adopted after submit error; " if a.adopted else ""
+    c.move(a.order_id, OrderState.SUBMITTED, f"{how}broker {broker_id}")
     c.journal(
         Choice.SUBMITTED,
         ReasonCode.ORDER_STEP,
-        f"step {step}: limit {price:+} ({coid[-4:]})",
-        step=step,
-        limit=str(price),
+        f"step {a.step}: limit {a.limit_price:+} ({a.client_order_id[-4:]})"
+        + (" adopted by client id after a submit error" if a.adopted else ""),
+        step=a.step,
+        limit=str(a.limit_price),
         broker_order_id=broker_id,
-        client_order_id=coid,
+        client_order_id=a.client_order_id,
+        adopted=True if a.adopted else None,
     )
 
-    st = _poll(c, broker_id, c.config.execution_step_seconds)
-    if st.status not in _FILLED | _DONE_NO_FILL:
+    terminal = _FILLED | _DONE_NO_FILL
+    st = first if first is not None and first.status in terminal else None
+    if st is None:
+        st = _poll(c, broker_id, c.config.execution_step_seconds)
+    if st is None or st.status not in terminal:
         try:
             c.broker.cancel(broker_id)
         except Exception as exc:  # noqa: BLE001 - it may have filled/closed meanwhile
             log.warning("execution.cancel_error", broker_order_id=broker_id, error=str(exc))
         st = _poll(c, broker_id, c.config.execution_cancel_confirm_seconds)
-    return a, _settle(c, a, st)
+    if st is None:
+        a.status = "unconfirmed"
+        a.detail = f"order {broker_id} status unreadable after the cancel; ladder stopped"
+        c.journal(
+            Choice.FAILED,
+            ReasonCode.ORDER_UNCONFIRMED,
+            a.detail,
+            step=a.step,
+            broker_order_id=broker_id,
+        )
+        return "unconfirmed"
+    return _settle(c, a, st)
+
+
+def _unknown_submit(c: _Ctx, a: AttemptRecord, exc: Exception) -> str:
+    """D71: ``submit()`` raised after the halt/token/approval checks; find out what happened.
+
+    Verdicts: the normal ones for an adopted order; ``next`` (absent after a
+    transport error), ``submit_failed`` (absent after any other error),
+    ``rejected`` (API 4xx the broker does not hold) or ``unconfirmed``.
+    """
+    error = f"{type(exc).__name__}: {exc}"[:500]
+    code = api_status_code(exc)
+    transport = is_transport_error(exc)
+    rejected_4xx = code is not None and 400 <= code < 500
+    log.error(
+        "execution.submit_error",
+        proposal_hash=c.phash,
+        step=a.step,
+        error=error,
+        status_code=code,
+        transport=transport,
+    )
+    # A 4xx is an answer (e.g. 422 "client_order_id must be unique" when a retried
+    # POST already landed): one lookup tells which; no lookup loop.
+    res: ResolvedSubmit = resolve_unknown_submit(
+        c.broker,
+        client_order_id=a.client_order_id,
+        attempts=1 if rejected_4xx else c.config.execution_unknown_submit_lookups,
+        sleep=c.sleep,
+        wait_seconds=c.config.execution_poll_seconds,
+    )
+    facts: dict[str, Any] = {
+        "step": a.step,
+        "limit": str(a.limit_price),
+        "client_order_id": a.client_order_id,
+        "lookups": res.lookups,
+        "outcome": res.outcome,
+        "submit_error": error,
+        "lookup_error": res.error or None,
+        "status_code": code,
+    }
+    if res.outcome == "accepted" and res.broker_order_id:
+        a.adopted = True
+        log.warning(
+            "execution.submit_adopted",
+            proposal_hash=c.phash,
+            step=a.step,
+            broker_order_id=res.broker_order_id,
+        )
+        return _work(c, a, res.broker_order_id, first=res.status)
+    if res.outcome == "absent" and rejected_4xx:
+        a.status = "rejected"
+        a.detail = f"broker rejected step {a.step} on submit: {error}"
+        c.move(a.order_id, OrderState.CANCELLED, a.detail)
+        c.journal(Choice.REJECTED, ReasonCode.ORDER_REJECTED, a.detail, **facts)
+        return "rejected"
+    if res.outcome == "absent":
+        a.status = "cancelled"
+        a.detail = f"submit failed (broker has no order {a.client_order_id[-4:]}): {error}"
+        c.move(a.order_id, OrderState.CANCELLED, a.detail)
+        c.journal(Choice.FAILED, ReasonCode.ORDER_SUBMIT_FAILED, a.detail, **facts)
+        return "next" if transport else "submit_failed"
+    a.status = "unconfirmed"
+    a.detail = (
+        f"broker error on submit ({error}); order state unknown after {res.lookups} "
+        f"client-id lookup(s); cancel by client id {'sent' if res.cancel_sent else 'not sent'}"
+    )
+    c.journal(
+        Choice.FAILED,
+        ReasonCode.ORDER_UNCONFIRMED,
+        a.detail,
+        **facts,
+        cancel_sent=res.cancel_sent,
+    )
+    return "unconfirmed"
 
 
 def _settle(c: _Ctx, a: AttemptRecord, st: BrokerOrderStatus) -> str:
@@ -529,6 +653,9 @@ def execute(
             out.filled_qty, out.fill_price, out.steps_used = a.filled_qty, a.fill_price, step
         elif verdict == "unconfirmed":
             out.status = ExecStatus.UNCONFIRMED
+            out.detail = a.detail
+        elif verdict == "submit_failed":
+            out.status, out.detail = ExecStatus.CANCELLED, a.detail
         else:  # refused / rejected
             out.status = ExecStatus.REJECTED
         break
@@ -560,6 +687,10 @@ def execute(
             band_lo=str(band.lo),
             band_hi=str(band.hi),
         )
+    if out.status is ExecStatus.UNCONFIRMED and config.execution_intraday_reconcile:
+        from arc.reconcile.intraday import queue_intraday_reconcile
+
+        queue_intraday_reconcile(conn, phash, reason=out.detail or out.summary(), now=clock())
     log.info("execution.done", proposal_hash=phash, kind=kind, summary=out.summary())
     return out
 

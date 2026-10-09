@@ -410,6 +410,35 @@ class ArcSettings(BaseSettings):
             "gate-approved band is not sent (journal reason stale_band)."
         ),
     )
+    # -- Unknown submit state (E11.1, D71) ---------------------------------------
+    execution_broker_connect_timeout_s: Annotated[float, Field(gt=0.0, le=30.0)] = Field(
+        default=5.0,
+        description=(
+            "D71: TCP connect timeout (s) on every broker REST call. alpaca-py sets none, "
+            "so without it a stalled connection blocks forever."
+        ),
+    )
+    execution_broker_read_timeout_s: Annotated[float, Field(gt=0.0, le=60.0)] = Field(
+        default=15.0,
+        description=(
+            "D71: read timeout (s) on every broker REST call. A submit with no answer in "
+            "this time is an unknown submit, resolved by client_order_id."
+        ),
+    )
+    execution_unknown_submit_lookups: Annotated[int, Field(ge=1, le=10)] = Field(
+        default=3,
+        description=(
+            "D71: client_order_id lookups after a submit error before the order is "
+            "called absent (or unknown when the lookups fail); execution_poll_seconds apart."
+        ),
+    )
+    execution_intraday_reconcile: bool = Field(
+        default=True,
+        description=(
+            "D71: queue a reconcile.intraday event after any unconfirmed execution "
+            "(orders/executions only; never halts by itself)."
+        ),
+    )
     # -- Close quote check (E6.2a; PLAN §6.8: data quality fails closed) --------
     close_quote_max_age_seconds: Annotated[int, Field(ge=1, le=600)] = Field(
         default=60,

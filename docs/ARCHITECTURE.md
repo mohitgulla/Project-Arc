@@ -221,3 +221,16 @@ Human decision from Slack. Fields: proposal_hash, slack_user, slack_ts, decision
 Event-sourced state machine: proposed -> gated -> approved -> submitted ->
 partially_filled -> filled | cancelled | rejected | expired. Every transition is
 an OrderEvent row.
+
+**Unknown submit state (E11.1, D71).** Every Alpaca HTTP call carries an explicit
+`(connect, read)` timeout (`arc.broker.http.TimeoutSession`, 5 s / 15 s). When
+`submit()` raises anything but `SubmitRefused`, the ladder never assumes: it looks
+the attempt up by its deterministic `client_order_id`
+(`arc.execution.resolve.resolve_unknown_submit`). Found → the broker id is
+adopted and the attempt is worked normally; absent after a transport error → the
+row is cancelled (`order:submit_failed`) and the next band step goes out with its
+own id; an API 4xx it does not hold → rejected; lookups failing → one
+`cancel_by_client_id`, `unconfirmed`, and one `reconcile.intraday` event for the
+proposal. That event-driven job reconciles only the proposal's orders/executions
+(`reconcile(scope="intraday")`) and halts + alerts only if the order is still
+unresolved. A client id is never submitted twice.

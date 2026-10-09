@@ -913,3 +913,91 @@ class TestEventsCli:
         assert run_routines(argparse.Namespace(**base, json=False)) == 0
         text = capsys.readouterr().out
         assert "STRANDED" in text and "age 12m00s" in text and "aaaa1111bbbb" in text
+
+
+# ---------------------------------------------------------------------------
+# E11.1 (D71): reconcile.intraday event → one run of the real handler
+# ---------------------------------------------------------------------------
+
+
+class TestIntradayReconcileEvent:
+    def _dispatcher(self, conn: sqlite3.Connection, broker: Any) -> tuple[Dispatcher, Any]:
+        from arc.broker.reconcile_job import intraday_reconcile
+
+        notifier = RecordingNotifier()
+        cfg = load_routines()
+        d = Dispatcher(
+            conn,
+            RoutinesConfig.model_validate(
+                {
+                    "personas": {
+                        "reconcile.intraday": cfg.personas["reconcile.intraday"].model_dump(
+                            exclude_none=True
+                        )
+                    }
+                }
+            ),  # fmt: skip
+            handlers={"reconcile.intraday": lambda ctx: intraday_reconcile(ctx, broker=broker)},
+            notifier=notifier,
+            is_halted=lambda: HaltSwitch(HaltRepo(conn)).is_halted(),
+            settings_factory=lambda: margin(gate_secret=SECRET),
+        )
+        return d, notifier
+
+    def test_shipped_job_is_event_triggered_and_halt_exempt(self) -> None:
+        from arc.routines.handlers import BUILTIN_HANDLERS as HANDLERS
+
+        cfg = load_routines()
+        job = cfg.personas["reconcile.intraday"]
+        assert job.trigger == "reconcile.intraday" and job.halt_exempt and job.llm is False
+        assert not job.schedule
+        assert HANDLERS["reconcile.intraday"].endswith(":intraday_reconcile_step")
+
+    def test_reconcile_intraday_event_runs_handler(self, conn: sqlite3.Connection) -> None:
+        from tests.test_reconcile import ClientIdBroker, unconfirmed_order
+
+        pos = unconfirmed_order(conn)
+        d, notifier = self._dispatcher(conn, ClientIdBroker(by_coid={}, lookup_error=True))
+        RoutineEventRepo(conn).emit(
+            "reconcile.intraday", {"proposal_hash": pos["phash"], "reason": "t"}, now=NOW
+        )
+        r = d.tick(NOW + dt.timedelta(minutes=1), since=NOW)
+        assert [(o.job, o.status) for o in r.outcomes] == [("reconcile.intraday", "ok")]
+        assert RoutineEventRepo(conn).pending(until=NOW + dt.timedelta(hours=1)) == []
+        assert any("still unknown" in text for _, text in notifier.posts), notifier.posts
+        assert HaltSwitch(HaltRepo(conn)).is_halted()
+        # a second tick does not run it again (dispatch once)
+        r2 = d.tick(NOW + dt.timedelta(minutes=2), since=NOW + dt.timedelta(minutes=1))
+        assert [o.job for o in r2.outcomes] == []
+
+    def test_reconcile_intraday_runs_under_halt(self, conn: sqlite3.Connection) -> None:
+        from tests.test_reconcile import ClientIdBroker, unconfirmed_order
+
+        pos = unconfirmed_order(conn)
+        HaltSwitch(HaltRepo(conn)).halt(actor="U1", reason="owner", now=NOW)
+        d, notifier = self._dispatcher(conn, ClientIdBroker(by_coid={}))
+        RoutineEventRepo(conn).emit("reconcile.intraday", {"proposal_hash": pos["phash"]}, now=NOW)
+        r = d.tick(NOW + dt.timedelta(minutes=1), since=NOW)
+        assert [(o.job, o.status) for o in r.outcomes] == [("reconcile.intraday", "ok")]
+        assert notifier.posts == [] or all("still unknown" not in t for _, t in notifier.posts)
+
+    def test_reconcile_cli_intraday_never_halts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import argparse
+
+        import arc.config
+        from arc.reconcile.cli import run_reconcile
+        from tests.test_reconcile import ClientIdBroker, unconfirmed_order
+
+        monkeypatch.setattr(arc.config, "get_settings", lambda **kw: margin(gate_secret=SECRET))
+        db = str(tmp_path / "r.db")
+        c = connect(db)
+        migrate(c)
+        unconfirmed_order(c)
+        c.close()
+        args = argparse.Namespace(db=db, no_halt=False, no_settle=False, intraday=True)
+        rc = run_reconcile(args, broker=ClientIdBroker(by_coid={}, lookup_error=True))
+        out = _json_out(capsys.readouterr().out)
+        assert rc == 1 and out["clean"] is False and out["scope"] == "intraday"
+        assert not HaltSwitch(HaltRepo(connect(db))).is_halted()

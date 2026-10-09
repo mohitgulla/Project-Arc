@@ -16,7 +16,7 @@ import datetime as dt  # noqa: TC003 — used at runtime
 import os
 import uuid
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from alpaca.trading.client import TradingClient
@@ -35,6 +35,7 @@ from arc.broker.base import (
     Fill,
     MlegOrder,
 )
+from arc.broker.http import install_timeouts
 
 if TYPE_CHECKING:
     from arc.broker.registry import BrokerInfo
@@ -93,10 +94,25 @@ def _require_paper() -> None:
         raise RuntimeError(msg)
 
 
-def _make_client(api_key: str | None = None, secret_key: str | None = None) -> TradingClient:
+def _default_timeouts() -> tuple[float, float]:
+    """``(connect_s, read_s)`` from :class:`arc.config.ArcSettings` (D71 defaults 5 s / 15 s)."""
+    from arc.config import get_settings
+
+    s = get_settings()
+    return s.execution_broker_connect_timeout_s, s.execution_broker_read_timeout_s
+
+
+def _make_client(
+    api_key: str | None = None,
+    secret_key: str | None = None,
+    *,
+    timeouts: tuple[float, float] | None = None,
+) -> TradingClient:
     """Build a TradingClient pointed at the paper endpoint.
 
     Explicit keys (both or neither) win over ``ALPACA_API_KEY``/``ALPACA_SECRET_KEY``.
+    Every request carries ``timeout=timeouts`` (``(connect_s, read_s)``; default from
+    settings, D71): alpaca-py has no timeout of its own.
     """
     if (api_key is None) != (secret_key is None):
         msg = "pass both api_key and secret_key, or neither"
@@ -110,11 +126,52 @@ def _make_client(api_key: str | None = None, secret_key: str | None = None) -> T
             "environment (see ~/.hermes/.env)."
         )
         raise RuntimeError(msg)
-    return TradingClient(
+    client = TradingClient(
         api_key=api_key,
         secret_key=secret_key,
         paper=True,
         url_override=_PAPER_BASE_URL,
+    )
+    connect_s, read_s = timeouts or _default_timeouts()
+    install_timeouts(client, connect_s=connect_s, read_s=read_s)
+    return client
+
+
+def _to_status(order: object) -> BrokerOrderStatus:
+    """An alpaca-py ``Order`` (or its raw dict) as a :class:`BrokerOrderStatus`."""
+    if isinstance(order, dict):
+        return BrokerOrderStatus(
+            broker_order_id=str(order.get("id", "")),
+            client_order_id=order.get("client_order_id"),
+            status=str(order.get("status", "unknown")),
+        )
+    o = cast("Any", order)
+    return BrokerOrderStatus(
+        broker_order_id=str(o.id),
+        client_order_id=o.client_order_id,
+        status=_enum_value(o.status) if o.status else "unknown",
+        filled_qty=Decimal(str(o.filled_qty or "0")),
+        filled_avg_price=(Decimal(str(o.filled_avg_price)) if o.filled_avg_price else None),
+        side=_order_side(getattr(o, "side", None)),
+        legs=(
+            [
+                {
+                    "symbol": leg.symbol,
+                    "side": _enum_value(leg.side) if leg.side else None,
+                    "qty": str(leg.qty),
+                    "filled_qty": str(leg.filled_qty or "0"),
+                    "status": _enum_value(leg.status) if leg.status else None,
+                    "filled_avg_price": (
+                        str(leg.filled_avg_price) if leg.filled_avg_price else None
+                    ),
+                }
+                for leg in o.legs
+            ]
+            if o.legs
+            else None
+        ),
+        created_at=o.created_at,
+        updated_at=o.updated_at,
     )
 
 
@@ -180,9 +237,10 @@ class AlpacaPaperBroker:
         api_key: str | None = None,
         secret_key: str | None = None,
         account_label: str = "paper",
+        timeouts: tuple[float, float] | None = None,
     ) -> None:
         _require_paper()
-        self._client = client or _make_client(api_key, secret_key)
+        self._client = client or _make_client(api_key, secret_key, timeouts=timeouts)
         self._account_label = account_label
 
     # -- identity (E13.11: registered as alpaca/paper/rest) -------------------
@@ -269,43 +327,33 @@ class AlpacaPaperBroker:
     # -- order_status --------------------------------------------------------
 
     def order_status(self, broker_order_id: str) -> BrokerOrderStatus:
-        order = self._client.get_order_by_id(broker_order_id)
-        if isinstance(order, dict):
-            # dict fallback
-            return BrokerOrderStatus(
-                broker_order_id=str(order.get("id", "")),
-                status=str(order.get("status", "unknown")),
-            )
-        # AlpacaOrder (or duck-typed equivalent)
-        return BrokerOrderStatus(
-            broker_order_id=str(order.id),
-            client_order_id=order.client_order_id,
-            status=_enum_value(order.status) if order.status else "unknown",
-            filled_qty=Decimal(str(order.filled_qty or "0")),
-            filled_avg_price=(
-                Decimal(str(order.filled_avg_price)) if order.filled_avg_price else None
-            ),
-            side=_order_side(getattr(order, "side", None)),
-            legs=(
-                [
-                    {
-                        "symbol": leg.symbol,
-                        "side": _enum_value(leg.side) if leg.side else None,
-                        "qty": str(leg.qty),
-                        "filled_qty": str(leg.filled_qty or "0"),
-                        "status": _enum_value(leg.status) if leg.status else None,
-                        "filled_avg_price": (
-                            str(leg.filled_avg_price) if leg.filled_avg_price else None
-                        ),
-                    }
-                    for leg in order.legs
-                ]
-                if order.legs
-                else None
-            ),
-            created_at=order.created_at,
-            updated_at=order.updated_at,
-        )
+        return _to_status(self._client.get_order_by_id(broker_order_id))
+
+    # -- by client_order_id (E11.1, D71: resolve an unknown submit) -----------
+
+    def order_status_by_client_id(self, client_order_id: str) -> BrokerOrderStatus | None:
+        """``GET /v2/orders:by_client_order_id``; ``None`` on 404 (no such order).
+
+        Any other API error, and every transport error, propagates: the caller
+        cannot tell "absent" from "unreadable" then.
+        """
+        from alpaca.common.exceptions import APIError
+
+        try:
+            order = self._client.get_order_by_client_id(client_order_id)
+        except APIError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+        return _to_status(order)
+
+    def cancel_by_client_id(self, client_order_id: str) -> None:
+        """Cancel the order held under *client_order_id*; a no-op when there is none."""
+        st = self.order_status_by_client_id(client_order_id)
+        if st is None:
+            log.info("cancel_by_client_id_absent", client_order_id=client_order_id)
+            return
+        self.cancel(st.broker_order_id)
 
     # -- order list (D32 order budget cross-check) ----------------------------
 

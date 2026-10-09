@@ -232,6 +232,7 @@ class ReasonCode(StrEnum):
     ORDER_UNCONFIRMED = "order:cancel_unconfirmed"
     ORDER_BUDGET_STOP = "order:budget_exhausted"
     ORDER_STALE_BAND = "order:stale_band"  # D34: re-priced mid left the gate-approved band
+    ORDER_SUBMIT_FAILED = "order:submit_failed"  # D71: submit errored; broker has no such order
     # exit (E6.2: E2.4 policy on open structures)
     EXIT_TAKE_PROFIT = "exit:take_profit"
     EXIT_STOP = "exit:stop"
@@ -461,6 +462,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.ORDER_UNCONFIRMED: "Cancel not confirmed by the broker",
     ReasonCode.ORDER_BUDGET_STOP: "Order stopped: daily budget used up",
     ReasonCode.ORDER_STALE_BAND: "Order stopped: price left the approved band",
+    ReasonCode.ORDER_SUBMIT_FAILED: "Order not taken by the broker (submit failed)",
     ReasonCode.EXIT_TAKE_PROFIT: "Exit: profit target hit",
     ReasonCode.EXIT_STOP: "Exit: stop hit",
     ReasonCode.EXIT_DTE: "Exit: days-to-expiry limit",
