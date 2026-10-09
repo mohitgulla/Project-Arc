@@ -6,7 +6,7 @@ import datetime as dt
 
 import pytest
 
-from arc.slack.loop import LoopOutcome, LoopRoot, loop_status_line, slot_stamp
+from arc.slack.loop import HEADLINE_MAX, LoopOutcome, LoopRoot, loop_status_line, slot_stamp
 from arc.utils.calendar import ET
 
 SLOT = dt.datetime(2026, 9, 28, 9, 40, tzinfo=ET)
@@ -82,20 +82,20 @@ class TestRootLine:
 
 
 class TestHeadline:
-    """D65: ≤2 bold-italic headline lines under the status line."""
+    """D65: one bold-italic headline sentence (≤2 laptop lines) under the status line."""
 
     def test_headline_follows_the_status_line(self) -> None:
-        r = _root(buys=["SPY"], headline=["20 ideas → 2 ranked → bought SPY", "Exits: 3 held."])
+        r = _root(buys=["SPY"], headline=["SPY iron condor x1 filled; FOMC hold is priced."])
         assert r.text() == (
             f":white_check_mark: {FACTS} • BUY: SPY\n"
-            "_*20 ideas → 2 ranked → bought SPY*_\n_*Exits: 3 held.*_"
+            "_*SPY iron condor x1 filled; FOMC hold is priced.*_"
         )
 
-    def test_at_most_two_lines_and_clipped(self) -> None:
-        r = _root(headline=["a" * 400, "b", "c"])
+    def test_one_sentence_clipped_to_two_lines(self) -> None:
+        r = _root(headline=["a" * 400, "b"])
         lines = r.text().split("\n")
-        assert len(lines) == 3  # status + 2
-        assert len(lines[1]) <= 180 + 4 and lines[1].endswith("…*_")
+        assert len(lines) == 2  # status + the one headline
+        assert len(lines[1]) <= HEADLINE_MAX + 4 and lines[1].endswith("…*_")
 
     def test_markers_and_mentions_are_neutralised(self) -> None:
         r = _root(headline=["<!channel> *bold* _it_ `x` ~s~ & co"])

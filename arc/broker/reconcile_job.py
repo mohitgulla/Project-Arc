@@ -180,7 +180,8 @@ def broker_reconcile(
 
 
 def _day_recap(ctx: JobContext, report: ReconcileReport) -> CardView | None:
-    """D65: the ``🗞️ Day recap`` headline, a day-thread reply also sent to #arc-investor.
+    """D65: ``:rolled_up_newspaper: Thu Oct 8 • Day Recap``, a day-thread reply also sent to
+    #arc-investor (Slack's "Also send to" checkbox).
 
     Presentation only: a failure is logged and the reconcile card still posts.
     Arm stores (E10.2) don't post one; their reports are the experiment lines.
@@ -209,8 +210,8 @@ def _day_recap(ctx: JobContext, report: ReconcileReport) -> CardView | None:
         return None
     if not lines:
         return None
-    text = f":newspaper: *Day recap · {report.day:%a %b} {report.day.day}*\n" + "\n".join(
-        bold_italic(line) for line in lines[:2]
+    text = f":rolled_up_newspaper: *{report.day:%a %b} {report.day.day} • Day Recap*\n" + "\n".join(
+        bold_italic(line) for line in lines[:1]
     )
     return CardView(text=text, blocks=[], broadcast=True)
 

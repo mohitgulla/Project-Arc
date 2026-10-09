@@ -567,10 +567,11 @@ class TestRootPerLoop:
             f":heavy_multiplication_x: {slot_stamp(SLOT0)} • Portfolio: $100,000 • P&L: +$0"
             " • Orders: 0/200 • HOLD"
         )
-        # D65: a bold-italic headline (≤2 lines) under the status line
-        assert 1 <= len(headline) <= 2
-        assert all(h.startswith("_*") and h.endswith("*_") for h in headline)
-        assert headline[0] == "_*No workable structure for NVDA and XOM.*_"
+        # D65: one bold-italic headline sentence under the status line
+        assert headline == [
+            "_*No trade: no workable structure for NVDA and XOM; "
+            "fixture Research reply (offline run).*_"
+        ]
         assert LoopRoot.model_validate(LoopState(conn).root(chain) or {}).outcome.value == "hold"
         # the notifier is unbound again after the loop
         assert notes.thread_ts is None
@@ -700,6 +701,7 @@ class TestRootPerLoop:
         assert root.buys == ["SPY"] and root.pending == [] and root.working == []
         assert root.text().startswith(":white_check_mark: ")
         assert refresh_loop_root(conn, poster, chain) == root.text()
-        status, headline, *_ = poster.root_edits[-1][1].split("\n")
+        status, headline = poster.root_edits[-1][1].split("\n")
         assert status.endswith("• BUY: SPY")
-        assert headline == "_*SPY bet is on: iron condor x1 filled.*_"  # D65
+        # D65: one sentence; the thesis's own "; …" tail is cut to keep one point per clause
+        assert headline == "_*SPY iron condor x1 filled; FOMC hold is priced.*_"

@@ -1,9 +1,10 @@
 """D65: punchy headlines for #arc-investor: one per loop root, one per day recap.
 
-A headline is at most two short sentences, written like a news headline: the
-main thing that happened (a fill, a close, or why nothing traded), then the
-thesis or the market read behind it. It is deliberately not exhaustive; the
-thread under the root keeps every detail.
+A headline is ONE sentence of at most two lines (:data:`HEADLINE_CHARS`), written
+like a news headline: ``<main point>; <second point>.`` The main point is what
+happened (a fill, a close, or why nothing traded); the second is the why. A second
+point that would overflow is dropped, not wrapped. Deliberately not exhaustive:
+the thread under the root keeps every detail.
 
 Deterministic: the facts come from what a chain journaled (``decisions`` /
 ``proposals`` / ``executions``) and the thesis/market sentences are lifted from
@@ -28,6 +29,8 @@ __all__ = [
     "chain_facts",
     "day_recap",
     "first_sentence",
+    "HEADLINE_CHARS",
+    "headline_sentence",
     "loop_headline",
     "names",
 ]
@@ -278,121 +281,161 @@ def chain_facts(conn: sqlite3.Connection, chain_run_id: str) -> ChainFacts:
 
 
 # ---------------------------------------------------------------------------
-# Sentences
+# Clauses: a headline is ONE sentence, ``<main point>; <second point>.``
 # ---------------------------------------------------------------------------
+
+#: The whole headline in characters (the Slack renderer's ``HEADLINE_MAX``).
+HEADLINE_CHARS = 150
 
 
 def _bias(f: ChainFacts, t: str) -> str:
     return {"bullish": "bull", "bearish": "bear"}.get(f.stance.get(t, ""), "")
 
 
-def _open_sentence(f: ChainFacts) -> str:
+def _open_clause(f: ChainFacts) -> str:
     filled = [t for t in f.opens if t.status == "filled"]
     if filled:
         t = filled[0]
-        what = " ".join(x for x in (t.ticker, _bias(f, t.ticker), "bet") if x)
-        size = f"{t.structure} x{t.qty}" if t.structure else f"x{t.qty}"
+        what = " ".join(x for x in (t.ticker, _bias(f, t.ticker), t.structure) if x)
         at = f" at {t.price}" if t.price else ""
         more = f" (+{len(filled) - 1} more)" if len(filled) > 1 else ""
-        return f"{what} is on: {size} filled{at}{_FIT.get(f.fit.get(t.ticker, ''), '')}{more}."
+        return f"{what} x{t.qty} filled{at}{more}"
     for status, words in (
         ("pending", "awaits your approval"),
         ("working", "is working toward a fill"),
-        ("missed", "missed: no fill inside the price band"),
+        ("missed", "missed, no fill inside the price band"),
         ("rejected", "was rejected"),
         ("expired", "expired unapproved"),
     ):
         hit = [t for t in f.opens if t.status == status]
         if hit:
             t = hit[0]
-            return f"{t.ticker} {t.structure or 'trade'} {words}.".replace("  ", " ")
+            return " ".join(x for x in (t.ticker, t.structure or "trade", words) if x)
     return ""
 
 
-def _close_sentence(f: ChainFacts) -> str:
+def _close_clause(f: ChainFacts) -> str:
     sold = [t for t in f.closes if t.status == "filled"]
     if sold:
         why = _EXIT_WHY.get(f.exit_why.get(sold[0].ticker, ""), "")
-        return f"Closed {names([t.ticker for t in sold])}" + (f" {why}" if why else "") + "."
+        return f"Closed {names([t.ticker for t in sold])}" + (f" {why}" if why else "")
     for status, words in (
         ("pending", "close awaits your approval"),
         ("working", "close is working"),
-        ("missed", "close missed: no fill inside the band"),
+        ("missed", "close missed, no fill inside the band"),
     ):
         hit = [t.ticker for t in f.closes if t.status == status]
         if hit:
-            return f"{names(hit)} {words}."
+            return f"{names(hit)} {words}"
     return ""
 
 
-def _stuck_sentence(f: ChainFacts) -> str:
-    if not f.exit_stuck:
-        return ""
-    t = f.exit_stuck[0]
-    why = _EXIT_WHY.get(f.exit_why.get(t, ""), "")
-    lead = f"Want out of {names(f.exit_stuck)}" + (f" {why}" if why else "")
-    return f"{lead}, but quotes are too wide to close."
+def _stuck_clause(f: ChainFacts) -> str:
+    return f"{names(f.exit_stuck)} exit stuck on wide quotes" if f.exit_stuck else ""
 
 
 _NO_TRADE = {
-    "ev": "No edge, no trade: {n} fell short of the Net EV floor.",
-    "risk": "Risk said no to {n}.",
-    "structure": "No workable structure for {n}.",
-    "gate": "The risk gate blocked {n}.",
-    "sizing": "{n} sized to zero.",
-    "budget": "Order budget is spent; {n} must wait.",
-    "dedupe": "{n} already traded recently; nothing new.",
-    "concentration": "{n} dropped: the book is already crowded there.",
-    "reprice": "{n} could not be re-priced at fresh quotes.",
-    "stopped": "Shortlisted {n}, but the loop stopped after Research.",
-    "other": "{n} shortlisted, nothing proposed.",
+    "ev": "{n} below the Net EV floor",
+    "risk": "Risk vetoed {n}",
+    "structure": "no workable structure for {n}",
+    "gate": "the risk gate blocked {n}",
+    "sizing": "{n} sized to zero",
+    "budget": "order budget spent, {n} must wait",
+    "dedupe": "{n} traded recently",
+    "concentration": "{n} would crowd the book",
+    "reprice": "{n} failed to re-price",
+    "stopped": "loop stopped before pricing {n}",
+    "other": "{n} shortlisted, nothing proposed",
+}
+_FIT_CLAUSE = {
+    "hedges": "it hedges the book",
+    "diversifies": "it diversifies the book",
+    "adds_concentration": "it adds to a crowded sector",
 }
 
 
-def _no_trade_sentence(f: ChainFacts) -> str:
-    if not f.ranked:
-        why = f.no_trade.replace("_", " ")
-        lead = f"Research passed on all {f.ideas} ideas" if f.ideas else "Research passed"
-        return lead + (f" ({why})." if why else ".")
+def _blocker_clause(f: ChainFacts) -> str:
+    """Why the ranked names didn't open: the reason that stopped the most of them."""
     main = max(f.blocked.items(), key=lambda kv: len(kv[1]), default=None)
     if main is None:
         return ""
     key, tickers = main
-    out = _NO_TRADE.get(key, _NO_TRADE["other"]).format(n=names(tickers))
-    return out[0].upper() + out[1:]
+    return _NO_TRADE.get(key, _NO_TRADE["other"]).format(n=names(tickers))
+
+
+def _no_trade_clause(f: ChainFacts) -> str:
+    if not f.ranked:
+        why = f.no_trade.replace("_", " ")
+        lead = f"No trade: Research passed on all {f.ideas} ideas" if f.ideas else "No trade"
+        return lead + (f" ({why})" if why else "")
+    blocker = _blocker_clause(f)
+    return f"No trade: {blocker}" if blocker else ""
 
 
 def _thesis(f: ChainFacts, ticker: str) -> str:
     return first_sentence(f.thesis.get(ticker, ""), skip_structure=True)
 
 
-def loop_headline(conn: sqlite3.Connection, chain_run_id: str) -> list[str]:
-    """≤2 headline sentences for *chain_run_id*: the main action, then its why.
+def _clause(text: str) -> str:
+    """Prose as a clause: no closing period; a sentence-case lead word lower-cased."""
+    text = text.strip().split("; ", 1)[0].rstrip(" .")  # one point per clause
+    words = text.split(" ", 2)
+    # Lower-case a plain sentence start ("Indexes are", "Closed META"), never a
+    # ticker or acronym ("FOMC", "TSM has") or a persona ("Risk vetoed").
+    if (
+        words[0][:1].isupper()
+        and words[0][1:].islower()
+        and words[0] not in ("Risk", "Research", "Scout", "Scalp", "Quant", "Net")
+    ):
+        text = text[:1].lower() + text[1:]
+    return text
 
-    Order: an open fill (or its pending/working/missed state), a close, else why
-    nothing traded. The second sentence is a second action when there is one,
-    otherwise the thesis behind the first (Research's for an open, Risk's for a
-    close), a close stuck on wide quotes, or Research's market read.
+
+def headline_sentence(main: str, *more: str, limit: int = HEADLINE_CHARS) -> str:
+    """``Main; second.``: one sentence, at most *limit* characters.
+
+    *more* are candidate second points in preference order; the first that keeps the
+    sentence within *limit* is used, the rest are dropped (never wrapped onto a
+    third line). The main point alone is clipped with ``…`` if it is too long.
+    """
+    main = main.strip().rstrip(" .")
+    if not main:
+        return ""
+    main = main[:1].upper() + main[1:]
+    for extra in more:
+        point = _clause(extra) if extra else ""
+        if point and len(main) + len(point) + 3 <= limit:
+            return f"{main}; {point}."
+    if len(main) + 1 > limit:
+        return main[: limit - 1].rstrip(" ,;") + "…"
+    return f"{main}."
+
+
+def loop_headline(conn: sqlite3.Connection, chain_run_id: str) -> list[str]:
+    """The loop's headline: one sentence, ``<main point>; <second point>.`` (or ``[]``).
+
+    The main point is an open (filled / pending / working / missed), else a close,
+    else why nothing traded. The second is the first that fits of: a second action,
+    the why (Research's thesis, Risk's close reason), a close stuck on wide quotes,
+    or Research's market read.
     """
     f = chain_facts(conn, chain_run_id)
-    opened = _open_sentence(f)
-    closed = _close_sentence(f)
-    lines: list[str] = []
-    if opened and closed:
-        return [opened, closed]
+    opened = _open_clause(f)
+    closed = _close_clause(f)
+    stuck = _stuck_clause(f)
     if opened:
         t = f.opens[0].ticker
-        lines = [opened, _thesis(f, t)]
+        fit = _FIT_CLAUSE.get(f.fit.get(t, ""), "")
+        line = headline_sentence(opened, closed, _thesis(f, t), fit, stuck)
     elif closed:
         sold = [t.ticker for t in f.closes]
-        lines = [closed, f.exit_note.get(sold[0], "") if sold else ""]
-        if not lines[1] and f.has_research:
-            lines[1] = _no_trade_sentence(f)
+        note = f.exit_note.get(sold[0], "") if sold else ""
+        line = headline_sentence(closed, stuck, note, _no_trade_clause(f) if f.has_research else "")
     elif f.has_research:
-        lines = [_no_trade_sentence(f), _stuck_sentence(f) or f.market]
+        line = headline_sentence(_no_trade_clause(f), stuck, f.market)
     else:
-        lines = [_stuck_sentence(f)]
-    return [ln for ln in lines if ln][:2]
+        line = headline_sentence(stuck)
+    return [line] if line else []
 
 
 # ---------------------------------------------------------------------------
@@ -420,11 +463,10 @@ def day_recap(
     day_pnl: float | None = None,
     equity_start: float | None = None,
 ) -> list[str]:
-    """≤2 headline sentences for ET *day*: the result, then what drove or held it back.
+    """ET *day* in one headline sentence: ``<P&L and trades>; <what drove it>.``
 
-    Line 1: the day's P&L with the trade count and the biggest closed P&L.
-    Line 2: the most common reason ranked names didn't open, over the day's full loops,
-    plus how many slots were skipped as unchanged.
+    The second point is the biggest closed P&L, else the reason that kept the most
+    ranked picks from opening across the day's full loops.
     """
     lo, hi = _utc_bounds(day)
     fills = conn.execute(
@@ -452,7 +494,6 @@ def day_recap(
              AND scheduled_for >= ? AND scheduled_for < ? AND chain_run_id IS NOT NULL""",
         (lo, hi),
     ).fetchall()
-    skips = sum(str(r["summary"] or "").startswith("no_change") for r in runs)
     blockers: dict[str, int] = {}
     ranked = 0
     for r in runs:
@@ -470,26 +511,19 @@ def day_recap(
         trades.append(f"{closed} close{'s' if closed != 1 else ''}")
     on = f" on {' and '.join(trades)}" if trades else ", no trades"
     if day_pnl is None:
-        first = f"Day done{on}."
+        main = f"Day done{on}"
     else:
         pct = f" ({day_pnl / equity_start:+.1%})" if equity_start else ""
         mood = "Green day" if day_pnl > 0 else "Red day" if day_pnl < 0 else "Flat day"
-        first = f"{mood}: {_money(day_pnl)}{pct}{on}."
+        main = f"{mood}: {_money(day_pnl)}{pct}{on}"
+    biggest = ""
     if realized:
         worst = min(realized, key=lambda kv: kv[1])
         best = max(realized, key=lambda kv: kv[1])
         pick = worst if abs(worst[1]) >= abs(best[1]) else best
-        verb = "worst close" if pick[1] < 0 else "best close"
-        first = first[:-1] + f"; {verb} {pick[0]} {_money(pick[1])}."
-    lines = [first]
+        biggest = f"{'biggest hit' if pick[1] < 0 else 'best win'} {pick[0]} {_money(pick[1])}"
+    blocker = ""
     if blockers:
         key, n = max(blockers.items(), key=lambda kv: kv[1])
-        second = f"Biggest blocker: {BLOCKER_LABELS.get(key, key)}, {n} of {ranked} ranked picks"
-        second += f"; {skips} quiet slot{'s' if skips != 1 else ''} skipped." if skips else "."
-        lines.append(second)
-    elif runs:
-        lines.append(
-            f"{len(runs)} loops ran"
-            + (f", {skips} quiet slot{'s' if skips != 1 else ''} skipped." if skips else ".")
-        )
-    return lines
+        blocker = f"{BLOCKER_LABELS.get(key, key)} blocked {n} of {ranked} picks"
+    return [headline_sentence(main, biggest, blocker)]

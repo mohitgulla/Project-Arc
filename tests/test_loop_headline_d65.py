@@ -1,4 +1,4 @@
-"""D65: punchy bold-italic headlines: one under each loop root, one per day recap.
+"""D65: a punchy one-sentence bold-italic headline under each loop root and per day recap.
 
 Built only from what the chain journaled (``decisions`` / ``proposals`` /
 ``executions``), so these tests seed those rows in the shapes the live loop
@@ -14,7 +14,13 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from arc.pipeline.runner import open_db
-from arc.routines.headline import day_recap, first_sentence, loop_headline
+from arc.routines.headline import (
+    HEADLINE_CHARS,
+    day_recap,
+    first_sentence,
+    headline_sentence,
+    loop_headline,
+)
 from arc.routines.loop import loop_root_from_db
 from arc.utils.calendar import ET
 
@@ -191,14 +197,15 @@ class TestLoopHeadline:
         )
         root = loop_root_from_db(conn, CHAIN, SLOT)
         assert root.buys == ["HOOD"]
+        # one sentence, "<main point>; <why>." (the structure-only first thesis
+        # sentence is skipped for the one with the why)
         assert root.headline == [
-            "HOOD bear bet is on: put debit spread x2 filled at 6.75, hedging the book.",
-            # the structure-only first sentence is skipped for the one with the why
-            "HOOD is in a sticky bear regime with a 20-day drawdown.",
+            "HOOD bear put debit spread x2 filled at 6.75; "
+            "HOOD is in a sticky bear regime with a 20-day drawdown."
         ]
-        status, *lines = root.text().split("\n")
+        status, line = root.text().split("\n")
         assert status.endswith("• BUY: HOOD")
-        assert lines == [f"_*{h}*_" for h in root.headline]
+        assert line == f"_*{root.headline[0]}*_"
 
     def test_close_leads_with_why_then_risks_reason(self) -> None:
         conn = _conn()
@@ -219,8 +226,7 @@ class TestLoopHeadline:
             price="-7.2000",
         )
         assert loop_headline(conn, CHAIN) == [
-            "Closed MRVL to cut concentration.",
-            "Third semis line in a 70% tech book.",
+            "Closed MRVL to cut concentration; third semis line in a 70% tech book."
         ]
 
     def test_open_and_close_in_one_slot(self) -> None:
@@ -249,8 +255,7 @@ class TestLoopHeadline:
             execution="filled",
         )
         assert loop_headline(conn, CHAIN) == [
-            "TSM bull bet is on: call debit spread x1 filled at 10.75, adding to a crowded sector.",
-            "Closed META on its stop.",
+            "TSM bull call debit spread x1 filled at 10.75; closed META on its stop."
         ]
 
     def test_no_trade_names_the_main_blocker_and_the_market_read(self) -> None:
@@ -266,8 +271,8 @@ class TestLoopHeadline:
         _dec(conn, "quant", "structure", "PLTR", "no_trade", "quant_skipped")
         _market(conn, "Indexes are trending up on narrow leadership. Breadth is weak.")
         assert loop_headline(conn, CHAIN) == [
-            "No edge, no trade: ORCL, GOOGL and XOM fell short of the Net EV floor.",
-            "Indexes are trending up on narrow leadership.",
+            "No trade: ORCL, GOOGL and XOM below the Net EV floor; "
+            "indexes are trending up on narrow leadership."
         ]
 
     def test_stuck_close_outranks_the_market_read(self) -> None:
@@ -280,8 +285,7 @@ class TestLoopHeadline:
         _close_review(conn, "os-gs", "ev_exhausted", "Remaining EV is -$32/unit.")
         _dec(conn, "quant", "exit", "os-gs", "no_trade", "exit:quote_unusable")
         assert loop_headline(conn, CHAIN) == [
-            "No edge, no trade: ORCL fell short of the Net EV floor.",
-            "Want out of GS with the edge used up, but quotes are too wide to close.",
+            "No trade: ORCL below the Net EV floor; GS exit stuck on wide quotes."
         ]
 
     def test_missed_fill(self) -> None:
@@ -298,23 +302,23 @@ class TestLoopHeadline:
             execution="cancelled",
         )
         assert loop_headline(conn, CHAIN)[0] == (
-            "IREN long put missed: no fill inside the price band."
+            "IREN long put missed, no fill inside the price band."
         )
 
     def test_loop_stopped_after_research(self) -> None:
         conn = _conn()
         _run(conn, "research", 0)
         _ranked(conn, ("ORCL", "bearish", "", ""), ("XOM", "bullish", "", ""))
-        assert loop_headline(conn, CHAIN) == [
-            "Shortlisted ORCL and XOM, but the loop stopped after Research."
-        ]
+        assert loop_headline(conn, CHAIN) == ["No trade: loop stopped before pricing ORCL and XOM."]
 
     def test_nothing_ranked(self) -> None:
         conn = _conn()
         _run(conn, "research", 0)
         _ideas(conn, 5)
         _dec(conn, "research", "shortlist", "session", "no_trade", "market_unclear")
-        assert loop_headline(conn, CHAIN) == ["Research passed on all 5 ideas (market unclear)."]
+        assert loop_headline(conn, CHAIN) == [
+            "No trade: Research passed on all 5 ideas (market unclear)."
+        ]
 
     def test_position_manager_close_awaiting_approval(self) -> None:
         conn = _conn()
@@ -340,6 +344,28 @@ class TestLoopHeadline:
         status, line = root.text().split("\n")
         assert status.endswith("• HOLD (skip)")
         assert line == "_*Nothing new since the last look; open orders carry on.*_"
+
+
+class TestHeadlineSentence:
+    """D65: one sentence, never longer than two lines."""
+
+    def test_second_point_that_overflows_is_dropped_for_one_that_fits(self) -> None:
+        long = "x" * 140
+        assert headline_sentence("Closed GS", long, "it hedges the book") == (
+            "Closed GS; it hedges the book."
+        )
+        assert headline_sentence("Closed GS", long) == "Closed GS."
+
+    def test_main_point_alone_is_clipped(self) -> None:
+        out = headline_sentence("y" * 400)
+        assert len(out) <= HEADLINE_CHARS and out.endswith("…")
+
+    def test_every_live_shape_fits(self) -> None:
+        for line in (
+            "No trade: loop stopped before pricing ORCL, XOM and PLTR",
+            "Closed MRVL to cut concentration",
+        ):
+            assert len(headline_sentence(line, "z" * 200, "indexes are up")) <= HEADLINE_CHARS
 
 
 class TestFirstSentence:
@@ -392,8 +418,17 @@ class TestDayRecap:
         conn = _conn()
         self._day(conn)
         assert day_recap(conn, SLOT.date(), day_pnl=-1945.57, equity_start=99604.46) == [
-            "Red day: -$1,946 (-2.0%) on 1 open and 2 closes; worst close META -$8,765.",
-            "Biggest blocker: Net EV floor, 2 of 2 ranked picks; 1 quiet slot skipped.",
+            "Red day: -$1,946 (-2.0%) on 1 open and 2 closes; biggest hit META -$8,765."
+        ]
+
+    def test_blocker_when_nothing_closed(self) -> None:
+        conn = _conn()
+        _full_chain(conn)
+        _ranked(conn, ("ORCL", "bearish", "", ""), ("XOM", "bullish", "", ""))
+        for t in ("ORCL", "XOM"):
+            _dec(conn, "quant", "propose", t, "no_trade", "net_ev_floor")
+        assert day_recap(conn, SLOT.date(), day_pnl=-120.0) == [
+            "Red day: -$120, no trades; Net EV floor blocked 2 of 2 picks."
         ]
 
     def test_green_day_and_no_pnl(self) -> None:
@@ -431,7 +466,11 @@ class TestRecapBroadcast:
                 )
             )
         )
-        recap = CardView(text=":newspaper: *Day recap*\n_*Red day.*_", blocks=[], broadcast=True)
+        recap = CardView(
+            text=":rolled_up_newspaper: *Thu Oct 8 • Day Recap*\n_*Red day.*_",
+            blocks=[],
+            broadcast=True,
+        )
         card = CardView(text="🏦 [Broker] Reconcile", blocks=[header("card")])
         notes = RecordingNotifier()
         d = Dispatcher(
@@ -478,9 +517,8 @@ class TestRecapBroadcast:
         view = _day_recap(SimpleNamespace(conn=conn), report)  # type: ignore[arg-type]
         assert view is not None and view.broadcast and view.blocks == []
         assert view.text.split("\n") == [
-            ":newspaper: *Day recap · Thu Oct 8*",
-            "_*Red day: -$1,946 (-2.0%) on 1 open and 2 closes; worst close META -$8,765.*_",
-            "_*Biggest blocker: Net EV floor, 2 of 2 ranked picks; 1 quiet slot skipped.*_",
+            ":rolled_up_newspaper: *Thu Oct 8 • Day Recap*",
+            "_*Red day: -$1,946 (-2.0%) on 1 open and 2 closes; biggest hit META -$8,765.*_",
         ]
 
     def test_recap_failure_never_blocks_the_reconcile(self) -> None:

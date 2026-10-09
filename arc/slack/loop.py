@@ -7,10 +7,10 @@ Pure rendering. One of three states, then the same facts every time:
     :hourglass_flowing_sand: … • PENDING: SPY
     :heavy_multiplication_x: … • HOLD
 
-D65: the line is followed by a bold-italic *headline* of at most two lines
-(``_*…*_``) that says what the loop did and why, in plain words: the opens
-funnel first, then the exits. It is built from what the chain journaled
-(:func:`arc.routines.loop.loop_headline`), so it is re-rendered with the root.
+D65: the line is followed by a bold-italic *headline* (``_*…*_``): ONE sentence
+of at most two lines on a laptop (``HEADLINE_MAX`` chars), ``<main point>; <why>.``
+It is built from what the chain journaled (:func:`arc.routines.headline.loop_headline`),
+so it is re-rendered with the root.
 Everything else (persona cards, the proposal card, the ``[Routines]`` metadata)
 stays in the thread.
 """
@@ -55,7 +55,7 @@ class LoopRoot(BaseModel):
     no_change: bool = False
     timeout: bool = False
     skipped: str | None = None  # the slot never ran (why)
-    headline: list[str] = Field(default_factory=list)  # D65: ≤2 plain-text lines
+    headline: list[str] = Field(default_factory=list)  # D65: one plain-text sentence
 
     @property
     def outcome(self) -> LoopOutcome:
@@ -116,12 +116,11 @@ def loop_status_line(root: LoopRoot) -> str:
             hold = "HOLD (skip)"
         action.append(hold)
     line = f"{_EMOJI[root.outcome]} " + " • ".join([*facts, *action])
-    head = [h for h in (root.headline or _flag_headline(root)) if h.strip()][:HEADLINE_LINES]
+    head = [h for h in (root.headline or _flag_headline(root)) if h.strip()][:1]
     return "\n".join([line, *(bold_italic(h) for h in head)])
 
 
-HEADLINE_LINES = 2
-HEADLINE_MAX = 180  # chars per headline sentence
+HEADLINE_MAX = 150  # the whole headline: two lines of a Slack message on a laptop
 
 
 def _flag_headline(root: LoopRoot) -> list[str]:
@@ -146,7 +145,7 @@ def bold_italic(text: str) -> str:
 
 
 __all__ = [
-    "HEADLINE_LINES",
+    "HEADLINE_MAX",
     "LoopOutcome",
     "bold_italic",
     "LoopRoot",
