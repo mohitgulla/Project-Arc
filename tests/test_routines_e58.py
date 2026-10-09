@@ -596,10 +596,10 @@ class TestRootPerLoop:
         assert poster.root_edits[-1][1].startswith(":hourglass_flowing_sand: ")
         assert poster.root_edits[-1][1].split("\n")[0].endswith("• PENDING: SPY")
         assert "SPY" in poster.root_edits[-1][1].split("\n")[1]  # D65 headline
-        # the owner approves: the service re-renders the root → WORKING (ladder running)
+        # the owner approves: the service re-renders the root → WIP (ladder running)
         res = svc.decide(phash, user=OWNER, approve=True, now=SLOT0 + dt.timedelta(minutes=1))
         assert res.outcome.value == "approved", res
-        assert poster.root_edits[-1][0] == ts and "WORKING: SPY" in poster.root_edits[-1][1]
+        assert poster.root_edits[-1][0] == ts and "WIP: SPY" in poster.root_edits[-1][1]
         # a rejection (here: the request row as a Reject click leaves it) → HOLD again
         conn.execute(
             "UPDATE approval_requests SET status = 'rejected' WHERE proposal_hash = ?", (phash,)
@@ -630,7 +630,7 @@ class TestRootPerLoop:
         assert ts is not None
         status, headline = notes.roots[ts].split("\n")
         assert status.endswith("• HOLD (skip)")  # D65: renamed from "HOLD (no change)"
-        assert headline == ("_*Nothing new since the last look; open orders carry on.*_")
+        assert headline == "_*Nothing new since the last look; open orders stay.*_"
         assert notes.roots[ts].startswith(":heavy_multiplication_x: ")
         # a no_change loop gets only the [Routines] reply in its thread (no Scalp / Research card)
         replies = notes.in_thread(ts)

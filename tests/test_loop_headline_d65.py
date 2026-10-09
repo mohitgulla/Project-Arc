@@ -343,7 +343,7 @@ class TestLoopHeadline:
         assert root.headline == []
         status, line = root.text().split("\n")
         assert status.endswith("• HOLD (skip)")
-        assert line == "_*Nothing new since the last look; open orders carry on.*_"
+        assert line == "_*Nothing new since the last look; open orders stay.*_"
 
 
 class TestHeadlineSentence:

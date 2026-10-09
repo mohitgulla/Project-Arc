@@ -44,7 +44,7 @@ class TestRootLine:
 
     def test_working_ladder(self) -> None:
         r = _root(working=["SPY"])
-        assert r.text() == f":hourglass_flowing_sand: {FACTS} • WORKING: SPY"
+        assert r.text() == f":hourglass_flowing_sand: {FACTS} • WIP: SPY"
 
     def test_hold(self) -> None:
         r = _root()

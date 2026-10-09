@@ -105,7 +105,7 @@ def loop_status_line(root: LoopRoot) -> str:
         if root.pending:
             action.append("PENDING: " + ", ".join(root.pending))
         if root.working:
-            action.append("WORKING: " + ", ".join(root.working))
+            action.append("WIP: " + ", ".join(root.working))
     if not action:
         hold = "HOLD"
         if root.skipped:
@@ -130,7 +130,7 @@ def _flag_headline(root: LoopRoot) -> list[str]:
     if root.timeout:
         return ["Out of time: the loop hit its deadline before finishing."]
     if root.no_change:
-        return ["Nothing new since the last look; open orders carry on."]
+        return ["Nothing new since the last look; open orders stay."]
     return []
 
 
