@@ -193,6 +193,7 @@ class TestDispatchOnce:
         again = d.run_event("broker", ev, now=FIXTURE_NOW + dt.timedelta(minutes=6))
         assert [o.status for o in again] == ["duplicate"] and calls == [_phash(pconn)]
 
+    @pytest.mark.serial  # wall-clock budget: runs alone, after the parallel pass (Makefile)
     @pytest.mark.parametrize("step_seconds", [1, 900])
     def test_tick_never_blocks_on_ladder(
         self, pconn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, step_seconds: int
