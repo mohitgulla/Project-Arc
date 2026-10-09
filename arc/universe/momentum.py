@@ -316,6 +316,7 @@ def build_payload(fetch: MomentumFetch, *, now: _dt.datetime) -> UniverseTierPay
                 + (f", incl. {'+'.join(p.merged)}" if p.merged else "")
             ),
             as_of=as_of,
+            weight_pct=round(p.weight, 4),
         )
         for i, p in enumerate(fetch.picks, 1)
     ]

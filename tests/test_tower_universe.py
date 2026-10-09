@@ -122,7 +122,7 @@ def test_todays_resolve_is_shown_as_stored(tmp_path: Path) -> None:
     assert aapl.tier == "core" and aapl.also_in == ["momentum"]
     tiers = {t.name: t for t in r.tiers}
     assert [t.name for t in r.tiers] == ["core", "momentum", "discovery", "trending"]
-    assert (tiers["momentum"].offered, tiers["momentum"].active) == (3, 2)
+    assert (tiers["momentum"].listed, tiers["momentum"].active) == (3, 2)
     assert tiers["core"].size_cap == MAX_CORE
     assert tiers["momentum"].size_cap == ArcSettings().universe_momentum_size_d56
     assert tiers["discovery"].size_cap == ArcSettings().universe_discovery_size
@@ -242,9 +242,9 @@ def test_route_on_the_ops_fixture_is_get_only(tmp_path: Path) -> None:
     # the fixture's 100-name `universe` override (E8.8e) is the pre-D51 list: ignored
     assert body.core_override_ignored is not None and body.core_override_ignored.count == 100
     mom = next(t for t in body.tiers if t.name == "momentum")
-    assert mom.partial and mom.source == "stockanalysis" and mom.offered == 24
+    assert mom.partial and mom.source == "stockanalysis" and mom.listed == 24
     disc = next(t for t in body.tiers if t.name == "discovery")
-    assert disc.offered == len(ops_fixture.DISCOVERY_FIXTURE) and disc.source == "scout"
+    assert disc.listed == len(ops_fixture.DISCOVERY_FIXTURE) and disc.source == "scout"
     assert body.director_diversification in {"strict", "relaxed"}
     rk = next(a for a in body.active if a.ticker == "RKLB")
     assert rk.tier == "discovery" and rk.reason.startswith("YouTube call")

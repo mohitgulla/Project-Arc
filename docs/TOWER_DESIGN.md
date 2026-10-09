@@ -316,10 +316,17 @@ they are never dropped.
     all → the core list (`Never Resolved`). Never a blank page.
   - Pinned summary card: `Active 50/50 · Core 25 · Momentum 17 · Trending 0 · Discovery 8`,
     the resolve state, its age and config version.
-  - One card per tier, Core → Momentum → Trending → Discovery: header = `offered · active /
-    size`, source, refresh age, data date, `Partial` / `Expired` pills; body = ticker chips
-    (`rank TICKER`, `+n` when deduped). Tap/hover a chip for `#rank in Tier · source`, the
-    reason (`SPMO weight 1.54% (row 18)`, `reddit #3 (+41 24h) …`) and `also in <tier>`.
+  - One table per tier, Core → Momentum → Discovery → Trending (E14.8, D64): header =
+    `20 names` (core) / `top 20 of 24 listed` (momentum: tier size vs feed rows) /
+    `25 names (3 carried)` (discovery, trending), then `source · refreshed <age> · active n /
+    size`, data date, `Partial` / `Expired` pills. Rows by rank: Core `# · Ticker · Picked ·
+    Trades · ST`; Momentum adds `SPMO wt`; Discovery `Score · Today / Prev · Stance · Sources`;
+    Trending `Score · Today / Prev · Inputs`. Picked = distinct days with a `candidates` row,
+    Trades = `proposals` rows (both last 20 sessions); ST = Stocktwits `80% bull` (≥ 60 % pos,
+    ≤ 40 % neg, `—` when none). Phones keep ticker + 2 key columns; tapping a row expands the
+    rest plus In tier (sessions of 20), velocity, the reason and `also in <tier>`.
+  - Today's Pick (Overview) rows: `TICKER · score · 80% bull` (combined score, toned
+    sentiment, no velocity); below 400 px the sentiment stacks under the score.
   - **Dropped** (ticker · tier · reason in words), then **Market Reference**
     (`SPY QQQ (regime only, not traded)`) and the Director diversification mode.
 - **Run detail** (`/ops/runs/:runId`, `pages/RunDetail.tsx`, E8.8e) is concise:

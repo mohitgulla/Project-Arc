@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import datetime as _dt  # noqa: TC003 - pydantic resolves the field types at runtime
 import json
-from typing import TYPE_CHECKING, Literal
+import re
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -99,6 +100,41 @@ class UniverseActiveRow(BaseModel):
     origins: list[str] | None = Field(
         None, description="D64 discovery: the Scout's origins (youtube:<slug>)"
     )
+    # E14.8 (D64): structured Today's Pick / Ops › Universe columns (the UI never parses
+    # `sentiment`; the string stays for the popover)
+    origin_labels: list[str] | None = Field(
+        None,
+        description="E14.8 discovery: origins as channel labels (youtube.briefs `label`; an "
+        "unknown slug reads as itself)",
+    )
+    carried: bool = Field(
+        False, description="E14.8: carried from the previous run only (score_today null)"
+    )
+    weight_pct: float | None = Field(
+        None,
+        description="E14.8 momentum: SPMO weight %, stored by the writer (v5) or parsed from "
+        "a pre-v5 `SPMO weight 9.48%` reason",
+    )
+    sentiment_bull_pct: float | None = Field(
+        None,
+        description="E14.8: Stocktwits bullish share of tagged messages, percent (null = no "
+        "entry or too few tags)",
+    )
+    sentiment_tagged: int | None = Field(
+        None, description="E14.8: tagged messages behind the reading (null = no entry)"
+    )
+    sentiment_age_s: int | None = Field(
+        None, description="E14.8: age of the retail_sentiment entry (null = no entry)"
+    )
+    picked_20d: int = Field(
+        0, description="E14.8: distinct ET days with a `candidates` row, last 20 sessions"
+    )
+    proposals_20d: int = Field(0, description="E14.8: `proposals` rows, last 20 sessions")
+    in_tier_20d: int | None = Field(
+        None,
+        description="E14.8: sessions in the last 20 whose in-force `universe_tier` entry for "
+        "this tier listed the name (null = core, which has no feed)",
+    )
 
 
 class UniverseDroppedRow(BaseModel):
@@ -114,8 +150,14 @@ class UniverseTierRow(BaseModel):
     model_config = _STRICT
 
     name: str = Field(description="core | momentum | discovery | trending (precedence order)")
-    offered: int = Field(description="Names the tier offered before dedupe and caps (raw_count)")
+    listed: int = Field(
+        description="E14.8: rows the tier's feed listed before the size cut (raw_count; the "
+        "momentum SPMO page lists ~24 for a top-20 tier)"
+    )
     active: int = Field(description="Names this tier holds in the active list")
+    carried: int = Field(
+        0, description="E14.8 (D64): active names carried from the previous run only"
+    )
     size_cap: int | None = Field(
         description="The tier's size: core ceiling 25, momentum/discovery/trending sizes; "
         "null = no cut"
@@ -278,33 +320,167 @@ def _trending_velocity(
     return out
 
 
-def _sentiment_facts(conn: sqlite3.Connection, now: _dt.datetime) -> dict[str, str]:
-    """E14.6: ``ticker -> "ST 80% bull (…)"`` from each ticker's newest unexpired
-    ``retail_sentiment`` entry (read-only; ``{}`` when there is none)."""
+class SentimentFacts(NamedTuple):
+    """E14.8: one ticker's newest unexpired ``retail_sentiment`` reading."""
+
+    text: str  # `ST 80% bull (10 tagged, 2.7h)` (popover)
+    bull_pct: float | None  # bullish share of tagged, percent (None = too few tags)
+    tagged: int
+    age_s: int | None
+
+
+def _sentiment_facts(conn: sqlite3.Connection, now: _dt.datetime) -> dict[str, SentimentFacts]:
+    """E14.6: ``ticker -> SentimentFacts`` from each ticker's newest unexpired
+    ``retail_sentiment`` entry (read-only; ``{}`` when there is none). E14.8 adds the
+    structured fields from the same read, so the UI never parses the string."""
     from arc.context.retail_sentiment import sentiment_fact
     from arc.context.ttl import to_db
 
     rows = conn.execute(
-        "SELECT subject, payload FROM context_entries WHERE kind = 'retail_sentiment'"
+        "SELECT subject, payload, valid_from FROM context_entries"
+        " WHERE kind = 'retail_sentiment'"
         " AND valid_from <= ? AND (expires_at IS NULL OR expires_at > ?)"
         " ORDER BY valid_from, created_at, rowid",
         (to_db(now), to_db(now)),
     ).fetchall()
-    out: dict[str, str] = {}
+    out: dict[str, SentimentFacts] = {}
     for r in rows:  # oldest first: the newest per ticker wins
         try:
-            out[r["subject"]] = sentiment_fact(json.loads(r["payload"]))
-        except (ValueError, TypeError):
+            p = json.loads(r["payload"])
+            ratio = p.get("bull_ratio")
+            out[r["subject"]] = SentimentFacts(
+                text=sentiment_fact(p),
+                bull_pct=None if ratio is None else round(float(ratio) * 100, 2),
+                tagged=int(p.get("tagged") or 0),
+                age_s=_age(parse_ts(r["valid_from"]), now),
+            )
+        except (ValueError, TypeError, AttributeError):
             continue
     return out
 
 
-def _active_row(
-    m: TierMember,
-    velocity: Mapping[str, tuple[float, str]],
-    sentiment: Mapping[str, str] | None = None,
-) -> UniverseActiveRow:
-    vel = velocity.get(m.ticker) if m.tier is Tier.TRENDING else None
+#: E14.8: the look-back of the Picked / Trades / In-tier columns, in sessions.
+WINDOW_SESSIONS = 20
+
+_SPMO_WEIGHT_RE = re.compile(r"SPMO weight\s+([0-9]+(?:\.[0-9]+)?)%")
+
+
+def weight_from_reason(reason: str) -> float | None:
+    """E14.8: ``SPMO weight 9.48% (row 1)`` -> ``9.48`` (pre-v5 momentum rows)."""
+    m = _SPMO_WEIGHT_RE.search(reason or "")
+    return float(m.group(1)) if m else None
+
+
+def window_sessions(today: _dt.date, n: int = WINDOW_SESSIONS) -> list[_dt.date]:
+    """The last *n* sessions ending at *today* (or the session before it), ascending."""
+    from arc.utils.calendar import is_session, previous_session
+
+    cur = today if is_session(today) else previous_session(today)
+    out = [cur]
+    while len(out) < n:
+        cur = previous_session(cur)
+        out.append(cur)
+    return out[::-1]
+
+
+def _count_by_ticker(conn: sqlite3.Connection, sql: str, lo: str, hi: str) -> dict[str, int]:
+    return {r[0]: int(r[1]) for r in conn.execute(sql, (lo, hi)) if r[0]}
+
+
+def picked_counts(conn: sqlite3.Connection, sessions: list[_dt.date]) -> dict[str, int]:
+    """E14.8 Picked: distinct ET days with a ``candidates`` row, per ticker (one query)."""
+    if not sessions or not _has_table(conn, "candidates"):
+        return {}
+    return _count_by_ticker(
+        conn,
+        "SELECT ticker, COUNT(DISTINCT day) FROM candidates"
+        " WHERE day >= ? AND day <= ? GROUP BY ticker",
+        sessions[0].isoformat(),
+        sessions[-1].isoformat(),
+    )
+
+
+def proposal_counts(conn: sqlite3.Connection, sessions: list[_dt.date]) -> dict[str, int]:
+    """E14.8 Trades: ``proposals`` rows per ticker by ``proposals.day`` (one query)."""
+    if not sessions or not _has_table(conn, "proposals"):
+        return {}
+    return _count_by_ticker(
+        conn,
+        "SELECT ticker, COUNT(*) FROM proposals WHERE day >= ? AND day <= ? GROUP BY ticker",
+        sessions[0].isoformat(),
+        sessions[-1].isoformat(),
+    )
+
+
+def in_tier_counts(
+    conn: sqlite3.Connection, sessions: list[_dt.date]
+) -> dict[tuple[str, str], int]:
+    """E14.8 In tier: ``(tier, ticker) -> sessions`` whose in-force ``universe_tier`` entry
+    listed the name (one query for every feed tier).
+
+    The entry in force on session *d* is the newest one written before the end of *d*
+    that had not expired by the start of *d* (a monthly momentum list counts every day it
+    is live; a daily discovery list counts its own day and, carried, the next)."""
+    if not sessions or not _has_table(conn, "context_entries"):
+        return {}
+    from arc.context.ttl import to_db
+
+    start = _dt.datetime.combine(sessions[0], _dt.time.min, tzinfo=ET)
+    end = _dt.datetime.combine(sessions[-1] + _dt.timedelta(days=1), _dt.time.min, tzinfo=ET)
+    entries: dict[str, list[tuple[_dt.datetime, _dt.datetime | None, frozenset[str]]]] = {}
+    for r in conn.execute(
+        "SELECT subject, payload, valid_from, expires_at FROM context_entries"
+        " WHERE kind = 'universe_tier' AND valid_from < ?"
+        " AND (expires_at IS NULL OR expires_at > ?)"
+        " ORDER BY valid_from, created_at, rowid",
+        (to_db(end), to_db(start)),
+    ):
+        at = parse_ts(r["valid_from"])
+        if at is None:
+            continue
+        try:
+            names = frozenset(m["ticker"] for m in json.loads(r["payload"])["members"])
+        except (ValueError, TypeError, KeyError):
+            continue
+        entries.setdefault(r["subject"], []).append((at, parse_ts(r["expires_at"]), names))
+    out: dict[tuple[str, str], int] = {}
+    for tier, rows in entries.items():
+        for d in sessions:
+            d0 = _dt.datetime.combine(d, _dt.time.min, tzinfo=ET)
+            d1 = d0 + _dt.timedelta(days=1)
+            live = [n for at, exp, n in rows if at < d1 and (exp is None or exp > d0)]
+            for t in live[-1] if live else ():
+                out[(tier, t)] = out.get((tier, t), 0) + 1
+    return out
+
+
+class _RowFacts(NamedTuple):
+    """E14.8: the page-wide per-ticker reads :func:`_active_row` looks up."""
+
+    velocity: Mapping[str, tuple[float, str]]
+    sentiment: Mapping[str, SentimentFacts]
+    picked: Mapping[str, int]
+    proposals: Mapping[str, int]
+    in_tier: Mapping[tuple[str, str], int]
+    channel_labels: Mapping[str, str]
+
+
+_NO_FACTS = _RowFacts({}, {}, {}, {}, {}, {})
+
+
+def _origin_label(origin: str, labels: Mapping[str, str]) -> str:
+    """``youtube:arete`` -> ``Arete Trading`` (the youtube.briefs channel label)."""
+    slug = origin.split(":", 1)[1] if ":" in origin else origin
+    return labels.get(slug, slug)
+
+
+def _active_row(m: TierMember, f: _RowFacts | None = None) -> UniverseActiveRow:
+    f = f or _NO_FACTS
+    vel = f.velocity.get(m.ticker) if m.tier is Tier.TRENDING else None
+    st = f.sentiment.get(m.ticker)
+    weight = m.weight_pct
+    if weight is None and m.tier is Tier.MOMENTUM:
+        weight = weight_from_reason(m.reason)
     return UniverseActiveRow(
         ticker=m.ticker,
         tier=m.tier.value,
@@ -315,13 +491,22 @@ def _active_row(
         inputs=m.inputs,
         velocity=vel[0] if vel else None,
         velocity_detail=vel[1] if vel else None,
-        sentiment=(sentiment or {}).get(m.ticker),
+        sentiment=st.text if st else None,
         score=m.score,
         score_today=m.score_today,
         score_prev=m.score_prev,
         runs=[d.isoformat() for d in m.runs] or None,
         stance=m.stance,
         origins=list(m.origins) or None,
+        origin_labels=[_origin_label(o, f.channel_labels) for o in m.origins] or None,
+        carried=bool(m.runs) and m.score_today is None,
+        weight_pct=weight,
+        sentiment_bull_pct=st.bull_pct if st else None,
+        sentiment_tagged=st.tagged if st else None,
+        sentiment_age_s=st.age_s if st else None,
+        picked_20d=f.picked.get(m.ticker, 0),
+        proposals_20d=f.proposals.get(m.ticker, 0),
+        in_tier_20d=(None if m.tier is Tier.CORE else f.in_tier.get((m.tier.value, m.ticker), 0)),
     )
 
 
@@ -350,11 +535,13 @@ def load_universe(
     now: _dt.datetime,
     director_diversification: str | None = None,
     velocity: VelocityOptions | None = None,
+    channel_labels: Mapping[str, str] | None = None,
 ) -> UniverseResponse:
     """The stored resolve + tier feeds + the effective core/market-reference settings.
 
     *velocity* (E14.5) = the ``universe.trending`` velocity knobs; each trending member
-    gets its Reddit mention velocity (default knobs when ``None``)."""
+    gets its Reddit mention velocity (default knobs when ``None``). *channel_labels*
+    (E14.8) = youtube.briefs ``slug -> label``, for the discovery Sources column."""
     now = now.astimezone(ET)
     today = now.date()
     has_ctx = _has_table(conn, "context_entries")
@@ -398,7 +585,7 @@ def load_universe(
         tiers.append(
             UniverseTierRow(
                 name=tier.value,
-                offered=int(active.raw_counts.get(tier.value, 0)),
+                listed=int(active.raw_counts.get(tier.value, 0)),
                 active=int(active.counts.get(tier.value, 0)),
                 size_cap=sizes[tier],
                 source=source,
@@ -440,6 +627,18 @@ def load_universe(
         else {}
     )
     sentiment = _sentiment_facts(conn, now) if has_ctx else {}
+    sessions = window_sessions(today)
+    facts = _RowFacts(
+        velocity=trending_vel,
+        sentiment=sentiment,
+        picked=picked_counts(conn, sessions),
+        proposals=proposal_counts(conn, sessions),
+        in_tier=in_tier_counts(conn, sessions) if has_ctx else {},
+        channel_labels=channel_labels or {},
+    )
+    rows = [_active_row(m, facts) for m in active.members]
+    carried = {t.value: sum(1 for r in rows if r.tier == t.value and r.carried) for t in TIER_ORDER}
+    tiers = [t.model_copy(update={"carried": carried.get(t.name, 0)}) for t in tiers]
     return UniverseResponse(
         as_of=now,
         model=active.model,
@@ -451,7 +650,7 @@ def load_universe(
         note=note,
         config_version=active.config_version if state != "none" else settings.config_version,
         active_max=settings.universe_active_max,
-        active=[_active_row(m, trending_vel, sentiment) for m in active.members],
+        active=rows,
         tiers=tiers,
         dropped=dropped,
         market_reference=market_reference(settings),

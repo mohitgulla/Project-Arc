@@ -5719,15 +5719,43 @@ export interface components {
              */
             also_in?: string[];
             /**
+             * Carried
+             * @description E14.8: carried from the previous run only (score_today null)
+             * @default false
+             */
+            carried: boolean;
+            /**
+             * In Tier 20D
+             * @description E14.8: sessions in the last 20 whose in-force `universe_tier` entry for this tier listed the name (null = core, which has no feed)
+             */
+            in_tier_20d?: number | null;
+            /**
              * Inputs
              * @description D58 trending: retail_buzz inputs that listed the name (2 | 1)
              */
             inputs?: number | null;
             /**
+             * Origin Labels
+             * @description E14.8 discovery: origins as channel labels (youtube.briefs `label`; an unknown slug reads as itself)
+             */
+            origin_labels?: string[] | null;
+            /**
              * Origins
              * @description D64 discovery: the Scout's origins (youtube:<slug>)
              */
             origins?: string[] | null;
+            /**
+             * Picked 20D
+             * @description E14.8: distinct ET days with a `candidates` row, last 20 sessions
+             * @default 0
+             */
+            picked_20d: number;
+            /**
+             * Proposals 20D
+             * @description E14.8: `proposals` rows, last 20 sessions
+             * @default 0
+             */
+            proposals_20d: number;
             /** Rank */
             rank: number;
             /** Reason */
@@ -5757,6 +5785,21 @@ export interface components {
              * @description E14.6: Stocktwits `ST 80% bull (10 tagged, 2.7h)` from the newest unexpired retail_sentiment entry (null = none); context only
              */
             sentiment?: string | null;
+            /**
+             * Sentiment Age S
+             * @description E14.8: age of the retail_sentiment entry (null = no entry)
+             */
+            sentiment_age_s?: number | null;
+            /**
+             * Sentiment Bull Pct
+             * @description E14.8: Stocktwits bullish share of tagged messages, percent (null = no entry or too few tags)
+             */
+            sentiment_bull_pct?: number | null;
+            /**
+             * Sentiment Tagged
+             * @description E14.8: tagged messages behind the reading (null = no entry)
+             */
+            sentiment_tagged?: number | null;
             /** Source */
             source: string;
             /**
@@ -5778,6 +5821,11 @@ export interface components {
              * @description E14.5 trending: `reddit #20 · 5.2× (157 vs 30)`
              */
             velocity_detail?: string | null;
+            /**
+             * Weight Pct
+             * @description E14.8 momentum: SPMO weight %, stored by the writer (v5) or parsed from a pre-v5 `SPMO weight 9.48%` reason
+             */
+            weight_pct?: number | null;
         };
         /** UniverseDroppedRow */
         UniverseDroppedRow: {
@@ -5878,6 +5926,12 @@ export interface components {
             /** Age S */
             age_s?: number | null;
             /**
+             * Carried
+             * @description E14.8 (D64): active names carried from the previous run only
+             * @default 0
+             */
+            carried: number;
+            /**
              * Expired
              * @description The latest feed expired: read as empty by the resolve
              */
@@ -5888,15 +5942,15 @@ export interface components {
              */
             fetched_at: string | null;
             /**
+             * Listed
+             * @description E14.8: rows the tier's feed listed before the size cut (raw_count; the momentum SPMO page lists ~24 for a top-20 tier)
+             */
+            listed: number;
+            /**
              * Name
              * @description core | momentum | discovery | trending (precedence order)
              */
             name: string;
-            /**
-             * Offered
-             * @description Names the tier offered before dedupe and caps (raw_count)
-             */
-            offered: number;
             /**
              * Partial
              * @default false

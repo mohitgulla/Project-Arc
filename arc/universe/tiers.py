@@ -144,6 +144,10 @@ class TierMember(BaseModel):
     origins: list[str] = Field(
         default_factory=list, description="discovery: the Scout's origins (youtube:<slug>)"
     )
+    # v5 (E14.8, D64): momentum members carry the SPMO weight the writer ranked by
+    weight_pct: float | None = Field(
+        None, description="momentum: the name's SPMO weight in percent (e.g. 9.48)"
+    )
 
 
 class CarryoverKnobs(BaseModel):
