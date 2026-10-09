@@ -77,7 +77,10 @@ class BrokerOrderStatus(BaseModel):
     client_order_id: str | None = None
     status: str  # new, partially_filled, filled, canceled, expired, rejected, etc.
     filled_qty: Decimal = Decimal("0")
+    # Alpaca reports the average unsigned; ``side`` (``buy``/``sell``) signs a
+    # simple one-leg order's fill (E6.2f). None on mleg parents / when unknown.
     filled_avg_price: Decimal | None = None
+    side: str | None = None
     legs: list[dict] | None = None
     created_at: dt.datetime | None = None
     updated_at: dt.datetime | None = None

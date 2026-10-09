@@ -13,6 +13,7 @@ from decimal import Decimal as D
 from typing import TYPE_CHECKING
 
 import pytest
+from structlog.testing import capture_logs
 
 from arc.broker.base import BrokerOrderStatus, MlegOrder
 from arc.execution.ladder import ExecStatus, execute, fill_net_price
@@ -46,12 +47,15 @@ class Clock:
         self.t += dt.timedelta(seconds=s)
 
 
-def st(bid: str, status: str, filled: int = 0, price: str | None = None) -> BrokerOrderStatus:
+def st(
+    bid: str, status: str, filled: int = 0, price: str | None = None, side: str | None = None
+) -> BrokerOrderStatus:
     return BrokerOrderStatus(
         broker_order_id=bid,
         status=status,
         filled_qty=D(filled),
         filled_avg_price=D(price) if price is not None else None,
+        side=side,
     )
 
 
@@ -67,8 +71,10 @@ class ScriptedBroker:
         scripts: list[list[str]],
         cancel_scripts: dict[int, list[tuple[str, int]]] | None = None,
         fills: dict[int, tuple[int, str]] | None = None,
+        sides: dict[int, str] | None = None,
     ) -> None:
         self.scripts = scripts
+        self.sides = sides or {}
         self.cancel_scripts = cancel_scripts or {}
         self.fills = fills or {}
         self.orders: list[MlegOrder] = []
@@ -104,7 +110,7 @@ class ScriptedBroker:
         if status in ("filled", "canceled", "expired", "rejected"):
             self.working.discard(broker_order_id)
         price = self.fills.get(k, (0, None))[1] if filled else None
-        return st(broker_order_id, status, filled, price)
+        return st(broker_order_id, status, filled, price, self.sides.get(k))
 
 
 def cfg(**kw: object) -> ArcSettings:
@@ -431,6 +437,131 @@ def test_fill_net_price_fallbacks() -> None:
     assert fill_net_price(s, D("-0.85")) == D("-0.85")
     s2 = s.model_copy(update={"filled_avg_price": D("1.10")})
     assert fill_net_price(s2, D("0")) == D("1.10")
+
+
+# ---------------------------------------------------------------------------
+# E6.2f: single-leg fills are reported unsigned; the order's side signs them
+# ---------------------------------------------------------------------------
+
+
+def _one_leg(**kw: object) -> BrokerOrderStatus:
+    base: dict[str, object] = {
+        "broker_order_id": "b",
+        "status": "filled",
+        "filled_qty": D(1),
+        "filled_avg_price": D("43.45"),
+    }
+    base.update(kw)
+    return BrokerOrderStatus(**base)  # type: ignore[arg-type]
+
+
+def test_fill_net_price_single_leg_sell_is_a_credit() -> None:
+    assert fill_net_price(_one_leg(side="sell"), D("-43.26")) == D("-43.45")
+
+
+def test_fill_net_price_single_leg_buy_is_a_debit() -> None:
+    assert fill_net_price(_one_leg(side="buy", filled_avg_price=D("44.20")), D("44.20")) == D(
+        "44.20"
+    )
+
+
+def test_fill_net_price_side_unknown_takes_the_limit_sign() -> None:
+    assert fill_net_price(_one_leg(), D("-43.26")) == D("-43.45")
+    assert fill_net_price(_one_leg(), D("44.20")) == D("43.45")
+    assert fill_net_price(_one_leg(), D("0")) == D("43.45")  # no sign known: + (logged)
+
+
+def test_fill_sign_mismatch_takes_the_limit_sign() -> None:
+    legs = [
+        {"side": "buy", "filled_qty": "1", "filled_avg_price": "2.05"},
+        {"side": "sell", "filled_qty": "1", "filled_avg_price": "1.23"},
+    ]
+    s = BrokerOrderStatus(broker_order_id="b", status="filled", filled_qty=D(1), legs=legs)
+    with capture_logs() as logs:
+        # A buy can't fill a credit limit (and vice versa): the limit's sign wins.
+        assert fill_net_price(_one_leg(side="buy"), D("-43.26")) == D("-43.45")
+        assert fill_net_price(_one_leg(side="sell"), D("44.20")) == D("43.45")
+        # an mleg net that came back as a debit against a credit limit is flipped too
+        assert fill_net_price(s, D("-0.85")) == D("-0.82")
+        # agreeing signs log nothing
+        assert fill_net_price(_one_leg(side="sell"), D("-43.26")) == D("-43.45")
+    assert [e["event"] for e in logs] == ["fill_sign_mismatch"] * 3
+
+
+def test_fill_net_price_mleg_price_improvement_kept() -> None:
+    # a debit-limit spread filled at a small credit is real improvement, not a sign error
+    legs = [
+        {"side": "buy", "filled_qty": "1", "filled_avg_price": "1.00"},
+        {"side": "sell", "filled_qty": "1", "filled_avg_price": "1.05"},
+    ]
+    s = BrokerOrderStatus(broker_order_id="b", status="filled", filled_qty=D(1), legs=legs)
+    assert fill_net_price(s, D("0.10")) == D("-0.05")
+
+
+def _seed_close(conn: sqlite3.Connection, p: Proposal) -> None:
+    ProposalRepo(conn).insert(
+        candidate_id=p.candidate_id,
+        proposal_hash=proposal_hash(p),
+        structure_json=p.structure.model_dump_json(),
+        thesis=p.thesis,
+        quant_json=p.quant.model_dump_json(),
+        sizing_json=p.sizing.model_dump_json(),
+        expires_at=p.expires_at.isoformat(),
+        ticker="SPY",
+        kind="close",
+    )
+
+
+def test_single_leg_open_and_sell_close_signed(conn: sqlite3.Connection) -> None:
+    """The META 2026-10-08 case: long call opened @ 44.20, sold @ 43.45 → −$75, not −$8,765."""
+    from arc.structures import long_call
+
+    exp = dt.date(2026, 11, 20)
+    lc = long_call("SPY", exp, strike=600, premium="44.20", as_of=dt.date(2026, 10, 9))
+    sizing = S.Sizing(contracts=1, notional=D("4420"), pct_equity=0.04)
+    open_p = S.proposal(
+        structure=lc, sizing=sizing, limit_price=D("44.20"),
+        expires_at=NOW + dt.timedelta(minutes=20),
+    )  # fmt: skip
+    one = PriceBand(lo=D("44.20"), hi=D("44.20"), max_steps=0)
+    b = ScriptedBroker([["filled"]], fills={0: (1, "44.20")}, sides={0: "buy"})
+    opened = run(conn, b, p=open_p, decision=gated(open_p, band=one))
+    assert opened.status is ExecStatus.FILLED and opened.fill_price == D("44.20")
+    assert opened.structure_id is not None
+
+    close_p = S.proposal(
+        structure=lc, sizing=sizing, thesis="exit", limit_price=D("-43.62"),
+        expires_at=NOW + dt.timedelta(minutes=20),
+    )  # fmt: skip
+    _seed_close(conn, close_p)
+    band = PriceBand(lo=D("-43.62"), hi=D("-43.26"), max_steps=1)
+    b2 = ScriptedBroker(
+        [["new"], ["filled"]],
+        cancel_scripts={0: [("canceled", 0)]},
+        fills={1: (1, "43.45")},  # Alpaca's unsigned average
+        sides={0: "sell", 1: "sell"},
+    )
+    out = run(
+        conn, b2, p=close_p, decision=gated(close_p, band=band),
+        kind="close", structure_id=opened.structure_id,
+    )  # fmt: skip
+    assert out.status is ExecStatus.FILLED and out.fill_price == D("-43.45")
+    ex = ExecutionRepo(conn).get(out.proposal_hash)
+    assert ex is not None and D(ex["fill_price"]) == D("-43.45")
+    row = OpenStructureRepo(conn).get(opened.structure_id)
+    assert row is not None and row["status"] == "closed"
+    assert D(row["close_net"]) == D("-43.45")
+    # the fills row carries the same signed per-unit net as executions.fill_price
+    fill = conn.execute(
+        """SELECT f.price FROM fills f JOIN orders o ON o.id = f.order_id
+           WHERE o.proposal_hash = ?""",
+        (out.proposal_hash,),
+    ).fetchone()
+    assert D(fill[0]) == D("-43.45")
+    pnl = conn.execute(
+        "SELECT payload FROM decisions WHERE reason_code = 'exit:closed'"
+    ).fetchone()[0]
+    assert D(json.loads(pnl)["realized_pnl"]) == D("-75.00")  # -(44.20 - 43.45) x 100 x 1
 
 
 def test_attempt_rows_carry_unique_client_ids(conn: sqlite3.Connection) -> None:

@@ -150,8 +150,16 @@ def fill_net_price(status: BrokerOrderStatus, fallback: Decimal) -> Decimal:
     """Per-unit net fill price (+ debit / − credit).
 
     From the legs' fill prices when every leg reports one (``buy`` +, ``sell`` −,
-    weighted by leg qty / order qty); else the order's own average (a simple
-    one-leg order reports the premium, signed by its side); else ``fallback``.
+    weighted by leg qty / order qty); else the order's own average, which the
+    broker reports *unsigned*: ``+avg`` for a ``buy``, ``−avg`` for a ``sell``,
+    and the sign of ``fallback`` (the attempt's signed limit) when the side is
+    unknown (E6.2f); else ``fallback``.
+
+    Guard (deterministic): a limit order never fills worse than its limit, so a
+    credit limit (< 0) can't fill as a debit, and a one-leg order is always a
+    pure debit (buy) or credit (sell). A fill whose sign disagrees in those cases
+    is logged ``fill_sign_mismatch`` and takes the limit's sign. A debit-limit
+    mleg filled as a credit is genuine price improvement and is kept.
     """
     legs = status.legs or []
     qty = status.filled_qty
@@ -161,10 +169,39 @@ def fill_net_price(status: BrokerOrderStatus, fallback: Decimal) -> Decimal:
             sign = 1 if str(leg.get("side")) == "buy" else -1
             ratio = Decimal(str(leg.get("filled_qty") or leg.get("qty") or 0)) / qty
             net += sign * ratio * Decimal(str(leg["filled_avg_price"]))
-        return net.quantize(Decimal("0.0001"))
+        return _sign_guard(status, net.quantize(Decimal("0.0001")), fallback, single=False)
     if status.filled_avg_price is not None:
-        return status.filled_avg_price
+        avg = abs(status.filled_avg_price)
+        side = (status.side or "").lower()
+        if side not in ("buy", "sell"):  # unknown: the signed limit decides
+            side = "sell" if fallback < 0 else "buy"
+            if fallback == 0:
+                log.warning(
+                    "fill_sign_unknown",
+                    broker_order_id=status.broker_order_id,
+                    filled_avg_price=str(avg),
+                )
+        price = avg if side == "buy" else -avg
+        return _sign_guard(status, price, fallback, single=True)
     return fallback
+
+
+def _sign_guard(
+    status: BrokerOrderStatus, price: Decimal, limit: Decimal, *, single: bool
+) -> Decimal:
+    """Flip *price* to the limit's sign when the two can't legitimately disagree."""
+    credit_as_debit = limit < 0 < price
+    debit_as_credit = single and price < 0 < limit
+    if not (credit_as_debit or debit_as_credit):
+        return price
+    log.warning(
+        "fill_sign_mismatch",
+        broker_order_id=status.broker_order_id,
+        fill=str(price),
+        limit=str(limit),
+        side=status.side,
+    )
+    return -price
 
 
 # ---------------------------------------------------------------------------
