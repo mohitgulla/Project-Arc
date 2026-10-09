@@ -14,10 +14,13 @@ the closing order is proposed like an entry (:func:`propose_close`):
 4. once approved, the Broker works it through the band (:mod:`arc.broker.ladder_job`).
 
 At most one exit proposal per structure per ET day, and none while one is still
-pending or working. Stops are evaluated on end-of-day marks only (D23): marks
+pending or working. E11.4 (D73): inside the expiry guard's closing window
+(DTE <= ``flat_by_dte`` + 1) up to ``attempts_per_day`` (:func:`close_allowed`), each
+a fresh proposal over a band of ``expiry_guard.steps`` steps; none for an expired
+structure or after the expiry-day cutoff. Stops are evaluated on end-of-day marks only (D23): marks
 count as end of day from ``eod_marks_from`` (default 15:30 ET), so the last
 monitor runs of the session can still fire the stop while the market is open.
-No exits are proposed while trading is halted.
+No exits are proposed while trading is halted (an opens-only halt, E11.4, lets them run).
 
 E6.4/D56: ``exits.mandatory`` (:mod:`arc.positions`) calls :func:`propose_close`
 for mandatory review signals (stop, DTE exit, expiry), and the ``quant.propose``
@@ -47,6 +50,7 @@ if TYPE_CHECKING:
     from arc.config import ArcSettings
     from arc.data.base import MarketDataProvider
     from arc.exits import ExitConfig
+    from arc.exits.expiry import ClosingWindow, ExpiryGuard
     from arc.gate.halt import HaltSwitch
     from arc.gate.inputs import AccountSnapshot, Portfolio
     from arc.pipeline.market import PricedStructure
@@ -55,6 +59,8 @@ __all__ = [
     "EXIT_CODES",
     "CloseOutcome",
     "ExitRun",
+    "attempts_today",
+    "close_allowed",
     "exit_legs",
     "exit_pending",
     "price_close",
@@ -211,6 +217,37 @@ def exit_pending(conn: sqlite3.Connection, row: dict[str, Any]) -> bool:
     return ex is not None and ex["status"] == "unconfirmed"  # reconcile first
 
 
+def structure_expiry(st: Structure) -> _dt.date:
+    """The structure's last expiration (every leg is gone by then)."""
+    from arc.structures import parse_occ
+
+    return max(parse_occ(leg.occ_symbol).expiration for leg in st.legs)
+
+
+def attempts_today(row: dict[str, Any], day: str) -> int:
+    """Close proposals made for *row* on ET *day* (``exit_attempts_day``, E11.4)."""
+    if row.get("exit_day") != day:
+        return 0
+    return max(int(row.get("exit_attempts_day") or 0), 1)  # a pre-031 row counts as one
+
+
+def close_allowed(
+    row: dict[str, Any], guard: ExpiryGuard, now: _dt.datetime
+) -> tuple[bool, ClosingWindow]:
+    """E11.4 (D73): may a close be proposed for *row* now, and its closing window.
+
+    Outside the window: one per ET day (the E6.2 rule). Inside it: up to
+    ``attempts_per_day``. Never for an expired structure or after the expiry-day
+    cutoff. The caller still skips a structure whose exit is pending.
+    """
+    from arc.exits.expiry import closing_window, may_attempt
+
+    st = Structure.model_validate_json(row["structure_json"])
+    today = now.astimezone(ET).date()
+    window = closing_window(structure_expiry(st), today, guard)
+    return may_attempt(attempts_today(row, today.isoformat()), window, now), window
+
+
 def price_close(
     market: MarketDataProvider, st: Structure, *, as_of: _dt.date, r: float
 ) -> PricedStructure:
@@ -246,8 +283,13 @@ def propose_close(
     secret: bytes | None,
     payload: dict[str, Any],
     swap_id: str | None = None,
+    close_max_steps: int | None = None,
 ) -> CloseOutcome:
     """Propose closing the open structure *row* at the re-priced *priced* legs.
+
+    ``close_max_steps`` (E11.4, D73): the band's improvement steps for a close inside
+    the expiry guard's closing window (``expiry_guard.steps``); default
+    ``execution_improvement_steps``.
 
     Gate (``closing=True``) over the D24 band, ``arc2`` token on PASS when *secret*
     is given (live paper runs resolve it up front and fail without it, E5.2b),
@@ -285,7 +327,7 @@ def propose_close(
     close = priced.structure
     snap = market_snapshot(priced.contracts, {})
     limit = limit_price(close.net_debit_credit, grid_for(close.legs, snap, settings))
-    band = price_band(close.legs, limit, snap, settings)
+    band = price_band(close.legs, limit, snap, settings, max_steps=close_max_steps)
     n = int(row["contracts"])
     proposal = Proposal(
         candidate_id=str(row["candidate_id"]),
@@ -313,6 +355,7 @@ def propose_close(
         now=now,
         band=band,
         closing=True,
+        close_max_steps=close_max_steps,
     )
     if secret is not None and decision.passed:
         decision = issue_token(decision, proposal, secret=secret, now=now, band=band)
@@ -423,12 +466,13 @@ def propose_exits(
 
         exits = exit_config(settings)  # D26: exits.yaml + control-panel overrides
     cfg = exits
+    guard = cfg.positions.expiry_guard
     repo = OpenStructureRepo(conn)
     today = now.astimezone(ET).date()
-    day = today.isoformat()
     for row in repo.list_open():
         t = row["ticker"]
-        if exit_pending(conn, row) or row.get("exit_day") == day:
+        allowed, window = close_allowed(row, guard, now)
+        if exit_pending(conn, row) or not allowed:
             continue
         out.evaluated += 1
         st = Structure.model_validate_json(row["structure_json"])
@@ -474,6 +518,7 @@ def propose_exits(
             write_context=write_context,
             secret=secret,
             payload={"state": state.model_dump(mode="json")},
+            close_max_steps=guard.steps if window.in_window else None,
         )
         out.lines.append(res.line)
         if res.alert:

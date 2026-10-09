@@ -170,11 +170,16 @@ class OpenStructureRepo:
     def set_exit(
         self, structure_id: str, *, proposal_hash: str, reason: str, day: str, commit: bool = True
     ) -> None:
+        """Record the pending exit. ``exit_attempts_day`` counts proposals on *day*
+        (E11.4, D73): +1 when ``exit_day`` is already *day*, else reset to 1."""
         self.conn.execute(
             """UPDATE open_structures
-               SET exit_proposal_hash = ?, exit_reason = ?, exit_day = ?
+               SET exit_proposal_hash = ?, exit_reason = ?,
+                   exit_attempts_day = CASE WHEN exit_day = ? THEN exit_attempts_day + 1
+                                            ELSE 1 END,
+                   exit_day = ?
                WHERE id = ?""",
-            (proposal_hash, reason, day, structure_id),
+            (proposal_hash, reason, day, day, structure_id),
         )
         if commit:
             self.conn.commit()

@@ -52,6 +52,20 @@ positions:
   remaining_ev_floor_per_bp: -0.01
   remaining_ev_floor_eod_only: true
   kinds: {}
+  # E11.4 (D73): never reach expiry by accident. Inside the closing window
+  # (DTE <= flat_by_dte + 1) exits.mandatory may propose a close up to
+  # attempts_per_day times per day, each a fresh D24 band of `steps` steps
+  # (gate + token + approval every time). Still open from 15 min before the close
+  # of the flat_by session -> owner alert + opens-only halt (arc:expiry). Expiry
+  # day: nothing proposed from close - cutoff_minutes_before_close (15:15 ET);
+  # near-the-money long legs get a do-not-exercise instruction (paper only).
+  expiry_guard:
+    flat_by_dte: 1
+    attempts_per_day: 4
+    steps: 6
+    cutoff_minutes_before_close: 45
+    dne: near_money          # never | near_money | all_longs
+    pin_band: 0.50           # near_money: |spot - strike| <= this, $/share
 
 default:
   take_profit_pct_of_max_gain: 0.50

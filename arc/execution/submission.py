@@ -135,13 +135,14 @@ def _check(
     step: int,
     limit_price: Decimal | None,
     supports_mleg: bool = True,
+    closing: bool = False,
 ) -> MlegOrder:
     if now.tzinfo is None or now.utcoffset() is None:
         raise SubmitRefused(RefusalCode.BAD_TIME, "`now` must be timezone-aware")
     if halt is None:
         raise SubmitRefused(RefusalCode.HALTED, "no halt switch given: failing closed")
     try:
-        require_trading_allowed(halt)
+        require_trading_allowed(halt, closing=closing)
     except TradingHaltedError as exc:
         raise SubmitRefused(RefusalCode.HALTED, str(exc)) from exc
     if config.env is not ArcEnv.PAPER:
@@ -212,12 +213,14 @@ def submit(
     halt: HaltSwitch | None,
     step: int = 0,
     limit_price: Decimal | None = None,
+    closing: bool = False,
 ) -> str:
     """Submit attempt ``step`` of ``proposal`` as one limit order; return the broker order id.
 
     Raises :class:`SubmitRefused` (and never touches ``broker``) when trading is
     halted (``halt`` is required: ``None`` refuses), when the broker is single-leg
     only (``supports_mleg is False``) and the proposal has more than one leg, or
+    (E11.4, D73) an opens-only halt is active and *closing* is False, or
     unless the gate token and the approval both check out for this exact
     proposal, step and price.
     """
@@ -232,6 +235,7 @@ def submit(
             step=step,
             limit_price=limit_price,
             supports_mleg=getattr(broker, "supports_mleg", True) is not False,
+            closing=closing,
         )
     except SubmitRefused as exc:
         log.warning("execution.submit_refused", code=str(exc.code), detail=exc.detail, step=step)

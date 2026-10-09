@@ -242,6 +242,7 @@ class _Ctx:
     phash: str
     ticker: str
     stale_detail: str = ""
+    closing: bool = False  # E11.4 (D73): a close passes an opens-only halt
 
     @property
     def orders(self) -> OrderRepo:
@@ -342,6 +343,7 @@ def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
             config=c.config,
             now=c.clock(),
             halt=c.halt,
+            closing=c.closing,
             step=step,
             limit_price=price,
         )
@@ -610,6 +612,7 @@ def execute(
     c = _Ctx(
         conn, broker, config, halt, clock, sleep, run_id, proposal, decision, approval, phash, t
     )
+    c.closing = kind == "close"
     execs = ExecutionRepo(conn)
     claimed = execs.start(
         proposal_hash=phash,

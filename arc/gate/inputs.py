@@ -40,6 +40,13 @@ class AccountSnapshot(_Frozen):
         ),
     )
     halted: bool = Field(False, description="Kill switch / daily halt is active (E3.3)")
+    opens_halted: bool = Field(
+        False,
+        description=(
+            "E11.4 (D73): an opens-only halt is active (halts.scope = 'opens', e.g. "
+            "arc:expiry). New opens fail the halt rule; closes still pass."
+        ),
+    )
     settled_cash: Decimal | None = Field(
         None,
         description=(
