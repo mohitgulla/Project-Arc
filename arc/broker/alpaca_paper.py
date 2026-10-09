@@ -67,6 +67,14 @@ def _enum_value(v: object) -> str:
     return str(getattr(v, "value", v))
 
 
+def _order_side(v: object) -> str | None:
+    """``buy`` / ``sell`` from an order's side, else None (mleg parents carry none)."""
+    if v is None:
+        return None
+    side = _enum_value(v).lower()
+    return side if side in ("buy", "sell") else None
+
+
 def _opt_dec(v: object) -> Decimal | None:
     """Optional Alpaca decimal field (wire string); anything else (None, "") -> ``None``."""
     if isinstance(v, bool) or not isinstance(v, str | int | float | Decimal) or v == "":
@@ -273,6 +281,7 @@ class AlpacaPaperBroker:
             filled_avg_price=(
                 Decimal(str(order.filled_avg_price)) if order.filled_avg_price else None
             ),
+            side=_order_side(getattr(order, "side", None)),
             legs=(
                 [
                     {

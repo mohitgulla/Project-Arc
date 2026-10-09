@@ -236,6 +236,32 @@ class TestAlpacaPaperBrokerMocked:
         assert status.status == "new" and type(status.status) is str
         assert status.client_order_id == "arc-test-001"
 
+    def test_order_status_carries_one_leg_side(self) -> None:
+        """E6.2f: a simple one-leg order's side signs its unsigned average."""
+
+        class _Order:  # duck-typed one-leg Alpaca order
+            id = uuid4()
+            client_order_id = "arc1.x.s1"
+            status = OrderStatus.FILLED
+            side = OrderSide.SELL
+            filled_qty = "1"
+            filled_avg_price = "43.45"
+            legs = None
+            created_at = updated_at = dt.datetime(2026, 10, 8, 10, 0, tzinfo=ET)
+
+        mock_client = MagicMock()
+        mock_client.get_order_by_id.return_value = _Order()
+        status = _make_broker(mock_client).order_status("x")
+        assert status.side == "sell" and type(status.side) is str
+        assert status.filled_avg_price == Decimal("43.45")
+
+        _Order.side = OrderSide.BUY
+        assert _make_broker(mock_client).order_status("x").side == "buy"
+        _Order.side = None  # mleg parents carry no side
+        assert _make_broker(mock_client).order_status("x").side is None
+        _Order.side = "sell_short"  # anything else is unknown, not guessed
+        assert _make_broker(mock_client).order_status("x").side is None
+
     def test_order_status_with_legs(self) -> None:
         mock_client = MagicMock()
         mock_leg = MagicMock()
