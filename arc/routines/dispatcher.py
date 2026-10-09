@@ -64,6 +64,7 @@ from arc.routines.handlers import (
 from arc.routines.heartbeat import Heartbeats, LogNotifier, Notifier
 from arc.routines.locks import LLM_LOCK, LockBusyError, LockManager, NullLocks
 from arc.routines.runs import (
+    ClaimScope,
     RoutineEvent,
     RoutineEventRepo,
     RoutineRun,
@@ -113,6 +114,14 @@ _STEP_PERSONA = {
 #: mandatory-exit floor (stop / DTE exit / expiry) is risk management: a slow run
 #: cuts new risk, not exits.
 DEADLINE_EXEMPT_STEPS: frozenset[str] = frozenset({"exits.mandatory"})
+
+#: E13.21a: chain steps claimed once per chain instead of once per slot. A step in two
+#: chains (``AUTO_CHAINS``: ``research`` and ``positions.evaluate``) is by default one
+#: run per slot, whichever chain claims it first; the other chain records a
+#: ``duplicate`` and goes on (``exits.mandatory``: the mandatory-exit floor runs once).
+#: ``broker.execute`` publishes and dispatches *its own chain's* proposals, so each
+#: chain needs its own run (migration 029 keys chain steps per chain).
+CHAIN_SCOPED_STEPS: frozenset[str] = frozenset({"broker.execute"})
 
 
 # ---------------------------------------------------------------------------
@@ -430,12 +439,31 @@ class Dispatcher:
         plan = self.plan(now, since=since, halted=halted)
 
         if dry_run:
+            # E13.21a: a slot-scoped step already planned in another chain for the same
+            # slot runs once (there); this chain records a duplicate and goes on.
+            planned_in: dict[tuple[str, _dt.datetime], str] = {}
             for d in plan:
                 reason = self._reason(d)
                 status = "planned" if d.action == "run" else "skipped"
                 report.outcomes.append(Outcome(d.job, d.slot, status, reason))
                 if d.action == "run":
                     for i, step in enumerate(d.chain, 1):
+                        key = (step, d.slot)
+                        owner = planned_in.get(key)
+                        if owner is not None and step not in CHAIN_SCOPED_STEPS:
+                            report.outcomes.append(
+                                Outcome(
+                                    step,
+                                    d.slot,
+                                    "duplicate",
+                                    f"chain step {i}: runs once per slot, in {owner}'s "
+                                    "chain; chain continues",
+                                    step_index=i,
+                                    metrics={"shared": True},
+                                )
+                            )
+                            continue
+                        planned_in.setdefault(key, d.job)
                         report.outcomes.append(
                             Outcome(step, d.slot, "planned", f"chain step {i}", step_index=i)
                         )
@@ -885,6 +913,11 @@ class Dispatcher:
         if is_loop and chain_run_id:
             root_ts = self._open_loop_root(chain_run_id, scheduled_for)
         self._loop_root_ts = root_ts
+        # E13.21a: the no_change state before this loop, put back when the loop is cut
+        # short before quant.propose (Research records last_full_run as it finishes).
+        from arc.routines.loop import LoopState
+
+        loop_mark = LoopState(self.conn).mark() if is_loop else None
         # D38: an action chain (the position manager) opens the same root line, but
         # only once it has a proposal, so a close shows as SELL and quiet runs post nothing.
         is_action = (
@@ -911,6 +944,8 @@ class Dispatcher:
                 if stop:
                     break
             wall_ms = int((time.monotonic() - t_start) * 1000)
+            if is_loop and loop_mark is not None:
+                self._loop_unrecord_truncated(c, loop_mark)
             if is_loop and chain_run_id:
                 self._finish_loop(
                     chain_run_id,
@@ -1032,19 +1067,15 @@ class Dispatcher:
                 now=now,
                 # E6.2d: an event-triggered run is unique per (job, event), not per slot.
                 event_id=c.event.id if c.event is not None else None,
+                scope=self._claim_scope(step),
             )
             if claimed is None:
-                c.outcomes.append(
-                    Outcome(
-                        step,
-                        scheduled_for,
-                        "duplicate",
-                        "already ran for this slot",
-                        chain_run_id=chain_run_id,
-                        step_index=index,
-                    )
-                )
-                return True
+                dup = self._duplicate(step, scheduled_for, chain_run_id, index, event=c.event)
+                c.outcomes.append(dup)
+                # E13.21a: a later step another chain (or a standalone run) already ran
+                # for this slot is on the record and the chain goes on; a re-dispatch of
+                # this chain (its root is the duplicate) still stops.
+                return not dup.metrics.get("shared")
             run = claimed
         t_step = time.monotonic()
         outcome = self._execute(
@@ -1292,6 +1323,82 @@ class Dispatcher:
         secs = int(self.routines.loop.max_runtime.total_seconds())
         return f"{secs // 60}m" if secs % 60 == 0 else f"{secs}s"
 
+    def _loop_unrecord_truncated(self, c: _ChainRun, mark: tuple[str | None, str | None]) -> None:
+        """E13.21a: a loop counts as *full* (for D31 ``no_change``) only when it reached
+        ``quant.propose`` (the chain's last pricing step) or ended cleanly with nothing
+        to price (Research's own ``stop_chain``). Otherwise (a timeout, a failed step, a
+        duplicate stop before it) the ``last_full_run``/digest Research recorded is
+        rolled back to *mark*, so the next slot with the same inputs runs in full.
+        """
+        if c.no_change or not c.outcomes:
+            return
+        root = c.outcomes[0]
+        target = "quant.propose" if "quant.propose" in c.steps else c.steps[-1]
+        reached = any(
+            o.job == target
+            and (o.status == "ok" or (o.status == "skipped" and o.metrics.get("continue_chain")))
+            for o in c.outcomes
+        )
+        clean_stop = root.status == "ok" and bool(root.metrics.get("stop_chain"))
+        if reached or clean_stop:
+            return
+        from arc.routines.loop import LoopState
+
+        if LoopState(self.conn).restore(mark):
+            log.warning(
+                "routines.loop_not_full",
+                chain_run_id=c.chain_run_id,
+                timed_out=c.timed_out,
+                last=[(o.job, o.status) for o in c.outcomes[-2:]],
+                why=f"chain ended before {target}; last_full_run rolled back",
+            )
+
+    def _claim_scope(self, step: str) -> ClaimScope:
+        """E13.21a: ``chain`` for :data:`CHAIN_SCOPED_STEPS`, else ``slot``."""
+        return "chain" if step in CHAIN_SCOPED_STEPS else "slot"
+
+    def _duplicate(
+        self,
+        step: str,
+        scheduled_for: _dt.datetime,
+        chain_run_id: str | None,
+        index: int,
+        *,
+        event: RoutineEvent | None = None,
+    ) -> Outcome:
+        """The ``duplicate`` outcome of a lost claim.
+
+        E13.21a: ``metrics["shared"]`` is set when a later chain step (``index > 0``,
+        scheduled, not event-triggered) lost to a run that belongs to *another* chain
+        or to no chain (a standalone run): the step ran once for this slot, elsewhere,
+        and this chain continues. A lost root claim (the chain re-dispatched for a slot
+        it already ran) or a row of this same chain is never shared: the chain stops.
+        """
+        owner = None
+        if index and event is None and chain_run_id:
+            owner = self.runs.slot_owner(step, scheduled_for)
+        shared = owner is not None and owner.chain_run_id != chain_run_id
+        reason = "already ran for this slot"
+        if shared and owner is not None:
+            reason += f" (in {owner.chain_run_id or owner.run_id}); chain continues"
+            log.info(
+                "routines.step_shared",
+                job=step,
+                chain_run_id=chain_run_id,
+                owner_chain_run_id=owner.chain_run_id,
+                owner_run_id=owner.run_id,
+            )
+        return Outcome(
+            step,
+            scheduled_for,
+            "duplicate",
+            reason,
+            run_id=owner.run_id if shared and owner is not None else None,
+            chain_run_id=chain_run_id,
+            step_index=index,
+            metrics={"shared": True} if shared else {},
+        )
+
     def _record_skipped_step(
         self,
         step: str,
@@ -1303,7 +1410,11 @@ class Dispatcher:
         summary: str,
         now: _dt.datetime,
     ) -> Outcome:
-        """A chain step the loop decided not to run (timeout / no_change), on the record."""
+        """A chain step the loop decided not to run (timeout / no_change), on the record.
+
+        Never stops the chain (the caller goes on either way); a lost claim is a
+        ``duplicate`` with the same E13.21a ``shared`` rule as :meth:`_run_step`.
+        """
         claimed = self.runs.claim(
             job=step,
             scheduled_for=scheduled_for,
@@ -1313,17 +1424,11 @@ class Dispatcher:
             status=RunStatus.SKIPPED,
             summary=summary,
             now=now,
+            scope=self._claim_scope(step),
         )
         log.info("routines.step_skipped", job=step, why=summary, chain_run_id=chain_run_id)
         if claimed is None:
-            return Outcome(
-                step,
-                scheduled_for,
-                "duplicate",
-                "already ran for this slot",
-                chain_run_id=chain_run_id,
-                step_index=step_index,
-            )
+            return self._duplicate(step, scheduled_for, chain_run_id, step_index)
         self._write_manifest(
             claimed,
             _RunTrace(metrics={"loop_skipped": summary.split(":", 1)[0]}),
