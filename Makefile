@@ -1,6 +1,6 @@
-.PHONY: check test test-gate lint fmt audit lock-check web web-check web-api web-e2e
+.PHONY: check test test-rest test-gate lint fmt audit lock-check web web-check web-api web-e2e
 
-check: lock-check lint fmt audit test test-gate
+check: lock-check lint fmt audit test
 
 lock-check:
 	uv lock --check
@@ -17,14 +17,24 @@ lint:
 fmt:
 	uv run ruff format --check arc/ tests/
 
-test:
-	uv run pytest
+# Tests run in parallel (pytest-xdist): one worker per CPU. Override for a serial run
+# with `make test PYTEST_WORKERS=0`. A bare `uv run pytest` stays serial.
+PYTEST_WORKERS ?= auto
+
+# The risk-gate suite. Its 100% branch coverage of arc.gate must come from these files
+# alone, so they run once, in `test-gate`, and `test-rest` skips them.
+GATE_TESTS := tests/test_gate.py tests/test_halt.py tests/test_gate_token.py \
+	tests/test_gate_hook_policy.py tests/test_gate_band.py tests/test_account_profiles.py \
+	tests/test_day_trades.py
+
+# Full suite: every test file runs exactly once.
+test: test-rest test-gate
+
+test-rest:
+	uv run pytest -n $(PYTEST_WORKERS) $(addprefix --ignore=,$(GATE_TESTS))
 
 test-gate:
-	uv run pytest tests/test_gate.py tests/test_halt.py tests/test_gate_token.py \
-		tests/test_gate_hook_policy.py tests/test_gate_band.py tests/test_account_profiles.py \
-		tests/test_day_trades.py \
-		-v --tb=short \
+	uv run pytest -n $(PYTEST_WORKERS) $(GATE_TESTS) \
 		--cov=arc.gate --cov-branch --cov-report=term-missing --cov-fail-under=100
 
 # ---------------------------------------------------------------------------
