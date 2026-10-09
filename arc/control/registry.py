@@ -1900,6 +1900,52 @@ _OPTIONS_FAST_TUNABLES: tuple[Tunable, ...] = (
 )
 
 
+# D64 (E14.7): the `universe.carryover` block in routines.yaml (discovery + trending
+# two-run merge). On by default (owner decision, not an experiment).
+_CARRYOVER_TUNABLES: tuple[Tunable, ...] = (
+    Tunable(
+        key="universe.carryover.enabled",
+        group=Group.UNIVERSE,
+        type=_B,
+        description="D64: discovery + trending entries merge the previous run's names "
+        "(48 h, 0.6 x today + 0.4 x previous). Off = each run's list only.",
+        target=Target.ROUTINES,
+        risk=Risk.TRUE,
+        path=("universe", "carryover", "enabled"),
+        aliases=("routines.universe.carryover.enabled", "carryover.enabled"),
+    ),
+    Tunable(
+        key="universe.carryover.window_h",
+        group=Group.UNIVERSE,
+        type=_I,
+        description="D64: the previous run is merged only when written this many hours "
+        "before the new run (strict clock hours; Monday's run has no previous run at 48).",
+        target=Target.ROUTINES,
+        risk=Risk.UP,
+        unit="h",
+        path=("universe", "carryover", "window_h"),
+        min=24,
+        max=96,
+        hard_ceiling=96,
+        aliases=("routines.universe.carryover.window_h", "carryover.window_h"),
+    ),
+    Tunable(
+        key="universe.carryover.w_today",
+        group=Group.UNIVERSE,
+        type=_F,
+        description="D64: weight of this run's score in the combined score (the previous "
+        "run gets 1 - w_today).",
+        target=Target.ROUTINES,
+        risk=Risk.DOWN,
+        path=("universe", "carryover", "w_today"),
+        min=0.5,
+        max=1.0,
+        hard_ceiling=0.5,
+        aliases=("routines.universe.carryover.w_today", "carryover.w_today"),
+    ),
+)
+
+
 # D49: D47 category names renamed in place (old -> new). Their tunable keys stay as
 # aliases, so a change-log override on ``categories.company.weight`` applies to
 # ``categories.company_data.weight``. ``video`` was split, so its keys have no single
@@ -2100,6 +2146,7 @@ REGISTRY: dict[str, Tunable] = {
         *_FUNNEL_TUNABLES,
         *_OPTIONS_SLOW_TUNABLES,
         *_OPTIONS_FAST_TUNABLES,
+        *_CARRYOVER_TUNABLES,
         *_EXPERIMENT_TUNABLES,
     )
 }
@@ -2469,6 +2516,7 @@ _PLAIN_ROUTINE_SECTIONS = (
     ("tower",),
     ("funnel",),
     ("options_slow",),  # E13.5
+    ("universe",),  # D64 (E14.7): universe.carryover.*
 )
 # Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
 _PERSONA_SWITCHES = frozenset(

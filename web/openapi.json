@@ -14056,6 +14056,21 @@
             "description": "D58 trending: retail_buzz inputs that listed the name (2 | 1)",
             "title": "Inputs"
           },
+          "origins": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D64 discovery: the Scout's origins (youtube:<slug>)",
+            "title": "Origins"
+          },
           "rank": {
             "title": "Rank",
             "type": "integer"
@@ -14063,6 +14078,57 @@
           "reason": {
             "title": "Reason",
             "type": "string"
+          },
+          "runs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D64: run dates (ET, ISO) that listed the name (1 or 2)",
+            "title": "Runs"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D64: combined score used for ranking (0.6 x today + 0.4 x prev)",
+            "title": "Score"
+          },
+          "score_prev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D64: the previous run's own score (null = not in the previous run)",
+            "title": "Score Prev"
+          },
+          "score_today": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D64: this run's own score (null = carried from the previous run)",
+            "title": "Score Today"
           },
           "sentiment": {
             "anyOf": [
@@ -14079,6 +14145,18 @@
           "source": {
             "title": "Source",
             "type": "string"
+          },
+          "stance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D64 discovery: the Scout's stance",
+            "title": "Stance"
           },
           "ticker": {
             "title": "Ticker",

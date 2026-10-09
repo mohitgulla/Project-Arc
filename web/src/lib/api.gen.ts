@@ -5723,10 +5723,35 @@ export interface components {
              * @description D58 trending: retail_buzz inputs that listed the name (2 | 1)
              */
             inputs?: number | null;
+            /**
+             * Origins
+             * @description D64 discovery: the Scout's origins (youtube:<slug>)
+             */
+            origins?: string[] | null;
             /** Rank */
             rank: number;
             /** Reason */
             reason: string;
+            /**
+             * Runs
+             * @description D64: run dates (ET, ISO) that listed the name (1 or 2)
+             */
+            runs?: string[] | null;
+            /**
+             * Score
+             * @description D64: combined score used for ranking (0.6 x today + 0.4 x prev)
+             */
+            score?: number | null;
+            /**
+             * Score Prev
+             * @description D64: the previous run's own score (null = not in the previous run)
+             */
+            score_prev?: number | null;
+            /**
+             * Score Today
+             * @description D64: this run's own score (null = carried from the previous run)
+             */
+            score_today?: number | null;
             /**
              * Sentiment
              * @description E14.6: Stocktwits `ST 80% bull (10 tagged, 2.7h)` from the newest unexpired retail_sentiment entry (null = none); context only
@@ -5734,6 +5759,11 @@ export interface components {
             sentiment?: string | null;
             /** Source */
             source: string;
+            /**
+             * Stance
+             * @description D64 discovery: the Scout's stance
+             */
+            stance?: string | null;
             /** Ticker */
             ticker: string;
             /** Tier */

@@ -838,6 +838,29 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   table, no write) or `arc universe trending [--db PATH] [--no-slack]` (runs the job).
   The job's `[Routines]` notice is the diff against the previous list
   (`Trending tier: 23 names, 11 in both inputs (+SPCX −RIVN) · inputs reddit, stocktwits`).
+- **48 h two-run carry-over (E14.7, D64), discovery + trending, on by default.** Both
+  tiers' `universe_tier` entries live **48 h** (strict clock hours; job-level
+  `context:` on `universe.trending`, `context_kinds: {universe_tier: …}` on the Scout so
+  its other kinds keep their TTLs). Each run writes a **merged** list: this run's names
+  plus the previous entry's own names, where previous = the latest entry for the tier
+  written ≤ `window_h` ago on an **earlier ET day** (a same-day re-run never merges today
+  with today; Monday's run is > 48 h after Friday's, so it has no previous run).
+  `score = round(0.6 × today + 0.4 × previous, 4)` (a name missing from a run scores 0
+  there), sorted by score, today's rank, previous rank, ticker, cut to the tier size (25).
+  Each run uses the previous run's **own** score (`score_today`), so a name never informs
+  more than 2 runs. Carried names keep their details plus `· carried from <date>`, are
+  re-checked against today's exclusions (SPY/QQQ/IWM, leveraged funds, the Scout's
+  excluded list; higher tiers are deduped by the resolver) but never re-screened, get no
+  candidate row, and are journaled once per day `universe:carried_over`. `reason` keeps
+  its trailing `· score x.xx`, now the combined score. Members carry `score`,
+  `score_today`, `score_prev`, `runs` (discovery also `stance`, `origins`); the entry
+  carries `merged_from` (previous entry id) and `merge` (knobs). A failed run writes
+  nothing, so the previous list serves until its 48 h end. Knobs:
+  `universe.carryover.enabled` (true; off = each run's list only), `.window_h` (48,
+  24–96), `.w_today` (0.6, 0.5–1.0) in `config/routines.yaml` / `!arc config set`.
+  Rehearse on a scratch copy: `arc universe trending --db <scratch> --now <next 05:50>`
+  (`--now` on a real run needs an explicit `--db`); the printout shows
+  `score (today · prev)` per name. `/api/ops/universe` active rows carry the same fields.
 - **Reddit mention velocity (E14.5, D60).** `retail_buzz` v2 rows also store ApeWisdom's
   `mentions_24h_ago` and `upvotes`. Velocity = `(mentions + k) / (mentions_24h_ago + k)`
   (`universe.trending.velocity.smoothing` k = 5; under `min_mentions` 10, or with no 24 h

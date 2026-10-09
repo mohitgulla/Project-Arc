@@ -157,8 +157,9 @@ context_ttl:
   analyst_recs:  {ttl: 8d, supersede: latest}
   fundamentals:  {ttl: 8d, supersede: latest}
   # D56 (E13.4): tiered universe. universe_tier subject = tier; momentum (E12.2, monthly:
-  # first session of the month) sets a 35d ttl on its job, the Scout's discovery tier
-  # uses this default. An expired tier reads as empty (logged universe.tier_expired).
+  # first session of the month) sets a 35d ttl on its job; the Scout's discovery tier and
+  # universe.trending set 48h on their jobs (D64). An expired tier reads as empty
+  # (logged universe.tier_expired).
   universe_tier: {ttl: 1 session, supersede: latest}
   active_universe: {ttl: 1 session, supersede: latest}   # subject = active; one per resolve
   scout_read:    {ttl: 24h, supersede: latest}             # E13.7 (D56) the Scout's daily read; subject = session
@@ -222,6 +223,19 @@ options_slow:
 options_fast:
   vix_flags: {vix_gt_25: 25, vix_gt_35: 35}
   max_csv_bytes: 20000000
+
+# D64 (E14.7): discovery (Scout) + trending (universe.trending) two-run carry-over. Each
+# run's universe_tier entry lives 48 h (job `context_kinds`) and is merged with the
+# previous run's entry written <= window_h ago on an earlier ET day: score = w_today x
+# this run + (1 - w_today) x previous run (missing = 0), each run's OWN score (a name
+# never carries past 2 runs), cut to the tier size (25). Carried names are re-checked
+# against today's exclusions, never re-screened. Off = each run's list only.
+# Tunable: `!arc config set universe.carryover.enabled|window_h|w_today`. OPS 5.31.
+universe:
+  carryover:
+    enabled: true               # owner decision D64: on by default (not an experiment)
+    window_h: 48                # 24-96: strict clock hours (Monday's run has no previous run)
+    w_today: 0.6                # 0.5-1.0; previous run weight = 1 - w_today
 
 # D30 (E4.5) source registry: every `sources:` job that writes raw_doc_ref is a Scalp
 # source; each RSS feed is its own source. Every source job that writes context (or
@@ -618,8 +632,10 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     schedule: ["05:50"]         # after retail_buzz 05:40, before the 06:00 Scout; `arc universe trending` = by hand
     days: trading
     ttl: 1h
-    # context_ttl default for universe_tier: 1 session, supersede latest. A failed run
-    # writes nothing; yesterday's entry has expired, so the tier is empty today.
+    # D64 (E14.7): the trending entry lives 48 h; each run merges the previous run's
+    # entry (universe.carryover above). A failed run writes nothing, so the previous
+    # list stays valid until its 48 h end.
+    context: {ttl: 48h, supersede: latest}
     reads: [retail_buzz, universe_tier]
     writes: [universe_tier, active_universe]   # re-resolves today's active list after the write
     pool: 40                    # first 40 in rank order get the tier's screen
@@ -704,6 +720,8 @@ personas:
     notify: card
     reads: [channel_brief, options_daily, vx_curve, vol_term, retail_buzz, retail_sentiment, universe_tier, active_universe]   # retail_buzz: D58, context only (E13.20); retail_sentiment: E14.6, read only with personas.retail_sentiment_context on
     writes: [scout_read, candidate, note, universe_tier, active_universe]   # universe_tier: discovery only; active_universe: re-resolve after
+    context_kinds:              # D64 (E14.7): discovery lives 48 h and merges the previous run (universe.carryover)
+      universe_tier: {ttl: 48h, supersede: latest}
   scalp:                        # D31: every 30 min in session (15 runs), after the fast sources
     label: Scalp
     about: "Reads fresh news and filings; writes candidate ideas and story digests"

@@ -82,6 +82,23 @@ class UniverseActiveRow(BaseModel):
         description="E14.6: Stocktwits `ST 80% bull (10 tagged, 2.7h)` from the newest "
         "unexpired retail_sentiment entry (null = none); context only",
     )
+    # D64 (E14.7): discovery / trending two-run carry-over, copied from the stored member
+    score: float | None = Field(
+        None, description="D64: combined score used for ranking (0.6 x today + 0.4 x prev)"
+    )
+    score_today: float | None = Field(
+        None, description="D64: this run's own score (null = carried from the previous run)"
+    )
+    score_prev: float | None = Field(
+        None, description="D64: the previous run's own score (null = not in the previous run)"
+    )
+    runs: list[str] | None = Field(
+        None, description="D64: run dates (ET, ISO) that listed the name (1 or 2)"
+    )
+    stance: str | None = Field(None, description="D64 discovery: the Scout's stance")
+    origins: list[str] | None = Field(
+        None, description="D64 discovery: the Scout's origins (youtube:<slug>)"
+    )
 
 
 class UniverseDroppedRow(BaseModel):
@@ -299,6 +316,12 @@ def _active_row(
         velocity=vel[0] if vel else None,
         velocity_detail=vel[1] if vel else None,
         sentiment=(sentiment or {}).get(m.ticker),
+        score=m.score,
+        score_today=m.score_today,
+        score_prev=m.score_prev,
+        runs=[d.isoformat() for d in m.runs] or None,
+        stance=m.stance,
+        origins=list(m.origins) or None,
     )
 
 

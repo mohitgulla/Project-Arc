@@ -1,5 +1,30 @@
 {
   "$defs": {
+    "CarryoverKnobs": {
+      "additionalProperties": false,
+      "description": "D64: the carry-over knobs a merged ``universe_tier`` entry was built with.",
+      "properties": {
+        "w_prev": {
+          "title": "W Prev",
+          "type": "number"
+        },
+        "w_today": {
+          "title": "W Today",
+          "type": "number"
+        },
+        "window_h": {
+          "title": "Window H",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "window_h",
+        "w_today",
+        "w_prev"
+      ],
+      "title": "CarryoverKnobs",
+      "type": "object"
+    },
     "Tier": {
       "description": "Universe tiers, highest precedence first (D58: trending is last).",
       "enum": [
@@ -42,6 +67,14 @@
           "description": "trending: inputs that listed the name",
           "title": "Inputs"
         },
+        "origins": {
+          "description": "discovery: the Scout's origins (youtube:<slug>)",
+          "items": {
+            "type": "string"
+          },
+          "title": "Origins",
+          "type": "array"
+        },
         "rank": {
           "minimum": 1,
           "title": "Rank",
@@ -52,9 +85,70 @@
           "title": "Reason",
           "type": "string"
         },
+        "runs": {
+          "description": "run dates (ET) that listed the name (1 or 2)",
+          "items": {
+            "format": "date",
+            "type": "string"
+          },
+          "title": "Runs",
+          "type": "array"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "combined score used for ranking (4 dp)",
+          "title": "Score"
+        },
+        "score_prev": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the previous run's own score (None = not in the previous run)",
+          "title": "Score Prev"
+        },
+        "score_today": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "this run's own score (None = not in this run, carried)",
+          "title": "Score Today"
+        },
         "source": {
           "title": "Source",
           "type": "string"
+        },
+        "stance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "discovery: the Scout's stance",
+          "title": "Stance"
         },
         "ticker": {
           "title": "Ticker",
@@ -94,6 +188,29 @@
       },
       "title": "Members",
       "type": "array"
+    },
+    "merge": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CarryoverKnobs"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "merged_from": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Merged From"
     },
     "partial": {
       "default": false,
