@@ -384,6 +384,19 @@
           "title": "Occ Symbol",
           "type": "string"
         },
+        "penny_program": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "D66: the contract's Penny Program flag (Alpaca `ppind`), set by arc.pipeline.market.price_structure from the chain. None = unknown (the single-leg grid then falls back to the wider standard increments). Left out of dumps when None, so proposal hashes of older proposals are unchanged.",
+          "title": "Penny Program"
+        },
         "premium": {
           "anyOf": [
             {

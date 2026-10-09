@@ -24,7 +24,7 @@ from hypothesis import strategies as st
 from arc.config import ArcSettings
 from arc.data.base import OptionContract, UnderlyingQuote
 from arc.gate.inputs import MarketSnapshot, Quote
-from arc.gate.rules import combo_nbbo, price_band
+from arc.gate.rules import combo_nbbo, grid_for, price_band
 from arc.models import Leg, LegIntent
 from arc.pipeline.market import (
     LegQuote,
@@ -264,7 +264,10 @@ def test_bad_read_band_starts_outside_the_market() -> None:
     s = cfg()
     bad, _ = _priced("bad")
     good, _ = _priced("good")
-    limit = limit_price(bad.structure.net_debit_credit, s.limit_tick)
+    limit = limit_price(
+        bad.structure.net_debit_credit,
+        grid_for(bad.structure.legs, market_snapshot(bad.contracts, {}), s),
+    )
     band = price_band(bad.structure.legs, limit, market_snapshot(bad.contracts, {}), s)
     lo, hi = combo_nbbo(good.structure.legs, market_snapshot(good.contracts, {})) or (None, None)
     assert lo is not None and hi is not None
@@ -308,11 +311,12 @@ def test_band_from_sane_quotes_stays_inside_the_combo_nbbo(
         (leg.ratio * (q.bid + q.ask) / 2 * (1 if leg.side == LegIntent.LONG else -1))
         for leg, q in book
     )
-    limit = limit_price(D(net), s.limit_tick)
+    grid = grid_for(legs, snap, s)
+    limit = limit_price(D(net), grid)
     band = price_band(legs, limit, snap, s)
     nbbo = combo_nbbo(legs, snap)
     assert nbbo is not None
     lo, hi = nbbo
     assert lo <= band.lo <= band.hi <= hi, (band, nbbo)
-    for p in band.ladder(D(str(s.limit_tick))):
+    for p in band.ladder(grid):
         assert lo <= p <= hi

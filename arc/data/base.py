@@ -53,6 +53,8 @@ class OptionContract(BaseModel):
     # Volume / interest
     open_interest: int | None = None
     volume: int | None = None
+    # D66: Penny Program class (Alpaca contracts `ppind`); None = unknown
+    penny_program: bool | None = None
 
     # Volatility and Greeks
     implied_volatility: float | None = None

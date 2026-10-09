@@ -128,6 +128,10 @@ def build_mleg_request(order: MlegOrder) -> LimitOrderRequest:
     """
     tif = _TIF_MAP.get(order.time_in_force.lower(), TimeInForce.DAY)
     client_order_id = order.client_order_id or f"arc-{uuid.uuid4().hex[:12]}"
+    # D66: Alpaca rejects a limit with 3 or more decimal places. Never send one.
+    if order.limit_price != order.limit_price.quantize(Decimal("0.01")):
+        msg = f"limit {order.limit_price} has more than 2 decimal places"
+        raise ValueError(msg)
     if len(order.legs) == 1 and order.legs[0].ratio_qty == 1:
         (leg,) = order.legs
         return LimitOrderRequest(

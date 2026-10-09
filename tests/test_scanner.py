@@ -746,6 +746,96 @@ class TestAlpacaEnrichment:
         assert second.underlying_symbols == ["SPY"]
 
     @patch.dict("os.environ", {"ALPACA_API_KEY": "k", "ALPACA_SECRET_KEY": "s"})
+    @patch("arc.data.alpaca.now_et", lambda: FROZEN_NOW)
+    def test_ppind_parsed_from_raw_contracts_page(self) -> None:
+        """D66: ``ppind`` from a recorded paper contracts page (COIN true, APP false)."""
+        from pathlib import Path
+
+        from alpaca.trading.client import TradingClient
+
+        from arc.data.alpaca import AlpacaMarketData
+
+        page = json.loads(
+            (Path(__file__).parent / "fixtures/alpaca/option_contracts_ppind.json").read_text()
+        )
+        syms = [c["symbol"] for c in page["option_contracts"]]
+
+        class FakeTrading(TradingClient):
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            def get(self, path: str, data: object = None, **_: object) -> object:  # type: ignore[override]
+                assert isinstance(data, dict)
+                self.calls.append((path, data))
+                return page
+
+        def _snap() -> MagicMock:
+            s = MagicMock()
+            s.latest_quote.bid_price = 1.0
+            s.latest_quote.ask_price = 1.1
+            s.latest_quote.timestamp = FROZEN_NOW
+            s.latest_trade = None
+            s.greeks.delta = 0.3
+            s.implied_volatility = 0.5
+            return s
+
+        option = MagicMock()
+        option.get_option_chain.return_value = {s: _snap() for s in syms}
+        raw = MagicMock()
+        raw.get_option_chain.return_value = {}
+        trading = FakeTrading()
+        md = AlpacaMarketData(
+            option_client=option,
+            stock_client=MagicMock(),
+            contracts_client=trading,
+            raw_option_client=raw,
+        )
+        chain = {
+            c.symbol: c
+            for c in md.option_chain("COIN", dt.date(2026, 10, 16), dt.date(2026, 10, 16))
+        }
+        assert chain["COIN261016C00045000"].penny_program is True
+        assert chain["APP261016C00170000"].penny_program is False
+        assert chain["COIN261016C00045000"].open_interest == 6
+        assert chain["APP261016C00175000"].open_interest is None
+        ((path, params),) = trading.calls
+        assert path == "/options/contracts"
+        assert params["underlying_symbols"] == "COIN" and params["limit"] == 10_000
+
+    @patch.dict("os.environ", {"ALPACA_API_KEY": "k", "ALPACA_SECRET_KEY": "s"})
+    @patch("arc.data.alpaca.now_et", lambda: FROZEN_NOW)
+    def test_ppind_unknown_without_raw_client(self) -> None:
+        """A parsed-model client (no ``ppind`` attribute) leaves the flag unknown."""
+        from arc.data.alpaca import AlpacaMarketData
+
+        sym = "COIN261016C00045000"
+        snap = MagicMock()
+        snap.latest_quote.bid_price = 1.0
+        snap.latest_quote.ask_price = 1.1
+        snap.latest_quote.timestamp = FROZEN_NOW
+        snap.latest_trade = None
+        snap.implied_volatility = 0.5
+        option = MagicMock()
+        option.get_option_chain.return_value = {sym: snap}
+        page = MagicMock(spec=["option_contracts", "next_page_token"])
+        page.option_contracts = [
+            MagicMock(spec=["symbol", "open_interest"], symbol=sym, open_interest="5")
+        ]
+        page.next_page_token = None
+        contracts = MagicMock()
+        contracts.get_option_contracts.return_value = page
+        raw = MagicMock()
+        raw.get_option_chain.return_value = {}
+        md = AlpacaMarketData(
+            option_client=option,
+            stock_client=MagicMock(),
+            contracts_client=contracts,
+            raw_option_client=raw,
+        )
+        (c,) = md.option_chain("COIN", dt.date(2026, 10, 16), dt.date(2026, 10, 16))
+        assert c.penny_program is None and c.open_interest == 5
+
+    @patch.dict("os.environ", {"ALPACA_API_KEY": "k", "ALPACA_SECRET_KEY": "s"})
     def test_injected_option_client_skips_enrichment(self) -> None:
         from arc.data.alpaca import AlpacaMarketData
 

@@ -49,6 +49,7 @@ from arc.context.ttl import to_db
 from arc.execution.submission import SubmitRefused, attempt_order_id, submit
 from arc.gate.band import PriceBand
 from arc.gate.rules import proposal_hash as hash_proposal
+from arc.gate.ticks import TickGrid, legs_grid
 from arc.gate.token import BandToken, TokenError, parse_any
 from arc.journal.outcomes import record_close_outcome
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
@@ -396,7 +397,7 @@ def _settle(c: _Ctx, a: AttemptRecord, st: BrokerOrderStatus) -> str:
 def _fresh_band(
     c: _Ctx,
     band: PriceBand,
-    tick: Decimal,
+    grid: TickGrid,
     *,
     priced_at: _dt.datetime | None,
     fresh_mid: Callable[[], Decimal | None] | None,
@@ -413,7 +414,7 @@ def _fresh_band(
     except Exception as exc:  # noqa: BLE001 - no quote = fail closed, never widen
         log.warning("execution.reprice_failed", proposal_hash=c.phash, error=str(exc))
         mid = None
-    walk = band.reanchor(mid, tick) if mid is not None else None
+    walk = band.reanchor(mid, grid) if mid is not None else None
     if walk is None:
         why = f"mid {mid:+}" if mid is not None else "no usable mid"
         c.stale_detail = (
@@ -502,11 +503,16 @@ def execute(
         return ExecutionOutcome(phash, ExecStatus.ALREADY, band, t, detail="already executed")
 
     out = ExecutionOutcome(phash, ExecStatus.CANCELLED, band, t)
-    tick = Decimal(str(config.limit_tick))
-    walk = _fresh_band(c, band, tick, priced_at=priced_at, fresh_mid=fresh_mid)
-    ladder = walk.ladder(tick) if walk is not None else ()
+    grid = legs_grid(proposal.structure.legs, config.ticks)  # D66: the order's exchange grid
+    walk = _fresh_band(c, band, grid, priced_at=priced_at, fresh_mid=fresh_mid)
+    ladder = walk.ladder(grid) if walk is not None else ()
     if walk is None:
         out.detail = c.stale_detail
+    elif not ladder:
+        out.detail = (
+            f"band {walk.lo:+} .. {walk.hi:+} holds no exchange-valid price "
+            f"({grid.describe(walk.lo)}); not sent"
+        )
     for step, price in enumerate(ladder):
         blocked = _budget_blocks(c, kind)
         if blocked is not None:

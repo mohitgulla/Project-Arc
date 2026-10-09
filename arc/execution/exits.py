@@ -260,7 +260,7 @@ def propose_close(
     left without a pending exit, so the next tick re-prices and tries again.
     """
     from arc.gate.halt import evaluate_with_halt
-    from arc.gate.rules import price_band, proposal_hash
+    from arc.gate.rules import grid_for, price_band, proposal_hash
     from arc.gate.token import issue_token
     from arc.pipeline.market import limit_price, market_snapshot
     from arc.store.execution import OpenStructureRepo
@@ -283,8 +283,8 @@ def propose_close(
         return CloseOutcome(None, False, problems, line, alert)
     day = now.astimezone(ET).date().isoformat()
     close = priced.structure
-    limit = limit_price(close.net_debit_credit, settings.limit_tick)
     snap = market_snapshot(priced.contracts, {})
+    limit = limit_price(close.net_debit_credit, grid_for(close.legs, snap, settings))
     band = price_band(close.legs, limit, snap, settings)
     n = int(row["contracts"])
     proposal = Proposal(
