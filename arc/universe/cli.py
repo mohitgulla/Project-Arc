@@ -338,13 +338,15 @@ def _run_trending(args: argparse.Namespace, settings: ArcSettings, now: _dt.date
     read-only and print the score table (writes nothing). Otherwise run the
     ``universe.trending`` routine."""
     if not args.dry_run:
-        if args.no_screen or args.now or args.scoring:
-            _out(
-                {"error": "--no-screen / --now / --scoring are only valid with --dry-run"},
-                args.json,
-            )
+        if args.no_screen or args.scoring:
+            _out({"error": "--no-screen / --scoring are only valid with --dry-run"}, args.json)
             return 2
-        return _run_tier_job(args, "universe.trending", "trending")
+        if args.now and not args.db:
+            # D64 (E14.7): a run "as of" another time writes to the store; only on an
+            # explicit (scratch) --db, never the default live store.
+            _out({"error": "--now on a real run needs an explicit --db (a scratch copy)"}, True)
+            return 2
+        return _run_tier_job(args, "universe.trending", "trending", now=_parse_now(args.now, now))
     from arc.control.effective import effective_settings
     from arc.routines.config import load_routines
     from arc.routines.handlers import run_trending_tier
@@ -513,7 +515,9 @@ def _run_momentum_job(args: argparse.Namespace) -> int:
     return 0 if out is not None and out.status == "ok" else 1
 
 
-def _run_tier_job(args: argparse.Namespace, job: str, subject: str) -> int:
+def _run_tier_job(
+    args: argparse.Namespace, job: str, subject: str, *, now: _dt.datetime | None = None
+) -> int:
     """Run *job* through the dispatcher and print the ``universe_tier`` it wrote."""
     import argparse as _argparse
 
@@ -525,7 +529,7 @@ def _run_tier_job(args: argparse.Namespace, job: str, subject: str) -> int:
         db=args.db, config=None, now=None, no_slack=args.no_slack, lock_dir=str(DEFAULT_LOCK_DIR)
     )
     conn = _conn(rargs)
-    outcomes = _dispatcher(rargs, conn).run_manual(job, now=now_et())
+    outcomes = _dispatcher(rargs, conn).run_manual(job, now=now or now_et())
     out = outcomes[-1] if outcomes else None
     info: dict[str, object] = {"run": _outcome_json(out) if out else None}
     row = conn.execute(
@@ -541,13 +545,30 @@ def _run_tier_job(args: argparse.Namespace, job: str, subject: str) -> int:
             "as_of": pay.source_as_of.isoformat() if pay.source_as_of else None,
             "names": len(pay.members),
             "partial": pay.partial,
+            "merged_from": pay.merged_from,
             "members": [
-                {"rank": m.rank, "ticker": m.ticker, "reason": m.reason, "inputs": m.inputs}
+                {
+                    "rank": m.rank,
+                    "ticker": m.ticker,
+                    "reason": m.reason,
+                    "inputs": m.inputs,
+                    "score": m.score,
+                    "score_today": m.score_today,
+                    "score_prev": m.score_prev,
+                    "runs": [d.isoformat() for d in m.runs],
+                }
                 for m in pay.members
             ],
             **{
                 k: out.metrics.get(k)
-                for k in ("added", "removed", "input_errors", "active", "active_trending")
+                for k in (
+                    "added",
+                    "removed",
+                    "carried",
+                    "input_errors",
+                    "active",
+                    "active_trending",
+                )
             },
         }
     _print_tier(info, args.json)
@@ -565,4 +586,8 @@ def _print_tier(info: dict[str, object], as_json: bool) -> None:
             if "weight" in m
             else str(m.get("reason", ""))
         )
+        if m.get("score") is not None:  # D64: combined = today / prev
+            today = "-" if m["score_today"] is None else f"{m['score_today']:.3f}"
+            prev = "-" if m["score_prev"] is None else f"{m['score_prev']:.3f}"
+            detail = f"{m['score']:.4f} (today {today} · prev {prev})  {detail}"
         sys.stdout.write(f"{m['rank']:>3} {m['ticker']:<6} {detail}\n")

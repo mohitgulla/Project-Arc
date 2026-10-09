@@ -473,6 +473,22 @@ class TrendingResult:
     # E14.5: symbol -> (velocity, mentions, mentions_24h_ago) from the Reddit input
     velocity: dict[str, Velocity] = field(default_factory=dict)
     buzz: RetailBuzzPayload | None = None  # E14.5: the entry ranked (fastest risers)
+    # D64 (E14.7): today's exclusions (ticker -> why) and the symbol master, so the
+    # carry-over re-checks names kept from the previous run.
+    exclude: dict[str, str] = field(default_factory=dict)
+    master: SymbolMaster | None = None
+
+    def carry_excluded(self, sym: str) -> str | None:
+        """D64: why a name carried from the previous run is dropped today: the market
+        reference or a leveraged / inverse fund (higher tiers are deduped by the
+        resolver; carried names are never re-screened)."""
+        why = self.exclude.get(sym)
+        if why in ("market_reference", EXCLUDED_LEVERAGED):
+            return why
+        info = self.master.get(sym) if self.master is not None else None
+        if info is not None and leveraged(info.name):
+            return EXCLUDED_LEVERAGED
+        return None
 
     @property
     def members(self) -> list[TrendingRow]:
@@ -576,11 +592,15 @@ def run_trending(
         scoring=opts.scoring,
         velocity=buzz_velocities(buzz, opts.velocity),
         buzz=buzz,
+        exclude=excl,
+        master=master,
     )
 
 
 def build_payload(res: TrendingResult, *, now: _dt.datetime) -> UniverseTierPayload:
-    """The ``universe_tier`` (subject ``trending``) entry for *res*."""
+    """The ``universe_tier`` (subject ``trending``) entry for *res* (this run only;
+    D64: each member's ``score_today`` / ``score`` = its trend score, ``runs`` = today;
+    :func:`arc.universe.carryover.apply_carryover` merges the previous run)."""
     from arc.universe.tiers import Tier, TierMember, UniverseTierPayload
 
     members = [
@@ -592,6 +612,9 @@ def build_payload(res: TrendingResult, *, now: _dt.datetime) -> UniverseTierPayl
             reason=r.reason(res.order),
             as_of=res.as_of,
             inputs=r.n_inputs,
+            score=round(r.trend_score, 4),
+            score_today=round(r.trend_score, 4),
+            runs=[res.as_of],
         )
         for i, r in enumerate(res.members, 1)
     ]
@@ -608,22 +631,35 @@ def build_payload(res: TrendingResult, *, now: _dt.datetime) -> UniverseTierPayl
     )
 
 
-def notice_line(res: TrendingResult, previous: Sequence[str] | None) -> str:
-    """``Trending tier: 25 names, 9 in both (+SPCX −RIVN) · inputs reddit, stocktwits``."""
+def notice_line(
+    res: TrendingResult,
+    previous: Sequence[str] | None,
+    *,
+    tickers: Sequence[str] | None = None,
+    carried: Sequence[str] = (),
+) -> str:
+    """``Trending tier: 25 names, 9 in both (+SPCX −RIVN) · inputs reddit, stocktwits``.
+
+    D64: *tickers* = the written (merged) list, compared with *previous*; *carried* =
+    the names kept from the previous run (``· 3 carried``).
+    """
+    cur_list = list(tickers) if tickers is not None else res.tickers
     if previous is None:
         change = "first list"
     else:
-        prev, cur = set(previous), set(res.tickers)
-        moves = [f"+{t}" for t in res.tickers if t not in prev] + [
+        prev, cur = set(previous), set(cur_list)
+        moves = [f"+{t}" for t in cur_list if t not in prev] + [
             f"\u2212{t}" for t in previous if t not in cur
         ]
         change = " ".join(moves[:12]) + (" …" if len(moves) > 12 else "") if moves else "no change"
     both = sum(1 for r in res.members if r.n_inputs >= 2)
     live = [i.name for i in res.inputs if i.live]
     parts = [
-        f"Trending tier: {len(res.members)} names, {both} in both inputs ({change})",
+        f"Trending tier: {len(cur_list)} names, {both} in both inputs ({change})",
         f"inputs {', '.join(live)}",
     ]
+    if carried:
+        parts.append(f"{len(carried)} carried")
     if res.failed_inputs:
         parts.append("no data: " + ", ".join(res.failed_inputs))
     fails = sum(1 for r in res.pool if r.screen_passed is False)

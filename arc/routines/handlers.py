@@ -1655,9 +1655,13 @@ def universe_trending_source(ctx: JobContext) -> JobResult:
     (subject ``trending``), then re-resolve today's active list.
 
     Journals every admission / screen fail / leveraged drop and posts the daily diff as
-    a notice. 0 live inputs raises: ``failed`` + alerted, nothing written, the tier is
-    empty today (yesterday's entry has expired).
+    a notice. D64 (E14.7): the written list merges the previous run's entry (48 h,
+    ``universe.carryover``); carried names are journaled ``universe:carried_over``.
+    0 live inputs raises: ``failed`` + alerted, nothing written, so the previous entry
+    stays valid until its 48 h end.
     """
+    from arc.universe.carryover import apply_carryover, journal_carried
+    from arc.universe.tiers import Tier
     from arc.universe.trending import (
         build_payload,
         journal_decisions,
@@ -1682,11 +1686,30 @@ def universe_trending_source(ctx: JobContext) -> JobResult:
             digest=i.digest or None,
         )
     previous = previous_members(ctx.conn)
-    line = notice_line(res, previous)
     journaled = journal_decisions(
         ctx.conn, res, at=ctx.now, run_id=ctx.run_id, chain_run_id=ctx.chain_run_id
     )
-    ctx.write("universe_tier", "trending", build_payload(res, now=ctx.now))
+    # D64 (E14.7): merge the previous run's entry (<= 48 h, earlier ET day) on top
+    payload, merged = apply_carryover(
+        ctx.conn,
+        build_payload(res, now=ctx.now),
+        now=ctx.now,
+        cfg=ctx.routines.universe.carryover,
+        size=ctx.settings.universe_trending_size,
+        excluded=res.carry_excluded,
+    )
+    tickers = [m.ticker for m in payload.members]
+    carried = [m.ticker for m in merged.carried]
+    journaled["universe:carried_over"] = journal_carried(
+        ctx.conn,
+        merged,
+        tier=Tier.TRENDING,
+        at=ctx.now,
+        run_id=ctx.run_id,
+        chain_run_id=ctx.chain_run_id,
+    )
+    line = notice_line(res, previous, tickers=tickers, carried=carried)
+    ctx.write("universe_tier", "trending", payload)
     active = resolve_universe(ctx)
     prev = set(previous or [])
     kept = sum(1 for m in active.members if m.tier.value == "trending")
@@ -1694,11 +1717,15 @@ def universe_trending_source(ctx: JobContext) -> JobResult:
         summary=f"{line} · active {len(active.members)} ({kept} trending)",
         notice=line,
         metrics={
-            "names": len(res.members),
+            "names": len(tickers),
             "both_inputs": sum(1 for r in res.members if r.n_inputs >= 2),
-            "tickers": res.tickers,
-            "added": [t for t in res.tickers if t not in prev],
-            "removed": [t for t in (previous or []) if t not in set(res.tickers)],
+            "tickers": tickers,
+            "run_tickers": res.tickers,
+            "carried": carried,
+            "carry_excluded": merged.excluded,
+            "merged_from": payload.merged_from,
+            "added": [t for t in tickers if t not in prev],
+            "removed": [t for t in (previous or []) if t not in set(tickers)],
             "ranked": len(res.ranked),
             "pool": len(res.pool),
             "screen_fail": sum(1 for r in res.pool if r.screen_passed is False),
@@ -2263,6 +2290,7 @@ def scout_persona(
     from arc.pipeline.store import PersonaCallRepo, sha256
     from arc.slack.digests import TrendingFact, scout_card
     from arc.store.repos import CandidateRepo
+    from arc.universe.carryover import apply_carryover, journal_carried
     from arc.universe.guard import UniverseGuard
     from arc.universe.tiers import (
         Tier,
@@ -2444,12 +2472,19 @@ def scout_persona(
             source="scout",
             reason=f"{c.stance.value} · {', '.join(c.origins)} · score {c.confidence:.2f}",
             as_of=today,
+            score=round(c.confidence, 4),
+            score_today=round(c.confidence, 4),
+            runs=[today],
+            stance=c.stance.value,
+            origins=list(c.origins),
         )
         for i, c in enumerate(disc.members, 1)
     ]
-    ctx.write(
-        "universe_tier",
-        Tier.DISCOVERY.value,
+    # D64 (E14.7): merge the previous run's discovery entry (<= 48 h, earlier ET day);
+    # carried names are re-checked against today's exclusions only (never re-screened)
+    # and get no candidate row (they are in the active list).
+    tier_payload, merged = apply_carryover(
+        ctx.conn,
         UniverseTierPayload(
             tier=Tier.DISCOVERY,
             members=members,
@@ -2457,7 +2492,20 @@ def scout_persona(
             source="scout",
             digest=sha256(",".join(disc.tickers)),
         ),
+        now=ctx.now,
+        cfg=ctx.routines.universe.carryover,
+        size=settings.universe_discovery_size,
+        excluded=lambda sym: "excluded" if sym in excluded else None,
     )
+    journal_carried(
+        ctx.conn,
+        merged,
+        tier=Tier.DISCOVERY,
+        at=ctx.now,
+        run_id=ctx.run_id,
+        chain_run_id=ctx.chain_run_id,
+    )
+    ctx.write("universe_tier", Tier.DISCOVERY.value, tier_payload)
     active = resolve_universe(ctx)
 
     # -- candidates (feed=scout) -------------------------------------------

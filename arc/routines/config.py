@@ -84,6 +84,7 @@ from arc.context.store import Supersede
 from arc.context.ttl import Ttl, parse_duration
 from arc.monitoring.config import MonitoringSettings
 from arc.routines.conditions import parse_condition
+from arc.universe.tiers import CarryoverSettings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -318,6 +319,9 @@ class StepSpec(BaseModel):
     model_config = ConfigDict(extra="allow", frozen=True)
 
     context: ContextPolicy | None = None
+    # D64 (E14.7): per-kind producer policy, for a job that writes several kinds but
+    # overrides only one (the Scout's universe_tier 48 h). Beats `context:` for its kinds.
+    context_kinds: dict[str, ContextPolicy] = Field(default_factory=dict)
     reads: list[str] | None = None
     # D27: kinds this unit may write. None = undeclared -> ANY write fails the run;
     # [] = writes nothing. Enforced in JobContext.write (fail-closed).
@@ -344,6 +348,17 @@ class StepSpec(BaseModel):
             msg = f"{info.field_name} lists a kind twice"
             raise ValueError(msg)
         return v
+
+    @model_validator(mode="after")
+    def _context_kinds(self) -> StepSpec:
+        for kind in self.context_kinds:
+            if kind not in KINDS:
+                msg = f"unknown context kind {kind!r} in context_kinds"
+                raise ValueError(msg)
+            if kind not in (self.writes or []):
+                msg = f"context_kinds: {kind!r} is not in this job's writes"
+                raise ValueError(msg)
+        return self
 
     @field_validator("handler")
     @classmethod
@@ -889,6 +904,15 @@ class OptionsFastSettings(BaseModel):
     max_csv_bytes: Annotated[int, Field(ge=1_000_000, le=100_000_000)] = 20_000_000
 
 
+class RoutinesUniverseSettings(BaseModel):
+    """D64 (E14.7): the ``universe:`` block (tier-writer knobs shared by the Scout's
+    discovery tier and ``universe.trending``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    carryover: CarryoverSettings = Field(default_factory=CarryoverSettings)
+
+
 class RoutinesConfig(BaseModel):
     """Top-level ``config/routines.yaml``."""
 
@@ -931,6 +955,7 @@ class RoutinesConfig(BaseModel):
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)  # D56 (E13.3)
     options_slow: OptionsSlowSettings = Field(default_factory=OptionsSlowSettings)  # E13.5
     options_fast: OptionsFastSettings = Field(default_factory=OptionsFastSettings)  # E13.6
+    universe: RoutinesUniverseSettings = Field(default_factory=RoutinesUniverseSettings)  # D64
 
     @model_validator(mode="before")
     @classmethod
@@ -1341,9 +1366,12 @@ class RoutinesConfig(BaseModel):
         return [r for r in self.all_triggers() if r.on == event]
 
     def context_policy(self, kind: str, job: str | None = None) -> ContextPolicy:
-        """Producer policy for *kind*: job/step override > ``context_ttl`` > none."""
+        """Producer policy for *kind*: job/step ``context_kinds`` > job/step ``context``
+        > ``context_ttl`` > none."""
         if job is not None:
             spec = self.step(job)[1]
+            if kind in spec.context_kinds:
+                return spec.context_kinds[kind]
             if spec.context is not None:
                 return spec.context
         return self.context_ttl.get(kind, ContextPolicy())

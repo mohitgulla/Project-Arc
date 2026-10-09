@@ -34,7 +34,7 @@ import datetime as _dt  # noqa: TC003 - pydantic resolves the field types at run
 import enum
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
@@ -54,6 +54,8 @@ __all__ = [
     "SEED_TIERS",
     "TIER_ORDER",
     "ActiveUniverse",
+    "CarryoverKnobs",
+    "CarryoverSettings",
     "DroppedMember",
     "Tier",
     "TierInputs",
@@ -126,6 +128,53 @@ class TierMember(BaseModel):
     )
     # v3 (E13.19): trending members say how many retail_buzz inputs listed them (2|1)
     inputs: int | None = Field(None, ge=1, description="trending: inputs that listed the name")
+    # v4 (D64, E14.7): discovery / trending two-run carry-over (None on other tiers and
+    # on pre-D64 rows; arc.universe.carryover parses those rows' score from `reason`).
+    score: float | None = Field(None, description="combined score used for ranking (4 dp)")
+    score_today: float | None = Field(
+        None, description="this run's own score (None = not in this run, carried)"
+    )
+    score_prev: float | None = Field(
+        None, description="the previous run's own score (None = not in the previous run)"
+    )
+    runs: list[_dt.date] = Field(
+        default_factory=list, description="run dates (ET) that listed the name (1 or 2)"
+    )
+    stance: str | None = Field(None, description="discovery: the Scout's stance")
+    origins: list[str] = Field(
+        default_factory=list, description="discovery: the Scout's origins (youtube:<slug>)"
+    )
+
+
+class CarryoverKnobs(BaseModel):
+    """D64: the carry-over knobs a merged ``universe_tier`` entry was built with."""
+
+    model_config = _FORBID
+
+    window_h: int
+    w_today: float
+    w_prev: float
+
+
+class CarryoverSettings(BaseModel):
+    """D64 (E14.7): ``universe.carryover`` in ``config/routines.yaml`` (D26 tunables).
+
+    Read by both writers of a merged tier (the Scout's discovery, ``universe.trending``);
+    :mod:`arc.universe.carryover` applies it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = True
+    window_h: Annotated[int, Field(ge=24, le=96)] = 48
+    w_today: Annotated[float, Field(ge=0.5, le=1.0)] = 0.6
+
+    @property
+    def w_prev(self) -> float:
+        return round(1.0 - self.w_today, 6)
+
+    def knobs(self) -> CarryoverKnobs:
+        return CarryoverKnobs(window_h=self.window_h, w_today=self.w_today, w_prev=self.w_prev)
 
 
 class UniverseTierPayload(BaseModel):
@@ -147,6 +196,10 @@ class UniverseTierPayload(BaseModel):
     # than the tier wants (Schwab fallback: first 20 rows only).
     url: str = ""
     partial: bool = False
+    # v4 (D64, E14.7): the previous entry merged into this one (None = none within the
+    # window, or carry-over off) and the knobs used (None = carry-over off).
+    merged_from: str | None = None
+    merge: CarryoverKnobs | None = None
 
 
 class DroppedMember(BaseModel):
