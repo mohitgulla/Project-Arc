@@ -574,7 +574,7 @@ def test_handler_end_to_end(conn: sqlite3.Connection, pages: dict[str, bytes | E
     assert out.metrics["stale"] is False and out.metrics["partial"] is True
     assert any("Momentum tier: first list · 24 names · as of Oct 2" in t for _, t in notifier.posts)
     entry = ContextStore(conn).query(as_of=NOW, kinds=["universe_tier"])[0]
-    assert entry.subject == "momentum" and entry.schema_version == 4
+    assert entry.subject == "momentum" and entry.schema_version == 5
     assert entry.expires_at is not None and (entry.expires_at - NOW).days == 35
     active = ContextStore(conn).query(as_of=NOW, kinds=["active_universe"])[0]
     assert active.expires_at is not None and (active.expires_at - NOW) < dt.timedelta(days=1)

@@ -562,11 +562,30 @@ def add_universe(conn: sqlite3.Connection, now: dt.datetime) -> None:
         for i, t in enumerate(yaml_core(ArcSettings()), 1)
     ]  # fmt: skip
     d_at = now - dt.timedelta(hours=3)
+    prev = today - dt.timedelta(days=1)
+    # D64 (E14.8): two-run scores, stance and origins; #3 (NBIS) is carried from yesterday
     disc = [
         TierMember(ticker=t, tier=Tier.DISCOVERY, rank=i, source="scout",
-                   reason=f"YouTube call, confidence {0.9 - 0.04 * i:.2f}", as_of=today)
+                   reason=f"YouTube call, confidence {0.9 - 0.04 * i:.2f}", as_of=today,
+                   score=round(0.9 - 0.04 * i, 4),
+                   score_today=None if i == 3 else round(0.9 - 0.04 * i, 4),
+                   score_prev=0.7 if i in (1, 3) else None,
+                   runs=[prev] if i == 3 else ([prev, today] if i == 1 else [today]),
+                   stance="bearish" if i == 2 else "bullish",
+                   origins=["youtube:arete", "youtube:fxevolution"] if i == 1 else ["youtube:arete"])
         for i, t in enumerate(DISCOVERY_FIXTURE, 1)
     ]  # fmt: skip
+    # E14.8: Stocktwits readings for Today's Pick / Ops › Universe (80 % / 30 % / too few)
+    for t, bull, bear in (("QCOM", 8, 2), ("CRWV", 3, 7), ("NBIS", 1, 1)):
+        s_at = now - dt.timedelta(hours=2)
+        store.write(
+            kind="retail_sentiment", subject=t, produced_by="retail_sentiment",
+            payload={"as_of": s_at.isoformat(), "messages": 30, "tagged": bull + bear,
+                     "bullish": bull, "bearish": bear,
+                     "bull_ratio": round(bull / (bull + bear), 4) if bull + bear >= 5 else None,
+                     "min_tagged": 5, "window_minutes": 160.0},
+            ttl=Ttl(duration=dt.timedelta(hours=26)), valid_from=s_at, now=s_at,
+        )  # fmt: skip
     store.write(
         kind="universe_tier", subject="discovery", produced_by="scout",
         payload=UniverseTierPayload(

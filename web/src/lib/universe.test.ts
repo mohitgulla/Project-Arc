@@ -1,7 +1,22 @@
 // E12.6: Universe page helpers (summary line, tier order, chip detail, override warning).
 import { describe, expect, it } from "vitest";
 
-import { discoveryFillLine, pickHeader, pickRow, pickSections, tailCutDetail } from "./universe";
+import {
+  discoveryFillLine,
+  inputsLabel,
+  pickHeader,
+  pickRow,
+  pickScore,
+  pickSections,
+  rowDetail,
+  sentimentText,
+  sentimentTone,
+  sourcesLabel,
+  stancePill,
+  tailCutDetail,
+  todayPrev,
+  weightText,
+} from "./universe";
 
 import {
   CORE_KEY_LABEL,
@@ -14,7 +29,8 @@ import {
   resolveLabel,
   sortTiers,
   summaryLine,
-  tierCounts,
+  tierActiveLine,
+  tierCountLine,
   tierLabel,
   type UniverseActive,
   type UniverseTier,
@@ -23,8 +39,9 @@ import {
 function tier(name: string, active: number, extra: Partial<UniverseTier> = {}): UniverseTier {
   return {
     name,
-    offered: active,
+    listed: active,
     active,
+    carried: 0,
     size_cap: null,
     source: null,
     url: null,
@@ -38,7 +55,7 @@ function tier(name: string, active: number, extra: Partial<UniverseTier> = {}): 
 }
 
 function m(ticker: string, t: string, rank: number, extra: Partial<UniverseActive> = {}): UniverseActive {
-  return { ticker, tier: t, rank, source: "x", reason: "", also_in: [], ...extra };
+  return { ticker, tier: t, rank, source: "x", reason: "", also_in: [], carried: false, picked_20d: 0, proposals_20d: 0, ...extra };
 }
 
 describe("universe page helpers", () => {
@@ -69,8 +86,14 @@ describe("universe page helpers", () => {
   });
 
   it("formats tier counts, drop reasons and the market reference", () => {
-    expect(tierCounts(tier("momentum", 17, { offered: 24, size_cap: 25 }))).toBe("offered 24 · active 17 / 25");
-    expect(tierCounts(tier("discovery", 8, { offered: 10 }))).toBe("offered 10 · active 8");
+    expect(tierCountLine(tier("momentum", 17, { listed: 24, size_cap: 20 }))).toBe("top 20 of 24 listed");
+    expect(tierCountLine(tier("momentum", 11, { listed: 12, size_cap: 20 }))).toBe("top 12 of 12 listed");
+    expect(tierCountLine(tier("core", 20))).toBe("20 names");
+    expect(tierCountLine(tier("discovery", 8, { listed: 10, carried: 3 }))).toBe("10 names (3 carried)");
+    expect(tierCountLine(tier("trending", 14, { listed: 14 }))).toBe("14 names");
+    expect(tierActiveLine(tier("momentum", 11, { size_cap: 20 }))).toBe("active 11 / 20");
+    expect(tierActiveLine(tier("discovery", 8))).toBe("active 8");
+    for (const n of ["core", "momentum", "discovery", "trending"]) expect(tierCountLine(tier(n, 5, { size_cap: 20 }))).not.toMatch(/offered/);
     expect(dropLabel("over_active_cap")).toBe("past the active-list cap");
     expect(dropLabel("weird_reason")).toBe("weird reason");
     expect(marketReferenceLine(["SPY", "QQQ"])).toBe("SPY QQQ (regime only, not traded)");
@@ -114,7 +137,7 @@ describe("E13.14 tail cuts + discovery fill", () => {
 });
 
 describe("D59 Today's Pick", () => {
-  const m = (ticker: string, tier: string, rank: number) => ({ ticker, tier, rank, source: "s", reason: "r", also_in: [] });
+  const m = (ticker: string, tier: string, rank: number) => ({ ticker, tier, rank, source: "s", reason: "r", also_in: [], carried: false, picked_20d: 0, proposals_20d: 0 });
   const u = {
     active: [
       m("NVDA", "core", 1),
@@ -156,5 +179,57 @@ describe("D59 Today's Pick", () => {
     });
     expect(pickRow({ source: "scout", reason: "2 videos" })).toEqual({ source: "Scout", detail: "2 videos", score: null });
     expect(pickRow({ source: "scout", reason: "bullish · stockedup · score 0.72" }).score).toBe("0.72");
+  });
+});
+
+describe("E14.8 (D64) Today's Pick score + sentiment, tier table cells", () => {
+  it("tones sentiment at the 60 / 40 thresholds", () => {
+    expect(sentimentTone(80)).toBe("pos");
+    expect(sentimentTone(60)).toBe("pos");
+    expect(sentimentTone(59.9)).toBe("neutral");
+    expect(sentimentTone(50)).toBe("neutral");
+    expect(sentimentTone(40.1)).toBe("neutral");
+    expect(sentimentTone(40)).toBe("neg");
+    expect(sentimentTone(35)).toBe("neg");
+    expect(sentimentTone(null)).toBe("neutral");
+    expect(sentimentTone(undefined)).toBe("neutral");
+  });
+
+  it("prints sentiment as `80% bull` (0 dp) or `—`", () => {
+    expect(sentimentText({ sentiment_bull_pct: 80 })).toBe("80% bull");
+    expect(sentimentText({ sentiment_bull_pct: 34.6 })).toBe("35% bull");
+    expect(sentimentText({ sentiment_bull_pct: null })).toBe("—");
+    expect(sentimentText({})).toBe("—");
+  });
+
+  it("uses the combined score and falls back to the reason for pre-D64 rows", () => {
+    expect(pickScore({ score: 0.9812, source: "s", reason: "reddit #3 · score 0.50" })).toBe("0.98");
+    expect(pickScore({ score: null, source: "s", reason: "reddit #3 · stocktwits #1 · score 0.96" })).toBe("0.96");
+    expect(pickScore({ source: "scout", reason: "2 videos" })).toBeNull();
+  });
+
+  it("formats Today / Prev with carried and new names", () => {
+    expect(todayPrev({ score_today: 0.6, score_prev: 0.7 })).toBe("0.60 / 0.70");
+    expect(todayPrev({ score_today: null, score_prev: 0.7 })).toBe("— / 0.70");
+    expect(todayPrev({ score_today: 0.6 })).toBe("0.60 / —");
+  });
+
+  it("tags carried rows in the detail and shows In tier", () => {
+    const c = m("NBIS", "discovery", 3, { carried: true, runs: ["2026-10-07"], in_tier_20d: 4, reason: "YouTube call" });
+    expect(rowDetail(c)).toEqual(["In tier 4 of the last 20 sessions", "carried from 2026-10-07", "YouTube call"]);
+    const core = m("NVDA", "core", 1, { reason: "core list", in_tier_20d: null });
+    expect(rowDetail(core)).toEqual(["core list"]);
+  });
+
+  it("labels trending inputs, discovery sources, momentum weight and stance", () => {
+    expect(inputsLabel({ source: "reddit+stocktwits", reason: "reddit #3 · stocktwits #1 · score 0.98" })).toBe("Reddit #3 · Stocktwits #1");
+    expect(inputsLabel({ source: "reddit", reason: "reddit #4 · carried from 2026-10-07 · score 0.40" })).toBe("Reddit #4");
+    expect(sourcesLabel({ origin_labels: ["Arete Trading", "FX Evolution"] })).toBe("Arete Trading, FX Evolution");
+    expect(sourcesLabel({ origin_labels: null })).toBe("—");
+    expect(weightText({ weight_pct: 9.48 })).toBe("9.48%");
+    expect(weightText({ weight_pct: null })).toBe("—");
+    expect(stancePill({ stance: "bullish" })).toEqual({ label: "Bullish", tone: "pos" });
+    expect(stancePill({ stance: "bearish" })).toEqual({ label: "Bearish", tone: "neg" });
+    expect(stancePill({ stance: null })).toBeNull();
   });
 });

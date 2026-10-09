@@ -672,12 +672,12 @@ def test_tower_row_copies_member_fields() -> None:
             "origins": ["youtube:arete"],
         }
     )
-    row = _active_row(m, {})
+    row = _active_row(m)
     assert isinstance(row, UniverseActiveRow)
     assert (row.score, row.score_today, row.score_prev) == (0.5, 0.5, 0.4)
     assert row.runs == ["2026-10-08", "2026-10-09"]
     assert row.stance == "bullish" and row.origins == ["youtube:arete"]
     core = _active_row(
-        TierMember(ticker="SPY", tier=Tier.CORE, rank=1, source="s", as_of=THU.date()), {}
+        TierMember(ticker="SPY", tier=Tier.CORE, rank=1, source="s", as_of=THU.date())
     )
     assert core.score is None and core.runs is None and core.origins is None

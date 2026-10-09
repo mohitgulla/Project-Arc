@@ -210,6 +210,12 @@ def universe(cfg: Tower, conn: Conn) -> UniverseResponse:
     from arc.universe.velocity import VelocityOptions
 
     tjob = routines.job("universe.trending")
+    yjob = routines.job("youtube.briefs")
+    labels = {
+        str(c["slug"]): str(c.get("label") or c["slug"])
+        for c in ((yjob[1].options.get("channels") if yjob else None) or [])
+        if isinstance(c, dict) and c.get("slug")
+    }
     return load_universe(
         conn,
         settings,
@@ -218,6 +224,7 @@ def universe(cfg: Tower, conn: Conn) -> UniverseResponse:
         velocity=VelocityOptions.model_validate(
             (tjob[1].options.get("velocity") if tjob else None) or {}
         ),
+        channel_labels=labels,
     )
 
 

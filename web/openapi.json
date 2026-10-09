@@ -14044,6 +14044,24 @@
             "title": "Also In",
             "type": "array"
           },
+          "carried": {
+            "default": false,
+            "description": "E14.8: carried from the previous run only (score_today null)",
+            "title": "Carried",
+            "type": "boolean"
+          },
+          "in_tier_20d": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E14.8: sessions in the last 20 whose in-force `universe_tier` entry for this tier listed the name (null = core, which has no feed)",
+            "title": "In Tier 20D"
+          },
           "inputs": {
             "anyOf": [
               {
@@ -14055,6 +14073,21 @@
             ],
             "description": "D58 trending: retail_buzz inputs that listed the name (2 | 1)",
             "title": "Inputs"
+          },
+          "origin_labels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E14.8 discovery: origins as channel labels (youtube.briefs `label`; an unknown slug reads as itself)",
+            "title": "Origin Labels"
           },
           "origins": {
             "anyOf": [
@@ -14070,6 +14103,18 @@
             ],
             "description": "D64 discovery: the Scout's origins (youtube:<slug>)",
             "title": "Origins"
+          },
+          "picked_20d": {
+            "default": 0,
+            "description": "E14.8: distinct ET days with a `candidates` row, last 20 sessions",
+            "title": "Picked 20D",
+            "type": "integer"
+          },
+          "proposals_20d": {
+            "default": 0,
+            "description": "E14.8: `proposals` rows, last 20 sessions",
+            "title": "Proposals 20D",
+            "type": "integer"
           },
           "rank": {
             "title": "Rank",
@@ -14142,6 +14187,42 @@
             "description": "E14.6: Stocktwits `ST 80% bull (10 tagged, 2.7h)` from the newest unexpired retail_sentiment entry (null = none); context only",
             "title": "Sentiment"
           },
+          "sentiment_age_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E14.8: age of the retail_sentiment entry (null = no entry)",
+            "title": "Sentiment Age S"
+          },
+          "sentiment_bull_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E14.8: Stocktwits bullish share of tagged messages, percent (null = no entry or too few tags)",
+            "title": "Sentiment Bull Pct"
+          },
+          "sentiment_tagged": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E14.8: tagged messages behind the reading (null = no entry)",
+            "title": "Sentiment Tagged"
+          },
           "source": {
             "title": "Source",
             "type": "string"
@@ -14189,6 +14270,18 @@
             ],
             "description": "E14.5 trending: `reddit #20 \u00b7 5.2\u00d7 (157 vs 30)`",
             "title": "Velocity Detail"
+          },
+          "weight_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E14.8 momentum: SPMO weight %, stored by the writer (v5) or parsed from a pre-v5 `SPMO weight 9.48%` reason",
+            "title": "Weight Pct"
           }
         },
         "required": [
@@ -14448,6 +14541,12 @@
             ],
             "title": "Age S"
           },
+          "carried": {
+            "default": 0,
+            "description": "E14.8 (D64): active names carried from the previous run only",
+            "title": "Carried",
+            "type": "integer"
+          },
           "expired": {
             "description": "The latest feed expired: read as empty by the resolve",
             "title": "Expired",
@@ -14466,15 +14565,15 @@
             "description": "Latest universe_tier entry's fetch time",
             "title": "Fetched At"
           },
+          "listed": {
+            "description": "E14.8: rows the tier's feed listed before the size cut (raw_count; the momentum SPMO page lists ~24 for a top-20 tier)",
+            "title": "Listed",
+            "type": "integer"
+          },
           "name": {
             "description": "core | momentum | discovery | trending (precedence order)",
             "title": "Name",
             "type": "string"
-          },
-          "offered": {
-            "description": "Names the tier offered before dedupe and caps (raw_count)",
-            "title": "Offered",
-            "type": "integer"
           },
           "partial": {
             "default": false,
@@ -14531,7 +14630,7 @@
         },
         "required": [
           "name",
-          "offered",
+          "listed",
           "active",
           "size_cap",
           "source",

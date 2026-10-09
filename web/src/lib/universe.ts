@@ -63,10 +63,102 @@ export function memberDetail(m: UniverseActive): string[] {
   return out;
 }
 
-/** Tier header caption: `offered 24 · active 17 / 25`. */
-export function tierCounts(t: UniverseTier): string {
-  const cap = t.size_cap == null ? "" : ` / ${t.size_cap}`;
-  return `offered ${t.offered} · active ${t.active}${cap}`;
+/** E14.8 (D64) tier header count, replacing the old `offered n` caption:
+ *  core `20 names`; momentum `top 20 of 24 listed` (tier size vs the feed's rows);
+ *  discovery / trending `25 names (3 carried)`. */
+export function tierCountLine(t: Pick<UniverseTier, "name" | "listed" | "active" | "size_cap" | "carried">): string {
+  if (t.name === "momentum") {
+    if (t.size_cap == null) return `${t.listed} listed`;
+    return `top ${Math.min(t.size_cap, t.listed)} of ${t.listed} listed`;
+  }
+  if (t.name === "core") return `${t.listed} names`;
+  const carried = t.carried ?? 0;
+  return `${t.listed} names${carried > 0 ? ` (${carried} carried)` : ""}`;
+}
+
+/** `active 11 / 20` (the tier's active-list share vs its size). */
+export function tierActiveLine(t: Pick<UniverseTier, "active" | "size_cap">): string {
+  return `active ${t.active}${t.size_cap == null ? "" : ` / ${t.size_cap}`}`;
+}
+
+// ---------------------------------------------------------------------------
+// E14.8 (D64): per-row values for Today's Pick and the Ops › Universe tables
+// ---------------------------------------------------------------------------
+
+export type SentimentTone = "pos" | "neg" | "neutral";
+
+/** ≥ 60 % bull = pos, ≤ 40 % = neg, otherwise neutral (null = no reading). */
+export function sentimentTone(pct: number | null | undefined): SentimentTone {
+  if (pct == null) return "neutral";
+  if (pct >= 60) return "pos";
+  if (pct <= 40) return "neg";
+  return "neutral";
+}
+
+/** `80% bull` (0 dp) or `—` (no retail_sentiment entry, or too few tags). */
+export function sentimentText(m: Pick<UniverseActive, "sentiment_bull_pct">): string {
+  return m.sentiment_bull_pct == null ? "—" : `${Math.round(m.sentiment_bull_pct)}% bull`;
+}
+
+/** The combined score, 2 dp; pre-D64 rows fall back to the reason's `score x.xx`. */
+export function pickScore(m: Pick<UniverseActive, "score" | "source" | "reason">): string | null {
+  if (m.score != null) return m.score.toFixed(2);
+  return pickRow(m).score;
+}
+
+const fmt2 = (x: number | null | undefined) => (x == null ? "—" : x.toFixed(2));
+
+/** `0.60 / 0.70`, `— / 0.70` (carried), `0.60 / —` (new today). */
+export function todayPrev(m: Pick<UniverseActive, "score_today" | "score_prev">): string {
+  return `${fmt2(m.score_today)} / ${fmt2(m.score_prev)}`;
+}
+
+/** Trending inputs from the reason: `Reddit #3 · Stocktwits #1` (score and carry tag dropped). */
+export function inputsLabel(m: Pick<UniverseActive, "source" | "reason">): string {
+  const d = pickRow(m).detail.replace(/\s*·?\s*carried from \S+/i, "").trim();
+  return d || "—";
+}
+
+/** Discovery sources: channel labels `Arete Trading, FX Evolution`. */
+export function sourcesLabel(m: Pick<UniverseActive, "origin_labels">): string {
+  return m.origin_labels?.length ? m.origin_labels.join(", ") : "—";
+}
+
+/** `9.48%` or `—`. */
+export function weightText(m: Pick<UniverseActive, "weight_pct">): string {
+  return m.weight_pct == null ? "—" : `${m.weight_pct.toFixed(2)}%`;
+}
+
+/** `Bullish` / `Bearish` + tone, or null. */
+export function stancePill(m: Pick<UniverseActive, "stance">): { label: string; tone: SentimentTone } | null {
+  if (!m.stance) return null;
+  const s = m.stance.toLowerCase();
+  return { label: tierLabel(s), tone: s === "bullish" ? "pos" : s === "bearish" ? "neg" : "neutral" };
+}
+
+/** Column ⓘ texts (E14.8). */
+export const COLUMN_INFO = {
+  picked: "Days this name became a trade idea, last 20 sessions.",
+  trades: "Proposals built, last 20 sessions.",
+  st: "Stocktwits bullish share of user-tagged messages (≥ 60 % green, ≤ 40 % red).",
+  score: "2-run combined score: 0.6 × today + 0.4 × the previous run.",
+  weight: "The name's weight in the SPMO momentum ETF.",
+} as const;
+
+export const PICK_LEGEND_INFO =
+  "Score: 2-run combined (0.6 today + 0.4 previous run). ST: Stocktwits bullish share of user-tagged messages.";
+
+/** Row detail lines (tap / expand): In tier, velocity, Stocktwits string, reason, also-in. */
+export function rowDetail(m: UniverseActive): string[] {
+  const out: string[] = [];
+  if (m.in_tier_20d != null) out.push(`In tier ${m.in_tier_20d} of the last 20 sessions`);
+  if (m.carried && m.runs?.length) out.push(`carried from ${m.runs[0]}`);
+  if (m.velocity_detail) out.push(`mention velocity: ${m.velocity_detail}`);
+  if (m.sentiment) out.push(`Stocktwits: ${m.sentiment.replace(/^ST /, "")}`);
+  if (m.reason) out.push(m.reason);
+  const also = m.also_in ?? [];
+  if (also.length) out.push(`also in ${also.map(tierLabel).join(", ")}`);
+  return out;
 }
 
 /** Freshness state of the stored resolve. */

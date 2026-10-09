@@ -46,9 +46,21 @@ import {
   type Overview,
   type OverviewRange,
 } from "../lib/overview";
-import { memberDetail, pickHeader, pickRow, pickSections, type Universe } from "../lib/universe";
+import {
+  memberDetail,
+  pickHeader,
+  pickScore,
+  pickSections,
+  PICK_LEGEND_INFO,
+  sentimentText,
+  sentimentTone,
+  type Universe,
+} from "../lib/universe";
 import { useMeta, useOps, useOverview } from "../lib/useApi";
 import { PositionsTable } from "./PositionsTable";
+
+/** E14.8: Today's Pick sentiment tone (≥ 60 % bull pos, ≤ 40 % neg). */
+const PICK_TONE = { pos: "text-pos-text", neg: "text-neg-text", neutral: "text-secondary" } as const;
 
 const PROPOSAL_STAGES = ["proposed", "gate", "approval", "execution", "filled"] as const;
 
@@ -563,24 +575,41 @@ function PickCard() {
         <div className="grid grid-cols-2 gap-x-6">
           {pickSections(u).map((sec) => (
             <div key={sec.tier} className="min-w-0" data-testid="pick-tier" data-tier={sec.tier}>
-              <div className="mb-1 border-b border-line pb-1 text-caption font-semibold text-secondary tabular-nums" data-testid="pick-header">
-                {pickHeader(sec)}
+              <div className="mb-1 flex items-center justify-between gap-1 border-b border-line pb-1">
+                <span className="truncate text-caption font-semibold text-secondary tabular-nums" data-testid="pick-header">
+                  {pickHeader(sec)}
+                </span>
+                <span className="inline-flex shrink-0 items-center text-micro text-muted" data-testid="pick-legend">
+                  <span className="max-[400px]:hidden">score · ST</span>
+                  <InfoTip label={`About the ${sec.label} columns`}>{PICK_LEGEND_INFO}</InfoTip>
+                </span>
               </div>
               {sec.rows.length === 0 ? (
                 <p className="py-1.5 text-caption text-muted">None today</p>
               ) : (
                 <ul data-testid="pick-rows">
                   {sec.rows.map((m) => {
-                    const score = pickRow(m).score;
+                    const score = pickScore(m);
+                    const tone = m.sentiment_bull_pct == null ? "text-muted" : PICK_TONE[sentimentTone(m.sentiment_bull_pct)];
                     return (
-                      <li key={m.ticker}>
+                      <li key={m.ticker} data-testid="pick-row" data-ticker={m.ticker}>
                         <Link
                           to="/ops/universe"
                           title={memberDetail(m).join("\n")}
                           className="flex min-h-[28px] items-center justify-between gap-2 hover:bg-hover max-tablet:min-h-[32px]"
                         >
                           <span className="truncate font-semibold text-title">{m.ticker}</span>
-                          <span className="text-caption text-secondary tabular-nums">{score ?? "—"}</span>
+                          <span className="flex shrink-0 items-baseline gap-1 text-caption tabular-nums max-[400px]:flex-col max-[400px]:items-end max-[400px]:gap-0">
+                            <span className="text-secondary" data-testid="pick-score">
+                              {score ?? "—"}
+                            </span>
+                            <span className="text-muted max-[400px]:hidden" aria-hidden="true">
+                              ·
+                            </span>
+                            <span className={`${tone} max-[400px]:text-micro`} data-testid="pick-st">
+                              {sentimentText(m)}
+                            </span>
+                          </span>
                         </Link>
                       </li>
                     );

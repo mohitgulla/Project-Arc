@@ -156,6 +156,19 @@
         },
         "tier": {
           "$ref": "#/$defs/Tier"
+        },
+        "weight_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "momentum: the name's SPMO weight in percent (e.g. 9.48)",
+          "title": "Weight Pct"
         }
       },
       "required": [

@@ -162,7 +162,7 @@ def ranked(opts: Any = None, *, with_counts: bool = True) -> dict[str, Any]:
     return {"payload": payload, "table": table(res)}
 
 
-D64_MEMBER_KEYS = ("score", "score_today", "score_prev", "runs", "stance", "origins")
+D64_MEMBER_KEYS = ("score", "score_today", "score_prev", "runs", "stance", "origins", "weight_pct")
 D64_PAYLOAD_KEYS = ("merged_from", "merge")
 
 
