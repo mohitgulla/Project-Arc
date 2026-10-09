@@ -411,8 +411,11 @@ class TestDigestCards:
         # E5.7 open universe: UFPT fails the screen, ZZZQ is not a listed symbol; the
         # failed checks are shown for the illiquid name. D51: PLTR is core now, so it is
         # admitted without the "new" tag.
-        assert "*PLTR*\nbullish · news · 90% confidence · 1 source\n" in scalp
-        assert "PLTR*\nbullish · news · 90% confidence · 1 source · new" not in scalp
+        # D65: one line per ticker under its stance group
+        assert re.search(
+            r"\*Bullish \(\d+\)\*\n(.*\n)*\*PLTR\* 90% · news · 1 source( — |\n)", scalp
+        )
+        assert "*PLTR* 90% · news · 1 source · new" not in scalp
         # D47: grouped by category, equal shares, sources inside each
         assert (
             "*Source mix*\n*Market news* 50% · 8 read: rss 8\n"
