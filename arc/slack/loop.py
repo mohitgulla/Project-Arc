@@ -130,7 +130,7 @@ def _flag_headline(root: LoopRoot) -> list[str]:
     if root.timeout:
         return ["Out of time: the loop hit its deadline before finishing."]
     if root.no_change:
-        return ["Nothing new since the last look; open orders carry on."]
+        return ["Nothing new since the last look; open orders stay."]
     return []
 
 

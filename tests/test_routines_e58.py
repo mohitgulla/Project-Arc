@@ -630,7 +630,7 @@ class TestRootPerLoop:
         assert ts is not None
         status, headline = notes.roots[ts].split("\n")
         assert status.endswith("• HOLD (skip)")  # D65: renamed from "HOLD (no change)"
-        assert headline == ("_*Nothing new since the last look; open orders carry on.*_")
+        assert headline == "_*Nothing new since the last look; open orders stay.*_"
         assert notes.roots[ts].startswith(":heavy_multiplication_x: ")
         # a no_change loop gets only the [Routines] reply in its thread (no Scalp / Research card)
         replies = notes.in_thread(ts)
