@@ -6,7 +6,7 @@ import datetime as dt
 
 import pytest
 
-from arc.slack.loop import LoopOutcome, LoopRoot, loop_status_line, slot_stamp
+from arc.slack.loop import HEADLINE_MAX, LoopOutcome, LoopRoot, loop_status_line, slot_stamp
 from arc.utils.calendar import ET
 
 SLOT = dt.datetime(2026, 9, 28, 9, 40, tzinfo=ET)
@@ -54,13 +54,15 @@ class TestRootLine:
     @pytest.mark.parametrize(
         ("kw", "suffix"),
         [
-            ({"no_change": True}, "HOLD (no change)"),
+            ({"no_change": True}, "HOLD (skip)"),  # D65: was "HOLD (no change)"
             ({"timeout": True}, "HOLD (timeout)"),
             ({"skipped": "previous loop running"}, "HOLD (skipped: previous loop running)"),
         ],
     )
     def test_hold_reasons(self, kw: dict[str, object], suffix: str) -> None:
-        assert _root(**kw).text().endswith(f"• {suffix}")
+        status, headline = _root(**kw).text().split("\n")
+        assert status.endswith(f"• {suffix}")
+        assert headline.startswith("_*") and headline.endswith("*_")  # D65 flag headline
 
     def test_negative_pnl_and_missing_facts(self) -> None:
         r = _root(day_pnl=-1_250.7, equity=None, orders_used=None)
@@ -77,3 +79,30 @@ class TestRootLine:
         r = _root(buys=["SPY"])
         again = LoopRoot.model_validate(r.model_dump(mode="json"))
         assert again == r and again.text() == r.text()
+
+
+class TestHeadline:
+    """D65: one bold-italic headline sentence (≤2 laptop lines) under the status line."""
+
+    def test_headline_follows_the_status_line(self) -> None:
+        r = _root(buys=["SPY"], headline=["SPY iron condor x1 filled; FOMC hold is priced."])
+        assert r.text() == (
+            f":white_check_mark: {FACTS} • BUY: SPY\n"
+            "_*SPY iron condor x1 filled; FOMC hold is priced.*_"
+        )
+
+    def test_one_sentence_clipped_to_two_lines(self) -> None:
+        r = _root(headline=["a" * 400, "b"])
+        lines = r.text().split("\n")
+        assert len(lines) == 2  # status + the one headline
+        assert len(lines[1]) <= HEADLINE_MAX + 4 and lines[1].endswith("…*_")
+
+    def test_markers_and_mentions_are_neutralised(self) -> None:
+        r = _root(headline=["<!channel> *bold* _it_ `x` ~s~ & co"])
+        line = r.text().split("\n")[1]
+        assert "<!channel>" not in line and "&lt;!channel&gt;" in line
+        inner = line[2:-2]
+        assert not any(ch in inner for ch in "*_`~")
+
+    def test_plain_hold_has_no_headline(self) -> None:
+        assert "\n" not in _root().text()

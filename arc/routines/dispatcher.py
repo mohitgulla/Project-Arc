@@ -1536,7 +1536,8 @@ class Dispatcher:
         if result.notice:
             posts.append(self.heartbeats.notice(now, run.job, result.notice))
         for card in result.extra_cards:
-            posts.append(self.heartbeats.card(now, card.text, card.blocks or None))
+            if not card.broadcast:
+                posts.append(self.heartbeats.card(now, card.text, card.blocks or None))
         in_loop_thread = bool(self._loop_root_ts)
         if in_loop_thread and (self._loop_no_change or result.metrics.get("no_change")):
             # D36: a no_change loop gets only the [Routines] metadata reply in its thread;
@@ -1555,6 +1556,11 @@ class Dispatcher:
             posts.append(self.heartbeats.summary(now, run.job, summary, blocks=result.card.blocks))
         else:
             posts.append(self.heartbeats.summary(now, run.job, summary))
+        # D65: a broadcast card (the end-of-day recap) follows the job's own card, as a
+        # day-thread reply also sent to the channel.
+        for card in result.extra_cards:
+            if card.broadcast:
+                posts.append(self.heartbeats.broadcast(now, card.text, card.blocks or None))
         log.info("routines.ok", job=run.job, run_id=run.run_id, outputs=len(ctx.outputs))
         return self._outcome(run, "ok", summary, metrics=result.metrics)
 

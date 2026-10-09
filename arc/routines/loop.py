@@ -222,6 +222,14 @@ def loop_root_from_db(
             equity, day_pnl = fallback.equity, fallback.day_pnl
         if used is None:
             used, limit = fallback.orders_used, fallback.orders_limit
+    headline: list[str] = []
+    if not (no_change or skipped):
+        try:
+            from arc.routines.headline import loop_headline
+
+            headline = loop_headline(conn, chain_run_id)
+        except Exception as exc:  # noqa: BLE001 - the headline is presentation; never fail the root
+            log.warning("routines.loop_headline_failed", chain_run_id=chain_run_id, err=str(exc))
     return LoopRoot(
         slot=slot,
         equity=equity,
@@ -235,6 +243,7 @@ def loop_root_from_db(
         no_change=no_change,
         timeout=timeout,
         skipped=skipped,
+        headline=headline,
     )
 
 

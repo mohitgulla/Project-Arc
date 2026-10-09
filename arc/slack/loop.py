@@ -7,8 +7,12 @@ Pure rendering. One of three states, then the same facts every time:
     :hourglass_flowing_sand: … • PENDING: SPY
     :heavy_multiplication_x: … • HOLD
 
-Nothing else goes on the root: the persona cards, the proposal card and the
-``[Routines]`` metadata are replies in its thread.
+D65: the line is followed by a bold-italic *headline* (``_*…*_``): ONE sentence
+of at most two lines on a laptop (``HEADLINE_MAX`` chars), ``<main point>; <why>.``
+It is built from what the chain journaled (:func:`arc.routines.headline.loop_headline`),
+so it is re-rendered with the root.
+Everything else (persona cards, the proposal card, the ``[Routines]`` metadata)
+stays in the thread.
 """
 
 from __future__ import annotations
@@ -51,6 +55,7 @@ class LoopRoot(BaseModel):
     no_change: bool = False
     timeout: bool = False
     skipped: str | None = None  # the slot never ran (why)
+    headline: list[str] = Field(default_factory=list)  # D65: one plain-text sentence
 
     @property
     def outcome(self) -> LoopOutcome:
@@ -108,9 +113,42 @@ def loop_status_line(root: LoopRoot) -> str:
         elif root.timeout:
             hold = "HOLD (timeout)"
         elif root.no_change:
-            hold = "HOLD (no change)"
+            hold = "HOLD (skip)"
         action.append(hold)
-    return f"{_EMOJI[root.outcome]} " + " • ".join([*facts, *action])
+    line = f"{_EMOJI[root.outcome]} " + " • ".join([*facts, *action])
+    head = [h for h in (root.headline or _flag_headline(root)) if h.strip()][:1]
+    return "\n".join([line, *(bold_italic(h) for h in head)])
 
 
-__all__ = ["LoopOutcome", "LoopRoot", "loop_status_line", "slot_stamp"]
+HEADLINE_MAX = 150  # the whole headline: two lines of a Slack message on a laptop
+
+
+def _flag_headline(root: LoopRoot) -> list[str]:
+    """Headline for a loop that never reached the personas (skip / timeout / no change)."""
+    if root.skipped:
+        return [f"Slot skipped: {root.skipped}."]
+    if root.timeout:
+        return ["Out of time: the loop hit its deadline before finishing."]
+    if root.no_change:
+        return ["Nothing new since the last look; open orders carry on."]
+    return []
+
+
+def bold_italic(text: str) -> str:
+    """``_*text*_``: Slack bold + italic, with the marker characters made safe."""
+    clean = " ".join(text.split())
+    clean = clean.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    clean = clean.replace("*", "∗").replace("_", " ").replace("~", "-").replace("`", "'")
+    if len(clean) > HEADLINE_MAX:
+        clean = clean[: HEADLINE_MAX - 1].rstrip(" ,;·") + "…"
+    return f"_*{clean}*_"
+
+
+__all__ = [
+    "HEADLINE_MAX",
+    "LoopOutcome",
+    "bold_italic",
+    "LoopRoot",
+    "loop_status_line",
+    "slot_stamp",
+]

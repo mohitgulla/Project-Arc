@@ -76,6 +76,7 @@ class ArcSlackClient:
         text: str,
         blocks: list[dict[str, Any]] | None = None,
         persona: Persona | None = None,
+        broadcast: bool = False,
     ) -> SlackResponse:
         """Post a threaded reply, optionally prefixed with a persona label.
 
@@ -83,6 +84,9 @@ class ArcSlackClient:
         ----------
         persona:
             If provided, the message text is prefixed with ``[Scalp]`` etc.
+        broadcast:
+            D65: also send the reply to the channel (``reply_broadcast``, Slack's
+            "Also send to #channel" checkbox).
         """
         if persona is not None:
             text = f"{persona_label(persona)} {text}"
@@ -93,6 +97,8 @@ class ArcSlackClient:
         }
         if blocks:
             kwargs["blocks"] = blocks
+        if broadcast:
+            kwargs["reply_broadcast"] = True
         resp = self._client.chat_postMessage(**kwargs)
         log.info("slack.reply", channel=channel, thread_ts=thread_ts, ts=resp.get("ts"))
         return resp

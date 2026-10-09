@@ -1275,8 +1275,26 @@ up within one slot.
 
 ```
 ✅ 2026-09-28 09:40ET • Portfolio: $101,234 • P&L: +$312 • Orders: 3/200 • BUY: SPY
+_*HOOD bear put debit spread x2 filled at 6.75; it hedges the book.*_
 ⏳ … • PENDING: SPY          (card awaiting the owner)  /  WORKING: SPY (ladder running)
-✖ … • HOLD | HOLD (no change) | HOLD (timeout) | HOLD (skipped: previous loop running)
+✖ … • HOLD | HOLD (skip) | HOLD (timeout) | HOLD (skipped: previous loop running)
+```
+
+D65: under the status line, a bold-italic headline (`arc.routines.headline.loop_headline`):
+ONE sentence, never longer than two lines (≤150 chars), `<main point>; <why>.`
+The main point is an open fill (or pending / working / missed), else a close, else
+why nothing traded; the why is Research's thesis, Risk's close reason, a close
+stuck on wide quotes, or the market read. A second point that would overflow is
+dropped rather than wrapped. It is rebuilt from the chain's journal with the root,
+so a later fill or approval updates it. `HOLD (skip)` slots (inputs unchanged,
+D31) get a fixed one-liner.
+
+After the 16:30 `broker.reconcile`, a `:rolled_up_newspaper: Thu Oct 8 • Day Recap` reply
+posts in the day's Session Notes thread with "Also send to #arc-investor" ticked
+(`reply_broadcast`), e.g.:
+
+```
+_*Red day: -$1,946 (-2.0%) on 2 opens and 5 closes; biggest hit META -$8,765.*_
 ```
 
 The thread under it, in order: `[Sweep] Context: N Candidates • run <stamp>`

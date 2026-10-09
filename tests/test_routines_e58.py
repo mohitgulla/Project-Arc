@@ -562,11 +562,16 @@ class TestRootPerLoop:
         assert poster.posted and poster.thread_of == [ts]
         # the root line: the slot stamp and the facts. Fixture proposals carry no gate
         # token, so the card is informational (not_actionable) and the loop is a HOLD.
-        root = notes.roots[ts]
-        assert root == (
+        status, *headline = notes.roots[ts].split("\n")
+        assert status == (
             f":heavy_multiplication_x: {slot_stamp(SLOT0)} • Portfolio: $100,000 • P&L: +$0"
             " • Orders: 0/200 • HOLD"
         )
+        # D65: one bold-italic headline sentence under the status line
+        assert headline == [
+            "_*No trade: no workable structure for NVDA and XOM; "
+            "fixture Research reply (offline run).*_"
+        ]
         assert LoopRoot.model_validate(LoopState(conn).root(chain) or {}).outcome.value == "hold"
         # the notifier is unbound again after the loop
         assert notes.thread_ts is None
@@ -589,7 +594,8 @@ class TestRootPerLoop:
         assert refresh_loop_root(conn, poster, chain) is not None
         assert poster.root_edits[-1][0] == ts
         assert poster.root_edits[-1][1].startswith(":hourglass_flowing_sand: ")
-        assert poster.root_edits[-1][1].endswith("• PENDING: SPY")
+        assert poster.root_edits[-1][1].split("\n")[0].endswith("• PENDING: SPY")
+        assert "SPY" in poster.root_edits[-1][1].split("\n")[1]  # D65 headline
         # the owner approves: the service re-renders the root → WORKING (ladder running)
         res = svc.decide(phash, user=OWNER, approve=True, now=SLOT0 + dt.timedelta(minutes=1))
         assert res.outcome.value == "approved", res
@@ -600,7 +606,10 @@ class TestRootPerLoop:
         )
         conn.commit()
         svc.refresh_loop_root(phash)
-        assert poster.root_edits[-1][1].endswith("• HOLD")
+        assert poster.root_edits[-1][1].split("\n")[0].endswith("• HOLD")
+        assert (
+            "SPY iron condor was rejected" in poster.root_edits[-1][1]
+        )  # D65: the headline follows
         assert len({e[0] for e in poster.root_edits}) == 1
         # an unchanged root is not re-posted
         n = len(poster.root_edits)
@@ -619,7 +628,9 @@ class TestRootPerLoop:
         assert chain is not None
         ts = LoopState(conn).thread_ts(chain)
         assert ts is not None
-        assert notes.roots[ts].endswith("• HOLD (no change)")
+        status, headline = notes.roots[ts].split("\n")
+        assert status.endswith("• HOLD (skip)")  # D65: renamed from "HOLD (no change)"
+        assert headline == ("_*Nothing new since the last look; open orders carry on.*_")
         assert notes.roots[ts].startswith(":heavy_multiplication_x: ")
         # a no_change loop gets only the [Routines] reply in its thread (no Scalp / Research card)
         replies = notes.in_thread(ts)
@@ -639,7 +650,8 @@ class TestRootPerLoop:
             disp.run_job("research", SLOT0, reason="schedule", now=SLOT0, chain=True)
         assert list(notes.roots.values()) == [
             f":heavy_multiplication_x: {slot_stamp(SLOT0)} • Portfolio: n/a • P&L: n/a"
-            " • Orders: n/a • HOLD (skipped: previous loop running)"
+            " • Orders: n/a • HOLD (skipped: previous loop running)\n"
+            "_*Slot skipped: previous loop running.*_"
         ]
         # …unless post_hold_roots is off
         quiet = load_routines(overrides=_loop_overrides(post_hold_roots=False))
@@ -689,4 +701,7 @@ class TestRootPerLoop:
         assert root.buys == ["SPY"] and root.pending == [] and root.working == []
         assert root.text().startswith(":white_check_mark: ")
         assert refresh_loop_root(conn, poster, chain) == root.text()
-        assert poster.root_edits[-1][1].endswith("• BUY: SPY")
+        status, headline = poster.root_edits[-1][1].split("\n")
+        assert status.endswith("• BUY: SPY")
+        # D65: one sentence; the thesis's own "; …" tail is cut to keep one point per clause
+        assert headline == "_*SPY iron condor x1 filled; FOMC hold is priced.*_"
