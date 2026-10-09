@@ -19,7 +19,8 @@
   ``outcomes`` row of every closed structure; idempotent.
 - ``arc journal repair-fill-signs [--dry-run]``  (E6.2g) restate fills stored with
   the wrong sign vs their signed band (fills, structure nets, tax lot, outcome,
-  plus a ``reconcile:fill_sign_corrected`` decision); idempotent.
+  plus a ``reconcile:fill_sign_corrected`` decision), then the day ``pnl_snapshots``
+  realised P&L of the days those lots closed; idempotent.
 
 - ``arc funnel report --since YYYY-MM-DD --until YYYY-MM-DD``  (E13.14, D56) the
   idea funnel per stage and feed (shares ``arc.tower.data_funnel`` with the Tower).
@@ -341,16 +342,20 @@ def _repair_fill_signs(conn: sqlite3.Connection, *, dry_run: bool) -> int:
     """``arc journal repair-fill-signs``: restate sign-mismatched fills (E6.2g)."""
     from decimal import Decimal
 
-    from arc.journal.fill_signs import repair_fill_signs
+    from arc.journal.fill_signs import repair_fill_signs, restate_pnl_snapshots
     from arc.utils.calendar import now_et
 
     reps = repair_fill_signs(conn, now=now_et(), dry_run=dry_run)
     lines = [line for r in reps for line in r.lines()]
     delta = sum((r.delta for r in reps), start=Decimal(0))
+    # a dry run rolled the structures back, so its snapshot step sees no new corrections
+    snaps = restate_pnl_snapshots(conn, dry_run=dry_run)
+    lines += [s.line() for s in snaps]
     verb = "would change" if dry_run else "changed"
     lines.append(
         f"{'dry run: ' if dry_run else ''}{verb} {len(reps)} structure(s), "
-        f"{sum(len(r.fixes) for r in reps)} execution(s); realised delta {delta:+.2f}"
+        f"{sum(len(r.fixes) for r in reps)} execution(s), {len(snaps)} pnl snapshot(s); "
+        f"realised delta {delta:+.2f}"
     )
     _out(lines)
     return 0

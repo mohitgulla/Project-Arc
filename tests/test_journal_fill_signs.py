@@ -15,7 +15,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from arc.journal.fill_signs import find_sign_mismatches, repair_fill_signs
+from arc.journal.fill_signs import (
+    find_sign_mismatches,
+    repair_fill_signs,
+    restate_pnl_snapshots,
+)
 from arc.journal.outcomes import record_close_outcome
 from arc.journal.reasons import REASON_LABELS, ReasonCode
 from arc.journal.scorecard import closed_positions, execution_costs
@@ -274,4 +278,123 @@ def test_cli_dry_run_then_run_then_noop(
     assert main(["journal", "repair-fill-signs", "--db", str(db)]) == 0
     assert "changed 1 structure(s)" in capsys.readouterr().out
     assert main(["journal", "repair-fill-signs", "--db", str(db)]) == 0
-    assert "changed 0 structure(s), 0 execution(s)" in capsys.readouterr().out
+    assert "changed 0 structure(s), 0 execution(s), 0 pnl snapshot(s)" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# pnl_snapshots (the reconcile's day snapshot behind the Tower Day P&L card)
+# ---------------------------------------------------------------------------
+
+
+def _lot_closed_at(conn: sqlite3.Connection) -> str:
+    (at,) = conn.execute(
+        """SELECT closed_at FROM tax_lots WHERE realized_pnl IS NOT NULL
+           AND CAST(realized_pnl AS REAL) != 0"""
+    ).fetchone()
+    return str(at)
+
+
+def _snapshot(
+    conn: sqlite3.Connection,
+    *,
+    sid: str,
+    realized: str,
+    at: str,
+    day: str,
+    arm: str | None = None,
+) -> None:
+    conn.execute(
+        """INSERT INTO pnl_snapshots
+           (id, snapshot_at, realized, unrealized, total, details_json, arm_id)
+           VALUES (?, ?, ?, '-10', ?, ?, ?)""",
+        (sid, at, realized, str(D(realized) - 10), json.dumps({"day": day}), arm),
+    )
+    conn.commit()
+
+
+def _eod(conn: sqlite3.Connection) -> tuple[str, str]:
+    """The ET day of the P&L lot's close and a snapshot time 1h after it."""
+    from arc.utils.calendar import ET
+
+    closed = dt.datetime.fromisoformat(_lot_closed_at(conn).replace("Z", "+00:00"))
+    return closed.astimezone(ET).date().isoformat(), (closed + dt.timedelta(hours=1)).isoformat()
+
+
+def _snap(conn: sqlite3.Connection, sid: str) -> tuple[D, D]:
+    r = conn.execute("SELECT realized, total FROM pnl_snapshots WHERE id = ?", (sid,)).fetchone()
+    return D(r[0]), D(r[1])
+
+
+def test_snapshot_written_before_the_repair_is_restated(conn: sqlite3.Connection) -> None:
+    _bad(conn)
+    day, at = _eod(conn)
+    _snapshot(conn, sid="eod", realized="250.0000", at=at, day=day)  # pre-repair reconcile
+    _snapshot(conn, sid="arm", realized="250.0000", at=at, day=day, arm="XP-1:treatment")
+    repair_fill_signs(conn, now=NOW)
+    (s,) = restate_pnl_snapshots(conn)
+    assert (s.snapshot_id, s.old_realized, s.new_realized) == ("eod", D("250"), D("90"))
+    assert _snap(conn, "eod") == (D("90"), D("80"))  # total = realized + unrealized (-10)
+    assert _snap(conn, "arm") == (D("250"), D("240"))  # experiment arm rows are not touched
+    assert restate_pnl_snapshots(conn) == []  # idempotent
+
+
+def test_snapshot_before_the_close_or_on_another_day_is_untouched(
+    conn: sqlite3.Connection,
+) -> None:
+    _bad(conn)
+    day, at = _eod(conn)
+    before = (
+        dt.datetime.fromisoformat(_lot_closed_at(conn).replace("Z", "+00:00"))
+        - dt.timedelta(minutes=1)
+    ).isoformat()
+    _snapshot(conn, sid="early", realized="0", at=before, day=day)
+    _snapshot(conn, sid="other", realized="250.0000", at=at, day="1999-01-01")
+    repair_fill_signs(conn, now=NOW)
+    assert restate_pnl_snapshots(conn) == []
+    assert _snap(conn, "early")[0] == D("0") and _snap(conn, "other")[0] == D("250")
+
+
+def test_snapshot_that_drifted_for_another_reason_is_left_alone(
+    conn: sqlite3.Connection,
+) -> None:
+    _bad(conn)
+    day, at = _eod(conn)
+    _snapshot(conn, sid="eod", realized="777.0000", at=at, day=day)  # gap != correction delta
+    repair_fill_signs(conn, now=NOW)
+    assert restate_pnl_snapshots(conn) == []
+    assert _snap(conn, "eod")[0] == D("777")
+
+
+def test_snapshot_dry_run_writes_nothing(conn: sqlite3.Connection) -> None:
+    _bad(conn)
+    day, at = _eod(conn)
+    _snapshot(conn, sid="eod", realized="250.0000", at=at, day=day)
+    repair_fill_signs(conn, now=NOW)
+    (s,) = restate_pnl_snapshots(conn, dry_run=True)
+    assert s.new_realized == D("90") and _snap(conn, "eod")[0] == D("250")
+    assert not conn.in_transaction
+
+
+def test_cli_restates_a_snapshot_of_an_already_repaired_store(
+    tmp_path: Path,
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    """A store repaired before the snapshot step existed: the rerun fixes only the snapshot."""
+    from arc.cli import main
+
+    db = tmp_path / "arc.db"
+    disk = connect(str(db))
+    migrate(disk)
+    _bad(disk)
+    day, at = _eod(disk)
+    _snapshot(disk, sid="eod", realized="250.0000", at=at, day=day)
+    disk.execute("UPDATE pnl_snapshots SET arm_id = NULL")  # production row
+    repair_fill_signs(disk, now=NOW)  # the E6.2g run: structures only
+    disk.commit()
+    disk.close()
+    assert main(["journal", "repair-fill-signs", "--db", str(db)]) == 0
+    out = capsys.readouterr().out
+    assert "pnl_snapshots eod" in out and "realized +250.00 -> +90.00" in out
+    assert "changed 0 structure(s), 0 execution(s), 1 pnl snapshot(s)" in out
+    assert main(["journal", "repair-fill-signs", "--db", str(db)]) == 0
+    assert "0 pnl snapshot(s)" in capsys.readouterr().out
