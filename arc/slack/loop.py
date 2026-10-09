@@ -7,7 +7,7 @@ Pure rendering. One of three states, then the same facts every time:
     :hourglass_flowing_sand: … • PENDING: SPY
     :heavy_multiplication_x: … • HOLD
 
-D65: the line is followed by a bold-italic *headline* (``_*…*_``): ONE sentence
+D65: the line is followed by a quoted bold-italic *headline* (``> _*…*_``): ONE sentence
 of at most two lines on a laptop (``HEADLINE_MAX`` chars), ``<main point>; <why>.``
 It is built from what the chain journaled (:func:`arc.routines.headline.loop_headline`),
 so it is re-rendered with the root.
@@ -117,7 +117,7 @@ def loop_status_line(root: LoopRoot) -> str:
         action.append(hold)
     line = f"{_EMOJI[root.outcome]} " + " • ".join([*facts, *action])
     head = [h for h in (root.headline or _flag_headline(root)) if h.strip()][:1]
-    return "\n".join([line, *(bold_italic(h) for h in head)])
+    return "\n".join([line, *(f"> {bold_italic(h)}" for h in head)])  # D65: quoted
 
 
 HEADLINE_MAX = 150  # the whole headline: two lines of a Slack message on a laptop

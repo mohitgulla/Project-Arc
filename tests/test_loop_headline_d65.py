@@ -205,7 +205,7 @@ class TestLoopHeadline:
         ]
         status, line = root.text().split("\n")
         assert status.endswith("• BUY: HOOD")
-        assert line == f"_*{root.headline[0]}*_"
+        assert line == f"> _*{root.headline[0]}*_"
 
     def test_close_leads_with_why_then_risks_reason(self) -> None:
         conn = _conn()
@@ -343,7 +343,7 @@ class TestLoopHeadline:
         assert root.headline == []
         status, line = root.text().split("\n")
         assert status.endswith("• HOLD (skip)")
-        assert line == "_*Nothing new since the last look; open orders stay.*_"
+        assert line == "> _*Nothing new since the last look; open orders stay.*_"
 
 
 class TestHeadlineSentence:

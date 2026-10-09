@@ -569,7 +569,7 @@ class TestRootPerLoop:
         )
         # D65: one bold-italic headline sentence under the status line
         assert headline == [
-            "_*No trade: no workable structure for NVDA and XOM; "
+            "> _*No trade: no workable structure for NVDA and XOM; "
             "fixture Research reply (offline run).*_"
         ]
         assert LoopRoot.model_validate(LoopState(conn).root(chain) or {}).outcome.value == "hold"
@@ -630,7 +630,7 @@ class TestRootPerLoop:
         assert ts is not None
         status, headline = notes.roots[ts].split("\n")
         assert status.endswith("• HOLD (skip)")  # D65: renamed from "HOLD (no change)"
-        assert headline == "_*Nothing new since the last look; open orders stay.*_"
+        assert headline == "> _*Nothing new since the last look; open orders stay.*_"
         assert notes.roots[ts].startswith(":heavy_multiplication_x: ")
         # a no_change loop gets only the [Routines] reply in its thread (no Scalp / Research card)
         replies = notes.in_thread(ts)
@@ -651,7 +651,7 @@ class TestRootPerLoop:
         assert list(notes.roots.values()) == [
             f":heavy_multiplication_x: {slot_stamp(SLOT0)} • Portfolio: n/a • P&L: n/a"
             " • Orders: n/a • HOLD (skipped: previous loop running)\n"
-            "_*Slot skipped: previous loop running.*_"
+            "> _*Slot skipped: previous loop running.*_"
         ]
         # …unless post_hold_roots is off
         quiet = load_routines(overrides=_loop_overrides(post_hold_roots=False))
@@ -704,4 +704,4 @@ class TestRootPerLoop:
         status, headline = poster.root_edits[-1][1].split("\n")
         assert status.endswith("• BUY: SPY")
         # D65: one sentence; the thesis's own "; …" tail is cut to keep one point per clause
-        assert headline == "_*SPY iron condor x1 filled; FOMC hold is priced.*_"
+        assert headline == "> _*SPY iron condor x1 filled; FOMC hold is priced.*_"
