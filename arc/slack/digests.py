@@ -263,6 +263,25 @@ def _stance_groups(rows: Sequence[tuple[str, str]]) -> list[Block]:
     return out
 
 
+def _upcoming(catalyst: object, run_at: _dt.datetime) -> str:
+    """D65: `` Oct 28`` for a catalyst after the run day (an event ahead), else ``""``.
+
+    A past or same-day catalyst date is noise on a scan row (the news already
+    happened); an upcoming one (earnings, FOMC) is the point.
+    """
+    if not catalyst:
+        return ""
+    try:
+        day = (
+            catalyst.astimezone(ET).date()
+            if isinstance(catalyst, _dt.datetime) and catalyst.tzinfo
+            else _dt.date.fromisoformat(str(catalyst)[:10])
+        )
+    except ValueError:
+        return ""
+    return f" {day:%b %d}" if day > run_at.astimezone(ET).date() else ""
+
+
 def scalp_card(
     *,
     docs: int,
@@ -328,7 +347,7 @@ def scalp_card(
     ranked = sorted(candidates, key=lambda c: -c.confidence)
     rows: list[tuple[str, str]] = []
     for c in ranked[:_MAX_SCALP_ROWS]:
-        when = f" {c.catalyst_date:%b %d}" if c.catalyst_date else ""
+        when = _upcoming(c.catalyst_date, c.created_at)
         facts = f"{_pct(c.confidence)} confidence · {c.catalyst_type.value}{when}"
         if c.corroboration is not None:
             facts += f" · {_plural(c.corroboration, 'source')}"
@@ -491,9 +510,8 @@ def scalp_context_card(
         f"{_plural(len(runs), 'Scalp run')}" if len(runs) > 1 else "",
     )
     # D65: one line per candidate grouped by stance. The catalyst date only shows
-    # when it isn't the run day, and ``as of`` only for entries older than the
-    # newest Scalp run (the header already carries that time).
-    run_day = newest.valid_from.astimezone(ET).date() if newest else None
+    # for an upcoming event (``earnings Oct 28``); no per-row ``as of`` (the header
+    # carries the run time).
     rows: list[tuple[str, str]] = []
     for e in cands[:_MAX_SCALP_ROWS]:
         p = e.payload
@@ -502,22 +520,12 @@ def scalp_context_card(
         if conf is not None:
             facts.append(f"{_pct(float(conf))} confidence")
         what = str(p.get("catalyst_type") or "?")
-        raw_date = p.get("catalyst_date")
-        if raw_date:
-            try:
-                day = _dt.date.fromisoformat(str(raw_date)[:10])
-            except ValueError:
-                day = None
-            if day is not None and day != run_day:
-                what += f" {day:%b %d}"
+        if newest is not None:
+            what += _upcoming(p.get("catalyst_date"), newest.valid_from)
         facts.append(what)
         corr = p.get("corroboration")
         if corr is not None:
             facts.append(_plural(int(corr), "source"))
-        if newest is not None and e.valid_from < newest.valid_from:
-            older = e.valid_from.astimezone(ET)
-            stamp = f"{older:%H:%M}ET" if older.date() == run_day else slot_stamp(e.valid_from)
-            facts.append(f"as of {stamp}")
         line = f"*{B.esc(e.subject)}* {B.esc(' · '.join(facts))}"
         rows.append((str(p.get("stance") or "unknown"), line))
     blocks.extend(_stance_groups(rows))

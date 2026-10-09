@@ -375,11 +375,46 @@ class TestScalpContext:
         sections = [b["text"]["text"] for b in view.blocks if b["type"] == "section"]
         assert sections == [
             "*Bullish (2)*\n*TSM* 72% confidence · news · 4 sources\n"
-            "*AMD* 50% confidence · sector Oct 15 · 1 source · as of 14:00ET",
+            "*AMD* 50% confidence · sector Oct 15 · 1 source",  # D65: no per-row "as of"
             "*Bearish (1)*\n*ORCL* 62% confidence · news · 2 sources",
             "*Neutral (1)*\n*NVDA* 48% confidence · news · 6 sources",
         ]
         assert sum(b["type"] == "divider" for b in view.blocks) == 3  # one per stance
+
+    def test_past_catalyst_dates_are_hidden(self) -> None:
+        # D65 (owner): "news Oct 08" on an Oct 9 card is noise; only upcoming dates show.
+        run = dt.datetime(2026, 10, 9, 10, 30, tzinfo=ET)
+        entries = [
+            _ctx_entry(
+                "BA",
+                "bullish",
+                0.62,
+                run,
+                catalyst_type="news",
+                catalyst_date="2026-10-08",
+                corroboration=4,
+            ),
+            _ctx_entry(
+                "MU",
+                "bullish",
+                0.55,
+                run - dt.timedelta(days=1),
+                catalyst_type="earnings",
+                catalyst_date="2026-10-28",
+                corroboration=2,
+            ),
+        ]
+        text = _all(D.scalp_context_card(entries, chain_run_id="chain-1"))
+        assert "*BA* 62% confidence · news · 4 sources" in text
+        assert "*MU* 55% confidence · earnings Oct 28 · 2 sources" in text
+        assert "as of" not in text and "Oct 08" not in text
+
+    def test_scan_card_hides_past_catalyst_dates(self) -> None:
+        past = cand(
+            "BA", catalyst_type=CatalystType.NEWS, catalyst_date=dt.datetime(2020, 1, 2, tzinfo=ET)
+        )
+        text = _all(D.scalp_card(docs=1, accepted=1, candidates=[past], rejected={}))
+        assert "Jan 02" not in text and "*BA*" in text
 
     def test_empty(self) -> None:
         view = D.scalp_context_card([], chain_run_id="chain-1")
