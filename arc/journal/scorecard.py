@@ -445,18 +445,40 @@ def _structure(conn: sqlite3.Connection, phash: str) -> dict[str, Any] | None:
 def _realised_by_structure(
     conn: sqlite3.Connection,
 ) -> dict[str, list[tuple[_dt.datetime, Decimal, str, dict[str, Any]]]]:
-    """structure id -> [(at, realised $, reason code, payload)] from the journal (oldest first)."""
+    """structure id -> [(at, realised $, reason code, payload)] from the journal (oldest first).
+
+    E6.2g: a ``reconcile:fill_sign_corrected`` decision restates a structure's
+    realised P&L; its ``realized_pnl_delta`` is folded into the structure's latest
+    close event so every consumer (totals, swaps, early/expiry) reads the corrected
+    number. A correction for a structure without close events is ignored: those
+    fall back to ``close_net``, which the repair already corrected.
+    """
     out: dict[str, list[tuple[_dt.datetime, Decimal, str, dict[str, Any]]]] = defaultdict(list)
+    deltas: dict[str, Decimal] = defaultdict(Decimal)
     for r in conn.execute(
         """SELECT reason_code, payload, at FROM decisions
-           WHERE reason_code IN (?, ?) ORDER BY at, rowid""",
-        (str(ReasonCode.EXIT_CLOSED), str(ReasonCode.RECONCILE_EXPIRED)),
+           WHERE reason_code IN (?, ?, ?) ORDER BY at, rowid""",
+        (
+            str(ReasonCode.EXIT_CLOSED),
+            str(ReasonCode.RECONCILE_EXPIRED),
+            str(ReasonCode.RECONCILE_FILL_SIGN),
+        ),
     ):
         p = json.loads(r["payload"])
+        if r["reason_code"] == ReasonCode.RECONCILE_FILL_SIGN:
+            sid, delta = p.get("structure_id"), _dec(p.get("realized_pnl_delta"))
+            if sid and delta is not None:
+                deltas[sid] += delta
+            continue
         sid, pnl = p.get("structure_id"), _dec(p.get("realized_pnl"))
         at = _ts(r["at"])
         if sid and pnl is not None and at is not None:
             out[sid].append((at, pnl, r["reason_code"], p))
+    for sid, delta in deltas.items():
+        events = out.get(sid)
+        if events:
+            at, pnl, code, p = events[-1]
+            events[-1] = (at, pnl + delta, code, p)
     return out
 
 

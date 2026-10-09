@@ -273,6 +273,9 @@ class ReasonCode(StrEnum):
     RECONCILE_WASH_SALE = "reconcile:wash_sale"
     RECONCILE_LOT_PRICE = "reconcile:lot_price"
     RECONCILE_TEST_FILL = "reconcile:test_fill"
+    # E6.2g: a stored fill whose sign disagreed with its signed band, repaired by
+    # `arc journal repair-fill-signs`; the payload carries the realised P&L delta
+    RECONCILE_FILL_SIGN = "reconcile:fill_sign_corrected"
     # experiments (E10.1, D44): pre-registration and lifecycle of a forward A/B test
     EXPERIMENT_DRAFTED = "experiment:drafted"
     EXPERIMENT_REGISTERED = "experiment:registered"
@@ -490,6 +493,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.RECONCILE_EXPIRED: "Expired at reconcile",
     ReasonCode.RECONCILE_WASH_SALE: "Wash sale flagged at reconcile",
     ReasonCode.RECONCILE_LOT_PRICE: "Tax-lot price corrected at reconcile",
+    ReasonCode.RECONCILE_FILL_SIGN: "Fill sign corrected (realised P&L restated)",
     ReasonCode.RECONCILE_TEST_FILL: "Integration-test fill seen at reconcile",
     ReasonCode.EXPERIMENT_DRAFTED: "Experiment drafted",
     ReasonCode.EXPERIMENT_REGISTERED: "Experiment pre-registered (spec locked)",
