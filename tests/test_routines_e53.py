@@ -166,6 +166,7 @@ class TestShippedDefaults:
             "options_fast",
             "rss",
             "ticker_news",
+            "broker.reattach",  # E11.2 (D72): a dead ladder is adopted before the loop
             "monitor",
             "research",
             "scalp",
@@ -914,6 +915,7 @@ def test_yaml_comment_overview_matches_config() -> None:
         "broker",
         "positions.evaluate", "experiments.evaluate",
         "reconcile.intraday",  # E11.1 (D71): event-driven
+        "broker.reattach",  # E11.2 (D72): every tick in RTH
     }  # fmt: skip
     # D31: the loop's cadence and window are config; the loop knobs are one block.
     assert raw["personas"]["research"] == {

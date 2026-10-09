@@ -209,6 +209,30 @@ def test_stuck_runs_per_job_override(conn: sqlite3.Connection) -> None:
     assert {f.key for f in r.findings} == {f"stuck:{mon.run_id}", f"stuck:{rss.run_id}"}
 
 
+def test_stuck_broker_override_15m() -> None:
+    """E11.2 (D72): the shipped config flags a broker ladder run after 15 min."""
+    ms = load_routines().monitoring
+    assert ms.stuck_after_for("broker") == dt.timedelta(minutes=15)
+
+
+def test_stuck_run_detail_carries_liveness(conn: sqlite3.Connection) -> None:
+    """E11.2: a stuck run's finding says its pid, whether it lives, and the heartbeat age."""
+    ms = MonitoringSettings.model_validate({"stuck_after_jobs": {"broker": "15m"}})
+    repo = RoutineRunRepo(conn)
+    t0 = et(2026, 9, 28, 10, 0)
+    run = repo.claim(job="broker", scheduled_for=t0, reason="event:approval", now=t0, event_id="e1")
+    assert run is not None
+    repo.set_pid(run.run_id, 2**22 + 7, now=t0)  # no such process
+    repo.beat(run.run_id, t0 + dt.timedelta(minutes=2))
+    r = checks.stuck_runs(conn, ms, t0 + dt.timedelta(minutes=16))
+    (f,) = r.findings
+    assert f.detail["pid"] == 2**22 + 7
+    assert f.detail["pid_alive"] is False
+    assert f.detail["heartbeat_age_s"] == 14 * 60.0
+    got = repo.get(run.run_id)
+    assert got is not None and got.pid == 2**22 + 7 and got.heartbeat_at is not None
+
+
 def test_stuck_after_jobs_validation() -> None:
     with pytest.raises(ValidationError):
         MonitoringSettings.model_validate({"stuck_after_jobs": {"monitor": "0m"}})

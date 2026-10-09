@@ -1192,6 +1192,15 @@ Close strays and resume after a reconcile halt:
 5. Resume: `!resume` in Slack, or `.venv/bin/arc resume --actor <owner Slack id>`.
    Check with `.venv/bin/arc halt-status` (exit 0 = not halted).
 
+A ladder process died mid-order (E11.2, D72): the `broker.reattach` job adopts it
+on the next 10-min tick and posts `Re-attached <ticker> <kind>: ladder pid N died at
+step k; …`. To look or act now: `.venv/bin/arc reattach --dry-run` lists orphans
+(run, pid, heartbeat age, open orders; no broker call, no writes);
+`.venv/bin/arc reattach --json` adopts them (exit 0 clean, 1 if any ended
+`unconfirmed` or errored → `reconcile.intraday` follows; 2 broker refused). A
+`wedged` line means the ladder holds its lock but stopped beating; it gets one
+SIGTERM after 10 min and is adopted on the following tick.
+
 ### 5.13 Portfolio-aware Director, idea dedupe, no-trade (E5.9, D33)
 
 Before every entry chain the Director step runs three deterministic pieces

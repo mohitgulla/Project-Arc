@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from arc.broker.base import BrokerAdapter
 
-__all__ = ["add_execute_parser", "run_execute"]
+__all__ = ["add_execute_parser", "add_reattach_parser", "run_execute", "run_reattach"]
 
 log = structlog.get_logger(__name__)
 
@@ -141,3 +141,78 @@ def run_execute(args: argparse.Namespace, *, broker: BrokerAdapter | None = None
         }
     )
     return 0 if out.status in (ExecStatus.FILLED, ExecStatus.ALREADY) else 1
+
+
+# -- E11.2 (D72): `arc reattach` ------------------------------------------------
+
+
+def add_reattach_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    """``arc reattach``: adopt working executions whose ladder process died.
+
+    A separate top-level command (not ``arc execute reattach``): ``arc execute``
+    is the token-gated order path the ``arc-gate`` hook blocks without ``--token``,
+    and re-attach never sends an order.
+    """
+    p = sub.add_parser(
+        "reattach",
+        help="Adopt a dead ladder's working order: record fills, cancel the rest (D72)",
+    )
+    p.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+    p.add_argument("--lock-dir", default="data/locks", help="The dispatcher's lock dir")
+    p.add_argument(
+        "--dry-run", action="store_true", help="List orphans only: no broker call, no writes"
+    )
+    p.add_argument("--json", action="store_true", help="Print the full report as JSON")
+
+
+def run_reattach(args: argparse.Namespace, *, broker: BrokerAdapter | None = None) -> int:
+    """Exit 0 when nothing was adopted or every adoption ended cleanly; 1 when any
+    ended ``unconfirmed`` or errored; 2 when the broker is refused."""
+    import uuid
+
+    from arc.config import get_settings
+    from arc.execution.reattach import reattach
+    from arc.routines.locks import LockManager, NullLocks
+    from arc.store.identity import open_store
+    from arc.utils.calendar import now_et
+
+    settings = get_settings()
+    conn = open_store(args.db, settings=settings)  # D70: binds the store to ARC_ENV
+    from arc.control import effective_settings
+
+    settings = effective_settings(conn, base=settings)
+    if broker is None and not args.dry_run:
+        from arc.broker.registry import BrokerNotAvailable
+        from arc.experiments.broker import trading_broker
+
+        try:
+            broker = trading_broker(conn, settings)  # E10.2: an arm store's own account
+        except BrokerNotAvailable as exc:
+            _out({"status": "refused", "detail": str(exc)})
+            return 2
+    locks = NullLocks() if args.dry_run else LockManager(args.lock_dir)
+    report = reattach(
+        conn,
+        broker,
+        locks,
+        now=now_et(),
+        settings=settings,
+        run_id=f"cli-reattach-{uuid.uuid4().hex[:12]}",
+        clock=now_et,
+        sleep=time.sleep,
+        dry_run=args.dry_run,
+    )
+    if args.json:
+        _out(report.model_dump(mode="json"))
+    else:
+        sys.stdout.write(report.summary() + "\n")
+        for o in report.orphans:
+            live = o.liveness
+            sys.stdout.write(
+                f"  orphan {o.proposal_hash[:12]} {o.ticker} {o.kind}: run {live.run_id} "
+                f"pid {live.pid} heartbeat {live.heartbeat_age_s}s, "
+                f"{len(o.orders)} open order(s)\n"
+            )
+        for a in report.adopted:
+            sys.stdout.write(f"  {a.alert}\n")
+    return 1 if report.unconfirmed or report.errors else 0

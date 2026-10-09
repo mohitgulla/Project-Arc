@@ -223,6 +223,9 @@ def _make_parser() -> argparse.ArgumentParser:
             from arc.execution.cli import add_execute_parser
 
             add_execute_parser(sub)
+            from arc.execution.cli import add_reattach_parser
+
+            add_reattach_parser(sub)
         elif cmd == "reconcile":
             from arc.reconcile.cli import add_reconcile_parser
 
@@ -783,6 +786,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_execute(args)
+    if args.command == "reattach":
+        from arc.execution.cli import run_reattach
+
+        _log_to_stderr()
+        return run_reattach(args)
     if args.command == "reconcile":
         from arc.reconcile.cli import run_reconcile
 

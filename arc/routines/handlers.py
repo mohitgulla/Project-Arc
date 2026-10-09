@@ -136,6 +136,9 @@ class JobContext:
     run_env: RunEnv = field(default_factory=RunEnv)
     # Why this run started: schedule | manual | manual:<what> | event:<name> | chain:<root>.
     reason: str = "schedule"
+    # E11.2 (D72): "this run is still working" (a ladder calls it on every poll);
+    # the dispatcher wires it to ``routine_runs.heartbeat_at``.
+    heartbeat: Callable[[], None] = field(default=lambda: None)
 
     @property
     def is_loop_run(self) -> bool:
@@ -2747,6 +2750,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "broker.reconcile": "arc.broker.reconcile_job:broker_reconcile_step",
     # E11.1 (D71): event-driven reconcile of an unconfirmed ladder (never waits for 16:30)
     "reconcile.intraday": "arc.broker.reconcile_job:intraday_reconcile_step",
+    # E11.2 (D72): adopt a dead ladder's working order (fills applied, rest cancelled)
+    "broker.reattach": "arc.broker.reattach_job:reattach_step",
     # E6.4 position manager: marks -> mandatory exits (arc/positions/steps.py)
     "positions.evaluate": "arc.positions.steps:evaluate_step",
     # E13.18 (D56): the deterministic mandatory-exit floor (stop / DTE exit / expiry)
