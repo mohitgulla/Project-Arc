@@ -148,6 +148,15 @@ class BrokerAdapter(Protocol):
         Every option order (single-leg ``us_option`` or mleg) the broker lists
         since *since*, any status. The D32 order budget cross-checks the local
         count against it; adapters without it are counted locally only.
+    order_status_by_client_id(client_order_id) -> BrokerOrderStatus | None
+        E11.1 (D71): the order the broker holds under *client_order_id* (any
+        status), ``None`` when it has no such order (Alpaca: 404). Raises on a
+        transport or other API error. Resolves an unknown submit
+        (:mod:`arc.execution.resolve`) and an order with no broker id at
+        reconcile. Adapters without it leave such an order unresolved.
+    cancel_by_client_id(client_order_id) -> None
+        E11.1 (D71): best-effort cancel of the order held under
+        *client_order_id* (lookup, then cancel by broker id).
     info() -> arc.broker.registry.BrokerInfo
         Venue/env/transport, an account label (never an account id) and
         whether the venue takes multi-leg orders / has a paper mode (E13.11).

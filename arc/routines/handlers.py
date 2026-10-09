@@ -2745,6 +2745,8 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "broker.execute": "arc.broker.ladder_job:execute_step",
     # E6.3 / D56 Broker reconcile: post-market broker vs local, snapshots, tax lots, card
     "broker.reconcile": "arc.broker.reconcile_job:broker_reconcile_step",
+    # E11.1 (D71): event-driven reconcile of an unconfirmed ladder (never waits for 16:30)
+    "reconcile.intraday": "arc.broker.reconcile_job:intraday_reconcile_step",
     # E6.4 position manager: marks -> mandatory exits (arc/positions/steps.py)
     "positions.evaluate": "arc.positions.steps:evaluate_step",
     # E13.18 (D56): the deterministic mandatory-exit floor (stop / DTE exit / expiry)

@@ -375,8 +375,19 @@ def broker_execute(
             "status": str(out.status),
             "steps_used": out.steps_used if out.steps_used is not None else -1,
         },
-        notice=f"{ticker} {what} {out.status}" + (f": {out.detail}" if out.detail else ""),
+        notice=_notice(ctx, out, ticker=ticker, what=what),
     )
+
+
+def _notice(ctx: JobContext, out: ExecutionOutcome, *, ticker: str | None, what: str) -> str:
+    """The ladder's one-line notice; D71: an unconfirmed one says the reconcile is queued."""
+    from arc.execution.ladder import ExecStatus
+
+    if out.status is ExecStatus.UNCONFIRMED and ctx.settings.execution_intraday_reconcile:
+        head = f"{ticker} {what} UNCONFIRMED — intraday reconcile queued"
+    else:
+        head = f"{ticker} {what} {out.status}"
+    return head + (f": {out.detail}" if out.detail else "")
 
 
 def _execution_note(

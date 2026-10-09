@@ -128,6 +128,13 @@ class PrefixedOrderBroker:
         )
         return self._inner.submit_mleg(tagged)
 
+    def order_status_by_client_id(self, client_order_id: str) -> Any:
+        """D71: look up by the same ``test.``-tagged id the order went out with."""
+        return self._inner.order_status_by_client_id(tag_client_order_id(client_order_id))
+
+    def cancel_by_client_id(self, client_order_id: str) -> None:
+        self._inner.cancel_by_client_id(tag_client_order_id(client_order_id))
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
 

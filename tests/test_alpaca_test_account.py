@@ -144,6 +144,11 @@ def test_wrapper_prefixes_client_order_id_and_delegates() -> None:
     assert inner.submit_mleg.call_args.args[0].client_order_id.startswith("test.")
     b.account()
     inner.account.assert_called_once()
+    # D71: client-id lookups/cancels use the tagged id the order went out with.
+    b.order_status_by_client_id(token)
+    inner.order_status_by_client_id.assert_called_once_with(TEST_CLIENT_ORDER_PREFIX + token)
+    b.cancel_by_client_id(token)
+    inner.cancel_by_client_id.assert_called_once_with(TEST_CLIENT_ORDER_PREFIX + token)
 
 
 def test_tag_is_idempotent_and_bounded() -> None:

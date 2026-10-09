@@ -23,6 +23,15 @@
    ``wash_sale`` when another lot on the same underlying was opened within
    ``wash_sale_days`` before or after the loss close (§5: same underlying).
 
+``scope="intraday"`` (E11.1, D71) checks only step 2, and only for executions
+left ``unconfirmed`` (optionally one proposal): no positions, fills, snapshots,
+lots or settles, and it never halts by itself; the caller
+(:func:`arc.broker.reconcile_job.intraday_reconcile`) decides. Both scopes adopt
+an order that has no broker id by looking its ``client_order_id`` up (when the
+adapter has ``order_status_by_client_id``): found = its broker id is recorded and
+it is checked like any other; absent = the broker never took it, so it is
+cancelled locally (``reconcile:resolved``).
+
 Any mismatch (or a broker read failure: we can't prove the books agree) raises a
 halt (``actor = arc:reconcile``) so no new entry is gated until the owner
 ``!resume``s; the caller posts the alert. Every outcome is journaled with a
@@ -36,7 +45,7 @@ import json
 from collections import defaultdict
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
@@ -60,7 +69,13 @@ if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Callable
 
-    from arc.broker.base import AccountInfo, BrokerAdapter, BrokerPosition, Fill
+    from arc.broker.base import (
+        AccountInfo,
+        BrokerAdapter,
+        BrokerOrderStatus,
+        BrokerPosition,
+        Fill,
+    )
     from arc.config import ArcSettings
 
 __all__ = [
@@ -68,6 +83,7 @@ __all__ = [
     "Mismatch",
     "MismatchKind",
     "ReconcileReport",
+    "halt_on_mismatch",
     "reconcile",
 ]
 
@@ -122,6 +138,7 @@ class ReconcileReport(BaseModel):
 
     day: _dt.date
     at: _dt.datetime
+    scope: Literal["full", "intraday"] = "full"
     mismatches: list[Mismatch] = Field(default_factory=list)
     notices: list[Mismatch] = Field(
         default_factory=list,
@@ -158,6 +175,9 @@ class ReconcileReport(BaseModel):
 
     def summary(self) -> str:
         head = "clean" if self.clean else f"{len(self.mismatches)} mismatch(es)"
+        if self.scope == "intraday":
+            stop = "; HALTED" if self.halted else ""
+            return f"intraday {head}: {self.orders_checked} order(s) checked{stop}"
         pnl = f", day P&L ${self.day_pnl:+,.2f}" if self.day_pnl is not None else ""
         text = (
             f"{head}: {self.structures_attributed}/{self.structures_open} structures held, "
@@ -295,6 +315,24 @@ _NO_FILL_TERMINAL = {
 }
 
 
+def _lookup_by_client_id(
+    broker: BrokerAdapter, client_order_id: str | None
+) -> tuple[bool, BrokerOrderStatus | None, str]:
+    """``(asked, status, error)``: the broker's order under *client_order_id* (D71).
+
+    ``asked`` is False when the adapter cannot look up by client id or the row has
+    none; ``status`` None with ``asked`` True and no error = the broker has no
+    such order.
+    """
+    lookup = getattr(broker, "order_status_by_client_id", None)
+    if not client_order_id or not callable(lookup):
+        return False, None, ""
+    try:
+        return True, lookup(client_order_id), ""
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        return True, None, f"{type(exc).__name__}: {exc}"
+
+
 def _check_orders(
     conn: sqlite3.Connection,
     broker: BrokerAdapter,
@@ -302,6 +340,9 @@ def _check_orders(
     journal: list[dict[str, Any]],
     now: _dt.datetime,
     run_id: str | None,
+    *,
+    only: set[str] | None = None,
+    exec_states: tuple[str, ...] = _OPEN_EXEC_STATES,
 ) -> None:
     """Flag local orders/executions left open after the close.
 
@@ -309,6 +350,11 @@ def _check_orders(
     locally (moved to that state; its execution becomes ``cancelled``) and
     journaled. Anything with a fill, or that the broker can't confirm, is a
     mismatch: a fill changes positions, which only a human may settle.
+
+    D71: an order with no broker id is looked up by ``client_order_id``; found =
+    its broker id is adopted and the rule above applies, absent = cancelled
+    locally. *only* restricts the check to those proposal hashes (intraday scope);
+    *exec_states* are the execution statuses checked.
     """
     from arc.models import OrderState
     from arc.store.execution import ExecutionRepo
@@ -318,27 +364,68 @@ def _check_orders(
     orders = OrderRepo(conn)
     marks = ",".join("?" * len(_OPEN_ORDER_STATES))
     rows = conn.execute(
-        f"""SELECT o.id, o.state, o.broker_order_id, o.client_order_id, p.ticker
+        f"""SELECT o.id, o.state, o.broker_order_id, o.client_order_id, o.proposal_hash,
+                   p.ticker
             FROM orders o LEFT JOIN proposals p ON p.proposal_hash = o.proposal_hash
             WHERE o.state IN ({marks}) ORDER BY o.created_at, o.id""",  # noqa: S608 - fixed placeholders
         _OPEN_ORDER_STATES,
     ).fetchall()
     for r in rows:
+        if only is not None and r["proposal_hash"] not in only:
+            continue
         report.orders_checked += 1
         status = "no broker id"
-        if r["broker_order_id"]:
-            try:
-                st = broker.order_status(r["broker_order_id"])
-            except Exception as exc:  # noqa: BLE001 - reported, not raised
-                status = f"broker status unreadable ({type(exc).__name__}: {exc})"
-            else:
+        bid = r["broker_order_id"]
+        st: BrokerOrderStatus | None = None
+        frm = OrderState(r["state"])
+        if not bid:
+            asked, st, err = _lookup_by_client_id(broker, r["client_order_id"])
+            if asked and err:
+                status = f"no broker id; client-id lookup failed ({err})"
+            elif asked and st is None:
+                orders.transition(
+                    order_id=r["id"], to_state=OrderState.CANCELLED, actor=RECONCILE_ACTOR,
+                    detail="reconcile: broker has no order with this client id",
+                    event_at=to_db(now), run_id=run_id,
+                )  # fmt: skip
+                journal.append({
+                    "subject": r["ticker"] or r["client_order_id"], "choice": Choice.NOTED,
+                    "code": ReasonCode.RECONCILE_RESOLVED,
+                    "text": f"order {r['client_order_id']} was {r['state']} locally with no "
+                    "broker id; the broker has no order under its client id: set cancelled",
+                    "payload": {"order_id": r["id"]},
+                })  # fmt: skip
+                continue
+            elif st is not None:
+                bid = st.broker_order_id
+                orders.set_broker_order_id(r["id"], bid)
+                if frm is OrderState.APPROVED:
+                    orders.transition(
+                        order_id=r["id"], to_state=OrderState.SUBMITTED, actor=RECONCILE_ACTOR,
+                        detail=f"reconcile: adopted broker {bid} by client id",
+                        event_at=to_db(now), run_id=run_id,
+                    )  # fmt: skip
+                    frm = OrderState.SUBMITTED
+                journal.append({
+                    "subject": r["ticker"] or r["client_order_id"], "choice": Choice.NOTED,
+                    "code": ReasonCode.RECONCILE_RESOLVED,
+                    "text": f"order {r['client_order_id']} had no broker id; adopted {bid} "
+                    f"by client id (broker says {st.status})",
+                    "payload": {"order_id": r["id"], "broker_order_id": bid},
+                })  # fmt: skip
+        if bid:
+            if st is None:
+                try:
+                    st = broker.order_status(bid)
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    status = f"broker status unreadable ({type(exc).__name__}: {exc})"
+            if st is not None:
                 status = f"broker says {st.status} (filled {st.filled_qty})"
                 target = _NO_FILL_TERMINAL.get(st.status)
                 has_fill = conn.execute(
                     "SELECT 1 FROM fills WHERE order_id = ? LIMIT 1", (r["id"],)
                 ).fetchone()
                 to = OrderState(target) if target else None
-                frm = OrderState(r["state"])
                 if to is not None and to not in VALID_TRANSITIONS[frm]:
                     to = OrderState.CANCELLED
                 if to is not None and st.filled_qty == 0 and not has_fill:
@@ -351,26 +438,29 @@ def _check_orders(
                         "code": ReasonCode.RECONCILE_RESOLVED,
                         "text": f"order {r['client_order_id']} was {r['state']} locally; "
                         f"{status}: set {to.value}",
-                        "payload": {"order_id": r["id"], "broker_order_id": r["broker_order_id"]},
+                        "payload": {"order_id": r["id"], "broker_order_id": bid},
                     })  # fmt: skip
                     continue
+        when = "intraday" if only is not None else "after the close"
         report.mismatches.append(
             Mismatch(
                 kind=MismatchKind.ORDER_OPEN,
                 subject=r["ticker"] or r["client_order_id"],
-                detail=f"order {r['client_order_id']} is still {r['state']} locally after the "
-                f"close; {status}",
-                refs=[r["id"], *([r["broker_order_id"]] if r["broker_order_id"] else [])],
+                detail=f"order {r['client_order_id']} is still {frm.value} locally {when}; "
+                f"{status}",
+                refs=[r["id"], *([bid] if bid else [])],
             )
         )
-    marks = ",".join("?" * len(_OPEN_EXEC_STATES))
+    marks = ",".join("?" * len(exec_states))
     for r in conn.execute(
         f"""SELECT e.proposal_hash, e.status, e.detail, p.ticker FROM executions e
             LEFT JOIN proposals p ON p.proposal_hash = e.proposal_hash
             WHERE e.status IN ({marks})""",  # noqa: S608 - fixed placeholders
-        _OPEN_EXEC_STATES,
+        exec_states,
     ).fetchall():
         phash = r["proposal_hash"]
+        if only is not None and phash not in only:
+            continue
         order_marks = ",".join("?" * len(_OPEN_ORDER_STATES))
         still_open = conn.execute(
             f"SELECT 1 FROM orders WHERE proposal_hash = ? AND state IN ({order_marks}) LIMIT 1",  # noqa: S608
@@ -711,16 +801,19 @@ def reconcile(
     run_id: str | None = None,
     halt: bool = True,
     settle_price: Callable[[str, _dt.date], Decimal | None] | None = None,
+    scope: Literal["full", "intraday"] = "full",
+    proposal_hashes: set[str] | None = None,
 ) -> ReconcileReport:
     """Reconcile *broker* against the local store for the ET day of *now* (see module doc).
 
     ``settle_price(root, day)`` (optional) returns the underlying's close on an
     expiration day, so expired structures can be settled at intrinsic value.
+    ``scope="intraday"`` (D71) checks only unconfirmed executions (all, or those in
+    *proposal_hashes*) and never stops trading; *halt* is ignored there.
     """
-    from arc.gate.halt import HaltSwitch
-    from arc.store.repos import HaltRepo
-
     day = now.astimezone(ET).date()
+    if scope == "intraday":
+        return _reconcile_intraday(conn, broker, day, now, run_id, proposal_hashes)
     report = ReconcileReport(day=day, at=now)
     info: AccountInfo | None = None
     positions: list[BrokerPosition] | None = None
@@ -818,20 +911,73 @@ def reconcile(
             )  # fmt: skip
 
     if report.mismatches and halt:
-        switch = HaltSwitch(HaltRepo(conn))
-        active = [h for h in switch.state().active if h.actor == RECONCILE_ACTOR]
-        if active:
-            report.halt_id = active[0].id
-        else:
-            kinds = sorted({str(m.kind) for m in report.mismatches})
-            rec = switch.halt(
-                actor=RECONCILE_ACTOR,
-                reason=f"reconciliation {day}: {len(report.mismatches)} mismatch(es) "
-                f"({', '.join(kinds)})",
-                now=now,
-                run_id=run_id,
-            )
-            report.halt_id = rec.id
-        report.halted = True
+        halt_on_mismatch(conn, report, now=now, run_id=run_id)
     log.info("reconcile.done", day=day.isoformat(), summary=report.summary())
     return report
+
+
+def _reconcile_intraday(
+    conn: sqlite3.Connection,
+    broker: BrokerAdapter,
+    day: _dt.date,
+    now: _dt.datetime,
+    run_id: str | None,
+    proposal_hashes: set[str] | None,
+) -> ReconcileReport:
+    """D71: orders/executions of the unconfirmed ladders only; journal, never stop trading."""
+    report = ReconcileReport(day=day, at=now, scope="intraday")
+    rows = conn.execute(
+        "SELECT proposal_hash FROM executions WHERE status = 'unconfirmed'"
+    ).fetchall()
+    only = {r["proposal_hash"] for r in rows}
+    if proposal_hashes is not None:
+        only &= proposal_hashes
+    journal: list[dict[str, Any]] = []
+    _check_orders(conn, broker, report, journal, now, run_id, only=only,
+                  exec_states=("unconfirmed",))  # fmt: skip
+    with conn:
+        store = JournalStore(conn)
+        for j in journal:
+            store.record(
+                persona=JournalPersona.BROKER, stage=Stage.RECONCILE, subject=j["subject"],
+                choice=j["choice"], reason_code=j["code"], reason_text=j["text"][:2000],
+                payload={**(j.get("payload") or {}), "scope": "intraday"}, at=now,
+                run_id=run_id,
+            )  # fmt: skip
+        for m in report.mismatches:
+            store.record(
+                persona=JournalPersona.BROKER, stage=Stage.RECONCILE, subject=m.subject,
+                choice=Choice.FAILED, reason_code=ReasonCode.RECONCILE_MISMATCH,
+                reason_text=m.detail[:2000], at=now, run_id=run_id,
+                payload={"kind": str(m.kind), "refs": m.refs, "scope": "intraday"},
+            )  # fmt: skip
+    log.info("reconcile.intraday_done", checked=sorted(only), summary=report.summary())
+    return report
+
+
+def halt_on_mismatch(
+    conn: sqlite3.Connection, report: ReconcileReport, *, now: _dt.datetime, run_id: str | None
+) -> None:
+    """Raise (or join) the ``arc:reconcile`` halt for *report*'s mismatches.
+
+    One active reconcile halt at a time: a second call records the existing one.
+    """
+    from arc.gate.halt import HaltSwitch
+    from arc.store.repos import HaltRepo
+
+    switch = HaltSwitch(HaltRepo(conn))
+    active = [h for h in switch.state().active if h.actor == RECONCILE_ACTOR]
+    if active:
+        report.halt_id = active[0].id
+    else:
+        kinds = sorted({str(m.kind) for m in report.mismatches})
+        what = "intraday reconciliation" if report.scope == "intraday" else "reconciliation"
+        rec = switch.halt(
+            actor=RECONCILE_ACTOR,
+            reason=f"{what} {report.day}: {len(report.mismatches)} mismatch(es) "
+            f"({', '.join(kinds)})",
+            now=now,
+            run_id=run_id,
+        )
+        report.halt_id = rec.id
+    report.halted = True

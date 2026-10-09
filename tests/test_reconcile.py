@@ -661,3 +661,174 @@ def test_auditor_output_maps_categories(conn: sqlite3.Connection) -> None:
     assert out.reconciliation_status == "discrepancies_found"
     assert {a.category for a in out.anomalies} == {"position_mismatch", "fill_discrepancy"}
     assert all(a.severity == "critical" for a in out.anomalies)
+
+
+# ---------------------------------------------------------------------------
+# E11.1 (D71): orders without a broker id, intraday scope, reconcile.intraday job
+# ---------------------------------------------------------------------------
+
+
+class ClientIdBroker(FakeBroker):
+    """FakeBroker that knows orders by client id; ``settle``/positions must not be read."""
+
+    def __init__(
+        self, *, by_coid: dict[str, BrokerOrderStatus], lookup_error: bool = False, **kw: Any
+    ) -> None:
+        super().__init__(**kw)
+        self.by_coid = by_coid
+        self.lookup_error = lookup_error
+        self.read: list[str] = []
+
+    def order_status_by_client_id(self, coid: str) -> BrokerOrderStatus | None:
+        self.read.append(f"coid:{coid}")
+        if self.lookup_error:
+            msg = "lookup down"
+            raise ConnectionError(msg)
+        return self.by_coid.get(coid)
+
+    def order_status(self, broker_order_id: str) -> BrokerOrderStatus:
+        self.read.append(f"status:{broker_order_id}")
+        return super().order_status(broker_order_id)
+
+    def positions(self) -> list[BrokerPosition]:
+        self.read.append("positions")
+        return super().positions()
+
+    def fills(self, since: dt.datetime) -> list[Fill]:
+        self.read.append("fills")
+        return super().fills(since)
+
+    def account(self) -> AccountInfo:
+        self.read.append("account")
+        return super().account()
+
+
+def unconfirmed_order(
+    conn: sqlite3.Connection, *, phash: str = "d" * 64, state: OrderState = OrderState.APPROVED
+) -> dict[str, Any]:
+    """The submit-exception orphan: an order with no broker id, execution unconfirmed."""
+    pos = open_position(conn, phash=phash, bid=None, fill=False)
+    conn.execute("UPDATE orders SET state = ? WHERE id = ?", (state.value, pos["oid"]))
+    conn.execute("UPDATE open_structures SET status = 'closed'")  # never opened
+    ExecutionRepo(conn).start(
+        proposal_hash=phash, kind="open", token_version="arc2", band_lo=D("-0.9"),
+        band_hi=D("-0.8"), max_steps=3, contracts=2, now=OPENED,
+    )  # fmt: skip
+    conn.execute("UPDATE executions SET status = 'unconfirmed' WHERE proposal_hash = ?", (phash,))
+    conn.commit()
+    return pos
+
+
+def coid(pos: dict[str, Any]) -> str:
+    return f"coid-{pos['phash'][:6]}"
+
+
+@pytest.mark.parametrize("state", [OrderState.APPROVED, OrderState.SUBMITTED])
+def test_order_without_broker_id_adopted_by_client_id(
+    conn: sqlite3.Connection, state: OrderState
+) -> None:
+    pos = unconfirmed_order(conn, state=state)
+    b = ClientIdBroker(
+        by_coid={coid(pos): BrokerOrderStatus(broker_order_id="brk-z", status="canceled")}
+    )
+    rep = run(conn, b)
+    assert rep.clean, rep.mismatches
+    row = OrderRepo(conn).get(pos["oid"])
+    assert row["broker_order_id"] == "brk-z" and row["state"] == "cancelled"
+    assert ExecutionRepo(conn).get(pos["phash"])["status"] == "cancelled"
+    assert reasons(conn).count(ReasonCode.RECONCILE_RESOLVED.value) >= 2  # adopted + resolved
+
+
+def test_order_without_broker_id_absent_is_cancelled(conn: sqlite3.Connection) -> None:
+    pos = unconfirmed_order(conn)
+    rep = run(conn, ClientIdBroker(by_coid={}))
+    assert rep.clean, rep.mismatches
+    assert OrderRepo(conn).get(pos["oid"])["state"] == "cancelled"
+    assert ExecutionRepo(conn).get(pos["phash"])["status"] == "cancelled"
+
+
+def test_order_without_broker_id_lookup_error_is_mismatch(conn: sqlite3.Connection) -> None:
+    unconfirmed_order(conn)
+    rep = run(conn, ClientIdBroker(by_coid={}, lookup_error=True), halt=False)
+    kinds = [m.kind for m in rep.mismatches]
+    assert MismatchKind.ORDER_OPEN in kinds
+    assert "client-id lookup failed" in rep.mismatches[0].detail
+
+
+def test_order_without_broker_id_and_no_lookup_is_mismatch(conn: sqlite3.Connection) -> None:
+    """An adapter without ``order_status_by_client_id`` keeps today's behaviour."""
+    unconfirmed_order(conn)
+    rep = run(conn, FakeBroker(), halt=False)
+    assert rep.mismatches[0].kind is MismatchKind.ORDER_OPEN
+    assert "no broker id" in rep.mismatches[0].detail
+
+
+def test_intraday_scope_never_halts_or_settles(conn: sqlite3.Connection) -> None:
+    other = open_position(conn)  # a filled, held position the intraday scope must not touch
+    pos = unconfirmed_order(conn)
+    b = ClientIdBroker(
+        by_coid={coid(pos): BrokerOrderStatus(broker_order_id="brk-z", status="new")}
+    )
+    settle = MagicMock()
+    rep = run(conn, b, scope="intraday", settle_price=settle)
+    assert rep.scope == "intraday" and not rep.clean and rep.halted is False
+    # the order (adopted: approved -> submitted) and its unconfirmed execution
+    assert [m.kind for m in rep.mismatches] == [MismatchKind.ORDER_OPEN] * 2
+    assert "still submitted locally intraday" in rep.mismatches[0].detail
+    assert rep.mismatches[0].refs[-1] == "brk-z", "adopted broker id is reported"
+    assert not HaltSwitch(HaltRepo(conn)).state().halted
+    settle.assert_not_called()
+    assert "positions" not in b.read and "fills" not in b.read and "account" not in b.read
+    assert conn.execute("SELECT COUNT(*) FROM pnl_snapshots").fetchone()[0] == 0
+    assert OrderRepo(conn).get(other["oid"])["state"] == "filled"
+    assert "intraday 2 mismatch(es): 1 order(s) checked" in rep.summary()
+
+
+def test_intraday_scope_limited_to_proposal(conn: sqlite3.Connection) -> None:
+    unconfirmed_order(conn, phash="d" * 64)
+    unconfirmed_order(conn, phash="e" * 64)
+    rep = run(conn, ClientIdBroker(by_coid={}), scope="intraday", proposal_hashes={"e" * 64})
+    assert rep.orders_checked == 1 and rep.clean
+    assert ExecutionRepo(conn).get("d" * 64)["status"] == "unconfirmed"
+    assert ExecutionRepo(conn).get("e" * 64)["status"] == "cancelled"
+
+
+def _intraday_ctx(conn: sqlite3.Connection, phash: str) -> JobContext:
+    from arc.routines.runs import RoutineEventRepo
+
+    routines = RoutinesConfig.model_validate(
+        {"personas": {"reconcile.intraday": {"trigger": "reconcile.intraday", "llm": False,
+                                    "notify": "quiet", "halt_exempt": True,
+                                    "halt_on_mismatch": True, "writes": []}}}
+    )  # fmt: skip
+    kind, step = routines.step("reconcile.intraday")
+    ev = RoutineEventRepo(conn).emit(
+        "reconcile.intraday", {"proposal_hash": phash, "reason": "t"}, now=NOW
+    )
+    return JobContext(
+        job="reconcile.intraday", kind=kind, spec=step, run_id="run-i", chain_run_id=None,
+        scheduled_for=NOW, now=NOW, conn=conn, snapshot=ContextStore(conn).snapshot(NOW),
+        routines=routines, settings_factory=lambda: settings(), event=ev,
+    )  # fmt: skip
+
+
+def test_intraday_job_resolved_orphan_does_not_halt(conn: sqlite3.Connection) -> None:
+    from arc.broker.reconcile_job import intraday_reconcile
+
+    pos = unconfirmed_order(conn)
+    res = intraday_reconcile(_intraday_ctx(conn, pos["phash"]), broker=ClientIdBroker(by_coid={}))
+    assert res.metrics["clean"] and not res.metrics["halted"] and not res.notice
+    assert not HaltSwitch(HaltRepo(conn)).state().halted
+    assert ReasonCode.RECONCILE_RESOLVED.value in reasons(conn)
+
+
+def test_intraday_job_still_unknown_halts_and_alerts(conn: sqlite3.Connection) -> None:
+    from arc.broker.reconcile_job import intraday_reconcile
+
+    pos = unconfirmed_order(conn)
+    b = ClientIdBroker(by_coid={}, lookup_error=True)
+    res = intraday_reconcile(_intraday_ctx(conn, pos["phash"]), broker=b)
+    assert res.metrics["halted"] and "HALTED" in res.notice and "!resume" in res.notice
+    state = HaltSwitch(HaltRepo(conn)).state()
+    assert state.halted and state.active[0].actor == RECONCILE_ACTOR
+    assert "intraday reconciliation" in state.active[0].reason

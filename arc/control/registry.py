@@ -193,6 +193,11 @@ NOT_EXPOSED: dict[str, str] = {
     "ticks": "exchange tick size",
     "execution_poll_seconds": "broker polling plumbing",
     "execution_cancel_confirm_seconds": "broker cancel plumbing",
+    # E11.1 (D71): broker HTTP plumbing; read-only in this card, change by PR.
+    "execution_broker_connect_timeout_s": "broker HTTP connect timeout (D71); change by PR",
+    "execution_broker_read_timeout_s": "broker HTTP read timeout (D71); change by PR",
+    "execution_unknown_submit_lookups": "client-id lookups after a submit error (D71)",
+    "execution_intraday_reconcile": "safety: reconcile an unconfirmed ladder at once (D71)",
     "alpaca_data_feed": "data subscription tier",
     "alpaca_options_feed": "data subscription tier",
     "scanner_target_delta": "target inside the tunable short band",

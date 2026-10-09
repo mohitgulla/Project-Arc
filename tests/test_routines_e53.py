@@ -913,6 +913,7 @@ def test_yaml_comment_overview_matches_config() -> None:
         "scout", "scalp", "scalp.overnight", "research", "monitor", "broker.reconcile", "scorecard",
         "broker",
         "positions.evaluate", "experiments.evaluate",
+        "reconcile.intraday",  # E11.1 (D71): event-driven
     }  # fmt: skip
     # D31: the loop's cadence and window are config; the loop knobs are one block.
     assert raw["personas"]["research"] == {

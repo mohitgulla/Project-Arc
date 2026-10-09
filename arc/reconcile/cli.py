@@ -3,7 +3,8 @@
 Same code path as the Broker reconcile job (:func:`arc.reconcile.engine.reconcile`)
 against the Alpaca **paper** broker (read-only calls). Prints the report as
 JSON. Exit 0 when clean, 1 on any mismatch (a halt is raised unless
-``--no-halt``).
+``--no-halt``). ``--intraday`` (E11.1, D71) checks only unconfirmed executions'
+orders (adopting broker ids by client id) and never halts.
 """
 
 from __future__ import annotations
@@ -27,6 +28,11 @@ def add_reconcile_parser(sub: argparse._SubParsersAction) -> None:  # type: igno
     p.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
     p.add_argument(
         "--no-halt", action="store_true", help="Report mismatches without raising a halt"
+    )
+    p.add_argument(
+        "--intraday",
+        action="store_true",
+        help="Only unconfirmed executions' orders (D71); never halts, no snapshots",
     )
     p.add_argument(
         "--no-settle", action="store_true", help="Do not fetch closes to settle expired structures"
@@ -63,7 +69,7 @@ def run_reconcile(args: argparse.Namespace, *, broker: BrokerAdapter | None = No
             refusal = {"status": "refused", "detail": str(exc), "broker": exc.spec.label}
             sys.stdout.write(json.dumps(refusal) + "\n")
             return 2
-        if not args.no_settle:
+        if not args.no_settle and not getattr(args, "intraday", False):
             from arc.broker.reconcile_job import settle_from_market
             from arc.data.alpaca import AlpacaMarketData
 
@@ -79,6 +85,13 @@ def run_reconcile(args: argparse.Namespace, *, broker: BrokerAdapter | None = No
             sys.stderr.write("--now must carry a UTC offset\n")
             return 2
         now = at.astimezone(ET)
+    if getattr(args, "intraday", False):
+        report = reconcile(conn, broker, settings=settings, now=now, scope="intraday")
+        out = report.model_dump(mode="json")
+        out["clean"] = report.clean
+        out["summary"] = report.summary()
+        sys.stdout.write(json.dumps(out, indent=2, default=str) + "\n")
+        return 0 if report.clean else 1
     report = reconcile(
         conn, broker, settings=settings, now=now, halt=not args.no_halt, settle_price=settle
     )

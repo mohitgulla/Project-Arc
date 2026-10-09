@@ -35,6 +35,7 @@
 #   09:50-15:50     position marks every 30 min (:20/:50, D52): positions.evaluate ->
 #                   exits.mandatory -> broker.execute (stop / DTE exit / expiry; D56)
 #   16:30           broker.reconcile (reconcile + journal)
+#   (event)         reconcile.intraday (E11.1/D71): right after a ladder ends unconfirmed
 #   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop; E10.5 posts)
 #   16:45 Fri       weekly scorecard ([Ops])
 #   18:00           earnings calendar
@@ -807,6 +808,17 @@ personas:
     notify: card                # [Broker] Reconcile card: reconciliation + Day/MTD/YTD P&L (D28)
     halt_on_mismatch: true      # any mismatch raises an arc:reconcile halt until the owner !resume
     writes: [journal, note]     # note: lessons (E7.x); override TTL with context: when emitted
+  reconcile.intraday:           # E11.1 (D71): an unconfirmed ladder's orders, checked at once (not 16:30)
+    label: Intraday reconcile
+    about: "Resolves an unconfirmed order by client id right away; still unknown -> halt + alert"
+    group: trading_loop
+    persona: broker
+    trigger: reconcile.intraday # event from the Broker ladder (one per proposal), never scheduled
+    halt_exempt: true           # runs under !halt: it only reads the broker and settles local state
+    llm: false                  # deterministic: broker (read-only) vs local orders/executions
+    notify: quiet               # the notice (still unknown -> halt) posts at once
+    halt_on_mismatch: true      # an order still unknown after it raises the arc:reconcile halt
+    writes: []
   scorecard:                    # E7.3 weekly paper scorecard -> #arc-investor + docs/RESEARCH/weekly/
     label: Weekly scorecard
     about: "Weekly paper scorecard to #arc-investor and docs/RESEARCH/weekly"
