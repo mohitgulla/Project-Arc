@@ -17,6 +17,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from arc.config import TickRules
 from arc.gate import Portfolio, RuleCode, derive, proposal_hash
 from arc.gate import rules as R
 from arc.gate import token as T
@@ -105,19 +106,19 @@ class TestPriceBand:
             PriceBand(lo=D("1.001"), hi=D("1.10"), max_steps=1)
 
     def test_from_nbbo(self) -> None:
-        b = band_from_nbbo(D("-0.85"), D("-0.75"), max_steps=3, reach=D(1), tick=TICK)
+        b = band_from_nbbo(D("-0.85"), D("-0.75"), max_steps=3, reach=D(1), grid=TICK)
         assert b == BAND
-        half = band_from_nbbo(D("-0.85"), D("-0.75"), max_steps=3, reach=D("0.5"), tick=TICK)
+        half = band_from_nbbo(D("-0.85"), D("-0.75"), max_steps=3, reach=D("0.5"), grid=TICK)
         assert half.hi == D("-0.80")
 
     def test_from_nbbo_no_room(self) -> None:
-        b = band_from_nbbo(D("1.00"), D("0.95"), max_steps=3, reach=D(1), tick=TICK)
+        b = band_from_nbbo(D("1.00"), D("0.95"), max_steps=3, reach=D(1), grid=TICK)
         assert (b.lo, b.hi, b.max_steps) == (D("1.00"), D("1.00"), 0)
 
     @pytest.mark.parametrize(("tick", "reach"), [(D(0), D(1)), (TICK, D("1.5")), (TICK, D(-1))])
     def test_from_nbbo_bad_args(self, tick: D, reach: D) -> None:
-        with pytest.raises(ValueError, match="invalid"):
-            band_from_nbbo(D(1), D(2), max_steps=1, reach=reach, tick=tick)
+        with pytest.raises(ValueError, match="invalid|tick must be positive"):
+            band_from_nbbo(D(1), D(2), max_steps=1, reach=reach, grid=tick)
 
     @given(
         st.integers(-50_000, 50_000),
@@ -128,12 +129,21 @@ class TestPriceBand:
     def test_property_ladder_monotone_inside_band(
         self, lo_c: int, width_c: int, n: int, tick: D
     ) -> None:
+        """D66: every price on the grid, inside the band, strictly increasing (deduped);
+        the full N + 1 attempts whenever the band ends are on the grid and each step
+        spans at least one increment (the pre-D66 behaviour)."""
         b = PriceBand(lo=D(lo_c) / 100, hi=D(lo_c + width_c) / 100, max_steps=n)
         ladder = b.ladder(tick)
-        assert len(ladder) == n + 1
-        assert ladder[0] == b.lo and ladder[-1] == (b.hi if n else b.lo)
-        assert all(b.contains(x) for x in ladder)
-        assert list(ladder) == sorted(ladder)
+        assert len(ladder) <= n + 1
+        assert all(b.contains(x) and x % tick == 0 for x in ladder)
+        assert list(ladder) == sorted(set(ladder))
+        if ladder:
+            assert ladder[0] == (b.lo / tick).to_integral_value(rounding="ROUND_CEILING") * tick
+            if n:
+                assert ladder[-1] == (b.hi / tick).to_integral_value(rounding="ROUND_FLOOR") * tick
+        on_grid = b.lo % tick == 0 and b.hi % tick == 0
+        if on_grid and n and b.hi - b.lo >= n * tick:
+            assert len(ladder) == n + 1 and ladder[0] == b.lo and ladder[-1] == b.hi
 
 
 # ---------------------------------------------------------------------------
@@ -213,9 +223,9 @@ class TestBandRules:
         legs = G.bull_put().legs
         no_q = R.price_band(legs, D("-0.85"), G.mkt(quotes={}), cfg())
         assert (no_q.hi, no_q.max_steps) == (D("-0.85"), 0)
-        off = R.price_band(legs, D("-0.85"), G.mkt(), cfg(limit_tick=0.05))
+        off = R.price_band(legs, D("-0.85"), G.mkt(), cfg(ticks=TickRules(mleg=D("0.05"))))
         assert off.max_steps == 3  # -0.85 is on a 0.05 tick
-        off2 = R.price_band(legs, D("-0.84"), G.mkt(), cfg(limit_tick=0.05))
+        off2 = R.price_band(legs, D("-0.84"), G.mkt(), cfg(ticks=TickRules(mleg=D("0.05"))))
         assert (off2.hi, off2.max_steps) == (D("-0.84"), 0)
 
     def test_evaluate_with_band_passes(self) -> None:
@@ -394,7 +404,7 @@ class TestMaxGain:
         cap = R.max_gain_cap(legs, tick)
         assert cap is not None
         band = band_from_nbbo(
-            mid, mid + D(extra_c) / 100, max_steps=n, reach=reach, tick=tick, cap=cap
+            mid, mid + D(extra_c) / 100, max_steps=n, reach=reach, grid=tick, cap=cap
         )
         ceiling = R.price_ceiling(legs)
         assert ceiling is not None and ceiling == D(width)

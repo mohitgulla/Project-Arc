@@ -25,7 +25,8 @@ from pydantic import BaseModel, ConfigDict
 
 from arc.account_profiles import BuyingPower, DayTradeRule, ShortLegPolicy
 from arc.config import ArcSettings, StructureKind
-from arc.gate.band import PriceBand, band_from_nbbo
+from arc.gate.band import PriceBand, as_grid, band_from_nbbo
+from arc.gate.ticks import TickGrid, order_grid
 from arc.models import GateDecision, Leg, LegIntent, Proposal
 from arc.models import StructureKind as ModelKind
 from arc.structures import (
@@ -77,6 +78,7 @@ __all__ = [
 
 _ZERO = Decimal(0)
 _HUNDRED = Decimal(100)
+_CENT = Decimal("0.01")
 _ONE = Decimal(1)
 
 
@@ -201,12 +203,18 @@ def price_ceiling(legs: Sequence[Leg]) -> Decimal | None:
     return None if max_gain is None else net_debit_credit(legs) + max_gain / _HUNDRED
 
 
-def max_gain_cap(legs: Sequence[Leg], tick: Decimal) -> Decimal | None:
-    """Worst on-tick limit that still leaves max gain > 0: the last tick below the ceiling."""
+def max_gain_cap(legs: Sequence[Leg], grid: TickGrid | Decimal) -> Decimal | None:
+    """Worst on-grid limit that still leaves max gain > 0: the last grid price below the ceiling."""
     ceiling = price_ceiling(legs)
     if ceiling is None:
         return None
-    return (ceiling / tick).to_integral_value(rounding=ROUND_CEILING) * tick - tick
+    below = (ceiling / _CENT).to_integral_value(rounding=ROUND_CEILING) * _CENT - _CENT
+    return as_grid(grid).snap(below, "down")
+
+
+def grid_for(legs: Sequence[Leg], market: MarketSnapshot, config: ArcSettings) -> TickGrid:
+    """D66: the exchange price grid for an order of *legs* (``ppind`` from *market*)."""
+    return order_grid(legs, config.ticks, market.penny_program)
 
 
 def check_max_gain(d: Derived) -> list[Violation]:
@@ -361,9 +369,14 @@ def check_spread_tick(
             RuleCode.LIMIT_OUTSIDE_NBBO,
             f"limit {d.limit_price} outside combo NBBO [{low}, {high}]",
         )
-    tick = _d(config.limit_tick)
-    if d.limit_price % tick != 0:
-        out += _v(RuleCode.TICK, f"limit {d.limit_price} is not a multiple of tick {tick}")
+    grid = grid_for(proposal.structure.legs, market, config)
+    tick = grid.tick_at(d.limit_price)
+    if not grid.on_grid(d.limit_price):
+        out += _v(
+            RuleCode.TICK,
+            f"limit {d.limit_price} is not a multiple of tick {tick} "
+            f"({grid.describe(d.limit_price)})",
+        )
     return out
 
 
@@ -394,24 +407,25 @@ def price_band(
     ``execution_band_reach`` of the way to the far touch, capped at
     :func:`max_gain_cap` so no step can leave max gain <= 0 (a debit vertical
     never priced at or above its width, a credit never at or below zero).
-    Without a complete NBBO (or with an off-tick limit) there is no room: a
+    Without a complete NBBO (or with an off-grid limit) there is no room: a
     one-attempt band at the limit (the gate's own spread/tick checks then
-    decide). Pure.
+    decide). Every band price is on the order's exchange grid (D66,
+    :func:`grid_for`), so the ``arc2`` token is minted on grid-valid prices. Pure.
     """
     nbbo = combo_nbbo(legs, market)
-    tick = _d(config.limit_tick)
-    if limit % Decimal("0.01"):
+    grid = grid_for(legs, market, config)
+    if limit % _CENT:
         msg = f"limit {limit} is not whole cents: round it to the tick before banding"
         raise ValueError(msg)
-    if nbbo is None or limit % tick != 0:
+    if nbbo is None or not grid.on_grid(limit):
         return PriceBand(lo=limit, hi=limit, max_steps=0)
     return band_from_nbbo(
         limit,
         nbbo[1],
         max_steps=config.execution_improvement_steps,
         reach=_d(config.execution_band_reach),
-        tick=tick,
-        cap=max_gain_cap(legs, tick),
+        grid=grid,
+        cap=max_gain_cap(legs, grid),
     )
 
 

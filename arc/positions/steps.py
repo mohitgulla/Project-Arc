@@ -560,7 +560,7 @@ def _open_leg(
 ) -> str:
     """The close filled: re-price, re-size (D18 + S-7), gate and card the swap's open."""
     from arc.gate.halt import evaluate_with_halt
-    from arc.gate.rules import proposal_hash
+    from arc.gate.rules import grid_for, proposal_hash
     from arc.gate.token import issue_token
     from arc.journal.store import JournalStore
     from arc.models import Proposal, QuantMetrics, Sizing
@@ -601,7 +601,7 @@ def _open_leg(
     market = market_snapshot(
         priced.contracts, earnings, {t: priced.spot}, proposal_betas(ctx.conn, [t], _today(ctx))
     )
-    limit = limit_price(st.net_debit_credit, settings.limit_tick)
+    limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
     band = band_for(st, limit, market, settings)
     size = size_contracts(
         suggestion=int(src["suggestion"]),

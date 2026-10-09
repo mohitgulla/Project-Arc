@@ -24,7 +24,7 @@ from arc.models import (
 from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.store.repos import HaltRepo
-from arc.structures import credit_vertical, format_occ
+from arc.structures import credit_vertical, format_occ, long_call
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -410,3 +410,42 @@ def test_broker_without_supports_mleg_is_multi_leg() -> None:
     p = proposal()
     assert not hasattr(FakeBroker(), "supports_mleg")
     assert go(p, gated(p), approved(p))[0] == "brk-1"
+
+
+# ---------------------------------------------------------------------------
+# D66 (E6.2h): an off-grid limit is never sent
+# ---------------------------------------------------------------------------
+
+
+def _coin_call(penny: bool | None, premium: str) -> Proposal:
+    st = long_call("COIN", EXP, strike=300, premium=premium, as_of=dt.date(2026, 10, 9))
+    leg = st.legs[0].model_copy(update={"penny_program": penny})
+    st = st.model_copy(update={"legs": [leg]})
+    return proposal(
+        structure=st,
+        limit_price=D(premium),
+        sizing=Sizing(contracts=1, notional=D(premium) * 100, pct_equity=0.01),
+    )
+
+
+def test_refuses_off_grid_single_leg_limit() -> None:
+    p = _coin_call(True, "19.68")  # penny class, >= $3 -> $0.05 grid
+    code, _ = refused(p, gated(p), approved(p))
+    assert code is RefusalCode.OFF_GRID
+    with pytest.raises(SubmitRefused, match=r"tick 0\.05 \(single-leg penny ≥\$3\)"):
+        submit(p, gated(p), approved(p), broker=FakeBroker(), config=cfg(), now=NOW, halt=switch())
+
+
+def test_unknown_ppind_needs_standard_grid() -> None:
+    assert refused(*(lambda p: (p, gated(p), approved(p)))(_coin_call(None, "2.12")))[0] is (
+        RefusalCode.OFF_GRID
+    )
+    p = _coin_call(None, "2.15")
+    _, broker = go(p, gated(p), approved(p))
+    assert broker.orders[0].limit_price == D("2.15")
+
+
+def test_on_grid_single_leg_penny_is_sent() -> None:
+    p = _coin_call(True, "19.70")
+    _, broker = go(p, gated(p), approved(p))
+    assert broker.orders[0].limit_price == D("19.70")

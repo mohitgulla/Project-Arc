@@ -190,7 +190,7 @@ NOT_EXPOSED: dict[str, str] = {
     "quote_max_age_seconds": "data freshness guard (gate); change by PR",
     "account_max_age_seconds": "data freshness guard (gate); change by PR",
     "gate_fee_per_leg_contract": "gate fee assumption; broker schedule",
-    "limit_tick": "exchange tick size",
+    "ticks": "exchange tick size",
     "execution_poll_seconds": "broker polling plumbing",
     "execution_cancel_confirm_seconds": "broker cancel plumbing",
     "alpaca_data_feed": "data subscription tier",

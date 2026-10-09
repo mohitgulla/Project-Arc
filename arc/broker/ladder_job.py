@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
     from arc.approvals.service import ApprovalService
     from arc.broker.base import BrokerAdapter
+    from arc.config import TickRules
     from arc.data.base import MarketDataProvider
     from arc.execution.ladder import ExecutionOutcome
     from arc.models import GateDecision, Proposal
@@ -202,18 +203,22 @@ def broker_card(
     kind: str,
     step_seconds: int,
     run_id: str | None = None,
+    ticks: TickRules | None = None,
 ) -> CardView:
     """``🏦 [Broker] Order`` card (E5.5 layout) with the ladder's :class:`ExecutionResult`.
 
     ``steps_used`` is the index of the filling attempt (0 = filled at mid), so the
     card reads "Filled on attempt k+1 of max_steps+1" (D28: attempts, not steps).
+    The planned ladder is drawn on the order's exchange grid (D66, *ticks*).
     """
+    from arc.config import TickRules as _TickRules
+    from arc.gate.ticks import legs_grid
     from arc.personas.schemas import BrokerPlan, ImprovementStep
     from arc.slack.digests import ExecutionResult
     from arc.slack.digests import broker_card as render_card
 
-    tick = Decimal("0.01")
-    ladder = out.band.ladder(tick)
+    grid = legs_grid(proposal.structure.legs, ticks or _TickRules())
+    ladder = out.band.ladder(grid) or (out.band.lo,)
     sk = proposal.structure.kind
     structure = "close_position" if kind == "close" else (sk.value if sk else "custom")
     plan = BrokerPlan(
@@ -357,6 +362,7 @@ def broker_execute(
             kind=kind,
             step_seconds=ctx.settings.execution_step_seconds,
             run_id=ctx.run_id,
+            ticks=ctx.settings.ticks,
         )
         _refresh_root(ctx, phash)
         _execution_note(ctx, out, ticker=ticker or out.ticker, what=what, phash=phash)

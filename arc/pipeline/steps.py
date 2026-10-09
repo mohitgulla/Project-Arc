@@ -3156,7 +3156,7 @@ def quant_propose(ctx: JobContext, env: PipelineEnv) -> JobResult:
 def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
     """The open path of ``quant.propose`` (E5.2 / E13.9)."""
     from arc.gate.halt import HaltSwitch, evaluate_with_halt
-    from arc.gate.rules import proposal_hash
+    from arc.gate.rules import grid_for, proposal_hash
     from arc.store.repos import GateDecisionRepo, HaltRepo, ProposalRepo
 
     settings = ctx.settings
@@ -3399,7 +3399,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             {t: priced.spot},
             proposal_betas(ctx.conn, [t], now.astimezone(ET).date()),
         )
-        limit = limit_price(st.net_debit_credit, settings.limit_tick)
+        limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
         # D24: the gate checks the whole price band; size at its worst price (D18).
         band = band_for(st, limit, market, settings)
         size = size_contracts(
