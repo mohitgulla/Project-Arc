@@ -123,7 +123,7 @@ def test_filled_closes_post_a_sell_root() -> None:
     ((ts, text),) = notes.roots.items()
     assert text == (
         f":white_check_mark: {slot_stamp(SLOT)} • Portfolio: $100,250 • P&L: +$250"
-        " • Orders: n/a • SELL: IWM, SPY\n> _*Closed IWM and SPY.*_"  # D65 headline
+        " • Orders: n/a • SELL: IWM, SPY\n_*Closed IWM and SPY.*_"  # D65 headline
     )
     chain = outs[0].chain_run_id
     assert chain is not None and LoopState(conn).thread_ts(chain) == ts
@@ -163,7 +163,7 @@ def test_working_close_becomes_sell_after_the_fill() -> None:
     ed = Editor()
     new = refresh_loop_root(conn, ed, outs[0].chain_run_id)
     assert new is not None and new.split("\n")[0].endswith("• SELL: NFLX")
-    assert new.split("\n")[1] == "> _*Closed NFLX.*_"  # D65 headline
+    assert new.split("\n")[1] == "_*Closed NFLX.*_"  # D65 headline
     assert new.startswith(":white_check_mark: ") and "Portfolio: $100,250" in new
     assert ed.edits == [(ts, new)]
 

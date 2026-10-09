@@ -62,7 +62,7 @@ class TestRootLine:
     def test_hold_reasons(self, kw: dict[str, object], suffix: str) -> None:
         status, headline = _root(**kw).text().split("\n")
         assert status.endswith(f"• {suffix}")
-        assert headline.startswith("> _*") and headline.endswith("*_")  # D65 flag headline
+        assert headline.startswith("_*") and headline.endswith("*_")  # D65 flag headline
 
     def test_negative_pnl_and_missing_facts(self) -> None:
         r = _root(day_pnl=-1_250.7, equity=None, orders_used=None)
@@ -88,21 +88,20 @@ class TestHeadline:
         r = _root(buys=["SPY"], headline=["SPY iron condor x1 filled; FOMC hold is priced."])
         assert r.text() == (
             f":white_check_mark: {FACTS} • BUY: SPY\n"
-            "> _*SPY iron condor x1 filled; FOMC hold is priced.*_"
+            "_*SPY iron condor x1 filled; FOMC hold is priced.*_"
         )
 
     def test_one_sentence_clipped_to_two_lines(self) -> None:
         r = _root(headline=["a" * 400, "b"])
         lines = r.text().split("\n")
         assert len(lines) == 2  # status + the one headline
-        assert len(lines[1]) <= HEADLINE_MAX + 6 and lines[1].endswith("…*_")
+        assert len(lines[1]) <= HEADLINE_MAX + 4 and lines[1].endswith("…*_")
 
     def test_markers_and_mentions_are_neutralised(self) -> None:
         r = _root(headline=["<!channel> *bold* _it_ `x` ~s~ & co"])
         line = r.text().split("\n")[1]
         assert "<!channel>" not in line and "&lt;!channel&gt;" in line
-        assert line.startswith("> _*")
-        inner = line[4:-2]
+        inner = line[2:-2]
         assert not any(ch in inner for ch in "*_`~")
 
     def test_plain_hold_has_no_headline(self) -> None:

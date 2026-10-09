@@ -1275,7 +1275,7 @@ up within one slot.
 
 ```
 ✅ 2026-09-28 09:40ET • Portfolio: $101,234 • P&L: +$312 • Orders: 3/200 • BUY: SPY
-> _*HOOD bear put debit spread x2 filled at 6.75; it hedges the book.*_
+_*HOOD bear put debit spread x2 filled at 6.75; it hedges the book.*_
 ⏳ … • PENDING: SPY          (card awaiting the owner)  /  WIP: SPY (ladder running)
 ✖ … • HOLD | HOLD (skip) | HOLD (timeout) | HOLD (skipped: previous loop running)
 ```
