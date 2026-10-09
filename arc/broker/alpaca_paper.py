@@ -29,6 +29,7 @@ from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
 
 from arc.broker.base import (
     AccountInfo,
+    BrokerActivity,
     BrokerOrderRef,
     BrokerOrderStatus,
     BrokerPosition,
@@ -57,6 +58,35 @@ _TIF_MAP: dict[str, TimeInForce] = {
 # ---------------------------------------------------------------------------
 
 _PAPER_BASE_URL = "https://paper-api.alpaca.markets"
+
+
+def _to_activity(raw: object, types: tuple[str, ...]) -> BrokerActivity | None:
+    """One Alpaca activity row -> :class:`BrokerActivity` (``None`` = not ours/unparsable)."""
+    if not isinstance(raw, dict):
+        return None
+    kind = str(raw.get("activity_type") or "")
+    sym = str(raw.get("symbol") or "")
+    if kind not in types or kind not in ("OPASN", "OPEXC", "OPEXP", "OPTRD") or not sym:
+        return None
+    day_raw = str(raw.get("date") or raw.get("transaction_time") or "")[:10]
+    try:
+        day = dt.date.fromisoformat(day_raw)
+    except ValueError:
+        return None
+    price = raw.get("price")
+    try:
+        return BrokerActivity(
+            id=str(raw.get("id") or f"{kind}:{sym}:{day_raw}"),
+            activity_type=kind,  # type: ignore[arg-type]
+            symbol=sym,
+            qty=Decimal(str(raw.get("qty") or 0)),
+            date=day,
+            price=None if price in (None, "") else Decimal(str(price)),
+            status=str(raw.get("status") or ""),
+            raw={k: v for k, v in raw.items() if k != "account_id"},
+        )
+    except (ArithmeticError, ValueError):
+        return None
 
 
 def _enum_value(v: object) -> str:
@@ -354,6 +384,52 @@ class AlpacaPaperBroker:
             log.info("cancel_by_client_id_absent", client_order_id=client_order_id)
             return
         self.cancel(st.broker_order_id)
+
+    # -- option non-trade activities / DNE (E11.4, D73) ------------------------
+
+    def activities(
+        self,
+        since: dt.date,
+        *,
+        types: tuple[str, ...] = ("OPASN", "OPEXC", "OPEXP", "OPTRD"),
+    ) -> list[BrokerActivity]:
+        """``GET /v2/account/activities?activity_types=...&after=<since - 1 day>``, paged.
+
+        alpaca-py's ``TradingClient`` has no activities method, so this uses its raw
+        REST ``get`` (base URL stays the paper endpoint). Rows of other types and
+        rows without an OCC ``symbol`` are dropped. Read-only.
+        """
+        out: list[BrokerActivity] = []
+        params: dict[str, Any] = {
+            "activity_types": ",".join(types),
+            "after": (since - dt.timedelta(days=1)).isoformat(),
+            "direction": "asc",
+            "page_size": 100,
+        }
+        seen: set[str] = set()
+        while True:
+            page = self._client.get("/account/activities", params)
+            rows = page if isinstance(page, list) else []
+            for raw in rows:
+                act = _to_activity(raw, types)
+                if act is not None and act.id not in seen and act.date >= since:
+                    seen.add(act.id)
+                    out.append(act)
+            if len(rows) < params["page_size"]:
+                return out
+            last = str(rows[-1].get("id") or "")
+            if not last or last == params.get("page_token"):
+                return out
+            params["page_token"] = last
+
+    def do_not_exercise(self, occ: str) -> None:
+        """``POST /v2/positions/{occ}/do-not-exercise`` (BETA; expiry day only).
+
+        Raises the broker's ``APIError`` on a rejection (e.g. not the expiration
+        day, after Alpaca's cutoff). Only ``arc.execution.instructions`` calls it.
+        """
+        self._client.post(f"/positions/{occ}/do-not-exercise")
+        log.info("do_not_exercise_sent", occ=occ)
 
     # -- order list (D32 order budget cross-check) ----------------------------
 

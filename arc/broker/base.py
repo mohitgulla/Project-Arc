@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import datetime as dt  # noqa: TC003 — used at runtime in Protocol signatures
 from decimal import Decimal
-from typing import Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Data contracts returned by the adapter
@@ -111,6 +111,25 @@ class Fill(BaseModel):
     )
 
 
+class BrokerActivity(BaseModel):
+    """A non-trade activity (E11.4, D73): option assignment / exercise / expiry.
+
+    Alpaca NTAs ``OPASN`` / ``OPEXC`` / ``OPEXP`` (each paired with an ``OPTRD``).
+    ``symbol`` is the OCC symbol. Read by the reconcile's expiry classifier.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str
+    activity_type: Literal["OPASN", "OPEXC", "OPEXP", "OPTRD"]
+    symbol: str
+    qty: Decimal = Decimal(0)
+    date: dt.date
+    price: Decimal | None = None
+    status: str = ""
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
 # Integration-test orders carry this client_order_id prefix (E6.2c). Only the
 # tests' broker wrapper adds it; ``arc.execution.submit()`` never does (its ids
 # are gate tokens, ``arc1.``/``arc2.``). Reconcile reports a stray fill with it
@@ -157,6 +176,14 @@ class BrokerAdapter(Protocol):
     cancel_by_client_id(client_order_id) -> None
         E11.1 (D71): best-effort cancel of the order held under
         *client_order_id* (lookup, then cancel by broker id).
+    activities(since, *, types) -> list[BrokerActivity]
+        E11.4 (D73): option non-trade activities (``OPASN``/``OPEXC``/``OPEXP``/
+        ``OPTRD``) dated on or after *since*. The reconcile classifies an expired
+        structure's legs from them; without it the share footprint decides.
+    do_not_exercise(occ) -> None
+        E11.4 (D73): ask the broker not to auto-exercise the long contract *occ*
+        (expiry day only). Only :func:`arc.execution.instructions.do_not_exercise`
+        calls it (paper only, guarded, journaled).
     info() -> arc.broker.registry.BrokerInfo
         Venue/env/transport, an account label (never an account id) and
         whether the venue takes multi-leg orders / has a paper mode (E13.11).

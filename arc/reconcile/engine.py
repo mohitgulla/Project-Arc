@@ -23,6 +23,16 @@
    ``wash_sale`` when another lot on the same underlying was opened within
    ``wash_sale_days`` before or after the loss close (§5: same underlying).
 
+6. **Expiry (E11.4, D73).** On and after an expiration day, a structure the
+   broker no longer holds is classified per leg (:func:`arc.exits.expiry.classify_expiry`):
+   expired / exercised / assigned from the broker's OPEXP/OPEXC/OPASN activities,
+   else from the share footprint (±100 x ratio x contracts). A fully classified
+   structure is booked at intrinsic (the settle) and any share position it left
+   is recorded in ``assignment_shares`` as *expected* until the owner unwinds it
+   at the broker; the owner's stock fill is attributed to that row. An exercise
+   or assignment raises an *opens-only* halt (``arc:expiry``); anything
+   unclassified stays a mismatch and halts everything (fail closed).
+
 ``scope="intraday"`` (E11.1, D71) checks only step 2, and only for executions
 left ``unconfirmed`` (optionally one proposal): no positions, fills, snapshots,
 lots or settles, and it never halts by itself; the caller
@@ -56,7 +66,6 @@ from arc.journal.outcomes import record_close_outcome
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
 from arc.journal.store import JournalStore
 from arc.models import LegIntent, Structure
-from arc.pricing.bs import OptionKind
 from arc.reconcile.attribution import attribute, broker_legs, holdings_from_rows
 from arc.reconcile.baseline import Baseline, start_of_day_equity
 from arc.reconcile.baseline import day_pnl as baseline_day_pnl
@@ -77,6 +86,7 @@ if TYPE_CHECKING:
         Fill,
     )
     from arc.config import ArcSettings
+    from arc.exits.expiry import BrokerActivityView
 
 __all__ = [
     "RECONCILE_ACTOR",
@@ -90,6 +100,7 @@ __all__ = [
 log = structlog.get_logger(__name__)
 
 RECONCILE_ACTOR = "arc:reconcile"
+EXPIRY_ACTOR = "arc:expiry"  # E11.4 (D73): opens-only halts of the expiry guard
 _OPEN_ORDER_STATES = ("approved", "submitted", "partially_filled")
 _OPEN_EXEC_STATES = ("working", "unconfirmed")
 
@@ -163,6 +174,18 @@ class ReconcileReport(BaseModel):
     unrealized: Decimal = Decimal(0)
     lots_repriced: int = 0
     expired: list[str] = Field(default_factory=list, description="Structures settled at expiry")
+    expiry_events: list[str] = Field(
+        default_factory=list,
+        description="E11.4: assignment/exercise lines (owner instruction included)",
+    )
+    unwound: list[str] = Field(
+        default_factory=list, description="E11.4: assignment_shares rows unwound today"
+    )
+    expiry_halt_id: str | None = None
+    expiry_pending: list[str] = Field(
+        default_factory=list,
+        description="E11.4: structures expired today, legs gone, settled at the next reconcile",
+    )
     wash_sales: list[str] = Field(default_factory=list, description="Loss lots marked")
     positions_snapshot_id: str | None = None
     pnl_snapshot_id: str | None = None
@@ -187,6 +210,10 @@ class ReconcileReport(BaseModel):
             text += f", {len(self.wash_sales)} wash sale(s)"
         if self.notices:
             text += f", {len(self.notices)} test fill(s) ignored"
+        if self.expiry_events:
+            text += f", {len(self.expiry_events)} assignment/exercise event(s) (opens halted)"
+        if self.unwound:
+            text += f", {len(self.unwound)} share unwind(s) attributed"
         return text + ("; HALTED" if self.halted else "")
 
 
@@ -235,9 +262,23 @@ def _structure_legs(structure_json: str, units: int) -> dict[str, tuple[str, int
 # ---------------------------------------------------------------------------
 
 
+def _signed_shares(p: BrokerPosition) -> int:
+    q = abs(p.qty)
+    return -int(q) if (p.side == "short" or p.qty < 0) else int(q)
+
+
 def _check_positions(
-    rows: list[dict[str, Any]], positions: list[BrokerPosition], report: ReconcileReport
+    rows: list[dict[str, Any]],
+    positions: list[BrokerPosition],
+    report: ReconcileReport,
+    expected_shares: dict[str, int] | None = None,
 ) -> dict[str, Any]:
+    """Broker positions vs the open structures.
+
+    *expected_shares* (E11.4): root -> signed shares open ``assignment_shares``
+    rows account for. A share position equal to it is expected, not a mismatch.
+    """
+    expected = expected_shares or {}
     try:
         legs, other = broker_legs(positions)
     except ValueError as exc:
@@ -271,14 +312,31 @@ def _check_positions(
                 detail=f"broker holds {qty:+d} {sym} that no open structure accounts for",
             )
         )
+    share_qty = {p.symbol: _signed_shares(p) for p in positions if p.asset_class != "us_option"}
     for sym in other:
+        if sym in expected and share_qty.get(sym) == expected[sym]:
+            continue  # E11.4: assignment/exercise shares awaiting the owner's unwind
+        want = f" (expected {expected[sym]:+d} from assignment/exercise)" if sym in expected else ""
         report.mismatches.append(
             Mismatch(
                 kind=MismatchKind.POSITION_NON_OPTION,
                 subject=sym,
-                detail=f"broker holds a non-option position in {sym} (assignment/exercise?)",
+                detail=f"broker holds a non-option position in {sym} "
+                f"({share_qty.get(sym, 0):+d} shares; assignment/exercise?){want}",
             )
         )
+    for sym, qty in expected.items():
+        if sym not in share_qty:
+            # Recorded shares gone with no attributed fill: the owner's unwind was not
+            # seen (e.g. done on an earlier day). A human confirms (fail closed).
+            report.mismatches.append(
+                Mismatch(
+                    kind=MismatchKind.POSITION_MISSING,
+                    subject=sym,
+                    detail=f"expected {qty:+d} {sym} shares from an assignment/exercise, the "
+                    "broker holds none and no unwind fill was attributed",
+                )
+            )
     by_sym = {p.symbol: p for p in positions}
     return {
         "structures": [
@@ -509,12 +567,37 @@ def _local_fills(conn: sqlite3.Connection, day: _dt.date) -> list[dict[str, Any]
     return [dict(r) for r in rows]
 
 
+def _is_option_symbol(sym: str) -> bool:
+    try:
+        parse_occ(sym)
+    except ValueError:
+        return False
+    return True
+
+
 def _check_fills(
-    local: list[dict[str, Any]], broker_fills: list[Fill], report: ReconcileReport
+    local: list[dict[str, Any]],
+    broker_fills: list[Fill],
+    report: ReconcileReport,
+    unwinds: list[dict[str, Any]] | None = None,
 ) -> None:
+    """Broker fills vs local fills. Equity fills (E11.4) are matched to open
+    ``assignment_shares`` rows by the caller and passed in *unwinds*; every other
+    equity fill is ``fill_unknown``."""
     got: dict[str, dict[str, list[Any]]] = defaultdict(lambda: defaultdict(lambda: ["", 0]))
     coids: dict[str, str] = {}
+    matched = {u["broker_order_id"] for u in unwinds or []}
     for f in broker_fills:
+        if not _is_option_symbol(f.symbol):
+            if f.broker_order_id not in matched:
+                report.mismatches.append(
+                    Mismatch(kind=MismatchKind.FILL_UNKNOWN, subject=f.symbol,
+                             refs=[f.broker_order_id],
+                             detail=f"broker equity order {f.broker_order_id} filled {f.side} "
+                             f"{f.qty} {f.symbol} @ {f.price} with no local record and no "
+                             "open assignment/exercise share row")
+                )  # fmt: skip
+            continue
         leg = got[f.broker_order_id][parse_occ(f.symbol).format()]
         leg[0] = f.side
         leg[1] += int(f.qty)
@@ -531,7 +614,7 @@ def _check_fills(
             acc[sym] = (side, prev + qty)
         who[bid] = f
     report.fills_local = len(local)
-    report.fills_broker = len(got)
+    report.fills_broker = len(got) + len(matched)
     for bid in sorted(set(got) - set(want)):
         legs = ", ".join(f"{s} {sd} {q}" for s, (sd, q) in sorted(got[bid].items()))
         root = parse_occ(next(iter(got[bid]))).root
@@ -671,76 +754,295 @@ def _update_lots(
         })  # fmt: skip
 
 
-def _close_expired(
+def _open_assignment_shares(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM assignment_shares WHERE unwound_at IS NULL ORDER BY detected_at"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _expected_shares(open_rows: list[dict[str, Any]]) -> dict[str, int]:
+    out: dict[str, int] = defaultdict(int)
+    for r in open_rows:
+        out[r["root"]] += int(r["qty"])
+    return dict(out)
+
+
+def _activities(
+    broker: BrokerAdapter, since: _dt.date | None
+) -> tuple[list[BrokerActivityView] | None, str | None]:
+    """The broker's option NTAs since *since* (``None`` = no feed / unreadable)."""
+    from arc.exits.expiry import BrokerActivityView
+
+    fetch = getattr(broker, "activities", None)
+    if since is None or not callable(fetch):
+        return None, None
+    try:
+        rows = fetch(since, types=("OPASN", "OPEXC", "OPEXP", "OPTRD"))
+    except Exception as exc:  # noqa: BLE001 - the share footprint decides then (fail closed)
+        log.warning("reconcile.activities_failed", error=str(exc))
+        return None, f"{type(exc).__name__}: {exc}"
+    return [
+        BrokerActivityView.model_validate(a.model_dump() if hasattr(a, "model_dump") else a)
+        for a in rows
+    ], None
+
+
+def _book_close(
     conn: sqlite3.Connection,
+    row: dict[str, Any],
+    close_net: Decimal,
+    spot: Decimal,
+    now: _dt.datetime,
+) -> Decimal:
+    """Close *row* at *close_net* (per share), realise P&L on its first lot; returns it."""
+    repo = OpenStructureRepo(conn)
+    lots = TaxLotRepo(conn)
+    n = int(row["contracts"])
+    pnl = -(Decimal(row["entry_net"]) + close_net) * 100 * n
+    repo.reduce(row["id"], closed_qty=n, close_net=close_net, now=now, commit=False)
+    record_close_outcome(conn, row["id"], expired=True, settlement=spot)  # E7.4b
+    open_lots = conn.execute(
+        """SELECT l.id FROM tax_lots l JOIN orders o ON o.id = l.order_id
+           WHERE o.proposal_hash = ? AND l.closed_at IS NULL ORDER BY l.rowid""",
+        (row["open_proposal_hash"],),
+    ).fetchall()
+    for i, lot in enumerate(open_lots):
+        lots.close_lot(
+            lot["id"],
+            close_price="0",
+            realized_pnl=str(pnl if i == 0 else Decimal(0)),
+            closed_at=now.astimezone(_dt.UTC).isoformat(),
+        )
+    return pnl
+
+
+def _settle_expiry(
+    conn: sqlite3.Connection,
+    broker: BrokerAdapter,
     rows: list[dict[str, Any]],
     positions: list[BrokerPosition],
     report: ReconcileReport,
     journal: list[dict[str, Any]],
     now: _dt.datetime,
     settle_price: Callable[[str, _dt.date], Decimal | None] | None,
+    open_shares: list[dict[str, Any]],
+    run_id: str | None,
 ) -> list[dict[str, Any]]:
-    """Settle structures whose every leg expired before today; returns the rows still open.
+    """Settle structures whose every leg has expired (E11.4: on and after expiry day).
 
-    Only when the broker holds none of the legs and no shares of the underlying
-    (a single ITM long is exercised into shares: that stays a mismatch for a
-    human), and ``settle_price(root, expiration)`` knows the underlying's close.
-    The structure is closed at its intrinsic value (per share, the ladder's sign
-    convention: + paid / - received), realized P&L = -(entry + close) x 100 x n,
-    booked on the first lot like :mod:`arc.execution.ladder`.
+    Returns the rows still open. A structure is settled only when the broker holds
+    none of its legs and ``settle_price(root, expiration)`` knows the close:
+
+    - no unexplained shares of the root and no activity for its legs: closed at
+      intrinsic, as before E11.4 (cash-equivalent expiry; the ladder sign
+      convention, + paid / - received; realised -(entry + close) x 100 x n on
+      the first lot);
+    - otherwise :func:`arc.exits.expiry.classify_expiry` decides per leg from the
+      broker's activities or the share footprint. Only a ``confident``
+      classification is booked (same intrinsic close) and its share position is
+      recorded in ``assignment_shares``; an unclassified one stays open and
+      ``_check_positions`` reports it (total halt, status quo).
     """
+    from arc.exits.expiry import classify_expiry, intrinsic
+
     if settle_price is None:
         return rows
     held = {parse_occ(p.symbol).format() for p in positions if p.asset_class == "us_option"}
-    shares = {p.symbol for p in positions if p.asset_class != "us_option"}
-    repo = OpenStructureRepo(conn)
-    lots = TaxLotRepo(conn)
+    shares_now = {p.symbol: _signed_shares(p) for p in positions if p.asset_class != "us_option"}
+    expected = _expected_shares(open_shares)
+    candidates: list[tuple[dict[str, Any], Structure, list[Any], _dt.date]] = []
     still: list[dict[str, Any]] = []
     for row in rows:
         st = Structure.model_validate_json(row["structure_json"])
         occs = [parse_occ(leg.occ_symbol) for leg in st.legs]
         exp = max((o.expiration for o in occs), default=report.day)
-        if (
-            exp >= report.day
-            or any(o.format() in held for o in occs)
-            or row["ticker"] in shares
-            or (spot := settle_price(row["ticker"], exp)) is None
-        ):
+        if exp > report.day or any(o.format() in held for o in occs):
             still.append(row)
             continue
-        close_net = Decimal(0)
-        for leg, occ in zip(st.legs, occs, strict=True):
-            strike = occ.strike
-            call = occ.kind == OptionKind.CALL
-            intrinsic = max(spot - strike, Decimal(0)) if call else max(strike - spot, Decimal(0))
-            sign = -1 if leg.side == LegIntent.LONG else 1
-            close_net += sign * leg.ratio * intrinsic
-        n = int(row["contracts"])
-        pnl = -(Decimal(row["entry_net"]) + close_net) * 100 * n
-        repo.reduce(row["id"], closed_qty=n, close_net=close_net, now=now, commit=False)
-        record_close_outcome(conn, row["id"], expired=True, settlement=spot)  # E7.4b
-        open_lots = conn.execute(
-            """SELECT l.id FROM tax_lots l JOIN orders o ON o.id = l.order_id
-               WHERE o.proposal_hash = ? AND l.closed_at IS NULL ORDER BY l.rowid""",
-            (row["open_proposal_hash"],),
-        ).fetchall()
-        for i, lot in enumerate(open_lots):
-            lots.close_lot(
-                lot["id"],
-                close_price="0",
-                realized_pnl=str(pnl if i == 0 else Decimal(0)),
-                closed_at=now.astimezone(_dt.UTC).isoformat(),
-            )
+        candidates.append((row, st, occs, exp))
+    if not candidates:
+        return still
+    activities, act_error = _activities(broker, min(c[3] for c in candidates))
+    acted = {
+        parse_occ(a.symbol).format()
+        for a in activities or []
+        if a.activity_type != "OPTRD" and _is_option_symbol(a.symbol)
+    }
+    for row, st, occs, exp in candidates:
+        root = row["ticker"]
+        spot = settle_price(root, exp)
+        if spot is None:
+            still.append(row)
+            continue
+        free = shares_now.get(root, 0) - expected.get(root, 0)
+        legs_acted = any(o.format() in acted for o in occs)
+        if free == 0 and not legs_acted:
+            close_net = Decimal(0)
+            for leg, occ in zip(st.legs, occs, strict=True):
+                sign = -1 if leg.side == LegIntent.LONG else 1
+                close_net += sign * leg.ratio * intrinsic(occ.kind, occ.strike, spot)
+            if exp == report.day and any(intrinsic(o.kind, o.strike, spot) > 0 for o in occs):
+                # Expiry day, an ITM leg and no activity/shares yet: the broker books
+                # exercise/assignment overnight. Settle tomorrow, not at a guess.
+                report.expiry_pending.append(row["id"])
+                still.append(row)
+                continue
+            pnl = _book_close(conn, row, close_net, spot, now)
+            report.expired.append(row["id"])
+            journal.append({
+                "subject": root, "choice": Choice.NOTED,
+                "code": ReasonCode.RECONCILE_EXPIRED,
+                "text": f"structure {row['id']} expired {exp:%Y-%m-%d} ({root} settled "
+                f"{spot}); closed at {close_net:+}, realized {pnl:+.2f}",
+                "payload": {"structure_id": row["id"], "realized_pnl": str(pnl),
+                            "settle": str(spot), "close_net": str(close_net)},
+            })  # fmt: skip
+            continue
+        cls = classify_expiry(
+            structure_id=row["id"],
+            structure=st,
+            contracts=int(row["contracts"]),
+            held=held,
+            shares=free,
+            activities=activities,
+            settle=spot,
+        )
+        if not cls.confident or cls.close_net is None:
+            if exp == report.day:
+                # The broker is still processing today's expiry: classify tomorrow.
+                report.expiry_pending.append(row["id"])
+                still.append(row)
+                continue
+            journal.append({
+                "subject": root, "choice": Choice.FAILED,
+                "code": ReasonCode.RECONCILE_MISMATCH,
+                "text": f"structure {row['id']} expired {exp:%Y-%m-%d}: legs not classified "
+                f"({', '.join(f'{e.occ} {e.kind}' for e in cls.legs)}; {free:+d} unexplained "
+                f"{root} shares" + (f"; activities unreadable: {act_error}" if act_error else "")
+                + ")",
+                "payload": {"structure_id": row["id"],
+                            "classification": cls.model_dump(mode="json")},
+            })  # fmt: skip
+            still.append(row)
+            continue
+        pnl = _book_close(conn, row, cls.close_net, spot, now)
         report.expired.append(row["id"])
-        journal.append({
-            "subject": row["ticker"], "choice": Choice.NOTED,
-            "code": ReasonCode.RECONCILE_EXPIRED,
-            "text": f"structure {row['id']} expired {exp:%Y-%m-%d} ({row['ticker']} settled "
-            f"{spot}); closed at {close_net:+}, realized {pnl:+.2f}",
-            "payload": {"structure_id": row["id"], "realized_pnl": str(pnl),
-                        "settle": str(spot), "close_net": str(close_net)},
-        })  # fmt: skip
+        if cls.shares_net:
+            via = "activity" if any(e.via == "activity" for e in cls.events) else "inferred"
+            conn.execute(
+                """INSERT INTO assignment_shares (id, structure_id, root, qty, via, from_occ,
+                       basis, detected_at, evidence_json, run_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    f"asn_{row['id']}",
+                    row["id"],
+                    root,
+                    cls.shares_net,
+                    via,
+                    ",".join(e.occ for e in cls.events),
+                    str(cls.basis if cls.basis is not None else spot),
+                    to_db(now),
+                    json.dumps(cls.model_dump(mode="json"), default=str),
+                    run_id,
+                ),
+            )
+        for ev in cls.events:
+            side = "sell" if cls.shares_net > 0 else "buy"
+            instr = (
+                f"{side} {abs(cls.shares_net)} {root} at the broker, then !resume"
+                if cls.shares_net
+                else "no net shares (the legs offset); !resume once checked"
+            )
+            line = (
+                f"{root}: {ev.occ} {ev.kind} ({ev.via}); structure {row['id'][:8]} booked at "
+                f"settle {spot}, realized {pnl:+.2f}; shares {cls.shares_net:+d}. You: {instr}"
+            )
+            report.expiry_events.append(line)
+            journal.append({
+                "subject": root, "choice": Choice.NOTED,
+                "code": ReasonCode.RECONCILE_ASSIGNMENT if ev.kind == "assigned"
+                else ReasonCode.RECONCILE_EXERCISE,
+                "text": line,
+                "payload": {"structure_id": row["id"], "realized_pnl": str(pnl),
+                            "settle": str(spot), "close_net": str(cls.close_net),
+                            "leg": ev.model_dump(mode="json"),
+                            "shares_net": cls.shares_net},
+            })  # fmt: skip
+        if not cls.events:
+            journal.append({
+                "subject": root, "choice": Choice.NOTED,
+                "code": ReasonCode.RECONCILE_EXPIRED,
+                "text": f"structure {row['id']} expired {exp:%Y-%m-%d} (classified from "
+                f"activities); closed at {cls.close_net:+}, realized {pnl:+.2f}",
+                "payload": {"structure_id": row["id"], "realized_pnl": str(pnl),
+                            "settle": str(spot), "close_net": str(cls.close_net)},
+            })  # fmt: skip
+        expected[root] = expected.get(root, 0) + cls.shares_net
+        open_shares.append({"root": root, "qty": cls.shares_net, "id": f"asn_{row['id']}",
+                            "basis": str(cls.basis or spot), "unwound_at": None})  # fmt: skip
     return still
+
+
+def _attribute_unwinds(
+    conn: sqlite3.Connection,
+    broker_fills: list[Fill],
+    open_shares: list[dict[str, Any]],
+    report: ReconcileReport,
+    journal: list[dict[str, Any]],
+    now: _dt.datetime,
+) -> list[dict[str, Any]]:
+    """E11.4 rule 6: match equity fills to open ``assignment_shares`` rows.
+
+    A broker equity order in the row's root, opposite side, with the row's |qty|
+    (summed over the order's fills) unwinds it: ``unwound_at``/``unwind_price``
+    are set and the realised share P&L ``(unwind - basis) x qty`` is journaled
+    (``reconcile:resolved``). Returns the matched ``{broker_order_id, row id}``.
+    """
+    orders: dict[str, dict[str, Any]] = {}
+    for f in broker_fills:
+        if _is_option_symbol(f.symbol):
+            continue
+        o = orders.setdefault(
+            f.broker_order_id,
+            {"symbol": f.symbol, "side": f.side, "qty": Decimal(0), "notional": Decimal(0),
+             "at": f.filled_at},
+        )  # fmt: skip
+        o["qty"] += f.qty
+        o["notional"] += f.qty * f.price
+    out: list[dict[str, Any]] = []
+    for row in open_shares:
+        if row.get("unwound_at") is not None:
+            continue
+        qty = int(row["qty"])
+        want_side = "sell" if qty > 0 else "buy"
+        for bid, o in sorted(orders.items()):
+            if any(m["broker_order_id"] == bid for m in out):
+                continue
+            if o["symbol"] != row["root"] or o["side"] != want_side or o["qty"] != abs(qty):
+                continue
+            price = (o["notional"] / o["qty"]).quantize(Decimal("0.0001"))
+            basis = Decimal(str(row["basis"]))
+            pnl = (price - basis) * qty
+            conn.execute(
+                "UPDATE assignment_shares SET unwound_at = ?, unwind_price = ? WHERE id = ?",
+                (to_db(now), str(price), row["id"]),
+            )
+            row["unwound_at"] = to_db(now)
+            out.append({"broker_order_id": bid, "row_id": row["id"]})
+            report.unwound.append(row["id"])
+            journal.append({
+                "subject": row["root"], "choice": Choice.NOTED,
+                "code": ReasonCode.RECONCILE_RESOLVED,
+                "text": f"{row['root']}: owner unwound {qty:+d} assignment/exercise shares "
+                f"({o['side']} {o['qty']} @ {price}, broker order {bid}); basis {basis}, "
+                f"realized {pnl:+.2f}",
+                "payload": {"assignment_shares_id": row["id"], "broker_order_id": bid,
+                            "unwind_price": str(price), "basis": str(basis),
+                            "realized_pnl": str(pnl)},
+            })  # fmt: skip
+            break
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -845,11 +1147,18 @@ def reconcile(
 
     rows = OpenStructureRepo(conn).list_open()
     journal: list[dict[str, Any]] = []
+    open_shares = _open_assignment_shares(conn)
     if positions is not None:
-        rows = _close_expired(conn, rows, positions, report, journal, now, settle_price)
+        rows = _settle_expiry(conn, broker, rows, positions, report, journal, now,
+                              settle_price, open_shares, run_id)  # fmt: skip
+    unwinds = _attribute_unwinds(conn, broker_fills, open_shares, report, journal, now)
     snapshot: dict[str, Any] = {}
     if positions is not None:
-        snapshot = _check_positions(rows, positions, report)
+        expected = _expected_shares([r for r in open_shares if r.get("unwound_at") is None])
+        pending = set(report.expiry_pending)
+        snapshot = _check_positions(
+            [r for r in rows if r["id"] not in pending], positions, report, expected
+        )
         report.unrealized = sum(
             (p.unrealized_pl or Decimal(0) for p in positions if p.asset_class == "us_option"),
             start=Decimal(0),
@@ -857,7 +1166,7 @@ def reconcile(
     _check_orders(conn, broker, report, journal, now, run_id)
     local = _local_fills(conn, day)
     if fills_ok:
-        _check_fills(local, broker_fills, report)
+        _check_fills(local, broker_fills, report, unwinds)
     else:
         report.fills_local = len(local)
     report.realized, report.closed_today = _realized_today(conn, day)
@@ -910,10 +1219,30 @@ def reconcile(
                 payload={"kind": str(m.kind), "refs": m.refs},
             )  # fmt: skip
 
+    conn.commit()  # the settle/unwind writes above share the journal's transaction
+    if report.expiry_events and halt:
+        _halt_opens_on_expiry(conn, report, now=now, run_id=run_id)
     if report.mismatches and halt:
         halt_on_mismatch(conn, report, now=now, run_id=run_id)
     log.info("reconcile.done", day=day.isoformat(), summary=report.summary())
     return report
+
+
+def _halt_opens_on_expiry(
+    conn: sqlite3.Connection, report: ReconcileReport, *, now: _dt.datetime, run_id: str | None
+) -> None:
+    """E11.4 (D73) Q3: a classified assignment/exercise stops new opens only."""
+    from arc.gate.halt import HaltSwitch
+    from arc.store.repos import HaltRepo
+
+    rec = HaltSwitch(HaltRepo(conn)).halt_opens_once(
+        actor=EXPIRY_ACTOR,
+        reason=f"assignment/exercise at reconcile {report.day}",
+        now=now,
+        run_id=run_id,
+    )
+    if rec is not None:
+        report.expiry_halt_id = rec.id
 
 
 def _reconcile_intraday(
