@@ -67,6 +67,14 @@ class AccountSnapshot(_Frozen):
             "not counted, so the day_trades rule is skipped."
         ),
     )
+    live_gate_met: bool | None = Field(
+        None,
+        description=(
+            "D70: the live scorecard gate is met (LIVE closes on the live store, "
+            "arc.approvals.live_gate). Filled by live callers; None = not live / unknown, "
+            "so the live_size_cap rule caps (fail closed). Ignored in paper."
+        ),
+    )
     as_of: dt.datetime = Field(..., description="When the snapshot was taken (tz-aware)")
 
 

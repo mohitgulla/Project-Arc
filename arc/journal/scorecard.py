@@ -48,7 +48,7 @@ import datetime as _dt
 import json
 from collections import Counter, defaultdict
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -87,6 +87,9 @@ __all__ = [
     "calibration_points",
     "auto_approve_gate",
     "auto_approve_readiness",
+    "env_readiness",
+    "live_gate_met",
+    "mark_env_mismatch",
     "closed_positions",
     "execution_costs",
     "funnel",
@@ -1061,6 +1064,14 @@ class AutoApproveReadiness(BaseModel):
     realised_slippage: float | None = Field(None, description="$ fill - mid over those fills")
     half_spread: float | None = Field(None, description="$ modelled half-spread, same fills")
     slippage_tolerance: float
+    env: Literal["paper", "live"] | None = Field(
+        None,
+        description=(
+            "D70: the env stamped on the store the readiness was computed on "
+            "(store_identity); None = unstamped. A readiness is valid for live only "
+            "when this is 'live'."
+        ),
+    )
 
     @property
     def slippage_limit(self) -> float | None:
@@ -1090,6 +1101,8 @@ class AutoApproveReadiness(BaseModel):
                     f"realised slippage {_usd(self.realised_slippage)} > half-spread "
                     f"{_usd(self.half_spread, signed=False)} x {self.slippage_tolerance:g}"
                 )
+            elif code == "store_env_mismatch":
+                parts.append(f"store is not a live store (env {self.env or 'unstamped'})")
             else:
                 parts.append("no fill with a modelled spread to check slippage against")
         return "; ".join(parts)
@@ -1161,13 +1174,46 @@ def auto_approve_gate(
     """
     return AutoApproveGate(
         scorecard_gate=bool(settings.auto_approve_scorecard_gate),
-        readiness=auto_approve_readiness(
-            conn,
-            now=now,
-            min_closed_trades=settings.auto_approve_min_closed_trades,
-            slippage_tolerance=settings.auto_approve_slippage_tolerance,
-        ),
+        readiness=env_readiness(conn, settings, now=now),
     )
+
+
+def env_readiness(
+    conn: sqlite3.Connection, settings: ArcSettings, *, now: _dt.datetime
+) -> AutoApproveReadiness:
+    """D70: the scorecard readiness for the running env.
+
+    Paper: ``auto_approve.min_closed_trades`` (unchanged). Live: the separate
+    ``auto_approve.live_min_closed_trades`` over the live store's closes, and a
+    readiness whose store is not stamped ``live`` fails ``store_env_mismatch``
+    (paper evidence never qualifies live).
+    """
+    live = settings.env.value == "live"
+    ready = auto_approve_readiness(
+        conn,
+        now=now,
+        min_closed_trades=(
+            settings.auto_approve_live_min_closed_trades
+            if live
+            else settings.auto_approve_min_closed_trades
+        ),
+        slippage_tolerance=settings.auto_approve_slippage_tolerance,
+    )
+    return mark_env_mismatch(ready, settings)
+
+
+def mark_env_mismatch(ready: AutoApproveReadiness, settings: ArcSettings) -> AutoApproveReadiness:
+    """D70: in live, a readiness not computed on a live-stamped store fails closed."""
+    if settings.env.value == "live" and ready.env != "live":
+        return ready.model_copy(
+            update={"ok": False, "failing": [*ready.failing, "store_env_mismatch"]}
+        )
+    return ready
+
+
+def live_gate_met(ready: AutoApproveReadiness) -> bool:
+    """D70: the live scorecard gate is met (a live-stamped store, every criterion ok)."""
+    return ready.ok and ready.env == "live"
 
 
 def auto_approve_readiness(
@@ -1235,7 +1281,16 @@ def auto_approve_readiness(
         realised_slippage=slip,
         half_spread=half,
         slippage_tolerance=slippage_tolerance,
+        env=_store_env(conn),
     )
+
+
+def _store_env(conn: sqlite3.Connection) -> Literal["paper", "live"] | None:
+    """D70: the env stamped on this store (``store_identity``), None when unstamped."""
+    from arc.store.identity import read_store_env
+
+    ident = read_store_env(conn)
+    return None if ident is None else ident.env
 
 
 def slippage_since(

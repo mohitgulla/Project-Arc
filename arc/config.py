@@ -667,6 +667,41 @@ class ArcSettings(BaseSettings):
         default=30,
         description="E7.5a: closed trades the scorecard gate needs before auto-approving opens.",
     )
+    # -- E11.3 (D70): live evidence is live-only --------------------------------
+    auto_approve_live_min_closed_trades: Annotated[int, Field(ge=1, le=1000)] = Field(
+        default=30,
+        description=(
+            "D70: LIVE closed trades (live store only) the live scorecard gate needs before "
+            "live auto-approve is effective and the live size cap lifts. Paper uses "
+            "auto_approve_min_closed_trades."
+        ),
+    )
+    live_max_contracts_until_gate: Annotated[int, Field(ge=1, le=100)] = Field(
+        default=1,
+        description=(
+            "D70: contracts per live open while the live scorecard gate is not met "
+            "(sizing clamps to it and the gate rule live_size_cap rejects anything above). "
+            "Lifts automatically when the gate is met. Never applies to paper or to closes."
+        ),
+    )
+    live_auto_approve_requires_gate: bool = Field(
+        default=True,
+        description=(
+            "D70: live auto-approve (auto_approve.live) is effective only once the live "
+            "scorecard gate is met; until then the owner approves every live open. Code "
+            "constant (not tunable): the owner decided no live auto-approve before the "
+            "live collection phase ends."
+        ),
+    )
+    live_gate_met: bool = Field(
+        default=False,
+        description=(
+            "D70: the live scorecard gate was met once on this live store (sticky; key "
+            "`live.gate_met`, set on only by arc:live-gate, D26 change log). Lifts the live "
+            "size cap and lets auto_approve.live take effect. Never from an env var: "
+            "validated to False and applied from the store only (like auto_approve.live)."
+        ),
+    )
     auto_approve_slippage_tolerance: Annotated[float, Field(gt=0.0, le=10.0)] = Field(
         default=1.5,
         description=(
@@ -690,7 +725,10 @@ class ArcSettings(BaseSettings):
     )
     db_path: Path | None = Field(
         default=None,
-        description="Audit store path (ARC_DB_PATH). None = data/arc.db in the repo.",
+        description=(
+            "Audit store path (ARC_DB_PATH). None = data/arc.db in the repo for paper; a live "
+            "process defaults to data/arc-live.db (D70: one store per env)."
+        ),
     )
 
     # -- Market data feeds (D7) ---------------------------------------------
@@ -1295,10 +1333,48 @@ class ArcSettings(BaseSettings):
                 setattr(self, name, False)
         return self
 
+    @model_validator(mode="after")
+    def _live_evidence_is_live_only(self) -> ArcSettings:
+        """D70: the paper opt-out never reaches live; live gets its own store path.
+
+        - ``auto_approve_scorecard_gate`` is forced on in live (the E6.6a opt-out
+          is the paper collection phase only). :func:`arc.control.effective.apply_changes`
+          validates every store override through this, so a stored ``off`` cannot
+          switch it off in live either.
+        - ``live_auto_approve_requires_gate`` cannot be turned off (owner decision).
+        - ``live_gate_met`` is never set by an env var or kwarg (store only, post-validation).
+        - ``db_path`` unset in live defaults to ``data/arc-live.db``.
+        """
+        if self.live_gate_met:
+            log.warning("live_gate_met forced off (set by arc:live-gate in the store only)")
+            self.live_gate_met = False
+        if self.env is not ArcEnv.LIVE:
+            return self
+        if not self.auto_approve_scorecard_gate:
+            log.warning(
+                "scorecard gate forced on in live (auto_approve.scorecard_gate is paper-only)",
+                key="auto_approve_scorecard_gate",
+            )
+            self.auto_approve_scorecard_gate = True
+        if not self.live_auto_approve_requires_gate:
+            log.warning(
+                "live auto-approve always requires the live gate (D70)",
+                key="live_auto_approve_requires_gate",
+            )
+            self.live_auto_approve_requires_gate = True
+        if self.db_path is None:
+            # data/arc-live.db (== arc.store.identity.DEFAULT_LIVE_DB_PATH; no arc.store
+            # import here, arc.config sits under the gate's no-storage contract).
+            self.db_path = Path(__file__).resolve().parent.parent / "data" / "arc-live.db"
+        return self
+
 
 # Settings switches with one value per ARC_ENV (D34). The env var sets the paper
 # value only; `arc.control` applies the store's `<field>.<env>` key for the running env.
 PER_ENV_SWITCHES: frozenset[str] = frozenset({"auto_approve", "auto_exit_defined_risk"})
+# D70: live-only fields the validators force off; only the store's live key turns them
+# on, applied after validation by arc.control.effective.apply_changes.
+STORE_ONLY_LIVE_FIELDS: frozenset[str] = PER_ENV_SWITCHES | {"live_gate_met"}
 
 
 def get_settings(**overrides: object) -> ArcSettings:

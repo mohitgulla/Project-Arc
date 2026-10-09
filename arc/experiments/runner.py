@@ -190,11 +190,23 @@ class PairResult:
 
 
 def _connect(path: Path | str) -> sqlite3.Connection:
+    """Open + migrate an arm store and bind it to the running env (D70).
+
+    Arm stores are paper by construction (experiment account); a live process
+    refuses them like any paper store.
+    """
+    from arc.config import get_settings
     from arc.store.db import connect
+    from arc.store.identity import bind_store_env
     from arc.store.migrate import migrate
 
     conn = connect(path)
     migrate(conn)
+    try:
+        bind_store_env(conn, get_settings().env.value, path=str(path))
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 

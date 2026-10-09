@@ -438,8 +438,31 @@ class TestServicePerEnv:
         assert rep.auto_approved == [] and rep.published == [_phash(pconn)]
         assert poster.posted and "Auto-approved" not in json.dumps(poster.posted[0][1].blocks)
 
-    def test_live_store_switch_auto_approves_marked_live(self, pconn: sqlite3.Connection) -> None:
-        s = live_on(account_profile="margin")
+    def test_live_store_switch_auto_approves_marked_live(
+        self, pconn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # D70: live auto-approve needs the live gate met (sticky live.gate_met) on a
+        # live store with an ok live readiness (stubbed); before that the owner clicks
+        # (tests/test_auto_approve_live_gate.py). This test covers the D34 label only.
+        import arc.approvals.service as svc_mod
+        from arc.journal.scorecard import AutoApproveReadiness
+
+        ok = AutoApproveReadiness(
+            ok=True,
+            closed_trades=30,
+            min_closed_trades=30,
+            window_trades=30,
+            realised_pnl=100.0,
+            fees=10.0,
+            realised_net_ev=3.0,
+            slippage_fills=30,
+            realised_slippage=1.0,
+            half_spread=10.0,
+            slippage_tolerance=1.5,
+            env="live",
+        )
+        monkeypatch.setattr(svc_mod, "auto_approve_readiness", lambda *a, **k: ok)
+        s = live_on(account_profile="margin").model_copy(update={"live_gate_met": True})
         poster = LogCardPoster()
         rep = ApprovalService(pconn, s, poster).publish_pending(FIXTURE_NOW)
         ph = _phash(pconn)
@@ -448,7 +471,7 @@ class TestServicePerEnv:
         assert rec is not None and rec.slack_user == AUTO_APPROVER
         assert rec.decision is ApprovalDecision.APPROVED
         text = json.dumps(poster.posted[0][1].blocks)
-        assert "Auto-approved (LIVE, gate off)" in text
+        assert "Auto-approved (LIVE)" in text
         assert "Approve" not in text.replace("Auto-approved", "")
         row = pconn.execute(
             "SELECT payload FROM decisions WHERE stage='approval' AND proposal_hash=?", (ph,)

@@ -206,9 +206,17 @@ def _day(text: str | None) -> _dt.datetime | None:
 
 
 def _connect_ro(db: str | None, settings: ArcSettings) -> sqlite3.Connection:
-    from arc.store.db import DEFAULT_DB_PATH, connect_ro
+    from arc.store.db import connect_ro
+    from arc.store.identity import check_store_env, store_path
 
-    return connect_ro(db or settings.db_path or DEFAULT_DB_PATH)
+    path = store_path(settings, db)
+    conn = connect_ro(path)
+    try:
+        check_store_env(conn, settings.env, path=str(path))  # D70: never the other env's store
+    except Exception:
+        conn.close()
+        raise
+    return conn
 
 
 def run_scorecard(args: argparse.Namespace) -> int:
@@ -365,15 +373,14 @@ def run_journal(args: argparse.Namespace) -> int:
     from arc.config import get_settings
     from arc.journal.report import ShadowPricer, gaps, replay, show_lines
     from arc.journal.store import JournalStore, ReviewCitationError
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
     from arc.utils.calendar import ET, now_et
 
     settings = get_settings()
     if args.journal_command in READ_ONLY:
         return _run_read_only(args, settings)
-    conn = connect(args.db or settings.db_path)
-    migrate(conn)
+    from arc.store.identity import open_store
+
+    conn = open_store(args.db, settings=settings)
     cmd = args.journal_command
     try:
         if cmd == "show":

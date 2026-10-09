@@ -68,14 +68,14 @@ YAML_PATHS: dict[Target, Path] = {
 }
 
 
-def open_store(db_path: Path | str | None) -> sqlite3.Connection:
-    """Connect and migrate (the override tables live in the main Arc DB)."""
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
+def open_store(
+    db_path: Path | str | None, *, settings: ArcSettings | None = None
+) -> sqlite3.Connection:
+    """Connect, migrate and bind to the running env (the override tables live in the
+    main Arc DB). D70: a store of the other env raises ``StoreEnvMismatchError``."""
+    from arc.store.identity import open_store as _open
 
-    conn = connect(db_path)
-    migrate(conn)
-    return conn
+    return _open(db_path, settings=settings)
 
 
 def effective_from_path(
@@ -99,6 +99,9 @@ def effective_from_path(
     conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
+        from arc.store.identity import check_store_env
+
+        check_store_env(conn, base.env, path=str(p))  # D70: never the other env's overrides
         settings = effective_settings(conn, base=base)
         routines = effective_routines(conn, routines_path)
     finally:
@@ -225,7 +228,7 @@ def effective_settings(
     """
     base = base if base is not None else ArcSettings()
     own = conn is None
-    c = conn if conn is not None else open_store(db_path or base.db_path)
+    c = conn if conn is not None else open_store(db_path or base.db_path, settings=base)
     try:
         changes, version, overlay = _arm_source(c)
     finally:
@@ -254,7 +257,7 @@ def apply_changes(
     consumer that goes through :func:`exit_config` / :func:`cost_model` /
     :func:`ranking_config` / the profile spec sees the arm's config.
     """
-    from arc.config import PER_ENV_SWITCHES
+    from arc.config import STORE_ONLY_LIVE_FIELDS
 
     data = base.model_dump()
     post: dict[str, Any] = {}  # per-env switches applied after validation (live only)
@@ -272,7 +275,7 @@ def apply_changes(
             continue
         if t.env is not None and t.env != env:
             continue  # e.g. auto_approve.live while running paper
-        if t.env == "live" and t.field in PER_ENV_SWITCHES:
+        if t.env == "live" and t.field in STORE_ONLY_LIVE_FIELDS:
             post[t.field] = bool(change.new)
             continue
         trial = {**data, t.field: change.new}

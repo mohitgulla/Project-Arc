@@ -110,7 +110,7 @@ def _service(args: argparse.Namespace) -> ControlService:
     from arc.control.service import ControlService
 
     base = ArcSettings()
-    conn = open_store(args.db or base.db_path)
+    conn = open_store(args.db or base.db_path, settings=base)
     return ControlService(conn, base=base, optionable=_optionable())
 
 

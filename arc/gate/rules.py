@@ -56,6 +56,7 @@ __all__ = [
     "check_data_freshness",
     "check_day_trades",
     "check_dte_window",
+    "check_live_size_cap",
     "check_earnings_blackout",
     "check_greek_caps",
     "check_greeks_present",
@@ -116,6 +117,8 @@ class RuleCode(StrEnum):
     ORDER_BUDGET = "order_budget"
     # E10.2 day-trade limit of the account profile (PDT / good-faith parity)
     DAY_TRADES = "account_profile_day_trades"
+    # D70 (E11.3): live opens capped until the live scorecard gate is met
+    LIVE_SIZE_CAP = "live_size_cap"
     RULE_ERROR = "rule_error"
 
 
@@ -295,6 +298,31 @@ def check_order_budget(
             f"(daily max {config.order_budget_daily_max}"
             + ("" if closing else f", close reserve {config.order_budget_close_reserve}")
             + ")",
+        )
+    return []
+
+
+def check_live_size_cap(
+    proposal: Proposal, account: AccountSnapshot, config: ArcSettings
+) -> list[Violation]:
+    """D70: a live open may not exceed ``live_max_contracts_until_gate`` until the live
+    scorecard gate is met.
+
+    Opens only (the caller skips it for closes). Paper is never capped. The gate
+    status is handed in by the caller (``AccountSnapshot.live_gate_met``, computed
+    from the live store's readiness outside the gate); ``None`` (unknown) caps,
+    fail closed. Defence in depth behind the sizing clamp: an owner-edited or
+    replayed proposal cannot exceed the cap either.
+    """
+    if config.env.value != "live" or account.live_gate_met is True:
+        return []
+    cap = config.live_max_contracts_until_gate
+    n = proposal.sizing.contracts
+    if n > cap:
+        state = "not met" if account.live_gate_met is False else "unknown"
+        return _v(
+            RuleCode.LIVE_SIZE_CAP,
+            f"{n} contracts > live cap {cap} while the live scorecard gate is {state}",
         )
     return []
 
@@ -885,6 +913,7 @@ def evaluate(
         violations += _run("max_open_positions", lambda: check_max_open_positions(pf, c))
         violations += _run("greeks_present", lambda: check_greeks_present(p))
         violations += _run("greek_caps", lambda: check_greek_caps(p, a, pf, m, c))
+        violations += _run("live_size_cap", lambda: check_live_size_cap(p, a, c))
     violations += _run("approval_ttl", lambda: check_approval_ttl(p, c, now))
     violations += _run("data_freshness", lambda: check_data_freshness(p, a, m, c, now))
     attempts = band.attempts if band is not None else 1 + c.execution_improvement_steps
