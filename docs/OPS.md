@@ -1275,9 +1275,18 @@ up within one slot.
 
 ```
 ✅ 2026-09-28 09:40ET • Portfolio: $101,234 • P&L: +$312 • Orders: 3/200 • BUY: SPY
+_*20 ideas → 2 ranked → bought SPY Put Debit Spread x2 @ 6.75. Skipped: XOM rejected by Risk.*_
+_*Exits: sold MRVL x1 @ 7.20 (concentration), realized -$410; 3 held.*_
 ⏳ … • PENDING: SPY          (card awaiting the owner)  /  WORKING: SPY (ladder running)
-✖ … • HOLD | HOLD (no change) | HOLD (timeout) | HOLD (skipped: previous loop running)
+✖ … • HOLD | HOLD (skip) | HOLD (timeout) | HOLD (skipped: previous loop running)
 ```
+
+D65: under the status line, a bold-italic headline of at most two lines
+(`arc.routines.loop.loop_headline`): the opens funnel (ideas → ranked → what
+opened, or why each ranked name didn't, grouped by reason), then the exits (fills
+with realized P&L, closes blocked by quotes, positions held). It is rebuilt from
+the chain's journal with the root, so a later fill or approval updates it. A
+`HOLD (skip)` slot (inputs unchanged, D31) gets a fixed one-liner.
 
 The thread under it, in order: `[Sweep] Context: N Candidates • run <stamp>`
 (the candidate entries the Director read, with the Sweep run that wrote them),

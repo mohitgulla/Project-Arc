@@ -7,8 +7,12 @@ Pure rendering. One of three states, then the same facts every time:
     :hourglass_flowing_sand: … • PENDING: SPY
     :heavy_multiplication_x: … • HOLD
 
-Nothing else goes on the root: the persona cards, the proposal card and the
-``[Routines]`` metadata are replies in its thread.
+D65: the line is followed by a bold-italic *headline* of at most two lines
+(``_*…*_``) that says what the loop did and why, in plain words: the opens
+funnel first, then the exits. It is built from what the chain journaled
+(:func:`arc.routines.loop.loop_headline`), so it is re-rendered with the root.
+Everything else (persona cards, the proposal card, the ``[Routines]`` metadata)
+stays in the thread.
 """
 
 from __future__ import annotations
@@ -51,6 +55,7 @@ class LoopRoot(BaseModel):
     no_change: bool = False
     timeout: bool = False
     skipped: str | None = None  # the slot never ran (why)
+    headline: list[str] = Field(default_factory=list)  # D65: ≤2 plain-text lines
 
     @property
     def outcome(self) -> LoopOutcome:
@@ -108,9 +113,38 @@ def loop_status_line(root: LoopRoot) -> str:
         elif root.timeout:
             hold = "HOLD (timeout)"
         elif root.no_change:
-            hold = "HOLD (no change)"
+            hold = "HOLD (skip)"
         action.append(hold)
-    return f"{_EMOJI[root.outcome]} " + " • ".join([*facts, *action])
+    line = f"{_EMOJI[root.outcome]} " + " • ".join([*facts, *action])
+    head = [h for h in (root.headline or _flag_headline(root)) if h.strip()][:HEADLINE_LINES]
+    return "\n".join([line, *(_bold_italic(h) for h in head)])
 
 
-__all__ = ["LoopOutcome", "LoopRoot", "loop_status_line", "slot_stamp"]
+HEADLINE_LINES = 2
+HEADLINE_MAX = 160  # chars per headline line (a Slack line on a laptop)
+
+
+def _flag_headline(root: LoopRoot) -> list[str]:
+    """Headline for a loop that never reached the personas (skip / timeout / no change)."""
+    if root.skipped:
+        return [f"Slot skipped ({root.skipped}); nothing was evaluated."]
+    if root.timeout:
+        return ["Loop hit its deadline; the steps after it were skipped this slot."]
+    if root.no_change:
+        return [
+            "Inputs unchanged since the last full loop; personas skipped, open orders carry on."
+        ]
+    return []
+
+
+def _bold_italic(text: str) -> str:
+    """``_*text*_``: Slack bold + italic, with the marker characters made safe."""
+    clean = " ".join(text.split())
+    clean = clean.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    clean = clean.replace("*", "∗").replace("_", " ").replace("~", "-").replace("`", "'")
+    if len(clean) > HEADLINE_MAX:
+        clean = clean[: HEADLINE_MAX - 1].rstrip(" ,;·") + "…"
+    return f"_*{clean}*_"
+
+
+__all__ = ["HEADLINE_LINES", "LoopOutcome", "LoopRoot", "loop_status_line", "slot_stamp"]

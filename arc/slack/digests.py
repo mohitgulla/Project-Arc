@@ -30,6 +30,7 @@ from arc.models import Performance
 from arc.slack import blocks as B
 from arc.slack.blocks import Block, CardView
 from arc.slack.personas import Persona, persona_label
+from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -79,10 +80,11 @@ _RESEARCH = persona_label(Persona.RESEARCH)
 _QUANT = persona_label(Persona.QUANT)
 _RISK = persona_label(Persona.RISK)
 _BROKER = persona_label(Persona.BROKER)
-# Scalp rows are two blocks each (divider + section); 20 keeps a card with the
-# head, a "+N more" line, the Rejected list, folded Session notes and the footer
-# under Slack's 50-block cap.
-_MAX_SCALP_ROWS = 20
+# D65: Scalp rows are one line each, grouped by stance (one section per stance,
+# not one per ticker). 40 rows keep even a full scan inside a few sections;
+# the rest fold into a ``+N more`` line.
+_MAX_SCALP_ROWS = 40
+_STANCE_ORDER = ("bullish", "bearish", "neutral")
 
 # Human text for stable drop/reject reason keys (arc.ingest.scalp, arc.pipeline.steps).
 _REASONS = {
@@ -231,6 +233,36 @@ def category_mix_lines(mix: Sequence[CategoryMix]) -> list[str]:
     return out
 
 
+def _stance_groups(rows: Sequence[tuple[str, str]]) -> list[Block]:
+    """D65: one ``*Bullish (n)*`` section per stance, one pre-escaped line per ticker.
+
+    *rows* is ``(stance, line)`` in display order (confidence first). Each group
+    is chunked so no section passes Slack's text limit; groups are separated by a
+    divider. Stances outside bullish/bearish/neutral follow, in first-seen order.
+    """
+    groups: dict[str, list[str]] = {}
+    for stance, line in rows:
+        groups.setdefault(stance, []).append(line)
+    order = [s for s in _STANCE_ORDER if s in groups] + [
+        s for s in groups if s not in _STANCE_ORDER
+    ]
+    out: list[Block] = []
+    for stance in order:
+        lines = groups[stance]
+        out.append(B.divider())
+        head = f"*{B.esc(stance.capitalize())} ({len(lines)})*"
+        chunk: list[str] = [head]
+        for line in lines:
+            if len("\n".join([*chunk, line])) > B.SECTION_MAX:
+                out.append(
+                    {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(chunk)}}
+                )
+                chunk = []
+            chunk.append(B.clip(line, 600))
+        out.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(chunk)}})
+    return out
+
+
 def scalp_card(
     *,
     docs: int,
@@ -291,24 +323,21 @@ def scalp_card(
         blocks.append(_section("Filtered (title filter, not read)", [line]))
     if tape_line:
         blocks.append(B.summary(B.esc(tape_line)))
-    # E5.5b: one section per candidate with dividers (like Research's ranked
-    # list), so each row folds on its own. Lines start at column 0: no indent.
+    # D65: one line per candidate, grouped by stance (``*Bullish (3)*``), so a
+    # 20-name scan reads as a short list instead of 20 divider-separated blocks.
     ranked = sorted(candidates, key=lambda c: -c.confidence)
+    rows: list[tuple[str, str]] = []
     for c in ranked[:_MAX_SCALP_ROWS]:
         when = f" {c.catalyst_date:%b %d}" if c.catalyst_date else ""
-        facts = (
-            f"{c.stance.value} · {c.catalyst_type.value}{when} · {_pct(c.confidence)} confidence"
-        )
+        facts = f"{_pct(c.confidence)} · {c.catalyst_type.value}{when}"
         if c.corroboration is not None:
             facts += f" · {_plural(c.corroboration, 'source')}"
         why = (rationales or {}).get(c.ticker, "").strip()
-        lines = [f"*{B.esc(c.ticker)}*", facts]
+        line = f"*{B.esc(c.ticker)}* {facts}"
         if why:
-            lines.append(B.esc(why))
-        blocks.append(B.divider())
-        blocks.append(
-            {"type": "section", "text": {"type": "mrkdwn", "text": B.clip("\n".join(lines))}}
-        )
+            line += f" — {B.esc(why)}"
+        rows.append((c.stance.value, line))
+    blocks.extend(_stance_groups(rows))
     if len(ranked) > _MAX_SCALP_ROWS:
         rest = ", ".join(B.esc(c.ticker) for c in ranked[_MAX_SCALP_ROWS:])
         blocks.append(B.summary(B.clip(f"+{len(ranked) - _MAX_SCALP_ROWS} more: {rest}")))
@@ -461,26 +490,37 @@ def scalp_context_card(
         "what Research read this loop",
         f"{_plural(len(runs), 'Scalp run')}" if len(runs) > 1 else "",
     )
+    # D65: one line per candidate grouped by stance. The catalyst date only shows
+    # when it isn't the run day, and ``as of`` only for entries older than the
+    # newest Scalp run (the header already carries that time).
+    run_day = newest.valid_from.astimezone(ET).date() if newest else None
+    rows: list[tuple[str, str]] = []
     for e in cands[:_MAX_SCALP_ROWS]:
         p = e.payload
-        facts = f"{p.get('stance', '?')} · {p.get('catalyst_type', '?')}"
-        raw_date = p.get("catalyst_date")
-        if raw_date:
-            facts += f" {str(raw_date)[:10]}"
+        facts: list[str] = []
         conf = p.get("confidence")
         if conf is not None:
-            facts += f" · {_pct(float(conf))} confidence"
+            facts.append(_pct(float(conf)))
+        what = str(p.get("catalyst_type") or "?")
+        raw_date = p.get("catalyst_date")
+        if raw_date:
+            try:
+                day = _dt.date.fromisoformat(str(raw_date)[:10])
+            except ValueError:
+                day = None
+            if day is not None and day != run_day:
+                what += f" {day:%b %d}"
+        facts.append(what)
         corr = p.get("corroboration")
         if corr is not None:
-            facts += f" · {_plural(int(corr), 'source')}"
-        facts += f" · as of {slot_stamp(e.valid_from)}"
-        blocks.append(B.divider())
-        blocks.append(
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": B.clip(f"*{B.esc(e.subject)}*\n{B.esc(facts)}")},
-            }
-        )
+            facts.append(_plural(int(corr), "source"))
+        if newest is not None and e.valid_from < newest.valid_from:
+            older = e.valid_from.astimezone(ET)
+            stamp = f"{older:%H:%M}ET" if older.date() == run_day else slot_stamp(e.valid_from)
+            facts.append(f"as of {stamp}")
+        line = f"*{B.esc(e.subject)}* {B.esc(' · '.join(facts))}"
+        rows.append((str(p.get("stance") or "unknown"), line))
+    blocks.extend(_stance_groups(rows))
     if len(cands) > _MAX_SCALP_ROWS:
         rest = ", ".join(B.esc(e.subject) for e in cands[_MAX_SCALP_ROWS:])
         blocks.append(B.summary(B.clip(f"+{len(cands) - _MAX_SCALP_ROWS} more: {rest}")))

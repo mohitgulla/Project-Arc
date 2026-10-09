@@ -221,22 +221,23 @@ class TestScalp:
         )
         text = _all(view)
         assert "*3* accepted this run · 3 rejected" in text
-        # E5.5b: one section per candidate, divider-separated, no indented subtext.
+        # D65: one line per candidate, grouped by stance; no line break per ticker.
         sections = [
             b["text"]["text"]
             for b in view.blocks
             if b["type"] == "section" and b["text"]["text"].startswith("*")
         ]
         assert sections[0] == (
-            "*NVDA*\nbullish · earnings Oct 28 · 75% confidence\nBuyback plus raised guidance."
+            "*Bullish (1)*\n*NVDA* 75% · earnings Oct 28 — Buyback plus raised guidance."
         )
-        assert sections[1] == "*XOM*\nbearish · earnings · 75% confidence"
+        assert sections[1] == "*Bearish (1)*\n*XOM* 75% · earnings"
         kinds = [b["type"] for b in view.blocks]
         assert kinds[2:6] == ["divider", "section", "divider", "section"]
         assert not any(line.startswith(" ") for t in _texts(view) for line in t.split("\n")), (
             "no line in any block starts with a space"
         )
         assert "•" not in sections[0] and "•" not in sections[1]
+        assert "confidence" not in sections[0]  # D65: the % alone, in the stance group
         assert "source" not in text.lower().replace("sources →", "")
         assert "http" not in text  # owner: no source links on the Scalp card
         assert "• not in universe (2): PLTR, AAPL" in text
@@ -270,7 +271,7 @@ class TestScalp:
             "*Source mix*\nWSJ 12 (46 over budget) · CNBC 12 · Fed 3 · EDGAR 24 (157 over budget)"
             in text
         )
-        assert "75% confidence · 3 sources" in text
+        assert "*NVDA* 75% · earnings Oct 28 · 3 sources" in text
         _assert_slack_limits(view)
         one = _all(
             D.scalp_card(
@@ -295,14 +296,14 @@ class TestScalp:
         assert text.count(EVIL_ESC) == 2 and "<!channel>" not in text
 
     def test_many_candidates_clip_under_block_limit(self) -> None:
-        # E5.5b: one section per candidate, so a long list is clipped to rows
-        # plus a "+N more" line, and the whole card stays under 50 blocks.
+        # D65: rows are lines in one stance section, so a long list is clipped to
+        # 40 rows plus a "+N more" line, and the whole card stays under 50 blocks.
         many = [cand(f"T{i}", sources=[f"https://example.com/{'z' * 80}/{i}"]) for i in range(80)]
         view = D.scalp_card(docs=80, accepted=80, candidates=many, rejected={"schema": 1})
         _assert_slack_limits(view)
         contexts = [b["elements"][0]["text"] for b in view.blocks if b["type"] == "context"]
-        assert any(t.startswith("+60 more: T20, T21") for t in contexts)
-        assert sum(b["type"] == "divider" for b in view.blocks) == 21  # 20 rows + Rejected
+        assert any(t.startswith("+40 more: T40, T41") for t in contexts)
+        assert sum(b["type"] == "divider" for b in view.blocks) == 2  # one stance + Rejected
         assert view.blocks[-1]["type"] == "context"  # footer stays last
 
     def test_ten_candidates_fit_without_clipping(self) -> None:
@@ -310,7 +311,8 @@ class TestScalp:
         view = D.scalp_card(docs=10, accepted=10, candidates=many, rejected={})
         _assert_slack_limits(view)
         assert "more" not in _all(view)
-        assert sum(b["type"] == "divider" for b in view.blocks) == 10
+        assert sum(b["type"] == "divider" for b in view.blocks) == 1  # D65: one stance group
+        assert "*Bullish (10)*" in _all(view)
 
     def test_long_rationale_is_clipped(self) -> None:
         view = D.scalp_card(
@@ -323,6 +325,66 @@ class TestScalp:
 # ---------------------------------------------------------------------------
 # Research
 # ---------------------------------------------------------------------------
+
+
+def _ctx_entry(ticker: str, stance: str, conf: float, at: dt.datetime, **payload: Any) -> Any:
+    from arc.context.store import ContextEntry
+
+    return ContextEntry(
+        id=f"ctx-{ticker}",
+        kind="candidate",
+        subject=ticker,
+        payload={"stance": stance, "confidence": conf, **payload},
+        schema_version=1,
+        produced_by="scalp",
+        run_id=f"run-{at:%H%M}",
+        created_at=at,
+        valid_from=at,
+    )
+
+
+class TestScalpContext:
+    """D65: the loop-thread Scalp card is one line per ticker, grouped by stance."""
+
+    def test_grouped_one_line_per_ticker(self) -> None:
+        run = dt.datetime(2026, 10, 8, 15, 30, tzinfo=ET)
+        entries = [
+            _ctx_entry(
+                "TSM",
+                "bullish",
+                0.72,
+                run,
+                catalyst_type="news",
+                catalyst_date="2026-10-08T00:00:00-04:00",
+                corroboration=4,
+            ),
+            _ctx_entry("ORCL", "bearish", 0.62, run, catalyst_type="news", corroboration=2),
+            _ctx_entry(
+                "AMD",
+                "bullish",
+                0.50,
+                run - dt.timedelta(minutes=90),
+                catalyst_type="sector",
+                catalyst_date="2026-10-15",
+                corroboration=1,
+            ),
+            _ctx_entry("NVDA", "neutral", 0.48, run, catalyst_type="news", corroboration=6),
+        ]
+        view = D.scalp_context_card(entries, chain_run_id="chain-1")
+        _assert_slack_limits(view)
+        assert view.text == "⚡ [Scalp] Context: 4 Candidates • run 2026-10-08 15:30ET"
+        sections = [b["text"]["text"] for b in view.blocks if b["type"] == "section"]
+        assert sections == [
+            "*Bullish (2)*\n*TSM* 72% · news · 4 sources\n"
+            "*AMD* 50% · sector Oct 15 · 1 source · as of 14:00ET",
+            "*Bearish (1)*\n*ORCL* 62% · news · 2 sources",
+            "*Neutral (1)*\n*NVDA* 48% · news · 6 sources",
+        ]
+        assert sum(b["type"] == "divider" for b in view.blocks) == 3  # one per stance
+
+    def test_empty(self) -> None:
+        view = D.scalp_context_card([], chain_run_id="chain-1")
+        assert "*Candidates*\nnone" in _all(view)
 
 
 class TestResearch:

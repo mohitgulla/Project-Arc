@@ -54,13 +54,15 @@ class TestRootLine:
     @pytest.mark.parametrize(
         ("kw", "suffix"),
         [
-            ({"no_change": True}, "HOLD (no change)"),
+            ({"no_change": True}, "HOLD (skip)"),  # D65: was "HOLD (no change)"
             ({"timeout": True}, "HOLD (timeout)"),
             ({"skipped": "previous loop running"}, "HOLD (skipped: previous loop running)"),
         ],
     )
     def test_hold_reasons(self, kw: dict[str, object], suffix: str) -> None:
-        assert _root(**kw).text().endswith(f"• {suffix}")
+        status, headline = _root(**kw).text().split("\n")
+        assert status.endswith(f"• {suffix}")
+        assert headline.startswith("_*") and headline.endswith("*_")  # D65 flag headline
 
     def test_negative_pnl_and_missing_facts(self) -> None:
         r = _root(day_pnl=-1_250.7, equity=None, orders_used=None)
@@ -77,3 +79,30 @@ class TestRootLine:
         r = _root(buys=["SPY"])
         again = LoopRoot.model_validate(r.model_dump(mode="json"))
         assert again == r and again.text() == r.text()
+
+
+class TestHeadline:
+    """D65: ≤2 bold-italic headline lines under the status line."""
+
+    def test_headline_follows_the_status_line(self) -> None:
+        r = _root(buys=["SPY"], headline=["20 ideas → 2 ranked → bought SPY", "Exits: 3 held."])
+        assert r.text() == (
+            f":white_check_mark: {FACTS} • BUY: SPY\n"
+            "_*20 ideas → 2 ranked → bought SPY*_\n_*Exits: 3 held.*_"
+        )
+
+    def test_at_most_two_lines_and_clipped(self) -> None:
+        r = _root(headline=["a" * 400, "b", "c"])
+        lines = r.text().split("\n")
+        assert len(lines) == 3  # status + 2
+        assert len(lines[1]) <= 160 + 4 and lines[1].endswith("…*_")
+
+    def test_markers_and_mentions_are_neutralised(self) -> None:
+        r = _root(headline=["<!channel> *bold* _it_ `x` ~s~ & co"])
+        line = r.text().split("\n")[1]
+        assert "<!channel>" not in line and "&lt;!channel&gt;" in line
+        inner = line[2:-2]
+        assert not any(ch in inner for ch in "*_`~")
+
+    def test_plain_hold_has_no_headline(self) -> None:
+        assert "\n" not in _root().text()
