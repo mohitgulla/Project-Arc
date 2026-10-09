@@ -147,6 +147,8 @@ from arc.pipeline.market import (
     account_snapshot,
     build_portfolio,
     limit_price,
+    live_gate_status,
+    live_size_cap,
     market_snapshot,
     next_earnings,
     price_structure,
@@ -172,7 +174,7 @@ from arc.routines.handlers import JobResult
 from arc.routines.loop import LoopInputs, LoopState, pnl_bucket
 from arc.routines.runs import RoutineRunRepo
 from arc.scanner.rank import live_net_ev_check
-from arc.sizing import size_contracts
+from arc.sizing import apply_live_cap, size_contracts
 from arc.slack.blocks import esc
 from arc.slack.digests import quant_card, research_card, risk_card
 from arc.structures import parse_occ
@@ -3073,6 +3075,7 @@ def _restrictive_check(
 _SIZING_REASONS = {
     "ok": ReasonCode.SIZING_OK,
     "capped": ReasonCode.SIZING_CAPPED,
+    "live_capped": ReasonCode.SIZING_CAPPED,  # D70: the live cap; payload carries live_cap
     "cap_zero": ReasonCode.SIZING_CAP_ZERO,
     "budget_exhausted": ReasonCode.SIZING_BUDGET_EXHAUSTED,
     "risk_zero": ReasonCode.SIZING_RISK_ZERO,
@@ -3210,6 +3213,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
         fetched_at,
         baseline=account_baseline(ctx.conn, info, fetched_at),
         orders_used_today=budget.budget.used,
+        live_gate_met=live_gate_status(ctx.conn, settings, now=fetched_at),
     )
     portfolio = build_portfolio(
         ctx.conn,
@@ -3409,6 +3413,8 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             cap_pct=settings.max_alloc_pct,
             existing_max_loss=existing_max_loss(portfolio, t),  # S-7: remaining budget
         )
+        live_cap = live_size_cap(settings, account)  # D70: None in paper / gate met
+        size = apply_live_cap(size, live_cap, info.equity)
         sizing_payload = size.model_dump(mode="json") | {
             "max_loss_per_contract": str(st.max_loss) if st.max_loss is not None else None,
             "worst_loss_per_contract": (
@@ -3417,6 +3423,8 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             "equity": str(info.equity),
             "cap_pct": settings.max_alloc_pct,
         }
+        if live_cap is not None:
+            sizing_payload["live_cap"] = live_cap
         if not size.trade:
             skipped["sizing"] += 1
             if size.code == "budget_exhausted":
@@ -3537,7 +3545,12 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             t,
             Choice.SIZED,
             _SIZING_REASONS[size.code],
-            reason_text=f"min(Risk {size.suggestion}, cap {size.cap_contracts}) = {size.contracts}",
+            reason_text=(
+                f"min(Risk {size.suggestion}, cap {size.cap_contracts}) = {size.contracts}"
+                if live_cap is None
+                else f"min(Risk {size.suggestion}, cap {size.cap_contracts}, "
+                f"live cap {live_cap}) = {size.contracts}"
+            ),
             proposal_hash=phash,
             payload=sizing_payload,
         )

@@ -183,3 +183,40 @@ class TestAutoApprove:
         with mock.patch("arc.config._LIVE_ENV_PATH", fake_live_env):
             s = get_settings(env="live", auto_approve=True)
         assert s.auto_approve is False
+
+
+# ---------------------------------------------------------------------------
+# E11.3 (D70): live evidence is live-only
+# ---------------------------------------------------------------------------
+
+
+def test_live_forces_scorecard_gate_on() -> None:
+    from structlog.testing import capture_logs
+
+    from tests.test_auto_approve_d34 import live_settings
+
+    with capture_logs() as logs:
+        s = live_settings(auto_approve_scorecard_gate=False)
+    assert s.auto_approve_scorecard_gate is True
+    assert any("scorecard gate forced on in live" in e.get("event", "") for e in logs)
+    paper = ArcSettings(_env_file=None, auto_approve_scorecard_gate=False)  # type: ignore[call-arg]
+    assert paper.auto_approve_scorecard_gate is False  # paper opt-out unchanged
+
+
+def test_live_defaults_and_constant() -> None:
+    from tests.test_auto_approve_d34 import live_settings
+
+    s = live_settings()
+    assert s.auto_approve_live_min_closed_trades == 30
+    assert s.live_max_contracts_until_gate == 1
+    assert s.live_auto_approve_requires_gate is True
+    assert s.live_gate_met is False
+    assert live_settings(live_auto_approve_requires_gate=False).live_auto_approve_requires_gate
+
+
+def test_live_gate_met_never_from_env_or_kwargs(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_auto_approve_d34 import live_settings
+
+    monkeypatch.setenv("ARC_LIVE_GATE_MET", "true")
+    assert live_settings().live_gate_met is False
+    assert ArcSettings(_env_file=None, live_gate_met=True).live_gate_met is False  # type: ignore[call-arg]

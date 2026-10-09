@@ -58,6 +58,8 @@ __all__ = [
     "curve_mid",
     "day_trades_used",
     "limit_price",
+    "live_gate_status",
+    "live_size_cap",
     "market_snapshot",
     "next_earnings",
     "opened_today_symbols",
@@ -114,6 +116,7 @@ def account_snapshot(
     baseline: Baseline | None,
     orders_used_today: int | None = None,
     day_trades_used: int | None = None,
+    live_gate_met: bool | None = None,
 ) -> AccountSnapshot:
     """Gate view of the account. The halt flag is stamped later by ``HaltSwitch.apply``.
 
@@ -127,6 +130,8 @@ def account_snapshot(
     ``order_budget`` rule runs. ``None`` skips the rule (fixtures, dry runs).
     ``day_trades_used`` (E10.2) feeds the profile's day-trade rule on closes;
     ``None`` skips it.
+    ``live_gate_met`` (D70) is :func:`live_gate_status`; ``None`` makes the gate's
+    live size cap apply (fail closed). Ignored in paper.
     """
     return AccountSnapshot(
         equity=info.equity,
@@ -134,8 +139,37 @@ def account_snapshot(
         settled_cash=settled_cash(info),
         orders_used_today=orders_used_today,
         day_trades_used=day_trades_used,
+        live_gate_met=live_gate_met,
         as_of=now,
     )
+
+
+def live_gate_status(
+    conn: sqlite3.Connection, settings: ArcSettings, *, now: _dt.datetime
+) -> bool | None:
+    """D70: is the live scorecard gate met? ``None`` in paper (the cap never applies).
+
+    True once the sticky ``live.gate_met`` is on, or when the live readiness on
+    this (live-stamped) store is met now. Any error → False (fail closed: capped).
+    """
+    if settings.env.value != "live":
+        return None
+    if settings.live_gate_met:
+        return True
+    from arc.journal.scorecard import env_readiness, live_gate_met
+
+    try:
+        return live_gate_met(env_readiness(conn, settings, now=now))
+    except Exception:  # noqa: BLE001 - unknown gate status caps; never blocks the loop
+        log.exception("pipeline.live_gate_status_failed")
+        return False
+
+
+def live_size_cap(settings: ArcSettings, account: AccountSnapshot) -> int | None:
+    """D70: contracts a live open is clamped to, or ``None`` (paper / gate met)."""
+    if settings.env.value != "live" or account.live_gate_met is True:
+        return None
+    return settings.live_max_contracts_until_gate
 
 
 # ---------------------------------------------------------------------------

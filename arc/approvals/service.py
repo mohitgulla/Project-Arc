@@ -72,7 +72,12 @@ from arc.approvals.trail import load_trail
 from arc.context.ttl import from_db, require_aware, to_db
 from arc.gate.rules import proposal_hash as hash_proposal
 from arc.journal.reasons import Choice, JournalPersona, ReasonCode, Stage
-from arc.journal.scorecard import AutoApproveReadiness, auto_approve_readiness
+from arc.journal.scorecard import (
+    AutoApproveReadiness,
+    auto_approve_readiness,
+    live_gate_met,
+    mark_env_mismatch,
+)
 from arc.journal.store import JournalStore
 from arc.models import ApprovalDecision, ApprovalRecord, GateDecision, Proposal
 from arc.structures import is_defined_risk
@@ -88,6 +93,7 @@ log = structlog.get_logger(__name__)
 __all__ = [
     "AUTO_APPROVER",
     "GATE_REENABLE_ACTOR",
+    "LIVE_GATE_ACTOR",
     "RETRY_AFTER",
     "TTL_ACTOR",
     "UNPOSTED_CHANNEL",
@@ -106,6 +112,7 @@ __all__ = [
 TTL_ACTOR = "arc:ttl"
 AUTO_APPROVER = "arc:auto-approve"
 GATE_REENABLE_ACTOR = "arc:scorecard-gate"  # E6.6a: ends the D34 paper collection phase
+LIVE_GATE_ACTOR = "arc:live-gate"  # D70: ends the live collection phase (live.gate_met)
 # E6.1b: ``approval_requests.channel`` of a request whose card post raised. Such a
 # pending request is re-posted by the next full sweep (no schema change: the column
 # already means "where the card went", ``log`` when it went nowhere on purpose).
@@ -406,6 +413,7 @@ class ApprovalService:
         report = SweepReport(published=[], auto_approved=[], expired=[])
         self._readiness = None  # E7.5a: computed once per sweep, on first need
         self.reenable_scorecard_gate(now)  # E6.6a: before any open is decided
+        self.update_live_gate(now)  # D70: the live gate's sticky lift, same point
         for row in self._unpublished(day, only):
             phash = row["proposal_hash"]
             try:
@@ -578,6 +586,8 @@ class ApprovalService:
         """
         if self.settings.auto_approve_scorecard_gate:
             return False
+        if self.settings.env.value == "live":  # D70: nothing to re-enable in live
+            return False
         ready = self.readiness(now)
         if "min_closed_trades" in ready.failing:
             return False
@@ -620,15 +630,85 @@ class ApprovalService:
     _readiness: AutoApproveReadiness | None = None
 
     def readiness(self, now: _dt.datetime) -> AutoApproveReadiness:
-        """The scorecard gate's verdict at *now* (cached for one sweep)."""
+        """The scorecard gate's verdict at *now* (cached for one sweep).
+
+        D70: per env (:func:`arc.journal.scorecard.env_readiness`); in live it
+        counts the live store's closes against ``auto_approve.live_min_closed_trades``.
+        """
         if self._readiness is None:
-            self._readiness = auto_approve_readiness(
+            s = self.settings
+            live = s.env.value == "live"
+            ready = auto_approve_readiness(
                 self.conn,
                 now=now,
-                min_closed_trades=self.settings.auto_approve_min_closed_trades,
-                slippage_tolerance=self.settings.auto_approve_slippage_tolerance,
+                min_closed_trades=(
+                    s.auto_approve_live_min_closed_trades
+                    if live
+                    else s.auto_approve_min_closed_trades
+                ),
+                slippage_tolerance=s.auto_approve_slippage_tolerance,
             )
+            self._readiness = mark_env_mismatch(ready, s)
         return self._readiness
+
+    # -- D70 (E11.3): the live collection phase ----------------------------------
+
+    def update_live_gate(self, now: _dt.datetime) -> bool:
+        """D70: record, once, that the live scorecard gate is met (sticky lift).
+
+        Live only. When the live readiness is met and ``live.gate_met`` is not on
+        yet, turn it on through the control service (actor ``arc:live-gate``, D26
+        change log) and post the flip to the day thread. That lifts the live size
+        cap and lets ``auto_approve.live`` take effect. Never turns it off again
+        (the owner may). Idempotent: once this actor set it, it never runs again.
+        Returns True when it flipped.
+        """
+        if self.settings.env.value != "live" or self.settings.live_gate_met:
+            return False
+        ready = self.readiness(now)
+        if not live_gate_met(ready):
+            return False
+        from arc.control.service import ControlService
+
+        svc = ControlService(self.conn, base=self.settings, now=lambda: now)
+        key = "live.gate_met"
+        if any(c.actor == LIVE_GATE_ACTOR for c in svc.history(key, limit=1000)):
+            return False
+        res = svc.set_system(
+            key,
+            "on",
+            actor=LIVE_GATE_ACTOR,
+            reason=(
+                f"D70: live collection phase complete ({ready.closed_trades} live closes "
+                f">= {ready.min_closed_trades}, readiness ok)"
+            ),
+        )
+        if res.outcome != "applied":
+            log.error("approvals.live_gate_flip_failed", message=res.message)
+            return False
+        self.settings = self.settings.model_copy(update={"live_gate_met": True})
+        text = (
+            f"*Live gate: MET* ({ready.closed_trades} live closed trades >= "
+            f"{ready.min_closed_trades}); live size cap lifted, auto_approve.live now "
+            f"effective if on. {ready.gate_line(True)}"
+        )
+        log.warning(
+            "approvals.live_gate_met",
+            change_id=res.change_id,
+            closed_trades=ready.closed_trades,
+            detail=text,
+        )
+        if self.live:
+            from arc.approvals.auto import post_day_notice
+
+            post_day_notice(self.conn, text, now)
+        return True
+
+    def _live_gate_blocks(self, now: _dt.datetime) -> bool:
+        """D70 Q3: live auto-approve is not effective until the live gate is met."""
+        if self.settings.env.value != "live" or not self.settings.live_auto_approve_requires_gate:
+            return False
+        return not (self.settings.live_gate_met or live_gate_met(self.readiness(now)))
 
     def _scorecard_gate(
         self, phash: str, row: sqlite3.Row, auto: str, now: _dt.datetime
@@ -640,7 +720,9 @@ class ApprovalService:
         if row["kind"] == "close":
             return auto, None
         env = self.settings.env.value
-        if not self.settings.auto_approve_scorecard_gate:
+        live = env == "live"
+        # D70: the paper opt-out never applies in live (also forced at validation).
+        if not live and not self.settings.auto_approve_scorecard_gate:
             ready = self.readiness(now)  # E6.6a: what the gate would have said (journaled)
             log.warning(
                 "approvals.auto_approve_scorecard_gate_off",
@@ -652,7 +734,7 @@ class ApprovalService:
             )
             return f"{auto[:-1]}, scorecard gate off)", None
         ready = self.readiness(now)
-        if ready.ok:
+        if ready.ok and not (live and self._live_gate_blocks(now)):
             return f"{auto[:-1]}, scorecard gate met)", None
         text = f"auto-approve gated ({env}): {ready.summary()}"
         with self.conn:

@@ -67,12 +67,9 @@ def add_iv_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
 
 
 def _open(args: argparse.Namespace) -> sqlite3.Connection:
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
+    from arc.store.identity import open_store
 
-    conn = connect(Path(args.db) if args.db else None)
-    migrate(conn)
-    return conn
+    return open_store(Path(args.db) if args.db else None)  # D70: binds to ARC_ENV
 
 
 def _tickers(

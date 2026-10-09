@@ -104,23 +104,34 @@ class ProposeReport:
         return out
 
 
-def open_db(db: str | Path | None, *, copy: bool) -> sqlite3.Connection:
-    """Open (and migrate) the audit DB. ``copy=True`` returns an in-memory copy of it."""
-    from arc.store.db import DEFAULT_DB_PATH, connect
+def open_db(
+    db: str | Path | None, *, copy: bool, settings: ArcSettings | None = None
+) -> sqlite3.Connection:
+    """Open (and migrate) the audit DB. ``copy=True`` returns an in-memory copy of it.
+
+    D70: the store (or the copy) is bound to the running ``ARC_ENV``; a store of
+    the other env raises ``StoreEnvMismatchError`` before any broker call.
+    """
+    from arc.store.db import connect
+    from arc.store.identity import bind_store_env, open_store, store_path
     from arc.store.migrate import migrate
 
+    if settings is None:
+        from arc.config import get_settings
+
+        settings = get_settings()
     if not copy:
-        conn = connect(db)
-    else:
-        conn = connect(":memory:")
-        src_path = Path(db) if db else DEFAULT_DB_PATH
-        if src_path.is_file():
-            src = sqlite3.connect(f"file:{src_path}?mode=ro", uri=True)
-            try:
-                src.backup(conn)
-            finally:
-                src.close()
+        return open_store(db, settings=settings)
+    conn = connect(":memory:")
+    src_path = Path(store_path(settings, db))
+    if src_path.is_file():
+        src = sqlite3.connect(f"file:{src_path}?mode=ro", uri=True)
+        try:
+            src.backup(conn)
+        finally:
+            src.close()
     migrate(conn)
+    bind_store_env(conn, settings.env, path=str(src_path))
     return conn
 
 
@@ -193,7 +204,7 @@ def fixture_run(
     from arc.pipeline.env import FIXTURE_SETS
     from arc.routines.heartbeat import LogNotifier
 
-    conn = open_db(db or ":memory:", copy=False)
+    conn = open_db(db or ":memory:", copy=False, settings=settings)
     load_fixture_docs(conn)
     env = PipelineEnv.fixtures(FIXTURE_SETS[fixture_set])
     report = run_propose(

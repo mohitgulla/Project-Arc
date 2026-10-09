@@ -211,6 +211,7 @@ class ReasonCode(StrEnum):
     GATE_ACCOUNT_CASH = "gate:account_profile_settled_cash"
     GATE_ORDER_BUDGET = "gate:order_budget"
     GATE_DAY_TRADES = "gate:account_profile_day_trades"
+    GATE_LIVE_SIZE_CAP = "gate:live_size_cap"  # D70 (E11.3)
     # approval (E6.1)
     OWNER_APPROVE = "owner_approve"
     OWNER_REJECT = "owner_reject"
@@ -441,6 +442,7 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.GATE_ACCOUNT_CASH: "Gate: not enough settled cash",
     ReasonCode.GATE_ORDER_BUDGET: "Gate: daily order budget",
     ReasonCode.GATE_DAY_TRADES: "Gate: day-trade limit of the account profile",
+    ReasonCode.GATE_LIVE_SIZE_CAP: "Gate: live size cap (live gate not met)",
     ReasonCode.OWNER_APPROVE: "Owner approved",
     ReasonCode.OWNER_REJECT: "Owner rejected",
     ReasonCode.AUTO_APPROVE: "Auto-approved",

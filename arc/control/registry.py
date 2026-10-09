@@ -177,6 +177,8 @@ NEVER_TUNABLE: frozenset[str] = frozenset(
         # E13.11 (D56): process topology; change by env var + PR, never at runtime.
         "broker_venue",
         "broker_transport",
+        # D70 (E11.3): owner decision; live auto-approve always waits for the live gate.
+        "live_auto_approve_requires_gate",
     }
 )
 
@@ -344,27 +346,71 @@ _STATIC: tuple[Tunable, ...] = (
         field="auto_approve",
         env="live",
     ),
-    # E7.5a: the scorecard gate in front of D34 auto-approve (both envs, opens only).
+    # E7.5a: the scorecard gate in front of D34 auto-approve (opens only). D70: the
+    # opt-out is paper-only; a live process forces the gate on (ArcSettings validator).
     _s(
         "auto_approve.scorecard_gate",
         Group.ACCOUNT,
         _B,
         "E7.5a: auto-approve opens only when the scorecard shows enough closed trades, "
-        "realised net EV >= 0 and slippage within tolerance. Off = explicit opt-out.",
+        "realised net EV >= 0 and slippage within tolerance. Off = explicit opt-out "
+        "(paper only, D70: live always runs the gate).",
         Risk.FALSE,
         field="auto_approve_scorecard_gate",
         aliases=("scorecard_gate",),
+        env="paper",
     ),
     _s(
         "auto_approve.min_closed_trades",
         Group.ACCOUNT,
         _I,
-        "E7.5a: closed trades the scorecard gate needs before auto-approving opens.",
+        "E7.5a: closed trades the scorecard gate needs before auto-approving opens (paper; "
+        "live uses auto_approve.live_min_closed_trades).",
         Risk.DOWN,
         field="auto_approve_min_closed_trades",
         min=10,
         max=500,
         hard_ceiling=10,
+    ),
+    # D70 (E11.3): the live collection phase. Live-only keys; the riskier direction
+    # (a lower threshold / a higher cap) needs the confirm code.
+    _s(
+        "auto_approve.live_min_closed_trades",
+        Group.ACCOUNT,
+        _I,
+        "D70: LIVE closed trades (live store only) before live auto-approve is effective and "
+        "the live size cap lifts.",
+        Risk.DOWN,
+        field="auto_approve_live_min_closed_trades",
+        min=10,
+        max=500,
+        hard_ceiling=10,
+        env="live",
+    ),
+    _s(
+        "live.max_contracts_until_gate",
+        Group.ACCOUNT,
+        _I,
+        "D70: contracts per live open until the live scorecard gate is met (sizing clamp + "
+        "gate rule live_size_cap). Lifts itself when the gate is met.",
+        Risk.UP,
+        field="live_max_contracts_until_gate",
+        min=1,
+        max=5,
+        hard_ceiling=5,
+        unit="contracts",
+        env="live",
+    ),
+    _s(
+        "live.gate_met",
+        Group.ACCOUNT,
+        _B,
+        "D70: the live scorecard gate was met (sticky). Turned on only by Arc (arc:live-gate) "
+        "the first sweep that finds it met; lifts the live size cap and lets auto_approve.live "
+        "take effect. The owner may turn it off (re-imposes the cap), never on.",
+        Risk.TRUE,
+        field="live_gate_met",
+        env="live",
     ),
     _s(
         "auto_approve.slippage_tolerance",

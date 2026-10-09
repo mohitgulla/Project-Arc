@@ -150,12 +150,10 @@ def _load(args: argparse.Namespace) -> RoutinesConfig:
 
 
 def _conn(args: argparse.Namespace, *, memory: bool = False) -> sqlite3.Connection:
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
+    from arc.store.identity import open_store
 
-    conn = connect(":memory:" if memory else args.db)
-    migrate(conn)
-    return conn
+    # D70: every store (in-memory dry runs too) is bound to the running ARC_ENV.
+    return open_store(":memory:" if memory else args.db)
 
 
 def _dispatcher(

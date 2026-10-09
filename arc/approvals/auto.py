@@ -22,9 +22,10 @@ Rules, enforced here and in the control service:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
+from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
     import argparse
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
     from arc.control.service import ControlService, Result
 
 __all__ = [
+    "LiveGateStatus",
+    "live_gate_block",
     "add_auto_parser",
     "auto_status",
     "notice_text",
@@ -78,7 +81,64 @@ def auto_status(svc: ControlService, base: ArcSettings) -> dict[str, Any]:
     out["effective"] = bool(eff.auto_approve)
     out["config_version"] = svc.version()
     out["scorecard_gate"] = bool(eff.auto_approve_scorecard_gate)
+    if base.env.value == "live":  # D70: live auto-approve waits for the live gate
+        out["live_gate_met"] = bool(eff.live_gate_met)
+        out["effective"] = bool(eff.auto_approve) and (
+            bool(eff.live_gate_met) or not eff.live_auto_approve_requires_gate
+        )
     return out
+
+
+def live_gate_block(
+    conn: sqlite3.Connection, settings: ArcSettings, now: _dt.datetime
+) -> dict[str, Any]:
+    """D70: the ``LiveGateStatus`` block of ``arc approve auto status``.
+
+    Paper: ``{"env": "paper", "line": "live gate: n/a (paper)"}``.
+    """
+    if settings.env.value != "live":
+        return {"env": settings.env.value, "line": "live gate: n/a (paper)"}
+    from arc.journal.scorecard import env_readiness, live_gate_met
+
+    r = env_readiness(conn, settings, now=now)
+    met = bool(settings.live_gate_met) or live_gate_met(r)
+    cap = None if met else settings.live_max_contracts_until_gate
+    auto = bool(settings.auto_approve) and met
+    status = LiveGateStatus(
+        env="live",
+        live_closed_trades=r.closed_trades,
+        required=r.min_closed_trades,
+        readiness_ok=r.ok,
+        gate_met=met,
+        size_cap=cap,
+        auto_approve_effective=auto,
+    )
+    return {**status.model_dump(mode="json"), "line": status.line()}
+
+
+class LiveGateStatus(BaseModel):
+    """D70: what the card / tower / auto status show about the live collection phase."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    env: Literal["paper", "live"]
+    live_closed_trades: int
+    required: int
+    readiness_ok: bool
+    gate_met: bool
+    size_cap: int | None
+    auto_approve_effective: bool
+
+    def line(self) -> str:
+        if self.gate_met:
+            return (
+                f"live gate: MET ({self.live_closed_trades}/{self.required} live closes) — "
+                f"no size cap — auto-approve {'on' if self.auto_approve_effective else 'off'}"
+            )
+        return (
+            f"live gate: NOT MET ({self.live_closed_trades}/{self.required} live closes) — "
+            f"size cap {self.size_cap} — auto-approve off"
+        )
 
 
 def scorecard_readiness(
@@ -197,12 +257,15 @@ def run_auto(args: argparse.Namespace, *, base: ArcSettings, conn: sqlite3.Conne
         st = auto_status(svc, base)
         ready = scorecard_readiness(conn, svc.settings(), now_et())
         st["scorecard"] = ready
+        live_gate = live_gate_block(conn, svc.settings(), now_et())
+        st["live_gate"] = live_gate
         sys.stdout.write(json.dumps(st, indent=2) + "\n")
         sys.stdout.write(
             f"auto_approve: {'on' if st['effective'] else 'off'} ({st['env']}); "
             f"paper={'on' if st['paper'] else 'off'} live={'on' if st['live'] else 'off'}\n"
         )
         sys.stdout.write(f"{ready['gate_line']}\n")
+        sys.stdout.write(f"{live_gate['line']}\n")
         return 0
     on = args.state == "on"
     res = set_auto(svc, env=env, on=on, reason=args.reason, confirm_code=args.confirm_live)

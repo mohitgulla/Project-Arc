@@ -113,6 +113,20 @@ personas off the frontier model.
 `ARC_ENV` defaults to `paper`. The `live` credential file does not exist.
 Never set `ARC_ENV=live` in Phase 1.
 
+**Per-env stores (E11.3, D70).** Paper and live never share an audit store. The
+first read-write open stamps the store's env (`store_identity`, append-only); a
+process of the other env refuses it (`StoreEnvMismatchError`) before any broker or
+LLM call, and the Tower returns 503 `store_env_mismatch`. Default path: paper
+`data/arc.db`, live `data/arc-live.db`; `ARC_DB_PATH` / `--db` override both (the
+stamp still guards a wrong override). Check a store with `arc store identity [--db P]`
+(read-only; exit 1 on a mismatch). In live the E7.5a scorecard gate is unconditional
+and counts live closes only (`auto_approve.live_min_closed_trades`, default 30);
+until it is met live opens are capped at `live.max_contracts_until_gate` (default 1,
+sizing + gate rule `live_size_cap`) and `auto_approve.live` is not effective. The
+sticky `live.gate_met` is turned on only by `arc:live-gate` (D26 change log, one
+day-thread notice); the owner may turn it off, never on. `arc approve auto status`
+prints a `live gate:` line (`n/a (paper)` in paper).
+
 ### 3.3 Broker venues (E13.11, D56)
 
 Every trading entry point builds its broker through `arc/broker/registry.py`

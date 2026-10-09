@@ -90,13 +90,12 @@ def _write(obj: object) -> None:
 
 def run_approve(args: argparse.Namespace) -> int:
     from arc.config import get_settings
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
     from arc.utils.calendar import now_et
 
     settings = get_settings()
-    conn = connect(args.db or settings.db_path)
-    migrate(conn)
+    from arc.store.identity import open_store
+
+    conn = open_store(args.db, settings=settings)  # D70: binds the store to ARC_ENV
     cmd = args.approve_command
     if cmd == "auto":
         from arc.approvals.auto import run_auto
