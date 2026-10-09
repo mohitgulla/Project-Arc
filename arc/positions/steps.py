@@ -115,7 +115,7 @@ def _book(ctx: JobContext, env: PipelineEnv) -> tuple[Any, AccountSnapshot, Port
     # D32: closes are charged against the full daily cap (the gate's order_budget rule).
     budget = read_budget(ctx, env, settings, now=ctx.clock())
     # E10.2: the profile's day-trade limit on same-day closes (its own store's count).
-    from arc.pipeline.market import day_trades_used
+    from arc.pipeline.market import day_trades_used, live_gate_status
 
     dt_rule = settings.profile.day_trades
     account = account_snapshot(
@@ -126,6 +126,7 @@ def _book(ctx: JobContext, env: PipelineEnv) -> tuple[Any, AccountSnapshot, Port
         day_trades_used=day_trades_used(
             ctx.conn, ctx.now.astimezone(ET).date(), dt_rule.window_sessions
         ),
+        live_gate_met=live_gate_status(ctx.conn, settings, now=ctx.now),  # D70
     )
     return info, switch.apply(account), portfolio, switch
 
@@ -566,6 +567,7 @@ def _open_leg(
     from arc.models import Proposal, QuantMetrics, Sizing
     from arc.pipeline.market import (
         limit_price,
+        live_size_cap,
         market_snapshot,
         next_earnings,
         price_structure,
@@ -576,7 +578,7 @@ def _open_leg(
         existing_max_loss,
         worst_loss_per_contract,
     )
-    from arc.sizing import size_contracts
+    from arc.sizing import apply_live_cap, size_contracts
     from arc.store.repos import GateDecisionRepo, ProposalRepo
     from arc.store.swaps import SwapRepo
 
@@ -610,6 +612,8 @@ def _open_leg(
         cap_pct=settings.max_alloc_pct,
         existing_max_loss=existing_max_loss(portfolio, t),
     )
+    # D70: a live swap open is clamped like any live open (closes never are).
+    size = apply_live_cap(size, live_size_cap(settings, account), info.equity)
     if not size.trade:
         _cancel(ctx, sw, f"open no longer fits after the close ({size.reason})")
         return f"swap {sw['id']} cancelled: {size.reason}"

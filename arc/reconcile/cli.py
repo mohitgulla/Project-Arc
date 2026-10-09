@@ -42,13 +42,12 @@ def run_reconcile(args: argparse.Namespace, *, broker: BrokerAdapter | None = No
     from arc.config import get_settings
     from arc.reconcile.engine import reconcile
     from arc.reconcile.performance import performance
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
     from arc.utils.calendar import now_et
 
     settings = get_settings()
-    conn = connect(args.db or settings.db_path)
-    migrate(conn)
+    from arc.store.identity import open_store
+
+    conn = open_store(args.db, settings=settings)  # D70: binds the store to ARC_ENV
     from arc.control import effective_settings
 
     settings = effective_settings(conn, base=settings)  # D26 overrides

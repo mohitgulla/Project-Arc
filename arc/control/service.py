@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
-from arc.config import ArcSettings
+from arc.config import PER_ENV_SWITCHES, ArcSettings
 from arc.control.effective import apply_changes, raw_yaml, yaml_overrides
 from arc.control.registry import (
     REGISTRY,
@@ -59,6 +59,10 @@ log = structlog.get_logger(__name__)
 
 CONFIRM_TTL = _dt.timedelta(minutes=10)
 LOCAL_ACTOR = "local"
+# D70: keys only Arc itself may turn on (a pre-registered riskier transition). The
+# owner may still turn them off; `on` from any other actor (set, revert, confirm) is
+# refused. key -> the one system actor allowed to set it on.
+SYSTEM_ON_KEYS: dict[str, str] = {"live.gate_met": "arc:live-gate"}
 
 
 class NotOwnerError(PermissionError):
@@ -221,7 +225,7 @@ class ControlService:
 
     def _default(self, t: Tunable) -> Any:
         if t.target is Target.SETTINGS:
-            if t.env is not None and t.env != self.base.env.value:
+            if t.env is not None and t.env != self.base.env.value and t.field in PER_ENV_SWITCHES:
                 return False  # a per-env switch for another env: off unless overridden
             v = getattr(self.base, t.field or t.key)
             return list(v) if isinstance(v, list) else v
@@ -456,7 +460,7 @@ class ControlService:
         except TunableError as exc:
             return Result("refused", key=key, message=str(exc))
         d = direction(t, view.value, new)
-        if d is Direction.RISKIER:
+        if d is Direction.RISKIER and SYSTEM_ON_KEYS.get(t.key) != actor:
             return Result(
                 "refused",
                 key=t.key,
@@ -464,6 +468,19 @@ class ControlService:
                 new=new,
                 direction=d.value,
                 message=f"{t.key}: a system actor may only make safer changes",
+            )
+        if d is Direction.RISKIER:  # D70: the registered system transition, applied at once
+            return self._apply(
+                t,
+                old=view.value,
+                new=new,
+                is_default=False,
+                kind="set",
+                actor=actor,
+                source="cli",
+                reason=reason,
+                direction_=d,
+                supersedes_id=None,
             )
         return self._stage_or_apply(
             t,
@@ -550,6 +567,18 @@ class ControlService:
         supersedes_id: int | None = None,
     ) -> Result:
         d = direction(t, old, new)
+        if d is Direction.RISKIER and t.key in SYSTEM_ON_KEYS and actor != SYSTEM_ON_KEYS[t.key]:
+            return Result(
+                "refused",
+                key=t.key,
+                old=old,
+                new=new,
+                direction=d.value,
+                message=(
+                    f"{t.key} is turned on by {SYSTEM_ON_KEYS[t.key]} only (D70); "
+                    "it can be turned off, never on by hand"
+                ),
+            )
         if d is Direction.UNCHANGED and not (kind == "revert" and supersedes_id is not None):
             return Result(
                 "unchanged",

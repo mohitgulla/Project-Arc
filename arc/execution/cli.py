@@ -61,8 +61,6 @@ def run_execute(args: argparse.Namespace, *, broker: BrokerAdapter | None = None
     from arc.execution.ladder import ExecStatus, execute
     from arc.gate.halt import HaltSwitch
     from arc.gate.token import TokenError, gate_secret
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
     from arc.store.repos import HaltRepo
     from arc.utils.calendar import is_open, now_et
 
@@ -73,8 +71,9 @@ def run_execute(args: argparse.Namespace, *, broker: BrokerAdapter | None = None
         _out({"status": "refused", "detail": f"ARC_GATE_SECRET not usable: {exc}"})
         return 2
 
-    conn = connect(args.db or settings.db_path)
-    migrate(conn)
+    from arc.store.identity import open_store
+
+    conn = open_store(args.db, settings=settings)  # D70: before any broker is built
     from arc.control import effective_settings
 
     settings = effective_settings(conn, base=settings)  # D26 overrides (ladder, caps)

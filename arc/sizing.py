@@ -25,11 +25,18 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["SizingCode", "SizingResult", "size_contracts"]
+__all__ = ["SizingCode", "SizingResult", "apply_live_cap", "size_contracts"]
 
 # Stable outcome codes (the decision journal records them as ``sizing:<code>``).
 SizingCode = Literal[
-    "ok", "capped", "cap_zero", "budget_exhausted", "risk_zero", "unbounded", "invalid_input"
+    "ok",
+    "capped",
+    "cap_zero",
+    "budget_exhausted",
+    "risk_zero",
+    "unbounded",
+    "invalid_input",
+    "live_capped",
 ]
 
 
@@ -117,4 +124,24 @@ def size_contracts(
         pct_equity=float(total / equity),
         existing_max_loss=existing,
         code="capped" if contracts < suggestion else "ok",
+    )
+
+
+def apply_live_cap(size: SizingResult, cap: int | None, equity: Decimal) -> SizingResult:
+    """D70: clamp a live open to *cap* contracts while the live scorecard gate is not met.
+
+    ``cap=None`` (paper, or the live gate met) returns *size* unchanged, as does a
+    no-trade result. Only ever lowers the count (a layer under D18, never above it).
+    """
+    if cap is None or not size.trade or size.contracts <= cap:
+        return size
+    per = size.max_loss_total / size.contracts
+    total = per * cap
+    return size.model_copy(
+        update={
+            "contracts": cap,
+            "max_loss_total": total,
+            "pct_equity": float(total / equity) if equity > 0 else 0.0,
+            "code": "live_capped",
+        }
     )

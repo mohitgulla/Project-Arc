@@ -70,12 +70,9 @@ def _write(text: str) -> None:
 
 
 def _conn(args: argparse.Namespace) -> sqlite3.Connection:
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
+    from arc.store.identity import open_store
 
-    conn = connect(args.db)
-    migrate(conn)
-    return conn
+    return open_store(args.db)  # D70: binds the store to ARC_ENV
 
 
 def _settings(args: argparse.Namespace) -> MonitoringSettings:

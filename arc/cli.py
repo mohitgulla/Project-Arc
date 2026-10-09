@@ -293,6 +293,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_remote_parser(sub)
 
+    from arc.store.identity_cli import add_store_parser
+
+    add_store_parser(sub)
+
     # -- kill switch (E3.3) ---------------------------------------------------
     halt = sub.add_parser("halt", help="Halt trading now (kill switch)")
     halt.add_argument("--actor", required=True, help="Who is halting (Slack user id or name)")
@@ -317,14 +321,11 @@ def _out(text: str) -> None:
 
 
 def _switch() -> HaltSwitch:
-    from arc.config import get_settings
     from arc.gate.halt import HaltSwitch
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
+    from arc.store.identity import open_store
     from arc.store.repos import HaltRepo
 
-    conn = connect(get_settings().db_path)
-    migrate(conn)
+    conn = open_store()  # D70: ARC_DB_PATH or the env's default store, bound to ARC_ENV
     return HaltSwitch(HaltRepo(conn))
 
 
@@ -399,20 +400,22 @@ def _chains_iv_conn(args: argparse.Namespace) -> sqlite3.Connection | None:
     """
     from pathlib import Path
 
-    from arc.store.db import DEFAULT_DB_PATH, connect, connect_ro
-    from arc.store.migrate import migrate
+    from arc.config import get_settings
+    from arc.store.db import connect_ro
+    from arc.store.identity import check_store_env, open_store, store_path
 
-    path = Path(args.db) if args.db else DEFAULT_DB_PATH
+    settings = get_settings()
+    path = Path(store_path(settings, args.db))
     if args.record_iv:
-        conn = connect(path)
-        migrate(conn)
-        return conn
+        return open_store(path, settings=settings)
     if not path.is_file():
         return None
     try:
-        return connect_ro(path)
+        conn = connect_ro(path)
     except (FileNotFoundError, sqlite3.Error):
         return None
+    check_store_env(conn, settings.env, path=str(path))  # D70: never the other env's store
+    return conn
 
 
 def _record_chain_iv(
@@ -533,14 +536,12 @@ def _chains(args: argparse.Namespace) -> int:
 def _scan(args: argparse.Namespace) -> int:
     from arc.config import get_settings
     from arc.ingest.scalp import load_fixture_docs, run_scalp
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
+    from arc.store.identity import open_store
 
     # stdout carries the JSON report; keep structured logs on stderr.
     _log_to_stderr()
     settings = get_settings()
-    conn = connect(":memory:" if args.dry_run else args.db)
-    migrate(conn)
+    conn = open_store(":memory:" if args.dry_run else args.db, settings=settings)
     if args.dry_run:
         load_fixture_docs(conn)
 
@@ -597,13 +598,11 @@ def _ingest(args: argparse.Namespace) -> int:
     )
     from arc.ingest.llm import HermesScalpLLM
     from arc.ingest.youtube import fetch_youtube
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
+    from arc.store.identity import open_store
 
     _log_to_stderr()
     settings = get_settings()
-    conn = connect(":memory:" if args.dry_run else args.db)
-    migrate(conn)
+    conn = open_store(":memory:" if args.dry_run else args.db, settings=settings)
     registry = default_registry()
     sources: list[object] = []
 
@@ -652,12 +651,10 @@ def _ingest(args: argparse.Namespace) -> int:
 
 def _brief(args: argparse.Namespace) -> int:
     from arc.ingest.channels.briefs import active_briefs
-    from arc.store.db import connect
-    from arc.store.migrate import migrate
+    from arc.store.identity import open_store
 
     _log_to_stderr()
-    conn = connect(args.db)
-    migrate(conn)
+    conn = open_store(args.db)
     briefs = active_briefs(conn, channel_slug=args.channel)
     if args.channel:
         payload: object = briefs[0].model_dump(mode="json") if briefs else None
@@ -717,7 +714,7 @@ def _propose(args: argparse.Namespace) -> int:
             now=FIXTURE_NOW + dt.timedelta(minutes=args.fixture_offset_minutes),
         )
     else:
-        conn = open_db(args.db, copy=args.dry_run and args.db is None)
+        conn = open_db(args.db, copy=args.dry_run and args.db is None, settings=settings)
         env = PipelineEnv.live(settings, broker=not args.dry_run, conn=conn)
         notifier: Notifier = (
             LogNotifier() if args.dry_run or args.no_slack else SlackDayThreadNotifier(conn)
@@ -821,6 +818,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_betas(args)
+    if args.command == "store":
+        from arc.store.identity_cli import run_store
+
+        _log_to_stderr()
+        return run_store(args)
     if args.command == "history":
         from arc.data.history.cli import run_history
 
