@@ -107,6 +107,26 @@ class LoopState:
         if full_run:
             self._state.set_time(_LAST_FULL, now)
 
+    def mark(self) -> tuple[str | None, str | None]:
+        """E13.21a: the raw (digest, last_full_run) pair, to :meth:`restore` later."""
+        return self._state.get(_LAST_DIGEST), self._state.get(_LAST_FULL)
+
+    def restore(self, mark: tuple[str | None, str | None]) -> bool:
+        """E13.21a: put back a :meth:`mark`; True when anything changed.
+
+        A loop truncated before ``quant.propose`` (timeout, a failed step, a duplicate
+        stop) must not stay the ``last_full_run``: with the pre-loop pair back, the next
+        slot's digest is compared with the last loop that really finished.
+        """
+        if self.mark() == mark:
+            return False
+        for key, value in zip((_LAST_DIGEST, _LAST_FULL), mark, strict=True):
+            if value is None:
+                self._state.delete(key)
+            else:
+                self._state.set(key, value)
+        return True
+
     # -- Slack root per loop (D36) -------------------------------------------
 
     def thread_ts(self, chain_run_id: str) -> str | None:
