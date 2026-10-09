@@ -1241,7 +1241,7 @@ class Dispatcher:
         return ts
 
     def _finish_action_root(self, chain_run_id: str, slot: _dt.datetime, root_ts: str) -> None:
-        """D38: re-render the action root from what the chain wrote (WORKING / SELL)."""
+        """D38: re-render the action root from what the chain wrote (WIP / SELL)."""
         from arc.routines.loop import LoopRoot, LoopState, loop_root_from_db
 
         state = LoopState(self.conn)
