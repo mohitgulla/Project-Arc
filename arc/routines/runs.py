@@ -7,7 +7,7 @@ import enum
 import json
 import sqlite3
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,6 +16,9 @@ from arc.utils.calendar import ET, now_et
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+#: E13.21a: what a scheduled claim is unique over (see :meth:`RoutineRunRepo.claim`).
+type ClaimScope = Literal["slot", "chain"]
 
 
 class RunStatus(enum.StrEnum):
@@ -83,40 +86,77 @@ class RoutineRunRepo:
         summary: str | None = None,
         now: _dt.datetime | None = None,
         event_id: str | None = None,
+        scope: ClaimScope = "slot",
     ) -> RoutineRun | None:
         """Insert the row for ``(job, scheduled_for)``; ``None`` if it already exists.
 
         The unique key is what makes a duplicate tick a no-op. An event-triggered
         run (``event_id`` set) is unique per ``(job, event_id)`` instead (migration
         018), so two events created in the same second each get their own run.
+
+        E13.21a: *scope* says what "already exists" means for a scheduled run.
+        ``slot`` (default): any row of *job* for *scheduled_for* (one run per slot,
+        whichever chain). ``chain`` (a chain step only, ``step_index > 0``): a root
+        run of *job* for the slot or a row in the same chain; another chain's row of
+        the same step does not count (``broker.execute`` publishes its own chain's
+        proposals). The check and the insert are one statement (atomic).
         """
         now = now or now_et()
         run_id = f"run-{uuid.uuid4().hex[:16]}"
         finished = to_db(now) if status is not RunStatus.RUNNING else None
+        values = (
+            run_id,
+            job,
+            chain_run_id,
+            step_index,
+            reason,
+            to_db(scheduled_for),
+            to_db(now),
+            finished,
+            status.value,
+            summary,
+            event_id,
+        )
+        cols = """INSERT INTO routine_runs
+                  (run_id, job, chain_run_id, step_index, reason, scheduled_for,
+                   started_at, finished_at, status, summary, event_id)"""
         try:
             with self.conn:
-                self.conn.execute(
-                    """INSERT INTO routine_runs
-                       (run_id, job, chain_run_id, step_index, reason, scheduled_for,
-                        started_at, finished_at, status, summary, event_id)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        run_id,
-                        job,
-                        chain_run_id,
-                        step_index,
-                        reason,
-                        to_db(scheduled_for),
-                        to_db(now),
-                        finished,
-                        status.value,
-                        summary,
-                        event_id,
-                    ),
-                )
+                if event_id is not None:
+                    cur = self.conn.execute(
+                        f"{cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", values
+                    )
+                else:
+                    per_chain = scope == "chain" and step_index > 0 and chain_run_id is not None
+                    taken = "(step_index = 0 OR chain_run_id = ?)" if per_chain else "1 = 1"
+                    cur = self.conn.execute(
+                        f"""{cols} SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM routine_runs
+                                WHERE job = ? AND scheduled_for = ? AND event_id IS NULL
+                                  AND {taken})""",  # noqa: S608 - fixed SQL, placeholders only
+                        (
+                            *values,
+                            job,
+                            to_db(scheduled_for),
+                            *((chain_run_id,) if per_chain else ()),
+                        ),
+                    )
         except sqlite3.IntegrityError:
             return None
+        if cur.rowcount != 1:
+            return None
         return self.get(run_id)
+
+    def slot_owner(self, job: str, scheduled_for: _dt.datetime) -> RoutineRun | None:
+        """E13.21a: the earliest scheduled/manual row of *job* for one slot (any chain)."""
+        row = self.conn.execute(
+            """SELECT * FROM routine_runs
+               WHERE job = ? AND scheduled_for = ? AND event_id IS NULL
+               ORDER BY started_at, rowid LIMIT 1""",
+            (job, to_db(scheduled_for)),
+        ).fetchone()
+        return _row(row) if row else None
 
     def restart(self, run_id: str, *, now: _dt.datetime | None = None) -> RoutineRun:
         """Re-open a failed row for a resume attempt (same slot, attempts + 1)."""

@@ -350,6 +350,8 @@ class TestParallel:
         assert all(by[s].status == "ok" for s in CHAIN)
 
     def test_duplicate_claim_in_a_branch(self, tmp_path: Path) -> None:
+        """E13.21a: a branch step another chain already ran for this slot is a
+        ``duplicate`` on the record and the branch, the other branch and the join go on."""
         conn = _db(tmp_path)
         disp = _disp(conn, load_routines(), Fake())
         chain = "chain-dup"
@@ -368,6 +370,35 @@ class TestParallel:
             )
         }
         assert outs["quant.open"].status == "duplicate"
+        assert outs["quant.open"].metrics == {"shared": True}
+        assert "chain continues" in outs["quant.open"].reason
+        assert outs["risk.exit"].status == "ok"
+        assert outs["risk.open"].status == "ok"
+        assert outs["quant.propose"].status == "ok"
+        assert outs["broker.execute"].status == "ok"
+
+    def test_duplicate_of_this_chains_own_row_in_a_branch_stops(self, tmp_path: Path) -> None:
+        """A lost claim to a row of the *same* chain is not shared: the branch stops and
+        the join applies the stop rule (no quant.propose), as before E13.21a."""
+        conn = _db(tmp_path)
+        disp = _disp(conn, load_routines(), Fake())
+        chain = "chain-dup"
+        RoutineRunRepo(conn).claim(
+            job="quant.open",
+            scheduled_for=SLOT,
+            reason="chain:research",
+            chain_run_id=chain,
+            step_index=4,
+            now=SLOT,
+        )
+        outs = {
+            o.job: o
+            for o in disp._run_steps(  # noqa: SLF001
+                CHAIN, SLOT, reason="schedule", now=SLOT, chain_run_id=chain
+            )
+        }
+        assert outs["quant.open"].status == "duplicate"
+        assert outs["quant.open"].metrics == {}
         assert outs["risk.exit"].status == "ok"
         assert "quant.propose" not in outs
 
