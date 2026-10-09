@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 from collections import defaultdict
-from decimal import ROUND_CEILING, Decimal
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import structlog
@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict
 from arc.betas.store import betas_used
 from arc.context.ttl import from_db
 from arc.data.base import DEFAULT_SPOT_MAX_SPREAD_PCT, market_spot
+from arc.gate.band import as_grid
 from arc.gate.inputs import AccountSnapshot, ClosedLot, MarketSnapshot, Portfolio, Position, Quote
 from arc.models import Greeks, Leg, LegIntent
 from arc.scanner.iv import atm_iv
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     from arc.broker.base import AccountInfo, BrokerPosition
     from arc.config import ArcSettings
     from arc.data.base import MarketDataProvider, OptionContract
+    from arc.gate.ticks import TickGrid
     from arc.models import Structure
     from arc.reconcile.baseline import Baseline
 
@@ -620,7 +622,13 @@ def price_structure(
             raise LookupError(msg)
         used[key] = c
         out_legs.append(
-            Leg(occ_symbol=key, side=side, ratio=ratio, premium=Decimal(str(round(c.mid, 4))))
+            Leg(
+                occ_symbol=key,
+                side=side,
+                ratio=ratio,
+                premium=Decimal(str(round(c.mid, 4))),
+                penny_program=c.penny_program,
+            )
         )
     ivs = {
         k: float(c.implied_volatility)
@@ -643,15 +651,16 @@ def price_structure(
     )
 
 
-def limit_price(net: Decimal, tick: float) -> Decimal:
-    """Round the mid net price onto the tick, toward the marketable side.
+def limit_price(net: Decimal, grid: TickGrid | Decimal) -> Decimal:
+    """Round the mid net price onto the order's exchange grid, toward the marketable side.
 
-    ``ROUND_CEILING`` pays up by at most one tick on a debit and gives up at most
-    one tick of credit (-1.6555 becomes -1.65). The gate still checks the result
-    against the combo NBBO.
+    ``up`` (``ROUND_CEILING`` in signed terms) pays up by at most one increment
+    on a debit and gives up at most one increment of credit (-1.6555 becomes
+    -1.65 on a $0.01 grid). D66: *grid* is the order's grid
+    (:func:`arc.gate.rules.grid_for`); a bare ``Decimal`` is a flat increment.
+    The gate still checks the result against the combo NBBO and the grid.
     """
-    t = Decimal(str(tick))
-    return (net / t).to_integral_value(rounding=ROUND_CEILING) * t
+    return as_grid(grid).snap(net, "up")
 
 
 def market_snapshot(
@@ -665,6 +674,7 @@ def market_snapshot(
     *spots* (D57): underlying spot per root, the re-pricing spot. A ``None`` or
     non-positive spot is left out, so the gate's dollar-delta cap fails closed.
     *betas* (D62): β used per root (from :func:`proposal_betas`; already floored).
+    D66: ``penny_program`` carries each contract's ``ppind`` (None = unknown).
     """
     quotes: dict[str, Quote] = {}
     for sym, c in contracts.items():
@@ -678,7 +688,11 @@ def market_snapshot(
     }
     beta_map = {root: Decimal(str(v)) for root, v in (betas or {}).items()}
     return MarketSnapshot(
-        quotes=quotes, next_earnings=earnings, underlying_spot=spot_map, underlying_beta=beta_map
+        quotes=quotes,
+        next_earnings=earnings,
+        underlying_spot=spot_map,
+        underlying_beta=beta_map,
+        penny_program={sym: c.penny_program for sym, c in contracts.items()},
     )
 
 

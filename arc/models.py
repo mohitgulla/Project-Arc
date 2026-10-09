@@ -11,7 +11,15 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    StringConstraints,
+    field_validator,
+    model_serializer,
+)
 
 from arc.utils.calendar import ET
 
@@ -106,6 +114,22 @@ class Leg(BaseModel):
         description="Per-share option price used for analytics (e.g. mid). Required by "
         "arc.structures payoff / max gain / max loss math.",
     )
+    penny_program: bool | None = Field(
+        None,
+        description=(
+            "D66: the contract's Penny Program flag (Alpaca `ppind`), set by "
+            "arc.pipeline.market.price_structure from the chain. None = unknown (the "
+            "single-leg grid then falls back to the wider standard increments). Left out "
+            "of dumps when None, so proposal hashes of older proposals are unchanged."
+        ),
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_unknown_penny(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        out: dict[str, Any] = handler(self)
+        if out.get("penny_program") is None:
+            out.pop("penny_program", None)
+        return out
 
 
 class Greeks(BaseModel):

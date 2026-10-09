@@ -575,3 +575,38 @@ def test_attempt_rows_carry_unique_client_ids(conn: sqlite3.Connection) -> None:
         row = OrderRepo(conn).get(a.order_id)
         assert row is not None and row["client_order_id"] == a.client_order_id
         assert row["broker_order_id"] == a.broker_order_id
+
+
+def _penny_call(premium: str, penny: bool | None) -> Proposal:
+    from arc.structures import long_call
+
+    lc = long_call("COIN", dt.date(2026, 11, 20), strike=300, premium=premium,
+                   as_of=dt.date(2026, 10, 9))  # fmt: skip
+    lc = lc.model_copy(update={"legs": [lc.legs[0].model_copy(update={"penny_program": penny})]})
+    return S.proposal(
+        structure=lc, limit_price=D(premium),
+        sizing=S.Sizing(contracts=1, notional=D(premium) * 100, pct_equity=0.01),
+        expires_at=NOW + dt.timedelta(minutes=20),
+    )  # fmt: skip
+
+
+def test_single_leg_penny_ladder_sends_only_grid_prices(conn: sqlite3.Connection) -> None:
+    """D66: penny class ≥$3 → every attempt on $0.05, distinct, inside the band."""
+    p = _penny_call("4.60", True)
+    band = PriceBand(lo=D("4.60"), hi=D("4.73"), max_steps=3)
+    b = ScriptedBroker([["new"], ["new"], ["new"]], cancel_scripts={0: [("canceled", 0)],
+                       1: [("canceled", 0)], 2: [("canceled", 0)]})  # fmt: skip
+    out = run(conn, b, p=p, decision=gated(p, band=band))
+    assert [o.limit_price for o in b.orders] == [D("4.60"), D("4.65"), D("4.70")]
+    assert out.status is ExecStatus.CANCELLED and "after 3 attempt(s)" in (out.detail or "")
+
+
+def test_band_without_grid_price_sends_nothing(conn: sqlite3.Connection) -> None:
+    """Unknown ppind → standard grid ($0.10 at $3+): [4.61, 4.69] holds no valid price."""
+    p = _penny_call("4.61", None)
+    band = PriceBand(lo=D("4.61"), hi=D("4.69"), max_steps=2)
+    b = ScriptedBroker([["new"]])
+    out = run(conn, b, p=p, decision=gated(p, band=band))
+    assert b.orders == []
+    assert out.status is ExecStatus.CANCELLED
+    assert "holds no exchange-valid price (single-leg standard ≥$3)" in (out.detail or "")

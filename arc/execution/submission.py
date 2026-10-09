@@ -35,6 +35,7 @@ from arc.broker.base import MlegLeg, MlegOrder
 from arc.config import ArcEnv
 from arc.execution.guard import TradingHaltedError, require_trading_allowed
 from arc.gate.rules import proposal_hash
+from arc.gate.ticks import legs_grid, max_decimal_places_ok
 from arc.gate.token import (
     BandToken,
     OrderPayload,
@@ -76,6 +77,7 @@ class RefusalCode(StrEnum):
     APPROVAL_TIME = "approval_time_invalid"
     BAD_TIME = "bad_time"
     VENUE_SINGLE_LEG_ONLY = "venue_single_leg_only"
+    OFF_GRID = "off_grid"
 
 
 class SubmitRefused(Exception):
@@ -173,6 +175,17 @@ def _check(
         )
     except TokenError as exc:
         raise SubmitRefused(RefusalCode.TOKEN_INVALID, str(exc)) from exc
+
+    # D66 defence in depth: the gate and the ladder already keep every price on
+    # the order's exchange grid; an off-grid limit is never sent.
+    grid = legs_grid(proposal.structure.legs, config.ticks)
+    if not max_decimal_places_ok(order.limit_price) or not grid.on_grid(order.limit_price):
+        tick = grid.tick_at(order.limit_price)
+        raise SubmitRefused(
+            RefusalCode.OFF_GRID,
+            f"limit {order.limit_price} is not a multiple of tick {tick} "
+            f"({grid.describe(order.limit_price)})",
+        )
 
     if approval is None:
         raise SubmitRefused(RefusalCode.NO_APPROVAL, "no approval record")

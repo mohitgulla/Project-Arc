@@ -255,7 +255,7 @@ class AlpacaMarketData:
             feed=self._options_feed,
         )
         snapshots = self._option_client.get_option_chain(req)
-        open_interest = self._open_interest(underlying, exp_start, exp_end)
+        open_interest, penny = self._contract_facts(underlying, exp_start, exp_end)
         volume = self._daily_volume(req)
 
         now = now_et()
@@ -315,6 +315,7 @@ class AlpacaMarketData:
                     last_trade_price=last_trade_price,
                     open_interest=open_interest.get(symbol),
                     volume=volume.get(symbol),
+                    penny_program=penny.get(symbol),
                     implied_volatility=snap.implied_volatility,
                     greeks=greeks,
                     quote_timestamp=quote_ts,
@@ -330,30 +331,64 @@ class AlpacaMarketData:
         )
         return contracts
 
-    def _open_interest(
+    def _contract_facts(
         self, underlying: str, exp_start: dt.date, exp_end: dt.date
-    ) -> dict[str, int]:
-        """OCC symbol → open interest from the paper Trading API contracts list."""
+    ) -> tuple[dict[str, int], dict[str, bool]]:
+        """OCC symbol → open interest, and → Penny Program flag (``ppind``, D66).
+
+        One paged walk of the paper Trading API contracts list (the same requests
+        as before D66). The pinned alpaca-py ``OptionContract`` model has no
+        ``ppind`` field, so each page is read raw through the client's own ``get``
+        with the request's fields when the client exposes it; otherwise (a client
+        without ``get``) the parsed model is used and ``ppind`` stays unknown.
+        """
         if self._contracts_client is None:
-            return {}
-        out: dict[str, int] = {}
+            return {}, {}
+        oi: dict[str, int] = {}
+        penny: dict[str, bool] = {}
         page: str | None = None
         while True:
-            resp = self._contracts_client.get_option_contracts(
-                GetOptionContractsRequest(
-                    underlying_symbols=[underlying],
-                    expiration_date_gte=exp_start,
-                    expiration_date_lte=exp_end,
-                    limit=10_000,
-                    page_token=page,
-                )
+            request = GetOptionContractsRequest(
+                underlying_symbols=[underlying],
+                expiration_date_gte=exp_start,
+                expiration_date_lte=exp_end,
+                limit=10_000,
+                page_token=page,
             )
-            for c in resp.option_contracts or []:
-                if c.open_interest is not None:
-                    out[c.symbol] = int(c.open_interest)
-            page = resp.next_page_token
+            contracts, page = self._contracts_page(request)
+            for c in contracts:
+                symbol = c.get("symbol")
+                if not symbol:
+                    continue
+                if c.get("open_interest") is not None:
+                    oi[symbol] = int(c["open_interest"])
+                if isinstance(c.get("ppind"), bool):
+                    penny[symbol] = c["ppind"]
             if not page:
-                return out
+                return oi, penny
+
+    def _contracts_page(
+        self, request: GetOptionContractsRequest
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """One contracts page as raw dicts plus the next page token."""
+        client = self._contracts_client
+        assert client is not None
+        if isinstance(client, TradingClient):
+            params = request.to_request_fields()
+            params["underlying_symbols"] = ",".join(request.underlying_symbols or [])
+            raw = client.get("/options/contracts", params)
+            body = raw if isinstance(raw, dict) else {}
+            return list(body.get("option_contracts") or []), body.get("next_page_token")
+        resp = client.get_option_contracts(request)
+        parsed = [
+            {
+                "symbol": c.symbol,
+                "open_interest": c.open_interest,
+                "ppind": getattr(c, "ppind", None),
+            }
+            for c in getattr(resp, "option_contracts", None) or []
+        ]
+        return parsed, getattr(resp, "next_page_token", None)
 
     def _daily_volume(self, req: OptionChainRequest) -> dict[str, int]:
         """OCC symbol → latest daily-bar volume from the raw snapshots payload."""

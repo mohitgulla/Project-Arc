@@ -7,11 +7,20 @@ from __future__ import annotations
 
 import enum
 import json
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal
 
 import structlog
-from pydantic import Field, PrivateAttr, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from arc.account_profiles import DEFAULT_ACCOUNT_PROFILE, AccountProfile, load_account_profiles
@@ -133,6 +142,79 @@ DEFAULT_UNIVERSE: list[str] = [
     "INTC",
     "NFLX",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Exchange price increments (D66, E6.2h)
+# ---------------------------------------------------------------------------
+
+_CENT = Decimal("0.01")
+
+
+class TickRules(BaseModel):
+    """Exchange-valid option price increments (D66). Read by :mod:`arc.gate.ticks`.
+
+    Single-leg orders (one ratio-1 leg, sent to Alpaca as a simple order) trade on
+    their class grid by the order's own price level: Penny Program (``ppind``)
+    classes on ``penny_below`` under ``boundary`` and ``penny_above`` at or above
+    it; every other class, including an unknown ``ppind``, on the wider standard
+    grid; ``penny_all_underlyings`` on ``penny_all`` at any price. Multi-leg
+    (``mleg``) net prices trade on ``mleg`` (our reading of complex-order rules;
+    Alpaca's article is silent, so it is configurable).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mleg: Decimal = Field(default=Decimal("0.01"), description="Multi-leg net price increment ($).")
+    penny_all_underlyings: tuple[str, ...] = Field(
+        default=("SPY", "QQQ", "IWM"), description="Underlyings quoted in pennies at any price."
+    )
+    penny_all: Decimal = Field(
+        default=Decimal("0.01"), description="Increment for those underlyings."
+    )
+    penny_below: Decimal = Field(
+        default=Decimal("0.01"), description="Penny Program, below boundary."
+    )
+    penny_above: Decimal = Field(
+        default=Decimal("0.05"), description="Penny Program, at/above boundary."
+    )
+    standard_below: Decimal = Field(
+        default=Decimal("0.05"), description="Standard class, below boundary."
+    )
+    standard_above: Decimal = Field(
+        default=Decimal("0.10"), description="Standard class, at/above it."
+    )
+    boundary: Decimal = Field(
+        default=Decimal("3.00"), description="Price level where the grid widens ($)."
+    )
+
+    @field_validator("penny_all_underlyings")
+    @classmethod
+    def _upper(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(s.strip().upper() for s in v)
+
+    @model_validator(mode="after")
+    def _whole_cents(self) -> TickRules:
+        ticks = {
+            "mleg": self.mleg,
+            "penny_all": self.penny_all,
+            "penny_below": self.penny_below,
+            "penny_above": self.penny_above,
+            "standard_below": self.standard_below,
+            "standard_above": self.standard_above,
+        }
+        for name, t in ticks.items():
+            if t <= 0 or t % _CENT:
+                msg = f"ticks.{name} must be a positive whole-cent increment, got {t}"
+                raise ValueError(msg)
+        if self.boundary <= 0:
+            msg = f"ticks.boundary must be positive, got {self.boundary}"
+            raise ValueError(msg)
+        for name in ("penny_below", "penny_above", "standard_below", "standard_above"):
+            if self.boundary % ticks[name]:
+                msg = f"ticks.boundary {self.boundary} is not a multiple of ticks.{name}"
+                raise ValueError(msg)
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -286,9 +368,12 @@ class ArcSettings(BaseSettings):
             "~= $0.04); the gate cannot read the cost model file (pure, no I/O)."
         ),
     )
-    limit_tick: Annotated[float, Field(gt=0.0)] = Field(
-        default=0.01,
-        description="Limit price must be a whole multiple of this tick ($).",
+    ticks: TickRules = Field(
+        default=TickRules(),
+        description=(
+            "D66 exchange price increments: every limit is on the grid for its order "
+            "(multi-leg net, Penny Program / standard single-leg by price level)."
+        ),
     )
     # -- Execution: bounded price improvement (D24, E6.2) --------------------
     execution_improvement_steps: Annotated[int, Field(ge=0, le=9)] = Field(

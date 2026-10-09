@@ -168,3 +168,11 @@ class MarketSnapshot(_Frozen):
             "fails closed."
         ),
     )
+    penny_program: dict[str, bool | None] = Field(
+        default_factory=dict,
+        description=(
+            "D66: Penny Program flag (Alpaca `ppind`) per leg, keyed by occ_symbol. A "
+            "missing key or None is unknown: a single-leg order is then priced on the "
+            "wider standard grid (arc.gate.ticks)."
+        ),
+    )

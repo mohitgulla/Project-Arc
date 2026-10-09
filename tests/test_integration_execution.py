@@ -108,7 +108,7 @@ def _gate_approve_execute(
     from arc.execution.ladder import execute
     from arc.gate import HaltSwitch, proposal_hash
     from arc.gate.halt import evaluate_with_halt
-    from arc.gate.rules import max_gain_cap, price_band
+    from arc.gate.rules import grid_for, max_gain_cap, price_band
     from arc.gate.token import gate_secret, issue_token
     from arc.models import Proposal, QuantMetrics, Sizing
     from arc.pipeline.market import (
@@ -123,11 +123,12 @@ def _gate_approve_execute(
     today = now_et().date()  # wall-clock: prices live quotes as of today
     priced = price_structure(data, legs, as_of=today, r=0.04, require_iv=not closing)
     _quote_check(conn, priced, settings, fired="close" if closing else "open", sid=structure_id)
-    limit = limit_price(priced.structure.net_debit_credit, settings.limit_tick)
     snap = market_snapshot(priced.contracts, {"SPY": None})
+    grid = grid_for(priced.structure.legs, snap, settings)
+    limit = limit_price(priced.structure.net_debit_credit, grid)
     band = price_band(priced.structure.legs, limit, snap, settings)
-    tick = D(str(settings.limit_tick))
-    cap = max_gain_cap(priced.structure.legs, tick)
+
+    cap = max_gain_cap(priced.structure.legs, grid)
     assert cap is not None and band.hi <= cap, (band, cap)  # max gain > 0 at every step
 
     # wall-clock: after the live quotes were fetched (gate refuses future quotes)
@@ -281,6 +282,7 @@ def test_approve_then_work_band_on_paper() -> None:
     from arc.execution.exits import exit_legs
     from arc.execution.ladder import ExecStatus
     from arc.gate import Portfolio
+    from arc.gate.ticks import legs_grid
     from arc.gate.token import TokenError, gate_secret
     from arc.models import LegIntent
     from arc.pipeline.market import price_structure
@@ -370,7 +372,8 @@ def test_approve_then_work_band_on_paper() -> None:
         prices = [a.limit_price for a in out.attempts]
         assert all(band.contains(p) for p in prices), prices
         assert all(p < width for p in prices), (prices, width)  # max gain > 0 every step
-        assert prices == list(band.ladder(D(str(settings.limit_tick))))[: len(out.attempts)]
+        grid = legs_grid(proposal.structure.legs, settings.ticks)  # D66: mleg $0.01 net
+        assert prices == list(band.ladder(grid))[: len(out.attempts)]
         assert len({a.client_order_id for a in out.attempts}) == len(out.attempts)
         assert all(a.broker_order_id for a in out.attempts)
         for a in out.attempts:  # E6.2c: the broker saw the test-tagged id

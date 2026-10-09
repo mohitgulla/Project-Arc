@@ -11,23 +11,35 @@ Sign convention (as everywhere in Arc): per-share net price, ``+`` = debit,
 numerically higher (pay more debit, receive less credit), so ``lo`` is the
 start (mid) and ``hi`` is the worst price: ``lo <= hi``.
 
+D66 (E6.2h): every price is snapped onto the order's exchange grid
+(:class:`arc.gate.ticks.TickGrid`); a bare ``Decimal`` tick is a flat grid.
+Ladder steps that collapse onto the same grid price are sent once.
+
 Pure: no clock, no I/O.
 """
 
 from __future__ import annotations
 
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-__all__ = ["MAX_BAND_STEPS", "PriceBand", "band_from_nbbo"]
+from arc.gate.ticks import TickGrid
+
+__all__ = ["MAX_BAND_STEPS", "PriceBand", "as_grid", "band_from_nbbo"]
 
 MAX_BAND_STEPS = 9
 _CENT = Decimal("0.01")
 
 
-def _floor_to(x: Decimal, tick: Decimal) -> Decimal:
-    return (x / tick).to_integral_value(rounding=ROUND_FLOOR) * tick
+def as_grid(grid: TickGrid | Decimal) -> TickGrid:
+    """*grid* as a :class:`TickGrid` (a ``Decimal`` is one flat increment)."""
+    if isinstance(grid, TickGrid):
+        return grid
+    if grid <= 0:
+        msg = f"tick must be positive, got {grid}"
+        raise ValueError(msg)
+    return TickGrid.flat(grid)
 
 
 class PriceBand(BaseModel):
@@ -51,47 +63,53 @@ class PriceBand(BaseModel):
 
     @property
     def attempts(self) -> int:
-        """Orders the ladder may send: the mid attempt plus every step."""
+        """Orders the ladder may send at most: the mid attempt plus every step."""
         return self.max_steps + 1
 
     def contains(self, price: Decimal) -> bool:
         return self.lo <= price <= self.hi
 
-    def reanchor(self, mid: Decimal, tick: Decimal) -> PriceBand | None:
+    def reanchor(self, mid: Decimal, grid: TickGrid | Decimal) -> PriceBand | None:
         """The band re-started at a fresh *mid* (D34 stale-quote re-price), or ``None``.
 
-        Pure. ``mid`` is rounded onto *tick* toward the marketable side (up: pay
-        at most one tick more, as :func:`arc.pipeline.market.limit_price` does).
-        The result keeps ``hi`` and ``max_steps``, so every attempt is still inside
-        the band the gate signed into the token; a fresh mid that is already
+        Pure. ``mid`` is snapped onto *grid* toward the marketable side (up: pay
+        at most one increment more, as :func:`arc.pipeline.market.limit_price`
+        does). The result keeps ``hi`` and ``max_steps``, so every attempt is still
+        inside the band the gate signed into the token; a fresh mid that is already
         *better* than ``lo`` also starts at ``lo`` (never outside the band). A mid
         past ``hi`` returns ``None``: the band is stale and nothing may be sent
         without a new gate decision. The band is never widened.
         """
-        if tick <= 0:
-            msg = f"tick must be positive, got {tick}"
-            raise ValueError(msg)
-        start = (mid / tick).to_integral_value(rounding=ROUND_CEILING) * tick
+        start = as_grid(grid).snap(mid, "up")
         if start > self.hi:
             return None
         start = max(start, self.lo)
         return PriceBand(lo=start, hi=self.hi, max_steps=self.max_steps if self.hi > start else 0)
 
-    def ladder(self, tick: Decimal) -> tuple[Decimal, ...]:
-        """Price for attempt ``k`` (0 = mid): ``lo + (hi − lo)·k/N`` floored to ``tick``.
+    def ladder(self, grid: TickGrid | Decimal) -> tuple[Decimal, ...]:
+        """Distinct grid prices to send, attempt 0 (the start) first.
 
-        The last attempt is exactly ``hi``. Floors toward ``lo`` so no attempt is
-        worse than its share of the band.
+        Step ``k`` targets ``lo + (hi − lo)·k/N`` snapped down onto *grid* (toward
+        ``lo``, so no attempt is worse than its share of the band); the start is
+        ``lo`` snapped up and the last step ``hi`` snapped down, so every price is
+        inside the band. Steps that land on the same grid price are sent once (a
+        narrow band on a coarse grid gets fewer attempts, never repeats). Empty
+        when the band holds no grid price at all (nothing valid can be sent).
         """
-        if tick <= 0:
-            msg = f"tick must be positive, got {tick}"
-            raise ValueError(msg)
+        g = as_grid(grid)
+        first, last = g.snap(self.lo, "up"), g.snap(self.hi, "down")
+        if last < first:
+            return ()
         n = self.max_steps
         if n == 0:
-            return (self.lo,)
+            return (first,)
         width = self.hi - self.lo
-        inner = tuple(self.lo + _floor_to(width * k / n, tick) for k in range(1, n))
-        return (self.lo, *inner, self.hi)
+        inner = [max(g.snap(self.lo + width * k / n, "down"), first) for k in range(1, n)]
+        out: list[Decimal] = [first]
+        for p in (*inner, last):
+            if p != out[-1]:
+                out.append(p)
+        return tuple(out)
 
 
 def band_from_nbbo(
@@ -100,23 +118,24 @@ def band_from_nbbo(
     *,
     max_steps: int,
     reach: Decimal,
-    tick: Decimal,
+    grid: TickGrid | Decimal,
     cap: Decimal | None = None,
 ) -> PriceBand:
     """Band from the start (mid) limit toward the far touch ``far`` of the combo NBBO.
 
-    ``hi = start + reach·(min(far, cap) − start)`` floored to ``tick`` (never
+    ``hi = start + reach·(min(far, cap) − start)`` snapped down onto *grid* (never
     below ``start``). With ``reach = 1`` the last step is the far touch. ``cap``
     is the worst price the structure can still profit at (see
     :func:`arc.gate.rules.max_gain_cap`); ``None`` = no cap. When neither the
     far touch nor the cap is worse than the start there is no room to improve:
     ``hi = lo`` and ``max_steps = 0`` (one attempt at the start price).
     """
-    if tick <= 0 or not Decimal(0) <= reach <= Decimal(1):
-        msg = f"invalid tick {tick} or reach {reach}"
+    if not Decimal(0) <= reach <= Decimal(1):
+        msg = f"invalid reach {reach}"
         raise ValueError(msg)
+    g = as_grid(grid)
     if cap is not None:
         far = min(far, cap)
     room = max(far - start, Decimal(0))
-    hi = start + _floor_to(room * reach, tick)
+    hi = max(g.snap(start + room * reach, "down"), start)
     return PriceBand(lo=start, hi=hi, max_steps=max_steps if hi > start else 0)

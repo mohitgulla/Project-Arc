@@ -211,6 +211,15 @@ class TestAlpacaPaperBrokerMocked:
         assert payload["client_order_id"] == "arc-fixed"
         assert payload["limit_price"] == -1.0  # negative = net credit
 
+    def test_build_mleg_request_refuses_three_decimals(self) -> None:
+        """D66: Alpaca rejects a limit with 3+ decimal places; never send one."""
+        order = MlegOrder(
+            legs=[MlegLeg(symbol="SPY261016C00450000", side="buy", ratio_qty=1)],
+            limit_price=Decimal("1.005"),
+        )
+        with pytest.raises(ValueError, match="more than 2 decimal places"):
+            build_mleg_request(order)
+
     def test_cancel(self) -> None:
         mock_client = MagicMock()
         broker = _make_broker(mock_client)

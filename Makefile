@@ -25,7 +25,7 @@ PYTEST_WORKERS ?= auto
 # alone, so they run once, in `test-gate`, and `test-rest` skips them.
 GATE_TESTS := tests/test_gate.py tests/test_halt.py tests/test_gate_token.py \
 	tests/test_gate_hook_policy.py tests/test_gate_band.py tests/test_account_profiles.py \
-	tests/test_day_trades.py
+	tests/test_day_trades.py tests/test_gate_ticks.py
 
 # Full suite: every test file runs exactly once.
 test: test-rest test-gate
