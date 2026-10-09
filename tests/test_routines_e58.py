@@ -570,7 +570,7 @@ class TestRootPerLoop:
         # D65: a bold-italic headline (≤2 lines) under the status line
         assert 1 <= len(headline) <= 2
         assert all(h.startswith("_*") and h.endswith("*_") for h in headline)
-        assert "ranked" in headline[0] and "SPY" in headline[0]
+        assert headline[0] == "_*No workable structure for NVDA and XOM.*_"
         assert LoopRoot.model_validate(LoopState(conn).root(chain) or {}).outcome.value == "hold"
         # the notifier is unbound again after the loop
         assert notes.thread_ts is None
@@ -606,7 +606,9 @@ class TestRootPerLoop:
         conn.commit()
         svc.refresh_loop_root(phash)
         assert poster.root_edits[-1][1].split("\n")[0].endswith("• HOLD")
-        assert "SPY Iron Condor rejected" in poster.root_edits[-1][1]  # D65: the headline follows
+        assert (
+            "SPY iron condor was rejected" in poster.root_edits[-1][1]
+        )  # D65: the headline follows
         assert len({e[0] for e in poster.root_edits}) == 1
         # an unchanged root is not re-posted
         n = len(poster.root_edits)
@@ -627,9 +629,7 @@ class TestRootPerLoop:
         assert ts is not None
         status, headline = notes.roots[ts].split("\n")
         assert status.endswith("• HOLD (skip)")  # D65: renamed from "HOLD (no change)"
-        assert headline == (
-            "_*Inputs unchanged since the last full loop; personas skipped, open orders carry on.*_"
-        )
+        assert headline == ("_*Nothing new since the last look; open orders carry on.*_")
         assert notes.roots[ts].startswith(":heavy_multiplication_x: ")
         # a no_change loop gets only the [Routines] reply in its thread (no Scalp / Research card)
         replies = notes.in_thread(ts)
@@ -650,7 +650,7 @@ class TestRootPerLoop:
         assert list(notes.roots.values()) == [
             f":heavy_multiplication_x: {slot_stamp(SLOT0)} • Portfolio: n/a • P&L: n/a"
             " • Orders: n/a • HOLD (skipped: previous loop running)\n"
-            "_*Slot skipped (previous loop running); nothing was evaluated.*_"
+            "_*Slot skipped: previous loop running.*_"
         ]
         # …unless post_hold_roots is off
         quiet = load_routines(overrides=_loop_overrides(post_hold_roots=False))
@@ -702,4 +702,4 @@ class TestRootPerLoop:
         assert refresh_loop_root(conn, poster, chain) == root.text()
         status, headline, *_ = poster.root_edits[-1][1].split("\n")
         assert status.endswith("• BUY: SPY")
-        assert "→ bought SPY" in headline  # D65
+        assert headline == "_*SPY bet is on: iron condor x1 filled.*_"  # D65

@@ -329,7 +329,7 @@ def scalp_card(
     rows: list[tuple[str, str]] = []
     for c in ranked[:_MAX_SCALP_ROWS]:
         when = f" {c.catalyst_date:%b %d}" if c.catalyst_date else ""
-        facts = f"{_pct(c.confidence)} · {c.catalyst_type.value}{when}"
+        facts = f"{_pct(c.confidence)} confidence · {c.catalyst_type.value}{when}"
         if c.corroboration is not None:
             facts += f" · {_plural(c.corroboration, 'source')}"
         why = (rationales or {}).get(c.ticker, "").strip()
@@ -500,7 +500,7 @@ def scalp_context_card(
         facts: list[str] = []
         conf = p.get("confidence")
         if conf is not None:
-            facts.append(_pct(float(conf)))
+            facts.append(f"{_pct(float(conf))} confidence")
         what = str(p.get("catalyst_type") or "?")
         raw_date = p.get("catalyst_date")
         if raw_date:

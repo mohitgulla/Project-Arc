@@ -78,6 +78,15 @@ class Notifier(Protocol):
 
 
 @runtime_checkable
+class Broadcaster(Protocol):
+    """D65: a notifier that can post a day-thread reply also sent to the channel."""
+
+    def post_broadcast(
+        self, day: _dt.date, text: str, blocks: Blocks | None = None
+    ) -> str | None: ...
+
+
+@runtime_checkable
 class ThreadBound(Protocol):
     """D36: a notifier / poster that can redirect its posts into one loop's thread.
 
@@ -121,6 +130,10 @@ class LogNotifier:
     def update_root(self, ts: str, text: str) -> None:
         log.info("routines.loop_root_update", ts=ts, text=text)
 
+    def post_broadcast(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> str | None:
+        log.info("routines.broadcast", day=day.isoformat(), text=text)
+        return None
+
 
 class RecordingNotifier:
     """Keeps posted lines (and any blocks) in memory (tests)."""
@@ -131,6 +144,7 @@ class RecordingNotifier:
         self.threads: list[str | None] = []  # the bound thread at each post (D36)
         self.roots: dict[str, str] = {}  # ts -> current text (D36 root lines)
         self.root_edits: list[tuple[str, str]] = []
+        self.broadcasts: list[str] = []  # D65: day-thread replies also sent to the channel
         self.thread_ts: str | None = None
 
     def post(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> str | None:
@@ -150,6 +164,10 @@ class RecordingNotifier:
     def update_root(self, ts: str, text: str) -> None:
         self.roots[ts] = text
         self.root_edits.append((ts, text))
+
+    def post_broadcast(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> str | None:
+        self.broadcasts.append(text)
+        return self.post(day, text, blocks)
 
     def in_thread(self, ts: str) -> list[str]:
         return [t for (_, t), th in zip(self.posts, self.threads, strict=True) if th == ts]
@@ -275,6 +293,25 @@ class SlackDayThreadNotifier:
         ts = resp.get("ts") if hasattr(resp, "get") else None
         return str(ts) if ts else None
 
+    def post_broadcast(self, day: _dt.date, text: str, blocks: Blocks | None = None) -> str | None:
+        """D65: a reply in *day*'s Session Notes thread, also sent to #arc-investor."""
+        from arc.slack.client import CHANNEL_ARC_INVESTOR, ArcSlackClient
+
+        try:
+            assert isinstance(self._client, ArcSlackClient)
+            resp = self._client.reply(
+                channel=CHANNEL_ARC_INVESTOR,
+                thread_ts=day_thread_ts(self._conn, self._client, day),
+                text=text,
+                blocks=blocks,
+                broadcast=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - a recap must never fail a run
+            log.warning("routines.broadcast_failed", error=str(exc), text=text)
+            return None
+        ts = resp.get("ts") if hasattr(resp, "get") else None
+        return str(ts) if ts else None
+
 
 class Heartbeats:
     """Applies the quiet/summary/alert policy on top of a :class:`Notifier`."""
@@ -380,6 +417,17 @@ class Heartbeats:
         folded in and no code fence is added.
         """
         return self._notifier.post(self.day(now), text, blocks or None)
+
+    def broadcast(self, now: _dt.datetime, text: str, blocks: Blocks | None = None) -> str | None:
+        """D65: a day-thread reply also sent to the channel (the end-of-day recap).
+
+        Always the day thread, never a bound loop thread; a notifier without
+        broadcast support gets a plain post.
+        """
+        n = self._notifier
+        if isinstance(n, Broadcaster):
+            return n.post_broadcast(self.day(now), text, blocks or None)
+        return n.post(self.day(now), text, blocks or None)
 
     def alert(
         self, now: _dt.datetime, job: str, text: str, *, run_id: str | None = None

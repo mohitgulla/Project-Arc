@@ -413,9 +413,9 @@ class TestDigestCards:
         # admitted without the "new" tag.
         # D65: one line per ticker under its stance group
         assert re.search(
-            r"\*Bullish \(\d+\)\*\n(.*\n)*\*PLTR\* 90% · news · 1 source( — |\n)", scalp
+            r"\*Bullish \(\d+\)\*\n(.*\n)*\*PLTR\* 90% confidence · news · 1 source( — |\n)", scalp
         )
-        assert "*PLTR* 90% · news · 1 source · new" not in scalp
+        assert "*PLTR* 90% confidence · news · 1 source · new" not in scalp
         # D47: grouped by category, equal shares, sources inside each
         assert (
             "*Source mix*\n*Market news* 50% · 8 read: rss 8\n"

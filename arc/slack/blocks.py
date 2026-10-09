@@ -64,6 +64,8 @@ class CardView:
 
     text: str
     blocks: list[Block]
+    # D65: a thread reply also sent to the channel ("Also send to #arc-investor").
+    broadcast: bool = False
 
 
 def esc(text: str) -> str:

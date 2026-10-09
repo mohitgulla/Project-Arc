@@ -95,7 +95,7 @@ class TestHeadline:
         r = _root(headline=["a" * 400, "b", "c"])
         lines = r.text().split("\n")
         assert len(lines) == 3  # status + 2
-        assert len(lines[1]) <= 160 + 4 and lines[1].endswith("…*_")
+        assert len(lines[1]) <= 180 + 4 and lines[1].endswith("…*_")
 
     def test_markers_and_mentions_are_neutralised(self) -> None:
         r = _root(headline=["<!channel> *bold* _it_ `x` ~s~ & co"])

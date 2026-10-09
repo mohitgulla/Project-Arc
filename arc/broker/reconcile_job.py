@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from arc.personas.schemas import ReconcileOutput
     from arc.reconcile.engine import ReconcileReport
     from arc.routines.handlers import JobContext
+    from arc.slack.blocks import CardView
 
 __all__ = [
     "broker_reconcile",
@@ -156,10 +157,12 @@ def broker_reconcile(
         chain_run_id=ctx.chain_run_id,
         ops_line=ops_line,
     )
+    recap = _day_recap(ctx, report)
     return JobResult(
         summary=report.summary(),
         card=card,
         notice=_notice(report),
+        extra_cards=[recap] if recap else [],
         metrics={
             "clean": report.clean,
             "mismatches": len(report.mismatches),
@@ -174,6 +177,42 @@ def broker_reconcile(
             "approvals": approvals_line,
         },
     )
+
+
+def _day_recap(ctx: JobContext, report: ReconcileReport) -> CardView | None:
+    """D65: the ``🗞️ Day recap`` headline, a day-thread reply also sent to #arc-investor.
+
+    Presentation only: a failure is logged and the reconcile card still posts.
+    Arm stores (E10.2) don't post one; their reports are the experiment lines.
+    """
+    import sqlite3
+
+    from arc.routines.headline import day_recap
+    from arc.slack.blocks import CardView
+    from arc.slack.loop import bold_italic
+
+    try:
+        try:
+            arm = ctx.conn.execute("SELECT 1 FROM arm_identity WHERE id = 1").fetchone()
+        except sqlite3.OperationalError:
+            arm = None
+        if arm:
+            return None
+        lines = day_recap(
+            ctx.conn,
+            report.day,
+            day_pnl=float(report.day_pnl) if report.day_pnl is not None else None,
+            equity_start=float(report.baseline.value) if report.baseline else None,
+        )
+    except Exception as exc:  # noqa: BLE001 - the recap must never block the reconcile
+        log.warning("reconcile.recap_failed", error=str(exc))
+        return None
+    if not lines:
+        return None
+    text = f":newspaper: *Day recap · {report.day:%a %b} {report.day.day}*\n" + "\n".join(
+        bold_italic(line) for line in lines[:2]
+    )
+    return CardView(text=text, blocks=[], broadcast=True)
 
 
 def _slots_line(ctx: JobContext) -> str | None:

@@ -117,27 +117,25 @@ def loop_status_line(root: LoopRoot) -> str:
         action.append(hold)
     line = f"{_EMOJI[root.outcome]} " + " • ".join([*facts, *action])
     head = [h for h in (root.headline or _flag_headline(root)) if h.strip()][:HEADLINE_LINES]
-    return "\n".join([line, *(_bold_italic(h) for h in head)])
+    return "\n".join([line, *(bold_italic(h) for h in head)])
 
 
 HEADLINE_LINES = 2
-HEADLINE_MAX = 160  # chars per headline line (a Slack line on a laptop)
+HEADLINE_MAX = 180  # chars per headline sentence
 
 
 def _flag_headline(root: LoopRoot) -> list[str]:
     """Headline for a loop that never reached the personas (skip / timeout / no change)."""
     if root.skipped:
-        return [f"Slot skipped ({root.skipped}); nothing was evaluated."]
+        return [f"Slot skipped: {root.skipped}."]
     if root.timeout:
-        return ["Loop hit its deadline; the steps after it were skipped this slot."]
+        return ["Out of time: the loop hit its deadline before finishing."]
     if root.no_change:
-        return [
-            "Inputs unchanged since the last full loop; personas skipped, open orders carry on."
-        ]
+        return ["Nothing new since the last look; open orders carry on."]
     return []
 
 
-def _bold_italic(text: str) -> str:
+def bold_italic(text: str) -> str:
     """``_*text*_``: Slack bold + italic, with the marker characters made safe."""
     clean = " ".join(text.split())
     clean = clean.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -147,4 +145,11 @@ def _bold_italic(text: str) -> str:
     return f"_*{clean}*_"
 
 
-__all__ = ["HEADLINE_LINES", "LoopOutcome", "LoopRoot", "loop_status_line", "slot_stamp"]
+__all__ = [
+    "HEADLINE_LINES",
+    "LoopOutcome",
+    "bold_italic",
+    "LoopRoot",
+    "loop_status_line",
+    "slot_stamp",
+]

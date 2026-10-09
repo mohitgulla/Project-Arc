@@ -228,16 +228,15 @@ class TestScalp:
             if b["type"] == "section" and b["text"]["text"].startswith("*")
         ]
         assert sections[0] == (
-            "*Bullish (1)*\n*NVDA* 75% · earnings Oct 28 — Buyback plus raised guidance."
+            "*Bullish (1)*\n*NVDA* 75% confidence · earnings Oct 28 — Buyback plus raised guidance."
         )
-        assert sections[1] == "*Bearish (1)*\n*XOM* 75% · earnings"
+        assert sections[1] == "*Bearish (1)*\n*XOM* 75% confidence · earnings"
         kinds = [b["type"] for b in view.blocks]
         assert kinds[2:6] == ["divider", "section", "divider", "section"]
         assert not any(line.startswith(" ") for t in _texts(view) for line in t.split("\n")), (
             "no line in any block starts with a space"
         )
         assert "•" not in sections[0] and "•" not in sections[1]
-        assert "confidence" not in sections[0]  # D65: the % alone, in the stance group
         assert "source" not in text.lower().replace("sources →", "")
         assert "http" not in text  # owner: no source links on the Scalp card
         assert "• not in universe (2): PLTR, AAPL" in text
@@ -271,7 +270,7 @@ class TestScalp:
             "*Source mix*\nWSJ 12 (46 over budget) · CNBC 12 · Fed 3 · EDGAR 24 (157 over budget)"
             in text
         )
-        assert "*NVDA* 75% · earnings Oct 28 · 3 sources" in text
+        assert "*NVDA* 75% confidence · earnings Oct 28 · 3 sources" in text
         _assert_slack_limits(view)
         one = _all(
             D.scalp_card(
@@ -375,10 +374,10 @@ class TestScalpContext:
         assert view.text == "⚡ [Scalp] Context: 4 Candidates • run 2026-10-08 15:30ET"
         sections = [b["text"]["text"] for b in view.blocks if b["type"] == "section"]
         assert sections == [
-            "*Bullish (2)*\n*TSM* 72% · news · 4 sources\n"
-            "*AMD* 50% · sector Oct 15 · 1 source · as of 14:00ET",
-            "*Bearish (1)*\n*ORCL* 62% · news · 2 sources",
-            "*Neutral (1)*\n*NVDA* 48% · news · 6 sources",
+            "*Bullish (2)*\n*TSM* 72% confidence · news · 4 sources\n"
+            "*AMD* 50% confidence · sector Oct 15 · 1 source · as of 14:00ET",
+            "*Bearish (1)*\n*ORCL* 62% confidence · news · 2 sources",
+            "*Neutral (1)*\n*NVDA* 48% confidence · news · 6 sources",
         ]
         assert sum(b["type"] == "divider" for b in view.blocks) == 3  # one per stance
 

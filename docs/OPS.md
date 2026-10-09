@@ -1275,18 +1275,28 @@ up within one slot.
 
 ```
 ✅ 2026-09-28 09:40ET • Portfolio: $101,234 • P&L: +$312 • Orders: 3/200 • BUY: SPY
-_*20 ideas → 2 ranked → bought SPY Put Debit Spread x2 @ 6.75. Skipped: XOM rejected by Risk.*_
-_*Exits: sold MRVL x1 @ 7.20 (concentration), realized -$410; 3 held.*_
+_*HOOD bear bet is on: put debit spread x2 filled at 6.75, hedging the book.*_
+_*HOOD is in a sticky bear regime with a 20-day drawdown.*_
 ⏳ … • PENDING: SPY          (card awaiting the owner)  /  WORKING: SPY (ladder running)
 ✖ … • HOLD | HOLD (skip) | HOLD (timeout) | HOLD (skipped: previous loop running)
 ```
 
-D65: under the status line, a bold-italic headline of at most two lines
-(`arc.routines.loop.loop_headline`): the opens funnel (ideas → ranked → what
-opened, or why each ranked name didn't, grouped by reason), then the exits (fills
-with realized P&L, closes blocked by quotes, positions held). It is rebuilt from
-the chain's journal with the root, so a later fill or approval updates it. A
-`HOLD (skip)` slot (inputs unchanged, D31) gets a fixed one-liner.
+D65: under the status line, a bold-italic headline of at most two sentences
+(`arc.routines.headline.loop_headline`), written like a news headline: the main
+action (an open fill, else a close, else why nothing traded, naming the main
+blocker), then the why (Research's thesis, Risk's close reason, a close stuck on
+wide quotes, or the market read). It is rebuilt from the chain's journal with the
+root, so a later fill or approval updates it. `HOLD (skip)` slots (inputs
+unchanged, D31) get a fixed one-liner.
+
+After the 16:30 `broker.reconcile`, a `:newspaper: Day recap · Thu Oct 8` reply
+posts in the day's Session Notes thread with "Also send to #arc-investor" ticked
+(`reply_broadcast`), e.g.:
+
+```
+_*Red day: -$1,946 (-2.0%) on 2 opens and 5 closes; worst close META -$8,765.*_
+_*Biggest blocker: no workable structure, 30 of 81 ranked picks; 12 quiet slots skipped.*_
+```
 
 The thread under it, in order: `[Sweep] Context: N Candidates • run <stamp>`
 (the candidate entries the Director read, with the Sweep run that wrote them),

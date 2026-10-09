@@ -9,7 +9,6 @@ timeout notice. Pure bookkeeping; nothing here calls an LLM or the broker.
 
 from __future__ import annotations
 
-import contextlib
 import json
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -226,6 +225,8 @@ def loop_root_from_db(
     headline: list[str] = []
     if not (no_change or skipped):
         try:
+            from arc.routines.headline import loop_headline
+
             headline = loop_headline(conn, chain_run_id)
         except Exception as exc:  # noqa: BLE001 - the headline is presentation; never fail the root
             log.warning("routines.loop_headline_failed", chain_run_id=chain_run_id, err=str(exc))
@@ -244,251 +245,6 @@ def loop_root_from_db(
         skipped=skipped,
         headline=headline,
     )
-
-
-# ---------------------------------------------------------------------------
-# D65: the loop headline (≤2 bold-italic lines under the root)
-# ---------------------------------------------------------------------------
-
-# Why a ranked name was not opened, from the chain's journal (first match wins,
-# in this order: the later the stage, the more final the reason).
-_OPEN_BLOCKERS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("gate:",), "blocked by the gate"),
-    (("sizing:risk_zero", "sizing:cap_zero", "sizing:budget_exhausted"), "sized to 0"),
-    (("order_budget_exhausted",), "order budget used up"),
-    (("net_ev_floor",), "below the Net EV floor"),
-    (("risk_reject", "risk_declined"), "rejected by Risk"),
-    (("dedupe_executed", "dedupe_proposed", "dedupe_rejected"), "already traded recently"),
-    (("drop_concentration", "drop_at_cap"), "dropped for concentration"),
-    (("reprice_failed",), "could not re-price"),
-    (
-        ("no_structure", "quant_skipped", "no_chain", "not_structured", "quant_omitted"),
-        "no viable structure",
-    ),
-)
-_EXIT_REASONS = {
-    "ev_exhausted": "EV exhausted",
-    "ev_remaining": "EV left elsewhere",
-    "concentration": "concentration",
-    "thesis_broken": "thesis broken",
-    "costs_exceed_gain": "costs exceed the gain",
-    "exit:stop": "stop",
-    "exit:take_profit": "take profit",
-    "exit:dte": "DTE exit",
-    "exit:expiry": "expiry",
-    "exit:hold_limit_reached": "hold limit",
-}
-_STRUCT_NAMES = {
-    "long_call": "Long Call",
-    "long_put": "Long Put",
-    "vertical_debit": "{side} Debit Spread",
-    "vertical_credit": "{side} Credit Spread",
-    "iron_condor": "Iron Condor",
-}
-
-
-def _names(items: list[str], limit: int = 4) -> str:
-    shown = ", ".join(items[:limit])
-    return shown + (f" +{len(items) - limit}" if len(items) > limit else "")
-
-
-def _struct_label(structure_json: str | None) -> str:
-    try:
-        st = json.loads(structure_json or "{}")
-        name = _STRUCT_NAMES.get(str(st.get("kind") or ""), "")
-        if "{side}" in name:
-            occ = str(st["legs"][0]["occ_symbol"])
-            side = "Put" if occ[-9:-8] == "P" else "Call"
-            name = name.format(side=side)
-    except (ValueError, KeyError, IndexError, TypeError):
-        return ""
-    return name
-
-
-def _price(raw: object) -> str:
-    try:
-        return f"{abs(float(str(raw))):.2f}"
-    except (TypeError, ValueError):
-        return "?"
-
-
-def loop_headline(conn: sqlite3.Connection, chain_run_id: str) -> list[str]:
-    """D65: at most two plain lines that say what *chain_run_id* did and why.
-
-    Line 1 is the opens funnel (``21 ideas → 4 ranked → no open: ORCL, GOOGL below
-    the Net EV floor; PLTR no viable structure``, or the fill when one opened).
-    Line 2 is the exits (``Exits: sold MRVL x1 @ 7.20 (concentration), realized
-    -$410; 3 held``), only when the loop reviewed open positions. Deterministic:
-    read from the chain's ``decisions`` / ``proposals`` / ``executions`` rows, no
-    LLM, so a fill or an approval later just re-renders it.
-    """
-    rows = conn.execute(
-        """SELECT d.persona, d.stage, d.choice, d.reason_code, d.subject, d.payload
-           FROM decisions d LEFT JOIN routine_runs r ON r.run_id = d.run_id
-           WHERE d.chain_run_id = ? OR r.chain_run_id = ? ORDER BY d.rowid""",
-        (chain_run_id, chain_run_id),
-    ).fetchall()
-    if not rows:
-        return []
-    props = conn.execute(
-        """SELECT p.ticker, p.kind, p.structure_json, a.status AS approval,
-                  e.status AS execution, e.filled_qty, e.fill_price, e.contracts
-           FROM proposals p
-           JOIN routine_runs r ON r.run_id = p.run_id
-           LEFT JOIN approval_requests a ON a.proposal_hash = p.proposal_hash
-           LEFT JOIN executions e ON e.proposal_hash = p.proposal_hash
-           WHERE r.chain_run_id = ? ORDER BY p.rowid""",
-        (chain_run_id,),
-    ).fetchall()
-    ran = {
-        str(r["job"])
-        for r in conn.execute(
-            "SELECT job FROM routine_runs WHERE chain_run_id = ? AND status = 'ok'",
-            (chain_run_id,),
-        )
-    }
-    opens = [p for p in props if p["kind"] != "close"]
-    lines: list[str] = []
-    if "research" in ran or opens:  # the position manager (D38) has no opens funnel
-        lines.append(_opens_line(rows, opens, stopped="quant.open" not in ran))
-    exits = _exits_line(conn, rows, [p for p in props if p["kind"] == "close"])
-    if exits:
-        lines.append(exits)
-    return [ln for ln in lines if ln]
-
-
-def _opens_line(rows: list[sqlite3.Row], opens: list[sqlite3.Row], *, stopped: bool) -> str:
-    ideas = {
-        r["subject"]
-        for r in rows
-        if r["stage"] == "candidate" and r["choice"] == "selected" and r["persona"] != "system"
-    }
-    ranked = _dedupe(
-        [str(r["subject"]) for r in rows if r["stage"] == "shortlist" and r["choice"] == "selected"]
-    )
-    head = f"{len(ideas)} ideas → {len(ranked)} ranked" if ideas else f"{len(ranked)} ranked"
-    if not ranked:
-        why = next(
-            (
-                str(r["reason_code"]).replace("_", " ")
-                for r in rows
-                if r["stage"] == "shortlist" and r["choice"] == "no_trade"
-            ),
-            "",
-        )
-        return f"{head}: Research opened nothing" + (f" ({why})" if why else "") + "."
-    done: list[str] = []
-    for p in opens:
-        what = " ".join(x for x in (p["ticker"], _struct_label(p["structure_json"])) if x)
-        if p["execution"] in ("filled", "partially_filled"):
-            done.append(
-                f"bought {what} x{p['filled_qty'] or p['contracts']} @ {_price(p['fill_price'])}"
-            )
-        elif p["execution"] == "cancelled":
-            done.append(f"{what} not filled (ladder cancelled)")
-        elif p["approval"] == "pending":
-            done.append(f"{what} awaiting approval")
-        elif p["approval"] == "approved":
-            done.append(f"working {what}")
-        elif p["approval"] in ("rejected", "expired"):
-            done.append(f"{what} {p['approval']}")
-        else:
-            done.append(f"proposed {what}")
-    acted = {str(p["ticker"]) for p in opens}
-    by_reason: dict[str, list[str]] = {}
-    for t in ranked:
-        if t in acted:
-            continue
-        codes = [
-            str(r["reason_code"]) for r in rows if r["subject"] == t and r["choice"] != "selected"
-        ]
-        reason = next(
-            (
-                label
-                for prefixes, label in _OPEN_BLOCKERS
-                if any(c.startswith(pre) for c in codes for pre in prefixes)
-            ),
-            "not structured (loop stopped after Research)" if stopped else "not proposed",
-        )
-        by_reason.setdefault(reason, []).append(t)
-    skipped = "; ".join(f"{_names(ts)} {reason}" for reason, ts in by_reason.items())
-    if done:
-        return f"{head} → " + "; ".join(done) + (f". Skipped: {skipped}." if skipped else ".")
-    return f"{head} ({_names(ranked)}) → no open: {skipped}."
-
-
-def _exits_line(
-    conn: sqlite3.Connection, rows: list[sqlite3.Row], closes: list[sqlite3.Row]
-) -> str:
-    watched = _dedupe(
-        [str(r["subject"]) for r in rows if str(r["reason_code"]).startswith("exit:watch_")]
-    )
-    mandatory = [r for r in rows if r["reason_code"] in _EXIT_REASONS and r["stage"] == "exit"]
-    if not watched and not mandatory and not closes:
-        return ""
-    tickers: dict[str, str] = {}
-
-    def ticker(subject: str) -> str:
-        """An open-structure id (``os-…``) as its ticker; a ticker stays as it is."""
-        if subject not in tickers:
-            row = conn.execute(
-                "SELECT ticker FROM open_structures WHERE id = ?", (subject,)
-            ).fetchone()
-            tickers[subject] = str(row["ticker"]) if row else subject
-        return tickers[subject]
-
-    why: dict[str, str] = {}
-    for r in rows:
-        code = str(r["reason_code"])
-        try:
-            payload = json.loads(r["payload"] or "{}")
-        except ValueError:
-            payload = {}
-        if code == "exit:research_review" and r["persona"] == "risk":
-            verdict = payload.get("verdict") or {}
-            if verdict.get("verdict") == "close":
-                why[ticker(str(r["subject"]))] = _EXIT_REASONS.get(
-                    str(verdict.get("reason_code")), "Risk close"
-                )
-        elif code in _EXIT_REASONS and r["stage"] == "exit":
-            why.setdefault(ticker(str(r["subject"])), _EXIT_REASONS[code])
-    realized: dict[str, float] = {}
-    for r in rows:
-        if r["reason_code"] == "exit:closed":
-            with contextlib.suppress(ValueError, KeyError, TypeError):
-                realized[str(r["subject"])] = float(
-                    json.loads(r["payload"] or "{}")["realized_pnl"]
-                )
-    blocked = {str(r["subject"]) for r in rows if r["reason_code"] == "exit:quote_unusable"}
-    parts: list[str] = []
-    for p in closes:
-        t = str(p["ticker"])
-        tag = f" ({why[t]})" if t in why else ""
-        if p["execution"] in ("filled", "partially_filled"):
-            part = f"sold {t} x{p['filled_qty'] or p['contracts']} @ {_price(p['fill_price'])}{tag}"
-            if t in realized:
-                pnl = realized[t]
-                part += f", realized {'+' if pnl >= 0 else '-'}${abs(pnl):,.0f}"
-            parts.append(part)
-        elif p["execution"] == "cancelled":
-            parts.append(f"{t} close{tag} not filled (ladder cancelled)")
-        elif p["approval"] == "pending":
-            parts.append(f"close {t} awaiting approval{tag}")
-        else:
-            parts.append(f"closing {t}{tag}")
-    acted = {str(p["ticker"]) for p in closes}
-    for t, reason in why.items():
-        if t in acted:
-            continue
-        if t in blocked:
-            parts.append(f"{t} close ({reason}) blocked: quotes too wide")
-        else:
-            parts.append(f"Risk wants {t} closed ({reason})")
-    closing = acted | set(why)
-    held = [ticker(s) for s in watched if ticker(s) not in closing]
-    if held:
-        parts.append(f"{len(held)} held")
-    return "Exits: " + "; ".join(parts) + "." if parts else ""
 
 
 def latest_account_facts(conn: sqlite3.Connection, slot: _dt.datetime) -> LoopRoot:
@@ -573,7 +329,6 @@ __all__ = [
     "LoopState",
     "RootEditor",
     "latest_account_facts",
-    "loop_headline",
     "loop_root_from_db",
     "pnl_bucket",
     "refresh_loop_root",

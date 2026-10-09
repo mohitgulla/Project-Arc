@@ -1,9 +1,9 @@
-"""D65: the bold-italic loop headline under the #arc-investor root line.
+"""D65: punchy bold-italic headlines: one under each loop root, one per day recap.
 
 Built only from what the chain journaled (``decisions`` / ``proposals`` /
 ``executions``), so these tests seed those rows in the shapes the live loop
-writes (Oct 8 chains: a Net-EV-floor HOLD, a HOOD open fill, an MRVL exit fill,
-a GS close blocked by wide quotes) and assert the two lines.
+writes (Oct 8 chains: a Net-EV-floor HOLD, a HOOD open fill, an MRVL close, a
+GS close stuck on wide quotes) and assert the sentences.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from arc.pipeline.runner import open_db
-from arc.routines.loop import loop_headline, loop_root_from_db
+from arc.routines.headline import day_recap, first_sentence, loop_headline
+from arc.routines.loop import loop_root_from_db
 from arc.utils.calendar import ET
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
 CHAIN = "chain-d65"
 SLOT = dt.datetime(2026, 10, 8, 15, 40, tzinfo=ET)
+STAMP = SLOT.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")  # the store's format
 
 
 def _conn() -> sqlite3.Connection:
@@ -30,12 +32,21 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
-def _run(conn: sqlite3.Connection, job: str, step: int, status: str = "ok") -> str:
+def _run(
+    conn: sqlite3.Connection,
+    job: str,
+    step: int,
+    status: str = "ok",
+    *,
+    chain: str = CHAIN,
+    summary: str = "",
+    at: str = STAMP,
+) -> str:
     run_id = f"run-{job}-{uuid.uuid4().hex[:6]}"
     conn.execute(
         """INSERT INTO routine_runs (run_id, job, chain_run_id, step_index, reason,
-               scheduled_for, status) VALUES (?, ?, ?, ?, 'schedule', ?, ?)""",
-        (run_id, job, CHAIN, step, SLOT.isoformat(), status),
+               scheduled_for, status, summary) VALUES (?, ?, ?, ?, 'schedule', ?, ?, ?)""",
+        (run_id, job, chain, step, at, status, summary),
     )
     return run_id
 
@@ -51,10 +62,12 @@ def _dec(
     *,
     chain: str | None = CHAIN,
     run_id: str | None = None,
+    text: str = "",
 ) -> None:
     conn.execute(
         """INSERT INTO decisions (id, chain_run_id, run_id, persona, stage, subject, choice,
-               reason_code, payload, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               reason_code, payload, at, reason_text)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             f"dec-{uuid.uuid4().hex[:8]}",
             chain,
@@ -65,7 +78,8 @@ def _dec(
             choice,
             code,
             json.dumps(payload or {}),
-            SLOT.isoformat(),
+            STAMP,
+            text,
         ),
     )
 
@@ -101,7 +115,7 @@ def _proposal(
             """INSERT INTO executions (proposal_hash, kind, status, token_version, band_lo,
                    band_hi, max_steps, contracts, filled_qty, fill_price, started_at)
                VALUES (?, ?, ?, 'arc2', '1', '2', 3, ?, ?, ?, ?)""",
-            (phash, kind, execution, qty, qty, price, SLOT.isoformat()),
+            (phash, kind, execution, qty, qty, price, STAMP),
         )
     return phash
 
@@ -111,9 +125,22 @@ def _ideas(conn: sqlite3.Connection, n: int) -> None:
         _dec(conn, "scalp", "candidate", f"T{i}", "selected", "scalp_candidate")
 
 
-def _ranked(conn: sqlite3.Connection, *tickers: str) -> None:
-    for t in tickers:
-        _dec(conn, "research", "shortlist", t, "selected", "shortlisted")
+def _ranked(conn: sqlite3.Connection, *picks: tuple[str, str, str, str]) -> None:
+    """(ticker, stance, portfolio_fit, thesis) per shortlisted name."""
+    for t, stance, fit, thesis in picks:
+        _dec(
+            conn,
+            "research",
+            "shortlist",
+            t,
+            "selected",
+            "shortlisted",
+            {"stance": stance, "portfolio_fit": fit, "thesis": thesis},
+        )
+
+
+def _market(conn: sqlite3.Connection, text: str) -> None:
+    _dec(conn, "research", "shortlist", "market", "noted", "market_read", text=text)
 
 
 def _open_structure(conn: sqlite3.Connection, sid: str, ticker: str) -> None:
@@ -121,7 +148,7 @@ def _open_structure(conn: sqlite3.Connection, sid: str, ticker: str) -> None:
         """INSERT INTO open_structures (id, ticker, open_proposal_hash, candidate_id,
                structure_json, contracts, entry_net, opened_at)
            VALUES (?, ?, ?, 'c', '{}', 1, '1', ?)""",
-        (sid, ticker, f"p-{sid}", SLOT.isoformat()),
+        (sid, ticker, f"p-{sid}", STAMP),
     )
 
 
@@ -133,160 +160,334 @@ def _full_chain(conn: sqlite3.Connection) -> dict[str, str]:
     return runs
 
 
-def test_no_open_groups_the_reasons() -> None:
-    conn = _conn()
-    _full_chain(conn)
-    _ideas(conn, 21)
-    _ranked(conn, "ORCL", "GOOGL", "XOM", "PLTR")
-    for t in ("ORCL", "GOOGL"):
-        _dec(conn, "quant", "propose", t, "no_trade", "net_ev_floor")
-    _dec(conn, "risk", "risk_review", "XOM", "rejected", "risk_reject")
-    _dec(conn, "quant", "structure", "PLTR", "no_trade", "quant_skipped")
-    assert loop_headline(conn, CHAIN) == [
-        "21 ideas → 4 ranked (ORCL, GOOGL, XOM, PLTR) → no open: ORCL, GOOGL below the "
-        "Net EV floor; XOM rejected by Risk; PLTR no viable structure."
-    ]
+HOOD_THESIS = (
+    "Bearish put debit vertical on Robinhood. HOOD is in a sticky bear regime with a "
+    "20-day drawdown. A capped-cost vertical keeps the loss small."
+)
 
 
-def test_open_fill_names_structure_and_price() -> None:
-    conn = _conn()
-    runs = _full_chain(conn)
-    _ideas(conn, 20)
-    _ranked(conn, "HOOD", "XOM")
-    _dec(conn, "risk", "risk_review", "XOM", "rejected", "risk_reject")
-    _proposal(
-        conn,
-        runs["quant.propose"],
-        "HOOD",
-        "open",
-        struct="vertical_debit",
-        occ="HOOD261120P00110000",
-        execution="filled",
-        qty=2,
-        price="6.7500",
-    )
-    root = loop_root_from_db(conn, CHAIN, SLOT)
-    assert root.buys == ["HOOD"]
-    assert root.headline == [
-        "20 ideas → 2 ranked → bought HOOD Put Debit Spread x2 @ 6.75. "
-        "Skipped: XOM rejected by Risk."
-    ]
-    status, line = root.text().split("\n")
-    assert status.endswith("• BUY: HOOD")
-    assert line.startswith("_*20 ideas") and line.endswith("*_")
+def _close_review(conn: sqlite3.Connection, sid: str, code: str, reason: str) -> None:
+    verdict = {"verdict": "close", "reason_code": code, "reason": reason}
+    _dec(conn, "risk", "exit", sid, "noted", "exit:research_review", {"verdict": verdict})
 
 
-def test_exit_fill_with_realized_pnl_and_blocked_close() -> None:
-    conn = _conn()
-    runs = _full_chain(conn)
-    _ideas(conn, 21)
-    _ranked(conn, "ORCL")
-    _dec(conn, "quant", "propose", "ORCL", "no_trade", "net_ev_floor")
-    for sid, t, code in (
-        ("os-mrvl", "MRVL", "exit:watch_review"),
-        ("os-gs", "GS", "exit:watch_review"),
-        ("os-mu", "MU", "exit:watch_hold"),
-    ):
-        _open_structure(conn, sid, t)
-        _dec(conn, "research", "exit", sid, "noted", code)
-    _dec(
-        conn,
-        "risk",
-        "exit",
-        "os-mrvl",
-        "noted",
-        "exit:research_review",
-        {"verdict": {"verdict": "close", "reason_code": "concentration"}},
-    )
-    _dec(
-        conn,
-        "risk",
-        "exit",
-        "os-gs",
-        "noted",
-        "exit:research_review",
-        {"verdict": {"verdict": "close", "reason_code": "ev_exhausted"}},
-    )
-    _dec(
-        conn,
-        "quant",
-        "exit",
-        "GS",
-        "no_trade",
-        "exit:quote_unusable",
-        chain=None,
-        run_id=runs["quant.propose"],
-    )
-    _proposal(
-        conn,
-        runs["quant.propose"],
-        "MRVL",
-        "close",
-        struct="vertical_credit",
-        occ="MRVL261120C00100000",
-        execution="filled",
-        price="-7.2000",
-    )
-    # the Broker's close journal row has no chain id; it is found through its run
-    _dec(
-        conn,
-        "broker",
-        "exit",
-        "MRVL",
-        "filled",
-        "exit:closed",
-        {"realized_pnl": "-410.00"},
-        chain=None,
-        run_id=runs["broker"],
-    )
-    assert loop_headline(conn, CHAIN) == [
-        "21 ideas → 1 ranked (ORCL) → no open: ORCL below the Net EV floor.",
-        "Exits: sold MRVL x1 @ 7.20 (concentration), realized -$410; "
-        "GS close (EV exhausted) blocked: quotes too wide; 1 held.",
-    ]
+class TestLoopHeadline:
+    def test_open_fill_leads_with_the_bet_then_the_thesis(self) -> None:
+        conn = _conn()
+        runs = _full_chain(conn)
+        _ideas(conn, 20)
+        _ranked(conn, ("HOOD", "bearish", "hedges", HOOD_THESIS), ("XOM", "bullish", "", ""))
+        _dec(conn, "risk", "risk_review", "XOM", "rejected", "risk_reject")
+        _proposal(
+            conn,
+            runs["quant.propose"],
+            "HOOD",
+            "open",
+            struct="vertical_debit",
+            occ="HOOD261120P00110000",
+            execution="filled",
+            qty=2,
+            price="6.7500",
+        )
+        root = loop_root_from_db(conn, CHAIN, SLOT)
+        assert root.buys == ["HOOD"]
+        assert root.headline == [
+            "HOOD bear bet is on: put debit spread x2 filled at 6.75, hedging the book.",
+            # the structure-only first sentence is skipped for the one with the why
+            "HOOD is in a sticky bear regime with a 20-day drawdown.",
+        ]
+        status, *lines = root.text().split("\n")
+        assert status.endswith("• BUY: HOOD")
+        assert lines == [f"_*{h}*_" for h in root.headline]
+
+    def test_close_leads_with_why_then_risks_reason(self) -> None:
+        conn = _conn()
+        runs = _full_chain(conn)
+        _ideas(conn, 21)
+        _ranked(conn, ("ORCL", "bearish", "", ""))
+        _dec(conn, "quant", "propose", "ORCL", "no_trade", "net_ev_floor")
+        _open_structure(conn, "os-mrvl", "MRVL")
+        _close_review(conn, "os-mrvl", "concentration", "Third semis line in a 70% tech book.")
+        _proposal(
+            conn,
+            runs["quant.propose"],
+            "MRVL",
+            "close",
+            struct="vertical_credit",
+            occ="MRVL261120C00100000",
+            execution="filled",
+            price="-7.2000",
+        )
+        assert loop_headline(conn, CHAIN) == [
+            "Closed MRVL to cut concentration.",
+            "Third semis line in a 70% tech book.",
+        ]
+
+    def test_open_and_close_in_one_slot(self) -> None:
+        conn = _conn()
+        runs = _full_chain(conn)
+        _ranked(conn, ("TSM", "bullish", "adds_concentration", "TSM has the best idea."))
+        _proposal(
+            conn,
+            runs["quant.propose"],
+            "TSM",
+            "open",
+            struct="vertical_debit",
+            occ="TSM261120C00200000",
+            execution="filled",
+            price="10.75",
+        )
+        _open_structure(conn, "os-meta", "META")
+        _dec(conn, "system", "exit", "os-meta", "selected", "exit:stop")
+        _proposal(
+            conn,
+            runs["exits.mandatory"],
+            "META",
+            "close",
+            struct="long_call",
+            occ="META261120C00700000",
+            execution="filled",
+        )
+        assert loop_headline(conn, CHAIN) == [
+            "TSM bull bet is on: call debit spread x1 filled at 10.75, adding to a crowded sector.",
+            "Closed META on its stop.",
+        ]
+
+    def test_no_trade_names_the_main_blocker_and_the_market_read(self) -> None:
+        conn = _conn()
+        _full_chain(conn)
+        _ideas(conn, 21)
+        _ranked(
+            conn,
+            *((t, "bullish", "", "") for t in ("ORCL", "GOOGL", "XOM", "PLTR")),
+        )
+        for t in ("ORCL", "GOOGL", "XOM"):
+            _dec(conn, "quant", "propose", t, "no_trade", "net_ev_floor")
+        _dec(conn, "quant", "structure", "PLTR", "no_trade", "quant_skipped")
+        _market(conn, "Indexes are trending up on narrow leadership. Breadth is weak.")
+        assert loop_headline(conn, CHAIN) == [
+            "No edge, no trade: ORCL, GOOGL and XOM fell short of the Net EV floor.",
+            "Indexes are trending up on narrow leadership.",
+        ]
+
+    def test_stuck_close_outranks_the_market_read(self) -> None:
+        conn = _conn()
+        _full_chain(conn)
+        _ranked(conn, ("ORCL", "bearish", "", ""))
+        _dec(conn, "quant", "propose", "ORCL", "no_trade", "net_ev_floor")
+        _market(conn, "Indexes are up.")
+        _open_structure(conn, "os-gs", "GS")
+        _close_review(conn, "os-gs", "ev_exhausted", "Remaining EV is -$32/unit.")
+        _dec(conn, "quant", "exit", "os-gs", "no_trade", "exit:quote_unusable")
+        assert loop_headline(conn, CHAIN) == [
+            "No edge, no trade: ORCL fell short of the Net EV floor.",
+            "Want out of GS with the edge used up, but quotes are too wide to close.",
+        ]
+
+    def test_missed_fill(self) -> None:
+        conn = _conn()
+        runs = _full_chain(conn)
+        _ranked(conn, ("IREN", "bearish", "", ""))
+        _proposal(
+            conn,
+            runs["quant.propose"],
+            "IREN",
+            "open",
+            struct="long_put",
+            occ="IREN261120P00040000",
+            execution="cancelled",
+        )
+        assert loop_headline(conn, CHAIN)[0] == (
+            "IREN long put missed: no fill inside the price band."
+        )
+
+    def test_loop_stopped_after_research(self) -> None:
+        conn = _conn()
+        _run(conn, "research", 0)
+        _ranked(conn, ("ORCL", "bearish", "", ""), ("XOM", "bullish", "", ""))
+        assert loop_headline(conn, CHAIN) == [
+            "Shortlisted ORCL and XOM, but the loop stopped after Research."
+        ]
+
+    def test_nothing_ranked(self) -> None:
+        conn = _conn()
+        _run(conn, "research", 0)
+        _ideas(conn, 5)
+        _dec(conn, "research", "shortlist", "session", "no_trade", "market_unclear")
+        assert loop_headline(conn, CHAIN) == ["Research passed on all 5 ideas (market unclear)."]
+
+    def test_position_manager_close_awaiting_approval(self) -> None:
+        conn = _conn()
+        run = _run(conn, "exits.mandatory", 0)
+        _open_structure(conn, "os-iwm", "IWM")
+        _dec(conn, "system", "exit", "os-iwm", "selected", "exit:stop")
+        _proposal(
+            conn,
+            run,
+            "IWM",
+            "close",
+            struct="vertical_debit",
+            occ="IWM261120C00200000",
+            execution=None,
+            approval="pending",
+        )
+        assert loop_headline(conn, CHAIN) == ["IWM close awaits your approval."]
+
+    def test_no_change_root_skips_the_journal(self) -> None:
+        conn = _conn()
+        root = loop_root_from_db(conn, CHAIN, SLOT, no_change=True)
+        assert root.headline == []
+        status, line = root.text().split("\n")
+        assert status.endswith("• HOLD (skip)")
+        assert line == "_*Nothing new since the last look; open orders carry on.*_"
 
 
-def test_loop_stopped_after_research() -> None:
-    conn = _conn()
-    _run(conn, "research", 0)
-    _ideas(conn, 21)
-    _ranked(conn, "ORCL", "XOM")
-    assert loop_headline(conn, CHAIN) == [
-        "21 ideas → 2 ranked (ORCL, XOM) → no open: ORCL, XOM not structured "
-        "(loop stopped after Research)."
-    ]
+class TestFirstSentence:
+    def test_label_prefix_and_structure_only_lead(self) -> None:
+        assert first_sentence("META: close (ev_exhausted): Remaining EV is -$39. More.") == (
+            "close (ev_exhausted): Remaining EV is -$39."
+        )
+        assert first_sentence(HOOD_THESIS, skip_structure=True).startswith("HOOD is in")
+        assert first_sentence("Bullish call vertical on TSM.", skip_structure=True) == (
+            "Bullish call vertical on TSM."  # nothing better to fall back to
+        )
 
 
-def test_nothing_ranked() -> None:
-    conn = _conn()
-    _run(conn, "research", 0)
-    _ideas(conn, 5)
-    _dec(conn, "research", "shortlist", "session", "no_trade", "market_unclear")
-    assert loop_headline(conn, CHAIN) == [
-        "5 ideas → 0 ranked: Research opened nothing (market unclear)."
-    ]
+class TestDayRecap:
+    def _day(self, conn: sqlite3.Connection) -> None:
+        runs = _full_chain(conn)
+        _ranked(conn, ("ORCL", "bearish", "", ""), ("XOM", "bullish", "", ""))
+        for t in ("ORCL", "XOM"):
+            _dec(conn, "quant", "propose", t, "no_trade", "net_ev_floor")
+        _proposal(
+            conn,
+            runs["quant.propose"],
+            "HOOD",
+            "open",
+            struct="vertical_debit",
+            occ="HOOD261120P00110000",
+            execution="filled",
+        )
+        for t, pnl in (("META", "-8765.00"), ("VST", "160.00")):
+            _proposal(
+                conn,
+                runs["quant.propose"],
+                t,
+                "close",
+                struct="long_call",
+                occ=f"{t}261120C00100000",
+                execution="filled",
+            )
+            _dec(conn, "broker", "exit", t, "filled", "exit:closed", {"realized_pnl": pnl})
+        _run(
+            conn,
+            "research",
+            0,
+            chain="chain-skip",
+            summary="no_change: inputs unchanged",
+            at=STAMP.replace("19:40", "19:50"),
+        )
+
+    def test_result_then_main_blocker(self) -> None:
+        conn = _conn()
+        self._day(conn)
+        assert day_recap(conn, SLOT.date(), day_pnl=-1945.57, equity_start=99604.46) == [
+            "Red day: -$1,946 (-2.0%) on 1 open and 2 closes; worst close META -$8,765.",
+            "Biggest blocker: Net EV floor, 2 of 2 ranked picks; 1 quiet slot skipped.",
+        ]
+
+    def test_green_day_and_no_pnl(self) -> None:
+        conn = _conn()
+        self._day(conn)
+        assert day_recap(conn, SLOT.date(), day_pnl=500, equity_start=100000)[0].startswith(
+            "Green day: +$500 (+0.5%) on 1 open and 2 closes"
+        )
+        assert day_recap(conn, SLOT.date())[0].startswith("Day done on 1 open and 2 closes")
+
+    def test_quiet_day(self) -> None:
+        assert day_recap(_conn(), SLOT.date(), day_pnl=0.0) == ["Flat day: +$0, no trades."]
 
 
-def test_position_manager_chain_has_only_the_exit_line() -> None:
-    conn = _conn()
-    runs = {"exits.mandatory": _run(conn, "exits.mandatory", 0)}
-    _open_structure(conn, "os-iwm", "IWM")
-    _dec(conn, "system", "exit", "os-iwm", "selected", "exit:stop")
-    _proposal(
-        conn,
-        runs["exits.mandatory"],
-        "IWM",
-        "close",
-        struct="vertical_debit",
-        occ="IWM261120C00200000",
-        execution=None,
-        approval="pending",
-    )
-    assert loop_headline(conn, CHAIN) == ["Exits: close IWM awaiting approval (stop)."]
+class TestRecapBroadcast:
+    """D65: the recap is a day-thread reply with "Also send to #arc-investor" ticked."""
 
+    def test_dispatcher_posts_the_broadcast_after_the_jobs_own_card(self) -> None:
+        import textwrap
 
-def test_no_change_root_skips_the_journal() -> None:
-    conn = _conn()
-    root = loop_root_from_db(conn, CHAIN, SLOT, no_change=True)
-    assert root.headline == []
-    assert root.text().split("\n")[0].endswith("• HOLD (skip)")
+        from arc.routines.config import RoutinesConfig
+        from arc.routines.dispatcher import Dispatcher
+        from arc.routines.handlers import JobResult
+        from arc.routines.heartbeat import RecordingNotifier
+        from arc.slack.blocks import CardView, header
+
+        conn = _conn()
+        cfg = RoutinesConfig.model_validate(
+            __import__("yaml").safe_load(
+                textwrap.dedent(
+                    """
+                    personas:
+                      broker.reconcile: {schedule: ["16:30"], notify: card}
+                    """
+                )
+            )
+        )
+        recap = CardView(text=":newspaper: *Day recap*\n_*Red day.*_", blocks=[], broadcast=True)
+        card = CardView(text="🏦 [Broker] Reconcile", blocks=[header("card")])
+        notes = RecordingNotifier()
+        d = Dispatcher(
+            conn,
+            cfg,
+            handlers={
+                "broker.reconcile": lambda ctx: JobResult(
+                    summary="clean", card=card, extra_cards=[recap]
+                )
+            },
+            notifier=notes,
+            is_halted=lambda: False,
+        )
+        d.run_manual("broker.reconcile", now=dt.datetime(2026, 10, 8, 16, 30, tzinfo=ET))
+        assert [t for _, t in notes.posts][-1] == recap.text
+        assert notes.broadcasts == [recap.text]
+        assert notes.posts[0][1].startswith("🏦 [Broker]")
+
+    def test_slack_reply_sets_reply_broadcast(self) -> None:
+        from unittest.mock import MagicMock
+
+        from arc.slack.client import ArcSlackClient
+
+        fake = MagicMock()
+        fake.chat_postMessage.return_value = {"ok": True, "ts": "1.2"}
+        client = ArcSlackClient(client=fake)
+        client.reply(channel="C1", thread_ts="9.9", text="x", broadcast=True)
+        assert fake.chat_postMessage.call_args.kwargs["reply_broadcast"] is True
+        client.reply(channel="C1", thread_ts="9.9", text="x")
+        assert "reply_broadcast" not in fake.chat_postMessage.call_args.kwargs
+
+    def test_reconcile_builds_the_recap_card(self) -> None:
+        from types import SimpleNamespace
+
+        from arc.broker.reconcile_job import _day_recap
+
+        conn = _conn()
+        TestDayRecap()._day(conn)
+        report = SimpleNamespace(
+            day=SLOT.date(),
+            day_pnl=-1945.57,
+            baseline=SimpleNamespace(value=99604.46),
+        )
+        view = _day_recap(SimpleNamespace(conn=conn), report)  # type: ignore[arg-type]
+        assert view is not None and view.broadcast and view.blocks == []
+        assert view.text.split("\n") == [
+            ":newspaper: *Day recap · Thu Oct 8*",
+            "_*Red day: -$1,946 (-2.0%) on 1 open and 2 closes; worst close META -$8,765.*_",
+            "_*Biggest blocker: Net EV floor, 2 of 2 ranked picks; 1 quiet slot skipped.*_",
+        ]
+
+    def test_recap_failure_never_blocks_the_reconcile(self) -> None:
+        from types import SimpleNamespace
+
+        from arc.broker.reconcile_job import _day_recap
+
+        broken = SimpleNamespace(conn=None)  # no store at all
+        report = SimpleNamespace(day=SLOT.date(), day_pnl=None, baseline=None)
+        assert _day_recap(broken, report) is None  # type: ignore[arg-type]
