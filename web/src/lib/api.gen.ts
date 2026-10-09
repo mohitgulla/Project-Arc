@@ -2924,6 +2924,11 @@ export interface components {
             kind: string;
             /** Reason */
             reason: string;
+            /**
+             * Scope
+             * @default all
+             */
+            scope: string;
         };
         /** HaltsResponse */
         HaltsResponse: {

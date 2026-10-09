@@ -123,9 +123,13 @@ def _print_activities(args: argparse.Namespace, settings: Any, broker: BrokerAda
         sys.stderr.write("--activities is paper-only (ARC_ENV=paper)\n")
         return 2
     if broker is None:
-        from arc.broker.alpaca_paper import AlpacaPaperBroker
+        from arc.broker.registry import BrokerNotAvailable, resolve_broker
 
-        broker = AlpacaPaperBroker()
+        try:
+            broker = resolve_broker(settings)  # E13.11: the registry is the only constructor
+        except BrokerNotAvailable as exc:
+            sys.stderr.write(f"broker refused: {exc}\n")
+            return 2
     fetch = getattr(broker, "activities", None)
     if not callable(fetch):
         sys.stderr.write("this broker has no activities feed\n")
