@@ -1023,3 +1023,37 @@ def test_beta_delta_carries_forward_across_two_proposals() -> None:
     [v] = R.check_greek_caps(p, acct(), book, m, cfg())
     assert v.code == RuleCode.BETA_DELTA_CAP
     assert v.detail == "post-trade |β$Δ| $257,600.00 > cap $200,000.00 (MU β 3.22)"
+
+
+# ---------------------------------------------------------------------------
+# E11.4 (D73): opens-only halt, close band steps in the closing window
+# ---------------------------------------------------------------------------
+
+
+def test_opens_only_halt_blocks_opens_not_closes() -> None:
+    a = acct(opens_halted=True)
+    assert R.check_halt(a)[0].code == RuleCode.HALTED
+    assert "opens-only" in R.check_halt(a)[0].detail
+    assert R.check_halt(a, closing=True) == []
+    assert R.check_halt(acct(halted=True), closing=True)[0].code == RuleCode.HALTED
+    assert RuleCode.HALTED.value in codes(run(account=a))
+    held = _held_for_close()
+    d = evaluate(make_proposal(), a, held, cfg(), market=mkt(), now=NOW, closing=True)
+    assert RuleCode.HALTED.value not in codes(d)
+
+
+def test_close_band_may_use_expiry_guard_steps_opens_may_not() -> None:
+    p = make_proposal()
+    six = R.price_band(p.structure.legs, D("-0.85"), mkt(), cfg(), max_steps=6)
+    assert six.max_steps == 6
+    held = _held_for_close()
+    # a close inside the closing window: 6 steps accepted
+    d = evaluate(p, acct(), held, cfg(), market=mkt(), now=NOW, closing=True, band=six,
+                 close_max_steps=6)  # fmt: skip
+    assert RuleCode.BAND.value not in codes(d)
+    # without the window (or for an open) the default 3-step ceiling applies
+    d = evaluate(p, acct(), held, cfg(), market=mkt(), now=NOW, closing=True, band=six)
+    assert RuleCode.BAND.value in codes(d)
+    d = evaluate(p, acct(), Portfolio(), cfg(), market=mkt(), now=NOW, band=six,
+                 close_max_steps=6)  # fmt: skip
+    assert RuleCode.BAND.value in codes(d)

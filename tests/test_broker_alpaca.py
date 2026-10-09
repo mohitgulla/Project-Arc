@@ -355,3 +355,50 @@ class TestAlpacaPaperBrokerMocked:
             ("SPY261016C00450000", "buy"),
             ("SPY261016C00460000", "sell"),
         ]
+
+
+# ---------------------------------------------------------------------------
+# E11.4 (D73): option NTAs (activities) and do-not-exercise
+# ---------------------------------------------------------------------------
+
+
+class TestActivitiesAndDne:
+    def test_activities_parses_paged_ntas(self) -> None:
+        import datetime as _dt
+
+        client = MagicMock()
+        page1 = [
+            {"id": "a1", "activity_type": "OPASN", "symbol": "SPY260925P00268000",
+             "qty": "2", "date": "2026-09-25"},
+            {"id": "a0", "activity_type": "OPEXP", "symbol": "SPY260918P00268000",
+             "qty": "1", "date": "2026-09-18"},  # before since: dropped
+            {"id": "a2", "activity_type": "FILL", "symbol": "SPY", "qty": "1",
+             "date": "2026-09-25"},  # other type: dropped
+            {"id": "a3", "activity_type": "OPTRD", "qty": "1", "date": "2026-09-25"},  # no symbol
+        ]  # fmt: skip
+        client.get.side_effect = [page1]
+        b = _make_broker(client)
+        acts = b.activities(_dt.date(2026, 9, 25))
+        assert [(a.id, a.activity_type, a.qty) for a in acts] == [("a1", "OPASN", 2)]
+        path, params = client.get.call_args.args
+        assert path == "/account/activities" and params["after"] == "2026-09-24"
+        assert params["activity_types"] == "OPASN,OPEXC,OPEXP,OPTRD"
+
+    def test_activities_pages_until_short_page(self) -> None:
+        import datetime as _dt
+
+        client = MagicMock()
+        full = [
+            {"id": f"x{i}", "activity_type": "OPEXP", "symbol": "SPY260925P00268000",
+             "qty": "1", "date": "2026-09-25"}
+            for i in range(100)
+        ]  # fmt: skip
+        client.get.side_effect = [full, []]
+        acts = _make_broker(client).activities(_dt.date(2026, 9, 25))
+        assert len(acts) == 100 and client.get.call_count == 2
+        assert client.get.call_args.args[1]["page_token"] == "x99"
+
+    def test_do_not_exercise_posts_to_the_position(self) -> None:
+        client = MagicMock()
+        _make_broker(client).do_not_exercise("SPY260925C00100000")
+        client.post.assert_called_once_with("/positions/SPY260925C00100000/do-not-exercise")

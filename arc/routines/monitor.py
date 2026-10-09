@@ -194,7 +194,9 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
     )
     if new_halt is not None:
         notices.append(f"daily-loss halt raised: {new_halt.reason}")
-    halted = switch.is_halted()
+    halt_state = switch.state()
+    halted = halt_state.halted
+    opens_halted = halt_state.opens_only  # E11.4 (D73): exits keep running
 
     pnl = day_pnl(info.equity, baseline)
     pnl_text = f", day P&L ${pnl:+,.2f}" if pnl is not None else ""
@@ -204,6 +206,7 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
         "prev_close": _f(baseline.value) if baseline is not None else None,
         "prev_close_source": baseline.source if baseline is not None else None,
         "halted": halted,
+        "opens_halted": opens_halted,
         "halt_raised": new_halt is not None,
     }
 
@@ -295,6 +298,8 @@ def monitor(ctx: JobContext, env: PipelineEnv) -> JobResult:
         notices.append(f"expiring within {within} day(s): {', '.join(expiring)}")
     if halted:
         summary += "; HALTED"
+    elif opens_halted:
+        summary += "; OPENS HALTED (exits still run)"
     metrics["broker_requests"] = broker_requests(_option_roots(positions))
     log.info("routines.monitor", **{k: v for k, v in metrics.items() if v is not None})
     _record_heartbeat(ctx, positions, info, metrics)

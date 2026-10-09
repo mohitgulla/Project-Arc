@@ -6,8 +6,11 @@ and the post-market reconcile (:mod:`arc.reconcile.engine`).
 
 Rules (owner decisions 2026-10-09, D73):
 
-* **Closing window.** ``in_window`` when ``dte <= flat_by_dte + 1`` (calendar days,
-  the exits engine's unit). Outside the window a structure gets one close proposal
+* **Closing window.** ``in_window`` from the session before ``flat_by`` on, i.e.
+  ``dte <= flat_by_dte + 1`` calendar days for a mid-week expiry (Wed for a Fri
+  expiry), and Thu for a Mon expiry (flat_by = Fri, the last session before the
+  weekend), so a weekend never eats the retry session. Outside the window a
+  structure gets one close proposal
   per ET day (unchanged); inside it up to ``attempts_per_day``, each a fresh
   proposal (new mid, new D24 band with ``steps`` improvement steps, gate, token,
   approval).
@@ -176,7 +179,8 @@ def closing_window(expiry: _dt.date, today: _dt.date, guard: ExpiryGuard) -> Clo
     priced on a dead chain).
     """
     dte = dte_calendar(today, expiry)
-    in_window = dte <= guard.flat_by_dte + 1
+    flat_by = _flat_by(expiry, guard)
+    in_window = dte <= guard.flat_by_dte + 1 or today >= previous_session(flat_by)
     expiry_day = dte == 0
     cutoff = expiry_cutoff(expiry, guard) if expiry_day and is_session(expiry) else None
     if dte < 0:
@@ -188,7 +192,7 @@ def closing_window(expiry: _dt.date, today: _dt.date, guard: ExpiryGuard) -> Clo
     return ClosingWindow(
         expiry=expiry,
         dte=dte,
-        flat_by=_flat_by(expiry, guard),
+        flat_by=flat_by,
         in_window=in_window,
         expiry_day=expiry_day,
         cutoff=cutoff,

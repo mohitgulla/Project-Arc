@@ -484,3 +484,93 @@ class TestHaltRepoRaw:
         repo = HaltRepo(_open(db_path))
         with pytest.raises(sqlite3.IntegrityError):
             repo.halt(kind="bogus")
+
+
+# ---------------------------------------------------------------------------
+# E11.4 (D73): halt scope ('opens' = new opens stop, exits keep running)
+# ---------------------------------------------------------------------------
+
+
+class TestOpensOnlyScope:
+    def test_existing_rows_default_to_scope_all(self, switch: HaltSwitch, db_path: Path) -> None:
+        switch.halt(actor=OTHER, reason="old style", now=NOW)
+        conn = _open(db_path)
+        assert conn.execute("SELECT scope FROM halts").fetchone()[0] == "all"
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO halts (id, at, reason, actor, kind, scope) "
+                "VALUES ('x', 'a', 'r', 'o', 'manual', 'closes')"
+            )
+
+    def test_opens_only_state_and_apply(self, switch: HaltSwitch) -> None:
+        rec = switch.halt(actor="arc:expiry", reason="not flat", now=NOW, scope=H.HaltScope.OPENS)
+        assert rec.scope is H.HaltScope.OPENS
+        state = switch.state()
+        assert not state.halted and state.opens_only and state.opens_blocked
+        assert not switch.is_halted() and switch.opens_blocked()
+        a = switch.apply(_acct())
+        assert a.opens_halted and not a.halted
+        # an already-flagged snapshot is returned as is
+        assert switch.apply(a) is a
+        # a full halt on top wins: everything stops
+        switch.halt(actor=OTHER, reason="full", now=NOW)
+        state = switch.state()
+        assert state.halted and not state.opens_only
+        b = switch.apply(_acct())
+        assert b.halted and not b.opens_halted
+
+    def test_no_halt_apply_is_identity(self, switch: HaltSwitch) -> None:
+        a = _acct()
+        assert switch.apply(a) is a and not switch.opens_blocked()
+
+    def test_submit_guard_lets_closes_through_an_opens_only_halt(self, switch: HaltSwitch) -> None:
+        switch.halt(actor="arc:expiry", reason="x", now=NOW, scope=H.HaltScope.OPENS)
+        require_trading_allowed(switch, closing=True)
+        with pytest.raises(TradingHaltedError):
+            require_trading_allowed(switch)
+
+    def test_gate_opens_only_halt_via_evaluate_with_halt(
+        self, switch: HaltSwitch, cfg: ArcSettings
+    ) -> None:
+        from tests.test_gate import NOW as GNOW
+        from tests.test_gate import _held_for_close, make_proposal, mkt
+
+        switch.halt(actor="arc:expiry", reason="x", now=NOW, scope=H.HaltScope.OPENS)
+        a = AccountSnapshot(equity=D("100000"), last_equity=D("100000"), as_of=GNOW)
+        p = make_proposal()
+        opened = evaluate_with_halt(switch, p, a, Portfolio(), cfg, market=mkt(), now=GNOW)
+        assert RuleCode.HALTED.value in [v.split(":")[0] for v in opened.violations]
+        closed = evaluate_with_halt(
+            switch, p, a, _held_for_close(), cfg, market=mkt(), now=GNOW, closing=True
+        )
+        assert RuleCode.HALTED.value not in [v.split(":")[0] for v in closed.violations]
+
+    def test_halt_opens_once_per_session_per_reason(
+        self, switch: HaltSwitch, cfg: ArcSettings
+    ) -> None:
+        first = switch.halt_opens_once(actor="arc:expiry", reason="IWM not flat", now=NOW)
+        assert first is not None and first.scope is H.HaltScope.OPENS
+        assert switch.halt_opens_once(actor="arc:expiry", reason="IWM not flat", now=NOW) is None
+        # the owner resumes: the next tick the same session does not re-raise it
+        switch.resume(actor=OWNER, config=cfg, now=NOW + dt.timedelta(minutes=5))
+        later = NOW + dt.timedelta(minutes=10)
+        assert switch.halt_opens_once(actor="arc:expiry", reason="IWM not flat", now=later) is None
+        assert switch.halt_opens_once(actor="arc:expiry", reason="other", now=later) is not None
+        # a new session raises it again
+        tomorrow = NOW + dt.timedelta(days=1)
+        assert switch.halt_opens_once(actor="arc:expiry", reason="IWM not flat", now=tomorrow)
+
+    def test_cli_halt_scope_opens_and_status(self, db_path: Path) -> None:
+        env = {**os.environ, "ARC_DB_PATH": str(db_path), "ARC_OWNER_SLACK_USER_ID": OWNER}
+
+        def arc(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, "-m", "arc.cli", *args], capture_output=True, text=True,
+                env=env, cwd=REPO_ROOT, check=False,
+            )  # fmt: skip
+
+        out = arc("halt", "--actor", OWNER, "--reason", "expiry test", "--scope", "opens")
+        assert out.returncode == 0 and "OPENS HALTED" in out.stdout, out.stderr
+        status = arc("halt-status")
+        assert status.returncode == 1
+        assert "exits still run" in status.stdout and "scope=opens" in status.stdout

@@ -666,6 +666,8 @@ def _leg_prices(broker_fills: list[Fill]) -> dict[tuple[str, str], Decimal]:
     """``(broker order id, occ) -> qty-weighted fill price`` per leg."""
     tot: dict[tuple[str, str], list[Decimal]] = defaultdict(lambda: [Decimal(0), Decimal(0)])
     for f in broker_fills:
+        if not _is_option_symbol(f.symbol):  # E11.4: equity fills (owner unwinds) carry no lot
+            continue
         acc = tot[(f.broker_order_id, parse_occ(f.symbol).format())]
         acc[0] += f.qty * f.price
         acc[1] += f.qty

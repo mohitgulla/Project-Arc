@@ -894,7 +894,7 @@ def _portfolio_context(
         settings,
         info=info,
         now=ctx.now,
-        halted=HaltSwitch(HaltRepo(ctx.conn)).is_halted(),
+        halted=HaltSwitch(HaltRepo(ctx.conn)).opens_blocked(),  # E11.4: opens stop either way
         budget_tier=budget.tier.value,
         portfolio=portfolio,
         snapshot=ctx.snapshot,

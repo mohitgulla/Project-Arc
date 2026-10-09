@@ -2200,3 +2200,22 @@ A live integration test that genuinely needs real time (live quotes, RTH checks,
 hook subprocess verifying real token expiry) marks the call with
 `# wall-clock: <reason>` on the same line or in the comment block directly above it.
 Everything else pins the clock.
+
+### 5.35 Expiry guard and assignment/exercise (E11.4, D73)
+
+The expiry guard runs inside `exits.mandatory` (the deterministic close step, every loop tick). Keys: `exits.positions.expiry_guard` in `config/exits.yaml` (D26 tunables `expiry_guard.*`).
+
+| When | What Arc does |
+|---|---|
+| Session before `flat_by` → `flat_by` (Wed–Thu for a Fri expiry) | Up to 4 close proposals per structure per day, each a fresh mid + 6-step band through gate + approval (cards unless auto-exit/auto-approve is on). |
+| From 15 min before the `flat_by` close (15:45 ET), still open | `exit:expiry_guard` journal, `NOT FLAT` alert, **opens-only halt** `arc:expiry`. Exits keep running. |
+| Expiry day, from 15:15 ET (12:15 on an early close) | No more close proposals. Do-not-exercise sent for long legs within $0.50 of spot (paper only). One alert per leg with the expected Alpaca action. |
+| Post-market reconcile, on and after expiry | Legs classified (OPEXP/OPEXC/OPASN, or the share footprint). Booked at intrinsic. Shares are recorded as expected in `assignment_shares`. An assignment/exercise raises the opens-only halt. Unclassified → total `arc:reconcile` halt (as before). |
+
+**Assignment/exercise: what you do.**
+1. Read the `[Ops]` reconcile notice: `<root>: <occ> assigned|exercised …; You: sell|buy N <root> at the broker, then !resume`.
+2. Unwind the shares at the broker (Alpaca dashboard). Arc never trades shares.
+3. The next reconcile attributes your fill to the `assignment_shares` row (`reconcile:resolved`, realised share P&L) instead of `fill_unknown`.
+4. `!resume` clears the opens-only halt. Check with `arc halt-status` (it shows `scope=opens` while one is active).
+
+Read-only checks: `arc reconcile --activities [--days 30]` prints the paper account's OPASN/OPEXC/OPEXP/OPTRD rows (no store is opened). Open share rows: `select * from assignment_shares where unwound_at is null`.
