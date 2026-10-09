@@ -825,7 +825,14 @@ class TestTickScript:
         repo = tmp_path / "repo"
         repo.mkdir()
         mod = _load_tick_script(repo, monkeypatch, tmp_path)
-        monkeypatch.setattr(mod.time, "sleep", lambda _s: _fake_arc(repo, "sys.exit(0)"))
+
+        # `mod.time` is the global time module, so subprocess's own wait loop calls this
+        # stub too when the child is slow (loaded CI runner): create the arc only once.
+        def _appear(_s: float) -> None:
+            if not (repo / ".venv" / "bin" / "arc").exists():
+                _fake_arc(repo, "sys.exit(0)")
+
+        monkeypatch.setattr(mod.time, "sleep", _appear)
         assert mod.main() == 0
         assert capsys.readouterr().out == ""
 
