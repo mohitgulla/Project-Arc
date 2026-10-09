@@ -17,6 +17,9 @@
   (E9.3) P&L attribution buckets with a ``low_sample`` flag.
 - ``arc journal backfill-outcomes [--dry-run]``  (E7.4b) write the missing
   ``outcomes`` row of every closed structure; idempotent.
+- ``arc journal repair-fill-signs [--dry-run]``  (E6.2g) restate fills stored with
+  the wrong sign vs their signed band (fills, structure nets, tax lot, outcome,
+  plus a ``reconcile:fill_sign_corrected`` decision); idempotent.
 
 - ``arc funnel report --since YYYY-MM-DD --until YYYY-MM-DD``  (E13.14, D56) the
   idea funnel per stage and feed (shares ``arc.tower.data_funnel`` with the Tower).
@@ -123,6 +126,13 @@ def add_journal_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
     b.add_argument("--dry-run", action="store_true", help="Build the records, write nothing")
     b.add_argument("--json", action="store_true", help="Print the per-structure results as JSON")
     b.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
+
+    fs = jsub.add_parser(
+        "repair-fill-signs",
+        help="Restate fills stored with the wrong sign vs their band (idempotent, E6.2g)",
+    )
+    fs.add_argument("--dry-run", action="store_true", help="Print every change, write nothing")
+    fs.add_argument("--db", default=None, help="SQLite path (default: data/arc.db)")
 
 
 def add_scorecard_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
@@ -327,6 +337,25 @@ def _backfill(conn: sqlite3.Connection, *, dry_run: bool, as_json: bool) -> int:
     return 0
 
 
+def _repair_fill_signs(conn: sqlite3.Connection, *, dry_run: bool) -> int:
+    """``arc journal repair-fill-signs``: restate sign-mismatched fills (E6.2g)."""
+    from decimal import Decimal
+
+    from arc.journal.fill_signs import repair_fill_signs
+    from arc.utils.calendar import now_et
+
+    reps = repair_fill_signs(conn, now=now_et(), dry_run=dry_run)
+    lines = [line for r in reps for line in r.lines()]
+    delta = sum((r.delta for r in reps), start=Decimal(0))
+    verb = "would change" if dry_run else "changed"
+    lines.append(
+        f"{'dry run: ' if dry_run else ''}{verb} {len(reps)} structure(s), "
+        f"{sum(len(r.fixes) for r in reps)} execution(s); realised delta {delta:+.2f}"
+    )
+    _out(lines)
+    return 0
+
+
 def run_journal(args: argparse.Namespace) -> int:
     from arc.config import get_settings
     from arc.journal.report import ShadowPricer, gaps, replay, show_lines
@@ -389,6 +418,8 @@ def run_journal(args: argparse.Namespace) -> int:
             return _scorecard(conn, args, settings)
         if cmd == "backfill-outcomes":
             return _backfill(conn, dry_run=args.dry_run, as_json=args.json)
+        if cmd == "repair-fill-signs":
+            return _repair_fill_signs(conn, dry_run=args.dry_run)
     except (LookupError, ReviewCitationError, ValueError) as exc:
         sys.stderr.write(f"arc journal {cmd}: {exc}\n")
         return 2

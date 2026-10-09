@@ -207,12 +207,16 @@ def record_close_outcome(
     *,
     expired: bool | None = None,
     settlement: Decimal | None = None,
+    restate: bool = False,
 ) -> str | None:
     """Append the outcome of a fully closed structure; no commit (caller's transaction).
 
     Returns the new row id, or ``None`` when the proposal already has a closed
     outcome (idempotent) or the outcome cannot be built (logged: the close itself
     must never fail because of the journal).
+
+    ``restate=True`` (E6.2g, after the stored fills were corrected) re-derives the
+    outcome even when a closed one exists, as a new row superseding it.
     """
     store = JournalStore(conn)
     raw = conn.execute(
@@ -222,7 +226,7 @@ def record_close_outcome(
         log.warning("journal.outcome_skipped", structure_id=structure_id, reason="unknown")
         return None
     latest = store.latest_outcome_row(raw[0])
-    if latest is not None and latest[1] in _FINAL:
+    if latest is not None and latest[1] in _FINAL and not restate:
         return None
     try:
         rec = build_close_outcome(
