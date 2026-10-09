@@ -543,6 +543,7 @@ def test_api_overview_missing_db(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.serial  # wall-clock budget: runs alone, after the parallel pass (Makefile)
 def test_overview_under_300ms_on_a_50mb_db(tmp_path: Path) -> None:
     path = tmp_path / "big.db"
     fixture.build(path, NOW)

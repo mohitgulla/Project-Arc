@@ -74,6 +74,7 @@ addopts = "-v --tb=short"
 markers = [
     "integration: tests that require real API keys and network access",
     "live_exec: trades real paper orders; runs only with ARC_LIVE_EXEC_TESTS=1 (docs/OPS.md 5.12)",
+    "serial: asserts a wall-clock budget; `make test` runs it alone after the parallel pass",
 ]
 
 # The risk gate is deterministic (AGENTS.md hard rule, PLAN §2.1 boundary 3).

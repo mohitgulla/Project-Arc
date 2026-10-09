@@ -280,6 +280,7 @@ class TestTickSpawns:
         assert scalp.run_id is not None and status(conn, scalp.run_id) == "failed"
         assert any("spawn failed" in text for _, text in notes.posts)
 
+    @pytest.mark.serial  # wall-clock budget: runs alone, after the parallel pass (Makefile)
     def test_tick_does_not_wait_on_slow_background_jobs(self, conn: sqlite3.Connection) -> None:
         """Scalp + EDGAR sleep 1.5 s each; the tick's inline work is far below that."""
         h = Handlers(sleep=1.5, slow=frozenset({"scalp", "edgar"}))

@@ -30,8 +30,11 @@ GATE_TESTS := tests/test_gate.py tests/test_halt.py tests/test_gate_token.py \
 # Full suite: every test file runs exactly once.
 test: test-rest test-gate
 
+# Tests marked `serial` assert a wall-clock budget, which CPU contention from parallel
+# workers can break, so they run alone after the parallel pass.
 test-rest:
-	uv run pytest -n $(PYTEST_WORKERS) $(addprefix --ignore=,$(GATE_TESTS))
+	uv run pytest -n $(PYTEST_WORKERS) -m "not serial" $(addprefix --ignore=,$(GATE_TESTS))
+	uv run pytest -m serial $(addprefix --ignore=,$(GATE_TESTS))
 
 test-gate:
 	uv run pytest -n $(PYTEST_WORKERS) $(GATE_TESTS) \

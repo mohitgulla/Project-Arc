@@ -822,6 +822,7 @@ def test_list_query_plan_uses_indexes(big_db: Path) -> None:
     assert "SCAN open_structures" not in plan and "SCAN outcomes" not in plan
 
 
+@pytest.mark.serial  # wall-clock budget: runs alone, after the parallel pass (Makefile)
 @pytest.mark.parametrize(
     "filters",
     [

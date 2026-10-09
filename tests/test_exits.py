@@ -550,6 +550,7 @@ class TestModel:
         assert realized_vol_forecast(None, None) is None
         assert realized_vol_forecast(float("nan"), 0.0) is None
 
+    @pytest.mark.serial  # wall-clock budget: runs alone, after the parallel pass (Makefile)
     def test_performance_20k_paths(self) -> None:
         cfg = load_exit_config().model
         assert cfg.n_paths == 20_000
