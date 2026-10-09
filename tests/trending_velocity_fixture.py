@@ -151,10 +151,19 @@ def ranked(opts: Any = None, *, with_counts: bool = True) -> dict[str, Any]:
         exclude={"SPY": "market_reference", "AAPL": "core"},
         screen=None,
     )
-    return {
-        "payload": build_payload(res, now=NOW).model_dump(mode="json"),
-        "table": table(res),
-    }
+    payload = build_payload(res, now=NOW).model_dump(mode="json")
+    # D64 (E14.7) added fields (scores, runs, merge audit) postdate the parity file; the
+    # parity guards the pre-existing ranking fields byte for byte.
+    for k in D64_PAYLOAD_KEYS:
+        payload.pop(k, None)
+    for m in payload["members"]:
+        for k in D64_MEMBER_KEYS:
+            m.pop(k, None)
+    return {"payload": payload, "table": table(res)}
+
+
+D64_MEMBER_KEYS = ("score", "score_today", "score_prev", "runs", "stance", "origins")
+D64_PAYLOAD_KEYS = ("merged_from", "merge")
 
 
 def render(**kw: Any) -> str:

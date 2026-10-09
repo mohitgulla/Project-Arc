@@ -78,6 +78,14 @@
           "description": "trending: inputs that listed the name",
           "title": "Inputs"
         },
+        "origins": {
+          "description": "discovery: the Scout's origins (youtube:<slug>)",
+          "items": {
+            "type": "string"
+          },
+          "title": "Origins",
+          "type": "array"
+        },
         "rank": {
           "minimum": 1,
           "title": "Rank",
@@ -88,9 +96,70 @@
           "title": "Reason",
           "type": "string"
         },
+        "runs": {
+          "description": "run dates (ET) that listed the name (1 or 2)",
+          "items": {
+            "format": "date",
+            "type": "string"
+          },
+          "title": "Runs",
+          "type": "array"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "combined score used for ranking (4 dp)",
+          "title": "Score"
+        },
+        "score_prev": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the previous run's own score (None = not in the previous run)",
+          "title": "Score Prev"
+        },
+        "score_today": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "this run's own score (None = not in this run, carried)",
+          "title": "Score Today"
+        },
         "source": {
           "title": "Source",
           "type": "string"
+        },
+        "stance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "discovery: the Scout's stance",
+          "title": "Stance"
         },
         "ticker": {
           "title": "Ticker",
