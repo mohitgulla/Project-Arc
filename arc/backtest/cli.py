@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from arc.backtest.costs import load_cost_model
-from arc.backtest.report import DEFAULT_R, closes_for, run_report
+from arc.backtest.report import DEFAULT_R, closes_for, label_closes_for, run_report
 from arc.data.history.store import ParquetHistoryStore
 
 if TYPE_CHECKING:
@@ -53,6 +53,24 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         default="hold_to_expiry",
         help="hold_to_expiry (default) or policy / d19_rules (same thing) = config/exits.yaml "
         "rules (E2.4, D19, D23)",
+    )
+    p.add_argument(
+        "--regime-model",
+        choices=["v1", "v2"],
+        default="v1",
+        help="E17.3: trend/vol labels for the by-regime tables (default v1)",
+    )
+    p.add_argument(
+        "--label-history-days",
+        type=int,
+        default=0,
+        help="E17.3: label regimes on raw closes from this many days before --start "
+        "(0 = the trading closes)",
+    )
+    p.add_argument(
+        "--label-adjusted",
+        action="store_true",
+        help="E17.3: with --label-history-days, label on split-adjusted closes",
     )
     bs = p.add_subparsers(dest="backtest_command", required=False)
     rk = bs.add_parser(
@@ -122,6 +140,27 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         "from the close. Needs the same split-adjusted daily OHLC as --entry-filter",
     )
     rk.add_argument("--workers", type=int, default=1, help="Parallel ticker processes")
+    rk.add_argument(
+        "--regime-model",
+        choices=["v1", "v2"],
+        default=None,
+        help="E17.3: override backtest.regime_model (labels for the stance menu, the "
+        "sub-periods and trade rows; default: config/ranking.yaml, v1)",
+    )
+    rk.add_argument(
+        "--label-history-days",
+        type=int,
+        default=0,
+        help="E17.3: label regimes on raw closes from this many calendar days before "
+        "--from (v2 needs ~470 for a full vol-percentile window, like the live step); "
+        "0 = label on the trading closes (from - 60d)",
+    )
+    rk.add_argument(
+        "--label-adjusted",
+        action="store_true",
+        help="E17.3: with --label-history-days, label on split-adjusted closes "
+        "(<data-dir>/underlying_ohlc/) so a split is not a crash day",
+    )
     rk.add_argument("--no-charts", action="store_true")
     rk.add_argument(
         "--offline", action="store_true", help="Use cached underlying closes only (no Alpaca)"
@@ -211,7 +250,22 @@ def run_rank_cli(args: argparse.Namespace) -> int:
                 "backtest": bt.model_validate({**bt.model_dump(), "max_be_atr": args.max_be_atr})
             }
         )
+    if getattr(args, "regime_model", None) is not None:
+        bt = cfg.backtest
+        cfg = cfg.model_copy(
+            update={"backtest": bt.model_copy(update={"regime_model": args.regime_model})}
+        )
     closes = closes_for(tickers, args.start, args.end, args.data_dir, source)
+    label_closes = label_closes_for(
+        tickers,
+        args.start,
+        args.end,
+        args.data_dir,
+        source,
+        getattr(args, "label_history_days", 0),
+        adjusted=getattr(args, "label_adjusted", False),
+        offline=args.offline,
+    )
     ohlc = None
     if cfg.backtest.entry_filter != "none" or cfg.backtest.max_be_atr is not None:
         ohlc = ohlc_for(tickers, args.start, args.end, args.data_dir, offline=args.offline)
@@ -231,6 +285,7 @@ def run_rank_cli(args: argparse.Namespace) -> int:
         workers=args.workers,
         charts=not args.no_charts,
         ohlc_by_ticker=ohlc,
+        label_closes_by_ticker=label_closes,
     )
     sys.stdout.write(f"report: {args.out / 'report.md'}\n")
     return 0
@@ -318,6 +373,17 @@ def run_backtest_cli(args: argparse.Namespace) -> int:
         test_months=args.test_months,
         sensitivity=not args.no_sensitivity,
         exit_policy=args.exit_policy,
+        regime_model=args.regime_model,
+        label_closes_by_ticker=label_closes_for(
+            tickers,
+            args.start,
+            args.end,
+            args.data_dir,
+            source,
+            args.label_history_days,
+            adjusted=args.label_adjusted,
+            offline=args.offline,
+        ),
     )
     sys.stdout.write(f"report: {args.out / 'report.md'}\n")
     return 0

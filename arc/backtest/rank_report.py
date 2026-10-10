@@ -117,11 +117,15 @@ def ticker_job(
     slippages: Sequence[float],
     stances: Mapping[str, Mapping[str, frozenset[str]]] | None = None,
     ohlc: pd.DataFrame | None = None,
+    label_closes: pd.Series | None = None,
 ) -> TickerResult:
     """Everything that depends on one ticker only (safe to run in a worker process).
 
     *ohlc* (split-adjusted daily bars) feeds the E16.3 entry filter; required when
     ``backtest.entry_filter`` is not ``none`` (an empty frame filters nothing).
+    *label_closes* (E17.3): a longer raw-close history for the regime labels only (v2
+    needs ~270 sessions of warm-up for its vol percentile); labels stay trailing, so
+    it adds no look-ahead. ``None`` = label on *closes* (the E7.5 run).
     """
     closes = closes.sort_index()
     bt = cfg.backtest
@@ -132,7 +136,7 @@ def ticker_job(
     else:
         chains = clean_chains(chains, max_dev=bt.max_leg_iv_dev, window=bt.smile_window)
     days = [d for d in sorted(chains) if start <= d <= end and d in closes.index]
-    trend, vol = labels_for(closes)
+    trend, vol = labels_for(closes if label_closes is None else label_closes, bt.regime_model)
     stretched: dict[dt.date, frozenset[str]] | None = None
     if bt.entry_filter != "none":
         stretched = stretched_days(
@@ -193,7 +197,8 @@ def ticker_job(
                     tilt=bt.direction_tilt,
                 )
             if stances is not None:
-                m = apply_stance(m, trend, stances[profile])
+                gate = {str(k): frozenset(v) for k, v in bt.vol_gate.get(profile, {}).items()}
+                m = apply_stance(m, trend, stances[profile], vol=vol, vol_gate=gate or None)
             if stretched is not None:  # E16.3: after the stance, before any ranker picks
                 m, filtered[(profile, x)] = apply_entry_filter(m, trend, stretched)
             if atr is not None and bt.max_be_atr is not None:  # E16.5: same place
@@ -283,11 +288,14 @@ def run_rank_report(
     workers: int = 1,
     charts: bool = True,
     ohlc_by_ticker: Mapping[str, pd.DataFrame] | None = None,
+    label_closes_by_ticker: Mapping[str, pd.Series] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Run the ranking backtest and write ``report.md`` + CSVs (+ PNG charts) to *out_dir*.
 
     *ohlc_by_ticker*: split-adjusted daily bars for the E16.3 entry filter
     (``backtest.entry_filter`` not ``none``); a missing ticker filters nothing.
+    *label_closes_by_ticker* (E17.3): longer raw-close histories for the regime labels
+    only; a missing ticker labels on its *closes_by_ticker* series.
     """
     exits = exits or load_exit_config()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -303,9 +311,12 @@ def run_rank_report(
         return (t, raw, closes_by_ticker[t])
 
     def job_kw(t: str) -> dict[str, object]:
-        if bt.entry_filter == "none" and bt.max_be_atr is None:
-            return kw
-        return {**kw, "ohlc": (ohlc_by_ticker or {}).get(t)}
+        out = kw
+        if bt.entry_filter != "none" or bt.max_be_atr is not None:
+            out = {**out, "ohlc": (ohlc_by_ticker or {}).get(t)}
+        if label_closes_by_ticker and t in label_closes_by_ticker:
+            out = {**out, "label_closes": label_closes_by_ticker[t]}
+        return out
 
     kw = {
         "start": start,
@@ -604,6 +615,20 @@ def _knobs(cfg: RankingFile) -> list[str]:
                 f"{p}: "
                 + ", ".join(f"{lab} → {'/'.join(map(str, k)) or 'none'}" for lab, k in m.items())
                 for p, m in bt.stance_menus.items()
+            )
+            + "\n"
+        )
+    if bt.regime_model != "v1":
+        out.append(
+            f"Regime labels (E17.3, D77): {bt.regime_model}: vol-scaled trend z (stance and "
+            "sub-periods) and per-ticker rv20 percentile vol state\n"
+        )
+    if bt.vol_gate:
+        out.append(
+            "Vol gate (E17.3): "
+            + "; ".join(
+                f"{p}: " + ", ".join(f"{k} only in {'|'.join(v)} vol" for k, v in g.items())
+                for p, g in bt.vol_gate.items()
             )
             + "\n"
         )
