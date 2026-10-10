@@ -1977,13 +1977,13 @@ _OPTIONS_SLOW_TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
-# E16.1 (D76): the `iv_backfill:` block (nightly IV-history top-up; context data only).
+# E16.1 (D76): the `iv_backfill:` block (pre-market IV-history top-up, D81; context data only).
 _IV_BACKFILL_TUNABLES: tuple[Tunable, ...] = (
     Tunable(
         key="iv_backfill.max_tickers_per_run",
         group=Group.ROUTINES,
         type=_I,
-        description="E16.1: most names short of IV rank history that one nightly "
+        description="E16.1: most names short of IV rank history that one pre-market "
         "iv.backfill run fills (open underlyings first, then the active list).",
         target=Target.ROUTINES,
         risk=Risk.NONE,

@@ -905,7 +905,7 @@ class OptionsFastSettings(BaseModel):
 
 
 class IvBackfillSettings(BaseModel):
-    """E16.1 (D76): the ``iv_backfill:`` block (nightly ``iv.backfill`` top-up knobs).
+    """E16.1 (D76): the ``iv_backfill:`` block (pre-market ``iv.backfill`` top-up knobs, D81).
 
     Context data only (IV rank / percentile on ``regime``); never a gate input.
     """

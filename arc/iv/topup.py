@@ -1,7 +1,7 @@
-"""Nightly ``iv.backfill`` top-up (E16.1, D76): keep IV rank populated for new names.
+"""Pre-market ``iv.backfill`` top-up (E16.1, D76; D81 07:15 ET): IV rank for new names.
 
 The active list churns daily (Discovery / Trending), so a one-off backfill goes stale.
-Each trading evening, after ``iv.record``, this picks the names that are still short
+Each trading morning, once the active list is final, this picks the names that are still short
 of ``iv_min_obs_rank`` usable observations in the 252-session lookback and runs the
 E4.12 backfill (:func:`arc.iv.backfill.backfill`) on them, capped per run and by wall
 time. It never writes a second IV series: it only fills ``alpaca_backfill`` rows.
