@@ -1235,8 +1235,16 @@ Before every entry chain the Director step runs three deterministic pieces
    `vol_term` context (E4.5), else `PipelineEnv.vix_quote` (fixtures:
    `arc/pipeline/fixtures/vix.json`). New opens are blocked, and the chain stops
    before any LLM call, when VIX ≥ `no_trade.vix_max`, the term structure is in
-   backwardation (`no_trade.on_backwardation`), or SPY's regime stickiness is
-   under `no_trade.transitional_min_confidence`. No VIX at all fails closed
+   backwardation (`no_trade.on_backwardation`), or SPY's regime is transitional:
+   on a v2 entry the trend label has held fewer than `regime.guard_min_run`
+   sessions or its z is within `regime.guard_min_margin_z` of a bull/bear
+   threshold (D77, E17.2); entries without `run_length`/`margin_z` fall back to
+   stickiness under `no_trade.transitional_min_confidence` (`regime_check: legacy`).
+   The confirmation test **ships off**: the defaults (run 1, margin z 0.0) never
+   block. The reference setting run 3 / margin z 0.10 (23.4 % of SPY sessions
+   over 2 y) is what E17.3 measures; turn it on with `arc config set` only if
+   trades opened on would-be-blocked days underperform.
+   No VIX at all fails closed
    (`market_data_missing`) unless `no_trade.require_vix` is off. Exits never go
    through the guard: the positions chain keeps closing.
 2. **Portfolio context** (`arc/pipeline/portfolio_context.py`, kind

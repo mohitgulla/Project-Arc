@@ -11356,6 +11356,17 @@
             ],
             "title": "Last Close"
           },
+          "margin_z": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Z"
+          },
           "model": {
             "anyOf": [
               {

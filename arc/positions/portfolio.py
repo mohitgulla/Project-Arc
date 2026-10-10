@@ -281,6 +281,13 @@ class MarketGuard(BaseModel):
     vix: VixReading | None = None
     regime: str | None = None
     regime_stickiness: float | None = None
+    # D77 (E17.2): SPY confirmation fields from a v2 regime entry (None on v1 / old rows).
+    regime_run_length: int | None = None
+    regime_margin_z: float | None = None
+    regime_check: Literal["confirmation", "legacy"] | None = Field(
+        default=None,
+        description="Which transitional test ran: v2 confirmation or the stickiness fallback",
+    )
     checked: list[str] = Field(default_factory=list, description="Checks that ran")
 
     @property
