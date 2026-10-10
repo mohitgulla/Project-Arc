@@ -1943,7 +1943,7 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         aliases=("routines.personas.anti_chase", "anti_chase"),
     ),
     # E16.4 (D76/D44): the code-rendered `Market health (…)` line for Research.
-    # Strategy lane (a prompt change): default off; draft XP-13 arm t5 tests on.
+    # D83: ships on without an experiment (owner); off = rollback, prompt byte-identical.
     Tunable(
         key="personas.market_health_context",
         group=Group.ROUTINES,

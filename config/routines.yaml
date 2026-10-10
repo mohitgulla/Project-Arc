@@ -799,7 +799,7 @@ personas:
   retail_sentiment_context: "off"   # E14.6 (D60): off | on: Stocktwits bull/bear lines for the Scout + one fact per Research pool line (strategy lane; draft XP-12)
   anti_chase: "on"              # E16.3 (D76/D78): off | on: drop stretched directional long-premium ideas before Quant (D78 ships on; off = rollback, pipeline byte-identical)
   research_technicals: "on"     # E16.2 (D76/D78): off | on: the code-rendered `tech …` segment on Research's regime lines (D78 ships on; off = rollback, prompt byte-identical)
-  market_health_context: "off"  # E16.4 (D76): off | on: one code-rendered `Market health (…)` line in Research's market block (strategy lane; draft XP-13 arm t5)
+  market_health_context: "on"   # E16.4 (D76/D83): off | on: one code-rendered `Market health (…)` line in Research's market block (D83 ships it on without an experiment; off = rollback, prompt byte-identical)
   scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + the previous evening's options_slow (18:30 vol_term, 23:00 options_daily/vix_futures; E14.2)
     label: Scout
     about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"

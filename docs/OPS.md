@@ -2426,7 +2426,7 @@ only: never a gate input; `market_guard`'s VIX ≥ 35 / backwardation rule is un
   (< 0.4 above SMA50), `breadth_strong` (> 0.7).
 
 Research sees one code-rendered line in its market block only with
-`personas.market_health_context: on` (default off; strategy lane, draft XP-13 arm t5):
+`personas.market_health_context: on` (D83 ships it on without an experiment; `off` is the rollback):
 
     Market health (10-09): VIX 14.8 (-4% vs 50d, 1y p7, compressed) · VVIX 85 (p4) · P/C eq 5d 0.59 (p55)
 

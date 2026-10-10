@@ -840,10 +840,10 @@ class ResearchTechnicalsSettings(BaseModel):
 class MarketHealthContextSettings(BaseModel):
     """E16.4 (D76, D44): the code-rendered ``Market health (…)`` line for Research.
 
-    ``enabled`` comes from ``personas.market_health_context: off | on`` (default off =
-    the Research prompt is byte-identical to before E16.4). The ``market_health`` job
-    writes its daily entry whatever this says (audit); the switch only decides whether
-    Research sees it.
+    ``enabled`` comes from ``personas.market_health_context: off | on`` (D83 ships it
+    **on**; ``off`` is the rollback: the Research prompt is byte-identical to before
+    E16.4). The ``market_health`` job writes its daily entry whatever this says (audit);
+    the switch only decides whether Research sees it.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

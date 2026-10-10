@@ -669,9 +669,11 @@ def test_kinds_are_reference_with_ttls() -> None:
     assert r.step("research")[1].reads == RESEARCH_READS
 
 
-def test_flag_defaults_off_and_parses() -> None:
+def test_flag_defaults_on_and_parses() -> None:
     r = load_routines()
-    assert r.market_health_context.enabled is False
+    assert r.market_health_context.enabled is True  # D83: ships on (off = rollback)
+    off = load_routines(overrides={("personas", "market_health_context"): "off"})
+    assert off.market_health_context.enabled is False
     assert r.market_health == HealthThresholds()
     on = load_routines(overrides={("personas", "market_health_context"): "on"})
     assert on.market_health_context.enabled is True
@@ -701,10 +703,11 @@ def test_registry_entries() -> None:
         assert name in raw["market_health"]
 
 
-def test_xp13_draft_arm_turns_only_the_flag_on() -> None:
+def test_xp13_has_no_market_health_arm() -> None:
+    # D83: market_health_context ships on, so an XP-13 arm turning it on would equal control.
     spec = yaml.safe_load((REPO / "config/experiments/live/xp13_technicals.yaml").read_text())
-    t5 = spec["arms"]["treatments"]["t5"]["overlay"]
-    assert t5 == {"routines": {"personas": {"market_health_context": "on"}}}
+    assert "t5" not in spec["arms"]["treatments"]
+    assert "market_health_context" not in yaml.safe_dump(spec)
 
 
 def test_never_a_gate_input() -> None:
