@@ -435,7 +435,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E11.4 Expiry guard: flat by DTE 1 with escalation, DNE at the 15:15 ET cutoff, assignment/exercise booked, opens-only halt (D73) ← E11.1
 - E16.1 IV rank populated: live Alpaca IV backfill one-off + pre-market `iv.backfill` top-up for short names (D76; 07:15 ET per D81)
 - E16.2 Technical features (SMA/RSI/ATR/stretch/range, implied vs ATR move, RS vs SPY/sector, squeeze, prior-day levels) on `regime` v4 + Research segment behind `personas.research_technicals` (D76; on per D78) ← E16.1
-- E16.3 Anti-chase entry filter (`personas.anti_chase`, default off; optional VWAP stretch) + backtest verdict + draft XP-13 (D76) ← E16.2
+- E16.3 Anti-chase entry filter (`personas.anti_chase`, D76; on per D78: 2.5 ATR AND RSI 75; optional VWAP stretch, off) + backtest verdict + draft XP-13 ← E16.2
 - E16.4 Market-health line: VIX vs 50d + 1y pct, VVIX, put/call 5d pct, breadth, behind `personas.market_health_context` (D76) ← E16.3
 - E16.5 Breakeven in ATR terms per proposal (card + Quant menu) + optional `max_be_atr` filter (D76) ← E16.4
 - E17.1 Regime v2: vol-scaled trend z, per-ticker vol state, rolling 252 fit, run_length/margin_z on `regime` v-next; default v2, `regime.model` rollback (D77)

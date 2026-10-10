@@ -1139,6 +1139,165 @@ def _portfolio_filter(
     return out, dropped, rejected
 
 
+#: Scanner strategies that collect premium: a stance the profile maps to any of them is
+#: not "long premium only", so the anti-chase filter leaves it alone (E16.3).
+_CREDIT_STRATEGY_NAMES = frozenset({"bull_put", "bear_call", "iron_condor"})
+
+
+@dataclasses.dataclass
+class _AntiChase:
+    """E16.3 (D76/D78): what the anti-chase filter did in one Research run."""
+
+    kept: list[ResearchRankedItem]
+    dropped: Counter[str] = dataclasses.field(default_factory=Counter)
+    rejected: list[tuple[ResearchRankedItem, str]] = dataclasses.field(default_factory=list)
+    # ticker -> the verdict (every directional long-premium idea checked)
+    verdicts: dict[str, Any] = dataclasses.field(default_factory=dict)
+    # tickers kept because their technicals were missing / the VWAP fetch failed
+    tech_missing: list[ResearchRankedItem] = dataclasses.field(default_factory=list)
+    vwap_missing: list[tuple[ResearchRankedItem, str]] = dataclasses.field(default_factory=list)
+
+
+def _long_premium_only(stance: str, settings: ArcSettings) -> bool:
+    """The profile maps *stance* to debit structures only (long calls/puts, debit verticals)."""
+    names = settings.profile.strategies_for(stance)
+    return bool(names) and not (set(names) & _CREDIT_STRATEGY_NAMES)
+
+
+def _session_vwap_stretch(
+    ctx: JobContext,
+    env: PipelineEnv,
+    ticker: str,
+    atr14: float | None,
+    take: Callable[[], object] | None,
+) -> tuple[float | None, str]:
+    """``((spot - session VWAP) / ATR14, why-missing)`` from today's 5-min bars.
+
+    Spot is the last bar's close (no extra quote call). One ``history_bars`` request,
+    taken from the shared ``alpaca_data:calls`` budget (*take*). Any failure returns
+    ``(None, reason)``: the caller skips the VWAP part and keeps the daily rule.
+    """
+    from arc.features.technicals import session_vwap, vwap_stretch_atr
+
+    today = _today(ctx)
+    try:
+        if take is not None:
+            take()
+        bars = env.market.history_bars(ticker, today, today, "5Min")
+        ctx.record_input(f"bars5m:{ticker}", _source(env), bars, as_of=ctx.now, count=len(bars))
+    except Exception as exc:  # noqa: BLE001 - a missing intraday read only skips VWAP
+        return None, f"5-min bars failed: {exc}"[:200]
+    open_at = _dt.time(9, 30)
+    vwap = session_vwap(bars, start=open_at, end=ctx.now)
+    spot = None
+    for b in bars:
+        if b.timestamp.astimezone(ET) < ctx.now:
+            spot = float(b.close)
+    out = vwap_stretch_atr(spot, vwap, atr14)
+    if out is None:
+        return None, "no session bars yet" if vwap is None else "no ATR14"
+    return out, ""
+
+
+def _alpaca_take(ctx: JobContext, env: PipelineEnv) -> Callable[[], object] | None:
+    """The shared Alpaca data budget (``routine_state[alpaca_data:calls]``); None offline."""
+    if env.offline:
+        return None
+    from arc.ingest.finnhub import DbRateLimiter
+    from arc.iv.alpaca_history import RATE_STATE_KEY
+
+    return DbRateLimiter(
+        ctx.conn, calls_per_minute=ctx.settings.alpaca_data_calls_per_minute, key=RATE_STATE_KEY
+    ).acquire
+
+
+def _anti_chase_filter(
+    ctx: JobContext,
+    env: PipelineEnv,
+    snap: ContextSnapshot,
+    kept: list[ResearchRankedItem],
+) -> _AntiChase:
+    """E16.3 (D76/D78): drop directional long-premium ideas whose move is stretched.
+
+    Runs after Research ranks (and after the E5.9 portfolio drops), before Quant.
+    Only a bullish/bearish idea the account profile can structure as long premium
+    only is checked (a credit-capable stance and neutral ideas pass untouched). The
+    rule is :func:`arc.features.technicals.is_stretched` on the ``regime`` entry's
+    technicals. Missing technicals keep the idea (journaled ``technicals_missing``).
+    With ``anti_chase.vwap`` on, each checked idea also costs one 5-min bars request
+    (shared Alpaca budget); a failed fetch skips only the VWAP part (``vwap_missing``).
+    Survivors are re-ranked 1..n. Deterministic: no LLM, never a gate input.
+    """
+    from arc.features.technicals import TechnicalFeatures, is_stretched
+
+    cfg = ctx.routines.anti_chase
+    rule = cfg.rule()
+    res = _AntiChase(kept=[])
+    take = _alpaca_take(ctx, env) if cfg.vwap else None
+    for item in kept:
+        stance = item.stance.strip().lower()
+        if stance not in ("bullish", "bearish") or not _long_premium_only(stance, ctx.settings):
+            res.kept.append(item.model_copy(update={"rank": len(res.kept) + 1}))
+            continue
+        entry = snap.latest("regime", item.ticker)
+        raw = (entry.payload.get("technicals") if entry is not None else None) or None
+        tech = TechnicalFeatures.model_validate(raw) if raw is not None else None
+        vwap_stretch: float | None = None
+        if cfg.vwap:
+            vwap_stretch, why = _session_vwap_stretch(
+                ctx, env, item.ticker, tech.atr14 if tech is not None else None, take
+            )
+            if vwap_stretch is None:
+                res.vwap_missing.append((item, why))
+        verdict = is_stretched(tech, stance, rule, vwap_stretch=vwap_stretch)
+        res.verdicts[item.ticker] = verdict
+        if verdict.stretched:
+            res.dropped[ReasonCode.STRETCHED_ENTRY.value] += 1
+            res.rejected.append((item, ReasonCode.STRETCHED_ENTRY.value))
+            continue
+        if verdict.status == "missing" and tech is None:
+            res.tech_missing.append(item)
+        res.kept.append(item.model_copy(update={"rank": len(res.kept) + 1}))
+    return res
+
+
+def _journal_anti_chase(j: Recorder, chase: _AntiChase, call_id: str | None) -> None:
+    """E16.3: one record per stretched drop (with the numbers), per kept-without-data idea."""
+    for item, _ in chase.rejected:
+        v = chase.verdicts[item.ticker]
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.REJECTED,
+            ReasonCode.STRETCHED_ENTRY,
+            reason_text=f"{item.stance}: {v.text()}",
+            confidence=item.confidence,
+            persona_call_id=call_id,
+            payload={"idea": item.model_dump(mode="json"), "anti_chase": v.model_dump(mode="json")},
+        )
+    for item in chase.tech_missing:
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.TECHNICALS_MISSING,
+            reason_text="no technicals on the regime entry: idea kept (optional filter)",
+            persona_call_id=call_id,
+        )
+    for item, why in chase.vwap_missing:
+        j.add(
+            JournalPersona.RESEARCH,
+            Stage.SHORTLIST,
+            item.ticker,
+            Choice.NOTED,
+            ReasonCode.VWAP_MISSING,
+            reason_text=f"VWAP part skipped ({why}); daily rule applied",
+            persona_call_id=call_id,
+        )
+
+
 def _no_trade_reason(out: ResearchOutput, kept: list[ResearchRankedItem]) -> str | None:
     """The explicit no-trade outcome (E5.9): only meaningful with an empty shortlist."""
     if kept:
@@ -1773,6 +1932,11 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
     kept, pdropped, prejected = _portfolio_filter(kept, pctx, held, settings, diversification)
     dropped.update(pdropped)
     rejected.extend(prejected)
+    chase: _AntiChase | None = None
+    if ctx.routines.anti_chase.enabled:  # E16.3 (D78 on): off = pipeline as before E16.3
+        chase = _anti_chase_filter(ctx, env, snap, kept)
+        kept = chase.kept
+        dropped.update(chase.dropped)
     ranked = {i.ticker for i in kept}
     excluded = _filter_excluded(out, cands, ranked)
     call_id = _record_ok(ctx, "research", reply, snap.id, dropped)
@@ -1841,6 +2005,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             persona_call_id=call_id,
             payload=item.model_dump(mode="json"),
         )
+    if chase is not None:
+        _journal_anti_chase(j, chase, call_id)
     for ex in excluded:
         j.add(
             JournalPersona.RESEARCH,
@@ -1852,6 +2018,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
             persona_call_id=call_id,
         )
     accounted = ranked | {e.ticker for e in excluded}
+    if chase is not None:  # E16.3: a stretched drop was ranked; it has its own record
+        accounted |= {i.ticker for i, _ in chase.rejected}
     not_ranked = sorted(set(cands) - accounted)
     for t in not_ranked:
         j.add(
@@ -1929,6 +2097,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         )
     names = ", ".join(f"{i.ticker} ({i.stance})" for i in kept) or "none"
     drop_items = [(i.ticker.strip().upper() or "?", reason) for i, reason in rejected]
+    if chase is not None:
+        drop_items += [(i.ticker, reason) for i, reason in chase.rejected]
     funnel = [
         *[(e.ticker, FUNNEL_EXCLUDED, e.reason) for e in excluded],
         *[(t, FUNNEL_NOT_RANKED, "") for t in not_ranked],

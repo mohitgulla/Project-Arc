@@ -161,6 +161,10 @@ class ReasonCode(StrEnum):
     # E5.9 (D33): portfolio-aware Research, idea dedupe, explicit no-trade
     DROP_CONCENTRATION = "drop_concentration"  # adds_concentration over a flagged threshold
     DROP_AT_CAP = "drop_at_cap"  # underlying already at the per-underlying max-loss cap
+    # E16.3 (D76/D78): the deterministic anti-chase entry filter (personas.anti_chase)
+    STRETCHED_ENTRY = "stretched_entry"  # directional long premium on a stretched move
+    TECHNICALS_MISSING = "technicals_missing"  # filter on, no technicals: idea kept (noted)
+    VWAP_MISSING = "vwap_missing"  # anti_chase.vwap on, intraday fetch failed: daily rule only
     DEDUPE_EXECUTED = "dedupe_executed"  # same idea is open / closed within the cooldown
     DEDUPE_PROPOSED = "dedupe_proposed"  # same idea proposed within the cooldown
     DEDUPE_REJECTED = "dedupe_rejected"  # same idea rejected by the owner within the cooldown
@@ -403,6 +407,9 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.ORDER_BUDGET_EXHAUSTED: "Daily order budget used up",
     ReasonCode.DROP_CONCENTRATION: "Dropped: adds concentration",
     ReasonCode.DROP_AT_CAP: "Dropped: underlying already at its max-loss cap",
+    ReasonCode.STRETCHED_ENTRY: "Skipped: move already stretched",
+    ReasonCode.TECHNICALS_MISSING: "Anti-chase check skipped: no technicals",
+    ReasonCode.VWAP_MISSING: "VWAP check skipped: no intraday bars",
     ReasonCode.DEDUPE_EXECUTED: "Same idea already traded recently",
     ReasonCode.DEDUPE_PROPOSED: "Same idea already proposed recently",
     ReasonCode.DEDUPE_REJECTED: "Same idea rejected by the owner recently",
