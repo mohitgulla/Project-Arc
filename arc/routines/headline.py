@@ -45,6 +45,7 @@ _OPEN_BLOCKERS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("risk_reject", "risk_declined"), "risk"),
     (("dedupe_executed", "dedupe_proposed", "dedupe_rejected"), "dedupe"),
     (("drop_concentration", "drop_at_cap"), "concentration"),
+    (("stretched_entry",), "stretched"),
     (("reprice_failed",), "reprice"),
     (("no_structure", "quant_skipped", "no_chain", "not_structured", "quant_omitted"), "structure"),
 )
@@ -57,6 +58,7 @@ BLOCKER_LABELS = {
     "risk": "Risk veto",
     "dedupe": "recently traded",
     "concentration": "concentration",
+    "stretched": "move already stretched",
     "reprice": "re-price failed",
     "structure": "no workable structure",
     "stopped": "loop cut short",
