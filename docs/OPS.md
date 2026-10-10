@@ -2371,6 +2371,32 @@ split-adjusted daily OHLC, cached in `<data-dir>/underlying_ohlc/` (fetched from
 unless `--offline`). The VWAP arm reads the daily bar's VWAP at the decision close.
 Verdict and caveats: `docs/RESEARCH/anti-chase-backtest.md`.
 
+### 5.37a Breakeven in ATR terms + the realism filter (E16.5, D76; filter off)
+
+`be_atr = |BE − spot| / (ATR14 × √DTE)`: how far a breakeven sits from spot in the
+stock's own realised daily range, scaled to the days left (calendar DTE, the same
+days the σ-distance uses). ATR14 is read from the ticker's `regime` entry
+(`technicals.atr14`, E16.2); no new data call. Example: spot 100, BE 105, ATR 2,
+25 DTE → 5 / (2 × 5) = 0.5.
+
+- **Card / Tower (always, presentation):** every breakeven line gains it, e.g.
+  `BE 412.30 (+3.1%, 0.8σ, 1.4 ATR√t)` (`ProposalAnalytics.breakevens[].atr_multiple`;
+  the Tower trade detail shows it under Breakeven). Missing ATR14 → no field.
+- **Filter `scanner.max_be_atr`** (`config/ranking.yaml`, `null` = off, bounds 0.5–5,
+  registry key, strategy lane): drops a **debit** structure whose breakeven in the
+  trade's direction (the highest for a call debit, the lowest for a put debit) is
+  more than the limit, in Quant's menu **before** it is ranked and cut. Credit
+  structures are never dropped. A ticker without ATR14 keeps everything (journaled
+  `technicals_missing`, noted). Each ticker that lost structures gets one
+  `be_unrealistic` record (stage `structure`, payload: the dropped legs and values).
+  With the filter on, each menu row also carries `be_atr`; off, the menu is
+  byte-identical to before.
+- `arc chains … --db <store> [--max-be-atr X]` prints `BE 0.5 ATR√t` per debit row when
+  the store's latest `regime` entry has ATR14, and applies the same filter.
+- Backtest: `arc backtest rank … --max-be-atr X` (`backtest.max_be_atr`, default
+  `null`); ATR14 from the cached split-adjusted daily OHLC ≤ the decision day,
+  rescaled to raw chain prices. Report: `docs/RESEARCH/be-atr-backtest.md`.
+
 ### 5.38 Exit stats: hold-to-expiry shadow + max favourable excursion (E18.3, D78/D19)
 
 Every closed position's latest `outcomes` row carries, next to MAE, the
