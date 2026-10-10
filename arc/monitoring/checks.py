@@ -576,7 +576,7 @@ def stuck_runs(
     rows = [
         r
         for r in conn.execute(
-            """SELECT run_id, job, chain_run_id, started_at FROM routine_runs
+            """SELECT * FROM routine_runs
                WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?""",
             (to_db(now - shortest),),
         ).fetchall()
@@ -591,13 +591,24 @@ def stuck_runs(
                 f"{r['job']} run {r['run_id']} still running since "
                 f"{from_db(r['started_at']):%m-%d %H:%M %Z}"
             ),
-            detail={"run_id": r["run_id"], "chain_run_id": r["chain_run_id"]},
+            detail={"run_id": r["run_id"], "chain_run_id": r["chain_run_id"], **_liveness(r, now)},
         )
         for r in rows
     )
     return CheckResult(
         "stuck_runs", "failed" if findings else "ok", f"{len(findings)} stuck", findings
     )
+
+
+def _liveness(r: sqlite3.Row, now: _dt.datetime) -> dict[str, Any]:
+    """E11.2 (D72): the run's recorded pid / heartbeat, read-only (tower + Ops page)."""
+    from arc.routines.runs import pid_alive
+
+    keys = r.keys()
+    pid = r["pid"] if "pid" in keys else None
+    beat = r["heartbeat_at"] if "heartbeat_at" in keys else None
+    age = round((now - from_db(beat)).total_seconds(), 1) if beat else None
+    return {"pid": pid, "pid_alive": pid_alive(pid), "heartbeat_age_s": age}
 
 
 EARNINGS_JOB = "earnings"

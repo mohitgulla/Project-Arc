@@ -59,6 +59,11 @@ class LockManager:
                 fcntl.flock(fd, fcntl.LOCK_UN)
                 os.close(fd)
 
+    def discard(self, name: str) -> None:
+        """Remove *name*'s lock file (E11.2: per-run locks would otherwise pile up)."""
+        with contextlib.suppress(OSError):
+            self._path(name).unlink()
+
 
 class NullLocks(LockManager):
     """No-op locks for dry runs."""
@@ -69,3 +74,6 @@ class NullLocks(LockManager):
     @contextlib.contextmanager
     def hold(self, *names: str) -> Iterator[None]:
         yield
+
+    def discard(self, name: str) -> None:
+        return

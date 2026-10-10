@@ -343,6 +343,29 @@ def test_investor_closes_the_structure(conn: sqlite3.Connection) -> None:
     }
 
 
+def test_broker_job_skips_when_adopted(conn: sqlite3.Connection) -> None:
+    """E11.2 (D72) rule 7: an adopted ladder's run finishes ``skipped``, writing nothing."""
+    open_structure(conn)
+    (phash,) = propose(conn).proposed
+    _approve(conn, phash)
+    proposal = load_approved(conn, phash)[0]
+
+    class AdoptingBroker(ScriptedBroker):
+        def order_status(self, broker_order_id: str):  # type: ignore[no-untyped-def]
+            conn.execute("UPDATE executions SET adopted_by_run_id = 'run-new'")
+            conn.commit()
+            return super().order_status(broker_order_id)
+
+    b = AdoptingBroker([["filled"]], fills={0: (2, str(proposal.limit_price))})
+    t = NOW + dt.timedelta(minutes=1)
+    with pytest.raises(JobSkippedError, match="adopted by run-new"):
+        broker_execute(
+            _ctx(conn, phash, t), broker=b, clock=lambda: t, sleep=lambda s: None,
+            market_open=lambda _t: True,
+        )  # fmt: skip
+    assert conn.execute("SELECT count(*) FROM fills").fetchone()[0] == 0
+
+
 def test_investor_refuses_outside_rth(conn: sqlite3.Connection) -> None:
     open_structure(conn)
     (phash,) = propose(conn).proposed

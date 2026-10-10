@@ -36,6 +36,7 @@
 #                   exits.mandatory -> broker.execute (stop / DTE exit / expiry; D56)
 #   16:30           broker.reconcile (reconcile + journal)
 #   (event)         reconcile.intraday (E11.1/D71): right after a ladder ends unconfirmed
+#   09:30-16:10     broker.reattach every 10 min (E11.2/D72): adopts a dead ladder's working order
 #   16:40           experiments.evaluate (E10.3: daily A/B evaluation, auto-stop; E10.5 posts)
 #   16:45 Fri       weekly scorecard ([Ops])
 #   18:00           earnings calendar
@@ -80,6 +81,7 @@ monitoring:
   stuck_after_jobs:        # per-job override of stuck_after (E5.3a; E5.8 reuses it for the loop)
     monitor: 20m           # 10-min cadence (D52): two slots without finishing means it is wedged
     research: 20m          # D31/D52 trading loop: same rule (loop.max_runtime is 7m, D61)
+    broker: 15m            # E11.2 (D72): a ladder is minutes long; broker.reattach adopts a dead one
   # E8.2a: one alert per missed slot only for slow jobs; fast jobs (10-min loop,
   # monitor, scalp, rss) get one `coverage:<job>` condition per job instead.
   per_slot_min_interval: 60m   # slots >= this far apart: one `missed_window` alert per slot
@@ -818,6 +820,18 @@ personas:
     llm: false                  # deterministic: broker (read-only) vs local orders/executions
     notify: quiet               # the notice (still unknown -> halt) posts at once
     halt_on_mismatch: true      # an order still unknown after it raises the arc:reconcile halt
+    writes: []
+  broker.reattach:              # E11.2 (D72): a ladder process that died mid-order is adopted
+    label: Ladder re-attach
+    about: "Adopts a dead ladder's working order: fills recorded, remainder cancelled"
+    group: trading_loop
+    persona: broker
+    every: 10m                  # every tick (the D52 floor); a dead ladder's order is cancelled within one
+    window: "09:30-16:10"       # DAY orders still settle just after the close
+    days: trading
+    halt_exempt: true           # cancelling / recording an existing fill only reduces risk
+    llm: false                  # deterministic: local orders + broker status; never submits
+    notify: quiet               # one notice per adopted execution posts at once
     writes: []
   scorecard:                    # E7.3 weekly paper scorecard -> #arc-investor + docs/RESEARCH/weekly/
     label: Weekly scorecard

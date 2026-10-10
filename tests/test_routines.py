@@ -1081,6 +1081,7 @@ class TestDryRunAndCli:
             "options_fast",
             "market_movers",  # E14.3 (D60)
             "ticker_news",
+            "broker.reattach",  # E11.2 (D72): every tick in RTH
         }
         assert order.index("research") < order.index("scalp")
         assert order.index("options_fast") < order.index("scalp")  # E13.6: a Scalp source

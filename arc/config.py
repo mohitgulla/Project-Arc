@@ -439,6 +439,28 @@ class ArcSettings(BaseSettings):
             "(orders/executions only; never halts by itself)."
         ),
     )
+    # -- Ladder liveness and re-attach (E11.2, D72) -------------------------------
+    execution_reattach: bool = Field(
+        default=True,
+        description=(
+            "D72: the broker.reattach job adopts a working execution whose ladder process "
+            "died (fills recorded, remainder cancelled). Off = orphans are only listed."
+        ),
+    )
+    execution_reattach_stale_s: Annotated[int, Field(ge=30, le=900)] = Field(
+        default=90,
+        description=(
+            "D72: a running ladder whose heartbeat is older than this is not alive "
+            "(it beats on every poll, execution_poll_seconds apart)."
+        ),
+    )
+    execution_reattach_kill_after_s: Annotated[int, Field(ge=60, le=3600)] = Field(
+        default=600,
+        description=(
+            "D72: a ladder that still holds its run lock but has not beaten for this long "
+            "is wedged: SIGTERM its recorded pid (never SIGKILL); adopted on the next tick."
+        ),
+    )
     # -- Close quote check (E6.2a; PLAN §6.8: data quality fails closed) --------
     close_quote_max_age_seconds: Annotated[int, Field(ge=1, le=600)] = Field(
         default=60,
