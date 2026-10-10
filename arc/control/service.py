@@ -493,6 +493,45 @@ class ControlService:
             reason=reason,
         )
 
+    def carry_over(self, key: str, value: Any, *, actor: str, reason: str) -> Result:
+        """E19.1 (D80): re-apply an override already applied (and confirmed) on another store.
+
+        Used by ``arc store reset`` to rebuild the runtime config on a fresh store:
+        the owner check, the registry lookup (an alias lands on its current key) and
+        the effective-config validation all run, so the new ``config_changes`` row is
+        a real change. A riskier value is applied at once, not staged: it was
+        confirmed when it was first applied. The universe optionable probe is skipped
+        (no network; the value already passed it).
+        """
+        try:
+            self.check_owner(actor, "cli")
+            t = lookup(key)
+            view = self.view(t.key)
+            self._validate_effective(t, value)
+        except NotOwnerError as exc:
+            return Result("refused", key=key, message=str(exc))
+        except TunableError as exc:
+            return Result("refused", key=key, message=str(exc))
+        d = direction(t, view.value, value)
+        if d is Direction.RISKIER and t.key in SYSTEM_ON_KEYS:
+            return Result(
+                "refused",
+                key=t.key,
+                message=f"{t.key} is turned on by {SYSTEM_ON_KEYS[t.key]} only (D70)",
+            )
+        return self._apply(
+            t,
+            old=view.value,
+            new=value,
+            is_default=False,
+            kind="set",
+            actor=actor,
+            source="cli",
+            reason=reason,
+            direction_=d,
+            supersedes_id=None,
+        )
+
     def revert(
         self,
         ref: str,

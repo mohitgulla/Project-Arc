@@ -127,6 +127,26 @@ sticky `live.gate_met` is turned on only by `arc:live-gate` (D26 change log, one
 day-thread notice); the owner may turn it off, never on. `arc approve auto status`
 prints a `live gate:` line (`n/a (paper)` in paper).
 
+**Store reset (E19.1, D80).** `arc store reset [--db P] [--out DIR]` is a dry run by
+default: per-table kept/dropped rows, the config carry-over list and four prechecks
+(scope-`all` halt, no lock held under `data/locks/`, no experiment `running`, store at
+head migration); exit 1 when one fails. `--apply --actor <owner id>
+[--account-last4 NNNN --starting-equity 25000]` then:
+1. archives the store and every `data/arc-exp-*.db` with SQLite's online backup into
+   `data/archive/<YYYYMMDD-HHMM>-pre-d80/` (chmod 0444, `MANIFEST.json` with row counts,
+   sha256 and git sha);
+2. builds `data/arc.db.new` at head migration (fresh `store_identity`) and copies the
+   keep list in `config/store_reset.yaml` from the archive (market/reference tables,
+   context kinds, `routine_state` prefixes such as `cursor:*`; edit the YAML to keep
+   more, no code change);
+3. re-asserts the halt (the new `halts` table is empty), re-applies every override
+   whose latest `config_changes` row is `applied` through the control service (actor =
+   owner, reason `D80 carry-over from <archive>`), checks that the effective settings and
+   routines diff against the archive is empty, and writes `routine_state` `store:epoch`;
+4. swaps the new file in with `os.replace` and removes the archived arm stores.
+Any failure before the swap deletes `arc.db.new` and leaves the live store as it was.
+Trading stays halted afterwards: resume only after the cutover checks (E19.3).
+
 ### 3.3 Broker venues (E13.11, D56)
 
 Every trading entry point builds its broker through `arc/broker/registry.py`
