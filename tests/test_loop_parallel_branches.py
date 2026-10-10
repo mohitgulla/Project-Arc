@@ -214,6 +214,7 @@ class TestConfig:
 
 
 class TestParallel:
+    @pytest.mark.serial  # wall-clock budget: flakes under xdist CPU contention
     def test_branches_overlap_and_wall_is_max_not_sum(self, tmp_path: Path) -> None:
         def run(r: RoutinesConfig, name: str) -> tuple[Fake, dict[str, Any], float]:
             fake = Fake()
