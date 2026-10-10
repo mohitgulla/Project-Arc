@@ -975,6 +975,11 @@ export interface components {
         /** BreakevenStat */
         BreakevenStat: {
             /**
+             * Atr Multiple
+             * @description E16.5 (D76): |BE − S| / (ATR14 · √DTE); None without the ticker's ATR14
+             */
+            atr_multiple?: number | null;
+            /**
              * Pct
              * @description (BE − S) / S
              */

@@ -25,7 +25,12 @@ import pandas as pd
 import structlog
 
 from arc.backtest.engine import prepare_chains
-from arc.backtest.entry_filter import apply_entry_filter, stretched_days
+from arc.backtest.entry_filter import (
+    apply_be_filter,
+    apply_entry_filter,
+    atr14_days,
+    stretched_days,
+)
 from arc.backtest.ranking import (
     Candidate,
     Outcome,
@@ -84,6 +89,7 @@ class TickerResult:
         trend: pd.Series,
         vol: pd.Series,
         filtered: dict[_Key, int] | None = None,
+        be_dropped: dict[_Key, int] | None = None,
     ) -> None:
         self.ticker = ticker
         self.menus = menus
@@ -92,6 +98,8 @@ class TickerResult:
         self.vol = vol
         # E16.3: (profile, slippage) -> decision days the entry filter emptied of long premium
         self.filtered = filtered or {}
+        # E16.5: (profile, slippage) -> debit candidates backtest.max_be_atr dropped
+        self.be_dropped = be_dropped or {}
 
 
 def ticker_job(
@@ -134,6 +142,13 @@ def ticker_job(
             vwap=bt.entry_filter == "anti_chase_vwap",
         )
     filtered: dict[_Key, int] = {}
+    # E16.5: ATR14 per decision day (raw price units) for backtest.max_be_atr
+    atr = (
+        atr14_days(ohlc if ohlc is not None else pd.DataFrame(), closes, days)
+        if bt.max_be_atr is not None
+        else None
+    )
+    be_dropped: dict[_Key, int] = {}
     # E7.5b: the tilted rankers' stance per session (the same trend proxy as the menu)
     day_stance = trend_stances(trend) if bt.direction_tilt > 0 else None
     menus: dict[_Key, dict[dt.date, list[Candidate]]] = {}
@@ -181,6 +196,8 @@ def ticker_job(
                 m = apply_stance(m, trend, stances[profile])
             if stretched is not None:  # E16.3: after the stance, before any ranker picks
                 m, filtered[(profile, x)] = apply_entry_filter(m, trend, stretched)
+            if atr is not None and bt.max_be_atr is not None:  # E16.5: same place
+                m, be_dropped[(profile, x)] = apply_be_filter(m, closes, atr, bt.max_be_atr)
             menus[(profile, x)] = m
             outcomes[(profile, x)] = picked_outcomes(
                 m,
@@ -194,7 +211,7 @@ def ticker_job(
                 cost_by_kind=ck,
             )
     log.info("backtest.rank_ticker", ticker=ticker, sessions=len(days))
-    return TickerResult(ticker, menus, outcomes, trend, vol, filtered)
+    return TickerResult(ticker, menus, outcomes, trend, vol, filtered, be_dropped)
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +303,7 @@ def run_rank_report(
         return (t, raw, closes_by_ticker[t])
 
     def job_kw(t: str) -> dict[str, object]:
-        if bt.entry_filter == "none":
+        if bt.entry_filter == "none" and bt.max_be_atr is None:
             return kw
         return {**kw, "ohlc": (ohlc_by_ticker or {}).get(t)}
 
@@ -361,6 +378,19 @@ def run_rank_report(
                     "ticker": t,
                     "profile": p,
                     "days_filtered": r.filtered.get((p, cost.slippage_frac), 0),
+                }
+                for t, r in sorted(results.items())
+                for p in profiles
+            ]
+        )
+    if bt.max_be_atr is not None:  # E16.5: debit candidates the realism filter dropped
+        frames["be_filter_drops"] = pd.DataFrame(
+            [
+                {
+                    "ticker": t,
+                    "profile": p,
+                    "max_be_atr": bt.max_be_atr,
+                    "candidates_dropped": r.be_dropped.get((p, cost.slippage_frac), 0),
                 }
                 for t, r in sorted(results.items())
                 for p in profiles
@@ -590,6 +620,11 @@ def _knobs(cfg: RankingFile) -> list[str]:
                 else ""
             )
             + "\n"
+        )
+    if bt.max_be_atr is not None:
+        out.append(
+            f"Breakeven realism (E16.5): drop debit candidates whose directional breakeven "
+            f"is > {bt.max_be_atr:g} ATR14·√DTE from the decision close\n"
         )
     if bt.direction_tilt > 0:
         out.append(

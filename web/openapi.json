@@ -1016,6 +1016,18 @@
       "BreakevenStat": {
         "additionalProperties": false,
         "properties": {
+          "atr_multiple": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "E16.5 (D76): |BE \u2212 S| / (ATR14 \u00b7 \u221aDTE); None without the ticker's ATR14",
+            "title": "Atr Multiple"
+          },
           "pct": {
             "description": "(BE \u2212 S) / S",
             "title": "Pct",

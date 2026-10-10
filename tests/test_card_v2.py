@@ -224,10 +224,14 @@ class TestCardItems:
         assert und[2] == "1σ move to expiry ±31.75 (739.58 – 803.09)"
         mon = _field(run.view, "Moneyness (% / σ from spot)")
         assert mon[1] == "Short 745P: -3.4%, 0.8σ"
-        assert mon[-2:] == ["BE 743.34: -3.6%, 0.9σ", "BE 799.66: +3.7%, 0.9σ"]
+        # E16.5: |BE - S| / (ATR14 x sqrt(DTE)) from the fixture regime's technicals
+        assert mon[-2:] == [
+            "BE 743.34: -3.6%, 0.9σ, 1.1 ATR√t",
+            "BE 799.66: +3.7%, 0.9σ, 1.1 ATR√t",
+        ]
         assert _field(run.view, "Breakevens") == [
-            "BE 743.34 (-3.6%, 0.9σ)",
-            "BE 799.66 (+3.7%, 0.9σ)",
+            "BE 743.34 (-3.6%, 0.9σ, 1.1 ATR√t)",
+            "BE 799.66 (+3.7%, 0.9σ, 1.1 ATR√t)",
         ]
 
     def test_9_vol_stats_na_for_missing(self, run: SimpleNamespace) -> None:

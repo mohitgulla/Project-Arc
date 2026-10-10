@@ -372,9 +372,11 @@ class ControlService:
 
                 load_cost_model(overrides=ov.get("costs"))
             elif t.target is Target.RANKING:
+                from arc.scanner.be_atr import load_scanner_filters
                 from arc.scanner.rank import load_ranking_config
 
                 load_ranking_config(overrides=ov.get("ranking"))
+                load_scanner_filters(overrides=ov.get("ranking"))  # E16.5: scanner: block
             elif t.target is Target.EXPERIMENTS:
                 from arc.experiments.config import load_experiments_config
 

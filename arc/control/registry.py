@@ -1128,6 +1128,22 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         risk=Risk.FALSE,
         path=("ranking", "filters", "live"),
     ),
+    # E16.5 (D76): the breakeven-realism filter. Strategy lane, ships off (none);
+    # promotion only through an experiment verdict (D44). Higher / none = fewer drops.
+    Tunable(
+        key="scanner.max_be_atr",
+        group=Group.ENTRIES,
+        type=ValueType.FLOAT_OR_NONE,
+        description="E16.5: drop debit structures whose breakeven (in the trade's direction) "
+        "is more than this many ATR14 x sqrt(DTE) from spot, before Quant's menu is ranked "
+        "(journaled be_unrealistic). Credit structures untouched; 'none' = off (default).",
+        target=Target.RANKING,
+        risk=Risk.UP,
+        path=("scanner", "max_be_atr"),
+        min=0.5,
+        max=5.0,
+        aliases=("max_be_atr",),
+    ),
     _s(
         "realloc_min_edge",
         Group.POSITIONS,

@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import datetime as _dt  # noqa: TC003 - pydantic fields
 import math
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from arc.backtest.costs import CostModel, FeeBreakdown  # noqa: TC001 - pydantic fields
 from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic fields
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 __all__ = [
     "ANALYTICS_VERSION",
@@ -33,6 +36,9 @@ __all__ = [
     "LegAnalytics",
     "ProposalAnalytics",
     "VolStats",
+    "be_atr_multiple",
+    "debit_direction",
+    "directional_breakeven",
     "expected_move",
     "moneyness_pct",
     "otm",
@@ -78,6 +84,43 @@ def otm(kind: Literal["call", "put"], strike: float, spot: float) -> bool:
     return strike >= spot if kind == "call" else strike <= spot
 
 
+def be_atr_multiple(breakeven: float, spot: float, atr14: float | None, dte: int) -> float | None:
+    """E16.5 (D76): ``|BE − S| / (ATR14 · √DTE)``, the breakeven in realised-move terms.
+
+    ATR14 is the stock's average daily true range ($); √DTE scales it to the days
+    left (calendar DTE, the same days the σ-distance uses). Example: spot 100, BE
+    105, ATR 2, 25 DTE → 5 / (2 · 5) = 0.5. ``None`` without a positive ATR or DTE.
+    """
+    if atr14 is None or not math.isfinite(atr14) or atr14 <= 0 or dte <= 0 or spot <= 0:
+        return None
+    return abs(breakeven - spot) / (atr14 * math.sqrt(dte))
+
+
+def directional_breakeven(breakevens: Sequence[float], direction: int) -> float | None:
+    """E16.5: the breakeven a debit structure must cross in its own direction.
+
+    *direction* ``+1`` (long call, bull call debit) → the highest breakeven; ``-1``
+    (long put, bear put debit) → the lowest; ``0`` (credit / neutral) → ``None``.
+    """
+    if not breakevens or direction == 0:
+        return None
+    return max(breakevens) if direction > 0 else min(breakevens)
+
+
+def debit_direction(net_debit_credit: float, long_kinds: Sequence[str]) -> int:
+    """E16.5: ``+1`` / ``-1`` for a debit structure bought on calls / puts, else ``0``.
+
+    *net_debit_credit* is per share (> 0 = a debit); *long_kinds* are the option
+    types (``call`` / ``put``) of the bought legs. Credit structures, and a debit
+    with long legs of both types (not on any profile today), return 0: no single
+    direction, so no directional breakeven.
+    """
+    kinds = set(long_kinds)
+    if net_debit_credit <= 0 or len(kinds) != 1:
+        return 0
+    return 1 if kinds == {"call"} else -1 if kinds == {"put"} else 0
+
+
 class LegAnalytics(BaseModel):
     """One leg's quote, liquidity, moneyness and entry cost, frozen at proposal time."""
 
@@ -115,6 +158,10 @@ class BreakevenStat(BaseModel):
     price: float
     pct: float = Field(..., description="(BE − S) / S")
     sigma: float | None = Field(None, description="ln(BE/S) / (ATM IV · √t)")
+    atr_multiple: float | None = Field(
+        None,
+        description="E16.5 (D76): |BE − S| / (ATR14 · √DTE); None without the ticker's ATR14",
+    )
 
 
 class VolStats(BaseModel):

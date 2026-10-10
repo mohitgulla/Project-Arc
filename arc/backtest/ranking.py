@@ -83,6 +83,7 @@ from arc.gate.inputs import AccountSnapshot, Portfolio, Position
 from arc.gate.rules import Derived, check_max_open_positions, check_per_underlying
 from arc.models import Leg, LegIntent, StructureKind
 from arc.pricing.bs import OptionKind, price_vectorized
+from arc.scanner.be_atr import BE_ATR_MAX, BE_ATR_MIN, ScannerFilters
 from arc.scanner.rank import (
     Ranker,
     RankFilters,
@@ -277,6 +278,15 @@ class BacktestSettings(BaseModel):
         default_factory=lambda: EntryFilterRule(),
         description="E16.3 recommend-the-experiment rule, fixed before the run",
     )
+    # -- E16.5 (D76): breakeven realism (default None: the E7.5 run unchanged) --
+    max_be_atr: float | None = Field(
+        None,
+        ge=BE_ATR_MIN,
+        le=BE_ATR_MAX,
+        description="Drop debit candidates whose directional breakeven is more than this "
+        "many ATR14 x sqrt(DTE) from the decision close (ATR14 from daily OHLC <= the "
+        "decision day), before any ranker picks; None = off",
+    )
 
     def window_for(self, profile: str, default: tuple[int, int]) -> tuple[int, int]:
         lo, hi = self.dte_windows.get(profile, default)
@@ -293,6 +303,8 @@ class RankingFile(BaseModel):
     model_config = _FORBID
 
     ranking: RankingConfig = Field(default_factory=lambda: RankingConfig())
+    # E16.5 (D76): the live Quant-menu breakeven-realism filter (scanner.max_be_atr)
+    scanner: ScannerFilters = Field(default_factory=lambda: ScannerFilters())
     backtest: BacktestSettings
 
 

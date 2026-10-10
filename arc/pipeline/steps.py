@@ -74,7 +74,7 @@ from arc.context.kinds import (
 )
 from arc.context.store import ContextStore
 from arc.control.effective import cost_model as cost_config
-from arc.control.effective import exit_config, ranking_config
+from arc.control.effective import exit_config, ranking_config, scanner_filters
 from arc.exits import ExitSummary, model_exits, realized_vol_forecast
 from arc.ingest.llm import ScalpLLMError
 from arc.ingest.scalp import extract_json_object
@@ -2233,9 +2233,11 @@ def _menu_entry(
     c: ScanCandidate,
     exit_summary: ExitSummary | None = None,
     rank_key: MenuRankKey | None = None,
+    be_atr: float | None = None,
 ) -> dict[str, Any]:
     """One Quant menu row. ``rank_key``/``rank_measure`` (E7.5b) appear only under a
-    non-control ``pipeline.menu_measure``, so the control menu is byte-identical."""
+    non-control ``pipeline.menu_measure``, so the control menu is byte-identical.
+    ``be_atr`` (E16.5) appears only with ``scanner.max_be_atr`` set and ATR14 known."""
     st = c.structure
     extra: dict[str, Any] = {}
     if rank_key is not None:
@@ -2245,6 +2247,8 @@ def _menu_entry(
         }
         if rank_key.tilt is not None:
             extra["rank_tilt"] = rank_key.tilt
+    if be_atr is not None:
+        extra["be_atr"] = round(be_atr, 2)
     return {
         "structure_type": _structure_type(c),
         "strategy": c.strategy.value,
@@ -2334,6 +2338,76 @@ class _QuantMenus:
     no_profile: list[tuple[str, str]] = dataclasses.field(default_factory=list)
     # E7.5b: id(candidate) -> its menu rank key (only under a non-control menu_measure)
     rank_keys: dict[int, MenuRankKey] = dataclasses.field(default_factory=dict)
+    # E16.5 (scanner.max_be_atr set): id(candidate) -> be_atr, the dropped structures per
+    # ticker (journal rows) and the tickers checked without ATR14 (kept, noted)
+    be_atr: dict[int, float] = dataclasses.field(default_factory=dict)
+    be_dropped: dict[str, list[dict[str, Any]]] = dataclasses.field(default_factory=dict)
+    be_no_atr: list[str] = dataclasses.field(default_factory=list)
+    max_be_atr: float | None = None
+
+
+def _be_filter(
+    ctx: JobContext,
+    m: _QuantMenus,
+    ticker: str,
+    cands: list[ScanCandidate],
+    spot: float,
+    max_be: float,
+) -> list[ScanCandidate]:
+    """E16.5 (D76): drop debit candidates whose directional breakeven is > *max_be* ATR√t.
+
+    ATR14 comes from the ticker's ``regime`` entry (E16.2 technicals); without it every
+    candidate is kept and the ticker is noted (``technicals_missing``). Deterministic,
+    no data call, never a gate input.
+    """
+    from arc.pipeline.analytics import regime_atr14
+    from arc.scanner.be_atr import filter_menu
+
+    entry = ctx.snapshot.latest("regime", ticker)
+    atr14 = regime_atr14(entry.payload if entry is not None else None)
+    if atr14 is None:
+        m.be_no_atr.append(ticker)
+        return cands
+    res = filter_menu(cands, spot=spot, atr14=atr14, max_be_atr=max_be)
+    m.be_atr.update({k: v for k, v in res.values.items() if v is not None})
+    if res.dropped:
+        m.be_dropped[ticker] = res.dropped_rows()
+        log.info(
+            "pipeline.be_unrealistic",
+            ticker=ticker,
+            dropped=len(res.dropped),
+            kept=len(res.kept),
+            max_be_atr=max_be,
+            atr14=atr14,
+        )
+    return res.kept
+
+
+def _journal_be_filter(j: Recorder, m: _QuantMenus, call_id: str | None = None) -> None:
+    """E16.5: one record per ticker that lost structures, one note per ticker without ATR."""
+    for t, rows in sorted(m.be_dropped.items()):
+        j.add(
+            JournalPersona.QUANT,
+            Stage.STRUCTURE,
+            t,
+            Choice.REJECTED,
+            ReasonCode.BE_UNREALISTIC,
+            reason_text=f"{len(rows)} debit structure(s) need > {m.max_be_atr:g} ATR√t to "
+            "break even (scanner.max_be_atr)",
+            persona_call_id=call_id,
+            payload={"max_be_atr": m.max_be_atr, "dropped": rows},
+        )
+    for t in m.be_no_atr:
+        j.add(
+            JournalPersona.QUANT,
+            Stage.STRUCTURE,
+            t,
+            Choice.NOTED,
+            ReasonCode.TECHNICALS_MISSING,
+            reason_text="no ATR14 on the regime entry: breakeven-realism filter skipped, "
+            "every structure kept (scanner.max_be_atr)",
+            persona_call_id=call_id,
+        )
 
 
 def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedItem]) -> _QuantMenus:
@@ -2350,7 +2424,9 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
     measure = exits.pipeline.menu_measure  # E7.5b (D79): "control" = scanner menu
     full = measure != MENU_CONTROL
     scan_top = settings.pipeline_scan_top
-    pool = max(scan_top, exits.pipeline.menu_pool_max) if full else scan_top
+    # E16.5 (D76): breakeven-realism filter; None (default) = off, menu byte-identical
+    max_be = m.max_be_atr = scanner_filters(settings).max_be_atr
+    pool = max(scan_top, exits.pipeline.menu_pool_max) if full or max_be is not None else scan_top
     for item in items:
         strategies = _strategies(item.stance, settings)
         if not strategies:
@@ -2385,6 +2461,17 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
             continue
         spots[item.ticker] = res.spot
         cands = list(res.candidates)
+        if max_be is not None:  # E16.5: drop unrealistic debits before ranking / the cut
+            cands = _be_filter(ctx, m, item.ticker, cands, res.spot, max_be)
+            if not cands:
+                no_chain.append(item.ticker)
+                no_chain_why[item.ticker] = (
+                    f"every scanner structure needs a move > {max_be:g} ATR√t to break even "
+                    "(scanner.max_be_atr)"
+                )
+                continue
+            if not full:
+                cands = cands[:scan_top]
         rv = _realized_vol(ctx.snapshot, item.ticker)
         r = settings.scanner_risk_free_rate
         models: dict[int, ExitModelResult] = {}
@@ -2432,7 +2519,10 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
             "policy in config/exits.yaml (both after costs, $ per contract). Paths move at "
             "the realised-vol forecast (path_vol, mean HV20/HV60) and are priced at IV; "
             "vrp = IV − forecast; rorc_day = managed net EV / (max loss × days held).",
-            "menu": [_menu_entry(c, summaries.get(id(c)), m.rank_keys.get(id(c))) for c in cands],
+            "menu": [
+                _menu_entry(c, summaries.get(id(c)), m.rank_keys.get(id(c)), m.be_atr.get(id(c)))
+                for c in cands
+            ],
         }
 
     return m
@@ -2477,6 +2567,7 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
     m = _quant_menus(ctx, env, shortlist.budgeted())
     summaries, menus, chains, spots = m.summaries, m.menus, m.chains, m.spots
     no_chain, no_chain_why, no_profile = m.no_chain, m.no_chain_why, m.no_profile
+    _journal_be_filter(j, m)  # E16.5: nothing unless scanner.max_be_atr is set
 
     def journal_no_chain(call_id: str | None = None) -> None:
         for t in no_chain:
