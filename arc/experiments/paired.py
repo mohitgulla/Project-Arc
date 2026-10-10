@@ -104,14 +104,17 @@ def _lit(text: str) -> str:
 
 
 @contextlib.contextmanager
-def paired_view(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+def paired_view(
+    conn: sqlite3.Connection, paths: list[Path] | None = None
+) -> Iterator[sqlite3.Connection]:
     """A read-only connection to *conn*'s store with every arm attached.
 
-    Yields *conn* itself when the store is not a file (tests, ``:memory:``), is an
-    arm store, or has no arm store recorded: there is nothing to union.
+    *paths* overrides the arm stores recorded at t0 (``repair-ledger`` on a
+    scratch copy). Yields *conn* itself when the store is not a file (tests,
+    ``:memory:``), is an arm store, or has no arm store: there is nothing to union.
     """
     path = _db_file(conn)
-    arms = _arm_paths(conn) if path is not None else []
+    arms = (paths if paths is not None else _arm_paths(conn)) if path is not None else []
     if path is None or not arms or read_identity(conn) is not None:
         yield conn
         return
