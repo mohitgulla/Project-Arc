@@ -1134,7 +1134,7 @@ def exits_mandatory_summary(closes: Sequence[tuple[str, str, str | None]]) -> st
     *closes* is ``(ticker, signal, proposal hash or None)``; ``None`` = not proposed.
     """
     if not closes:
-        return "no mandatory exit signals (stop / DTE exit / expiry)"
+        return "no mandatory exit signals (stop / profit lock / DTE exit / expiry)"
     parts = [
         f"{t} · {sig.replace('_', ' ')} · " + (f"proposal {h[:8]}" if h else "not proposed")
         for t, sig, h in closes

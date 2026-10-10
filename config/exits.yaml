@@ -16,11 +16,24 @@
 #   time_adjusted_targets        take-profit pct once DTE <= dte_lte (D19 decay target)
 #   stop_eod_only                the stop is evaluated on end-of-day marks only
 #                                (take profit / DTE exit may fire intraday)
-# Checked daily in the order: stop -> take profit -> DTE exit.
+#   profit_lock                  E18.1 (D78) trailing take profit, null = off:
+#                                {arm_pct, floor_pct, eod_only}, on the take-profit
+#                                basis (debit paid / max gain). Once the PEAK P&L since
+#                                entry (stored 30-min marks) >= arm_pct x basis, close
+#                                when P&L <= floor_pct x basis. A mandatory signal
+#                                (exits.mandatory closes it like the stop).
+#                                0 < floor_pct < arm_pct < take profit pct.
+# Checked in the order: stop -> profit lock -> take profit -> DTE exit.
 #
 # D23 (owner, 2026-09-27): stops are relaxed so a trade can play out:
 # credit 75% of max loss, debit 75% of debit, end-of-day marks only.
 # Time-adjusted targets are empty until the owner sets them.
+#
+# D78 (owner, 2026-10-10; D44 waived, no XP): debit take profit 1.00 -> 0.60 of the
+# debit, and a 0.50 -> 0.20 profit lock on the debit kinds, intraday on the 30-min
+# marks. Credit kinds keep profit_lock null: their take profit already closes at 50 %
+# of max gain, where a lock would arm, so it could never act. Rollback (Slack, no
+# PR): `exits.<kind>.profit_lock none` and `exits.<kind>.take_profit 1.0`.
 
 model:
   n_paths: 20000
@@ -69,11 +82,12 @@ positions:
 
 default:
   take_profit_pct_of_max_gain: 0.50
-  take_profit_pct_of_debit: 1.00
+  take_profit_pct_of_debit: 0.60
   stop: null
   stop_eod_only: true
   close_at_dte: 7
   time_adjusted_targets: []
+  profit_lock: null
 
 kinds:
   vertical_credit:
@@ -83,6 +97,7 @@ kinds:
     stop_eod_only: true
     close_at_dte: 7
     time_adjusted_targets: []
+    profit_lock: null
   iron_condor:
     take_profit_pct_of_max_gain: 0.50
     take_profit_pct_of_debit: null
@@ -90,24 +105,28 @@ kinds:
     stop_eod_only: true
     close_at_dte: 7
     time_adjusted_targets: []
+    profit_lock: null
   vertical_debit:
     take_profit_pct_of_max_gain: null
-    take_profit_pct_of_debit: 1.00
+    take_profit_pct_of_debit: 0.60
     stop: {basis: pct_debit, value: 0.75}
     stop_eod_only: true
     close_at_dte: 7
     time_adjusted_targets: []
+    profit_lock: {arm_pct: 0.50, floor_pct: 0.20, eod_only: false}
   long_call:
     take_profit_pct_of_max_gain: null
-    take_profit_pct_of_debit: 1.00
+    take_profit_pct_of_debit: 0.60
     stop: {basis: pct_debit, value: 0.75}
     stop_eod_only: true
     close_at_dte: 7
     time_adjusted_targets: []
+    profit_lock: {arm_pct: 0.50, floor_pct: 0.20, eod_only: false}
   long_put:
     take_profit_pct_of_max_gain: null
-    take_profit_pct_of_debit: 1.00
+    take_profit_pct_of_debit: 0.60
     stop: {basis: pct_debit, value: 0.75}
     stop_eod_only: true
     close_at_dte: 7
     time_adjusted_targets: []
+    profit_lock: {arm_pct: 0.50, floor_pct: 0.20, eod_only: false}

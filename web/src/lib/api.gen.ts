@@ -2230,6 +2230,8 @@ export interface components {
              * @default 7
              */
             close_at_dte: number | null;
+            /** @description E18.1 (D78) trailing take profit; null = off */
+            profit_lock?: components["schemas"]["ProfitLock"] | null;
             stop?: components["schemas"]["StopRule"] | null;
             /**
              * Stop Eod Only
@@ -3369,6 +3371,12 @@ export interface components {
             p_dte_exit: number;
             /** P Expiry */
             p_expiry: number;
+            /**
+             * P Profit Lock
+             * @description E18.1 (D78) profit lock
+             * @default 0
+             */
+            p_profit_lock: number;
             /** P Stop */
             p_stop: number;
             /** P Take Profit */
@@ -4473,6 +4481,25 @@ export interface components {
              * @description Normal-mixture scale (spec mde or MDE@min)
              */
             tau?: number | null;
+        };
+        /**
+         * ProfitLock
+         * @description E18.1 (D78) trailing take profit, in units of the take-profit basis.
+         *
+         *     Armed once the peak P&L since entry ≥ ``arm_pct · B``; then closes when the
+         *     current P&L ≤ ``floor_pct · B`` (``B`` = max gain for credit, debit for debit).
+         *     ``eod_only``: evaluated on end-of-day marks only (default: every mark).
+         */
+        ProfitLock: {
+            /** Arm Pct */
+            arm_pct: number;
+            /**
+             * Eod Only
+             * @default false
+             */
+            eod_only: boolean;
+            /** Floor Pct */
+            floor_pct: number;
         };
         /**
          * ProposalAnalytics

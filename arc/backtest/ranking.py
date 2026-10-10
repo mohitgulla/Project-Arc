@@ -727,6 +727,7 @@ def simulate_outcome(
     symbols = [lg.symbol for lg in o.legs]
     marks: dict[dt.date, float] = {}
     trade: Trade | None = None
+    peak: float | None = None  # E18.1: peak P&L of the earlier session marks
     for day in days:
         if day <= c.day:
             continue
@@ -741,7 +742,9 @@ def simulate_outcome(
             continue
         value_mid = sum(lg.side * m[lg.symbol][0] for lg in o.legs)
         marks[day] = (value_mid - entry_fill) * MULT - o.open_fees
-        reason = check_rules(rules, pnl=value_mid - rules.entry_net, dte=(o.expiration - day).days)
+        pnl = value_mid - rules.entry_net
+        reason = check_rules(rules, pnl=pnl, dte=(o.expiration - day).days, peak_pnl=peak)
+        peak = pnl if peak is None else max(peak, pnl)
         if reason is not None:
             trade = close_early(
                 o, day=day, marks=m, spot=float(closes[day]), reason=reason, cost=cost

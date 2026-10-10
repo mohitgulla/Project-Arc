@@ -1597,6 +1597,15 @@ its body:
   value must equal that experiment's treatment overlay. `Flag:` and `Lane: fast` never
   cover a promotion. Comment-only YAML edits are not promotions.
 - A value change in `universe.yaml` (no overlay can test it) needs any one lane line.
+- **Owner waiver** (E18.1, D78): `owner_waivers` in `config/strategy_lane.yaml` lists
+  the only promotion leaves that may ship without an experiment (today: the four
+  debit `take_profit_pct_of_debit` leaves of D78). Such a promotion passes only when
+  every changed leaf is listed under one waiver, the body carries
+  `Lane: fast — owner-directed ship without experiment (PLAN D78)` naming that
+  decision, and the decision's row in `docs/PLAN.md` exists and says "D44 waived".
+  An unlisted leaf, a removed value, a body without the `(PLAN D<n>)` citation or a
+  PLAN row without the phrase stays blocked as above. A new waiver entry needs the
+  owner's D# row first; arc-sentinel audits waived PRs like fast-lane ones.
 - A wrong extra line (an unknown `XP-<n>`, a flag that is not new) fails even if
   another lane line passes, so the audit trail never cites something false.
 - The job reads the PR body at run time: after fixing the body, re-run the

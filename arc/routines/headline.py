@@ -70,6 +70,7 @@ _EXIT_WHY = {
     "thesis_broken": "as the thesis broke",
     "costs_exceed_gain": "before costs ate the gain",
     "exit:stop": "on its stop",
+    "exit:profit_lock": "on its profit lock",
     "exit:take_profit": "at the profit target",
     "exit:dte": "ahead of expiry",
     "exit:expiry": "at expiry",

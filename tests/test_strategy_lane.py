@@ -256,6 +256,102 @@ def test_comment_only_yaml_edit_is_not_a_promotion() -> None:
     assert r.ok and r.lane == "fast"
 
 
+# -- owner waivers (E18.1, D78) -----------------------------------------------
+
+WAIVE_BODY = "Lane: fast — owner-directed ship without experiment (PLAN D78)"
+PLAN_OK = {"D78": "| D78 | Quick exit fixes | ... | Owner: option A (**D44 waived for E18.1**) |"}
+TP_OLD = {
+    "kinds": {k: {"take_profit_pct_of_debit": 1.0} for k in ("vertical_debit", "long_call")},
+    "default": {"take_profit_pct_of_debit": 1.0, "close_at_dte": 7},
+}
+TP_NEW = {
+    "kinds": {k: {"take_profit_pct_of_debit": 0.6} for k in ("vertical_debit", "long_call")},
+    "default": {"take_profit_pct_of_debit": 0.6, "close_at_dte": 7},
+}
+
+
+def _waive(body: str, new: Any, plan: dict[str, str] | None = PLAN_OK) -> Any:
+    return lane.evaluate(
+        ["config/exits.yaml"], body, _exits_delta(TP_OLD, new), EXPERIMENTS, CFG, plan
+    )
+
+
+def test_repo_lane_config_carries_only_the_d78_waiver() -> None:
+    assert [w.decision for w in CFG.owner_waivers] == ["D78"]
+    assert CFG.owner_waivers[0].leaves == {
+        ("exits", "kinds", k, "take_profit_pct_of_debit")
+        for k in ("vertical_debit", "long_call", "long_put")
+    } | {("exits", "default", "take_profit_pct_of_debit")}
+
+
+def test_waived_leaf_passes() -> None:
+    r = _waive(WAIVE_BODY, TP_NEW)
+    assert r.ok and r.lane == "waiver", r.errors
+    assert any("owner waiver D78" in n for n in r.notes)
+
+
+def test_waiver_with_new_profit_lock_keys_passes() -> None:
+    new = {**TP_NEW, "kinds": {**TP_NEW["kinds"], "long_put": {
+        "profit_lock": {"arm_pct": 0.5, "floor_pct": 0.2, "eod_only": False}}}}  # fmt: skip
+    assert _waive(WAIVE_BODY, new).ok
+
+
+def test_unlisted_leaf_fails() -> None:
+    new = {**TP_NEW, "default": {"take_profit_pct_of_debit": 0.6, "close_at_dte": 5}}
+    r = _waive(WAIVE_BODY, new)
+    assert not r.ok and r.lane == "promotion"
+    assert "close_at_dte" in " ".join(r.errors)
+
+
+def test_missing_decision_in_body_fails() -> None:
+    for body in ("Lane: fast — owner-directed ship without experiment", ""):
+        r = _waive(body, TP_NEW)
+        assert not r.ok and r.lane == "promotion"
+
+
+def test_other_decision_cited_fails() -> None:
+    r = _waive("Lane: fast — owner-directed ship without experiment (PLAN D77)", TP_NEW)
+    assert not r.ok and "PLAN D78" in r.errors[0]
+
+
+def test_decision_row_missing_from_plan_fails() -> None:
+    r = _waive(WAIVE_BODY, TP_NEW, plan={})
+    assert not r.ok and "no decisions-log row" in r.errors[0]
+
+
+def test_decision_row_without_waiver_phrase_fails() -> None:
+    r = _waive(WAIVE_BODY, TP_NEW, plan={"D78": "| D78 | something | no waiver here |"})
+    assert not r.ok and "D44 waived" in r.errors[0]
+
+
+def test_waiver_never_covers_a_removed_value() -> None:
+    gone = {**TP_NEW, "default": {"take_profit_pct_of_debit": 0.6}}
+    r = _waive(WAIVE_BODY, gone)
+    assert not r.ok and "never waived" in " ".join(r.errors)
+
+
+def test_plan_rows_parser() -> None:
+    text = "intro\n| D77 | a |\n| D78 | b D44 waived |\nnot | D9 |\n"
+    assert lane.plan_rows(text) == {"D77": "| D77 | a |", "D78": "| D78 | b D44 waived |"}
+
+
+def test_owner_waiver_config_is_strict() -> None:
+    bad_entries: list[dict[str, Any]] = [
+        {"decision": "D78"},
+        {"decision": "x", "paths": {"exits": ["a"]}},
+        {"decision": "D78", "paths": {}},
+        {"decision": "D78", "paths": {"exits": "a"}},
+    ]
+    for bad in bad_entries:
+        with pytest.raises(ValueError, match="owner waiver|owner_waivers"):
+            lane.OwnerWaiver.from_mapping(bad)
+
+
+def test_the_real_plan_row_carries_the_waiver() -> None:
+    rows = lane.plan_rows((REPO / "docs" / "PLAN.md").read_text())
+    assert "d44 waived" in rows["D78"].lower()
+
+
 # -- yaml_delta ---------------------------------------------------------------
 
 
@@ -371,6 +467,16 @@ def test_e2e_new_flag(repo: Path, tmp_path: Path, capsys: Any) -> None:
     _write(repo, "arc/scanner/rank.py", "x = 3\n")
     rc, out = _run(repo, "Flag: exits.pipeline.new_menu", tmp_path, capsys)
     assert rc == 0 and "lane: flag" in out
+
+
+def test_e2e_owner_waiver_reads_plan(repo: Path, tmp_path: Path, capsys: Any) -> None:
+    new = {"kinds": {"long_call": {"take_profit_pct_of_debit": 0.6, "close_at_dte": 7}}}
+    _write(repo, "config/exits.yaml", new)
+    rc, out = _run(repo, WAIVE_BODY, tmp_path, capsys)
+    assert rc == 1 and "no decisions-log row" in out  # no docs/PLAN.md in the scratch repo
+    _write(repo, "docs/PLAN.md", "| D78 | exits | Owner: D44 waived for E18.1 |\n")
+    rc, out = _run(repo, WAIVE_BODY, tmp_path, capsys)
+    assert rc == 0 and "lane: waiver" in out
 
 
 def test_e2e_non_strategy(repo: Path, tmp_path: Path, capsys: Any) -> None:

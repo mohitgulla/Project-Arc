@@ -25,6 +25,11 @@
           "title": "P Expiry",
           "type": "number"
         },
+        "p_profit_lock": {
+          "default": 0.0,
+          "title": "P Profit Lock",
+          "type": "number"
+        },
         "p_stop": {
           "title": "P Stop",
           "type": "number"

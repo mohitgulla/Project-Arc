@@ -30,12 +30,15 @@ from arc.exits.policy import (
     IvModel,
     MenuRank,
     PipelineExitConfig,
+    ProfitLock,
     ResolvedRules,
     StopBasis,
     StopRule,
     TimeAdjustedTarget,
     check_rules,
     load_exit_config,
+    lock_fires,
+    peak_pnl,
     resolve_rules,
 )
 from arc.exits.position import OpenPosition, PositionExitState, PositionMarks, evaluate_position
@@ -57,6 +60,7 @@ __all__ = [
     "PipelineExitConfig",
     "PositionExitState",
     "PositionMarks",
+    "ProfitLock",
     "ResolvedRules",
     "StaticStats",
     "StopBasis",
@@ -67,7 +71,9 @@ __all__ = [
     "check_rules",
     "evaluate_position",
     "load_exit_config",
+    "lock_fires",
     "model_exits",
+    "peak_pnl",
     "realized_vol_forecast",
     "resolve_rules",
 ]
