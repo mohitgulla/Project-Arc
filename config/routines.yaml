@@ -24,6 +24,7 @@
 #   08:15           options_slow catch-up (options_daily / vix_futures / vol_term), only for a
 #                   session the evening slot did not write; lands after the 06:00 Scout, so it
 #                   serves Research and the Scalp only (E14.2, D60)
+#   08:20           market_health catch-up (E16.4), only when 23:15 did not write that session
 #   09:00-16:00     Scalp every 30 min (15 in-session runs; after the fast sources)
 #   09:30-16:00     intraday monitor every 10 min (D35/D52: positions, Greeks, marks + account
 #                   fields for the tower, expiries, halts; 40 slots, 16:00 inclusive)
@@ -45,6 +46,7 @@
 #                   YouTube never reaches the Scalp (D45): briefs only, at 02:00.
 #   23:00           options_daily / vix_futures (after the ~21:00-22:50 Cboe publish; E14.2)
 #                   -> read by the next morning's 06:00 Scout
+#   23:15           market_health (E16.4, D76): VIX/VVIX vs history, put/call 5d pct, breadth
 #
 # lane (D39 / E5.10): `background` = the tick claims the slot, spawns a detached
 # `arc routines run-claimed <run_id>` and moves on, so a slow job never delays the
@@ -146,6 +148,11 @@ context_ttl:
   story:         {ttl: 1 session, supersede: latest}       # D30 stage-1 digest; subject = story id
   vol_term:      {ttl: 1 session, supersede: latest}       # D30 options data; subject = market
   options_daily: {ttl: 1 session, supersede: latest}       # E13.5 (D56) options_slow; subject = market
+  # E16.4 (D76): market health. Histories outlive their ttl (the job reads the newest in
+  # any status); the read itself is 1 session like vol_term. Context only.
+  index_history: {ttl: 7d, supersede: latest}              # Cboe VIX / VVIX closes; subject = index
+  pc_history:    {ttl: 7d, supersede: latest}              # Cboe put/call by session; subject = market
+  market_health: {ttl: 1 session, supersede: latest}       # the daily read; subject = market
   vx_curve:      {ttl: 1 session, supersede: latest}
   # E13.6 (D56) options_fast: Cboe delayed tape, rewritten every 30 min in RTH.
   index_vols:    {ttl: 1h, supersede: latest}               # subject = market
@@ -455,6 +462,22 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     category: options_slow
     feed: scout
     writes: [options_daily]
+  # E16.4 (D76): the daily market-health read (VIX vs 50d + 1y percentile, VVIX, put/call
+  # 5d percentile, active-list breadth from regime.technicals). 23:15 lands after the
+  # 23:00 options_daily; the 08:20 catch-up (after the 08:15 options_daily catch-up) runs
+  # only when 23:15 did not write that session (payload as_of), before the 09:40 loop.
+  # Research sees it only with
+  # personas.market_health_context on; label thresholds in the market_health: block.
+  market_health:
+    label: Market health
+    about: "Daily market-health read: VIX vs its 50-day mean and 1-year percentile, VVIX, Cboe put/call 5-day percentile, active-list breadth"
+    schedule: ["23:15", "08:20"]
+    days: trading
+    ttl: 2h
+    catch_up: {days: trading, until_written: "market_health:{day}"}
+    reference: true             # derived reference data (no category; context only)
+    feed: scout                 # once a day
+    writes: [index_history, pc_history, market_health]
   vix_futures:                  # CFE VX futures settlement curve (monthlies + weeklies)
     label: VX futures curve
     about: "CFE VX futures settlements: front / second / back month, slope and contango or backwardation"
@@ -755,6 +778,19 @@ anti_chase:
   vwap: "off"                   # off | on: also drop when (spot - session VWAP) / ATR14 >= max_vwap_stretch_atr (5-min bars, shared Alpaca data budget)
   max_vwap_stretch_atr: 0.75
 
+# E16.4 (D76): label thresholds of the daily market_health read (labels on a context
+# line only; never a gate or pipeline input). Percentiles are 1-year (252 prior obs,
+# min 120). An input older than max_lag_sessions sessions is stale (None + missing).
+market_health:
+  vix_stretched_ratio: 1.2      # vix_stretched_high: VIX >= this x its 50-day mean ...
+  vix_stretched_pct: 0.8        # ... or its 1y percentile >= this
+  vix_compressed_pct: 0.2       # vix_compressed: VIX 1y percentile <= this
+  pc_fear_pct: 0.9              # pc_extreme_fear: equity P/C 5d mean 1y percentile >= this
+  pc_greed_pct: 0.1             # pc_extreme_greed: ... <= this
+  breadth_weak: 0.4             # breadth_weak: share of active names above SMA50 < this
+  breadth_strong: 0.7           # breadth_strong: ... > this
+  max_lag_sessions: 2
+
 personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   scalp_movers_context: "off"   # E14.3 (D60): off | on, the Scalp's "Tape movers" block (strategy lane; XP-11)
@@ -763,6 +799,7 @@ personas:
   retail_sentiment_context: "off"   # E14.6 (D60): off | on: Stocktwits bull/bear lines for the Scout + one fact per Research pool line (strategy lane; draft XP-12)
   anti_chase: "on"              # E16.3 (D76/D78): off | on: drop stretched directional long-premium ideas before Quant (D78 ships on; off = rollback, pipeline byte-identical)
   research_technicals: "on"     # E16.2 (D76/D78): off | on: the code-rendered `tech …` segment on Research's regime lines (D78 ships on; off = rollback, prompt byte-identical)
+  market_health_context: "on"   # E16.4 (D76/D83): off | on: one code-rendered `Market health (…)` line in Research's market block (D83 ships it on without an experiment; off = rollback, prompt byte-identical)
   scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + the previous evening's options_slow (18:30 vol_term, 23:00 options_daily/vix_futures; E14.2)
     label: Scout
     about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"
@@ -817,7 +854,7 @@ personas:
     chain: auto                 # E13.15 AUTO_CHAINS: exits.mandatory, quant.exit, risk.exit, quant.open, risk.open, quant.revise, quant.propose, broker.execute (D34/D56)
     reads: [candidate, regime, channel_brief, note, vol_term, macro_calendar, position_review, story,
             earnings_history, insider_activity, analyst_recs, fundamentals, scout_read, ex_dividend,
-            retail_sentiment]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read in the compact prompt; E13.17 ex_dividend feeds the exit-watch facts; E14.6 retail_sentiment renders only with retail_sentiment_context on
+            retail_sentiment, market_health]   # == RESEARCH_READS (arc/pipeline/steps.py); E4.8a facts render only with finnhub_context on; E13.8 scout_read in the compact prompt; E13.17 ex_dividend feeds the exit-watch facts; E14.6 retail_sentiment renders only with retail_sentiment_context on; E16.4 market_health only with market_health_context on
     writes: [shortlist, regime, note, portfolio_context, exit_watchlist, position_review]   # E5.9: portfolio_context + portfolio_view/thesis_check notes; E13.17: exit_watchlist + the reviews Research saw
     ttl: 5m                     # never a backlog: a slot missed by 5 min is skipped
     notify: card

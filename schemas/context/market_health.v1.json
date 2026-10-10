@@ -1,0 +1,291 @@
+{
+  "$defs": {
+    "MarketTerm": {
+      "additionalProperties": false,
+      "description": "VIX term structure copied from the fresh ``vol_term`` entry.",
+      "properties": {
+        "ratio_3m_1m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ratio 3M 1M"
+        },
+        "ratio_9d_1m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ratio 9D 1M"
+        },
+        "structure": {
+          "enum": [
+            "contango",
+            "flat",
+            "backwardation"
+          ],
+          "title": "Structure",
+          "type": "string"
+        }
+      },
+      "required": [
+        "structure"
+      ],
+      "title": "MarketTerm",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "E16.4 (D76): the daily market-health read; subject = ``market``.",
+  "properties": {
+    "as_of": {
+      "description": "Session the read describes",
+      "format": "date",
+      "title": "As Of",
+      "type": "string"
+    },
+    "breadth_above_200d": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Breadth Above 200D"
+    },
+    "breadth_above_50d": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Breadth Above 50D"
+    },
+    "breadth_n": {
+      "default": 0,
+      "description": "Active names with fresh technicals",
+      "minimum": 0,
+      "title": "Breadth N",
+      "type": "integer"
+    },
+    "labels": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Labels",
+      "type": "array"
+    },
+    "missing": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing",
+      "type": "array"
+    },
+    "pc_equity": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pc Equity"
+    },
+    "pc_equity_5d": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pc Equity 5D"
+    },
+    "pc_equity_5d_pct_1y": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pc Equity 5D Pct 1Y"
+    },
+    "pc_total_5d": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pc Total 5D"
+    },
+    "pc_total_5d_pct_1y": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pc Total 5D Pct 1Y"
+    },
+    "sources_as_of": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": "Sources As Of",
+      "type": "object"
+    },
+    "squeeze_count": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Squeeze Count"
+    },
+    "term": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MarketTerm"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "vix": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vix"
+    },
+    "vix_pct_1y": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vix Pct 1Y"
+    },
+    "vix_sma50": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vix Sma50"
+    },
+    "vix_vs_sma50_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "vix / vix_sma50 - 1",
+      "title": "Vix Vs Sma50 Pct"
+    },
+    "vvix": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vvix"
+    },
+    "vvix_pct_1y": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vvix Pct 1Y"
+    }
+  },
+  "required": [
+    "as_of"
+  ],
+  "title": "MarketHealthPayload",
+  "type": "object"
+}

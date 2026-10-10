@@ -1942,6 +1942,21 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("on", "off"),
         aliases=("routines.personas.anti_chase", "anti_chase"),
     ),
+    # E16.4 (D76/D44): the code-rendered `Market health (…)` line for Research.
+    # D83: ships on without an experiment (owner); off = rollback, prompt byte-identical.
+    Tunable(
+        key="personas.market_health_context",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E16.4: add one code-rendered 'Market health' line to Research's market "
+        "block (VIX vs 50d + 1y percentile, VVIX, put/call 5d percentile, active-list "
+        "breadth). Context only; never a gate input. off = prompt unchanged.",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "market_health_context"),
+        choices=("off", "on"),
+        aliases=("routines.personas.market_health_context", "market_health_context"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -2184,6 +2199,81 @@ _IV_BACKFILL_TUNABLES: tuple[Tunable, ...] = (
         max=3600,
         hard_ceiling=3600,
     ),
+)
+
+# E16.4 (D76): the `market_health:` label thresholds. They only label a context line
+# (never a gate or pipeline input), so no direction is riskier.
+_MARKET_HEALTH_TUNABLES: tuple[Tunable, ...] = tuple(
+    Tunable(
+        key=f"market_health.{name}",
+        group=Group.ROUTINES,
+        type=typ,
+        description=f"E16.4: {desc}",
+        target=Target.ROUTINES,
+        risk=Risk.NONE,
+        path=("market_health", name),
+        min=lo,
+        max=hi,
+    )
+    for name, typ, lo, hi, desc in (
+        (
+            "vix_stretched_ratio",
+            _F,
+            1.05,
+            3.0,
+            "label vix_stretched_high when VIX >= this x its 50-day mean (labels only).",
+        ),
+        (
+            "vix_stretched_pct",
+            _F,
+            0.5,
+            1.0,
+            "label vix_stretched_high when VIX's 1y percentile >= this (labels only).",
+        ),
+        (
+            "vix_compressed_pct",
+            _F,
+            0.0,
+            0.5,
+            "label vix_compressed when VIX's 1y percentile <= this (labels only).",
+        ),
+        (
+            "pc_fear_pct",
+            _F,
+            0.5,
+            1.0,
+            "label pc_extreme_fear when the equity put/call 5d mean's 1y percentile >= this.",
+        ),
+        (
+            "pc_greed_pct",
+            _F,
+            0.0,
+            0.5,
+            "label pc_extreme_greed when the equity put/call 5d mean's 1y percentile <= this.",
+        ),
+        (
+            "breadth_weak",
+            _F,
+            0.0,
+            1.0,
+            "label breadth_weak when the active list's share above SMA50 is below this.",
+        ),
+        (
+            "breadth_strong",
+            _F,
+            0.0,
+            1.0,
+            "label breadth_strong when the active list's share above SMA50 is above this.",
+        ),
+        (
+            "max_lag_sessions",
+            _I,
+            0,
+            10,
+            "an input whose last value is more sessions old "
+            "than this is stale (its fields None, named in missing).",
+        ),
+    )
 )
 
 # E16.3 (D76/D78): the `anti_chase:` thresholds (a higher stretch/RSI bar, a lower
@@ -2590,6 +2680,7 @@ REGISTRY: dict[str, Tunable] = {
         *_OPTIONS_SLOW_TUNABLES,
         *_IV_BACKFILL_TUNABLES,
         *_ANTI_CHASE_TUNABLES,
+        *_MARKET_HEALTH_TUNABLES,
         *_OPTIONS_FAST_TUNABLES,
         *_CARRYOVER_TUNABLES,
         *_EXPERIMENT_TUNABLES,
@@ -2989,6 +3080,7 @@ _PLAIN_ROUTINE_SECTIONS = (
     ("universe",),  # D64 (E14.7): universe.carryover.*
     ("iv_backfill",),  # E16.1 (D76)
     ("anti_chase",),  # E16.3 (D76/D78)
+    ("market_health",),  # E16.4 (D76)
 )
 # Scalar switches that sit next to the jobs under `personas:` (E4.8a), as `on | off`.
 _PERSONA_SWITCHES = frozenset(
@@ -2999,6 +3091,7 @@ _PERSONA_SWITCHES = frozenset(
         ("personas", "retail_sentiment_context"),  # E14.6
         ("personas", "research_technicals"),  # E16.2
         ("personas", "anti_chase"),  # E16.3
+        ("personas", "market_health_context"),  # E16.4
     }
 )
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.

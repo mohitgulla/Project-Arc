@@ -19,6 +19,11 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from arc.exits.model import ExitModelResult  # noqa: TC001 - pydantic field
+from arc.features.market_health import (
+    IndexHistoryPayload,
+    MarketHealthPayload,
+    PcHistoryPayload,
+)
 from arc.features.snapshot import FeatureSnapshot
 from arc.models import Candidate, CatalystType, ChannelBrief, Proposal, Stance
 from arc.personas.schemas import (
@@ -982,6 +987,11 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("retail_sentiment", RetailSentimentPayload),
     KindSpec("macro_calendar", MacroCalendarPayload),
     KindSpec("ex_dividend", ExDividendPayload),
+    # E16.4 (D76): market-health inputs (Cboe VIX/VVIX closes, subject = index; the
+    # put/call history, subject market) and the daily read itself (subject market).
+    KindSpec("index_history", IndexHistoryPayload),
+    KindSpec("pc_history", PcHistoryPayload),
+    KindSpec("market_health", MarketHealthPayload),
     # E4.8 (D46): Finnhub per-ticker context (subject = ticker)
     KindSpec("earnings_history", EarningsHistoryPayload),
     KindSpec("insider_activity", InsiderActivityPayload),

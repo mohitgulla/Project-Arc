@@ -248,6 +248,9 @@ RESEARCH_READS = [
     # E14.6 (D60): Stocktwits bull/bear per ticker; rendered only with
     # personas.retail_sentiment_context on (one fact per pool line)
     "retail_sentiment",
+    # E16.4 (D76): the daily market-health read; rendered only with
+    # personas.market_health_context on (one line in the market block)
+    "market_health",
 ]  # == routines.yaml research.reads (D30 adds the options-data kinds)
 # E5.9 drop reasons (Research stage; deterministic). Values == ReasonCode values.
 DROP_CONCENTRATION = ReasonCode.DROP_CONCENTRATION.value
@@ -1911,6 +1914,8 @@ def research(ctx: JobContext, env: PipelineEnv) -> JobResult:
         inputs["retail_sentiment"] = sentiment
     if ctx.routines.research_technicals.enabled:  # E16.2: absent when off (prompt unchanged)
         inputs["technicals"] = True
+    if ctx.routines.market_health_context.enabled:  # E16.4: absent when off (prompt unchanged)
+        inputs["market_health"] = True
     # E13.8: the merged idea pool, recorded with the compact prompt's inputs
     inputs["idea_pool"] = [i.model_dump(mode="json") for i in pool.items]
     inputs["candidate_tickers"] = sorted(cands)

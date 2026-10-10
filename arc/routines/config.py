@@ -82,6 +82,7 @@ from arc.context.categories import (
 from arc.context.kinds import KINDS
 from arc.context.store import Supersede
 from arc.context.ttl import Ttl, parse_duration
+from arc.features.market_health import HealthThresholds  # noqa: TC001 - pydantic field
 from arc.monitoring.config import MonitoringSettings
 from arc.routines.conditions import parse_condition
 from arc.universe.tiers import CarryoverSettings
@@ -631,6 +632,7 @@ PERSONA_FLAGS: tuple[str, ...] = (
     "retail_sentiment_context",  # E14.6
     "research_technicals",  # E16.2 (D76/D78)
     "anti_chase",  # E16.3 (D76/D78)
+    "market_health_context",  # E16.4 (D76)
 )
 #: E13.15 (D56 cutover): switches removed with their off paths. Each is always on
 #: now (quant_risk_loop on, scalp_options_tape on, scout_feed on, research_idea_pool
@@ -828,6 +830,20 @@ class ResearchTechnicalsSettings(BaseModel):
     on; ``off`` is the rollback and keeps the Research prompt byte-identical to before
     E16.2). The indicators are always computed and stored on the ``regime`` entry
     (audit); this switch only decides whether Research sees them.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+
+
+class MarketHealthContextSettings(BaseModel):
+    """E16.4 (D76, D44): the code-rendered ``Market health (…)`` line for Research.
+
+    ``enabled`` comes from ``personas.market_health_context: off | on`` (D83 ships it
+    **on**; ``off`` is the rollback: the Research prompt is byte-identical to before
+    E16.4). The ``market_health`` job writes its daily entry whatever this says (audit);
+    the switch only decides whether Research sees it.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1067,6 +1083,12 @@ class RoutinesConfig(BaseModel):
     technicals: TechnicalsSettings = Field(default_factory=TechnicalsSettings)  # E16.2
     # E16.3 (D76/D78): knobs + the ``personas.anti_chase`` flag (as ``enabled``).
     anti_chase: AntiChaseSettings = Field(default_factory=AntiChaseSettings)
+    # E16.4 (D76): the ``personas.market_health_context`` flag (as ``enabled``) and the
+    # ``market_health:`` label thresholds / staleness limit of the daily read.
+    market_health_context: MarketHealthContextSettings = Field(
+        default_factory=MarketHealthContextSettings
+    )
+    market_health: HealthThresholds = Field(default_factory=HealthThresholds)
     # E12.5: knobs + the ``personas.director_diversification`` switch (as ``mode``).
     director_diversification: ResearchDiversificationSettings = Field(
         default_factory=ResearchDiversificationSettings

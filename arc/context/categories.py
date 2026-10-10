@@ -118,6 +118,10 @@ REFERENCE_KINDS: frozenset[str] = frozenset(
         "insider_activity",
         "analyst_recs",
         "fundamentals",
+        # E16.4 (D76): market-health histories + the daily read (derived, no category)
+        "index_history",
+        "pc_history",
+        "market_health",
     }
 )
 

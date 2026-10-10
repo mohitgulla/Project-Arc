@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "PcPoint": {
+      "additionalProperties": false,
+      "description": "One session's Cboe put/call ratios (equity and total).",
+      "properties": {
+        "day": {
+          "format": "date",
+          "title": "Day",
+          "type": "string"
+        },
+        "equity": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Equity"
+        },
+        "total": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total"
+        }
+      },
+      "required": [
+        "day"
+      ],
+      "title": "PcPoint",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Daily Cboe put/call history (from ``options_daily`` + a one-off backfill of\nCboe's dated daily statistics); subject = ``market``.",
+  "properties": {
+    "as_of": {
+      "description": "Date of the last point",
+      "format": "date",
+      "title": "As Of",
+      "type": "string"
+    },
+    "points": {
+      "description": "Oldest first",
+      "items": {
+        "$ref": "#/$defs/PcPoint"
+      },
+      "minItems": 1,
+      "title": "Points",
+      "type": "array"
+    },
+    "source": {
+      "const": "cboe",
+      "default": "cboe",
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "as_of",
+    "points"
+  ],
+  "title": "PcHistoryPayload",
+  "type": "object"
+}
