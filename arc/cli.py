@@ -292,6 +292,10 @@ def _make_parser() -> argparse.ArgumentParser:
 
     add_betas_parser(sub)
 
+    from arc.ingest.market_health_cli import add_market_health_parser
+
+    add_market_health_parser(sub)
+
     from arc.remote.cli import add_remote_parser
 
     add_remote_parser(sub)
@@ -840,6 +844,11 @@ def main(argv: list[str] | None = None) -> int:
 
         _log_to_stderr()
         return run_betas(args)
+    if args.command == "market-health":
+        from arc.ingest.market_health_cli import run_market_health
+
+        _log_to_stderr()
+        return run_market_health(args)
     if args.command == "store":
         from arc.store.identity_cli import run_store
 

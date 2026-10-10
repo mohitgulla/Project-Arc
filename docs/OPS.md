@@ -2396,3 +2396,42 @@ waits for the expiration), `no_settle` (expired but no settlement close), `skipp
 
 Exit policy v1 vs v2 report (report only): `scripts/exit_policy_report.py`, output and
 keep/rollback verdict in `docs/RESEARCH/exit-policy-v2.md`.
+
+### 5.39 Market health line (E16.4, D76, D44)
+
+The `market_health` job (23:15 ET after the 23:00 `options_daily`, catch-up 08:20, only
+when the evening slot did not write that session) writes one `market_health` entry
+(subject `market`, ttl 1 session) for the session it reads. Pure math in
+`arc/features/market_health.py`; fetch/store in `arc/ingest/market_health.py`. Context
+only: never a gate input; `market_guard`'s VIX ≥ 35 / backwardation rule is unchanged.
+
+- **VIX / VVIX:** Cboe's free `<INDEX>_History.csv` (the files `vol_term` reads), last
+  300 closes stored as `index_history` (subject = index). `vix_sma50` = mean of the last
+  50 closes (today included); `*_pct_1y` = share of the previous 252 closes strictly
+  below today's (min 120 prior, else None).
+- **Put/call:** `pc_history` (subject `market`) = our `options_daily` rows plus a one-off
+  backfill (Cboe's historical put/call CSVs stop in Oct 2019; the dated daily JSON goes
+  back to 2023). `pc_*_5d` = mean of the last 5 sessions; its percentile ranks today's
+  5-day mean among the previous 252 five-day means.
+- **Breadth:** share of today's active list whose `regime.technicals` (E16.2, no extra
+  data calls) has close > SMA50 / > SMA200, plus the `squeeze_on` count. Names without
+  technicals within `max_lag_sessions` are left out (`breadth_n` says how many counted).
+- **Staleness:** an input whose last value is more than `market_health.max_lag_sessions`
+  (2) sessions before `as_of` gives None for its fields and a line in `missing`; nothing
+  is carried forward. The evening slot skips while Cboe's VIX CSV does not reach the
+  session yet.
+- **Labels** (thresholds in the `market_health:` block, runtime-tunable, labels only):
+  `vix_stretched_high` (VIX ≥ 1.2 × SMA50 or pct ≥ 0.8), `vix_compressed` (pct ≤ 0.2),
+  `pc_extreme_fear` / `pc_extreme_greed` (equity 5d pct ≥ 0.9 / ≤ 0.1), `breadth_weak`
+  (< 0.4 above SMA50), `breadth_strong` (> 0.7).
+
+Research sees one code-rendered line in its market block only with
+`personas.market_health_context: on` (default off; strategy lane, draft XP-13 arm t5):
+
+    Market health (10-09): VIX 14.8 (-4% vs 50d, 1y p7, compressed) · VVIX 85 (p4) · P/C eq 5d 0.59 (p55)
+
+Commands (rehearse on a scratch `--db`):
+
+    arc market-health backfill-pc [--since D] [--until D] [--pace 0.5] [--db P]   # resumable, saves every 20 sessions
+    arc market-health show [--json] [--db P]                                       # read-only
+    arc routines run market_health --db P --no-slack

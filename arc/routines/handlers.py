@@ -446,6 +446,103 @@ def options_daily_source(ctx: JobContext) -> JobResult:
     )
 
 
+def market_health_source(
+    ctx: JobContext,
+    fetch_index: Callable[[str], Any] | None = None,
+) -> JobResult:
+    """E16.4 (D76): the daily market-health read -> one ``market_health`` entry.
+
+    Fetches Cboe's VIX / VVIX history CSVs (stored as ``index_history``, subject =
+    index), refreshes the ``pc_history`` series from ``options_daily``, reads the newest
+    ``vol_term`` and each active name's ``regime.technicals`` (breadth), and writes
+    :func:`arc.features.market_health.compute_market_health` for the session the slot
+    reads (:func:`arc.utils.calendar.completed_session`). A stale input is ``None`` +
+    named in ``missing``, never carried forward. Context only; never a gate input.
+
+    The evening slot skips while Cboe's VIX CSV does not reach the session yet; the
+    morning catch-up writes whatever is fresh (the rest listed in ``missing``).
+    """
+    from arc.features.market_health import (
+        HISTORY_KEEP,
+        IndexHistoryPayload,
+        PcHistoryPayload,
+        compute_market_health,
+        market_health_line,
+    )
+    from arc.ingest.market_health import (
+        HEALTH_INDICES,
+        PC_SUBJECT,
+        fetch_index_history,
+        gather_inputs,
+        latest_payload,
+        session_lag,
+    )
+    from arc.universe.tiers import active_tickers
+    from arc.utils.calendar import completed_session
+
+    th = ctx.routines.market_health
+    slot = ctx.scheduled_for.astimezone(ET)
+    day = completed_session(slot)
+    fetch = fetch_index or fetch_index_history
+    series: dict[str, list[tuple[_dt.date, float]]] = {}
+    fetch_errors: list[str] = []
+    for idx in HEALTH_INDICES:
+        hist: IndexHistoryPayload | None = None
+        try:
+            hist = fetch(idx)
+        except Exception as exc:  # noqa: BLE001 - one index never stops the read
+            fetch_errors.append(f"{idx}: {type(exc).__name__}")
+            log.warning("market_health.index_fetch_failed", index=idx, error=str(exc)[:200])
+        if hist is not None:
+            if idx == "VIX" and hist.as_of < day and day == slot.date():
+                msg = f"not published yet: Cboe VIX history ends {hist.as_of}, want {day}"
+                raise JobSkippedError(msg)
+            _data_result(
+                ctx, f"index_history:{idx}", "cboe", hist.model_dump(mode="json"), len(hist.closes)
+            )
+            ctx.write("index_history", idx, hist)
+        else:
+            raw = latest_payload(ctx.conn, "index_history", idx)
+            hist = IndexHistoryPayload.model_validate(raw) if raw else None
+        if hist is not None:
+            series[idx] = [(c.day, c.close) for c in hist.closes]
+
+    tickers = active_tickers(ctx.conn, ctx.settings, ctx.now)
+    inp = gather_inputs(ctx.conn, as_of=day, tickers=tickers, max_lag_sessions=th.max_lag_sessions)
+    if inp.pc:
+        points = inp.pc[-HISTORY_KEEP:]
+        ctx.write("pc_history", PC_SUBJECT, PcHistoryPayload(as_of=points[-1].day, points=points))
+    payload = compute_market_health(
+        as_of=day,
+        vix=series.get("VIX", ()),
+        vvix=series.get("VVIX", ()),
+        pc=inp.pc,
+        term=inp.term,
+        technicals=inp.technicals,
+        technicals_as_of=inp.technicals_as_of,
+        lag=session_lag,
+        thresholds=th,
+    )
+    payload.missing.extend(f"fetch {e}" for e in fetch_errors)
+    _data_result(ctx, "market_health", "derived", payload.model_dump(mode="json"), len(inp.pc))
+    ctx.write("market_health", PC_SUBJECT, payload)
+    line = market_health_line(payload.model_dump(mode="json"))
+    if payload.missing:
+        line += f" · missing {len(payload.missing)}"
+    return JobResult(
+        summary=line,
+        metrics={
+            "vix": payload.vix,
+            "vix_pct_1y": payload.vix_pct_1y,
+            "pc_equity_5d_pct_1y": payload.pc_equity_5d_pct_1y,
+            "breadth_n": payload.breadth_n,
+            "pc_sessions": len(inp.pc),
+            "missing": len(payload.missing),
+            "labels": ",".join(payload.labels),
+        },
+    )
+
+
 def vix_futures_source(ctx: JobContext) -> JobResult:
     """E13.5 (D56): CFE VX futures settlements -> one ``vx_curve`` entry."""
     from arc.context.kinds import VxCurvePayload
@@ -2785,6 +2882,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "vol_term": "arc.routines.handlers:vol_term_source",
     "options_daily": "arc.routines.handlers:options_daily_source",  # E13.5 (D56)
     "vix_futures": "arc.routines.handlers:vix_futures_source",
+    "market_health": "arc.routines.handlers:market_health_source",  # E16.4 (D76)
     "options_fast": "arc.routines.handlers:options_fast_source",  # E13.6 (D56)
     "market_movers": "arc.routines.handlers:market_movers_source",  # E14.3 (D60)
     "macro_calendar": "arc.routines.handlers:macro_calendar_source",

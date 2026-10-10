@@ -195,6 +195,7 @@ def research_input_from_context(
     exit_rules: Sequence[str] = (),
     retail_sentiment: Mapping[str, str] | None = None,
     technicals: bool = False,
+    market_health: bool = False,
 ) -> ResearchInput:
     """Research reads every active ``candidate`` and ``regime`` entry, plus up to
     *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
@@ -238,6 +239,9 @@ def research_input_from_context(
 
     E16.2 (D76/D78): *technicals* (recorded only with ``personas.research_technicals``
     on) appends :func:`tech_segment` to each regime line.
+
+    E16.4 (D76): *market_health* (recorded only with ``personas.market_health_context``
+    on) adds the code-rendered ``Market health (…)`` line to the market lines.
     """
     entries = snapshot.of_kind("candidate")
     if candidate_tickers is not None:
@@ -285,7 +289,9 @@ def research_input_from_context(
             regime_lines="\n".join(
                 regime_line(t, regime[t], technicals=technicals) for t in sorted(regime)
             ),
-            market_lines=market_lines(market_data_from_context(snapshot)),
+            market_lines=market_lines(
+                market_data_from_context(snapshot, market_health=market_health)
+            ),
             notes_lines="\n".join(note_line(n) for n in notes_out),
             exit_block=exit_block,
             exit_rules=tuple(exit_rules),
@@ -508,6 +514,11 @@ def market_lines(data: Mapping[str, Any]) -> str:
         keys = ("vix9d", "vix", "vix3m", "vvix", "ratio_9d_1m", "ratio_3m_1m")
         nums = " · ".join(f"{k} {_num(vt.get(k))}" for k in keys if vt.get(k) is not None)
         out.append(f"Vol term ({vt.get('as_of', '?')}): {vt.get('structure', '?')} · {nums}")
+    mh = data.get("market_health")
+    if mh:  # E16.4 (D76): only present with personas.market_health_context on
+        from arc.features.market_health import market_health_line
+
+        out.append(market_health_line(mh))
     mc = data.get("macro_calendar")
     if mc:
         events = sorted(mc.get("events") or [], key=lambda e: str(e.get("date", "")))
@@ -1476,15 +1487,26 @@ def _event_risk_block(event_risk_json: str) -> str:
     )
 
 
-def market_data_from_context(snapshot: ContextSnapshot, *, unusual: bool = False) -> dict[str, Any]:
+def market_data_from_context(
+    snapshot: ContextSnapshot, *, unusual: bool = False, market_health: bool = False
+) -> dict[str, Any]:
     """D30 options data in a snapshot: the market-wide kinds.
 
     Empty kinds are left out, so a prompt built before E4.5 data exists is unchanged.
     *unusual* (a pre-D56 replay only) adds the flagged ``unusual_options`` entries the
-    removed E4.5 detector wrote (D56 dropped the kind).
+    removed E4.5 detector wrote (D56 dropped the kind). *market_health* (E16.4,
+    ``personas.market_health_context`` on) adds the ``market_health`` entry.
     """
     out: dict[str, Any] = {}
-    for kind in ("vol_term", "macro_calendar"):
+    kinds = (
+        ("vol_term", "macro_calendar", "market_health")
+        if market_health
+        else (
+            "vol_term",
+            "macro_calendar",
+        )
+    )
+    for kind in kinds:
         entry = snapshot.latest(kind, "market")
         if entry is not None:
             out[kind] = entry.payload

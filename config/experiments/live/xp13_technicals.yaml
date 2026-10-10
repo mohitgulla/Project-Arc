@@ -14,6 +14,7 @@
 #   t2       technicals on,  anti_chase off           (context only, no filter)
 #   t3       technicals off, anti_chase on            (filter only)
 #   t4       technicals on,  anti_chase on + vwap on  (adds the intraday VWAP stretch)
+#   t5       control + personas.market_health_context on (E16.4: the Market health line)
 # A t1 "win" over control is a rollback signal for D78; t2/t3 isolate each half.
 #
 # Backtest (E7.5 harness, `backtest.entry_filter`): docs/RESEARCH/anti-chase-backtest.md.
@@ -56,6 +57,12 @@ arms:
         routines:
           anti_chase:
             vwap: "on"
+    # E16.4 (D76): the market-health line for Research on (production keeps it off).
+    t5:
+      overlay:
+        routines:
+          personas:
+            market_health_context: "on"
 non_inferiority_margin: 0.5
 proposed_by: owner
 backtest_ref: "docs/RESEARCH/anti-chase-backtest.md (E16.3; filter only, technicals context not backtestable)"
