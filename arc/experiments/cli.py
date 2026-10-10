@@ -505,7 +505,7 @@ def run_experiment(args: argparse.Namespace) -> int:
             return _run_eval(args, store, conn)
         elif cmd == "plan":
             return _run_plan(args, store, conn)
-        elif cmd in ("start", "pair", "arms-tick"):
+        elif cmd in ("start", "pair", "arms-tick", "repair-ledger"):
             from arc.experiments.cli_arms import run_arm_command
 
             return run_arm_command(args, conn)

@@ -12,6 +12,10 @@ into :class:`VirtualState`:
 * ``fill``: every broker fill of the arm's account, as a premium cash flow
   (sells +, buys -; fees included). Sale proceeds settle on the next session
   (T+1), which is what a cash account may spend before then (``settled``).
+  Keyed on ``order:symbol:cumulative qty`` and booking only the increment over
+  what the ledger holds for that leg (E10.2c: Alpaca's leg ``filled_at`` drifts).
+* ``adjust``: a compensating row ``arc experiment repair-ledger`` appends for a
+  fill booked twice before E10.2c (:mod:`arc.experiments.repair`).
 
 Virtual equity = virtual cash + the market value of the arm's broker positions
 (the account was flat at t0, so every position is the arm's own); it moves only
@@ -51,9 +55,13 @@ __all__ = [
     "LedgerRow",
     "VirtualBroker",
     "VirtualState",
+    "append_row",
+    "booked",
     "fill_amount",
+    "fill_ref",
     "legacy_reservations",
     "open_account",
+    "order_symbol",
     "record_fills",
     "release_legacy",
     "replay",
@@ -63,7 +71,7 @@ __all__ = [
 log = structlog.get_logger(__name__)
 
 MULTIPLIER = Decimal(100)
-LedgerKind = Literal["open", "legacy_hold", "legacy_release", "fill"]
+LedgerKind = Literal["open", "legacy_hold", "legacy_release", "fill", "adjust"]
 
 
 class LedgerRow(BaseModel):
@@ -132,6 +140,11 @@ def _insert(conn: sqlite3.Connection, row: LedgerRow) -> bool:
     return cur.rowcount > 0
 
 
+def append_row(conn: sqlite3.Connection, row: LedgerRow) -> bool:
+    """Append *row* unless its ``(arm_id, kind, ref)`` is already booked (no commit)."""
+    return _insert(conn, row)
+
+
 def rows(conn: sqlite3.Connection, arm_id: str) -> list[LedgerRow]:
     out: list[LedgerRow] = []
     for r in conn.execute(
@@ -197,8 +210,42 @@ def fill_amount(fill: Fill, *, fee_per_contract: Decimal = Decimal(0)) -> Decima
     return sign * gross - fee_per_contract * fill.qty
 
 
-def _fill_ref(f: Fill) -> str:
-    return f"{f.broker_order_id}:{f.symbol}:{f.filled_at.isoformat()}:{f.qty}:{f.price}"
+def _qty_text(q: Decimal) -> str:
+    """Canonical text of a contract count (``1``, ``1.0`` and ``1E0`` are one key)."""
+    return f"{abs(q).normalize():f}"
+
+
+def fill_ref(broker_order_id: str, symbol: str, cum_qty: Decimal) -> str:
+    """The ledger ref of a leg fill: stable fields only (E10.2c).
+
+    ``<broker_order_id>:<symbol>:<cumulative filled qty>``. Alpaca's mleg leg
+    ``filled_at`` drifts by microseconds between calls, so neither the time nor the
+    (average) price may be in the key. Shared mode (E15.2) books FILL activities by
+    activity id instead; this key stays the dedicated-mode one.
+    """
+    return f"{broker_order_id}:{symbol}:{_qty_text(cum_qty)}"
+
+
+def order_symbol(ref: str) -> tuple[str, str]:
+    """``(broker_order_id, symbol)`` of a ``fill`` / ``adjust`` ref, any format.
+
+    Pre-E10.2c refs are ``order:symbol:<filled_at iso>:qty:price``; the order id
+    (a UUID) and the OCC symbol never contain a colon, so the prefix is shared.
+    """
+    order, symbol, *_ = ref.split(":", 2)
+    return order, symbol
+
+
+def booked(ledger: Iterable[LedgerRow]) -> dict[tuple[str, str], tuple[Decimal, Decimal]]:
+    """``(order, symbol)`` -> (signed contracts, cash) already booked by fill + adjust rows."""
+    out: dict[tuple[str, str], tuple[Decimal, Decimal]] = {}
+    for r in ledger:
+        if r.kind not in ("fill", "adjust"):
+            continue
+        key = order_symbol(r.ref)
+        qty, cash = out.get(key, (Decimal(0), Decimal(0)))
+        out[key] = (qty + Decimal(str(r.detail.get("qty", "0"))), cash + r.amount)
+    return out
 
 
 def record_fills(
@@ -208,26 +255,50 @@ def record_fills(
     *,
     fee_per_contract: Decimal = Decimal(0),
 ) -> int:
-    """Append each new broker fill (idempotent per fill). Returns how many were new."""
+    """Book each broker leg fill's *increment* (idempotent). Returns how many rows were new.
+
+    A :class:`Fill` carries the leg's cumulative ``filled_qty`` and average price.
+    The row books what the ledger does not hold yet for ``(order, symbol)``: the
+    contracts above those already booked, and the cumulative cash flow less the
+    cash already booked, so a partial then full fill totals the full fill exactly.
+    A re-fetch of a fill already booked (same or lower cumulative qty, any
+    ``filled_at`` drift) books nothing.
+    """
     n = 0
     with conn:
+        have = booked(rows(conn, arm_id))
         for f in sorted(fills, key=lambda x: (x.filled_at, x.broker_order_id, x.symbol)):
-            amount = fill_amount(f, fee_per_contract=fee_per_contract)
+            key = (f.broker_order_id, f.symbol)
+            sign = Decimal(-1) if f.side.lower().startswith("sell") else Decimal(1)
+            cum_qty = sign * abs(f.qty)
+            cum_amount = fill_amount(f, fee_per_contract=fee_per_contract)
+            qty0, cash0 = have.get(key, (Decimal(0), Decimal(0)))
+            if abs(cum_qty) <= abs(qty0):
+                continue
+            amount = cum_amount - cash0
             day = f.filled_at.astimezone(ET).date()
             settles = next_session(day) if amount > 0 else day
-            signed = f.qty if not f.side.lower().startswith("sell") else -f.qty
-            n += _insert(
+            new = _insert(
                 conn,
                 LedgerRow(
                     arm_id=arm_id,
                     kind="fill",
-                    ref=_fill_ref(f),
+                    ref=fill_ref(f.broker_order_id, f.symbol, f.qty),
                     amount=amount,
                     settles_on=settles,
                     at=f.filled_at,
-                    detail={"symbol": f.symbol, "qty": str(signed), "price": str(f.price)},
+                    detail={
+                        "symbol": f.symbol,
+                        "qty": str(cum_qty - qty0),
+                        "price": str(f.price),
+                        "cum_qty": str(cum_qty),
+                        "cum_amount": str(cum_amount),
+                    },
                 ),
             )
+            if new:
+                have[key] = (cum_qty, cum_amount)
+                n += 1
     return n
 
 
@@ -255,7 +326,7 @@ def replay(ledger: Sequence[LedgerRow], *, as_of: _dt.date) -> VirtualState:
             holds[r.ref] = r.amount
         elif r.kind == "legacy_release":
             released.add(r.ref)
-        elif r.kind == "fill":
+        elif r.kind in ("fill", "adjust"):
             day = r.at.astimezone(ET).date()
             if day > as_of:
                 continue
@@ -265,8 +336,11 @@ def replay(ledger: Sequence[LedgerRow], *, as_of: _dt.date) -> VirtualState:
             if day < as_of:
                 cash_sod += r.amount
                 held_sod[sym] += qty
-            if r.amount > 0 and r.settles_on is not None and r.settles_on > as_of:
+            pending = r.settles_on is not None and r.settles_on > as_of
+            if pending and (r.amount > 0 or r.kind == "adjust"):
+                # an adjust nets out the unsettled proceeds of the fill it compensates
                 unsettled += r.amount
+    unsettled = max(unsettled, Decimal(0))
     open_legacy = tuple(sorted(set(holds) - released))
     return VirtualState(
         arm_id=arm_id,

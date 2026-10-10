@@ -96,6 +96,21 @@ def add_arm_parsers(esub: Any, common: Any, local_actor: str) -> None:
         help="With --dry-run: preview this (draft/registered) experiment's arms instead",
     )
     at.add_argument("--since", default=None, help="With --dry-run: tick window start (ISO)")
+    rl = common(
+        esub.add_parser(
+            "repair-ledger",
+            help="E10.2c: net out double-booked fills in the arms' virtual ledgers (append-only)",
+        )
+    )
+    rl.add_argument("experiment_id")
+    rl.add_argument(
+        "--arm-db",
+        action="append",
+        default=None,
+        help="Arm store to repair (repeatable; default: the stores control recorded at t0)",
+    )
+    rl.add_argument("--dry-run", action="store_true", help="Print the repair; write nothing")
+    rl.add_argument("--now", default=None, help="Re-evaluate as of this ISO time (default: now)")
 
 
 def _parse_now(text: str | None, default: _dt.datetime | None = None) -> _dt.datetime:
@@ -356,6 +371,73 @@ def _arms_tick(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     return 1 if failed else 0
 
 
+def _repair_ledger(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """``repair-ledger`` (E10.2c): adjust rows + restated snapshots, then a fresh report."""
+    from arc.control.effective import effective_settings, experiments_config
+    from arc.experiments.arms import read_identity
+    from arc.experiments.evaluate import build_report, store_report
+    from arc.experiments.paired import paired_view
+    from arc.experiments.repair import repair_ledger
+    from arc.experiments.store import ExperimentStore
+    from arc.store.db import connect_ro
+
+    store = ExperimentStore(conn)
+    st = store.require(args.experiment_id)
+    paths = (
+        [Path(p).resolve() for p in args.arm_db]
+        if args.arm_db
+        else list(dict(sorted(_arm_stores(conn, st.experiment_id).items())).values())
+    )
+    if not paths:
+        _err("arc experiment repair-ledger: no arm stores (pass --arm-db)")
+        return 2
+    payload: list[dict[str, Any]] = []
+    for path in paths:
+        if not path.is_file():
+            _err(f"arc experiment repair-ledger: arm store {path} not found")
+            return 2
+        from arc.experiments.runner import _connect
+
+        arm = connect_ro(path) if args.dry_run else _connect(path)
+        try:
+            ident = read_identity(arm)
+            if ident is None or ident.experiment_id != st.experiment_id:
+                found = "no arm_identity" if ident is None else ident.experiment_id
+                _err(f"arc experiment repair-ledger: {path} is not an arm of {st.experiment_id} "
+                     f"({found})")  # fmt: skip
+                return 2
+            rep = repair_ledger(arm, ident.arm_id, dry_run=args.dry_run)
+        finally:
+            arm.close()
+        lines = rep.lines()
+        payload.append({"arm_store": str(path), "lines": lines})
+        if not args.json:
+            _out("\n".join(lines))
+    if not args.dry_run and st.running is not None:
+        from arc.experiments.cli import report_lines
+
+        now = _parse_now(args.now)
+        cfg = experiments_config(effective_settings(conn))
+        with paired_view(conn, paths) as view:
+            report = build_report(view, st, cfg, now=now, aa_sigma=store.aa_sigma())
+        with conn:
+            rid = store_report(conn, report, run_id="repair-ledger")
+        payload.append({"report_id": rid, "series": [r.model_dump(mode="json")
+                                                     for r in report.series]})  # fmt: skip
+        if not args.json:
+            _out(f"stored report #{rid} on the restated snapshots:")
+            _out("\n".join(report_lines(report)))
+    if args.json:
+        _out(json.dumps(payload, indent=2, default=str))
+    return 0
+
+
+def _arm_stores(conn: sqlite3.Connection, experiment_id: str) -> dict[str, Path]:
+    from arc.experiments.arms import arm_stores
+
+    return arm_stores(conn, experiment_id)
+
+
 def run_arm_command(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     from arc.experiments.runner import ArmStartError
 
@@ -365,6 +447,8 @@ def run_arm_command(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
             return _start(args, conn)
         if cmd == "pair":
             return _pair(args, conn)
+        if cmd == "repair-ledger":
+            return _repair_ledger(args, conn)
         return _arms_tick(args, conn)
     except (ArmStartError, ValueError) as exc:
         _err(f"arc experiment {cmd}: {exc}")

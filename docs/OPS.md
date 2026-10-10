@@ -1547,6 +1547,19 @@ The treatment arm is the same trading loop on its own paper account
 - Evaluation reads arm rows through `arc.experiments.paired.paired_view`: arm
   stores ATTACHed read-only, `arm_id` projected per store. Nothing is copied
   into the control store (D32 counts and Tower stay control-only).
+- Fill ledger (E10.2c): a leg fill is keyed `order:symbol:cumulative qty` and
+  books only the increment over what the ledger already holds for that leg, so a
+  re-fetch (Alpaca's mleg leg `filled_at` drifts by µs between calls) books
+  nothing and a partial → full fill totals the full fill. Arm stores booked
+  before the fix can hold a fill twice; repair them (append-only `adjust` rows,
+  restated EOD `pnl_snapshots`, then a fresh stored report in control):
+
+      arc experiment repair-ledger XP-10 --db <control> --dry-run   # print, write nothing
+      arc experiment repair-ledger XP-10 --db <control> [--arm-db <arm store>]
+
+  `--arm-db` defaults to the stores control recorded at t0. Rehearse on
+  `.backup` copies first (repoint `routine_state experiment_arm:<arm>` in the
+  control copy, or pass `--arm-db`); a live run needs the owner's ok.
 
 ### 5.20 Strategy-lane CI check: two PR lanes (E10.7, D44)
 
