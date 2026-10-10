@@ -514,7 +514,7 @@
       },
       "ArmSummary": {
         "additionalProperties": false,
-        "description": "Per-arm numbers from t0 (reported for the owner; no verdict reads them).",
+        "description": "Per-arm numbers from t0 (reported for the owner; no verdict reads them).\n\nD69 (E15.5): in a multi-arm (``report_version`` 2) report this is the all-arms row\n(:data:`ArmReport`); the fields below ``mean_slippage_bps`` are filled there and\nomitted from a one-treatment (v1) report, whose JSON stays byte-identical.",
         "properties": {
           "arm": {
             "title": "Arm",
@@ -530,6 +530,54 @@
               }
             ],
             "title": "Arm Id"
+          },
+          "cross_arm_conflicts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2: cross_arm_conflict refusals since t0",
+            "title": "Cross Arm Conflicts"
+          },
+          "cum_pnl_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2: total P&L / t0 equity (fraction)",
+            "title": "Cum Pnl Pct"
+          },
+          "daily_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2: mean daily return (fraction of t0 equity)",
+            "title": "Daily Mean"
+          },
+          "daily_sd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2: sd of daily returns (fraction)",
+            "title": "Daily Sd"
           },
           "executions": {
             "title": "Executions",
@@ -558,13 +606,55 @@
             "title": "Orders",
             "type": "integer"
           },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2: 1 = best cumulative net P&L %",
+            "title": "Rank"
+          },
           "sessions": {
             "title": "Sessions",
             "type": "integer"
           },
+          "sortino": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2: annualised",
+            "title": "Sortino"
+          },
           "total_pnl": {
             "title": "Total Pnl",
             "type": "number"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "continue",
+                  "win",
+                  "loss",
+                  "futility"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2: the arm's Control-vs-arm verdict",
+            "title": "Verdict"
           },
           "worst_day": {
             "anyOf": [
@@ -4621,7 +4711,7 @@
       },
       "ExperimentReport": {
         "additionalProperties": false,
-        "description": "One evaluation of one experiment (stored append-only in ``experiment_reports``).",
+        "description": "One evaluation of one experiment (stored append-only in ``experiment_reports``).\n\n``report_version`` 1: one treatment (D44). ``report_version`` 2 (D69, E15.5): K > 1\ntreatments. A v2 report adds ``pairwise``, ``omnibus`` and ``headline_arm`` (omitted\nfrom v1 JSON) and fills the all-arms fields of ``arms`` (Control first, then t1..tK).\nIts top-level ``primary`` / ``secondary`` / ``series`` are the **headline** pair\n(Control vs the best-ranked arm, ``headline_arm``) so one-line surfaces keep a\nsingle number; verdicts live per arm in ``pairwise``. ``calibration`` is pooled\nover the Control-vs-Ti pairs.",
         "properties": {
           "alpha": {
             "title": "Alpha",
@@ -4694,6 +4784,18 @@
             "title": "Experiment Id",
             "type": "string"
           },
+          "headline_arm": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2: the arm the top-level primary compares",
+            "title": "Headline Arm"
+          },
           "kind": {
             "$ref": "#/components/schemas/ExperimentKind"
           },
@@ -4720,6 +4822,32 @@
             "title": "Missing Sessions",
             "type": "array"
           },
+          "omnibus": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Omnibus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2"
+          },
+          "pairwise": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PairReport"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v2: Control vs Ti (verdicts, Holm) then Ti vs Tj (descriptive)",
+            "title": "Pairwise"
+          },
           "power": {
             "title": "Power",
             "type": "number"
@@ -4739,8 +4867,11 @@
             "title": "Registered Hash"
           },
           "report_version": {
-            "const": 1,
             "default": 1,
+            "enum": [
+              1,
+              2
+            ],
             "title": "Report Version",
             "type": "integer"
           },
@@ -7913,6 +8044,39 @@
         "title": "NoteView",
         "type": "object"
       },
+      "Omnibus": {
+        "additionalProperties": false,
+        "description": "D69: \"does any treatment differ from control?\" = the Holm-adjusted minimum p.",
+        "properties": {
+          "differs": {
+            "default": false,
+            "title": "Differs",
+            "type": "boolean"
+          },
+          "k": {
+            "description": "Treatments tested",
+            "title": "K",
+            "type": "integer"
+          },
+          "p_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "min Holm-adjusted p over the K pairs",
+            "title": "P Value"
+          }
+        },
+        "required": [
+          "k"
+        ],
+        "title": "Omnibus",
+        "type": "object"
+      },
       "OpsView": {
         "additionalProperties": false,
         "properties": {
@@ -8533,6 +8697,228 @@
           "activity_since"
         ],
         "title": "OverviewResponse",
+        "type": "object"
+      },
+      "PairReport": {
+        "additionalProperties": false,
+        "description": "D69 (E15.5): one pairwise comparison of a multi-arm experiment.\n\n``control_vs_treatment`` pairs carry the verdict: the primary metric (paired daily\nnet P&L diff of ``b`` minus ``a``, fraction of t0 equity), its always-valid CI with\nthe p next to it, the Holm-adjusted p across the K treatments, and the Sortino\nnon-inferiority. ``treatment_vs_treatment`` pairs (Ti vs Tj) are descriptive only\n(``descriptive`` true, ``verdict`` None), except in an A/A, where every pair enters\nthe harness check (``holm_p`` is then adjusted over all pairs).",
+        "properties": {
+          "a": {
+            "description": "Baseline arm (control, or Ti for Ti vs Tj)",
+            "title": "A",
+            "type": "string"
+          },
+          "arm_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "b's arm_id",
+            "title": "Arm Id"
+          },
+          "b": {
+            "description": "Compared arm; the difference is b - a",
+            "title": "B",
+            "type": "string"
+          },
+          "ci": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always-valid (mSPRT) CI, level 1-alpha"
+          },
+          "decided_day": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Session the arm stopped on (its series ends there)",
+            "title": "Decided Day"
+          },
+          "descriptive": {
+            "description": "True = no verdict (Ti vs Tj)",
+            "title": "Descriptive",
+            "type": "boolean"
+          },
+          "holm_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Holm-adjusted p (control pairs: over the K treatments; A/A: all pairs)",
+            "title": "Holm P"
+          },
+          "kind": {
+            "enum": [
+              "control_vs_treatment",
+              "treatment_vs_treatment"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          },
+          "missing_sessions": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Missing Sessions",
+            "type": "array"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "p_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always-valid mSPRT p (dual of ci)",
+            "title": "P Value"
+          },
+          "sample_sd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sample sd of the daily diff (calibration)",
+            "title": "Sample Sd"
+          },
+          "secondary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Secondary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sortino (control pairs only)"
+          },
+          "series": {
+            "description": "Control pairs: the paired sessions (control = a)",
+            "items": {
+              "$ref": "#/components/schemas/SessionRow"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "sigma": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sigma"
+          },
+          "sigma_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "aa",
+                  "running_corrected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sigma Source"
+          },
+          "tau": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tau"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "continue",
+                  "win",
+                  "loss",
+                  "futility"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None for descriptive pairs",
+            "title": "Verdict"
+          },
+          "verdict_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict Reason"
+          }
+        },
+        "required": [
+          "kind",
+          "a",
+          "b",
+          "descriptive",
+          "n",
+          "mean",
+          "sigma",
+          "sigma_source",
+          "tau"
+        ],
+        "title": "PairReport",
         "type": "object"
       },
       "PayoffPoint": {

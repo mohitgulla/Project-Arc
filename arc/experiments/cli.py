@@ -78,6 +78,16 @@ def add_experiment_parser(sub: argparse._SubParsersAction[argparse.ArgumentParse
     ev = common(esub.add_parser("evaluate", help="Evaluate running experiments; apply verdicts"))
     ev.add_argument("experiment_id", nargs="?", default=None)
     ev.add_argument("--now", default=None, help="Evaluate as of this ISO time (default: now)")
+    pl = common(
+        esub.add_parser(
+            "plan", help="D69: sessions needed for K arms with Holm at the A/A sigma (read-only)"
+        )
+    )
+    pl.add_argument("spec", help="config/experiments/live/<x>.yaml, or a stored experiment id")
+    pl.add_argument("--sigma", type=float, default=None, help="sigma of d_t (default: A/A's)")
+    pl.add_argument(
+        "--effect", type=float, default=None, help="daily effect to detect (default: spec mde)"
+    )
     # E10.2 arm runner: start | pair | arms-tick
     from arc.experiments.cli_arms import add_arm_parsers
 
@@ -186,6 +196,8 @@ def report_lines(r: ExperimentReport) -> list[str]:
             f"fills {a.filled_executions}/{a.executions}  "
             f"slippage {'-' if a.mean_slippage_bps is None else f'{a.mean_slippage_bps:.1f} bps'}"
         )
+    if r.multi_arm:
+        lines += _multi_arm_lines(r)
     c = r.calibration
     lines.append(
         f"  calibration: sigma {_pct(c.sigma)}  MDE "
@@ -222,6 +234,47 @@ def report_lines(r: ExperimentReport) -> list[str]:
     return lines
 
 
+def _multi_arm_lines(r: ExperimentReport) -> list[str]:
+    """D69 v2 sections: the all-arms table (ranked) and every pair (p next to each CI)."""
+    lines = [
+        f"  headline arm {r.headline_arm} (top-level primary/secondary/series = control vs it)",
+        "  all arms (ranked by primary; Ti vs control):",
+        "    rank arm        cum P&L %  daily mean ± sd        Sortino  max DD  orders  "
+        "conflicts  sessions  verdict",
+    ]
+    for a in sorted(r.arms, key=lambda x: x.rank or 0):
+        lines.append(
+            f"    {a.rank or '-':>4} {a.arm:9} {_pct(a.cum_pnl_pct, 2):>10}  "
+            f"{_pct(a.daily_mean)} ± {_pct(a.daily_sd).lstrip('+')}  "
+            f"{_num(a.sortino):>7}  {a.max_drawdown:6.2%}  {a.orders:6}  "
+            f"{a.cross_arm_conflicts if a.cross_arm_conflicts is not None else '-':>9}  "
+            f"{a.sessions:8}  {a.verdict or '-'}"
+        )
+    if r.omnibus is not None:
+        o = r.omnibus
+        lines.append(
+            f"  omnibus (any of {o.k} treatments differs from control): Holm-min p "
+            f"{'-' if o.p_value is None else f'{o.p_value:.4f}'} -> "
+            f"{'yes' if o.differs else 'no'}"
+        )
+    lines.append("  pairs (b - a; always-valid CI, p, Holm p):")
+    for p in r.pairwise or []:
+        ci = f"[{_pct(p.ci.lo)}, {_pct(p.ci.hi)}]" if p.ci else "-"
+        pv = "-" if p.p_value is None else f"{p.p_value:.4f}"
+        hp = "-" if p.holm_p is None else f"{p.holm_p:.4f}"
+        tag = (
+            "no verdict"
+            if p.descriptive
+            else f"{(p.verdict or '-').upper()}: {p.verdict_reason or ''}"
+            + (f" (stopped {p.decided_day})" if p.decided_day else "")
+        )
+        lines.append(
+            f"    {p.b} vs {p.a:8} n {p.n:3}  mean {_pct(p.mean)}/day  CI {ci}  p {pv}  "
+            f"Holm p {hp}  {tag}"
+        )
+    return lines
+
+
 def _owner(actor: str) -> bool:
     from arc.config import ArcSettings
 
@@ -243,6 +296,106 @@ def _write_md(rep: ExperimentReport, out: str | None) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(aa_document(rep))
     _out(f"wrote {path}")
+    return 0
+
+
+def plan_rows(
+    *, sigma: float, effect: float | None, k_max: int, alpha: float, power: float,
+    min_sessions: int, max_sessions: int, mde: float | None,
+) -> list[dict[str, Any]]:  # fmt: skip
+    """D69: per K (1..k_max) the sessions one arm needs (Holm worst step alpha/K) and the MDE.
+
+    ``mde_at_max`` is the always-valid MDE at ``max_sessions`` and level ``alpha / K``:
+    the smallest daily effect the run can still detect if it goes the full window.
+    """
+    from arc.experiments import stats
+
+    tau = stats.mixing_tau(sigma, mde=mde, min_sessions=min_sessions)
+    out = []
+    for k in range(1, k_max + 1):
+        need = (
+            None
+            if effect is None
+            else stats.sessions_needed(sigma, effect, tau=tau, alpha=alpha, power=power, k=k)
+        )
+        out.append(
+            {
+                "k": k,
+                "alpha_per_arm": alpha / k,
+                "sessions_needed": need,
+                "fits_window": None if need is None else need <= max_sessions,
+                "mde_at_max": stats.mde_always_valid(
+                    sigma, max_sessions, tau=tau, alpha=alpha / k, power=power
+                ),
+            }
+        )
+    return out
+
+
+def _run_plan(args: argparse.Namespace, store: Any, conn: sqlite3.Connection) -> int:
+    from pathlib import Path
+
+    from arc.control.effective import effective_settings, experiments_config
+    from arc.experiments.overlay import fill_defaults, load_spec
+
+    defaults = experiments_config(effective_settings(conn)).defaults
+    if Path(args.spec).is_file():
+        spec = fill_defaults(load_spec(args.spec), defaults)
+    else:
+        spec = store.require(args.spec).spec
+    sigma = args.sigma if args.sigma is not None else store.aa_sigma()
+    if sigma is None or sigma <= 0:
+        _err(
+            "arc experiment plan: no A/A sigma recorded yet (no A/A stopped with one); "
+            "pass --sigma <fraction of t0 equity>"
+        )
+        return 2
+    assert spec.alpha is not None and spec.power is not None  # noqa: S101 - filled
+    assert spec.min_sessions is not None and spec.max_sessions is not None  # noqa: S101
+    effect = args.effect if args.effect is not None else spec.mde
+    k = len(spec.arms.names)
+    rows = plan_rows(
+        sigma=sigma, effect=effect, k_max=max(k, 4), alpha=spec.alpha,
+        power=spec.power, min_sessions=spec.min_sessions, max_sessions=spec.max_sessions,
+        mde=spec.mde,
+    )  # fmt: skip
+    if args.json:
+        _out(
+            json.dumps(
+                {
+                    "experiment_id": spec.id,
+                    "k": k,
+                    "sigma": sigma,
+                    "sigma_source": "flag" if args.sigma is not None else "aa",
+                    "effect": effect,
+                    "alpha": spec.alpha,
+                    "power": spec.power,
+                    "min_sessions": spec.min_sessions,
+                    "max_sessions": spec.max_sessions,
+                    "rows": rows,
+                },
+                indent=2,
+            )
+        )
+        return 0
+    _out(
+        f"{spec.id}  K={k} treatment(s)  sigma {_pct(sigma)}/day "
+        f"({'--sigma' if args.sigma is not None else 'A/A'})  effect "
+        f"{_pct(effect) if effect is not None else '- (no spec mde; pass --effect)'}  "
+        f"alpha {spec.alpha} (Holm)  power {spec.power:.0%}  "
+        f"window {spec.min_sessions}-{spec.max_sessions}"
+    )
+    _out("    K  alpha/K   sessions needed   MDE at max_sessions")
+    for r in rows:
+        need = "-" if r["sessions_needed"] is None else str(r["sessions_needed"])
+        if r["fits_window"] is False:
+            need += " (> max)"
+        mark = "  <- this spec" if r["k"] == k else ""
+        _out(
+            f"  {r['k']:3}  {r['alpha_per_arm']:.4f}   {need:>15}   "
+            f"{_pct(r['mde_at_max'])}/day{mark}"
+        )
+    _out("  each extra arm lowers Holm's first step alpha/K, so every arm needs more sessions")
     return 0
 
 
@@ -350,6 +503,8 @@ def run_experiment(args: argparse.Namespace) -> int:
             return 0 if v["ok"] else 1
         elif cmd in ("report", "evaluate"):
             return _run_eval(args, store, conn)
+        elif cmd == "plan":
+            return _run_plan(args, store, conn)
         elif cmd in ("start", "pair", "arms-tick", "repair-ledger"):
             from arc.experiments.cli_arms import run_arm_command
 
