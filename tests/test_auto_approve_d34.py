@@ -38,6 +38,7 @@ from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.utils.calendar import ET
 from tests import test_execution_ladder as L
+from tests.pre_d85_env import reset_env
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -76,8 +77,7 @@ def conn() -> sqlite3.Connection:
 
 @pytest.fixture(autouse=True)
 def _no_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("ARC_AUTO_APPROVE", "ARC_AUTO_EXIT_DEFINED_RISK", "ARC_ENV"):
-        monkeypatch.delenv(var, raising=False)
+    reset_env(monkeypatch, "ARC_AUTO_APPROVE", "ARC_AUTO_EXIT_DEFINED_RISK", "ARC_ENV")
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +172,14 @@ class TestPerEnvConfig:
     def test_live_kwarg_forced_off_too(self) -> None:
         assert live_settings(auto_approve=True).auto_approve is False
 
-    def test_default_off_both_envs(self) -> None:
-        assert ArcSettings(_env_file=None).auto_approve is False  # type: ignore[call-arg]
-        assert live_settings().auto_approve is False
+    def test_default_paper_on_live_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # D85: the shipped paper default is on (was off); live is always validated off.
+        monkeypatch.delenv("ARC_AUTO_APPROVE")
+        monkeypatch.delenv("ARC_AUTO_EXIT_DEFINED_RISK")
+        p = ArcSettings(_env_file=None)  # type: ignore[call-arg]
+        assert p.auto_approve is True and p.auto_exit_defined_risk is True
+        s = live_settings()
+        assert s.auto_approve is False and s.auto_exit_defined_risk is False
 
     def test_max_quote_age_default_and_bounds(self) -> None:
         assert ArcSettings(_env_file=None).execution_max_quote_age_seconds == 60  # type: ignore[call-arg]

@@ -1862,14 +1862,14 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         path=("loop", "slack_layout"),
         choices=("root_per_loop", "day_thread"),
     ),
-    # E4.8a (D46/D44): Finnhub facts in the Scalp/Research prompts. Strategy lane:
-    # the default stays off until an experiment (XP-2) returns a `win` verdict.
+    # E4.8a (D46/D44): Finnhub facts in the Scalp/Research prompts. D85: shipped on
+    # without an experiment (XP-2 draft retired); off = rollback.
     Tunable(
         key="personas.finnhub_context",
         group=Group.ROUTINES,
         type=ValueType.CHOICE,
         description="E4.8a: show the Finnhub per-ticker facts (earnings surprises, insider, "
-        "analyst recs, fundamentals) to the Scalp and Research. Experiment XP-2 tests it.",
+        "analyst recs, fundamentals) to the Scalp and Research. D85: default on; off = rollback.",
         target=Target.ROUTINES,
         risk=Risk.ORDER,
         path=("personas", "finnhub_context"),
@@ -1891,8 +1891,9 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("off", "on"),
         aliases=("routines.personas.scalp_movers_context", "scalp_movers_context"),
     ),
-    # E12.5 (D51/D44): Research diversification. Strategy lane: strict is the
-    # control; relaxed lets two same-industry names rank and loosens the drops.
+    # E12.5 (D51/D44): Research diversification. strict = the E5.9 behaviour; relaxed
+    # lets two same-industry names rank and loosens the drops. D85: relaxed is the
+    # shipped default without an experiment (XP-3 draft retired); strict = rollback.
     Tunable(
         key="personas.director_diversification",
         group=Group.ROUTINES,
@@ -1900,7 +1901,7 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         description="E12.5: how strictly Research diversifies. strict = E5.9 drops; "
         "relaxed = two names per industry may rank, adds_concentration drops only on a "
         "flagged sector once the industry holds director_diversification."
-        "max_names_per_industry names, looser flag thresholds. Experiment XP-3 tests it.",
+        "max_names_per_industry names, looser flag thresholds. D85: default relaxed.",
         target=Target.ROUTINES,
         risk=Risk.ORDER,
         path=("personas", "director_diversification"),

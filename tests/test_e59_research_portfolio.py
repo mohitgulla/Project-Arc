@@ -80,7 +80,15 @@ def _settings(**kw: object) -> ArcSettings:
 
 @pytest.fixture
 def routines():  # noqa: ANN201
-    return load_routines()
+    # E5.9 pins the strict drops; D85 ships `relaxed` (tests/test_research_diversification.py).
+    cfg = load_routines()
+    return cfg.model_copy(
+        update={
+            "director_diversification": cfg.director_diversification.model_copy(
+                update={"mode": "strict"}
+            )
+        }
+    )
 
 
 @pytest.fixture

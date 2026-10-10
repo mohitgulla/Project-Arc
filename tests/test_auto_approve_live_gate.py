@@ -22,6 +22,7 @@ from arc.control.effective import effective_settings
 from arc.control.service import LOCAL_ACTOR, ControlService
 from arc.journal.scorecard import env_readiness, live_gate_met
 from arc.store.identity import write_store_env
+from tests.pre_d85_env import reset_env
 from tests.test_auto_approve_scorecard_gate import (
     NOW,
     _phash,
@@ -40,15 +41,15 @@ def _no_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # Live settings are re-validated inside the control service; the live-env
     # guard file is faked for the whole test (Phase 1 has no ~/.arc/live.env).
     monkeypatch.setattr("arc.config._LIVE_ENV_PATH", _FAKE_LIVE)
-    for k in (
+    reset_env(
+        monkeypatch,
         "ARC_AUTO_APPROVE",
         "ARC_AUTO_APPROVE_SCORECARD_GATE",
         "ARC_AUTO_APPROVE_MIN_CLOSED_TRADES",
         "ARC_AUTO_APPROVE_LIVE_MIN_CLOSED_TRADES",
         "ARC_LIVE_GATE_MET",
         "ARC_DB_PATH",
-    ):
-        monkeypatch.delenv(k, raising=False)
+    )
 
 
 @pytest.fixture

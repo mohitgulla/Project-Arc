@@ -111,7 +111,7 @@ monitoring:
 # D31 / D36 / D52: the 10-min trading loop (the `research` persona and its chain).
 loop:
   job: research
-  max_idle: 30m            # force one full LLM evaluation at least this often
+  max_idle: 15m            # force one full LLM evaluation at least this often (D85: was 30m)
   max_runtime: 7m          # chain deadline: no new step starts after it (run -> `timeout`); D61 (owner 2026-10-07, was 4m)
   pnl_bucket_pct: 0.5      # P&L rounding (as % of equity) inside the no-change digest
   post_hold_roots: true    # false = HOLD / no_change loops post no root line
@@ -721,8 +721,8 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     retries: 1
 
 # E4.8a (D46/D44): Finnhub per-ticker facts in the Scalp/Research prompts. The switch
-# is `personas.finnhub_context` below (default off = prompts unchanged); these are its
-# knobs. Experiment XP-2 (config/experiments/live/xp2_finnhub_context.yaml) tests `on`.
+# is `personas.finnhub_context` below (D85: default on, was off; off = rollback, prompts
+# without the facts); these are its knobs.
 finnhub_context:
   max_chars_per_ticker: 300     # rendered facts line per ticker (hard budget)
   scalp_max_tickers: 8          # Scalp: tickers its story digests name, first N
@@ -735,9 +735,8 @@ finnhub_context:
   cap_buckets_musd: {mega: 200000, large: 10000, mid: 2000, small: 300}   # below small = micro
 
 # E12.5 (D51/D44): Research diversification. The switch is
-# `personas.director_diversification` below (default strict = the E5.9 behaviour);
-# these knobs only apply in `relaxed`. Draft experiment XP-3
-# (config/experiments/live/xp3_relaxed_diversification.yaml) tests `relaxed`.
+# `personas.director_diversification` below (D85: default relaxed, was strict; strict =
+# the E5.9 behaviour, the rollback); these knobs only apply in `relaxed`.
 director_diversification:
   max_names_per_industry: 2     # relaxed: an adds_concentration pick on a flagged sector drops only once the book holds this many names in its industry
   relaxed:                      # relaxed-mode flag thresholds (never below the strict portfolio.*_max_pct)
@@ -792,9 +791,9 @@ market_health:
   max_lag_sessions: 2
 
 personas:
-  finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
+  finnhub_context: "on"         # E4.8a: off | on (D85: on without an experiment, was off; off = rollback)
   scalp_movers_context: "off"   # E14.3 (D60): off | on, the Scalp's "Tape movers" block (strategy lane; XP-11)
-  director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
+  director_diversification: relaxed   # E12.5: strict | relaxed (D85: relaxed without an experiment, was strict; strict = rollback)
   scout_buzz_velocity: "off"    # E14.5 (D60): off | on: Reddit mention velocity + "Fastest risers" in the Scout's retail-buzz section (strategy lane)
   retail_sentiment_context: "off"   # E14.6 (D60): off | on: Stocktwits bull/bear lines for the Scout + one fact per Research pool line (strategy lane; draft XP-12)
   anti_chase: "on"              # E16.3 (D76/D78): off | on: drop stretched directional long-premium ideas before Quant (D78 ships on; off = rollback, pipeline byte-identical)

@@ -23,9 +23,10 @@ class TestDefaults:
         s = get_settings()
         assert s.env is ArcEnv.PAPER
 
-    def test_default_limits(self) -> None:
+    def test_default_limits(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ARC_MAX_ALLOC_PCT")  # the suite pins the pre-D85 5%
         s = get_settings()
-        assert s.max_alloc_pct == 0.05
+        assert s.max_alloc_pct == 0.10  # D85 (was 0.05)
         assert s.daily_loss_halt_pct == 0.03
         assert s.spread_max_pct == 0.10
         assert s.spread_max_abs == 0.10
@@ -70,9 +71,9 @@ class TestEnvOverrides:
     """Settings are overridable via ARC_-prefixed env vars."""
 
     def test_override_max_alloc(self) -> None:
-        with mock.patch.dict(os.environ, {"ARC_MAX_ALLOC_PCT": "0.10"}):
+        with mock.patch.dict(os.environ, {"ARC_MAX_ALLOC_PCT": "0.08"}):
             s = ArcSettings()
-        assert s.max_alloc_pct == 0.10
+        assert s.max_alloc_pct == 0.08
 
     def test_override_universe_json(self) -> None:
         with mock.patch.dict(os.environ, {"ARC_UNIVERSE": '["AAPL", "MSFT", "GOOG"]'}):
