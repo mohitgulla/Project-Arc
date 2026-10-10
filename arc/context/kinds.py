@@ -955,7 +955,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload, schema_version=3),  # E13.7: feed, origins
     KindSpec("regime", RegimePayload, schema_version=4),  # E16.2 (D76): technicals
-    KindSpec("shortlist", ShortlistPayload, schema_version=5),  # E13.17: exit_watchlist_counts
+    KindSpec("shortlist", ShortlistPayload, schema_version=6),  # E17.2: market_guard run/margin z
     KindSpec("structures", StructuresPayload, schema_version=4),  # E18.1: profit_lock
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
     KindSpec("proposal", ProposalPayload, schema_version=5),  # E18.1: profit_lock

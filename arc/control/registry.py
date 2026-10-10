@@ -1612,11 +1612,13 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         max=5.0,
     ),
     # D77 (E17.2): the D33 transitional check on SPY confirmation; raising = safer.
+    # Shipped off: the defaults (run 1 / margin z 0.0) never block; reference 3 / 0.10.
     _s(
         "regime.guard_min_run",
         Group.ENTRIES,
         _I,
-        "D77: SPY trend label held fewer sessions than this = transitional, no new opens.",
+        "D77: SPY trend label held fewer sessions than this = transitional, no new opens. "
+        "Default 1 = off (never blocks); reference setting 3.",
         Risk.DOWN,
         field="regime_guard_min_run",
         unit="d",
@@ -1628,7 +1630,8 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         "regime.guard_min_margin_z",
         Group.ENTRIES,
         _F,
-        "D77: SPY trend z closer than this to a bull/bear threshold = transitional, no new opens.",
+        "D77: SPY trend z closer than this to a bull/bear threshold = transitional, no new "
+        "opens. Default 0.0 = off (never blocks); reference setting 0.10.",
         Risk.DOWN,
         field="regime_guard_min_margin_z",
         min=0.0,

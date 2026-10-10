@@ -31,10 +31,20 @@ FIXTURE_2Y = Path(__file__).parent / "fixtures" / "regime" / "spy_daily_closes_2
 REPLAY_SESSIONS = 504  # ~2 years
 
 
+# The named reference setting for replay / E17.3 (D77). The shipped defaults are
+# off (run 1 / margin z 0.0), so every test that expects the guard to fire sets
+# this explicitly and never relies on defaults.
+REFERENCE = {"regime_guard_min_run": 3, "regime_guard_min_margin_z": 0.10}
+
+
 def _settings(**kw: object) -> ArcSettings:
     base: dict[str, object] = {"_env_file": None, "no_trade_require_vix": False}
     base.update(kw)
     return ArcSettings(**base)  # type: ignore[arg-type]
+
+
+def _ref(**kw: object) -> ArcSettings:
+    return _settings(**{**REFERENCE, **kw})
 
 
 def _guard(regime: dict[str, Any] | None, settings: ArcSettings | None = None) -> MarketGuard:
@@ -57,32 +67,47 @@ V2 = {"model": "v2", "current": "sideways", "stickiness": 0.98}
 
 class TestConfirmationGuard:
     def test_flip_day_blocks(self) -> None:
-        g = _guard({**V2, "run_length": 1, "margin_z": 0.60})
+        g = _guard({**V2, "run_length": 1, "margin_z": 0.60}, _ref())
         assert not g.opens_allowed and g.reason_code == "market_unclear"
         assert g.regime_check == "confirmation"
-        assert g.reasons == ["SPY regime sideways transitional (run 1d < 3, margin z 0.60 >= 0.25)"]
+        assert g.reasons == ["SPY regime sideways transitional (run 1d < 3, margin z 0.60 >= 0.10)"]
         assert g.regime_run_length == 1 and g.regime_margin_z == pytest.approx(0.60)
 
     def test_near_threshold_blocks(self) -> None:
-        g = _guard({**V2, "run_length": 9, "margin_z": 0.12})
+        g = _guard({**V2, "run_length": 9, "margin_z": 0.06}, _ref())
         assert not g.opens_allowed
-        assert g.reasons == ["SPY regime sideways transitional (run 9d >= 3, margin z 0.12 < 0.25)"]
+        assert g.reasons == ["SPY regime sideways transitional (run 9d >= 3, margin z 0.06 < 0.10)"]
 
     def test_both_conditions_card_text(self) -> None:
-        g = _guard({**V2, "run_length": 1, "margin_z": 0.12})
-        assert g.reasons == ["SPY regime sideways transitional (run 1d < 3, margin z 0.12 < 0.25)"]
+        g = _guard({**V2, "run_length": 1, "margin_z": 0.06}, _ref())
+        assert g.reasons == ["SPY regime sideways transitional (run 1d < 3, margin z 0.06 < 0.10)"]
 
     def test_confirmed_allows(self) -> None:
-        g = _guard({**V2, "stickiness": 0.10, "run_length": 3, "margin_z": 0.25})
+        g = _guard({**V2, "stickiness": 0.10, "run_length": 3, "margin_z": 0.10}, _ref())
         # the legacy stickiness test is NOT applied to a v2 entry
         assert g.opens_allowed and g.reasons == [] and g.regime_check == "confirmation"
         assert "regime" in g.checked
 
     def test_thresholds_come_from_settings(self) -> None:
         reg = {**V2, "run_length": 4, "margin_z": 0.30}
-        assert _guard(reg).opens_allowed
-        assert not _guard(reg, _settings(regime_guard_min_run=5)).opens_allowed
-        assert not _guard(reg, _settings(regime_guard_min_margin_z=0.5)).opens_allowed
+        assert _guard(reg, _ref()).opens_allowed
+        assert not _guard(reg, _ref(regime_guard_min_run=5)).opens_allowed
+        assert not _guard(reg, _ref(regime_guard_min_margin_z=0.5)).opens_allowed
+
+
+class TestShippedOff:
+    """D77: the shipped defaults (run 1 / margin z 0.0) never block."""
+
+    def test_flip_day_on_threshold_does_not_block(self) -> None:
+        g = _guard({**V2, "run_length": 1, "margin_z": 0.0})
+        assert g.opens_allowed and g.reasons == [] and g.reason_code is None
+        assert g.regime_check == "confirmation" and "regime" in g.checked
+        assert g.regime_run_length == 1 and g.regime_margin_z == pytest.approx(0.0)
+
+    def test_full_replay_blocks_zero_sessions(self) -> None:
+        rows = replay(_settings())
+        assert len(rows) == REPLAY_SESSIONS
+        assert sum(b for _, b in rows) == 0
 
     def test_legacy_fallback_blocks_and_allows(self) -> None:
         low = _guard({"current": "sideways", "stickiness": 0.40})
@@ -124,7 +149,7 @@ class TestConfirmationGuard:
         assert g.regime_stickiness is None and g.regime_run_length is None
 
     def test_missing_vix_still_fails_closed(self) -> None:
-        g = _guard({**V2, "run_length": 10, "margin_z": 0.9}, _settings(no_trade_require_vix=True))
+        g = _guard({**V2, "run_length": 10, "margin_z": 0.9}, _ref(no_trade_require_vix=True))
         assert not g.opens_allowed and g.reason_code == "market_data_missing"
 
     def test_old_guard_json_still_validates(self) -> None:
@@ -135,11 +160,15 @@ class TestConfirmationGuard:
 
 
 class TestSettingsAndRegistry:
-    def test_defaults(self) -> None:
+    def test_defaults_are_off(self) -> None:
         s = _settings()
-        assert s.regime_guard_min_run == 3
-        assert s.regime_guard_min_margin_z == pytest.approx(0.25)
+        assert s.regime_guard_min_run == 1
+        assert s.regime_guard_min_margin_z == 0.0
         assert s.no_trade_transitional_min_confidence == pytest.approx(0.55)
+
+    def test_registry_text_says_default_off(self) -> None:
+        for key in ("regime.guard_min_run", "regime.guard_min_margin_z"):
+            assert "off" in lookup(key).description.lower()
 
     @pytest.mark.parametrize(
         ("key", "lo", "hi"),
@@ -190,7 +219,12 @@ def test_replay_fixture_covers_two_years() -> None:
     assert len(replay(_settings())) == REPLAY_SESSIONS
 
 
-def test_replay_guard_fires_sometimes_but_not_most_days() -> None:
-    rows = replay(_settings())
-    share = sum(b for _, b in rows) / len(rows)
+def test_replay_reference_setting_fires_sometimes_but_not_most_days() -> None:
+    """Reference setting run 3 / margin z 0.10, set explicitly (never via defaults)."""
+    rows = replay(_ref())
+    blocked = sum(b for _, b in rows)
+    share = blocked / len(rows)
     assert 0 < share < 0.25, f"blocked share {share:.1%}"
+    # 118 / 504 = 23.4 % on macOS; a band, not an exact pin, so a last-ULP z on
+    # a threshold under Linux BLAS can't flake it.
+    assert 110 <= blocked <= 125, blocked

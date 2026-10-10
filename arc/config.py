@@ -630,17 +630,19 @@ class ArcSettings(BaseSettings):
         ),
     )
     regime_guard_min_run: Annotated[int, Field(ge=1, le=10)] = Field(
-        default=3,
+        default=1,
         description=(
             "D77 (E17.2): SPY trend label held for fewer sessions than this = transitional; "
-            "the D33 market guard blocks new opens."
+            "the D33 market guard blocks new opens. Default 1 = off (run_length >= 1); "
+            "the reference setting for replay / E17.3 is 3."
         ),
     )
     regime_guard_min_margin_z: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
-        default=0.25,
+        default=0.0,
         description=(
             "D77 (E17.2): SPY trend z closer than this to a bull/bear threshold = "
-            "transitional; the D33 market guard blocks new opens."
+            "transitional; the D33 market guard blocks new opens. Default 0.0 = off "
+            "(margin_z >= 0); the reference setting for replay / E17.3 is 0.10."
         ),
     )
     # -- Regime model (E17.1, D77) ------------------------------------------------
