@@ -15,9 +15,11 @@ Four tiers, highest precedence first:
 
 :func:`resolve_active` is pure and deterministic: a name keeps its **highest** tier
 (core > momentum > discovery > trending) and records the others in ``also_in``; each
-tier is its feed's top ``size`` rows by rank; the deduped list is cut to ``active_max``
-in tier order, then rank, so overflow leaves from the tail of the lowest tier first
-(trending, then discovery, then momentum). Every cut name is listed in ``dropped``
+tier is its feed's top ``size`` rows by rank; core and momentum fill the active list
+first, then the slots left under ``active_max`` go to discovery and trending by round
+robin (D67: D1, T1, D2, T2, …, a tier that runs out spills to the other;
+``universe.active_fill: precedence`` restores D58's discovery-before-trending cut).
+Members stay grouped by tier, then rank. Every cut name is listed in ``dropped``
 (never silently lost).
 
 ``market_reference`` (SPY, QQQ, IWM) is not part of the trade list; Research always
@@ -47,12 +49,15 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 __all__ = [
+    "ACTIVE_FILLS",
     "ACTIVE_SUBJECT",
     "DROP_OVER_ACTIVE_CAP",
     "DROP_OVER_TIER_SIZE",
     "MAX_CORE",
     "SEED_TIERS",
+    "SHARED_TIERS",
     "TIER_ORDER",
+    "ActiveFill",
     "ActiveUniverse",
     "CarryoverKnobs",
     "CarryoverSettings",
@@ -104,6 +109,15 @@ class Tier(enum.StrEnum):
 
 #: D58 precedence order: core > momentum > discovery > trending.
 TIER_ORDER: tuple[Tier, ...] = (Tier.CORE, Tier.MOMENTUM, Tier.DISCOVERY, Tier.TRENDING)
+#: D67: always filled first, in order (core <= 25 + momentum <= 25 vs the cap of 50).
+_HEAD_TIERS: frozenset[Tier] = frozenset({Tier.CORE, Tier.MOMENTUM})
+#: D67: the tiers that share the slots left after core + momentum, round robin in this
+#: order (Discovery takes the first and the odd slot).
+SHARED_TIERS: tuple[Tier, ...] = (Tier.DISCOVERY, Tier.TRENDING)
+#: D67: how the shared slots are filled. ``round_robin`` (default) = D1, T1, D2, T2, …
+#: with spill; ``precedence`` = D58 (all of discovery before any trending).
+ActiveFill = Literal["round_robin", "precedence"]
+ACTIVE_FILLS: tuple[str, ...] = ("round_robin", "precedence")
 #: Every member, legacy included: sort key for stored history only.
 _ALL_TIERS: tuple[Tier, ...] = tuple(Tier)
 
@@ -237,6 +251,15 @@ class ActiveUniverse(BaseModel):
         default_factory=list, description="tiers whose latest feed expired (read as empty)"
     )
     config_version: int | None = None
+    # v6 (D67, E14.9): how the slots after core + momentum were filled. None on older
+    # rows (they were all D58 precedence).
+    fill: ActiveFill | None = Field(None, description="D67: round_robin | precedence")
+    open_slots: int | None = Field(
+        None, description="D67: active_max minus core + momentum (the shared slots R)"
+    )
+    slots: dict[str, int] = Field(
+        default_factory=dict, description="D67: shared slots taken per tier (discovery, trending)"
+    )
 
     @property
     def tickers(self) -> list[str]:
@@ -262,6 +285,7 @@ def resolve_active(
     as_of: _dt.date,
     config_version: int | None = None,
     expired_tiers: Iterable[Tier] = (),
+    fill: ActiveFill = "round_robin",
 ) -> ActiveUniverse:
     """Dedupe the tiers (highest wins), cut each to its size, cap at *active_max*.
 
@@ -272,8 +296,15 @@ def resolve_active(
     held by a lower tier that lists it (then it is not in ``dropped``). *tier_sizes*
     missing a tier means no per-tier cut. Deterministic: same inputs, same output.
 
-    The cap keeps names in tier order then rank, so the overflow is the tail of the
-    lowest tier first (trending's lowest-ranked rows, then discovery's, then momentum's).
+    Core and momentum are kept first (tier order, then rank). *fill* decides the
+    ``open_slots`` left under the cap (D67):
+
+    * ``round_robin`` (default): Discovery and Trending alternate by rank, Discovery
+      first (D1, T1, D2, T2, …); when one tier runs out the other takes the rest.
+    * ``precedence`` (D58): all of Discovery, then Trending (the old cut).
+
+    Members stay grouped by tier, then rank; every name past the cap is ``dropped`` as
+    ``over_active_cap`` with its rank.
     """
     sizes = tier_sizes or {}
     by_tier = {
@@ -315,10 +346,18 @@ def resolve_active(
             order.append(m.ticker)
     # a name cut by a higher tier's size but held by a lower tier is active, not dropped
     dropped = [d for d in dropped if d.ticker not in kept]
+    head = [s for s in order if kept[s].tier in _HEAD_TIERS][:active_max]
+    open_slots = active_max - len(head)
+    shared = {t: [s for s in order if kept[s].tier is t] for t in SHARED_TIERS}
+    if fill == "round_robin":
+        rr = _round_robin(shared[Tier.DISCOVERY], shared[Tier.TRENDING], open_slots)
+        chosen = set(head) | set(rr)
+    else:  # precedence (D58): the deduped list in tier order, cut at the cap
+        chosen = set(order[:active_max])
     members: list[TierMember] = []
-    for sym in order:
+    for sym in order:  # grouped by tier, rank order inside a tier (both fills)
         m = kept[sym]
-        if len(members) < active_max:
+        if sym in chosen:
             members.append(m)
         else:
             dropped.append(
@@ -334,7 +373,25 @@ def resolve_active(
         raw_counts=raw_counts,
         expired_tiers=sorted(set(expired_tiers), key=_ALL_TIERS.index),
         config_version=config_version,
+        fill=fill,
+        open_slots=open_slots,
+        slots={t.value: counts[t.value] for t in SHARED_TIERS},
     )
+
+
+def _round_robin(first: Sequence[str], second: Sequence[str], n: int) -> list[str]:
+    """D67: ``first[0], second[0], first[1], second[1], …`` up to *n* names; once one
+    queue is empty the other keeps filling (spill), so no slot is left empty."""
+    out: list[str] = []
+    i = j = 0
+    while len(out) < n and (i < len(first) or j < len(second)):
+        if i < len(first) and (j >= len(second) or i <= j):
+            out.append(first[i])
+            i += 1
+        else:
+            out.append(second[j])
+            j += 1
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +548,7 @@ def build_active(
 ) -> tuple[ActiveUniverse, TierInputs]:
     """Gather the inputs and resolve today's active list (no write)."""
     inputs = load_tier_inputs(conn, settings, now)
+    fill: ActiveFill = _universe_cfg(settings).active_fill
     active = resolve_active(
         core=inputs.core,
         momentum=inputs.momentum,
@@ -501,6 +559,7 @@ def build_active(
         as_of=_today(now),
         config_version=settings.config_version,
         expired_tiers=inputs.expired_tiers,
+        fill=fill,
     )
     return active, inputs
 
@@ -569,6 +628,9 @@ def record_active(
                     "as_of": day.isoformat(),
                     **({"rank": ranks[d.ticker]} if ranks.get(d.ticker) is not None else {}),
                     "model": active.model,
+                    # D67 (E14.9): how the shared slots were filled when this name was cut
+                    **({"fill": active.fill} if active.fill is not None else {}),
+                    **({"slots": dict(active.slots)} if active.slots else {}),
                 },
             )
             n += 1
@@ -579,6 +641,9 @@ def record_active(
         as_of=day.isoformat(),
         active=len(active.members),
         counts=active.counts,
+        fill=active.fill,
+        open_slots=active.open_slots,
+        slots=active.slots,
         over_cap=len(over),
         journaled=n,
     )

@@ -991,8 +991,8 @@ KINDS: Mapping[str, KindSpec] = _registry(
     # E14.8 (D64): v5 member weight_pct (momentum)
     KindSpec("universe_tier", UniverseTierPayload, schema_version=5),
     # E13.4: model, dropped rank; E13.19 (D58): v3 member `inputs`; D64: v4 member scores;
-    # E14.8: v5 member weight_pct
-    KindSpec("active_universe", ActiveUniverse, schema_version=5),
+    # E14.8: v5 member weight_pct; D67 (E14.9): v6 fill / open_slots / slots
+    KindSpec("active_universe", ActiveUniverse, schema_version=6),
     # E13.7 (D56): the Scout's daily read; subject = "session"
     KindSpec("scout_read", ScoutReadPayload, schema_version=2),  # E13.20: inputs.retail_buzz
     # E13.17 (D56): Research-managed exits. exit_watchlist subject = "session";

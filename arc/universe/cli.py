@@ -290,6 +290,9 @@ def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetim
         ],
         "active_count": len(active.members),
         "counts": active.counts,
+        "fill": active.fill,
+        "open_slots": active.open_slots,
+        "slots": active.slots,
         "dropped": [d.model_dump(mode="json") for d in active.dropped],
         "market_reference": reference,
         "stored_active_at": stored["valid_from"] if stored else None,
@@ -314,6 +317,9 @@ def _run_tiers(args: argparse.Namespace, settings: ArcSettings, now: _dt.datetim
         + " · ".join(f"{t.value} {c.get(t.value, 0)}" for t in order)
     )
     lines.append(f"           {' '.join(active.tickers)}")
+    if active.fill is not None:
+        split = " · ".join(f"{k} {v}" for k, v in active.slots.items())
+        lines.append(f"fill       {active.fill} · {active.open_slots} open slots → {split}")
     for d in active.dropped:
         rank = f" #{d.rank}" if d.rank is not None else ""
         lines.append(f"dropped    {d.ticker} ({d.tier.value}{rank}): {d.reason}")

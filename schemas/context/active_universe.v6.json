@@ -236,6 +236,23 @@
       "title": "Expired Tiers",
       "type": "array"
     },
+    "fill": {
+      "anyOf": [
+        {
+          "enum": [
+            "round_robin",
+            "precedence"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "D67: round_robin | precedence",
+      "title": "Fill"
+    },
     "members": {
       "items": {
         "$ref": "#/$defs/TierMember"
@@ -252,12 +269,33 @@
       "title": "Model",
       "type": "string"
     },
+    "open_slots": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "D67: active_max minus core + momentum (the shared slots R)",
+      "title": "Open Slots"
+    },
     "raw_counts": {
       "additionalProperties": {
         "type": "integer"
       },
       "description": "names each tier offered before dedupe and caps",
       "title": "Raw Counts",
+      "type": "object"
+    },
+    "slots": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "description": "D67: shared slots taken per tier (discovery, trending)",
+      "title": "Slots",
       "type": "object"
     }
   },

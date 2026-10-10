@@ -393,7 +393,7 @@ class TestStore:
     ) -> None:
         _write_tier(db, Tier.MOMENTUM, MOMENTUM_25)
         _write_tier(db, Tier.DISCOVERY, DISCOVERY_20)
-        _write_tier(db, Tier.TRENDING, ["PLUG"])  # D58: read, but cut by the active cap
+        _write_tier(db, Tier.TRENDING, ["PLUG"])  # D67: takes the 2nd shared slot
         # a Scalp candidate is not a discovery (Scout is the only entry point)
         db.execute(
             "INSERT INTO candidates (id, ticker, stance, catalyst_type, confidence, created_at, "
@@ -404,8 +404,11 @@ class TestStore:
         s = _settings()
         a, inputs = build_active(db, s, NOW)
         assert a.model == "d56" and [m.ticker for m in inputs.trending] == ["PLUG"]
-        assert a.counts == {"core": 20, "momentum": 13, "discovery": 17, "trending": 0}
-        assert "ZZZZ" not in a.tickers and "PLUG" not in a.tickers
+        # D67 round robin: 17 shared slots -> D1, PLUG, D2..D16 (trending ran out: spill)
+        assert a.counts == {"core": 20, "momentum": 13, "discovery": 16, "trending": 1}
+        assert a.fill == "round_robin" and a.open_slots == 17
+        assert a.slots == {"discovery": 16, "trending": 1}
+        assert "ZZZZ" not in a.tickers and "PLUG" in a.tickers
         store = ContextStore(db)
         n = record_active(
             db,
@@ -419,13 +422,33 @@ class TestStore:
         rows = db.execute(
             "SELECT subject, reason_code, payload FROM decisions ORDER BY subject"
         ).fetchall()
-        assert {r[0] for r in rows} == {"APP", "VST", "CEG", "PLUG"}
+        assert {r[0] for r in rows} == {"RDDT", "APP", "VST", "CEG"}
         p = json.loads(next(r[2] for r in rows if r[0] == "CEG"))
-        assert p == {"tier": "discovery", "as_of": "2026-10-06", "rank": 20, "model": "d56"}
+        assert p == {
+            "tier": "discovery",
+            "as_of": "2026-10-06",
+            "rank": 20,
+            "model": "d56",
+            "fill": "round_robin",
+            "slots": {"discovery": 16, "trending": 1},
+        }
         # consumers: the Scalp watches every active tier; seeds are core only
         later = NOW + dt.timedelta(minutes=5)
-        assert watch_tickers(db, s, later)[-1] == "RDDT"
+        assert watch_tickers(db, s, later)[-1] == "PLUG"
         assert seed_tickers(db, s, later) == list(DEFAULT_UNIVERSE)
+
+    def test_build_active_precedence_fill_keeps_d58_cut(self, db: sqlite3.Connection) -> None:
+        """``universe.active_fill: precedence`` (the D67 off switch) = the D58 cut."""
+        _write_tier(db, Tier.MOMENTUM, MOMENTUM_25)
+        _write_tier(db, Tier.DISCOVERY, DISCOVERY_20)
+        _write_tier(db, Tier.TRENDING, ["PLUG"])
+        s = _settings()
+        s._yaml_overrides = {"universe": {("active_fill",): "precedence"}}  # noqa: SLF001
+        a, _ = build_active(db, s, NOW)
+        assert a.counts == {"core": 20, "momentum": 13, "discovery": 17, "trending": 0}
+        assert a.fill == "precedence" and a.slots == {"discovery": 17, "trending": 0}
+        over = [d.ticker for d in a.dropped if d.reason == "over_active_cap"]
+        assert over == ["APP", "VST", "CEG", "PLUG"]
 
     def test_membership_cuts_feeds_to_tier_size(self, db: sqlite3.Connection) -> None:
         _write_tier(db, Tier.MOMENTUM, MOMENTUM_25)

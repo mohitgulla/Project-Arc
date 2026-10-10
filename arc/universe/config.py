@@ -285,6 +285,10 @@ class UniverseConfig(BaseModel):
     model_config = _FORBID
 
     core: list[str] = Field(default_factory=list, max_length=25)  # D58 MAX_CORE
+    # D67 (E14.9): how discovery + trending share the active slots left after core +
+    # momentum. round_robin = D1, T1, D2, T2, … with spill (owner default); precedence =
+    # D58 (all of discovery first). Registry key `universe.active_fill`.
+    active_fill: Literal["round_robin", "precedence"] = "round_robin"
     tiers: TiersConfig = Field(default_factory=TiersConfig)
     momentum: MomentumConfig = Field(default_factory=MomentumConfig)
     symbol_master: SymbolMasterConfig = Field(default_factory=SymbolMasterConfig)

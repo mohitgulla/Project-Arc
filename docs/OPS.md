@@ -847,8 +847,13 @@ discoveries, `universe.tiers.model`); an old `model:` / `trending:` key in
   Core/momentum/discovery names, SPY/QQQ/IWM and leveraged/inverse funds
   (`universe:trending_leveraged`) are excluded before the cut; the first `pool` (40)
   get the `loose` screen and the tier keeps `universe_trending_size` (25), floor 0.6.
-  The active list fills core > momentum > discovery > trending, so overflow cuts the
-  trending tail first. By hand: `arc universe trending --dry-run [--no-screen]` (score
+  The active list fills core, then momentum; the slots left (cap 50 − core ∪ momentum)
+  go to discovery and trending by **round robin** (D67, E14.9: D1, T1, D2, T2, …,
+  discovery takes the odd slot, a tier that runs out spills to the other).
+  `universe.active_fill: precedence` (`!arc config set universe.active_fill precedence`)
+  restores D58's discovery-before-trending cut. The resolve's `active_universe` entry
+  records `fill`, `open_slots` and `slots` (per tier), and `arc universe tiers` prints
+  them. By hand: `arc universe trending --dry-run [--no-screen]` (score
   table, no write) or `arc universe trending [--db PATH] [--no-slack]` (runs the job).
   The job's `[Routines]` notice is the diff against the previous list
   (`Trending tier: 23 names, 11 in both inputs (+SPCX −RIVN) · inputs reddit, stocktwits`).
