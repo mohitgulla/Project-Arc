@@ -1,0 +1,65 @@
+# `arc store reset` keep list (E19.1, D80). Validated by arc.store.reset.ResetKeepList.
+#
+# The reset builds a NEW audit store at head migration and copies only what is
+# listed here from the old one (which is archived read-only first). Everything
+# else (orders, fills, positions, P&L, proposals, decisions, outcomes, persona
+# calls, runs, heartbeats, halts, approvals, experiments, arm tables ...) starts
+# empty. Adding a table, a context kind or a routine_state prefix here needs no
+# code change.
+#
+# Rule: keep market/reference data only, so the feeds resume from their cursors
+# instead of cold-starting. Nothing that describes our own book is kept.
+
+# Tables copied verbatim (every row, every column).
+# Not kept on purpose: scalp_batches (Scalp LLM-usage audit rows; no raw_docs row
+# references them: raw_docs.scalp_run_id names a routine run, not a batch).
+tables:
+  - raw_docs
+  - ingest_cursors
+  - iv_daily
+  - iv_skips
+  - options_volume_daily
+  - market_tape
+  - betas
+  - channel_briefs
+
+# context_entries rows kept by kind (market / reference kinds only). Checked on the
+# live store 2026-10-10: no kept row supersedes a dropped kind and no kept payload
+# names a candidate, proposal, decision, snapshot, order or open structure id.
+# Dropped (our own book): portfolio_context, position_review, exit_case,
+# exit_watchlist, risk_review, risk_exit_review, proposal, shortlist, candidate,
+# structures, journal, note.
+context_kinds:
+  - active_universe
+  - universe_tier
+  - regime
+  - vx_curve
+  - vol_term
+  - index_vols
+  - put_call
+  - options_daily
+  - exchange_volume
+  - market_movers
+  - unusual_options
+  - earnings_history
+  - ex_dividend
+  - fundamentals
+  - analyst_recs
+  - insider_activity
+  - macro_calendar
+  - retail_buzz
+  - retail_sentiment
+  - channel_brief
+  - story
+  - raw_doc_ref
+  - scout_read
+  - chain_snapshot
+
+# routine_state keys kept, by prefix: dispatcher cursors (no catch-up storm), data
+# vendor call budgets and the rename cutover markers. Loop/day threads, monitor,
+# dispatcher:last_tick, close_quote_fail:* etc. are dropped.
+routine_state_prefixes:
+  - "cursor:"
+  - "finnhub"
+  - "alpaca_data"
+  - "rename:"
