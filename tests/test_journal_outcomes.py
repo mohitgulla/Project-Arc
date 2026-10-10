@@ -332,3 +332,163 @@ def test_analyst_gate_and_attribution_count_the_outcome(conn: sqlite3.Connection
     assert n == 1
     rep = attribution(conn, since=None, until=S.NOW + dt.timedelta(days=1))
     assert rep.trades == 1 and rep.rows[0].realised_pnl == pytest.approx(90.0)
+
+
+# ---------------------------------------------------------------------------
+# E18.3: MFE from the stored marks, the shadow + MFE backfill after expiry
+# ---------------------------------------------------------------------------
+
+
+def _review(conn: sqlite3.Connection, sid: str, value: str, at: dt.datetime) -> None:
+    from arc.context.ttl import to_db
+
+    conn.execute(
+        "INSERT INTO context_entries (id, kind, subject, payload, schema_version, produced_by, "
+        "created_at, valid_from, status) "
+        "VALUES (?, 'position_review', ?, ?, 3, 'positions.evaluate', ?, ?, 'superseded')",
+        (f"ctx-{sid}-{at.timestamp()}", sid,
+         json.dumps({"current_value": float(value), "entry_net": -0.85}),
+         to_db(at), to_db(at)),
+    )  # fmt: skip
+
+
+def _closed_with_marks(conn: sqlite3.Connection) -> str:
+    """Credit spread opened at -0.85 two days early, marked -1.10 then -0.30, closed at 0.40."""
+    from arc.context.ttl import to_db
+
+    sid = _open(conn)
+    t0 = S.NOW - dt.timedelta(days=2)
+    conn.execute("UPDATE open_structures SET opened_at = ? WHERE id = ?", (to_db(t0), sid))
+    _review(conn, sid, "-1.10", t0 + dt.timedelta(hours=1))  # -0.25/share: -50 on 2
+    _review(conn, sid, "-0.30", t0 + dt.timedelta(days=1))  # +0.55/share: +110 on 2
+    _review(conn, sid, "-0.05", S.NOW + dt.timedelta(days=1))  # after the close: ignored
+    conn.commit()
+    _close(conn, sid, thesis="exit", qty=2, price="0.40")
+    return sid
+
+
+def test_close_outcome_mae_and_mfe_use_the_stored_marks(conn: sqlite3.Connection) -> None:
+    _closed_with_marks(conn)
+    (o,) = outcome_rows(conn)
+    assert D(str(o["realised_pnl"])) == D("90")
+    assert D(str(o["max_adverse_excursion"])) == D("-50")
+    assert D(str(o["max_favourable_excursion"])) == D("110")  # the peak mark, not the exit
+    assert o["hold_to_expiry_shadow_pnl"] is None  # closed before expiry: unknown yet
+    rec = JournalStore(conn).outcome(str(o["proposal_hash"]))
+    assert rec is not None and rec.max_favourable_excursion == D("110")
+
+
+def test_backfill_exit_stats_prices_the_shadow_after_expiry(conn: sqlite3.Connection) -> None:
+    from arc.journal.outcomes import backfill_exit_stats
+
+    sid = _closed_with_marks(conn)
+    exp = S.EXP  # 2026-11-20
+    calls: list[tuple[str, dt.date]] = []
+
+    def settle(root: str, day: dt.date) -> D:
+        calls.append((root, day))
+        return D("572")  # above both puts: the credit spread expires worthless
+
+    # before expiry: nothing to price, MFE already there -> pending
+    (r,) = backfill_exit_stats(conn, today=exp, settle_price=settle)
+    assert r.action == "pending_expiry" and r.structure_id == sid and calls == []
+    assert len(outcome_rows(conn)) == 1
+    # after expiry, dry run: builds, writes nothing
+    (r,) = backfill_exit_stats(conn, today=exp + dt.timedelta(days=1), settle_price=settle,
+                               dry_run=True)  # fmt: skip
+    assert r.action == "would_write" and D(str(r.shadow)) == D("170") and calls == [("SPY", exp)]
+    assert len(outcome_rows(conn)) == 1
+    # after expiry: a superseding row with the D19 shadow (kept the 0.85 credit x 2)
+    (r,) = backfill_exit_stats(conn, today=exp + dt.timedelta(days=1), settle_price=settle)
+    assert r.action == "written" and D(str(r.mfe)) == D("110")
+    first, second = outcome_rows(conn)
+    assert second["supersedes_id"] == first["id"]
+    assert D(str(second["hold_to_expiry_shadow_pnl"])) == D("170")
+    assert D(str(second["realised_pnl"])) == D("90")  # the realised result is unchanged
+    # idempotent
+    (r,) = backfill_exit_stats(conn, today=exp + dt.timedelta(days=5), settle_price=settle)
+    assert r.action == "complete" and len(outcome_rows(conn)) == 2
+
+
+def test_backfill_exit_stats_fills_mfe_of_old_rows_and_waits_for_a_settle(
+    conn: sqlite3.Connection,
+) -> None:
+    from arc.journal.outcomes import backfill_exit_stats
+
+    _closed_with_marks(conn)
+    # a pre-E18.3 row: no MFE column value
+    conn.execute("DROP TRIGGER outcomes_no_update")  # simulate a pre-E18.3 row
+    conn.execute("UPDATE outcomes SET max_favourable_excursion = NULL")
+    conn.commit()
+    late = S.EXP + dt.timedelta(days=1)
+    (r,) = backfill_exit_stats(conn, today=late, settle_price=lambda root, day: None)
+    assert r.action == "written" and D(str(r.mfe)) == D("110") and r.shadow is None
+    (r,) = backfill_exit_stats(conn, today=late, settle_price=lambda root, day: None)
+    assert r.action == "no_settle"  # MFE done, settlement close not known
+    (r,) = backfill_exit_stats(conn, today=late, settle_price=None)
+    assert r.action == "no_settle"
+    assert len(outcome_rows(conn)) == 2
+
+
+def test_backfill_exit_stats_skips_unbuildable(conn: sqlite3.Connection) -> None:
+    from arc.journal.outcomes import backfill_exit_stats
+
+    sid = _closed_without_outcome(conn)
+    row = OpenStructureRepo(conn).get(sid)
+    assert row is not None
+    conn.execute(
+        "UPDATE proposals SET quant_json = '{}' WHERE proposal_hash = ?",
+        (row["open_proposal_hash"],),
+    )
+    (r,) = backfill_exit_stats(conn, today=S.NOW.date())
+    assert r.action == "skipped" and r.detail
+    assert outcome_rows(conn) == []
+
+
+def test_backfill_exit_stats_cli(conn: sqlite3.Connection, tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    from arc.cli import main
+
+    db = tmp_path / "arc.db"
+    c = connect(str(db))
+    migrate(c)
+    _closed_with_marks(c)
+    c.execute("DROP TRIGGER outcomes_no_update")
+    c.execute("UPDATE outcomes SET max_favourable_excursion = NULL")
+    c.commit()
+    c.close()
+    args = ["journal", "backfill-exit-stats", "--no-settle", "--db", str(db)]
+    assert main([*args, "--dry-run"]) == 0
+    assert "dry run: would_write=1" in capsys.readouterr().out
+    assert main(args) == 0
+    assert "written=1" in capsys.readouterr().out
+    assert main([*args, "--json"]) == 0
+    (res,) = json.loads(capsys.readouterr().out)
+    assert D(res["mfe"]) == D("110") and res["action"] in {"pending_expiry", "no_settle"}
+
+
+def test_nightly_reconcile_prices_the_shadow_of_an_expired_early_close(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arc.broker import reconcile_job
+
+    _closed_with_marks(conn)
+    ctx = R._ctx(conn)
+    monkeypatch.setattr(ctx, "now", dt.datetime(2026, 11, 23, 20, 0, tzinfo=dt.UTC))
+    seen: list[dt.date] = []
+
+    def settle(root: str, day: dt.date) -> D:
+        seen.append(day)
+        return D("572")
+
+    reconcile_job._fill_exit_stats(ctx, settle)
+    assert seen == [S.EXP]
+    assert D(str(outcome_rows(conn)[-1]["hold_to_expiry_shadow_pnl"])) == D("170")
+
+    def boom(root: str, day: dt.date) -> D:
+        raise RuntimeError("feed down")
+
+    conn.execute("DROP TRIGGER outcomes_no_delete")
+    conn.execute("DELETE FROM outcomes WHERE supersedes_id IS NOT NULL")
+    conn.commit()
+    reconcile_job._fill_exit_stats(ctx, boom)  # never raises into the reconcile
+    assert len(outcome_rows(conn)) == 1

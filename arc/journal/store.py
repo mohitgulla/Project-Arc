@@ -245,8 +245,8 @@ class JournalStore:
                (id, proposal_hash, status, contracts, limit_price, entry_fill, slippage_usd,
                 slippage_bps, cost_bps, exit_fill, realised_pnl, max_adverse_excursion,
                 days_held, exit_reason, ev_total, pnl_vs_ev, hold_to_expiry_shadow_pnl,
-                supersedes_id, at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                supersedes_id, at, max_favourable_excursion)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row_id,
                 o.proposal_hash,
@@ -267,6 +267,7 @@ class JournalStore:
                 _dec(o.hold_to_expiry_shadow_pnl),
                 o.supersedes_id,
                 to_db(o.at),
+                _dec(o.max_favourable_excursion),
             ),
         )
         return row_id
@@ -318,6 +319,7 @@ class JournalStore:
             exit_fill=d("exit_fill"),
             realised_pnl=d("realised_pnl"),
             max_adverse_excursion=d("max_adverse_excursion"),
+            max_favourable_excursion=d("max_favourable_excursion"),
             days_held=row["days_held"],
             exit_reason=row["exit_reason"],
             ev_total=d("ev_total"),
