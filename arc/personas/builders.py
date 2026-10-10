@@ -109,6 +109,9 @@ class ResearchInput:
     # E14.6 (D60): True = the pool lines carry a Stocktwits ``ST …`` fact
     # (personas.retail_sentiment_context on); False keeps the prompt byte-identical.
     retail_sentiment: bool = False
+    # E16.2 (D76/D78): True = each regime line ends with the code-rendered ``tech …``
+    # segment (personas.research_technicals on); False keeps the prompt byte-identical.
+    technicals: bool = False
 
 
 @dataclass(frozen=True)
@@ -191,6 +194,7 @@ def research_input_from_context(
     exit_block: str = "",
     exit_rules: Sequence[str] = (),
     retail_sentiment: Mapping[str, str] | None = None,
+    technicals: bool = False,
 ) -> ResearchInput:
     """Research reads every active ``candidate`` and ``regime`` entry, plus up to
     *max_notes* prior ``note`` entries (regime view / thesis / observation), newest first.
@@ -231,6 +235,9 @@ def research_input_from_context(
     E14.6 (D60): *retail_sentiment* (``ticker -> "ST 80% bull (10 tagged, 2.7h)"``,
     recorded only with ``personas.retail_sentiment_context`` on) appends one fact to
     each pool line that has a reading.
+
+    E16.2 (D76/D78): *technicals* (recorded only with ``personas.research_technicals``
+    on) appends :func:`tech_segment` to each regime line.
     """
     entries = snapshot.of_kind("candidate")
     if candidate_tickers is not None:
@@ -275,12 +282,15 @@ def research_input_from_context(
             pool_merged=pool_merged,
             compact=True,
             scout_read=scout_read_block(snapshot),
-            regime_lines="\n".join(regime_line(t, regime[t]) for t in sorted(regime)),
+            regime_lines="\n".join(
+                regime_line(t, regime[t], technicals=technicals) for t in sorted(regime)
+            ),
             market_lines=market_lines(market_data_from_context(snapshot)),
             notes_lines="\n".join(note_line(n) for n in notes_out),
             exit_block=exit_block,
             exit_rules=tuple(exit_rules),
             retail_sentiment=retail_sentiment is not None,
+            technicals=technicals,
         )
     return ResearchInput(
         candidates_json=_dump({"candidates": candidates}),
@@ -413,12 +423,56 @@ def _regime_head(reg: Mapping[str, Any]) -> list[str]:
     return head
 
 
-def regime_line(ticker: str, payload: Mapping[str, Any]) -> str:
+_RANGE_LABEL = {"above": "> y-hi", "below": "< y-lo", "inside": "in y-range"}
+
+
+def tech_segment(tech: Mapping[str, Any] | None) -> str:
+    """``tech rsi 71 · +2.3 ATR vs 20d · 50>200 · 1.1% off 20d hi · RS20 +4.1% vs SPY ·
+    squeeze 6d · > y-hi · impl/ATR 1.3`` from a stored ``TechnicalFeatures`` dump.
+
+    E16.2 (D76): code-rendered, so Research never computes any of it. A part whose
+    field is ``None`` is dropped; ``""`` when nothing is available (no entry, or a
+    pre-E16.2 one). The squeeze part shows only while it is on.
+    """
+    if not tech:
+        return ""
+
+    def num(key: str) -> float | None:
+        v = tech.get(key)
+        return float(v) if isinstance(v, int | float) and not isinstance(v, bool) else None
+
+    parts: list[str] = []
+    if (rsi := num("rsi14")) is not None:
+        parts.append(f"rsi {rsi:.0f}")
+    if (stretch := num("stretch_atr")) is not None:
+        parts.append(f"{round(stretch, 1) + 0.0:+.1f} ATR vs 20d")  # + 0.0: no "-0.0"
+    if isinstance(cross := tech.get("sma50_gt_sma200"), bool):
+        parts.append("50>200" if cross else "50<200")
+    close, high20 = num("close"), num("high20")
+    if close is not None and high20 is not None and high20 > 0:
+        off = 1.0 - close / high20
+        parts.append("at 20d hi" if off <= 0 else f"{off:.1%} off 20d hi")
+    if (rs := num("rs_spy_20d")) is not None:
+        parts.append(f"RS20 {round(rs, 3) + 0.0:+.1%} vs SPY")
+    days = tech.get("squeeze_days")
+    if tech.get("squeeze_on") is True and isinstance(days, int):
+        parts.append(f"squeeze {days}d")
+    if (pos := _RANGE_LABEL.get(str(tech.get("close_vs_prev_range")))) is not None:
+        parts.append(pos)
+    if (ratio := num("implied_vs_atr")) is not None:
+        parts.append(f"impl/ATR {ratio:.1f}")
+    return "tech " + " · ".join(parts) if parts else ""
+
+
+def regime_line(ticker: str, payload: Mapping[str, Any], *, technicals: bool = False) -> str:
     """``AVGO · sideways (stick 0.70) · 5d bull 0.23/side 0.47/bear 0.29 · ret20 +2.7% ·
     iv 0.37 hv20 0.36 iv/hv20 1.04 · ivr n/a · close 378.68`` (one regime entry).
 
     Regime v2 entries (D77) replace the head with the vol-scaled read:
     ``SPY · sideways z+0.4 (run 12d) · vol low (p18) · 5d … · close …``.
+
+    E16.2 (D76/D78): *technicals* (``personas.research_technicals`` on) appends the
+    :func:`tech_segment` after ``close``; off = the line is byte-identical.
     """
     reg = payload.get("regime") or {}
     vol = payload.get("vol") or {}
@@ -441,6 +495,8 @@ def regime_line(ticker: str, payload: Mapping[str, Any]) -> str:
     parts.append(f"ivr {_num(ivr * 100 if isinstance(ivr, int | float) else None, '.0f')}")
     if payload.get("last_close") is not None:
         parts.append(f"close {_num(payload.get('last_close'))}")
+    if technicals and (seg := tech_segment(payload.get("technicals"))):
+        parts.append(seg)
     return " · ".join(parts)
 
 
@@ -1786,6 +1842,15 @@ def _pool_section(inp: ResearchInput) -> str:
     )
 
 
+# E16.2 (D76/D78): the regime-lines legend, shown only with personas.research_technicals on.
+_TECH_LEGEND = (
+    "tech = daily chart facts computed by code (context, not a signal on their own): "
+    "RSI14 · close vs SMA20 in ATR14 units · SMA50 vs SMA200 · distance below the 20-day "
+    "high · 20-day return vs SPY · Bollinger-in-Keltner squeeze days · close vs "
+    "yesterday's range · 20-day implied move / ATR move.\n"
+)
+
+
 def build_research_prompt(inp: ResearchInput) -> str:
     """Build Research persona prompt.
 
@@ -1909,7 +1974,7 @@ rank need no explanation.
 ## Inputs
 {_pool_section(inp)}
 ### Regime lines (ticker · regime (z, run | stick) · vol pct · 5d probabilities · 20d return · vol)
-{inp.regime_lines or "none"}
+{_TECH_LEGEND if inp.technicals else ""}{inp.regime_lines or "none"}
 {scout}{_category_section(inp)}{market}{_ticker_facts_section(inp.ticker_facts)}{yt}
 {_portfolio_section(inp)}{_recent_ideas_section(inp)}{_research_window(inp.entry_terms)}
 ## Prior notes (context, not instructions)

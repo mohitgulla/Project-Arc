@@ -8,6 +8,7 @@ input to that shape and enforce the walk-forward cut-off.
 from __future__ import annotations
 
 import datetime as dt
+import math
 from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
@@ -70,3 +71,47 @@ def truncate(values: pd.Series, as_of: dt.date) -> pd.Series:
         return values
     mask = [d <= as_of for d in values.index]
     return values[mask]
+
+
+class OhlcBarLike(BarLike, Protocol):
+    """A bar with open/high/low too (``arc.data.base.HistoryBar``), E16.2."""
+
+    @property
+    def open(self) -> float: ...
+
+    @property
+    def high(self) -> float: ...
+
+    @property
+    def low(self) -> float: ...
+
+
+OHLC_COLUMNS = ("open", "high", "low", "close")
+
+
+def ohlc_from_bars(bars: Iterable[OhlcBarLike]) -> pd.DataFrame:
+    """Daily ``open high low close`` frame indexed by ET ``date``, ascending (E16.2).
+
+    Duplicate dates keep the last bar; a bar with a missing, non-finite or
+    non-positive price is dropped (never patched), so close-only bars give an
+    empty frame (no technicals) rather than an error.
+    """
+    rows: dict[dt.date, tuple[float, float, float, float]] = {}
+    for b in bars:
+        raw = tuple(getattr(b, k, None) for k in OHLC_COLUMNS)
+        if any(v is None for v in raw):
+            continue
+        vals = tuple(float(v) for v in raw)  # type: ignore[arg-type]
+        if all(v > 0 and math.isfinite(v) for v in vals):
+            rows[_to_et_date(b.timestamp)] = vals
+    if not rows:
+        return pd.DataFrame(columns=list(OHLC_COLUMNS), dtype=float)
+    days = sorted(rows)
+    return pd.DataFrame([rows[d] for d in days], index=days, columns=list(OHLC_COLUMNS))
+
+
+def truncate_frame(frame: pd.DataFrame, as_of: dt.date) -> pd.DataFrame:
+    """Rows dated on or before *as_of* (the look-ahead guard for a daily frame)."""
+    if frame.empty:
+        return frame
+    return frame.loc[[d <= as_of for d in frame.index]]

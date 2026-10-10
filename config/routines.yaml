@@ -722,12 +722,30 @@ director_diversification:
     stance_max_pct: 0.85        # strict portfolio.stance_max_pct 0.75
     expiry_max_pct: 0.70        # strict portfolio.expiry_max_pct 0.60
 
+# E16.2 (D76/D78): inputs for the technicals stored on every `regime` entry (context
+# only, never a gate input). Research sees them as one `tech …` segment per regime
+# line while `personas.research_technicals` is on (D78 default; off = rollback).
+# rs_spy_20d / rs_spy_60d always use SPY; SPY and each ETF below are fetched once per run.
+technicals:
+  sector_etf:                   # config/sectors.yaml sector -> ETF for rs_sector_20d; unmapped = None
+    technology: XLK
+    consumer_discretionary: XLY
+    consumer_staples: XLP
+    financials: XLF
+    energy: XLE
+    health_care: XLV
+    industrials: XLI
+    communication: XLC
+    utilities: XLU
+    real_estate: XLRE
+
 personas:
   finnhub_context: "off"        # E4.8a: off | on (strategy lane; promote only on an XP-2 win)
   scalp_movers_context: "off"   # E14.3 (D60): off | on, the Scalp's "Tape movers" block (strategy lane; XP-11)
   director_diversification: strict   # E12.5: strict | relaxed (strategy lane; `!arc config personas.director_diversification relaxed` or XP-3)
   scout_buzz_velocity: "off"    # E14.5 (D60): off | on: Reddit mention velocity + "Fastest risers" in the Scout's retail-buzz section (strategy lane)
   retail_sentiment_context: "off"   # E14.6 (D60): off | on: Stocktwits bull/bear lines for the Scout + one fact per Research pool line (strategy lane; draft XP-12)
+  research_technicals: "on"     # E16.2 (D76/D78): off | on: the code-rendered `tech …` segment on Research's regime lines (D78 ships on; off = rollback, prompt byte-identical)
   scout:                        # E13.7 (D56): once per trading day, after the 02:00 youtube.briefs + the previous evening's options_slow (18:30 vol_term, 23:00 options_daily/vix_futures; E14.2)
     label: Scout
     about: "Daily read of the YouTube briefs + Cboe options stats; writes the discovery tier and Scout ideas"

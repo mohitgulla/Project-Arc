@@ -93,7 +93,10 @@ class TestBars:
         s = closes_from_bars(bars)
         assert list(s.index) == list(closes.index)
         snap = build_snapshot_from_bars("iwm", bars, closes.index[-1])
-        assert snap == build_snapshot("IWM", closes, closes.index[-1])
+        # close-only bars: no technicals (E16.2), flagged as a warning, otherwise identical
+        assert snap.technicals is None and snap.warnings[-1].startswith("technicals:")
+        plain = build_snapshot("IWM", closes, closes.index[-1])
+        assert snap.model_copy(update={"warnings": plain.warnings}) == plain
 
     def test_utc_midnight_maps_to_prior_et_date(self) -> None:
         bar = _Bar(dt.datetime(2025, 3, 4, 3, 0, tzinfo=dt.UTC), 1.0)

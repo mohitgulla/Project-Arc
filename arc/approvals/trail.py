@@ -7,7 +7,8 @@ run that produced the proposal, so the card shows exactly what was journaled:
 - **Research** — rank in the shortlist, stance, confidence, regime read, thesis
 - **Quant**    — confidence and rationale for the chosen structure
 - **Risk**     — rating, advisory sizing vs. the D18 cap, concerns, narrative
-- **Market**   — regime + volatility frozen with the proposal (MarketContext)
+- **Market**   — regime + volatility (+ E16.2 technicals) frozen with the proposal
+  (MarketContext)
 - **Analytics** — E6.1a card v2 numbers (costs, liquidity, moneyness, vol stats,
   exit model), stored on that same MarketContext row; the card never recomputes them
 
@@ -66,6 +67,8 @@ def _features(mc: MarketContext | None) -> dict[str, Any] | None:
     return {
         "regime": {"current": mc.regime} if mc.regime else None,
         "vol": {"iv": mc.atm_iv, "iv_rank": mc.ivr, "hv20": mc.hv20},
+        # E16.2 (D76): the daily technicals frozen with the proposal (audit only)
+        "technicals": mc.technicals.model_dump(mode="json") if mc.technicals else None,
     }
 
 
