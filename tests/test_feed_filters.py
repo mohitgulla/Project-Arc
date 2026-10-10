@@ -264,6 +264,7 @@ class TestFeedSpecFilters:
             "sources.options_fast.strikes",
             "options_fast.vix_flags.vix_gt_25",  # E13.6: tape labels only
             "options_fast.vix_flags.vix_gt_35",
+            "iv_backfill.since",  # E16.1: backfill start date (data range)
         }
         with pytest.raises(TunableError):
             lookup("sources.rss.feeds.seekingalpha.title_exclude")

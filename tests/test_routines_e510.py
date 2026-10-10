@@ -191,6 +191,7 @@ class TestConfig:
             "finnhub.fundamentals",
             "finnhub.insider",
             "finnhub.recs",
+            "iv.backfill",  # E16.1: nightly IV top-up, up to 15 min on the Alpaca budget
             "iv.record",
             "market_movers",  # E14.3: two screener calls + one snapshot call
             "options_fast",  # E13.6: ~50 chain requests, ~45 s

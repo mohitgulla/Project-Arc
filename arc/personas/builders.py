@@ -414,7 +414,8 @@ def regime_line(ticker: str, payload: Mapping[str, Any]) -> str:
         f"iv {_num(vol.get('iv'))} hv20 {_num(vol.get('hv20'))} "
         f"iv/hv20 {_num(vol.get('iv_hv20_ratio'))}"
     )
-    parts.append(f"ivr {_num(vol.get('iv_rank'), '.0f')}")
+    ivr = vol.get("iv_rank")  # 0..1 -> 0..100 (E16.1: was printed as 0 / 1)
+    parts.append(f"ivr {_num(ivr * 100 if isinstance(ivr, int | float) else None, '.0f')}")
     if payload.get("last_close") is not None:
         parts.append(f"close {_num(payload.get('last_close'))}")
     return " · ".join(parts)

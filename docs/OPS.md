@@ -1895,7 +1895,7 @@ next recorded day within the threshold. The run summary lists `ours/Cboe` per na
     .venv/bin/arc iv backfill --tickers watch --since 2024-03-01 --db /tmp/arc-iv.db
     .venv/bin/arc iv backfill --tickers watch --since 2024-03-01        # live, resumable
 
-`watch` = today's watch list + open underlyings + SPY/QQQ. Per day: the underlying
+`watch` = today's watch list + open underlyings + SPY/QQQ/IWM. Per day: the underlying
 close, the expiries bracketing 30 DTE (nearest traded within six per side), the
 nearest strike to the close whose call and put both traded (within 3 %), BS inversion
 of the two closes (`scanner_risk_free_rate`, `iv_dividend_yields` for ETFs),
@@ -1903,6 +1903,28 @@ total-variance interpolation to 30 DTE. Requests share the
 `routine_state[alpaca_data:calls]` budget (`alpaca_data_calls_per_minute`, 150).
 About 25 s and 110 requests per ticker-year. Bars are last trades, not mids, and
 not simultaneous with the stock close: about ±2 vol pts of daily noise.
+
+**Nightly top-up: `iv.backfill` (E16.1, D76).** The active list churns daily
+(Discovery / Trending), so the one-off backfill goes stale. `iv.backfill` (16:20 ET,
+trading days, background lane, `ttl: 2h` so a missed slot is skipped, not caught up the
+next morning) runs the same backfill on the names still short of IV rank:
+
+- candidates: open underlyings, then today's active list in order, then SPY/QQQ/IWM;
+- short: fewer than `iv_min_obs_rank` (120) days in our series (`alpaca_cm30` or
+  `alpaca_backfill`) over the last 252 sessions;
+- not retried: a short name whose every missing day already has an `iv_skips` row
+  (counted as `exhausted` in the summary; delete its skips to retry);
+- at most `iv_backfill.max_tickers_per_run` (10) names; no new name starts after
+  `iv_backfill.max_runtime_s` (900 s); the next run resumes (per-day rows);
+- range `iv_backfill.since` (2024-03-01) .. the previous session; requests share
+  the `alpaca_data:calls` budget with every other Alpaca data job.
+
+Run summary: `n tickers filled, n days added, n skipped (reasons), n still short`
+(plus `deferred` / `exhausted` counts); a quiet night says `no short names`. No Slack
+post unless every picked name errors (the run fails → the usual `[Ops]` path).
+Knobs: `!arc config set iv_backfill.max_tickers_per_run|max_runtime_s`; `since` by PR.
+
+    .venv/bin/arc routines run iv.backfill --db <scratch> --no-slack   # rehearse
 
 **Option Strategist (ad hoc, internal use only — D55).** McMillan's free weekly file
 (Saturdays). Never scheduled, never redistributed or quoted outside Arc.
