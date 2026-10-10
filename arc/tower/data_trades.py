@@ -786,6 +786,7 @@ class RegimeView(BaseModel):
     model: str | None = None
     z: float | None = None
     run_length: int | None = None
+    margin_z: float | None = None
     vol_state: str | None = None
     rv20_pct_rank: float | None = None
 
@@ -2035,6 +2036,7 @@ def _regime(
             model=reg.get("model"),
             z=_f(reg.get("z")),
             run_length=reg.get("run_length") if isinstance(reg.get("run_length"), int) else None,
+            margin_z=_f(reg.get("margin_z")),
             vol_state=reg.get("vol_state"),
             rv20_pct_rank=_f(reg.get("rv20_pct_rank")),
         )

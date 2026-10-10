@@ -624,8 +624,23 @@ class ArcSettings(BaseSettings):
     no_trade_transitional_min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
         default=0.55,
         description=(
-            "D33: when the snapshot holds a SPY regime entry whose stickiness (P[stay]) is "
-            "below this, the regime counts as transitional and new opens are blocked."
+            "D33 legacy path: when the SPY regime entry has no v2 confirmation fields "
+            "(run_length / margin_z), stickiness (P[stay]) below this counts as transitional "
+            "and new opens are blocked. v2 entries use regime_guard_min_run / _margin_z (D77)."
+        ),
+    )
+    regime_guard_min_run: Annotated[int, Field(ge=1, le=10)] = Field(
+        default=3,
+        description=(
+            "D77 (E17.2): SPY trend label held for fewer sessions than this = transitional; "
+            "the D33 market guard blocks new opens."
+        ),
+    )
+    regime_guard_min_margin_z: Annotated[float, Field(ge=0.0, le=1.0)] = Field(
+        default=0.25,
+        description=(
+            "D77 (E17.2): SPY trend z closer than this to a bull/bear threshold = "
+            "transitional; the D33 market guard blocks new opens."
         ),
     )
     # -- Regime model (E17.1, D77) ------------------------------------------------

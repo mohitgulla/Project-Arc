@@ -4711,6 +4711,8 @@ export interface components {
             iv_rank?: number | null;
             /** Last Close */
             last_close?: number | null;
+            /** Margin Z */
+            margin_z?: number | null;
             /** Model */
             model?: string | null;
             /** Run Length */

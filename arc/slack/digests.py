@@ -616,12 +616,13 @@ def research_card(
     )
     if guard is not None:
         vix = f"VIX {guard.vix.value:.1f}" if guard.vix else "VIX n/a"
-        reg = (
-            f"SPY regime {B.esc(guard.regime)}"
-            + (f" (stickiness {guard.regime_stickiness:.2f})" if guard.regime_stickiness else "")
-            if guard.regime
-            else ""
-        )
+        if guard.regime_run_length is not None and guard.regime_margin_z is not None:
+            reg_detail = f" (run {guard.regime_run_length}d, margin z {guard.regime_margin_z:.2f})"
+        elif guard.regime_stickiness:
+            reg_detail = f" (stickiness {guard.regime_stickiness:.2f})"
+        else:
+            reg_detail = ""
+        reg = f"SPY regime {B.esc(guard.regime)}{reg_detail}" if guard.regime else ""
         state = "clear" if guard.opens_allowed else "no new opens"
         blocks.append(
             _section(

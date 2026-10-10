@@ -383,7 +383,9 @@ function Market({ d }: { d: TradeDetail }) {
                     },
                   ]
                 : []),
-              { label: "Stickiness / expected run", value: <>{pct(r.stickiness)} / {r.expected_duration == null ? "—" : `${formatNumber(r.expected_duration, 1)} steps`}</> },
+              r.run_length != null && r.margin_z != null
+                ? { label: "Run / margin z", value: `${r.run_length}d / ${r.margin_z.toFixed(2)}` }
+                : { label: "Stickiness / expected run", value: <>{pct(r.stickiness)} / {r.expected_duration == null ? "—" : `${formatNumber(r.expected_duration, 1)} steps`}</> },
               { label: "Trailing return", value: r.trailing_return == null ? DASH : formatPercent(r.trailing_return, { explicitSign: true }) },
               { label: "Last close", value: n0(r.last_close, 2) },
               { label: "IV / IV rank / HV20", value: <>{pct(r.iv)} / {pct(r.iv_rank)} / {pct(r.hv20)}</> },
