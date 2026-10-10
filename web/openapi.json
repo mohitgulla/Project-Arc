@@ -11308,6 +11308,39 @@
             ],
             "title": "Last Close"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "run_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Length"
+          },
+          "rv20_pct_rank": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rv20 Pct Rank"
+          },
           "snapshot_id": {
             "anyOf": [
               {
@@ -11340,6 +11373,28 @@
               }
             ],
             "title": "Trailing Return"
+          },
+          "vol_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vol State"
+          },
+          "z": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Z"
           }
         },
         "required": [

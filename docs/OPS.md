@@ -2273,3 +2273,29 @@ The expiry guard runs inside `exits.mandatory` (the deterministic close step, ev
 4. `!resume` clears the opens-only halt. Check with `arc halt-status` (it shows `scope=opens` while one is active).
 
 Read-only checks: `arc reconcile --activities [--days 30]` prints the paper account's OPASN/OPEXC/OPEXP/OPTRD rows (no store is opened). Open share rows: `select * from assignment_shares where unwound_at is null`.
+
+### 5.36 Regime v2: vol-scaled trend, vol state, rolling fit (E17.1, D77)
+
+Every `regime` context entry (schema v3) is computed by `arc/features/regime.py`.
+`regime.model: v2` is the default; `v1` (the old ±5 % 20-day return) is a rollback
+switch only and serialises byte-identically to the pre-v2 entries.
+
+- **Trend.** `z = r20 / (σ60 · √20)`: the 20-session return in units of the ticker's own
+  60-session daily-return stdev. `bull` at `z ≥ +regime.trend_z` (1.0), `bear` at
+  `z ≤ −1.0`, else `sideways`. A flat window gives `z = 0`.
+- **Vol state.** rv20 (annualised 20-session realised vol) ranked inside the ticker's
+  own last `regime.vol_rank_window` (252) rv20 values: `low` < p33.3 ≤ `mid` < p66.7 ≤
+  `high`. A ticker without a full window uses the fixed 12 % / 20 % buckets
+  (`vol_label_source: fixed`). The backtest's vol label is the same function.
+- **Fit.** Trend and vol chains are fit on the last `regime.fit_window` (252) labels with
+  Laplace `regime.alpha` (0.5).
+- **Confirmation fields** (read by E17.2's transitional guard): `run_length` (sessions the
+  trend label has held) and `margin_z` (distance from z to ±trend_z).
+- Research sees `SPY · sideways z+0.6 (run 30d) · vol low (p17) · 5d … · close …`
+  (code-rendered). The Tower trade page shows `Trend z / run · vol state`.
+- The regime step fetches `regime_history_days` of bars per ticker (470 calendar days at
+  the defaults; never below v1's 400). Fewer than 62 closes → no regime entry (warning).
+
+Rollback: `arc config set regime.model v1 --actor <owner> --source cli` (then confirm).
+Regime is context and a Research/backtest input only; it is never a gate input
+(`lint-imports`).

@@ -4684,12 +4684,22 @@ export interface components {
             iv_rank?: number | null;
             /** Last Close */
             last_close?: number | null;
+            /** Model */
+            model?: string | null;
+            /** Run Length */
+            run_length?: number | null;
+            /** Rv20 Pct Rank */
+            rv20_pct_rank?: number | null;
             /** Snapshot Id */
             snapshot_id?: string | null;
             /** Stickiness */
             stickiness?: number | null;
             /** Trailing Return */
             trailing_return?: number | null;
+            /** Vol State */
+            vol_state?: string | null;
+            /** Z */
+            z?: number | null;
         };
         /** ReviewView */
         ReviewView: {

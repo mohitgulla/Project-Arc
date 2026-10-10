@@ -628,6 +628,37 @@ class ArcSettings(BaseSettings):
             "below this, the regime counts as transitional and new opens are blocked."
         ),
     )
+    # -- Regime model (E17.1, D77) ------------------------------------------------
+    # Context and a Research/backtest input only; never a gate input.
+    regime_model: Literal["v1", "v2"] = Field(
+        default="v2",
+        description=(
+            "D77: per-ticker regime model. v2 = vol-scaled 20-day z trend + per-ticker vol "
+            "state + rolling fit (default); v1 = the old +/-5% trailing return (rollback)."
+        ),
+    )
+    regime_trend_z: Annotated[float, Field(gt=0.0, le=3.0)] = Field(
+        default=1.0,
+        description=(
+            "D77 v2: |z| at or above this labels bull / bear (z = r20 / (sigma60 * sqrt 20))."
+        ),
+    )
+    regime_vol_scale_window: Annotated[int, Field(ge=20, le=250)] = Field(
+        default=60,
+        description="D77 v2: sessions of daily log returns behind sigma in the trend z.",
+    )
+    regime_vol_rank_window: Annotated[int, Field(ge=60, le=504)] = Field(
+        default=252,
+        description="D77 v2: sessions of the ticker's own rv20 history for the vol percentile.",
+    )
+    regime_fit_window: Annotated[int, Field(ge=20, le=1000)] = Field(
+        default=252,
+        description="D77 v2: most recent labels the trend and vol chains are fit on.",
+    )
+    regime_alpha: Annotated[float, Field(ge=0.0, le=5.0)] = Field(
+        default=0.5,
+        description="D77 v2: Laplace pseudo-count per transition-matrix cell.",
+    )
     no_trade_require_vix: bool = Field(
         default=True,
         description=(

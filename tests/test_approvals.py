@@ -57,9 +57,12 @@ def arc_settings(monkeypatch: pytest.MonkeyPatch) -> ArcSettings:
 @pytest.fixture(scope="module")
 def _pipeline_db() -> bytes:
     """One offline `arc propose --fixtures` run, serialised so each test gets a copy."""
+    # The fixture recordings hold 42-50 closes, under regime v2's 62-close minimum
+    # (60-session sigma + one transition, D77); pin v1 so the SPY regime label exists.
     conn, report = fixture_run(
-        ArcSettings(_env_file=None, account_profile="margin"), load_routines()
-    )  # type: ignore[call-arg]
+        ArcSettings(_env_file=None, account_profile="margin", regime_model="v1"),  # type: ignore[call-arg]
+        load_routines(),
+    )
     assert len(report.proposals) == 1
     return conn.serialize()
 

@@ -394,12 +394,35 @@ def scout_read_block(snapshot: ContextSnapshot, *, max_chars: int = SCOUT_READ_M
     return text if len(text) <= max_chars else text[: max_chars - 1].rstrip() + "…"
 
 
+def _regime_head(reg: Mapping[str, Any]) -> list[str]:
+    """v2 (D77): ``sideways z+0.4 (run 12d)`` + ``vol low (p18)``; v1: ``sideways (stick 0.70)``."""
+    if reg.get("model") != "v2":
+        return [f"{reg.get('current', '?')} (stick {_num(reg.get('stickiness'))})"]
+    z = reg.get("z")
+    zs = f" z{z:+.1f}" if isinstance(z, int | float) else ""
+    run = reg.get("run_length")
+    runs = f" (run {run}d)" if isinstance(run, int) else ""
+    head = [f"{reg.get('current', '?')}{zs}{runs}"]
+    vs = reg.get("vol_state")
+    if vs:
+        pct = reg.get("rv20_pct_rank")
+        if isinstance(pct, int | float):
+            head.append(f"vol {vs} (p{pct:.0f})")
+        else:  # warm-up: fixed 12%/20% buckets on rv20
+            head.append(f"vol {vs} (rv20 {_num(reg.get('rv20'))} fixed)")
+    return head
+
+
 def regime_line(ticker: str, payload: Mapping[str, Any]) -> str:
     """``AVGO · sideways (stick 0.70) · 5d bull 0.23/side 0.47/bear 0.29 · ret20 +2.7% ·
-    iv 0.37 hv20 0.36 iv/hv20 1.04 · ivr n/a · close 378.68`` (one regime entry)."""
+    iv 0.37 hv20 0.36 iv/hv20 1.04 · ivr n/a · close 378.68`` (one regime entry).
+
+    Regime v2 entries (D77) replace the head with the vol-scaled read:
+    ``SPY · sideways z+0.4 (run 12d) · vol low (p18) · 5d … · close …``.
+    """
     reg = payload.get("regime") or {}
     vol = payload.get("vol") or {}
-    parts = [ticker, f"{reg.get('current', '?')} (stick {_num(reg.get('stickiness'))})"]
+    parts = [ticker, *_regime_head(reg)]
     for f in reg.get("forecasts") or []:
         if f.get("horizon") == 5:  # noqa: PLR2004 - the 5-session forecast
             pr = f.get("probabilities") or {}
@@ -1885,7 +1908,7 @@ rank need no explanation.
 
 ## Inputs
 {_pool_section(inp)}
-### Regime lines (ticker · regime (stickiness) · 5d probabilities · 20d return · vol)
+### Regime lines (ticker · regime (z, run | stick) · vol pct · 5d probabilities · 20d return · vol)
 {inp.regime_lines or "none"}
 {scout}{_category_section(inp)}{market}{_ticker_facts_section(inp.ticker_facts)}{yt}
 {_portfolio_section(inp)}{_recent_ideas_section(inp)}{_research_window(inp.entry_terms)}

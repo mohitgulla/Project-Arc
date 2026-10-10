@@ -18,23 +18,41 @@ Walk-forward safety: :func:`estimate_regime` truncates every input to
 ``as_of`` cannot change its output (property-tested).
 
 State order in every matrix / vector is :data:`STATES` = (bear, sideways, bull).
+
+**Regime v2 (PLAN D77, E17.1)** — ``estimate_regime(..., model="v2")``:
+
+1. **Vol-scaled trend.** ``z_t = r20_t / (sigma_t * sqrt(20))`` where ``sigma_t`` is
+   the sample stdev of daily log returns over the trailing ``vol_scale_window`` (60)
+   sessions ending at *t*. ``bull`` if ``z >= +trend_z`` (1.0), ``bear`` if
+   ``z <= -trend_z``, else ``sideways``. A flat window (``sigma = 0``) gives ``z = 0``.
+2. **Vol state** (:class:`VolState`). ``rv20`` = annualised 20-session realised vol;
+   its percentile rank within the ticker's own trailing ``vol_rank_window`` (252)
+   ``rv20`` values gives ``low`` (< 33.3), ``mid`` or ``high`` (>= 66.7). Before a full
+   window exists, the fixed 12 % / 20 % buckets apply (``vol_label_source: fixed``).
+3. **Rolling fit.** Trend and vol chains are fit on the last ``fit_window`` (252)
+   labels with Laplace ``alpha`` (0.5).
+4. **Confirmation.** ``run_length`` = sessions the current trend label has held
+   (>= 1); ``margin_z`` = distance from ``z`` to the nearest threshold (>= 0).
+
+v1 (the original return-threshold model) is the rollback path; its serialised
+output is byte-identical to the pre-v2 code (golden-tested).
 """
 
 from __future__ import annotations
 
 import datetime as dt  # noqa: TC003 — used at runtime in pydantic models
+import math
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-from pydantic import BaseModel, Field
+import pandas as pd
+from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
 from arc.features._series import InsufficientHistoryError, to_daily_series, truncate
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
-
-    import pandas as pd
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -45,6 +63,25 @@ BULL_THRESHOLD = 0.05
 BEAR_THRESHOLD = -0.05
 DEFAULT_HORIZONS: tuple[int, ...] = (1, 5, 20)
 
+# v2 defaults (PLAN D77); live values come from ``ArcSettings.regime_*``.
+RegimeModel = Literal["v1", "v2"]
+REGIME_MODELS: tuple[str, ...] = ("v1", "v2")
+V2_TREND_Z = 1.0
+V2_VOL_SCALE_WINDOW = 60
+V2_VOL_RANK_WINDOW = 252
+V2_FIT_WINDOW = 252
+V2_ALPHA = 0.5
+
+# Fixed realised-vol buckets (annualised): the backtest's vol regime and the v2
+# warm-up fallback. One implementation; ``arc.backtest.regime`` imports it.
+VOL_LOW = 0.12
+VOL_HIGH = 0.20
+# Percentile-rank cut-offs for the per-ticker vol state.
+VOL_PCT_LOW = 100.0 / 3.0
+VOL_PCT_HIGH = 200.0 / 3.0
+TRADING_DAYS = 252.0
+_FLAT_SIGMA = 1e-12
+
 
 class Regime(StrEnum):
     """Market regime label."""
@@ -54,9 +91,19 @@ class Regime(StrEnum):
     BULL = "bull"
 
 
+class VolState(StrEnum):
+    """Realised-vol state (v2)."""
+
+    LOW = "low"
+    MID = "mid"
+    HIGH = "high"
+
+
 STATES: tuple[Regime, ...] = (Regime.BEAR, Regime.SIDEWAYS, Regime.BULL)
 _INDEX = {s: i for i, s in enumerate(STATES)}
 N_STATES = len(STATES)
+VOL_STATES: tuple[VolState, ...] = (VolState.LOW, VolState.MID, VolState.HIGH)
+_VOL_INDEX = {s: i for i, s in enumerate(VOL_STATES)}
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +148,203 @@ def label_regimes(
     out = rets.astype(object).rename("regime")
     out[:] = [classify_return(float(r), bull=bull, bear=bear) for r in rets]
     return out
+
+
+# ---------------------------------------------------------------------------
+# v2 labelling (D77): vol-scaled trend z, per-ticker realised-vol state
+# ---------------------------------------------------------------------------
+
+
+def _positive_closes(closes: pd.Series) -> pd.Series:
+    s = to_daily_series(closes, name="close")
+    if (s <= 0).any():
+        raise ValueError("closes must be strictly positive")
+    return s
+
+
+def _window_std(values: np.ndarray, window: int) -> np.ndarray:
+    """Sample stdev (ddof=1) of every full trailing *window*; computed per window, so a
+    value never depends on data before its window (no running-sum drift)."""
+    if len(values) < window:
+        return np.empty(0)
+    return np.lib.stride_tricks.sliding_window_view(values, window).std(axis=1, ddof=1)
+
+
+def vol_scaled_z(
+    closes: pd.Series,
+    *,
+    lookback: int = LOOKBACK_DAYS,
+    vol_window: int = V2_VOL_SCALE_WINDOW,
+) -> pd.Series:
+    """``z_t = r_t / (sigma_t * sqrt(lookback))`` per date (warm-up rows dropped).
+
+    ``r_t`` is the trailing *lookback*-session simple return and ``sigma_t`` the sample
+    stdev of the *vol_window* daily log returns ending at *t*. A flat window
+    (``sigma_t`` ~ 0) gives ``z = 0`` instead of dividing by zero.
+    """
+    if lookback < 1 or vol_window < 2:  # noqa: PLR2004 - a stdev needs two returns
+        raise ValueError("lookback must be >= 1 and vol_window >= 2")
+    s = _positive_closes(closes)
+    c = s.to_numpy(dtype=float)
+    first = max(lookback, vol_window)
+    if len(c) <= first:
+        return pd.Series([], index=s.index[:0], dtype=float, name="z")
+    # log_ret[k] = ln(c[k+1] / c[k]); the ratio first, so a price rescale is exact.
+    log_ret = np.log(c[1:] / c[:-1])
+    sig = _window_std(log_ret, vol_window)  # sig[j] ends at close index j + vol_window
+    idx = np.arange(first, len(c))
+    sigma = sig[idx - vol_window]
+    r = c[idx] / c[idx - lookback] - 1.0
+    scale = sigma * math.sqrt(lookback)
+    z = np.where(sigma > _FLAT_SIGMA, r / np.where(sigma > _FLAT_SIGMA, scale, 1.0), 0.0)
+    return pd.Series(z, index=s.index[idx], name="z")
+
+
+def classify_z(z: float, *, trend_z: float = V2_TREND_Z) -> Regime:
+    """``bull`` if ``z >= +trend_z``, ``bear`` if ``z <= -trend_z``, else sideways."""
+    if trend_z <= 0:
+        raise ValueError("trend_z must be > 0")
+    if z >= trend_z:
+        return Regime.BULL
+    if z <= -trend_z:
+        return Regime.BEAR
+    return Regime.SIDEWAYS
+
+
+def label_regimes_v2(
+    closes: pd.Series,
+    *,
+    lookback: int = LOOKBACK_DAYS,
+    trend_z: float = V2_TREND_Z,
+    vol_window: int = V2_VOL_SCALE_WINDOW,
+) -> pd.Series:
+    """Per-day v2 trend labels (series of :class:`Regime`) from :func:`vol_scaled_z`."""
+    z = vol_scaled_z(closes, lookback=lookback, vol_window=vol_window)
+    out = z.astype(object).rename("regime")
+    out[:] = [classify_z(float(v), trend_z=trend_z) for v in z]
+    return out
+
+
+def realised_vol(closes: pd.Series, lookback: int = LOOKBACK_DAYS) -> pd.Series:
+    """Annualised *lookback*-session realised vol of daily log returns (NaN in warm-up).
+
+    Each value is the sample stdev of exactly its own window (no running-sum drift), so
+    a flat window is exactly 0 and equal windows give equal values (stable ranks).
+    """
+    c = closes.to_numpy(dtype=float)
+    out = np.full(len(c), np.nan)
+    if len(c) > lookback:
+        lr = np.log(c[1:] / c[:-1])
+        out[lookback:] = _window_std(lr, lookback) * np.sqrt(TRADING_DAYS)
+    return pd.Series(out, index=closes.index, name="rv")
+
+
+def label_vol(closes: pd.Series, lookback: int = LOOKBACK_DAYS) -> pd.Series:
+    """Fixed-bucket vol label per date: ``low`` < 12 % <= ``mid`` < 20 % <= ``high``.
+
+    ``unknown`` during warm-up. The backtest's vol regime and the v2 warm-up fallback
+    (before a ticker has a full percentile window) both use this one implementation.
+    """
+    rv = realised_vol(closes, lookback)
+    out = np.where(rv < VOL_LOW, "low", np.where(rv >= VOL_HIGH, "high", "mid"))
+    out = np.where(rv.isna(), "unknown", out)
+    return pd.Series(out, index=closes.index, name="vol")
+
+
+def percentile_rank(window: Sequence[float] | np.ndarray, value: float) -> float:
+    """Percentile of *value* within *window*: ``100 * (#below + #equal / 2) / n``.
+
+    Always in ``[0, 100]``; a constant window gives 50.
+    """
+    arr = np.asarray(window, dtype=float)
+    if arr.size == 0:
+        raise ValueError("window must be non-empty")
+    below = float(np.sum(arr < value))
+    equal = float(np.sum(arr == value))
+    return 100.0 * (below + 0.5 * equal) / float(arr.size)
+
+
+def vol_state_from_pct(pct: float) -> VolState:
+    """``low`` below the 33.3rd percentile, ``high`` from the 66.7th, else ``mid``."""
+    if pct < VOL_PCT_LOW:
+        return VolState.LOW
+    if pct >= VOL_PCT_HIGH:
+        return VolState.HIGH
+    return VolState.MID
+
+
+def vol_state_fixed(rv: float) -> VolState:
+    """Fixed 12 % / 20 % buckets (same cut-offs as :func:`label_vol`)."""
+    if rv < VOL_LOW:
+        return VolState.LOW
+    if rv >= VOL_HIGH:
+        return VolState.HIGH
+    return VolState.MID
+
+
+class VolLabels(BaseModel):
+    """Per-day v2 vol read (internal; one entry per date with an rv20)."""
+
+    rv: list[float]
+    pct_rank: list[float | None]
+    state: list[VolState]
+    source: list[Literal["percentile", "fixed"]]
+    dates: list[dt.date]
+
+
+def label_vol_v2(
+    closes: pd.Series,
+    *,
+    lookback: int = LOOKBACK_DAYS,
+    rank_window: int = V2_VOL_RANK_WINDOW,
+) -> VolLabels:
+    """Per-day vol state: percentile of rv20 in its own trailing *rank_window* values.
+
+    Dates before a full window fall back to the fixed buckets (``source: fixed``).
+    """
+    if rank_window < 2:  # noqa: PLR2004
+        raise ValueError("rank_window must be >= 2")
+    s = _positive_closes(closes)
+    rv = realised_vol(s, lookback).dropna()
+    vals = rv.to_numpy(dtype=float)
+    pct: list[float | None] = []
+    state: list[VolState] = []
+    source: list[Literal["percentile", "fixed"]] = []
+    for k, v in enumerate(vals):
+        if k + 1 >= rank_window:
+            p = percentile_rank(vals[k + 1 - rank_window : k + 1], v)
+            pct.append(p)
+            state.append(vol_state_from_pct(p))
+            source.append("percentile")
+        else:
+            pct.append(None)
+            state.append(vol_state_fixed(v))
+            source.append("fixed")
+    return VolLabels(
+        rv=[float(v) for v in vals],
+        pct_rank=pct,
+        state=state,
+        source=source,
+        dates=list(rv.index),
+    )
+
+
+def run_length(labels: Sequence[object]) -> int:
+    """Sessions the last label has held (>= 1 for a non-empty sequence)."""
+    if not labels:
+        raise ValueError("labels must be non-empty")
+    last = labels[-1]
+    n = 0
+    for x in reversed(labels):
+        if x != last:
+            break
+        n += 1
+    return n
+
+
+def margin_to_threshold(z: float, trend_z: float = V2_TREND_Z) -> float:
+    """Distance from *z* to the nearest of ``+trend_z`` / ``-trend_z`` (>= 0)."""
+    return min(abs(z - trend_z), abs(z + trend_z))
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +466,24 @@ class RegimeForecast(BaseModel):
     probabilities: dict[Regime, float]
 
 
+# Fields only a v2 read carries. A v1 read leaves them out of its serialised form, so
+# the rollback path (and every pre-v2 stored row) is byte-identical to the old model.
+V2_FIELDS: tuple[str, ...] = (
+    "model",
+    "z",
+    "trend_z",
+    "vol_state",
+    "vol_label_source",
+    "rv20",
+    "rv20_pct_rank",
+    "vol_transition_matrix",
+    "vol_stickiness",
+    "run_length",
+    "margin_z",
+    "fit_window",
+)
+
+
 class RegimeFeatures(BaseModel):
     """Markov regime state for one underlying as of one session close."""
 
@@ -241,12 +503,60 @@ class RegimeFeatures(BaseModel):
     )
     forecasts: list[RegimeForecast]
     stationary: dict[Regime, float]
+    # -- v2 (D77, E17.1); defaulted so v1 / pre-v2 rows load unchanged ---------------
+    model: RegimeModel = Field(
+        default="v1", description="Labelling model: v1 = +/-5% trailing return, v2 = vol-scaled z"
+    )
+    z: float | None = Field(default=None, description="v2: r20 / (sigma60 * sqrt(20)) at as_of")
+    trend_z: float | None = Field(default=None, description="v2: |z| threshold for bull / bear")
+    vol_state: VolState | None = Field(default=None, description="v2: realised-vol state at as_of")
+    vol_label_source: Literal["percentile", "fixed"] | None = Field(
+        None, description="v2: percentile of own rv20 history, or fixed 12%/20% (warm-up)"
+    )
+    rv20: float | None = Field(default=None, description="v2: annualised 20-session realised vol")
+    rv20_pct_rank: float | None = Field(
+        None, ge=0.0, le=100.0, description="v2: rv20 percentile in the trailing rank window"
+    )
+    vol_transition_matrix: dict[VolState, dict[VolState, float]] | None = Field(
+        None, description="v2: vol-state P[from][to], rows sum to 1"
+    )
+    vol_stickiness: float | None = Field(default=None, description="v2: P[vol_state][vol_state]")
+    run_length: int | None = Field(
+        None, ge=1, description="v2: sessions the current trend label has held"
+    )
+    margin_z: float | None = Field(
+        None, ge=0.0, description="v2: distance from z to the nearest threshold"
+    )
+    fit_window: int | None = Field(default=None, description="v2: labels used to fit the chains")
+
+    @model_serializer(mode="wrap")
+    def _drop_v2_fields_for_v1(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.model == "v1":
+            for k in V2_FIELDS:
+                data.pop(k, None)
+        return data
+
+
+def _fit(seq: Sequence[int], n_states: int, *, step: int, alpha: float) -> tuple[np.ndarray, int]:
+    """Row-stochastic matrix from integer state indices (same rule as
+    :func:`transition_matrix`), plus the number of transitions used."""
+    counts = np.zeros((n_states, n_states), dtype=float)
+    for a, b in zip(seq[:-step], seq[step:], strict=True):
+        counts[a, b] += 1.0
+    counts += alpha
+    totals = counts.sum(axis=1, keepdims=True)
+    uniform = np.full((n_states, n_states), 1.0 / n_states)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        probs = np.where(totals > 0, counts / np.where(totals > 0, totals, 1.0), uniform)
+    return probs, max(len(seq) - step, 0)
 
 
 def estimate_regime(
     closes: pd.Series,
     as_of: dt.date,
     *,
+    model: RegimeModel = "v1",
     lookback: int = LOOKBACK_DAYS,
     bull: float = BULL_THRESHOLD,
     bear: float = BEAR_THRESHOLD,
@@ -254,13 +564,36 @@ def estimate_regime(
     step: int = 1,
     alpha: float = 0.0,
     horizons: Sequence[int] = DEFAULT_HORIZONS,
+    trend_z: float = V2_TREND_Z,
+    vol_scale_window: int = V2_VOL_SCALE_WINDOW,
+    vol_rank_window: int = V2_VOL_RANK_WINDOW,
 ) -> RegimeFeatures:
     """Fit the regime chain on data up to *as_of* and describe the current state.
+
+    ``model="v1"`` (the rollback path) labels by the +/-5 % trailing return;
+    ``bull``/``bear`` apply and ``trend_z``/``vol_*`` are ignored. ``model="v2"`` labels by
+    the vol-scaled z, adds the vol state and the confirmation fields; ``bull``/``bear``
+    are ignored. Callers pass the live knobs (``ArcSettings.regime_*``).
 
     ``fit_window`` limits the fit to the most recent N labels (``None`` =
     all history up to ``as_of``). Raises :class:`InsufficientHistoryError`
     if there is not at least one transition to fit.
     """
+    if model == "v2":
+        return _estimate_v2(
+            closes,
+            as_of,
+            lookback=lookback,
+            fit_window=fit_window,
+            step=step,
+            alpha=alpha,
+            horizons=horizons,
+            trend_z=trend_z,
+            vol_scale_window=vol_scale_window,
+            vol_rank_window=vol_rank_window,
+        )
+    if model != "v1":
+        raise ValueError(f"unknown regime model {model!r}; expected one of {REGIME_MODELS}")
     history = truncate(to_daily_series(closes, name="close"), as_of)
     labels = label_regimes(history, lookback=lookback, bull=bull, bear=bear)
     if fit_window is not None:
@@ -295,6 +628,80 @@ def estimate_regime(
             for h in horizons
         ],
         stationary=_as_dict(stationary_distribution(p)),
+    )
+
+
+def _estimate_v2(  # noqa: PLR0913 - every knob is config (D77)
+    closes: pd.Series,
+    as_of: dt.date,
+    *,
+    lookback: int,
+    fit_window: int | None,
+    step: int,
+    alpha: float,
+    horizons: Sequence[int],
+    trend_z: float,
+    vol_scale_window: int,
+    vol_rank_window: int,
+) -> RegimeFeatures:
+    """Regime v2 (D77): see the module docstring."""
+    if alpha < 0:
+        raise ValueError("alpha must be >= 0")
+    if step < 1:
+        raise ValueError("step must be >= 1")
+    if fit_window is not None and fit_window < step + 1:
+        raise ValueError("fit_window must be > step")
+    history = truncate(_positive_closes(closes), as_of)
+    z = vol_scaled_z(history, lookback=lookback, vol_window=vol_scale_window)
+    labels = [classify_z(float(v), trend_z=trend_z) for v in z]
+    fit_labels = labels[-fit_window:] if fit_window is not None else labels
+    if max(len(fit_labels) - step, 0) < 1:
+        need = max(lookback, vol_scale_window) + step + 1
+        raise InsufficientHistoryError(
+            f"need at least {need} closes up to {as_of} for regime v2, got {len(history)}"
+        )
+    current = labels[-1]
+    p, n_trans = _fit([_INDEX[s] for s in fit_labels], N_STATES, step=step, alpha=alpha)
+    stick = stickiness(p)
+    dur = expected_duration(p)
+    z_now = float(z.iloc[-1])
+
+    vol = label_vol_v2(history, lookback=lookback, rank_window=vol_rank_window)
+    vol_seq = vol.state[-fit_window:] if fit_window is not None else vol.state
+    vp, _ = _fit([_VOL_INDEX[s] for s in vol_seq], len(VOL_STATES), step=step, alpha=alpha)
+    vol_now = vol.state[-1]
+
+    return RegimeFeatures(
+        as_of=as_of,
+        current=current,
+        trailing_return=float(history.iloc[-1] / history.iloc[-1 - lookback] - 1.0),
+        lookback_days=lookback,
+        step=step,
+        n_transitions=n_trans,
+        transition_matrix={s: _as_dict(p[i]) for i, s in enumerate(STATES)},
+        stickiness=stick[current],
+        stickiness_by_state=stick,
+        expected_duration=dur[current],
+        forecasts=[
+            RegimeForecast(horizon=h, probabilities=_as_dict(forecast(p, current, h)))
+            for h in horizons
+        ],
+        stationary=_as_dict(stationary_distribution(p)),
+        model="v2",
+        z=z_now,
+        trend_z=trend_z,
+        vol_state=vol_now,
+        vol_label_source=vol.source[-1],
+        rv20=vol.rv[-1],
+        rv20_pct_rank=vol.pct_rank[-1],
+        vol_transition_matrix={
+            a: {b: float(vp[i, j]) for j, b in enumerate(VOL_STATES)}
+            for i, a in enumerate(VOL_STATES)
+        },
+        vol_stickiness=float(vp[_VOL_INDEX[vol_now], _VOL_INDEX[vol_now]]),
+        run_length=run_length(labels),
+        margin_z=margin_to_threshold(z_now, trend_z),
+        fit_window=len(fit_labels),
     )
 
 

@@ -1,0 +1,89 @@
+{
+  "as_of": "2026-09-25",
+  "last_close": 771.35,
+  "regime": {
+    "as_of": "2026-09-25",
+    "current": "sideways",
+    "expected_duration": 49.40000000000008,
+    "forecasts": [
+      {
+        "horizon": 1,
+        "probabilities": {
+          "bear": 0.008097165991902834,
+          "bull": 0.012145748987854251,
+          "sideways": 0.979757085020243
+        }
+      },
+      {
+        "horizon": 5,
+        "probabilities": {
+          "bear": 0.01783892391792563,
+          "bull": 0.04693544787302798,
+          "sideways": 0.9352256282090465
+        }
+      },
+      {
+        "horizon": 20,
+        "probabilities": {
+          "bear": 0.018118214118597757,
+          "bull": 0.08981336840444437,
+          "sideways": 0.8920684174769582
+        }
+      }
+    ],
+    "lookback_days": 20,
+    "n_transitions": 279,
+    "stationary": {
+      "bear": 0.017921146953405017,
+      "bull": 0.09677419354838707,
+      "sideways": 0.885304659498208
+    },
+    "step": 1,
+    "stickiness": 0.979757085020243,
+    "stickiness_by_state": {
+      "bear": 0.6,
+      "bull": 0.8888888888888888,
+      "sideways": 0.979757085020243
+    },
+    "trailing_return": 0.00032421216444045164,
+    "transition_matrix": {
+      "bear": {
+        "bear": 0.6,
+        "bull": 0.0,
+        "sideways": 0.4
+      },
+      "bull": {
+        "bear": 0.0,
+        "bull": 0.8888888888888888,
+        "sideways": 0.1111111111111111
+      },
+      "sideways": {
+        "bear": 0.008097165991902834,
+        "bull": 0.012145748987854251,
+        "sideways": 0.979757085020243
+      }
+    }
+  },
+  "schema_version": 1,
+  "ticker": "SPY",
+  "vol": {
+    "as_of": "2026-09-25",
+    "hv20": 0.10761185186077867,
+    "hv60": 0.11178362879618313,
+    "iv": null,
+    "iv_hv20_ratio": null,
+    "iv_hv60_ratio": null,
+    "iv_lookback": 252,
+    "iv_observations": 0,
+    "iv_percentile": null,
+    "iv_percentile_ext": null,
+    "iv_percentile_ext_source": null,
+    "iv_rank": null,
+    "missing": [
+      "no IV observation on 2026-09-25"
+    ]
+  },
+  "warnings": [
+    "vol: no IV observation on 2026-09-25"
+  ]
+}

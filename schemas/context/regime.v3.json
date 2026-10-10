@@ -33,6 +33,19 @@
           "description": "Expected remaining run length of current state in steps; None = absorbing",
           "title": "Expected Duration"
         },
+        "fit_window": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2: labels used to fit the chains",
+          "title": "Fit Window"
+        },
         "forecasts": {
           "items": {
             "$ref": "#/$defs/RegimeForecast"
@@ -44,10 +57,76 @@
           "title": "Lookback Days",
           "type": "integer"
         },
+        "margin_z": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2: distance from z to the nearest threshold",
+          "title": "Margin Z"
+        },
+        "model": {
+          "default": "v1",
+          "description": "Labelling model: v1 = +/-5% trailing return, v2 = vol-scaled z",
+          "enum": [
+            "v1",
+            "v2"
+          ],
+          "title": "Model",
+          "type": "string"
+        },
         "n_transitions": {
           "description": "Transitions used to fit the matrix",
           "title": "N Transitions",
           "type": "integer"
+        },
+        "run_length": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2: sessions the current trend label has held",
+          "title": "Run Length"
+        },
+        "rv20": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2: annualised 20-session realised vol",
+          "title": "Rv20"
+        },
+        "rv20_pct_rank": {
+          "anyOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2: rv20 percentile in the trailing rank window",
+          "title": "Rv20 Pct Rank"
         },
         "stationary": {
           "additionalProperties": {
@@ -100,6 +179,99 @@
           },
           "title": "Transition Matrix",
           "type": "object"
+        },
+        "trend_z": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2: |z| threshold for bull / bear",
+          "title": "Trend Z"
+        },
+        "vol_label_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "percentile",
+                "fixed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2: percentile of own rv20 history, or fixed 12%/20% (warm-up)",
+          "title": "Vol Label Source"
+        },
+        "vol_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VolState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2: realised-vol state at as_of"
+        },
+        "vol_stickiness": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2: P[vol_state][vol_state]",
+          "title": "Vol Stickiness"
+        },
+        "vol_transition_matrix": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "propertyNames": {
+                  "$ref": "#/$defs/VolState"
+                },
+                "type": "object"
+              },
+              "propertyNames": {
+                "$ref": "#/$defs/VolState"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2: vol-state P[from][to], rows sum to 1",
+          "title": "Vol Transition Matrix"
+        },
+        "z": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v2: r20 / (sigma60 * sqrt(20)) at as_of",
+          "title": "Z"
         }
       },
       "required": [
@@ -297,6 +469,16 @@
       ],
       "title": "VolFeatures",
       "type": "object"
+    },
+    "VolState": {
+      "description": "Realised-vol state (v2).",
+      "enum": [
+        "low",
+        "mid",
+        "high"
+      ],
+      "title": "VolState",
+      "type": "string"
     }
   },
   "additionalProperties": false,

@@ -577,6 +577,43 @@ def _portfolio_summary(
 # ---------------------------------------------------------------------------
 
 
+def regime_kwargs(settings: ArcSettings) -> dict[str, object]:
+    """``estimate_regime`` keyword arguments from the effective settings (D77).
+
+    v1 (rollback) gets no extra kwargs, so its output stays byte-identical to the
+    pre-v2 code; v2 gets every ``regime_*`` knob.
+    """
+    if settings.regime_model == "v1":
+        return {"model": "v1"}
+    return {
+        "model": "v2",
+        "trend_z": settings.regime_trend_z,
+        "vol_scale_window": settings.regime_vol_scale_window,
+        "vol_rank_window": settings.regime_vol_rank_window,
+        "fit_window": settings.regime_fit_window,
+        "alpha": settings.regime_alpha,
+    }
+
+
+def regime_history_days(settings: ArcSettings) -> int:
+    """Calendar days of daily bars the regime step fetches (one call per ticker).
+
+    v2 needs ``max(vol_scale_window, 20) + fit_window + 1`` sessions for a full fit
+    window (and ``vol_rank_window + 20`` for a full vol percentile). Sessions -> days
+    at 1.5 (365/252 plus holidays), never less than the 400 days v1 always used.
+    """
+    if settings.regime_model == "v1":
+        return _REGIME_V1_DAYS
+    sessions = max(
+        max(settings.regime_vol_scale_window, 20) + settings.regime_fit_window + 1,
+        settings.regime_vol_rank_window + 21,
+    )
+    return max(_REGIME_V1_DAYS, math.ceil(sessions * 1.5))
+
+
+_REGIME_V1_DAYS = 400
+
+
 def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> list[str]:
     """Write today's regime/vol features for *tickers* lacking one; return tickers written.
 
@@ -595,12 +632,14 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
     today = _today(ctx)
     store = safe_store(ctx.conn)
     written: list[str] = []
+    rkw = regime_kwargs(settings)
+    days = regime_history_days(settings)
     for t in tickers:
         have = ctx.snapshot.latest("regime", t)
         if have is not None and have.payload.get("as_of") == today.isoformat():
             continue
         try:
-            bars = env.market.history_bars(t, today - _dt.timedelta(days=400), today)
+            bars = env.market.history_bars(t, today - _dt.timedelta(days=days), today)
             ctx.record_input(f"bars:{t}", _source(env), bars, as_of=ctx.now, count=len(bars))
             series = store.series(t, until=today) if store is not None else {}
             current = None if today in series else _live_iv30(env, t, today, settings)
@@ -610,6 +649,7 @@ def _regime_entries(ctx: JobContext, env: PipelineEnv, tickers: list[str]) -> li
                 today,
                 iv_history=pd.Series(series, dtype=float) if series else None,
                 current_iv=current,
+                regime_kwargs=rkw,
                 min_iv_obs=settings.iv_min_obs_rank,
             )
             if store is not None and snap.vol.iv_percentile is None:

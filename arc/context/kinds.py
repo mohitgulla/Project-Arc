@@ -951,7 +951,7 @@ KINDS: Mapping[str, KindSpec] = _registry(
     KindSpec("raw_doc_ref", RawDocRefPayload),
     KindSpec("channel_brief", ChannelBriefPayload),
     KindSpec("candidate", CandidatePayload, schema_version=3),  # E13.7: feed, origins
-    KindSpec("regime", RegimePayload, schema_version=2),  # E4.12: iv_percentile_ext
+    KindSpec("regime", RegimePayload, schema_version=3),  # E17.1 (D77): regime v2 fields
     KindSpec("shortlist", ShortlistPayload, schema_version=5),  # E13.17: exit_watchlist_counts
     KindSpec("structures", StructuresPayload, schema_version=3),  # E13.9: revision_of/kept
     KindSpec("risk_review", RiskReviewPayload, schema_version=2),  # E13.9: verdicts
