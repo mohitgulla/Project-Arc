@@ -67,7 +67,7 @@ from arc.backtest.engine import (
     settle,
 )
 from arc.backtest.entry_filter import EntryFilterRule
-from arc.backtest.regime import label_trend, label_vol
+from arc.backtest.regime import BacktestRegimeModel, regime_labels
 from arc.backtest.strategies import (
     ExpiryMode,
     LegPick,
@@ -260,6 +260,20 @@ class BacktestSettings(BaseModel):
         description="structure kind -> measured slippage x (mid +/- x*spread), e.g. from "
         "the E7.3 scorecard; replaces costs.yaml slippage_frac for that kind in the base "
         "run (the slippage_grid sensitivity rows keep their x).",
+    )
+
+    # -- E17.3 (D77): regime labels for the stance menu and the sub-period split --
+    regime_model: Literal["v1", "v2"] = Field(
+        "v1",
+        description="Trend/vol labels for the stance proxy, the sub-period split and the "
+        "trade rows: v1 = +/-5% 20-session return + fixed 12%/20% vol buckets (the E7.5 "
+        "run); v2 = the live D77 labeller (vol-scaled trend z, per-ticker rv20 percentile)",
+    )
+    vol_gate: dict[str, dict[StrategyKind, list[Literal["low", "mid", "high"]]]] = Field(
+        default_factory=dict,
+        description="profile -> structure -> vol labels it may open in (after the stance "
+        "menu; a structure not listed is ungated). E17.3 variant: margin iron_condor in "
+        "low|mid vol only.",
     )
 
     # -- E16.3 (D76/D78): the anti-chase entry filter (default none: E7.5 run unchanged) --
@@ -1347,16 +1361,28 @@ def apply_stance(
     menus: Mapping[dt.date, list[Candidate]],
     trend: pd.Series,
     kinds_by_label: Mapping[str, frozenset[str]],
+    *,
+    vol: pd.Series | None = None,
+    vol_gate: Mapping[str, frozenset[str]] | None = None,
 ) -> dict[dt.date, list[Candidate]]:
     """Keep only the candidates the day's trend stance allows (unknown label → no trade).
 
-    *trend* must be computed from closes ≤ each day (``label_trend`` is), so this adds
-    no look-ahead.
+    *vol_gate* (E17.3): structure → vol labels it may open in; a gated structure on a
+    day whose *vol* label is not listed (or unknown) is dropped. Ungated structures and
+    ``vol_gate=None`` leave the stance menu unchanged.
+
+    *trend* and *vol* must be computed from closes ≤ each day (``label_trend`` and the
+    v2 labellers are), so this adds no look-ahead.
     """
+    gate = vol_gate or {}
     out: dict[dt.date, list[Candidate]] = {}
     for d, menu in menus.items():
         allowed = kinds_by_label.get(str(trend.get(d, "unknown")), frozenset())
-        out[d] = [c for c in menu if c.kind in allowed]
+        keep = [c for c in menu if c.kind in allowed]
+        if gate:
+            v = str(vol.get(d, "unknown")) if vol is not None else "unknown"
+            keep = [c for c in keep if c.kind not in gate or v in gate[c.kind]]
+        out[d] = keep
     return out
 
 
@@ -1368,9 +1394,9 @@ def rankers_for(requested: Sequence[Ranker], *, allows_credit: bool) -> list[Ran
     return out
 
 
-def labels_for(closes: pd.Series) -> tuple[pd.Series, pd.Series]:
-    c = closes.sort_index()
-    return label_trend(c), label_vol(c)
+def labels_for(closes: pd.Series, model: BacktestRegimeModel = "v1") -> tuple[pd.Series, pd.Series]:
+    """(trend, vol) labels per date of *closes*; v1 = the E7.5 labels (unchanged)."""
+    return regime_labels(closes, model)
 
 
 def exit_reason_share(trades: pd.DataFrame) -> dict[str, float]:

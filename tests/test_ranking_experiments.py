@@ -116,8 +116,9 @@ def test_experiment_files_exist_and_each_changes_one_thing() -> None:
     base = load_ranking_file()
     names = {p.stem for p in EXPERIMENTS}
     e75a = {"e75a_a_regime_menu", "e75a_b_short_dte", "e75a_c_ev_cost"}
-    # E7.5b's overlay is a measure comparison (menu shape + tilt), not a one-knob E7.5a test
-    assert names == e75a | {"e75b_unified_measure"}
+    # E7.5b's overlay is a measure comparison (menu shape + tilt), not a one-knob E7.5a test;
+    # E17.3's overlays are the regime-model and vol-gate knobs (tested in test_backtest_regime)
+    assert names == e75a | {"e75b_unified_measure", "e173_regime_v2", "e173_vol_gate"}
     for p in (x for x in EXPERIMENTS if x.stem in e75a):
         cfg = load_ranking_file(None, [p])
         diffs = []

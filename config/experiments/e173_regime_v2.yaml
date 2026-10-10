@@ -1,0 +1,9 @@
+experiment: >
+  E17.3 (D77) regime v2 labels. One variable vs the E7.5a (a) regime-menu run: the
+  trend/vol labels behind the stance menu, the sub-period split and the trade rows come
+  from the live v2 labeller (vol-scaled 20-session trend z, threshold 1.0; per-ticker
+  rv20 percentile vol state) instead of v1 (+/-5% return, fixed 12%/20% vol). Use with
+  config/experiments/e75a_a_regime_menu.yaml and --label-history-days 490
+  --label-adjusted (the v2 warm-up, on split-adjusted closes). Backtest only.
+backtest:
+  regime_model: v2

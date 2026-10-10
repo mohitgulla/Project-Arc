@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from arc.backtest.regime import BacktestRegimeModel
     from arc.backtest.underlying import BarsSource
     from arc.data.history.store import ParquetHistoryStore
 
@@ -162,8 +163,14 @@ def run_report(
     test_months: int = 2,
     sensitivity: bool = True,
     exit_policy: ExitPolicyMode = "hold_to_expiry",
+    regime_model: BacktestRegimeModel = "v1",
+    label_closes_by_ticker: dict[str, pd.Series] | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Run baseline + D4 grid on cached data, write CSVs and ``report.md``; return frames."""
+    """Run baseline + D4 grid on cached data, write CSVs and ``report.md``; return frames.
+
+    *regime_model* (E17.3): which trend/vol labels the by-regime tables use (v1 default);
+    *label_closes_by_ticker*: longer raw-close histories for those labels only.
+    """
     cost = cost or CostModel()
     out_dir.mkdir(parents=True, exist_ok=True)
     raw = {t: _load(store, provider, t, start, end) for t in tickers}
@@ -182,7 +189,14 @@ def run_report(
             frames.append(
                 trades_frame(
                     run_backtest(
-                        chains, closes, specs, underlying=t, cost=c, exit_policy=exit_policy
+                        chains,
+                        closes,
+                        specs,
+                        underlying=t,
+                        cost=c,
+                        exit_policy=exit_policy,
+                        regime_model=regime_model,
+                        label_closes=(label_closes_by_ticker or {}).get(t),
                     )
                 )
             )
@@ -296,3 +310,49 @@ def closes_for(
         )
         for t in tickers
     }
+
+
+def label_closes_for(
+    tickers: Sequence[str],
+    start: dt.date,
+    end: dt.date,
+    data_dir: Path,
+    source: BarsSource | None,
+    history_days: int,
+    *,
+    adjusted: bool = False,
+    offline: bool = True,
+) -> dict[str, pd.Series] | None:
+    """E17.3: closes from ``start − history_days`` for the regime labels only.
+
+    ``history_days <= 0`` → ``None`` (label on the trading closes, the E7.5 behaviour).
+    *adjusted* reads the split-adjusted daily-bar cache (``underlying_ohlc``, E16.3)
+    instead of the raw closes, so a split is not a −90 % day in the trailing return,
+    the vol-scale sigma or the rv percentile. Labels are ratios, so adjusted closes are
+    the right input; option strikes keep using the raw closes. The labels are
+    trailing, so a longer history adds warm-up, never look-ahead.
+    """
+    if history_days <= 0:
+        return None
+    lo = start - dt.timedelta(days=history_days)
+    hi = end + dt.timedelta(days=70)
+    if adjusted:
+        from arc.backtest.entry_filter import OhlcStore, load_ohlc
+
+        osrc = None
+        if not offline:  # pragma: no cover - network
+            from arc.backtest.entry_filter import AlpacaOhlcSource
+            from arc.data.history.cli import _load_alpaca_env
+
+            _load_alpaca_env()
+            osrc = AlpacaOhlcSource()
+        store = OhlcStore(data_dir)
+        out: dict[str, pd.Series] = {}
+        for t in tickers:
+            df = load_ohlc(store, t, lo, end, source=osrc)
+            out[t] = pd.Series(df["close"].to_numpy(dtype=float), index=list(df.index), name=t)
+        return out
+    from arc.backtest.underlying import UnderlyingStore, load_closes
+
+    us = UnderlyingStore(data_dir)
+    return {t: load_closes(us, t, lo, hi, source=source) for t in tickers}
