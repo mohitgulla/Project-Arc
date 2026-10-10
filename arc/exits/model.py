@@ -10,9 +10,10 @@ Model ``gbm_flat_iv``
   and the day's IV. The IV path is constant by default; ``iv_model:
   mean_reverting`` in ``config/exits.yaml`` decays it deterministically toward a
   long-run level (see :class:`arc.exits.policy.IvModel`).
-- The exit policy is checked on the **mid** P&L each day in the order stop → take
-  profit → DTE exit (:func:`arc.exits.policy.check_rules`). A position that fires
-  closes that day; anything still open at expiry settles at intrinsic.
+- The exit policy is checked on the **mid** P&L each day in the order stop → profit
+  lock → take profit → DTE exit (:func:`arc.exits.policy.check_rules`). The profit
+  lock (E18.1, D78) tracks each path's peak daily P&L since entry. A position that
+  fires closes that day; anything still open at expiry settles at intrinsic.
 
 Costs (:class:`arc.backtest.costs.CostModel`, shared with the backtester)
 -------------------------------------------------------------------------
@@ -94,6 +95,7 @@ _REASON_CODE = {
     ExitReason.TAKE_PROFIT: 1,
     ExitReason.DTE_EXIT: 2,
     ExitReason.EXPIRY: 3,
+    ExitReason.PROFIT_LOCK: 4,
 }
 _FORBID = ConfigDict(extra="forbid", frozen=True)
 
@@ -154,6 +156,7 @@ class ManagedStats(BaseModel):
     p_stop: float = Field(..., ge=0.0, le=1.0)
     p_dte_exit: float = Field(..., ge=0.0, le=1.0)
     p_expiry: float = Field(..., ge=0.0, le=1.0)
+    p_profit_lock: float = Field(0.0, ge=0.0, le=1.0, description="E18.1 (D78) profit lock")
     expected_days_held: float = Field(..., ge=0.0)
     ev_per_bp_day: float | None = None
     costs: EvCosts | None = Field(None, description="gross_ev − net_ev, itemised")
@@ -238,6 +241,7 @@ class ExitSummary(BaseModel):
     p_stop: float
     p_dte_exit: float
     p_expiry: float
+    p_profit_lock: float = 0.0
     expected_days_held: float
     rorc_day: float | None = Field(None, description="managed net EV / (max loss × days held)")
     vrp: float | None = Field(None, description="ATM IV − realised-vol forecast")
@@ -257,6 +261,7 @@ class ExitSummary(BaseModel):
             p_stop=round(r.managed.p_stop, 4),
             p_dte_exit=round(r.managed.p_dte_exit, 4),
             p_expiry=round(r.managed.p_expiry, 4),
+            p_profit_lock=round(r.managed.p_profit_lock, 4),
             expected_days_held=r.managed.expected_days_held,
             rorc_day=r.rorc_day,
             vrp=r.vrp,
@@ -416,6 +421,7 @@ def simulate(
     cost: CostModel,
     cfg: ExitModelConfig,
     path_vol: float | None = None,
+    peak_pnl: float | None = None,
 ) -> SimOutcome:
     """Run the policy over ``cfg.n_paths`` daily GBM paths from *spot* to expiry (*dte* days).
 
@@ -423,6 +429,9 @@ def simulate(
     *path_vol* (a realised-vol forecast) when given, else along the IV path. Priced
     and simulated at IV alone, EV is ≈ −costs by construction; a realised-vol
     forecast below IV is what makes short premium worth anything (and vice versa).
+
+    *peak_pnl* (E18.1) is the per-share peak P&L the position already reached before
+    today (``None`` = none yet); every path's profit-lock peak starts there.
     """
     if dte < 1:
         msg = "the exit model needs dte >= 1"
@@ -453,8 +462,14 @@ def simulate(
         pol.stop is not None
         or pol.close_at_dte is not None
         or any(rules.tp_pnl(d) is not None for d in range(dte))
+        or rules.lock_arm_pnl is not None
     )
     stop = rules.stop_pnl
+    arm, floor = rules.lock_arm_pnl, rules.lock_floor_pnl
+    # E18.1: per-path peak daily P&L since entry (the paths are daily closes, so
+    # every step is an end-of-day mark and an eod_only lock is live on all of them).
+    start = -np.inf if peak_pnl is None else float(peak_pnl)
+    peak = np.full(n, start) if arm is not None else None
     for d in range(1, dte):
         if not has_rules:
             break
@@ -469,6 +484,12 @@ def simulate(
         fired = np.full(idx.size, -1, dtype=int)
         if stop is not None:
             fired[pnl <= stop] = _REASON_CODE[ExitReason.STOP]
+        if peak is not None and arm is not None and floor is not None:
+            # the peak of the marks before today (today's mark can't be both >= arm
+            # and <= floor), the same as the live check against stored marks
+            locked = (fired < 0) & (peak[idx] >= arm) & (pnl <= floor)
+            fired[locked] = _REASON_CODE[ExitReason.PROFIT_LOCK]
+            peak[idx] = np.maximum(peak[idx], pnl)
         tp = rules.tp_pnl(rem)
         if tp is not None:
             fired[(fired < 0) & (pnl >= tp)] = _REASON_CODE[ExitReason.TAKE_PROFIT]
@@ -720,6 +741,7 @@ def model_exits(
         p_stop=out.share(ExitReason.STOP),
         p_dte_exit=out.share(ExitReason.DTE_EXIT),
         p_expiry=out.share(ExitReason.EXPIRY),
+        p_profit_lock=out.share(ExitReason.PROFIT_LOCK),
         expected_days_held=round(days, 2),
         ev_per_bp_day=_per_bp_day(float(np.mean(net)), bp, days),
         costs=m_costs,

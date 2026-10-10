@@ -117,7 +117,7 @@ def test_every_registry_key_maps_to_a_real_setting_or_yaml_value() -> None:
         from arc.control.registry import read_raw
 
         raw = raw_yaml(t.target)
-        assert read_raw(t, raw) is not None or t.key.endswith("stop_value"), t.key
+        assert read_raw(t, raw) is not None or t.key.endswith(("stop_value", "profit_lock")), t.key
     assert s.config_version is None
 
 

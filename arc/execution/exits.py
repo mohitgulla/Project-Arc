@@ -73,6 +73,7 @@ log = structlog.get_logger(__name__)
 EXIT_CODES = {
     ExitReason.TAKE_PROFIT: ReasonCode.EXIT_TAKE_PROFIT,
     ExitReason.STOP: ReasonCode.EXIT_STOP,
+    ExitReason.PROFIT_LOCK: ReasonCode.EXIT_PROFIT_LOCK,
     ExitReason.DTE_EXIT: ReasonCode.EXIT_DTE,
     ExitReason.EXPIRY: ReasonCode.EXIT_EXPIRY,
 }
@@ -447,6 +448,7 @@ def propose_exits(
     approval card is rendered from (``JobContext.write``).
     """
     from arc.gate.token import TokenError, gate_secret
+    from arc.positions.marks import stored_peak_pnl
     from arc.store.execution import OpenStructureRepo
 
     out = ExitRun()
@@ -491,6 +493,12 @@ def propose_exits(
                     end_of_day=_eod(now, eod_from),
                 ),
                 cfg.policy_for(st.kind),
+                peak_pnl=(
+                    None
+                    if (pk := stored_peak_pnl(conn, str(row["id"]), opened_at=row.get("opened_at")))
+                    is None
+                    else float(pk)
+                ),
             )
         except (LookupError, ValueError) as exc:
             out.errors.append(f"{t}: cannot evaluate exit ({exc})")

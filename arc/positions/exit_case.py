@@ -4,8 +4,9 @@ Pure, no I/O. Research's exit watchlist (``review``) and the deterministic posit
 review's *discretionary* signals each trigger an exit case; a close-to-reallocate
 pairing against today's capacity rejections (:func:`arc.positions.reallocate.pair_swaps`,
 wrapping the D19 ``score_swaps``) adds a ``reallocate`` trigger. Mandatory signals
-(stop, DTE exit, expiry) never get a case: those exits stay deterministic (E13.18
-closes them).
+(stop, profit lock, DTE exit, expiry) never get a case: those exits stay
+deterministic (E13.18 closes them; E18.1 / D78 adds the profit lock: a lock Risk
+could veto would not be a lock).
 
 The case's numbers (:class:`ExitCaseFacts`) are code-built from ``position_review``
 and the E13.17 :class:`~arc.positions.portfolio.PositionFacts`; Quant's LLM
@@ -58,9 +59,10 @@ class WatchItemLike(Protocol):
     def reason(self) -> str: ...
 
 
-#: Loss and time caps: always closed deterministically, never an exit case (D56).
+#: Loss and time caps plus the D78 profit lock: always closed deterministically,
+#: never an exit case (D56, E18.1).
 MANDATORY_KINDS: frozenset[SignalKind] = frozenset(
-    {SignalKind.STOP, SignalKind.DTE_EXIT, SignalKind.EXPIRY}
+    {SignalKind.STOP, SignalKind.PROFIT_LOCK, SignalKind.DTE_EXIT, SignalKind.EXPIRY}
 )
 #: Gain / EV optimisation, where judgement adds value: each triggers an exit case.
 DISCRETIONARY_KINDS: frozenset[SignalKind] = frozenset(

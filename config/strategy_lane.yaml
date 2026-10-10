@@ -55,6 +55,21 @@ verdicts_dir: config/experiments/live/verdicts
 # go-ahead, PLAN D56).
 promotion_stems: [exits, ranking, costs, account_profiles]
 
+# Owner waivers (E18.1, PLAN D78): the ONLY promotions that pass without an XP verdict.
+# A promotion passes when every changed leaf is listed under one waiver below, the PR
+# body carries `Lane: fast — … (PLAN D<n>)` naming that decision, and the D<n> row of
+# docs/PLAN.md exists and says "D44 waived". Removing a value is never waived; any
+# other promotion stays blocked exactly as above. Paths are dotted leaves under the
+# stem (config/<stem>.yaml). Adding an entry here needs the owner's D# row first.
+owner_waivers:
+  - decision: D78
+    paths:
+      exits:
+        - kinds.vertical_debit.take_profit_pct_of_debit
+        - kinds.long_call.take_profit_pct_of_debit
+        - kinds.long_put.take_profit_pct_of_debit
+        - default.take_profit_pct_of_debit
+
 # Values that count as "off" (control behaviour) for a new `Flag:` key.
 # "strict" (E12.5): the control of a strict | relaxed choice switch
 # (personas.director_diversification); it names the unchanged behaviour.

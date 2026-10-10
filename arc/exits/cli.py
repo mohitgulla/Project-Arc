@@ -140,6 +140,7 @@ def format_result(
         f"   scanner PoP {_pct(c.pop)}  scanner EV {_money(c.ev_proxy)}",
         "",
         f"  exit reasons: take profit {_pct(m.p_take_profit)}  stop {_pct(m.p_stop)}  "
+        f"profit lock {_pct(m.p_profit_lock)}  "
         f"DTE exit {_pct(m.p_dte_exit)}  expiry {_pct(m.p_expiry)}",
         _trigger("take profit", r.take_profit),
         _trigger("stop", r.stop),

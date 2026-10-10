@@ -69,6 +69,7 @@ def _review(
     settings: ArcSettings,
     as_of: dt.date,
     eod: bool,
+    peak_pnl: float | None = None,
 ) -> PositionReview:
     from arc.execution.exits import price_close
     from arc.exits.position import OpenPosition, PositionMarks
@@ -93,6 +94,7 @@ def _review(
         ),
         exits=exits,
         theta_per_day=_theta(priced, structure, as_of, r),
+        peak_pnl=peak_pnl,
     )
 
 
@@ -147,11 +149,16 @@ def fixture_book(
     return reviews, cands
 
 
+def _float(x: object) -> float | None:
+    return None if x is None else float(x)  # type: ignore[arg-type]
+
+
 def _live_book(
     conn: sqlite3.Connection, settings: ArcSettings, exits: ExitConfig
 ) -> tuple[list[PositionReview], list[CapacityCandidate]]:
     from arc.data.alpaca import AlpacaMarketData
     from arc.models import Structure
+    from arc.positions.marks import stored_peak_pnl
     from arc.positions.steps import capacity_candidates
     from arc.store.execution import OpenStructureRepo
     from arc.store.swaps import SwapRepo
@@ -174,6 +181,9 @@ def _live_book(
                     settings=settings,
                     as_of=now.date(),
                     eod=now.time() >= dt.time(15, 30),
+                    peak_pnl=_float(
+                        stored_peak_pnl(conn, str(row["id"]), opened_at=row.get("opened_at"))
+                    ),
                 )
             )
         except (LookupError, ValueError) as exc:

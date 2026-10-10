@@ -75,6 +75,7 @@ export function allowedText(k: Pick<ConfigKey, "bounds" | "value_type" | "choice
   if (k.value_type === "tickers") return "any tickers";
   if (k.value_type === "user_ids") return "subset of the base ids";
   if (k.value_type === "targets") return "DTE:fraction pairs or none";
+  if (k.value_type === "profit_lock") return "arm:floor[:eod] fractions or none";
   if (k.value_type === "cadence") return "every Nm [HH:MM-HH:MM] | at HH:MM";
   return "any";
 }

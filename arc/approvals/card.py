@@ -351,6 +351,10 @@ def _policy_line(p: Proposal, em: ExitModelResult) -> str:
         if pol.stop_eod_only:
             stop += ", end-of-day marks"
         parts.append(stop)
+    if (lock := pol.profit_lock) is not None:  # E18.1 (D78)
+        base = "of max gain" if credit else "of debit"
+        eod = ", end-of-day marks" if lock.eod_only else ""
+        parts.append(f"Profit lock {lock.arm_pct:.0%} → {lock.floor_pct:.0%} {base}{eod}")
     if pol.close_at_dte is not None:
         parts.append(f"Close at {pol.close_at_dte} DTE")
     return " · ".join(parts)
@@ -366,7 +370,8 @@ def _exit_plan(p: Proposal, em: ExitModelResult | None) -> list[dict[str, Any] |
             f"Managed: PoP {m.pop:.0%} · Net EV {_money(m.net_ev)} / contract",
             f"Hold to expiry: PoP {s.pop:.0%} · Net EV {_money(s.net_ev)} / contract",
             f"Take profit {m.p_take_profit:.0%} · Stop {m.p_stop:.0%} · "
-            f"DTE exit {m.p_dte_exit:.0%} · Expiry {m.p_expiry:.0%}",
+            + (f"Profit lock {m.p_profit_lock:.0%} · " if em.policy.profit_lock else "")
+            + f"DTE exit {m.p_dte_exit:.0%} · Expiry {m.p_expiry:.0%}",
             f"Expected days held {m.expected_days_held:.1f}",
             f"Model: {em.n_paths:,} paths, marks at IV {em.iv_used:.1%}, "
             f"paths at {em.path_vol:.1%} ({em.path_vol_source.replace('_', ' ')})",

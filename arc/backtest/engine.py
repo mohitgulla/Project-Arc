@@ -358,6 +358,7 @@ def _managed_exit(
 ) -> Trade | None:
     """First session after entry (before expiry) where a rule fires, closed there."""
     symbols = [lg.symbol for lg in o.legs]
+    peak: float | None = None  # E18.1: peak P&L of the earlier session marks
     for day in days:
         if day <= o.entry_date:
             continue
@@ -367,7 +368,8 @@ def _managed_exit(
         if marks is None:
             continue
         pnl = sum(lg.side * marks[lg.symbol][0] for lg in o.legs) - rules.entry_net
-        reason = check_rules(rules, pnl=pnl, dte=(o.expiration - day).days)
+        reason = check_rules(rules, pnl=pnl, dte=(o.expiration - day).days, peak_pnl=peak)
+        peak = pnl if peak is None else max(peak, pnl)
         if reason is not None:
             return close_early(
                 o, day=day, marks=marks, spot=float(closes[day]), reason=reason, cost=cost

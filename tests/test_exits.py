@@ -25,6 +25,7 @@ from arc.exits import (
     ExitSummary,
     OpenPosition,
     PositionMarks,
+    ProfitLock,
     StopBasis,
     StopRule,
     TimeAdjustedTarget,
@@ -133,9 +134,15 @@ class TestPolicyConfig:
             assert p.close_at_dte == 7
         for kind in (StructureKind.VERTICAL_DEBIT, StructureKind.LONG_CALL, StructureKind.LONG_PUT):
             p = cfg.policy_for(kind)
-            assert p.take_profit_pct_of_debit == 1.0
+            assert p.take_profit_pct_of_debit == 0.6  # D78 (was 1.00)
             assert p.stop == StopRule(basis=StopBasis.PCT_DEBIT, value=0.75)
             assert p.stop_eod_only
+            # D78: 0.50 -> 0.20 of the debit, on the intraday 30-min marks
+            assert p.profit_lock == ProfitLock(arm_pct=0.5, floor_pct=0.2, eod_only=False)
+        for kind in (StructureKind.VERTICAL_CREDIT, StructureKind.IRON_CONDOR):
+            assert cfg.policy_for(kind).profit_lock is None
+        assert cfg.default.take_profit_pct_of_debit == 0.6
+        assert cfg.default.profit_lock is None
         assert cfg.policy_for(StructureKind.OTHER) == cfg.default
         assert cfg.policy_for(None) == cfg.default
         assert cfg.model.n_paths == 20_000
