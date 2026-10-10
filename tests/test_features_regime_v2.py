@@ -172,7 +172,9 @@ class TestFixture:
         golden = (FIXTURES / "golden_v1_snapshot.json").read_text()
         for kw in (None, {"model": "v1"}, regime_kwargs(ArcSettings(regime_model="v1"))):
             snap = build_snapshot("SPY", s, s.index[-1], regime_kwargs=kw)
-            text = json.dumps(snap.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+            dump = snap.model_dump(mode="json")
+            assert dump.pop("technicals") is None  # E16.2 additive field (closes only: none)
+            text = json.dumps(dump, indent=2, sort_keys=True) + "\n"
             assert text == golden
 
     def test_backtest_vol_label_is_the_features_one(self) -> None:
@@ -348,7 +350,7 @@ class TestWiring:
         assert RegimeFeatures.model_validate(v2) == estimate_regime(s, s.index[-1], **V2)
 
     def test_context_kind_v3_round_trip_and_v2_rows_load(self) -> None:
-        assert KINDS["regime"].schema_version == 3  # noqa: PLR2004
+        assert KINDS["regime"].schema_version >= 3  # noqa: PLR2004 - E16.2 made it v4
         s = _fixture()
         snap = build_snapshot("SPY", s, s.index[-1], regime_kwargs=V2)
         back = validate_payload("regime", RegimePayload.model_validate(snap.model_dump()))

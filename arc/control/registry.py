@@ -1828,6 +1828,23 @@ _LOOP_TUNABLES: tuple[Tunable, ...] = (
         choices=("off", "on"),
         aliases=("routines.personas.retail_sentiment_context", "retail_sentiment_context"),
     ),
+    # E16.2 (D76/D78): the code-rendered `tech …` segment on Research's regime lines.
+    # D78 ships it on without an experiment; `off` is the rollback switch only
+    # (Research prompt byte-identical to before E16.2).
+    Tunable(
+        key="personas.research_technicals",
+        group=Group.ROUTINES,
+        type=ValueType.CHOICE,
+        description="E16.2: show Research one code-computed 'tech …' segment per regime "
+        "line (RSI14, ATR stretch vs SMA20, 50>200, 20-day high distance, RS vs SPY, "
+        "squeeze, prior-day range, implied/ATR move). Context only; never a gate input. "
+        "off = rollback (prompt as before E16.2).",
+        target=Target.ROUTINES,
+        risk=Risk.ORDER,
+        path=("personas", "research_technicals"),
+        choices=("off", "on"),
+        aliases=("routines.personas.research_technicals", "research_technicals"),
+    ),
 )
 
 # E8.2a: ops-alert thresholds under `monitoring:` in routines.yaml. They only shape
@@ -2763,6 +2780,7 @@ _PERSONA_SWITCHES = frozenset(
         ("personas", "scout_buzz_velocity"),  # E14.5
         ("personas", "scalp_movers_context"),  # E14.3
         ("personas", "retail_sentiment_context"),  # E14.6
+        ("personas", "research_technicals"),  # E16.2
     }
 )
 # Scalar choice switches under `personas:` (E12.5) -> the control value when absent.

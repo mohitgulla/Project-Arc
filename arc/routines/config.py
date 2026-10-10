@@ -629,6 +629,7 @@ PERSONA_FLAGS: tuple[str, ...] = (
     "scout_buzz_velocity",
     "scalp_movers_context",
     "retail_sentiment_context",  # E14.6
+    "research_technicals",  # E16.2 (D76/D78)
 )
 #: E13.15 (D56 cutover): switches removed with their off paths. Each is always on
 #: now (quant_risk_loop on, scalp_options_tape on, scout_feed on, research_idea_pool
@@ -816,6 +817,46 @@ class FinnhubContextSettings(BaseModel):
         }
 
 
+_TICKER = re.compile(r"^[A-Z][A-Z0-9.]{0,9}$")
+
+
+class ResearchTechnicalsSettings(BaseModel):
+    """E16.2 (D76/D78): the code-rendered ``tech …`` segment on Research's regime lines.
+
+    ``enabled`` comes from ``personas.research_technicals: off | on`` (D78 ships it
+    on; ``off`` is the rollback and keeps the Research prompt byte-identical to before
+    E16.2). The indicators are always computed and stored on the ``regime`` entry
+    (audit); this switch only decides whether Research sees them.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+
+
+class TechnicalsSettings(BaseModel):
+    """E16.2 (D76): ``technicals:`` inputs for the sector relative-strength field.
+
+    ``sector_etf`` maps a sector name from ``config/sectors.yaml`` to the ETF
+    ``rs_sector_20d`` is measured against; an unmapped sector (or a ticker without
+    one) gets ``None``. ``rs_spy_*`` always use SPY. Each reference's bars are
+    fetched once per regime step and reused for every ticker.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sector_etf: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("sector_etf")
+    @classmethod
+    def _etfs(cls, v: dict[str, str]) -> dict[str, str]:
+        for sector, etf in v.items():
+            if not str(sector).strip() or not _TICKER.match(str(etf)):
+                msg = f"technicals.sector_etf: bad entry {sector!r}: {etf!r}"
+                raise ValueError(msg)
+        return v
+
+
 class ScalpMoversContextSettings(BaseModel):
     """E14.3 (D60, D44): the "Tape movers" block in the Scalp prompt (default off).
 
@@ -964,6 +1005,11 @@ class RoutinesConfig(BaseModel):
     retail_sentiment_context: RetailSentimentContextSettings = Field(
         default_factory=RetailSentimentContextSettings
     )
+    # E16.2 (D76/D78): knobs + the ``personas.research_technicals`` flag (as ``enabled``).
+    research_technicals: ResearchTechnicalsSettings = Field(
+        default_factory=ResearchTechnicalsSettings
+    )
+    technicals: TechnicalsSettings = Field(default_factory=TechnicalsSettings)  # E16.2
     # E12.5: knobs + the ``personas.director_diversification`` switch (as ``mode``).
     director_diversification: ResearchDiversificationSettings = Field(
         default_factory=ResearchDiversificationSettings

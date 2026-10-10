@@ -1,8 +1,9 @@
 """FeatureSnapshot: per-ticker, per-day structured inputs for Research / Quant.
 
-A snapshot bundles :class:`~arc.features.regime.RegimeFeatures` and
-:class:`~arc.features.vol.VolFeatures` for one underlying at one session
-close. It is pure data (pydantic, JSON-serialisable) and carries no prompt
+A snapshot bundles :class:`~arc.features.regime.RegimeFeatures`,
+:class:`~arc.features.vol.VolFeatures` and (E16.2, from OHLC bars only)
+:class:`~arc.features.technicals.TechnicalFeatures` for one underlying at one
+session close. It is pure data (pydantic, JSON-serialisable) and carries no prompt
 text; persona builders serialise it with :func:`snapshots_to_json` into
 ``ResearchInput.regime_features_json``.
 
@@ -23,10 +24,12 @@ from pydantic import BaseModel, Field
 from arc.features._series import (
     InsufficientHistoryError,
     closes_from_bars,
+    ohlc_from_bars,
     to_daily_series,
     truncate,
 )
 from arc.features.regime import RegimeFeatures, estimate_regime
+from arc.features.technicals import MIN_TECH_BARS, TechnicalFeatures, compute_technicals
 from arc.features.vol import MIN_IV_HISTORY, VolFeatures, compute_vol_features
 
 if TYPE_CHECKING:
@@ -34,7 +37,7 @@ if TYPE_CHECKING:
 
     import pandas as pd
 
-    from arc.features._series import BarLike
+    from arc.features._series import OhlcBarLike
 
 log = structlog.get_logger(__name__)
 
@@ -51,6 +54,9 @@ class FeatureSnapshot(BaseModel):
     regime: RegimeFeatures | None = Field(None, description="None if history is too short")
     vol: VolFeatures
     warnings: list[str] = Field(default_factory=list)
+    # E16.2 (D76): daily chart indicators; None = built from closes only, or fewer
+    # than MIN_TECH_BARS bars (a warning says which). Context only, never a gate input.
+    technicals: TechnicalFeatures | None = None
 
     @property
     def is_complete(self) -> bool:
@@ -108,16 +114,25 @@ def build_snapshot(
 
 def build_snapshot_from_bars(
     ticker: str,
-    bars: Iterable[BarLike],
+    bars: Iterable[OhlcBarLike],
     as_of: dt.date,
     *,
     iv_history: pd.Series | None = None,
     current_iv: float | None = None,
     regime_kwargs: Mapping[str, object] | None = None,
     min_iv_obs: int = MIN_IV_HISTORY,
+    benchmark: pd.Series | None = None,
+    sector: pd.Series | None = None,
+    sector_etf: str | None = None,
 ) -> FeatureSnapshot:
-    """:func:`build_snapshot` from OHLCV bars (e.g. ``MarketDataProvider.history_bars``)."""
-    return build_snapshot(
+    """:func:`build_snapshot` from OHLCV bars (e.g. ``MarketDataProvider.history_bars``).
+
+    E16.2: also computes :class:`TechnicalFeatures` from the same bars. *benchmark*
+    (SPY closes) and *sector* (the *sector_etf* closes) feed the relative-strength
+    fields; the implied move uses the snapshot's own ``vol.iv``.
+    """
+    bars = list(bars)
+    snap = build_snapshot(
         ticker,
         closes_from_bars(bars),
         as_of,
@@ -126,6 +141,18 @@ def build_snapshot_from_bars(
         regime_kwargs=regime_kwargs,
         min_iv_obs=min_iv_obs,
     )
+    tech = compute_technicals(
+        ohlc_from_bars(bars),
+        as_of,
+        iv30=snap.vol.iv,
+        benchmark=benchmark,
+        sector=sector,
+        sector_etf=sector_etf,
+    )
+    warnings = list(snap.warnings)
+    if tech is None:
+        warnings.append(f"technicals: need {MIN_TECH_BARS} OHLC bars")
+    return snap.model_copy(update={"technicals": tech, "warnings": warnings})
 
 
 def snapshots_to_json(snapshots: Iterable[FeatureSnapshot], *, indent: int | None = 2) -> str:
