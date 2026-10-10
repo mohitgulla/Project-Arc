@@ -34,6 +34,11 @@ non-loop personas the arm runs on its own store (``arm_personas``: ``scout`` /
 tick, on control's synced inputs (briefs, options stats, raw docs), and its rows are
 never synced from control; an arm that owns one forks its loop at ``research``.
 Broker code is shared; each arm trades its own account (``keys_env``).
+
+E10.2b (D75): Research reviews the book it sees, so an arm that holds any open
+structure of its own forks each paired chain at ``research`` (:func:`book_fork`):
+its own Research call writes its own ``exit_watchlist`` and its exit cases follow.
+With an empty book the planned fork stands (A/A: reuse control's Research).
 """
 
 from __future__ import annotations
@@ -86,6 +91,7 @@ __all__ = [
     "arm_stores",
     "arms_preview",
     "arms_tick",
+    "book_fork",
     "check_arm_account",
     "fork_step",
     "live_account_number",
@@ -278,6 +284,30 @@ def fork_step(chain: list[str], overlay: Mapping[str, Any], personas: Iterable[s
     if set(personas) and _RESEARCH in chain and chain.index(_RESEARCH) < chain.index(fork):
         return _RESEARCH
     return fork
+
+
+def book_fork(chain: list[str], fork: str, open_ids: Iterable[str]) -> str:
+    """E10.2b: the fork for one paired chain, given the arm's own open book.
+
+    Research writes the exit watchlist against the book it sees, so control's Research
+    reviews control's book only (``exit_watchlist`` is a :data:`BOOK_KINDS` kind, never
+    synced). An arm holding any open structure of its own (its store never holds the
+    legacy book) therefore runs ``research`` itself, with its own ``portfolio_view``;
+    with an empty book it keeps reusing control's Research (*fork* unchanged).
+    """
+    if (
+        any(True for _ in open_ids)
+        and _RESEARCH in chain
+        and fork in chain
+        and chain.index(_RESEARCH) < chain.index(fork)
+    ):
+        return _RESEARCH
+    return fork
+
+
+def _open_book(arm: sqlite3.Connection) -> list[str]:
+    """The arm's own open structure ids (the arm store never holds the legacy book)."""
+    return [str(r[0]) for r in arm.execute("SELECT id FROM open_structures WHERE status = 'open'")]
 
 
 def _overlay_paths(overlay: Mapping[str, Any]) -> list[str]:
@@ -1190,6 +1220,9 @@ def pair_chain(
     plan = plan_of(ident, routines, runner)
     personas = list(plan.arm_personas)
     fork = fork_step(chain, ident.overlay, personas)
+    planned = fork
+    book = _open_book(arm)
+    fork = book_fork(chain, fork, book)
     upstream = chain[: chain.index(fork)]
     not_ok = [j for j in upstream if status.get(j) != "ok"]
     if not_ok:
@@ -1241,7 +1274,9 @@ def pair_chain(
         res.reason = (
             f"{bad[0].job}: {bad[0].status} {bad[0].summary}".strip()
             if bad
-            else f"forked at {fork}; reused {len(upstream)} step(s), synced {synced} entries"
+            else f"forked at {fork}"
+            + (f" (own book: {len(book)} open; plan {planned})" if fork != planned else "")
+            + f"; reused {len(upstream)} step(s), synced {synced} entries"
         )
     except _DuplicateError as exc:
         res.status, res.reason = "duplicate", str(exc)

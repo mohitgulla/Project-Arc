@@ -1542,6 +1542,11 @@ The treatment arm is the same trading loop on its own paper account
   steps before the fork step (the first step its overlay changes; never later
   than `propose`) and replays control's market tape (`market_tape`). Every arm
   manifest carries `paired_chain_run_id`, `fork_step`, `arm_id`, `git_sha`.
+- Own book (E10.2b, D75): while the arm holds any open structure of its own, its
+  paired chain forks at `research` (its own Research call, own `exit_watchlist`
+  and exit cases); `arm_pairs.reason` then reads `forked at research (own book:
+  N open; plan exits.mandatory) …`. With an empty book it reuses control's
+  Research as before.
 - After each live control tick, `arc routines tick` spawns `arc experiment
   arms-tick` detached (own lock, own lock dirs), only while an experiment runs.
 - Evaluation reads arm rows through `arc.experiments.paired.paired_view`: arm
