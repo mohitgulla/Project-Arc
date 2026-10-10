@@ -15,10 +15,11 @@
 #              ApeWisdom + Stocktwits; D58, E13.19, job universe.trending;
 #              universe_trending_size): names in both inputs first, then the best
 #              single-input names; loose screen (owner to confirm); floor 0.6
-# Active list <= 50 (universe_active_max) filled core -> momentum -> discovery ->
-# trending; overflow is cut from the trending tail first, then the discovery tail
-# (journaled universe:over_active_cap,
-# never dropped silently). A Scalp idea for a name in no tier is never admitted
+# Active list <= 50 (universe_active_max): core, then momentum, then the slots left
+# go to discovery and trending by round robin (D67: D1, T1, D2, T2, ...; discovery
+# takes the odd slot; a tier that runs out spills its slots to the other). Overflow is
+# journaled universe:over_active_cap,
+# never dropped silently. A Scalp idea for a name in no tier is never admitted
 # (not_in_tier): it is only mentioned. Floors are the runtime tunables
 # universe_floor_core / _momentum / _discovery / _trending.
 #
@@ -35,6 +36,12 @@
 # Must equal arc.config.DEFAULT_UNIVERSE (tests pin it).
 core: [NVDA, AAPL, MSFT, AMZN, GOOGL, META, TSLA, AMD, AVGO, MU, JPM, XOM, UNH, BA, ORCL,
        COIN, PLTR, HOOD, INTC, NFLX]
+
+# D67 (E14.9, owner decision, on by default): how discovery + trending share the active
+# slots left after core + momentum. round_robin = D1, T1, D2, T2, ... with spill;
+# precedence = D58 (all of discovery before any trending). `!arc config set
+# universe.active_fill precedence` turns it off.
+active_fill: round_robin
 
 tiers:
   # order is fixed (core, momentum, discovery, trending) and defaults to it. E13.15: the D51

@@ -618,6 +618,7 @@ def _tier(tier: Tier, names: list[str]) -> list[TierMember]:
 
 class TestResolve:
     def test_order_and_tail_cut_trending_then_discovery(self) -> None:
+        """D58 cut, kept as the D67 off switch (``universe.active_fill: precedence``)."""
         core = [f"C{i}" for i in range(20)]
         mom = [f"M{i}" for i in range(20)]
         disc = [f"D{i}" for i in range(8)]
@@ -630,6 +631,9 @@ class TestResolve:
             "tier_sizes": {Tier.MOMENTUM: 20, Tier.DISCOVERY: 25, Tier.TRENDING: 25},
             "as_of": DAY,
         }
+        rr = resolve_active(active_max=50, **kw)  # D67 default: 10 slots -> 5 D / 5 T
+        assert rr.counts == {"core": 20, "momentum": 20, "discovery": 5, "trending": 5}
+        kw["fill"] = "precedence"
         a = resolve_active(active_max=50, **kw)
         assert a.counts == {"core": 20, "momentum": 20, "discovery": 8, "trending": 2}
         assert [m.tier for m in a.members] == sorted(

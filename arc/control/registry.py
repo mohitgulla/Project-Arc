@@ -659,6 +659,21 @@ _STATIC: tuple[Tunable, ...] = (
         max=0.40,
         hard_ceiling=0.40,
     ),
+    # D67 (E14.9): how discovery + trending share the active slots after core + momentum.
+    # Owner decision, on by default (not an experiment); precedence = the D58 cut.
+    Tunable(
+        key="universe.active_fill",
+        group=Group.UNIVERSE,
+        type=ValueType.CHOICE,
+        description="D67: the active-list slots left after core + momentum go to discovery "
+        "and trending by round robin, discovery first, a tier that runs out spills to the "
+        "other (round_robin); or all of discovery before any trending (precedence, D58).",
+        target=Target.UNIVERSE,
+        risk=Risk.ANY,
+        path=("active_fill",),
+        choices=("round_robin", "precedence"),
+        aliases=("universe_active_fill", "active_fill"),
+    ),
     # E4.8 / D46: Finnhub per-ticker context (data only; the gate never reads it).
     _s(
         "finnhub_calls_per_minute",

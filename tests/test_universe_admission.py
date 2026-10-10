@@ -346,7 +346,7 @@ class TestRegistry:
         got = {k for k, t in REGISTRY.items() if t.target is Target.UNIVERSE}
         want = {
             f"universe_screen_{p}_{leaf}" for p in ("standard", "loose") for leaf in SCREEN_KEYS
-        }
+        } | {"universe.active_fill"}  # D67 (E14.9)
         assert got == want
         screens = LiquidityScreens()
         for prof in ("standard", "loose"):

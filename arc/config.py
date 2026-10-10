@@ -1134,8 +1134,9 @@ class ArcSettings(BaseSettings):
     )
     universe_active_max: Annotated[int, Field(ge=1, le=60)] = Field(
         default=50,
-        description="D58: the deduped active list (core > momentum > discovery > trending) "
-        "is capped at this many names; the rest are journaled universe:over_active_cap.",
+        description="D58/D67: the deduped active list (core, momentum, then discovery ⇄ "
+        "trending by round robin) is capped at this many names; the rest are journaled "
+        "universe:over_active_cap.",
     )
     # -- D56 (E13.4) / D58 (E13.19): four tiers, per-tier sizes and floors
     universe_momentum_size_d56: Annotated[int, Field(ge=0, le=50)] = Field(
