@@ -347,6 +347,11 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 - E7.3 Paper scorecard — metrics, weekly report to `#arc-investor` ← E6.3, E7.4
 - E7.5 Ranking backtest — credit_width vs ev vs managed Net EV vs rorc_day per profile; pre-registered switch rule (D25) ← E2.4, E3.4, E7.2
 - E7.5b Unified menu measure — one managed-EV key for debit + credit ranked before truncation, stance-tilted drift ranking (flag off), E7.5 harness on live-shaped menus + draft XP (D79) ← E18.1
+- E7.6 ThetaData Value provider — tier-aware lookback (2020+), last_trade + OI fields, concurrent/backoff/adaptive-chunk resumable pull, `--plan` estimate (D84) ← E7.1
+- E7.7 Point-in-time backtest universe — ~500 optionable names per quarter (SIP $-volume → option OI/volume), always-include ever-proposed + seed, priority-ordered pull list (D84) ← E7.6
+- E7.8 OPS · Owner: ThetaData Options Value subscription + Theta Terminal v3 on the host (D84) ← E7.6, E7.7
+- E7.9 ThetaData pull — 2020→now EOD NBBO (+OI) for the E7.7 list inside the paid month + coverage/quality report vs the 4% spread estimate (D84) ← E7.8
+- E7.10 Backtests on real quotes — `marks: quoted`, universe-scale harness, re-run E7.2/E7.5/E16.3/E18.3 incl. 2020–22 vs their original rules, report only (D84) ← E7.9
 - E7.4 Decision journal — every decision + reason_code + inputs in an append-only DB journal; outcome attribution; root-cause reviews; `arc journal show|gaps|replay` (D22) ← E6.1
 
 **E8 Ops**
@@ -463,6 +468,7 @@ IDs below are the card titles on the board. Dependencies are Kanban parent links
 | Portfolio Greek caps | |net dollar Δ| (Σ Δ × spot) ≤ 100% of equity; |β-weighted net $Δ| (Σ Δ × spot × max(β,1) vs SPY) ≤ 200% of equity; |ν| ≤ 1.0% equity per vol-pt | D62 (was D57: $Δ ≤ 50%, no β cap; before that 0.30 × equity/100 share-eq, ν 0.5%) |
 | Structure whitelist | vertical, iron condor, long call/put | D4 |
 | DTE window | 30–45 entry; no 0DTE | D4 |
+| D84 | Real-quote backtest history: ThetaData Value one-month pull + ~500-name point-in-time universe (E7.6–E7.10) | Buy ThetaData **Options Value** ($40/mo) for **one month**, then cancel: EOD report with closing OPRA NBBO + open interest from 2020-01-01, pulled into `data/options_eod/provider=thetadata/` (gitignored; retail terms forbid redistribution, so no raw rows in git). Universe for backtests is **~500 optionable names chosen point-in-time per quarter** (underlying $-volume then option OI/volume, ≤ quarter start only), plus every name ever proposed/held, the D9 seed list and SPY/QQQ/IWM; size is a config knob. Pull is priority-ordered so a short month still lands the most useful data. Estimates (2026-10-10): ~4 GB for 50 names, ~20–25 GB for 500; ~175k requests at Value's 2 concurrent — measured on day 1, list cut from the bottom if ETA > 21 days. New backtest mark mode `quoted`; E7.2/E7.5/E16.3/E18.3 re-run against their original rules, report only (no default changes). Not bought: Databento (intraday, later), Alpaca Algo Trader Plus (live quotes, separate decision). Credentials stay in the Theta Terminal's own config, never `.env`/Slack/git. | Owner 2026-10-10 (#project-arc thread 1791668051.305679): backtests run on trade closes with a guessed 4% spread, 6 hand-picked tickers and no bear market; real quotes + a wider PIT universe are the biggest credibility gain per dollar. |
 | Earnings blackout | no short premium through earnings unless Director flags "earnings play" and Risk concurs; still gated | evidence |
 | Max open positions | 8 | default |
 | Approval TTL | 20 min | default |
