@@ -2332,3 +2332,39 @@ switch only and serialises byte-identically to the pre-v2 entries.
 Rollback: `arc config set regime.model v1 --actor <owner> --source cli` (then confirm).
 Regime is context and a Research/backtest input only; it is never a gate input
 (`lint-imports`).
+
+### 5.37 Anti-chase entry filter (E16.3, D76; on per D78)
+
+A deterministic drop between Research and Quant (`arc/pipeline/steps.py`
+`_anti_chase_filter`; the rule is `arc.features.technicals.is_stretched`, pure). After
+Research ranks and after the E5.9 portfolio drops, a **bullish/bearish idea that the
+account profile can only structure as long premium** (long call/put, debit vertical:
+`cash_debit`, `cash_long_only`) is dropped when its move is already stretched:
+
+- D78 rule (`anti_chase.combine: all`): `stretch_atr` = (close − SMA20) / ATR14 ≥ 2.5
+  **and** RSI14 ≥ 75. Bears mirror it (≤ −2.5 and RSI ≤ 25). The inputs are the
+  `technicals` on the ticker's `regime` entry (E16.2, daily bars ≤ the last close).
+- `combine: any` is the D76 card rule (stretch ≥ the limit **or** RSI at the limit within
+  `max_dist_high20_atr` of the 20-day high/low), kept for XP-13 variants.
+- Optional VWAP part (`anti_chase.vwap: on`, default off): one 5-min bars request per
+  checked idea (shared `alpaca_data:calls` budget); dropped also when
+  (last 5-min close − session VWAP) / ATR14 ≥ `max_vwap_stretch_atr` (0.75; mirrored).
+
+Never filtered: neutral ideas, any stance the profile maps to a credit spread
+(`margin`), exits. Missing technicals keep the idea (an optional filter, not a safety
+rule). Journal codes on the `shortlist` stage: `stretched_entry` (rejected; payload
+`anti_chase` holds the numbers and the rule), `technicals_missing` and `vwap_missing`
+(noted). The research outcome's metrics count `stretched_entry`; the loop headline
+says "move already stretched".
+
+Knobs (runtime registry, `!arc config` / `arc config set`): `personas.anti_chase`
+(on | off; **off is the rollback**: the pipeline is exactly the pre-E16.3 one),
+`anti_chase.combine`, `.max_stretch_atr`, `.rsi_overbought`, `.rsi_oversold`,
+`.max_dist_high20_atr`, `.vwap`, `.max_vwap_stretch_atr`. Variants go through the
+draft multi-arm `config/experiments/live/xp13_technicals.yaml` (D78: after E15.x).
+
+Backtest: `arc backtest rank ... --entry-filter anti_chase|anti_chase_vwap`
+(`backtest.entry_filter` in `config/ranking.yaml`, default `none`). It needs
+split-adjusted daily OHLC, cached in `<data-dir>/underlying_ohlc/` (fetched from Alpaca
+unless `--offline`). The VWAP arm reads the daily bar's VWAP at the decision close.
+Verdict and caveats: `docs/RESEARCH/anti-chase-backtest.md`.
