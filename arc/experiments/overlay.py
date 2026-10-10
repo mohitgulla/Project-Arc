@@ -81,7 +81,7 @@ def arm_config_data(
     *base* defaults to ``config/<target>.yaml``; the result is validated by the
     file's model (raises ``ValueError`` / ``ValidationError``).
     """
-    a = getattr(spec.arms, arm)
+    a = spec.arms.arm(arm)  # control, t1..tK (or v1 `treatment` = t1)
     if base is None:
         base = yaml.safe_load(target_path(target).read_text()) or {}
     merged = deep_merge(base, a.overlay.get(target, {}))
@@ -91,13 +91,15 @@ def arm_config_data(
 
 def validate_arms(spec: ExperimentSpec) -> None:
     """Every overlay target of every arm still loads under its file's model."""
-    for arm in ("control", "treatment"):
-        for target in getattr(spec.arms, arm).overlay:
+    for arm in ("control", *spec.arms.names):
+        for target in spec.arms.arm(arm).overlay:
             try:
                 arm_config_data(spec, arm, target)
             except ValueError as exc:
                 lines = str(exc).strip().splitlines()
-                msg = f"{arm} overlay for {target}.yaml does not validate: " + " | ".join(lines[:4])
+                label = "treatment" if spec.arms.names == ["t1"] and arm == "t1" else arm
+                why = " | ".join(lines[:4])
+                msg = f"{label} overlay for {target}.yaml does not validate: {why}"
                 raise ValueError(msg) from exc
 
 

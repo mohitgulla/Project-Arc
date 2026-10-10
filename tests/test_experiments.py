@@ -304,19 +304,19 @@ def test_verify_detects_a_tampered_spec(conn: sqlite3.Connection, store: Experim
 
 def test_one_registered_or_running_per_area_others_queue(store: ExperimentStore) -> None:
     for eid in ("XP-1", "XP-2", "XP-3"):
-        store.create(_spec(eid, area="other"), actor=OWNER)
-    store.create(_spec("XP-4", area="ranking"), actor=OWNER)
+        store.create(_spec(eid, area="other", kind="ab"), actor=OWNER)
+    store.create(_spec("XP-4", area="ranking", kind="ab"), actor=OWNER)
     assert store.register("XP-1", actor=OWNER).status is ExperimentStatus.REGISTERED
     assert store.register("XP-2", actor=OWNER).status is ExperimentStatus.QUEUED
     assert store.register("XP-3", actor=OWNER).status is ExperimentStatus.QUEUED
     assert store.register("XP-4", actor=OWNER).status is ExperimentStatus.REGISTERED  # other area
     # a queued spec is locked too
     with pytest.raises(SpecLockedError):
-        store.create(_spec("XP-2", title="edit"), actor=OWNER)
-    store.start("XP-1", _running(), actor=OWNER)
+        store.create(_spec("XP-2", kind="ab", title="edit"), actor=OWNER)
+    store.start("XP-1", _running(), actor=OWNER, aa_override=True)
     assert [s.experiment_id for s in store.active_in_area("other")] == ["XP-1"]
     with pytest.raises(TransitionError):
-        store.start("XP-2", _running(), actor=OWNER)  # queued cannot start
+        store.start("XP-2", _running(), actor=OWNER, aa_override=True)  # queued cannot start
     store.stop("XP-1", StopReason.FUTILITY, actor=OWNER, detail=StopDetail(sigma=0.4))
     # the oldest queued experiment takes the area; the next stays queued
     assert store.require("XP-2").status is ExperimentStatus.REGISTERED

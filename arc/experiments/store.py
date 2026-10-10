@@ -11,9 +11,13 @@ Rules enforced here (and, for the spec lock, by a DB trigger too):
   the spec; any later revision of that experiment id is refused
   (:class:`SpecLockedError`): a changed experiment needs a new id. ``verify``
   recomputes the hash of the stored spec.
-- **One per area.** At most one ``registered``/``running`` experiment per
+- **One per area.** At most one ``registered``/``running`` A/B experiment per
   ``area``; a registration into a busy area becomes ``queued`` and is promoted
-  to ``registered`` when the area frees up (:meth:`ExperimentStore.stop`).
+  to ``registered`` when the area frees up (:meth:`ExperimentStore.stop`). D69: an
+  ``aa`` experiment changes nothing, so it neither holds nor waits for an area.
+- **Arm cap (D69).** The arms of every registered/running experiment together stay
+  within ``experiments.runner.max_parallel_arms`` (:meth:`ExperimentStore.for_runner`);
+  a registration that would exceed it is ``queued`` until arms free up.
 - **A/A first.** An ``ab`` experiment may not start until an ``aa`` experiment has
   stopped with a recorded sigma (E10.4). The owner can override; the override is
   journaled (``experiment:aa_override``) and recorded on the running event.
@@ -50,6 +54,8 @@ from arc.journal.store import JournalStore
 if TYPE_CHECKING:
     import datetime as _dt
     from collections.abc import Callable
+
+    from arc.experiments.config import RunnerConfig
 
 __all__ = [
     "AaRequiredError",
@@ -108,13 +114,48 @@ def _persona(actor: str) -> JournalPersona:
 
 
 class ExperimentStore:
+    """The registry. *max_parallel_arms* (D69, ``experiments.runner.max_parallel_arms``)
+    caps the arms of every registered + running experiment together; *arms_of* counts
+    one experiment's arms (default: its spec treatments). ``None`` = no cap.
+    """
+
     def __init__(
-        self, conn: sqlite3.Connection, *, now: Callable[[], _dt.datetime] | None = None
+        self,
+        conn: sqlite3.Connection,
+        *,
+        now: Callable[[], _dt.datetime] | None = None,
+        max_parallel_arms: int | None = None,
+        arms_of: Callable[[ExperimentSpec], int] | None = None,
     ) -> None:
         from arc.utils.calendar import now_et
 
         self.conn = conn
         self._now = now or now_et
+        self.max_parallel_arms = max_parallel_arms
+        self._arms_of = arms_of or (lambda spec: len(spec.arms.treatments))
+
+    def arms_of(self, spec: ExperimentSpec) -> int:
+        """How many runner arms experiment *spec* runs (counts toward the cap)."""
+        return self._arms_of(spec)
+
+    @classmethod
+    def for_runner(
+        cls,
+        conn: sqlite3.Connection,
+        runner: RunnerConfig,
+        *,
+        now: Callable[[], _dt.datetime] | None = None,
+    ) -> ExperimentStore:
+        """A store capped by ``runner.max_parallel_arms``, counting each experiment's
+        runner arms (:meth:`RunnerConfig.arms_for`; its treatments when that refuses)."""
+
+        def count(spec: ExperimentSpec) -> int:
+            try:
+                return len(runner.arms_for(spec))
+            except ValueError:
+                return len(spec.arms.treatments)
+
+        return cls(conn, now=now, max_parallel_arms=runner.max_parallel_arms, arms_of=count)
 
     # -- reads -------------------------------------------------------------------
 
@@ -198,12 +239,39 @@ class ExperimentStore:
         return [s for s in out if status is None or s.status is status]
 
     def active_in_area(self, area: str, *, exclude: str | None = None) -> list[ExperimentState]:
-        """Registered/running experiments in *area* (they hold it)."""
+        """Registered/running A/B experiments in *area* (they hold it).
+
+        D69: an ``aa`` experiment changes nothing, so it never holds an area.
+        """
         return [
             s
             for s in self.all()
-            if s.spec.area == area and s.status in ACTIVE_STATUSES and s.experiment_id != exclude
+            if s.spec.area == area
+            and s.status in ACTIVE_STATUSES
+            and s.experiment_id != exclude
+            and s.kind is not ExperimentKind.AA
         ]
+
+    def active_arms(self, *, exclude: str | None = None) -> int:
+        """Arms of every registered + running experiment (the D69 cap counts these)."""
+        return sum(
+            self.arms_of(s.spec)
+            for s in self.all()
+            if s.status in ACTIVE_STATUSES and s.experiment_id != exclude
+        )
+
+    def _cap_blocks(self, st: ExperimentState) -> str | None:
+        """Why *st* may not hold arms now (over ``max_parallel_arms``), else None."""
+        if self.max_parallel_arms is None:
+            return None
+        used = self.active_arms(exclude=st.experiment_id)
+        need = self.arms_of(st.spec)
+        if used + need <= self.max_parallel_arms:
+            return None
+        return (
+            f"max_parallel_arms {self.max_parallel_arms}: {used} arm(s) registered/running "
+            f"+ {need} of {st.experiment_id}"
+        )
 
     def aa_sigma(self) -> float | None:
         """Sigma recorded by the latest A/A that stopped with one (E10.4), else None."""
@@ -323,7 +391,8 @@ class ExperimentStore:
         return self.require(spec.id)
 
     def register(self, experiment_id: str, *, actor: str) -> ExperimentState:
-        """Lock the spec (sha256) and register it, or queue it when its area is busy."""
+        """Lock the spec (sha256) and register it, or queue it when its area is busy
+        (A/B only, D69) or its arms would exceed ``max_parallel_arms``."""
         st = self.require(experiment_id)
         if st.status is not ExperimentStatus.DRAFT:
             msg = f"{experiment_id} is {st.status.value}, not draft: already registered"
@@ -331,21 +400,39 @@ class ExperimentStore:
         if not st.spec.complete:
             msg = f"{experiment_id}: spec has unset defaults; re-create it with arc experiment"
             raise ExperimentError(msg)
-        busy = self.active_in_area(st.spec.area.value, exclude=experiment_id)
-        to = ExperimentStatus.QUEUED if busy else ExperimentStatus.REGISTERED
+        busy = (
+            []
+            if st.kind is ExperimentKind.AA
+            else self.active_in_area(st.spec.area.value, exclude=experiment_id)
+        )
+        cap = self._cap_blocks(st)
+        if cap is not None and self.arms_of(st.spec) > (self.max_parallel_arms or 0):
+            msg = (
+                f"{experiment_id} runs {self.arms_of(st.spec)} arms, more than "
+                f"max_parallel_arms {self.max_parallel_arms}: it could never start"
+            )
+            raise ExperimentError(msg)
+        to = ExperimentStatus.QUEUED if busy or cap else ExperimentStatus.REGISTERED
         self._transition(st, to)
         text = f"spec sha256 {st.spec_hash}"
         if busy:
             text += f"; area {st.spec.area.value} held by " + ", ".join(
                 f"{b.experiment_id} ({b.status.value})" for b in busy
             )
+        if cap:
+            text += f"; {cap}"
+        detail: dict[str, Any] = {}
+        if busy:
+            detail["queued_behind"] = [b.experiment_id for b in busy]
+        if cap:
+            detail["arm_cap"] = cap
         with self.conn:
             self._event(
                 experiment_id,
                 to,
                 hash_=st.spec_hash,
                 actor=actor,
-                detail={"queued_behind": [b.experiment_id for b in busy]} if busy else None,
+                detail=detail or None,
                 text=text,
             )
         return self.require(experiment_id)
@@ -423,7 +510,7 @@ class ExperimentStore:
                 detail=d.model_dump(mode="json", exclude_none=True),
                 text=f"stopped: {reason.value}" + (f" ({d.note})" if d.note else ""),
             )
-            self._promote_queue(st.spec.area.value, actor="arc.experiments")
+            self._promote_queue(actor="arc.experiments")
         return self.require(experiment_id)
 
     def decide(self, experiment_id: str, *, promote: bool, actor: str) -> ExperimentState:
@@ -435,21 +522,23 @@ class ExperimentStore:
             self._event(experiment_id, to, hash_=st.spec_hash, actor=actor)
         return self.require(experiment_id)
 
-    def _promote_queue(self, area: str, *, actor: str) -> None:
-        """Move the oldest queued experiment of *area* to registered if the area is free."""
-        if self.active_in_area(area):
-            return
-        queued = [s for s in self.all(status=ExperimentStatus.QUEUED) if s.spec.area.value == area]
-        if not queued:
-            return
-        nxt = min(queued, key=lambda s: s.events[-1].id)
-        self._event(
-            nxt.experiment_id,
-            ExperimentStatus.REGISTERED,
-            hash_=nxt.spec_hash,
-            actor=actor,
-            text=f"area {area} free; spec sha256 {nxt.spec_hash}",
-        )
+    def _promote_queue(self, *, actor: str) -> None:
+        """Move queued experiments to registered, oldest first, while each fits: its area
+        is free (A/B only; an A/A holds none) and its arms fit ``max_parallel_arms``."""
+        queued = sorted(self.all(status=ExperimentStatus.QUEUED), key=lambda s: s.events[-1].id)
+        for nxt in queued:
+            area = nxt.spec.area.value
+            if nxt.kind is not ExperimentKind.AA and self.active_in_area(area):
+                continue
+            if self._cap_blocks(nxt) is not None:
+                continue
+            self._event(
+                nxt.experiment_id,
+                ExperimentStatus.REGISTERED,
+                hash_=nxt.spec_hash,
+                actor=actor,
+                text=f"area {area} free; spec sha256 {nxt.spec_hash}",
+            )
 
     # -- integrity ---------------------------------------------------------------
 

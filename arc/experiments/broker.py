@@ -93,8 +93,28 @@ def trading_broker(
     else:
         key, secret = arm_keys(ident.keys_env, environ)
         inner = factory(key, secret)
+    _guard_account(ident, inner)
     vb = virtual_broker(conn, ident, inner, settings=settings, now=now)
     return cast("BrokerAdapter", vb)  # the real broker's methods via __getattr__
+
+
+def _guard_account(ident: ArmIdentity, inner: BrokerAdapter) -> None:
+    """D69: refuse an arm broker whose keys reach another account than at t0.
+
+    Every arm broker is built here, so no arm step (sizing, gate, submit, reconcile)
+    ever talks to a swapped account; the arms tick halts the arm on the same check.
+    """
+    from arc.experiments.arms import ArmAccountChangedError, account_fingerprint
+
+    if ident.account_sha256 is None:
+        return
+    sha, last4 = account_fingerprint(str(inner.account().account_id))
+    if sha != ident.account_sha256:
+        msg = (
+            f"arm {ident.arm_id}: {ident.keys_env}_* now reach account …{last4}, not the t0 "
+            f"account …{ident.account_last4}; stop {ident.experiment_id}"
+        )
+        raise ArmAccountChangedError(msg)
 
 
 def virtual_broker(

@@ -199,7 +199,7 @@ def run(
         """SELECT chain_run_id FROM routine_runs WHERE job = 'research'
            AND chain_run_id IS NOT NULL ORDER BY rowid DESC LIMIT 1"""
     ).fetchone()[0]
-    arm = arm_stores(conn)["treatment"]
+    arm = arm_stores(conn, EID)["treatment"]
     conn.close()
     _check(*_arc("experiment", "pair", chain, "--fixtures", "--fixture-set", "bullish",
                  "--profile", "cash_debit", *db), "pair")  # fmt: skip

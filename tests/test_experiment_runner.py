@@ -93,8 +93,9 @@ def test_n_arms_by_configuration_pair_one_control_chain(control: Path, tmp_path:
     )
     assert st.status.value == "running" and st.running is not None
     assert st.running.t0_equity == 10000
-    stores = arm_stores(conn)
+    stores = arm_stores(conn, "XP-1")
     assert set(stores) == {"treatment", "shadow_control"}
+    assert set(arm_stores(conn)) == {"XP-1:treatment", "XP-1:shadow_control"}
     conn.close()
 
     # control's loop (Scalp + Research chain), then each arm's paired copy
@@ -191,7 +192,7 @@ def test_pair_skips_a_stale_control_chain(control: Path, tmp_path: Path) -> None
     chain = conn.execute(
         "SELECT chain_run_id FROM routine_runs WHERE job = 'research' AND chain_run_id IS NOT NULL"
     ).fetchone()[0]
-    arm = _db(arm_stores(conn)["treatment"])
+    arm = _db(arm_stores(conn, "XP-1")["treatment"])
     res = pair_chain(
         conn,
         arm,

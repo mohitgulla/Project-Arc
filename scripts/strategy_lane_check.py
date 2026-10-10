@@ -353,7 +353,13 @@ def load_experiments(root: Path, cfg: LaneConfig) -> dict[str, Experiment]:
             continue
         xid = str(data["id"]).upper()
         arms = data.get("arms") or {}
-        treatment = arms.get("treatment") or {} if isinstance(arms, dict) else {}
+        arms = arms if isinstance(arms, dict) else {}
+        treatment = arms.get("treatment")
+        if treatment is None:  # D69 spec v2: `treatments: {t1: ...}`
+            ts = arms.get("treatments") or {}
+            # a K>1 spec has no single tested overlay until its verdict names the winning
+            # arm (E15.5): nothing is promotable from it yet
+            treatment = next(iter(ts.values())) if isinstance(ts, dict) and len(ts) == 1 else {}
         overlay = treatment.get("overlay") or {} if isinstance(treatment, dict) else {}
         out[xid] = Experiment(id=xid, overlay=overlay, verdict=verdicts.get(xid))
     return out

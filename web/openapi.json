@@ -595,12 +595,18 @@
       },
       "Arms": {
         "additionalProperties": false,
+        "description": "Control plus K treatments (D69). Input ``treatment:`` (v1) becomes ``t1``.",
         "properties": {
           "control": {
             "$ref": "#/components/schemas/Arm"
           },
-          "treatment": {
-            "$ref": "#/components/schemas/Arm"
+          "treatments": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Arm"
+            },
+            "description": "t1..t16 -> the treatment arm (v1 `treatment` loads as t1)",
+            "title": "Treatments",
+            "type": "object"
           }
         },
         "title": "Arms",
@@ -4959,8 +4965,11 @@
             "type": "string"
           },
           "spec_version": {
-            "const": 1,
-            "default": 1,
+            "default": 2,
+            "enum": [
+              1,
+              2
+            ],
             "title": "Spec Version",
             "type": "integer"
           },

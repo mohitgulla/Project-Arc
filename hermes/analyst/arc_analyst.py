@@ -320,6 +320,18 @@ def _has_table(conn: sqlite3.Connection, name: str) -> bool:
     )
 
 
+def _treatment_overlay(spec: dict) -> dict:
+    """The treatment overlay of a v1 spec (``arms.treatment``) or a one-treatment v2
+    spec (``arms.treatments.t1``, D69); a multi-treatment spec maps arm -> overlay."""
+    arms = spec.get("arms") or {}
+    if "treatment" in arms:
+        return (arms.get("treatment") or {}).get("overlay") or {}
+    ts = arms.get("treatments") or {}
+    if len(ts) == 1:
+        return (next(iter(ts.values())) or {}).get("overlay") or {}
+    return {name: (arm or {}).get("overlay") or {} for name, arm in ts.items()}
+
+
 def _loads(text, default):
     try:
         return json.loads(text) if text else default
@@ -386,7 +398,7 @@ def experiments_overview(conn: sqlite3.Connection) -> list[dict]:
                 "hypothesis": spec.get("hypothesis", ""),
                 "proposed_by": spec.get("proposed_by"),
                 "backtest_ref": spec.get("backtest_ref"),
-                "overlay": ((spec.get("arms") or {}).get("treatment") or {}).get("overlay") or {},
+                "overlay": _treatment_overlay(spec),
                 "revision": revision,
                 "spec_hash": spec_hash,
                 "registered_hash": locked[0]["spec_hash"] if locked else None,

@@ -789,10 +789,19 @@ export interface components {
              */
             worst_day?: number | null;
         };
-        /** Arms */
+        /**
+         * Arms
+         * @description Control plus K treatments (D69). Input ``treatment:`` (v1) becomes ``t1``.
+         */
         Arms: {
             control?: components["schemas"]["Arm"];
-            treatment?: components["schemas"]["Arm"];
+            /**
+             * Treatments
+             * @description t1..t16 -> the treatment arm (v1 `treatment` loads as t1)
+             */
+            treatments?: {
+                [key: string]: components["schemas"]["Arm"];
+            };
         };
         /**
          * AutoApproveView
@@ -2534,10 +2543,10 @@ export interface components {
             secondary_metric: "sortino";
             /**
              * Spec Version
-             * @default 1
-             * @constant
+             * @default 2
+             * @enum {integer}
              */
-            spec_version: 1;
+            spec_version: 1 | 2;
             /** Title */
             title: string;
         };

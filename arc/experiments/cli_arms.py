@@ -24,9 +24,11 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     import argparse
     import sqlite3
+    from collections.abc import Callable
 
     from arc.broker.base import BrokerAdapter
     from arc.config import ArcSettings
+    from arc.experiments.runner import ArmAccount
 
 __all__ = ["ARMS_TICK_LOCK", "add_arm_parsers", "run_arm_command", "spawn_arms_tick"]
 
@@ -55,6 +57,12 @@ def add_arm_parsers(esub: Any, common: Any, local_actor: str) -> None:
     sa.add_argument("--aa-override", action="store_true", help="Owner: ab start with no A/A")
     sa.add_argument("--now", default=None, help="t0 as this ISO time (default: now)")
     sa.add_argument(
+        "--experiments-config",
+        default=None,
+        help="experiments.yaml for the runner arms (default: config/experiments.yaml); "
+        "e.g. a scratch copy with account_mode: shared (D69)",
+    )
+    sa.add_argument(
         "--dry-run",
         action="store_true",
         help="E13.12: print each arm's plan (fork step, own personas, shared kinds); "
@@ -76,7 +84,7 @@ def add_arm_parsers(esub: Any, common: Any, local_actor: str) -> None:
     at.add_argument("--config", default=None, help="routines.yaml (default: config/routines.yaml)")
     at.add_argument("--lock-dir", default="data/locks")
     at.add_argument("--now", default=None)
-    at.add_argument("--no-slack", action="store_true", help="Accepted; the arms never post")
+    at.add_argument("--no-slack", action="store_true", help="No [Ops] notice (D69 account guard)")
     at.add_argument(
         "--dry-run",
         action="store_true",
@@ -129,7 +137,7 @@ def _preview(args: argparse.Namespace, conn: sqlite3.Connection, experiment_id: 
 
 
 def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
-    from arc.experiments.runner import live_flat_check, runner_config, start_arms
+    from arc.experiments.runner import ArmAccount, live_account_probe, runner_config, start_arms
 
     if args.dry_run:
         return _preview(args, conn, args.experiment_id)
@@ -137,12 +145,17 @@ def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     if args.fixtures:
         from arc.pipeline.env import fixture_account
 
+        fx = fixture_account()
         try:
-            t0_equity = Decimal(args.t0_equity) if args.t0_equity else fixture_account().equity
+            t0_equity = Decimal(args.t0_equity) if args.t0_equity else fx.equity
         except InvalidOperation:
             _err(f"arc experiment start: --t0-equity {args.t0_equity!r} is not a number")
             return 2
-        check = None
+        # D69: every fixture arm account is the (flat) fixture paper account
+        flat = ArmAccount(
+            account_number=fx.account_id, equity=fx.equity, positions=0, open_orders=0
+        )
+        probe = cast("Callable[[str], ArmAccount]", lambda _keys: flat)
     else:
         if args.t0_equity:
             _err("arc experiment start: --t0-equity is only for --fixtures (live reads control)")
@@ -150,18 +163,18 @@ def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
         from arc.experiments.broker import trading_broker
 
         t0_equity = trading_broker(conn).account().equity
-        check = live_flat_check()
+        probe = live_account_probe()
     st = start_arms(
         conn,
         args.experiment_id,
         actor=args.actor,
         now=now,
         t0_equity=t0_equity,
-        runner=runner_config(conn),
+        runner=runner_config(conn, args.experiments_config),
         arm_dir=Path(args.arm_dir).resolve() if args.arm_dir else None,
         aa_override=args.aa_override,
-        check_flat=check,
         routines_path=args.config,
+        probe=probe,
     )
     from arc.experiments.runner import arm_stores
 
@@ -171,7 +184,7 @@ def _start(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
         "t0": None if st.running is None else st.running.t0.isoformat(),
         "t0_equity": str(t0_equity),
         "legacy_book": [] if st.running is None else st.running.legacy_book,
-        "arms": {n: str(p) for n, p in arm_stores(conn).items()},
+        "arms": {n: str(p) for n, p in arm_stores(conn, st.experiment_id).items()},
         "plans": {}
         if st.running is None
         else {n: pl.model_dump(mode="json") for n, pl in st.running.arm_plans.items()},
@@ -201,8 +214,14 @@ def _pair(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     from arc.control.effective import effective_routines
     from arc.experiments.arms import read_identity
     from arc.experiments.runner import _connect, arm_stores, pair_chain, runner_config
+    from arc.experiments.tape import running_experiments
 
-    stores = arm_stores(conn)
+    # D69: every running experiment's arms (keyed by arm id)
+    stores = {
+        f"{st.experiment_id}:{name}": path
+        for st in running_experiments(conn)
+        for name, path in arm_stores(conn, st.experiment_id).items()
+    }
     if not stores:
         _err("arc experiment pair: no arm stores (run `arc experiment start` first)")
         return 2
@@ -305,6 +324,16 @@ def _arms_tick(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     now = _parse_now(args.now)
     lock_dir = Path(args.lock_dir)
     report: dict[str, Any]
+    from arc.experiments.runner import live_account_number
+    from arc.monitoring.alerts import LogOpsNotifier, OpsNotifier, SlackOpsNotifier
+    from arc.routines.config import load_routines
+
+    # D69: an arm whose keys reach another account than at t0 is halted + [Ops] notice
+    notifier: OpsNotifier = (
+        LogOpsNotifier()
+        if args.no_slack
+        else SlackOpsNotifier(load_routines(args.config).monitoring.alert_channel)
+    )
     try:
         with LockManager(lock_dir).hold(ARMS_TICK_LOCK):
             report = arms_tick(
@@ -314,6 +343,8 @@ def _arms_tick(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
                 lock_dir=lock_dir,
                 clock=None if args.now else now_et,
                 spawner=spawn_detached,
+                account_number=live_account_number(),
+                notifier=notifier,
             )
     except LockBusyError as exc:
         report = {"skipped": f"another arms-tick is running ({exc})"}

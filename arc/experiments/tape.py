@@ -36,6 +36,7 @@ __all__ = [
     "prune_tape",
     "recording_enabled",
     "running_experiment",
+    "running_experiments",
     "tape_market",
 ]
 
@@ -177,15 +178,27 @@ class TapeReplay:
         return getattr(self.inner, name)
 
 
-def running_experiment(conn: sqlite3.Connection) -> Any:
-    """The control store's running experiment (``ExperimentState``) or ``None``."""
+def running_experiments(conn: sqlite3.Connection) -> list[Any]:
+    """Every running experiment of the control store (``ExperimentState``), oldest first.
+
+    D69: several experiments may run at once (different areas, A/As); the arms tick
+    serves all of them.
+    """
     from arc.experiments.models import ExperimentStatus
     from arc.experiments.store import ExperimentStore
 
     try:
-        running = ExperimentStore(conn).all(status=ExperimentStatus.RUNNING)
+        return ExperimentStore(conn).all(status=ExperimentStatus.RUNNING)
     except sqlite3.OperationalError:
-        return None
+        return []
+
+
+def running_experiment(conn: sqlite3.Connection) -> Any:
+    """The oldest running experiment (``ExperimentState``) or ``None``.
+
+    Kept for single-experiment readers; the arms tick uses :func:`running_experiments`.
+    """
+    running = running_experiments(conn)
     return running[0] if running else None
 
 
