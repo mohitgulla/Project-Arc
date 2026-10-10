@@ -109,9 +109,14 @@ def effective_from_path(
     return settings, routines
 
 
+# libyaml's C SafeLoader when PyYAML was built with it (same safe tag set, ~8x faster);
+# the pure-Python SafeLoader otherwise.
+_SAFE_LOADER: type[yaml.SafeLoader] = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
 def raw_yaml(target: Target, path: Path | str | None = None) -> dict[str, Any]:
     p = Path(path) if path is not None else YAML_PATHS[target]
-    data = yaml.safe_load(p.read_text()) or {}
+    data = yaml.load(p.read_text(), Loader=_SAFE_LOADER) or {}  # noqa: S506 - a SafeLoader
     return data if isinstance(data, dict) else {}
 
 

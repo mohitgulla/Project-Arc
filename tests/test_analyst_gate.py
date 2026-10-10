@@ -57,6 +57,27 @@ def _pipeline_db() -> bytes:
     return conn.serialize()
 
 
+@pytest.fixture
+def _stub_views(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Replace the gate's ``arc`` subprocess views with an instant canned output.
+
+    Each real view is a fresh ``arc`` process (~1 s of imports), ~10 per gate run.
+    Tests that assert only the gate's own logic (wake/skip, cap, experiments section)
+    use this; ``test_context_contains_scorecard_and_ledger`` and
+    ``test_never_touches_live_db`` keep the real subprocess path end to end.
+    """
+    calls: list[list[str]] = []
+
+    def fake(p: Any, args: list[str], run_dir: Path, name: str, timeout: int = 180) -> str:
+        calls.append(list(args))
+        out = f"[stub arc view {name}] " + " ".join(args) + "\n" + "x" * 400
+        (run_dir / f"{name}.log").write_text(out)
+        return out
+
+    monkeypatch.setattr(aa, "run_arc", fake)
+    return calls
+
+
 def _conn(blob: bytes) -> sqlite3.Connection:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
@@ -125,6 +146,7 @@ def test_skip_when_no_new_outcomes(
     assert not (p.home / "staging-copy.db").exists()
 
 
+@pytest.mark.usefixtures("_stub_views")
 def test_skip_when_nothing_changed_since_last_run(
     _pipeline_db: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -147,6 +169,7 @@ def test_skip_when_nothing_changed_since_last_run(
     assert "no new closed outcome, no halt and no experiment status change" in out
 
 
+@pytest.mark.usefixtures("_stub_views")
 def test_halt_wakes_without_new_outcome(
     _pipeline_db: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -216,6 +239,7 @@ def test_context_contains_scorecard_and_ledger(
     assert json.loads((run_dir / "metrics.json").read_text())["closed_total"] == 1
 
 
+@pytest.mark.usefixtures("_stub_views")
 def test_context_is_capped(
     _pipeline_db: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -572,6 +596,7 @@ def _experiment_db(_pipeline_db: bytes) -> bytes:
     return conn.serialize()
 
 
+@pytest.mark.usefixtures("_stub_views")
 def test_context_has_forward_experiments_and_record_writes_draft_specs(
     _experiment_db: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -615,6 +640,7 @@ def test_context_has_forward_experiments_and_record_writes_draft_specs(
     assert load_spec(draft).id == "XP-4"
 
 
+@pytest.mark.usefixtures("_stub_views")
 def test_experiment_status_change_wakes_the_analyst(
     _experiment_db: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
