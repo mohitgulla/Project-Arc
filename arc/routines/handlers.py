@@ -862,7 +862,7 @@ def iv_backfill_source(
     history_factory: Callable[[], Any] | None = None,
     clock: Callable[[], float] | None = None,
 ) -> JobResult:
-    """E16.1 (D76): nightly top-up of the IV history for names short of IV rank.
+    """E16.1 (D76) / D81: pre-market (07:15 ET) top-up of the IV history for names short of IV rank.
 
     Picks open underlyings + today's active list + SPY/QQQ/IWM whose series has fewer
     than ``iv_min_obs_rank`` days in the 252-session lookback (and still has a gap
@@ -2790,7 +2790,7 @@ BUILTIN_HANDLERS: Mapping[str, str] = {
     "macro_calendar": "arc.routines.handlers:macro_calendar_source",
     "ex_dividend": "arc.routines.handlers:ex_dividend_source",
     "iv.record": "arc.routines.handlers:iv_record_source",  # E4.12 (D55) daily 30-DTE IV
-    "iv.backfill": "arc.routines.handlers:iv_backfill_source",  # E16.1 (D76) nightly top-up
+    "iv.backfill": "arc.routines.handlers:iv_backfill_source",  # E16.1 (D76) / D81 pre-market
     "betas": "arc.routines.handlers:betas_source",  # E3.6 (D62) daily 1y beta vs SPY
     # E4.8 (D46): Finnhub per-ticker context (typed kinds, shared 55/min budget)
     "finnhub.insider": "arc.routines.handlers:finnhub_insider_source",

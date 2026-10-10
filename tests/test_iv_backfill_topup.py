@@ -1,4 +1,4 @@
-"""E16.1 (D76): nightly ``iv.backfill`` top-up (selection, runtime stop, resume, summary)."""
+"""E16.1 (D76) / D81: pre-market ``iv.backfill`` top-up (selection, stop, resume, summary)."""
 
 from __future__ import annotations
 
@@ -179,7 +179,7 @@ def _ctx(conn: Any, options: dict[str, Any] | None = None) -> JobContext:
     routines = RoutinesConfig.model_validate(
         {
             "sources": {
-                "iv.backfill": {"schedule": ["16:20"], "writes": [], **(options or {})},
+                "iv.backfill": {"schedule": ["07:15"], "writes": [], **(options or {})},
             },
             "iv_backfill": {"max_tickers_per_run": 2, "max_runtime_s": 900,
                             "since": "2026-09-28"},
@@ -237,19 +237,44 @@ def test_handler_skips_when_since_is_after_yesterday(conn: Any) -> None:
 
     ctx = _ctx(conn)
     ctx.routines = RoutinesConfig.model_validate(
-        {"sources": {"iv.backfill": {"schedule": ["16:20"], "writes": []}},
+        {"sources": {"iv.backfill": {"schedule": ["07:15"], "writes": []}},
          "iv_backfill": {"since": "2026-10-09"}}
     )  # fmt: skip
     with pytest.raises(JobSkippedError, match="no sessions"):
         iv_backfill_source(ctx, lambda: _Hist([]))
 
 
-def test_shipped_job_slot_after_iv_record_and_knobs() -> None:
+def test_shipped_job_slot_pre_market_after_active_list_and_knobs() -> None:
+    """D81: 07:15 ET, after every pre-market job that writes the active list (and after
+    the Scout / trending catch-up windows), and, with its ttl + runtime cap, done before
+    the research loop."""
     c = load_routines()
-    _, spec = c.jobs()["iv.backfill"]
-    _, rec = c.jobs()["iv.record"]
-    assert [t.strftime("%H:%M") for t in spec.schedule] == ["16:20"]
-    assert spec.schedule[0] > rec.schedule[0]
+    jobs = c.jobs()
+    _, spec = jobs["iv.backfill"]
+    assert [t.strftime("%H:%M") for t in spec.schedule] == ["07:15"]
+    slot = spec.schedule[0]
+    pre_market = {
+        n: j
+        for n, (_, j) in jobs.items()
+        if "active_universe" in (j.writes or []) and j.schedule and min(j.schedule) < slot
+    }
+    assert {"symbols", "universe.momentum", "universe.trending", "scout"} <= set(pre_market)
+    assert all(max(j.schedule) < slot for j in pre_market.values())
+    day = dt.date(2026, 10, 12)
+    for name in ("scout", "universe.trending"):
+        j = pre_market[name]
+        assert j.ttl is not None and j.ttl.duration is not None
+        end = dt.datetime.combine(day, max(j.schedule)) + j.ttl.duration
+        assert end.time() <= slot, name
+    _, research = jobs["research"]
+    assert spec.ttl is not None and spec.ttl.duration is not None
+    deadline = (
+        dt.datetime.combine(day, slot)
+        + spec.ttl.duration
+        + dt.timedelta(seconds=c.iv_backfill.max_runtime_s)
+    )
+    assert research.window is not None
+    assert deadline.time() <= research.window.start, research.window
     assert spec.writes == [] and spec.lane.value == "background"
     assert spec.ttl is not None
     assert c.iv_backfill.max_tickers_per_run == 10

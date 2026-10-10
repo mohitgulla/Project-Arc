@@ -1904,10 +1904,14 @@ total-variance interpolation to 30 DTE. Requests share the
 About 25 s and 110 requests per ticker-year. Bars are last trades, not mids, and
 not simultaneous with the stock close: about ±2 vol pts of daily noise.
 
-**Nightly top-up: `iv.backfill` (E16.1, D76).** The active list churns daily
-(Discovery / Trending), so the one-off backfill goes stale. `iv.backfill` (16:20 ET,
-trading days, background lane, `ttl: 2h` so a missed slot is skipped, not caught up the
-next morning) runs the same backfill on the names still short of IV rank:
+**Pre-market top-up: `iv.backfill` (E16.1, D76; retimed by D81).** The active list
+churns daily (Discovery / Trending), so the one-off backfill goes stale. `iv.backfill`
+(07:15 ET, trading days, background lane, `ttl: 2h`) runs once the day's active list is
+final (`symbols` 05:30, `universe.trending` 05:50, `universe.momentum` and the Scout
+06:00, Scout catch-up until 07:00), so a name new to the list has IV rank from its first
+session. A missed slot still runs until 09:15 and, with the 900 s runtime cap, is done
+before the 09:40 research loop; later it is skipped for the day. It runs the same
+backfill on the names still short of IV rank:
 
 - candidates: open underlyings, then today's active list in order, then SPY/QQQ/IWM;
 - short: fewer than `iv_min_obs_rank` (120) days in our series (`alpaca_cm30` or
@@ -1920,7 +1924,7 @@ next morning) runs the same backfill on the names still short of IV rank:
   the `alpaca_data:calls` budget with every other Alpaca data job.
 
 Run summary: `n tickers filled, n days added, n skipped (reasons), n still short`
-(plus `deferred` / `exhausted` counts); a quiet night says `no short names`. No Slack
+(plus `deferred` / `exhausted` counts); a quiet morning says `no short names`. No Slack
 post unless every picked name errors (the run fails → the usual `[Ops]` path).
 Knobs: `!arc config set iv_backfill.max_tickers_per_run|max_runtime_s`; `since` by PR.
 

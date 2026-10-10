@@ -227,7 +227,7 @@ options_fast:
   vix_flags: {vix_gt_25: 25, vix_gt_35: 35}
   max_csv_bytes: 20000000
 
-# E16.1 (D76): nightly `iv.backfill` top-up. Picks open underlyings, then today's active
+# E16.1 (D76) / D81: pre-market `iv.backfill` top-up (07:15 ET). Picks open underlyings, then today's active
 # list, then SPY/QQQ/IWM whose IV series has < iv_min_obs_rank (120) days in the
 # 252-session lookback and still has an untried gap (a day with an iv_skips row is not
 # retried). Tunable: `!arc config set iv_backfill.max_tickers_per_run|max_runtime_s`.
@@ -521,12 +521,12 @@ sources:                        # fetch-only jobs (no LLM), each with its own ca
     feed: scout                 # D54: slow feed (once a day)
     writes: []                  # stores iv_daily rows; the regime step reads them (no context kind)
     lane: background            # one chain snapshot per ticker
-  iv.backfill:                  # E16.1 (D76): nightly top-up of alpaca_backfill rows for names short of IV rank
+  iv.backfill:                  # E16.1 (D76) / D81: pre-market top-up of alpaca_backfill rows for names short of IV rank
     label: IV backfill
-    about: "Nightly top-up of the 30-day IV history for active names and open underlyings still short of IV rank (Alpaca option bars)"
-    schedule: ["16:20"]         # after iv.record (15:50); knobs in the iv_backfill: block (OPS 5.26)
+    about: "Pre-market top-up of the 30-day IV history for active names and open underlyings still short of IV rank (Alpaca option bars)"
+    schedule: ["07:15"]         # D81: pre-market, after the active list is final (symbols 05:30, trending 05:50, momentum + Scout 06:00, Scout ttl 07:00); knobs in the iv_backfill: block (OPS 5.26)
     days: trading
-    ttl: 2h                     # skipped (not caught up next morning) once 18:20 has passed
+    ttl: 2h                     # a missed 07:15 still runs until 09:15 (done before the 09:40 research loop); later = skipped
     reference: true             # reference data (iv_daily; the regime step reads it)
     feed: scout                 # slow feed (once a day)
     writes: []                  # stores iv_daily / iv_skips rows; no context kind
