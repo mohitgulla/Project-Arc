@@ -297,6 +297,12 @@ _CREDIT_EXIT_KINDS = frozenset({"vertical_credit", "iron_condor"})
 
 PROFILE_ORDER: tuple[str, ...] = ("cash_long_only", "cash_debit", "margin")  # safest first
 RANK_MENU_BY: tuple[str, ...] = ("scanner", "managed_net_ev", "rorc_day", "vrp")
+MENU_MEASURE: tuple[str, ...] = (
+    "control",
+    "managed_net_ev_full",
+    "rorc_day_full",
+    "rorc_day_tilted",
+)
 STOP_BASES: tuple[str, ...] = ("pct_max_loss", "pct_debit", "credit_multiple")
 
 MAX_UNIVERSE = 25  # D58: hard ceiling on the core list (arc.universe.tiers.MAX_CORE)
@@ -962,6 +968,43 @@ liquidity; a leg passes if within this OR spread_max_abs).",
         risk=Risk.NONE,
         path=("pipeline", "rank_menu_by"),
         choices=RANK_MENU_BY,
+    ),
+    # -- E7.5b (D79): one menu measure for credit + debit, ranked before the cut --------
+    Tunable(
+        key="menu_measure",
+        group=Group.ENTRIES,
+        type=ValueType.CHOICE,
+        description="E7.5b: control = scanner menu; managed_net_ev_full / rorc_day_full / "
+        "rorc_day_tilted rank up to menu_pool_max candidates (credit and debit on one key) "
+        "before the cut to pipeline_scan_top (exits.yaml pipeline.menu_measure).",
+        target=Target.EXITS,
+        risk=Risk.NONE,
+        path=("pipeline", "menu_measure"),
+        choices=MENU_MEASURE,
+    ),
+    Tunable(
+        key="menu_direction_tilt",
+        group=Group.ENTRIES,
+        type=ValueType.FLOAT,
+        description="E7.5b: rorc_day_tilted drift, a fraction of a 1-sigma move over the "
+        "expected hold in the stance's direction (0 = off). Ranking key only.",
+        target=Target.EXITS,
+        risk=Risk.ANY,
+        path=("pipeline", "direction_tilt"),
+        min=0.0,
+        max=0.5,
+    ),
+    Tunable(
+        key="menu_pool_max",
+        group=Group.ENTRIES,
+        type=ValueType.INT,
+        description="E7.5b: scanner candidates per ticker scored by the managed model before "
+        "the menu is cut (only under a *_full / *_tilted menu_measure).",
+        target=Target.EXITS,
+        risk=Risk.ANY,
+        path=("pipeline", "menu_pool_max"),
+        min=5,
+        max=40,
     ),
     # -- positions (E6.4, D19): early exits + close-to-reallocate -----------------
     Tunable(

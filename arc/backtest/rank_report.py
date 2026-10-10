@@ -43,9 +43,11 @@ from arc.backtest.ranking import (
     rankers_for,
     remark_chains,
     run_portfolio,
+    stance_hit_rate,
     stance_kinds,
     subperiod_stats,
     summarize,
+    trend_stances,
 )
 from arc.backtest.report import format_table
 from arc.exits.policy import load_exit_config
@@ -66,6 +68,9 @@ log = structlog.get_logger()
 __all__ = ["TickerResult", "root_cause", "run_rank_report", "ticker_job"]
 
 _Key = tuple[str, float]  # (profile, slippage)
+# E7.5b: forward window for the trend proxy's hit rate, in sessions (~ the mean
+# expected hold of the E7.5 picks, 20-22 calendar days)
+HIT_RATE_SESSIONS = 15
 
 
 class TickerResult:
@@ -129,6 +134,8 @@ def ticker_job(
             vwap=bt.entry_filter == "anti_chase_vwap",
         )
     filtered: dict[_Key, int] = {}
+    # E7.5b: the tilted rankers' stance per session (the same trend proxy as the menu)
+    day_stance = trend_stances(trend) if bt.direction_tilt > 0 else None
     menus: dict[_Key, dict[dt.date, list[Candidate]]] = {}
     outcomes: dict[_Key, dict[tuple[str, dt.date, str], Outcome | None]] = {}
     for profile, (lo, hi) in sorted(windows.items()):
@@ -153,6 +160,8 @@ def ticker_job(
                     exits=exits,
                     mc=mc,
                     r=bt.risk_free_rate,
+                    stances=day_stance,
+                    tilt=bt.direction_tilt,
                 )
             else:
                 m = build_menus(
@@ -165,6 +174,8 @@ def ticker_job(
                     exits=exits,
                     mc=mc,
                     r=bt.risk_free_rate,
+                    stances=day_stance,
+                    tilt=bt.direction_tilt,
                 )
             if stances is not None:
                 m = apply_stance(m, trend, stances[profile])
@@ -361,6 +372,16 @@ def run_rank_report(
     pngs: list[str] = []
     if charts:
         pngs = _charts(runs, profiles=profiles, rk=rk, x=cost.slippage_frac, out_dir=out_dir)
+    hits = {
+        t: stance_hit_rate(
+            closes_by_ticker[t],
+            r.trend,
+            horizon=HIT_RATE_SESSIONS,
+            start=start,
+            end=end,
+        )
+        for t, r in results.items()
+    }
     (out_dir / "report.md").write_text(
         _render(
             frames,
@@ -376,6 +397,7 @@ def run_rank_report(
             coverage={
                 t: len(r.menus[(profiles[0], cost.slippage_frac)]) for t, r in results.items()
             },
+            hits=hits,
         )
     )
     return frames
@@ -569,6 +591,11 @@ def _knobs(cfg: RankingFile) -> list[str]:
             )
             + "\n"
         )
+    if bt.direction_tilt > 0:
+        out.append(
+            f"Direction tilt (E7.5b, D79): {bt.direction_tilt:g} of a 1σ hold move, trend "
+            "stance, read only by the `*_tilted` rankers\n"
+        )
     if bt.slippage_by_kind:
         out.append(
             "Measured slippage x by structure (base run): "
@@ -591,9 +618,30 @@ def _render(
     menu_sizes: Mapping[str, float],
     pngs: Sequence[str],
     coverage: Mapping[str, int],
+    hits: Mapping[str, tuple[float | None, int]] | None = None,
 ) -> str:
     bt = cfg.backtest
     rule = bt.decision.text(bt.bootstrap.ci)
+    all_exp = any(m.expiry_mode == "all" for specs in bt.menus.values() for m in specs)
+    hit_lines: list[str] = []
+    if hits:
+        n_all = sum(n for _, n in hits.values())
+        h_all = sum((h or 0.0) * n for h, n in hits.values())
+        overall = f"{h_all / n_all:.1%}" if n_all else "n/a"
+        per = ", ".join(
+            f"{t} {'n/a' if h is None else f'{h:.0%}'} (n={n})" for t, (h, n) in hits.items()
+        )
+        hit_lines = [
+            f"- **Trend-proxy hit rate** (a bull/bear label followed by a close "
+            f"{HIT_RATE_SESSIONS} sessions later in the labelled direction; diagnostic, "
+            f"reads the future): {overall} overall · {per}. "
+            + (
+                f"The `*_tilted` rankers (tilt {bt.direction_tilt:g} of a 1σ hold move) "
+                "can only help when this is above 50%.\n"
+                if bt.direction_tilt > 0
+                else "\n"
+            )
+        ]
     parts = [
         "# Ranking backtest run (E7.5)\n",
         f"Tickers: {', '.join(tickers)} · entries {start} → {end} · profiles: "
@@ -643,10 +691,18 @@ def _render(
         "- Daily EOD decisions and marks only: stops and take-profits are checked on closes, "
         "so intraday paths are not seen (matches the owner's relaxed, end-of-day stop "
         "preference).\n"
-        "- Menus hold one expiration (nearest the middle of the profile's DTE window) and "
-        "a fixed delta grid, not the full live scanner menu; contracts with no trade that "
-        "session are missing. ThetaData EOD was not used (no coverage in this store).\n"
-        "- At most one new position per ticker per session (open positions stack up to the "
+        + (
+            "- **Live-shaped menus** (E7.5b): every expiration in the profile's DTE window "
+            "and the scanner's delta bands; contracts with no trade that session are "
+            "missing. ThetaData EOD was not used (no coverage in this store).\n"
+            if all_exp
+            else "- Menus hold one expiration (nearest the middle of the profile's DTE "
+            "window) and a fixed delta grid, not the full live scanner menu; contracts with "
+            "no trade that session are missing. ThetaData EOD was not used (no coverage in "
+            "this store).\n"
+        )
+        + "".join(hit_lines)
+        + "- At most one new position per ticker per session (open positions stack up to the "
         "gate's per-underlying and max-open caps), sized by D18 with no Risk persona "
         "(the equity cap binds).\n",
         "## Verdict\n",

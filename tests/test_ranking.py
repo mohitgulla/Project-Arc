@@ -187,7 +187,10 @@ def test_rank_is_deterministic_and_order_independent(
 
 def test_ranking_yaml_loads_and_does_not_change_live_default() -> None:
     cfg = load_ranking_config()
-    assert set(cfg.rankers) == set(Ranker)
+    # E7.5b: the tilted rankers are opt-in (--rankers / an experiment overlay), so the
+    # E7.5 default run is unchanged
+    tilted = {Ranker.MANAGED_NET_EV_TILTED, Ranker.RORC_DAY_TILTED}
+    assert set(cfg.rankers) == set(Ranker) - tilted
     f = load_ranking_file()
     assert {"margin", "cash_debit", "cash_long_only"} <= set(f.backtest.menus)
     # The live scanner / pipeline defaults stay on the incumbent (D25: owner flips it).

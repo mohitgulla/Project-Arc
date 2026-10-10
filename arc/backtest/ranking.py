@@ -21,9 +21,14 @@ Menu
 Per account profile (``config/ranking.yaml`` → ``backtest.menus``): each strategy
 kind × anchor |Δ| in the profile's list, on the one expiration nearest the middle
 of the profile's DTE window (:class:`arc.backtest.strategies.StrategySpec`), every
-leg with session volume ≥ ``min_volume``. Each candidate gets the scanner-style
+leg with session volume ≥ ``min_volume``. E7.5b: ``expiry_mode: all`` on a menu
+spec builds it on every expiration in the window (the live scanner's shape); the
+default ``nearest`` keeps the E7.5 numbers reproducible. Each candidate gets the scanner-style
 ``ev_proxy`` (flat ATM-IV BSM value after entry costs) and the E2.4 managed-exit
-Monte Carlo (Net EV, PoP, expected days held, ``rorc_day``, ``vrp``).
+Monte Carlo (Net EV, PoP, expected days held, ``rorc_day``, ``vrp``). With
+``backtest.direction_tilt`` > 0 a directional candidate also gets the managed model
+under the stance-tilted drift (D79), read only by the ``*_tilted`` rankers; the
+stance is the session's trend label, known at its close.
 
 Portfolio
 ---------
@@ -64,6 +69,7 @@ from arc.backtest.engine import (
 from arc.backtest.entry_filter import EntryFilterRule
 from arc.backtest.regime import label_trend, label_vol
 from arc.backtest.strategies import (
+    ExpiryMode,
     LegPick,
     StrategyKind,
     StrategySpec,
@@ -85,6 +91,8 @@ from arc.scanner.rank import (
     applicable,
     incumbent_for,
     rank,
+    stance_sign,
+    tilted_drift,
 )
 from arc.sizing import size_contracts
 from arc.structures import analyze, format_occ
@@ -145,6 +153,11 @@ class MenuSpec(BaseModel):
     width_pct: float = Field(0.02, gt=0.0, description="Vertical width as a fraction of spot")
     delta_tol: float = Field(0.04, ge=0.0)
     min_volume: float = Field(1.0, ge=0.0)
+    expiry_mode: ExpiryMode = Field(
+        ExpiryMode.NEAREST,
+        description="nearest = one expiration nearest the window middle (E7.5); all = every "
+        "expiration in the DTE window, like the live scanner (E7.5b)",
+    )
 
     def specs(self, dte_min: int, dte_max: int) -> list[StrategySpec]:
         return [
@@ -156,6 +169,7 @@ class MenuSpec(BaseModel):
                 delta_tol=self.delta_tol,
                 width_pct=self.width_pct,
                 min_volume=self.min_volume,
+                expiry_mode=self.expiry_mode,
             )
             for k in self.kinds
             for d in self.deltas
@@ -233,6 +247,13 @@ class BacktestSettings(BaseModel):
         description="profile -> trend label (bull/bear/sideways) -> structures allowed "
         "(replaces the account profile's stance_strategies for stance=trend; a label "
         "missing here = no trade). Experiment (a): regime-conditional menu.",
+    )
+    direction_tilt: float = Field(
+        0.0,
+        ge=0.0,
+        le=0.5,
+        description="E7.5b (D79): the *_tilted rankers' drift, a fraction of a 1-sigma move "
+        "over the expected hold in the trend stance's direction (0 = tilted == untilted)",
     )
     slippage_by_kind: dict[StructureKind, float] = Field(
         default_factory=dict,
@@ -522,11 +543,15 @@ def build_menu(
     exits: ExitConfig,
     mc: ExitModelConfig,
     r: float,
+    stance: str | None = None,
+    tilt: float = 0.0,
 ) -> list[Candidate]:
     """Every candidate for one session from information known at its close.
 
     *closes* is truncated to ``<= day`` here, so a caller cannot leak a future
-    close into IV, the realised-vol forecast or the model.
+    close into IV, the realised-vol forecast or the model. *stance* (bullish /
+    bearish / neutral, from the trend label at this close) and *tilt* feed only the
+    ``*_tilted`` ranker keys; without a tilt they equal the untilted keys.
     """
     past = closes[pd.Index(closes.index) <= day]
     if day not in past.index:
@@ -565,6 +590,29 @@ def build_menu(
                 spreads={_legs([p], underlying)[0].occ_symbol: p.spread for p in picks},
                 realized_vol=rv,
             )
+            t_ev, t_rorc = res.managed.net_ev, res.rorc_day
+            kind = STRUCTURE_KIND[spec.kind]
+            mu = tilted_drift(
+                r=r,
+                sign=stance_sign(stance, kind.value),
+                tilt=tilt,
+                sigma=res.path_vol,
+                hold_years=res.managed.expected_days_held / 365.0,
+            )
+            if mu != r:
+                tres = model_exits(
+                    structure,
+                    policy,
+                    spot=spot,
+                    iv=iv,
+                    r=r,
+                    cost=cost,
+                    cfg=mc,
+                    spreads={_legs([p], underlying)[0].occ_symbol: p.spread for p in picks},
+                    realized_vol=rv,
+                    drift=mu,
+                )
+                t_ev, t_rorc = tres.managed.net_ev, tres.rorc_day
             entry_mid = sum(p.side * p.mid for p in picks)
             width = _width(picks)
             ml = float(structure.max_loss)
@@ -591,6 +639,8 @@ def build_menu(
                         managed_pop=res.managed.pop,
                         rorc_day=res.rorc_day,
                         vrp=res.vrp,
+                        managed_net_ev_tilted=t_ev,
+                        rorc_day_tilted=t_rorc,
                         est_cost=round(res.managed.costs.total, 4)
                         if res.managed.costs is not None
                         else None,
@@ -630,6 +680,8 @@ def build_menus_by_kind(
     exits: ExitConfig,
     mc: ExitModelConfig,
     r: float,
+    stances: Mapping[dt.date, str] | None = None,
+    tilt: float = 0.0,
 ) -> dict[dt.date, list[Candidate]]:
     """:func:`build_menus` with each structure priced at its own cost model.
 
@@ -649,6 +701,8 @@ def build_menus_by_kind(
             exits=exits,
             mc=mc,
             r=r,
+            stances=stances,
+            tilt=tilt,
         )
         for g, ss in groups.items()
     }
@@ -671,7 +725,10 @@ def build_menus(
     exits: ExitConfig,
     mc: ExitModelConfig,
     r: float,
+    stances: Mapping[dt.date, str] | None = None,
+    tilt: float = 0.0,
 ) -> dict[dt.date, list[Candidate]]:
+    """:func:`build_menu` per session; *stances* (day → stance) feed the tilted keys."""
     closes = closes.sort_index()
     return {
         d: build_menu(
@@ -684,6 +741,8 @@ def build_menus(
             exits=exits,
             mc=mc,
             r=r,
+            stance=(stances or {}).get(d),
+            tilt=tilt,
         )
         for d in days
         if d in chains
@@ -1211,6 +1270,32 @@ def stance_kinds(profile: str, path: Path | str | None = None) -> dict[str, froz
         lab: frozenset(str(_STRATEGY_KIND[s]) for s in p.strategies_for(stance))
         for lab, stance in _TREND_STANCE.items()
     }
+
+
+def trend_stances(trend: pd.Series) -> dict[dt.date, str]:
+    """Day → Research-proxy stance (bull → bullish, bear → bearish, else neutral)."""
+    return {d: _TREND_STANCE.get(str(v), "neutral") for d, v in trend.items()}
+
+
+def stance_hit_rate(
+    closes: pd.Series, trend: pd.Series, *, horizon: int, start: dt.date, end: dt.date
+) -> tuple[float | None, int]:
+    """(share of bull/bear-labelled sessions whose close *horizon* sessions later moved
+    the labelled way, sessions counted). Reads the future: a report diagnostic only,
+    never a model input. Sideways sessions and sessions without a forward close are
+    not counted."""
+    c = closes.sort_index().astype(float)
+    fwd = c.shift(-horizon) / c - 1.0
+    hits = n = 0
+    for d, lab in trend.items():
+        if not start <= d <= end or lab not in ("bull", "bear"):
+            continue
+        r = fwd.get(d)
+        if r is None or not math.isfinite(float(r)):
+            continue
+        n += 1
+        hits += int((r > 0) if lab == "bull" else (r < 0))
+    return (hits / n if n else None), n
 
 
 def apply_stance(
