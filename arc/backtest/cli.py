@@ -105,6 +105,14 @@ def add_backtest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         default=5,
         help="Fills a structure kind needs before its measured slippage is used",
     )
+    rk.add_argument(
+        "--entry-filter",
+        choices=["none", "anti_chase", "anti_chase_vwap"],
+        default=None,
+        help="E16.3: override backtest.entry_filter (default: config/ranking.yaml, none). "
+        "A filter needs split-adjusted daily OHLC (cached in <data-dir>/underlying_ohlc/, "
+        "fetched from Alpaca unless --offline)",
+    )
     rk.add_argument("--workers", type=int, default=1, help="Parallel ticker processes")
     rk.add_argument("--no-charts", action="store_true")
     rk.add_argument(
@@ -183,7 +191,15 @@ def run_rank_cli(args: argparse.Namespace) -> int:
 
         _load_alpaca_env()
         source = AlpacaBarsSource()
+    if args.entry_filter is not None:
+        bt = cfg.backtest
+        cfg = cfg.model_copy(
+            update={"backtest": bt.model_copy(update={"entry_filter": args.entry_filter})}
+        )
     closes = closes_for(tickers, args.start, args.end, args.data_dir, source)
+    ohlc = None
+    if cfg.backtest.entry_filter != "none":
+        ohlc = ohlc_for(tickers, args.start, args.end, args.data_dir, offline=args.offline)
     run_rank_report(
         store=ParquetHistoryStore(args.data_dir),
         closes_by_ticker=closes,
@@ -199,9 +215,28 @@ def run_rank_cli(args: argparse.Namespace) -> int:
         provider=args.provider,
         workers=args.workers,
         charts=not args.no_charts,
+        ohlc_by_ticker=ohlc,
     )
     sys.stdout.write(f"report: {args.out / 'report.md'}\n")
     return 0
+
+
+def ohlc_for(
+    tickers: list[str], start: dt.date, end: dt.date, data_dir: Path, *, offline: bool
+) -> dict[str, object]:
+    """E16.3: split-adjusted daily OHLC from ``start - 60d`` (indicator warm-up) to *end*."""
+    from arc.backtest.entry_filter import WARMUP_DAYS, OhlcStore, load_ohlc
+
+    source = None
+    if not offline:  # pragma: no cover - network
+        from arc.backtest.entry_filter import AlpacaOhlcSource
+        from arc.data.history.cli import _load_alpaca_env
+
+        _load_alpaca_env()
+        source = AlpacaOhlcSource()
+    store = OhlcStore(data_dir)
+    lo = start - dt.timedelta(days=WARMUP_DAYS * 2)
+    return {t: load_ohlc(store, t, lo, end, source=source) for t in tickers}
 
 
 def run_rank_compare_cli(args: argparse.Namespace) -> int:

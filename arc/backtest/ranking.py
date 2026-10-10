@@ -61,6 +61,7 @@ from arc.backtest.engine import (
     open_trade,
     settle,
 )
+from arc.backtest.entry_filter import EntryFilterRule
 from arc.backtest.regime import label_trend, label_vol
 from arc.backtest.strategies import (
     LegPick,
@@ -71,6 +72,7 @@ from arc.backtest.strategies import (
 )
 from arc.exits.model import model_exits, realized_vol_forecast
 from arc.exits.policy import ExitReason, check_rules, resolve_rules
+from arc.features.technicals import AntiChaseRule
 from arc.gate.inputs import AccountSnapshot, Portfolio, Position
 from arc.gate.rules import Derived, check_max_open_positions, check_per_underlying
 from arc.models import Leg, LegIntent, StructureKind
@@ -237,6 +239,22 @@ class BacktestSettings(BaseModel):
         description="structure kind -> measured slippage x (mid +/- x*spread), e.g. from "
         "the E7.3 scorecard; replaces costs.yaml slippage_frac for that kind in the base "
         "run (the slippage_grid sensitivity rows keep their x).",
+    )
+
+    # -- E16.3 (D76/D78): the anti-chase entry filter (default none: E7.5 run unchanged) --
+    entry_filter: Literal["none", "anti_chase", "anti_chase_vwap"] = Field(
+        "none",
+        description="none = no entry filter; anti_chase = drop directional long-premium "
+        "candidates on days their stance is stretched (arc.backtest.entry_filter, daily "
+        "bars <= the decision day); anti_chase_vwap = also the close-vs-bar-VWAP stretch",
+    )
+    anti_chase: AntiChaseRule = Field(
+        default_factory=lambda: AntiChaseRule(),
+        description="Thresholds of the filter (defaults = the live D78 rule)",
+    )
+    entry_filter_rule: EntryFilterRule = Field(
+        default_factory=lambda: EntryFilterRule(),
+        description="E16.3 recommend-the-experiment rule, fixed before the run",
     )
 
     def window_for(self, profile: str, default: tuple[int, int]) -> tuple[int, int]:

@@ -25,6 +25,7 @@ import pandas as pd
 import structlog
 
 from arc.backtest.engine import prepare_chains
+from arc.backtest.entry_filter import apply_entry_filter, stretched_days
 from arc.backtest.ranking import (
     Candidate,
     Outcome,
@@ -77,12 +78,15 @@ class TickerResult:
         outcomes: dict[_Key, dict[tuple[str, dt.date, str], Outcome | None]],
         trend: pd.Series,
         vol: pd.Series,
+        filtered: dict[_Key, int] | None = None,
     ) -> None:
         self.ticker = ticker
         self.menus = menus
         self.outcomes = outcomes
         self.trend = trend
         self.vol = vol
+        # E16.3: (profile, slippage) -> decision days the entry filter emptied of long premium
+        self.filtered = filtered or {}
 
 
 def ticker_job(
@@ -99,8 +103,13 @@ def ticker_job(
     rankers: Mapping[str, Sequence[Ranker]],
     slippages: Sequence[float],
     stances: Mapping[str, Mapping[str, frozenset[str]]] | None = None,
+    ohlc: pd.DataFrame | None = None,
 ) -> TickerResult:
-    """Everything that depends on one ticker only (safe to run in a worker process)."""
+    """Everything that depends on one ticker only (safe to run in a worker process).
+
+    *ohlc* (split-adjusted daily bars) feeds the E16.3 entry filter; required when
+    ``backtest.entry_filter`` is not ``none`` (an empty frame filters nothing).
+    """
     closes = closes.sort_index()
     bt = cfg.backtest
     mc = exits.model.model_copy(update={"n_paths": bt.n_paths})
@@ -111,6 +120,15 @@ def ticker_job(
         chains = clean_chains(chains, max_dev=bt.max_leg_iv_dev, window=bt.smile_window)
     days = [d for d in sorted(chains) if start <= d <= end and d in closes.index]
     trend, vol = labels_for(closes)
+    stretched: dict[dt.date, frozenset[str]] | None = None
+    if bt.entry_filter != "none":
+        stretched = stretched_days(
+            ohlc if ohlc is not None else pd.DataFrame(),
+            days,
+            bt.anti_chase,
+            vwap=bt.entry_filter == "anti_chase_vwap",
+        )
+    filtered: dict[_Key, int] = {}
     menus: dict[_Key, dict[dt.date, list[Candidate]]] = {}
     outcomes: dict[_Key, dict[tuple[str, dt.date, str], Outcome | None]] = {}
     for profile, (lo, hi) in sorted(windows.items()):
@@ -150,6 +168,8 @@ def ticker_job(
                 )
             if stances is not None:
                 m = apply_stance(m, trend, stances[profile])
+            if stretched is not None:  # E16.3: after the stance, before any ranker picks
+                m, filtered[(profile, x)] = apply_entry_filter(m, trend, stretched)
             menus[(profile, x)] = m
             outcomes[(profile, x)] = picked_outcomes(
                 m,
@@ -163,7 +183,7 @@ def ticker_job(
                 cost_by_kind=ck,
             )
     log.info("backtest.rank_ticker", ticker=ticker, sessions=len(days))
-    return TickerResult(ticker, menus, outcomes, trend, vol)
+    return TickerResult(ticker, menus, outcomes, trend, vol, filtered)
 
 
 # ---------------------------------------------------------------------------
@@ -234,8 +254,13 @@ def run_rank_report(
     exits: ExitConfig | None = None,
     workers: int = 1,
     charts: bool = True,
+    ohlc_by_ticker: Mapping[str, pd.DataFrame] | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Run the ranking backtest and write ``report.md`` + CSVs (+ PNG charts) to *out_dir*."""
+    """Run the ranking backtest and write ``report.md`` + CSVs (+ PNG charts) to *out_dir*.
+
+    *ohlc_by_ticker*: split-adjusted daily bars for the E16.3 entry filter
+    (``backtest.entry_filter`` not ``none``); a missing ticker filters nothing.
+    """
     exits = exits or load_exit_config()
     out_dir.mkdir(parents=True, exist_ok=True)
     bt = cfg.backtest
@@ -248,6 +273,11 @@ def run_rank_report(
     def job_args(t: str) -> tuple[object, ...]:
         raw = store.read(provider, t, start, end)
         return (t, raw, closes_by_ticker[t])
+
+    def job_kw(t: str) -> dict[str, object]:
+        if bt.entry_filter == "none":
+            return kw
+        return {**kw, "ohlc": (ohlc_by_ticker or {}).get(t)}
 
     kw = {
         "start": start,
@@ -265,10 +295,10 @@ def run_rank_report(
     results: dict[str, TickerResult] = {}
     if workers > 1:
         with ProcessPoolExecutor(max_workers=workers) as ex:
-            futs = {t: ex.submit(ticker_job, *job_args(t), **kw) for t in tickers}  # type: ignore[arg-type]
+            futs = {t: ex.submit(ticker_job, *job_args(t), **job_kw(t)) for t in tickers}  # type: ignore[arg-type]
             results = {t: f.result() for t, f in futs.items()}
     else:
-        results = {t: ticker_job(*job_args(t), **kw) for t in tickers}  # type: ignore[arg-type]
+        results = {t: ticker_job(*job_args(t), **job_kw(t)) for t in tickers}  # type: ignore[arg-type]
 
     sessions = _sessions(closes_by_ticker, start)
     trend = {t: r.trend for t, r in results.items()}
@@ -313,6 +343,18 @@ def run_rank_report(
         for p in profiles
     }
     frames["equity"] = _equity_frame(runs, profiles=profiles, rk=rk, x=cost.slippage_frac)
+    if bt.entry_filter != "none":  # E16.3: decision days the filter emptied of long premium
+        frames["entry_filter_days"] = pd.DataFrame(
+            [
+                {
+                    "ticker": t,
+                    "profile": p,
+                    "days_filtered": r.filtered.get((p, cost.slippage_frac), 0),
+                }
+                for t, r in sorted(results.items())
+                for p in profiles
+            ]
+        )
     for name, df in frames.items():
         if isinstance(df, pd.DataFrame):
             df.to_csv(out_dir / f"{name}.csv", index=False)
@@ -515,6 +557,18 @@ def _knobs(cfg: RankingFile) -> list[str]:
         )
     if f.min_net_ev_to_cost is not None:
         out.append(f"Net EV ÷ est. cost filter: ≥ {f.min_net_ev_to_cost:g}\n")
+    if bt.entry_filter != "none":
+        a = bt.anti_chase
+        out.append(
+            f"Entry filter (E16.3): {bt.entry_filter}, combine {a.combine}, stretch ≥ "
+            f"{a.max_stretch_atr:g} ATR, RSI ≥ {a.rsi_overbought:g} / ≤ {a.rsi_oversold:g}"
+            + (
+                f", VWAP stretch ≥ {a.max_vwap_stretch_atr:g} ATR"
+                if bt.entry_filter == "anti_chase_vwap"
+                else ""
+            )
+            + "\n"
+        )
     if bt.slippage_by_kind:
         out.append(
             "Measured slippage x by structure (base run): "
