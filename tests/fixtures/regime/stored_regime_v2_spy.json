@@ -1,0 +1,89 @@
+{
+  "as_of": "2026-10-09",
+  "last_close": 776.61,
+  "regime": {
+    "as_of": "2026-10-09",
+    "current": "sideways",
+    "expected_duration": 56.249999999999986,
+    "forecasts": [
+      {
+        "horizon": 1,
+        "probabilities": {
+          "bear": 0.008888888888888889,
+          "bull": 0.008888888888888889,
+          "sideways": 0.9822222222222222
+        }
+      },
+      {
+        "horizon": 5,
+        "probabilities": {
+          "bear": 0.01969924229805082,
+          "bull": 0.036973557412494286,
+          "sideways": 0.9433272002894548
+        }
+      },
+      {
+        "horizon": 20,
+        "probabilities": {
+          "bear": 0.019994468778770477,
+          "bull": 0.08469169965046139,
+          "sideways": 0.8953138315707683
+        }
+      }
+    ],
+    "lookback_days": 20,
+    "n_transitions": 256,
+    "stationary": {
+      "bear": 0.019531249999999997,
+      "bull": 0.10156249999999997,
+      "sideways": 0.87890625
+    },
+    "step": 1,
+    "stickiness": 0.9822222222222222,
+    "stickiness_by_state": {
+      "bear": 0.6,
+      "bull": 0.9230769230769231,
+      "sideways": 0.9822222222222222
+    },
+    "trailing_return": 0.016318999136283985,
+    "transition_matrix": {
+      "bear": {
+        "bear": 0.6,
+        "bull": 0.0,
+        "sideways": 0.4
+      },
+      "bull": {
+        "bear": 0.0,
+        "bull": 0.9230769230769231,
+        "sideways": 0.07692307692307693
+      },
+      "sideways": {
+        "bear": 0.008888888888888889,
+        "bull": 0.008888888888888889,
+        "sideways": 0.9822222222222222
+      }
+    }
+  },
+  "schema_version": 1,
+  "ticker": "SPY",
+  "vol": {
+    "as_of": "2026-10-09",
+    "hv20": 0.09861298277176209,
+    "hv60": 0.10994551613501605,
+    "iv": 0.12802257613405535,
+    "iv_hv20_ratio": 1.298232469353059,
+    "iv_hv60_ratio": 1.1644183467822389,
+    "iv_lookback": 252,
+    "iv_observations": 4,
+    "iv_percentile": null,
+    "iv_percentile_ext": null,
+    "iv_percentile_ext_source": null,
+    "iv_rank": null,
+    "missing": [
+      "IV rank needs 120 obs, got 4"
+    ]
+  },
+  "warnings": [
+    "vol: IV rank needs 120 obs, got 4"
+  ]
+}

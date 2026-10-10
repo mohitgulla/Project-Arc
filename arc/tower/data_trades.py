@@ -782,6 +782,12 @@ class RegimeView(BaseModel):
     iv: float | None = None
     iv_rank: float | None = None
     hv20: float | None = None
+    # Regime v2 (D77, E17.1); None on v1 / pre-v2 entries.
+    model: str | None = None
+    z: float | None = None
+    run_length: int | None = None
+    vol_state: str | None = None
+    rv20_pct_rank: float | None = None
 
 
 class CandidateView(BaseModel):
@@ -2026,6 +2032,11 @@ def _regime(
             iv=_f(vol.get("iv")),
             iv_rank=_f(vol.get("iv_rank")),
             hv20=_f(vol.get("hv20")),
+            model=reg.get("model"),
+            z=_f(reg.get("z")),
+            run_length=reg.get("run_length") if isinstance(reg.get("run_length"), int) else None,
+            vol_state=reg.get("vol_state"),
+            rv20_pct_rank=_f(reg.get("rv20_pct_rank")),
         )
     return None
 

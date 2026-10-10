@@ -110,6 +110,7 @@ forbidden_modules = [
     "arc.routines",
     "arc.cli",
     "arc.iv",  # E4.12 (D55): IV history is context only, never a gate input
+    "arc.features.regime",  # E17.1 (D77): the regime is context, never a gate input
 ]
 
 # E4.12 / D55: IV history reads market data only; it never trades or calls an LLM.

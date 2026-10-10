@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import importlib.util
+import json
 import re
 import sqlite3
 import sys
@@ -626,8 +627,35 @@ def test_detail_market_context(conn: sqlite3.Connection) -> None:
     assert m.quotes_as_of is not None
     assert m.regime is not None and m.regime.current == "bull"
     assert m.regime.snapshot_id == "snap-fx-spy" and m.regime.stickiness == pytest.approx(0.82)
+    assert m.regime.z is None and m.regime.vol_state is None  # a v1 entry
     assert m.candidate is not None and m.candidate.corroboration == 3
     assert any(s.startswith("https://www.sec.gov/") for s in m.candidate.sources)
+
+
+def test_detail_market_context_regime_v2(tmp_path: Path) -> None:
+    """E17.1 (D77): a v2 regime entry shows its z, run length and vol state."""
+    db = fixture.build(tmp_path / "arc.db", NOW)
+    rw = sqlite3.connect(db)
+    # a throwaway copy of the fixture: lift the append-only guard to rewrite one payload
+    rw.execute("DROP TRIGGER context_entries_status_only")
+    (raw,) = rw.execute(
+        "SELECT payload FROM context_entries WHERE id = 'ctx-fx-regime-spy'"
+    ).fetchone()
+    payload = json.loads(raw)
+    payload["regime"].update(model="v2", z=1.37, run_length=4, vol_state="low", rv20_pct_rank=18.0)
+    rw.execute(
+        "UPDATE context_entries SET payload = ? WHERE id = 'ctx-fx-regime-spy'",
+        (json.dumps(payload),),
+    )
+    rw.commit()
+    rw.close()
+    c = connect_ro(db)
+    try:
+        r = _detail(c, "pos-spy").market.regime
+    finally:
+        c.close()
+    assert r is not None and r.model == "v2" and r.z == pytest.approx(1.37)
+    assert r.run_length == 4 and r.vol_state == "low" and r.rv20_pct_rank == pytest.approx(18.0)
 
 
 def test_detail_manifest(conn: sqlite3.Connection) -> None:
