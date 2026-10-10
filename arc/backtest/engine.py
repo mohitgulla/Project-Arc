@@ -38,7 +38,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from arc.backtest.chain import prepare_chain
-from arc.backtest.regime import label_trend, label_vol
+from arc.backtest.regime import BacktestRegimeModel, regime_labels
 from arc.backtest.strategies import (
     LegPick,
     StrategyKind,
@@ -394,12 +394,17 @@ def run_backtest(
     entry_dates: Iterable[dt.date] | None = None,
     exit_policy: ExitPolicyMode = "hold_to_expiry",
     policies: ExitConfig | None = None,
+    regime_model: BacktestRegimeModel = "v1",
+    label_closes: pd.Series | None = None,
 ) -> list[Trade]:
     """Open every *spec* on every entry session (default: every chain session).
 
     ``exit_policy="hold_to_expiry"`` settles at expiry; ``"policy"`` applies the
     per-kind :class:`arc.exits.ExitPolicy` from *policies* (default:
     ``config/exits.yaml``) on each later session's marks (see module doc).
+    *regime_model* picks the trend/vol labels stamped on each trade (E17.3; v1 default),
+    computed on *label_closes* when given (a longer warm-up history; labels are trailing,
+    so a longer series adds no look-ahead) else on *closes*.
     """
     if exit_policy not in ("hold_to_expiry", *_POLICY_MODES):
         msg = f"unknown exit_policy {exit_policy!r}"
@@ -410,8 +415,7 @@ def run_backtest(
         policies = load_exit_config()
     all_days = sorted(chains)
     closes = closes.sort_index()
-    trend = label_trend(closes)
-    vol = label_vol(closes)
+    trend, vol = regime_labels(closes if label_closes is None else label_closes, regime_model)
     specs = list(specs)
     days = sorted(chains) if entry_dates is None else sorted(set(entry_dates) & set(chains))
     trades: list[Trade] = []
@@ -439,7 +443,14 @@ def run_backtest(
                     t = _managed_exit(o, rules, chains, all_days, closes, cost)
                 if t is None:
                     t = settle(o, exit_spot, cost)
-                trades.append(t.model_copy(update={"trend": str(trend[day]), "vol": str(vol[day])}))
+                trades.append(
+                    t.model_copy(
+                        update={
+                            "trend": str(trend.get(day, "unknown")),
+                            "vol": str(vol.get(day, "unknown")),
+                        }
+                    )
+                )
     log.info(
         "backtest.run",
         underlying=underlying,
