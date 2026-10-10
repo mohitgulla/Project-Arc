@@ -842,6 +842,52 @@ def test_quote_freshness_boundary(age: int) -> None:
     assert (_fresh(m=m) == []) == (age <= 60)
 
 
+def test_paired_arm_ages_replayed_quotes_on_the_paired_chain_clock() -> None:
+    """E10.2d: the same snapshot, 90 s after the quote on the arm's wall clock.
+
+    Control saw it 5 s old; the arm replays it 85 s later. The plain path (wall
+    clock) fails it, the arm path (paired-chain reference = control's clock) passes.
+    """
+    quotes = {LP: quote("1.20", "1.30", age_s=90), SP: quote("2.05", "2.15", age_s=90)}
+    plain = run(market=mkt(quotes=quotes))
+    assert codes(plain) == [RuleCode.STALE_DATA, RuleCode.STALE_DATA]
+    assert "90s old" in plain.violations[0] and plain.ref_time == "wall"
+    ref = NOW - dt.timedelta(seconds=85)  # the paired control chain's clock at NOW
+    arm = run(market=mkt(quotes=quotes, quote_ref_time={LP: ref, SP: ref}))
+    assert arm.passed and arm.violations == [] and arm.ref_time == "paired_chain"
+    # the reference still fails a quote that was already stale for control
+    late = NOW - dt.timedelta(seconds=20)
+    [v] = _fresh(m=mkt(quotes=quotes, quote_ref_time={LP: late, SP: ref}))
+    assert LP in v.detail and "70s old" in v.detail and "paired-chain clock" in v.detail
+    # a live read on a tape miss (no reference) keeps the wall clock: mixed
+    mixed = run(market=mkt(quotes=quotes, quote_ref_time={SP: ref}))
+    assert codes(mixed) == [RuleCode.STALE_DATA] and LP in mixed.violations[0]
+    assert mixed.ref_time == "mixed"
+    # the account snapshot is the arm's own: always aged on the gate's now
+    old_acct = acct(as_of=NOW - dt.timedelta(seconds=301))
+    [v] = R.check_data_freshness(
+        make_proposal(), old_acct, mkt(quotes=quotes, quote_ref_time={LP: ref, SP: ref}),
+        cfg(), NOW,
+    )  # fmt: skip
+    assert "account snapshot" in v.detail
+
+
+@given(lag=st.integers(min_value=0, max_value=540), age=st.integers(min_value=0, max_value=120))
+def test_paired_reference_ages_like_control(lag: int, age: int) -> None:
+    """Any arm lag: the arm passes iff control (the quote *age* s old at its clock) did."""
+    quotes = {
+        LP: quote("1.20", "1.30", age_s=age + lag),
+        SP: quote("2.05", "2.15", age_s=age + lag),
+    }
+    ref = NOW - dt.timedelta(seconds=lag)
+    arm = _fresh(m=mkt(quotes=quotes, quote_ref_time={LP: ref, SP: ref}))
+    assert (arm == []) == (age <= 60)
+
+
+def test_quote_clock_is_wall_without_legs_replayed() -> None:
+    assert R.quote_clock(make_proposal(), mkt()) == "wall"
+
+
 # ---------------------------------------------------------------------------
 # Purity guard (belt and braces alongside import-linter)
 # ---------------------------------------------------------------------------

@@ -3402,6 +3402,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             earnings,
             {t: priced.spot},
             proposal_betas(ctx.conn, [t], now.astimezone(ET).date()),
+            quote_ref_time=priced.quote_ref_times(now),  # E10.2d: paired arm replay
         )
         limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
         # D24: the gate checks the whole price band; size at its worst price (D18).
@@ -3521,6 +3522,7 @@ def _propose_opens(ctx: JobContext, env: PipelineEnv) -> JobResult:
             violations=decision.violations,
             token=decision.token,
             account_snapshot=decision.account_snapshot,
+            ref_time=decision.ref_time,
             decided_at=now.isoformat(),
             run_id=ctx.run_id,
             commit=False,
@@ -4375,12 +4377,27 @@ def risk_exit_step(ctx: JobContext) -> JobResult:
     return risk_exit(ctx, _live_env(ctx))
 
 
+def _taped(env: PipelineEnv, ctx: JobContext) -> PipelineEnv:
+    """An offline *env* with the E10.2 market tape on the step's store (as live has it).
+
+    :meth:`PipelineEnv.live` wraps its market itself; an offline (fixture) env is
+    wrapped here per step, so a fixture control loop records its reads while an arm
+    may pair and a fixture arm chain replays them, aged on the step's clock (E10.2d).
+    """
+    if not env.offline:
+        return env
+    from arc.experiments.tape import tape_market
+
+    market = tape_market(ctx.conn, ctx.chain_run_id, env.market, clock=ctx.clock)
+    return env if market is env.market else dataclasses.replace(env, market=market)
+
+
 def pipeline_handlers(env: PipelineEnv) -> dict[str, Handler]:
     """Dispatcher overrides binding every E5.2 step (and the Scalp) to one *env*."""
     from arc.routines.handlers import scalp_persona
 
     def bind(fn: Callable[[JobContext, PipelineEnv], JobResult]) -> Handler:
-        return lambda ctx: fn(ctx, env)
+        return lambda ctx: fn(ctx, _taped(env, ctx))
 
     handlers: dict[str, Handler] = {name: bind(fn) for name, fn in _STEPS.items()}
     # E13.18: the mandatory-exit floor runs inside the Research chain.

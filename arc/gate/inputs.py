@@ -191,3 +191,16 @@ class MarketSnapshot(_Frozen):
             "wider standard grid (arc.gate.ticks)."
         ),
     )
+    quote_ref_time: dict[str, dt.datetime] = Field(
+        default_factory=dict,
+        description=(
+            "E10.2d: per leg (occ_symbol), the time a replayed quote's age is measured "
+            "against instead of the gate's `now`. Set only for an experiment arm's quotes "
+            "replayed from the paired control chain's market tape: the paired chain's "
+            "clock (its record time plus the arm's own time since the replay), so the arm "
+            "judges the same snapshot at the same age control did. A missing key (every "
+            "control quote, every quote the arm fetched live on a tape miss) is measured "
+            "against `now` (wall clock). The account snapshot is always measured against "
+            "`now`: an arm's virtual account is its own, fetched at the arm's clock."
+        ),
+    )

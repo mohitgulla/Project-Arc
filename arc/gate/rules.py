@@ -27,7 +27,7 @@ from arc.account_profiles import BuyingPower, DayTradeRule, ShortLegPolicy
 from arc.config import ArcSettings, StructureKind
 from arc.gate.band import MAX_BAND_STEPS, PriceBand, as_grid, band_from_nbbo
 from arc.gate.ticks import TickGrid, order_grid
-from arc.models import GateDecision, Leg, LegIntent, Proposal
+from arc.models import GateDecision, Leg, LegIntent, Proposal, QuoteClock
 from arc.models import StructureKind as ModelKind
 from arc.structures import (
     classify,
@@ -75,6 +75,7 @@ __all__ = [
     "price_ceiling",
     "proposal_band",
     "proposal_hash",
+    "quote_clock",
 ]
 
 _ZERO = Decimal(0)
@@ -820,17 +821,35 @@ def check_data_freshness(
     config: ArcSettings,
     now: dt.datetime,
 ) -> list[Violation]:
-    """Account snapshot and every leg quote are present and recent."""
+    """Account snapshot and every leg quote are present and recent.
+
+    E10.2d: a leg quote with a ``market.quote_ref_time`` entry (an experiment arm's
+    quote replayed from the paired control chain's tape) is aged against that
+    reference, not ``now``; every other quote and the account snapshot against ``now``.
+    """
     out = _age_violation("account snapshot", account.as_of, config.account_max_age_seconds, now)
     for leg in proposal.structure.legs:
         q = market.quotes.get(leg.occ_symbol)
         if q is None:
             out += _v(RuleCode.STALE_DATA, f"no quote for {leg.occ_symbol}")
-        else:
-            out += _age_violation(
-                f"quote {leg.occ_symbol}", q.as_of, config.quote_max_age_seconds, now
-            )
+            continue
+        ref = market.quote_ref_time.get(leg.occ_symbol)
+        label = f"quote {leg.occ_symbol}" + ("" if ref is None else " (paired-chain clock)")
+        out += _age_violation(label, q.as_of, config.quote_max_age_seconds, ref or now)
     return out
+
+
+def quote_clock(proposal: Proposal, market: MarketSnapshot) -> QuoteClock:
+    """E10.2d: which clock the leg quotes' age was measured against.
+
+    ``paired_chain`` when every leg has a ``quote_ref_time`` (all replayed from the
+    paired control chain), ``wall`` when none does, ``mixed`` otherwise.
+    """
+    legs = [leg.occ_symbol for leg in proposal.structure.legs]
+    paired = sum(1 for s in legs if s in market.quote_ref_time)
+    if paired == 0:
+        return "wall"
+    return "paired_chain" if paired == len(legs) else "mixed"
 
 
 # ---------------------------------------------------------------------------
@@ -976,4 +995,5 @@ def evaluate(
         violations=[str(v) for v in violations],
         token=None,
         account_snapshot=a.model_dump(mode="json"),
+        ref_time=quote_clock(p, m),
     )
