@@ -115,8 +115,10 @@ def test_cost_filter_monotone_in_threshold(nev: float, cost: float, k: float) ->
 def test_experiment_files_exist_and_each_changes_one_thing() -> None:
     base = load_ranking_file()
     names = {p.stem for p in EXPERIMENTS}
-    assert names == {"e75a_a_regime_menu", "e75a_b_short_dte", "e75a_c_ev_cost"}
-    for p in EXPERIMENTS:
+    e75a = {"e75a_a_regime_menu", "e75a_b_short_dte", "e75a_c_ev_cost"}
+    # E7.5b's overlay is a measure comparison (menu shape + tilt), not a one-knob E7.5a test
+    assert names == e75a | {"e75b_unified_measure"}
+    for p in (x for x in EXPERIMENTS if x.stem in e75a):
         cfg = load_ranking_file(None, [p])
         diffs = []
         if cfg.backtest.stance_menus != base.backtest.stance_menus:
@@ -131,6 +133,22 @@ def test_experiment_files_exist_and_each_changes_one_thing() -> None:
         rest_e = cfg.backtest.model_dump(exclude={"stance_menus", "dte_windows"})
         assert rest_b == rest_e, p.name
         assert len(diffs) == 1, (p.name, diffs)
+
+
+def test_e75b_overlay_is_live_shaped_and_tilted() -> None:
+    from arc.backtest.strategies import ExpiryMode
+    from arc.scanner.rank import Ranker
+
+    base = load_ranking_file()
+    cfg = load_ranking_file(None, [REPO / "config/experiments/e75b_unified_measure.yaml"])
+    assert cfg.backtest.direction_tilt == 0.25 and base.backtest.direction_tilt == 0.0
+    for prof, specs in cfg.backtest.menus.items():
+        assert all(m.expiry_mode is ExpiryMode.ALL for m in specs), prof
+        # same kinds and anchor deltas as the E7.5 menu: only the expiry shape changes
+        strip = [m.model_dump(exclude={"expiry_mode"}) for m in specs]
+        assert strip == [m.model_dump(exclude={"expiry_mode"}) for m in base.backtest.menus[prof]]
+    assert {Ranker.MANAGED_NET_EV_TILTED, Ranker.RORC_DAY_TILTED} <= set(cfg.ranking.rankers)
+    assert cfg.ranking.filters == base.ranking.filters
 
 
 def test_experiment_a_content() -> None:

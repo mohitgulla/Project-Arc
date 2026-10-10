@@ -19,6 +19,13 @@ Rankers (:class:`Ranker`)
 ``rorc_day``       managed Net EV ÷ (max loss × expected days held).
 ``rorc_day_vrp``   ``rorc_day`` after a VRP gate: a candidate is dropped when
                    ``ATM IV − realised-vol forecast ≤ vrp_threshold`` (or unknown).
+``managed_net_ev_tilted`` / ``rorc_day_tilted``
+                   E7.5b (D79): the same keys from the managed model run under a
+                   stance-signed drift (:func:`tilted_drift`) instead of ``r``. A
+                   ranking key only: the card, the D41 Net EV floor and the gate keep
+                   the untilted numbers. Equal to the untilted key when the tilt is 0,
+                   the stance is neutral, the kind is not directional or no tilted
+                   model was run (the ``*_tilted`` input is ``None``).
 
 A candidate whose primary key is unknown (``None``) is dropped by that ranker,
 except under the width rankers, whose fallback group keeps it.
@@ -58,6 +65,8 @@ __all__ = [
     "live_net_ev_check",
     "passes_filters",
     "rank",
+    "stance_sign",
+    "tilted_drift",
 ]
 
 DEFAULT_RANKING_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "ranking.yaml"
@@ -71,6 +80,8 @@ class Ranker(StrEnum):
     MANAGED_NET_EV = "managed_net_ev"
     RORC_DAY = "rorc_day"
     RORC_DAY_VRP = "rorc_day_vrp"
+    MANAGED_NET_EV_TILTED = "managed_net_ev_tilted"
+    RORC_DAY_TILTED = "rorc_day_tilted"
 
 
 # The incumbent a ranker is compared against, by whether the account can sell premium.
@@ -93,6 +104,12 @@ class RankInputs(BaseModel):
     managed_pop: float | None = Field(None, ge=0.0, le=1.0, description="Managed PoP after costs")
     rorc_day: float | None = Field(None, description="managed Net EV ÷ (max loss × days held)")
     vrp: float | None = Field(None, description="ATM IV − realised-vol forecast")
+    managed_net_ev_tilted: float | None = Field(
+        None, description="E7.5b: managed Net EV under the stance-tilted drift (ranking only)"
+    )
+    rorc_day_tilted: float | None = Field(
+        None, description="E7.5b: rorc_day under the stance-tilted drift (ranking only)"
+    )
     est_cost: float | None = Field(
         None,
         ge=0.0,
@@ -229,6 +246,16 @@ def _field_key(value: float | None, tie: float | None, key: str) -> _Key | None:
     return (0, -value, _num(tie), key)
 
 
+def _tilted_ev(c: RankInputs) -> float | None:
+    """Tilted managed Net EV; the untilted value when no tilted model was run."""
+    return c.managed_net_ev if c.managed_net_ev_tilted is None else c.managed_net_ev_tilted
+
+
+def _tilted_rorc(c: RankInputs) -> float | None:
+    """Tilted rorc_day; the untilted value when no tilted model was run."""
+    return c.rorc_day if c.rorc_day_tilted is None else c.rorc_day_tilted
+
+
 def _key_fn(ranker: Ranker, vrp_threshold: float) -> Callable[[RankInputs], _Key | None]:
     if ranker is Ranker.CREDIT_WIDTH:
         return lambda c: _width_key(c, credit_side=True)
@@ -240,6 +267,10 @@ def _key_fn(ranker: Ranker, vrp_threshold: float) -> Callable[[RankInputs], _Key
         return lambda c: _field_key(c.managed_net_ev, c.rorc_day, c.key)
     if ranker is Ranker.RORC_DAY:
         return lambda c: _field_key(c.rorc_day, c.managed_net_ev, c.key)
+    if ranker is Ranker.MANAGED_NET_EV_TILTED:
+        return lambda c: _field_key(_tilted_ev(c), _tilted_rorc(c), c.key)
+    if ranker is Ranker.RORC_DAY_TILTED:
+        return lambda c: _field_key(_tilted_rorc(c), _tilted_ev(c), c.key)
 
     def vrp_gated(c: RankInputs) -> _Key | None:
         if c.vrp is None or c.vrp <= vrp_threshold:
@@ -262,3 +293,31 @@ def rank(
     keyed = [(k, c) for c in candidates if passes_filters(c, f) and (k := fn(c)) is not None]
     keyed.sort(key=lambda kc: kc[0])
     return [c for _, c in keyed]
+
+
+# ---------------------------------------------------------------------------
+# E7.5b (D79): stance-tilted drift for the *_tilted rankers
+# ---------------------------------------------------------------------------
+
+# Structure kinds whose value depends on the direction of the underlying (verticals,
+# single long options). An iron condor (or anything else) is always ranked at ``r``.
+DIRECTIONAL_KINDS = frozenset({"vertical_debit", "vertical_credit", "long_call", "long_put"})
+
+
+def stance_sign(stance: str | None, kind: str | None) -> int:
+    """+1 bullish, -1 bearish, 0 neutral / unknown stance or a non-directional *kind*."""
+    if kind is None or str(kind) not in DIRECTIONAL_KINDS:
+        return 0
+    return {"bullish": 1, "bearish": -1}.get(str(stance or "").lower(), 0)
+
+
+def tilted_drift(*, r: float, sign: int, tilt: float, sigma: float, hold_years: float) -> float:
+    """``mu = r + sign × tilt × sigma / sqrt(T_hold)`` (annual), the drift under which
+    the expected log move over the hold is ``tilt`` of a 1σ hold move.
+
+    *tilt* is config (``exits.pipeline.direction_tilt``), never an LLM number.
+    ``sign == 0``, ``tilt == 0`` or a degenerate hold/vol returns *r* unchanged.
+    """
+    if sign == 0 or tilt == 0.0 or sigma <= 0.0 or hold_years <= 0.0:
+        return r
+    return r + math.copysign(1.0, sign) * tilt * sigma / math.sqrt(hold_years)

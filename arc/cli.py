@@ -79,6 +79,10 @@ def _delta(text: str) -> float:
     return v
 
 
+# E7.5b (D79): --rank-by values that rank the pool on a managed-model key (arc.scanner.menu)
+_MENU_MEASURES = ("managed_net_ev_full", "rorc_day_full", "rorc_day_tilted")
+
+
 def _add_scan_args(p: argparse.ArgumentParser) -> None:
     from arc.scanner import RankBy, ScanStrategy
 
@@ -94,9 +98,36 @@ def _add_scan_args(p: argparse.ArgumentParser) -> None:
         help="Restrict to a structure (repeatable). Default: all.",
     )
     p.add_argument(
-        "--rank-by", choices=[r.value for r in RankBy], default=None, help="Primary sort key"
+        "--rank-by",
+        choices=["scanner", *(r.value for r in RankBy), *_MENU_MEASURES],
+        default=None,
+        help="Primary sort key (scanner = the scanner's default order, the pipeline's "
+        "control menu). E7.5b (D79): managed_net_ev_full | rorc_day_full | "
+        "rorc_day_tilted rank credit and debit kinds on ONE managed-model key over a pool "
+        "of --pool scanner candidates, then keep --top",
     )
     p.add_argument("--top", type=int, default=10, help="Candidates kept per ticker")
+    p.add_argument(
+        "--tilt",
+        type=float,
+        default=None,
+        help="rorc_day_tilted: fraction of a 1-sigma hold move in the stance's direction "
+        "(default exits.yaml pipeline.direction_tilt)",
+    )
+    p.add_argument(
+        "--stance",
+        choices=["bullish", "bearish", "neutral"],
+        default=None,
+        help="Research stance for --rank-by rorc_day_tilted (also limits the default "
+        "strategies to the profile's stance_strategies)",
+    )
+    p.add_argument(
+        "--pool",
+        type=int,
+        default=None,
+        help="Scanner candidates scored before the cut under a *_full / *_tilted --rank-by "
+        "(default exits.yaml pipeline.menu_pool_max)",
+    )
     p.add_argument(
         "--profile",
         default=None,
@@ -413,6 +444,77 @@ def _fmt_candidate(c: ScanCandidate) -> str:
     )
 
 
+def _fmt_key(v: float | None) -> str:
+    return "n/a" if v is None else f"{v:.6g}"
+
+
+def _tilt(args: argparse.Namespace, exits: Any) -> float:
+    return float(args.tilt if args.tilt is not None else exits.pipeline.direction_tilt)
+
+
+def _measure_menu(
+    res: Any,
+    measure: str,
+    args: argparse.Namespace,
+    settings: Any,
+    exits: Any,
+    conn: sqlite3.Connection | None,
+) -> tuple[Any, dict[tuple[str, int], float | None]]:
+    """E7.5b: re-rank a scan's pool on one managed-model key (the pipeline's
+    :func:`arc.scanner.menu.rank_menu`), keep ``--top``, renumber ranks.
+
+    The realised-vol forecast comes from the store's latest ``regime`` entry for the
+    ticker when ``--db`` has one (as in the pipeline), else the paths move at IV.
+    """
+    from arc.scanner.menu import candidate_model, rank_menu
+
+    rv = _regime_rv(conn, res.ticker)
+    r = settings.scanner_risk_free_rate
+    pool = list(res.candidates)
+    models = {}
+    for c in pool:
+        m = candidate_model(c, res.spot, exits, r, rv)
+        if m is not None:
+            models[id(c)] = m
+    kept, keys = rank_menu(
+        pool,
+        models,
+        measure=measure,
+        top=args.top,
+        stance=args.stance or "neutral",
+        tilt=_tilt(args, exits),
+        spot=res.spot,
+        exits=exits,
+        r=r,
+        realized_vol=rv,
+    )
+    out = [c.model_copy(update={"rank": i}) for i, c in enumerate(kept, start=1)]
+    vals = {(res.ticker, i): keys[id(c)].value for i, c in enumerate(kept, start=1)}
+    return res.model_copy(update={"candidates": out}), vals
+
+
+def _regime_rv(conn: sqlite3.Connection | None, ticker: str) -> float | None:
+    """Realised-vol forecast (mean HV20/HV60) from the latest ``regime`` entry, if any."""
+    if conn is None:
+        return None
+    from arc.exits import realized_vol_forecast
+
+    try:
+        row = conn.execute(
+            "select payload from context_entries where kind='regime' and subject=? "
+            "order by valid_from desc limit 1",
+            (ticker.upper(),),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    vol = json.loads(row[0]).get("vol")
+    if not isinstance(vol, dict):
+        return None
+    return realized_vol_forecast(vol.get("hv20"), vol.get("hv60"))
+
+
 def _chains_iv_conn(args: argparse.Namespace) -> sqlite3.Connection | None:
     """E4.12: the store holding iv_daily for ``arc chains`` (``None`` = no IV history).
 
@@ -488,6 +590,23 @@ def _chains(args: argparse.Namespace) -> int:
             return 2
 
     dte = args.dte or (None, None)
+    measure = args.rank_by if args.rank_by in _MENU_MEASURES else None
+    exits = None
+    pool = args.top
+    if measure is not None:
+        from arc.control.effective import exit_config
+
+        exits = exit_config(settings)
+        pool = max(args.top, args.pool or exits.pipeline.menu_pool_max)
+    strategies = [ScanStrategy(s) for s in args.strategy] if args.strategy else None
+    if strategies is None and args.stance is not None:
+        strategies = [ScanStrategy(s) for s in settings.profile.strategies_for(args.stance)]
+        if not strategies:
+            sys.stderr.write(
+                f"arc chains: profile {settings.account_profile} has no structure for a "
+                f"{args.stance} stance\n"
+            )
+            return 2
     try:
         params = ScanParams.from_settings(
             settings,
@@ -495,9 +614,9 @@ def _chains(args: argparse.Namespace) -> int:
             dte_max=dte[1],
             target_delta=args.delta,
             wing_width=args.width,
-            strategies=[ScanStrategy(s) for s in args.strategy] if args.strategy else None,
-            rank_by=args.rank_by,
-            top=args.top,
+            strategies=strategies,
+            rank_by=None if measure or args.rank_by == "scanner" else args.rank_by,
+            top=pool,
         )
     except ValueError as exc:
         sys.stderr.write(f"arc chains: {exc}\n")
@@ -505,6 +624,7 @@ def _chains(args: argparse.Namespace) -> int:
 
     iv_conn = _chains_iv_conn(args)
     results = []
+    menu_keys: dict[tuple[str, int], float | None] = {}
     for ticker in args.tickers:
         if args.as_of is not None:
             as_of = args.as_of
@@ -523,10 +643,18 @@ def _chains(args: argparse.Namespace) -> int:
         res = scan(provider, ticker, params, as_of=as_of, iv_history=history)
         if args.record_iv and store is not None:
             _record_chain_iv(store, provider, ticker, as_of, settings)
+        if measure is not None and exits is not None:
+            res, keys = _measure_menu(res, measure, args, settings, exits, iv_conn)
+            menu_keys.update(keys)
         results.append(res)
 
     if args.json:
         payload = [r.model_dump(mode="json") for r in results]
+        if measure is not None:
+            for r, d in zip(results, payload, strict=True):
+                for c, row in zip(r.candidates, d["candidates"], strict=True):
+                    k = menu_keys.get((r.ticker, c.rank))
+                    row["rank_measure"], row["rank_key"] = measure, k
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
         return 0
 
@@ -548,7 +676,19 @@ def _chains(args: argparse.Namespace) -> int:
         lines.append(f"  contracts {fr.total} -> liquid {fr.kept}  rejected {fr.rejected}")
         if not r.candidates:
             lines.append("  no candidates")
-        lines.extend("  " + _fmt_candidate(c) for c in r.candidates)
+        if measure is not None:
+            tilt = (
+                f" tilt {_tilt(args, exits):g} stance {args.stance or 'neutral'}"
+                if (measure == "rorc_day_tilted")
+                else ""
+            )
+            lines.append(f"  ranked by {measure}{tilt} (credit and debit on one key)")
+        lines.extend(
+            "  "
+            + _fmt_candidate(c)
+            + ("" if measure is None else f"  key {_fmt_key(menu_keys.get((r.ticker, c.rank)))}")
+            for c in r.candidates
+        )
         lines.append("")
     sys.stdout.write("\n".join(lines))
     return 0

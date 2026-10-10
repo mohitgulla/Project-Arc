@@ -1,0 +1,55 @@
+# E7.5b (D79, D44, D69): DRAFT multi-arm forward experiment for the unified menu
+# measure. Not registered: `arc experiment create` + `register` hash-lock it, so the
+# owner reviews arms, margin and sessions first.
+#
+# Control (production) ranks the Quant menu the way it always has: the scanner sorts
+# credit structures by credit/width and debit structures by EV/max-loss in a separate
+# group after them, then cuts to pipeline_scan_top (exits.yaml
+# `pipeline.menu_measure: control`). Each treatment instead runs the E2.4 managed
+# model on up to `pipeline.menu_pool_max` scanner candidates per ticker and orders
+# credit and debit kinds on ONE key before the cut:
+#   t1  rorc_day_full        managed Net EV / (max loss x expected days held)
+#   t2  rorc_day_tilted 0.25 the same key under a stance-signed drift worth 0.25 of a
+#                            1-sigma move over the expected hold (verticals and long
+#                            options only; condors and neutral stances stay at r)
+#   t3  managed_net_ev_full  managed Net EV after all costs, $ per unit
+# The tilted number is a ranking key only: the card, the D41 Net EV floor and the gate
+# see the untilted managed numbers in every arm.
+#
+# Backtest (E7.5 harness on live-shaped menus): docs/RESEARCH/ranking-unified-measure.md.
+# Promotion (changing a default in config/exits.yaml) needs a committed
+# `verdicts/XP-14.yaml` with `verdict: win`, only to the values it tested (OPS.md 5.20).
+spec_version: 2
+id: XP-14
+title: Unified managed-EV menu measure, ranked before the cut, with a stance tilt
+hypothesis: >
+  Ranking every structure kind on one managed-EV key over the full scanner pool (and,
+  for t2, scoring directional structures under a modest move in Research's stance
+  direction) puts better structures in front of Quant than the scanner's split
+  credit/width vs EV/max-loss order, raising paired daily net P&L without a worse
+  Sortino or max drawdown.
+area: entries
+kind: ab
+arms:
+  control:
+    overlay: {}
+  treatments:
+    t1:
+      overlay:
+        exits:
+          pipeline:
+            menu_measure: rorc_day_full
+    t2:
+      overlay:
+        exits:
+          pipeline:
+            menu_measure: rorc_day_tilted
+            direction_tilt: 0.25
+    t3:
+      overlay:
+        exits:
+          pipeline:
+            menu_measure: managed_net_ev_full
+non_inferiority_margin: 0.5
+proposed_by: owner
+backtest_ref: "docs/RESEARCH/ranking-unified-measure.md (E7.5b; E7.5 harness, live-shaped menus)"

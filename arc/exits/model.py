@@ -422,6 +422,7 @@ def simulate(
     cfg: ExitModelConfig,
     path_vol: float | None = None,
     peak_pnl: float | None = None,
+    drift: float | None = None,
 ) -> SimOutcome:
     """Run the policy over ``cfg.n_paths`` daily GBM paths from *spot* to expiry (*dte* days).
 
@@ -432,6 +433,10 @@ def simulate(
 
     *peak_pnl* (E18.1) is the per-share peak P&L the position already reached before
     today (``None`` = none yet); every path's profit-lock peak starts there.
+
+    *drift* (E7.5b, D79) is the annual drift the underlying paths move at (``None`` =
+    *r*). Marks stay priced at *r*: a drift only moves the paths, it is a ranking
+    scenario, never the pricing measure.
     """
     if dte < 1:
         msg = "the exit model needs dte >= 1"
@@ -445,7 +450,8 @@ def simulate(
     dt = 1.0 / 365.0
     z = rng.standard_normal((n, dte))
     step_sig = sig[:dte] if path_vol is None else np.full(dte, path_vol)  # vol over day d → d+1
-    log_ret = (r - 0.5 * step_sig**2) * dt + step_sig * math.sqrt(dt) * z
+    mu = r if drift is None else drift
+    log_ret = (mu - 0.5 * step_sig**2) * dt + step_sig * math.sqrt(dt) * z
     spots = spot * np.exp(np.cumsum(log_ret, axis=1))  # spots[:, d-1] = spot at end of day d
 
     exit_day = np.full(n, dte, dtype=int)
@@ -684,6 +690,7 @@ def model_exits(
     cfg: ExitModelConfig | None = None,
     spreads: Mapping[str, float] | None = None,
     realized_vol: float | None = None,
+    drift: float | None = None,
 ) -> ExitModelResult:
     """Static (hold to expiry) vs managed (under *policy*) PoP and EV for *structure*.
 
@@ -692,6 +699,9 @@ def model_exits(
     *realized_vol* is the realised-vol forecast the paths move at (the pipeline
     passes the mean of HV20 and HV60, see :func:`realized_vol_forecast`); ``None``
     or ``cfg.path_vol == "iv"`` moves the paths at IV.
+    *drift* (E7.5b, D79) moves the paths at that annual drift instead of *r*
+    (:func:`simulate`); only the menu ranker passes one. The card, the D41 Net EV
+    floor and the gate always use the untilted (``drift=None``) result.
     """
     cost = cost or load_cost_model()
     cfg = cfg or ExitModelConfig()
@@ -710,6 +720,7 @@ def model_exits(
         cost=cost,
         cfg=cfg,
         path_vol=pvol if use_rv else None,
+        drift=drift,
     )
 
     entry_mid = rules.entry_net

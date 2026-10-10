@@ -173,6 +173,8 @@ from arc.pipeline.store import PersonaCallRepo
 from arc.routines.handlers import JobResult
 from arc.routines.loop import LoopInputs, LoopState, pnl_bucket
 from arc.routines.runs import RoutineRunRepo
+from arc.scanner.menu import CONTROL as MENU_CONTROL
+from arc.scanner.menu import MenuRankKey, candidate_model, rank_menu
 from arc.scanner.rank import live_net_ev_check
 from arc.sizing import apply_live_cap, size_contracts
 from arc.slack.blocks import esc
@@ -2218,18 +2220,7 @@ def _exit_model(
     c: ScanCandidate, spot: float, exits: ExitConfig, r: float, realized_vol: float | None
 ) -> ExitModelResult | None:
     """E2.4 static vs managed numbers for a scanner candidate (None without an IV)."""
-    if c.atm_iv is None or c.dte < 1:
-        return None
-    return model_exits(
-        c.structure,
-        exits.policy_for(c.structure.kind),
-        spot=spot,
-        iv=c.atm_iv,
-        r=r,
-        cfg=exits.model,
-        spreads=c.leg_spreads,
-        realized_vol=realized_vol,
-    )
+    return candidate_model(c, spot, exits, r, realized_vol)
 
 
 def _menu_rank_key(summary: ExitSummary | None, by: str) -> float:
@@ -2238,8 +2229,22 @@ def _menu_rank_key(summary: ExitSummary | None, by: str) -> float:
     return math.inf if val is None else -float(val)
 
 
-def _menu_entry(c: ScanCandidate, exit_summary: ExitSummary | None = None) -> dict[str, Any]:
+def _menu_entry(
+    c: ScanCandidate,
+    exit_summary: ExitSummary | None = None,
+    rank_key: MenuRankKey | None = None,
+) -> dict[str, Any]:
+    """One Quant menu row. ``rank_key``/``rank_measure`` (E7.5b) appear only under a
+    non-control ``pipeline.menu_measure``, so the control menu is byte-identical."""
     st = c.structure
+    extra: dict[str, Any] = {}
+    if rank_key is not None:
+        extra = {
+            "rank_measure": rank_key.measure,
+            "rank_key": rank_key.value,
+        }
+        if rank_key.tilt is not None:
+            extra["rank_tilt"] = rank_key.tilt
     return {
         "structure_type": _structure_type(c),
         "strategy": c.strategy.value,
@@ -2261,6 +2266,7 @@ def _menu_entry(c: ScanCandidate, exit_summary: ExitSummary | None = None) -> di
         "cost_bps": _cost_bps(c),
         "greeks": {"delta": st.greeks.delta, "vega": st.greeks.vega, "theta": st.greeks.theta},
         "exits": None if exit_summary is None else exit_summary.model_dump(mode="json"),
+        **extra,
     }
 
 
@@ -2326,6 +2332,8 @@ class _QuantMenus:
     no_chain_why: dict[str, str] = dataclasses.field(default_factory=dict)
     # (ticker, stance) the account profile cannot trade
     no_profile: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+    # E7.5b: id(candidate) -> its menu rank key (only under a non-control menu_measure)
+    rank_keys: dict[int, MenuRankKey] = dataclasses.field(default_factory=dict)
 
 
 def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedItem]) -> _QuantMenus:
@@ -2339,6 +2347,10 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
     today = _today(ctx)
     iv_store = safe_iv_store(ctx.conn)  # E4.12: scanner IV rank from iv_daily
     exits = exit_config(settings)  # D26: exits.yaml + control-panel overrides
+    measure = exits.pipeline.menu_measure  # E7.5b (D79): "control" = scanner menu
+    full = measure != MENU_CONTROL
+    scan_top = settings.pipeline_scan_top
+    pool = max(scan_top, exits.pipeline.menu_pool_max) if full else scan_top
     for item in items:
         strategies = _strategies(item.stance, settings)
         if not strategies:
@@ -2352,9 +2364,7 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
             )
             continue
         try:
-            params = ScanParams.from_settings(
-                settings, strategies=strategies, top=settings.pipeline_scan_top
-            )
+            params = ScanParams.from_settings(settings, strategies=strategies, top=pool)
             history = iv_store.series(item.ticker, until=today) if iv_store is not None else {}
             res = scan(env.market, item.ticker, params, as_of=today, iv_history=history)
             ctx.record_input(
@@ -2376,12 +2386,40 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
         spots[item.ticker] = res.spot
         cands = list(res.candidates)
         rv = _realized_vol(ctx.snapshot, item.ticker)
+        r = settings.scanner_risk_free_rate
+        models: dict[int, ExitModelResult] = {}
         for c in cands:
-            model = _exit_model(c, res.spot, exits, settings.scanner_risk_free_rate, rv)
+            model = _exit_model(c, res.spot, exits, r, rv)
             if model is not None:
-                summaries[id(c)] = ExitSummary.from_result(model)
+                models[id(c)] = model
+        if full:
+            t0 = time.perf_counter()
+            cands, keys = rank_menu(
+                cands,
+                models,
+                measure=measure,
+                top=scan_top,
+                stance=item.stance,
+                tilt=exits.pipeline.direction_tilt,
+                spot=res.spot,
+                exits=exits,
+                r=r,
+                realized_vol=rv,
+            )
+            m.rank_keys.update({id(c): keys[id(c)] for c in cands})
+            log.info(
+                "pipeline.menu_measure",
+                ticker=item.ticker,
+                measure=measure,
+                pool=len(res.candidates),
+                kept=len(cands),
+                rank_ms=round((time.perf_counter() - t0) * 1000),
+            )
+        for c in cands:
+            if id(c) in models:
+                summaries[id(c)] = ExitSummary.from_result(models[id(c)])
         by = exits.pipeline.rank_menu_by
-        if by != "scanner":
+        if by != "scanner" and not full:
             cands.sort(key=lambda c: _menu_rank_key(summaries.get(id(c)), by))
         menus[item.ticker] = {
             _legs_key([(leg.occ_symbol, leg.side.value) for leg in c.structure.legs]): c
@@ -2394,7 +2432,7 @@ def _quant_menus(ctx: JobContext, env: PipelineEnv, items: list[ResearchRankedIt
             "policy in config/exits.yaml (both after costs, $ per contract). Paths move at "
             "the realised-vol forecast (path_vol, mean HV20/HV60) and are priced at IV; "
             "vrp = IV − forecast; rorc_day = managed net EV / (max loss × days held).",
-            "menu": [_menu_entry(c, summaries.get(id(c))) for c in cands],
+            "menu": [_menu_entry(c, summaries.get(id(c)), m.rank_keys.get(id(c))) for c in cands],
         }
 
     return m
@@ -2601,7 +2639,7 @@ def quant_open(ctx: JobContext, env: PipelineEnv) -> JobResult:
                 persona_call_id=call_id,
             )
         for key, c in menu.items():
-            entry = _menu_entry(c, summaries.get(id(c)))
+            entry = _menu_entry(c, summaries.get(id(c)), m.rank_keys.get(id(c)))
             if chosen.get(t) == key:
                 q = by_ticker[t]
                 j.add(
