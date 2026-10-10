@@ -102,6 +102,11 @@ def reconcile_output(report: ReconcileReport) -> ReconcileOutput:
         lines.append(f"Settled {len(report.expired)} expired structure(s) at intrinsic value.")
     if report.lots_repriced:
         lines.append(f"{report.lots_repriced} tax lot(s) set to broker fill prices.")
+    if report.expiry_events:
+        lines.append(
+            f"{len(report.expiry_events)} assignment/exercise event(s); new opens halted "
+            "until the owner unwinds the shares at the broker and runs !resume."
+        )
     if report.halted:
         lines.append("Trading is halted until the owner checks the mismatches and runs !resume.")
     return ReconcileOutput(
@@ -118,15 +123,23 @@ def reconcile_output(report: ReconcileReport) -> ReconcileOutput:
 
 
 def _notice(report: ReconcileReport) -> str:
+    expiry = ""
+    if report.expiry_events:
+        # E11.4 (D73): a classified assignment/exercise is an owner action, not a mismatch.
+        expiry = (
+            f"assignment/exercise ({len(report.expiry_events)}); new opens HALTED, exits "
+            "still run\n• " + "\n• ".join(report.expiry_events[:_MAX_NOTICE_ITEMS])
+        )
     if report.clean:
-        return ""
+        return expiry
     items = [f"{m.kind}: {m.detail}" for m in report.mismatches[:_MAX_NOTICE_ITEMS]]
     more = len(report.mismatches) - len(items)
     text = (
         f"reconciliation mismatch ({len(report.mismatches)}); trading HALTED "
         "until the owner checks and runs !resume\n• " + "\n• ".join(items)
     )
-    return text + (f"\n• …and {more} more (arc journal show)" if more > 0 else "")
+    text += f"\n• …and {more} more (arc journal show)" if more > 0 else ""
+    return f"{expiry}\n{text}" if expiry else text
 
 
 def broker_reconcile(
@@ -175,6 +188,9 @@ def broker_reconcile(
             "fills_broker": report.fills_broker,
             "wash_sales": len(report.wash_sales),
             "expired": len(report.expired),
+            "expiry_events": len(report.expiry_events),
+            "expiry_pending": len(report.expiry_pending),
+            "shares_unwound": len(report.unwound),
             "day_pnl": float(report.day_pnl) if report.day_pnl is not None else None,
             "slots": slots_line,
             "approvals": approvals_line,

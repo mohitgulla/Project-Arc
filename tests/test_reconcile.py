@@ -832,3 +832,206 @@ def test_intraday_job_still_unknown_halts_and_alerts(conn: sqlite3.Connection) -
     state = HaltSwitch(HaltRepo(conn)).state()
     assert state.halted and state.active[0].actor == RECONCILE_ACTOR
     assert "intraday reconciliation" in state.active[0].reason
+
+
+# ---------------------------------------------------------------------------
+# E11.4 (D73): assignment / exercise classified, booked, opens-only halt
+# ---------------------------------------------------------------------------
+
+AEXP = dt.date(2026, 9, 25)  # expired Friday; NOW (Mon 09-28 16:30) is the next session
+
+
+def put_debit(exp: dt.date = AEXP) -> Structure:
+    """Long 270 put / short 268 put (a bear put debit)."""
+    from arc.structures import debit_vertical
+
+    return debit_vertical(
+        "put", "SPY", exp, long_strike=270, long_premium="3.00",
+        short_strike=268, short_premium="2.00", as_of=dt.date(2026, 9, 1),
+    )  # fmt: skip
+
+
+def call_debit(exp: dt.date = AEXP) -> Structure:
+    from arc.structures import debit_vertical
+
+    return debit_vertical(
+        "call", "SPY", exp, long_strike=100, long_premium="3.00",
+        short_strike=110, short_premium="1.00", as_of=dt.date(2026, 9, 1),
+    )  # fmt: skip
+
+
+def shares(qty: int, sym: str = "SPY") -> BrokerPosition:
+    return BrokerPosition(symbol=sym, qty=D(qty), side="long" if qty > 0 else "short",
+                          asset_class="us_equity", avg_entry_price=D("1"))  # fmt: skip
+
+
+class ActivityBroker(FakeBroker):
+    def __init__(self, *, activities: list[Any] | None = None, **kw: Any) -> None:
+        super().__init__(**kw)
+        self._acts = activities or []
+
+    def activities(self, since: dt.date, *, types: tuple[str, ...]) -> list[Any]:
+        return [a for a in self._acts if a.date >= since and a.activity_type in types]
+
+
+def act(kind: str, symbol: str, day: dt.date = AEXP, qty: int = 2) -> Any:
+    from arc.broker.base import BrokerActivity
+
+    return BrokerActivity(id=f"{kind}-{symbol}", activity_type=kind, symbol=symbol,  # type: ignore[arg-type]
+                          qty=D(qty), date=day)  # fmt: skip
+
+
+def asn_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return [dict(r) for r in conn.execute("SELECT * FROM assignment_shares")]
+
+
+def test_assigned_short_leg_is_classified_not_generic_mismatch(
+    conn: sqlite3.Connection,
+) -> None:
+    st = put_debit()
+    pos = open_position(conn, st=st, entry="1.00", opened=OPENED - dt.timedelta(days=10))
+    short, long = legs_of(st)
+    broker = ActivityBroker(
+        positions=[shares(200)],
+        activities=[act("OPASN", short), act("OPEXP", long)],
+    )
+    rep = run(conn, broker, settle_price=lambda root, day: D("268.50"))
+    kinds = {m.kind for m in rep.mismatches}
+    assert MismatchKind.POSITION_NON_OPTION not in kinds
+    assert MismatchKind.POSITION_MISSING not in kinds
+    assert rep.clean, rep.mismatches
+    assert rep.expired == [pos["sid"]]
+    (row,) = asn_rows(conn)
+    assert row["qty"] == 200 and D(row["basis"]) == D("268.50") and row["via"] == "activity"
+    assert row["unwound_at"] is None
+    halts = conn.execute("SELECT actor, scope FROM halts").fetchall()
+    assert [(h[0], h[1]) for h in halts] == [("arc:expiry", "opens")]
+    assert not rep.halted and rep.expiry_halt_id
+    assert ReasonCode.RECONCILE_ASSIGNMENT.value in reasons(conn)
+    assert "sell 200 SPY at the broker" in rep.expiry_events[0]
+    srow = OpenStructureRepo(conn).get(pos["sid"])
+    assert srow["status"] == "closed" and D(srow["close_net"]) == D("0")
+    # the next day the shares are expected: no non-option mismatch
+    rep2 = reconcile(conn, FakeBroker(positions=[shares(200)]), settings=settings(),
+                     now=NOW + dt.timedelta(days=1), run_id="r2")  # fmt: skip
+    assert rep2.clean, rep2.mismatches
+
+
+def test_exercised_long_leg_is_classified_and_booked_at_intrinsic(
+    conn: sqlite3.Connection,
+) -> None:
+    st = call_debit()
+    pos = open_position(conn, st=st, entry="2.00", opened=OPENED - dt.timedelta(days=10))
+    short, long = legs_of(st)
+    broker = ActivityBroker(
+        positions=[shares(200)],
+        activities=[act("OPEXC", long), act("OPEXP", short)],
+    )
+    rep = run(conn, broker, settle_price=lambda root, day: D("105"))
+    assert rep.clean, rep.mismatches
+    srow = OpenStructureRepo(conn).get(pos["sid"])
+    assert srow["status"] == "closed" and D(srow["close_net"]) == D("-5.00")
+    assert ReasonCode.RECONCILE_EXERCISE.value in reasons(conn)
+    lots = TaxLotRepo(conn).with_structure()
+    assert all(lot["closed_at"] for lot in lots)
+    assert sum(D(lot["realized_pnl"]) for lot in lots) == D("600")  # -(2.00 - 5.00) x 200
+    (row,) = asn_rows(conn)
+    assert row["qty"] == 200 and D(row["basis"]) == D("105")
+
+
+def test_inferred_classification_without_activities_adapter(conn: sqlite3.Connection) -> None:
+    """No activities verb: the +-100 x ratio x contracts footprint decides."""
+    st = put_debit()
+    open_position(conn, st=st, entry="1.00", opened=OPENED - dt.timedelta(days=10))
+    # settle 269: long 270 put ITM -> exercised into -200 shares; short 268 OTM
+    rep = run(conn, FakeBroker(positions=[shares(-200)]), settle_price=lambda r, d: D("269"))
+    assert rep.clean, rep.mismatches
+    (row,) = asn_rows(conn)
+    assert row["qty"] == -200 and row["via"] == "inferred"
+    assert "buy 200 SPY at the broker" in rep.expiry_events[0]
+
+
+def test_unclassified_shares_still_total_halt(conn: sqlite3.Connection) -> None:
+    st = put_debit()
+    open_position(conn, st=st, entry="1.00", opened=OPENED - dt.timedelta(days=10))
+    rep = run(conn, FakeBroker(positions=[shares(-300)]), settle_price=lambda r, d: D("269"))
+    kinds = {m.kind for m in rep.mismatches}
+    assert MismatchKind.POSITION_NON_OPTION in kinds and MismatchKind.POSITION_MISSING in kinds
+    assert rep.halted
+    scope = conn.execute("SELECT scope FROM halts WHERE actor = ?", (RECONCILE_ACTOR,))
+    assert scope.fetchone()[0] == "all"
+    assert asn_rows(conn) == []
+
+
+def test_owner_unwind_fill_attributed_not_fill_unknown(conn: sqlite3.Connection) -> None:
+    st = put_debit()
+    short, long = legs_of(st)
+    open_position(conn, st=st, entry="1.00", opened=OPENED - dt.timedelta(days=10))
+    broker = ActivityBroker(positions=[shares(200)],
+                            activities=[act("OPASN", short), act("OPEXP", long)])  # fmt: skip
+    assert run(conn, broker, settle_price=lambda r, d: D("268")).clean
+    nxt = NOW + dt.timedelta(days=1)
+    sale = Fill(broker_order_id="eq-1", symbol="SPY", side="sell", qty=D(200), price=D("270"),
+                filled_at=nxt - dt.timedelta(hours=5))  # fmt: skip
+    rep = reconcile(conn, FakeBroker(fills=[sale]), settings=settings(), now=nxt, run_id="r2")
+    assert rep.clean, rep.mismatches
+    (row,) = asn_rows(conn)
+    assert rep.unwound == [row["id"]]
+    assert row["unwound_at"] and D(row["unwind_price"]) == D("270")
+    rows = conn.execute(
+        "SELECT payload FROM decisions WHERE reason_code = ?",
+        (ReasonCode.RECONCILE_RESOLVED.value,),
+    ).fetchall()
+    assert any(D(json.loads(r[0]).get("realized_pnl") or 0) == D(400) for r in rows)
+    # rows are append-only except the unwind columns of an open row
+    with pytest.raises(Exception, match="assignment_shares"):
+        conn.execute("UPDATE assignment_shares SET qty = 1")
+    with pytest.raises(Exception, match="never deleted"):
+        conn.execute("DELETE FROM assignment_shares WHERE 1 = 1")
+    # an unrelated equity fill still halts
+    other = Fill(broker_order_id="eq-2", symbol="QQQ", side="buy", qty=D(5), price=D("1"),
+                 filled_at=nxt - dt.timedelta(hours=4))  # fmt: skip
+    rep3 = reconcile(conn, FakeBroker(fills=[other]), settings=settings(),
+                     now=nxt + dt.timedelta(minutes=1), run_id="r3", halt=False)  # fmt: skip
+    assert [m.kind for m in rep3.mismatches] == [MismatchKind.FILL_UNKNOWN]
+
+
+def test_expiry_day_itm_without_activity_waits_for_the_next_reconcile(
+    conn: sqlite3.Connection,
+) -> None:
+    """On the expiry day the broker has not booked exercise/assignment yet: no guess."""
+    open_position(conn, st=put_debit(exp=NOW.date()), entry="1.00",
+                  opened=OPENED - dt.timedelta(days=10))  # fmt: skip
+    rep = run(conn, FakeBroker(), settle_price=lambda r, d: D("269"))
+    assert rep.clean, rep.mismatches
+    assert rep.expiry_pending and rep.expired == []
+
+
+def test_expiry_day_all_otm_settles_on_the_day(conn: sqlite3.Connection) -> None:
+    open_position(conn, st=put_debit(exp=NOW.date()), entry="1.00",
+                  opened=OPENED - dt.timedelta(days=10))  # fmt: skip
+    rep = run(conn, FakeBroker(), settle_price=lambda r, d: D("280"))
+    assert rep.clean and len(rep.expired) == 1
+
+
+def test_cli_activities_prints_ntas_read_only(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E11.4 acceptance #12 shape: `arc reconcile --activities` opens no store."""
+    import argparse
+
+    from arc.reconcile.cli import add_reconcile_parser, run_reconcile
+
+    monkeypatch.setenv("ARC_ENV", "paper")
+    monkeypatch.setenv("ARC_DB_PATH", str(tmp_path / "never.db"))
+    parser = argparse.ArgumentParser()
+    add_reconcile_parser(parser.add_subparsers(dest="command"))
+    args = parser.parse_args(["reconcile", "--activities", "--days", "400"])
+    broker = ActivityBroker(activities=[act("OPEXP", "SPY260925P00268000")])
+    assert run_reconcile(args, broker=broker) == 0
+    out = capsys.readouterr().out
+    assert "OPEXP SPY260925P00268000 qty 2" in out
+    assert not (tmp_path / "never.db").exists()
+    assert run_reconcile(args, broker=ActivityBroker()) == 0
+    assert "no OPASN/OPEXC/OPEXP/OPTRD activities" in capsys.readouterr().out
+    assert run_reconcile(args, broker=FakeBroker()) == 2  # no activities verb

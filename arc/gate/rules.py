@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict
 
 from arc.account_profiles import BuyingPower, DayTradeRule, ShortLegPolicy
 from arc.config import ArcSettings, StructureKind
-from arc.gate.band import PriceBand, as_grid, band_from_nbbo
+from arc.gate.band import MAX_BAND_STEPS, PriceBand, as_grid, band_from_nbbo
 from arc.gate.ticks import TickGrid, order_grid
 from arc.models import GateDecision, Leg, LegIntent, Proposal
 from arc.models import StructureKind as ModelKind
@@ -267,10 +267,16 @@ def check_daily_loss(account: AccountSnapshot, config: ArcSettings) -> list[Viol
     return []
 
 
-def check_halt(account: AccountSnapshot) -> list[Violation]:
-    """Kill switch / daily halt must not be active."""
+def check_halt(account: AccountSnapshot, *, closing: bool = False) -> list[Violation]:
+    """Kill switch / daily halt must not be active.
+
+    E11.4 (D73): an opens-only halt (``opens_halted``) blocks opens only; a close
+    still passes so positions can be taken off before expiry.
+    """
     if account.halted:
         return _v(RuleCode.HALTED, "trading is halted")
+    if account.opens_halted and not closing:
+        return _v(RuleCode.HALTED, "new opens are halted (opens-only halt; exits still run)")
     return []
 
 
@@ -427,11 +433,19 @@ def combo_nbbo(legs: Sequence[Leg], market: MarketSnapshot) -> tuple[Decimal, De
 
 
 def price_band(
-    legs: Sequence[Leg], limit: Decimal, market: MarketSnapshot, config: ArcSettings
+    legs: Sequence[Leg],
+    limit: Decimal,
+    market: MarketSnapshot,
+    config: ArcSettings,
+    *,
+    max_steps: int | None = None,
 ) -> PriceBand:
     """D24 band from *limit* toward the far touch of the legs' combo NBBO.
 
-    ``max_steps = config.execution_improvement_steps``; the worst price is
+    ``max_steps`` defaults to ``config.execution_improvement_steps``; E11.4 (D73)
+    passes the expiry guard's steps for a close inside the closing window (the
+    gate accepts more steps than the default for closes only, see
+    :func:`check_band`). The worst price is
     ``execution_band_reach`` of the way to the far touch, capped at
     :func:`max_gain_cap` so no step can leave max gain <= 0 (a debit vertical
     never priced at or above its width, a credit never at or below zero).
@@ -450,7 +464,7 @@ def price_band(
     return band_from_nbbo(
         limit,
         nbbo[1],
-        max_steps=config.execution_improvement_steps,
+        max_steps=config.execution_improvement_steps if max_steps is None else max_steps,
         reach=_d(config.execution_band_reach),
         grid=grid,
         cap=max_gain_cap(legs, grid),
@@ -478,6 +492,8 @@ def check_band(
     band: PriceBand,
     market: MarketSnapshot,
     config: ArcSettings,
+    *,
+    max_steps: int | None = None,
 ) -> list[Violation]:
     """D24: the band starts at the proposal's limit, its steps are within the configured
     maximum, and its worst price passes the combo-NBBO and tick checks too and still
@@ -487,13 +503,11 @@ def check_band(
     :func:`check_per_underlying` on :func:`worst_case`, see :func:`evaluate`.)
     """
     out: list[Violation] = []
+    cap = config.execution_improvement_steps if max_steps is None else max_steps
     if band.lo != d.limit_price:
         out += _v(RuleCode.BAND, f"band starts at {band.lo}, not at the limit {d.limit_price}")
-    if band.max_steps > config.execution_improvement_steps:
-        out += _v(
-            RuleCode.BAND,
-            f"{band.max_steps} steps > max {config.execution_improvement_steps}",
-        )
+    if band.max_steps > cap:
+        out += _v(RuleCode.BAND, f"{band.max_steps} steps > max {cap}")
     worst = d._replace(limit_price=band.hi)
     for v in check_spread_tick(proposal, worst, market, config):
         if v.code in (RuleCode.LIMIT_OUTSIDE_NBBO, RuleCode.TICK):
@@ -877,6 +891,7 @@ def evaluate(
     now: dt.datetime,
     band: PriceBand | None = None,
     closing: bool = False,
+    close_max_steps: int | None = None,
 ) -> GateDecision:
     """Run every rule and return a :class:`GateDecision` listing *all* violations.
 
@@ -897,14 +912,20 @@ def evaluate(
     risk are skipped — daily-loss entry block, max open positions, Greek caps,
     per-underlying cap, structure whitelist, account profile (D25), wash sale, entry DTE window and
     earnings blackout. The halt, TTL, data freshness, spread/NBBO/tick and band
-    checks still run (fail closed).
+    checks still run (fail closed). An opens-only halt (E11.4, D73) blocks opens
+    only.
+
+    ``close_max_steps`` (E11.4, D73): the band step ceiling for a *close* inside
+    the expiry guard's closing window (``expiry_guard.steps``). Ignored for opens
+    (they always use ``execution_improvement_steps``) and never above
+    ``MAX_BAND_STEPS``.
     """
     if now.tzinfo is None or now.utcoffset() is None:
         msg = "evaluate() requires a timezone-aware `now` (use arc.utils.calendar.now_et())"
         raise ValueError(msg)
     p, a, pf, c, m = proposal, account_snapshot, portfolio, config, market
     violations: list[Violation] = []
-    violations += _run("halt", lambda: check_halt(a))
+    violations += _run("halt", lambda: check_halt(a, closing=closing))
     if closing:
         violations += _run("closing", lambda: check_closing(p, pf))
         violations += _run("day_trades", lambda: check_day_trades(p, a, pf, c))
@@ -936,7 +957,12 @@ def evaluate(
         violations += _run("max_gain", lambda: check_max_gain(dd))
         if band is not None:
             bb = band
-            violations += _run("band", lambda: check_band(p, dd, bb, m, c))
+            steps_cap = (
+                min(max(close_max_steps, c.execution_improvement_steps), MAX_BAND_STEPS)
+                if closing and close_max_steps is not None
+                else None
+            )
+            violations += _run("band", lambda: check_band(p, dd, bb, m, c, max_steps=steps_cap))
         if not closing:
             violations += _run("structure", lambda: check_structure_whitelist(p, dd, c))
             violations += _run("account_profile", lambda: check_account_profile(p, risk_d, a, c))

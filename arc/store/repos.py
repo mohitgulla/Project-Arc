@@ -593,15 +593,16 @@ class HaltRepo:
         at: str | None = None,
         run_id: str | None = None,
         id: str | None = None,
+        scope: str = "all",
     ) -> str:
         row_id = id or _uuid()
         self.conn.execute(
-            """INSERT INTO halts (id, at, reason, actor, kind, session_date, run_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (row_id, at or _now_iso(), reason, actor, kind, session_date, run_id),
+            """INSERT INTO halts (id, at, reason, actor, kind, session_date, run_id, scope)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (row_id, at or _now_iso(), reason, actor, kind, session_date, run_id, scope),
         )
         self.conn.commit()
-        log.info("halt.set", halt_id=row_id, kind=kind, actor=actor, reason=reason)
+        log.info("halt.set", halt_id=row_id, kind=kind, actor=actor, reason=reason, scope=scope)
         return row_id
 
     def resume(self, halt_id: str, *, actor: str = "", at: str | None = None) -> None:
@@ -628,6 +629,15 @@ class HaltRepo:
             "SELECT * FROM halts WHERE cleared_at IS NULL ORDER BY at, rowid"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def exists_for_reason(self, *, actor: str, reason: str, session_date: str) -> bool:
+        """True if *actor* raised a halt with *reason* in ``session_date`` (cleared or not)."""
+        row = self.conn.execute(
+            """SELECT 1 FROM halts WHERE actor = ? AND reason = ? AND session_date = ?
+               LIMIT 1""",
+            (actor, reason, session_date),
+        ).fetchone()
+        return row is not None
 
     def exists_for_session(self, *, kind: str, session_date: str) -> bool:
         """True if a halt of ``kind`` was ever raised for ``session_date`` (cleared or not)."""

@@ -400,3 +400,154 @@ def test_dry_run_never_mints(conn: sqlite3.Connection) -> None:
     assert _run(conn, env, "exits.mandatory", st=st).metrics["gate_passed"] == 1
     (tok,) = conn.execute("SELECT token FROM gate_decisions").fetchone()
     assert tok is None
+
+
+# ---------------------------------------------------------------------------
+# E11.4 (D73): the expiry guard inside exits.mandatory
+# ---------------------------------------------------------------------------
+
+
+def _expiring(monkeypatch: pytest.MonkeyPatch, exp: dt.date) -> None:
+    """Pretend every structure expires on *exp* (the bundled chain is 35 DTE)."""
+    import arc.execution.exits as X
+
+    monkeypatch.setattr(X, "structure_expiry", lambda st: exp)
+
+
+def _close_hashes(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute("SELECT proposal_hash FROM proposals WHERE kind = 'close' ORDER BY rowid")
+    return [r[0] for r in rows]
+
+
+def test_skipped_close_at_dte2_escalates_and_is_flat_by_dte1(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fri 09-25, expiry Tue 09-29 (flat-by Mon 09-28; Fri is its retry session): a close
+    that does not go through is re-proposed the same day, up to 4 times, each a fresh
+    proposal through the gate with a 6-step band."""
+    from arc.gate.token import parse_any
+
+    _expiring(monkeypatch, dt.date(2026, 9, 29))
+    env = _env_with(_held(BULL_PUT))
+    st = _dte_settings(conn)
+    sid = _open(conn, env, BULL_PUT, "-0.03")
+    _run(conn, env, "positions.evaluate", st=st)
+    for k in range(1, 5):
+        tick = NOW + dt.timedelta(seconds=k)  # each attempt is a later tick (fresh proposal)
+        out = _run(conn, env, "exits.mandatory", now=tick, st=st)
+        assert out.metrics["proposed"] == 1 and out.metrics["gate_passed"] == 1, (k, out.summary)
+        hashes = _close_hashes(conn)
+        assert len(hashes) == k
+        row = OpenStructureRepo(conn).get(sid)
+        assert row["exit_attempts_day"] == k and row["exit_day"] == "2026-09-25"
+        tok = conn.execute(
+            "SELECT token FROM gate_decisions WHERE proposal_hash = ?", (hashes[-1],)
+        ).fetchone()[0]
+        assert parse_any(tok).max_steps == 6  # expiry_guard.steps inside the window
+        # still pending: no second proposal
+        pending = _run(conn, env, "exits.mandatory", now=tick, st=st)
+        assert pending.metrics.get("proposed", 0) == 0
+        _approve(conn, hashes[-1], approve=False)  # the attempt did not go through
+    # the fifth attempt today is refused
+    fifth = _run(conn, env, "exits.mandatory", now=NOW + dt.timedelta(seconds=5), st=st)
+    assert fifth.metrics.get("proposed", 0) == 0
+    assert len(_close_hashes(conn)) == 4
+
+
+def test_attempts_outside_window_unchanged(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arc.gate.token import parse_any
+
+    _expiring(monkeypatch, dt.date(2026, 10, 5))  # DTE 10
+    env = _env_with(_held(BULL_PUT))
+    st = _dte_settings(conn)
+    _open(conn, env, BULL_PUT, "-0.03")
+    _run(conn, env, "positions.evaluate", st=st)
+    assert _run(conn, env, "exits.mandatory", st=st).metrics["proposed"] == 1
+    (h,) = _close_hashes(conn)
+    tok = conn.execute("SELECT token FROM gate_decisions WHERE proposal_hash = ?", (h,))
+    assert parse_any(tok.fetchone()[0]).max_steps == 3  # the default band
+    _approve(conn, h, approve=False)
+    assert _run(conn, env, "exits.mandatory", st=st).metrics.get("proposed", 0) == 0
+
+
+def test_not_flat_after_dte1_session_alerts_and_raises_opens_only_halt(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Expiry Mon 09-28 -> flat-by Fri 09-25; at 16:00 the structure is still open."""
+    from arc.gate.halt import HaltSwitch
+    from arc.store.repos import HaltRepo
+
+    _expiring(monkeypatch, dt.date(2026, 9, 28))
+    env = _env_with(_held(BULL_PUT))
+    st = _dte_settings(conn)
+    _open(conn, env, BULL_PUT, "-0.03")
+    _run(conn, env, "positions.evaluate", st=st)
+    out = _run(conn, env, "exits.mandatory", st=st)
+    assert out.metrics["expiry_guard"]["not_flat"] == 1 and "NOT FLAT" in out.notice
+    halts = conn.execute("SELECT actor, scope FROM halts WHERE cleared_at IS NULL").fetchall()
+    assert [(h[0], h[1]) for h in halts] == [("arc:expiry", "opens")]
+    state = HaltSwitch(HaltRepo(conn)).state()
+    assert state.opens_only and not state.halted
+    codes = [r[0] for r in conn.execute("SELECT reason_code FROM decisions")]
+    assert ReasonCode.EXIT_EXPIRY_GUARD.value in codes
+    # exits keep running under the opens-only halt: the next attempt passes the gate
+    (h,) = _close_hashes(conn)
+    _approve(conn, h, approve=False)
+    again = _run(conn, env, "exits.mandatory", now=NOW + dt.timedelta(seconds=1), st=st)
+    assert again.metrics["proposed"] == 1 and again.metrics["gate_passed"] == 1
+    # the alert / halt is once per structure per session
+    assert "expiry_guard" not in again.metrics
+    assert conn.execute("SELECT COUNT(*) FROM halts").fetchone()[0] == 1
+
+
+class _DneBroker:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    def do_not_exercise(self, occ: str) -> None:
+        self.sent.append(occ)
+
+
+def test_expiry_day_cutoff_no_proposals_dne_and_leg_alert(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arc.control.service import ControlService
+
+    _expiring(monkeypatch, NOW.date())  # expiry day today; cutoff 15:15
+    env = _env_with(_held(BULL_PUT))
+    broker = _DneBroker()
+    env.broker = broker  # type: ignore[assignment]
+    st = _dte_settings(conn)
+    svc = ControlService(conn, base=st, now=lambda: NOW, is_halted=lambda: False)
+    r = svc.set("expiry_guard.dne", "all_longs", actor="U0C5KUMH28G", source="slack")
+    if r.pending is not None:
+        svc.confirm(r.pending.code, actor="U0C5KUMH28G", source="slack")
+    st = svc.settings()
+    _open(conn, env, BULL_PUT, "-0.03")
+    _run(conn, env, "positions.evaluate", st=st)
+    at_cutoff = dt.datetime(2026, 9, 25, 15, 16, tzinfo=ET)
+    out = _run(conn, env, "exits.mandatory", now=at_cutoff, st=st)
+    assert out.metrics.get("proposed", 0) == 0 and _close_hashes(conn) == []
+    assert out.metrics["expiry_guard"]["cutoff"] == 1
+    assert broker.sent == ["SPY261030P00710000"]  # the long leg only
+    assert "cutoff 15:15 ET passed" in out.notice and "short SPY261030P00711000" in out.notice
+    codes = [r[0] for r in conn.execute("SELECT reason_code FROM decisions")]
+    assert ReasonCode.EXIT_DNE.value in codes and ReasonCode.EXIT_EXPIRY_GUARD.value in codes
+    # once per structure: the next tick sends nothing
+    later = at_cutoff + dt.timedelta(minutes=5)
+    again = _run(conn, env, "exits.mandatory", now=later, st=st)
+    assert broker.sent == ["SPY261030P00710000"] and "expiry_guard" not in again.metrics
+
+
+def test_expiry_day_before_cutoff_still_proposes(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _expiring(monkeypatch, dt.date(2026, 9, 26))  # Sat expiry -> flat-by Fri; window open
+    env = _env_with(_held(BULL_PUT))
+    st = _dte_settings(conn)
+    _open(conn, env, BULL_PUT, "-0.03")
+    _run(conn, env, "positions.evaluate", st=st)
+    out = _run(conn, env, "exits.mandatory", st=st)
+    assert out.metrics["proposed"] == 1

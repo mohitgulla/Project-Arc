@@ -240,6 +240,8 @@ class ReasonCode(StrEnum):
     EXIT_EXPIRY = "exit:expiry"
     EXIT_NOT_PROPOSED = "exit:not_proposed"
     EXIT_QUOTE_UNUSABLE = "exit:quote_unusable"  # E6.2a: close legs' quotes failed the check
+    EXIT_DNE = "exit:dne"  # E11.4 (D73): do-not-exercise instruction (sent or refused)
+    EXIT_EXPIRY_GUARD = "exit:expiry_guard"  # E11.4: not flat by DTE 1 / expiry-day cutoff
     EXIT_CLOSED = "exit:closed"
     # E6.4 position manager (D19): review signals beyond E6.2's fired rules
     EXIT_TIME_ADJUSTED = "exit:time_adjusted_target"
@@ -280,6 +282,9 @@ class ReasonCode(StrEnum):
     # E6.2g: a stored fill whose sign disagreed with its signed band, repaired by
     # `arc journal repair-fill-signs`; the payload carries the realised P&L delta
     RECONCILE_FILL_SIGN = "reconcile:fill_sign_corrected"
+    # E11.4 (D73): a leg the broker assigned / exercised, classified and booked
+    RECONCILE_ASSIGNMENT = "reconcile:assignment"
+    RECONCILE_EXERCISE = "reconcile:exercise"
     # experiments (E10.1, D44): pre-registration and lifecycle of a forward A/B test
     EXPERIMENT_DRAFTED = "experiment:drafted"
     EXPERIMENT_REGISTERED = "experiment:registered"
@@ -469,6 +474,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.EXIT_EXPIRY: "Exit: expiry",
     ReasonCode.EXIT_NOT_PROPOSED: "Exit not proposed",
     ReasonCode.EXIT_QUOTE_UNUSABLE: "Exit held: close quotes unusable",
+    ReasonCode.EXIT_DNE: "Do-not-exercise instruction at expiry",
+    ReasonCode.EXIT_EXPIRY_GUARD: "Expiry guard: not flat before expiry",
     ReasonCode.EXIT_CLOSED: "Position closed",
     ReasonCode.EXIT_TIME_ADJUSTED: "Exit: time-adjusted profit target",
     ReasonCode.EXIT_EV_FLOOR: "Exit: remaining EV below the floor",
@@ -501,6 +508,8 @@ REASON_LABELS: dict[ReasonCode, str] = {
     ReasonCode.RECONCILE_WASH_SALE: "Wash sale flagged at reconcile",
     ReasonCode.RECONCILE_LOT_PRICE: "Tax-lot price corrected at reconcile",
     ReasonCode.RECONCILE_FILL_SIGN: "Fill sign corrected (realised P&L restated)",
+    ReasonCode.RECONCILE_ASSIGNMENT: "Short leg assigned at the broker (booked)",
+    ReasonCode.RECONCILE_EXERCISE: "Long leg exercised at the broker (booked)",
     ReasonCode.RECONCILE_TEST_FILL: "Integration-test fill seen at reconcile",
     ReasonCode.EXPERIMENT_DRAFTED: "Experiment drafted",
     ReasonCode.EXPERIMENT_REGISTERED: "Experiment pre-registered (spec locked)",

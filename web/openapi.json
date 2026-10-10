@@ -5982,6 +5982,11 @@
           "reason": {
             "title": "Reason",
             "type": "string"
+          },
+          "scope": {
+            "default": "all",
+            "title": "Scope",
+            "type": "string"
           }
         },
         "required": [

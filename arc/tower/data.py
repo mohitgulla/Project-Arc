@@ -338,6 +338,7 @@ class HaltView(BaseModel):
     cleared_at: _dt.datetime | None
     cleared_by: str | None
     active: bool
+    scope: str = "all"  # E11.4 (D73): 'opens' = new opens stopped, exits still run
 
 
 class GateViolation(BaseModel):
@@ -673,6 +674,7 @@ def _halts(conn: sqlite3.Connection, limit: int) -> list[HaltView]:
             cleared_at=parse_ts(r["cleared_at"]),
             cleared_by=r["cleared_by"],
             active=r["cleared_at"] is None,
+            scope=r["scope"] if "scope" in r.keys() else "all",  # noqa: SIM118 - sqlite3.Row
         )
         for r in rows
     ]

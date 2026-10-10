@@ -65,6 +65,7 @@ from typing import TYPE_CHECKING, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from arc.exits.expiry import ExpiryGuard
 from arc.models import StructureKind
 
 if TYPE_CHECKING:
@@ -275,6 +276,10 @@ class PositionsConfig(BaseModel):
         True, description="Evaluate the remaining-EV floor on end-of-day marks only"
     )
     kinds: dict[StructureKind, float | None] = Field(default_factory=dict)
+    expiry_guard: ExpiryGuard = Field(
+        default_factory=ExpiryGuard,
+        description="E11.4 (D73): flat by DTE, closing-window retries, expiry-day cutoff, DNE",
+    )
 
     def floor_for(self, kind: StructureKind | None) -> float | None:
         if kind is not None and kind in self.kinds:

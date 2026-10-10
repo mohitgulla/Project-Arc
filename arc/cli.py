@@ -304,6 +304,12 @@ def _make_parser() -> argparse.ArgumentParser:
     halt = sub.add_parser("halt", help="Halt trading now (kill switch)")
     halt.add_argument("--actor", required=True, help="Who is halting (Slack user id or name)")
     halt.add_argument("--reason", default="manual halt", help="Why")
+    halt.add_argument(
+        "--scope",
+        choices=("all", "opens"),
+        default="all",
+        help="all = stop opens and closes (default); opens = stop new opens only (E11.4)",
+    )
 
     resume = sub.add_parser("resume", help="Clear all halts (owner only)")
     resume.add_argument("--actor", required=True, help="Slack user id; must be the owner")
@@ -334,14 +340,16 @@ def _switch() -> HaltSwitch:
 
 def _run_halt_command(args: argparse.Namespace) -> int:
     from arc.config import get_settings
-    from arc.gate.halt import ResumeNotAuthorizedError
+    from arc.gate.halt import HaltScope, ResumeNotAuthorizedError
     from arc.slack.halt import handle_command
     from arc.utils.calendar import now_et
 
     switch = _switch()
     if args.command == "halt":
-        rec = switch.halt(actor=args.actor, reason=args.reason, now=now_et())
-        _out(f"HALTED {rec.id} by {rec.actor}: {rec.reason}")
+        scope = HaltScope(args.scope)
+        rec = switch.halt(actor=args.actor, reason=args.reason, now=now_et(), scope=scope)
+        label = "HALTED" if scope is HaltScope.ALL else "OPENS HALTED"
+        _out(f"{label} {rec.id} by {rec.actor}: {rec.reason}")
         return 0
     if args.command == "resume":
         try:
@@ -353,13 +361,19 @@ def _run_halt_command(args: argparse.Namespace) -> int:
         return 0
     if args.command == "halt-status":
         state = switch.state()
-        if not state.halted:
+        if not state.active and not state.halted:
             _out("trading allowed (no active halts)")
             return 0
         if state.error:
             _out(f"HALTED (state unreadable, failing closed): {state.error}")
+        if state.opens_only:
+            _out("new opens halted; exits still run (opens-only halt, E11.4)")
         for h in state.active:
-            _out(f"HALTED {h.id} {h.kind} at {h.at.isoformat()} by {h.actor}: {h.reason}")
+            label = "HALTED" if h.scope is HaltScope.ALL else "OPENS HALTED"
+            _out(
+                f"{label} {h.id} {h.kind} scope={h.scope.value} at {h.at.isoformat()} "
+                f"by {h.actor}: {h.reason}"
+            )
         return 1
     # slack-command
     reply = handle_command(

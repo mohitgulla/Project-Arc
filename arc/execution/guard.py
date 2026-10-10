@@ -5,6 +5,9 @@ first, before checking the GateToken / ApprovalRecord and before any broker
 call. A halt raised after the gate passed (e.g. ``!halt`` while a proposal
 waited for approval) must still stop the order, so this reads the persisted
 halt state at submit time rather than trusting the gate decision.
+
+E11.4 (D73): an opens-only halt (``arc:expiry``) refuses opens only; a close
+still goes out so a position can be taken off before expiry.
 """
 
 from __future__ import annotations
@@ -23,10 +26,13 @@ class TradingHaltedError(RuntimeError):
     """Execution refused: the kill switch / daily halt is active (or unreadable)."""
 
 
-def require_trading_allowed(switch: HaltSwitch) -> None:
-    """Raise :class:`TradingHaltedError` unless trading is allowed right now."""
+def require_trading_allowed(switch: HaltSwitch, *, closing: bool = False) -> None:
+    """Raise :class:`TradingHaltedError` unless trading is allowed right now.
+
+    *closing*: the order closes a held position; an opens-only halt lets it through.
+    """
     state = switch.state()
-    if not state.halted:
+    if not state.halted and not (state.opens_only and not closing):
         return
     if state.error is not None:
         detail = f"halt state unreadable, failing closed ({state.error})"

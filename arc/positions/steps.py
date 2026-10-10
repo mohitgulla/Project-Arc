@@ -30,6 +30,8 @@ from __future__ import annotations
 import datetime as _dt
 import json
 from collections import Counter
+from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -309,10 +311,12 @@ def _close_on_signals(ctx: JobContext, env: PipelineEnv, kinds: frozenset[Signal
 
     The first signal of a review inside *kinds* is the one closed on.
     """
-    from arc.execution.exits import exit_pending, price_close, propose_close
+    from arc.control.effective import exit_config
+    from arc.execution.exits import close_allowed, exit_pending, price_close, propose_close
     from arc.store.execution import OpenStructureRepo
 
     settings = ctx.settings
+    guard = exit_config(settings).positions.expiry_guard
     reviews = _reviews(ctx)
     fired: dict[str, ExitSignal] = {}
     for r in reviews.values():
@@ -330,7 +334,7 @@ def _close_on_signals(ctx: JobContext, env: PipelineEnv, kinds: frozenset[Signal
             metrics={"signals": len(flagged), "proposed": 0, "halted": True},
         )
     repo = OpenStructureRepo(ctx.conn)
-    day = _today(ctx).isoformat()
+    now = ctx.clock()
     lines: list[str] = []
     errors: list[str] = []
     alerts: list[str] = []
@@ -340,7 +344,11 @@ def _close_on_signals(ctx: JobContext, env: PipelineEnv, kinds: frozenset[Signal
         row = repo.get(rv.structure_id)
         if row is None or row["status"] != "open":
             continue
-        if exit_pending(ctx.conn, row) or row.get("exit_day") == day:
+        # E11.4 (D73): one close a day outside the expiry guard's closing window, up
+        # to attempts_per_day inside it; none for an expired structure or after the
+        # expiry-day cutoff (the reconcile settles it).
+        allowed, window = close_allowed(row, guard, now)
+        if exit_pending(ctx.conn, row) or not allowed:
             continue
         sig = fired[rv.structure_id]
         st = Structure.model_validate_json(row["structure_json"])
@@ -369,6 +377,7 @@ def _close_on_signals(ctx: JobContext, env: PipelineEnv, kinds: frozenset[Signal
             write_context=ctx.write,
             secret=secret,
             payload={"review": rv.model_dump(mode="json", exclude={"structure"})},
+            close_max_steps=guard.steps if window.in_window else None,
         )
         if res.alert:
             alerts.append(res.alert)
@@ -709,6 +718,182 @@ def evaluate_step(ctx: JobContext) -> JobResult:
     return evaluate(ctx, _env(ctx))
 
 
+# ---------------------------------------------------------------------------
+# Expiry guard (E11.4, D73): not flat by DTE 1, the expiry-day cutoff
+# ---------------------------------------------------------------------------
+
+EXPIRY_ACTOR = "arc:expiry"
+
+
+@dataclass
+class ExpirySweep:
+    lines: list[str] = field(default_factory=list)
+    alerts: list[str] = field(default_factory=list)
+    metrics: dict[str, Any] = field(default_factory=dict)
+
+
+def _once(ctx: JobContext, key: str) -> bool:
+    """True the first time *key* is seen (``routine_state``); records it."""
+    from arc.routines.runs import RoutineStateRepo
+
+    state = RoutineStateRepo(ctx.conn)
+    if state.get(key) is not None:
+        return False
+    state.set(key, "1", now=ctx.clock())
+    return True
+
+
+def _leg_lines(st: Structure, spot: float | None, dne: set[str]) -> list[str]:
+    """Per still-held leg: moneyness vs spot and what Alpaca is expected to do."""
+    from arc.exits.expiry import intrinsic
+    from arc.structures import parse_occ
+
+    out: list[str] = []
+    for leg in st.legs:
+        occ = parse_occ(leg.occ_symbol)
+        side = "long" if leg.side == LegIntent.LONG else "short"
+        if spot is None:
+            out.append(f"{side} {occ.format()}: no spot (moneyness unknown)")
+            continue
+        itm = intrinsic(occ.kind, occ.strike, Decimal(str(spot))) > 0
+        if occ.format() in dne:
+            action = "DNE requested: should expire unexercised"
+        elif side == "long":
+            action = (
+                "ITM: Alpaca auto-exercises (or sells out if buying power is short)"
+                if itm
+                else "OTM: expires worthless"
+            )
+        else:
+            action = "ITM: expect assignment" if itm else "OTM: expected to expire"
+        out.append(
+            f"{side} {occ.format()} vs spot {spot:.2f} ({'ITM' if itm else 'OTM'}): {action}"
+        )
+    return out
+
+
+def expiry_sweep(ctx: JobContext, env: PipelineEnv) -> ExpirySweep:
+    """E11.4 (D73) rules 3 and 4, run by ``exits.mandatory`` every tick.
+
+    - Rule 3: a structure still open from ``session_close(flat_by) - 15 min`` on
+      -> journal ``exit:expiry_guard``, owner alert and an opens-only halt (actor
+      ``arc:expiry``), once per structure per ET session.
+    - Rule 4: the first tick at/after the expiry-day cutoff -> per-leg alert
+      (moneyness, expected Alpaca action) and a do-not-exercise instruction for
+      the long legs ``dne_candidates`` picks (paper only, never on a dry run),
+      once per structure.
+
+    Never proposes, never prices a chain; reads only spot for the cutoff lines.
+    """
+    from arc.control.effective import exit_config
+    from arc.data.base import market_spot
+    from arc.execution.exits import structure_expiry
+    from arc.execution.instructions import do_not_exercise
+    from arc.exits.expiry import closing_window, dne_candidates, not_flat
+    from arc.gate.halt import HaltSwitch
+    from arc.journal.store import JournalStore
+    from arc.store.execution import OpenStructureRepo
+    from arc.store.repos import HaltRepo
+
+    out = ExpirySweep(metrics={"not_flat": 0, "cutoff": 0, "dne_sent": 0, "halts": 0})
+    guard = exit_config(ctx.settings).positions.expiry_guard
+    now = ctx.clock()
+    today = now.astimezone(ET).date()
+    day = today.isoformat()
+    switch = HaltSwitch(HaltRepo(ctx.conn))
+    journal = JournalStore(ctx.conn)
+    for row in OpenStructureRepo(ctx.conn).list_open():
+        sid, ticker = str(row["id"]), str(row["ticker"])
+        st = Structure.model_validate_json(row["structure_json"])
+        window = closing_window(structure_expiry(st), today, guard)
+        if not window.in_window or window.dte < 0:
+            continue
+        if not_flat(window, now) and _once(ctx, f"expiry_guard:not_flat:{sid}:{day}"):
+            out.metrics["not_flat"] += 1
+            why = (
+                f"{ticker} not flat: expires {window.expiry} (DTE {window.dte}), "
+                f"flat-by {window.flat_by} (structure {sid[:8]})"
+            )
+            with ctx.conn:
+                journal.record(
+                    persona=JournalPersona.QUANT,
+                    stage=Stage.EXIT,
+                    subject=ticker,
+                    choice=Choice.NOTED,
+                    reason_code=ReasonCode.EXIT_EXPIRY_GUARD,
+                    reason_text=why,
+                    payload={"structure_id": sid, "window": window.model_dump(mode="json")},
+                    at=now,
+                    run_id=ctx.run_id,
+                )
+            halt = switch.halt_opens_once(
+                actor=EXPIRY_ACTOR, reason=f"expiry guard: {why}", now=now, run_id=ctx.run_id
+            )
+            out.metrics["halts"] += halt is not None
+            out.lines.append(f"expiry guard: {why}")
+            out.alerts.append(
+                f"NOT FLAT: {why}. New opens halted (opens-only, {EXPIRY_ACTOR}); exits keep "
+                "running; close it or `!resume` once it is flat"
+            )
+        if (
+            window.cutoff is not None
+            and now.astimezone(ET) >= window.cutoff
+            and _once(ctx, f"expiry_guard:cutoff:{sid}:{day}")
+        ):
+            out.metrics["cutoff"] += 1
+            try:
+                spot = market_spot(env.market, ticker, today).price
+            except Exception as exc:  # noqa: BLE001 - no spot: no DNE (fail safe), still alert
+                log.warning("expiry_guard.spot_failed", ticker=ticker, error=str(exc))
+                spot = None
+            occs = dne_candidates(st, None if spot is None else Decimal(str(spot)), guard)
+            sent: set[str] = set()
+            for occ in occs:
+                res = do_not_exercise(
+                    ctx.conn,
+                    env.broker,
+                    occ=occ,
+                    ticker=ticker,
+                    structure_id=sid,
+                    settings=ctx.settings,
+                    now=now,
+                    expiry_day=window.expiry,
+                    cutoff=window.cutoff,
+                    held_long=True,  # a long leg of an open structure (dne_candidates)
+                    dry_run=not env.mint_tokens,
+                    run_id=ctx.run_id,
+                )
+                if res.sent:
+                    sent.add(occ)
+            out.metrics["dne_sent"] += len(sent)
+            legs = _leg_lines(st, spot, sent)
+            text = (
+                f"{ticker} expiry-day cutoff {window.cutoff:%H:%M} ET passed, still open "
+                f"(structure {sid[:8]}): no more close proposals; " + "; ".join(legs)
+            )
+            with ctx.conn:
+                journal.record(
+                    persona=JournalPersona.QUANT,
+                    stage=Stage.EXIT,
+                    subject=ticker,
+                    choice=Choice.NOTED,
+                    reason_code=ReasonCode.EXIT_EXPIRY_GUARD,
+                    reason_text=text,
+                    payload={
+                        "structure_id": sid,
+                        "spot": spot,
+                        "dne_candidates": occs,
+                        "dne_sent": sorted(sent),
+                        "legs": legs,
+                    },
+                    at=now,
+                    run_id=ctx.run_id,
+                )
+            out.lines.append(f"expiry cutoff: {ticker} {sid[:8]}")
+            out.alerts.append(text)
+    return out
+
+
 def exits_mandatory(ctx: JobContext, env: PipelineEnv) -> JobResult:
     """``exits.mandatory`` (E13.18, D56): the deterministic safety floor.
 
@@ -731,6 +916,15 @@ def exits_mandatory(ctx: JobContext, env: PipelineEnv) -> JobResult:
         res.summary = exits_mandatory_summary([tuple(c) for c in res.metrics["closes"]])
     else:
         res.summary = f"mandatory exits: {res.summary}"
+    # E11.4 (D73): the expiry guard's not-flat alert / opens-only halt and the
+    # expiry-day cutoff (DNE, per-leg alert), after this tick's close proposals.
+    sweep = expiry_sweep(ctx, env)
+    if sweep.lines:
+        res.summary += "; " + "; ".join(sweep.lines)
+    if sweep.alerts:
+        res.notice = "; ".join([n for n in (res.notice, *sweep.alerts) if n])
+    if any(sweep.metrics.values()):
+        res.metrics["expiry_guard"] = sweep.metrics
     return res
 
 

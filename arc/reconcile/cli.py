@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import argparse
@@ -42,6 +42,13 @@ def add_reconcile_parser(sub: argparse._SubParsersAction) -> None:  # type: igno
         default=None,
         help="Reconcile as of this tz-aware ISO time (default: now), e.g. 2026-10-05T16:30-04:00",
     )
+    p.add_argument(
+        "--activities",
+        action="store_true",
+        help="E11.4 (D73): print the paper account's OPASN/OPEXC/OPEXP/OPTRD activities "
+        "(read-only; no store, no reconcile)",
+    )
+    p.add_argument("--days", type=int, default=30, help="--activities look-back (default 30)")
 
 
 def run_reconcile(args: argparse.Namespace, *, broker: BrokerAdapter | None = None) -> int:
@@ -51,6 +58,8 @@ def run_reconcile(args: argparse.Namespace, *, broker: BrokerAdapter | None = No
     from arc.utils.calendar import now_et
 
     settings = get_settings()
+    if getattr(args, "activities", False):
+        return _print_activities(args, settings, broker)
     from arc.store.identity import open_store
 
     conn = open_store(args.db, settings=settings)  # D70: binds the store to ARC_ENV
@@ -101,3 +110,36 @@ def run_reconcile(args: argparse.Namespace, *, broker: BrokerAdapter | None = No
     out["performance"] = perf.model_dump() if perf else None
     sys.stdout.write(json.dumps(out, indent=2, default=str) + "\n")
     return 0 if report.clean else 1
+
+
+def _print_activities(args: argparse.Namespace, settings: Any, broker: BrokerAdapter | None) -> int:
+    """E11.4 (D73): the account's option NTAs, read-only (no store is opened)."""
+    import datetime as dt
+
+    from arc.config import ArcEnv
+    from arc.utils.calendar import now_et
+
+    if settings.env is not ArcEnv.PAPER:
+        sys.stderr.write("--activities is paper-only (ARC_ENV=paper)\n")
+        return 2
+    if broker is None:
+        from arc.broker.registry import BrokerNotAvailable, resolve_broker
+
+        try:
+            broker = resolve_broker(settings)  # E13.11: the registry is the only constructor
+        except BrokerNotAvailable as exc:
+            sys.stderr.write(f"broker refused: {exc}\n")
+            return 2
+    fetch = getattr(broker, "activities", None)
+    if not callable(fetch):
+        sys.stderr.write("this broker has no activities feed\n")
+        return 2
+    since = now_et().date() - dt.timedelta(days=max(int(args.days), 1))
+    rows = fetch(since, types=("OPASN", "OPEXC", "OPEXP", "OPTRD"))
+    if not rows:
+        sys.stdout.write(f"no OPASN/OPEXC/OPEXP/OPTRD activities since {since}\n")
+        return 0
+    for a in rows:
+        price = "" if a.price is None else f" @ {a.price}"
+        sys.stdout.write(f"{a.date} {a.activity_type} {a.symbol} qty {a.qty}{price} {a.id}\n")
+    return 0

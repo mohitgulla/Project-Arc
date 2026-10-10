@@ -10,6 +10,11 @@ it survives process restarts. This module owns the *policy*:
   ``!resume`` is not immediately undone by the same loss). The gate's
   ``daily_loss_halt`` rule still blocks new entries while the loss persists;
 - reading the state fails closed: if the store cannot be read, we are halted.
+- E11.4 (D73): a halt has a *scope*. ``all`` (every halt before D73) stops opens
+  and closes; ``opens`` (actor ``arc:expiry``) stops new opens only, so exits keep
+  running. ``HaltState.halted`` is True only for a scope-``all`` halt (or a read
+  error); ``HaltState.opens_only`` is True when every active halt is scope
+  ``opens``. Only the owner clears either.
 
 The gate itself stays pure: callers stamp the halt flag onto the
 :class:`~arc.gate.inputs.AccountSnapshot` with :meth:`HaltSwitch.apply` before
@@ -41,6 +46,7 @@ log = structlog.get_logger(__name__)
 __all__ = [
     "HaltKind",
     "HaltRecord",
+    "HaltScope",
     "HaltSwitch",
     "HaltState",
     "ResumeNotAuthorizedError",
@@ -52,6 +58,13 @@ __all__ = [
 class HaltKind(StrEnum):
     MANUAL = "manual"
     DAILY_LOSS = "daily_loss"
+
+
+class HaltScope(StrEnum):
+    """E11.4 (D73): what a halt stops."""
+
+    ALL = "all"  # opens and closes
+    OPENS = "opens"  # new opens only; exits keep running
 
 
 class HaltRecord(BaseModel):
@@ -67,16 +80,27 @@ class HaltRecord(BaseModel):
     cleared_at: dt.datetime | None = None
     cleared_by: str | None = None
     session_date: dt.date | None = None
+    scope: HaltScope = HaltScope.ALL
 
 
 class HaltState(BaseModel):
-    """Active halts at read time. ``halted`` is True on any active halt or a read error."""
+    """Active halts at read time.
+
+    ``halted`` is True on any active scope-``all`` halt or a read error (opens and
+    closes stop). ``opens_only`` is True when halts are active and every one is
+    scope ``opens`` (new opens stop, exits run). ``opens_blocked`` = either.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     halted: bool
     active: list[HaltRecord]
     error: str | None = None
+    opens_only: bool = False
+
+    @property
+    def opens_blocked(self) -> bool:
+        return self.halted or self.opens_only
 
 
 class ResumeNotAuthorizedError(PermissionError):
@@ -112,6 +136,7 @@ def _record(row: dict[str, object]) -> HaltRecord:
         cleared_at=_from_store(row.get("cleared_at")),  # type: ignore[arg-type]
         cleared_by=row.get("cleared_by"),  # type: ignore[arg-type]
         session_date=dt.date.fromisoformat(str(session)) if session else None,
+        scope=HaltScope(str(row.get("scope") or HaltScope.ALL.value)),
     )
 
 
@@ -144,16 +169,29 @@ class HaltSwitch:
         except Exception as exc:  # noqa: BLE001 — any read/parse error means halted
             log.error("halt.state_unreadable", error=str(exc))
             return HaltState(halted=True, active=[], error=f"{type(exc).__name__}: {exc}")
-        return HaltState(halted=bool(active), active=active)
+        full = any(h.scope is HaltScope.ALL for h in active)
+        return HaltState(halted=full, active=active, opens_only=bool(active) and not full)
 
     def is_halted(self) -> bool:
+        """True while a scope-``all`` halt is active (opens *and* closes stop)."""
         return self.state().halted
 
+    def opens_blocked(self) -> bool:
+        """True while any halt is active: new opens stop (E11.4: also opens-only halts)."""
+        return self.state().opens_blocked
+
     def apply(self, account: AccountSnapshot) -> AccountSnapshot:
-        """Return ``account`` with ``halted`` set from the store (never cleared by it)."""
-        if account.halted or not self.is_halted():
-            return account
-        return account.model_copy(update={"halted": True})
+        """Return ``account`` with ``halted`` / ``opens_halted`` set from the store.
+
+        Never clears a flag the caller already set.
+        """
+        state = self.state()
+        update: dict[str, bool] = {}
+        if state.halted and not account.halted:
+            update["halted"] = True
+        if state.opens_only and not account.opens_halted:
+            update["opens_halted"] = True
+        return account.model_copy(update=update) if update else account
 
     # -- write -----------------------------------------------------------
 
@@ -165,8 +203,12 @@ class HaltSwitch:
         now: dt.datetime,
         kind: HaltKind = HaltKind.MANUAL,
         run_id: str | None = None,
+        scope: HaltScope = HaltScope.ALL,
     ) -> HaltRecord:
-        """Raise a halt immediately. Anyone may halt; repeated halts stack (all must clear)."""
+        """Raise a halt immediately. Anyone may halt; repeated halts stack (all must clear).
+
+        ``scope=HaltScope.OPENS`` (E11.4, D73) stops new opens only.
+        """
         at = _to_store(now)
         session = now.astimezone(ET).date()
         halt_id = self._repo.halt(
@@ -176,6 +218,7 @@ class HaltSwitch:
             session_date=session.isoformat(),
             at=at,
             run_id=run_id,
+            scope=scope.value,
         )
         return HaltRecord(
             id=halt_id,
@@ -184,7 +227,20 @@ class HaltSwitch:
             actor=actor,
             at=now.astimezone(ET),
             session_date=session,
+            scope=scope,
         )
+
+    def halt_opens_once(
+        self, *, actor: str, reason: str, now: dt.datetime, run_id: str | None = None
+    ) -> HaltRecord | None:
+        """E11.4 (D73): raise an opens-only halt at most once per ET session per
+        ``(actor, reason)`` (an owner ``!resume`` is not undone by the next tick).
+        Returns the new halt, or ``None`` when this session already had it.
+        """
+        session = now.astimezone(ET).date().isoformat()
+        if self._repo.exists_for_reason(actor=actor, reason=reason, session_date=session):
+            return None
+        return self.halt(actor=actor, reason=reason, now=now, run_id=run_id, scope=HaltScope.OPENS)
 
     def resume(self, *, actor: str, config: ArcSettings, now: dt.datetime) -> list[HaltRecord]:
         """Clear every active halt. Only ``config.owner_slack_user_id`` may resume.
@@ -232,6 +288,7 @@ def evaluate_with_halt(
     now: dt.datetime,
     band: PriceBand | None = None,
     closing: bool = False,
+    close_max_steps: int | None = None,
 ) -> GateDecision:
     """The gate as callers must run it: persisted halt state stamped in, then :func:`evaluate`."""
     return evaluate(
@@ -243,4 +300,5 @@ def evaluate_with_halt(
         now=now,
         band=band,
         closing=closing,
+        close_max_steps=close_max_steps,
     )

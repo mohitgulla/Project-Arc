@@ -213,6 +213,7 @@ class LadderContext:
     actor: str = _ACTOR
     heartbeat: Callable[[], None] | None = None
     stale_detail: str = ""
+    closing: bool = False  # E11.4 (D73): a close passes an opens-only halt
 
     @property
     def orders(self) -> OrderRepo:
@@ -345,6 +346,7 @@ def _attempt(c: _Ctx, step: int, price: Decimal) -> tuple[AttemptRecord, str]:
             config=c.config,
             now=c.clock(),
             halt=c.halt,
+            closing=c.closing,
             step=step,
             limit_price=price,
         )
@@ -630,6 +632,7 @@ def execute(
         approval=approval,
         heartbeat=heartbeat,
     )
+    c.closing = kind == "close"
     try:
         return _execute(c, band, version, kind, structure_id, priced_at, fresh_mid)
     except ExecutionAdoptedError as exc:
