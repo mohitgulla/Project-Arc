@@ -316,19 +316,25 @@ they are never dropped.
     all → the core list (`Never Resolved`). Never a blank page.
   - Pinned summary card: `Active 50/50 · Core 25 · Momentum 17 · Trending 0 · Discovery 8`,
     the resolve state, its age and config version.
-  - One table per tier, Core → Momentum → Discovery → Trending (E14.8, D64): header =
-    `20 names` (core) / `top 20 of 24 listed` (momentum: tier size vs feed rows) /
-    `25 names (3 carried)` (discovery, trending), then `source · refreshed <age> · active n /
-    size`, data date, `Partial` / `Expired` pills. Rows by rank: Core `# · Ticker · Picked ·
-    Trades · ST`; Momentum adds `SPMO wt`; Discovery `Score · Today / Prev · Stance · Sources`;
-    Trending `Score · Today / Prev · Inputs`. Picked = distinct days with a `candidates` row,
-    Trades = `proposals` rows (both last 20 sessions); ST = Stocktwits `80% bull` (≥ 60 % pos,
-    ≤ 40 % neg, `—` when none). Phones keep ticker + 2 key columns; tapping a row expands the
-    rest plus In tier (sessions of 20), velocity, the reason and `also in <tier>`.
-  - Today's Pick (Overview) rows: `TICKER · score · 80% bull` (combined score, toned
-    sentiment, no velocity); below 400 px the sentiment stacks under the score.
-  - **Dropped** (ticker · tier · reason in words), then **Market Reference**
-    (`SPY QQQ (regime only, not traded)`) and the Director diversification mode.
+  - One section per tier, Core → Momentum → Discovery → Trending (E14.10, D67; was E14.8
+    tables): header = `20 names` (core) / `top 20 of 24 listed` (momentum: tier size vs feed
+    rows) / `25 names (3 carried)` (discovery, trending), then `source · refreshed <age> ·
+    active n / size`, data date, `Partial` / `Expired` pills; then a **4-column pill grid**
+    (`TickerPill` + `PillGrid`, `grid-cols-4` at every width, equal cells, fixed height) of the
+    tier's active names by rank. Pill = ticker (semibold, truncated), a muted micro score on
+    Discovery / Trending, a hollow ring for `carried` and a dot for `also in` (titles explain).
+  - Click / tap a pill → its detail panel, full width under the pill's grid row (accordion,
+    one open, Esc or a second click closes, `aria-expanded`): Rank, Picked (20d), Trades (20d),
+    SPMO Weight (momentum), Score + Today / Prev, Stance + Sources (discovery), Inputs
+    (trending), then In tier (sessions of 20), carried from, velocity, reason, `also in`.
+    The open pill is in the URL: `/ops/universe?t=<TICKER>` deep-links to it.
+  - **No Stocktwits sentiment (ST)** on this page or Today's Pick (D67).
+  - Today's Pick (Overview): Discovery then Trending stacked, header `Discovery (n)` (n =
+    active), the same 4-column pill grid (ticker + score), at most 12 per tier then `+k more`
+    → Ops › Universe, `None today` when empty; a pill opens `/ops/universe?t=<TICKER>`.
+  - **Market Reference** stays one visible line (`SPY QQQ (regime only, not traded)`); tail
+    cuts, dropped (ticker · tier · reason in words), the Scout discovery fill and the Research
+    diversification mode sit in one `Dropped & Reference (n)` disclosure, closed by default.
 - **Run detail** (`/ops/runs/:runId`, `pages/RunDetail.tsx`, E8.8e) is concise:
   - Summary card: job label + persona chip (routines.yaml), status, duration, trigger,
     scheduled-for, config version, git sha (12, copy-on-tap), LLM cost + tokens, attempt,
@@ -394,5 +400,5 @@ they are never dropped.
 - **Idea Funnel card** (Performance, full width, follows the page range): one ProgressRow per
   stage with the feed split and the stage-over-stage % on the right; top sources (capped);
   the discovery-fill line.
-- **Universe**: a `Tail Cuts` card (chips with `#rank in Tier`) before Dropped; the summary
-  card adds `Discovery fill n / 20 today (Scout)` under d56.
+- **Universe**: a `Tail Cuts` list (chips with `#rank in Tier`) inside the `Dropped &
+  Reference` disclosure (E14.10), with `Discovery fill n / 20 today (Scout)` under d56.

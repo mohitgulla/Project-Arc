@@ -10,12 +10,14 @@ import { Freshness } from "../components/Freshness";
 import { InfoTip } from "../components/InfoTip";
 import { KeyValueList } from "../components/KeyValueList";
 import { Money } from "../components/Money";
+import { PillGrid } from "../components/PillGrid";
 import { ProgressRow } from "../components/ProgressRow";
 import { ProportionBar } from "../components/ProportionBar";
 import { RangeControl } from "../components/RangeControl";
 import { StatCard } from "../components/StatCard";
 import { StatusStepper } from "../components/StatusStepper";
 import { StructureLabel, structureText } from "../components/StructureLabel";
+import { TickerPill } from "../components/TickerPill";
 import { Tile, TileRow } from "../components/Tile";
 import { TrendChart } from "../components/TrendChart";
 import { num } from "../lib/api";
@@ -47,20 +49,19 @@ import {
   type OverviewRange,
 } from "../lib/overview";
 import {
+  alsoInTitle,
+  carriedTitle,
   memberDetail,
+  moreLabel,
   pickHeader,
   pickScore,
   pickSections,
   PICK_LEGEND_INFO,
-  sentimentText,
-  sentimentTone,
+  universeHref,
   type Universe,
 } from "../lib/universe";
 import { useMeta, useOps, useOverview } from "../lib/useApi";
 import { PositionsTable } from "./PositionsTable";
-
-/** E14.8: Today's Pick sentiment tone (≥ 60 % bull pos, ≤ 40 % neg). */
-const PICK_TONE = { pos: "text-pos-text", neg: "text-neg-text", neutral: "text-secondary" } as const;
 
 const PROPOSAL_STAGES = ["proposed", "gate", "approval", "execution", "filled"] as const;
 
@@ -557,8 +558,9 @@ function ProposalsCard({ o }: { o: Overview }) {
   );
 }
 
-/** D59: Today's Pick, two compact columns (Discovery | Trending): the top 10 active names of
- *  each fast-changing tier with their score. Core and momentum stay on Ops › Universe. */
+/** D59 / E14.10 (D67): Today's Pick, two stacked sections (Discovery, then Trending), each a
+ *  4-column pill grid of the tier's active names by rank (ticker + score, at most 12, then
+ *  `+k more` → Ops › Universe). A pill opens that name's Universe panel (`?t=`). */
 function PickCard() {
   const q = useOps("/api/ops/universe");
   const u = q.data as Universe | undefined;
@@ -567,57 +569,50 @@ function PickCard() {
       title="Today's Pick"
       testid="picks"
       action={{ label: "VIEW ALL", to: "/ops/universe" }}
+      headerExtra={<InfoTip label="About Today's Pick">{PICK_LEGEND_INFO}</InfoTip>}
       subtitle={<span data-testid="pick-asof">{u?.resolved_at ? <>as of {formatEt(u.resolved_at)} ET</> : "not resolved yet"}</span>}
     >
       {!u ? (
         <EmptyState caption={q.isError ? "Could not load the universe." : "Loading…"} />
       ) : (
-        <div className="grid grid-cols-2 gap-x-6">
-          {pickSections(u).map((sec) => (
-            <div key={sec.tier} className="min-w-0" data-testid="pick-tier" data-tier={sec.tier}>
-              <div className="mb-1 flex items-center justify-between gap-1 border-b border-line pb-1">
-                <span className="truncate text-caption font-semibold text-secondary tabular-nums" data-testid="pick-header">
-                  {pickHeader(sec)}
-                </span>
-                <span className="inline-flex shrink-0 items-center text-micro text-muted" data-testid="pick-legend">
-                  <span className="max-[400px]:hidden">score · ST</span>
-                  <InfoTip label={`About the ${sec.label} columns`}>{PICK_LEGEND_INFO}</InfoTip>
-                </span>
+        <div className="grid gap-3">
+          {pickSections(u).map((sec) => {
+            const more = moreLabel(sec.more);
+            return (
+              <div key={sec.tier} className="min-w-0" data-testid="pick-tier" data-tier={sec.tier}>
+                <div className="mb-1.5 border-b border-line pb-1">
+                  <span className="text-caption font-semibold text-secondary tabular-nums" data-testid="pick-header">
+                    {pickHeader(sec)}
+                  </span>
+                </div>
+                {sec.rows.length === 0 ? (
+                  <p className="py-1.5 text-caption text-muted">None today</p>
+                ) : (
+                  <PillGrid
+                    items={sec.rows}
+                    keyOf={(m) => m.ticker}
+                    testid="pick-grid"
+                    renderPill={(m) => (
+                      <TickerPill
+                        ticker={m.ticker}
+                        score={pickScore(m)}
+                        carriedTitle={carriedTitle(m)}
+                        alsoTitle={alsoInTitle(m)}
+                        to={universeHref(m.ticker)}
+                        title={memberDetail(m).join("\n")}
+                        testid="pick-pill"
+                      />
+                    )}
+                  />
+                )}
+                {more && (
+                  <Link to="/ops/universe" className="arc-action mt-1 inline-block text-caption" data-testid="pick-more">
+                    {more}
+                  </Link>
+                )}
               </div>
-              {sec.rows.length === 0 ? (
-                <p className="py-1.5 text-caption text-muted">None today</p>
-              ) : (
-                <ul data-testid="pick-rows">
-                  {sec.rows.map((m) => {
-                    const score = pickScore(m);
-                    const tone = m.sentiment_bull_pct == null ? "text-muted" : PICK_TONE[sentimentTone(m.sentiment_bull_pct)];
-                    return (
-                      <li key={m.ticker} data-testid="pick-row" data-ticker={m.ticker}>
-                        <Link
-                          to="/ops/universe"
-                          title={memberDetail(m).join("\n")}
-                          className="flex min-h-[28px] items-center justify-between gap-2 hover:bg-hover max-tablet:min-h-[32px]"
-                        >
-                          <span className="truncate font-semibold text-title">{m.ticker}</span>
-                          <span className="flex shrink-0 items-baseline gap-1 text-caption tabular-nums max-[400px]:flex-col max-[400px]:items-end max-[400px]:gap-0">
-                            <span className="text-secondary" data-testid="pick-score">
-                              {score ?? "—"}
-                            </span>
-                            <span className="text-muted max-[400px]:hidden" aria-hidden="true">
-                              ·
-                            </span>
-                            <span className={`${tone} max-[400px]:text-micro`} data-testid="pick-st">
-                              {sentimentText(m)}
-                            </span>
-                          </span>
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </Card>
