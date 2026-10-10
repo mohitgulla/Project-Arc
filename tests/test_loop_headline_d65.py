@@ -467,7 +467,7 @@ class TestRecapBroadcast:
             )
         )
         recap = CardView(
-            text=":rolled_up_newspaper: *Thu Oct 8 • Day Recap*\n_*Red day.*_",
+            text=":rolled_up_newspaper: *Thu Oct 8 · Day Recap*\n\n_*Red day.*_",
             blocks=[],
             broadcast=True,
         )
@@ -517,7 +517,8 @@ class TestRecapBroadcast:
         view = _day_recap(SimpleNamespace(conn=conn), report)  # type: ignore[arg-type]
         assert view is not None and view.broadcast and view.blocks == []
         assert view.text.split("\n") == [
-            ":rolled_up_newspaper: *Thu Oct 8 • Day Recap*",
+            ":rolled_up_newspaper: *Thu Oct 8 · Day Recap*",
+            "",
             "_*Red day: -$1,946 (-2.0%) on 1 open and 2 closes; biggest hit META -$8,765.*_",
         ]
 

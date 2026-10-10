@@ -46,6 +46,7 @@ from arc.store.db import connect
 from arc.store.migrate import migrate
 from arc.structures import credit_vertical, long_call
 from tests import exits_v1_golden as golden
+from tests.golden_compare import assert_json_close
 from tests.test_positions_steps import LONG_CALL, NOW, _env_with, _held, _open, _run
 
 if TYPE_CHECKING:
@@ -276,17 +277,14 @@ def test_rollback_values_reproduce_main_exactly() -> None:
             return {k: strip(v) for k, v in x.items() if k not in new}
         if isinstance(x, list):
             return [strip(v) for v in x]
-        if isinstance(x, float):
-            # 10 significant digits: numpy's summation order differs by platform
-            # (macOS vs the Linux CI runner) in the last ulp of a few derived ratios
-            return float(f"{x:.10g}")
         return x
 
+    # Floats to 1e-12 relative (tests/golden_compare): numpy's summation order differs
+    # by platform (macOS vs the Linux CI runner) in the last ulp of a few derived ratios.
+    # Rounding to N digits instead still flakes when a value sits on a rounding boundary.
     assert set(got) == set(want)
     for key in want:
-        assert json.dumps(strip(got[key]), sort_keys=True) == json.dumps(
-            strip(want[key]), sort_keys=True
-        ), key
+        assert_json_close(strip(got[key]), strip(want[key]), key)
 
 
 # -- registry rollback keys -------------------------------------------------------------

@@ -1337,11 +1337,13 @@ dropped rather than wrapped. It is rebuilt from the chain's journal with the roo
 so a later fill or approval updates it. `HOLD (skip)` slots (inputs unchanged,
 D31) get a fixed one-liner.
 
-After the 16:30 `broker.reconcile`, a `:rolled_up_newspaper: Thu Oct 8 • Day Recap` reply
+After the 16:30 `broker.reconcile`, a `:rolled_up_newspaper: Thu Oct 8 · Day Recap` reply
 posts in the day's Session Notes thread with "Also send to #arc-investor" ticked
-(`reply_broadcast`), e.g.:
+(`reply_broadcast`): the bold title, a blank line, then the headline, e.g.:
 
 ```
+:rolled_up_newspaper: *Thu Oct 8 · Day Recap*
+
 _*Red day: -$1,946 (-2.0%) on 2 opens and 5 closes; biggest hit META -$8,765.*_
 ```
 
