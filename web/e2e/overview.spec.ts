@@ -58,11 +58,13 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByText("NO", { exact: true }).or(page.getByText("not held")).first()).toBeVisible();
         await expect(page.getByTestId("proposals").locator(":scope > li")).toHaveCount(9);
         await expect(page.getByTestId("proposals")).toContainText("per_underlying_limit");
-        // D59: Today's Pick = two compact columns, Discovery then Trending (ticker + score,
-        // top 10), headers `Tier (shown of active)`; VIEW ALL opens Ops > Universe.
+        // D59 / E14.10 (D67): Today's Pick = two stacked pill sections, Discovery then Trending,
+        // headers `Tier (active)`; VIEW ALL opens Ops > Universe; no ST anywhere.
         const picks = page.getByTestId("picks");
         await expect(picks.getByTestId("pick-header")).toHaveCount(2);
-        await expect(picks.getByTestId("pick-header").first()).toHaveText(/^Discovery \(\d+ of \d+\)$/);
+        await expect(picks.getByTestId("pick-header").first()).toHaveText(/^Discovery \(\d+\)$/);
+        await expect(picks.getByTestId("pick-st")).toHaveCount(0);
+        await expect(picks).not.toContainText(/\d+% bull/);
         await expect(picks.getByRole("link", { name: /VIEW ALL/ })).toHaveAttribute("href", "/ops/universe");
         await expect(picks.getByTestId("pick-asof")).toBeVisible();
         // Column headers are caption size, smaller than the card title.
@@ -120,8 +122,9 @@ test.describe("overview behaviour", () => {
   });
 
   test("stale badge appears once the last monitor mark is older than 3x the cadence", async ({ page }) => {
-    // The fixture's last mark is 2 min before server start; move the browser clock 20 min on.
-    await page.clock.install({ time: Date.now() + 20 * 60_000 });
+    // The fixture's last mark is 2 min before server start; move the browser clock 45 min on
+    // (past 3x the monitor cadence: the badge reads "stale after 30m" since the 10-min tick).
+    await page.clock.install({ time: Date.now() + 45 * 60_000 });
     await open(page, "/", "light");
     await expect(page.getByTestId("greeks-freshness")).toHaveAttribute("data-freshness", "stale");
     await expect(page.getByTestId("greeks-freshness")).toContainText("stale ·");

@@ -51,12 +51,11 @@ export function dropLabel(reason: string): string {
   return DROP_LABEL[reason] ?? reason.replace(/_/g, " ");
 }
 
-/** A chip's detail lines: source, reason, `also in Momentum, Discovery`. */
+/** A pill's hover title lines: source, reason, `also in Momentum, Discovery`. */
 export function memberDetail(m: UniverseActive): string[] {
   const out = [`#${m.rank} in ${tierLabel(m.tier)} · source ${m.source || "—"}`];
   if (m.inputs != null) out.push(m.inputs >= 2 ? "in both inputs" : "in one input");
   if (m.velocity_detail) out.push(`mention velocity: ${m.velocity_detail}`);
-  if (m.sentiment) out.push(`Stocktwits: ${m.sentiment.replace(/^ST /, "")}`);
   if (m.reason) out.push(m.reason);
   const also = m.also_in ?? [];
   if (also.length) out.push(`also in ${also.map(tierLabel).join(", ")}`);
@@ -82,23 +81,11 @@ export function tierActiveLine(t: Pick<UniverseTier, "active" | "size_cap">): st
 }
 
 // ---------------------------------------------------------------------------
-// E14.8 (D64): per-row values for Today's Pick and the Ops › Universe tables
+// E14.8 (D64): per-name values for Today's Pick and the Ops › Universe pill details.
+// E14.10 (D67): Stocktwits sentiment (ST) is no longer shown on either view.
 // ---------------------------------------------------------------------------
 
-export type SentimentTone = "pos" | "neg" | "neutral";
-
-/** ≥ 60 % bull = pos, ≤ 40 % = neg, otherwise neutral (null = no reading). */
-export function sentimentTone(pct: number | null | undefined): SentimentTone {
-  if (pct == null) return "neutral";
-  if (pct >= 60) return "pos";
-  if (pct <= 40) return "neg";
-  return "neutral";
-}
-
-/** `80% bull` (0 dp) or `—` (no retail_sentiment entry, or too few tags). */
-export function sentimentText(m: Pick<UniverseActive, "sentiment_bull_pct">): string {
-  return m.sentiment_bull_pct == null ? "—" : `${Math.round(m.sentiment_bull_pct)}% bull`;
-}
+export type StanceTone = "pos" | "neg" | "neutral";
 
 /** The combined score, 2 dp; pre-D64 rows fall back to the reason's `score x.xx`. */
 export function pickScore(m: Pick<UniverseActive, "score" | "source" | "reason">): string | null {
@@ -130,31 +117,28 @@ export function weightText(m: Pick<UniverseActive, "weight_pct">): string {
 }
 
 /** `Bullish` / `Bearish` + tone, or null. */
-export function stancePill(m: Pick<UniverseActive, "stance">): { label: string; tone: SentimentTone } | null {
+export function stancePill(m: Pick<UniverseActive, "stance">): { label: string; tone: StanceTone } | null {
   if (!m.stance) return null;
   const s = m.stance.toLowerCase();
   return { label: tierLabel(s), tone: s === "bullish" ? "pos" : s === "bearish" ? "neg" : "neutral" };
 }
 
-/** Column ⓘ texts (E14.8). */
+/** Detail-field ⓘ texts (E14.8; E14.10 shows them as the field label's title). */
 export const COLUMN_INFO = {
   picked: "Days this name became a trade idea, last 20 sessions.",
   trades: "Proposals built, last 20 sessions.",
-  st: "Stocktwits bullish share of user-tagged messages (≥ 60 % green, ≤ 40 % red).",
   score: "2-run combined score: 0.6 × today + 0.4 × the previous run.",
   weight: "The name's weight in the SPMO momentum ETF.",
 } as const;
 
-export const PICK_LEGEND_INFO =
-  "Score: 2-run combined (0.6 today + 0.4 previous run). ST: Stocktwits bullish share of user-tagged messages.";
+export const PICK_LEGEND_INFO = "Score: 2-run combined (0.6 today + 0.4 previous run). Tap a name for its details.";
 
-/** Row detail lines (tap / expand): In tier, velocity, Stocktwits string, reason, also-in. */
+/** Detail lines under a pill's fields: In tier, carried from, velocity, reason, also-in. */
 export function rowDetail(m: UniverseActive): string[] {
   const out: string[] = [];
   if (m.in_tier_20d != null) out.push(`In tier ${m.in_tier_20d} of the last 20 sessions`);
   if (m.carried && m.runs?.length) out.push(`carried from ${m.runs[0]}`);
   if (m.velocity_detail) out.push(`mention velocity: ${m.velocity_detail}`);
-  if (m.sentiment) out.push(`Stocktwits: ${m.sentiment.replace(/^ST /, "")}`);
   if (m.reason) out.push(m.reason);
   const also = m.also_in ?? [];
   if (also.length) out.push(`also in ${also.map(tierLabel).join(", ")}`);
@@ -205,7 +189,8 @@ export function tailCutDetail(d: UniverseDropped): string {
 /** The fast-changing tiers the Overview widget shows, in active-list order (D58). */
 export const PICK_TIERS = ["discovery", "trending"] as const;
 export type PickTier = (typeof PICK_TIERS)[number];
-export const PICK_TOP = 10;
+/** E14.10 (D67): at most 12 pills per tier (3 rows of 4), then `+k more`. */
+export const PICK_TOP = 12;
 
 export interface PickSection {
   tier: PickTier;
@@ -214,6 +199,8 @@ export interface PickSection {
   rows: UniverseActive[];
   /** Active members of the tier (before the top-N cut). */
   active: number;
+  /** Active names not shown (active − rows): the `+k more` count. */
+  more: number;
   /** Names the tier lost past the active-list cap today. */
   cut: number;
 }
@@ -226,13 +213,19 @@ export function pickSections(
   const cuts = u.tail_cuts?.length ? u.tail_cuts : (u.dropped ?? []).filter((d) => d.reason === "over_active_cap");
   return PICK_TIERS.map((tier) => {
     const all = membersOf(u.active, tier);
-    return { tier, label: tierLabel(tier), rows: all.slice(0, top), active: all.length, cut: cuts.filter((d) => d.tier === tier).length };
+    const rows = all.slice(0, top);
+    return { tier, label: tierLabel(tier), rows, active: all.length, more: all.length - rows.length, cut: cuts.filter((d) => d.tier === tier).length };
   });
 }
 
-/** Column header: `Trending (10 of 17)` = names shown of names in the active list. */
-export function pickHeader(s: Pick<PickSection, "label" | "rows" | "active">): string {
-  return `${s.label} (${s.rows.length} of ${s.active})`;
+/** Section header: `Trending (14)` = the tier's active count (E14.10). */
+export function pickHeader(s: Pick<PickSection, "label" | "active">): string {
+  return `${s.label} (${s.active})`;
+}
+
+/** `+2 more` under a capped pill grid, or null when every name is shown. */
+export function moreLabel(more: number): string | null {
+  return more > 0 ? `+${more} more` : null;
 }
 
 const SOURCE_WORDS: Record<string, string> = { reddit: "Reddit", stocktwits: "Stocktwits", scout: "Scout", youtube: "YouTube" };
@@ -245,4 +238,81 @@ export function pickRow(m: Pick<UniverseActive, "source" | "reason">): { source:
   const rest = match ? (m.reason ?? "").slice(0, match.index) : (m.reason ?? "");
   const detail = rest.replace(/\b(reddit|stocktwits|scout|youtube)\b/gi, (w) => sourceWord(w)).trim();
   return { source, detail, score: match ? match[1]! : null };
+}
+
+// ---------------------------------------------------------------------------
+// E14.10 (D67): 4-column pill grids, click-through details, `?t=` deep link
+// ---------------------------------------------------------------------------
+
+/** Every pill grid has 4 columns at every width. */
+export const GRID_COLS = 4;
+
+/** Split items into grid rows of `cols` (a detail panel goes in below its pill's row). */
+export function gridRows<T>(items: readonly T[], cols: number = GRID_COLS): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += cols) out.push(items.slice(i, i + cols));
+  return out;
+}
+
+/** The `?t=` deep-link ticker, upper-cased; null when absent or not ticker-shaped. */
+export function tickerParam(search: string | URLSearchParams): string | null {
+  const p = typeof search === "string" ? new URLSearchParams(search) : search;
+  const t = (p.get("t") ?? "").trim().replace(/^\$/, "").toUpperCase();
+  return /^[A-Z0-9][A-Z0-9.-]{0,9}$/.test(t) ? t : null;
+}
+
+/** `/ops/universe?t=NVDA` (Today's Pick → that name's Universe panel). */
+export function universeHref(ticker: string): string {
+  return `/ops/universe?t=${encodeURIComponent(ticker)}`;
+}
+
+/** Pill score: on the fast tiers (Discovery, Trending) only. */
+export function pillScore(m: Pick<UniverseActive, "tier" | "score" | "source" | "reason">): string | null {
+  return m.tier === "discovery" || m.tier === "trending" ? pickScore(m) : null;
+}
+
+/** Pill marker titles: `Carried from 2026-10-07`, `Also in Trending`. */
+export function carriedTitle(m: Pick<UniverseActive, "carried" | "runs">): string | null {
+  if (!m.carried) return null;
+  return m.runs?.length ? `Carried from ${m.runs[0]}` : "Carried from the previous run";
+}
+
+export function alsoInTitle(m: Pick<UniverseActive, "also_in">): string | null {
+  const also = m.also_in ?? [];
+  return also.length ? `Also in ${also.map(tierLabel).join(", ")}` : null;
+}
+
+export interface PillFact {
+  key: string;
+  label: string;
+  value: string;
+  info?: string;
+}
+
+/** The detail panel's fields: everything the E14.8 columns showed, except ST. */
+export function pillFacts(m: UniverseActive): PillFact[] {
+  const out: PillFact[] = [
+    { key: "rank", label: "Rank", value: `#${m.rank} in ${tierLabel(m.tier)}` },
+    { key: "picked", label: "Picked (20d)", value: String(m.picked_20d ?? 0), info: COLUMN_INFO.picked },
+    { key: "trades", label: "Trades (20d)", value: String(m.proposals_20d ?? 0), info: COLUMN_INFO.trades },
+  ];
+  if (m.tier === "momentum") out.push({ key: "weight", label: "SPMO Weight", value: weightText(m), info: COLUMN_INFO.weight });
+  if (m.tier === "discovery" || m.tier === "trending") {
+    out.push({ key: "score", label: "Score", value: pickScore(m) ?? "—", info: COLUMN_INFO.score });
+    out.push({ key: "today-prev", label: "Today / Prev", value: todayPrev(m) });
+  }
+  if (m.tier === "discovery") {
+    const s = stancePill(m);
+    if (s) out.push({ key: "stance", label: "Stance", value: s.label });
+    out.push({ key: "sources", label: "Sources", value: sourcesLabel(m) });
+  }
+  if (m.tier === "trending") out.push({ key: "inputs", label: "Inputs", value: inputsLabel(m) });
+  return out;
+}
+
+/** Names behind the `Dropped & Reference (n)` disclosure: tail cuts ∪ dropped, by tier + ticker. */
+export function droppedCount(u: Pick<Universe, "tail_cuts" | "dropped">): number {
+  const keys = new Set<string>();
+  for (const d of [...(u.tail_cuts ?? []), ...(u.dropped ?? [])]) keys.add(`${d.tier}:${d.ticker}`);
+  return keys.size;
 }

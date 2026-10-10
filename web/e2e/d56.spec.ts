@@ -56,8 +56,11 @@ for (const vp of VIEWPORTS) {
 
     test("universe shows the tail cuts", async ({ page }) => {
       await open(page, "/ops/universe");
+      // E14.10 (D67): tail cuts live in the closed `Dropped & Reference` disclosure
+      await page.getByTestId("uni-dropped-ref").locator("summary").click();
       await expect(page.getByTestId("uni-tail-cuts")).toBeVisible();
-      await expect(page.getByTestId("uni-tail-cut")).toHaveCount(2);
+      // the --ops fixture's resolve cuts one name at the active cap (BBAI, discovery)
+      await expect(page.getByTestId("uni-tail-cut")).toHaveCount(1);
       await expect(page.getByTestId("uni-tail-cut").first()).toContainText("Discovery");
       await expectNoOverflow(page);
       await page.screenshot({ path: `e2e/screenshots/d56-universe-${vp.name}.png`, fullPage: true });
