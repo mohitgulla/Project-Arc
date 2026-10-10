@@ -263,13 +263,14 @@ class GateDecisionRepo:
         run_id: str | None = None,
         id: str | None = None,
         commit: bool = True,
+        ref_time: str = "wall",
     ) -> str:
         row_id = id or _uuid()
         self.conn.execute(
             """INSERT INTO gate_decisions
                (id, proposal_hash, passed, violations_json, token,
-                account_snapshot, decided_at, run_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                account_snapshot, decided_at, run_id, ref_time)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row_id,
                 proposal_hash,
@@ -279,6 +280,7 @@ class GateDecisionRepo:
                 json.dumps(account_snapshot or {}),
                 decided_at or _now_iso(),
                 run_id,
+                ref_time,
             ),
         )
         if commit:

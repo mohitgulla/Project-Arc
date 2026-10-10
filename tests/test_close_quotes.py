@@ -91,6 +91,43 @@ def test_future_quote_is_stale() -> None:
     assert codes(close_quote_sanity(q, NOW, cfg())) == ["stale"]
 
 
+def test_replayed_close_quotes_age_on_the_paired_chain_clock() -> None:
+    """E10.2d: an arm's close priced from control's tape 90 s late: same age as control."""
+    late = [
+        lq(C768, 11.01, 11.04, side=LegIntent.SHORT, age=91, curve=11.03),
+        lq(C769, 10.35, 10.36, age=91, curve=10.40),
+    ]
+    out = close_quote_sanity(late, NOW, cfg())  # plain path: wall clock
+    assert codes(out) == ["stale", "stale"] and "paired-chain" not in out[0]
+    replayed = [q.model_copy(update={"tape_lag_s": 90.0}) for q in late]
+    assert close_quote_sanity(replayed, NOW, cfg()) == []  # arm path: 1 s old, as control saw
+    # a quote already stale for control stays stale, and says which clock judged it
+    old = [q.model_copy(update={"tape_lag_s": 20.0}) for q in late]
+    out = close_quote_sanity(old, NOW, cfg())
+    assert codes(out) == ["stale", "stale"] and "71s old" in out[0]
+    assert "paired-chain clock" in out[0]
+
+
+def test_leg_quotes_and_snapshot_carry_tape_lags() -> None:
+    from arc.pipeline.market import PricedStructure
+    from arc.structures import analyze
+
+    c = OptionContract.model_validate(
+        {"symbol": C768, "underlying": "SPY", "expiration": EXP.isoformat(), "strike": 768,
+         "option_type": "call", "bid": 11.0, "ask": 11.1, "mid": 11.05,
+         "quote_timestamp": (NOW - dt.timedelta(seconds=95)).isoformat()}
+    )  # fmt: skip
+    st = analyze([Leg(occ_symbol=C768, side=LegIntent.LONG, premium=D("11.05"))], as_of=EXP)
+    priced = PricedStructure(st, {C768: c}, tape_lags={C768: dt.timedelta(seconds=90)})
+    [q] = priced.leg_quotes()
+    assert q.tape_lag_s == 90.0
+    ref = priced.quote_ref_times(NOW)
+    assert ref == {C768: NOW - dt.timedelta(seconds=90)}
+    snap = market_snapshot(priced.contracts, {}, quote_ref_time={**ref, "NOT_A_LEG": NOW})
+    assert snap.quote_ref_time == ref  # only legs with a gate quote
+    assert PricedStructure(st, {C768: c}).leg_quotes()[0].tape_lag_s is None
+
+
 def test_skewed_legs_block() -> None:
     q = sane()
     q[1] = lq(C769, 10.35, 10.36, age=40, curve=10.40)  # fresh, but 39 s after the other leg

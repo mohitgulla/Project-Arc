@@ -205,6 +205,89 @@ def test_pair_skips_a_stale_control_chain(control: Path, tmp_path: Path) -> None
     assert arm.execute("SELECT count(*) FROM routine_runs").fetchone()[0] == 0
 
 
+def _gate_rows(c: sqlite3.Connection) -> list[dict[str, object]]:
+    return [
+        {
+            "ticker": r["ticker"],
+            "passed": r["passed"],
+            "ref_time": r["ref_time"],
+            "violations": json.loads(r["violations_json"]),
+            "decided_at": r["decided_at"],
+        }
+        for r in c.execute(
+            """SELECT p.ticker, g.passed, g.ref_time, g.violations_json, g.decided_at
+               FROM gate_decisions g JOIN proposals p USING (proposal_hash)
+               ORDER BY p.ticker, g.decided_at"""
+        )
+    ]
+
+
+@pytest.mark.parametrize("profile", [None, "cash_debit"])
+def test_arm_paired_late_gates_replayed_quotes_as_control_did(
+    control: Path, tmp_path: Path, profile: str | None
+) -> None:
+    """E10.2d: the arm pairs 120 s after control and replays control's tape.
+
+    The recorded fixture chain's quotes were 1-43 s old at control's clock; at the
+    arm's clock they are 121-163 s old (> quote_max_age_seconds 60), the XP-10
+    stale_data bias. Aged against the paired chain's clock the arm's gate decides
+    exactly as control's did, and every arm decision records ``paired_chain``.
+    """
+    conn = _db(control)
+    stores = start_arms(
+        conn, "XP-1", actor="local", now=T0, t0_equity=D(100000),  # = the fixture account
+        runner=_runner("treatment"), arm_dir=tmp_path / "arms", control_sha="abcdef1",
+    )  # fmt: skip
+    assert stores.running is not None
+    # The fixture SPY debit vertical sits under the live Net EV floor; switch the floor
+    # off (D26 override on control, which every arm store reads) so it reaches the gate.
+    from arc.config import ArcSettings
+    from arc.control.service import ControlService
+
+    owner = "U0OWNER001"
+    svc = ControlService(
+        conn,
+        base=ArcSettings(_env_file=None, approver_slack_user_ids=[owner]),  # type: ignore[call-arg]
+        now=lambda: T0,
+        is_halted=lambda: False,
+    )
+    r = svc.set("entries.net_ev_floor_live", "off", actor=owner, source="slack")
+    assert r.pending is not None
+    svc.confirm(r.pending.code, actor=owner, source="slack")
+    conn.close()
+    prof = ["--profile", profile] if profile else []
+    assert _arc("propose", "--fixtures", "--fixture-set", "bullish", *prof, "--db",
+                str(control), "--no-slack", "--lock-dir", str(tmp_path / "locks")) == 0  # fmt: skip
+    conn = _db(control)
+    chain = conn.execute(
+        "SELECT chain_run_id FROM routine_runs WHERE job = 'research' AND chain_run_id IS NOT NULL"
+    ).fetchone()[0]
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM market_tape WHERE chain_run_id = ?", (chain,)
+        ).fetchone()[0]
+        > 0
+    ), "control's fixture loop records its market reads"
+    late = (FIXTURE_NOW + dt.timedelta(seconds=120)).isoformat()
+    assert _arc("experiment", "pair", chain, "--fixtures", "--fixture-set", "bullish", *prof,
+                "--now", late, "--db", str(control)) == 0  # fmt: skip
+    arm = _db(arm_stores(conn, "XP-1")["treatment"])
+    ctl_rows, arm_rows = _gate_rows(conn), _gate_rows(arm)
+    assert ctl_rows and len(arm_rows) == len(ctl_rows)
+    assert {r["ref_time"] for r in ctl_rows} == {"wall"}
+    assert {r["ref_time"] for r in arm_rows} == {"paired_chain"}
+    for c, a in zip(ctl_rows, arm_rows, strict=True):
+        assert (a["ticker"], a["passed"], a["violations"]) == (
+            c["ticker"], c["passed"], c["violations"],
+        )  # fmt: skip
+        assert not any("stale_data" in v for v in a["violations"])  # type: ignore[union-attr]
+    stale = arm.execute(
+        "SELECT count(*) FROM decisions WHERE reason_code = 'gate:stale_data'"
+    ).fetchone()[0]
+    assert stale == 0
+    arm.close()
+
+
 def test_start_refuses_existing_store_and_leaves_nothing(control: Path, tmp_path: Path) -> None:
     conn = _db(control)
     arms = tmp_path / "arms"

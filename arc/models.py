@@ -9,7 +9,7 @@ from datetime import date as date_
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -237,6 +237,10 @@ class Proposal(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# E10.2d: the clock a gate decision aged its leg quotes against.
+QuoteClock = Literal["wall", "paired_chain", "mixed"]
+
+
 class GateDecision(BaseModel):
     """Result of the deterministic risk-proxy gate evaluation."""
 
@@ -245,6 +249,14 @@ class GateDecision(BaseModel):
     violations: list[str] = Field(default_factory=list)
     token: str | None = Field(None, description="HMAC gate token if passed")
     account_snapshot: dict[str, Any] = Field(default_factory=dict)
+    ref_time: QuoteClock = Field(
+        "wall",
+        description=(
+            "E10.2d: the clock the leg quotes' age was measured against: `wall` (the "
+            "gate's now), `paired_chain` (an experiment arm's quotes replayed from the "
+            "paired control chain's tape, aged on that chain's clock) or `mixed`."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

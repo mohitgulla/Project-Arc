@@ -21,7 +21,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import structlog
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from arc.betas.store import betas_used
 from arc.context.ttl import from_db
@@ -443,6 +443,13 @@ class LegQuote(BaseModel):
     quote_ts: _dt.datetime | None = None
     spread_pct: float | None = None
     curve_mid: float | None = None
+    tape_lag_s: float | None = Field(
+        None,
+        description=(
+            "E10.2d: seconds the paired control chain's clock was behind the arm's when "
+            "this quote was replayed from the market tape; None = a live read (wall clock)"
+        ),
+    )
 
     @property
     def sign(self) -> int:
@@ -455,7 +462,9 @@ class PricedStructure:
 
     ``spot`` and ``atm_iv`` (the expiry's ATM IV, ``None`` if the chain has no IVs)
     feed the E2.4 exit model. ``curve`` holds each leg's strike-curve fair mid
-    (E6.2a quote check).
+    (E6.2a quote check). ``tape_lags`` (E10.2d): per leg replayed from a paired arm's
+    market tape, how far the paired control chain's clock was behind the arm's
+    (:meth:`arc.experiments.tape.TapeReplay.tape_lag`); a leg absent was read live.
     """
 
     def __init__(
@@ -467,6 +476,7 @@ class PricedStructure:
         atm_iv: float | None = None,
         spot_as_of: _dt.datetime | None = None,
         curve: dict[str, float | None] | None = None,
+        tape_lags: dict[str, _dt.timedelta] | None = None,
     ) -> None:
         self.structure = structure
         self.contracts = contracts
@@ -474,6 +484,11 @@ class PricedStructure:
         self.atm_iv = atm_iv
         self.spot_as_of = spot_as_of
         self.curve = curve or {}
+        self.tape_lags = tape_lags or {}
+
+    def quote_ref_times(self, now: _dt.datetime) -> dict[str, _dt.datetime]:
+        """E10.2d: per replayed leg, the paired chain's clock at *now* (``now - lag``)."""
+        return {k: now - lag for k, lag in self.tape_lags.items()}
 
     def leg_spreads(self) -> dict[str, float]:
         """Quoted ask − bid per leg (per share)."""
@@ -507,6 +522,11 @@ class PricedStructure:
                     quote_ts=c.quote_timestamp if c is not None else None,
                     spread_pct=spread_pct,
                     curve_mid=self.curve.get(leg.occ_symbol),
+                    tape_lag_s=(
+                        lag.total_seconds()
+                        if (lag := self.tape_lags.get(leg.occ_symbol)) is not None
+                        else None
+                    ),
                 )
             )
         return out
@@ -550,7 +570,9 @@ def close_quote_sanity(
 
     * ``missing``: has a bid, an ask (bid <= ask) and a quote timestamp;
     * ``stale``: quote timestamp within ``close_quote_max_age_seconds`` of *now*
-      (the quote's own time, not the fetch time; a future stamp fails too);
+      (the quote's own time, not the fetch time; a future stamp fails too). E10.2d:
+      a leg replayed from a paired arm's tape (``tape_lag_s``) is aged against the
+      paired chain's clock, ``now - tape_lag_s``, the age control saw;
     * ``spread``: spread <= ``close_quote_max_spread_pct`` of mid, or
       <= ``close_quote_max_spread_abs`` (a cheap wing is never unclosable);
 
@@ -577,11 +599,13 @@ def close_quote_sanity(
             )
             continue
         stamps.append(q.quote_ts)
-        age = (now - q.quote_ts).total_seconds()
+        ref = now if q.tape_lag_s is None else now - _dt.timedelta(seconds=q.tape_lag_s)
+        age = (ref - q.quote_ts).total_seconds()
         if age < 0 or age > max_age:
+            clock = "" if q.tape_lag_s is None else ", paired-chain clock"
             out.append(
                 f"stale: {q.symbol} quote is {age:.0f}s old "
-                f"(max {max_age}s, quote {q.quote_ts.isoformat()})"
+                f"(max {max_age}s, quote {q.quote_ts.isoformat()}{clock})"
             )
         spread = q.ask - q.bid
         pct = spread / q.mid if q.mid > 0 else float("inf")
@@ -675,6 +699,9 @@ def price_structure(
         else None
     )
     chain_list = list(chain.values())
+    from arc.experiments.tape import tape_lag  # noqa: PLC0415 - E10.2d, paired arms only
+
+    lags = {k: lag for k in used if (lag := tape_lag(market, k)) is not None}
     return PricedStructure(
         analyze(out_legs, as_of=as_of, market=market_inputs),
         used,
@@ -682,6 +709,7 @@ def price_structure(
         atm_iv=atm_iv(chain_list, spot) if spot is not None else None,
         spot_as_of=uq.timestamp,
         curve={k: curve_mid(chain_list, k) for k in used},
+        tape_lags=lags,
     )
 
 
@@ -702,6 +730,8 @@ def market_snapshot(
     earnings: dict[str, _dt.date | None],
     spots: Mapping[str, float | None] | None = None,
     betas: Mapping[str, float] | None = None,
+    *,
+    quote_ref_time: Mapping[str, _dt.datetime] | None = None,
 ) -> MarketSnapshot:
     """Gate quotes for the legs. A contract without a quote timestamp is left out (fails closed).
 
@@ -709,6 +739,9 @@ def market_snapshot(
     non-positive spot is left out, so the gate's dollar-delta cap fails closed.
     *betas* (D62): β used per root (from :func:`proposal_betas`; already floored).
     D66: ``penny_program`` carries each contract's ``ppind`` (None = unknown).
+    *quote_ref_time* (E10.2d): per leg replayed from a paired arm's tape, the paired
+    chain's clock (:meth:`PricedStructure.quote_ref_times`); the gate ages those
+    quotes against it.
     """
     quotes: dict[str, Quote] = {}
     for sym, c in contracts.items():
@@ -727,6 +760,7 @@ def market_snapshot(
         underlying_spot=spot_map,
         underlying_beta=beta_map,
         penny_program={sym: c.penny_program for sym, c in contracts.items()},
+        quote_ref_time={s: t for s, t in (quote_ref_time or {}).items() if s in quotes},
     )
 
 

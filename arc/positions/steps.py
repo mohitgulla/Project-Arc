@@ -610,7 +610,11 @@ def _open_leg(
     now = ctx.clock()  # E5.2b: judge quote age against a clock read after the fetch
     earnings = next_earnings(ctx.conn, [t], _today(ctx))
     market = market_snapshot(
-        priced.contracts, earnings, {t: priced.spot}, proposal_betas(ctx.conn, [t], _today(ctx))
+        priced.contracts,
+        earnings,
+        {t: priced.spot},
+        proposal_betas(ctx.conn, [t], _today(ctx)),
+        quote_ref_time=priced.quote_ref_times(now),  # E10.2d: paired arm replay
     )
     limit = limit_price(st.net_debit_credit, grid_for(st.legs, market, settings))
     band = band_for(st, limit, market, settings)
@@ -672,6 +676,7 @@ def _open_leg(
             violations=decision.violations,
             token=decision.token,
             account_snapshot=decision.account_snapshot,
+            ref_time=decision.ref_time,
             decided_at=now.isoformat(),
             run_id=ctx.run_id,
             commit=False,

@@ -325,7 +325,7 @@ def propose_close(
         return CloseOutcome(None, False, problems, line, alert)
     day = now.astimezone(ET).date().isoformat()
     close = priced.structure
-    snap = market_snapshot(priced.contracts, {})
+    snap = market_snapshot(priced.contracts, {}, quote_ref_time=priced.quote_ref_times(now))
     limit = limit_price(close.net_debit_credit, grid_for(close.legs, snap, settings))
     band = price_band(close.legs, limit, snap, settings, max_steps=close_max_steps)
     n = int(row["contracts"])
@@ -383,6 +383,7 @@ def propose_close(
             violations=decision.violations,
             token=decision.token,
             account_snapshot=decision.account_snapshot,
+            ref_time=decision.ref_time,
             decided_at=now.isoformat(),
             run_id=run_id,
             commit=False,

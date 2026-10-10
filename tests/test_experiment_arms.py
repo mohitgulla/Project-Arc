@@ -261,6 +261,62 @@ def test_tape_records_control_and_replays_identically() -> None:
     assert prune_tape(ctl, keep_days=3, now=NOW + dt.timedelta(days=10)) == 1
 
 
+class _Chain:
+    """A provider with one option chain whose quote is stamped at *NOW*."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def option_chain(self, underlying: str, exp_start: dt.date, exp_end: dt.date) -> list:
+        from arc.data.base import OptionContract
+
+        self.calls += 1
+        return [
+            OptionContract.model_validate(
+                {"symbol": "SPY261120C00580000", "underlying": underlying, "expiration":
+                 exp_start.isoformat(), "strike": 580, "option_type": "call", "bid": 1.0,
+                 "ask": 1.1, "mid": 1.05, "quote_timestamp": NOW.isoformat()}
+            )
+        ]  # fmt: skip
+
+
+def test_replay_ages_tape_quotes_on_the_paired_chain_clock() -> None:
+    """E10.2d: a tape hit carries its lag behind the arm's clock; a live miss carries none."""
+    from arc.experiments.tape import tape_lag
+
+    ctl = _db()
+    exp = dt.date(2026, 11, 20)
+    rec = TapeRecorder(_Chain(), ctl, "chain-1", clock=lambda: NOW + dt.timedelta(seconds=2))  # type: ignore[arg-type]
+    rec.option_chain("SPY", exp, exp)
+    arm_now = [NOW + dt.timedelta(seconds=122)]
+    live = _Chain()
+    replay_ = TapeReplay.from_store(ctl, "chain-1", live, clock=lambda: arm_now[0])  # type: ignore[arg-type]
+    sym = "SPY261120C00580000"
+    assert replay_.tape_lag(sym) is None  # not served yet
+    replay_.option_chain("SPY", exp, exp)
+    assert replay_.tape_lag(sym) == dt.timedelta(seconds=120)
+    assert tape_lag(replay_, sym) == dt.timedelta(seconds=120)
+    assert tape_lag(live, sym) is None  # control / unpaired: wall clock
+    # a miss is a live read: that symbol is aged on the wall clock again
+    other = dt.date(2026, 12, 18)
+    replay_.option_chain("SPY", other, other)
+    assert live.calls == 1 and replay_.misses == 1 and replay_.tape_lag(sym) is None
+    # a record time that cannot be parsed ages on the wall clock (fails closed)
+    ctl.execute("UPDATE market_tape SET at = 'garbage'")
+    bad = TapeReplay.from_store(ctl, "chain-1", None, clock=lambda: arm_now[0])
+    bad.option_chain("SPY", exp, exp)
+    assert bad.tape_lag(sym) is None
+
+
+def test_tape_lag_never_negative() -> None:
+    ctl = _db()
+    exp = dt.date(2026, 11, 20)
+    TapeRecorder(_Chain(), ctl, "c", clock=lambda: NOW).option_chain("SPY", exp, exp)  # type: ignore[arg-type]
+    replay_ = TapeReplay.from_store(ctl, "c", None, clock=lambda: NOW - dt.timedelta(seconds=5))
+    replay_.option_chain("SPY", exp, exp)
+    assert replay_.tape_lag("SPY261120C00580000") == dt.timedelta(0)
+
+
 # --- manifests -------------------------------------------------------------------
 
 
